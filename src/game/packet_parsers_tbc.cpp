@@ -1,4 +1,5 @@
 #include "game/packet_parsers.hpp"
+#include "game/tbc_cast_results.hpp"
 #include "game/spline_packet.hpp"
 #include "core/logger.hpp"
 
@@ -1177,23 +1178,12 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
     return true;
 }
 
-static uint8_t translateTbcCastFailure(uint8_t tbcResult) {
-    // TBC has no SUCCESS entry, while WoWee's shared string table is WotLK-based.
-    // Most early values line up with +1.  Later enum sections diverge; map observed
-    // high-value TBC failures explicitly so user-facing errors stay sane.
-    switch (tbcResult) {
-        case 0x17: return 25;  // SPELL_FAILED_CHEST_IN_USE
-        case 0x24: return 38;  // SPELL_FAILED_IMMUNE
-        case 0x25: return 40;  // SPELL_FAILED_INTERRUPTED
-        case 0x26: return 41;  // SPELL_FAILED_INTERRUPTED_COMBAT
-        case 0x2E: return 49;  // SPELL_FAILED_LOW_CASTLEVEL
-        case 0x7F: return 132; // SPELL_FAILED_TRY_AGAIN
-        case 0x91: return 146; // SPELL_FAILED_DAMAGE_IMMUNE
-        case 0x95: return 150; // SPELL_FAILED_MIN_SKILL
-        default: break;
+static uint8_t translateTbcCastFailure(uint8_t raw) {
+    if (raw >= kTbcCastResults.size()) {
+        LOG_ERROR("Invalid TBC spell cast result: ", static_cast<int>(raw));
+        return 187; // Shared UNKNOWN; never mislabel an unknown wire value.
     }
-    if (tbcResult == 63) return 67; // SPELL_FAILED_NOT_READY
-    return static_cast<uint8_t>(tbcResult + 1);
+    return kTbcCastResults[raw];
 }
 
 uint8_t TbcPacketParsers::castResult(uint8_t raw) const {
