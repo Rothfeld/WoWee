@@ -799,10 +799,6 @@ void MovementHandler::sendMovement(Opcode opcode) {
         }
     }
 
-    LOG_DEBUG("Sending movement packet: opcode=0x", std::hex,
-              wireOpcode(opcode), std::dec,
-              (includeTransportInWire ? " ONTRANSPORT" : ""));
-
     // Block heartbeats from a near-origin position on Eastern Kingdoms (map 0).
     // These positions are almost certainly bugs (area trigger misfire, corrupted
     // save). Sending them tells the server the player is there, which persists
@@ -844,6 +840,13 @@ void MovementHandler::sendMovement(Opcode opcode) {
         wireInfo.transportZ = serverTransportPos.z;
         wireInfo.transportO = core::coords::normalizeAngleRad(-wireInfo.transportO);
     }
+
+    LOG_DEBUG("Sending movement packet: opcode=0x", std::hex,
+              wireOpcode(opcode), " flags=0x", wireInfo.flags, std::dec,
+              " time=", wireInfo.time,
+              " position=(", wireInfo.x, ",", wireInfo.y, ",", wireInfo.z,
+              ") facing=", wireInfo.orientation,
+              (includeTransportInWire ? " ONTRANSPORT" : ""));
 
     // Build and send movement packet (expansion-specific format)
     auto packet = owner_.getPacketParsers()

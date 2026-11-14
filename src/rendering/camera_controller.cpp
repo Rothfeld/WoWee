@@ -3058,17 +3058,18 @@ void CameraController::update(float deltaTime) {
             }
         }
 
-        // Strafing
-        if (nowStrafeLeft && !wasStrafingLeft) {
+        // STOP_STRAFE clears both wire flags. Clear released directions first,
+        // then restore any held direction, including a direct left/right switch.
+        const bool releasedStrafe = (!nowStrafeLeft && wasStrafingLeft) ||
+                                    (!nowStrafeRight && wasStrafingRight);
+        if (releasedStrafe) {
+            movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_STRAFE));
+        }
+        if (nowStrafeLeft && (!wasStrafingLeft || releasedStrafe)) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_STRAFE_LEFT));
         }
-        if (nowStrafeRight && !wasStrafingRight) {
+        if (nowStrafeRight && (!wasStrafingRight || releasedStrafe)) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_STRAFE_RIGHT));
-        }
-        if ((!nowStrafeLeft && wasStrafingLeft) || (!nowStrafeRight && wasStrafingRight)) {
-            if (!nowStrafeLeft && !nowStrafeRight) {
-                movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_STRAFE));
-            }
         }
 
         // Turning
