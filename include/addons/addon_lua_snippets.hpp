@@ -603,6 +603,8 @@ local function buildPanel(category, settings)
             control.read()
         end
     end
+    -- TBC invokes OnShow when selecting a category; it has no refresh callback.
+    panel:SetScript("OnShow", panel.refresh)
     panel.okay = function()
         for _, control in ipairs(controls) do
             opened[control.key] = WoweeGetSetting(control.key)
