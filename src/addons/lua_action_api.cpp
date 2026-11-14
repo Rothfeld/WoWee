@@ -192,6 +192,7 @@ static int lua_GetActionTexture(lua_State* L) {
             return 1;
         }
     } else if (action.type == game::ActionBarSlot::ITEM && action.id != 0) {
+        gh->ensureItemInfo(action.id);
         const auto* info = gh->getItemInfo(action.id);
         if (info && info->displayInfoId != 0) {
             std::string icon = gh->getItemIconPath(info->displayInfoId);
@@ -251,6 +252,9 @@ static int lua_IsUsableAction(lua_State* L) {
             usable = prerequisite == game::SpellPrerequisite::Ready;
             noMana = prerequisite == game::SpellPrerequisite::NoPower;
         }
+    }
+    if (action.type == game::ActionBarSlot::ITEM) {
+        usable = gh->getInventory().countItem(action.id) > 0;
     }
     lua_pushboolean(L, usable ? 1 : 0);
     lua_pushboolean(L, noMana ? 1 : 0);

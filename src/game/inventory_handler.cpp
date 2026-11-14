@@ -4446,6 +4446,15 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
                                            {std::to_string(data.entry)});
         }
 
+        // An action can reference a depleted item absent from all inventory
+        // objects. Its metadata query still needs to refresh the original icon.
+        const auto& actions = owner_.getActionBar();
+        for (size_t i = 0; i < actions.size(); ++i) {
+            if (actions[i].type == ActionBarSlot::ITEM && actions[i].id == data.entry) {
+                owner_.fireAddonEvent("ACTIONBAR_SLOT_CHANGED", {std::to_string(i + 1)});
+            }
+        }
+
         // The loot window's row for this item, which was drawn before the
         // item was known.
         //
