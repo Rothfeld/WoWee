@@ -238,6 +238,21 @@ TEST_CASE("An interface from 3.0 onwards is left alone", "[handlerglobals]") {
     CHECK(fx.globalIsNil("arg1"));
 }
 
+TEST_CASE("A failing OnLoad restores the caller's this", "[handlerglobals]") {
+    Fixture fx;
+    setLegacyHandlerGlobals(true);
+    REQUIRE(luaL_dostring(fx.L, "this = 'caller'") == 0);
+    fx.handler("OnLoad", "error('load failed')");
+    lua_pushcfunction(fx.L, wowee::addons::lua_WoweeFireOnLoad);
+    lua_getglobal(fx.L, "f");
+    REQUIRE(lua_pcall(fx.L, 1, 0, 0) != 0);
+    REQUIRE(std::string(lua_tostring(fx.L, -1)).find("load failed") != std::string::npos);
+    lua_pop(fx.L, 1);
+    lua_getglobal(fx.L, "this");
+    CHECK(std::string(lua_tostring(fx.L, -1)) == "caller");
+    lua_pop(fx.L, 1);
+}
+
 TEST_CASE("A handler that raises still gives the names back",
           "[handlerglobals]") {
     Fixture fx;

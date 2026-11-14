@@ -146,18 +146,9 @@ int lua_WoweeFireOnLoad(lua_State* L) {
     if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return 0; }
     lua_remove(L, -2);                    // __scripts, leaving the handler
     lua_pushvalue(L, 1);                  // self
-    if (!gLegacyHandlerGlobals) {
-        lua_call(L, 1, 0);
-        return 0;
-    }
-    // The saved value rides on the stack below the call rather than anywhere it
-    // would have to be cleaned up, because a raise here does not return.
-    rawGetGlobal(L, "this");
-    lua_insert(L, -3);                    // beneath the handler and its argument
-    lua_pushvalue(L, 1);
-    lua_setglobal(L, "this");
-    lua_call(L, 1, 0);
-    lua_setglobal(L, "this");             // what was saved, still on the stack
+    // OnLoad can raise while building nested frames. Restore the caller's
+    // legacy globals before propagating the error to the loader.
+    if (pcallScript(L, "OnLoad", 1, 0) != 0) return lua_error(L);
     return 0;
 }
 

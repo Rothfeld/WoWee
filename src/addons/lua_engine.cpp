@@ -6016,6 +6016,10 @@ void LuaEngine::registerCoreAPI() {
 
     // WoW-specific and not derivable from a standard library.
     bootstrap(
+        "function strreplace(s, search, replacement)\n"
+        "  local pattern = search:gsub('(%W)', '%%%1')\n"
+        "  return (s:gsub(pattern, function() return replacement end))\n"
+        "end\n"
         "function strtrim(s, chars)\n"
         "  chars = chars or ' \\t\\r\\n'\n"
         "  local p = '[' .. chars:gsub('(%W)', '%%%1') .. ']'\n"
@@ -8776,9 +8780,9 @@ void LuaEngine::registerCoreAPI() {
         "    local s = math.floor(math.fmod(copper, 10000) / 100)\n"
         "    local c = math.fmod(copper, 100)\n"
         "    local r = ''\n"
-        "    if g > 0 then r = r .. format(GOLD_AMOUNT_TEXTURE, g, 0, 0) .. ' ' end\n"
-        "    if s > 0 then r = r .. format(SILVER_AMOUNT_TEXTURE, s, 0, 0) .. ' ' end\n"
-        "    if c > 0 or r == '' then r = r .. format(COPPER_AMOUNT_TEXTURE, c, 0, 0) end\n"
+        "    if g > 0 then r = r .. format('%d|TInterface\\\\MoneyFrame\\\\UI-GoldIcon:0:0:2:0|t', g, 0, 0) .. ' ' end\n"
+        "    if s > 0 then r = r .. format('%d|TInterface\\\\MoneyFrame\\\\UI-SilverIcon:0:0:2:0|t', s, 0, 0) .. ' ' end\n"
+        "    if c > 0 or r == '' then r = r .. format('%d|TInterface\\\\MoneyFrame\\\\UI-CopperIcon:0:0:2:0|t', c, 0, 0) end\n"
         "    return r\n"
         "end\n"
         "GetCoinText = GetCoinTextureString\n"

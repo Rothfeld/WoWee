@@ -2471,7 +2471,7 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"GetGossipAvailableQuests", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             if (!gh) return 0;
-            // Five values per quest, and the quest count is the server's. Room
+            // Reserve the maximum record width; TBC uses three values. Room
             // first: pushing past the stack top corrupts the heap rather than
             // raising.
             if (!lua_checkstack(
@@ -2486,16 +2486,19 @@ void registerSocialLuaAPI(lua_State* L) {
                 // Trivial greys the title out. Nothing here knows a quest's
                 // green range, and guessing it would grey quests that are not.
                 lua_pushboolean(L, 0);
-                lua_pushboolean(L, (q.questFlags & kQuestFlagsDaily) ? 1 : 0);
-                lua_pushboolean(L, q.isRepeatable ? 1 : 0);
-                n += 5;
+                n += 3;
+                if (interfaceVersion(L) >= 30000) {
+                    lua_pushboolean(L, (q.questFlags & kQuestFlagsDaily) ? 1 : 0);
+                    lua_pushboolean(L, q.isRepeatable ? 1 : 0);
+                    n += 2;
+                }
             }
             return n;
         }},
                 {"GetGossipActiveQuests", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             if (!gh) return 0;
-            // Five values per quest, and the quest count is the server's. Room
+            // Reserve the maximum record width; TBC uses three values. Room
             // first: pushing past the stack top corrupts the heap rather than
             // raising.
             if (!lua_checkstack(
@@ -2508,8 +2511,11 @@ void registerSocialLuaAPI(lua_State* L) {
                 lua_pushstring(L, q.title.c_str());
                 lua_pushnumber(L, q.questLevel);
                 lua_pushboolean(L, 0);
-                lua_pushboolean(L, gossipQuestIsCompletable(q.questIcon) ? 1 : 0);
-                n += 4;
+                n += 3;
+                if (interfaceVersion(L) >= 30000) {
+                    lua_pushboolean(L, gossipQuestIsCompletable(q.questIcon) ? 1 : 0);
+                    ++n;
+                }
             }
             return n;
         }},

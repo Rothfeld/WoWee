@@ -63,6 +63,9 @@
 #include "core/app_clock.hpp"
 #include "ui/widget_renderer.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_layout.hpp"
+#include "pipeline/dbc_loader.hpp"
+#include "pipeline/spell_icon_paths.hpp"
 #include "ui/interface_fonts.hpp"
 #include "ui/link_hit.hpp"
 #include "game/expansion_profile.hpp"
@@ -104,6 +107,19 @@ int main(int argc, char** argv) {
         return 2;
     }
     const std::string assetPath = argv[1];
+    // The runner takes an expansion directory. Bind that expansion before Lua
+    // loads, so GetBuildInfo and DBC readers use the same version as FrameXML.
+    wowee::game::ExpansionRegistry testExpansions;
+    const auto expansionPath = std::filesystem::absolute(assetPath);
+    if (!testExpansions.initialize(expansionPath.parent_path().parent_path().string()) ||
+        !testExpansions.setActive(expansionPath.filename().string())) {
+        std::fprintf(stderr, "framexml_run: cannot select expansion %s\n", assetPath.c_str());
+        return 2;
+    }
+    wowee::pipeline::DBCLayout testLayout;
+    if (!testLayout.loadFromJson(assetPath + "/dbc_layouts.json")) return 2;
+    wowee::pipeline::setActiveDBCLayout(&testLayout);
+
 
     // The client's settings, so the panels the schema generates have values to
     // show. Without this every control was built against a nil: WoweeGetSetting
@@ -147,7 +163,6 @@ int main(int argc, char** argv) {
     // channels were written to it and saved from the chat panel's, so they read
     // back as whatever they had always been.
     gameScreen.setServices(wowee::ui::UIServices{});
-    wowee::ui::SettingsPanel& settingsPanel = gameScreen.getSettingsPanel();
     // No seeding of the defaults. The panel's fields already hold them - the
     // schema's default and the member's initialiser are checked against each
     // other in settings_apply_on_load - and setting them here went through
@@ -160,6 +175,7 @@ int main(int argc, char** argv) {
     // assigns the pending fields directly - so it was the harness undoing the
     // thing the harness exists to watch.
     wowee::addons::LuaServices settingServices;
+    settingServices.expansionRegistry = &testExpansions;
     settingServices.getClientSetting = [](const std::string& key) -> std::string {
         return gameScreen.getSettingsPanel().settingValue(key);
     };
@@ -308,8 +324,8 @@ int main(int argc, char** argv) {
         // overlap question turns on.
         int faces = 0;
         for (const char* name : {"frizqt__.ttf", "morpheus.ttf", "skurri.ttf",
-                                 "arialn.ttf", "friends.ttf"}) {
-            const std::string file = assetPath + "/misc/fonts/" + name;
+                                 "arialn.ttf"}) {
+            const std::string file = assetPath + "/fonts/" + name;
             ImFontConfig cfg;
             cfg.ExtraSizeScale = wowee::ui::fontEmSizeScaleOfFile(file);
             if (ImFont* f = io.Fonts->AddFontFromFileTTF(file.c_str(), 16.0f, &cfg)) {
@@ -318,7 +334,7 @@ int main(int argc, char** argv) {
             }
         }
         if (faces == 0) io.Fonts->AddFontDefault();
-        std::printf("== fonts: %d of 5 of the game's own faces\n", faces);
+        std::printf("== fonts: %d of 4 of the game's own faces\n", faces);
         io.Fonts->Build();
         unsigned char* pixels = nullptr;
         int fw = 0, fh = 0;
@@ -437,6 +453,7 @@ int main(int argc, char** argv) {
         // which GameHandler accepts, and the character is set directly.
         if (std::strcmp(argv[i], "--player") == 0) {
             static wowee::game::GameServices svc;
+            svc.expansionRegistry = &testExpansions;
             // The real asset manager, so bindings that read a DBC - quest reward
             // XP from QuestXP.dbc, zone names from AreaTable - answer for real
             // rather than the empty they give with no assets behind them.
@@ -480,20 +497,39 @@ int main(int argc, char** argv) {
             if (auto* sh = gh.getSpellHandler()) {
                 for (uint32_t id : {133u, 168u, 116u}) sh->addKnownSpell(id);
             }
-            // A spell icon path for every id, so GetSpellTexture answers
-            // non-empty. Without it SpellButton_UpdateButton hides the icon and
-            // SpellButton_OnDrag's `not IconTexture:IsShown()` guard returns
-            // before PickupSpell - a drag that looks broken but is only a
-            // spellbook with no icons, which is what the client draws over a
-            // realm and the harness cannot. The path need not resolve to pixels;
-            // the guard only asks whether the texture is shown.
+            // Read real icon paths. Placeholder icons conceal DBC/schema failures.
+            std::unordered_map<uint32_t, std::string> iconPaths;
+            wowee::pipeline::loadSpellIconPaths(&assets, iconPaths);
+            const auto spells = assets.loadDBC("Spell.dbc");
+            const auto* spellLayout = testLayout.getLayout("Spell");
+            if (!spells || !spellLayout) return 2;
+            std::unordered_map<uint32_t, std::string> spellIcons;
+            for (uint32_t row = 0; row < spells->getRecordCount(); ++row) {
+                const auto icon = spells->getUInt32(row, spellLayout->field("IconID"));
+                const auto found = iconPaths.find(icon);
+                if (found != iconPaths.end())
+                    spellIcons.emplace(spells->getUInt32(row, 0), found->second);
+            }
             gh.setSpellIconPathResolver(
-                [](uint32_t) { return std::string("Interface\\Icons\\INV_Misc_QuestionMark"); });
+                [spellIcons](uint32_t id) {
+                    const auto found = spellIcons.find(id);
+                    return found == spellIcons.end() ? std::string{} : found->second;
+                });
+            gh.setIconPathResolver([iconPaths](uint32_t id) {
+                const auto found = iconPaths.find(id);
+                return found == iconPaths.end() ? std::string{} : found->second;
+            });
             // A quest in the log, with the text the server sends only on
             // query, so the quest-log detail has something real to lay out.
             // Without it GetQuestLogQuestText answers empty and "the
             // description is blank" cannot be told from "there was no quest".
             if (auto* qh = gh.getQuestHandler()) {
+                qh->currentGossipRef().quests = {
+                    {.questId = 179, .questIcon = 2, .questLevel = 1,
+                     .title = "Dwarven Outfitters"},
+                    {.questId = 233, .questIcon = 4, .questLevel = 3,
+                     .title = "Coldridge Valley Mail Delivery"}
+                };
                 auto& log = qh->questLogRef();
                 if (log.empty()) {
                     wowee::game::QuestHandler::QuestLogEntry q{};
