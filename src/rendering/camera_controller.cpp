@@ -2091,14 +2091,8 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     collisionDistance = currentDistance;
 
     if ((wmoRenderer || m2Renderer || terrainManager) && currentDistance > MIN_DISTANCE) {
-        // Built geometry and the ground are treated separately from here on.
-        //
-        // A wall or a pillar is a thing with a side to step around, and it wants
-        // reacting to sharply. A hillside is neither: it has no edge to clear,
-        // it is under the camera for as long as the slope lasts, and the height
-        // it reports changes a little with every step the player takes. Feeding
-        // the ground through the same sharp path made the camera jitter along a
-        // slope and shove forward at every rise.
+        // Geometry pulls the camera inward immediately. Terrain has its own
+        // slower response because sampled slope heights vary between frames.
         auto geometryLimitAlong = [&](const glm::vec3& dir) -> float {
             float hit = currentDistance;
             if (wmoRenderer)
@@ -2112,64 +2106,8 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
         float rawLimit = geometryLimitAlong(camDir);
 
-        // Step around what is in the way rather than only backing away from it.
-        //
-        // Pulling straight in is what puts the camera on the player's neck the
-        // moment they set their back to a wall, and from inside their own head
-        // there is nothing to steer by. A few degrees of yaw usually clears the
-        // obstruction entirely - a pillar, a doorframe, the corner of a
-        // building - and keeps the shot.
-        //
-        // Two extra rays at most, and only on a frame that is actually blocked,
-        // which is the minority of them. The winner has to buy a real amount of
-        // clearance, so the camera does not wander for nothing.
-        constexpr float DEFLECT_MAX_DEG = 14.0f;
-        constexpr float DEFLECT_MIN_GAIN = 1.0f;   // yards of clearance worth turning for
-        float deflectTarget = 0.0f;
-        if (rawLimit < currentDistance - 0.5f && rawLimit < userTargetDistance) {
-            float bestLimit = rawLimit;
-            for (float trialDeg : {DEFLECT_MAX_DEG, -DEFLECT_MAX_DEG}) {
-                const float a = glm::radians(trialDeg);
-                const float ca = std::cos(a), sa = std::sin(a);
-                // Yaw about world Z: the camera should step sideways, not rise.
-                glm::vec3 trialDir(camDir.x * ca - camDir.y * sa,
-                                   camDir.x * sa + camDir.y * ca,
-                                   camDir.z);
-                float trialLimit = geometryLimitAlong(glm::normalize(trialDir));
-                if (trialLimit > bestLimit + DEFLECT_MIN_GAIN) {
-                    bestLimit = trialLimit;
-                    deflectTarget = trialDeg;
-                }
-            }
-            rawLimit = bestLimit;
-        }
-
-        // Ease into and out of the turn; snapping to it reads as the camera
-        // being knocked sideways.
-        {
-            const float tau = (deflectTarget != 0.0f) ? 0.12f : 0.30f;
-            const float alpha = 1.0f - std::exp(-deltaTime / tau);
-            cameraDeflectDeg_ += (deflectTarget - cameraDeflectDeg_) * alpha;
-            if (std::abs(cameraDeflectDeg_) > 0.05f) {
-                const float a = glm::radians(cameraDeflectDeg_);
-                const float ca = std::cos(a), sa = std::sin(a);
-                camDir = glm::normalize(glm::vec3(camDir.x * ca - camDir.y * sa,
-                                                  camDir.x * sa + camDir.y * ca,
-                                                  camDir.z));
-            }
-        }
-
-        // Deflection is smoothed, so its trial direction is not yet the actual
-        // camera ray. Recheck the ray used this frame before accepting clearance.
-        rawLimit = geometryLimitAlong(camDir);
-
-        // The ground, folded in after the deflection and on its own timing.
-        //
-        // It is never a reason to turn: there is no side to a hillside to step
-        // past, so trying to yaw around one only wanders. And its own limit is
-        // smoothed before it is used, because the marched height changes a
-        // little every step the player takes and that arrives as a shudder if
-        // it is passed straight through.
+        // Preserve the player's orbit direction. Obstacles only shorten the
+        // camera ray; terrain uses separate smoothing to avoid slope jitter.
         if (!cachedInsideInteriorWMO) {
             const float terrainLimit =
                 raymarchTerrainCameraLimit(pivot, camDir, currentDistance);

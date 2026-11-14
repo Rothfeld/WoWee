@@ -588,10 +588,7 @@ private:
     /// below, the water surface. Eased both ways so crossing the water's
     /// edge does not jump the view.
     float waterNudgeZ_ = 0.0f;
-    // Degrees of yaw the camera is currently stepping around an obstruction by,
-    // so it clears a pillar or a doorframe instead of riding up the player's
-    // neck. Smoothed; zero whenever nothing is in the way.
-    float cameraDeflectDeg_ = 0.0f;
+
 
     // Gravity / grounding
     float verticalVelocity = 0.0f;
