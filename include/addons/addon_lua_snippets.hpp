@@ -2018,6 +2018,17 @@ local function paint(box)
         if art and art.Hide then art:Hide() end
     end
 
+    -- TBC's middle border region is anonymous, so named suffixes miss it.
+    for _, region in ipairs({box:GetRegions()}) do
+        if region:GetObjectType() == "Texture" then
+            local path = region:GetTexture()
+            if type(path) == "string" and
+               string.find(string.lower(path), "ui-chatinputborder", 1, true) then
+                region:Hide()
+            end
+        end
+    end
+
     -- The window this box belongs to, which is the one it is anchored under.
     local frame = box.chatFrame or DEFAULT_CHAT_FRAME
     local source = frame and frame.GetName and _G[frame:GetName() .. "Background"]
@@ -2063,6 +2074,7 @@ local function paint(box)
 end
 
 local function paintAll()
+    if (__WoweeInterfaceVersion or 0) < 30000 then paint(ChatFrameEditBox) end
     for i = 1, (NUM_CHAT_WINDOWS or 10) do
         paint(_G["ChatFrame" .. i .. "EditBox"])
     end

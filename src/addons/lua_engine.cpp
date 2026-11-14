@@ -4153,6 +4153,15 @@ int lua_Frame_SetNormalFontObject(lua_State* L) {
 
 /// Attach the shared region methods to the table on top of the stack.
 void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
+    const int region = lua_gettop(L);
+    const uint32_t id = widgetIdOf(L, region);
+    if (id != 0) {
+        lua_getglobal(L, "__WoweeRegionsByWid");
+        lua_pushinteger(L, static_cast<lua_Integer>(id));
+        lua_pushvalue(L, region);
+        lua_rawset(L, -3);
+        lua_pop(L, 1);
+    }
     auto set = [&](const char* name, lua_CFunction fn) {
         lua_pushcfunction(L, fn);
         lua_setfield(L, -2, name);
@@ -4520,6 +4529,31 @@ int lua_Frame_GetChildren(lua_State* L) {
     }
     lua_remove(L, registry);    // drop the registry, keep the children above it
     return pushed;
+}
+
+// Texture and font-string regions belonging directly to this frame.
+int lua_Frame_GetRegions(lua_State* L) {
+    auto* tree = wowee::addons::getWidgetTree(L);
+    const auto* w = widgetOf(L, 1);
+    if (!tree || !w) return 0;
+    if (!lua_checkstack(L, static_cast<int>(w->children.size()) + 2))
+        return luaL_error(L, "GetRegions: insufficient Lua stack space");
+    lua_getglobal(L, "__WoweeRegionsByWid");
+    if (!lua_istable(L, -1))
+        return luaL_error(L, "GetRegions: missing widget registry");
+    const int registry = lua_gettop(L);
+    int count = 0;
+    for (const uint32_t childId : w->children) {
+        const auto* child = tree->get(childId);
+        if (!child || child->kind == wowee::ui::WidgetKind::Frame) continue;
+        lua_pushinteger(L, static_cast<lua_Integer>(childId));
+        lua_rawget(L, registry);
+        if (!lua_istable(L, -1))
+            return luaL_error(L, "GetRegions: missing region table");
+        ++count;
+    }
+    lua_remove(L, registry);
+    return count;
 }
 
 int lua_Frame_EnableKeyboard(lua_State* L) {
@@ -6302,6 +6336,7 @@ void LuaEngine::registerCoreAPI() {
         {"SetParent",       lua_Region_SetParent},
         {"GetParent",       lua_Region_GetParent},
         {"GetChildren",     lua_Frame_GetChildren},
+        {"GetRegions",      lua_Frame_GetRegions},
         {"CreateTexture",   lua_Frame_CreateTexture},
         {"CreateFontString", lua_Frame_CreateFontString},
         {nullptr, nullptr}
@@ -7217,6 +7252,8 @@ void LuaEngine::registerCoreAPI() {
     // widget id -> frame table, so a hit test can find the scripts to run.
     lua_newtable(L_);
     lua_setglobal(L_, "__WoweeFramesByWid");
+    lua_newtable(L_);
+    lua_setglobal(L_, "__WoweeRegionsByWid");
 
     // Reached from EnableMouseWheel, which is written in Lua on the metatable
     // so it applies to every frame without another entry in the method list.
