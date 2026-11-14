@@ -1184,8 +1184,8 @@ void AnimationController::updateCharacterAnimation() {
     const bool requestChanged = (lastPlayerAnimRequest_ != animId) || (lastPlayerAnimLoopRequest_ != loop);
     // Only re-assert looping animations if the renderer drifted (e.g., external
     // playAnimation call).  One-shot animations must NOT be re-asserted after the
-    // renderer auto-resets them to STAND on completion - the FSM detects the ID
-    // change via oneShotComplete and transitions to the next state in the same frame.
+    // animation reaches its end - the FSM consumes the completed duration and
+    // chooses its successor while the renderer holds the final pose.
     const bool drifted = haveState && currentAnimId != animId && loop;
     const bool shouldPlay = requestChanged || drifted;
 
@@ -1206,7 +1206,7 @@ void AnimationController::updateCharacterAnimation() {
     }
 
     if (shouldPlay) {
-        characterRenderer->playAnimation(characterInstanceId, animId, loop);
+        characterRenderer->playAnimation(characterInstanceId, animId, loop, 0, true);
         lastPlayerAnimRequest_ = animId;
         lastPlayerAnimLoopRequest_ = loop;
     }

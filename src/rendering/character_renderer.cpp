@@ -2027,7 +2027,7 @@ uint32_t CharacterRenderer::createInstance(uint32_t modelId, const glm::vec3& po
 }
 
 void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId, bool loop,
-                                      uint32_t oneShotReturnAnim) {
+                                      uint32_t oneShotReturnAnim, bool holdFinalPose) {
     auto it = instances.find(instanceId);
     if (it == instances.end()) {
         core::Logger::getInstance().warning("Cannot play animation: instance ", instanceId, " not found");
@@ -2037,6 +2037,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     auto& instance = it->second;
     auto& model = models[instance.modelId].data;
     instance.oneShotReturnAnim = loop ? 0 : oneShotReturnAnim;
+    instance.holdFinalPose = holdFinalPose;
 
     // Track death state for preventing movement while dead
     if (animationId == 1) {
@@ -2152,19 +2153,17 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                         inst.animationTime -= static_cast<float>(seq.duration);
                     }
                 } else {
-                    // One-shot animation finished: return to the caller-specified
-                    // resume anim (NPC state emote) or Stand. Locomotion
-                    // completion is owned by its FSM.
-                    if (inst.currentAnimationId != anim::DEATH &&
+                    // Caller-owned completion holds the final pose until its FSM
+                    // chooses the successor. NPC one-shots can resume a state emote.
+                    if (!inst.holdFinalPose && inst.currentAnimationId != anim::DEATH &&
                         inst.currentAnimationId != anim::JUMP_START &&
                         inst.currentAnimationId != anim::JUMP_END) {
                         const uint32_t resumeAnim =
                             inst.oneShotReturnAnim != 0 ? inst.oneShotReturnAnim : anim::STAND;
                         playAnimation(pair.first, resumeAnim, true);
                     } else {
-                        // Hold death and locomotion one-shots at their final pose.
-                        // The locomotion FSM consumes completion next frame;
-                        // rendering Stand here produces a one-frame airborne snap.
+                        // Hold until the owning state machine consumes completion.
+                        // An automatic Stand here flashes between chained poses.
                         inst.animationTime = static_cast<float>(seq.duration);
                     }
                 }

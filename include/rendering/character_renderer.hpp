@@ -79,9 +79,10 @@ public:
 
     // oneShotReturnAnim: animation to resume (looping) when a non-looping
     // animation finishes; 0 = Stand. Lets NPC one-shot emotes return to their
-    // persistent work/state loop instead of idling.
+    // persistent work/state loop instead of idling. holdFinalPose lets a caller
+    // own completion and select the next animation without an intermediate pose.
     void playAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true,
-                       uint32_t oneShotReturnAnim = 0);
+                       uint32_t oneShotReturnAnim = 0, bool holdFinalPose = false);
     /// Play other animations on each arm alone, until the next playAnimation.
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
 
@@ -265,6 +266,7 @@ private:
         float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)
         bool animationLoop = true;
         uint32_t oneShotReturnAnim = 0; // Anim to resume when a one-shot ends (0 = Stand)
+        bool holdFinalPose = false; // Caller owns the transition after completion
         bool isDead = false;  // Prevents movement while in death state
         std::vector<glm::mat4> boneMatrices;  // Current bone transforms
 
