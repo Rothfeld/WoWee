@@ -883,7 +883,8 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
 
     // Chest/Shirt/Robe → group 8 (sleeves)
     {
-        uint32_t did = findDisplayId({4, 5, 20});
+        uint32_t did = findDisplayId({5, 20});
+        if (did == 0) did = findDisplayId({4});
         uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
         if (gg > 0) geosetSleeves = pickGeoset(core::equippedGeoset(core::equipment::kChestBare, gg), core::kGeosetBareSleeves);
         // Robe kilt legs
@@ -894,7 +895,8 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     {
         uint32_t did = findDisplayId({7});
         uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
-        if (gg > 0) geosetPants = pickGeoset(core::equippedGeoset(core::equipment::kLegsBare, gg), core::kGeosetBarePants);
+        if (gg > 0 && geosetPants == core::kGeosetBarePants)
+            geosetPants = pickGeoset(core::equippedGeoset(core::equipment::kLegsBare, gg), core::kGeosetBarePants);
     }
     // Boots → group 5 (shins)
     {
@@ -968,7 +970,21 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     std::vector<std::pair<int, std::string>> regionLayers;
     regionLayers.reserve(32);
 
-    for (const auto& it : equipment) {
+    auto textureEquipment = equipment;
+    // Chest/robes cover the lower-body texture supplied by leggings and boots.
+    std::stable_sort(textureEquipment.begin(), textureEquipment.end(), [](const auto& a, const auto& b) {
+        const auto layer = [](uint8_t type) {
+            switch (type) {
+                case 4: return 0;  // shirt
+                case 7: return 1;  // leggings
+                case 8: return 2;  // boots
+                case 5: case 20: return 3; // chest / robe
+                default: return 4;
+            }
+        };
+        return layer(a.inventoryType) < layer(b.inventoryType);
+    });
+    for (const auto& it : textureEquipment) {
         if (it.displayModel == 0) continue;
         int32_t recIdx = displayInfoDbc->findRecordById(it.displayModel);
         if (recIdx < 0) continue;

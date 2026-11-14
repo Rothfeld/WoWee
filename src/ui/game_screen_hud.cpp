@@ -222,7 +222,8 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
     // Controls group 8 (wristbands/sleeve length): 801=bare wrists, 802+=sleeve styles
     // Also controls group 13 (trousers) via GeosetGroup[2] for robes
     {
-        uint32_t did = findEquippedDisplayId({4, 5, 20});
+        uint32_t did = findEquippedDisplayId({5, 20});
+        if (did == 0) did = findEquippedDisplayId({4});
         uint32_t gg = getGeosetGroup(did, geosetGroup1Field);
         geosets.insert(gg > 0 ? core::equippedGeoset(core::equipment::kChestBare, gg)
                               : core::kGeosetBareSleeves);
@@ -376,7 +377,7 @@ void GameScreen::updateCharacterTextures(game::Inventory& inventory) {
     // Collect equipment texture regions from all equipped items
     std::vector<std::pair<int, std::string>> regionLayers;
 
-    for (int s = 0; s < game::Inventory::NUM_EQUIP_SLOTS; s++) {
+    for (int s : {0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}) {
         const auto& slot = inventory.getEquipSlot(static_cast<game::EquipSlot>(s));
         if (slot.empty() || slot.item.displayInfoId == 0) continue;
 

@@ -480,7 +480,8 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
 
     // Chest/Shirt/Robe (invType 4,5,20) → wrist/sleeve group 8
     {
-        uint32_t did = findDisplayIdByInvType({4, 5, 20});
+        uint32_t did = findDisplayIdByInvType({5, 20});
+        if (did == 0) did = findDisplayIdByInvType({4});
         uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
         if (gg1 > 0) geosetSleeves = pickGeoset(equippedGeoset(equipment::kChestBare, gg1), kGeosetBareSleeves);
         // Robe kilt → leg group 13
@@ -492,7 +493,8 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     {
         uint32_t did = findDisplayIdByInvType({7});
         uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        if (gg1 > 0) geosetPants = pickGeoset(equippedGeoset(equipment::kLegsBare, gg1), kGeosetBarePants);
+        if (gg1 > 0 && geosetPants == kGeosetBarePants)
+            geosetPants = pickGeoset(equippedGeoset(equipment::kLegsBare, gg1), kGeosetBarePants);
     }
 
     // Feet/Boots (invType 8) → shin group 5
@@ -777,7 +779,7 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     std::vector<std::pair<int, std::string>> regionLayers;
     const bool isFemale = (st.genderId == 1);
 
-    for (int s = 0; s < 19; s++) {
+    for (int s : {0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}) {
         uint32_t did = displayInfoIds[s];
         if (did == 0) continue;
         int32_t recIdx = displayInfoDbc->findRecordById(did);
