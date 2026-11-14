@@ -1873,7 +1873,9 @@ std::vector<std::pair<uint32_t, uint32_t>> QuestHandler::getQuestTimers() const 
     // its rows the way the log lists the quests, and the two disagree once a
     // quest has been turned in and its slot reused.
     for (const auto& q : questLog_) {
-        if (q.questId == 0) continue;
+        // Failed quests retain their expiry field on the server. Their state
+        // removes them from the active timer list, even before expiry.
+        if (q.questId == 0 || q.failed) continue;
         for (uint16_t slot = 0; slot < maxSlots; ++slot) {
             const uint16_t idField = ufQuestStart + slot * qStride;
             auto idIt = owner_.lastPlayerFieldsRef().find(idField);
