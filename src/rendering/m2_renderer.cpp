@@ -351,13 +351,14 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
     cutoutPipeline_ = buildM2Pipeline(PipelineBuilder::blendDisabled(), true,
                                       VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_,
                                       /*alphaToCoverage=*/true);
-    // This experiment is still opt-in until other foliage and viewpoints have
-    // been visually checked. Wind remains an independent diagnostic.
+    // Respect authored one-sided foliage. IronForgeSnowTree01 has overlapping
+    // front/back surfaces with different triangulations; drawing both produces
+    // depth conflicts, amplified by procedural wind. Two-sided materials retain
+    // the unculled pipeline. Wind remains an independent diagnostic.
     if (!skyMode_ && core::envFlagEnabled("WOWEE_M2_NO_FOLIAGE_WIND")) {
         LOG_WARNING("M2 foliage diagnostic: procedural tree wind disabled");
     }
-    const bool enableFoliageCull = core::envFlagEnabled("WOWEE_M2_FOLIAGE_CULL_DIAG") &&
-                                   !core::envFlagEnabled("WOWEE_M2_NO_FOLIAGE_CULL");
+    const bool enableFoliageCull = !core::envFlagEnabled("WOWEE_M2_NO_FOLIAGE_CULL");
     if (!skyMode_ && enableFoliageCull) {
         foliageCullOpaquePipeline_ = buildM2Pipeline(
             PipelineBuilder::blendDisabled(), true, VK_PIPELINE_CREATE_DERIVATIVE_BIT,
@@ -366,9 +367,10 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
             PipelineBuilder::blendDisabled(), true, VK_PIPELINE_CREATE_DERIVATIVE_BIT,
             opaquePipeline_, true, VK_CULL_MODE_BACK_BIT, kM2FoliageFrontFace);
         if (foliageCullOpaquePipeline_ && foliageCullCutoutPipeline_) {
-            LOG_WARNING("M2 foliage diagnostic: authored one-sided solid/cutout batches cull back faces (counter-clockwise front)");
+            LOG_INFO("M2 foliage: authored one-sided solid/cutout batches cull back faces (counter-clockwise front)");
         } else {
-            LOG_WARNING("M2: failed to build one or more foliage culling pipelines; using two-sided pipeline where unavailable");
+            LOG_ERROR("M2: failed to build authored foliage culling pipelines");
+            return false;
         }
     }
     alphaPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), false,
