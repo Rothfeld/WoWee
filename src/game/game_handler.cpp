@@ -2875,6 +2875,20 @@ void GameHandler::loadFactionNameCache() const {
              factionRepListToId_.size(), " with reputation tracking");
 }
 
+std::string GameHandler::getSpellIconPath(uint32_t spellId) const {
+    // Attack's DBC icon is a placeholder. Its artwork follows the main hand.
+    if (spellId == 6603) {
+        const auto& weapon = inventory.getEquipSlot(EquipSlot::MAIN_HAND);
+        if (weapon.empty()) return "Interface\\Icons\\INV_Gauntlets_04";
+        uint32_t displayId = weapon.item.displayInfoId;
+        if (displayId == 0) {
+            if (const auto* info = getItemInfo(weapon.item.itemId)) displayId = info->displayInfoId;
+        }
+        return getItemIconPath(displayId);
+    }
+    return spellIconPathResolver_ ? spellIconPathResolver_(spellId) : std::string{};
+}
+
 GameHandler::SpellDataInfo GameHandler::getSpellData(uint32_t spellId) const {
     SpellDataInfo info = spellDataResolver_ ? spellDataResolver_(spellId) : SpellDataInfo{};
     if (info.manaCostPct == 0) return info;

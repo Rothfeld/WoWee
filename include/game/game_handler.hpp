@@ -405,9 +405,7 @@ public:
     // Spell icon path resolver: spellId -> texture path string (e.g., "Interface\\Icons\\Spell_Fire_Fireball01")
     using SpellIconPathResolver = std::function<std::string(uint32_t)>;
     void setSpellIconPathResolver(SpellIconPathResolver r) { spellIconPathResolver_ = std::move(r); }
-    std::string getSpellIconPath(uint32_t spellId) const {
-        return spellIconPathResolver_ ? spellIconPathResolver_(spellId) : std::string{};
-    }
+    std::string getSpellIconPath(uint32_t spellId) const;
 
     // The same SpellIcon.dbc, reached by icon id rather than through a spell.
     // SkillLine.dbc names an icon directly, so a spellbook tab has one without
