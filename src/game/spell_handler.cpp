@@ -2166,6 +2166,12 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         spellclass::RestChannelKind restKind = spellclass::RestChannelKind::NONE;
         auto spellNameIt = owner_.spellNameCacheRef().find(data.spellId);
         if (spellNameIt != owner_.spellNameCacheRef().end()) {
+            // Successful tracking casts from any input path replace service tracking.
+            const auto& auras = spellNameIt->second.effectAuraIds;
+            if (std::any_of(std::begin(auras), std::end(auras),
+                            [](uint32_t aura) { return aura == 44 || aura == 45; })) {
+                addons::setStoredCVar("wowee_trackingservice", "0");
+            }
             restKind = spellclass::classifyRestChannel(spellNameIt->second.name);
             if (spellclass::hasInebriateEffect(spellNameIt->second.effectIds, 3)) {
                 restKind = spellclass::RestChannelKind::ALCOHOL;

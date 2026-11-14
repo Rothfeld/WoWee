@@ -1,4 +1,5 @@
 #include "game/group_defines.hpp"
+#include "game/tracking_services.hpp"
 
 #include <set>
 #include "ui/game_screen.hpp"
@@ -15,6 +16,7 @@
 #include "core/application.hpp"
 #include "core/appearance_composer.hpp"
 #include "addons/addon_manager.hpp"
+#include "addons/lua_api_registrations.hpp"
 #include "core/coordinates.hpp"
 #include "core/input.hpp"
 #include "rendering/renderer.hpp"
@@ -1688,7 +1690,43 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     const auto& minimapQuestGoEntries = minimapQuestGameObjectEntries_;
 
     renderMinimapNpcDots(frame, minimapUnits, minimapQuestEntries);
-    renderMinimapFlightMasters(frame, minimapUnits);
+    if (game::isActiveExpansion("tbc")) {
+        const auto service = std::stoul(addons::storedCVarValue("wowee_trackingservice", "0"));
+        if (service > game::tbcTrackingServices.size())
+            throw std::runtime_error("Invalid TBC tracking service");
+        if (service != 0) {
+            const auto& entry = game::tbcTrackingServices[service - 1];
+            static std::array<VkDescriptorSet, game::tbcTrackingServices.size()> icons{};
+            auto& icon = icons[service - 1];
+            if (!icon) {
+                icon = uploadUiTextureFromBlp(services_.assetManager, std::string(entry.texture) + ".blp", services_.window);
+                if (!icon) throw std::runtime_error("Tracking service icon failed to load");
+            }
+            const auto drawService = [&](const game::Entity& entity, const std::string& name) {
+                float sx = 0, sy = 0;
+                if (!frame.projectEntity(entity, sx, sy)) return;
+                frame.drawList->AddImage((ImTextureID)(uintptr_t)icon,
+                    ImVec2(sx - 7, sy - 7), ImVec2(sx + 7, sy + 7));
+                if (cursorNearBlip(sx, sy)) ImGui::SetTooltip("%s", name.c_str());
+            };
+            if (entry.npcMask != 0) {
+                for (const auto& entity : minimapUnits) {
+                    const auto unit = std::static_pointer_cast<game::Unit>(entity);
+                    if (unit->getHealth() > 0 && (unit->getNpcFlags() & entry.npcMask) != 0 &&
+                        gameHandler.unitReactionToPlayer(*unit) >= 4)
+                        drawService(*unit, unit->getName());
+                }
+            } else {
+                for (const auto& entity : minimapGameObjects) {
+                    const auto go = std::static_pointer_cast<game::GameObject>(entity);
+                    const auto* info = gameHandler.getCachedGameObjectInfo(go->getEntry());
+                    if (info && info->type == 19) drawService(*go, info->name);
+                }
+            }
+        }
+    } else {
+        renderMinimapFlightMasters(frame, minimapUnits);
+    }
     renderMinimapRares(frame, minimapUnits, gameHandler);
     renderMinimapPlayerDots(frame, minimapPlayers, gameHandler);
     renderMinimapLootCorpses(frame, minimapUnits);

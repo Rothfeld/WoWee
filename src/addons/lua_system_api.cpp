@@ -1,6 +1,8 @@
 // lua_system_api.cpp - System, time, sound, locale, map, addons, instances, and utilities Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/damage_meter.hpp"
+#include "game/tracking_services.hpp"
+#include "game/game_utils.hpp"
 #include <array>
 #include <algorithm>
 #include <cctype>
@@ -2408,6 +2410,13 @@ static bool trackingActive(game::GameHandler* gh, uint32_t spellId) {
 /// shows and what makes the button look like something to click.
 static int lua_GetTrackingTexture(lua_State* L) {
     auto* gh = getGameHandler(L);
+    if (game::isActiveExpansion("tbc")) {
+        const auto service = std::stoul(storedCVarValue("wowee_trackingservice", "0"));
+        if (service > 0 && service <= game::tbcTrackingServices.size()) {
+            lua_pushstring(L, game::tbcTrackingServices[service - 1].texture);
+            return 1;
+        }
+    }
     for (uint32_t sid : trackingSpells(gh)) {
         if (!trackingActive(gh, sid)) continue;
         const std::string icon = gh->getSpellIconPath(sid);
@@ -2432,7 +2441,8 @@ static int lua_GetTrackingTexture(lua_State* L) {
 
 /// GetNumTrackingTypes() → how many the player knows.
 static int lua_GetNumTrackingTypes(lua_State* L) {
-    lua_pushnumber(L, static_cast<lua_Number>(trackingSpells(getGameHandler(L)).size()));
+    lua_pushnumber(L, static_cast<lua_Number>(trackingSpells(getGameHandler(L)).size() +
+        (game::isActiveExpansion("tbc") ? game::tbcTrackingServices.size() : 0)));
     return 1;
 }
 
@@ -2450,6 +2460,16 @@ static int lua_GetTrackingInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
     const auto spells = trackingSpells(gh);
+    if (game::isActiveExpansion("tbc") && index > static_cast<int>(spells.size())) {
+        const auto service = static_cast<size_t>(index - spells.size());
+        if (service > game::tbcTrackingServices.size()) return 0;
+        const auto& entry = game::tbcTrackingServices[service - 1];
+        lua_getglobal(L, entry.label);
+        lua_pushstring(L, entry.texture);
+        lua_pushboolean(L, service == std::stoul(storedCVarValue("wowee_trackingservice", "0")));
+        lua_pushstring(L, "other");
+        return 4;
+    }
     if (index < 1 || index > static_cast<int>(spells.size())) return 0;
     const uint32_t sid = spells[static_cast<size_t>(index - 1)];
     lua_pushstring(L, gh->getSpellName(sid).c_str());
@@ -2474,18 +2494,30 @@ static int lua_ActiveTrackingSpell(lua_State* L) {
     return luaReturnNil(L);
 }
 
-/// SetTracking(index) - casting the spell is how tracking is turned on; there
-/// is no separate message for it. A nil index is the menu's "None" entry,
-/// which in a stock client cancels the running tracking aura. Cancelling a
-/// player's own buff is not wired up here, so that entry does nothing rather
-/// than casting something arbitrary.
+/// TBC permits one tracking selection: a spell, a service, or None.
 static int lua_SetTracking(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh || lua_isnoneornil(L, 1)) return 0;
+    if (!gh) return 0;
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
     const auto spells = trackingSpells(gh);
-    if (index < 1 || index > static_cast<int>(spells.size())) return 0;
-    gh->castSpell(spells[static_cast<size_t>(index - 1)], 0);
+    const int serviceCount = game::isActiveExpansion("tbc")
+        ? static_cast<int>(game::tbcTrackingServices.size()) : 0;
+    if (index < 0 || index > static_cast<int>(spells.size()) + serviceCount)
+        return luaL_error(L, "Invalid tracking index: %d", index);
+    const bool spellSelected = index > 0 && index <= static_cast<int>(spells.size());
+    if (!spellSelected) {
+        for (uint32_t sid : spells) {
+            if (trackingActive(gh, sid)) gh->cancelAura(sid);
+        }
+    }
+    cvarStore()["wowee_trackingservice"] = std::to_string(
+        index > static_cast<int>(spells.size()) ? index - spells.size() : 0);
+    saveStoredCVars();
+    if (spellSelected) gh->castSpell(spells[static_cast<size_t>(index - 1)], 0);
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_lua_engine");
+    auto* engine = static_cast<LuaEngine*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (engine) engine->fireEvent("MINIMAP_UPDATE_TRACKING", {});
     return 0;
 }
 
