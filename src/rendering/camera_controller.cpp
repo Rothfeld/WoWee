@@ -1889,15 +1889,12 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
 
             // Only snap when:
             // 1. Near ground (within step-up range above) - handles walking
-            // 2. Actually falling from height (was airborne + falling fast)
-            //    Scale snap range with fall speed so slow falls don't teleport
-            //    while extreme speeds still catch geometry penetration.
+            // 2. Airborne feet crossed the floor while descending. Proximity
+            //    alone must not truncate the final part of the jump arc.
             // 3. Was grounded + ground is close (grace for slopes)
             bool nearGround = (dz >= 0.0f && dz <= stepUp);
-            float airSnapRange = std::min(fallCatch,
-                std::max(0.5f, std::abs(verticalVelocity) * f.physicsDeltaTime * 2.0f));
-            bool airFalling = (!grounded && verticalVelocity < -5.0f
-                               && dz >= -airSnapRange);
+            bool airFalling = (!grounded && verticalVelocity <= 0.0f
+                               && dz >= 0.0f && prevTargetPos.z >= *groundH);
             // Not while climbing in flight: a frame's climb at a high frame
             // rate is less than the quarter yard this reaches down, so taking
             // off was pulled back to the ground every frame and never left it.
