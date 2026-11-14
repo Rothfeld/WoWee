@@ -593,6 +593,8 @@ private:
     // Gravity / grounding
     float verticalVelocity = 0.0f;
     bool grounded = false;
+    glm::vec3 airborneHorizontalVelocity_{0.0f};
+    bool preserveAirborneMomentum_ = false;
     static constexpr float STAND_EYE_HEIGHT = 1.2f;  // Standing eye height
     static constexpr float CROUCH_EYE_HEIGHT = 0.6f; // Crouching eye height
     float eyeHeight = STAND_EYE_HEIGHT;

@@ -347,6 +347,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
     // Move the follow target (character position) instead of the camera
     prevTargetPos = *followTarget;
     glm::vec3 targetPos = *followTarget;
+    if (swimming || flightAirborne_ || externalFollow_) preserveAirborneMomentum_ = false;
     if (!externalFollow_) {
         if (wmoRenderer) {
             wmoRenderer->setCollisionFocus(targetPos, COLLISION_FOCUS_RADIUS_THIRD_PERSON);
@@ -769,11 +770,19 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             // Skip all ground physics - go straight to collision/WMO sections
         } else {
 
-        float moveLenSq = glm::dot(f.movement, f.movement);
-        if (moveLenSq > 1e-6f) {
-            f.movement *= glm::inversesqrt(moveLenSq);
-            targetPos += f.movement * f.speed * f.physicsDeltaTime;
+        const float moveLenSq = glm::dot(f.movement, f.movement);
+        if (moveLenSq > 1e-6f) f.movement *= glm::inversesqrt(moveLenSq);
+        if (grounded) {
+            // Running jumps retain takeoff velocity even when facing, input,
+            // or movement speed changes in flight. Stationary jumps have a
+            // distinct drift mode and do not acquire running-jump momentum.
+            airborneHorizontalVelocity_ = f.movement * f.speed;
+            preserveAirborneMomentum_ = moveLenSq > 1e-6f;
         }
+        const glm::vec3 horizontalVelocity =
+            !grounded && preserveAirborneMomentum_ && !knockbackActive_
+                ? airborneHorizontalVelocity_ : f.movement * f.speed;
+        targetPos += horizontalVelocity * f.physicsDeltaTime;
 
         // Apply server-driven knockback horizontal velocity (decays over time).
         if (knockbackActive_) {
