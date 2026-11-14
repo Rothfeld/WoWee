@@ -9,6 +9,7 @@ build/bin/test_update_field_table && build/bin/test_lua_handler_globals && build
 Branch: `fix/tbc-client-compatibility`, based on `ad3f84b`.
 
 Implemented fixes:
+- TBC character creation offers its nine classes; death knight is excluded.
 - TBC pings use a 30-second minimum interval, including transfer pings.
 - Warden reset drains its worker before releasing the module it reads.
 - Relative mouse capture reports SDL failures.
