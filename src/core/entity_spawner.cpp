@@ -2184,23 +2184,15 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     }
     const uint32_t modelId = cacheIt->second;
 
-    // What the server sent is only one of the three terms. A creature draws at
-    // the model's own scale, times the size this display asks for, times the
-    // per-unit scale the server sets - and only the last of those was applied,
-    // so every display sharing a model came out the same size. That is one
-    // model at 0.6 and at 1.5 both drawing at 1.0.
+    // OBJECT_FIELD_SCALE_X already includes the server's selected display
+    // size or creature-template override. CMaNGOS ObjectMgr loads the display
+    // scale only when the template has no override; Creature::InitEntry sends
+    // that resolved value. Multiplying the display scale again shrinks/grows
+    // creatures twice (Ragged Young Wolf: server 1.0, display 0.4).
     const float dispScale = creatureDisplayScale(displayId);
     const float serverScale = scale;
-    scale *= dispScale * creatureModelScale(displayId);
+    scale *= creatureModelScale(displayId);
 
-    // Measured: this server sends 1.0 for every creature whose display asks
-    // for a size of its own, so it does not fold CreatureDisplayInfo's scale
-    // into the unit field and the multiply above is the client's to make.
-    // What each display actually resolves to, once per display, because the
-    // three terms are in three files and only their product is visible. This
-    // is how the Greater Duskbat was settled: entry 1553, display 4734, a
-    // FelBat at 0.15, which is a 2.2 yard wingspan and exactly what the data
-    // asks for - the size came from CreatureDisplayInfo, not from here.
     {
         static std::set<uint32_t> saidDisplay;
         if (saidDisplay.size() < 60 && saidDisplay.insert(displayId).second) {
@@ -2229,8 +2221,8 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
             LOG_DEBUG("Creature display ", displayId, " (", (name.empty() ? "?" : name),
                         ", entry ", entry, ") draws ", path,
                         " at ", scale, " (server ", serverScale,
-                        " x display ", dispScale,
-                        " x model ", creatureModelScale(displayId), ")");
+                        " x model ", creatureModelScale(displayId),
+                        "; display default ", dispScale, ")");
         }
     }
 
