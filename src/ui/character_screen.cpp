@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <cstdlib>
+#include <stdexcept>
 
 namespace wowee { namespace ui {
 
@@ -190,6 +192,23 @@ void CharacterScreen::render(game::GameHandler& gameHandler) {
         gameHandler.selectCharacter(character.guid);
         if (onCharacterSelected) onCharacterSelected(character.guid);
     };
+
+    static bool startupCharacterAttempted = false;
+    if (!startupCharacterAttempted) {
+        startupCharacterAttempted = true;
+        if (const char* name = std::getenv("WOWEE_START_CHARACTER")) {
+            const auto found = std::find_if(characters.begin(), characters.end(),
+                [name](const game::Character& character) { return character.name == name; });
+            if (found == characters.end()) {
+                LOG_ERROR("Requested startup character not found: ", name);
+                throw std::runtime_error("Startup character not found");
+            }
+            LOG_INFO("Startup character selected: ", found->name);
+            enterWorld(*found);
+            ui_.end();
+            return;
+        }
+    }
 
     {
         const PaperUI::ListResult picked = ui_.list(

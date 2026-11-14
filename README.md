@@ -539,6 +539,21 @@ the server then sends no checks, which most servers tolerate. See the
 When reporting a bug, include the relevant client log lines, expansion, server
 core, and reproduction steps.
 
+## Automatic startup for development
+
+Set `WOWEE_START_CHARACTER` to an exact character name to log in once using
+the selected saved server profile and enter that character automatically.
+The profile must already have remembered credentials. No password belongs in
+the environment variable or command line. The normal realm-selection rules
+still apply: a single unlocked realm is selected automatically; multiple
+realms require selection.
+
+The startup request runs once per process. Disconnecting or logging out does
+not trigger another login. A missing saved login or a character name absent
+from a nonempty character list fails with an explicit error. An empty list
+remains on the character screen. Unset the variable for normal interactive
+startup.
+
 ## License and references
 
 WoWee source code is available under the [MIT License with an additional

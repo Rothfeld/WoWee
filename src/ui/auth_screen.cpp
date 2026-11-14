@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <unordered_map>
+#include <stdexcept>
 
 namespace wowee { namespace ui {
 
@@ -292,6 +293,22 @@ void AuthScreen::render(auth::AuthHandler& authHandler) {
                     break;
                 }
             }
+        }
+    }
+
+    // Opt-in, once per process: reuse the selected profile's saved credentials.
+    // A later disconnect must remain visible instead of starting a retry loop.
+    static bool startupLoginAttempted = false;
+    if (!startupLoginAttempted) {
+        startupLoginAttempted = true;
+        if (const char* character = std::getenv("WOWEE_START_CHARACTER")) {
+            if (!*character || username_.empty() || hostname_.empty() ||
+                !usingStoredHash || savedPasswordHash.empty()) {
+                LOG_ERROR("WOWEE_START_CHARACTER requires a name and a saved login profile with credentials");
+                throw std::runtime_error("Invalid automatic login configuration");
+            }
+            LOG_INFO("Startup login requested for character: ", character);
+            attemptAuth(authHandler);
         }
     }
 
