@@ -166,6 +166,7 @@ public:
     SkySystem* getSkySystem() const { return skySystem.get(); }
     const std::string& getCurrentZoneName() const;
     uint32_t getCurrentZoneId() const;
+    uint32_t getCurrentAreaId() const;
     /// The area under the player, asked of AreaTable rather than resolved to a
     /// zone first - the world PvP flag is on the subzone. See ZoneManager.
     bool isOnOutdoorPvpObjective() const;
@@ -311,6 +312,7 @@ private:
     /// made the zone flip at chunk boundaries while walking. Mutable because
     /// getCurrentZoneId() is const and this is a cache of what it last learnt.
     mutable uint32_t lastResolvedZoneId_ = 0;
+    uint32_t announcedAreaId_ = 0;
     /// The map that answer belongs to, so it is dropped on a
     /// continent change rather than held across one.
     mutable uint32_t lastResolvedZoneMapId_ = 0xFFFFFFFFu;

@@ -1832,6 +1832,11 @@ bool Renderer::isOnOutdoorPvpObjective() const {
     return false;
 }
 
+uint32_t Renderer::getCurrentAreaId() const {
+    if (!terrainManager) return 0;
+    return terrainManager->getAreaIdAt(characterPosition.x, characterPosition.y).value_or(0);
+}
+
 uint32_t Renderer::getCurrentZoneId() const {
     // A zone remembered from the last map is worse than none: the sticky
     // answer below would hold Duskwood's pinned midnight over a continent
@@ -1998,6 +2003,14 @@ void Renderer::update(float deltaTime) {
         }
     }
     playerIndoors_ = insideWmo;
+
+    const uint32_t areaId = getCurrentAreaId();
+    if (areaId != 0 && areaId != announcedAreaId_) {
+        announcedAreaId_ = areaId;
+        if (auto* gh = core::Application::getInstance().getGameHandler()) {
+            gh->fireAddonEvent("ZONE_CHANGED", {});
+        }
+    }
 
     // Update lighting system
     if (lightingManager) {

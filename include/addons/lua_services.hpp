@@ -191,6 +191,7 @@ struct LuaServices {
     /// server announced rather than the one being walked through. The real
     /// client works this out locally for exactly that reason.
     std::function<uint32_t()> getLiveZoneId;
+    std::function<uint32_t()> getLiveAreaId;
 
     /// Whether the player is standing on a world PvP objective.
     ///

@@ -756,6 +756,9 @@ bool Application::initialize() {
         luaSvc.getLiveZoneId = [r = renderer.get()]() -> uint32_t {
             return r ? r->getCurrentZoneId() : 0u;
         };
+        luaSvc.getLiveAreaId = [r = renderer.get()]() -> uint32_t {
+            return r ? r->getCurrentAreaId() : 0u;
+        };
         luaSvc.isOnOutdoorPvpObjective = [r = renderer.get()]() -> bool {
             return r && r->isOnOutdoorPvpObjective();
         };

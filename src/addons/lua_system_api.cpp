@@ -2017,13 +2017,25 @@ static int lua_GetZoneText(lua_State* L) {
     return 1;
 }
 
-// GetSubZoneText() → subzone name (same as zone for now - server doesn't always send subzone)
+// Subzones retain the raw terrain area ID rather than its parent zone.
 static int lua_GetSubZoneText(lua_State* L) {
-    return lua_GetZoneText(L);  // Best-effort: zone and subzone often overlap
+    auto* svc = getLuaServices(L);
+    auto* gh = getGameHandler(L);
+    if (svc && gh && svc->getLiveAreaId && svc->getLiveZoneId) {
+        const uint32_t area = svc->getLiveAreaId();
+        if (area != 0 && area != svc->getLiveZoneId()) {
+            lua_pushstring(L, gh->getWhoAreaName(area).c_str());
+            return 1;
+        }
+    }
+    lua_pushstring(L, "");
+    return 1;
 }
 
-// GetMinimapZoneText() → zone name displayed near minimap
 static int lua_GetMinimapZoneText(lua_State* L) {
+    lua_GetSubZoneText(L);
+    if (lua_objlen(L, -1) != 0) return 1;
+    lua_pop(L, 1);
     return lua_GetZoneText(L);
 }
 
