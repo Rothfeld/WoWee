@@ -587,9 +587,21 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
             }
         }
         fullBodyDistance_ = camera_->getPosition().y;
-        // A player model is framed by its bounds; no creature portrait camera
-        // is in play, and a stale one from the shared preview must not be.
+        // Player M2s carry the same type-0 portrait camera as creatures.
+        // Use authored framing rather than a generic head-bone distance.
         portraitCameraValid_ = false;
+        for (const auto& cam : model.cameras) {
+            if (cam.type != 0) continue;
+            if (!isFiniteVec3(cam.positionBase) || !isFiniteVec3(cam.targetBase)) {
+                LOG_ERROR("CharacterPreview: invalid player portrait camera: ", m2Path);
+                return false;
+            }
+            portraitCameraPos_ = cam.positionBase;
+            portraitCameraTarget_ = cam.targetBase;
+            portraitCameraFovDegrees_ = glm::degrees(cam.fov);
+            portraitCameraValid_ = true;
+            break;
+        }
     }
 
     // Look up CharSections.dbc for all appearance textures
@@ -1539,33 +1551,21 @@ void CharacterPreview::resetView() {
 void CharacterPreview::applyPreviewView() {
     if (!camera_) return;
 
-    // A model that carries its own portrait camera is framed by it. The
-    // fraction-of-height guess below assumes the bind pose is the drawn pose,
-    // which holds for a player and not for a creature that hunches: a gnoll
-    // stands 2.04 tall in bind pose, so 82% of it aimed at 1.67 while the
-    // artist's own camera looks at 0.96, and the portrait showed the top of
-    // its head. The camera is placed in model space, so it is offset by where
-    // the model stands and the model is left in its own orientation.
+    // Authored portrait cameras use model-space positions and targets.
+    // Keep the model in its authored orientation for this view.
     if (zoomLevel_ >= 1.0f && portraitCameraValid_) {
-        // Room for the idle to move in.
-        //
-        // The artist's camera frames the pose Stand opens on, tightly. Left at
-        // exactly that, a gnoll swings its head out of shot for most of the
-        // loop. Backing off along the same axis keeps the framing the artist
-        // chose - the angle, the target, the whole composition - and only
-        // loosens the crop, which is the one thing an animated portrait needs
-        // and a still one does not. One number, tune it by eye.
-        constexpr float kPortraitHeadroom = 1.35f;
         const glm::vec3 focus = previewStandPosition_ + portraitCameraTarget_;
         const glm::vec3 camPos =
-            focus + (portraitCameraPos_ - portraitCameraTarget_) * kPortraitHeadroom;
+            focus + (portraitCameraPos_ - portraitCameraTarget_);
         camera_->setPosition(camPos);
         const glm::vec3 forward = glm::normalize(focus - camPos);
         camera_->setRotation(glm::degrees(std::atan2(forward.y, forward.x)),
                              glm::degrees(std::asin(std::clamp(forward.z, -1.0f, 1.0f))));
         if (portraitCameraFovDegrees_ > 0.0f) {
             if (defaultFovDegrees_ <= 0.0f) defaultFovDegrees_ = camera_->getFovDegrees();
-            camera_->setFov(portraitCameraFovDegrees_);
+            // M2 cameras store diagonal FOV; Camera expects vertical FOV.
+            const float aspect = camera_->getAspectRatio();
+            camera_->setFov(portraitCameraFovDegrees_ / std::sqrt(1.0f + aspect * aspect));
         }
         if (instanceId_ > 0 && charRenderer_) {
             charRenderer_->setInstancePosition(instanceId_, previewStandPosition_);
