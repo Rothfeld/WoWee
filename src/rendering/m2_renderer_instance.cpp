@@ -1203,6 +1203,16 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
             glm::vec3 localPos  = glm::vec3(instance.invModelMatrix * glm::vec4(adjustedPos, 1.0f));
             float localRadius = playerRadius / instance.scale;
 
+            // Permit escape from a trunk that already contains the player.
+            // Entry from outside still takes the normal collision path.
+            if (model.collisionTreeTrunk && insideTrunkCollision(
+                    model.collision, localFrom)) {
+                static std::set<std::string> reportedRecovery;
+                if (reportedRecovery.insert(model.name).second)
+                    LOG_WARNING("Collision: allowing exit from overlapping trunk '", model.name, "'");
+                continue;
+            }
+
             model.collision.getWallTrisInRange(
                 std::min(localFrom.x, localPos.x) - localRadius - 1.0f,
                 std::min(localFrom.y, localPos.y) - localRadius - 1.0f,

@@ -263,3 +263,36 @@ TEST_CASE("M2Model collections", "[m2]") {
     REQUIRE(model.textures.size() == 1);
     REQUIRE(model.sequences[0].duration == 1000);
 }
+
+TEST_CASE("authored collision bounds contain the trunk beyond guessed tree radius", "[m2][collision]") {
+    wowee::rendering::M2ModelGPU model;
+    model.boundMin = {-10.0f, -10.0f, -1.0f};
+    model.boundMax = {10.0f, 10.0f, 35.0f};
+    model.collisionTreeTrunk = true;
+    model.collision.triCount = 16;
+    model.collision.boundsMin = {-2.4f, -3.1f, -0.9f};
+    model.collision.boundsMax = {3.9f, 3.2f, 34.7f};
+    glm::vec3 lo, hi;
+    wowee::rendering::m2_internal::getTightCollisionBounds(model, lo, hi);
+    CHECK(lo == model.collision.boundsMin);
+    CHECK(hi == model.collision.boundsMax);
+    // Classifier guesses must not alter the authored collider's broad phase.
+    model.collisionTreeTrunk = false;
+    model.collisionSmallSolidProp = true;
+    wowee::rendering::m2_internal::getTightCollisionBounds(model, lo, hi);
+    CHECK(lo == model.collision.boundsMin);
+    CHECK(hi == model.collision.boundsMax);
+}
+
+TEST_CASE("trunk overlap recovery requires an enclosed horizontal section", "[m2][collision]") {
+    wowee::rendering::M2ModelGPU::CollisionMesh mesh;
+    mesh.vertices = {{-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
+                     {-1,-1,3},{1,-1,3},{1,1,3},{-1,1,3}};
+    mesh.indices = {0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7};
+    using wowee::rendering::m2_internal::insideTrunkCollision;
+    CHECK(insideTrunkCollision(mesh, {0,0,1}));
+    CHECK_FALSE(insideTrunkCollision(mesh, {2,0,1}));
+    CHECK_FALSE(insideTrunkCollision(mesh, {0,0,4}));
+    mesh.indices.resize(6);
+    CHECK_FALSE(insideTrunkCollision(mesh, {0,0,1}));
+}

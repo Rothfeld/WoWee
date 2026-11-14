@@ -108,6 +108,13 @@ inline float computeGroundDetailDownOffset(const M2ModelGPU& model, float scale)
 }
 
 inline void getTightCollisionBounds(const M2ModelGPU& model, glm::vec3& outMin, glm::vec3& outMax) {
+    // Broad-phase bounds must contain every authored collision triangle.
+    // Trunk-size guesses can reject contact before the player reaches the mesh.
+    if (model.collision.valid()) {
+        outMin = model.collision.boundsMin;
+        outMax = model.collision.boundsMax;
+        return;
+    }
     glm::vec3 center = (model.boundMin + model.boundMax) * 0.5f;
     glm::vec3 half = (model.boundMax - model.boundMin) * 0.5f;
 
@@ -139,6 +146,32 @@ inline void getTightCollisionBounds(const M2ModelGPU& model, glm::vec3& outMin, 
 
     outMin = center - half;
     outMax = center + half;
+}
+
+// Closed horizontal trunk sections can contain a player after loading an
+// already-overlapping position. Require odd crossings in both directions so
+// an isolated wall is not mistaken for an enclosed volume.
+inline bool insideTrunkCollision(const M2ModelGPU::CollisionMesh& mesh,
+                                  const glm::vec3& point) {
+    for (float sign : {-1.0f, 1.0f}) {
+        const glm::vec3 direction = sign * glm::normalize(glm::vec3(1.0f, 0.371f, 0.0f));
+        std::vector<float> hits;
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            const float distance = rayTriangleIntersect(point, direction,
+                mesh.vertices[mesh.indices[i]], mesh.vertices[mesh.indices[i + 1]],
+                mesh.vertices[mesh.indices[i + 2]]);
+            if (distance > 0.0f) hits.push_back(distance);
+        }
+        std::sort(hits.begin(), hits.end());
+        size_t crossings = 0;
+        float previous = -1.0f;
+        for (float distance : hits) {
+            if (previous < 0.0f || distance - previous > 1e-4f) ++crossings;
+            previous = distance;
+        }
+        if (crossings % 2 == 0) return false;
+    }
+    return true;
 }
 
 inline float getEffectiveCollisionTopLocal(const M2ModelGPU& model,
