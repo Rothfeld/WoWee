@@ -46,3 +46,21 @@ TEST_CASE("WotLK mana-regen fields resolve to their wire offsets", "[updatefield
     REQUIRE(table.index(UF::UNIT_FIELD_POWER_REGEN_FLAT_MODIFIER) == 40);              // + 0x22
     REQUIRE(table.index(UF::UNIT_FIELD_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER) == 47);  // + 0x29
 }
+
+TEST_CASE("TBC 8606 character fields match the server wire layout", "[updatefields]") {
+    UpdateFieldTable table;
+    REQUIRE(table.loadFromJson(fieldsPath("tbc")));
+    // CMaNGOS TBC UpdateFields.h, generated for client build 8606.
+    REQUIRE(table.index(UF::UNIT_FIELD_BYTES_1) == 6 + 0x99);
+    REQUIRE(table.index(UF::UNIT_FIELD_STAT0) == 6 + 0xA5);
+    REQUIRE(table.index(UF::UNIT_FIELD_STAT4) == 6 + 0xA9);
+    REQUIRE(table.index(UF::UNIT_FIELD_RESISTANCES) == 6 + 0xB4);
+    REQUIRE(table.index(UF::UNIT_FIELD_AURAS) == 6 + 0x2A);
+    REQUIRE(table.index(UF::UNIT_FIELD_AURAFLAGS) == 6 + 0x62);
+    REQUIRE(table.index(UF::PLAYER_BYTES) == 234 + 5);
+    REQUIRE(table.index(UF::PLAYER_FIELD_COINAGE) == 234 + 0x4CB);
+    REQUIRE(table.index(UF::PLAYER_FIELD_KEYRING_SLOT_1) == 822);
+    REQUIRE(table.index(UF::PLAYER_CRIT_PERCENTAGE) == 1321);
+    // TBC publishes separate game-object state/type fields, not WotLK's bytes.
+    REQUIRE_FALSE(table.hasField(UF::GAMEOBJECT_BYTES_1));
+}
