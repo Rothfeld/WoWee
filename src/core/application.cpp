@@ -4901,7 +4901,7 @@ void Application::render() {
                     {UiElement::Spellbook,      K::Action::TOGGLE_SPELLBOOK,        "ToggleSpellBook(BOOKTYPE_SPELL)"},
                     {UiElement::QuestLog,       K::Action::TOGGLE_QUESTS,           "ToggleFrame(QuestLogFrame)"},
                     {UiElement::CharacterFrame, K::Action::TOGGLE_CHARACTER_SCREEN, "ToggleCharacter(\"PaperDollFrame\")"},
-                    {UiElement::WorldMap,       K::Action::TOGGLE_WORLD_MAP,        "ToggleFrame(WorldMapFrame)"},
+                    {UiElement::WorldMap,       K::Action::TOGGLE_WORLD_MAP,        "if select(4, GetBuildInfo()) < 30000 then ToggleWorldMap() else ToggleFrame(WorldMapFrame) end"},
                     // Three more panels that poll their own key from inside
                     // their own draw, found by asking which of this client's
                     // windows do that and which of those are gated. Every one

@@ -264,10 +264,10 @@ void DataRepository::loadZones(const std::string& mapName,
             ov.offsetX   = static_cast<uint16_t>(wmoDbc->getUInt32(i, 11));
             ov.offsetY   = static_cast<uint16_t>(wmoDbc->getUInt32(i, 12));
             // HitRect (fields 13-16): fast AABB pre-filter for subzone hover
-            ov.hitRectLeft   = static_cast<uint16_t>(wmoDbc->getUInt32(i, 13));
-            ov.hitRectRight  = static_cast<uint16_t>(wmoDbc->getUInt32(i, 14));
-            ov.hitRectTop    = static_cast<uint16_t>(wmoDbc->getUInt32(i, 15));
-            ov.hitRectBottom = static_cast<uint16_t>(wmoDbc->getUInt32(i, 16));
+            ov.hitRectLeft   = static_cast<uint16_t>(wmoDbc->getUInt32(i, 14));
+            ov.hitRectRight  = static_cast<uint16_t>(wmoDbc->getUInt32(i, 16));
+            ov.hitRectTop    = static_cast<uint16_t>(wmoDbc->getUInt32(i, 13));
+            ov.hitRectBottom = static_cast<uint16_t>(wmoDbc->getUInt32(i, 15));
 
             if (ov.textureName.empty() || ov.texWidth == 0 || ov.texHeight == 0) continue;
 

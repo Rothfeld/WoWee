@@ -9,6 +9,7 @@ namespace world_map {
 class SubzoneTooltipLayer : public IOverlayLayer {
 public:
     void render(const LayerContext& ctx) override;
+    static int overlayAt(const Zone& zone, float u, float v);
 };
 
 } // namespace world_map

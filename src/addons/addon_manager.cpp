@@ -1,3 +1,4 @@
+#include "ui/interface_fonts.hpp"
 #include "addons/addon_manager.hpp"
 #include "addons/lua_handler_globals.hpp"
 #include "addons/addon_lua_snippets.hpp"
@@ -663,6 +664,9 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
         it != toc->directives.end()) {
         interfaceVersion = std::atoi(it->second.c_str());
     }
+    // Original 2.4.3 reports the requested size through GetFont, but renders
+    // sizes above 32 at 32. Verified with 16/32/64/102 FontStrings in that client.
+    ui::setInterfaceFontSizeLimit(interfaceVersion >= 20000 && interfaceVersion < 30000 ? 32.0f : 0.0f);
     const bool legacyHandlers = interfaceVersion == 0 || interfaceVersion < 30000;
     setLegacyHandlerGlobals(legacyHandlers);
     // Published, because some of FrameXML's own signatures changed between

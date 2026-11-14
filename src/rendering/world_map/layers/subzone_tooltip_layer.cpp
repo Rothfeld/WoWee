@@ -8,8 +8,27 @@ namespace wowee {
 namespace rendering {
 namespace world_map {
 
+int SubzoneTooltipLayer::overlayAt(const Zone& zone, float u, float v) {
+    if (u < 0 || u > 1 || v < 0 || v > 1) return -1;
+    // The visible map crops the padded 1024x768 texture to 1002x668.
+    const float x = u * 1002.0f, y = v * 668.0f;
+    int selected = -1;
+    float bestArea = std::numeric_limits<float>::max();
+    for (size_t i = 0; i < zone.overlays.size(); ++i) {
+        const auto& overlay = zone.overlays[i];
+        if (overlay.hitRectRight <= overlay.hitRectLeft || overlay.hitRectBottom <= overlay.hitRectTop)
+            continue;
+        if (x < overlay.hitRectLeft || x > overlay.hitRectRight ||
+            y < overlay.hitRectTop || y > overlay.hitRectBottom) continue;
+        const float area = static_cast<float>(overlay.hitRectRight - overlay.hitRectLeft) *
+                           (overlay.hitRectBottom - overlay.hitRectTop);
+        if (area < bestArea) { bestArea = area; selected = static_cast<int>(i); }
+    }
+    return selected;
+}
+
 void SubzoneTooltipLayer::render(const LayerContext& ctx) {
-    if (ctx.viewLevel != ViewLevel::ZONE) return;
+    if (ctx.frameXmlHosted || ctx.viewLevel != ViewLevel::ZONE) return;
     if (ctx.currentZoneIdx < 0 || !ctx.zones) return;
 
     ImVec2 mp = ImGui::GetIO().MousePos;
@@ -23,59 +42,14 @@ void SubzoneTooltipLayer::render(const LayerContext& ctx) {
     const auto& zone = (*ctx.zones)[ctx.currentZoneIdx];
     std::string hoveredName;
     bool hoveredExplored = false;
-    float bestArea = std::numeric_limits<float>::max();
-
-    float fboW = static_cast<float>(ctx.fboW);
-    float fboH = static_cast<float>(ctx.fboH);
-
-    // Mouse position in FBO pixel coordinates (used for HitRect AABB test)
-    float pixelX = mu * fboW;
-    float pixelY = mv * fboH;
-
-    for (int oi = 0; oi < static_cast<int>(zone.overlays.size()); oi++) {
-        const auto& ov = zone.overlays[oi];
-
-        // ── Hybrid Approach: Zone view uses HitRect AABB pre-filter ──
-        // WorldMapOverlay.dbc fields 13-16 define a hit-test rectangle.
-        // Only overlays whose HitRect contains the mouse need further testing.
-        // This is Blizzard's optimization to avoid sampling every overlay.
-        bool hasHitRect = (ov.hitRectRight > ov.hitRectLeft &&
-                           ov.hitRectBottom > ov.hitRectTop);
-        if (hasHitRect) {
-            if (pixelX < static_cast<float>(ov.hitRectLeft) ||
-                pixelX > static_cast<float>(ov.hitRectRight) ||
-                pixelY < static_cast<float>(ov.hitRectTop) ||
-                pixelY > static_cast<float>(ov.hitRectBottom)) {
-                continue;  // Mouse outside HitRect - skip this overlay
-            }
-        } else {
-            // Fallback: use overlay offset+size AABB (old behaviour)
-            float ovLeft   = static_cast<float>(ov.offsetX) / fboW;
-            float ovTop    = static_cast<float>(ov.offsetY) / fboH;
-            float ovRight  = static_cast<float>(ov.offsetX + ov.texWidth)  / fboW;
-            float ovBottom = static_cast<float>(ov.offsetY + ov.texHeight) / fboH;
-
-            if (mu < ovLeft || mu > ovRight || mv < ovTop || mv > ovBottom)
-                continue;
+    const int oi = overlayAt(zone, mu, mv);
+    if (oi >= 0) {
+        for (const auto areaId : zone.overlays[oi].areaIDs) {
+            if (!ctx.areaNameByAreaId) break;
+            const auto found = ctx.areaNameByAreaId->find(areaId);
+            if (found != ctx.areaNameByAreaId->end()) { hoveredName = found->second; break; }
         }
-
-        float area = static_cast<float>(ov.texWidth) * static_cast<float>(ov.texHeight);
-        if (area < bestArea) {
-            bestArea = area;
-            // Find display name from the first valid area ID
-            for (unsigned int areaID : ov.areaIDs) {
-                if (areaID == 0) continue;
-                if (ctx.areaNameByAreaId) {
-                    auto nameIt = ctx.areaNameByAreaId->find(areaID);
-                    if (nameIt != ctx.areaNameByAreaId->end()) {
-                        hoveredName = nameIt->second;
-                        break;
-                    }
-                }
-            }
-            hoveredExplored = ctx.exploredOverlays &&
-                              ctx.exploredOverlays->count(oi) > 0;
-        }
+        hoveredExplored = ctx.exploredOverlays && ctx.exploredOverlays->count(oi) > 0;
     }
 
     if (!hoveredName.empty()) {

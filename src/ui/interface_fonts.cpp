@@ -16,6 +16,7 @@
 namespace wowee::ui {
 
 namespace {
+float maximumFontSize = 0.0f;
 
 /// The lower-case stem of a path, with any directory and extension removed.
 /// "Fonts\\MORPHEUS.ttf" and "morpheus.ttf" both come out as "morpheus", which
@@ -70,8 +71,10 @@ ImFont* interfaceFaceOrDefault(const std::string& fontFace) {
     return (ImGui::GetCurrentContext() != nullptr) ? ImGui::GetFont() : nullptr;
 }
 
+void setInterfaceFontSizeLimit(float maximum) { maximumFontSize = maximum; }
+
 float interfaceFontSize(float fontHeight) {
-    if (fontHeight > 0.0f) return fontHeight;
+    if (fontHeight > 0.0f) return maximumFontSize > 0.0f ? std::min(fontHeight, maximumFontSize) : fontHeight;
     // What the renderer falls back to: the current size, not a flat twelve.
     return (ImGui::GetCurrentContext() != nullptr) ? ImGui::GetFontSize() : 12.0f;
 }

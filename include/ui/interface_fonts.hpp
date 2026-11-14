@@ -54,6 +54,9 @@ ImFont* interfaceFaceOrDefault(const std::string& fontFace);
 /// The point size a widget draws at, given the height it asked for.
 float interfaceFontSize(float fontHeight);
 
+/// Configure the source client's font rasterization limit; zero means uncapped.
+void setInterfaceFontSizeLimit(float maximum);
+
 /// What ImGui's rasterizer scale has to be multiplied by so a face asked for at
 /// height N draws with its EM square N pixels tall.
 ///

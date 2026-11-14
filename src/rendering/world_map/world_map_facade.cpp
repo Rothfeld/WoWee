@@ -741,6 +741,19 @@ int WorldMapFacade::zoneAtMapPoint(float u, float v) const {
 }
 
 std::string WorldMapFacade::zoneNameAtMapPoint(float u, float v) const {
+    const auto& d = *impl_;
+    if (d.viewState.currentLevel() == ViewLevel::ZONE) {
+        const int index = d.viewState.currentZoneIdx();
+        if (index < 0 || index >= static_cast<int>(d.data.zones().size())) return {};
+        const auto& zone = d.data.zones()[index];
+        const int overlay = SubzoneTooltipLayer::overlayAt(zone, u, v);
+        if (overlay < 0 || !d.exploration.exploredOverlays().contains(overlay)) return {};
+        for (const auto areaId : zone.overlays[overlay].areaIDs) {
+            const auto found = d.data.areaNameByAreaId().find(areaId);
+            if (found != d.data.areaNameByAreaId().end()) return found->second;
+        }
+        return {};
+    }
     const int idx = zoneAtMapPoint(u, v);
     const auto& zones = impl_->data.zones();
     if (idx < 0 || idx >= static_cast<int>(zones.size())) return {};
@@ -791,7 +804,7 @@ bool WorldMapFacade::mapUVForCanonical(float wowX, float wowY, float wowZ,
     // The same bounds every marker layer projects against.
     bool boundsAreContinent = false;
     const ZoneBounds bounds = projectionBoundsFor(
-        zones, impl_->viewState.continentIdx(), boundsAreContinent);
+        zones, idx, boundsAreContinent);
     const glm::vec2 uv = renderPosToMapUV(
         core::coords::canonicalToRender(glm::vec3(wowX, wowY, wowZ)),
         bounds, isContinent);
@@ -1073,6 +1086,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
 
         // Build layer context
         LayerContext layerCtx;
+        layerCtx.frameXmlHosted = hasFrameRect;
         layerCtx.drawList = drawList;
         layerCtx.imgMin = imgMin;
         layerCtx.displayW = displayW;
@@ -1139,7 +1153,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
 
         // World-level: Azeroth map with clickable continent regions
         ViewLevel vl = viewState.currentLevel();
-        if (vl == ViewLevel::WORLD) {
+        if (!hasFrameRect && vl == ViewLevel::WORLD) {
             bool goCosmic = false;
             if (viewState.cosmicEnabled() && !rightClickConsumed) {
                 goCosmic = ImGui::GetIO().MouseClicked[1];
@@ -1245,7 +1259,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
                     }
                 }
             }
-        } else if (vl == ViewLevel::CONTINENT && continentIndices.size() > 1) {
+        } else if (!hasFrameRect && vl == ViewLevel::CONTINENT && continentIndices.size() > 1) {
             ImGui::SetCursorPos(ImVec2(8.0f, contentLocalY + 8.0f));
             for (size_t i = 0; i < continentIndices.size(); i++) {
                 int ci = continentIndices[i];
@@ -1269,7 +1283,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         overlay.render(layerCtx);
 
         // Zone view: back to continent + zone name
-        if (vl == ViewLevel::ZONE && viewState.continentIdx() >= 0) {
+        if (!hasFrameRect && vl == ViewLevel::ZONE && viewState.continentIdx() >= 0) {
             ImGui::SetCursorPos(ImVec2(8.0f, contentLocalY + 8.0f));
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 0.8f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.1f, 0.9f));
@@ -1296,7 +1310,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         }
 
         // Continent view: back to world + hovered zone name
-        if (vl == ViewLevel::CONTINENT) {
+        if (!hasFrameRect && vl == ViewLevel::CONTINENT) {
             float localBtnY = contentLocalY +
                               (continentIndices.size() > 1 ? 40.0f : 8.0f);
             ImGui::SetCursorPos(ImVec2(8.0f, localBtnY));
@@ -1335,7 +1349,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         }
 
         // Cosmic view: title + clickable landmass regions
-        if (vl == ViewLevel::COSMIC) {
+        if (!hasFrameRect && vl == ViewLevel::COSMIC) {
             ImGui::SetCursorPos(ImVec2(8.0f, contentLocalY + 8.0f));
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 0.8f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.1f, 0.9f));
@@ -1473,6 +1487,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
             }
         }
 
+        if (!hasFrameRect) {
         // Help text
         const char* helpText;
         if (vl == ViewLevel::ZONE)
@@ -1491,6 +1506,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         float textY = imgMax.y - textSize.y - 4.0f;
         ImGui::SetCursorScreenPos(ImVec2(textX, textY));
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 0.8f), "%s", helpText);
+        }
     }
     ImGui::End();
 

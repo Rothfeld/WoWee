@@ -24,6 +24,7 @@ namespace world_map {
 
 /// Context passed to each overlay layer during rendering.
 struct LayerContext {
+    bool frameXmlHosted = false;
     ImDrawList* drawList = nullptr;
     ImVec2 imgMin;           // top-left of map image in screen space
     float displayW = 0, displayH = 0;

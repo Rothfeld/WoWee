@@ -11,6 +11,7 @@ namespace rendering {
 namespace world_map {
 
 void CoordinateDisplay::render(const LayerContext& ctx) {
+    if (ctx.frameXmlHosted) return;
     const auto projection = currentProjection(ctx);
     if (!projection) return;
 
