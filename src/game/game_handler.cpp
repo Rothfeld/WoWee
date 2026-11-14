@@ -925,21 +925,6 @@ void GameHandler::update(float deltaTime) {
         }
 
         updateAutoAttack(deltaTime);
-        auto closeIfTooFar = [&](bool windowOpen, uint64_t npcGuid, auto closeFn, const char* label) {
-            if (!windowOpen || npcGuid == 0) return;
-            auto npc = entityController_->getEntityManager().getEntity(npcGuid);
-            if (!npc) return;
-            float dx = movementInfo.x - npc->getX();
-            float dy = movementInfo.y - npc->getY();
-            const float distance = std::sqrt(dx * dx + dy * dy);
-            if (distance > game::NPC_INTERACT_MAX_DISTANCE) {
-                closeFn();
-                // Warning: a window closing by itself is a report waiting to
-                // happen, and the client is the one deciding.
-                LOG_WARNING(label, " closed: ", distance, " yards from the NPC, past ",
-                            game::NPC_INTERACT_MAX_DISTANCE);
-            }
-        };
         // A hello the server never answered. It says nothing when it refuses,
         // so this is the only place the refusal can be seen.
         if (pendingNpcHello_.guid != 0 &&
@@ -969,20 +954,54 @@ void GameHandler::update(float deltaTime) {
                         "or regards you as Unfriendly or worse");
             pendingNpcHello_.guid = 0;
         }
-        closeIfTooFar(isVendorWindowOpen(), getVendorItems().vendorGuid, [this]{ closeVendor(); }, "Vendor");
-        closeIfTooFar(isGossipWindowOpen(), getCurrentGossip().npcGuid, [this]{ closeGossip(); }, "Gossip");
-        // The movement handler's guid, not a copy of it: the one this class
-        // kept was never assigned, so this asked about guid 0, found no NPC and
-        // returned - the only one of these four windows that stayed open when
-        // the player walked away from it.
-        closeIfTooFar(isTaxiWindowOpen(),
-                      movementHandler_ ? movementHandler_->getTaxiNpcGuid() : 0,
-                      [this]{ closeTaxi(); }, "Taxi window");
-        closeIfTooFar(isTrainerWindowOpen(), getTrainerSpells().trainerGuid, [this]{ closeTrainer(); }, "Trainer");
+        closeDistantNpcWindows();
 
         updateEntityInterpolation(deltaTime);
 
     }
+}
+
+// NPC dialogs share the same lifetime while the player stays within reach.
+void GameHandler::closeDistantNpcWindows() {
+    auto closeIfTooFar = [&](bool windowOpen, uint64_t npcGuid, auto closeFn, const char* label) {
+        if (!windowOpen || npcGuid == 0) return;
+        auto npc = entityController_->getEntityManager().getEntity(npcGuid);
+        if (!npc) return;
+        float dx = movementInfo.x - npc->getX();
+        float dy = movementInfo.y - npc->getY();
+        const float dz = movementInfo.z - npc->getZ();
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        // CMaNGOS interaction range is five yards plus both units' reach.
+        float maxDistance = 5.0f;
+        if (auto unit = std::dynamic_pointer_cast<Unit>(npc))
+            maxDistance += unit->getCombatReach();
+        if (auto player = std::dynamic_pointer_cast<Unit>(
+                entityController_->getEntityManager().getEntity(playerGuid)))
+            maxDistance += player->getCombatReach();
+        if (distance >= maxDistance) {
+            closeFn();
+            // Warning: a window closing by itself is a report waiting to
+            // happen, and the client is the one deciding.
+            LOG_WARNING(label, " closed: ", distance, " yards from the NPC, past ",
+                        maxDistance);
+        }
+    };
+    closeIfTooFar(isVendorWindowOpen(), getVendorItems().vendorGuid, [this]{ closeVendor(); }, "Vendor");
+    closeIfTooFar(isGossipWindowOpen(), getCurrentGossip().npcGuid, [this]{ closeGossip(); }, "Gossip");
+    closeIfTooFar(isQuestDetailsOpen(), getQuestDetails().npcGuid,
+                  [this]{ declineQuest(); }, "Quest details");
+    closeIfTooFar(isQuestRequestItemsOpen(), getQuestRequestItems().npcGuid,
+                  [this]{ closeQuestRequestItems(); }, "Quest progress");
+    closeIfTooFar(isQuestOfferRewardOpen(), getQuestOfferReward().npcGuid,
+                  [this]{ closeQuestOfferReward(); }, "Quest reward");
+    // The movement handler's guid, not a copy of it: the one this class
+    // kept was never assigned, so this asked about guid 0, found no NPC and
+    // returned - the only one of these four windows that stayed open when
+    // the player walked away from it.
+    closeIfTooFar(isTaxiWindowOpen(),
+                  movementHandler_ ? movementHandler_->getTaxiNpcGuid() : 0,
+                  [this]{ closeTaxi(); }, "Taxi window");
+    closeIfTooFar(isTrainerWindowOpen(), getTrainerSpells().trainerGuid, [this]{ closeTrainer(); }, "Trainer");
 }
 
 // ============================================================

@@ -1575,9 +1575,15 @@ void QuestHandler::declineQuest(bool announce) {
 
 void QuestHandler::closeGossip() {
     gossipWindowOpen_ = false;
-    if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_CLOSED", {});
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("GOSSIP_CLOSED", {});
+        // SMSG_QUESTGIVER_QUEST_LIST uses QuestFrame, not GossipFrame.
+        // Its greeting page listens for QUEST_FINISHED when walking away.
+        if (questGreetingOpen_) owner_.addonEventCallbackRef()("QUEST_FINISHED", {});
+    }
     currentGossip_ = GossipMessageData{};
     questGreeting_.clear();
+    questGreetingOpen_ = false;
 }
 
 void QuestHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
@@ -2170,6 +2176,7 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
     // Gossip carries its text as an npc-text id, not inline, so any greeting
     // left over from a quest list belongs to a different window.
     questGreeting_.clear();
+    questGreetingOpen_ = false;
 
     // Asked for before the window is announced rather than after it.
     //
@@ -2257,6 +2264,7 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
 
     currentGossip_ = std::move(data);
     gossipWindowOpen_ = true;
+    questGreetingOpen_ = true;
     // QUEST_GREETING, not GOSSIP_SHOW. This is SMSG_QUESTGIVER_QUEST_LIST - a
     // quest giver listing what it has, which the greeting frame answers.
     // GOSSIP_SHOW belongs to SMSG_GOSSIP_MESSAGE and opens the gossip frame
@@ -2370,6 +2378,7 @@ void QuestHandler::handleGossipComplete(network::Packet& packet) {
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_CLOSED", {});
     currentGossip_ = GossipMessageData{};
     questGreeting_.clear();
+    questGreetingOpen_ = false;
 }
 
 void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {

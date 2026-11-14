@@ -300,6 +300,7 @@ private:
     bool gossipWindowOpen_ = false;
     GossipMessageData currentGossip_;
     std::string questGreeting_;
+    bool questGreetingOpen_ = false;
     std::vector<GossipPoi> gossipPois_;
 
     // Quest details

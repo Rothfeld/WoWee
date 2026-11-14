@@ -4169,6 +4169,7 @@ private:
      * Change state with logging
      */
     void setState(WorldState newState);
+    void closeDistantNpcWindows();
 
     /**
      * Fail connection with reason
