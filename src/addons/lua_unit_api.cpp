@@ -2277,7 +2277,9 @@ static int lua_UnitClassification(lua_State* L) {
 // GetComboPoints("player"|"vehicle", "target") → number
 static int lua_GetComboPoints(lua_State* L) {
     auto* gh = getGameHandler(L);
-    lua_pushnumber(L, gh ? gh->getComboPoints() : 0);
+    // TBC's no-argument API reports points on the selected target only.
+    lua_pushnumber(L, gh && gh->getTargetGuid() == gh->getComboTarget()
+        ? gh->getComboPoints() : 0);
     return 1;
 }
 

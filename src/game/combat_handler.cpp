@@ -1048,9 +1048,9 @@ void CombatHandler::handlePowerUpdate(network::Packet& packet) {
 }
 
 void CombatHandler::handleUpdateComboPoints(network::Packet& packet) {
-    const bool cpTbc = isActiveExpansion("tbc");
-    if (!packet.hasRemaining(cpTbc ? 8u : 2u) ) return;
-    uint64_t target = cpTbc ? packet.readUInt64() : packet.readPackedGuid();
+    // TBC also uses a packed GUID (CMaNGOS Player::SendComboPoints).
+    if (!packet.hasRemaining(2)) return;
+    uint64_t target = packet.readPackedGuid();
     if (!packet.hasRemaining(1)) return;
     owner_.comboPointsRef() = packet.readUInt8();
     owner_.comboTargetRef() = target;
