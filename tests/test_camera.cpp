@@ -1,3 +1,4 @@
+#include "rendering/terrain_view_distance.hpp"
 // Tests for rendering::Camera setter guards and degenerate-pose math.
 #include <catch_amalgamated.hpp>
 #include "rendering/camera.hpp"
@@ -171,4 +172,23 @@ TEST_CASE("foliage culling declines reflected and degenerate transforms", "[came
     glm::mat4 invalid = identity;
     invalid[0][0] = std::numeric_limits<float>::quiet_NaN();
     CHECK_FALSE(m2FoliageTransformPreservesWinding(invalid));
+}
+
+TEST_CASE("terrain distance preserves intersecting mountain chunks", "[camera][terrain]") {
+    using wowee::rendering::terrainWithinViewDistance;
+    const glm::vec3 camera(100.0f, -200.0f, 50.0f);
+    for (float distance : {450.0f, 1900.0f}) {
+        const float radius = 30.0f;
+        CHECK(terrainWithinViewDistance(camera + glm::vec3(distance + 20, 0, 600),
+                                        radius, camera, distance));
+        CHECK(terrainWithinViewDistance(camera + glm::vec3(distance + radius, 0, 0),
+                                        radius, camera, distance));
+        CHECK_FALSE(terrainWithinViewDistance(camera + glm::vec3(distance + radius + 1, 0, 0),
+                                              radius, camera, distance));
+        CHECK(terrainWithinViewDistance(camera + glm::vec3(0, -distance - 20, -600),
+                                        radius, camera, distance));
+        CHECK_FALSE(terrainWithinViewDistance(camera + glm::vec3(distance, distance, 0),
+                                              radius, camera, distance));
+        CHECK(terrainWithinViewDistance(camera, 0, camera, distance));
+    }
 }

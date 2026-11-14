@@ -1,4 +1,5 @@
 #include "rendering/terrain_vertex.hpp"
+#include "rendering/terrain_view_distance.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/terrain_renderer.hpp"
 #include "rendering/rt_scene.hpp"
@@ -945,7 +946,6 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
     }
 
     glm::vec3 camPos = camera.getPosition();
-    const float maxTerrainDistSq = maxViewDistance_ * maxViewDistance_;
 
     renderedChunks = 0;
     culledChunks = 0;
@@ -968,7 +968,9 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
         float dx = chunk.boundingSphereCenter.x - camPos.x;
         float dy = chunk.boundingSphereCenter.y - camPos.y;
         float distSq = dx * dx + dy * dy;
-        if (distSq > maxTerrainDistSq) {
+        if (!terrainWithinViewDistance(chunk.boundingSphereCenter,
+                                       chunk.boundingSphereRadius, camPos,
+                                       maxViewDistance_)) {
             culledChunks++;
             continue;
         }
