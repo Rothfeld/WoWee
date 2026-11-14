@@ -1936,6 +1936,12 @@ inline constexpr const char* kLootRollRefreshLua = R"LUA(
 local watcher = CreateFrame("Frame")
 watcher:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 watcher:SetScript("OnEvent", function()
+    -- TBC's loot frame predates LOOT_SLOT_CHANGED. Refill its existing rows
+    -- when asynchronous item data arrives, preserving its current page.
+    if (__WoweeInterfaceVersion or 0) < 30000 and
+       type(LootFrame_Update) == "function" and LootFrame and LootFrame:IsShown() then
+        LootFrame_Update()
+    end
     if type(GroupLootFrame_OnShow) ~= "function" then return end
     for i = 1, (NUM_GROUP_LOOT_FRAMES or 4) do
         local frame = _G["GroupLootFrame" .. i]
