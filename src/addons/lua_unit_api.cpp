@@ -2489,25 +2489,21 @@ void registerUnitLuaAPI(lua_State* L) {
             return 5;
         }},
                 {"UnitResistance", [](lua_State* L) -> int {
-            auto* gh = getGameHandler(L);
-            int school = static_cast<int>(luaL_optnumber(L, 2, 0));
-            int32_t val = 0;
-            // Whose resistance, for the same reason as UnitStat above.
-            std::string who(luaL_optstring(L, 1, "player"));
-            toLowerInPlace(who);
-            if (gh && school >= 0 && school <= 6) {
-                if (who == "pet") {
-                    val = gh->getPetResistances()[static_cast<size_t>(school)];
-                } else if (who == "player") {
-                    // Physical is armor, and it is index zero of the same block.
-                    val = (school == 0) ? gh->getArmorRating() : gh->getResistance(school);
-                }
+            const int school = static_cast<int>(luaL_checkinteger(L, 2));
+            auto* unit = resolveUnit(L, luaL_checkstring(L, 1));
+            int32_t effective = 0, positive = 0, negative = 0;
+            if (unit && school >= 0 && school <= 6) {
+                const auto base = game::fieldIndex(game::UF::UNIT_FIELD_RESISTANCES);
+                const auto pos = game::fieldIndex(game::UF::UNIT_FIELD_RESISTANCEBUFFMODSPOSITIVE);
+                const auto neg = game::fieldIndex(game::UF::UNIT_FIELD_RESISTANCEBUFFMODSNEGATIVE);
+                if (base != 0xFFFF) effective = static_cast<int32_t>(unit->getField(base + school));
+                if (pos != 0xFFFF) positive = static_cast<int32_t>(unit->getField(pos + school));
+                if (neg != 0xFFFF) negative = static_cast<int32_t>(unit->getField(neg + school));
             }
-            if (val < 0) val = 0;
-            lua_pushnumber(L, val); // base
-            lua_pushnumber(L, val); // effective
-            lua_pushnumber(L, 0);   // posBuff
-            lua_pushnumber(L, 0);   // negBuff
+            lua_pushinteger(L, effective - positive - negative);
+            lua_pushinteger(L, effective);
+            lua_pushinteger(L, positive);
+            lua_pushinteger(L, negative);
             return 4;
         }},
                 {"UnitStat",      lua_UnitStat},

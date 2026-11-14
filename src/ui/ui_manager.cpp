@@ -256,12 +256,7 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
     // walk above sees nothing at all - which is why the same build found them
     // on one machine and not another. The bytes are copied because ImGui takes
     // ownership of the buffer it is given and frees it with its own allocator.
-    // Weight, not size. A font string carries its own height and most of
-    // FrameXML asks for ten to fourteen, so nearly every label is drawn scaled
-    // down from the atlas above - and downscaling an antialiased glyph spreads
-    // each stroke over fewer pixels, which reads as faint rather than small.
-    // Brightening the rasterized coverage puts the weight back; it is what
-    // ImGui offers for exactly this and costs nothing at draw time.
+    // Preserve authored glyph coverage; a weight multiplier makes TBC text bold.
     // ExtraSizeScale is what makes a height mean the same thing here as it does
     // in FrameXML: an em, not the ascender-to-descender span ImGui would fit
     // into it. See fontEmSizeScale - without it every label in the interface is
@@ -269,7 +264,7 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
     // edge lands short.
     auto interfaceFontConfig = [](float emScale) {
         ImFontConfig cfg;
-        cfg.RasterizerMultiply = 1.35f;
+        cfg.RasterizerMultiply = 1.0f;
         cfg.ExtraSizeScale = emScale;
         return cfg;
     };

@@ -984,16 +984,11 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // so this stays where the real client leaves it rather than being turned
     // on into a filter that would not filter.
     else if (n == "showcastablebuffs") lua_pushstring(L, "0");
-    // The numbers on a unit frame's bars. A stock 3.3.5 client keeps these off
-    // and shows them on mouseover; on this one they are wanted permanently,
-    // which is what the Status Text interface option turns on.
-    // The unit frames each ask about their own, not about "statusText" - the
-    // player frame's bars carry cvar = "playerStatusText". Defaulting only the
-    // general one left every bar's numbers hidden, correct text and all.
+    // TBC shows bar values and prefixes on hover unless Status Text is enabled.
     else if (n == "statustext" || n == "playerstatustext" ||
              n == "targetstatustext" || n == "petstatustext" ||
              n == "partystatustext") {
-        lua_pushstring(L, "1");
+        lua_pushstring(L, interfaceVersion(L) < 30000 ? "0" : "1");
     }
     else if (n == "statustextpercentage") lua_pushstring(L, "0");
     // Which stat category each column of the character sheet shows. These are
@@ -2410,7 +2405,7 @@ static bool trackingActive(game::GameHandler* gh, uint32_t spellId) {
 /// shows and what makes the button look like something to click.
 static int lua_GetTrackingTexture(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (game::isActiveExpansion("tbc")) {
+    if (interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000) {
         const auto service = std::stoul(storedCVarValue("wowee_trackingservice", "0"));
         if (service > 0 && service <= game::tbcTrackingServices.size()) {
             lua_pushstring(L, game::tbcTrackingServices[service - 1].texture);
@@ -2442,7 +2437,7 @@ static int lua_GetTrackingTexture(lua_State* L) {
 /// GetNumTrackingTypes() → how many the player knows.
 static int lua_GetNumTrackingTypes(lua_State* L) {
     lua_pushnumber(L, static_cast<lua_Number>(trackingSpells(getGameHandler(L)).size() +
-        (game::isActiveExpansion("tbc") ? game::tbcTrackingServices.size() : 0)));
+        (interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000 ? game::tbcTrackingServices.size() : 0)));
     return 1;
 }
 
@@ -2460,7 +2455,7 @@ static int lua_GetTrackingInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
     const auto spells = trackingSpells(gh);
-    if (game::isActiveExpansion("tbc") && index > static_cast<int>(spells.size())) {
+    if (interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000 && index > static_cast<int>(spells.size())) {
         const auto service = static_cast<size_t>(index - spells.size());
         if (service > game::tbcTrackingServices.size()) return 0;
         const auto& entry = game::tbcTrackingServices[service - 1];
@@ -2500,7 +2495,7 @@ static int lua_SetTracking(lua_State* L) {
     if (!gh) return 0;
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
     const auto spells = trackingSpells(gh);
-    const int serviceCount = game::isActiveExpansion("tbc")
+    const int serviceCount = interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000
         ? static_cast<int>(game::tbcTrackingServices.size()) : 0;
     if (index < 0 || index > static_cast<int>(spells.size()) + serviceCount)
         return luaL_error(L, "Invalid tracking index: %d", index);

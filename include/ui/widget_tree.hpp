@@ -505,6 +505,8 @@ struct Widget {
         /// Lines the wrap produced, filled by the sizing pass so the draw and
         /// the height agree on how tall this line is.
         mutable int lines = 1;
+        mutable float fontHeight = 12.0f;
+        mutable std::string fontFace;
     };
     std::vector<TooltipLine> tooltipLines;
     /// Stand-ins for GameTooltipTextLeft1..N, created on demand by whatever

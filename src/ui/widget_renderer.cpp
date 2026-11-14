@@ -397,8 +397,12 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
     // 233x215 its XML asks for.
     if (w->objectType != "GameTooltip") return;
 
-    const float size = interfaceFontSize(w->fontHeight);
-    const float lineH = size * 1.2f;
+    for (size_t i = 0; i < w->tooltipLines.size(); ++i) {
+        const auto* region = tree.findByName(w->name + "TextLeft" + std::to_string(i + 1));
+        auto& line = w->tooltipLines[i];
+        line.fontHeight = region ? interfaceFontSize(region->fontHeight) : (i == 0 ? 14.0f : 12.0f);
+        line.fontFace = region ? region->fontFace : w->fontFace;
+    }
     // Ten units of padding a side, which is what the tooltip backdrop's
     // own insets come to.
     constexpr float kPad = 10.0f;
@@ -406,7 +410,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
     // width comes from the lines that cannot break. Bounded either way: a
     // tooltip of one long sentence used to stretch across the screen, and
     // one of nothing but short lines should not force prose into a column.
-    constexpr float kMinWrap = 180.0f, kMaxWrap = 320.0f;
+    constexpr float kMinWrap = 220.0f, kMaxWrap = 320.0f;
     float widest = 0.0f;
     // A picture counts toward the width, as it does when the line is
     // drawn. Measured from the stripped text alone, a sell price came out
@@ -414,7 +418,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
     // The widest of its lines, where a line breaks: runs are added up only
     // until a newline, or a colour change on the second line would be
     // measured as sitting at the end of the first.
-    const auto measure = [&](const std::string& text) {
+    const auto measure = [&](const std::string& text, float size) {
         float widestLine = 0.0f;
         float total = 0.0f;
         for (const auto& run : parseMarkup(text)) {
@@ -446,20 +450,24 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
         // it ever set a height, the box kept whatever size it had, and the
         // lines past that drew below its bottom edge.
         if (line.wrap) continue;
-        float wide = measure(line.left);
+        float wide = measure(line.left, line.fontHeight);
         if (!line.right.empty()) {
             // Left and right text share a line with a gap between them.
-            wide += 20.0f + measure(line.right);
+            wide += 20.0f + measure(line.right, line.fontHeight);
         }
         if (wide > widest) widest = wide;
     }
-    const float wrapW = std::clamp(widest > 0.0f ? widest : kMinWrap,
-                                   kMinWrap, kMaxWrap);
+    const bool hasWrappedText = std::any_of(w->tooltipLines.begin(), w->tooltipLines.end(),
+        [](const auto& line) { return line.wrap; });
+    const float wrapW = hasWrappedText
+        ? std::clamp(widest > 0.0f ? widest : kMinWrap, kMinWrap, kMaxWrap)
+        : widest;
 
     // What the draw must wrap at as well; see Widget::tooltipWrapWidth.
     w->tooltipWrapWidth = wrapW;
 
     int rows = 0;
+    float contentHeight = 0.0f;
     for (const auto& line : w->tooltipLines) {
         // Every line is at least one row, and wrapText does not promise that:
         // it returns nothing at all for empty text, and nothing for a zero
@@ -490,7 +498,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
                 rowsHere = static_cast<int>(
                     wrapText(parseMarkup(segment), wrapW, false,
                              [&](const std::string& piece) {
-                                 return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
+                                 return font->CalcTextSizeA(line.fontHeight, FLT_MAX, 0.0f,
                                                             piece.c_str()).x;
                              }).size());
                 if (rowsHere < 1) rowsHere = 1;
@@ -502,6 +510,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
         }
         line.lines = n > 0 ? n : 1;
         rows += line.lines;
+        contentHeight += (line.fontHeight + 2.0f) * line.lines;
     }
 
     // The floor SetMinimumWidth asked for, applied to the finished width
@@ -510,7 +519,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
     // widens the tooltip to hold it.
     w->width  = std::max(std::max(widest, wrapW) + kPad * 2.0f,
                          w->tooltipMinWidth);
-    w->height = lineH * static_cast<float>(rows) + kPad * 2.0f;
+    w->height = contentHeight + kPad * 2.0f;
     if (std::getenv("WOWEE_TOOLTIP_DIAG") != nullptr) {
         // The arithmetic, printed rather than reasoned about: the caller was
         // reporting the same height whether this counted three rows or eight,
@@ -521,8 +530,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
         if (now - saidAt > 0.4) {
             saidAt = now;
             LOG_WARNING("  sizeTooltip '", w->name, "': rows=", rows,
-                        " fontHeight=", w->fontHeight, " size=", size,
-                        " lineH=", lineH, " -> height=", w->height,
+                        " -> height=", w->height,
                         " width=", w->width, " (widest=", widest,
                         " wrapW=", wrapW, " minW=", w->tooltipMinWidth, ")");
         }
@@ -549,7 +557,7 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
             w->tooltipLineAnchors.resize(w->tooltipLines.size(), 0);
         float top = kPad;
         for (size_t i = 0; i < w->tooltipLines.size(); ++i) {
-            const float rowH = lineH * static_cast<float>(w->tooltipLines[i].lines);
+            const float rowH = (w->tooltipLines[i].fontHeight + 2.0f) * w->tooltipLines[i].lines;
             uint32_t& rid = w->tooltipLineAnchors[i];
             if (rid == 0) {
                 const std::string ln = w->name + "TextLeft" + std::to_string(i + 1);
@@ -2406,18 +2414,16 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                        w->objectType == "GameTooltip" &&
                                        !w->tooltipLines.empty();
             ImFont* tipFont = nullptr;
-            float tipSize = 0.0f, tipLineH = 0.0f, tipPad = 0.0f, tipTextW = 0.0f;
+            float tipPad = 0.0f, tipTextW = 0.0f;
             std::vector<int> tipRows;
             float tipHeight = 0.0f;
             if (isGameTooltip) {
                 tipFont = interfaceFaceOrDefault(w->fontFace);
-                tipSize = interfaceFontSize(w->fontHeight) * ws;
-                tipLineH = tipSize * 1.2f;
                 tipPad = 10.0f * ws;
                 tipTextW = (x1 - x0) - tipPad * 2.0f;
                 tipRows.reserve(w->tooltipLines.size());
-                int rows = 0;
                 for (const auto& line : w->tooltipLines) {
+                    const float tipSize = line.fontHeight * ws;
                     // As many rows as the sizing pass counted, breaks and
                     // all; only a wrapping line is re-counted at this width.
                     int n = std::max(line.lines, 1);
@@ -2432,9 +2438,9 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                      line.lines);
                     }
                     tipRows.push_back(n);
-                    rows += n;
+                    tipHeight += (line.fontHeight + 2.0f) * ws * n;
                 }
-                tipHeight = tipLineH * static_cast<float>(rows) + tipPad * 2.0f;
+                tipHeight += tipPad * 2.0f;
             }
 
             // The box, grown to hold them and then moved up until it fits.
@@ -2473,13 +2479,13 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // round from chat.
             if (isGameTooltip) {
                 ImFont* font = tipFont;
-                const float size = tipSize;
-                const float lineH = tipLineH;
                 const float pad = tipPad;
                 float y = boxY0 + pad;
                 const float textW = tipTextW;
                 size_t rowIdx = 0;
                 for (const auto& line : w->tooltipLines) {
+                    const float size = line.fontHeight * ws;
+                    const float lineH = (line.fontHeight + 2.0f) * ws;
                     float lc[4] = {line.lc[0], line.lc[1], line.lc[2], line.lc[3]};
                     drawMarkupText(dl, font, size, ImVec2(x0 + pad, y),
                                    packColor(lc, w->alpha), w->alpha, line.left,

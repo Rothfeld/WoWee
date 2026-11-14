@@ -136,6 +136,7 @@ void KeybindingManager::initializeDefaults(Device device) {
         {"MOVEFORWARD", {"W", "UP"}}, {"MOVEBACKWARD", {"S", "DOWN"}},
         {"TURNLEFT", {"A", "LEFT"}}, {"TURNRIGHT", {"D", "RIGHT"}},
         {"STRAFELEFT", {"Q", ""}}, {"STRAFERIGHT", {"E", ""}},
+        {"TOGGLECHARACTER2", {"U", ""}},
         {"JUMP", {"SPACE", ""}}, {"SITORSTAND", {"X", ""}},
         {"TOGGLERUN", {"NUMPADDIVIDE", ""}}, {"TOGGLESHEATH", {"Z", ""}},
         {"OPENCHATSLASH", {"/", ""}}, {"TARGETNEARESTENEMY", {"TAB", ""}},
