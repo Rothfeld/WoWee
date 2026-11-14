@@ -9348,6 +9348,11 @@ void LuaEngine::fireEvent(const std::string& eventName,
                            const std::vector<std::string>& args) {
     if (!L_) return;
 
+    if (eventName == "READY_CHECK" || eventName == "READY_CHECK_FINISHED") {
+        lua_pushnumber(L_, eventName == "READY_CHECK" ? core::appTimeSeconds() + 30.0 : 0.0);
+        lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
+    }
+
     if (eventName == "COMBAT_LOG_EVENT_UNFILTERED") recordCombatLogEvent(args);
     if (eventName == game::classic_combat::kLineEvent) {
         fireClassicCombatLine(args);
@@ -9672,22 +9677,9 @@ void LuaEngine::installMissingApiFallback() {
         const char* v = std::getenv(name);
         return v && *v && std::string(v) != "0";
     };
-    // Loading FrameXML implies it. FrameXML cannot get through its own load
-    // without the fallback, so two separate switches where one is useless
-    // without the other is only a way to be handed a wall of failures for
-    // setting the obvious one.
-    //
-    // Said explicitly, though, the setting wins either way. The fallback is not
-    // free - it makes every feature check read as present - and now that the
-    // real gaps are closing it is worth being able to ask what it is still
-    // buying, which needs a way to turn it off with FrameXML on.
-    const char* explicitSetting = std::getenv("WOWEE_LUA_API_FALLBACK");
-    const char* loadSetting = std::getenv("WOWEE_LOAD_FRAMEXML");
-    const bool frameXmlOn = loadSetting ? (std::string(loadSetting) != "0") : true;
-    const bool enabled = (explicitSetting && *explicitSetting)
-                             ? std::string(explicitSetting) != "0"
-                             : frameXmlOn;
-    (void)isSet;
+    // Missing globals must stay nil for FrameXML feature detection. The
+    // diagnostic stand-in remains opt-in while unimplemented APIs are traced.
+    const bool enabled = isSet("WOWEE_LUA_API_FALLBACK");
     if (!enabled) return;
 
     lua_pushcfunction(L_, lua_RecordMissingApi);

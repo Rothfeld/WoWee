@@ -46,6 +46,12 @@ bool AddonManager::initialize(game::GameHandler* gameHandler, const LuaServices&
     // Same reasoning as the loaders above: the manager owns both the list of
     // addons and the paths their variables are written to.
     luaServices_.saveAddOnVariables = [this]() { saveAllSavedVariables(); };
+    registeredSavedVariables_.clear();
+    registeredCharacterVariables_.clear();
+    luaServices_.registerSavedVariable = [this](const std::string& name, bool perCharacter) {
+        auto& names = perCharacter ? registeredCharacterVariables_ : registeredSavedVariables_;
+        if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+    };
     luaServices_.isAddOnLoaded = [this](const std::string& name) {
         return isAddOnLoadedByName(name);
     };
@@ -378,6 +384,12 @@ void AddonManager::loadAllAddons() {
         }
         luaEngine_.setUiSoundsSuppressed(true);
         loadFrameXml(frameXmlDir_);
+        const fs::path savedRoot = fs::path(core::getConfigRoot()) / "addons";
+        luaEngine_.loadSavedVariables((savedRoot / "FrameXML.lua.saved").string());
+        if (!characterName_.empty()) {
+            luaEngine_.loadSavedVariables((savedRoot / ("FrameXML." + characterName_ + ".lua.saved")).string());
+        }
+
         luaEngine_.setUiSoundsSuppressed(false);
         // The client's own options, as a category in FrameXML's Interface
         // Options. After FrameXML rather than in the bootstrap, because
@@ -1717,6 +1729,12 @@ void AddonManager::saveAllSavedVariables() {
     // the way out of the process would write every one of those files from a
     // state that never loaded them.
     if (!addonsLoaded_) return;
+    const fs::path savedRoot = fs::path(core::getConfigRoot()) / "addons";
+    if (!registeredSavedVariables_.empty())
+        luaEngine_.saveSavedVariables((savedRoot / "FrameXML.lua.saved").string(), registeredSavedVariables_);
+    if (!characterName_.empty() && !registeredCharacterVariables_.empty())
+        luaEngine_.saveSavedVariables((savedRoot / ("FrameXML." + characterName_ + ".lua.saved")).string(), registeredCharacterVariables_);
+
     for (const auto& addon : addons_) {
         auto savedVars = addon.getSavedVariables();
         if (!savedVars.empty()) {

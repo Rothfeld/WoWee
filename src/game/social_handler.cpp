@@ -603,7 +603,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
             ? "Ready check initiated!"
             : readyCheckInitiator_ + " initiated a ready check!");
         if (owner_.addonEventCallbackRef())
-            owner_.addonEventCallbackRef()("READY_CHECK", {readyCheckInitiator_});
+            owner_.addonEventCallbackRef()("READY_CHECK", {readyCheckInitiator_, "30"});
     };
     table[Opcode::MSG_RAID_READY_CHECK_CONFIRM] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(9)) { packet.skipAll(); return; }

@@ -2611,6 +2611,26 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"AddOrRemoveFriend",   lua_AddOrRemoveFriend},
                 {"AddOrDelIgnore",      lua_AddOrDelIgnore},
                 // DoReadyCheck() - what /readycheck does
+                {"GetReadyCheckTimeLeft", [](lua_State* L) -> int {
+            lua_getfield(L, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
+            const double deadline = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            lua_pushnumber(L, std::max(0.0, deadline - core::appTimeSeconds()));
+            return 1;
+        }},
+                {"CheckReadyCheckTime", [](lua_State* L) -> int {
+            lua_getfield(L, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
+            const double deadline = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            if (deadline > 0.0 && core::appTimeSeconds() >= deadline) {
+                lua_pushnumber(L, 0); lua_setfield(L, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
+                if (auto* gh = getGameHandler(L)) {
+                    gh->dismissReadyCheck();
+                    gh->fireAddonEvent("READY_CHECK_FINISHED", {});
+                }
+            }
+            return 0;
+        }},
                 {"DoReadyCheck", [](lua_State* L) -> int {
             if (auto* gh = getGameHandler(L)) gh->initiateReadyCheck();
             return 0;

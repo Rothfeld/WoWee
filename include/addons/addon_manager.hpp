@@ -108,6 +108,8 @@ private:
     [[nodiscard]] std::string getSavedVariablesPath(const TocFile& addon) const;
     [[nodiscard]] std::string getSavedVariablesPerCharacterPath(const TocFile& addon) const;
     std::string characterName_;
+    std::vector<std::string> registeredSavedVariables_;
+    std::vector<std::string> registeredCharacterVariables_;
 
     // addonName -> enabled. Absent means enabled (default on).
     std::unordered_map<std::string, bool> addonEnabled_;

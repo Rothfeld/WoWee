@@ -3824,6 +3824,20 @@ void registerQuestLuaAPI(lua_State* L) {
             for (const auto& s : subs) lua_pushstring(L, s.c_str());
             return static_cast<int>(subs.size());
         }},
+                {"GetCraftSlots", [](lua_State* L) -> int {
+            const auto slots = tradeSkillInvSlots(getGameHandler(L));
+            for (const auto& slot : slots) lua_pushstring(L, slot.c_str());
+            return static_cast<int>(slots.size());
+        }},
+                {"GetCraftFilter", [](lua_State* L) -> int {
+            lua_pushboolean(L, luaL_checkinteger(L, 1) == tradeSkillInvSlotPick());
+            return 1;
+        }},
+                {"SetCraftFilter", [](lua_State* L) -> int {
+            tradeSkillInvSlotPick() = static_cast<int>(luaL_checkinteger(L, 1));
+            ++tradeSkillRowsGeneration();
+            return 0;
+        }},
                 {"GetTradeSkillInvSlots", [](lua_State* L) -> int {
             const auto slots = tradeSkillInvSlots(getGameHandler(L));
             for (const auto& s : slots) lua_pushstring(L, s.c_str());

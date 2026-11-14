@@ -283,6 +283,7 @@ struct LuaServices {
     /// exactly this reason. Cheap: a few hundred bytes, and nothing calls it
     /// per frame.
     std::function<void()> saveAddOnVariables;
+    std::function<void(const std::string&, bool)> registerSavedVariable;
 
     /// Turn an addon on or off for the next run, as EnableAddOn and
     /// DisableAddOn do. It takes effect on reload rather than at once - an

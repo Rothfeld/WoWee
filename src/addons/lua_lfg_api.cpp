@@ -30,6 +30,8 @@
 // here guards, and a fabricated reward or lock reads as fact.
 #include "addons/lua_api_helpers.hpp"
 #include "addons/lua_engine.hpp"
+#include "network/world_socket.hpp"
+#include "network/packet.hpp"
 #include "game/game_utils.hpp"
 
 #include <algorithm>
@@ -162,6 +164,55 @@ void pushInfoRow(lua_State* L, const char* name, int typeId, int minLevel,
 
 void registerLfgLuaAPI(lua_State* L) {
     static const std::pair<const char*, lua_CFunction> api[] = {
+
+    {"SetLFGAutojoin", [](lua_State* L) -> int {
+        if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            network::Packet packet(game::wireOpcode(game::Opcode::CMSG_LFG_SET_AUTOJOIN));
+            gh->getSocket()->send(packet);
+        }
+        return 0;
+    }},
+    {"ClearLFGAutojoin", [](lua_State* L) -> int {
+        if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            network::Packet packet(game::wireOpcode(game::Opcode::CMSG_LFG_CLEAR_AUTOJOIN));
+            gh->getSocket()->send(packet);
+        }
+        return 0;
+    }},
+    {"SetLFMAutofill", [](lua_State* L) -> int {
+        if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            network::Packet packet(game::wireOpcode(game::Opcode::CMSG_LFM_SET_AUTOFILL));
+            gh->getSocket()->send(packet);
+        }
+        return 0;
+    }},
+    {"ClearLFMAutofill", [](lua_State* L) -> int {
+        if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            network::Packet packet(game::wireOpcode(game::Opcode::CMSG_LFM_CLEAR_AUTOFILL));
+            gh->getSocket()->send(packet);
+        }
+        return 0;
+    }},
+    {"GetLFGTypes", [](lua_State* L) -> int {
+        for (const char* name : {"LFG_TYPE_NONE", "LFG_TYPE_DUNGEON", "LFG_TYPE_RAID",
+                                 "LFG_TYPE_QUEST", "LFG_TYPE_ZONE", "LFG_TYPE_HEROIC_DUNGEON"})
+            lua_getglobal(L, name);
+        return 6;
+    }},
+    {"GetLFGTypeEntries", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L);
+        if (!gh) return 0;
+        const int type = static_cast<int>(luaL_checkinteger(L, 1)) - 1;
+        int count = 0;
+        for (const auto& dungeon : gh->getLfgDungeons()) {
+            if (static_cast<int>(dungeon.typeId) != type) continue;
+            luaL_checkstack(L, 2, "LFG entry list exceeds Lua stack");
+            lua_pushstring(L, dungeon.name.c_str());
+            lua_pushinteger(L, dungeon.id);
+            count += 2;
+        }
+        return count;
+    }},
 
     // ---- The catalogue ----
 

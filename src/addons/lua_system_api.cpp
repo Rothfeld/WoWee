@@ -5524,6 +5524,11 @@ void registerSystemLuaAPI(lua_State* L) {
                 // Both answer from the one value this client tracks. Only one
                 // of the two applies at a time, so that holds until a party
                 // sets a raid difficulty while standing in a dungeon.
+                {"GetCurrentDungeonDifficulty", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            lua_pushinteger(L, (gh ? gh->getInstanceDifficulty() : 0u) + 1u);
+            return 1;
+        }},
                 {"GetDungeonDifficulty", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             lua_pushnumber(L, (gh ? gh->getInstanceDifficulty() : 0u) + 1u);
@@ -6297,7 +6302,20 @@ void registerSystemLuaAPI(lua_State* L) {
             if (auto* gh = getGameHandler(L)) gh->requestGuildEventLog();
             return 0;
         }},
-                {"RegisterForSave",          lua_ReturnNothing},
+                {"RegisterForSave", [](lua_State* L) -> int {
+            const auto* services = getLuaServices(L);
+            if (!services || !services->registerSavedVariable) return luaL_error(L, "Saved variable registry unavailable");
+            for (int i = 1; i <= lua_gettop(L); ++i)
+                services->registerSavedVariable(luaL_checkstring(L, i), false);
+            return 0;
+        }},
+                {"RegisterForSavePerCharacter", [](lua_State* L) -> int {
+            const auto* services = getLuaServices(L);
+            if (!services || !services->registerSavedVariable) return luaL_error(L, "Saved variable registry unavailable");
+            for (int i = 1; i <= lua_gettop(L); ++i)
+                services->registerSavedVariable(luaL_checkstring(L, i), true);
+            return 0;
+        }},
                 {"RegisterStaticConstants",  lua_ReturnNothing},
                 {"SetChatWindowName",        lua_SetChatWindowName},
                 {"SetupFullscreenScale",     lua_ReturnNothing},
@@ -6812,6 +6830,37 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetPlayerFacing",     lua_GetPlayerFacing},
                 {"GetCVar",             lua_GetCVar},
                 {"GetCVarBool",         lua_GetCVarBool},
+                {"ShowNameplates", [](lua_State* L) -> int {
+            lua_settop(L, 0); lua_pushstring(L, "nameplateShowEnemies"); lua_pushstring(L, "1"); return lua_SetCVar(L);
+        }},
+                {"HideNameplates", [](lua_State* L) -> int {
+            lua_settop(L, 0); lua_pushstring(L, "nameplateShowEnemies"); lua_pushstring(L, "0"); return lua_SetCVar(L);
+        }},
+                {"ShowFriendNameplates", [](lua_State* L) -> int {
+            lua_settop(L, 0); lua_pushstring(L, "nameplateShowFriends"); lua_pushstring(L, "1"); return lua_SetCVar(L);
+        }},
+                {"HideFriendNameplates", [](lua_State* L) -> int {
+            lua_settop(L, 0); lua_pushstring(L, "nameplateShowFriends"); lua_pushstring(L, "0"); return lua_SetCVar(L);
+        }},
+                {"SetAutoLootDefault", [](lua_State* L) -> int {
+            const bool enabled = lua_toboolean(L, 1) != 0;
+            lua_settop(L, 0); lua_pushstring(L, "autoLootDefault"); lua_pushboolean(L, enabled); return lua_SetCVar(L);
+        }},
+                {"SetGuildRecruitmentMode", [](lua_State* L) -> int {
+            const int mode = static_cast<int>(luaL_checknumber(L, 1));
+            if (mode < 0 || mode > 1) return luaL_error(L, "Guild recruitment mode must be 0 or 1");
+            lua_settop(L, 0); lua_pushstring(L, "guildRecruitmentChannel"); lua_pushnumber(L, mode);
+            lua_SetCVar(L);
+            if (auto* gh = getGameHandler(L)) {
+                const auto& channels = gh->getJoinedChannels();
+                const bool joined = std::any_of(channels.begin(), channels.end(), [](const auto& name) {
+                    return name == "GuildRecruitment" || name.starts_with("GuildRecruitment - ");
+                });
+                if (mode && !joined) gh->joinChannel("GuildRecruitment");
+                else if (!mode && joined) gh->leaveChannel("GuildRecruitment");
+            }
+            return 0;
+        }},
                 {"SetCVar",             lua_SetCVar},
                 {"GetLocale",         lua_GetLocale},
                 // Gender-aware lookup of a global string by token name.

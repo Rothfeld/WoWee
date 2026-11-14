@@ -3273,7 +3273,7 @@ void GameHandler::loadLfgDungeonDbc() const {
     // has no holiday flag of its own; the group is the flag.
     constexpr uint32_t kHolidayGroup = 11;
     const bool wideEnough = dbc->getFieldCount() > kGroupId;
-    if (!wideEnough) {
+    if (!wideEnough && dbc->getFieldCount() != 24) {
         LOG_WARNING("LFGDungeons.dbc has only ", dbc->getFieldCount(),
                     " fields - the dungeon finder will list names only");
     }
@@ -3284,6 +3284,21 @@ void GameHandler::loadLfgDungeonDbc() const {
         std::string name = dbc->getString(i, nameField);
         if (name.empty()) continue;
         lfgDungeonNameCache_[id] = name;
+        if (dbc->getFieldCount() == 24) {
+            // Original 2.4.3 LFGDungeons: name locales 1..16, mask 17,
+            // min/max level 18/19, type 20, faction 21, order 22, expansion 23.
+            LfgDungeon dungeon;
+            dungeon.id = id;
+            dungeon.name = std::move(name);
+            dungeon.minLevel = dbc->getUInt32(i, 18);
+            dungeon.maxLevel = dbc->getUInt32(i, 19);
+            dungeon.typeId = dbc->getUInt32(i, 20);
+            dungeon.faction = static_cast<int32_t>(dbc->getUInt32(i, 21));
+            dungeon.orderIndex = dbc->getUInt32(i, 22);
+            dungeon.expansion = dbc->getUInt32(i, 23);
+            lfgDungeons_.push_back(std::move(dungeon));
+            continue;
+        }
         if (!wideEnough) continue;
 
         LfgDungeon d;
