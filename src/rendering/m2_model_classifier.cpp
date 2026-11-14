@@ -448,7 +448,8 @@ M2ClassificationResult classifyM2Model(
                             && !furnitureName;
     const bool treeLike     = treeHit.found && !structureHit.outranks(treeHit)
                             && !furnitureName;
-    const bool hardTreePart = has(n, "trunk") || has(n, "stump") || has(n, "log");
+    const bool fallenWood = has(n, "fallen") && (treeLike || has(n, "branch"));
+    const bool hardTreePart = has(n, "trunk") || has(n, "stump") || has(n, "log") || fallenWood;
 
     // A teleport structure is a doorway, not an object: you walk into or onto
     // it. TeleportTree.m2 - the Rut'theran Village portal to Darnassus - is the
@@ -469,7 +470,7 @@ M2ClassificationResult classifyM2Model(
     // fallen log is a low prop you step over or onto, which the small-solid
     // rules below already describe, so those two keep their exemption.
     const bool standingTrunk = has(n, "trunk");
-    const bool lowTreePart   = has(n, "stump") || has(n, "log");
+    const bool lowTreePart   = has(n, "stump") || has(n, "log") || fallenWood;
 
     // Trees big enough to have a visible trunk → solid cylinder collision.
     //

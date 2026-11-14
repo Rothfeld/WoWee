@@ -386,6 +386,8 @@ TEST_CASE("the wooden parts of a tree do not sway", "[m2][classifier][foliage]")
         for (const char* n : {"ElwynnTreeStump01", "elwynntreestump02",
                               "DuskwoodTreeStump01", "TreeStumpSmall",
                               "ElwynnLog01", "FallenTreeLog02",
+                              "WinterSpringFallenTree01", "WinterSpringFallenTree02",
+                              "WinterSpringFallenBranch01", "LochModanFallenTree01",
                               "ElwynnTreeTrunk01", "TeldrassilTreeTrunk03",
                               "WORLD\\AZEROTH\\ELWYNN\\PASSIVEDOODADS\\TREES\\ELWYNNTREESTUMP01.M2"}) {
             INFO(n);
