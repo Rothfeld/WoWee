@@ -60,10 +60,24 @@ float shadowTexel() {
 }
 
 float sampleShadowPCF(sampler2DShadow smap, vec3 coords) {
+    // Compare each tap against the receiver plane at that tap. A constant
+    // depth across the filter makes a sloped surface shadow itself in bands.
+    vec3 dx = dFdx(coords);
+    vec3 dy = dFdy(coords);
+    float determinant = dx.x * dy.y - dx.y * dy.x;
+    vec2 depthGradient = vec2(0.0);
+    if (abs(determinant) > 1e-12) {
+        depthGradient = vec2(dy.y * dx.z - dx.y * dy.z,
+                             dx.x * dy.z - dy.x * dx.z) / determinant;
+    }
+    // Hardware bilinear comparison reaches adjacent texel centers as well.
+    float quantizationBias = dot(abs(depthGradient), vec2(shadowTexel()));
     float shadow = 0.0;
     for (int x = -1; x <= 1; ++x) {
         for (int y = -1; y <= 1; ++y) {
-            shadow += texture(smap, vec3(coords.xy + vec2(x, y) * shadowTexel(), coords.z));
+            vec2 offset = vec2(x, y) * shadowTexel();
+            float depth = coords.z + dot(depthGradient, offset) - quantizationBias;
+            shadow += texture(smap, vec3(coords.xy + offset, depth));
         }
     }
     return shadow / 9.0;
