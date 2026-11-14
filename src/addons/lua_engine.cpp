@@ -3271,14 +3271,14 @@ int lua_Region_GetNumPoints(lua_State* L) {
     return 1;
 }
 
-// Minimap zoom. Five levels, as in WoW, and the level is kept on the widget so
+// Minimap zoom. Six levels, as in WoW, and the level is kept on the widget so
 // the buttons that step it can read back what they set - Minimap_Update
 // compares GetZoom() against GetZoomLevels() - 1 to decide whether to grey the
 // zoom-in button out, and nil there is arithmetic on nothing.
 int lua_Minimap_SetZoom(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         int z = static_cast<int>(luaL_optnumber(L, 2, 0));
-        w->zoomLevel = (z < 0) ? 0 : (z > 4 ? 4 : z);
+        w->zoomLevel = (z < 0) ? 0 : (z > 5 ? 5 : z);
         // And kept, because the player set it by using the map rather than by
         // setting a setting, and it was gone at every start: the ring came back
         // at its widest however far in it had been left. Written to the CVar
@@ -3301,7 +3301,7 @@ int lua_Minimap_GetZoom(lua_State* L) {
 }
 int lua_Minimap_GetZoomLevels(lua_State* L) {
     (void)L;
-    lua_pushnumber(L, 5);
+    lua_pushnumber(L, 6);
     return 1;
 }
 /// Minimap_OnClick's whole body: a click inside the circle pings that spot for

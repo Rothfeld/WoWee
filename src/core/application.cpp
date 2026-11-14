@@ -4303,16 +4303,17 @@ void Application::render() {
 
                         // The zoom buttons move a number on the frame, and the
                         // map has to be told: Minimap:SetZoom is the interface
-                        // saying what it wants, not the map changing. Five
+                        // saying what it wants, not the map changing. Six
                         // levels as WoW has them, zero furthest out.
                         static int appliedZoom = -1;
                         if (mm->zoomLevel != appliedZoom) {
                             appliedZoom = mm->zoomLevel;
-                            static const float kRadius[5] = {
-                                800.0f, 620.0f, 460.0f, 320.0f, 200.0f
+                            static const float kRadius[6] = {
+                                700.0f / 3.0f, 200.0f, 500.0f / 3.0f,
+                                400.0f / 3.0f, 100.0f, 200.0f / 3.0f
                             };
                             const int lvl = (mm->zoomLevel < 0) ? 0
-                                          : (mm->zoomLevel > 4 ? 4 : mm->zoomLevel);
+                                          : (mm->zoomLevel > 5 ? 5 : mm->zoomLevel);
                             map->setViewRadius(kRadius[lvl]);
                         }
 
