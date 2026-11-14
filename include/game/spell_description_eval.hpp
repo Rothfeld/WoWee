@@ -45,6 +45,8 @@ struct SpellDescriptionContext {
     /// $m1 / $M1 / $s1 / $o1 - a spell effect's magnitude, by zero-based
     /// index. False when there is none, which fails the expression.
     std::function<bool(int index, double& out)> magnitude;
+    /// Typed effect values ($m/$M/$b/$o) and player values ($AP).
+    std::function<bool(const std::string& token, int index, double& out)> value;
     /// Whether the player knows a spell, for $?s<id>[then][else].
     std::function<bool(uint32_t spellId)> knowsSpell;
     /// The "$name=expression" lines this spell draws on, or null.

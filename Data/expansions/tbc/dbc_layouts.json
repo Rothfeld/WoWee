@@ -218,6 +218,10 @@
   "Spell": {
     "Attributes": 5,
     "AttributesEx": 6,
+    "AttributesEx2": 7,
+    "AttributesEx4": 9,
+    "EquippedItemClass": 62,
+    "EquippedItemSubClassMask": 63,
     "CastingTimeIndex": 22,
     "CategoryRecoveryTime": 24,
     "Description": 161,
@@ -229,6 +233,15 @@
     "EffectApplyAuraName0": 95,
     "EffectApplyAuraName1": 96,
     "EffectApplyAuraName2": 97,
+    "EffectDieSides0": 68,
+    "EffectDieSides1": 69,
+    "EffectDieSides2": 70,
+    "EffectAmplitude0": 98,
+    "EffectAmplitude1": 99,
+    "EffectAmplitude2": 100,
+    "EffectPointsPerComboPoint0": 119,
+    "EffectPointsPerComboPoint1": 120,
+    "EffectPointsPerComboPoint2": 121,
     "EffectBasePoints0": 80,
     "EffectBasePoints1": 81,
     "EffectBasePoints2": 82,
@@ -279,8 +292,9 @@
     "Name": 13
   },
   "SpellRange": {
-    "MaxRange": 4,
-    "MinRange": 2
+    "Flags": 3,
+    "MaxRange": 2,
+    "MinRange": 1
   },
   "SpellVisual": {
     "CastKit": 2,

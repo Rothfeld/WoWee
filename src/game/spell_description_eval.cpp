@@ -9,6 +9,7 @@ struct Parser {
     int depth = 0;   ///< a row may name itself; stop rather than recurse forever
 
     bool value(const std::string& text, std::size_t& i, double& out);
+    bool product(const std::string& text, std::size_t& i, double& out);
     bool expression(const std::string& text, std::size_t& i, double& out);
 
     bool whole(const std::string& text, double& out) {
@@ -125,11 +126,16 @@ bool Parser::value(const std::string& text, std::size_t& i, double& out) {
 
     // $m1 / $M1 / $s1 / $o1 - the spell's own magnitudes.
     const char code = text[i++];
+    std::string token(1, code);
+    if (code == 'A' && i < text.size() && text[i] == 'P') {
+        token += text[i++];
+    }
     int index = 0;
     if (i < text.size() && text[i] >= '1' && text[i] <= '3') {
         index = text[i] - '1';
         ++i;
     }
+    if (ctx.value) return ctx.value(token, index, out);
     switch (code) {
         case 's': case 'S': case 'm': case 'M': case 'o': case 'O':
             return ctx.magnitude && ctx.magnitude(index, out);
@@ -141,26 +147,32 @@ bool Parser::value(const std::string& text, std::size_t& i, double& out) {
     }
 }
 
-bool Parser::expression(const std::string& text, std::size_t& i, double& out) {
+bool Parser::product(const std::string& text, std::size_t& i, double& out) {
     if (!value(text, i, out)) return false;
     while (true) {
         while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
-        if (i >= text.size()) return true;
-        const char op = text[i];
-        if (op != '+' && op != '-' && op != '*' && op != '/') return true;
-        ++i;
+        if (i >= text.size() || (text[i] != '*' && text[i] != '/')) return true;
+        const char op = text[i++];
         double rhs = 0.0;
         if (!value(text, i, rhs)) return false;
-        switch (op) {
-            case '+': out += rhs; break;
-            case '-': out -= rhs; break;
-            case '*': out *= rhs; break;
-            case '/':
-                if (std::abs(rhs) < 1e-9) return false;
-                out /= rhs;
-                break;
-            default: return false;
+        if (op == '*') out *= rhs;
+        else {
+            if (std::abs(rhs) < 1e-9) return false;
+            out /= rhs;
         }
+    }
+}
+
+bool Parser::expression(const std::string& text, std::size_t& i, double& out) {
+    if (!product(text, i, out)) return false;
+    while (true) {
+        while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+        if (i >= text.size() || (text[i] != '+' && text[i] != '-')) return true;
+        const char op = text[i++];
+        double rhs = 0.0;
+        if (!product(text, i, rhs)) return false;
+        if (op == '+') out += rhs;
+        else out -= rhs;
     }
 }
 

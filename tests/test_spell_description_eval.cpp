@@ -78,11 +78,9 @@ TEST_CASE("a declaration can name another one", "[spell][description]") {
     CHECK(evaluated("opportunity1", ctx) == Catch::Approx(110.0));
 }
 
-TEST_CASE("arithmetic, in the order it is written", "[spell][description]") {
+TEST_CASE("arithmetic respects precedence and parentheses", "[spell][description]") {
     const auto ctx = contextFor("$a=${2+3*4}\r\n$b=${(2+3)*4}\r\n$c=${10/4}");
-    // Left to right, which is what these expressions are written for - the
-    // parenthesised form is how the data groups when it means to.
-    CHECK(evaluated("a", ctx) == Catch::Approx(20.0));
+    CHECK(evaluated("a", ctx) == Catch::Approx(14.0));
     CHECK(evaluated("b", ctx) == Catch::Approx(20.0));
     CHECK(evaluated("c", ctx) == Catch::Approx(2.5));
 }
@@ -127,4 +125,22 @@ TEST_CASE("malformed expressions are refused, not guessed at",
     CHECK_FALSE(evaluateSpellExpression("$?s123[10]", ctx, out));   // one branch
     CHECK_FALSE(evaluateSpellExpression("${1/0}", ctx, out));
     CHECK_FALSE(evaluateSpellExpression("", ctx, out));
+}
+
+TEST_CASE("Combo point expressions preserve typed effect and attack power tokens", "[spell_description]") {
+    SpellDescriptionContext ctx;
+    ctx.value = [](const std::string& token, int index, double& out) {
+        if (token == "AP") { out = 24; return true; }
+        if (index != 0) return false;
+        if (token == "m") { out = 5; return true; }
+        if (token == "M") { out = 9; return true; }
+        if (token == "b") { out = 10; return true; }
+        return false;
+    };
+    double result = 0;
+    REQUIRE(evaluateSpellExpression("$m1+($b1*3)+$AP*0.09", ctx, result));
+    REQUIRE(std::abs(result - 37.16) < 0.0001);
+    REQUIRE(evaluateSpellExpression("$M1+($b1*3)+$AP*0.09", ctx, result));
+    REQUIRE(std::abs(result - 41.16) < 0.0001);
+    REQUIRE_FALSE(evaluateSpellExpression("$unknown", ctx, result));
 }

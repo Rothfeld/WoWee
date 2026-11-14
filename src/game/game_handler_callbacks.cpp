@@ -3903,6 +3903,49 @@ SpellDescriptionContext GameHandler::descriptionContext(
         out = std::abs(static_cast<double>(bp[index]) + 1.0);
         return true;
     };
+    if (services().expansionRegistry && services().expansionRegistry->getActive() &&
+        services().expansionRegistry->getActive()->id == "tbc") {
+        ctx.value = [this, spellId](const std::string& token, int index, double& out) {
+            if (token == "AP") { out = getMeleeAttackPower(); return true; }
+            auto* assets = services().assetManager;
+            const auto* layouts = pipeline::getActiveDBCLayout();
+            const auto* layout = layouts ? layouts->getLayout("Spell") : nullptr;
+            if (!assets || !layout || index < 0 || index > 2) return false;
+            const auto dbc = assets->loadDBC("Spell.dbc");
+            if (!dbc) return false;
+            const auto row = dbc->findRecordById(spellId);
+            if (row < 0) return false;
+            const auto field = [&](const char* name) {
+                return layout->field(std::string(name) + std::to_string(index));
+            };
+            if (token == "b") {
+                const auto column = field("EffectPointsPerComboPoint");
+                if (column >= dbc->getFieldCount()) return false;
+                out = dbc->getFloat(row, column);
+                return true;
+            }
+            if (token != "s" && token != "S" && token != "m" && token != "M" &&
+                token != "o" && token != "O") return false;
+            const auto base = field("EffectBasePoints");
+            const auto die = field("EffectDieSides");
+            if (base >= dbc->getFieldCount() || die >= dbc->getFieldCount()) return false;
+            const int32_t points = static_cast<int32_t>(dbc->getUInt32(row, base));
+            const int32_t sides = static_cast<int32_t>(dbc->getUInt32(row, die));
+            out = std::abs(static_cast<double>(points) + (token == "M" ? sides : 1));
+            if (token == "o" || token == "O") {
+                const auto periodField = field("EffectAmplitude");
+                const auto auraField = field("EffectApplyAuraName");
+                if (periodField >= dbc->getFieldCount() || auraField >= dbc->getFieldCount()) return false;
+                uint32_t period = dbc->getUInt32(row, periodField);
+                const uint32_t aura = dbc->getUInt32(row, auraField);
+                // Health and power regeneration auras express their amount per five seconds.
+                if (aura == 84 || aura == 85) period = 5000;
+                if (period == 0) return false;
+                out = std::floor(out * getSpellDuration(spellId) * 1000.0 / period);
+            }
+            return true;
+        };
+    }
     ctx.knowsSpell = [this](uint32_t id) { return isSpellKnownToClient(id); };
     return ctx;
 }
@@ -4062,6 +4105,13 @@ std::string GameHandler::formatSpellDescription(uint32_t selfSpellId,
             case 's': case 'S': case 'o': case 'O':
             case 'm': case 'M': {
                 long v = basePoints(target, idx);
+                const auto context = descriptionContext(target, nullptr);
+                if (context.value) {
+                    double typedValue = 0;
+                    if (context.value(std::string(1, code), idx, typedValue))
+                        v = std::lround(typedValue);
+                    else v = LONG_MIN;
+                }
                 if (v != LONG_MIN) { out += std::to_string(v); lastValue = v; resolved = true; }
                 break;
             }
