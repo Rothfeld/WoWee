@@ -2832,6 +2832,10 @@ void GameHandler::offerPetition(uint64_t petitionGuid, uint64_t targetGuid) {
 // Loot, Gossip, Vendor
 // ============================================================
 
+void GameHandler::prepareLoot(uint64_t guid, bool modifier) {
+    inventoryHandler_->prepareLoot(guid, modifier);
+}
+
 void GameHandler::lootTarget(uint64_t guid) {
     if (inventoryHandler_) inventoryHandler_->lootTarget(guid);
 }

@@ -2046,6 +2046,7 @@ public:
     }
 
     // ---- Loot ----
+    void prepareLoot(uint64_t guid, bool modifier);
     void lootTarget(uint64_t guid);
     void lootItem(uint8_t slotIndex, bool confirmed = false);
     void confirmPendingLoot();

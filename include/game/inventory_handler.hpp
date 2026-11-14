@@ -90,6 +90,11 @@ public:
     void setTradeGold(uint64_t amount);
 
     // ---- Loot ----
+    // Snapshot the interaction toggle before an asynchronous loot response.
+    void prepareLoot(uint64_t guid, bool modifier) {
+        lootRequestGuid_ = guid;
+        lootRequestAuto_ = autoLoot_ != modifier;
+    }
     void lootTarget(uint64_t targetGuid);
     /// Take the coin on the corpse. Its own request, with no slot:
     /// money is not one of the numbered loot slots on the wire even
@@ -658,6 +663,8 @@ private:
     // ---- Loot state ----
     bool lootWindowOpen_ = false;
     bool autoLoot_ = false;
+    uint64_t lootRequestGuid_ = 0;
+    bool lootRequestAuto_ = false;
     bool autoSellGrey_ = false;
     bool autoRepair_ = false;
     LootResponseData currentLoot_;

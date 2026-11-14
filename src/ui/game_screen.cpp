@@ -1700,6 +1700,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     // one object this already did, as a special case.
                     auto picked = gameHandler.getEntityManager().getEntity(closestGuid);
                     if (picked && picked->getType() == game::ObjectType::GAMEOBJECT) {
+                        gameHandler.prepareLoot(closestGuid, io.KeyShift);
                         gameHandler.interactWithGameObject(closestGuid);
                     } else {
                         gameHandler.setTarget(closestGuid);
@@ -1874,6 +1875,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         LOG_DEBUG("[GO-DIAG] Right-click: raypick hit GO 0x",
                                     std::hex, closestGuid, std::dec);
                         gameHandler.setTarget(closestGuid);
+                        gameHandler.prepareLoot(closestGuid, io.KeyShift);
                         gameHandler.interactWithGameObject(closestGuid);
                         return;
                     }
@@ -1888,6 +1890,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     // Check if unit is dead (health == 0) → loot, otherwise interact/attack
                     auto unit = std::static_pointer_cast<game::Unit>(target);
                     if (unit->getHealth() == 0 && unit->getMaxHealth() > 0) {
+                        gameHandler.prepareLoot(target->getGuid(), io.KeyShift);
                         gameHandler.lootTarget(target->getGuid());
                     } else {
                         // Service flags describe interaction, not permission to attack.

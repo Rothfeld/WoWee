@@ -1069,6 +1069,8 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
 void InventoryHandler::lootTarget(uint64_t targetGuid) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    if (lootRequestGuid_ != targetGuid) prepareLoot(targetGuid, false);
+    localLootState_[targetGuid].itemAutoLootSent = false;
     currentLoot_.items.clear();
     LOG_INFO("Looting target 0x", std::hex, targetGuid, std::dec);
     auto packet = LootPacket::build(targetGuid);
@@ -1186,6 +1188,8 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         LOG_DEBUG("Ignoring empty SMSG_LOOT_RESPONSE during pending gather/open");
         return;
     }
+    const bool autoLoot = currentLoot_.lootGuid == lootRequestGuid_ ? lootRequestAuto_ : autoLoot_;
+    lootRequestGuid_ = 0;
     lootWindowOpen_ = true;
     if (owner_.lootWindowCallbackRef()) owner_.lootWindowCallbackRef()(true);
     if (owner_.addonEventCallbackRef()) {
@@ -1194,7 +1198,7 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         // closes with CloseLoot(autoLoot == 0) - so an absent argument
         // compares false and tells the server the window opened when it did
         // not.
-        owner_.addonEventCallbackRef()("LOOT_OPENED", {autoLoot_ ? "1" : "0"});
+        owner_.addonEventCallbackRef()("LOOT_OPENED", {autoLoot ? "1" : "0"});
         owner_.addonEventCallbackRef()("LOOT_READY", {});
     }
     if (currentLoot_.lootGuid == lastInteractedGoGuid) {
@@ -1208,7 +1212,7 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         owner_.queryItemInfo(item.itemId, 0);
     }
 
-    if (currentLoot_.gold > 0) {
+    if (autoLoot && currentLoot_.gold > 0) {
         if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
             bool suppressFallback = false;
             auto cooldownIt = recentLootMoneyAnnounceCooldowns_.find(currentLoot_.lootGuid);
@@ -1232,18 +1236,14 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         }
     }
 
-    // Game-object quest containers are single-action pickups in normal play.
-    // Autostore their returned items even when general creature auto-loot is off;
-    // otherwise right-click opens server loot but never grants the objective item.
-    const bool autoStoreGameObjectLoot = isLastInteractedGoLoot;
-    if ((autoLoot_ || autoStoreGameObjectLoot) &&
+    if (autoLoot &&
         owner_.getState() == WorldState::IN_WORLD && owner_.getSocket() &&
         !localLoot.itemAutoLootSent) {
         for (const auto& item : currentLoot_.items) {
             LOG_INFO("Autostoring loot slot=", static_cast<int>(item.slotIndex),
                      " item=", item.itemId, " count=", item.count,
                      " fromGuid=0x", std::hex, currentLoot_.lootGuid, std::dec,
-                     " gameObject=", autoStoreGameObjectLoot);
+                     " gameObject=", isLastInteractedGoLoot);
             auto pkt = AutostoreLootItemPacket::build(item.slotIndex);
             owner_.getSocket()->send(pkt);
         }
