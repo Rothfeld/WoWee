@@ -947,8 +947,12 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     const bool isTBC = (header.version >= 260 && header.version < 264);
 
     // Bounding box
-    model.boundMin = glm::vec3(header.boundingBox[0], header.boundingBox[1], header.boundingBox[2]);
-    model.boundMax = glm::vec3(header.boundingBox[3], header.boundingBox[4], header.boundingBox[5]);
+    // Legacy assets (including Boar.m2 and Troglodyte.m2) can store the
+    // collision-box corners in reverse order. Consumers need ordered bounds.
+    const glm::vec3 corner0(header.boundingBox[0], header.boundingBox[1], header.boundingBox[2]);
+    const glm::vec3 corner1(header.boundingBox[3], header.boundingBox[4], header.boundingBox[5]);
+    model.boundMin = glm::min(corner0, corner1);
+    model.boundMax = glm::max(corner0, corner1);
     model.boundRadius = header.boundingRadius;
 
     // Read vertices

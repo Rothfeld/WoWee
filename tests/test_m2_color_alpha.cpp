@@ -6,6 +6,7 @@
 #include "rendering/m2_track_sampler.hpp"
 
 #include <filesystem>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -149,4 +150,18 @@ TEST_CASE("Vanilla peasant wood model parses color alpha ranges", "[m2][color]")
     // exactly 0 for the whole first key span (the renderer culls on <= 0.01).
     REQUIRE(model.colorAlphaTracks[1].interpolationType == 0);
     CHECK(firstAlpha(model, 1, 0) == Catch::Approx(0.0f).margin(0.01f));
+}
+
+TEST_CASE("Legacy collision boxes accept reversed authored corners", "[m2][bounds]") {
+    std::vector<uint8_t> bytes(332, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const uint32_t version = 262;
+    std::memcpy(bytes.data() + 4, &version, 4);
+    const float corners[]{0.30556f, 0.30556f, 2.03128f, -0.30556f, -0.30556f, 0.0f};
+    std::memcpy(bytes.data() + 208, corners, sizeof(corners));
+    const auto model = M2Loader::load(bytes);
+    CHECK(model.boundMin.z == 0.0f);
+    CHECK(model.boundMax.z == Catch::Approx(2.03128f));
+    CHECK(model.boundMin.x == Catch::Approx(-0.30556f));
+    CHECK(model.boundMax.x == Catch::Approx(0.30556f));
 }

@@ -158,25 +158,26 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
         selCircleFloorCacheAge_++;
     } else {
         const float baseZ = selCirclePos_.z;
-        floorZ = baseZ;
+        std::optional<float> surface;
         auto considerFloor = [&](std::optional<float> sample) {
             if (!sample) return;
             const float h = *sample;
             if (h < baseZ - 1.25f || h > baseZ + 0.85f) return;
-            floorZ = std::max(floorZ, h);
+            if (!surface || std::abs(h - baseZ) < std::abs(*surface - baseZ)) surface = h;
         };
 
         if (terrainHeight) considerFloor(terrainHeight(selCirclePos_.x, selCirclePos_.y));
         if (wmoHeight) considerFloor(wmoHeight(selCirclePos_.x, selCirclePos_.y, selCirclePos_.z + 3.0f));
         if (m2Height) considerFloor(m2Height(selCirclePos_.x, selCirclePos_.y, selCirclePos_.z + 2.0f));
 
+        floorZ = surface.value_or(baseZ);
         selCircleFloorCachePos_ = selCirclePos_;
         selCircleFloorCacheZ_ = floorZ;
         selCircleFloorCacheAge_ = 0;
     }
 
     glm::vec3 raisedPos = selCirclePos_;
-    raisedPos.z = floorZ + 0.17f;
+    raisedPos.z = floorZ + 0.025f;
     glm::mat4 model = glm::translate(glm::mat4(1.0f), raisedPos);
     model = glm::scale(model, glm::vec3(selCircleRadius_));
 
