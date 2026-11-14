@@ -1367,6 +1367,32 @@ int lua_CheckButton_SetChecked(lua_State* L) {
     }
     return 0;
 }
+// Attribute callbacks need the same legacy globals as event/show callbacks.
+// TBC action buttons read `this` while their parent opens the spellbook.
+int lua_Frame_SetAttribute(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    luaL_checkany(L, 2);
+    luaL_checkany(L, 3);
+    lua_getfield(L, 1, "__attributes");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, 1, "__attributes");
+    }
+    lua_pushvalue(L, 2);
+    lua_pushvalue(L, 3);
+    lua_settable(L, -3);
+    lua_pop(L, 1);
+    lua_getfield(L, 1, "__scripts");
+    if (!lua_istable(L, -1)) return 0;
+    lua_getfield(L, -1, "OnAttributeChanged");
+    if (!lua_isfunction(L, -1)) return 0;
+    lua_remove(L, -2);
+    for (int i = 1; i <= 3; ++i) lua_pushvalue(L, i);
+    if (pcallScript(L, "OnAttributeChanged", 3, 0) != 0) return lua_error(L);
+    return 0;
+}
 /// GetChecked. 1 when ticked and nil when not, which is what 3.3.5 answers and
 /// what this FrameXML is written against - the same 0/1 convention SetChecked
 /// takes, and forty SetChecked(0) calls in these files say which convention
@@ -6210,6 +6236,7 @@ void LuaEngine::registerCoreAPI() {
         {"ScrollToBottom",  lua_MessageFrame_ScrollToBottom},
         {"Enable",          lua_Button_Enable},
         {"SetChecked",      lua_CheckButton_SetChecked},
+        {"SetAttribute",    lua_Frame_SetAttribute},
         {"SetButtonState",  lua_Button_SetButtonState},
         {"GetButtonState",  lua_Button_GetButtonState},
         {"LockHighlight",   lua_Button_LockHighlight},
@@ -6816,12 +6843,6 @@ void LuaEngine::registerCoreAPI() {
         "    if type(fmt) ~= 'string' then return end\n"
         "    local ok, out = pcall(string.format, fmt, ...)\n"
         "    self:SetText(ok and out or fmt)\n"
-        "end\n"
-        "function mt:SetAttribute(name, value)\n"
-        "    self.__attributes = self.__attributes or {}\n"
-        "    self.__attributes[name] = value\n"
-        "    local handler = self.__scripts and self.__scripts.OnAttributeChanged\n"
-        "    if handler then handler(self, name, value) end\n"
         "end\n"
         // The three-argument form names one attribute in pieces, and falls
         // back to the bare name when no piece-specific value was set - which
