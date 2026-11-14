@@ -3402,14 +3402,22 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     ? std::optional<glm::vec3>(posIt->second)
                     : std::nullopt;
 
-            // Ground-moving entities need client floor projection between server
-            // spline points. Use the floor nearest server Z so outdoor terrain
+            // Grounded creatures need floor projection both between spline points
+            // and after stopping. Stopping must not restore stale server Z. Use the floor nearest server Z so outdoor terrain
             // above a tunnel cannot move the model into/onto the WMO shell.
             const bool groundCreature = !_creatureFlyingState.count(guid) &&
                                         !_creatureSwimmingState.count(guid);
-            if (entity->isActivelyMoving() && groundCreature) {
+            const bool onTransport = gameHandler->transportAttachmentsRef().count(guid) != 0;
+            if (groundCreature && !onTransport) {
                 if (auto floorZ = movingEntityFloor(renderer.get(), renderPos,
                                                     previousRenderPos)) {
+                    if (!entity->isActivelyMoving() && std::abs(renderPos.z - *floorZ) > 0.1f) {
+                        static std::unordered_set<uint64_t> reported;
+                        if (reported.size() < 32 && reported.insert(guid).second) {
+                            LOG_DEBUG("Stationary NPC ground correction: guid=", guid,
+                                      " serverZ=", renderPos.z, " floorZ=", *floorZ);
+                        }
+                    }
                     renderPos.z = *floorZ;
                 }
             }
