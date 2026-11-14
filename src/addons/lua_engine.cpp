@@ -1358,9 +1358,12 @@ int lua_CheckButton_SetChecked(lua_State* L) {
         // turned off. BagSlotButton_UpdateChecked is one: it counts the open
         // container frames and passes 0 or 1 straight in, so every bag button
         // stayed lit whether or not its bag was open.
+        // TBC SpellButton_UpdateSelection passes literal "true"/"false" strings.
         w->checked = lua_isnone(L, 2)    ? true
                    : lua_isnumber(L, 2)  ? (lua_tonumber(L, 2) != 0)
-                                         : (lua_toboolean(L, 2) != 0);
+                   : lua_type(L, 2) == LUA_TSTRING
+                       ? std::strcmp(lua_tostring(L, 2), "false") != 0
+                       : (lua_toboolean(L, 2) != 0);
     }
     return 0;
 }
