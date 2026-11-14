@@ -1204,6 +1204,15 @@ void GameHandler::sendPing() {
         return;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+    // CMaNGOS TBC treats intervals below 27 seconds as overspeed pings.
+    // Apply the normal 30-second cadence to transfer-triggered pings too.
+    if (isActiveExpansion("tbc") && pingSequence != 0 &&
+        now - pingTimestamp_ < std::chrono::duration<float>(pingInterval)) {
+        LOG_DEBUG("Deferring TBC ping until the 30-second interval has elapsed");
+        return;
+    }
+
     // Increment sequence number
     pingSequence++;
 
@@ -1211,7 +1220,7 @@ void GameHandler::sendPing() {
               " latencyHintMs=", lastLatency);
 
     // Record send time for RTT measurement
-    pingTimestamp_ = std::chrono::steady_clock::now();
+    pingTimestamp_ = now;
 
     // Build and send ping packet
     auto packet = PingPacket::build(pingSequence, lastLatency);

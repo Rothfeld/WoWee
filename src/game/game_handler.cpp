@@ -158,6 +158,9 @@ bool GameHandler::connect(const std::string& host,
 
     // Create world socket
     socket = std::make_unique<network::WorldSocket>();
+    pingSequence = 0;
+    timeSinceLastPing = 0.0f;
+    pingTimestamp_ = {};
 
     // Set up packet callback
     socket->setPacketCallback([this](const network::Packet& packet) {
@@ -822,7 +825,7 @@ void GameHandler::update(float deltaTime) {
         if (movementHandler_) movementHandler_->timeSinceLastMoveHeartbeatRef() += deltaTime;
 
         const float currentPingInterval =
-            (isPreWotlk()) ? game::CLASSIC_PING_INTERVAL_SEC : pingInterval;
+            isClassicLikeExpansion() ? game::CLASSIC_PING_INTERVAL_SEC : pingInterval;
         if (timeSinceLastPing >= currentPingInterval) {
             if (socket) {
                 sendPing();
