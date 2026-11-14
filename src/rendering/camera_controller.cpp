@@ -2063,10 +2063,6 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // Camera direction from yaw/pitch (already computed as forward3D)
     glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
 
-    // Smooth zoom toward user target
-    float zoomLerp = 1.0f - std::exp(-ZOOM_SMOOTH_SPEED * deltaTime);
-    currentDistance += (userTargetDistance - currentDistance) * zoomLerp;
-
     // Limit max zoom when inside a WMO with a ceiling (building interior)
     // Throttle: only recheck every 10 frames or when position changes >2 units.
     if (wmoRenderer) {
@@ -2077,35 +2073,13 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             insideWMOCheckCounter = 0;
             lastInsideWMOCheckPos = targetPos;
         }
-
-        // Pulled in indoors, and let back out again.
-        //
-        // This is the same containment test IsIndoors answers with - the one a
-        // macro's [indoors] reads and the one that says a mount is not allowed
-        // here - asked at the player rather than at the camera. Indoors the
-        // camera is forever being pushed off a wall and let back out, and that
-        // is what turns a corridor into a bout of motion sickness.
-        if (cachedInsideWMO) {
-            if (!indoorZoomHeld_) {
-                indoorZoomHeld_ = true;
-                outdoorTargetDistance_ = userTargetDistance;
-            }
-            if (userTargetDistance > MAX_DISTANCE_INTERIOR) {
-                userTargetDistance = MAX_DISTANCE_INTERIOR;
-            }
-        } else if (indoorZoomHeld_) {
-            indoorZoomHeld_ = false;
-            // Given back only if they have not chosen something closer while
-            // they were inside: their own wheel outranks the restore.
-            // Plus what the collision took: a zoom the sweep pulled in is not
-            // a zoom the player chose, and without this a walk down one
-            // corridor meant never getting the outdoor distance back.
-            if (userTargetDistance + collisionZoomDebt_ >= MAX_DISTANCE_INTERIOR - 0.01f &&
-                outdoorTargetDistance_ > userTargetDistance) {
-                userTargetDistance = outdoorTargetDistance_;
-            }
-        }
     }
+
+    // Environment limits the current view, never the player's chosen zoom.
+    const float zoomTarget = cachedInsideWMO
+        ? std::min(userTargetDistance, MAX_DISTANCE_INTERIOR) : userTargetDistance;
+    const float zoomLerp = 1.0f - std::exp(-ZOOM_SMOOTH_SPEED * deltaTime);
+    currentDistance += (zoomTarget - currentDistance) * zoomLerp;
 
     // ===== Camera collision (WMO/M2 raycasts + terrain heightfield march) =====
     // Cast a ray from the pivot toward the camera direction to find the
@@ -2230,48 +2204,6 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
         collisionDistance = std::min(collisionDistance, smoothedCollisionDist_);
 
-        // A collision takes the zoom in with it.
-        //
-        // The sweep moved the camera and left the zoom where it was, so the
-        // moment the obstruction passed the camera sprang back out to a
-        // distance the room had already refused - and the next step pushed it
-        // in again. That in-and-out is the whole of what makes an interior
-        // unpleasant, and no amount of smoothing fixes it, because the target
-        // it is smoothing toward is the wrong one. Bringing the target in
-        // behind the camera is what lets the view settle.
-        // Not while something else owns the distance.
-        //
-        // The barber's chair sets it to 2.4 and holds the camera on the
-        // character's face, where the sweep meets the chair and the character
-        // constantly. Pulling in there and handing it back a second later is a
-        // slow breathe in and out at close range, which from the chair reads as
-        // the view bobbing - reported as exactly that. A scripted view is not a
-        // player deciding how far back to stand.
-        const float bite = barberView_ ? 0.0f
-                                       : userTargetDistance - smoothedCollisionDist_;
-        if (bite > 0.1f) {
-            collisionClearSeconds_ = 0.0f;
-            // Toward what the sweep is asking for and no further, over about a
-            // second: passing a doorway should not collapse the zoom.
-            constexpr float kPullTau = 1.0f;
-            const float step = bite * (1.0f - std::exp(-deltaTime / kPullTau));
-            const float pulled = std::max(userTargetDistance - step, MIN_DISTANCE);
-            collisionZoomDebt_ += userTargetDistance - pulled;
-            userTargetDistance = pulled;
-        } else {
-            collisionClearSeconds_ += deltaTime;
-            // Given back only once nothing has been in the way for a moment,
-            // and more slowly than it was taken, so clearing a doorway does
-            // not throw the camera straight out into the next wall. Slower out
-            // than in is also what stops the two rules chasing each other.
-            constexpr float kSettleSeconds = 1.0f;
-            constexpr float kGiveTau = 2.5f;
-            if (collisionClearSeconds_ > kSettleSeconds && collisionZoomDebt_ > 0.001f) {
-                const float give = collisionZoomDebt_ * (1.0f - std::exp(-deltaTime / kGiveTau));
-                userTargetDistance += give;
-                collisionZoomDebt_ -= give;
-            }
-        }
     } else {
         smoothedCollisionDist_ = -1.0f;   // Reset when no collision sources available
         smoothedTerrainDist_ = -1.0f;
@@ -3723,11 +3655,6 @@ void CameraController::applyLookDelta(float dxPixels, float dyPixels) {
 }
 
 void CameraController::processMouseWheel(float delta) {
-    // The player's own choice clears whatever the sweep had taken: a distance
-    // they picked outranks one this arrived at, and it must not be given back
-    // on top of theirs a moment later.
-    collisionZoomDebt_ = 0.0f;
-    collisionClearSeconds_ = 0.0f;
     // Scale zoom speed proportionally to current distance for fine control up close
     float zoomSpeed = glm::max(userTargetDistance * 0.15f, 0.3f);
     userTargetDistance -= delta * zoomSpeed;

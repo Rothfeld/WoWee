@@ -170,12 +170,6 @@ public:
     void setBarberShopView(bool on) {
         if (on == barberView_) return;
         barberView_ = on;
-        // Whatever the collision sweep had taken off the zoom goes with it.
-        // This view sets its own distance and restores the player's on the way
-        // out, and a debt carried across either edge is given back on top of a
-        // number it was never taken from.
-        collisionZoomDebt_ = 0.0f;
-        collisionClearSeconds_ = 0.0f;
         if (on) {
             savedBarberYaw_ = yaw;
             savedBarberPitch_ = pitch;
@@ -618,15 +612,6 @@ private:
     // Cached isInsideWMO result (throttled to avoid per-frame cost)
     bool cachedInsideWMO = false;
     bool cachedInsideInteriorWMO = false;
-    /// The zoom the player chose outdoors, kept while the indoor limit holds
-    /// them closer and given back on the way out - a limit that quietly keeps
-    /// their zoom is a setting changed behind their back.
-    float outdoorTargetDistance_ = 0.0f;
-    bool indoorZoomHeld_ = false;
-    /// How much of the zoom the collision sweep has taken, and how long
-    /// nothing has been in the way. See the pull in updateOrbitCamera.
-    float collisionZoomDebt_ = 0.0f;
-    float collisionClearSeconds_ = 0.0f;
     int insideStateCheckCounter_ = 0;
     glm::vec3 lastInsideStateCheckPos_ = glm::vec3(0.0f);
     int insideWMOCheckCounter = 0;
