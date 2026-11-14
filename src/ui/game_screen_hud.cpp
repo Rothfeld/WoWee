@@ -1494,7 +1494,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             float subX = sx - subSz.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
             drawList->AddText(nameFont, nameFontSize, ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
-            drawList->AddText(nameFont, nameFontSize, ImVec2(subX,         subY),         IM_COL32(180, 180, 180, A(200)), subLabel.c_str());
+            drawList->AddText(nameFont, nameFontSize, ImVec2(subX,         subY),         (isPlayer ? IM_COL32(180, 180, 180, A(200)) : nameColor), subLabel.c_str());
         }
 
         // Group leader crown to the right of the name on player nameplates
@@ -1538,8 +1538,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 questIconX += ImGui::CalcTextSize("\xe2\x9a\x94").x + 2.0f;
             }
 
-            // Quest giver indicator: "!" for available quests, "?" for completable/incomplete
-            if (!isPlayer) {
+            // TBC uses the world-space quest marker, without a second glyph beside the name.
+            if (!game::isPreWotlk() && !isPlayer) {
                 const auto mark = game::questGiverMarker(
                     gameHandler.getQuestGiverStatus(guid));
                 const char* qSym = mark.symbol;

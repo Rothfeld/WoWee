@@ -885,9 +885,9 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                     target->getType() == game::ObjectType::PLAYER) {
                     showSelectionCircle = true;
                     auto unit = std::static_pointer_cast<game::Unit>(target);
-                    // HighlightColor.dbc colours: hostile, unfriendly, neutral, friendly, player, dead.
+                    // Reaction colors; unflagged player rings use pale violet in the TBC reference.
                     const glm::vec3 kRed(1.0f, 0.0f, 0.0f), kOrange(1.0f, 0.5f, 0.0f),
-                        kYellow(1.0f, 1.0f, 0.0f), kGreen(0.0f, 1.0f, 0.0f), kBlue(0.0f, 0.0f, 1.0f);
+                        kYellow(1.0f, 1.0f, 0.0f), kGreen(0.0f, 1.0f, 0.0f), kBlue(0.5f, 0.5f, 1.0f);
                     auto pvpFlagged = [&](uint64_t guid) {
                         auto e = gameHandler.getEntityManager().getEntity(guid);
                         return e && (e->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS)) & 0x00001000u);
