@@ -324,6 +324,25 @@ void GameScreen::renderMinimapClock(float centerX, float centerY, float mapRadiu
     auto* renderer = services_.renderer;
     auto* minimap = renderer ? renderer->getMinimap() : nullptr;
     if (!minimap) return;
+    if (frameXmlOwns(UiElement::Minimap)) {
+        auto* addons = services_.addonManager;
+        if (!addons) return;
+        auto* clock = addons->getLuaEngine()->widgets().findByName("TimeManagerClockButton");
+        if (settingsPanel_.showMinimapClock_ && !clock) {
+            std::string reason;
+            if (!addons->loadAddOnByName("Blizzard_TimeManager", reason)) {
+                LOG_ERROR("Minimap clock addon failed: ", reason);
+                throw std::runtime_error("Blizzard_TimeManager failed to load: " + reason);
+            }
+            clock = addons->getLuaEngine()->widgets().findByName("TimeManagerClockButton");
+            if (!clock) throw std::runtime_error("Blizzard_TimeManager has no clock button");
+        }
+        if (clock && clock->shown != settingsPanel_.showMinimapClock_) {
+            addons->runInterfaceCommand(settingsPanel_.showMinimapClock_
+                ? "TimeManagerClockButton:Show()" : "TimeManagerClockButton:Hide()");
+        }
+        return;
+    }
     // Optional clock display at bottom-right of minimap (local time).
     if (settingsPanel_.showMinimapClock_) {
         auto now = std::chrono::system_clock::now();
@@ -1701,6 +1720,8 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     // question separately from the blips above.
     if (!frameXmlOwns(UiElement::Minimap)) {
         renderMinimapChrome(gameHandler, centerX, centerY, mapRadius);
+    } else {
+        renderMinimapClock(centerX, centerY, mapRadius);
     }
 }
 void GameScreen::saveSettings() {
