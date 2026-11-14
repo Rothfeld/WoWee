@@ -296,3 +296,21 @@ TEST_CASE("trunk overlap recovery requires an enclosed horizontal section", "[m2
     mesh.indices.resize(6);
     CHECK_FALSE(insideTrunkCollision(mesh, {0,0,1}));
 }
+
+TEST_CASE("Z billboard faces the viewer while staying upright", "[m2][billboard]") {
+    wowee::rendering::M2ModelGPU model;
+    model.bones.resize(1);
+    model.bones[0].flags = 0x240;
+    model.bones[0].parentBone = -1;
+    model.bones[0].pivot = glm::vec3(0);
+    wowee::rendering::M2Instance instance;
+    instance.invModelMatrix = glm::mat4(1);
+    for (const auto& camera : {glm::vec3(5,0,3), glm::vec3(0,5,-3),
+                               glm::vec3(-5,0,8), glm::vec3(0,-5,0)}) {
+        wowee::rendering::m2_internal::computeBoneMatrices(model, instance, &camera);
+        const auto& pose = instance.boneMatrices[0];
+        const auto toward = glm::normalize(glm::vec3(camera.x, camera.y, 0));
+        CHECK(glm::dot(glm::vec3(pose[0]), toward) == Catch::Approx(1));
+        CHECK(glm::vec3(pose[2]).z == Catch::Approx(1));
+    }
+}

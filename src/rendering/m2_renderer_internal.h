@@ -307,6 +307,7 @@ inline glm::vec3 closestPointOnTriangle(const glm::vec3& p,
 /// left them at and cut through the model they belong to. Orgrimmar's bonfire
 /// keeps its glow on bone 0, flagged 0x8.
 constexpr uint32_t kM2BoneSphericalBillboard = 0x8;
+constexpr uint32_t kM2BoneCylindricalBillboardZ = 0x40;
 
 /// Bone transforms for one instance.
 ///
@@ -349,7 +350,7 @@ inline void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance,
 
         glm::mat4 local = glm::translate(glm::mat4(1.0f), bone.pivot);
         local = glm::translate(local, trans);
-        if (cameraPosWorld && (bone.flags & kM2BoneSphericalBillboard) != 0) {
+        if (cameraPosWorld && (bone.flags & (kM2BoneSphericalBillboard | kM2BoneCylindricalBillboardZ)) != 0) {
             // Turn the bone to face the camera instead of using its authored
             // rotation. Everything is done in model space, so the instance's
             // own rotation and scale still apply on top.
@@ -360,6 +361,8 @@ inline void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance,
             const glm::vec3 camModel =
                 glm::vec3(instance.invModelMatrix * glm::vec4(*cameraPosWorld, 1.0f));
             glm::vec3 toCamera = camModel - bone.pivot;
+            // Quest question marks rotate around Z while remaining upright.
+            if (bone.flags & kM2BoneCylindricalBillboardZ) toCamera.z = 0.0f;
             const float len2 = glm::dot(toCamera, toCamera);
             if (len2 > 1e-8f) {
                 toCamera *= glm::inversesqrt(len2);
