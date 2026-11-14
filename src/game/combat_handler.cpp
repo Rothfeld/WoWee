@@ -326,6 +326,15 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
         }
     }
 
+    // Resolve assist first, then reject friendly targets before range checks
+    // or local attack intent. A guard without gossip flags is still friendly.
+    if (auto entity = owner_.getEntityManager().getEntity(targetGuid)) {
+        if (auto* unit = dynamic_cast<Unit*>(entity.get());
+            unit && owner_.unitReactionToPlayer(*unit) > 4) {
+            return;
+        }
+    }
+
     // Client-side range gate to avoid starting "swing forever" loops when
     // target is already clearly out of range.
     if (auto target = owner_.getEntityManager().getEntity(targetGuid)) {

@@ -1877,8 +1877,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     if (unit->getHealth() == 0 && unit->getMaxHealth() > 0) {
                         gameHandler.lootTarget(target->getGuid());
                     } else {
-                        // Interact with service NPCs; otherwise treat non-interactable living units
-                        // as attackable fallback (covers bad faction-template classification).
+                        // Service flags describe interaction, not permission to attack.
                         auto isSpiritNpc = [&]() -> bool {
                             constexpr uint32_t NPC_FLAG_SPIRIT_GUIDE = 0x00004000;
                             constexpr uint32_t NPC_FLAG_SPIRIT_HEALER = 0x00008000;
@@ -1893,21 +1892,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         };
                         bool allowSpiritInteract = (gameHandler.isPlayerDead() || gameHandler.isPlayerGhost()) && isSpiritNpc();
                         bool canInteractNpc = unit->isInteractable() || allowSpiritInteract;
-                        bool shouldAttackByFallback = !canInteractNpc;
                         if (!unit->isHostile() && canInteractNpc) {
                             gameHandler.interactWithNpc(target->getGuid());
-                        } else if (unit->isHostile() || shouldAttackByFallback) {
-                            // Said once per unit: a creature nobody thinks is
-                            // hostile, attacked because it carries no NPC flags,
-                            // is a talk that never left this client.
-                            if (!unit->isHostile()) {
-                                static std::unordered_set<uint64_t> said;
-                                if (said.insert(target->getGuid()).second) {
-                                    LOG_WARNING("Right-click: ", unit->getName(),
-                                                " is not hostile and has no NPC flags,"
-                                                " so it was attacked rather than spoken to");
-                                }
-                            }
+                        } else if (gameHandler.unitReactionToPlayer(*unit) <= 4) {
                             gameHandler.startAutoAttack(target->getGuid());
                         }
                     }
