@@ -5,10 +5,14 @@
 #include <glm/mat4x4.hpp>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
+#include "rendering/vk_texture.hpp"
+#include "rendering/vk_context.hpp"
+#include <array>
 #include <functional>
 #include <optional>
 
 namespace wowee {
+namespace pipeline { class AssetManager; }
 namespace rendering {
 
 class VkContext;
@@ -26,6 +30,8 @@ public:
 
     OverlaySystem(const OverlaySystem&) = delete;
     OverlaySystem& operator=(const OverlaySystem&) = delete;
+
+    void loadSelectionTexture(pipeline::AssetManager& assets);
 
     // Selection circle
     void setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color);
@@ -68,8 +74,11 @@ private:
     // Selection circle resources
     VkPipeline selCirclePipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout selCirclePipelineLayout_ = VK_NULL_HANDLE;
-    ::VkBuffer selCircleVertBuf_ = VK_NULL_HANDLE;
-    VmaAllocation selCircleVertAlloc_ = VK_NULL_HANDLE;
+    std::array<AllocatedBuffer, MAX_FRAMES_IN_FLIGHT> selCircleVertexBuffers_{};
+    VkTexture selCircleTexture_;
+    VkDescriptorSetLayout selCircleSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool selCirclePool_ = VK_NULL_HANDLE;
+    VkDescriptorSet selCircleSet_ = VK_NULL_HANDLE;
     ::VkBuffer selCircleIdxBuf_ = VK_NULL_HANDLE;
     VmaAllocation selCircleIdxAlloc_ = VK_NULL_HANDLE;
     int selCircleVertCount_ = 0;
@@ -78,12 +87,11 @@ private:
     float selCircleRadius_ = 1.5f;
     bool selCircleVisible_ = false;
 
-    // Floor-snap cache: the terrain/WMO/M2 floor queries are collision
-    // raycasts, so reuse the result while the target stands still. Refreshed
-    // periodically in case world geometry streams in around the target.
-    glm::vec3 selCircleFloorCachePos_{0.0f};
-    float selCircleFloorCacheZ_ = 0.0f;
-    int selCircleFloorCacheAge_ = -1;  // -1 = invalid; counts frames since query
+    std::array<float, 81 * 5> selCircleVertices_{};
+    glm::vec3 selCircleMeshPos_{0.0f};
+    glm::vec2 selCircleMeshRight_{0.0f};
+    float selCircleMeshRadius_ = 0.0f;
+    int selCircleMeshAge_ = 30;
 
     // Fullscreen overlay resources
     VkPipeline overlayPipeline_ = VK_NULL_HANDLE;

@@ -3612,6 +3612,8 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
         return false;
     }
 
+    overlaySystem_->loadSelectionTexture(*assetManager);
+
     LOG_INFO("Initializing renderers for map: ", mapName);
 
     // Scan for custom zones on first initialization

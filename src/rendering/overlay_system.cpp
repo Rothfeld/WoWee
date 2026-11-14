@@ -5,6 +5,9 @@
 #include "rendering/vk_pipeline.hpp"
 #include "rendering/vk_utils.hpp"
 #include "core/logger.hpp"
+#include "pipeline/asset_manager.hpp"
+#include <stdexcept>
+#include <cstring>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <vector>
@@ -24,7 +27,11 @@ void OverlaySystem::cleanup() {
     VkDevice device = vkCtx_->getDevice();
     destroy(device, selCirclePipeline_);
     destroy(device, selCirclePipelineLayout_);
-    destroy(vkCtx_->getAllocator(), selCircleVertBuf_, selCircleVertAlloc_);
+    for (auto& buffer : selCircleVertexBuffers_) destroyBuffer(vkCtx_->getAllocator(), buffer);
+    destroy(device, selCirclePool_);
+    destroy(device, selCircleSetLayout_);
+    selCircleSet_ = VK_NULL_HANDLE;
+    selCircleTexture_.destroy(device, vkCtx_->getAllocator());
     destroy(vkCtx_->getAllocator(), selCircleIdxBuf_, selCircleIdxAlloc_);
     destroy(device, overlayPipeline_);
     destroy(device, brightnessPipeline_);
@@ -51,6 +58,43 @@ void OverlaySystem::clearSelectionCircle() {
     selCircleVisible_ = false;
 }
 
+void OverlaySystem::loadSelectionTexture(pipeline::AssetManager& assets) {
+    if (selCircleTexture_.isValid()) return;
+    const auto image = assets.loadTexture("Textures\\UnitSelectTexture.blp");
+    if (!image.isValid() || !selCircleTexture_.uploadBLP(*vkCtx_, image)) {
+        LOG_ERROR("Cannot load Textures/UnitSelectTexture.blp");
+        throw std::runtime_error("Selection circle texture failed to load");
+    }
+    VkDevice device = vkCtx_->getDevice();
+    if (!selCircleTexture_.createSampler(device, VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+                                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE))
+        throw std::runtime_error("Selection circle sampler failed to create");
+    VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                        1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+    selCircleSetLayout_ = createDescriptorSetLayout(device, {binding});
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    VkDescriptorPoolCreateInfo pool{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool.maxSets = 1;
+    pool.poolSizeCount = 1;
+    pool.pPoolSizes = &size;
+    if (!selCircleSetLayout_ || vkCreateDescriptorPool(device, &pool, nullptr, &selCirclePool_) != VK_SUCCESS)
+        throw std::runtime_error("Selection circle descriptor pool failed to create");
+    VkDescriptorSetAllocateInfo alloc{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    alloc.descriptorPool = selCirclePool_;
+    alloc.descriptorSetCount = 1;
+    alloc.pSetLayouts = &selCircleSetLayout_;
+    if (vkAllocateDescriptorSets(device, &alloc, &selCircleSet_) != VK_SUCCESS)
+        throw std::runtime_error("Selection circle descriptor allocation failed");
+    auto info = selCircleTexture_.descriptorInfo();
+    VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = selCircleSet_;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &info;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    LOG_INFO("Selection circle uses Textures/UnitSelectTexture.blp");
+}
+
 void OverlaySystem::initSelectionCircle() {
     if (selCirclePipeline_ != VK_NULL_HANDLE) return;
     if (!vkCtx_) return;
@@ -68,62 +112,49 @@ void OverlaySystem::initSelectionCircle() {
         return;
     }
 
-    // Pipeline layout: push constants only (mat4 mvp=64 + vec4 color=16), VERTEX|FRAGMENT
+    // Texture plus mat4 view-projection and reaction color.
     VkPushConstantRange pcRange{};
     pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcRange.offset = 0;
     pcRange.size = 80;
-    selCirclePipelineLayout_ = createPipelineLayout(device, {}, {pcRange});
+    if (!selCircleSet_) throw std::logic_error("Selection texture was not initialized");
+    if (!selCirclePipelineLayout_)
+        selCirclePipelineLayout_ = createPipelineLayout(device, {selCircleSetLayout_}, {pcRange});
 
-    // Vertex input: binding 0, stride 12, vec3 at location 0
-    VkVertexInputBindingDescription vertBind{.binding = 0, .stride = 12, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
-    VkVertexInputAttributeDescription vertAttr{.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0};
-
-    // Build disc geometry as TRIANGLE_LIST (N=48 segments)
-    constexpr int SEGMENTS = 48;
-    std::vector<float> verts;
-    verts.reserve((SEGMENTS + 1) * 3);
-    // Center vertex
-    verts.insert(verts.end(), {0.0f, 0.0f, 0.0f});
-    // Ring vertices
-    for (int i = 0; i <= SEGMENTS; ++i) {
-        float angle = core::coords::TWO_PI * static_cast<float>(i) / static_cast<float>(SEGMENTS);
-        verts.push_back(std::cos(angle));
-        verts.push_back(std::sin(angle));
-        verts.push_back(0.0f);
-    }
-
-    // Build TRIANGLE_LIST indices
-    std::vector<uint16_t> indices;
-    indices.reserve(SEGMENTS * 3);
-    for (int i = 0; i < SEGMENTS; ++i) {
-        indices.push_back(0);
-        indices.push_back(static_cast<uint16_t>(i + 1));
-        indices.push_back(static_cast<uint16_t>(i + 2));
-    }
-    selCircleVertCount_ = SEGMENTS * 3;
-
-    // Upload vertex buffer
-    if (selCircleVertBuf_ == VK_NULL_HANDLE) {
-        AllocatedBuffer vbuf = uploadBuffer(*vkCtx_, verts.data(),
-            verts.size() * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        selCircleVertBuf_ = vbuf.buffer;
-        selCircleVertAlloc_ = vbuf.allocation;
-
-        AllocatedBuffer ibuf = uploadBuffer(*vkCtx_, indices.data(),
-            indices.size() * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    // Ground-conforming 8x8 grid; each frame owns its mutable vertices.
+    VkVertexInputBindingDescription vertBind{0, 20, VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription position{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+    VkVertexInputAttributeDescription uv{1, 0, VK_FORMAT_R32G32_SFLOAT, 12};
+    constexpr int cells = 8;
+    if (selCircleIdxBuf_ == VK_NULL_HANDLE) {
+        std::vector<uint16_t> indices;
+        for (int y = 0; y < cells; ++y) {
+            for (int x = 0; x < cells; ++x) {
+                const uint16_t a = y * (cells + 1) + x;
+                indices.insert(indices.end(), {a, uint16_t(a + 1), uint16_t(a + cells + 1),
+                    uint16_t(a + 1), uint16_t(a + cells + 2), uint16_t(a + cells + 1)});
+            }
+        }
+        selCircleVertCount_ = static_cast<int>(indices.size());
+        auto ibuf = uploadBuffer(*vkCtx_, indices.data(), indices.size() * sizeof(uint16_t),
+                                 VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
         selCircleIdxBuf_ = ibuf.buffer;
         selCircleIdxAlloc_ = ibuf.allocation;
+        for (auto& buffer : selCircleVertexBuffers_) {
+            buffer = createBuffer(vkCtx_->getAllocator(), (cells + 1) * (cells + 1) * 20,
+                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+            if (!buffer.buffer) throw std::runtime_error("Selection vertex allocation failed");
+        }
     }
 
     // Build pipeline
     selCirclePipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
-        .setVertexInput({vertBind}, {vertAttr})
+        .setVertexInput({vertBind}, {position, uv})
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setNoDepthTest()
+        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx_->getMsaaSamples())
         .setLayout(selCirclePipelineLayout_)
@@ -148,45 +179,57 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
     initSelectionCircle();
     if (selCirclePipeline_ == VK_NULL_HANDLE || cmd == VK_NULL_HANDLE) return;
 
-    // Keep circle anchored near target foot Z. The floor queries are collision
-    // raycasts; reuse the last result while the target stands still, refreshing
-    // every 30 frames in case geometry streams in around it.
-    float floorZ;
-    if (selCircleFloorCacheAge_ >= 0 && selCircleFloorCacheAge_ < 30 &&
-        selCirclePos_ == selCircleFloorCachePos_) {
-        floorZ = selCircleFloorCacheZ_;
-        selCircleFloorCacheAge_++;
-    } else {
-        const float baseZ = selCirclePos_.z;
-        std::optional<float> surface;
-        auto considerFloor = [&](std::optional<float> sample) {
-            if (!sample) return;
-            const float h = *sample;
-            if (h < baseZ - 1.25f || h > baseZ + 0.85f) return;
-            if (!surface || std::abs(h - baseZ) < std::abs(*surface - baseZ)) surface = h;
-        };
-
-        if (terrainHeight) considerFloor(terrainHeight(selCirclePos_.x, selCirclePos_.y));
-        if (wmoHeight) considerFloor(wmoHeight(selCirclePos_.x, selCirclePos_.y, selCirclePos_.z + 3.0f));
-        if (m2Height) considerFloor(m2Height(selCirclePos_.x, selCirclePos_.y, selCirclePos_.z + 2.0f));
-
-        floorZ = surface.value_or(baseZ);
-        selCircleFloorCachePos_ = selCirclePos_;
-        selCircleFloorCacheZ_ = floorZ;
-        selCircleFloorCacheAge_ = 0;
+    // Fit the decal to nearby floors. A gap stays at target foot height rather
+    // than projecting down onto an unrelated floor below a bridge.
+    constexpr int cells = 8;
+    auto& vertices = selCircleVertices_;
+    glm::vec2 right(view[0][0], view[1][0]);
+    right = glm::normalize(right);
+    const glm::vec2 forward(-right.y, right.x);
+    if (selCircleMeshAge_++ >= 30 || selCircleMeshPos_ != selCirclePos_ ||
+        selCircleMeshRadius_ != selCircleRadius_ || selCircleMeshRight_ != right) {
+        selCircleMeshAge_ = 0;
+        selCircleMeshPos_ = selCirclePos_;
+        selCircleMeshRadius_ = selCircleRadius_;
+        selCircleMeshRight_ = right;
+        for (int y = 0; y <= cells; ++y) {
+            for (int x = 0; x <= cells; ++x) {
+                const float u = float(x) / cells;
+                const float v = float(y) / cells;
+                const glm::vec2 xy = glm::vec2(selCirclePos_) + selCircleRadius_ *
+                    ((2.0f * u - 1.0f) * right + (1.0f - 2.0f * v) * forward);
+                const float baseZ = selCirclePos_.z;
+                std::optional<float> surface;
+                auto consider = [&](std::optional<float> h) {
+                    if (h && *h >= baseZ - 1.25f && *h <= baseZ + 0.85f &&
+                        (!surface || std::abs(*h - baseZ) < std::abs(*surface - baseZ))) surface = h;
+                };
+                if (terrainHeight) consider(terrainHeight(xy.x, xy.y));
+                if (wmoHeight) consider(wmoHeight(xy.x, xy.y, baseZ + 3.0f));
+                if (m2Height) consider(m2Height(xy.x, xy.y, baseZ + 2.0f));
+                const size_t offset = (y * (cells + 1) + x) * 5;
+                vertices[offset] = xy.x;
+                vertices[offset + 1] = xy.y;
+                vertices[offset + 2] = surface.value_or(baseZ) + 0.025f;
+                vertices[offset + 3] = u;
+                vertices[offset + 4] = v;
+            }
+        }
     }
-
-    glm::vec3 raisedPos = selCirclePos_;
-    raisedPos.z = floorZ + 0.025f;
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), raisedPos);
-    model = glm::scale(model, glm::vec3(selCircleRadius_));
-
-    glm::mat4 mvp = projection * view * model;
+    auto& buffer = selCircleVertexBuffers_[vkCtx_->getCurrentFrame()];
+    void* mapped = nullptr;
+    if (vmaMapMemory(vkCtx_->getAllocator(), buffer.allocation, &mapped) != VK_SUCCESS)
+        throw std::runtime_error("Selection vertex mapping failed");
+    std::memcpy(mapped, vertices.data(), sizeof(vertices));
+    vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, sizeof(vertices));
+    vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
+    glm::mat4 mvp = projection * view;
     glm::vec4 color4(selCircleColor_, 1.0f);
-
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipelineLayout_,
+                            0, 1, &selCircleSet_, 0, nullptr);
     VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &selCircleVertBuf_, &offset);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
     vkCmdBindIndexBuffer(cmd, selCircleIdxBuf_, 0, VK_INDEX_TYPE_UINT16);
     vkCmdPushConstants(cmd, selCirclePipelineLayout_,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
