@@ -1,3 +1,4 @@
+#include "rendering/animation/stand_pose.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/helm_visual.hpp"
 #include "core/geoset_rules.hpp"
@@ -873,8 +874,38 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     }
 }
 
+uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
+    auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    if (!entity) return rendering::anim::STAND;
+    const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
+    if (state != 0) return rendering::standPose(state).idle;
+    if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
+    const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+    return unit ? rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState()) : 0;
+}
+
+void EntitySpawner::updateRemoteStandPose(uint64_t guid, uint32_t instanceId, bool moving, bool mounted) {
+    auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    if (!entity) return;
+    const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
+    const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
+    const uint8_t previous = it->second;
+    it->second = state;
+    if ((!initial && previous == state) || moving || mounted) return;
+    auto unit = std::static_pointer_cast<game::Unit>(entity);
+    if (unit->getHealth() == 0) return;
+    auto* cr = renderer_->getCharacterRenderer();
+    const auto pose = rendering::standPose(state);
+    const uint32_t transition = initial ? 0 : (state == 0 ? rendering::standPose(previous).leave : pose.enter);
+    const uint32_t idle = remoteIdleAnimation(guid);
+    cr->playAnimation(instanceId, transition != 0 ? transition : idle, transition == 0, idle);
+    LOG_DEBUG("Remote stand pose: guid=", guid, " state=", unsigned(state), " animation=", transition != 0 ? transition : idle);
+}
+
 void EntitySpawner::despawnPlayer(uint64_t guid) {
     if (!renderer_ || !renderer_->getCharacterRenderer()) return;
+    remoteStandStates_.erase(guid);
+    creatureActiveEmotes_.erase(guid);
     pendingRemotePlayerMounts_.erase(guid);
     removeRemotePlayerMount(guid);
     auto it = playerInstances_.find(guid);

@@ -3713,7 +3713,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         } else {
                             if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
                             else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
-                            else                    targetAnim = rendering::anim::STAND;
+                            else                    targetAnim = entitySpawner_->remoteIdleAnimation(guid);
                         }
                         charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
                     }
@@ -3735,6 +3735,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     }
                 }
             }
+
+            entitySpawner_->updateRemoteStandPose(guid, instanceId,
+                entity->isActivelyMoving(), remoteMount != nullptr);
 
             // Orientation sync
             float renderYaw = entity->getOrientation() + glm::radians(90.0f);

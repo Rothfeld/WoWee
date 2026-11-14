@@ -236,6 +236,8 @@ public:
     std::unordered_map<uint64_t, uint32_t>& getCreatureModelIds() { return creatureModelIds_; }
     const std::unordered_map<uint64_t, uint32_t>& getCreatureDisplayIds() const { return creatureDisplayIds_; }
     std::unordered_map<uint64_t, glm::vec3>& getCreatureRenderPosCache() { return creatureRenderPosCache_; }
+    void updateRemoteStandPose(uint64_t guid, uint32_t instanceId, bool moving, bool mounted);
+    uint32_t remoteIdleAnimation(uint64_t guid) const;
     std::unordered_map<uint64_t, bool>& getCreatureWasMoving() { return creatureWasMoving_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasSwimming() { return creatureWasSwimming_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasFlying() { return creatureWasFlying_; }
@@ -413,6 +415,7 @@ private:
     // has not completed yet. This prevents an older queued display from winning.
     std::unordered_map<uint64_t, uint32_t> requestedCreatureDisplayIds_;
     std::unordered_map<uint64_t, glm::vec3> creatureRenderPosCache_; // guid → last synced render position
+    std::unordered_map<uint64_t, uint8_t> remoteStandStates_;
     std::unordered_map<uint64_t, bool> creatureWasMoving_;
     std::unordered_map<uint64_t, bool> creatureWasSwimming_;
     std::unordered_map<uint64_t, bool> creatureWasFlying_;

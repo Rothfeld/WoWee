@@ -141,6 +141,7 @@ void EntitySpawner::shutdown() {
     creatureWeaponAttachAttempts_.clear();
     playerInstances_.clear();
     onlinePlayerAppearance_.clear();
+    remoteStandStates_.clear();
     remotePlayerMounts_.clear();
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();
@@ -169,6 +170,7 @@ void EntitySpawner::resetAllState() {
     creatureRenderPosCache_.clear();
     playerInstances_.clear();
     onlinePlayerAppearance_.clear();
+    remoteStandStates_.clear();
     remotePlayerMounts_.clear();
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();

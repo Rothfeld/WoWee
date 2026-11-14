@@ -1,3 +1,4 @@
+#include "rendering/animation/stand_pose.hpp"
 // lua_social_api.cpp - Chat, guild, friends, ignore, gossip, party management, and emotes Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include <iterator>
@@ -2338,6 +2339,8 @@ void registerSocialLuaAPI(lua_State* L) {
             if (!gh || !token) return 0;
             std::string name(token);
             toLowerInPlace(name);
+            const auto standState = rendering::emoteStandState(name);
+            if (standState) gh->setStandState(*standState);
             const uint32_t emoteId = rendering::AnimationController::getEmoteDbcId(name);
             if (emoteId == 0) return 0;
             // The second argument is whoever the emote is aimed at, and it was
@@ -2357,7 +2360,7 @@ void registerSocialLuaAPI(lua_State* L) {
             // the half that is seen by everyone else; playing it is the half
             // seen by the player, and standing still while the room is told you
             // danced is what an emote that "does nothing" looks like.
-            if (auto* svc = getLuaServices(L); svc && svc->playEmoteAnimation) {
+            if (auto* svc = getLuaServices(L); !standState && svc && svc->playEmoteAnimation) {
                 svc->playEmoteAnimation(name);
             }
             return 0;

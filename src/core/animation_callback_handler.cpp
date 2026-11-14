@@ -339,9 +339,9 @@ void AnimationCallbackHandler::setupCallbacks() {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
         auto entity = gameHandler_.getEntityManager().getEntity(guid);
-        const bool isCreature = entity && entity->getType() == game::ObjectType::UNIT;
+        const bool isRemote = entity && guid != gameHandler_.getPlayerGuid();
         auto& activeEmotes = entitySpawner_.getCreatureActiveEmotes();
-        if (isCreature && isState) {
+        if (isRemote && isState) {
             // State emotes can arrive while the creature's model is still loading.
             // Retain the raw animation so spawnOnlineCreature can apply it once the
             // correct display is instantiated.
@@ -383,14 +383,9 @@ void AnimationCallbackHandler::setupCallbacks() {
         }
         emoteInstanceId = entitySpawner_.getPlayerInstanceId(guid);
         if (emoteInstanceId != 0) {
-            if (emoteAnim == 0) {
-                cr->playAnimation(emoteInstanceId, rendering::anim::STAND, true);
-            } else if (isState) {
-                // Looped, as the NPC branch above does.
-                cr->playAnimation(emoteInstanceId, emoteAnim, true);
-            } else {
-                cr->playAnimation(emoteInstanceId, emoteAnim, false);
-            }
+            const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
+            cr->playAnimation(emoteInstanceId, emoteAnim != 0 ? emoteAnim : idle,
+                              isState || emoteAnim == 0, idle);
         }
     });
 
@@ -654,7 +649,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             }
             } // end !isFishing
         } else {
-            // Cast/channel ended - plays finalization anim completely then returns to idle
+            // Local casts finalize through their controller; remote casts release the hold.
             if (isLocalPlayer) {
                 appearanceComposer_.showMiningPick(false);
                 appearanceComposer_.showFishingPole(false);
@@ -663,8 +658,9 @@ void AnimationCallbackHandler::setupCallbacks() {
                     ac->setSeatedLoopAnimation(0);
                     ac->stopSpellCast();
                 }
-            } else if (isChannel) {
-                cr->playAnimation(instanceId, rendering::anim::STAND, true);
+            } else {
+                const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
+                cr->playAnimation(instanceId, idle, true);
             }
         }
     });

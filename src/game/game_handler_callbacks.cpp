@@ -1847,7 +1847,14 @@ void GameHandler::sendSetDifficulty(uint32_t difficulty, bool raid) {
 }
 
 void GameHandler::setStandState(uint8_t standState) {
-    if (socialHandler_) socialHandler_->setStandState(standState);
+    if (!socialHandler_ || !isInWorld()) return;
+    socialHandler_->setStandState(standState);
+    // Client-requested changes are acknowledged by update fields in TBC;
+    // SMSG_STANDSTATE_UPDATE is reserved for server-initiated changes.
+    if (standState_ != standState) {
+        standState_ = standState;
+        if (standStateCallback_) standStateCallback_(standState);
+    }
 }
 
 void GameHandler::toggleHelm() {
