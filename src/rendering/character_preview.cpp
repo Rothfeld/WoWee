@@ -15,6 +15,7 @@
 #include "pipeline/dbc_layout.hpp"
 #include "core/appearance_composer.hpp"
 #include "core/geoset_rules.hpp"
+#include "core/helm_visual.hpp"
 #include "pipeline/item_textures.hpp"
 #include "pipeline/m2_asset_loader.hpp"
 #include "core/logger.hpp"
@@ -947,9 +948,12 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
         if (geosetTabard != 0) geosets.insert(geosetTabard);
     }
 
-    // Keep hair visible in the preview. The in-world renderer can hide hair
-    // because it attaches helmet models, but this preview path does not yet
-    // render head-slot attachments; hiding hair here leaves bald characters.
+    const uint32_t headDisplay = findDisplayId({1});
+    if (headDisplay && core::helmHidesHair(*assetManager_, headDisplay,
+                                         static_cast<uint8_t>(gender_))) {
+        geosets.erase(selectedHairScalpGeoset());
+        geosets.insert(1);
+    }
 
     charRenderer_->setActiveGeosets(instanceId_, geosets);
 
@@ -1186,6 +1190,23 @@ bool CharacterPreview::loadPreviewM2(const std::string& m2Path, pipeline::M2Mode
 
 void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equipment) {
     if (!charRenderer_ || !assetManager_ || instanceId_ == 0) return;
+
+    charRenderer_->detachWeapon(instanceId_, core::kAttachHelm);
+    for (const auto& item : equipment) {
+        if (item.inventoryType != 1 || !item.displayModel) continue;
+        const auto helm = core::resolveHelmVisual(*assetManager_, item.displayModel,
+            static_cast<uint8_t>(race_), static_cast<uint8_t>(gender_));
+        if (!helm.valid()) continue;
+        const std::string path = assetManager_->fileExists(helm.racialModelPath)
+            ? helm.racialModelPath : helm.baseModelPath;
+        pipeline::M2Model model;
+        if (!loadPreviewM2(path, model) ||
+            !charRenderer_->attachWeapon(instanceId_, core::kAttachHelm, model,
+                                         previewModelIdFor(path), helm.texturePath)) {
+            LOG_ERROR("CharacterPreview helmet attachment failed: ", path);
+        }
+        break;
+    }
 
     // Attachment 1 = right hand, 2 = left hand.
     charRenderer_->detachWeapon(instanceId_, 1);

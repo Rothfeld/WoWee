@@ -115,6 +115,7 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
 
     // Build hostility map for each faction template
     std::unordered_map<uint32_t, bool> factionMap;
+    std::unordered_map<uint32_t, uint32_t> groupMasks;
     // And a friendly map beside it. Not the negation of the other one: a
     // faction can be neither, and most wildlife is. A beneficial spell may only
     // be aimed at a unit that is actually friendly - "not hostile" let a neutral
@@ -128,6 +129,7 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
         uint32_t id = ftDbc->getUInt32(i, ftID);
         uint32_t parentFaction = ftDbc->getUInt32(i, ftFaction);
         uint32_t factionGroup = ftDbc->getUInt32(i, ftFG);
+        groupMasks[ftDbc->getUInt32(i, ftID)] = factionGroup;
         uint32_t friendGroup = ftDbc->getUInt32(i, ftFriend);
         uint32_t enemyGroup = ftDbc->getUInt32(i, ftEnemy);
 
@@ -180,6 +182,7 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     LOG_INFO("Faction friendliness: ", friendlyCount, "/", friendlyMap.size(),
              " templates friendly; the rest are hostile or neutral");
     gameHandler.setFactionTemplateRepList(std::move(templateRepList));
+    gameHandler.setFactionGroupMasks(std::move(groupMasks));
     gameHandler.setFactionFriendlyMap(std::move(friendlyMap));
     gameHandler.setFactionHostileMap(std::move(factionMap));
     LOG_INFO("Faction hostility for race ", static_cast<int>(playerRace), " (FT ", playerFtId, "): ",

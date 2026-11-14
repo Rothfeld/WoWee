@@ -3744,26 +3744,20 @@ static int lua_ReturnNoCooldown(lua_State* L) {
     return 2;
 }
 
-/// Alliance or Horde for the player, and the same for anyone else until this
-/// client tracks other units' factions. Returns the English tag and the
-/// localised name, which is the pair FrameXML expects.
+// Faction membership comes from the unit's faction template. NPC race fields
+// are often zero, and a humanoid race does not imply Alliance/Horde membership.
 static int lua_UnitFactionGroup(lua_State* L) {
-    // Whose faction. This answered the player's for every unit, and the target
-    // frame asks it about the *target* to pick the PvP badge - so an Alliance
-    // player saw an Alliance badge over a Horde target, and the party frames
-    // did the same for anyone in the group.
     std::string uid(luaL_optstring(L, 1, "player"));
     toLowerInPlace(uid);
-    // Orc, Undead, Tauren, Troll, Blood Elf.
-    static const std::set<uint8_t> kHordeRaces = {2, 5, 6, 8, 10};
-    const uint8_t race = unitRaceOf(getGameHandler(L), uid);
-    // Nothing rather than a guess when the race is unknown: FrameXML compares
-    // the answer against the player's and hides the badge when it has neither,
-    // which is better than a badge of the wrong side.
-    if (race == 0) return 0;
-    const bool horde = kHordeRaces.count(race) > 0;
-    lua_pushstring(L, horde ? "Horde" : "Alliance");
-    lua_pushstring(L, horde ? "Horde" : "Alliance");
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    const auto* unit = gh->getUnitByGuid(resolveUnitGuid(gh, uid));
+    if (!unit) return 0;
+    const uint32_t team = gh->getFactionGroupMask(unit->getFactionTemplate()) & 6u;
+    if (team != 2u && team != 4u) return 0;
+    const char* name = team == 2u ? "Alliance" : "Horde";
+    lua_pushstring(L, name);
+    lua_pushstring(L, name);
     return 2;
 }
 

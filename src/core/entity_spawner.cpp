@@ -1364,6 +1364,10 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
                 if (itHairGeo != hairGeosetMap_.end() && itHairGeo->second > 0) {
                     selectedHairScalp = itHairGeo->second;
                 }
+                if (itExtra->second.equipDisplayId[0] != 0 &&
+                    helmHidesHair(*assetManager_, itExtra->second.equipDisplayId[0], extraSexId)) {
+                    selectedHairScalp = 1;
+                }
                 const uint32_t facialKey = appearanceKey(
                     extraRaceId, extraSexId, itExtra->second.facialHairId);
                 auto itFacial = facialHairGeosetMap_.find(facialKey);
@@ -2304,6 +2308,24 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     // at once - a cape and no cape, a robe skirt over trousers. Pick one per
     // clothing group and leave every other batch of the model alone.
     normalizeHumanoidClothingGeosets(instanceId, modelId, displayId);
+
+    if (humanoidAppearance) {
+        const auto& extra = humanoidExtraMap_.at(itDisplayData->second.extraDisplayId);
+        const auto helm = resolveHelmVisual(*assetManager_, extra.equipDisplayId[0],
+                                            extra.raceId, extra.sexId);
+        if (helm.valid()) {
+            const std::string path = assetManager_->fileExists(helm.racialModelPath)
+                ? helm.racialModelPath : helm.baseModelPath;
+            pipeline::M2Model model;
+            if (!loadWeaponM2(path, model) ||
+                !charRenderer->attachWeapon(instanceId, kAttachHelm, model,
+                                             nextWeaponModelId_++, helm.texturePath)) {
+                LOG_ERROR("NPC helmet attachment failed: display=", displayId, " path=", path);
+            } else {
+                LOG_DEBUG("Attached NPC helmet: display=", displayId, " path=", path);
+            }
+        }
+    }
 
     // Try attaching NPC held weapons; if update fields are not ready yet,
     // IN_GAME retry loop will attempt again shortly.

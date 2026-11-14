@@ -1449,15 +1449,12 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             nameColor = isHostile
                 ? IM_COL32(220, 80, 80, A(230))
                 : IM_COL32(102, 153, 255, A(230));
-        } else if (!isHostile && gameHandler.unitReactionToPlayer(*unit) == 3) {
-            // Orange - unfriendly: not attackable, and it will not talk to
-            // the player either. The Kurenai at Telaar, to an Alliance player
-            // who has not yet reached Neutral with them.
-            nameColor = IM_COL32(240, 130, 60, A(230));
         } else {
-            nameColor = isHostile
-                ? IM_COL32(220,  80,  80, A(230))   // red  - hostile NPC
-                : IM_COL32(240, 200, 100, A(230));  // yellow - friendly NPC
+            const int reaction = gameHandler.unitReactionToPlayer(*unit);
+            if (isHostile || reaction <= 2) nameColor = IM_COL32(255, 0, 0, A(230));
+            else if (reaction == 3) nameColor = IM_COL32(255, 128, 0, A(230));
+            else if (reaction == 4) nameColor = IM_COL32(255, 255, 0, A(230));
+            else nameColor = IM_COL32(0, 255, 0, A(230));
         }
         // Sub-label below the name: guild tag for players, subtitle for NPCs
         std::string subLabel;

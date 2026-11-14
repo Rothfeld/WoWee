@@ -1616,6 +1616,13 @@ public:
 
     // Faction hostility map (populated from FactionTemplate.dbc by Application)
     void setFactionHostileMap(std::unordered_map<uint32_t, bool> map) { factionHostileMap_ = std::move(map); }
+    void setFactionGroupMasks(std::unordered_map<uint32_t, uint32_t> masks) {
+        factionGroupMasks_ = std::move(masks);
+    }
+    uint32_t getFactionGroupMask(uint32_t factionTemplateId) const {
+        const auto it = factionGroupMasks_.find(factionTemplateId);
+        return it == factionGroupMasks_.end() ? 0 : it->second;
+    }
     void setFactionFriendlyMap(std::unordered_map<uint32_t, bool> map) { factionFriendlyMap_ = std::move(map); }
     /// The templates whose faction the player has a standing with, by that
     /// standing's index in the server's list. See factionAtWarLive.
@@ -4661,6 +4668,7 @@ private:
     // Quest giver status per NPC
     std::unordered_map<uint64_t, QuestGiverStatus> npcQuestStatus_;
 
+    std::unordered_map<uint32_t, uint32_t> factionGroupMasks_;
     // Faction hostility lookup (populated from FactionTemplate.dbc)
     std::unordered_map<uint32_t, bool> factionHostileMap_;
     std::unordered_map<uint32_t, bool> factionFriendlyMap_;
