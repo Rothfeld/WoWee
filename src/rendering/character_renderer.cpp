@@ -2153,13 +2153,18 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                     }
                 } else {
                     // One-shot animation finished: return to the caller-specified
-                    // resume anim (NPC state emote) or Stand, unless dead
-                    if (inst.currentAnimationId != anim::DEATH) {
+                    // resume anim (NPC state emote) or Stand. Locomotion
+                    // completion is owned by its FSM.
+                    if (inst.currentAnimationId != anim::DEATH &&
+                        inst.currentAnimationId != anim::JUMP_START &&
+                        inst.currentAnimationId != anim::JUMP_END) {
                         const uint32_t resumeAnim =
                             inst.oneShotReturnAnim != 0 ? inst.oneShotReturnAnim : anim::STAND;
                         playAnimation(pair.first, resumeAnim, true);
                     } else {
-                        // Stay on last frame of death
+                        // Hold death and locomotion one-shots at their final pose.
+                        // The locomotion FSM consumes completion next frame;
+                        // rendering Stand here produces a one-frame airborne snap.
                         inst.animationTime = static_cast<float>(seq.duration);
                     }
                 }
