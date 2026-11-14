@@ -1271,11 +1271,11 @@ void GameScreen::renderMinimapPlayerArrow(const MinimapFrame& frame) {
         }
     }
 
-    // Project character facing through the same transform as world markers.
-    // This also preserves facing when the camera rotates independently.
-    const float yaw = glm::radians(renderer->getCharacterYaw());
+    // Project viewing direction through the same transform as world markers.
+    // Free-look and strafing must not substitute the character's movement yaw.
+    const glm::vec3 forward = renderer->getCamera()->getForward();
     const glm::vec2 direction = renderDeltaToMinimapOffset(
-        std::cos(yaw), std::sin(yaw), frame.view);
+        forward.x, forward.y, frame.view);
     const float angle = std::atan2(direction.x, -direction.y);
     const float cs = std::cos(angle), sn = std::sin(angle);
     constexpr float halfSize = 16.0f;
