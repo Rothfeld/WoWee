@@ -650,6 +650,7 @@ private:
     /// set when the accept goes out - the server echoes an acceptance to the
     /// other player, not back to the one who made it, so there is nothing else
     /// to learn it from.
+    uint32_t peerTradeRevision_ = 0;
     bool tradeSelfAccepted_ = false;
     bool tradePartnerAccepted_ = false;
     void fireTradeAcceptUpdate();

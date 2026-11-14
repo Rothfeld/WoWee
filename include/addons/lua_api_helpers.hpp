@@ -361,6 +361,7 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
     // giver it came from, the gossip its own npc, and a vendor or a banker
     // theirs. The target is the last resort, and is usually the same NPC.
     if (uid == "npc" || uid == "questnpc") {
+        if (gh->isTradeOpen()) return gh->getInteractNpcGuid();
         if (uid == "questnpc" && gh->getQuestDetails().npcGuid != 0)
             return gh->getQuestDetails().npcGuid;
         if (gh->getCurrentGossip().npcGuid != 0) return gh->getCurrentGossip().npcGuid;

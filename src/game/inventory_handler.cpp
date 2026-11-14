@@ -3937,7 +3937,7 @@ void InventoryHandler::acceptTrade() {
     // way to add the other.
     if (!isTradeOpen()) return;
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    auto packet = AcceptTradePacket::build();
+    auto packet = AcceptTradePacket::build(peerTradeRevision_);
     owner_.getSocket()->send(packet);
     tradeSelfAccepted_ = true;
     fireTradeAcceptUpdate();
@@ -3989,6 +3989,7 @@ void InventoryHandler::setTradeGold(uint64_t amount) {
 void InventoryHandler::resetTradeState() {
     tradeStatus_ = TradeStatus::None;
     tradePeerGuid_ = 0;
+    peerTradeRevision_ = 0;
     tradePeerName_.clear();
     myTradeSlots_ = {};
     peerTradeSlots_ = {};
@@ -4128,45 +4129,18 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
 }
 
 void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
-    // SendUpdateTrade writes:
-    //
-    //   uint8  traderData     1 = the other player's offer, 0 = your own
-    //   uint32 tradeId
-    //   uint32 slotCount      seven, twice
-    //   uint32 slotCount
-    //   uint32 gold           the *header* carries it, not the tail
-    //   uint32 spell          cast on the lowest slot's item
-    //   per slot (seven of them):
-    //     uint8  slotIndex
-    //     uint32 entry, displayId, stackCount, wrapped
-    //     uint64 giftCreator
-    //     uint32 permEnchant, gem1, gem2, gem3
-    //     uint64 creator
-    //     uint32 charges, suffixFactor
-    //     int32  randomPropertyId
-    //     uint32 lockId, maxDurability, durability
-    //
-    // An empty slot writes eighteen zeroed uint32s, which is the same
-    // seventy-two bytes, so the stride never changes.
-    //
-    // What was here read a four-byte "whichPlayer" and a four-byte count and
-    // then walked slots of sixty-five bytes from offset eight. Every one of
-    // those is wrong: the discriminator is one byte, the item block starts at
-    // twenty-one, and a slot is seventy-three.
-    //
-    // It went unnoticed because the arithmetic came out right. The note above
-    // it read "8 + 8x65 + 4 = 532 (matches observed packet size)", and 532 is
-    // the true size - 21 + 7x73. A total that agrees says nothing about where
-    // the fields are, and every item in the trade window was read from the
-    // wrong offset with the wrong stride.
+    // TBC SendUpdateTrade: side, trade ID, client revision, server revision,
+    // gold, enchantment spell, then fixed 73-byte item records until packet end.
+    // Revision fields are not slot counts. Acceptance must echo the peer's
+    // server revision to reject offers changed after the player reviewed them.
     constexpr size_t kHeaderBytes = 1 + 4 * 5;
     constexpr size_t kSlotBytes = 1 + 4 * 4 + 8 + 4 * 4 + 8 + 4 * 6;
     if (!packet.hasRemaining(kHeaderBytes)) { packet.skipAll(); return; }
 
     const uint8_t traderData = packet.readUInt8();
     /*uint32_t tradeId    =*/ packet.readUInt32();
-    const uint32_t slotCount = packet.readUInt32();
-    /*uint32_t slotCount2 =*/ packet.readUInt32();
+    const uint32_t clientRevision = packet.readUInt32();
+    const uint32_t serverRevision = packet.readUInt32();
     const uint32_t gold = packet.readUInt32();
     /*uint32_t spell     =*/ packet.readUInt32();
 
@@ -4174,8 +4148,16 @@ void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
     const bool ownSide = (traderData == 0);
     auto& slots = ownSide ? myTradeSlots_ : peerTradeSlots_;
 
-    uint32_t count = slotCount;
-    if (count > TRADE_SLOT_COUNT) count = TRADE_SLOT_COUNT;
+    const bool tbc = isActiveExpansion("tbc");
+    if (tbc && (packet.getRemainingSize() % kSlotBytes != 0 ||
+                packet.getRemainingSize() / kSlotBytes > TRADE_SLOT_COUNT)) {
+        LOG_ERROR("Invalid TBC trade item payload length: ", packet.getRemainingSize());
+        return;
+    }
+    const uint32_t count = tbc ? packet.getRemainingSize() / kSlotBytes
+                               : std::min<uint32_t>(clientRevision, TRADE_SLOT_COUNT);
+    if (!ownSide) peerTradeRevision_ = serverRevision;
+    slots = {};
     LOG_DEBUG("SMSG_TRADE_STATUS_EXTENDED: ", ownSide ? "own" : "trader",
               " slots=", count, " gold=", gold);
 

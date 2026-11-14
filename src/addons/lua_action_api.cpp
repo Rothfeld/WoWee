@@ -1455,30 +1455,31 @@ static int lua_SetModifiedClick(lua_State* L) {
 // at and not touched, so clicking one does nothing rather than pretending.
 
 static int pushTradeSlot(lua_State* L, game::GameHandler* gh,
-                         const game::GameHandler::TradeSlot& slot) {
+                         const game::GameHandler::TradeSlot& slot, bool targetSide) {
     if (!slot.occupied || slot.itemId == 0) { return luaReturnNil(L); }
     const auto* info = gh->getItemInfo(slot.itemId);
     lua_pushstring(L, info ? info->name.c_str() : "");
     lua_pushstring(L, gh->getItemIconPath(
         info && info->displayInfoId ? info->displayInfoId : slot.displayId).c_str());
     lua_pushnumber(L, slot.stackCount);
+    if (targetSide) lua_pushnumber(L, info ? static_cast<int>(info->quality) : 0);
     lua_pushboolean(L, 1);       // isUsable
     lua_pushnil(L);              // enchantment: not carried by the trade packet
-    return 5;
+    return targetSide ? 6 : 5;
 }
 
 static int lua_GetTradePlayerItemInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int i = static_cast<int>(luaL_optnumber(L, 1, 0));
     if (!gh || i < 1 || i > game::GameHandler::TRADE_SLOT_COUNT) { return luaReturnNil(L); }
-    return pushTradeSlot(L, gh, gh->getMyTradeSlots()[i - 1]);
+    return pushTradeSlot(L, gh, gh->getMyTradeSlots()[i - 1], false);
 }
 
 static int lua_GetTradeTargetItemInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int i = static_cast<int>(luaL_optnumber(L, 1, 0));
     if (!gh || i < 1 || i > game::GameHandler::TRADE_SLOT_COUNT) { return luaReturnNil(L); }
-    return pushTradeSlot(L, gh, gh->getPeerTradeSlots()[i - 1]);
+    return pushTradeSlot(L, gh, gh->getPeerTradeSlots()[i - 1], true);
 }
 
 static int pushTradeLink(lua_State* L, game::GameHandler* gh,

@@ -1326,9 +1326,10 @@ network::Packet CancelTradePacket::build() {
     return packet;
 }
 
-network::Packet AcceptTradePacket::build() {
+network::Packet AcceptTradePacket::build(uint32_t peerRevision) {
     network::Packet packet(wireOpcode(Opcode::CMSG_ACCEPT_TRADE));
-    LOG_DEBUG("Built CMSG_ACCEPT_TRADE");
+    if (isActiveExpansion("tbc")) packet.writeUInt32(peerRevision);
+    LOG_DEBUG("Built CMSG_ACCEPT_TRADE revision=", peerRevision);
     return packet;
 }
 

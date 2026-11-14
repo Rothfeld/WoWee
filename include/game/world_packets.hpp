@@ -1654,10 +1654,10 @@ public:
     static network::Packet build();
 };
 
-/** CMSG_ACCEPT_TRADE packet builder (no payload - lock in current offer) */
+/** CMSG_ACCEPT_TRADE: TBC includes the accepted peer offer revision. */
 class AcceptTradePacket {
 public:
-    static network::Packet build();
+    static network::Packet build(uint32_t peerRevision);
 };
 
 /** CMSG_SET_TRADE_ITEM packet builder (tradeSlot, bag, bagSlot) */
