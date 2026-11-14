@@ -380,3 +380,16 @@ TEST_CASE("CMaNGOS build 8606 memory checks match the supplied 2.4.3 executable"
         CHECK(failures.empty());
     }
 }
+
+TEST_CASE("CMaNGOS nonzero scan terminator preserves opcode decoding", "[warden]") {
+    const uint8_t opcodes[9] = {0x52,0xA8,0xFE,0xDB,0x31,0xAA,0x87,0x00,0x56};
+    wowee::game::WardenCheckContext context;
+    context.opcodes = opcodes;
+    // Empty string table, timing check, first unused opcode (1), all XORed
+    // with the session byte where required. Module assigns zero to DRIVER.
+    const std::vector<uint8_t> request = {2,0,0x56 ^ 0xFE,1 ^ 0xFE};
+    const auto result = wowee::game::buildWardenCheckResponse(request, context, "test");
+    REQUIRE(result.size() == 12);
+    CHECK(result[1] == 5);
+    CHECK(result[7] == 1);
+}

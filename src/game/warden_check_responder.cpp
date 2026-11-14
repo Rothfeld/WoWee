@@ -94,6 +94,14 @@ constexpr KnownModule kKnownModules[] = {
     {"PRXDRVPE.DLL", false}, {"D3DHOOK.DLL", false}, {"NJUMD.DLL", false}, {"RPE.DLL", false},
 };
 
+uint8_t requestXorByte(const std::vector<uint8_t>& request, const uint8_t opcodes[9]) {
+    // CMaNGOS terminates scans with the first unused opcode, XORed with
+    // the session byte. Zero is not a terminator when the module uses it.
+    uint8_t terminator = 0;
+    while (std::find(opcodes, opcodes + 9, terminator) != opcodes + 9) ++terminator;
+    return request.back() ^ terminator;
+}
+
 CheckType decodeCheckType(uint8_t raw, uint8_t xorByte, const uint8_t opcodes[9]) {
     const uint8_t decoded = raw ^ xorByte;
     if (decoded == opcodes[0]) return CT_MEM;    // READ_MEMORY
@@ -125,7 +133,7 @@ size_t skipStringTable(const std::vector<uint8_t>& request, std::vector<std::str
 
 bool wardenRequestHasCodeScan(const std::vector<uint8_t>& request, const uint8_t opcodes[9]) {
     if (request.size() < 3) return false;
-    const uint8_t xorByte = request.back();
+    const uint8_t xorByte = requestXorByte(request, opcodes);
     for (size_t i = skipStringTable(request, nullptr); i + 1 < request.size(); ++i) {
         const uint8_t d = request[i] ^ xorByte;
         if (d == opcodes[2] || d == opcodes[3]) return true;
@@ -141,7 +149,7 @@ std::vector<uint8_t> buildWardenCheckResponse(const std::vector<uint8_t>& reques
 
     std::vector<std::string> strings;
     size_t pos = skipStringTable(request, &strings);
-    const uint8_t xorByte = request.back();
+    const uint8_t xorByte = requestXorByte(request, ctx.opcodes);
     const size_t checkEnd = request.size() - 1;  // exclude xorByte
 
     auto resolveString = [&](uint8_t oneBasedIndex) -> std::string {
