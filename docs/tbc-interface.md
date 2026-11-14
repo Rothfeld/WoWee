@@ -89,3 +89,7 @@ the trading player even when a vendor remains selected.
 Item actions retain their identity at zero inventory count. Metadata is requested
 independently of bag contents and matching actions refresh when it arrives.
 Original FrameXML supplies the dim icon and zero count for depleted consumables.
+
+Inventory rebuilds notify item action slots after the new bag contents are
+available. ActionButton does not listen for BAG_UPDATE; slot fields can arrive
+before item objects, so an earlier player-field notification is insufficient.

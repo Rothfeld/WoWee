@@ -2419,6 +2419,13 @@ void InventoryHandler::fireBagUpdates() {
     // The character sheet redraws from this one rather than from BAG_UPDATE, so
     // both go out together - equipping something changes a bag and a slot.
     fire("UNIT_INVENTORY_CHANGED", {"player"});
+    // ActionButton does not listen for BAG_UPDATE. Notify after the rebuilt
+    // inventory is available, including when item objects arrive after slots.
+    const auto& actions = owner_.getActionBar();
+    for (size_t slot = 0; slot < actions.size(); ++slot) {
+        if (actions[slot].type == ActionBarSlot::ITEM && actions[slot].id != 0)
+            fire("ACTIONBAR_SLOT_CHANGED", {std::to_string(slot + 1)});
+    }
     // An open trade skill window is looking at the bags too, and it does not
     // watch them: TradeSkillFrame_OnLoad registers TRADE_SKILL_UPDATE,
     // TRADE_SKILL_FILTER_UPDATE, UNIT_PORTRAIT_UPDATE and
