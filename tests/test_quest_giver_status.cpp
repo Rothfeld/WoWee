@@ -14,6 +14,8 @@
 #include <string>
 
 #include "game/quest_giver_status.hpp"
+#include "game/gossip_quest_status.hpp"
+#include <array>
 
 using wowee::game::QuestGiverStatus;
 using wowee::game::questGiverMarker;
@@ -103,4 +105,28 @@ TEST_CASE("a status the server never sends draws nothing", "[questgiver]") {
     // not know and must not guess at.
     CHECK(questGiverMarker(wire(11)).symbol == nullptr);
     CHECK(questGiverMarker(wire(255)).symbol == nullptr);
+}
+
+TEST_CASE("TBC gossip uses the server's TBC dialog statuses", "[questgiver][gossip]") {
+    using S = wowee::game::GossipQuestState;
+    // CMaNGOS QuestDef.h and Player::PrepareQuestMenu: offered quests use 6,
+    // incomplete quests use 3, and completed quests use 4.
+    constexpr std::array expected{S::None, S::None, S::Available, S::Incomplete,
+        S::Completable, S::Available, S::Available, S::Completable, S::Completable};
+    for (uint32_t icon = 0; icon < expected.size(); ++icon) {
+        INFO("TBC dialog status " << icon);
+        CHECK(wowee::game::gossipQuestState(icon, true) == expected[icon]);
+    }
+    CHECK(wowee::game::gossipQuestState(255, true) == S::None);
+}
+
+TEST_CASE("gossip status classification keeps non-TBC semantics", "[questgiver][gossip]") {
+    using S = wowee::game::GossipQuestState;
+    constexpr std::array expected{S::None, S::None, S::Available, S::Incomplete,
+        S::Incomplete, S::Completable, S::Completable, S::Available,
+        S::Available, S::None, S::Completable};
+    for (uint32_t icon = 0; icon < expected.size(); ++icon) {
+        INFO("non-TBC dialog status " << icon);
+        CHECK(wowee::game::gossipQuestState(icon, false) == expected[icon]);
+    }
 }

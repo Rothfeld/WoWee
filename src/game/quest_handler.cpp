@@ -1,3 +1,4 @@
+#include "game/gossip_quest_status.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "game/item_text.hpp"
 #include "game/quest_handler.hpp"
@@ -2277,17 +2278,12 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
 // does this because it has the freshest data; quest-list handler skips it because
 // completion updates arrive via separate packets).
 void QuestHandler::classifyGossipQuests(bool updateQuestLog) {
-    // Icon values come from the server's QUEST_STATUS enum, not a client constant,
-    // so these magic numbers are protocol-defined and stable across expansions.
-    auto isCompletable = [](uint32_t icon) { return icon == 5 || icon == 6 || icon == 10; };
-    auto isIncomplete  = [](uint32_t icon) { return icon == 3 || icon == 4; };
-    auto isAvailable   = [](uint32_t icon) { return icon == 2 || icon == 7 || icon == 8; };
-
     bool hasAvailable = false, hasReward = false, hasIncomplete = false;
     for (const auto& q : currentGossip_.quests) {
-        bool completable = isCompletable(q.questIcon);
-        bool incomplete  = isIncomplete(q.questIcon);
-        bool available   = isAvailable(q.questIcon);
+        const auto state = gossipQuestState(q.questIcon, isActiveExpansion("tbc"));
+        const bool completable = state == GossipQuestState::Completable;
+        const bool incomplete = state == GossipQuestState::Incomplete;
+        const bool available = state == GossipQuestState::Available;
         hasAvailable |= available;
         hasReward |= completable;
         hasIncomplete |= incomplete;

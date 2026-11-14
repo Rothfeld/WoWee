@@ -1,6 +1,8 @@
 // lua_social_api.cpp - Chat, guild, friends, ignore, gossip, party management, and emotes Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include <iterator>
+#include "game/gossip_quest_status.hpp"
+#include "game/game_utils.hpp"
 #include <vector>
 #include "addons/lua_api_helpers.hpp"
 #include "game/reputation_standing.hpp"
@@ -831,17 +833,17 @@ int& selectedFaction() {
 //
 // Which of an NPC's quests are on offer and which are already taken is decided
 // by the icon the server sent, not by anything the client tracks. The values
-// are the server's QUEST_STATUS enum and are the same ones quest_handler.cpp
-// classifies by - kept in step with it deliberately, since a quest sorted into
+// depend on the expansion and share classification with quest_handler.cpp.
+// Keep both consumers in step, since a quest sorted into
 // the wrong list is offered twice or not at all.
 namespace {
 
 /// Daily quests take a different icon in the list. Protocol-defined, WotLK.
 constexpr uint32_t kQuestFlagsDaily = 0x1000;
 
-bool gossipQuestIsAvailable(uint32_t icon)   { return icon == 2 || icon == 7 || icon == 8; }
-bool gossipQuestIsCompletable(uint32_t icon) { return icon == 5 || icon == 6 || icon == 10; }
-bool gossipQuestIsIncomplete(uint32_t icon)  { return icon == 3 || icon == 4; }
+bool gossipQuestIsAvailable(uint32_t icon)   { return wowee::game::gossipQuestState(icon, wowee::game::isActiveExpansion("tbc")) == wowee::game::GossipQuestState::Available; }
+bool gossipQuestIsCompletable(uint32_t icon) { return wowee::game::gossipQuestState(icon, wowee::game::isActiveExpansion("tbc")) == wowee::game::GossipQuestState::Completable; }
+bool gossipQuestIsIncomplete(uint32_t icon)  { return wowee::game::gossipQuestState(icon, wowee::game::isActiveExpansion("tbc")) == wowee::game::GossipQuestState::Incomplete; }
 /// Taken already, finished or not - which is one list in the gossip window.
 bool gossipQuestIsActive(uint32_t icon) {
     return gossipQuestIsIncomplete(icon) || gossipQuestIsCompletable(icon);
