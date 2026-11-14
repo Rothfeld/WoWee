@@ -77,3 +77,15 @@ casting and timer expiration; successful Lua loading alone does not verify pixel
 Local cast checks cover passive spells, death, combat restrictions, stealth,
 combo points and available power. The server remains authoritative for complete
 spell eligibility. Other expansion interfaces require their own comparison runs.
+
+## Trade and depleted action items
+
+TBC trade update headers contain client/server offer revisions. Item records run
+to packet end; revisions are not counts. CMSG_ACCEPT_TRADE echoes the peer's
+server revision. GetTradeTargetItemInfo returns quality before isUsable;
+GetTradePlayerItemInfo does not. During trade, the NPC unit token resolves to
+the trading player even when a vendor remains selected.
+
+Item actions retain their identity at zero inventory count. Metadata is requested
+independently of bag contents and matching actions refresh when it arrives.
+Original FrameXML supplies the dim icon and zero count for depleted consumables.
