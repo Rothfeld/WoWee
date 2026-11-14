@@ -875,8 +875,8 @@ void GameScreen::renderMinimapChests(const MinimapFrame& frame, const EntityList
 void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const QuestStatusMap& statuses,
                                          game::GameHandler& gameHandler) {
     for (const auto& [guid, status] : statuses) {
-        // Status 9 is a turn-in the server deliberately keeps off the map,
-        // which is the only thing separating it from 10.
+        // Visibility is separate from the mark over the NPC: incomplete
+        // quests and status 9 do not advertise a minimap turn-in.
         const auto mark = game::questGiverMarker(status);
         // Said once per status value, because a mark that appears over an
         // NPC's head and not on the minimap looks like a lost blip and is in
@@ -910,7 +910,7 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
             }
         }
         // Original ObjectIcons atlas: eight 32px columns, two rows.
-        // Second row: yellow !/?, then grey !/?.
+        // Second row: yellow !/?, then blue repeatable !/? (not grey).
         const int column = (mark.symbol[0] == '!' ? 1 : 2) + (mark.dim ? 2 : 0);
         frame.drawList->AddImage((ImTextureID)(uintptr_t)questAtlas,
             ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),

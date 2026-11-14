@@ -66,7 +66,7 @@ inline QuestGiverMarker questGiverMarker(QuestGiverStatus status) {
         case QuestGiverStatus::LOW_LEVEL_REWARD_REP:
             return {.symbol = "?", .dim = true, .tooltip = "Quest ready to turn in", .onMinimap = true};
         case QuestGiverStatus::INCOMPLETE:
-            return {.symbol = "?", .dim = true, .tooltip = "Quest in progress", .onMinimap = true};
+            return {.symbol = "?", .dim = true, .tooltip = "Quest in progress", .onMinimap = false};
         case QuestGiverStatus::NONE:
         case QuestGiverStatus::UNAVAILABLE:
             break;

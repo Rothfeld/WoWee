@@ -130,3 +130,12 @@ TEST_CASE("gossip status classification keeps non-TBC semantics", "[questgiver][
         CHECK(wowee::game::gossipQuestState(icon, false) == expected[icon]);
     }
 }
+
+TEST_CASE("Incomplete quests retain the NPC mark without a minimap marker", "[quest][minimap]") {
+    const auto marker = questGiverMarker(QuestGiverStatus::INCOMPLETE);
+    CHECK(std::string(marker.symbol) == "?");
+    CHECK(marker.dim);
+    CHECK_FALSE(marker.onMinimap);
+    CHECK(questGiverMarker(QuestGiverStatus::AVAILABLE).onMinimap);
+    CHECK(questGiverMarker(QuestGiverStatus::REWARD).onMinimap);
+}
