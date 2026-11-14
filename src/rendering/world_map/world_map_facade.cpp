@@ -702,7 +702,7 @@ int WorldMapFacade::zoneAtMapPoint(float u, float v) const {
     // Hillsbrad Foothills, and clicking went through the same lookup and zoomed
     // into a zone nobody had pointed at.
     const ViewLevel level = d.viewState.currentLevel();
-    if (level != ViewLevel::CONTINENT && level != ViewLevel::ZONE) return -1;
+    if (level != ViewLevel::CONTINENT) return -1;
 
     const int continentIdx = d.viewState.continentIdx();
     if (continentIdx < 0) return -1;
