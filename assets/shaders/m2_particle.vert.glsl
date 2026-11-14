@@ -21,6 +21,13 @@ layout(set = 0, binding = 0) uniform PerFrame {
 
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
 
+layout(push_constant) uniform Push {
+    vec2 tileCount;
+    int alphaKey;
+    float viewportHeight;
+} push;
+
+
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec4 aColor;
 layout(location = 2) in float aSize;
@@ -46,7 +53,10 @@ vec4 fogVolumeAt(vec3 worldPos) {
 void main() {
     vec4 viewPos4 = view * vec4(aPos, 1.0);
     float dist = -viewPos4.z;
-    gl_PointSize = clamp(aSize * 500.0 / max(dist, 1.0), 1.0, 128.0);
+    // Authored size is a billboard half-extent. Project its diameter into
+    // viewport pixels: 2 * radius * projectionY * height / (2 * depth).
+    gl_PointSize = clamp(aSize * abs(projection[1][1]) * push.viewportHeight /
+                         max(dist, 0.001), 1.0, 128.0);
     vColor = aColor;
     vTile = aTile;
     float worldDist = length(viewPos.xyz - aPos);

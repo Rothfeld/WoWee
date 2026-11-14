@@ -5,6 +5,7 @@ layout(set = 1, binding = 0) uniform sampler2D uTexture;
 layout(push_constant) uniform Push {
     vec2 tileCount;
     int alphaKey;
+    float viewportHeight;
 } push;
 
 layout(location = 0) in vec4 vColor;

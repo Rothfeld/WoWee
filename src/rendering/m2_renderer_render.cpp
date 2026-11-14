@@ -2228,8 +2228,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                                 particlePipelineLayout_, 1, 1, &glowTexDescSet_, 0, nullptr);
 
         // Push constants for particle: tileCount(vec2) + alphaKey(int)
-        struct { float tileX, tileY; int alphaKey; } particlePush = {.tileX = 1.0f, .tileY = 1.0f, .alphaKey = 0};
-        vkCmdPushConstants(cmd, particlePipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+        struct { float tileX, tileY; int alphaKey; float viewportHeight; } particlePush = {
+            .tileX = 1.0f, .tileY = 1.0f, .alphaKey = 0,
+            .viewportHeight = static_cast<float>(vkCtx_->getSwapchainExtent().height)};
+        vkCmdPushConstants(cmd, particlePipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(particlePush), &particlePush);
 
         // Write glow vertex data directly to mapped buffer (no temp vector)

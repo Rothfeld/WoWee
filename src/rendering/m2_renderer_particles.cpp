@@ -244,8 +244,8 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
     if (!inst.cachedModel) return;
     const auto& gpu = *inst.cachedModel;
 
-    // Hoist per-emitter gravity out of the per-particle loop. Gravity (and the
-    // emissionSpeed fallback) depends only on the emitter and animation time -
+    // Hoist per-emitter gravity out of the per-particle loop. Gravity
+    // depends only on the emitter and animation time -
     // not on the particle itself - so interpFloat was being re-evaluated for
     // every particle even when 100s of particles share one emitter.
     constexpr size_t kMaxStackEmitters = 16;
@@ -265,12 +265,7 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
             float grav = interpFloat(pem.gravity,
                                       inst.animTime, inst.globalSequenceTime,
                                       inst.currentSequenceIndex, gpu.globalSequenceDurations);
-            if (grav == 0.0f && !gpu.isFireflyEffect) {
-                float emSpeed = interpFloat(pem.emissionSpeed,
-                                             inst.animTime, inst.globalSequenceTime,
-                                             inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                grav = (std::abs(emSpeed) > 0.1f) ? 4.0f : 1.5f;
-            }
+            // Zero is authored zero acceleration, including LootFX.
             emitterGrav[e] = grav;
         }
     }
@@ -750,7 +745,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             vd[4] = color.g;
             vd[5] = color.b;
             vd[6] = alpha;
-            vd[7] = scale;
+            vd[7] = scale * inst.scale;
             float tileIndex = p.tileIndex;
             if (cachedIsTiled) {
                 tileIndex = p.tileIndex + static_cast<float>(cachedAnimFrame);
@@ -851,11 +846,12 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         }
 
         // Push constants: tileCount + alphaKey
-        struct { float tileX, tileY; int alphaKey; } pc = {
+        struct { float tileX, tileY; int alphaKey; float viewportHeight; } pc = {
             .tileX = static_cast<float>(group.tilesX), .tileY = static_cast<float>(group.tilesY),
-            .alphaKey = (blendType == 1) ? 1 : 0
+            .alphaKey = (blendType == 1) ? 1 : 0,
+            .viewportHeight = static_cast<float>(vkCtx_->getSwapchainExtent().height)
         };
-        vkCmdPushConstants(cmd, particlePipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+        vkCmdPushConstants(cmd, particlePipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(pc), &pc);
 
         // The vertices are already in the buffer, at this run's own offset.
