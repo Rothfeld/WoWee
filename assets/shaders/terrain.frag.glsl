@@ -155,7 +155,11 @@ void main() {
     float fragDist = length(viewPos.xyz - FragPos);
     gBlurDistFade = 1.0 - smoothstep(140.0, 260.0, fragDist);
 
-    vec4 baseColor = texture(uBaseTexture, TexCoord);
+    // Derivatives must be computed before per-fragment alpha branches. Implicit
+    // LOD inside those branches can select incorrect mips along layer edges.
+    vec2 textureDx = dFdx(TexCoord);
+    vec2 textureDy = dFdy(TexCoord);
+    vec4 baseColor = textureGrad(uBaseTexture, TexCoord, textureDx, textureDy);
 
     // Legacy alpha maps paint each layer over the preceding one. We use the
     // WDT big-alpha flag to select independent coverage weights, as in
@@ -168,15 +172,15 @@ void main() {
     vec4 color3 = vec4(0.0);
     if (hasLayer1 != 0) {
         a1 = sampleAlpha(uLayer1Alpha, LayerUV);
-        if (a1 > 0.0) color1 = texture(uLayer1Texture, TexCoord);
+        if (a1 > 0.0) color1 = textureGrad(uLayer1Texture, TexCoord, textureDx, textureDy);
     }
     if (hasLayer2 != 0) {
         a2 = sampleAlpha(uLayer2Alpha, LayerUV);
-        if (a2 > 0.0) color2 = texture(uLayer2Texture, TexCoord);
+        if (a2 > 0.0) color2 = textureGrad(uLayer2Texture, TexCoord, textureDx, textureDy);
     }
     if (hasLayer3 != 0) {
         a3 = sampleAlpha(uLayer3Alpha, LayerUV);
-        if (a3 > 0.0) color3 = texture(uLayer3Texture, TexCoord);
+        if (a3 > 0.0) color3 = textureGrad(uLayer3Texture, TexCoord, textureDx, textureDy);
     }
     vec4 finalColor;
     if (bigAlpha != 0) {
