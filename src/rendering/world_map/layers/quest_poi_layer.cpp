@@ -6,6 +6,9 @@
 #include "rendering/polygon_triangulate.hpp"
 #include <imgui.h>
 #include <vector>
+#include <stdexcept>
+#include "rendering/vk_context.hpp"
+#include "core/logger.hpp"
 
 namespace wowee {
 namespace rendering {
@@ -22,6 +25,42 @@ constexpr ImU32 kBlobEdge = IM_COL32(0, 210, 255, 150);
 }  // namespace
 
 using wowee::rendering::triangulateSimplePolygon;
+
+QuestPOILayer::~QuestPOILayer() { clearTextures(); }
+
+void QuestPOILayer::initialize(VkContext* ctx, pipeline::AssetManager* assets) {
+    vkCtx_ = ctx;
+    assets_ = assets;
+}
+
+void QuestPOILayer::clearTextures() {
+    if (!vkCtx_) return;
+    icons_.destroy(vkCtx_->getDevice(), vkCtx_->getAllocator());
+    dimIcons_.destroy(vkCtx_->getDevice(), vkCtx_->getAllocator());
+}
+
+void QuestPOILayer::ensureTextures() {
+    if (icons_.descriptorSet && dimIcons_.descriptorSet) return;
+    if (!vkCtx_ || !assets_) throw std::logic_error("QuestPOILayer is not initialized");
+    auto image = assets_->loadTexture("Interface\\Minimap\\ObjectIcons.blp");
+    if (!image.isValid() || image.width != 256 || image.height != 64 || image.data.size() != 256 * 64 * 4) {
+        LOG_ERROR("World map quest icon atlas is missing or has unexpected dimensions");
+        throw std::runtime_error("World map quest icon atlas invalid");
+    }
+    icons_ = makeImGuiTexture(*vkCtx_, image);
+    // Blue cells mean repeatable quests. Grey status uses desaturated gold art.
+    for (size_t i = 0; i < image.data.size(); i += 4) {
+        const uint8_t grey = static_cast<uint8_t>((unsigned(image.data[i]) * 77 +
+            unsigned(image.data[i + 1]) * 150 + unsigned(image.data[i + 2]) * 29) >> 8);
+        image.data[i] = image.data[i + 1] = image.data[i + 2] = grey;
+    }
+    dimIcons_ = makeImGuiTexture(*vkCtx_, image);
+    if (!icons_ || !dimIcons_) {
+        clearTextures();
+        LOG_ERROR("World map quest icon atlas upload failed");
+        throw std::runtime_error("World map quest icon atlas upload failed");
+    }
+}
 
 void QuestPOILayer::render(const LayerContext& ctx) {
     if (!pois_ || pois_->empty()) return;
@@ -109,14 +148,18 @@ void QuestPOILayer::render(const LayerContext& ctx) {
                 break;
         }
 
-        ctx.drawList->AddCircleFilled(ImVec2(px, py), 5.0f, fill);
-        ctx.drawList->AddCircle(ImVec2(px, py), 5.0f, outline, 0, 1.5f);
         if (marker) {
-            const float markerSize = ImGui::GetFontSize() * 0.8f;
-            ImVec2 markerSz = qFont->CalcTextSizeA(markerSize, FLT_MAX, 0.0f, marker);
-            ctx.drawList->AddText(qFont, markerSize,
-                                  ImVec2(px - markerSz.x * 0.5f, py - markerSz.y * 0.5f),
-                                  IM_COL32(0, 0, 0, 255), marker);
+            ensureTextures();
+            const bool dim = qp.kind == QuestPOI::Kind::AVAILABLE_LOW ||
+                             qp.kind == QuestPOI::Kind::INCOMPLETE;
+            const int column = marker[0] == '!' ? 1 : 2;
+            ctx.drawList->AddImage(
+                reinterpret_cast<ImTextureID>(dim ? dimIcons_.descriptorSet : icons_.descriptorSet),
+                ImVec2(px - 8, py - 8), ImVec2(px + 8, py + 8),
+                ImVec2(column / 8.0f, 0.5f), ImVec2((column + 1) / 8.0f, 1.0f));
+        } else {
+            ctx.drawList->AddCircleFilled(ImVec2(px, py), 5.0f, fill);
+            ctx.drawList->AddCircle(ImVec2(px, py), 5.0f, outline, 0, 1.5f);
         }
 
         // The name goes under an objective and nowhere else.
