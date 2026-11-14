@@ -1,3 +1,4 @@
+#include "game/spell_prerequisites.hpp"
 // lua_action_api.cpp - Action bar, cursor/pickup, keyboard input, key bindings, and pet actions Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/item_text.hpp"
@@ -245,19 +246,10 @@ static int lua_IsUsableAction(lua_State* L) {
     bool noMana = false;
     if (action.type == game::ActionBarSlot::SPELL) {
         usable = gh->getKnownSpells().count(action.id) > 0;
-        // Check power cost
-        if (usable && action.id != 0) {
-            auto spellData = gh->getSpellData(action.id);
-            if (spellData.manaCost > 0) {
-                auto pe = gh->getEntityManager().getEntity(gh->getPlayerGuid());
-                if (pe) {
-                    auto* unit = dynamic_cast<game::Unit*>(pe.get());
-                    if (unit && unit->getPowerByType(spellData.powerType) < spellData.manaCost) {
-                        noMana = true;
-                        usable = false;
-                    }
-                }
-            }
+        if (usable) {
+            const auto prerequisite = game::spellPrerequisite(*gh, action.id, gh->getTargetGuid());
+            usable = prerequisite == game::SpellPrerequisite::Ready;
+            noMana = prerequisite == game::SpellPrerequisite::NoPower;
         }
     }
     lua_pushboolean(L, usable ? 1 : 0);

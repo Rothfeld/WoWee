@@ -1,4 +1,5 @@
 #include "game/spell_handler.hpp"
+#include "game/spell_prerequisites.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "game/protocol_constants.hpp"
 #include "game/current_action.hpp"
@@ -706,9 +707,64 @@ bool SpellHandler::isTargetCastInterruptible() const {
     return s ? s->interruptible : true;
 }
 
+SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64_t target) {
+    owner.getSpellName(spellId);
+    const auto found = owner.spellNameCacheRef().find(spellId);
+    if (found == owner.spellNameCacheRef().end()) return SpellPrerequisite::Unknown;
+    const auto& entry = found->second;
+    if (entry.attr & 0x40u) return SpellPrerequisite::Passive;
+    if (owner.isPlayerDead() && !(entry.attr & 0x800000u)) return SpellPrerequisite::Dead;
+    if ((entry.attr & 0x10000000u) && owner.isInCombat()) return SpellPrerequisite::Combat;
+    if (entry.attr & 0x20000u) {
+        bool stealthed = false;
+        for (const auto& aura : owner.getPlayerAuras()) {
+            if (aura.isEmpty()) continue;
+            owner.getSpellName(aura.spellId);
+            const auto spell = owner.spellNameCacheRef().find(aura.spellId);
+            if (spell != owner.spellNameCacheRef().end()) {
+                for (auto effect : spell->second.effectAuraIds) stealthed |= effect == 16;
+            }
+        }
+        if (!stealthed) return SpellPrerequisite::Stealth;
+    }
+    if ((entry.attrEx & 0x500000u) &&
+        (owner.getComboPoints() == 0 || owner.getComboTarget() != target))
+        return SpellPrerequisite::NoComboPoints;
+    const auto data = owner.getSpellData(spellId);
+    const auto player = owner.getEntityManager().getEntity(owner.getPlayerGuid());
+    if (player && player->isUnit() && data.manaCost > 0 &&
+        static_cast<const Unit*>(player.get())->getPowerByType(data.powerType) < data.manaCost)
+        return SpellPrerequisite::NoPower;
+    return SpellPrerequisite::Ready;
+}
+
 void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     LOG_DEBUG("castSpell: spellId=", spellId, " target=0x", std::hex, targetGuid, std::dec);
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+
+    spellId = resolveHighestKnownRank(spellId);
+    const auto prerequisite = spellPrerequisite(owner_, spellId,
+        targetGuid != 0 ? targetGuid : owner_.getTargetGuid());
+    switch (prerequisite) {
+        case SpellPrerequisite::Ready: break;
+        case SpellPrerequisite::Unknown:
+            LOG_ERROR("Cast rejected: missing Spell.dbc entry ", spellId);
+            owner_.raiseUiError("Spell data unavailable");
+            return;
+        case SpellPrerequisite::Passive:
+            LOG_DEBUG("Ignoring cast request for passive spell ", spellId);
+            return;
+        case SpellPrerequisite::NoPower: {
+            const auto data = owner_.getSpellData(spellId);
+            owner_.raiseUiError(data.powerType == 3 ? "Not enough energy" :
+                data.powerType == 1 ? "Not enough rage" : "Not enough mana");
+            return;
+        }
+        case SpellPrerequisite::NoComboPoints: owner_.raiseUiError("That ability requires combo points"); return;
+        case SpellPrerequisite::Stealth: owner_.raiseUiError("You must be in stealth mode."); return;
+        case SpellPrerequisite::Combat: owner_.raiseUiError("You are in combat"); return;
+        case SpellPrerequisite::Dead: owner_.raiseUiError("You are dead"); return;
+    }
 
     // Food and water are server auras, but using any action interrupts them.
     // Cancel the aura and stand first, then allow the requested action to proceed.
@@ -1411,6 +1467,12 @@ const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() 
     lastSpellCount_ = knownSpells_.size();
     spellBookTabsDirty_ = false;
     spellBookTabs_.clear();
+    loadSpellNameCache();
+    loadSkillLineAbilityDbc();
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* spellLayout = layouts ? layouts->getLayout("Spell") : nullptr;
+    const auto spellDbc = owner_.services().assetManager
+        ? owner_.services().assetManager->loadDBC("Spell.dbc") : nullptr;
 
     // Which SkillLine.dbc categories earn a tab of their own.
     //
@@ -1450,10 +1512,23 @@ const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() 
         return false;
     };
 
+    const auto* registry = owner_.services().expansionRegistry;
+    const bool tbc = registry && registry->getActive() && registry->getActive()->id == "tbc";
     std::map<uint32_t, std::vector<uint32_t>> bySkillLine;
     std::vector<uint32_t> general;
 
     for (uint32_t spellId : knownSpells_) {
+        if (spellDbc && spellLayout) {
+            const auto field = spellLayout->field("AttributesEx4");
+            const auto row = spellDbc->findRecordById(spellId);
+            if (row >= 0 && field < spellDbc->getFieldCount() &&
+                (spellDbc->getUInt32(row, field) & 0x8000u)) continue;
+        }
+        // Item-granted spells remain castable but have no spellbook skill line.
+        if (tbc && !owner_.spellToSkillLineRef().count(spellId)) continue;
+        // Trade-spell entries are exposed by the profession window, not the book.
+        const auto spellEntry = owner_.spellNameCacheRef().find(spellId);
+        if (spellEntry != owner_.spellNameCacheRef().end() && (spellEntry->second.attr & 0x20u)) continue;
         auto slIt = owner_.spellToSkillLineRef().find(spellId);
         if (slIt != owner_.spellToSkillLineRef().end()) {
             uint32_t skillLineId = slIt->second;
@@ -1473,7 +1548,9 @@ const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() 
 
     if (!general.empty()) {
         std::sort(general.begin(), general.end(), byName);
-        spellBookTabs_.push_back({.name = "General", .texture = "Interface\\Icons\\INV_Misc_Book_09", .spellIds = std::move(general)});
+        spellBookTabs_.push_back({.name = "General", .texture = tbc
+            ? "Interface\\Icons\\Ability_Kick" : "Interface\\Icons\\INV_Misc_Book_09",
+            .spellIds = std::move(general)});
     }
 
     // Each tab's own picture, from SkillLine.dbc's icon column. Every tab used

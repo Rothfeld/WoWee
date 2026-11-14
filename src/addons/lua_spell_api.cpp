@@ -1,3 +1,4 @@
+#include "game/spell_prerequisites.hpp"
 // lua_spell_api.cpp - Spell info, casting, auras, and targeting Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
@@ -181,6 +182,13 @@ static bool classCanDispel(uint8_t classId, uint8_t dispelType) {
     }
 }
 
+static bool auraVisible(game::GameHandler& gh, uint32_t spellId) {
+    gh.getSpellName(spellId);
+    const auto found = gh.spellNameCacheRef().find(spellId);
+    if (found == gh.spellNameCacheRef().end()) return true;
+    return !(found->second.attr & 0x80u) && !(found->second.attrEx & 0x10000000u);
+}
+
 static int lua_UnitAura(lua_State* L, bool wantBuff) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
@@ -217,7 +225,7 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
     // Filter to buffs or debuffs and find the Nth one
     int found = 0;
     for (const auto& aura : *auras) {
-        if (aura.isEmpty() || aura.spellId == 0) continue;
+        if (aura.isEmpty() || aura.spellId == 0 || !auraVisible(*gh, aura.spellId)) continue;
         bool isDebuff = (aura.flags & 0x80) != 0;
         if (wantBuff ? isDebuff : !isDebuff) continue;
         if (dispellableOnly &&
@@ -356,7 +364,7 @@ static int lua_GetPlayerBuff(lua_State* L) {
         int seen = 0;
         for (size_t i = 0; i < auras.size(); ++i) {
             const game::AuraSlot& aura = auras[i];
-            if (aura.isEmpty()) continue;
+            if (aura.isEmpty() || !auraVisible(*gh, aura.spellId)) continue;
             const bool isDebuff = (aura.flags & 0x80) != 0;
             if (isDebuff != harmful) continue;
             if (seen++ != wanted) continue;
@@ -674,7 +682,7 @@ static int lua_GetSpellBookItemName(lua_State* L) {
             uint32_t spellId = tab.spellIds[idx - 1];
             const std::string& name = gh->getSpellName(spellId);
             lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
-            lua_pushstring(L, ""); // subName/rank
+            lua_pushstring(L, gh->getSpellRank(spellId).c_str());
             return 2;
         }
         idx -= static_cast<int>(tab.spellIds.size());
@@ -703,7 +711,7 @@ static int lua_GetSpellName(lua_State* L) {
     if (id == 0) { return luaReturnNil(L); }
     const std::string& name = gh->getSpellName(id);
     lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
-    lua_pushstring(L, "");
+    lua_pushstring(L, gh->getSpellRank(id).c_str());
     return 2;
 }
 
@@ -1180,23 +1188,9 @@ static int lua_IsUsableSpell(lua_State* L) {
         return 2;
     }
 
-    float cd = gh->getSpellCooldown(spellId);
-    bool onCooldown = (cd > 0.1f);
-    bool noMana = false;
-    if (!onCooldown) {
-        auto spellData = gh->getSpellData(spellId);
-        if (spellData.manaCost > 0) {
-            auto playerEntity = gh->getEntityManager().getEntity(gh->getPlayerGuid());
-            if (playerEntity) {
-                auto* unit = dynamic_cast<game::Unit*>(playerEntity.get());
-                if (unit && unit->getPowerByType(spellData.powerType) < spellData.manaCost) {
-                    noMana = true;
-                }
-            }
-        }
-    }
-    lua_pushboolean(L, (onCooldown || noMana) ? 0 : 1);
-    lua_pushboolean(L, noMana ? 1 : 0);
+    const auto prerequisite = game::spellPrerequisite(*gh, spellId, gh->getTargetGuid());
+    lua_pushboolean(L, prerequisite == game::SpellPrerequisite::Ready);
+    lua_pushboolean(L, prerequisite == game::SpellPrerequisite::NoPower);
     return 2;
 }
 
@@ -1252,6 +1246,11 @@ void registerSpellLuaAPI(lua_State* L) {
                 {"CastSpellByName",   lua_CastSpellByName},
                 {"CastSpellByID",       lua_CastSpellByID},
                 {"IsSpellKnown",      lua_IsSpellKnown},
+                {"PlayerHasSpells", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            lua_pushboolean(L, gh && !gh->getSpellBookTabs().empty());
+            return 1;
+        }},
                 {"GetNumSpellTabs",   lua_GetNumSpellTabs},
                 {"GetSpellTabInfo",   lua_GetSpellTabInfo},
                 {"GetSpellBookItemInfo", lua_GetSpellBookItemInfo},

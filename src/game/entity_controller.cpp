@@ -463,8 +463,8 @@ void EntityController::updateNonPlayerTransportAttachment(const UpdateBlock& blo
 //     Rebuild playerAuras from UNIT_FIELD_AURAS (Classic/TBC-era clients).
 //     blockFields is used to check if any aura field was updated in this packet.
 //     entity->getFields() is used for reading the full accumulated state.
-//     Normalises pre-WotLK harmful bit (0x02) to WotLK debuff bit (0x80) so
-//     downstream code checking for 0x80 works consistently across expansions.
+//     TBC uses 40 positive and 16 negative slots; aura flags contain effect
+//     bits, not the WotLK harmful flag. Classic uses 32 positive and 16 negative.
 void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>& entity) {
     if (!isPreWotlk() || !owner_.getSpellHandler()) return;
 
@@ -472,18 +472,21 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     const uint16_t ufAuraFlags = fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
     if (ufAuras == 0xFFFF) return;
 
+    const int positiveSlots = isActiveExpansion("tbc") ? 40 : 32;
+    const int auraSlots = positiveSlots + 16;
+    const auto previousAuras = owner_.getPlayerAuras();
     const auto& allFields = entity->getFields();
     bool hasAuraField = false;
     for (const auto& [fk, fv] : allFields) {
-        if (fk >= ufAuras && fk < ufAuras + 48) { hasAuraField = true; break; }
+        if (fk >= ufAuras && fk < ufAuras + auraSlots) { hasAuraField = true; break; }
     }
     if (!hasAuraField) return;
 
-    owner_.getSpellHandler()->resetPlayerAuras(48);
+    owner_.getSpellHandler()->resetPlayerAuras(auraSlots);
     uint64_t nowMs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
-    for (int slot = 0; slot < 48; ++slot) {
+    for (int slot = 0; slot < auraSlots; ++slot) {
         auto it = allFields.find(static_cast<uint16_t>(ufAuras + slot));
         if (it != allFields.end() && it->second != 0) {
             AuraSlot& a = owner_.getSpellHandler()->getPlayerAuraSlotRef(slot);
@@ -495,15 +498,18 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
                 if (fit != allFields.end())
                     aFlag = static_cast<uint8_t>((fit->second >> ((slot % 4) * 8)) & 0xFF);
             }
-            // Normalize pre-WotLK harmful bit (0x02) to WotLK debuff bit (0x80)
-            // so downstream code checking for 0x80 works consistently.
-            if (aFlag & 0x02)
-                aFlag = (aFlag & ~0x02) | 0x80;
-            a.flags = aFlag;
+            a.flags = (aFlag & ~0x80u) | (slot >= positiveSlots ? 0x80u : 0u);
             a.durationMs = -1;
             a.maxDurationMs = -1;
+            if (static_cast<size_t>(slot) < previousAuras.size() &&
+                previousAuras[slot].spellId == a.spellId) {
+                a.durationMs = previousAuras[slot].durationMs;
+                a.maxDurationMs = previousAuras[slot].maxDurationMs;
+                a.receivedAtMs = previousAuras[slot].receivedAtMs;
+            } else {
+                a.receivedAtMs = nowMs;
+            }
             a.casterGuid = owner_.getPlayerGuid();
-            a.receivedAtMs = nowMs;
         }
     }
     LOG_DEBUG("[pre-WotLK] Rebuilt playerAuras from UNIT_FIELD_AURAS");
