@@ -4066,9 +4066,18 @@ static int lua_CanExitVehicle(lua_State* L) {
 }
 static int lua_IsVehicleAimAngleAdjustable(lua_State* L) { lua_pushboolean(L, 0); return 1; }
 
-// HasKey() - whether the player carries a key ring at all. The keyring exists
-// and holds keys, so the button that opens it is offered.
-static int lua_HasKey(lua_State* L) { lua_pushboolean(L, 1); return 1; }
+// TBC reveals the keyring after the player obtains a key.
+static int lua_HasKey(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    bool hasKey = false;
+    if (gh) {
+        for (uint64_t guid : gh->keyringSlotGuidsRef()) {
+            if (guid != 0) { hasKey = true; break; }
+        }
+    }
+    lua_pushboolean(L, hasKey);
+    return 1;
+}
 
 // GetArenaTeam(index) →
 //   teamName, teamSize, teamRating, teamPlayed, teamWins, seasonTeamPlayed,
