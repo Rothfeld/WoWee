@@ -100,11 +100,6 @@ struct SpellCooldownEntry {
 inline const char* getSpellCastResultString(uint8_t result, int powerType = -1) {
     // AzerothCore 3.3.5a SpellCastResult enum (SharedDefines.h)
     switch (result) {
-        // TBC-only failures retained by the cross-expansion result translator.
-        case 188: return "Not enough training points";
-        case 189: return "Cannot disenchant while looting";
-        case 190: return "Cannot prospect while looting";
-        case 191: return "Too many skills";
         case 0:   return nullptr; // SUCCESS - not a failure
         case 1:   return "Affecting combat";
         case 2:   return "Already at full health";
@@ -303,6 +298,11 @@ inline const char* getSpellCastResultString(uint8_t result, int powerType = -1) 
         case 185: return "Pet can rename";
         case 186: return "Target cannot be resurrected";
         case 187: return "Unknown error";
+        // TBC-only failures retained by the cross-expansion result translator.
+        case 188: return "Not enough training points";
+        case 189: return "Cannot disenchant while looting";
+        case 190: return "Cannot prospect while looting";
+        case 191: return "Too many skills";
         case 255: return nullptr; // SPELL_CAST_OK
         default:  return nullptr;
     }
