@@ -185,7 +185,8 @@ static bool classCanDispel(uint8_t classId, uint8_t dispelType) {
 static bool auraVisible(game::GameHandler& gh, uint32_t spellId) {
     gh.getSpellName(spellId);
     const auto found = gh.spellNameCacheRef().find(spellId);
-    if (found == gh.spellNameCacheRef().end()) return true;
+    // Server-only helper spells have no client DBC entry or display icon.
+    if (found == gh.spellNameCacheRef().end()) return false;
     return !(found->second.attr & 0x80u) && !(found->second.attrEx & 0x10000000u);
 }
 
