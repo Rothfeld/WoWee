@@ -1210,14 +1210,12 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
                 std::max(localFrom.y, localPos.y) + localRadius + 1.0f,
                 tl_m2_collisionTriScratch);
 
-            constexpr float PLAYER_HEIGHT = 2.0f;
-            constexpr float MAX_TOTAL_PUSH = 0.02f; // Cap total push per instance
+            const float playerHeight = 2.0f / instance.scale;
             bool pushed = false;
-            float totalPushX = 0.0f, totalPushY = 0.0f;
 
             for (uint32_t ti : tl_m2_collisionTriScratch) {
                 if (ti >= model.collision.triCount) continue;
-                if (localPos.z + PLAYER_HEIGHT < model.collision.triBounds[ti].minZ ||
+                if (localPos.z + playerHeight < model.collision.triBounds[ti].minZ ||
                     localPos.z > model.collision.triBounds[ti].maxZ) continue;
 
                 // Step-up: only skip wall when player is rising (jumping over it)
@@ -1225,45 +1223,21 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
                 bool rising = (localPos.z > localFrom.z + 0.05f);
                 if (rising && localPos.z + MAX_STEP_UP >= model.collision.triBounds[ti].maxZ) continue;
 
-                // Early out if we already pushed enough this instance
-                float totalPushSoFar = std::sqrt(totalPushX * totalPushX + totalPushY * totalPushY);
-                if (totalPushSoFar >= MAX_TOTAL_PUSH) break;
-
                 const auto& verts = model.collision.vertices;
                 const auto& idx   = model.collision.indices;
                 const auto& v0 = verts[idx[ti * 3]];
                 const auto& v1 = verts[idx[ti * 3 + 1]];
                 const auto& v2 = verts[idx[ti * 3 + 2]];
 
-                glm::vec3 closest = closestPointOnTriangle(localPos, v0, v1, v2);
-                glm::vec3 diff = localPos - closest;
-                float distXY = std::sqrt(diff.x * diff.x + diff.y * diff.y);
-
-                if (distXY < localRadius && distXY > 1e-4f) {
-                    // Gentle push - very small fraction of penetration
-                    float penetration = localRadius - distXY;
-                    float pushDist = std::clamp(penetration * 0.08f, 0.001f, 0.015f);
-                    float dx = (diff.x / distXY) * pushDist;
-                    float dy = (diff.y / distXY) * pushDist;
-                    localPos.x += dx;
-                    localPos.y += dy;
-                    totalPushX += dx;
-                    totalPushY += dy;
+                const glm::vec3 closest = closestPointOnTriangle(localPos, v0, v1, v2);
+                const glm::vec3 fromClosest = closestPointOnTriangle(localFrom, v0, v1, v2);
+                const glm::vec2 separation = horizontalWallSeparation(
+                    glm::vec2(localFrom - fromClosest), glm::vec2(localPos - closest),
+                    glm::vec2(glm::cross(v1 - v0, v2 - v0)), localRadius);
+                if (glm::dot(separation, separation) > 0.0f) {
+                    localPos.x += separation.x;
+                    localPos.y += separation.y;
                     pushed = true;
-                } else if (distXY < 1e-4f) {
-                    // On the plane - soft push along triangle normal XY
-                    glm::vec3 n = glm::cross(v1 - v0, v2 - v0);
-                    float nxyLen = std::sqrt(n.x * n.x + n.y * n.y);
-                    if (nxyLen > 1e-4f) {
-                        float pushDist = std::min(localRadius, 0.015f);
-                        float dx = (n.x / nxyLen) * pushDist;
-                        float dy = (n.y / nxyLen) * pushDist;
-                        localPos.x += dx;
-                        localPos.y += dy;
-                        totalPushX += dx;
-                        totalPushY += dy;
-                        pushed = true;
-                    }
                 }
             }
 

@@ -196,3 +196,33 @@ TEST_CASE("a focus measures to the box, not to its centre", "[collision]") {
         CHECK(focus.excludes({10.001f, 0.0f, 0.0f}, {10.001f, 0.0f, 0.0f}));
     }
 }
+
+TEST_CASE("horizontal wall collision blocks sustained movement and preserves sliding", "[collision]") {
+    for (float scale : {0.25f, 1.0f, 4.0f}) {
+        for (float side : {-1.0f, 1.0f}) {
+            glm::vec2 position(side * 0.5f / scale, 0.0f);
+            for (int step = 0; step < 120; ++step) {
+                glm::vec2 proposed = position + glm::vec2(-side * 0.12f, 0.04f) / scale;
+                proposed += wowee::rendering::horizontalWallSeparation(
+                    {position.x, 0.0f}, {proposed.x, 0.0f}, {1.0f, 0.0f}, 0.5f / scale);
+                REQUIRE(proposed.x * side * scale >= 0.4999f);
+                REQUIRE(std::abs(proposed.y * scale - (step + 1) * 0.04f) < 0.0001f);
+                position = proposed;
+            }
+        }
+    }
+}
+
+TEST_CASE("horizontal wall collision retains entry side across thin surfaces", "[collision]") {
+    for (float normal : {-1.0f, 1.0f}) {
+        for (float destination : {-0.1f, 0.0f, 0.1f}) {
+            const auto push = wowee::rendering::horizontalWallSeparation(
+                {-0.2f, 0.0f}, {destination, 0.0f}, {normal, 0.0f}, 0.5f);
+            REQUIRE(std::abs(destination + push.x + 0.5f) < 0.0001f);
+            REQUIRE(push.y == 0.0f);
+        }
+    }
+    const auto clear = wowee::rendering::horizontalWallSeparation(
+        {-0.7f, 0.0f}, {-0.6f, 0.0f}, {1.0f, 0.0f}, 0.5f);
+    REQUIRE(clear == glm::vec2(0.0f));
+}

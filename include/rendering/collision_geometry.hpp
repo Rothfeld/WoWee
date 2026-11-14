@@ -61,6 +61,26 @@ inline float rayTriangleIntersect(const glm::vec3& origin, const glm::vec3& dir,
     return t > EPSILON ? t : -1.0f;  // behind the origin counts as a miss
 }
 
+/// Resolve horizontal overlap fully, retaining the approach side if a step
+/// crossed the surface. Offsets run from nearest triangle points to the body.
+inline glm::vec2 horizontalWallSeparation(const glm::vec2& fromOffset,
+                                          const glm::vec2& toOffset,
+                                          const glm::vec2& normal,
+                                          float radius) {
+    const float distance = glm::length(toOffset);
+    if (distance >= radius) return glm::vec2(0.0f);
+    if (distance > 1e-4f) {
+        const bool crossed = glm::dot(fromOffset, toOffset) < 0.0f;
+        const glm::vec2 direction = (crossed ? -toOffset : toOffset) / distance;
+        return direction * (radius + (crossed ? distance : -distance));
+    }
+    const float approachLength = glm::length(fromOffset);
+    if (approachLength > 1e-4f) return fromOffset * (radius / approachLength);
+    const float normalLength = glm::length(normal);
+    if (normalLength > 1e-4f) return normal * (radius / normalLength);
+    return glm::vec2(0.0f);
+}
+
 /// The sphere a collision query is restricted to, so that a query near the
 /// player does not walk every instance in the world.
 ///
