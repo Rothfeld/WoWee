@@ -41,6 +41,8 @@ do not emit spell-channel events or appear in UnitCastingInfo/UnitChannelInfo.
 Moving still cancels restoration; actual timed casts and channels retain their
 separate state. Animation classification reads the active restoration spell
 identity independently of the current cast ID, which remains zero while eating.
+EmoteEat runs on SpineLow and its descendants with an independent timeline;
+Sitting supplies the pelvis and legs. Food ending removes the upper-body layer.
 
 ## FrameXML behavior
 

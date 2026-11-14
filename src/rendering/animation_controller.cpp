@@ -1210,6 +1210,10 @@ void AnimationController::updateCharacterAnimation() {
         lastPlayerAnimRequest_ = animId;
         lastPlayerAnimLoopRequest_ = loop;
     }
+    // Keep the seated base pose and an independently timed eating gesture.
+    // Transitions and movement must not inherit the upper-body activity.
+    characterRenderer->setUpperBodyAnimation(characterInstanceId,
+        animId == anim::SITTING ? seatedUpperBodyAnimation_ : 0);
 }
 
 // ── Footstep update (delegated to FootstepDriver) ───────────────────────────

@@ -85,6 +85,8 @@ public:
                        uint32_t oneShotReturnAnim = 0, bool holdFinalPose = false);
     /// Play other animations on each arm alone, until the next playAnimation.
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
+    // Loop an animation on SpineLow and its descendants; zero removes the layer.
+    void setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId);
 
     void update(float deltaTime, const glm::vec3& cameraPos = glm::vec3(0.0f));
 
@@ -263,6 +265,9 @@ private:
         int armSequenceIndex[2] = {-1, -1};  // Left, right arm on their own sequences; -1 follows the body
         bool armSequenceLoops[2] = {false, false};  // Idle arm loops; a reaching arm holds its last frame
         std::vector<int8_t> boneArm;  // Per bone: 0 left arm, 1 right arm, -1 neither; built by setArmAnimations
+        int upperBodySequenceIndex = -1;
+        float upperBodyAnimationTime = 0.0f;
+        std::vector<bool> upperBodyBones;
         float animationTime = 0.0f;
         float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)
         bool animationLoop = true;

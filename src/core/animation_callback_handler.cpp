@@ -491,17 +491,11 @@ void AnimationCallbackHandler::setupCallbacks() {
                             appearanceComposer_.setWeaponsSheathed(true);
                             appearanceComposer_.loadEquippedWeapons();
                         }
-                        // Food and water keep the player seated (UNIT_FIELD_BYTES_1)
-                        // with the plain seated idle, exactly like the real client:
-                        // player models ship NO seated eating animation - EmoteEat is
-                        // authored standing (root bone stays at stand height) and
-                        // looping it while seated pops the model upright. Only
-                        // override the seated idle for models that truly have the
-                        // dedicated EatingLoop sequence.
-                        const uint32_t seatedLoop = pickFirst({rendering::anim::EATING_LOOP});
-                        ac->setSeatedLoopAnimation(seatedLoop);
+                        // EmoteEat supplies torso, head and hand motion. Sitting
+                        // remains the base pose so its pelvis and legs stay grounded.
+                        ac->setSeatedUpperBodyAnimation(rendering::anim::EMOTE_EAT);
                         LOG_DEBUG("Restoration animation: spell=", currentSpell,
-                                  " seatedLoop=", seatedLoop);
+                                  " upperBody=", rendering::anim::EMOTE_EAT);
                     }
                 }
                 // Food/water consume sounds repeat from SpellHandler::updateTimers
@@ -663,6 +657,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 auto* ac = renderer_.getAnimationController();
                 if (ac) {
                     ac->setSeatedLoopAnimation(0);
+                    ac->setSeatedUpperBodyAnimation(0);
                     ac->stopSpellCast();
                 }
             } else {

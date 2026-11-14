@@ -1,3 +1,4 @@
+#include <cassert>
 /**
  * CharacterRenderer - GPU rendering of M2 character models with skeletal animation (Vulkan)
  *
@@ -2169,6 +2170,13 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         // Advance global sequence timer (accumulates independently of animation wrapping)
         inst.globalSequenceTime += deltaTime * 1000.0f;
 
+        if (inst.upperBodySequenceIndex >= 0) {
+            const auto& upper = inst.cachedModel->data.sequences[inst.upperBodySequenceIndex];
+            inst.upperBodyAnimationTime = std::fmod(
+                inst.upperBodyAnimationTime + deltaTime * 1000.0f,
+                static_cast<float>(upper.duration));
+        }
+
         // Always advance animation time (cheap)
         if (inst.cachedModel && !inst.cachedModel->data.sequences.empty()) {
             if (inst.currentSequenceIndex < 0) {
@@ -2408,6 +2416,37 @@ void CharacterRenderer::setArmAnimations(uint32_t instanceId, uint32_t leftArmAn
     }
 }
 
+void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId) {
+    auto found = instances.find(instanceId);
+    assert(found != instances.end());
+    auto& instance = found->second;
+    if (animationId == 0) {
+        instance.upperBodySequenceIndex = -1;
+        instance.upperBodyAnimationTime = 0.0f;
+        return;
+    }
+    assert(instance.cachedModel);
+    const auto& model = instance.cachedModel->data;
+    if (instance.upperBodySequenceIndex >= 0 &&
+        model.sequences[instance.upperBodySequenceIndex].id == animationId) return;
+    const auto sequence = std::find_if(model.sequences.begin(), model.sequences.end(),
+        [animationId](const auto& value) { return value.id == animationId && value.variationIndex == 0; });
+    assert(sequence != model.sequences.end() && sequence->duration > 0);
+    instance.upperBodySequenceIndex = static_cast<int>(sequence - model.sequences.begin());
+    instance.upperBodyAnimationTime = 0.0f;
+    instance.upperBodyBones.assign(model.bones.size(), false);
+    bool haveSpine = false;
+    for (size_t i = 0; i < model.bones.size(); ++i) {
+        const auto& bone = model.bones[i];
+        assert(bone.parentBone < static_cast<int>(i));
+        const bool spine = bone.keyBoneId == kKeyBoneSpineLow;
+        haveSpine = haveSpine || spine;
+        instance.upperBodyBones[i] = spine ||
+            (bone.parentBone >= 0 && instance.upperBodyBones[bone.parentBone]);
+    }
+    assert(haveSpine);
+}
+
 void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     if (!instance.cachedModel) return;
     auto& model = instance.cachedModel->data;
@@ -2448,6 +2487,11 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
         int sequence = instance.currentSequenceIndex;
         float time = animationSampleTime(instance.currentAnimationId,
                                          model.sequences[sequence], instance.animationTime);
+        if (instance.upperBodySequenceIndex >= 0 && instance.upperBodyBones[i]) {
+            sequence = instance.upperBodySequenceIndex;
+            time = animationSampleTime(model.sequences[sequence].id,
+                                       model.sequences[sequence], instance.upperBodyAnimationTime);
+        }
         const int arm = armsOwnSequences ? instance.boneArm[i] : -1;
         if (arm >= 0 && instance.armSequenceIndex[arm] >= 0) {
             sequence = instance.armSequenceIndex[arm];

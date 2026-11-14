@@ -125,6 +125,7 @@ public:
     /// Leave spell cast animation state → plays finalization anim then idle.
     void stopSpellCast();
     void setSeatedLoopAnimation(uint32_t animationId);
+    void setSeatedUpperBodyAnimation(uint32_t animationId) { seatedUpperBodyAnimation_ = animationId; }
 
     // ── Loot animation ─────────────────────────────────────────────────────
     void startLooting();
@@ -201,6 +202,7 @@ private:
 
     // ── CharacterAnimator: owns the complete character animation FSM ─────
     CharacterAnimator characterAnimator_;
+    uint32_t seatedUpperBodyAnimation_ = 0;
     bool capabilitiesProbed_ = false;
 
     // ── Animation change detection ───────────────────────────────────────
