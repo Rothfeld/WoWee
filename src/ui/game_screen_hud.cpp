@@ -1,4 +1,5 @@
 #include "ui/game_screen.hpp"
+#include "ui/framexml_takeover.hpp"
 #include "ui/sight_cache.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "ui/ui_texture_load.hpp"
@@ -1391,7 +1392,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                                  : "unitNameFriendlyPetName")
             : isGuardian ? (isHostile ? "unitNameEnemyGuardianName"
                                       : "unitNameFriendlyGuardianName")
-                     : (unit->getMaxHealth() > 0 && unit->getMaxHealth() < 100
+                     : (gameHandler.getCreatureType(unit->getEntry()) == 8
                             ? "unitNameNonCombatCreatureName"   // critters
                             : "unitNameNPC");
         const bool showThisName =
@@ -1555,7 +1556,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Click to target / right-click context: detect clicks inside the nameplate region.
         // Use the wider of name text or health bar for the horizontal hit area so short
         // names like "Wolf" don't produce a tiny clickable strip narrower than the bar.
-        if (!ImGui::GetIO().WantCaptureMouse) {
+        if (!ImGui::GetIO().WantCaptureMouse && !frameXmlOwnsMouse()) {
             ImVec2 mouse = ImGui::GetIO().MousePos;
             float hitLeft  = std::min(nameX, barX) - 2.0f;
             float hitRight = std::max(nameX + textSize.x, barX + barW) + 2.0f;
@@ -1566,17 +1567,6 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             if (mouse.x >= nx0 && mouse.x <= nx1 && mouse.y >= ny0 && mouse.y <= ny1) {
                 // Track mouseover for [target=mouseover] macro conditionals
                 gameHandler.setMouseoverGuid(guid);
-                // Hover tooltip: name, level/class, guild
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted(unitName.c_str());
-                if (isPlayer) {
-                    uint8_t cid = entityClassId(unit);
-                    ImGui::Text("Level %u %s", level, classNameStr(cid));
-                } else if (level > 0) {
-                    ImGui::Text("Level %u", level);
-                }
-                if (!subLabel.empty()) ImGui::TextColored(ImVec4(0.7f,0.7f,0.7f,1.0f), "%s", subLabel.c_str());
-                ImGui::EndTooltip();
                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     gameHandler.setTarget(guid);
                 } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
