@@ -3385,7 +3385,14 @@ void CameraController::processMouseButton(const SDL_MouseButtonEvent& event) {
     bool anyDown = leftMouseDown || rightMouseDown;
     if (anyDown && !mouseButtonDown) {
         // SDL3 captures per window rather than globally. The focused window is the one the player is pointing at, and relative mode means nothing for any other - so that is the one to ask.
-        SDL_SetWindowRelativeMouseMode(SDL_GetKeyboardFocus(), true);
+        if (!SDL_SetWindowRelativeMouseMode(SDL_GetKeyboardFocus(), true)) {
+            LOG_ERROR("Cannot enable mouse look: ", SDL_GetError());
+            leftMouseDown = false;
+            rightMouseDown = false;
+            mouseButtonDown = false;
+            return;
+        }
+        LOG_DEBUG("Mouse look: relative input enabled");
         // Throw away the delta the switch itself makes. Entering relative
         // mode hands over the movement since the last relative read, which on
         // a press is everything the cursor did on its way to the thing being

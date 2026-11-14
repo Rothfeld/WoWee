@@ -141,6 +141,13 @@ void WardenHandler::registerOpcodes(DispatchTable& table) {
 // ---------------------------------------------------------------------------
 
 void WardenHandler::reset() {
+    // The worker reads the module image and opcode table through borrowed
+    // pointers. Drain it before releasing or changing session resources.
+    if (wardenResponsePending_) {
+        wardenPendingEncrypted_.get();
+        wardenPendingEncrypted_ = {};
+        wardenResponsePending_ = false;
+    }
     requiresWarden_ = false;
     wardenGateSeen_ = false;
     wardenGateElapsed_ = 0.0f;
@@ -154,13 +161,6 @@ void WardenHandler::reset() {
     wardenModuleSize_ = 0;
     wardenModuleData_.clear();
     wardenLoadedModule_.reset();
-    // A response still being built answers the session that just ended; sent
-    // on the next one it would go out under that session's keys.
-    if (wardenResponsePending_) {
-        wardenPendingEncrypted_.wait();
-        wardenPendingEncrypted_ = {};
-        wardenResponsePending_ = false;
-    }
 }
 
 // ---------------------------------------------------------------------------

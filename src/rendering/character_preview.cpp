@@ -1413,6 +1413,7 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     }
 
     uint32_t fi = frameIndex % MAX_FRAMES;
+    vkCtx_->checkpoint(cmd, "character preview start");
 
     // Update per-frame UBO with preview camera matrices and studio lighting
     GPUPerFrameData ubo{};
@@ -1450,8 +1451,10 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
 
     // Render the character model
     charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_);
+    vkCtx_->checkpoint(cmd, "character preview draws recorded");
 
     renderTarget_->endPass(cmd);
+    vkCtx_->checkpoint(cmd, "character preview end");
 
     compositeRendered_ = true;
 }
