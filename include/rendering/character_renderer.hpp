@@ -105,7 +105,8 @@ public:
     void setInstancePosition(uint32_t instanceId, const glm::vec3& position);
     void setInstanceRotation(uint32_t instanceId, const glm::vec3& rotation);
     void setInstanceTorsoYaw(uint32_t instanceId, float deltaYawRad);
-    void moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds);
+    void moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
+                        bool updateAnimation = true);
     void startFadeIn(uint32_t instanceId, float durationSeconds);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;

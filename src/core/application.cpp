@@ -3659,9 +3659,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 } else if (planarDistSq > kMoveThreshSq2 || dz > 0.08f) {
                     float planarDist = std::sqrt(planarDistSq);
                     float duration = std::clamp(planarDist / 5.5f, 0.05f, 0.22f);
-                    charRenderer->moveInstanceTo(instanceId, renderPos, duration);
+                    charRenderer->moveInstanceTo(instanceId, renderPos, duration, false);
                     if (remoteMount) {
-                        charRenderer->moveInstanceTo(remoteMount->instanceId, mountRenderPos, duration);
+                        charRenderer->moveInstanceTo(remoteMount->instanceId, mountRenderPos, duration, false);
                     }
                 }
                 posIt->second = renderPos;

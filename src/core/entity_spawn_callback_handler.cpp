@@ -145,7 +145,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
             if (isPlayer) {
                 glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
                 float durationSec = static_cast<float>(durationMs) / 1000.0f;
-                renderer_.getCharacterRenderer()->moveInstanceTo(instanceId, renderPos, durationSec);
+                renderer_.getCharacterRenderer()->moveInstanceTo(instanceId, renderPos, durationSec, false);
             }
             // Play the server-selected ground locomotion animation for the
             // duration of the spline move. Monster patrols report Walk through

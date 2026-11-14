@@ -3710,7 +3710,8 @@ void CharacterRenderer::setInstanceTorsoYaw(uint32_t instanceId, float deltaYawR
     }
 }
 
-void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds) {
+void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
+                                       bool updateAnimation) {
     auto it = instances.find(instanceId);
     if (it == instances.end()) return;
 
@@ -3740,7 +3741,7 @@ void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& des
             // Stop at current location.
             inst.position = destination;
             inst.isMoving = false;
-            if (inst.currentAnimationId == anim::WALK || inst.currentAnimationId == anim::RUN) {
+            if (updateAnimation && (inst.currentAnimationId == anim::WALK || inst.currentAnimationId == anim::RUN)) {
                 playAnimation(instanceId, anim::STAND, true);
             }
             return;
@@ -3769,7 +3770,7 @@ void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& des
     float moveSpeed = std::sqrt(planarDistSq) / std::max(durationSeconds, 0.001f);
     bool preferRun = (!synthesizedDuration && moveSpeed >= 4.5f);
     uint32_t moveAnim = pickMoveAnim(preferRun);
-    if (moveAnim != 0 && inst.currentAnimationId != moveAnim) {
+    if (updateAnimation && moveAnim != 0 && inst.currentAnimationId != moveAnim) {
         playAnimation(instanceId, moveAnim, true);
     }
 }
