@@ -170,13 +170,8 @@ private:
     int lastCenterTileX = -1;
     int lastCenterTileY = -1;
 
-    // No arrow texture: the player arrow is a triangle the display shader
-    // draws from push.arrowRotation. A MinimapArrow.blp was loaded here once
-    // and the members outlived the drawing - never assigned, so the teardown
-    // that freed them could not run, and the two accessors that read them had
-    // no callers. Kept as a note rather than as fields, because the real
-    // client draws the texture and honours SetPlayerTextureWidth/Height on it,
-    // which this cannot: those two are still no-ops.
+    // GameScreen draws MinimapArrow.blp over the map once, alongside markers.
+
 };
 
 } // namespace rendering

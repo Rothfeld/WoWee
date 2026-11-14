@@ -7,6 +7,9 @@
 #include "ui/ui_raid_icons.hpp"
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
+#include "ui/ui_texture_load.hpp"
+#include "game/game_utils.hpp"
+#include <stdexcept>
 #include "ui/minimap_projection.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
@@ -890,9 +893,6 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
             }
         }
         if (!mark.symbol || !mark.onMinimap) continue;
-        const ImU32 dotColor = mark.dim ? IM_COL32(160, 160, 160, 255)
-                                        : IM_COL32(255, 210, 0, 255);
-        const char* marker = mark.symbol;
 
         auto entity = gameHandler.getEntityManager().getEntity(guid);
         if (!entity) continue;
@@ -900,13 +900,21 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
         float sx = 0.0f, sy = 0.0f;
         if (!frame.projectEntity(*entity, sx, sy)) continue;
 
-        // Draw dot with marker text
-        frame.drawList->AddCircleFilled(ImVec2(sx, sy), 5.0f, dotColor);
-        ImFont* font = ImGui::GetFont();
-        ImVec2 textSize = font->CalcTextSizeA(11.0f, FLT_MAX, 0.0f, marker);
-        frame.drawList->AddText(font, 11.0f,
-            ImVec2(sx - textSize.x * 0.5f, sy - textSize.y * 0.5f),
-            IM_COL32(0, 0, 0, 255), marker);
+        static VkDescriptorSet questAtlas = VK_NULL_HANDLE;
+        if (!questAtlas) {
+            questAtlas = uploadUiTextureFromBlp(services_.assetManager,
+                "Interface\\Minimap\\ObjectIcons.blp", services_.window);
+            if (!questAtlas) {
+                LOG_ERROR("Minimap object icon atlas failed to load");
+                throw std::runtime_error("Minimap object icon atlas failed to load");
+            }
+        }
+        // Original ObjectIcons atlas: eight 32px columns, two rows.
+        // Second row: yellow !/?, then grey !/?.
+        const int column = (mark.symbol[0] == '!' ? 1 : 2) + (mark.dim ? 2 : 0);
+        frame.drawList->AddImage((ImTextureID)(uintptr_t)questAtlas,
+            ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
+            ImVec2(column / 8.0f, 0.5f), ImVec2((column + 1) / 8.0f, 1.0f));
 
         // Show NPC name and quest status on hover
         {
@@ -1253,42 +1261,34 @@ void GameScreen::renderMinimapPlayerArrow(const MinimapFrame& frame) {
     auto* renderer = services_.renderer;
     auto* minimap = renderer ? renderer->getMinimap() : nullptr;
     if (!minimap) return;
-    // Player position arrow at minimap center, pointing in camera facing direction.
-    // On a rotating minimap the map already turns so forward = screen-up; on a fixed
-    // minimap we rotate the arrow to match the player's compass heading.
-    {
-        // Compute screen-space facing direction for the arrow.
-        // frame.bearing = clockwise angle from screen-north (0 = facing north/up).
-        float arrowAngle = 0.0f; // 0 = pointing up (north)
-        if (!minimap->isRotateWithCamera()) {
-            // Fixed minimap: arrow must show actual facing relative to north.
-            // Match the mirrored minimap texture by flipping the arrow's
-            // visual north/south component.
-            arrowAngle = -glm::radians(renderer->getCharacterYaw());
+    static VkDescriptorSet arrowTexture = VK_NULL_HANDLE;
+    if (!arrowTexture) {
+        arrowTexture = uploadUiTextureFromBlp(services_.assetManager,
+            "Interface\\Minimap\\MinimapArrow.blp", services_.window);
+        if (!arrowTexture) {
+            LOG_ERROR("Minimap player texture failed to load");
+            throw std::runtime_error("Minimap player texture failed to load");
         }
-        // Screen direction the arrow tip points toward
-        float nx =  std::sin(arrowAngle); // screen +X = east
-        float ny = -std::cos(arrowAngle); // screen -Y = north
-
-        // Draw a chevron-style arrow: tip, two base corners, and a notch at the back
-        const float tipLen  = 8.0f;  // tip forward distance
-        const float baseW   = 5.0f;  // half-width at base
-        const float notchIn = 3.0f;  // how far back the center notch sits
-        // Perpendicular direction (rotated 90°)
-        float px =  ny; // perpendicular x
-        float py = -nx; // perpendicular y
-
-        ImVec2 tip  (frame.centerX + nx * tipLen,  frame.centerY + ny * tipLen);
-        ImVec2 baseL(frame.centerX - nx * baseW + px * baseW,  frame.centerY - ny * baseW + py * baseW);
-        ImVec2 baseR(frame.centerX - nx * baseW - px * baseW,  frame.centerY - ny * baseW - py * baseW);
-        ImVec2 notch(frame.centerX - nx * (baseW - notchIn),   frame.centerY - ny * (baseW - notchIn));
-
-        // Fill: bright white with slight gold tint, dark outline for readability
-        frame.drawList->AddTriangleFilled(tip, baseL, notch, IM_COL32(255, 248, 200, 245));
-        frame.drawList->AddTriangleFilled(tip, notch, baseR, IM_COL32(255, 248, 200, 245));
-        frame.drawList->AddTriangle(tip, baseL, notch, IM_COL32(60, 40, 0, 200), 1.2f);
-        frame.drawList->AddTriangle(tip, notch, baseR, IM_COL32(60, 40, 0, 200), 1.2f);
     }
+
+    // Project character facing through the same transform as world markers.
+    // This also preserves facing when the camera rotates independently.
+    const float yaw = glm::radians(renderer->getCharacterYaw());
+    const glm::vec2 direction = renderDeltaToMinimapOffset(
+        std::cos(yaw), std::sin(yaw), frame.view);
+    const float angle = std::atan2(direction.x, -direction.y);
+    const float cs = std::cos(angle), sn = std::sin(angle);
+    constexpr float halfSize = 16.0f;
+    const ImVec2 corners[] = {{-halfSize, -halfSize}, {halfSize, -halfSize},
+                             {halfSize, halfSize}, {-halfSize, halfSize}};
+    ImVec2 points[4];
+    for (int i = 0; i < 4; ++i) {
+        points[i] = ImVec2(frame.centerX + corners[i].x * cs - corners[i].y * sn,
+                           frame.centerY + corners[i].x * sn + corners[i].y * cs);
+    }
+    frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrowTexture,
+        points[0], points[1], points[2], points[3],
+        ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1));
 
 }
 
@@ -1607,9 +1607,8 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     float sinB = 0.0f;
     if (minimap->isRotateWithCamera()) {
         glm::vec3 fwd = camera->getForward();
-        // Render space: +X=West, +Y=North. Camera fwd=(cos(yaw),sin(yaw)).
-        // Clockwise bearing from North: atan2(fwd.y, -fwd.x).
-        bearing = std::atan2(fwd.y, -fwd.x);
+        // Match Minimap::render's texture rotation exactly.
+        bearing = std::atan2(-fwd.x, fwd.y);
         cosB = std::cos(bearing);
         sinB = std::sin(bearing);
     }
@@ -1678,7 +1677,10 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     renderMinimapChests(frame, minimapGameObjects, gameHandler);
 
     renderMinimapQuestGivers(frame, statuses, gameHandler);
-    renderMinimapQuestKills(frame, minimapUnits, statuses, gameHandler);
+    // TBC does not have automatic quest-kill tracking on the minimap.
+    if (!game::isActiveExpansion("tbc")) {
+        renderMinimapQuestKills(frame, minimapUnits, statuses, gameHandler);
+    }
     renderMinimapGossipPois(frame, gameHandler);
     renderMinimapPings(frame, gameHandler);
     renderMinimapPartyDots(frame, gameHandler);
