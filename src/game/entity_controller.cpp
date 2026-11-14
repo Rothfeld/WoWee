@@ -502,7 +502,8 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
             a.durationMs = -1;
             a.maxDurationMs = -1;
             if (static_cast<size_t>(slot) < previousAuras.size() &&
-                previousAuras[slot].spellId == a.spellId) {
+                (previousAuras[slot].spellId == a.spellId ||
+                 (previousAuras[slot].isEmpty() && previousAuras[slot].durationMs >= 0))) {
                 a.durationMs = previousAuras[slot].durationMs;
                 a.maxDurationMs = previousAuras[slot].maxDurationMs;
                 a.receivedAtMs = previousAuras[slot].receivedAtMs;
@@ -510,6 +511,11 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
                 a.receivedAtMs = nowMs;
             }
             a.casterGuid = owner_.getPlayerGuid();
+        } else if (static_cast<size_t>(slot) < previousAuras.size() &&
+                   previousAuras[slot].isEmpty() && previousAuras[slot].durationMs >= 0) {
+            // An unrelated fields packet must not discard a duration waiting
+            // for its spell ID. Empty slots remain invisible to the UI.
+            owner_.getSpellHandler()->getPlayerAuraSlotRef(slot) = previousAuras[slot];
         }
     }
     LOG_DEBUG("[pre-WotLK] Rebuilt playerAuras from UNIT_FIELD_AURAS");

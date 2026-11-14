@@ -3279,8 +3279,10 @@ void SpellHandler::clearUnitCaches() {
 
 void SpellHandler::handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs) {
     if (slot >= playerAuras_.size()) return;
-    if (playerAuras_[slot].isEmpty()) return;
-    playerAuras_[slot].durationMs = static_cast<int32_t>(durationMs);
+    // Duration may arrive before the corresponding object-field update.
+    playerAuras_[slot].durationMs = durationMs == 0 ? -1 : static_cast<int32_t>(durationMs);
+    if (playerAuras_[slot].maxDurationMs < playerAuras_[slot].durationMs)
+        playerAuras_[slot].maxDurationMs = playerAuras_[slot].durationMs;
     playerAuras_[slot].receivedAtMs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -4709,43 +4711,39 @@ void SpellHandler::handleSpellEnergizeLog(network::Packet& packet) {
 }
 
 void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
-    // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
-    // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
-    //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
-    auto remaining = [&]() { return packet.getRemainingSize(); };
-    if (remaining() < 9) { packet.skipAll(); return; }
-    uint64_t auraTargetGuid = packet.readUInt64();
-    uint8_t count = packet.readUInt8();
-
+    // CMaNGOS SpellAuraHolder::BuildAuraDurationToCaster and
+    // Player::SendAurasForTarget: packed GUID, then 13-byte slot/spell/max/remaining
+    // records. INIT has no count; SET has exactly one record.
+    if (!packet.hasFullPackedGuid()) {
+        LOG_ERROR("Truncated TBC extra-aura GUID");
+        return;
+    }
+    const uint64_t auraTargetGuid = packet.readPackedGuid();
+    const auto bytes = packet.getRemainingSize();
+    if (bytes % 13 != 0 || (!isInit && bytes != 13)) {
+        LOG_ERROR("Invalid TBC extra-aura payload length: ", bytes);
+        return;
+    }
     std::vector<AuraSlot>* auraList = nullptr;
-    if (auraTargetGuid == owner_.getPlayerGuid())       auraList = &playerAuras_;
-    else if (auraTargetGuid == owner_.getTargetGuid())   auraList = &targetAuras_;
-    else if (auraTargetGuid != 0)                   auraList = &unitAurasCache_[auraTargetGuid];
-
-    if (auraList && isInit) auraList->clear();
-
-    uint64_t nowMs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-
-    for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
-        uint8_t  slot        = packet.readUInt8();   // 1 byte
-        uint32_t spellId     = packet.readUInt32();  // 4 bytes
-        (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
-        uint8_t  flags       = packet.readUInt8();   // 1 byte
-        uint32_t durationMs  = packet.readUInt32();  // 4 bytes
-        uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes - total 15 bytes per entry
-
+    if (auraTargetGuid == owner_.getPlayerGuid()) auraList = &playerAuras_;
+    else if (auraTargetGuid == owner_.getTargetGuid()) auraList = &targetAuras_;
+    else if (auraTargetGuid != 0) auraList = &unitAurasCache_[auraTargetGuid];
+    const auto nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    while (packet.hasRemaining(13)) {
+        const uint8_t slot = packet.readUInt8();
+        const uint32_t spellId = packet.readUInt32();
+        const int32_t maximum = static_cast<int32_t>(packet.readUInt32());
+        const uint32_t remaining = packet.readUInt32();
         if (auraList) {
-            while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
-            AuraSlot& a = (*auraList)[slot];
-            a.spellId      = spellId;
-            // TBC uses same flag convention as Classic: 0x02=harmful, 0x04=beneficial.
-            // Normalize to WotLK SMSG_AURA_UPDATE convention: 0x80=debuff, 0=buff.
-            a.flags        = (flags & 0x02) ? 0x80u : 0u;
-            a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
-            a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
-            a.receivedAtMs = nowMs;
+            if (auraList->size() <= slot) auraList->resize(slot + 1);
+            auto& aura = (*auraList)[slot];
+            aura.spellId = spellId;
+            aura.flags = slot >= 40 && slot < 56 ? 0x80u : 0u;
+            aura.durationMs = maximum < 0 ? -1 : static_cast<int32_t>(remaining);
+            aura.maxDurationMs = maximum;
+            aura.receivedAtMs = nowMs;
+            aura.casterGuid = owner_.getPlayerGuid();
         }
     }
     if (auraList) mirrorAurasByGuid(auraTargetGuid, *auraList);

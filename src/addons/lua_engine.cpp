@@ -1854,10 +1854,10 @@ int lua_Tooltip_SetOwner(lua_State* L) {
 
     struct Pair { const char* name; const char* point; const char* rel; };
     static const Pair kAnchors[] = {
-        {"ANCHOR_TOPLEFT",     "BOTTOMLEFT",  "TOPLEFT"},
-        {"ANCHOR_TOPRIGHT",    "BOTTOMRIGHT", "TOPRIGHT"},
-        {"ANCHOR_BOTTOMLEFT",  "TOPLEFT",     "BOTTOMLEFT"},
-        {"ANCHOR_BOTTOMRIGHT", "TOPRIGHT",    "BOTTOMRIGHT"},
+        {"ANCHOR_TOPLEFT",     "BOTTOMRIGHT", "TOPLEFT"},
+        {"ANCHOR_TOPRIGHT",    "BOTTOMLEFT",  "TOPRIGHT"},
+        {"ANCHOR_BOTTOMLEFT",  "TOPRIGHT",    "BOTTOMLEFT"},
+        {"ANCHOR_BOTTOMRIGHT", "TOPLEFT",     "BOTTOMRIGHT"},
         {"ANCHOR_LEFT",        "BOTTOMRIGHT", "TOPLEFT"},
         {"ANCHOR_RIGHT",       "BOTTOMLEFT",  "TOPRIGHT"},
         {"ANCHOR_TOP",         "BOTTOM",      "TOP"},
