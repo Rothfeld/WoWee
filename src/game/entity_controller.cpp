@@ -1037,6 +1037,10 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         if (key == ufi.health) {
             unit->setHealth(val);
             result.healthChanged = true;
+            if (block.guid == owner_.getPlayerGuid() && val != oldHealth) {
+                LOG_DEBUG("Player health from server: ", oldHealth, " -> ", val,
+                          " max=", unit->getMaxHealth());
+            }
             if (val == 0) {
                 if (owner_.getCombatHandler() && block.guid == owner_.getCombatHandler()->getAutoAttackTargetGuid()) {
                     owner_.stopAutoAttack();
