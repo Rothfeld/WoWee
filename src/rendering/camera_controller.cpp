@@ -2107,16 +2107,16 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         }
     }
 
-    // ===== Camera collision (WMO raycast + terrain heightfield march) =====
+    // ===== Camera collision (WMO/M2 raycasts + terrain heightfield march) =====
     // Cast a ray from the pivot toward the camera direction to find the
-    // nearest WMO wall, and march the terrain heightfield along the same
+    // nearest building or doodad, and march the terrain heightfield along the same
     // ray so hills between the pivot and camera pull the camera in too.
     // Uses asymmetric smoothing: pull-in is fast (so the camera never
     // visibly clips through geometry) but recovery is slow (so passing a
     // doorway or hill crest doesn't cause a zoom-out snap).
     collisionDistance = currentDistance;
 
-    if ((wmoRenderer || terrainManager) && currentDistance > MIN_DISTANCE) {
+    if ((wmoRenderer || m2Renderer || terrainManager) && currentDistance > MIN_DISTANCE) {
         // Built geometry and the ground are treated separately from here on.
         //
         // A wall or a pillar is a thing with a side to step around, and it wants
@@ -2125,15 +2125,18 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // it reports changes a little with every step the player takes. Feeding
         // the ground through the same sharp path made the camera jitter along a
         // slope and shove forward at every rise.
-        auto wmoLimitAlong = [&](const glm::vec3& dir) -> float {
-            if (!wmoRenderer) return currentDistance;
-            float hit = wmoRenderer->raycastBoundingBoxes(pivot, dir, currentDistance);
+        auto geometryLimitAlong = [&](const glm::vec3& dir) -> float {
+            float hit = currentDistance;
+            if (wmoRenderer)
+                hit = std::min(hit, wmoRenderer->raycastBoundingBoxes(pivot, dir, currentDistance));
+            if (m2Renderer)
+                hit = std::min(hit, m2Renderer->raycastBoundingBoxes(pivot, dir, currentDistance));
             // hit == currentDistance means no hit (returns maxDistance on miss)
             if (hit >= currentDistance) return currentDistance;
             return std::max(MIN_DISTANCE, hit - CAM_SPHERE_RADIUS - CAM_EPSILON);
         };
 
-        float rawLimit = wmoLimitAlong(camDir);
+        float rawLimit = geometryLimitAlong(camDir);
 
         // Step around what is in the way rather than only backing away from it.
         //
@@ -2158,7 +2161,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
                 glm::vec3 trialDir(camDir.x * ca - camDir.y * sa,
                                    camDir.x * sa + camDir.y * ca,
                                    camDir.z);
-                float trialLimit = wmoLimitAlong(glm::normalize(trialDir));
+                float trialLimit = geometryLimitAlong(glm::normalize(trialDir));
                 if (trialLimit > bestLimit + DEFLECT_MIN_GAIN) {
                     bestLimit = trialLimit;
                     deflectTarget = trialDeg;
@@ -2181,6 +2184,10 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
                                                   camDir.z));
             }
         }
+
+        // Deflection is smoothed, so its trial direction is not yet the actual
+        // camera ray. Recheck the ray used this frame before accepting clearance.
+        rawLimit = geometryLimitAlong(camDir);
 
         // The ground, folded in after the deflection and on its own timing.
         //
