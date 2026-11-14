@@ -1195,6 +1195,17 @@ TEST_CASE("A button's state fonts reach it", "[framexml][emit]") {
     REQUIRE(has(r.lua, "SetDisabledFontObject(\"GameFontDisable\")"));
 }
 
+TEST_CASE("TBC button state fonts inherit their colors", "[framexml][emit]") {
+    const auto root = parseOrFail(
+        "<Ui><Button name='Btn'>"
+        "<HighlightFont inherits='GameFontHighlight'/>"
+        "<DisabledFont inherits='GameFontDisable'/>"
+        "</Button></Ui>");
+    const auto result = emitFrameXml(root);
+    REQUIRE(has(result.lua, "SetHighlightFontObject(\"GameFontHighlight\")"));
+    REQUIRE(has(result.lua, "SetDisabledFontObject(\"GameFontDisable\")"));
+}
+
 TEST_CASE("A key handler asks for the keyboard", "[framexml][emit]") {
     XmlNode root = parseOrFail(
         "<Ui><Frame name=\"Dialog\">"
@@ -1356,4 +1367,12 @@ TEST_CASE("Inline button fonts apply after the explicit label", "[framexml][emit
     REQUIRE(align != std::string::npos);
     CHECK(label < font);
     CHECK(font < align);
+}
+
+TEST_CASE("A texture with only Color creates a solid fill", "[framexml][emit]") {
+    const auto root = parseOrFail(
+        "<Ui><Frame name='Map'><Layers><Layer><Texture name='BlackoutWorld'>"
+        "<Color r='0' g='0' b='0'/></Texture></Layer></Layers></Frame></Ui>");
+    const auto result = emitFrameXml(root);
+    REQUIRE(has(result.lua, "SetTexture(0.000000, 0.000000, 0.000000, 1.000000)"));
 }

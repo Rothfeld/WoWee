@@ -343,7 +343,10 @@ struct Emitter {
                 std::to_string(col->attrFloat("g", 1.0f)) + ", " +
                 std::to_string(col->attrFloat("b", 1.0f)) + ", " +
                 std::to_string(col->attrFloat("a", 1.0f));
-            line(var + (isTexture ? ":SetVertexColor(" : ":SetTextColor(") + args + ")");
+            const char* setter = !isTexture ? ":SetTextColor("
+                : (!node.attr("file") && !node.attr("inherits")) ? ":SetTexture("
+                : ":SetVertexColor(";
+            line(var + setter + args + ")");
         }
         if (const XmlNode* anchors = node.child("Anchors"))
             emitAnchors(*anchors, var, parentVar, parentName);
@@ -1451,9 +1454,11 @@ struct Emitter {
                                      ? ":SetDisabledFontObject("
                                      : nullptr;
             if (!setter) continue;
-            if (const std::string* style = child.attr("style")) {
-                line(var + setter + quote(*style) + ")");
-            }
+            // TBC declares state fonts with inherits; later interfaces also
+            // use style. Both attributes name a font object.
+            const std::string* font = child.attr("inherits");
+            if (!font) font = child.attr("style");
+            if (font) line(var + setter + quote(*font) + ")");
         }
 
         // A scroll frame's content, which is a frame like any other but reached
