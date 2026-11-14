@@ -326,13 +326,14 @@ static int lua_BuybackItem(lua_State* L) {
     return 0;
 }
 
-/// GetRepairAllCost() → cost, whether it can be afforded. Both are wanted
-/// together: the button greys itself out on the second.
+/// GetRepairAllCost() returns cost and whether this merchant can repair
+/// damaged items. Available funds do not determine repair availability.
 static int lua_GetRepairAllCost(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const uint32_t cost = gh ? gh->estimateRepairAllCost() : 0;
+    const uint32_t cost = gh && gh->getVendorItems().canRepair
+        ? gh->estimateRepairAllCost() : 0;
     lua_pushnumber(L, cost);
-    lua_pushboolean(L, gh && gh->getMoneyCopper() >= cost);
+    lua_pushboolean(L, cost > 0);
     return 2;
 }
 
