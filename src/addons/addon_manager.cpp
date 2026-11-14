@@ -555,10 +555,6 @@ void AddonManager::giveCoinAmountsClearance() {
     if (!luaEngine_.executeString(kChatNoFadeLua)) {
         LOG_WARNING("Chat fade removal did not apply: ", luaEngine_.lastError());
     }
-    // The input box, in the chat window's own colours.
-    if (!luaEngine_.executeString(kChatInputBackgroundLua)) {
-        LOG_WARNING("Chat input background did not apply: ", luaEngine_.lastError());
-    }
     // And a wheel on the row that opens the colour picker.
     if (!luaEngine_.executeString(kChatBackgroundSwatchLua)) {
         LOG_WARNING("Chat background swatch did not apply: ", luaEngine_.lastError());
