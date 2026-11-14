@@ -1,4 +1,5 @@
 #include "rendering/collision_geometry.hpp"
+#include "rendering/movement_limits.hpp"
 #include "rendering/pom_quality.hpp"
 #include "rendering/placement_transform.hpp"
 #include "rendering/spatial_grid.hpp"
@@ -3672,7 +3673,6 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
     // Tighter radius when inside for more responsive indoor collision
     const float PLAYER_RADIUS = insideWMO ? 0.45f : 0.50f;
     const float PLAYER_HEIGHT = 2.0f;       // Cylinder height for Z bounds
-    const float MAX_STEP_HEIGHT = 1.0f;     // Step-up threshold
 
     glm::vec3 queryMin = glm::min(from, to) - glm::vec3(8.0f, 8.0f, 5.0f);
     glm::vec3 queryMax = glm::max(from, to) + glm::vec3(8.0f, 8.0f, 5.0f);
@@ -3751,12 +3751,10 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
                 if (tb.maxZ < localFeetZ + 0.3f) continue;
                 if (tb.minZ > localFeetZ + PLAYER_HEIGHT) continue;
 
-                // Skip low geometry that can be stepped over
-                if (tb.maxZ <= localFeetZ + MAX_STEP_HEIGHT) continue;
-
-                // Skip very short vertical surfaces (stair risers)
-                float triHeight = tb.maxZ - tb.minZ;
-                if (triHeight < 1.0f && tb.maxZ <= localFeetZ + 1.2f) continue;
+                // Only skip geometry the movement controller can step onto.
+                // A separate, larger threshold lets waist-high railings pass
+                // through wall collision while grounding rejects their tops.
+                if (tb.maxZ <= localFeetZ + movement::kMaxStepUp) continue;
 
                 // Use MOPY flags to filter wall collision. Blocking set is the
                 // union of both flag conventions seen in the assets:
