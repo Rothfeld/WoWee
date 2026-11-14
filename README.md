@@ -461,6 +461,8 @@ is not covered by the MIT license; see [LICENSE](LICENSE).
 
 ## Documentation
 
+- [TBC interface behavior and data conventions](docs/tbc-interface.md)
+
 ### Getting started
 
 - [Quick Start](docs/quickstart.md)
