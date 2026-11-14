@@ -1154,6 +1154,19 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
     // left silent rather than labelled "Unknown".
     const std::string name = game::entityDisplayName(entity);
     if (!name.empty() && name != "Unknown") {
+        // ImGui's default tooltip offset assumes its small native cursor.
+        // Our 32px game cursor is drawn afterward and would cover the name.
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const ImVec2 textSize = ImGui::CalcTextSize(name.c_str());
+        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+        const ImVec2 size(textSize.x + 2.0f * padding.x,
+                          textSize.y + 2.0f * padding.y);
+        const ImVec2 screen = ImGui::GetIO().DisplaySize;
+        float x = mouse.x + 36.0f;
+        float y = mouse.y + 36.0f;
+        if (x + size.x > screen.x) x = mouse.x - size.x - 4.0f;
+        if (y + size.y > screen.y) y = mouse.y - size.y - 4.0f;
+        ImGui::SetNextWindowPos(ImVec2(std::max(0.0f, x), std::max(0.0f, y)));
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(name.c_str());
         ImGui::EndTooltip();

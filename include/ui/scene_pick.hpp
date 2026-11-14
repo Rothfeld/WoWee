@@ -14,6 +14,7 @@
 #include <memory>
 
 #include <cmath>
+#include <algorithm>
 
 #include <glm/glm.hpp>
 
@@ -47,6 +48,25 @@ inline bool raySphereIntersect(const rendering::Ray& ray, const glm::vec3& cente
     if (t < 0.0f) return false;
     tOut = t;
     return true;
+}
+
+/// Test the visible heightfield between the camera and an entity hit. Missing
+/// samples represent unloaded terrain or holes. Below-ground cameras belong
+/// to caves/interiors, where the overlying outdoor heightfield is irrelevant.
+template<class HeightAt>
+bool terrainOccludesSceneRay(const rendering::Ray& ray, float hitDistance,
+                             HeightAt&& heightAt) {
+    const auto originHeight = heightAt(ray.origin.x, ray.origin.y);
+    if (originHeight && ray.origin.z < *originHeight - 0.02f) return false;
+    constexpr float step = 0.5f;
+    const int steps = std::max(1, static_cast<int>(std::ceil(hitDistance / step)));
+    for (int i = 1; i <= steps; ++i) {
+        const glm::vec3 point = ray.origin + ray.direction *
+            (hitDistance * static_cast<float>(i) / static_cast<float>(steps));
+        const auto height = heightAt(point.x, point.y);
+        if (height && point.z < *height - 0.02f) return true;
+    }
+    return false;
 }
 
 /// The parts of picking the two callers disagree about.

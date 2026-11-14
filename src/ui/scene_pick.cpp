@@ -5,6 +5,10 @@
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
 #include "rendering/camera.hpp"
+#include "rendering/renderer.hpp"
+#include "rendering/m2_renderer.hpp"
+#include "rendering/wmo_renderer.hpp"
+#include "rendering/terrain_manager.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -105,6 +109,19 @@ ScenePick pickScene(game::GameHandler& gameHandler,
 
         float hitT = 0.0f;
         if (!raySphereIntersect(ray, hitCenter, hitRadius, hitT)) continue;
+        // Hover and clicks share this visibility gate. Compare against the
+        // sphere's front surface so the target's own mesh does not hide it.
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* wmo = renderer->getWMORenderer(); wmo &&
+                wmo->raycastBoundingBoxes(ray.origin, ray.direction, hitT) < hitT) continue;
+            if (auto* m2 = renderer->getM2Renderer(); m2 &&
+                m2->raycastBoundingBoxes(ray.origin, ray.direction, hitT) < hitT) continue;
+            if (auto* terrain = renderer->getTerrainManager(); terrain &&
+                terrainOccludesSceneRay(ray, hitT, [terrain](float x, float y) {
+                    return terrain->isHoleAt(x, y) ? std::optional<float>{}
+                                                  : terrain->getHeightAt(x, y);
+                })) continue;
+        }
         const float centerT = glm::dot(hitCenter - ray.origin, ray.direction);
 
         if (type == game::ObjectType::UNIT || type == game::ObjectType::PLAYER) {
