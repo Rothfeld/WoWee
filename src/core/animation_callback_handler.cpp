@@ -422,7 +422,12 @@ void AnimationCallbackHandler::setupCallbacks() {
         const bool isArea     = (castType == game::SpellCastType::AREA);
 
         if (start) {
-            uint32_t currentSpell = isLocalPlayer ? gameHandler_.getCurrentCastSpellId() : 0;
+            // Restoration is aura-driven, so it deliberately has no current cast.
+            // Its animation still needs the active food/drink spell identity.
+            const uint32_t currentSpell = isLocalPlayer
+                ? (gameHandler_.isRestoring() ? gameHandler_.getActiveActionSpellId()
+                                              : gameHandler_.getCurrentCastSpellId())
+                : 0;
             bool isFishing = isChannel && game::spellclass::isFishingCast(currentSpell);
 
             // Helper: pick first animation the model supports from a list
@@ -493,8 +498,10 @@ void AnimationCallbackHandler::setupCallbacks() {
                         // looping it while seated pops the model upright. Only
                         // override the seated idle for models that truly have the
                         // dedicated EatingLoop sequence.
-                        ac->setSeatedLoopAnimation(
-                            pickFirst({rendering::anim::EATING_LOOP}));
+                        const uint32_t seatedLoop = pickFirst({rendering::anim::EATING_LOOP});
+                        ac->setSeatedLoopAnimation(seatedLoop);
+                        LOG_DEBUG("Restoration animation: spell=", currentSpell,
+                                  " seatedLoop=", seatedLoop);
                     }
                 }
                 // Food/water consume sounds repeat from SpellHandler::updateTimers

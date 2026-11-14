@@ -32,6 +32,15 @@ Extra-aura metadata augments known object-field auras. It does not erase auras
 omitted from the metadata packet. Duration can arrive before the spell ID;
 empty-slot timing is preserved until the corresponding object fields arrive.
 Unrelated field updates preserve a continuing aura's timer.
+Server-only helper spells absent from Spell.dbc stay out of UI aura lists.
+For example, CMaNGOS applies 20612 with Stoneform 20594; only 20594 has a
+client display entry.
+
+Food and drink restoration are aura-driven animation and sound states. They
+do not emit spell-channel events or appear in UnitCastingInfo/UnitChannelInfo.
+Moving still cancels restoration; actual timed casts and channels retain their
+separate state. Animation classification reads the active restoration spell
+identity independently of the current cast ID, which remains zero while eating.
 
 ## FrameXML behavior
 
