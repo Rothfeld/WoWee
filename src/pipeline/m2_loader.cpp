@@ -649,7 +649,7 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
 
     // If no ranges, treat entire array as one sequence
     if (ranges.empty()) {
-        ranges.push_back({.start = 0, .end = disk.nTimestamps});
+        ranges.push_back({.start = 0, .end = disk.nTimestamps - 1});
     }
 
     // Read the flat key array ONCE before the per-sequence loop. Previously
@@ -681,9 +681,10 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
 
     for (size_t i = 0; i < ranges.size(); i++) {
         uint32_t start = ranges[i].start;
-        uint32_t end = ranges[i].end;
-        if (start >= end || start >= disk.nTimestamps) continue;
-        end = std::min(end, disk.nTimestamps);
+        // Legacy interpolation ranges include both endpoints, including a
+        // single-key range [n, n]. Keep the closing key of looping sequences.
+        if (start > ranges[i].end || start >= disk.nTimestamps) continue;
+        uint32_t end = std::min(ranges[i].end, disk.nTimestamps - 1) + 1;
 
         track.sequences[i].timestamps.assign(
             allTimestamps.begin() + start, allTimestamps.begin() + end);

@@ -185,3 +185,31 @@ TEST_CASE("Legacy particles preserve zero and tiny lifecycle endpoints", "[m2][p
     CHECK(curve.floatValues[1] == Catch::Approx(scales[1]));
     CHECK(curve.floatValues[2] == Catch::Approx(scales[2]));
 }
+
+TEST_CASE("Legacy tracks retain inclusive closing and single keys", "[m2][track]") {
+    std::vector<uint8_t> bytes(540, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put = [&](size_t offset, uint32_t value) {
+        std::memcpy(bytes.data() + offset, &value, 4);
+    };
+    put(4, 263);
+    put(52, 1); put(56, 332); // One TBC bone.
+    put(348, 0xffff0001); // Linear translation, no global sequence.
+    put(352, 2); put(356, 444); // Two inclusive ranges.
+    put(360, 4); put(364, 460); // Four timestamps.
+    put(368, 4); put(372, 476); // Four vector keys.
+    put(444, 0); put(448, 2);
+    put(452, 3); put(456, 3);
+    const uint32_t times[]{1000, 1100, 1200, 2000};
+    const float keys[]{0,0,0, 1,0,0, 0,0,0, 5,0,0};
+    std::memcpy(bytes.data() + 460, times, sizeof(times));
+    std::memcpy(bytes.data() + 476, keys, sizeof(keys));
+    const auto model = M2Loader::load(bytes);
+    REQUIRE(model.bones.size() == 1);
+    const auto& track = model.bones[0].translation;
+    REQUIRE(track.sequences.size() == 2);
+    CHECK(track.sequences[0].timestamps == std::vector<uint32_t>{0, 100, 200});
+    REQUIRE(track.sequences[1].vec3Values.size() == 1);
+    CHECK(track.sequences[1].vec3Values[0].x == 5.0f);
+    CHECK(wowee::rendering::m2_track::sampleVec3(track, 0, 200, 0, {}, {}).x == 0.0f);
+}
