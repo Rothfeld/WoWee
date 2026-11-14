@@ -211,13 +211,9 @@ std::vector<TerrainVertex> TerrainMeshGenerator::generateVertices(const MapChunk
             vertex.normal[2] = 1.0f;
         }
 
-        // Texture coordinates: world-aligned so patterns don't reset per chunk.
-        // Tile each texture 4× per chunk (one repeat every ~8 yards) so the
-        // texture's own pattern noise breaks up the chunk grid rather than
-        // syncing with it. At 1 repeat/chunk the per-chunk alpha differences
-        // read as obvious 33-yard squares; at 4× the pattern is small enough
-        // that the eye no longer locks onto the chunk boundary.
-        constexpr float texScale = 4.0f / CHUNK_SIZE;
+        // ADT diffuse textures repeat eight times per 33 1/3-yard chunk.
+        // World alignment keeps the pattern continuous across chunk borders.
+        constexpr float texScale = 8.0f / CHUNK_SIZE;
         vertex.texCoord[0] = -vertex.position[1] * texScale;
         vertex.texCoord[1] = -vertex.position[0] * texScale;
 
