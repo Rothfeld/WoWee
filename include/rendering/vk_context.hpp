@@ -219,6 +219,8 @@ public:
     [[nodiscard]] uint32_t getCurrentFrame() const { return currentFrame; }
     [[nodiscard]] const FrameData& getCurrentFrameData() const { return frames[currentFrame]; }
 
+    VkPipeline getImGuiAdditivePipeline(VkPipelineLayout layout);
+
     // For ImGui
     [[nodiscard]] VkRenderPass getImGuiRenderPass() const { return imguiRenderPass; }
     // Single-sampled, colour-only pass that loads the swapchain. The UI draws
@@ -574,6 +576,7 @@ private:
 
     // ImGui resources
     VkRenderPass imguiRenderPass = VK_NULL_HANDLE;
+    VkPipeline imguiAdditivePipeline_ = VK_NULL_HANDLE;
     VkRenderPass overlayRenderPass = VK_NULL_HANDLE;
     VkRenderPass overlayClearRenderPass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> overlayFramebuffers;

@@ -18,6 +18,8 @@
 #include "core/logger.hpp"
 
 #include "imgui.h"
+#include <imgui_impl_vulkan.h>
+#include <cassert>
 
 #include <algorithm>
 #include <chrono>
@@ -65,8 +67,7 @@ void WidgetRenderer::initialize(pipeline::AssetManager* assets,
     vkCtx_ = vkCtx;
 }
 
-// Additive art is uploaded as its own image, because the same file can be
-// asked for both ways and the two differ in their alpha channel.
+// Blend mode remains part of the cache key; source texels are never modified.
 static std::string cacheKey(const std::string& path, bool add) {
     return add ? path + "|add" : path;
 }
@@ -157,19 +158,6 @@ VkDescriptorSet WidgetRenderer::texture(const std::string& path, bool add) {
         LOG_WARNING("Widget texture unreadable: ", resolved);
         textures_[key] = kMissing;
         return kMissing;
-    }
-    if (add) {
-        // Additive blending is not something a single ImGui draw list can be
-        // asked for - it has one pipeline and one blend state. But the art it
-        // is used for is a glow on black, with no alpha channel of its own, and
-        // over a dark scene "add" and "blend with alpha taken from brightness"
-        // put nearly the same pixels on the screen. Black stays invisible,
-        // which is the whole difference between a glow and a slab.
-        for (size_t i = 0; i + 3 < image.data.size(); i += 4) {
-            const uint8_t lum = std::max({image.data[i], image.data[i + 1],
-                                          image.data[i + 2]});
-            image.data[i + 3] = static_cast<uint8_t>((image.data[i + 3] * lum) / 255);
-        }
     }
     VkDescriptorSet set = vkCtx_->uploadImGuiTexture(image.data.data(),
                                                      image.width, image.height);
@@ -2840,6 +2828,16 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     uv1 = ImVec2(0.5f + halfU, 0.5f + halfV);
                 }
             }
+            if (w->blendAdd) {
+                dl->AddCallback([](const ImDrawList*, const ImDrawCmd* cmd) {
+                    auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
+                        ImGui::GetPlatformIO().Renderer_RenderState);
+                    assert(state);
+                    auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                    vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      context->getImGuiAdditivePipeline(state->PipelineLayout));
+                }, vkCtx_);
+            }
             if (!live && w->texCoordRotated) {
                 // A UV per corner, so the art can sit in the frame at any
                 // angle. WoW's order is upper-left, lower-left, upper-right,
@@ -2899,6 +2897,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                              ImVec2(x0, y0), ImVec2(x1, y1), uv0, uv1,
                              packColor(w->color, w->alpha));
             }
+            if (w->blendAdd) dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
         } else if (w->kind == WidgetKind::FontString) {
             // Font objects carry a height, and honouring it is most of what
             // makes a label look right - a heading and a footnote are the same

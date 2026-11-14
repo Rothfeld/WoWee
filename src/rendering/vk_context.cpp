@@ -3,6 +3,10 @@
 #include <thread>
 #include <mutex>
 #include "rendering/vk_context.hpp"
+#include "rendering/vk_pipeline.hpp"
+#include "rendering/vk_shader.hpp"
+#include <imgui.h>
+#include <stdexcept>
 
 #include <fstream>
 #include "rendering/vk_utils.hpp"
@@ -2288,7 +2292,35 @@ void VkContext::destroyOverlayRenderPass() {
     }
 }
 
+VkPipeline VkContext::getImGuiAdditivePipeline(VkPipelineLayout layout) {
+    if (imguiAdditivePipeline_ != VK_NULL_HANDLE) return imguiAdditivePipeline_;
+    auto shaders = loadShaderPair(device, "assets/shaders/ui_additive.vert.spv",
+                                  "assets/shaders/ui_additive.frag.spv", "additive UI");
+    if (!shaders) throw std::runtime_error("Could not load additive UI shaders");
+    imguiAdditivePipeline_ = PipelineBuilder()
+        .setShaders(shaders.vertStage, shaders.fragStage)
+        .setVertexInput({{0, sizeof(ImDrawVert), VK_VERTEX_INPUT_RATE_VERTEX}}, {
+            {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ImDrawVert, pos)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ImDrawVert, uv)},
+            {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(ImDrawVert, col)}})
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setNoDepthTest()
+        .setColorBlendAttachment(PipelineBuilder::blendAdditive())
+        .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+        .setLayout(layout).setRenderPass(overlayRenderPass)
+        .build(device, pipelineCache_);
+    if (imguiAdditivePipeline_ == VK_NULL_HANDLE) {
+        LOG_ERROR("Could not create additive UI pipeline");
+        throw std::runtime_error("Could not create additive UI pipeline");
+    }
+    return imguiAdditivePipeline_;
+}
+
 void VkContext::destroyImGuiResources() {
+    if (imguiAdditivePipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, imguiAdditivePipeline_, nullptr);
+        imguiAdditivePipeline_ = VK_NULL_HANDLE;
+    }
     // Destroy uploaded UI textures
     for (auto& tex : uiTextures_) {
         if (tex.view) vkDestroyImageView(device, tex.view, nullptr);
