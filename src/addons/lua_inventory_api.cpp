@@ -299,7 +299,9 @@ static int lua_GetBuybackItemInfo(lua_State* L) {
     // What it costs to take back is what it sold for, times the stack.
     lua_pushnumber(L, static_cast<double>(bi.item.sellPrice) * bi.count);
     lua_pushnumber(L, bi.count);
-    lua_pushnumber(L, 1);
+    // Buyback is one sold stack, not limited vendor stock. A positive stock
+    // value makes original MerchantFrame draw a parenthesized stock overlay.
+    lua_pushnumber(L, -1);
     lua_pushboolean(L, 1);
     return 6;
 }
