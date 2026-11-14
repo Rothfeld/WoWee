@@ -79,8 +79,8 @@ public:
     [[nodiscard]] float getSpellCooldownTotal(uint32_t spellId) const;
 
     // Cast state
-    [[nodiscard]] bool isCasting() const { return casting_ || restorationActive_; }
-    [[nodiscard]] bool isChanneling() const { return casting_ ? castIsChannel_ : restorationActive_; }
+    [[nodiscard]] bool isCasting() const { return casting_; }
+    [[nodiscard]] bool isChanneling() const { return casting_ && castIsChannel_; }
     [[nodiscard]] bool isRestoring() const { return restorationActive_; }
     /// Auto Shot or Shoot while it repeats, otherwise 0.
     [[nodiscard]] uint32_t getAutoRepeatSpellId() const { return autoRepeatSpellId_; }
@@ -92,18 +92,18 @@ public:
         return restorationActive_ ? restorationSpellId_ : nextSwingSpellId_;
     }
     [[nodiscard]] uint32_t getCurrentCastSpellId() const {
-        return casting_ ? currentCastSpellId_ : restorationSpellId_;
+        return casting_ ? currentCastSpellId_ : 0;
     }
     [[nodiscard]] float getCastProgress() const {
-        const float total = casting_ ? castTimeTotal_ : restorationTimeTotal_;
-        const float remaining = casting_ ? castTimeRemaining_ : restorationTimeRemaining_;
+        const float total = casting_ ? castTimeTotal_ : 0.0f;
+        const float remaining = casting_ ? castTimeRemaining_ : 0.0f;
         return total > 0.0f ? (total - remaining) / total : 0.0f;
     }
     [[nodiscard]] float getCastTimeRemaining() const {
-        return casting_ ? castTimeRemaining_ : restorationTimeRemaining_;
+        return casting_ ? castTimeRemaining_ : 0.0f;
     }
     [[nodiscard]] float getCastTimeTotal() const {
-        return casting_ ? castTimeTotal_ : restorationTimeTotal_;
+        return casting_ ? castTimeTotal_ : 0.0f;
     }
 
     // Repeat-craft queue

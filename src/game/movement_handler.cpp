@@ -543,7 +543,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
 
     // Cancel any timed non-channel cast, plus food/water restoration, the moment
     // the player starts moving. Other channels retain their normal behavior.
-    if (owner_.isCasting() && (!owner_.isChanneling() || owner_.isRestoring())) {
+    if (owner_.isRestoring() || (owner_.isCasting() && !owner_.isChanneling())) {
         const bool isPositionalMove =
             opcode == Opcode::MSG_MOVE_START_FORWARD  ||
             opcode == Opcode::MSG_MOVE_START_BACKWARD ||

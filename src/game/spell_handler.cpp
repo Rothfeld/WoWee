@@ -1834,7 +1834,6 @@ void SpellHandler::updateTimers(float dt) {
 
 void SpellHandler::stopRestorationPresentation() {
     if (!restorationActive_) return;
-    const uint32_t stoppedSpell = restorationSpellId_;
     if (owner_.spellCastAnimCallbackRef()) {
         owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), false, true,
                                           SpellCastType::OMNI);
@@ -1843,10 +1842,6 @@ void SpellHandler::stopRestorationPresentation() {
     restorationSpellId_ = 0;
     restorationTimeRemaining_ = 0.0f;
     restorationTimeTotal_ = 0.0f;
-    if (owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("UNIT_SPELLCAST_CHANNEL_STOP",
-                                       {"player", std::to_string(stoppedSpell)});
-    }
 }
 
 void SpellHandler::refreshRestorationFromPlayerAuras() {
@@ -1907,10 +1902,6 @@ void SpellHandler::refreshRestorationFromPlayerAuras() {
         if (owner_.spellCastAnimCallbackRef()) {
             owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), true, true,
                                               SpellCastType::OMNI);
-        }
-        if (owner_.addonEventCallbackRef()) {
-            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_CHANNEL_START",
-                                           {"player", std::to_string(spellId)});
         }
     }
 }
