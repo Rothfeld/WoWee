@@ -1341,3 +1341,19 @@ TEST_CASE("every other handler keeps its named arguments", "[framexml][emit]") {
     REQUIRE(has(r.lua, ":SetScript(\"OnUpdate\", function(self, elapsed, ...)"));
     REQUIRE_FALSE(has(r.lua, "local arg1"));
 }
+
+TEST_CASE("Inline button fonts apply after the explicit label", "[framexml][emit]") {
+    auto root = parseOrFail(
+        "<Ui><Button name='GossipTitleButton1'>"
+        "<ButtonText><Size><AbsDimension x='275' y='0'/></Size></ButtonText>"
+        "<NormalFont inherits='QuestFont' justifyH='LEFT'/></Button></Ui>");
+    const auto result = emitFrameXml(root);
+    const auto label = result.lua.find(":SetFontString(");
+    const auto font = result.lua.find(":GetFontString():SetFontObject(\"QuestFont\")");
+    const auto align = result.lua.find(":GetFontString():SetJustifyH(\"LEFT\")");
+    REQUIRE(label != std::string::npos);
+    REQUIRE(font != std::string::npos);
+    REQUIRE(align != std::string::npos);
+    CHECK(label < font);
+    CHECK(font < align);
+}

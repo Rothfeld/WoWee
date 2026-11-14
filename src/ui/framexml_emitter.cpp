@@ -1172,29 +1172,6 @@ struct Emitter {
         }
         emitAnimations(node, var, name);
 
-        // <NormalFont style="GameFontNormal"/> - the font a button's label is
-        // drawn in. Only the normal one: this renderer does not draw a button's
-        // text differently when it is highlighted or disabled, so emitting the
-        // other two would be calls that read as support and change nothing.
-        for (const XmlNode& child : node.children) {
-            if (child.name != "NormalFont") continue;
-            if (const std::string* style = child.attr("style")) {
-                line(var + ":SetNormalFontObject(" + quote(*style) + ")");
-            }
-            break;
-        }
-        // The other two states, which this renderer distinguishes by colour.
-        for (const XmlNode& child : node.children) {
-            const char* setter = child.name == "HighlightFont"
-                                     ? ":SetHighlightFontObject("
-                                 : child.name == "DisabledFont"
-                                     ? ":SetDisabledFontObject("
-                                     : nullptr;
-            if (!setter) continue;
-            if (const std::string* style = child.attr("style")) {
-                line(var + setter + quote(*style) + ")");
-            }
-        }
         // <HitRectInsets><AbsInset .../></HitRectInsets>
         for (const XmlNode& child : node.children) {
             if (child.name != "HitRectInsets") continue;
@@ -1454,6 +1431,31 @@ struct Emitter {
         // Before Frames and Scripts, so a child anchoring to $parentNormalTexture
         // and an OnLoad reading its own label both find something there.
         emitButtonRegions(node, var, name);
+        // <NormalFont style="GameFontNormal"/> - the font a button's label is
+        // drawn in. Only the normal one: this renderer does not draw a button's
+        // text differently when it is highlighted or disabled, so emitting the
+        // other two would be calls that read as support and change nothing.
+        for (const XmlNode& child : node.children) {
+            if (child.name != "NormalFont") continue;
+            if (const std::string* style = child.attr("style")) {
+                line(var + ":SetNormalFontObject(" + quote(*style) + ")");
+            }
+            emitFontInstance(child, var + ":GetFontString()");
+            break;
+        }
+        // The other two states, which this renderer distinguishes by colour.
+        for (const XmlNode& child : node.children) {
+            const char* setter = child.name == "HighlightFont"
+                                     ? ":SetHighlightFontObject("
+                                 : child.name == "DisabledFont"
+                                     ? ":SetDisabledFontObject("
+                                     : nullptr;
+            if (!setter) continue;
+            if (const std::string* style = child.attr("style")) {
+                line(var + setter + quote(*style) + ")");
+            }
+        }
+
         // A scroll frame's content, which is a frame like any other but reached
         // through SetScrollChild rather than sitting in Frames.
         // HybridScrollFrameScrollChild_OnLoad does self:GetParent().scrollChild
