@@ -70,7 +70,7 @@ TEST_CASE("ActivityFSM: looting starts and stops", "[activity]") {
     auto out = fsm.resolve(in, caps);
     REQUIRE(out.valid);
 
-    // stopLooting transitions through LOOT_END (KNEEL_END one-shot) before NONE
+    // stopLooting transitions through LOOT_END (LOOT_UP one-shot) before NONE
     fsm.stopLooting();
     CHECK(fsm.getState() == ActivityFSM::State::LOOT_END);
 }
@@ -128,5 +128,30 @@ TEST_CASE("ActivityFSM: reset clears all state", "[activity]") {
 
     fsm.reset();
     CHECK(fsm.getState() == ActivityFSM::State::NONE);
+    CHECK_FALSE(fsm.isActive());
+}
+
+TEST_CASE("ActivityFSM: loot holds and rises using the loot clip family", "[activity]") {
+    ActivityFSM fsm;
+    auto caps = makeActivityCaps();
+    auto in = idleInput();
+    in.haveAnimState = true;
+    fsm.startLooting();
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT);
+    in.currentAnimId = anim::LOOT;
+    in.currentAnimTime = 250;
+    in.currentAnimDuration = 500;
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT);
+    in.currentAnimTime = 500;
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT_HOLD);
+    in.currentAnimId = anim::LOOT_HOLD;
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT_HOLD);
+    fsm.stopLooting();
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT_UP);
+    in.currentAnimId = anim::LOOT_UP;
+    in.currentAnimTime = 250;
+    CHECK(fsm.resolve(in, caps).animId == anim::LOOT_UP);
+    in.currentAnimTime = 500;
+    CHECK_FALSE(fsm.resolve(in, caps).valid);
     CHECK_FALSE(fsm.isActive());
 }

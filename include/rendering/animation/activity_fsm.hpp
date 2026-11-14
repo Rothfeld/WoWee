@@ -21,8 +21,8 @@ public:
         NONE,
         EMOTE,
         LOOTING,        // One-shot LOOT anim
-        LOOT_KNEELING,  // KNEEL_LOOP until loot window closes
-        LOOT_END,       // One-shot KNEEL_END exit anim
+        LOOT_KNEELING,  // LOOT_HOLD until loot window closes
+        LOOT_END,       // One-shot LOOT_UP exit anim
         SIT_DOWN,
         SITTING,
         SIT_UP,

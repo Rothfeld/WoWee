@@ -61,6 +61,20 @@ namespace wowee {
 namespace rendering {
 
 namespace {
+
+// AnimationData.dbc declares LootHold (188) and LootUp (189) as aliases
+// of Loot (50) with flags 0x20 (hold end) and 0x10 (reverse). TBC player
+// models ship only sequence 50. Native 188/189 sequences take precedence.
+float animationSampleTime(uint32_t requestedId, const pipeline::M2Sequence& sequence,
+                          float elapsed) {
+    if (sequence.id == anim::LOOT) {
+        if (requestedId == anim::LOOT_HOLD) return static_cast<float>(sequence.duration);
+        if (requestedId == anim::LOOT_UP)
+            return std::max(0.0f, static_cast<float>(sequence.duration) - elapsed);
+    }
+    return elapsed;
+}
+
 size_t approxTextureBytesWithMips(int w, int h) {
     if (w <= 0 || h <= 0) return 0;
     size_t base = static_cast<size_t>(w) * static_cast<size_t>(h) * 4ull;
@@ -2047,6 +2061,8 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     }
 
     // Find animation sequence index by ID
+    const uint32_t previousId = instance.currentAnimationId;
+    const float previousTime = instance.animationTime;
     instance.currentAnimationId = animationId;
     instance.currentSequenceIndex = -1;
     instance.armSequenceIndex[0] = instance.armSequenceIndex[1] = -1;
@@ -2066,6 +2082,24 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     }
     if (instance.currentSequenceIndex < 0 && firstMatch >= 0) {
         instance.currentSequenceIndex = firstMatch;
+    }
+
+    if (instance.currentSequenceIndex < 0 &&
+        (animationId == anim::LOOT_HOLD || animationId == anim::LOOT_UP)) {
+        for (size_t i = 0; i < model.sequences.size(); ++i) {
+            if (model.sequences[i].id != anim::LOOT) continue;
+            instance.currentSequenceIndex = static_cast<int>(i);
+            if (model.sequences[i].variationIndex == 0) break;
+        }
+        if (instance.currentSequenceIndex >= 0) {
+            // Closing during the downward motion reverses from the current
+            // pose, rather than teleporting to the fully bent pose first.
+            if (animationId == anim::LOOT_UP && previousId == anim::LOOT) {
+                const float duration = model.sequences[instance.currentSequenceIndex].duration;
+                instance.animationTime = duration - std::min(previousTime, duration);
+            }
+            LOG_DEBUG("AnimationData loot alias ", animationId, " uses sequence 50");
+        }
     }
 
     if (instance.currentSequenceIndex < 0) {
@@ -2412,7 +2446,8 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
         const auto& bone = model.bones[i];
 
         int sequence = instance.currentSequenceIndex;
-        float time = instance.animationTime;
+        float time = animationSampleTime(instance.currentAnimationId,
+                                         model.sequences[sequence], instance.animationTime);
         const int arm = armsOwnSequences ? instance.boneArm[i] : -1;
         if (arm >= 0 && instance.armSequenceIndex[arm] >= 0) {
             sequence = instance.armSequenceIndex[arm];
@@ -2866,11 +2901,13 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 const float batchColorAlpha = glm::clamp(
                     evalBatchColorAlpha(gpuModel.data, batch,
                                         instance.currentSequenceIndex,
-                                        instance.animationTime,
+                                        animationSampleTime(instance.currentAnimationId,
+                                            gpuModel.data.sequences[instance.currentSequenceIndex], instance.animationTime),
                                         instance.globalSequenceTime) *
                     evalBatchTextureWeight(gpuModel.data, batch,
                                            instance.currentSequenceIndex,
-                                           instance.animationTime,
+                                           animationSampleTime(instance.currentAnimationId,
+                                               gpuModel.data.sequences[instance.currentSequenceIndex], instance.animationTime),
                                            instance.globalSequenceTime),
                     0.0f, 1.0f);
                 if (batchColorAlpha <= 0.01f) {
@@ -3930,6 +3967,8 @@ bool CharacterRenderer::hasAnimation(uint32_t instanceId, uint32_t animationId) 
             return true;
         }
     }
+    if (animationId == anim::LOOT_HOLD || animationId == anim::LOOT_UP)
+        return hasAnimation(instanceId, anim::LOOT);
     return false;
 }
 
