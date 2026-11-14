@@ -93,3 +93,16 @@ Original FrameXML supplies the dim icon and zero count for depleted consumables.
 Inventory rebuilds notify item action slots after the new bag contents are
 available. ActionButton does not listen for BAG_UPDATE; slot fields can arrive
 before item objects, so an earlier player-field notification is insufficient.
+
+## Combo points and online creature scale
+
+TBC SMSG_UPDATE_COMBO_POINTS carries a packed target GUID followed by one byte
+of points (CMaNGOS Player::SendComboPoints). GetComboPoints() reports the stored
+points only when the selected target matches that GUID. Original ComboFrame
+handles PLAYER_COMBO_POINTS and PLAYER_TARGET_CHANGED.
+
+Online creature scale uses OBJECT_FIELD_SCALE_X times CreatureModelData scale.
+CMaNGOS resolves CreatureDisplayInfo scale or the creature-template override
+before sending the object field; do not multiply the display default again.
+Ragged Young Wolf (entry 705, display 855) has display default 0.4 but receives
+server scale 1.0. Keep offline display previews separate from online unit scale.
