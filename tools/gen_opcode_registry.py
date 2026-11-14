@@ -57,6 +57,8 @@ def load_aliases(path: Path, canonical: set[str]) -> dict[str, str]:
 
 def write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.read_text() == content:
+        return
     path.write_text(content)
 
 
