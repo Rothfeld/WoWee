@@ -343,7 +343,7 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font) {
             wrapText(parseMarkup(w->text), w->width, w->nonSpaceWrap,
                      measureRun).size());
         w->wrappedLines = rows > 0 ? rows : 1;
-        w->height = size * 1.2f * static_cast<float>(w->wrappedLines);
+        w->height = textBlockHeight(size, w->wrappedLines);
         w->measuredText = w->text;
         w->measuredSize = size;
         w->measuredFace = w->fontFace;
@@ -361,7 +361,7 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font) {
         wrapText(parseMarkup(w->text), 0.0f, false, measureRun).size());
     w->wrappedLines = rows > 0 ? rows : 1;
     if (w->height <= 0.0f || w->autoSized) {
-        w->height = size * 1.2f * static_cast<float>(w->wrappedLines);
+        w->height = textBlockHeight(size, w->wrappedLines);
     }
     w->autoSized = true;
     w->measuredText = w->text;
@@ -621,6 +621,15 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                                                                piece.c_str()).x;
                                 });
     const float lineH = size * 1.2f;
+    // ImGui's glyph origin includes the face's ascender padding. Our layout
+    // uses an em-height line box, so center capital ink in that box. A fixed
+    // reference glyph keeps the baseline stable across ascenders/descenders
+    // and across markup runs; measuring each string would make rows jump.
+    auto* baked = font->GetFontBaked(size);
+    const auto* capital = baked->FindGlyph('H');
+    assert(capital);
+    const float glyphScale = size / baked->Size;
+    const float glyphOffsetY = (size - (capital->Y0 + capital->Y1) * glyphScale) * 0.5f;
     float y = at.y;
     for (const auto& line : lines) {
         // A picture contributes its own width, not its (empty) text's, or a
@@ -672,7 +681,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                 float rgba[4] = {run.rgba[0], run.rgba[1], run.rgba[2], run.rgba[3]};
                 col = packColor(rgba, alpha);
             }
-            dl->AddText(font, size, ImVec2(x, y), col, run.text.c_str());
+            dl->AddText(font, size, ImVec2(x, y + glyphOffsetY), col, run.text.c_str());
             const float runW = font->CalcTextSizeA(size, FLT_MAX, 0.0f,
                                                    run.text.c_str()).x;
             // Where the link landed, for the click that arrives in another
@@ -2990,7 +2999,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 w->wrappedLines = static_cast<int>(lines.size());
                 if (wrapW > 0.0f) {
                     extent.x = wrapW;
-                    extent.y = size * 1.2f * static_cast<float>(lines.size());
+                    extent.y = textBlockHeight(size, static_cast<int>(lines.size()));
                 }
             } else {
                 w->wrappedLines = 1;

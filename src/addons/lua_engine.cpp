@@ -854,7 +854,7 @@ double fontStringTextHeight(const wowee::ui::Widget& w) {
     const int lines = std::max(1, wowee::ui::interfaceTextLines(
                                       w.text, w.fontFace, w.fontHeight,
                                       wrapWidth, w.nonSpaceWrap));
-    return line * 1.2 * lines;
+    return wowee::ui::textBlockHeight(line, lines);
 }
 
 int lua_Region_GetTextHeight(lua_State* L) {

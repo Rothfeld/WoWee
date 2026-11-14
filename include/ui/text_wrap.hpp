@@ -15,6 +15,11 @@
 
 namespace wowee::ui {
 
+// Line spacing separates baselines; it does not add padding after the last line.
+inline float textBlockHeight(float fontSize, int lineCount) {
+    return lineCount > 0 ? fontSize * (1.0f + 1.2f * (lineCount - 1)) : 0.0f;
+}
+
 /// A piece of text and whether it carries a colour of its own. The renderer's
 /// markup parser produces these; the wrap works on them rather than on the
 /// stripped string so a colour run split across two lines keeps its colour on

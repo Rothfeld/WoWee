@@ -234,3 +234,10 @@ TEST_CASE("a character is never cut in half", "[wrap][ellipsis]") {
 TEST_CASE("a box too small for the dots gets the dots", "[wrap][ellipsis]") {
     CHECK(fitWithEllipsis("Anything", 2.0f, charWidth) == "...");
 }
+
+TEST_CASE("text block height includes spacing only between lines", "[text-wrap]") {
+    CHECK(wowee::ui::textBlockHeight(13, 0) == 0);
+    CHECK(wowee::ui::textBlockHeight(13, 1) == 13);
+    CHECK(wowee::ui::textBlockHeight(13, 2) == Catch::Approx(28.6f));
+    CHECK(wowee::ui::textBlockHeight(13, 3) == Catch::Approx(44.2f));
+}
