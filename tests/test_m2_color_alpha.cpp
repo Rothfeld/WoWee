@@ -165,3 +165,23 @@ TEST_CASE("Legacy collision boxes accept reversed authored corners", "[m2][bound
     CHECK(model.boundMin.x == Catch::Approx(-0.30556f));
     CHECK(model.boundMax.x == Catch::Approx(0.30556f));
 }
+
+TEST_CASE("Legacy particles preserve zero and tiny lifecycle endpoints", "[m2][particles]") {
+    std::vector<uint8_t> bytes(332 + 504, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const uint32_t version = 260, count = 1, offset = 332;
+    std::memcpy(bytes.data() + 4, &version, 4);
+    std::memcpy(bytes.data() + 316, &count, 4);
+    std::memcpy(bytes.data() + 320, &offset, 4);
+    const float midpoint = 0.5f;
+    std::memcpy(bytes.data() + offset + 0x14c, &midpoint, 4);
+    const float scales[]{0.0f, 0.05555556f, 0.00002777778f};
+    std::memcpy(bytes.data() + offset + 0x15c, scales, sizeof(scales));
+    const auto model = M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 1);
+    const auto& curve = model.particleEmitters[0].particleScale;
+    REQUIRE(curve.floatValues.size() == 3);
+    CHECK(curve.floatValues[0] == 0.0f);
+    CHECK(curve.floatValues[1] == Catch::Approx(scales[1]));
+    CHECK(curve.floatValues[2] == Catch::Approx(scales[2]));
+}

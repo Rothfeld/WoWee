@@ -713,9 +713,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             }
 
             float scale = rawScale;
-            if (gpu.isSpellEffect) {
-                scale = std::max(rawScale * 1.5f, 0.15f);
-            } else if (!gpu.isFireflyEffect) {
+            // Spell effects, including LootFX, use authored lifecycle sizes.
+            if (!gpu.isSpellEffect && !gpu.isFireflyEffect) {
                 scale = std::min(rawScale, 1.5f);
                 // Candle flames are authored at a fraction of a unit, which lands
                 // sub-pixel at any normal viewing distance - the fixture glows
