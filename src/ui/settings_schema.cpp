@@ -324,7 +324,7 @@ constexpr SettingDesc kSchema[] = {
      "Ease the camera round behind you as you turn, rather than\n"
      "snapping straight to it.", "", 0},
     {"idleorbit", "Idle orbit", SettingKind::Bool, 0, 0, 0, "Camera", "",
-     "Slowly circle the camera around you while you stand still.", "", 1},
+     "Slowly circle the camera around you while you stand still.", "", 0},
     {"mousespeed", "Mouse sensitivity", SettingKind::Float, 0.05f, 1.0f, 0.05f, "Camera", "Mouse",
      "How far the view turns for a given movement of the mouse. The game's\n"
      "own panel offered this twice, as sensitivity and as look speed, and\n"

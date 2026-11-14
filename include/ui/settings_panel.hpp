@@ -167,7 +167,7 @@ public:
     bool pendingSecureAbilityToggle = false;
     /// Debug: turn to face the target on attack. See GameHandler::setAutoFaceTarget.
     bool pendingAutoFaceTarget = false;
-    bool pendingIdleCameraOrbit = true;
+    bool pendingIdleCameraOrbit = false;
 
     // ---- Pending soundtrack ----
     bool pendingUseOriginalSoundtrack = true;

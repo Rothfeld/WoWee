@@ -806,7 +806,7 @@ private:
     // Idle camera: triggers intro pan after IDLE_TIMEOUT seconds of no input
     float idleTimer_ = 0.0f;
     bool idleOrbit_ = false;  // true when current intro pan is an idle orbit (loops)
-    bool idleOrbitEnabled_ = true;
+    bool idleOrbitEnabled_ = false;
     static constexpr float IDLE_TIMEOUT = 120.0f; // 2 minutes
 
     // Last known safe position (saved periodically when grounded on real geometry)
