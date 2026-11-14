@@ -2,7 +2,6 @@
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include <iterator>
 #include "game/gossip_quest_status.hpp"
-#include "game/game_utils.hpp"
 #include <vector>
 #include "addons/lua_api_helpers.hpp"
 #include "game/reputation_standing.hpp"
@@ -841,12 +840,12 @@ namespace {
 /// Daily quests take a different icon in the list. Protocol-defined, WotLK.
 constexpr uint32_t kQuestFlagsDaily = 0x1000;
 
-bool gossipQuestIsAvailable(uint32_t icon)   { return wowee::game::gossipQuestState(icon, wowee::game::isActiveExpansion("tbc")) == wowee::game::GossipQuestState::Available; }
-bool gossipQuestIsCompletable(uint32_t icon) { return wowee::game::gossipQuestState(icon, wowee::game::isActiveExpansion("tbc")) == wowee::game::GossipQuestState::Completable; }
-bool gossipQuestIsIncomplete(uint32_t icon)  { return wowee::game::gossipQuestState(icon, wowee::game::isActiveExpansion("tbc")) == wowee::game::GossipQuestState::Incomplete; }
+bool gossipQuestIsAvailable(lua_State* L, uint32_t icon)   { return wowee::game::gossipQuestState(icon, interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000) == wowee::game::GossipQuestState::Available; }
+bool gossipQuestIsCompletable(lua_State* L, uint32_t icon) { return wowee::game::gossipQuestState(icon, interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000) == wowee::game::GossipQuestState::Completable; }
+bool gossipQuestIsIncomplete(lua_State* L, uint32_t icon)  { return wowee::game::gossipQuestState(icon, interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000) == wowee::game::GossipQuestState::Incomplete; }
 /// Taken already, finished or not - which is one list in the gossip window.
-bool gossipQuestIsActive(uint32_t icon) {
-    return gossipQuestIsIncomplete(icon) || gossipQuestIsCompletable(icon);
+bool gossipQuestIsActive(lua_State* L, uint32_t icon) {
+    return gossipQuestIsIncomplete(L, icon) || gossipQuestIsCompletable(L, icon);
 }
 
 /// The i-th quest of one kind, or null past the end. One walk shared by
@@ -857,8 +856,8 @@ const game::GossipQuestItem* gossipQuestAt(lua_State* L, bool available, int ind
     if (!gh || index < 1) return nullptr;
     int seen = 0;
     for (const auto& q : gh->getCurrentGossip().quests) {
-        const bool matches = available ? gossipQuestIsAvailable(q.questIcon)
-                                       : gossipQuestIsActive(q.questIcon);
+        const bool matches = available ? gossipQuestIsAvailable(L, q.questIcon)
+                                       : gossipQuestIsActive(L, q.questIcon);
         if (matches && ++seen == index) return &q;
     }
     return nullptr;
@@ -869,8 +868,8 @@ int countGossipQuests(lua_State* L, bool available) {
     if (!gh) return 0;
     int n = 0;
     for (const auto& q : gh->getCurrentGossip().quests) {
-        if (available ? gossipQuestIsAvailable(q.questIcon)
-                      : gossipQuestIsActive(q.questIcon)) ++n;
+        if (available ? gossipQuestIsAvailable(L, q.questIcon)
+                      : gossipQuestIsActive(L, q.questIcon)) ++n;
     }
     return n;
 }
@@ -891,8 +890,8 @@ int selectGossipQuestAt(lua_State* L, bool available) {
     if (!gh || index < 1) return 0;
     int seen = 0;
     for (const auto& q : gh->getCurrentGossip().quests) {
-        const bool matches = available ? gossipQuestIsAvailable(q.questIcon)
-                                       : gossipQuestIsActive(q.questIcon);
+        const bool matches = available ? gossipQuestIsAvailable(L, q.questIcon)
+                                       : gossipQuestIsActive(L, q.questIcon);
         if (!matches) continue;
         if (++seen != index) continue;
         gh->selectGossipQuest(q.questId);
@@ -2482,7 +2481,7 @@ void registerSocialLuaAPI(lua_State* L) {
             }
             int n = 0;
             for (const auto& q : gh->getCurrentGossip().quests) {
-                if (!gossipQuestIsAvailable(q.questIcon)) continue;
+                if (!gossipQuestIsAvailable(L, q.questIcon)) continue;
                 lua_pushstring(L, q.title.c_str());
                 lua_pushnumber(L, q.questLevel);
                 // Trivial greys the title out. Nothing here knows a quest's
@@ -2509,13 +2508,13 @@ void registerSocialLuaAPI(lua_State* L) {
             }
             int n = 0;
             for (const auto& q : gh->getCurrentGossip().quests) {
-                if (!gossipQuestIsActive(q.questIcon)) continue;
+                if (!gossipQuestIsActive(L, q.questIcon)) continue;
                 lua_pushstring(L, q.title.c_str());
                 lua_pushnumber(L, q.questLevel);
                 lua_pushboolean(L, 0);
                 n += 3;
                 if (interfaceVersion(L) >= 30000) {
-                    lua_pushboolean(L, gossipQuestIsCompletable(q.questIcon) ? 1 : 0);
+                    lua_pushboolean(L, gossipQuestIsCompletable(L, q.questIcon) ? 1 : 0);
                     ++n;
                 }
             }
