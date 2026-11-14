@@ -1012,7 +1012,7 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
         if (instance.skipCollision) continue;
 
         // --- Mesh-based floor: vertical ray vs collision triangles ---
-        // A successful authored-mesh hit wins; AABB remains the fallback on a miss.
+        // Authored collision geometry is authoritative, including empty space.
         if (model.collision.valid()) {
             // Cast world-down through the instance transform. Using local -Z
             // only works for yaw-only placements; pitched flat models (notably
@@ -1084,12 +1084,10 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
                     bestFloor = bestWorldHitZ;
                     bestNormalZ = bestHitNormalZ;
                 }
-                // A successful authored-mesh hit is more accurate than the
-                // model AABB top, especially for pitched ramps where the AABB
-                // projection is not a world-vertical intersection.
-                continue;
             }
-            // Fall through to AABB floor - both contribute, highest wins
+            // A ray miss is empty space. Using the bounds as a floor here
+            // creates invisible platforms beside trunks and across mesh gaps.
+            continue;
         }
 
         float zMargin = model.collisionBridge ? 25.0f : 2.0f;
