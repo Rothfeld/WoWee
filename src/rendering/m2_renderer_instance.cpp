@@ -1473,6 +1473,32 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
             continue;
         }
 
+        if (authoredCollision) {
+            // Bounds only cull candidates. Their empty corners must not push
+            // the camera into the player when approaching an irregular prop.
+            const glm::vec3 localEnd = glm::vec3(instance.invModelMatrix *
+                glm::vec4(origin + direction * closestHit, 1.0f));
+            const glm::vec2 rangeMin = glm::min(glm::vec2(localOrigin), glm::vec2(localEnd));
+            const glm::vec2 rangeMax = glm::max(glm::vec2(localOrigin), glm::vec2(localEnd));
+            const auto& mesh = model.collision;
+            // Camera rays must test floors and ceilings as well as walls.
+            for (const auto* cells : {&mesh.cellFloorTris, &mesh.cellWallTris}) {
+                mesh.gatherTrisInRange(*cells, rangeMin.x, rangeMin.y,
+                                      rangeMax.x, rangeMax.y, tl_m2_collisionTriScratch);
+                for (uint32_t ti : tl_m2_collisionTriScratch) {
+                    const float t = rayTriangleIntersect(localOrigin, localDir,
+                        mesh.vertices[mesh.indices[ti * 3]],
+                        mesh.vertices[mesh.indices[ti * 3 + 1]],
+                        mesh.vertices[mesh.indices[ti * 3 + 2]]);
+                    if (t < 0.0f) continue;
+                    const glm::vec3 worldHit = glm::vec3(instance.modelMatrix *
+                        glm::vec4(localOrigin + localDir * t, 1.0f));
+                    closestHit = std::min(closestHit, glm::length(worldHit - origin));
+                }
+            }
+            continue;
+        }
+
         // Local-space AABB slab intersection.
         glm::vec3 invDir = 1.0f / localDir;
         glm::vec3 tMin = (localMin - localOrigin) * invDir;
