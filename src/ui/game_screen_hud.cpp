@@ -11,6 +11,7 @@
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
 #include "core/appearance_composer.hpp"
+#include "core/entity_spawner.hpp"
 #include "ui/map_window.hpp"
 #include "addons/addon_manager.hpp"
 #include "core/coordinates.hpp"
@@ -993,32 +994,18 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0;
         const bool isGuardian = isSummon && !isPet;
 
-        // Friendly player nameplates use Shift+V; enemy players and hostile/NPC
-        // nameplates use V. Reaction, not object type, owns the visual category.
-        // The current target ALWAYS gets a nameplate so it's clear what is
-        // selected even with nameplates toggled off.
-        if (isPlayer && !isHostile && !settingsPanel_.showFriendlyNameplates_ && !isTarget) continue;
-        if ((!isPlayer || isHostile) && !settingsPanel_.showEnemyNameplates_ && !isTarget) continue;
-
-        // Totems answer to their own two settings on top of the above, which
-        // is how the real client has it: the defaults show an enemy's totems
-        // and not your own side's, so a field of friendly totems does not bury
-        // the fight. The target keeps its plate either way.
-        if (isTotem && !isTarget) {
-            const char* totemPlateCVar = isHostile ? "nameplateShowEnemyTotems"
-                                                   : "nameplateShowFriendlyTotems";
-            if (addons::storedCVarValue(totemPlateCVar, isHostile ? "1" : "0") == "0") continue;
+        bool showPlate = isHostile ? settingsPanel_.showEnemyNameplates_
+                                   : settingsPanel_.showFriendlyNameplates_;
+        if (isTotem) {
+            showPlate = showPlate && addons::storedCVarValue(
+                isHostile ? "nameplateShowEnemyTotems" : "nameplateShowFriendlyTotems",
+                isHostile ? "1" : "0") != "0";
         }
-
-        // The same question for the other two summon categories. Every one of
-        // these four is on in the real client; they are here to be turned off
-        // by someone who does not want a warlock's minions in the way.
-        if ((isPet || isGuardian) && !isTarget) {
-            const char* platecVar =
-                isPet ? (isHostile ? "nameplateShowEnemyPets" : "nameplateShowFriendlyPets")
-                      : (isHostile ? "nameplateShowEnemyGuardians"
-                                   : "nameplateShowFriendlyGuardians");
-            if (addons::storedCVarValue(platecVar, "1") == "0") continue;
+        if (isPet || isGuardian) {
+            const char* plateCVar = isPet
+                ? (isHostile ? "nameplateShowEnemyPets" : "nameplateShowFriendlyPets")
+                : (isHostile ? "nameplateShowEnemyGuardians" : "nameplateShowFriendlyGuardians");
+            showPlate = showPlate && addons::storedCVarValue(plateCVar, "1") != "0";
         }
 
         // For corpses (dead units), only show a minimal grey nameplate if selected
@@ -1032,13 +1019,22 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             renderPos = core::coords::canonicalToRender(
                 glm::vec3(unit->getX(), unit->getY(), unit->getZ()));
         }
-        renderPos.z += 2.3f;
+        float unitHeight = 2.0f;
+        auto& app = core::Application::getInstance();
+        if (auto* spawner = app.getEntitySpawner()) {
+            if (auto* characters = services_.renderer->getCharacterRenderer()) {
+                float modelHeight = 0.0f;
+                if (characters->getInstanceHeight(spawner->characterInstanceIdForGuid(guid), modelHeight))
+                    unitHeight = modelHeight;
+            }
+        }
+        renderPos.z += unitHeight + 0.3f;
 
         // Cull distance: the current target stays visible to 60 units so its
         // bar doesn't vanish at combat range; players 40; other NPCs 20.
         glm::vec3 nameDelta = renderPos - camPos;
         float distSq = glm::dot(nameDelta, nameDelta);
-        float cullDist = isTarget ? 60.0f : (isPlayer ? 40.0f : 20.0f);
+        float cullDist = isTarget ? 60.0f : ((!showPlate || isPlayer) ? 40.0f : 20.0f);
         if (distSq > cullDist * cullDist) continue;
 
         // Behind a building is out of sight, and a name that reads through a
@@ -1141,7 +1137,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // plate occupies is its bar plus the name line above it; the bound is
         // generous rather than exact, because a plate that clears by a pixel
         // still reads as two bars touching.
-        if (!allowPlateOverlap) {
+        if (showPlate && !allowPlateOverlap) {
             const float topExtent = barH + 24.0f;
             sy = ui::plateTopClearOf(placedPlates, barX, barX + barW, sy, barH, topExtent);
             placedPlates.push_back({.x0 = barX, .y0 = sy - topExtent, .x1 = barX + barW, .y1 = sy + barH});
@@ -1154,6 +1150,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ? std::clamp(static_cast<float>(unit->getHealth()) / static_cast<float>(unit->getMaxHealth()), 0.0f, 1.0f)
             : 0.0f;
 
+        if (showPlate) {
         drawList->AddRectFilled(ImVec2(barX,                 sy), ImVec2(barX + barW,               sy + barH), bgColor,    2.0f);
         // For corpses, don't fill health bar (just show grey background)
         if (!isCorpse) {
@@ -1374,6 +1371,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             }
         }
 
+        }
+
         // Name + level label above health bar
         //
         // Whether this kind of unit gets its name shown at all. The interface
@@ -1431,7 +1430,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 else
                     snprintf(labelBuf, sizeof(labelBuf), "Player");
             }
-        } else if (level > 0) {
+        } else if (showPlate && level > 0) {
             uint32_t playerLevel = gameHandler.getPlayerLevel();
             // Show skull for units more than 10 levels above the player
             if (playerLevel > 0 && level > playerLevel + 10)
@@ -1441,9 +1440,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         } else {
             snprintf(labelBuf, sizeof(labelBuf), "%s", unitName.c_str());
         }
-        ImVec2 textSize = ImGui::CalcTextSize(labelBuf);
+        // Plain world names scale with perspective; nameplates remain screen UI.
+        const glm::vec4 textTop = viewProj * glm::vec4(renderPos + glm::vec3(0, 0, 0.25f), 1.0f);
+        const float nameFontSize = showPlate ? ImGui::GetFontSize()
+            : std::clamp(std::abs(textTop.y / textTop.w - ndc.y) * screenH * 0.5f, 8.0f, 40.0f);
+        ImFont* nameFont = ImGui::GetFont();
+        ImVec2 textSize = nameFont->CalcTextSizeA(nameFontSize, FLT_MAX, 0.0f, labelBuf);
         float nameX = sx - textSize.x * 0.5f;
-        float nameY = sy - barH - 12.0f;
+        float nameY = sy - (showPlate ? barH + 12.0f : textSize.y);
         // Name color communicates reaction too: friendly players blue, enemies red.
         ImU32 nameColor;
         if (isPlayer) {
@@ -1475,37 +1479,22 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
         }
-        if (!subLabel.empty()) nameY -= 10.0f;  // shift name up for sub-label line
+        if (!subLabel.empty()) nameY -= nameFontSize;  // shift name up for sub-label line
 
         if (showThisName) {
-            drawList->AddText(ImVec2(nameX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), labelBuf);
-            drawList->AddText(ImVec2(nameX,         nameY),         nameColor, labelBuf);
-        }
-
-        // Gold chevron above the current target's plate - a gently bobbing
-        // down-arrow so the selected enemy is unmistakable at a glance.
-        if (isTarget) {
-            float bob = 2.0f * std::sin(static_cast<float>(ImGui::GetTime()) * 5.0f);
-            float tipY  = nameY - 5.0f + bob;
-            float baseY = tipY - 8.0f;
-            float halfW = 6.0f;
-            drawList->AddTriangleFilled(
-                ImVec2(sx - halfW + 1.0f, baseY + 1.0f), ImVec2(sx + halfW + 1.0f, baseY + 1.0f),
-                ImVec2(sx + 1.0f, tipY + 1.0f), IM_COL32(0, 0, 0, A(140)));
-            drawList->AddTriangleFilled(
-                ImVec2(sx - halfW, baseY), ImVec2(sx + halfW, baseY),
-                ImVec2(sx, tipY), IM_COL32(255, 215, 0, A(240)));
+            drawList->AddText(nameFont, nameFontSize, ImVec2(nameX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), labelBuf);
+            drawList->AddText(nameFont, nameFontSize, ImVec2(nameX,         nameY),         nameColor, labelBuf);
         }
 
         // Sub-label below the name (WoW-style <Guild Name> or <NPC Title> in
         // lighter color). Hidden with the name it belongs to: a guild tag
         // floating alone over a nameless plate is not what anyone asked for.
         if (!subLabel.empty() && showThisName) {
-            ImVec2 subSz = ImGui::CalcTextSize(subLabel.c_str());
+            ImVec2 subSz = nameFont->CalcTextSizeA(nameFontSize, FLT_MAX, 0.0f, subLabel.c_str());
             float subX = sx - subSz.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
-            drawList->AddText(ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
-            drawList->AddText(ImVec2(subX,         subY),         IM_COL32(180, 180, 180, A(200)), subLabel.c_str());
+            drawList->AddText(nameFont, nameFontSize, ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
+            drawList->AddText(nameFont, nameFontSize, ImVec2(subX,         subY),         IM_COL32(180, 180, 180, A(200)), subLabel.c_str());
         }
 
         // Group leader crown to the right of the name on player nameplates
