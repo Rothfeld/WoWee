@@ -1,8 +1,9 @@
 #include "core/local_time.hpp"
+#include "game/game_utils.hpp"
+#include "rendering/legacy_light_direction.hpp"
 #include "rendering/lighting_manager.hpp"
 #include "rendering/light_coords.hpp"
 #include "rendering/light_band_block.hpp"
-#include "rendering/light_headroom.hpp"
 #include "rendering/light_volume_order.hpp"
 #include <glm/gtc/constants.hpp>
 #include "pipeline/asset_manager.hpp"
@@ -393,7 +394,16 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.fogEnd = 300.0f;
     } else if (!activeVolumes_.empty()) {
         // Outdoor with DBC lighting - blend multiple volumes
-        newParams = {}; // Zero-initialize
+        // Default member initializers are fallback lighting, not a zero blend.
+        newParams.ambientColor = glm::vec3(0.0f);
+        newParams.diffuseColor = glm::vec3(0.0f);
+        newParams.fogColor = glm::vec3(0.0f);
+        newParams.skyTopColor = glm::vec3(0.0f);
+        newParams.skyMiddleColor = glm::vec3(0.0f);
+        newParams.skyBand1Color = glm::vec3(0.0f);
+        newParams.skyBand2Color = glm::vec3(0.0f);
+        newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
+        newParams.cloudDensity = newParams.horizonGlow = 0.0f;
         glm::vec3 blendedDir(0.0f);  // Accumulate weighted directions
 
         // The first MAX_BLEND_VOLUMES only: the list is the whole
@@ -504,14 +514,8 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.fogEnd *= scale;
     }
 
-    // Every lit shader adds these as `ambient + diffuse * N-dot-L`, and on
-    // ground facing the sun that is nearly their plain sum. 82% of the
-    // client's 844 LightParams rows exceed 1.0 in some channel at noon, the
-    // worst reaching 2.00, and clipping happens per channel - the ones that
-    // overflow stop while the rest keep their value, and the hue slides toward
-    // whatever saturated. Scaling both together keeps the hue and only ever
-    // darkens.
-    applyLightHeadroom(newParams.ambientColor, newParams.diffuseColor);
+    // Preserve authored light intensities. Clamping belongs after lighting is
+    // multiplied by surface albedo; normalizing ambient + diffuse darkens it.
 
     // What the sky is being told, whenever it changes.
     //
@@ -685,6 +689,12 @@ uint32_t LightingManager::selectLightParamsId(const LightVolume* volume, bool is
         return volume->lightParamsIdRain;
     }
     return volume->lightParamsId;
+}
+
+glm::vec3 LightingManager::getSurfaceLightDirection() const {
+    return game::isActiveExpansion("tbc")
+        ? legacySurfaceLightDirection(visualTimeOfDayHours_)
+        : currentParams_.directionalDir;
 }
 
 LightingParams LightingManager::sampleLightParams(const LightParamsProfile* profile, uint16_t timeHalfMinutes) const {

@@ -567,7 +567,7 @@ void Renderer::updatePerFrameUBO() {
     // Lighting from LightingManager
     if (lightingManager) {
         const auto& lp = lightingManager->getLightingParams();
-        currentFrameData.lightDir = glm::vec4(lp.directionalDir, 0.0f);
+        currentFrameData.lightDir = glm::vec4(lightingManager->getSurfaceLightDirection(), 0.0f);
         currentFrameData.lightColor = glm::vec4(lp.diffuseColor, 1.0f);
         currentFrameData.ambientColor = glm::vec4(lp.ambientColor, 1.0f);
         currentFrameData.fogColor = glm::vec4(lp.fogColor, 1.0f);
@@ -4066,10 +4066,10 @@ glm::mat4 Renderer::computeLightSpaceMatrix() {
     // therefore shadow rays must use -directionalDir to stay aligned.
     glm::vec3 sunDir = glm::normalize(glm::vec3(-0.3f, -0.7f, -0.6f));
     if (lightingManager) {
-        const auto& lighting = lightingManager->getLightingParams();
-        float ldirLenSq = glm::dot(lighting.directionalDir, lighting.directionalDir);
+        const glm::vec3 lightDir = lightingManager->getSurfaceLightDirection();
+        float ldirLenSq = glm::dot(lightDir, lightDir);
         if (ldirLenSq > 1e-6f) {
-            sunDir = -lighting.directionalDir * glm::inversesqrt(ldirLenSq);
+            sunDir = -lightDir * glm::inversesqrt(ldirLenSq);
         }
     }
     // Shadow camera expects light rays pointing downward in render space (Z up).

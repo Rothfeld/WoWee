@@ -197,6 +197,7 @@ public:
      * Get current lighting parameters
      */
     [[nodiscard]] const LightingParams& getLightingParams() const { return currentParams_; }
+    [[nodiscard]] glm::vec3 getSurfaceLightDirection() const;
 
     /**
      * Set whether player is indoors (disables outdoor lighting)
@@ -317,8 +318,8 @@ private:
     /// When update last ran, for smoothing by real time rather than by frame.
     std::chrono::steady_clock::time_point lastUpdate_{};
     bool isIndoors_ = false;
-    float fogSkyBlend_ = 0.7f;
-    float fogStrength_ = 0.4f;
+    float fogSkyBlend_ = 0.0f;
+    float fogStrength_ = 1.0f;
 
     // Last values the sky diagnostic reported, so it prints on a change
     // rather than every frame. See LightingManager::update.
