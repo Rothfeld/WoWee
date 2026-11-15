@@ -534,10 +534,13 @@ void WorldMapFacade::render(const glm::vec3& playerRenderPos,
     const bool mouseOverMap = d.haveImageRect && ImGui::IsMousePosValid(&mouse) &&
                               mouse.x >= d.imageMin.x && mouse.x < d.imageMax.x &&
                               mouse.y >= d.imageMin.y && mouse.y < d.imageMax.y;
-    InputResult inputResult = d.input.process(d.viewState.currentLevel(),
-                                               hoveredZone,
-                                               d.viewState.cosmicEnabled(),
-                                               mouseOverMap);
+    // Hosted maps use WorldMapButton_OnClick / ProcessMapClick. Polling again
+    // here also consumes clicks intended for FrameXML dropdowns over the map.
+    InputResult inputResult;
+    if (!d.hasFrameRect) {
+        inputResult = d.input.process(d.viewState.currentLevel(), hoveredZone,
+                                      d.viewState.cosmicEnabled(), mouseOverMap);
+    }
 
     // Flight map is locked to the continent view: node clicks are handled by
     // the taxi layer, so only closing the map is a valid input action here.
@@ -964,7 +967,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         windowW = frameRectW;
         windowH = frameRectH;
         flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoBackground;
+                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs;
         ImGui::SetNextWindowPos(ImVec2(mapX, mapY), ImGuiCond_Always);
     } else {
         // Map window - styled like the character selection window

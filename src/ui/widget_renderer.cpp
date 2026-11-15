@@ -2267,8 +2267,9 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
     }
 
     for (const Widget* w : order) {
-        // FrameXML labels must cover the embedded ImGui world map.
-        dl = (w->effStrata >= FrameStrata::Fullscreen && w->kind == WidgetKind::FontString)
+        // Fullscreen dialogs and tooltips must also cover embedded ImGui maps.
+        dl = (w->effStrata >= FrameStrata::FullscreenDialog ||
+              (w->effStrata >= FrameStrata::Fullscreen && w->kind == WidgetKind::FontString))
             ? ImGui::GetForegroundDrawList() : ImGui::GetBackgroundDrawList();
         // Anything inside a scroll frame is bounded by it. Without this a
         // scroll child taller than its window draws over everything above and
