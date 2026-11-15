@@ -2788,7 +2788,7 @@ void CameraController::update(float deltaTime) {
                 float degreesPerSec = introOrbitDegrees / introDuration;
                 yaw -= degreesPerSec * deltaTime;
                 camera->setRotation(yaw, pitch);
-                facingYaw = yaw;
+                if (!seatedInChair_) facingYaw = yaw;
             } else {
                 float t = (introDuration > 0.0f) ? std::min(introTimer / introDuration, 1.0f) : 1.0f;
                 yaw = introStartYaw + (introEndYaw - introStartYaw) * t;
@@ -2796,7 +2796,7 @@ void CameraController::update(float deltaTime) {
                 currentDistance = introStartDistance + (introEndDistance - introStartDistance) * t;
                 userTargetDistance = introEndDistance;
                 camera->setRotation(yaw, pitch);
-                facingYaw = yaw;
+                if (!seatedInChair_) facingYaw = yaw;
                 if (t >= 1.0f) {
                     introActive = false;
                 }
@@ -2971,8 +2971,11 @@ void CameraController::update(float deltaTime) {
     // On a phone that is what the right mouse button is on a desktop: the
     // character turns to face where the player is looking, so that walking
     // forward goes where the screen points.
-    bool cameraDrivesFacing = rightMouseDown || mouseAutorun || steering_ ||
-                              (swimming && hasMoveInput);
+    // A chair owns body orientation. Mouse/touch orbit may move the camera,
+    // but must not replace the server's seat heading or send a new facing.
+    bool cameraDrivesFacing = !seatedInChair_ &&
+                              (rightMouseDown || mouseAutorun || steering_ ||
+                               (swimming && hasMoveInput));
     // During taxi flights, orientation is controlled by the flight path, not player input
     if (cameraDrivesFacing && !externalFollow_) {
         facingYaw = yaw;

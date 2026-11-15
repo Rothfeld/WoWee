@@ -736,3 +736,6 @@ reach expands that local box by 3 yards. Object cursor color uses the same range
 check as interaction; chairs have no name tooltip. When updating extracted
 assets, update their `dbc_layouts.json` as well: the running client reads it from
 its expansion asset directory, not the source `Data` directory.
+
+Chair stand states retain the server seat heading while mouse, touch, or idle
+orbit moves the camera. Leaving the chair restores normal camera-driven facing.
