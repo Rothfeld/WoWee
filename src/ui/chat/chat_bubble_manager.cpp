@@ -9,6 +9,7 @@
 #include <imgui.h>
 #include "ui/chat/chat_utils.hpp"
 #include "ui/sight_cache.hpp"
+#include "ui/ui_texture_load.hpp"
 
 #include <glm/glm.hpp>
 
@@ -112,9 +113,10 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         // thing that cannot go underneath.
         ImDrawList* dl = ImGui::GetBackgroundDrawList();
         ImFont* font = ImGui::GetFont();
-        const float fontSize = ImGui::GetFontSize();
-        constexpr float kWrapWidth = 200.0f;
-        const ImVec2 padding(8.0f, 4.0f);
+        const float scale = screenH / 768.0f;
+        const float fontSize = 15.0f * scale;
+        const float kWrapWidth = 300.0f * scale;
+        const ImVec2 padding(16.0f * scale, 12.0f * scale);
 
         const ImVec2 textSize =
             font->CalcTextSizeA(fontSize, FLT_MAX, kWrapWidth, bubble.message.c_str());
@@ -123,16 +125,43 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         // it, centred - which is what the window's pivot of (0.5, 1) did.
         const ImVec2 topLeft(screenX - size.x * 0.5f, screenY - size.y);
 
-        ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-        background.w = 0.7f * alpha;
-        dl->AddRectFilled(topLeft, ImVec2(topLeft.x + size.x, topLeft.y + size.y),
-                          ImGui::GetColorU32(background), 8.0f);
+        static const auto background = uploadUiTextureFromBlp(services.assetManager,
+            "Interface/Tooltips/ChatBubble-Background.blp", window);
+        static const auto border = uploadUiTextureFromBlp(services.assetManager,
+            "Interface/Tooltips/ChatBubble-Backdrop.blp", window);
+        static const auto tail = uploadUiTextureFromBlp(services.assetManager,
+            "Interface/Tooltips/ChatBubble-Tail.blp", window);
+        if (!background || !border || !tail)
+            throw std::runtime_error("Missing authored chat bubble textures");
+        const ImU32 tint = IM_COL32(255, 255, 255, static_cast<int>(255 * alpha));
+        const float x0 = topLeft.x, y0 = topLeft.y;
+        const float x1 = x0 + size.x, y1 = y0 + size.y;
+        const float edge = 16.0f * scale;
+        dl->AddImage((ImTextureID)(uintptr_t)background, ImVec2(x0 + 3 * scale, y0 + 3 * scale),
+            ImVec2(x1 - 3 * scale, y1 - 3 * scale), ImVec2(0, 0), ImVec2(1, 1), tint);
+        const auto piece = [&](int index, float left, float top, float right, float bottom, bool rotated = false) {
+            const float u0 = index / 8.0f, u1 = (index + 1) / 8.0f;
+            dl->AddImageQuad((ImTextureID)(uintptr_t)border,
+                ImVec2(left, top), ImVec2(right, top), ImVec2(right, bottom), ImVec2(left, bottom),
+                ImVec2(u0, 0), rotated ? ImVec2(u0, 1) : ImVec2(u1, 0),
+                ImVec2(u1, 1), rotated ? ImVec2(u1, 0) : ImVec2(u0, 1), tint);
+        };
+        piece(4, x0, y0, x0 + edge, y0 + edge);
+        piece(5, x1 - edge, y0, x1, y0 + edge);
+        piece(6, x0, y1 - edge, x0 + edge, y1);
+        piece(7, x1 - edge, y1 - edge, x1, y1);
+        piece(0, x0, y0 + edge, x0 + edge, y1 - edge);
+        piece(1, x1 - edge, y0 + edge, x1, y1 - edge);
+        piece(2, x0 + edge, y0, x1 - edge, y0 + edge, true);
+        piece(3, x0 + edge, y1 - edge, x1 - edge, y1, true);
+        dl->AddImage((ImTextureID)(uintptr_t)tail, ImVec2(screenX - edge, y1 - edge * .5f),
+            ImVec2(screenX + edge, y1 + edge * 1.5f), ImVec2(0, 0), ImVec2(1, 1), tint);
 
         const ImVec4 textColor = bubble.isYell
             ? ImVec4(1.0f, 0.2f, 0.2f, alpha)
             : ImVec4(1.0f, 1.0f, 1.0f, alpha);
         dl->AddText(font, fontSize, ImVec2(topLeft.x + padding.x, topLeft.y + padding.y),
-                    ImGui::GetColorU32(textColor), bubble.message.c_str(), nullptr,
+                    ImGui::ColorConvertFloat4ToU32(textColor), bubble.message.c_str(), nullptr,
                     kWrapWidth);
     }
 }

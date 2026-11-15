@@ -110,6 +110,8 @@ public:
     ChatAutoJoin chatAutoJoin;
 
 private:
+    void emitChatBubble(const MessageChatData& data);
+
     /// A chat line waiting for a name: its sender's, or that of the player an
     /// NPC's line is written for. See deliverChatMessage.
     struct ChatAwaitingName {

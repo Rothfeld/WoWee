@@ -617,3 +617,38 @@ TEST_CASE("a spell go miss shows what the server says happened", "[replay]") {
         CHECK(types == std::vector<wowee::game::CombatTextEntry::Type>{type});
     }
 }
+
+TEST_CASE("TBC local speech produces one bubble despite suppressed server echo", "[chat][tbc]") {
+    Session s("tbc");
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 2}});
+    int bubbles = 0;
+    s.handler().setChatBubbleCallback([&](uint64_t guid, const std::string& text, bool yell) {
+        CHECK(guid == Session::kPlayerGuid);
+        CHECK(text == "bubblecheck");
+        CHECK_FALSE(yell);
+        ++bubbles;
+    });
+    wowee::game::MessageChatData local;
+    local.senderGuid = Session::kPlayerGuid;
+    local.type = wowee::game::ChatType::SAY;
+    local.message = "bubblecheck";
+    s.handler().addLocalChatMessage(local);
+    CHECK(bubbles == 1);
+
+    // CMaNGOS ChatHandler::BuildChatPacket, ordinary SAY body.
+    wowee::network::Packet echo(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_MESSAGECHAT));
+    echo.writeUInt8(static_cast<uint8_t>(local.type));
+    echo.writeUInt32(0);
+    echo.writeUInt64(local.senderGuid);
+    echo.writeUInt32(0);
+    echo.writeUInt64(0);
+    echo.writeUInt32(static_cast<uint32_t>(local.message.size() + 1));
+    echo.writeString(local.message);
+    echo.writeUInt8(0);
+    s.receive(echo);
+    CHECK(bubbles == 1);
+
+    local.type = wowee::game::ChatType::WHISPER_INFORM;
+    s.handler().addLocalChatMessage(local);
+    CHECK(bubbles == 1);
+}
