@@ -827,23 +827,29 @@ TEST_CASE_METHOD(Integration, "Repeated vendor gossip refreshes without closing 
     CHECK(handler.getInteractNpcGuid() == 0);
 }
 
-TEST_CASE("Conversation facing takes shortest arc and returns without a snap", "[npc-facing]") {
-    using wowee::core::advanceNpcInteractionFacing;
+TEST_CASE("Conversation facing settles in native 50 ms interval", "[npc-facing]") {
+    using wowee::core::NpcInteractionFacing;
     using wowee::core::coords::normalizeAngleRad;
-    float heading = 3.0f;
+    NpcInteractionFacing facing(3.0f);
     const float target = -3.0f;
-    const float next = advanceNpcInteractionFacing(heading, target, 0.01f);
-    CHECK(normalizeAngleRad(next - heading) > 0.0f);
-    CHECK(normalizeAngleRad(next - heading) < 0.064f);
-    for (int frame = 0; frame < 60; ++frame)
-        heading = advanceNpcInteractionFacing(heading, target, 1.0f / 60.0f);
-    CHECK(std::abs(normalizeAngleRad(heading - target)) < 0.0001f);
-    // Repeated interaction does not reset the heading or overshoot.
-    CHECK(advanceNpcInteractionFacing(heading, target, 0.01f) == heading);
-    const float returning = advanceNpcInteractionFacing(heading, 0.0f, 0.01f);
-    CHECK(std::abs(normalizeAngleRad(returning - heading)) < 0.064f);
-    for (int frame = 0; frame < 60; ++frame)
-        heading = advanceNpcInteractionFacing(heading, 0.0f, 1.0f / 60.0f);
-    CHECK(std::abs(heading) < 0.0001f);
-    CHECK(advanceNpcInteractionFacing(0.2f, 1.0f, 0.0f) == 0.2f);
+    CHECK(normalizeAngleRad(facing.advance(target, 0.01f) - 3.0f) > 0.0f);
+    CHECK(facing.remaining > 0.039f);
+    // Repeated target requests keep the original deadline.
+    for (int frame = 0; frame < 3; ++frame) facing.advance(target, 0.01f);
+    CHECK(facing.remaining < 0.011f);
+    CHECK(std::abs(normalizeAngleRad(facing.current - target)) > 0.01f);
+    CHECK(std::abs(normalizeAngleRad(facing.advance(target, 0.011f) - target)) < 0.0001f);
+    CHECK(facing.remaining == 0.0f);
+    CHECK(facing.advance(target, 0.01f) == facing.current);
+    CHECK(facing.advance(0.0f, 0.0f) == target);
+    CHECK(std::abs(facing.advance(0.0f, 0.05f)) < 0.0001f);
+    for (float dt : {1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 144.0f}) {
+        NpcInteractionFacing turn(0.0f);
+        float elapsed = 0.0f;
+        while (elapsed < 0.05f) {
+            turn.advance(2.0f, dt);
+            elapsed += dt;
+        }
+        CHECK(std::abs(turn.current - 2.0f) < 0.0001f);
+    }
 }

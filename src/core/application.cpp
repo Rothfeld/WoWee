@@ -3599,8 +3599,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             float facing = entity->getOrientation();
             if (interactionYaw || npcInteractionFacing_.contains(guid)) {
                 auto [it, inserted] = npcInteractionFacing_.try_emplace(guid, facing);
-                facing = advanceNpcInteractionFacing(it->second, interactionYaw.value_or(facing), deltaTime);
-                it->second = facing;
+                facing = it->second.advance(interactionYaw.value_or(facing), deltaTime);
                 if (!interactionYaw && std::abs(coords::normalizeAngleRad(facing - entity->getOrientation())) < 0.0001f)
                     npcInteractionFacing_.erase(it);
             }
