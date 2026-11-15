@@ -60,3 +60,21 @@ TEST_CASE("nothing to report hides the meter", "[dps]") {
     DamageMeter meter;
     CHECK_FALSE(meter.update(false, 1.0f, {}, 0, {}).show);
 }
+
+TEST_CASE("TBC damage expires before the XP reward popup", "[combat-text]") {
+    // Build 8606 popup table at 0xBBF1C0: hit 1500 ms, XP 4500 ms.
+    T damage;
+    damage.type = T::MELEE_DAMAGE;
+    damage.age = 1.49f;
+    CHECK_FALSE(damage.isExpired());
+    damage.age = 1.5f;
+    CHECK(damage.isExpired());
+    T xp;
+    xp.type = T::XP_GAIN;
+    xp.age = 1.5f;
+    CHECK_FALSE(xp.isExpired());
+    xp.age = 4.49f;
+    CHECK_FALSE(xp.isExpired());
+    xp.age = 4.5f;
+    CHECK(xp.isExpired());
+}

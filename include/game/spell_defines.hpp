@@ -65,8 +65,11 @@ struct CombatTextEntry {
     uint64_t dstGuid = 0;       // Destination entity (victim/target) - used for world-space positioning
     float xSeed = 0.0f;         // Random horizontal offset seed (-1..1) to stagger overlapping text
 
-    static constexpr float LIFETIME = 2.5f;
-    [[nodiscard]] bool isExpired() const { return age >= LIFETIME; }
+    static constexpr float LIFETIME = 1.5f;
+    [[nodiscard]] float lifetime() const {
+        return type == XP_GAIN || type == HONOR_GAIN ? 4.5f : LIFETIME;
+    }
+    [[nodiscard]] bool isExpired() const { return age >= lifetime(); }
 };
 
 /**

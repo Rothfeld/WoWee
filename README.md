@@ -584,3 +584,11 @@ unpremultiplied shader color. The upload buffer grows to fit visible particles;
 a fixed global cap can hide newly created loot and spell effects behind scenery.
 Set `WOWEE_PARTICLE_TRACE=LootFX` to log emitter colors, sizes and submitted bounds.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
+
+### TBC combat feedback
+
+Outgoing melee damage uses white numbers; ability damage uses yellow numbers.
+XP appears above the player as `XP: <amount>` in purple, using FRIZQT__.TTF.
+Ordinary damage lasts 1.5 seconds; XP lasts 4.5 seconds. The build-8606 popup
+parameter table begins at 0xBBF1C0 (28-byte records); XP formatting is at
+0x6089E0. Incoming floating combat text follows the `enableCombatText` setting.

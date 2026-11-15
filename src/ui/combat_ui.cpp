@@ -5,6 +5,7 @@
 // battleground score HUD, combat log, threat window, BG scoreboard.
 // ============================================================
 #include "ui/combat_ui.hpp"
+#include "ui/interface_fonts.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "ui/buff_bar_layout.hpp"
 #include "ui/framexml_takeover.hpp"
@@ -75,17 +76,8 @@ void CombatUI::playSoundsForNewChat(game::GameHandler& gameHandler) {
 // Floating Combat Text
 // ============================================================
 
-// Not gated, and there is no element to gate it on.
-//
-// FrameXML's own floating combat text lives in Blizzard_CombatText, which is
-// load-on-demand and reached from exactly one place: the float-mode dropdown in
-// the Interface Options combat panel, which calls UIParentLoadAddOn for it. So
-// it is absent until a player touches that setting, and drawing beside it after
-// that is a latent double rather than a live one.
-//
-// Left alone deliberately. Covering it means a new UiElement and a suppression
-// entry, which is a decision about what this interface owns rather than a fix
-// to something broken - and the client's combat text is the one on screen today.
+// World damage/XP numbers are separate from optional incoming combat text.
+// TBC build 8606 keeps damage for 1.5 seconds and XP for 4.5 seconds.
 void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     const auto& entries = gameHandler.getCombatText();
     if (entries.empty()) return;
@@ -102,8 +94,9 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     if (camera) viewProj = camera->getProjectionMatrix() * camera->getViewMatrix();
 
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
-    ImFont* font = ImGui::GetFont();
-    const float baseFontSize = ImGui::GetFontSize();
+    ImFont* font = interfaceFace("frizqt__");
+    if (!font) { LOG_ERROR("Combat text requires Fonts\\FRIZQT__.TTF"); return; }
+    const float baseFontSize = 22.0f * screenH / 600.0f;
 
     // HUD fallback: entries without world-space anchor use classic screen-position layout.
     // We still need an ImGui window for those.
@@ -150,9 +143,19 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     };
 
     for (const auto& entry : entries) {
-        if (!wanted(entry.type)) continue;
-        const float alpha = 1.0f - (entry.age / game::CombatTextEntry::LIFETIME);
         const bool outgoing = entry.isPlayerSource;
+        const bool experience = entry.type == game::CombatTextEntry::XP_GAIN;
+        const bool reward = experience || entry.type == game::CombatTextEntry::HONOR_GAIN;
+        if (!outgoing && !reward &&
+            (addons::storedCVarValue("enableCombatText", "0") == "0" || !wanted(entry.type))) continue;
+        const bool isCrit = entry.type == game::CombatTextEntry::CRIT_DAMAGE ||
+                            entry.type == game::CombatTextEntry::CRIT_HEAL;
+        // Native fade thresholds: ordinary hits 150/760/1500 ms;
+        // XP 500/2000/4500 ms. Keep full opacity between fade intervals.
+        const float fadeIn = reward ? 0.5f : 0.15f;
+        const float fadeOut = reward ? 2.0f : isCrit ? 1.0f : 0.76f;
+        const float alpha = std::clamp(std::min(entry.age / fadeIn,
+            (entry.lifetime() - entry.age) / (entry.lifetime() - fadeOut)), 0.0f, 1.0f);
 
         // --- Format text and color (identical logic for both world and HUD paths) ---
         ImVec4 color;
@@ -160,15 +163,16 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         switch (entry.type) {
             case game::CombatTextEntry::MELEE_DAMAGE:
             case game::CombatTextEntry::SPELL_DAMAGE:
-                snprintf(text, sizeof(text), "-%d", entry.amount);
+                snprintf(text, sizeof(text), outgoing ? "%d" : "-%d", entry.amount);
                 color = outgoing ?
-                    ImVec4(1.0f, 1.0f, 0.3f, alpha) :
+                    (entry.type == game::CombatTextEntry::MELEE_DAMAGE ?
+                     ImVec4(1,1,1,alpha) : ImVec4(1,1,0,alpha)) :
                     ImVec4(1.0f, 0.3f, 0.3f, alpha);
                 break;
             case game::CombatTextEntry::CRIT_DAMAGE:
-                snprintf(text, sizeof(text), "-%d!", entry.amount);
+                snprintf(text, sizeof(text), outgoing ? "%d" : "-%d", entry.amount);
                 color = outgoing ?
-                    ImVec4(1.0f, 0.8f, 0.0f, alpha) :
+                    (entry.spellId ? ImVec4(1,1,0,alpha) : ImVec4(1,1,1,alpha)) :
                     ImVec4(1.0f, 0.5f, 0.0f, alpha);
                 break;
             case game::CombatTextEntry::HEAL:
@@ -181,16 +185,16 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 break;
             case game::CombatTextEntry::MISS:
                 snprintf(text, sizeof(text), "Miss");
-                color = ImVec4(0.7f, 0.7f, 0.7f, alpha);
+                color = ImVec4(1,1,1,alpha);
                 break;
             case game::CombatTextEntry::DODGE:
                 snprintf(text, sizeof(text), outgoing ? "Dodge" : "You Dodge");
-                color = outgoing ? ImVec4(0.6f, 0.6f, 0.6f, alpha)
+                color = outgoing ? ImVec4(1,1,1,alpha)
                                  : ImVec4(0.4f, 0.9f, 1.0f, alpha);
                 break;
             case game::CombatTextEntry::PARRY:
                 snprintf(text, sizeof(text), outgoing ? "Parry" : "You Parry");
-                color = outgoing ? ImVec4(0.6f, 0.6f, 0.6f, alpha)
+                color = outgoing ? ImVec4(1,1,1,alpha)
                                  : ImVec4(0.4f, 0.9f, 1.0f, alpha);
                 break;
             case game::CombatTextEntry::BLOCK:
@@ -198,12 +202,12 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                     snprintf(text, sizeof(text), outgoing ? "Block %d" : "You Block %d", entry.amount);
                 else
                     snprintf(text, sizeof(text), outgoing ? "Block" : "You Block");
-                color = outgoing ? ImVec4(0.6f, 0.6f, 0.6f, alpha)
+                color = outgoing ? ImVec4(1,1,1,alpha)
                                  : ImVec4(0.4f, 0.9f, 1.0f, alpha);
                 break;
             case game::CombatTextEntry::EVADE:
                 snprintf(text, sizeof(text), outgoing ? "Evade" : "You Evade");
-                color = outgoing ? ImVec4(0.6f, 0.6f, 0.6f, alpha)
+                color = outgoing ? ImVec4(1,1,1,alpha)
                                  : ImVec4(0.4f, 0.9f, 1.0f, alpha);
                 break;
             case game::CombatTextEntry::PERIODIC_DAMAGE:
@@ -252,11 +256,11 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 }
                 break;
             case game::CombatTextEntry::XP_GAIN:
-                snprintf(text, sizeof(text), "+%d XP", entry.amount);
-                color = ImVec4(0.7f, 0.3f, 1.0f, alpha);
+                snprintf(text, sizeof(text), "XP: %d", entry.amount);
+                color = ImVec4(0.6f, 0.0f, 0.6f, alpha);
                 break;
             case game::CombatTextEntry::IMMUNE:
-                snprintf(text, sizeof(text), "Immune!");
+                snprintf(text, sizeof(text), "Immune");
                 color = ImVec4(0.9f, 0.9f, 0.9f, alpha);
                 break;
             case game::CombatTextEntry::ABSORB:
@@ -271,7 +275,7 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                     snprintf(text, sizeof(text), "Resisted %d", entry.amount);
                 else
                     snprintf(text, sizeof(text), "Resisted");
-                color = ImVec4(0.7f, 0.7f, 0.7f, alpha);
+                color = ImVec4(1,1,1,alpha);
                 break;
             case game::CombatTextEntry::DEFLECT:
                 snprintf(text, sizeof(text), outgoing ? "Deflect" : "You Deflect");
@@ -340,13 +344,13 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 color = ImVec4(1.0f, 0.85f, 0.0f, alpha);
                 break;
             case game::CombatTextEntry::GLANCING:
-                snprintf(text, sizeof(text), "~%d", entry.amount);
+                snprintf(text, sizeof(text), "%d", entry.amount);
                 color = outgoing ?
-                    ImVec4(0.75f, 0.75f, 0.5f, alpha) :
+                    ImVec4(1,1,1,alpha) :
                     ImVec4(0.75f, 0.35f, 0.35f, alpha);
                 break;
             case game::CombatTextEntry::CRUSHING:
-                snprintf(text, sizeof(text), "%d!", entry.amount);
+                snprintf(text, sizeof(text), "%d", entry.amount);
                 color = outgoing ?
                     ImVec4(1.0f, 0.55f, 0.1f, alpha) :
                     ImVec4(1.0f, 0.15f, 0.15f, alpha);
@@ -358,27 +362,27 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         }
 
         // --- Rendering style ---
-        bool isCrit = (entry.type == game::CombatTextEntry::CRIT_DAMAGE ||
-                       entry.type == game::CombatTextEntry::CRIT_HEAL);
-        float renderFontSize = isCrit ? baseFontSize * 1.35f : baseFontSize;
+        const float progress = entry.age / entry.lifetime();
+        const float critPulse = progress < 0.1f ? 0.1f + 19.0f * progress :
+            progress < 0.2f ? 3.0f - 10.0f * progress : 1.0f;
+        float renderFontSize = isCrit ? baseFontSize * 1.5f * critPulse : baseFontSize;
 
         ImU32 shadowCol = IM_COL32(0, 0, 0, static_cast<int>(alpha * 180));
         ImU32 textCol   = ImGui::ColorConvertFloat4ToU32(color);
 
         // --- Try world-space anchor if we have a destination entity ---
         // Types that should always stay as HUD elements (no world anchor)
-        bool isHudOnly = (entry.type == game::CombatTextEntry::XP_GAIN ||
-                          entry.type == game::CombatTextEntry::HONOR_GAIN ||
-                          entry.type == game::CombatTextEntry::PROC_TRIGGER);
+        bool isHudOnly = entry.type == game::CombatTextEntry::PROC_TRIGGER || !outgoing;
+        const uint64_t anchorGuid = reward ? gameHandler.getPlayerGuid() : entry.dstGuid;
 
         bool rendered = false;
-        if (!isHudOnly && camera && entry.dstGuid != 0) {
+        if (!isHudOnly && camera && anchorGuid != 0) {
             // Look up the destination entity's render position
             glm::vec3 renderPos;
-            bool havePos = core::Application::getInstance().getRenderPositionForGuid(entry.dstGuid, renderPos);
+            bool havePos = core::Application::getInstance().getRenderPositionForGuid(anchorGuid, renderPos);
             if (!havePos) {
                 // Fallback to entity canonical position
-                auto entity = gameHandler.getEntityManager().getEntity(entry.dstGuid);
+                auto entity = gameHandler.getEntityManager().getEntity(anchorGuid);
                 if (entity) {
                     auto* unit = entity->isUnit() ? static_cast<game::Unit*>(entity.get()) : nullptr;
                     if (unit) {
@@ -391,7 +395,7 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
 
             if (havePos) {
                 // Float upward from above the entity's head
-                renderPos.z += 2.5f + entry.age * 1.2f;
+                renderPos.z += reward ? 2.0f : 2.5f + 2.0f * progress;
 
                 // Project to screen
                 glm::vec4 clipPos = viewProj * glm::vec4(renderPos, 1.0f);
@@ -401,8 +405,6 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                         float sx = (ndc.x * 0.5f + 0.5f) * screenW;
                         float sy = (ndc.y * 0.5f + 0.5f) * screenH;
 
-                        // Horizontal stagger using the random seed
-                        sx += entry.xSeed * 40.0f;
 
                         // Center the text horizontally on the projected point
                         ImVec2 ts = font->CalcTextSizeA(renderFontSize, FLT_MAX, 0.0f, text);
@@ -421,7 +423,8 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
             }
         }
 
-        // --- HUD fallback for entries without world anchor or HUD-only types ---
+        // Offscreen or missing world targets do not produce unrelated HUD numbers.
+        if (!rendered && !isHudOnly) continue;
         if (!rendered) {
             if (!needsHudWindow) {
                 needsHudWindow = true;
