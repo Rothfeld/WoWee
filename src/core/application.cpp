@@ -780,6 +780,9 @@ bool Application::initialize() {
         luaSvc.getLiveAreaId = [r = renderer.get()]() -> uint32_t {
             return r ? r->getCurrentAreaId() : 0u;
         };
+        luaSvc.getInteriorZoneName = [r = renderer.get()]() -> std::string {
+            return r ? r->getInteriorZoneName() : std::string{};
+        };
         luaSvc.getInteriorAreaName = [r = renderer.get()]() -> std::string {
             return r ? r->getInteriorAreaName() : std::string{};
         };

@@ -686,9 +686,7 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
 std::string ZoneManager::getWmoAreaName(uint32_t root, uint32_t nameSet, uint32_t group) const {
     const auto exact = wmoAreaNames_.find({root, nameSet, group});
     if (exact != wmoAreaNames_.end()) return exact->second;
-    // Group -1 supplies the building-wide name inherited by unnamed rooms.
-    const auto building = wmoAreaNames_.find({root, nameSet, UINT32_MAX});
-    return building == wmoAreaNames_.end() ? std::string{} : building->second;
+    return {};
 }
 
 } // namespace game

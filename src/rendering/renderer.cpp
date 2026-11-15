@@ -2011,18 +2011,28 @@ void Renderer::update(float deltaTime) {
     const auto playerInterior = wmoRenderer
         ? wmoRenderer->getInteriorLocation(characterPosition + glm::vec3(0, 0, 0.1f))
         : std::optional<WMORenderer::InteriorLocation>{};
-    const std::string interiorName = playerInterior && zoneManager
-        ? zoneManager->getWmoAreaName(playerInterior->rootId, playerInterior->nameSet,
-                                      playerInterior->groupId) : std::string{};
-    const bool interiorNameChanged = interiorName != interiorAreaName_;
+    auto playerArea = wmoRenderer
+        ? wmoRenderer->getInteriorLocation(characterPosition + glm::vec3(0, 0, 0.1f), false)
+        : std::optional<WMORenderer::InteriorLocation>{};
+    if (playerArea && terrainManager &&
+        !terrainManager->isHoleAt(characterPosition.x, characterPosition.y)) {
+        const auto ground = terrainManager->getHeightAt(characterPosition.x, characterPosition.y);
+        if (ground && *ground > playerArea->surfaceHeight && *ground <= characterPosition.z + 0.1f)
+            playerArea.reset();
+    }
+    const std::string interiorName = playerArea && zoneManager
+        ? zoneManager->getWmoAreaName(playerArea->rootId, playerArea->nameSet,
+                                      playerArea->groupId) : std::string{};
+    const std::string interiorZone = playerArea && zoneManager
+        ? zoneManager->getWmoAreaName(playerArea->rootId, playerArea->nameSet, UINT32_MAX)
+        : std::string{};
+    const bool interiorNameChanged = interiorName != interiorAreaName_ || interiorZone != interiorZoneName_;
+    interiorZoneName_ = interiorZone;
     interiorAreaName_ = interiorName;
-    // Announce the crossing. zonetext.lua and worldstateframe.lua both listen
-    // for ZONE_CHANGED_INDOORS, and WoW answers the way back out with a plain
-    // ZONE_CHANGED - there is no outdoors counterpart. Nothing fired either,
-    // so the state was known here and never left this file.
-    const bool indoorStateChanged = playerInterior.has_value() != playerIndoors_;
+    // A named WMO can span outdoor stairs and indoor rooms. Crossing its
+    // lighting boundary does not change the displayed zone or repeat its title.
     playerIndoors_ = playerInterior.has_value();
-    if (indoorStateChanged || interiorNameChanged) {
+    if (interiorNameChanged) {
         if (auto* gh = core::Application::getInstance().getGameHandler()) {
             gh->fireAddonEvent(playerInterior ? "ZONE_CHANGED_INDOORS" : "ZONE_CHANGED", {});
         }
@@ -2031,8 +2041,10 @@ void Renderer::update(float deltaTime) {
     const uint32_t areaId = getCurrentAreaId();
     if (areaId != 0 && areaId != announcedAreaId_) {
         announcedAreaId_ = areaId;
-        if (auto* gh = core::Application::getInstance().getGameHandler()) {
-            gh->fireAddonEvent("ZONE_CHANGED", {});
+        if (interiorName.empty() && interiorZone.empty() && !interiorNameChanged) {
+            if (auto* gh = core::Application::getInstance().getGameHandler()) {
+                gh->fireAddonEvent("ZONE_CHANGED", {});
+            }
         }
     }
 

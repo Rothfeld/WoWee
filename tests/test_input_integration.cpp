@@ -868,3 +868,25 @@ TEST_CASE("Conversation shuffle starts only on directional heading changes", "[n
     facing.advance(3.001f, 0.01f);
     CHECK(facing.turnDirection == 0); // tiny facing corrections need no step
 }
+
+TEST_CASE_METHOD(Integration, "WMO building names and room names have distinct zone APIs", "[zone-text]") {
+    std::string building = "Anvilmar";
+    std::string room;
+    addons::LuaServices services;
+    services.getInteriorZoneName = [&] { return building; };
+    services.getInteriorAreaName = [&] { return room; };
+    lua.setLuaServices(services);
+    truth("GetZoneText() == 'Anvilmar'");
+    truth("GetSubZoneText() == ''");
+    truth("GetMinimapZoneText() == 'Anvilmar'");
+    // Named rooms remain subzones rather than replacing their building name.
+    building = "Ironforge";
+    room = "Hall of Explorers";
+    truth("GetZoneText() == 'Ironforge'");
+    truth("GetSubZoneText() == 'Hall of Explorers'");
+    truth("GetMinimapZoneText() == 'Hall of Explorers'");
+    building.clear();
+    room.clear();
+    truth("GetZoneText() == '' and GetSubZoneText() == ''");
+    lua.setLuaServices({});
+}

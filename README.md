@@ -673,11 +673,17 @@ cards retain their authored blending and depth behavior.
 
 ## TBC scene integration
 
-Interior area names use the WMO root ID, placement name-set and authored group
-ID with `WMOAreaTable.dbc`. A named building can have area ID zero: Anvilmar is
-root 752, name-set 1, with its name on the group -1 row. `GetSubZoneText` uses
-that building name without inventing an AreaTable ID. Indoor events follow the
-player, independently of the camera's room.
+WMO area names use the root ID, placement name-set and authored group ID with
+`WMOAreaTable.dbc`. A building can have area ID zero: Anvilmar is root 752,
+name-set 1, with its building name on the group -1 row. That name overrides
+`GetZoneText`; named group rows supply `GetSubZoneText`. An unnamed room in a
+named building has an empty subzone. Original TBC FrameXML then displays the
+building heading and territory subtitle.
+
+Area membership follows the closest WMO surface below the player's feet,
+including outdoor entrance stairs. Terrain above that surface takes precedence.
+Indoor lighting and minimap containment remain separate: crossing from outdoor
+stairs into the same building's indoor group must not replay the zone title.
 
 Interior minimaps use the authored WMO tiles in `md5translate.trs`, at two pixels
 per local yard. Group filenames use the original group index, including empty

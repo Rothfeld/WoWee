@@ -1989,6 +1989,10 @@ static int lua_GetCurrentMapAreaID(lua_State* L) {
 
 // GetZoneText() / GetRealZoneText() → current zone name
 static int lua_GetZoneText(lua_State* L) {
+    if (auto* svc = getLuaServices(L); svc && svc->getInteriorZoneName) {
+        const auto name = svc->getInteriorZoneName();
+        if (!name.empty()) { lua_pushstring(L, name.c_str()); return 1; }
+    }
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushstring(L, ""); return 1; }
     // The terrain under the player first, and the server's zone only as a
@@ -2021,6 +2025,10 @@ static int lua_GetSubZoneText(lua_State* L) {
     if (svc && svc->getInteriorAreaName) {
         const auto name = svc->getInteriorAreaName();
         if (!name.empty()) { lua_pushstring(L, name.c_str()); return 1; }
+    }
+    if (svc && svc->getInteriorZoneName && !svc->getInteriorZoneName().empty()) {
+        lua_pushstring(L, "");
+        return 1;
     }
     if (svc && gh && svc->getLiveAreaId && svc->getLiveZoneId) {
         const uint32_t area = svc->getLiveAreaId();

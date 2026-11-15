@@ -404,8 +404,10 @@ public:
         std::string sourcePath;
         glm::vec3 localPosition, boundsMin, boundsMax;
         glm::mat4 transform;
+        float surfaceHeight = 0.0f;
     };
-    std::optional<InteriorLocation> getInteriorLocation(const glm::vec3& position) const;
+    // Area names also apply to outdoor groups, resolved from geometry below feet.
+    std::optional<InteriorLocation> getInteriorLocation(const glm::vec3& position, bool indoorOnly = true) const;
     struct InteriorMapGroup { uint32_t index; glm::vec3 min, max; };
     std::vector<InteriorMapGroup> getInteriorMapGroups(const InteriorLocation& location) const;
 
