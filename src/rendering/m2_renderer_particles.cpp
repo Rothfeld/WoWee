@@ -156,8 +156,11 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
             M2Particle p;
             p.emitterIndex = static_cast<int>(ei);
-            p.life = 0.0f;
+            // The accumulator locates this birth inside the frame. Aging every
+            // newborn by the full frame can erase short sparks before rendering.
+            p.life = inst.emitterAccumulators[ei] / rate;
             p.maxLife = life;
+            if (p.life >= p.maxLife) continue;
             p.tileIndex = 0.0f;
 
             // Position: emitter position transformed by bone matrix
@@ -210,6 +213,11 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 }
             }
 
+            const float gravity = interpFloat(em.gravity, inst.animTime,
+                inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+            p.position += p.velocity * p.life;
+            p.position.z -= 0.5f * gravity * p.life * p.life;
+            p.velocity.z -= gravity * p.life;
             inst.particles.push_back(p);
 
             // Diagnostic: log first particle birth per spell effect instance
@@ -267,10 +275,12 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
             inst.particles.pop_back();
             continue;
         }
-        if (p.emitterIndex >= 0 && static_cast<size_t>(p.emitterIndex) < numEm) {
-            p.velocity.z -= emitterGrav[p.emitterIndex] * dt;
-        }
         p.position += p.velocity * dt;
+        if (p.emitterIndex >= 0 && static_cast<size_t>(p.emitterIndex) < numEm) {
+            const float gravity = emitterGrav[p.emitterIndex];
+            p.position.z -= 0.5f * gravity * dt * dt;
+            p.velocity.z -= gravity * dt;
+        }
         i++;
     }
 }

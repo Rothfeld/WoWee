@@ -592,3 +592,8 @@ XP appears above the player as `XP: <amount>` in purple, using FRIZQT__.TTF.
 Ordinary damage lasts 1.5 seconds; XP lasts 4.5 seconds. The build-8606 popup
 parameter table begins at 0xBBF1C0 (28-byte records); XP formatting is at
 0x6089E0. Incoming floating combat text follows the `enableCombatText` setting.
+
+Particle births retain their time within each render frame. Existing particles advance
+before emission; new particles start at their elapsed age since birth, including
+ballistic displacement. Short effects such as LootFX's 0.2-second stars must retain
+their authored live population even at low rendering rates.

@@ -723,8 +723,8 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         float distSq = glm::dot(toCam, toCam);
         if (distSq > cachedMaxRenderDistSq_) continue;
         if (!instance.cachedModel) continue;
-        emitParticles(instance, *instance.cachedModel, deltaTime);
         updateParticles(instance, deltaTime);
+        emitParticles(instance, *instance.cachedModel, deltaTime);
         if (!instance.cachedModel->ribbonEmitters.empty()) {
             updateRibbons(instance, *instance.cachedModel, deltaTime);
         }
