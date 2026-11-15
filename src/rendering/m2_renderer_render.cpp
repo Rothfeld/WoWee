@@ -635,15 +635,11 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         float paddedRadius = instance.cachedPaddedRadius;
         if (paddedRadius > 0.0f && !updateFrustum.intersectsSphere(instance.cachedCullCenter, paddedRadius)) continue;
 
-        // LOD 3 skip: models beyond 150 units use the lowest LOD mesh which has
-        // no visible skeletal animation.  Keep their last-computed bone matrices
-        // (always valid - seeded on spawn) and avoid the expensive per-bone work.
-        // Sky birds, light beams, and ship machinery are exempt: their visible
-        // motion is baked entirely into bone animation.
-        constexpr float kLOD3DistSq = rendering::M2_LOD3_DISTANCE * rendering::M2_LOD3_DISTANCE;
+        // Distant meshes retain animated vertices. Freezing their bones makes
+        // visible machinery stop or jump when crossing the distance boundary.
+        // Keep the clock and poses advancing, with reduced update frequency.
         const bool needsDistantBones = instance.cachedIsSkyBird || instance.cachedIsLightBeam ||
                                        instance.cachedIsTransportDoodad;
-        if (distSq > kLOD3DistSq && !needsDistantBones) continue;
 
         // Distance-based frame skipping: update distant bones less frequently
         uint32_t boneInterval = 1;
