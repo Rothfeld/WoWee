@@ -633,3 +633,7 @@ Moving landings resolve directly to walk/run. Character rendering cross-fades
 jump, landing and locomotion sequences using the destination sequence's authored
 blend time. Outgoing one-shots clamp at their final frame during the blend;
 looping sequences wrap. Stationary landings retain JumpEnd.
+
+Descending floor selection excludes prop/structure candidates above previous
+feet. A nearby log rim must not hide terrain crossed beneath it. Terrain retains
+its endpoint crossing rule for uphill landings; grounded step-up is separate.

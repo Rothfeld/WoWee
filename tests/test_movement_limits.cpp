@@ -291,3 +291,15 @@ TEST_CASE("Airborne terrain contact uses both endpoint surface heights", "[movem
     CHECK_FALSE(crossesGroundSurface(380.0f, 384.0f, 379.90f, 384.0f));
     CHECK(crossesGroundSurface(385.0f, 384.0f, 383.99f, 384.0f));
 }
+
+TEST_CASE("Overhead log rims cannot hide descending terrain contact", "[movement][floor]") {
+    using namespace wowee::rendering::movement;
+    // Coldridge log: feet cross terrain while center/offset log surfaces are overhead.
+    CHECK(descendingContactFloor(384.769f, 385.9f, 384.67f, std::nullopt, 386.117f) == 384.67f);
+    CHECK(descendingContactFloor(386.8f, 386.67f, 384.67f, std::nullopt, 386.117f) == 386.67f);
+    CHECK(descendingContactFloor(385.f, 385.1f, 385.1f, std::nullopt, std::nullopt, 384.95f) == 385.1f);
+    // Genuine lower floors still win below an overhead cave roof.
+    CHECK(descendingContactFloor(380.f, 385.f, 390.f, 379.f, 381.f) == 379.f);
+    CHECK_FALSE(descendingContactFloor(380.f, 385.f, 390.f, std::nullopt, 381.f));
+    CHECK(descendingContactFloor(386.117f, 386.117f, 384.67f, std::nullopt, 386.117f) == 386.117f);
+}

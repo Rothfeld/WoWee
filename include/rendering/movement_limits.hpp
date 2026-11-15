@@ -137,6 +137,25 @@ inline bool crossesGroundSurface(float previousFeet, float previousFloor,
     return previousFeet >= previousFloor - 0.001f && feet <= floor;
 }
 
+// Falling has no step-up allowance. An overhead prop candidate must not
+// hide a lower floor crossed by the feet during this movement segment.
+inline std::optional<float> descendingContactFloor(
+    float previousFeet, const std::optional<float>& selected,
+    const std::optional<float>& terrain, const std::optional<float>& wmo,
+    const std::optional<float>& m2,
+    const std::optional<float>& previousTerrain = std::nullopt) {
+    std::optional<float> floor;
+    for (const auto& candidate : {selected, terrain, wmo, m2}) {
+        if (candidate && *candidate <= previousFeet && (!floor || *candidate > *floor))
+            floor = candidate;
+    }
+    // Rising terrain can cross the path even above the previous feet. The
+    // old terrain height establishes which side of that surface we started on.
+    if (terrain && previousTerrain && previousFeet >= *previousTerrain - 0.001f &&
+        (!floor || *terrain > *floor)) floor = terrain;
+    return floor;
+}
+
 inline bool isReachableStep(float deltaZ) {
     return deltaZ >= -0.25f && deltaZ <= kMaxStepUp;
 }

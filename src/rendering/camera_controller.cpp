@@ -1831,6 +1831,17 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             }
         }
 
+        // A falling body cannot step onto an offset prop surface above its
+        // previous feet. Keep lower crossed floors visible to landing instead
+        // of repeatedly choosing an unreachable log rim or bridge edge.
+        if (!grounded && verticalVelocity <= 0.0f) {
+            groundH = movement::descendingContactFloor(prevTargetPos.z, groundH,
+                centerTerrainH, centerWmoH, centerM2H,
+                terrainManager && !terrainManager->isHoleAt(prevTargetPos.x, prevTargetPos.y)
+                    ? terrainManager->getHeightAt(prevTargetPos.x, prevTargetPos.y)
+                    : std::nullopt);
+        }
+
         // WOWEE_FLOOR_DEBUG=1 - what every floor query answered and which
         // one won, four times a second.
         //
