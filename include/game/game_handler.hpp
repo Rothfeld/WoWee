@@ -1653,6 +1653,7 @@ public:
     /// any standing, but at Unfriendly they will not talk to one either, and
     /// the server refuses the conversation on exactly this number.
     [[nodiscard]] int unitReactionToPlayer(const Unit& unit) const;
+    [[nodiscard]] bool canPlayerAttackUnit(const Unit& unit) const;
 
     // Creature move callback (online mode - triggered by SMSG_MONSTER_MOVE)
     // Parameters: guid, x, y, z (canonical), duration_ms (0 = instant)

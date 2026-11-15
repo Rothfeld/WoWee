@@ -94,12 +94,16 @@ TEST_CASE("World cursors distinguish unit actions and corpse priority") {
     CHECK(std::string(unitCursorPath(true, 0, 4, 0, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Attack.blp");
     CHECK(std::string(unitCursorPath(false, UNIT_DYNFLAG_LOOTABLE, 2, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::AVAILABLE)) == "Interface\\Cursor\\LootAll.blp");
     CHECK(std::string(unitCursorPath(false, 0, 2, 0, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Point.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_AUCTIONEER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_BANKER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Speak.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_VENDOR | NPC_FLAG_REPAIR, QuestGiverStatus::NONE)) == "Interface\\Cursor\\RepairNPC.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::AVAILABLE)) == "Interface\\Cursor\\Quest.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, 0, QuestGiverStatus::REWARD)) == "Interface\\Cursor\\QuestTurnIn.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_QUESTGIVER, QuestGiverStatus::UNAVAILABLE)) == "Interface\\Cursor\\Point.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_AUCTIONEER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_BANKER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::UNAVAILABLE)) == "Interface\\Cursor\\Speak.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, 0, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Point.blp");
 }
@@ -144,4 +148,15 @@ TEST_CASE("Visual prop occlusion leaves gaps between solid parts selectable") {
     CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,5}, {0,0,-0.5f}, 20) == 10);
     CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,-5}, {0,0,1}, 10) == 5);
     CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,5}, {0,0,-1}, 3) == 3);
+}
+
+TEST_CASE("NPC cursor honors server cursor and attack permission") {
+    using namespace wowee::game;
+    using wowee::ui::unitCursorPath;
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP,
+        QuestGiverStatus::NONE, "Directions", false)) == "Interface\\Cursor\\Directions.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 4, NPC_FLAG_GOSSIP,
+        QuestGiverStatus::NONE, "", false)) == "Interface\\Cursor\\Speak.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 4, 0,
+        QuestGiverStatus::NONE, "", true)) == "Interface\\Cursor\\Attack.blp");
 }

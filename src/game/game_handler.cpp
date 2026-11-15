@@ -2920,6 +2920,13 @@ bool GameHandler::isDuelOpponent(const Unit& unit) const {
         self->getField(arbiter + 1) == unit.getField(arbiter + 1);
 }
 
+bool GameHandler::canPlayerAttackUnit(const Unit& unit) const {
+    if (unit.getGuid() == getPlayerGuid() ||
+        (unit.getUnitFlags() & (UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_IMMUNE_TO_PC))) return false;
+    if (isDuelOpponent(unit)) return true;
+    return !isFriendlyFaction(unit.getFactionTemplate()) && unitReactionToPlayer(unit) <= 4;
+}
+
 int GameHandler::unitReactionToPlayer(const Unit& unit) const {
     if (isDuelOpponent(unit)) return 2;
     const uint32_t ft = unit.getFactionTemplate();

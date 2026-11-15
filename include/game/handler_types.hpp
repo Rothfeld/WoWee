@@ -310,6 +310,7 @@ struct ChatAutoJoin {
 // ---- Quest / gossip ----
 
 struct GossipPoi {
+    uint32_t mapId = 0;
     float    x     = 0.0f;
     float    y     = 0.0f;
     uint32_t icon  = 0;

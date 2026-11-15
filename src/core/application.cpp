@@ -696,7 +696,7 @@ bool Application::initialize() {
             }
             return out;
         };
-        luaSvc.getMapLandmarks = [r = renderer.get()]() {
+        luaSvc.getMapLandmarks = [r = renderer.get(), gh = gameHandler.get()]() {
             std::vector<addons::LuaServices::MapLandmark> out;
             auto* wmap = r ? r->getWorldMap() : nullptr;
             if (!wmap) return out;
@@ -708,6 +708,19 @@ bool Application::initialize() {
                 m.x = l.x;
                 m.y = l.y;
                 out.push_back(std::move(m));
+            }
+            if (gh) {
+                for (const auto& poi : gh->getGossipPois()) {
+                    if (poi.questObjectiveIndex != -2 || poi.mapId != gh->getCurrentMapId()) continue;
+                    float u = 0.0f, v = 0.0f;
+                    if (!wmap->mapUVForCanonical(poi.x, poi.y, 0.0f, u, v)) continue;
+                    addons::LuaServices::MapLandmark m;
+                    m.name = poi.name;
+                    m.icon = static_cast<int>(poi.icon);
+                    m.x = u;
+                    m.y = v;
+                    out.push_back(std::move(m));
+                }
             }
             return out;
         };

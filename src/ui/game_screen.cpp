@@ -1081,10 +1081,13 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
                     entity->getType() != game::ObjectType::PLAYER)) return false;
     const auto unit = std::static_pointer_cast<game::Unit>(entity);
     const auto questStatus = gameHandler.getQuestGiverStatus(guid);
+    const auto& creatureInfo = gameHandler.getCreatureInfoCache();
+    const auto info = creatureInfo.find(unit->getEntry());
+    const std::string_view iconName = info != creatureInfo.end() ? std::string_view(info->second.iconName) : std::string_view{};
     const char* path = ui::unitCursorPath(
         !game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()),
         unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
-        unit->getNpcFlags(), questStatus);
+        unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit));
     const auto texture = cursorTexture(services_.assetManager, services_.window, path);
     if (!texture) return false;
     drawCursorTexture(texture);
@@ -1097,11 +1100,6 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
     // would act on, and asking the hover a different question puts the two
     // back into disagreement.
     //
-    // ...and where a click would act on nothing, the object the pointer is on
-    // anyway. A signpost, a banner, a shop's board are generic scenery: WoW
-    // uses none of them either, and all three carry the name that is the whole
-    // point of them - "Mage Quarter", "Everyday Merchandise". Named, with no
-    // cursor of its own, since nothing will happen if it is clicked.
     uint64_t guid = pick.resolve();
     const bool usable = guid != 0;
     if (guid == 0) guid = pick.namedObjectGuid;
@@ -1121,8 +1119,8 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
         drawCursorTexture(tex);
     }
 
-    // Native chairs show only the interaction cursor, with no name tooltip.
-    if (info && info->type == 7) return usable;
+    // Generic scenery has no hover label; chairs only show their cursor.
+    if (info && (info->type == 5 || info->type == 7)) return usable;
 
     // ...and what it is, beside the pointer, which is the whole of what the
     // real client shows for an object: a cursor saying what it is for and a
@@ -1896,7 +1894,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         bool canInteractNpc = unit->isInteractable() || allowSpiritInteract;
                         if (!unit->isHostile() && canInteractNpc) {
                             gameHandler.interactWithNpc(target->getGuid());
-                        } else if (gameHandler.unitReactionToPlayer(*unit) <= 4) {
+                        } else if (gameHandler.canPlayerAttackUnit(*unit)) {
                             gameHandler.startAutoAttack(target->getGuid());
                         }
                     }
@@ -1910,7 +1908,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     }
                 } else if (target->getType() == game::ObjectType::PLAYER) {
                     const auto unit = std::static_pointer_cast<game::Unit>(target);
-                    if (gameHandler.unitReactionToPlayer(*unit) <= 4) {
+                    if (gameHandler.canPlayerAttackUnit(*unit)) {
                         gameHandler.startAutoAttack(target->getGuid());
                     }
                 }

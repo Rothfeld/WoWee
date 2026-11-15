@@ -2972,9 +2972,12 @@ void InventoryHandler::selectDefaultStationery() {
     // successfully. So the first letter of a session could never be sent - the
     // button was disabled before it was ever pressed, which is exactly what the
     // input log shows and what "mail not being sent" turned out to be.
-    owner_.runInterfaceCommand(
-        "if StationeryPopupFrame and not StationeryPopupFrame.selectedIndex then "
-        "StationeryPopupButton_OnClick(nil, 1) end");
+    // Pre-Wrath FrameXML takes only index; Wrath takes self, index.
+    owner_.runInterfaceCommand(isPreWotlk()
+        ? "if StationeryPopupFrame and not StationeryPopupFrame.selectedIndex then "
+          "StationeryPopupButton_OnClick(1) end"
+        : "if StationeryPopupFrame and not StationeryPopupFrame.selectedIndex then "
+          "StationeryPopupButton_OnClick(nil, 1) end");
 }
 
 void InventoryHandler::closeMailbox() {

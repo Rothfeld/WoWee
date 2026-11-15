@@ -427,7 +427,7 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
     }
 
     auto& group = model.groups[groupIndex];
-    group.groupId = groupIndex;
+    group.groupId = 0;
 
     uint32_t offset = 0;
 
@@ -477,6 +477,8 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
             group.fogIndices[2] = read<uint8_t>(groupData, mogpOffset);
             group.fogIndices[3] = read<uint8_t>(groupData, mogpOffset);
             group.liquidType = read<uint32_t>(groupData, mogpOffset);
+            // WMOAreaTable uses this authored ID, not the group filename index.
+            group.groupId = read<uint32_t>(groupData, mogpOffset);
             // Skip to end of 68-byte header
             mogpOffset = offset + 68;
 

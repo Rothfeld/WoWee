@@ -862,3 +862,21 @@ use the red selection circle regardless of PvP flags. Player creation refreshes
 hostility for both duel participants, including reconnects where the opponent
 arrives before the local player. UnitCanAttack uses the live reaction rather
 than cached presentation state. Friendly target cycling excludes opponents.
+
+## TBC interaction compatibility
+
+`build/bin/test_input_integration '[guard-gossip],[npc-attack],[mail-coin],[mail-stationery]'`
+checks server gossip dispatch, direction-map refresh, NPC attack immunity,
+coin artwork boundaries, and the TBC stationery callback.
+
+Creature query `iconName` selects service cursors such as `Directions`.
+Reaction color and attack permission differ: neutral NPCs may be immune to
+player attacks or belong to a peaceful reputation faction. Gossip selection
+sends the selected option to the server; destination labels such as "Auction
+House" do not identify service activation requests. Guard destinations enter
+both the FrameXML map landmark API and the minimap POI atlas renderer.
+
+TBC mail uses `StationeryPopupButton_OnClick(index)`. Coin attachments use
+`Interface\Icons\INV_Misc_Coin_01` through `_06`, including separate
+single-coin and ten-coin denomination thresholds. WMO area names use the
+MOGP authored group ID, which differs from the numbered group filename.

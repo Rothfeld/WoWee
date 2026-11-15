@@ -1198,22 +1198,18 @@ static int lua_GetSendMailItem(lua_State* L) {
 // attachment and deleting were all here, and returning was not, so a letter
 // that should have gone back could only be deleted - which destroys whatever
 // came with it.
-// GetCoinIcon(copper) → the coin to draw for an amount.
-//
-// The letter's money attachment is drawn with SetItemButtonTexture, and a nil
-// texture reads as an empty slot to FrameXML - so a letter carrying gold showed
-// nothing attached at all. Gold above a gold, silver above a silver, copper
-// below: the three icon paths are the ones globalstrings names in
-// GOLD_AMOUNT_TEXTURE and its pair, so this is the interface's own artwork
-// rather than a path invented to fill the gap.
+// Native GetCoinIcon chooses denomination, then a stack icon at ten coins.
+static const char* coinIconForAmount(double copper) {
+    if (copper >= 100000) return "Interface\\Icons\\INV_Misc_Coin_02";
+    if (copper >= 10000) return "Interface\\Icons\\INV_Misc_Coin_01";
+    if (copper >= 1000) return "Interface\\Icons\\INV_Misc_Coin_04";
+    if (copper >= 100) return "Interface\\Icons\\INV_Misc_Coin_03";
+    if (copper >= 10) return "Interface\\Icons\\INV_Misc_Coin_06";
+    return "Interface\\Icons\\INV_Misc_Coin_05";
+}
+
 static int lua_GetCoinIcon(lua_State* L) {
-    constexpr double kCopperPerSilver = 100.0;
-    constexpr double kCopperPerGold   = 100.0 * 100.0;
-    const double copper = luaL_optnumber(L, 1, 0);
-    const char* icon = (copper >= kCopperPerGold)   ? "Interface\\MoneyFrame\\UI-GoldIcon"
-                     : (copper >= kCopperPerSilver) ? "Interface\\MoneyFrame\\UI-SilverIcon"
-                                                    : "Interface\\MoneyFrame\\UI-CopperIcon";
-    lua_pushstring(L, icon);
+    lua_pushstring(L, coinIconForAmount(luaL_optnumber(L, 1, 0)));
     return 1;
 }
 
@@ -3111,19 +3107,7 @@ static int lua_GetLootSlotInfo(lua_State* L) {
         // The coin slot describes itself: the interface shows the amount as the
         // name and has a texture of its own for it.
         //
-        // Which coin depends on how much, as it does everywhere else money is
-        // drawn: gold at a gold and above, silver at a silver, copper below.
-        // This was pinned to the gold pile, so a corpse carrying eight copper
-        // was looted from a heap of gold.
-        //
-        // The same thresholds GetCoinIcon uses, against the icon set's own
-        // grouping - the pairs run gold, silver, copper.
-        constexpr uint32_t kCopperPerSilver = 100;
-        constexpr uint32_t kCopperPerGold   = 100 * 100;
-        const char* coin = (loot.gold >= kCopperPerGold)   ? "Interface\\Icons\\INV_Misc_Coin_01"
-                         : (loot.gold >= kCopperPerSilver) ? "Interface\\Icons\\INV_Misc_Coin_03"
-                                                           : "Interface\\Icons\\INV_Misc_Coin_05";
-        lua_pushstring(L, coin);
+        lua_pushstring(L, coinIconForAmount(loot.gold));
         lua_pushstring(L, lootCoinText(loot.gold).c_str());
         lua_pushnumber(L, loot.gold);
         lua_pushnumber(L, 1);

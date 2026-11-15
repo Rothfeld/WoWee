@@ -1008,3 +1008,92 @@ TEST_CASE_METHOD(Integration, "Duel countdown prints localized chat once per sec
     lua.fireEvent("DUEL_FINISHED");
     truth("not __WoweeDuelCountdown:IsShown()");
 }
+
+TEST_CASE_METHOD(Integration, "TBC mailbox default stationery uses the legacy index argument", "[mail-stationery]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    handler.setInterfaceCommandCallback([this](const std::string& command) { run(command); });
+    run(R"(
+        StationeryPopupFrame = {}
+        StationeryPopupButton_OnClick = function(index)
+            assert(index == 1)
+            StationeryPopupFrame.selectedIndex = index
+        end
+    )");
+    handler.openMailbox(123);
+    truth("StationeryPopupFrame.selectedIndex == 1");
+    handler.setInterfaceCommandCallback({});
+}
+
+TEST_CASE_METHOD(Integration, "Coin icons match native denomination and ten-coin boundaries", "[mail-coin]") {
+    run(R"(
+        local cases = {{0,5},{1,5},{9,5},{10,6},{99,6},{100,3},{999,3},
+                       {1000,4},{9999,4},{10000,1},{99999,1},{100000,2}}
+        for _, case in ipairs(cases) do
+            assert(GetCoinIcon(case[1]) == string.format("Interface\\Icons\\INV_Misc_Coin_%02d", case[2]), case[1])
+        end
+    )");
+}
+
+TEST_CASE_METHOD(Integration, "Guard destinations send only gossip selection", "[guard-gossip]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    for (const std::string text : {"Auction House", "Stable Master", "Bank"}) {
+        wowee::network::Packet gossip(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_MESSAGE));
+        gossip.writeUInt64(123);
+        gossip.writeUInt32(2121);
+        gossip.writeUInt32(0);
+        gossip.writeUInt32(1);
+        gossip.writeUInt32(0);
+        gossip.writeUInt8(0);
+        gossip.writeUInt8(0);
+        gossip.writeUInt32(0);
+        gossip.writeString(text);
+        gossip.writeString("");
+        gossip.writeUInt32(0);
+        session.receive(gossip);
+        handler.selectGossipOption(0);
+    }
+    CHECK(session.sent().of(wowee::game::Opcode::CMSG_GOSSIP_SELECT_OPTION).size() == 3);
+    CHECK(session.sent().of(wowee::game::Opcode::MSG_AUCTION_HELLO).empty());
+    CHECK(session.sent().of(wowee::game::Opcode::CMSG_BANKER_ACTIVATE).empty());
+    CHECK(session.sent().of(wowee::game::Opcode::MSG_LIST_STABLED_PETS).empty());
+}
+
+TEST_CASE_METHOD(Integration, "Attack permission respects immunity and peaceful reputation", "[npc-attack]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    wowee::game::Unit unit(123);
+    unit.setFactionTemplate(1217);
+    CHECK(handler.canPlayerAttackUnit(unit));
+    unit.setUnitFlags(0x100); // Stormpike Emissary: immune to player attacks.
+    CHECK_FALSE(handler.canPlayerAttackUnit(unit));
+    unit.setUnitFlags(2);
+    CHECK_FALSE(handler.canPlayerAttackUnit(unit));
+    unit.setUnitFlags(0);
+    handler.setFactionFriendlyMap({{1217, true}});
+    CHECK_FALSE(handler.canPlayerAttackUnit(unit));
+}
+
+TEST_CASE_METHOD(Integration, "Guard directions replace destination and refresh world map", "[guard-gossip]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    int updates = 0;
+    handler.setAddonEventCallback([&](const std::string& event, const std::vector<std::string>&) {
+        if (event == "WORLD_MAP_UPDATE") ++updates;
+    });
+    for (const std::string name : {"Ironforge Auction House", "Ironforge Bank"}) {
+        wowee::network::Packet poi(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_POI));
+        poi.writeUInt32(0);
+        poi.writeFloat(-4957);
+        poi.writeFloat(-911.604f);
+        poi.writeUInt32(6);
+        poi.writeUInt32(0);
+        poi.writeString(name);
+        session.receive(poi);
+    }
+    REQUIRE(handler.getGossipPois().size() == 1);
+    CHECK(handler.getGossipPois().front().name == "Ironforge Bank");
+    CHECK(handler.getGossipPois().front().icon == 6);
+    CHECK(updates == 2);
+}

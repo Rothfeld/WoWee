@@ -860,3 +860,25 @@ TEST_CASE("WOB rejects load on overlong group name", "[wob][hardening]") {
     REQUIRE_FALSE(bld.isValid());
     std::filesystem::remove(path);
 }
+
+TEST_CASE("WMO area group ID comes from MOGP rather than file index", "[wmo-area]") {
+    std::vector<uint8_t> bytes(134, 0);
+    const auto put = [&](size_t offset, const auto& value) {
+        std::memcpy(bytes.data() + offset, &value, sizeof(value));
+    };
+    put(0, uint32_t{0x4D4F4750}); // MOGP
+    put(4, uint32_t{126});
+    put(8 + 56, uint32_t{3697}); // Vault of Ironforge WMOAreaTable group ID
+    put(76, uint32_t{0x4D4F5654}); // MOVT
+    put(80, uint32_t{36});
+    const float vertices[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    std::memcpy(bytes.data() + 84, vertices, sizeof(vertices));
+    put(120, uint32_t{0x4D4F5649}); // MOVI
+    put(124, uint32_t{6});
+    const uint16_t indices[3] = {0, 1, 2};
+    std::memcpy(bytes.data() + 128, indices, sizeof(indices));
+    WMOModel model;
+    model.groups.resize(2);
+    REQUIRE(WMOLoader::loadGroup(bytes, model, 1));
+    CHECK(model.groups[1].groupId == 3697);
+}

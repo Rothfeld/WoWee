@@ -1033,6 +1033,7 @@ void GameScreen::renderMinimapQuestKills(const MinimapFrame& frame, const Entity
 void GameScreen::renderMinimapGossipPois(const MinimapFrame& frame, game::GameHandler& gameHandler) {
     // Gossip POI markers (quest / NPC navigation targets)
     for (const auto& poi : gameHandler.getGossipPois()) {
+        if (poi.questObjectiveIndex == -2 && poi.mapId != gameHandler.getCurrentMapId()) continue;
         // A gossip target always, a quest's points while it is tracked.
         if (poi.questObjectiveIndex != -2 && !gameHandler.isQuestTracked(poi.data)) {
             continue;
@@ -1041,16 +1042,18 @@ void GameScreen::renderMinimapGossipPois(const MinimapFrame& frame, game::GameHa
         float sx = 0.0f, sy = 0.0f;
         if (!frame.projectCanonical(poi.x, poi.y, sx, sy)) continue;
 
-        // Draw as a cyan diamond with tooltip on hover
-        const float d = 5.0f;
-        ImVec2 pts[4] = {
-            { sx,     sy - d },
-            { sx + d, sy     },
-            { sx,     sy + d },
-            { sx - d, sy     },
-        };
-        frame.drawList->AddConvexPolyFilled(pts, 4, IM_COL32(0, 210, 255, 220));
-        frame.drawList->AddPolyline(pts, 4, IM_COL32(255, 255, 255, 160), true, 1.0f);
+        static VkDescriptorSet poiAtlas = VK_NULL_HANDLE;
+        if (!poiAtlas) {
+            poiAtlas = uploadUiTextureFromBlp(services_.assetManager,
+                "Interface\\Minimap\\POIIcons.blp", services_.window);
+            if (!poiAtlas) throw std::runtime_error("Minimap POI icon atlas failed to load");
+        }
+        // TBC POIIcons uses 16px cells in a 128px atlas, shared with WorldMap.
+        const float u = (poi.icon % 8) / 8.0f;
+        const float v = (poi.icon / 8) / 8.0f;
+        frame.drawList->AddImage((ImTextureID)(uintptr_t)poiAtlas,
+            ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
+            ImVec2(u, v), ImVec2(u + 1.0f / 8, v + 1.0f / 8));
 
         // Show name label if cursor is within ~8px
         ImVec2 cursorPos = ImGui::GetMousePos();
@@ -1299,7 +1302,12 @@ void GameScreen::renderMinimapPlayerArrow(const MinimapFrame& frame) {
         forward.x, forward.y, frame.view);
     const float angle = std::atan2(direction.x, -direction.y);
     const float cs = std::cos(angle), sn = std::sin(angle);
-    constexpr float halfSize = 16.0f;
+    float halfSize = 16.0f;
+    if (services_.addonManager) {
+        if (auto* engine = services_.addonManager->getLuaEngine()) {
+            halfSize *= engine->widgets().uiScale();
+        }
+    }
     const ImVec2 corners[] = {{-halfSize, -halfSize}, {halfSize, -halfSize},
                              {halfSize, halfSize}, {-halfSize, halfSize}};
     ImVec2 points[4];
