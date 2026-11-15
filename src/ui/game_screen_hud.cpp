@@ -911,8 +911,8 @@ VkDescriptorSet GameScreen::getSpellIcon(uint32_t spellId, pipeline::AssetManage
 void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     if (gameHandler.getState() != game::WorldState::IN_WORLD) return;
 
-    // Reset mouseover each frame; we'll set it below when the cursor is over a nameplate
-    gameHandler.setMouseoverGuid(0);
+    // World picking and visible nameplates share one mouseover identity.
+    uint64_t mouseoverGuid = worldHoverGuid_;
 
     auto* appRenderer = services_.renderer;
     if (!appRenderer) return;
@@ -928,6 +928,19 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     const glm::vec3 camPos   = camera->getPosition();
     const uint64_t  playerGuid = gameHandler.getPlayerGuid();
     const uint64_t  targetGuid = gameHandler.getTargetGuid();
+    const bool legacyPlates = game::isPreWotlk();
+    // Build 8606 WorldFrame plate geometry, queried at its 768-unit UI height.
+    const float plateArtScale = screenH / 768.0f * (156.651184f / 128.0f)
+                             * settingsPanel_.nameplateScale_;
+    static VkDescriptorSet plateBorder = VK_NULL_HANDLE;
+    static VkDescriptorSet plateFill = VK_NULL_HANDLE;
+    if (legacyPlates && (settingsPanel_.showFriendlyNameplates_ || settingsPanel_.showEnemyNameplates_)) {
+        if (!plateBorder) plateBorder = uploadUiTextureFromBlp(services_.assetManager,
+            "Interface/Tooltips/Nameplate-Border.blp", services_.window);
+        if (!plateFill) plateFill = uploadUiTextureFromBlp(services_.assetManager,
+            "Interface/TargetingFrame/UI-TargetingFrame-BarFill.blp", services_.window);
+        if (!plateBorder || !plateFill) throw std::runtime_error("Missing original nameplate textures");
+    }
 
     refreshQuestObjectiveCache(gameHandler);
     const auto& questKillEntries = minimapQuestCreatureEntries_;
@@ -1006,7 +1019,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0;
         const bool isGuardian = isSummon && !isPet;
 
-        bool showPlate = isHostile ? settingsPanel_.showEnemyNameplates_
+        const bool enemyPlate = isHostile || (!isPlayer && gameHandler.unitReactionToPlayer(*unit) <= 4);
+        bool showPlate = enemyPlate ? settingsPanel_.showEnemyNameplates_
                                    : settingsPanel_.showFriendlyNameplates_;
         if (isTotem) {
             showPlate = showPlate && addons::storedCVarValue(
@@ -1022,7 +1036,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         // For corpses (dead units), only show a minimal grey nameplate if selected
         bool isCorpse = (unit->getHealth() == 0);
-        if (isCorpse && !isTarget) continue;
+        if (isCorpse && (!isTarget || (legacyPlates && showPlate))) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
         // rendered model exactly (avoids drift from the parallel entity interpolator).
@@ -1040,14 +1054,21 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                     unitHeight = modelHeight;
             }
         }
+        const glm::vec3 unitPosition = renderPos;
         renderPos.z += unitHeight + 0.3f;
 
-        // Cull distance: the current target stays visible to 60 units so its
-        // bar doesn't vanish at combat range; players 40; other NPCs 20.
+        // World-name visibility uses camera distance. Legacy plate range is
+        // checked independently against the player below.
         glm::vec3 nameDelta = renderPos - camPos;
         float distSq = glm::dot(nameDelta, nameDelta);
-        float cullDist = isTarget ? 60.0f : ((!showPlate || isPlayer) ? 40.0f : 20.0f);
-        if (distSq > cullDist * cullDist) continue;
+        float cullDist = legacyPlates ? 40.0f : (isTarget ? 60.0f : ((!showPlate || isPlayer) ? 40.0f : 20.0f));
+        if (showPlate && legacyPlates) {
+            const glm::vec3 playerRender = core::coords::canonicalToRender(playerCanonical);
+            const glm::vec3 separation = unitPosition - playerRender;
+            // Plate visibility is a unit-to-player range, independent of camera zoom.
+            if (glm::dot(separation, separation) > 20.0f * 20.0f) showPlate = false;
+        }
+        if ((!showPlate || !legacyPlates) && distSq > cullDist * cullDist) continue;
 
         // Behind a building is out of sight, and a name that reads through a
         // wall is worse than no name: it puts a player in a room they are not
@@ -1083,6 +1104,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
         float dist = std::sqrt(distSq);
         float alpha = distSq < fadeSq ? 1.0f : 1.0f - (dist - (cullDist - 5.0f)) / 5.0f;
+        if (showPlate && legacyPlates) alpha = 1.0f;
         auto A = [&](int v) { return static_cast<int>(v * alpha); };
 
         // Bar colour by hostility (grey for corpses)
@@ -1141,9 +1163,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
               : IM_COL32(20,  20,  20, A(180));
 
         // Bar geometry
-        const float barW = 80.0f * settingsPanel_.nameplateScale_;
-        const float barH = 8.0f * settingsPanel_.nameplateScale_;
-        const float barX = sx - barW * 0.5f;
+        const float barW = legacyPlates ? 103.0f * plateArtScale : 80.0f * settingsPanel_.nameplateScale_;
+        const float barH = legacyPlates ? 9.0f * plateArtScale : 8.0f * settingsPanel_.nameplateScale_;
+        const float barX = legacyPlates ? sx - 59.0f * plateArtScale : sx - barW * 0.5f;
 
         // ...and the lift itself, before anything is drawn with sy. The block a
         // plate occupies is its bar plus the name line above it; the bound is
@@ -1163,6 +1185,33 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             : 0.0f;
 
         if (showPlate) {
+        if (legacyPlates) {
+            const int reaction = gameHandler.unitReactionToPlayer(*unit);
+            ImU32 fill = isPlayer && !isHostile ? IM_COL32(0, 0, 255, 255)
+                : reaction <= 2 ? IM_COL32(255, 0, 0, 255)
+                : reaction <= 4 ? IM_COL32(255, 255, 0, 255) : IM_COL32(0, 255, 0, 255);
+            const uint32_t flags = unit->getDynamicFlags();
+            if ((flags & 0x0004) && !(flags & 0x0008)) fill = IM_COL32(128, 128, 128, 255);
+            drawList->AddRectFilled(ImVec2(barX, sy), ImVec2(barX + barW, sy + barH), IM_COL32(0, 0, 0, 255));
+            drawList->AddImage((ImTextureID)(uintptr_t)plateFill,
+                ImVec2(barX, sy), ImVec2(barX + barW * healthPct, sy + barH),
+                ImVec2(0, 0), ImVec2(healthPct, 1), fill);
+            const float artX = sx - 64.0f * plateArtScale;
+            const float artY = sy - 19.0f * plateArtScale;
+            drawList->AddImage((ImTextureID)(uintptr_t)plateBorder,
+                ImVec2(artX, artY), ImVec2(artX + 128.0f * plateArtScale, artY + 32.0f * plateArtScale));
+            const uint32_t level = unit->getLevel();
+            const int difference = static_cast<int>(level) - static_cast<int>(gameHandler.getPlayerLevel());
+            const ImU32 levelColor = difference >= 5 ? IM_COL32(255, 26, 26, 255)
+                : difference >= 3 ? IM_COL32(255, 128, 64, 255)
+                : difference >= -2 ? IM_COL32(255, 255, 0, 255) : IM_COL32(64, 191, 64, 255);
+            const std::string levelText = std::to_string(level);
+            const float fontSize = 11.52f * plateArtScale;
+            const ImVec2 size = ImGui::GetFont()->CalcTextSizeA(fontSize, FLT_MAX, 0, levelText.c_str());
+            const ImVec2 position(artX + 116.0f * plateArtScale - size.x * .5f, sy + (barH - size.y) * .5f);
+            drawList->AddText(ImGui::GetFont(), fontSize, ImVec2(position.x + 1, position.y + 1), IM_COL32(0,0,0,255), levelText.c_str());
+            drawList->AddText(ImGui::GetFont(), fontSize, position, levelColor, levelText.c_str());
+        } else {
         drawList->AddRectFilled(ImVec2(barX,                 sy), ImVec2(barX + barW,               sy + barH), bgColor,    2.0f);
         // For corpses, don't fill health bar (just show grey background)
         if (!isCorpse) {
@@ -1199,6 +1248,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             drawList->AddText(ImVec2(hpTx + 1.0f, hpTy + 1.0f), IM_COL32(0, 0, 0, A(140)), hpBuf);
             drawList->AddText(ImVec2(hpTx,         hpTy),         IM_COL32(255, 255, 255, A(200)), hpBuf);
         }
+
+        } // Non-legacy plate artwork.
 
         // Cast bar below health bar when unit is casting
         float castBarBaseY = sy + barH + 2.0f;
@@ -1279,7 +1330,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Debuff dot indicators: small colored squares below the nameplate showing
         // player-applied auras on the current hostile target.
         // Colors: Magic=blue, Curse=purple, Disease=yellow, Poison=green, Other=grey
-        if (isTarget && unit->isHostile() && !isCorpse) {
+        if (!legacyPlates && isTarget && unit->isHostile() && !isCorpse) {
             const auto& auras = gameHandler.getTargetAuras();
             const uint64_t pguid = gameHandler.getPlayerGuid();
             const float dotSize = 6.0f * settingsPanel_.nameplateScale_;
@@ -1407,7 +1458,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                             ? "unitNameNonCombatCreatureName"   // critters
                             : "unitNameNPC");
         const bool showThisName =
-            isTarget || addons::storedCVarValue(nameCVar, "1") != "0";
+            showPlate || isTarget || guid == worldHoverGuid_ || addons::storedCVarValue(nameCVar, "1") != "0";
 
         uint32_t level = unit->getLevel();
         const std::string& unitName = unit->getName();
@@ -1442,7 +1493,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 else
                     snprintf(labelBuf, sizeof(labelBuf), "Player");
             }
-        } else if (showPlate && level > 0) {
+        } else if (showPlate && !legacyPlates && level > 0) {
             uint32_t playerLevel = gameHandler.getPlayerLevel();
             // Show skull for units more than 10 levels above the player
             if (playerLevel > 0 && level > playerLevel + 10)
@@ -1454,24 +1505,33 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
         // Plain world names scale with perspective; nameplates remain screen UI.
         const glm::vec4 textTop = viewProj * glm::vec4(renderPos + glm::vec3(0, 0, 0.25f), 1.0f);
-        const float nameFontSize = showPlate ? ImGui::GetFontSize()
-            : std::clamp(std::abs(textTop.y / textTop.w - ndc.y) * screenH * 0.5f, 8.0f, 40.0f);
+        const float nameFontSize = showPlate ? (legacyPlates ? 12.8f * plateArtScale : ImGui::GetFontSize())
+            : std::clamp(std::abs(textTop.y / textTop.w - ndc.y) * screenH * 0.5f, 1.0f, 40.0f);
         ImFont* nameFont = ImGui::GetFont();
         ImVec2 textSize = nameFont->CalcTextSizeA(nameFontSize, FLT_MAX, 0.0f, labelBuf);
         float nameX = sx - textSize.x * 0.5f;
         float nameY = sy - (showPlate ? barH + 12.0f : textSize.y);
+        if (showPlate && legacyPlates) nameY = sy - nameFontSize - 2.0f * plateArtScale;
+        const ImVec2 pointer = ImGui::GetIO().MousePos;
+        const bool plateHovered = showPlate && !ImGui::GetIO().WantCaptureMouse && !frameXmlOwnsMouse()
+            && pointer.x >= std::min(nameX, barX) - 2.0f
+            && pointer.x <= std::max(nameX + textSize.x, barX + barW) + 2.0f
+            && pointer.y >= nameY - 1.0f && pointer.y <= sy + barH + 2.0f;
         // Name color communicates reaction too: friendly players blue, enemies red.
         ImU32 nameColor;
         if (isPlayer) {
             nameColor = isHostile
-                ? IM_COL32(220, 80, 80, A(230))
-                : IM_COL32(102, 153, 255, A(230));
+                ? IM_COL32(220, 80, 80, A(255))
+                : IM_COL32(128, 128, 255, A(255));
         } else {
             const int reaction = gameHandler.unitReactionToPlayer(*unit);
-            if (isHostile || reaction <= 2) nameColor = IM_COL32(255, 0, 0, A(230));
-            else if (reaction == 3) nameColor = IM_COL32(255, 128, 0, A(230));
-            else if (reaction == 4) nameColor = IM_COL32(255, 255, 0, A(230));
-            else nameColor = IM_COL32(0, 255, 0, A(230));
+            if (isHostile || reaction <= 2) nameColor = IM_COL32(255, 0, 0, A(255));
+            else if (reaction == 3) nameColor = IM_COL32(255, 128, 0, A(255));
+            else if (reaction == 4) nameColor = IM_COL32(255, 255, 0, A(255));
+            else nameColor = IM_COL32(0, 255, 0, A(255));
+        }
+        if (showPlate && legacyPlates) {
+            nameColor = (guid == worldHoverGuid_ || plateHovered) ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 255, 255, 255);
         }
         // Sub-label below the name: guild tag for players, subtitle for NPCs
         std::string subLabel;
@@ -1491,6 +1551,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());
             if (!sub.empty()) subLabel = "<" + sub + ">";
         }
+        if (showPlate && legacyPlates) subLabel.clear();
         if (!subLabel.empty()) nameY -= nameFontSize;  // shift name up for sub-label line
 
         if (showThisName) {
@@ -1567,7 +1628,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Click to target / right-click context: detect clicks inside the nameplate region.
         // Use the wider of name text or health bar for the horizontal hit area so short
         // names like "Wolf" don't produce a tiny clickable strip narrower than the bar.
-        if (!ImGui::GetIO().WantCaptureMouse && !frameXmlOwnsMouse()) {
+        if (showPlate && !ImGui::GetIO().WantCaptureMouse && !frameXmlOwnsMouse()) {
             ImVec2 mouse = ImGui::GetIO().MousePos;
             float hitLeft  = std::min(nameX, barX) - 2.0f;
             float hitRight = std::max(nameX + textSize.x, barX + barW) + 2.0f;
@@ -1577,7 +1638,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             float nx1 = hitRight;
             if (mouse.x >= nx0 && mouse.x <= nx1 && mouse.y >= ny0 && mouse.y <= ny1) {
                 // Track mouseover for [target=mouseover] macro conditionals
-                gameHandler.setMouseoverGuid(guid);
+                mouseoverGuid = guid;
                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     gameHandler.setTarget(guid);
                 } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -1587,6 +1648,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 }
             }
         }
+    }
+
+    gameHandler.setMouseoverGuid(mouseoverGuid);
+    if (auto* characters = appRenderer->getCharacterRenderer()) {
+        auto* spawner = core::Application::getInstance().getEntitySpawner();
+        characters->setHoveredInstance(spawner && mouseoverGuid
+            ? spawner->characterInstanceIdForGuid(mouseoverGuid) : 0);
     }
 
     // My Name. Its own block rather than a case inside the loop above, because

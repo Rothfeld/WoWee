@@ -114,6 +114,7 @@ public:
     [[nodiscard]] float getInstanceScale(uint32_t instanceId) const;
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
+    void setHoveredInstance(uint32_t instanceId) { hoveredInstance_ = instanceId; }
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
     [[nodiscard]] const pipeline::M2Model* getInstanceModelData(uint32_t instanceId) const;
     void setActiveGeosets(uint32_t instanceId, const std::unordered_set<uint16_t>& geosets);
@@ -252,6 +253,8 @@ private:
     };
 
     // Character instance
+    uint32_t hoveredInstance_ = 0;
+
     struct CharacterInstance {
         uint32_t id;
         uint32_t modelId;

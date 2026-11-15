@@ -45,6 +45,7 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float heightMapVariance;
     float normalMapStrength;
     int hairMaterial;
+    float hoverHighlight;
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
@@ -394,6 +395,10 @@ void main() {
     }
 
     if (unlit == 0) result += localLightContribution(FragPos, norm, texColor.rgb);
+
+    // Unit hover adds neutral illumination while preserving texture detail.
+    // Apply before fog so highlighted units retain their distance attenuation.
+    result += texColor.rgb * (0.3 * hoverHighlight);
 
     float dist = length(viewPos.xyz - FragPos);
     result = applyFog(result, FragPos, dist);

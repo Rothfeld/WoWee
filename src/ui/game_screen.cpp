@@ -1491,6 +1491,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         }
     }
 
+    worldHoverGuid_ = 0;
     // Cursor affordance: show hand cursor over interactable entities.
     // Not while the cursor is over a frame FrameXML owns: ImGui has never heard
     // of those, so its own answer is no wherever they are.
@@ -1508,6 +1509,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // tighter sphere critters get, which this copy did not have.
             const ui::ScenePick hoverPick =
                 ui::pickScene(gameHandler, ray, ui::ScenePickParams{});
+            const auto hovered = gameHandler.getEntityManager().getEntity(hoverPick.resolve());
+            if (hovered && hovered->isUnit()) worldHoverGuid_ = hovered->getGuid();
             if (hoverPick.closestGuid != 0) {
                 if (!drawVendorCursor(gameHandler, hoverPick) &&
                     !drawWorldObjectCursor(gameHandler, hoverPick)) {

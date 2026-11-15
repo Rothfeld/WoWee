@@ -265,7 +265,7 @@ struct CharMaterialUBO {
     float heightMapVariance;
     float normalMapStrength;
     int32_t hairMaterial;
-    float _pad[1];
+    float hoverHighlight;
 };
 
 // GPU vertex struct with tangent (expanded from M2Vertex for normal mapping)
@@ -3195,6 +3195,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 // Create per-batch material UBO
                 CharMaterialUBO matData{};
+                matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && instance.id == hoveredInstance_ ? 1.0f : 0.0f;
                 matData.opacity = instance.opacity * batchColorAlpha;
                 matData.alphaTest = blendNeedsCutout ? 1 : 0;
                 matData.colorKeyBlack = colorKeyBlack ? 1 : 0;
@@ -3311,6 +3312,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             }
 
             CharMaterialUBO matData{};
+            matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && instance.id == hoveredInstance_ ? 1.0f : 0.0f;
             matData.opacity = instance.opacity;
             matData.alphaTest = 0;
             matData.colorKeyBlack = 0;

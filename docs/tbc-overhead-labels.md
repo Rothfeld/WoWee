@@ -1,0 +1,34 @@
+# TBC overhead labels and hover
+
+Overhead health plates and plain world names use different presentation rules.
+TBC plates use `Interface/Tooltips/Nameplate-Border.blp` and
+`Interface/TargetingFrame/UI-TargetingFrame-BarFill.blp`, with white names,
+yellow hovered names, a separate level field, and reaction-colored health.
+Friendly unflagged player plates use blue health. NPC subtitles, percentage
+text, and custom aura dots are omitted from legacy plates.
+
+Plate range is measured from the player, independently of camera zoom. Units
+outside plate range can still show a plain world name according to name settings.
+Neutral attackable creatures use the enemy-plate toggle. A visible plate retains
+its name even when the ordinary NPC-name setting is disabled. Plain names scale
+with perspective and have no clickable plate rectangle.
+
+World picking and visible plate hit tests produce one mouseover GUID. It drives
+NPC name visibility, mouseover macros, and character highlight. FrameXML and
+ImGui mouse ownership suppress underlying world input. Character hover adds
+neutral texture illumination before fog, without modifying texture alpha or
+preview rendering. Moving off the unit or plate clears the highlighted instance.
+
+Build 8606's anonymous WorldFrame children expose the original textures, text
+fonts, region geometry, and health colors. Geometry was queried at a 768-unit
+logical UI height with 1280x720 presentation. Native and WoWee captures cover
+Adlin Pridedrift, Balir Frosthammer, Coldridge Mountaineers, and another player.
+They verify plate artwork, name colors, level placement, model/plate hover,
+hover-only NPC names, and range at the comparison camera distance. They do not
+establish pixel-exact anchor placement, highlight intensity under every lighting
+condition, or boss/elite artwork parity.
+
+In TBC, `ShowFriendNameplates()` / `HideFriendNameplates()` and the saved
+`FRIENDNAMEPLATES_ON` variable control friendly plates. Stock FrameXML restores
+this variable through `UpdateNameplates()`. A comparison restart must close the
+client normally: SIGTERM bypasses saved-variable shutdown and resets this state.
