@@ -1993,7 +1993,9 @@ void Renderer::update(float deltaTime) {
     // Visibility hardening: ensure player instance cannot stay hidden after
     // taxi/camera transitions, but preserve first-person self-hide.
     if (characterRenderer && characterInstanceId > 0 && cameraController) {
-        if ((cameraController->isThirdPerson() && !cameraController->isFirstPersonView()) || (animationController_ && animationController_->isTaxiFlight())) {
+        if (!cameraController->shouldHidePlayer() &&
+            (cameraController->isThirdPerson() ||
+             (animationController_ && animationController_->isTaxiFlight()))) {
             characterRenderer->setInstanceVisible(characterInstanceId, true);
         }
     }

@@ -14,6 +14,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/blp_loader.hpp"
 #include "core/logger.hpp"
+#include "rendering/movement_limits.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -1211,48 +1212,50 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
                 continue;
             }
 
+            // The body is vertical in world space, even for pitched/rolled
+            // doodads. Query every triangle classification touched by its span:
+            // a model-local floor can become a world-space wall after placement.
+            const glm::vec3 localTopFrom(instance.invModelMatrix * glm::vec4(from + glm::vec3(0,0,2), 1));
+            const glm::vec3 localTopTo(instance.invModelMatrix * glm::vec4(adjustedPos + glm::vec3(0,0,2), 1));
+            const glm::vec3 queryLow = glm::min(glm::min(localFrom, localPos), glm::min(localTopFrom, localTopTo));
+            const glm::vec3 queryHigh = glm::max(glm::max(localFrom, localPos), glm::max(localTopFrom, localTopTo));
             model.collision.getWallTrisInRange(
-                std::min(localFrom.x, localPos.x) - localRadius - 1.0f,
-                std::min(localFrom.y, localPos.y) - localRadius - 1.0f,
-                std::max(localFrom.x, localPos.x) + localRadius + 1.0f,
-                std::max(localFrom.y, localPos.y) + localRadius + 1.0f,
-                tl_m2_collisionTriScratch);
-
-            const float playerHeight = 2.0f / instance.scale;
+                queryLow.x - localRadius, queryLow.y - localRadius,
+                queryHigh.x + localRadius, queryHigh.y + localRadius, tl_m2_collisionTriScratch);
+            thread_local std::vector<uint32_t> floorTriangles;
+            model.collision.getFloorTrisInRange(
+                queryLow.x - localRadius, queryLow.y - localRadius,
+                queryHigh.x + localRadius, queryHigh.y + localRadius, floorTriangles);
+            tl_m2_collisionTriScratch.insert(tl_m2_collisionTriScratch.end(), floorTriangles.begin(), floorTriangles.end());
+            std::sort(tl_m2_collisionTriScratch.begin(), tl_m2_collisionTriScratch.end());
+            tl_m2_collisionTriScratch.erase(std::unique(tl_m2_collisionTriScratch.begin(), tl_m2_collisionTriScratch.end()), tl_m2_collisionTriScratch.end());
             bool pushed = false;
-
             for (uint32_t ti : tl_m2_collisionTriScratch) {
-                if (ti >= model.collision.triCount) continue;
-                if (localPos.z + playerHeight < model.collision.triBounds[ti].minZ ||
-                    localPos.z > model.collision.triBounds[ti].maxZ) continue;
-
-                // Step-up: only skip wall when player is rising (jumping over it)
-                constexpr float MAX_STEP_UP = 1.2f;
-                bool rising = (localPos.z > localFrom.z + 0.05f);
-                if (rising && localPos.z + MAX_STEP_UP >= model.collision.triBounds[ti].maxZ) continue;
-
                 const auto& verts = model.collision.vertices;
-                const auto& idx   = model.collision.indices;
-                const auto& v0 = verts[idx[ti * 3]];
-                const auto& v1 = verts[idx[ti * 3 + 1]];
-                const auto& v2 = verts[idx[ti * 3 + 2]];
-
-                const glm::vec3 closest = closestPointOnTriangle(localPos, v0, v1, v2);
-                const glm::vec3 fromClosest = closestPointOnTriangle(localFrom, v0, v1, v2);
-                const glm::vec2 separation = horizontalWallSeparation(
-                    glm::vec2(localFrom - fromClosest), glm::vec2(localPos - closest),
-                    glm::vec2(glm::cross(v1 - v0, v2 - v0)), localRadius);
-                if (glm::dot(separation, separation) > 0.0f) {
-                    localPos.x += separation.x;
-                    localPos.y += separation.y;
-                    pushed = true;
-                }
+                const auto& ix = model.collision.indices;
+                const glm::vec3 a(instance.modelMatrix * glm::vec4(verts[ix[ti*3]],1));
+                const glm::vec3 b(instance.modelMatrix * glm::vec4(verts[ix[ti*3+1]],1));
+                const glm::vec3 c(instance.modelMatrix * glm::vec4(verts[ix[ti*3+2]],1));
+                const glm::vec3 cross = glm::cross(b-a,c-a);
+                const float length = glm::length(cross);
+                if (length < 0.00001f) continue;
+                const glm::vec3 normal = cross / length;
+                if (std::abs(normal.z) >= movement::kMinWalkableNormalZ) continue;
+                const float bottom = adjustedPos.z + movement::kMaxStepUp;
+                const float top = adjustedPos.z + 2.0f;
+                const auto closest = closestHorizontalPointInSlab(glm::vec2(adjustedPos),a,b,c,bottom,top);
+                if (!closest) continue;
+                const auto prior = closestHorizontalPointInSlab(glm::vec2(from),a,b,c,bottom,top);
+                const glm::vec2 push = horizontalWallSeparation(
+                    glm::vec2(from)-*prior, glm::vec2(adjustedPos)-*closest,
+                    glm::vec2(normal),playerRadius);
+                if (glm::dot(push,push)==0) continue;
+                adjustedPos.x += push.x;
+                adjustedPos.y += push.y;
+                pushed = true;
             }
 
             if (pushed) {
-                glm::vec3 worldPos = glm::vec3(instance.modelMatrix * glm::vec4(localPos, 1.0f));
-                adjustedPos.x = worldPos.x;
-                adjustedPos.y = worldPos.y;
                 collided = true;
                 // Which doodad is in the way, once per model.
                 //

@@ -2342,9 +2342,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
     camera->setPosition(smoothedCamPos);
 
-    // Hide player model when in first-person (camera too close)
-    // WoW fades between ~1.0m and ~0.5m, hides fully below 0.5m
-    // For now, just hide below first-person threshold
+    // Measure the followed model and hide it when the camera enters its head.
     if (characterRenderer && playerInstanceId > 0) {
         // How tall whoever is being followed actually is, so the pivot lands
         // on them rather than at a fixed distance above their feet. Measured
@@ -2388,20 +2386,12 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             if (measuredHead) followedHeadZ_ = headZ;
         }
 
-        // Hide only on first-person *intent* (the user's zoom), not on a
-        // collision-squeezed distance. The `actualDist < MIN_DISTANCE + 0.1`
-        // term fired whenever geometry pushed the camera close in third
-        // person - under Undercity's overhangs, or backing into a wall -
-        // but the renderer's visibility hardening forces the player visible
-        // again in third person on the very same frame. So the two wrote
-        // opposite values every frame, toggling the instance and its weapon
-        // attachments on and off (visible in the log as a rapid
-        // setInstanceVisible flip) while what actually drew never changed.
-        // isFirstPersonView already covers the anti-clip-pushback case the
-        // extra term was meant for, since it reads the target distance, not
-        // the squeezed one.
-        bool shouldHidePlayer = isFirstPersonView();
-        characterRenderer->setInstanceVisible(playerInstanceId, !shouldHidePlayer);
+        // Collision can put the eye inside the head despite a distant zoom
+        // request. Share this visibility decision with the renderer so its
+        // recovery path cannot immediately reveal the intersecting mesh again.
+        const float eyeDistance = glm::distance(smoothedCamPos, pivot);
+        cameraInsidePlayer_ = eyeDistance < (cameraInsidePlayer_ ? 0.85f : 0.75f);
+        characterRenderer->setInstanceVisible(playerInstanceId, !shouldHidePlayer());
 
         // Note: the Renderer's CharAnimState machine drives player character animations
         // (Run, Walk, Jump, Swim, etc.) - no additional animation driving needed here.
