@@ -48,11 +48,11 @@ TEST_CASE("the values are the server's DIALOG_STATUS numbers", "[questgiver]") {
 TEST_CASE("every status the server can send draws something or nothing on purpose",
           "[questgiver]") {
     // The bug was silence: a value with no branch drew no mark, and the player
-    // saw an NPC with nothing over its head. Only 0 and 1 mean nothing.
+    // saw an NPC with nothing over its head. Only 0 means nothing.
     for (uint8_t v = 0; v <= 10; ++v) {
         INFO("status " << static_cast<int>(v));
         const auto m = questGiverMarker(wire(v));
-        if (v == 0 || v == 1) {
+        if (v == 0) {
             CHECK(m.symbol == nullptr);
         } else {
             REQUIRE(m.symbol != nullptr);
@@ -138,4 +138,12 @@ TEST_CASE("Incomplete quests retain the NPC mark without a minimap marker", "[qu
     CHECK_FALSE(marker.onMinimap);
     CHECK(questGiverMarker(QuestGiverStatus::AVAILABLE).onMinimap);
     CHECK(questGiverMarker(QuestGiverStatus::REWARD).onMinimap);
+}
+
+TEST_CASE("unavailable quests show a grey world exclamation without a minimap dot", "[questgiver][tbc]") {
+    const auto marker = questGiverMarker(QuestGiverStatus::UNAVAILABLE);
+    REQUIRE(marker.symbol);
+    CHECK(std::string(marker.symbol) == "!");
+    CHECK(marker.dim);
+    CHECK_FALSE(marker.onMinimap);
 }
