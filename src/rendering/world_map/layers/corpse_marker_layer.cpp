@@ -44,6 +44,7 @@ void CorpseMarkerLayer::ensureTexture() {
 }
 
 void CorpseMarkerLayer::render(const LayerContext& ctx) {
+    if (ctx.frameXmlHosted) return;
     if (!hasCorpse_ && !hasGraveyard_) return;
     const auto projection = currentProjection(ctx);
     if (!projection) return;

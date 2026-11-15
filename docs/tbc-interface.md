@@ -169,3 +169,39 @@ sampling distances and tilt smoothing have not been reverse-engineered.
 The `creature_ground_tilt` experiment loads original models and checks rendered
 forward vectors on uphill/downhill/flat planes at four headings, flags-disabled
 models, and missing floor samples. Paired clips preserve visual comparisons.
+
+### World map ownership and comparison
+
+Blizzard FrameXML draws the world map tiles, explored overlays, landmarks,
+party/corpse textures, controls and hover highlights. The embedded renderer
+supplies its player arrow without compositing another map or custom zone labels
+above the interface. The separate map window retains its own renderer.
+Weather draws behind interface widgets.
+
+Top-level XML frames without a declared or inherited parent remain parentless.
+This matters for DropDownList1: fullscreen ShowUIPanel hides UIParent, so
+implicitly parenting dropdowns there makes an open dropdown invisible.
+
+GetMapOverlayInfo exposes only overlays revealed by server exploration bits.
+Continent hover resolves ZMP subareas through AreaTable's parent chain, including
+coastal water without an exploration overlay. UpdateMapHighlight supplies the
+zone's original highlight texture, cropped to its aspect ratio, and the
+WorldMapArea rectangle projected into continent coordinates. Native 2.4.3 probe
+at (0.52, 0.43) on Eastern Kingdoms returns Hinterlands with texture UV
+(1, 0.6640625), dimensions (0.09449898, 0.09453761), and offset
+(0.48469314, 0.35763493). Coastal (0.4057508, 0.6964856) resolves to Westfall.
+
+TBC's 32-pixel font rasterization cap applies after effective UI scale.
+Measurement and rendering use the same physical cap; ordinary small labels
+still scale normally. The world-map player marker uses the 16-unit FrameXML
+marker footprint and scales with the detail frame. It remains a textured quad;
+native uses MinimapArrow.m2 plus an effect model, so full 3D/glow parity is not
+established by the size correction.
+
+Stock TBC has no automatic quest-giver/objective world-map pins. QuestHelper
+adds them. The workspace original client has QuestHelper disabled and moved
+outside Interface/AddOns; comparisons use that addon-free reference. NPC and
+minimap quest markers remain separate from world-map quest pins.
+
+Evidence: workspace experiment `20261115T094832.882389Z.world_map_completion`,
+including paired zone/continent hover captures and native API probes.

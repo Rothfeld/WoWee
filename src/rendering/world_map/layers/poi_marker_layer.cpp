@@ -10,6 +10,7 @@ namespace rendering {
 namespace world_map {
 
 void POIMarkerLayer::render(const LayerContext& ctx) {
+    if (ctx.frameXmlHosted) return;
     if (!markers_ || markers_->empty()) return;
     const auto projection = currentProjection(ctx);
     if (!projection) return;

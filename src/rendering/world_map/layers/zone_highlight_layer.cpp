@@ -133,6 +133,7 @@ ImTextureID ZoneHighlightLayer::getHighlightTexture(const std::string& key,
 }
 
 void ZoneHighlightLayer::render(const LayerContext& ctx) {
+    if (ctx.frameXmlHosted) return;
     if (ctx.viewLevel != ViewLevel::CONTINENT || ctx.continentIdx < 0) return;
     if (!ctx.zones) return;
 

@@ -48,6 +48,7 @@
 #include "pipeline/item_textures.hpp"
 
 #include "game/expansion_profile.hpp"
+#include <cassert>
 #include "game/character.hpp"
 #include "core/logger.hpp"
 #include <imgui.h>
@@ -589,28 +590,36 @@ void GameScreen::feedWorldMap(game::GameHandler& gameHandler,
     // Quest objective and quest-giver markers on the world map.
     {
         std::vector<rendering::WorldMap::QuestPoi> qpois;
+        assert(services_.expansionRegistry && services_.expansionRegistry->getActive());
+        const bool hasQuestMapPOIs = services_.expansionRegistry->getActive()->majorVersion >= 3;
         const auto& questStatuses = gameHandler.getNpcQuestStatuses();
-        // Add authoritative NPC statuses first. Some servers also emit a
-        // generic POI at the NPC's position; that duplicate is filtered below
-        // so it cannot leave a teal objective circle on a quest giver.
-        for (const auto& [guid, status] : questStatuses) {
-            auto entity = gameHandler.getEntityManager().getEntity(guid);
-            if (!entity || entity->getType() != game::ObjectType::UNIT) continue;
+        // Vanilla/TBC FrameXML draws landmarks and group positions, not quest
+        // endpoints. Nearby NPC dialog status belongs on the minimap/world;
+        // promoting it to world-map pins invents a quest tracking feature.
+        // Addons remain responsible for their own quest-map textures.
+        if (hasQuestMapPOIs) {
+            // Add authoritative NPC statuses first. Some servers also emit a
+            // generic POI at the NPC's position; that duplicate is filtered below
+            // so it cannot leave a teal objective circle on a quest giver.
+            for (const auto& [guid, status] : questStatuses) {
+                auto entity = gameHandler.getEntityManager().getEntity(guid);
+                if (!entity || entity->getType() != game::ObjectType::UNIT) continue;
 
-            rendering::WorldMap::QuestPoi qp;
-            qp.wowX = entity->getX();
-            qp.wowY = entity->getY();
-            qp.name = std::static_pointer_cast<game::Unit>(entity)->getName();
-            const auto marker = game::questGiverMarker(status);
-            if (!marker.symbol) continue;
-            if (marker.symbol[0] == '!') {
-                qp.kind = marker.dim ? rendering::WorldMap::QuestPoi::Kind::AVAILABLE_LOW
-                                     : rendering::WorldMap::QuestPoi::Kind::AVAILABLE;
-            } else {
-                qp.kind = marker.dim ? rendering::WorldMap::QuestPoi::Kind::INCOMPLETE
-                                     : rendering::WorldMap::QuestPoi::Kind::REWARD;
+                rendering::WorldMap::QuestPoi qp;
+                qp.wowX = entity->getX();
+                qp.wowY = entity->getY();
+                qp.name = std::static_pointer_cast<game::Unit>(entity)->getName();
+                const auto marker = game::questGiverMarker(status);
+                if (!marker.symbol) continue;
+                if (marker.symbol[0] == '!') {
+                    qp.kind = marker.dim ? rendering::WorldMap::QuestPoi::Kind::AVAILABLE_LOW
+                                         : rendering::WorldMap::QuestPoi::Kind::AVAILABLE;
+                } else {
+                    qp.kind = marker.dim ? rendering::WorldMap::QuestPoi::Kind::INCOMPLETE
+                                         : rendering::WorldMap::QuestPoi::Kind::REWARD;
+                }
+                qpois.push_back(std::move(qp));
             }
-            qpois.push_back(std::move(qp));
         }
 
         constexpr float kQuestGiverPoiMergeDistance = 15.0f;
@@ -626,6 +635,7 @@ void GameScreen::feedWorldMap(game::GameHandler& gameHandler,
         }
         size_t objectivePois = 0;
         for (const auto& poi : gameHandler.getGossipPois()) {
+            if (!hasQuestMapPOIs && poi.questObjectiveIndex != -2) continue;
             // Keep ordinary gossip navigation POIs, and quest points for a
             // quest in the log.
             //
@@ -682,7 +692,7 @@ void GameScreen::feedWorldMap(game::GameHandler& gameHandler,
         // quest_poi table, and an empty one looks exactly like a client that
         // is not drawing them.
         static bool reportedNoObjectivePois = false;
-        if (objectivePois == 0 && !questsInLog.empty() && !reportedNoObjectivePois) {
+        if (hasQuestMapPOIs && objectivePois == 0 && !questsInLog.empty() && !reportedNoObjectivePois) {
             reportedNoObjectivePois = true;
             LOG_WARNING("World map: ", questsInLog.size(), " quest(s) in the log and no "
                         "objective points for any of them - the server sent no quest POI "

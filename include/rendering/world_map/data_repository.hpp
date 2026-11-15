@@ -101,6 +101,7 @@ private:
     bool zmpLoaded_ = false;
     // AreaID → zone index (zones_ vector) for quick resolution
     std::unordered_map<uint32_t, int> areaIdToZoneIdx_;
+    std::unordered_map<uint32_t, uint32_t> parentByAreaId_;
     // ZMP-derived bounding boxes per zone index (UV coords on display)
     std::unordered_map<int, ZmpRect> zmpZoneBounds_;
 

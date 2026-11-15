@@ -159,6 +159,8 @@ struct WorldMapFacade::Impl {
     // Where a host frame wants the map drawn, in pixels from the top-left.
     // Lives here rather than on the facade because the drawing does.
     bool  hasFrameRect = false;
+    bool frameXmlHosted = false;
+    std::unordered_map<std::string, glm::vec2> highlightSizes;
     float frameRectX = 0.0f, frameRectY = 0.0f;
     float frameRectW = 0.0f, frameRectH = 0.0f;
     std::function<void()> taxiCloseHandler;
@@ -412,6 +414,7 @@ void WorldMapFacade::render(const glm::vec3& playerRenderPos,
                              d.viewState.currentZoneIdx(),
                              d.data.exploreFlagByAreaId(), d.playerZoneId);
         if (d.exploration.overlaysChanged() && d.viewState.currentZoneIdx() >= 0) {
+            d.viewChanged = true;
             d.compositor.invalidateComposite();
             d.compositor.requestComposite(d.viewState.currentZoneIdx());
         }
@@ -743,6 +746,37 @@ int WorldMapFacade::zoneAtMapPoint(float u, float v) const {
     return zoneIdx;
 }
 
+WorldMapFacade::Highlight WorldMapFacade::highlightAtMapPoint(float u, float v) {
+    auto& d = *impl_;
+    const int index = zoneAtMapPoint(u, v);
+    if (index < 0) return {};
+    const auto& zone = d.data.zones()[index];
+    bool continent = false;
+    const auto bounds = projectionBoundsFor(d.data.zones(), d.viewState.continentIdx(), continent);
+    const float spanX = bounds.locLeft - bounds.locRight;
+    const float spanY = bounds.locTop - bounds.locBottom;
+    if (!continent || spanX <= 0 || spanY <= 0) return {};
+    auto size = d.highlightSizes.find(zone.areaName);
+    if (size == d.highlightSizes.end()) {
+        const auto path = "Interface\\WorldMap\\" + zone.areaName + "\\" + zone.areaName + "Highlight.blp";
+        const auto texture = d.assetManager->loadTexture(path);
+        if (!texture.isValid()) {
+            LOG_ERROR("World map highlight unavailable: ", path);
+            return {};
+        }
+        size = d.highlightSizes.emplace(zone.areaName, glm::vec2(texture.width, texture.height)).first;
+    }
+    const float width = zone.bounds.locLeft - zone.bounds.locRight;
+    const float height = zone.bounds.locTop - zone.bounds.locBottom;
+    const float scale = std::min(size->second.x / width, size->second.y / height);
+    return {.file = zone.areaName,
+            .texU = std::floor(width * scale + 0.001f) / size->second.x,
+            .texV = std::floor(height * scale + 0.001f) / size->second.y,
+            .width = width / spanX, .height = height / spanY,
+            .x = (bounds.locLeft - zone.bounds.locLeft) / spanX,
+            .y = (bounds.locTop - zone.bounds.locTop) / spanY};
+}
+
 std::string WorldMapFacade::zoneNameAtMapPoint(float u, float v) const {
     const auto& d = *impl_;
     if (d.viewState.currentLevel() == ViewLevel::ZONE) {
@@ -794,7 +828,14 @@ std::vector<OverlayEntry> WorldMapFacade::currentOverlays() const {
     // A continent has no overlay art of its own; its detail is the child
     // zones' maps, which the interface reaches by drilling in.
     if (zones[static_cast<size_t>(idx)].areaID == 0) return {};
-    return zones[static_cast<size_t>(idx)].overlays;
+    std::vector<OverlayEntry> visible;
+    for (const auto& overlay : zones[static_cast<size_t>(idx)].overlays) {
+        // Query the server mask directly: Lua can switch maps and request
+        // overlays before the next render updates the cached zone indices.
+        if (impl_->exploration.isOverlayExplored(overlay, impl_->data.exploreFlagByAreaId()))
+            visible.push_back(overlay);
+    }
+    return visible;
 }
 bool WorldMapFacade::mapUVForCanonical(float wowX, float wowY, float wowZ,
                                        float& u, float& v) const {
@@ -866,7 +907,8 @@ void WorldMapFacade::setQuestPois(std::vector<QuestPOI> pois) {
     impl_->questPois = std::move(pois);
 }
 
-void WorldMapFacade::setFrameRect(float x, float y, float w, float h) {
+void WorldMapFacade::setFrameRect(float x, float y, float w, float h, bool frameXml) {
+    impl_->frameXmlHosted = frameXml;
     impl_->frameRectX = x; impl_->frameRectY = y;
     impl_->frameRectW = w; impl_->frameRectH = h;
     impl_->hasFrameRect = true;
@@ -1008,7 +1050,9 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         // A zone change is not this case: invalidateComposite() only says the
         // picture is stale, and a stale map for one frame is the right thing
         // to show.
-        if (compositor.everComposited()) {
+        if (frameXmlHosted) {
+            ImGui::Dummy(ImVec2(displayW, displayH));
+        } else if (compositor.everComposited()) {
             ImGui::Image(
                 reinterpret_cast<ImTextureID>(compositor.displayDescriptorSet()),
                 ImVec2(displayW, displayH),
@@ -1023,7 +1067,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
 
         // Transition fade overlay
         const auto& trans = viewState.transition();
-        if (trans.active) {
+        if (!frameXmlHosted && trans.active) {
             float alpha = std::max(0.0f, 1.0f - trans.progress);
             if (alpha > 0.01f) {
                 uint8_t fadeAlpha = static_cast<uint8_t>(alpha * 180.0f);
@@ -1089,7 +1133,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
 
         // Build layer context
         LayerContext layerCtx;
-        layerCtx.frameXmlHosted = hasFrameRect;
+        layerCtx.frameXmlHosted = frameXmlHosted;
         layerCtx.drawList = drawList;
         layerCtx.imgMin = imgMin;
         layerCtx.displayW = displayW;

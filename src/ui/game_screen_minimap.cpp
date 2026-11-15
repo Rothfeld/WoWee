@@ -2280,7 +2280,8 @@ void GameScreen::renderWeatherOverlay(game::GameHandler& gameHandler) {
         return std::uniform_int_distribution<int>(0, std::max(0, maxExcl - 1))(wxRng);
     };
 
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    // Weather belongs behind the interface, including opaque fullscreen maps.
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
     const float dt = std::min(io.DeltaTime, 0.05f);   // cap delta at 50ms to avoid teleporting particles
 
     if (wType == 1 || wType == 3) {

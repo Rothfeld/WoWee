@@ -9,6 +9,7 @@ namespace rendering {
 namespace world_map {
 
 void PartyDotLayer::render(const LayerContext& ctx) {
+    if (ctx.frameXmlHosted) return;
     if (!dots_ || dots_->empty()) return;
     const auto projection = currentProjection(ctx);
     if (!projection) return;

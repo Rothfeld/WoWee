@@ -6913,13 +6913,8 @@ void registerSystemLuaAPI(lua_State* L) {
                 //   name, fileName, texPercentageX, texPercentageY,
                 //   textureX, textureY, scrollChildX, scrollChildY
                 //
-                // Asked on every frame the cursor is over the map, and only
-                // the first value is read for anything this client can answer:
-                // WorldMapFrame_OnUpdate sets the area label from it. The
-                // other seven place a highlight *texture* over the zone, which
-                // needs the per-zone highlight art the client's own map layer
-                // loads on demand - nil leaves the label named and the glow
-                // off, which is the honest half.
+                // FrameXML owns the highlight texture and additive blending;
+                // supply the hovered area's native art crop and map rectangle.
                 {"UpdateMapHighlight", [](lua_State* L) -> int {
             auto* svc = getLuaServices(L);
             const float u = static_cast<float>(luaL_optnumber(L, 1, -1.0));
@@ -6928,7 +6923,16 @@ void registerSystemLuaAPI(lua_State* L) {
             if (svc && svc->getMapZoneNameAt) name = svc->getMapZoneNameAt(u, v);
             if (name.empty()) lua_pushnil(L);
             else              lua_pushstring(L, name.c_str());
-            for (int i = 0; i < 7; ++i) lua_pushnil(L);
+            const auto highlight = svc && svc->getMapHighlightAt
+                ? svc->getMapHighlightAt(u, v) : LuaServices::MapHighlight{};
+            if (highlight.file.empty()) {
+                for (int i = 0; i < 7; ++i) lua_pushnil(L);
+            } else {
+                lua_pushstring(L, highlight.file.c_str());
+                for (float value : {highlight.texU, highlight.texV, highlight.width,
+                                    highlight.height, highlight.x, highlight.y})
+                    lua_pushnumber(L, value);
+            }
             return 8;
         }},
                 // Clicking a continent drills into the zone under the point.

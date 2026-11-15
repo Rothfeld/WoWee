@@ -87,3 +87,19 @@ TEST_CASE("ExplorationState: update with valid zone and server mask", "[world_ma
     // Zone should be explored since bit 0 is set in the mask
     REQUIRE(es.exploredZones().count(0) == 1);
 }
+
+TEST_CASE("Overlay queries use current server bits without a render update", "[world_map][exploration_state]") {
+    ExplorationState state;
+    OverlayEntry overlay;
+    overlay.areaIDs[0] = 11;
+    overlay.areaIDs[1] = 12;
+    const std::unordered_map<uint32_t, uint32_t> flags{{11, 3}, {12, 35}};
+    CHECK_FALSE(state.isOverlayExplored(overlay, flags));
+    state.setServerMask({0, 8}, true);
+    CHECK(state.isOverlayExplored(overlay, flags));
+    state.setServerMask({0, 0}, true);
+    CHECK_FALSE(state.isOverlayExplored(overlay, flags));
+    state.setServerMask({8, 0}, true);
+    CHECK(state.isOverlayExplored(overlay, flags));
+    CHECK_FALSE(state.isOverlayExplored(overlay, {}));
+}

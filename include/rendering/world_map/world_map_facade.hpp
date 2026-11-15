@@ -58,7 +58,7 @@ public:
     /// and wrong when FrameXML does: there the map belongs inside the frame
     /// FrameXML drew for it, and the title bar belongs to that frame rather
     /// than to a window underneath it. Unset, nothing changes.
-    void setFrameRect(float x, float y, float w, float h);
+    void setFrameRect(float x, float y, float w, float h, bool frameXml = false);
     void clearFrameRect();
     /// Whether a frame rect is set - which, when FrameXML owns the map, is how
     /// the client knows FrameXML has its map panel on screen and wants the map
@@ -99,6 +99,12 @@ public:
     /// The overlays for whatever the map is showing, in draw order. Empty at
     /// continent and cosmic level, which have no per-zone art.
     [[nodiscard]] std::vector<OverlayEntry> currentOverlays() const;
+    struct Highlight {
+        std::string file;
+        float texU = 0, texV = 0, width = 0, height = 0, x = 0, y = 0;
+    };
+    [[nodiscard]] Highlight highlightAtMapPoint(float u, float v);
+
 
     /// The folder this map's art lives in under Interface\WorldMap, which is
     /// also what GetMapInfo answers with. Empty at continent and cosmic level,

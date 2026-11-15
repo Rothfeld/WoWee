@@ -10,6 +10,7 @@ namespace rendering {
 namespace world_map {
 
 void RareTrackerLayer::render(const LayerContext& ctx) {
+    if (ctx.frameXmlHosted) return;
     if (!rares_ || rares_->empty()) return;
     const auto projection = currentProjection(ctx);
     if (!projection) return;

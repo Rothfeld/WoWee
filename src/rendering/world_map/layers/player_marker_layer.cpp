@@ -76,11 +76,14 @@ void PlayerMarkerLayer::render(const LayerContext& ctx) {
     ensureTexture();
 
     if (marker_.descriptorSet) {
-        constexpr float ARROW_HALF = 16.0f;
+        // TBC WorldMapPlayer declares a 16-unit marker. Scale with the
+        // 1002-unit detail frame, rather than using a fixed screen-pixel quad.
+        const float arrowHalf = ctx.frameXmlHosted
+            ? 8.0f * ctx.displayW / 1002.0f : 16.0f;
 
         // 4 corners of the unrotated quad (TL, TR, BR, BL)
-        float cx[4] = { -ARROW_HALF,  ARROW_HALF,  ARROW_HALF, -ARROW_HALF };
-        float cy[4] = { -ARROW_HALF, -ARROW_HALF,  ARROW_HALF,  ARROW_HALF };
+        float cx[4] = { -arrowHalf,  arrowHalf,  arrowHalf, -arrowHalf };
+        float cy[4] = { -arrowHalf, -arrowHalf,  arrowHalf,  arrowHalf };
 
         ImVec2 p[4];
         for (int i = 0; i < 4; i++) {

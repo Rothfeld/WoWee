@@ -1,3 +1,4 @@
+#include <stdexcept>
 // data_repository.cpp - DBC data loading, ZMP pixel map, and zone/POI/overlay storage.
 // Extracted from WorldMap::loadZonesFromDBC, loadPOIData, buildCosmicView
 // (Phase 5 of refactoring plan).
@@ -26,6 +27,7 @@ void DataRepository::clear() {
     exploreFlagByAreaId_.clear();
     areaNameByAreaId_.clear();
     areaIdToZoneIdx_.clear();
+    parentByAreaId_.clear();
     zmpZoneBounds_.clear();
     zmpGrid_.fill(0);
     zmpLoaded_ = false;
@@ -97,6 +99,7 @@ void DataRepository::loadZones(const std::string& mapName,
     // Use expansion-aware DBC layout when available; fall back to WotLK stock field
     // indices (ID=0, ParentAreaNum=2, ExploreFlag=3) when layout metadata is missing.
     const auto* atL = activeLayout ? activeLayout->getLayout("AreaTable") : nullptr;
+    parentByAreaId_.clear();
     std::unordered_map<uint32_t, uint32_t> exploreFlagByAreaId;
     std::unordered_map<uint32_t, std::vector<uint32_t>> childBitsByParent;
     auto areaDbc = assetManager.loadDBC("AreaTable.dbc");
@@ -110,7 +113,10 @@ void DataRepository::loadZones(const std::string& mapName,
             const uint32_t areaId = areaDbc->getUInt32(i, atL ? (*atL)["ID"] : 0);
             const uint32_t exploreFlag = areaDbc->getUInt32(i, atL ? (*atL)["ExploreFlag"] : 3);
             const uint32_t parentArea = areaDbc->getUInt32(i, parentField);
-            if (areaId != 0) exploreFlagByAreaId[areaId] = exploreFlag;
+            if (areaId != 0) {
+                exploreFlagByAreaId[areaId] = exploreFlag;
+                parentByAreaId_[areaId] = parentArea;
+            }
             if (areaId != 0)
                 mapIdByAreaId_[areaId] = areaDbc->getUInt32(i, atL ? (*atL)["MapID"] : 1);
             if (parentArea != 0) childBitsByParent[parentArea].push_back(exploreFlag);
@@ -447,20 +453,16 @@ void DataRepository::buildZmpZoneBounds() {
 
 int DataRepository::zoneIndexForAreaId(uint32_t areaId) const {
     if (areaId == 0) return -1;
-    auto it = areaIdToZoneIdx_.find(areaId);
-    if (it != areaIdToZoneIdx_.end()) return it->second;
-
-    // Fallback: check if areaId is a sub-zone whose parent is in our zone list.
-    // Some ZMP cells reference sub-area IDs not directly in WorldMapArea.dbc.
-    // Walk the AreaTable parent chain via exploreFlagByAreaId_ (which was built
-    // from AreaTable.dbc and includes parentArea relationships).
-    // For now, iterate zones looking for one whose overlays reference this areaId.
-    for (int i = 0; i < static_cast<int>(zones_.size()); i++) {
-        for (const auto& ov : zones_[i].overlays) {
-            for (uint32_t ovAreaId : ov.areaIDs) {
-                if (ovAreaId == areaId) return i;
-            }
-        }
+    // ZMP contains subareas, including coastal water with no exploration
+    // overlay. Resolve the AreaTable parent chain, not overlay membership.
+    for (size_t depth = 0; areaId != 0; ++depth) {
+        if (depth > parentByAreaId_.size())
+            throw std::runtime_error("Cycle in AreaTable parent chain");
+        const auto zone = areaIdToZoneIdx_.find(areaId);
+        if (zone != areaIdToZoneIdx_.end()) return zone->second;
+        const auto parent = parentByAreaId_.find(areaId);
+        if (parent == parentByAreaId_.end()) return -1;
+        areaId = parent->second;
     }
     return -1;
 }

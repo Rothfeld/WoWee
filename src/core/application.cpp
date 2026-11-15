@@ -704,6 +704,14 @@ bool Application::initialize() {
             }
             return out;
         };
+        luaSvc.getMapHighlightAt = [r = renderer.get()](float u, float v) {
+            addons::LuaServices::MapHighlight result;
+            if (auto* map = r->getWorldMap()) {
+                const auto h = map->highlightAtMapPoint(u, v);
+                result = {h.file, h.texU, h.texV, h.width, h.height, h.x, h.y};
+            }
+            return result;
+        };
         luaSvc.getMapZoneNameAt = [r = renderer.get()](float u, float v) -> std::string {
             auto* wmap = r ? r->getWorldMap() : nullptr;
             return wmap ? wmap->zoneNameAtMapPoint(u, v) : std::string();
@@ -4297,7 +4305,7 @@ void Application::render() {
                         const float sc = widgets.uiScale();
                         wmap->setFrameRect(wm->left * sc,
                                            io.DisplaySize.y - (wm->bottom + wm->rectH) * sc,
-                                           wm->rectW * sc, wm->rectH * sc);
+                                           wm->rectW * sc, wm->rectH * sc, true);
                     } else {
                         wmap->clearFrameRect();
                     }

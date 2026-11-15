@@ -18,6 +18,9 @@ public:
     void setServerMask(const std::vector<uint32_t>& masks, bool hasData);
     [[nodiscard]] bool hasServerMask() const { return hasServerMask_; }
 
+    [[nodiscard]] bool isOverlayExplored(const OverlayEntry& overlay,
+        const std::unordered_map<uint32_t, uint32_t>& exploreFlags) const;
+
     /// Recompute explored zones and overlays for given player position.
     /// @param zones          All loaded zones
     /// @param playerRenderPos Player position in render-space

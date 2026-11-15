@@ -31,6 +31,16 @@ bool ExplorationState::isBitSet(uint32_t bitIndex) const {
     return (serverMask_[word] & (1u << (bitIndex % 32))) != 0;
 }
 
+bool ExplorationState::isOverlayExplored(const OverlayEntry& overlay,
+    const std::unordered_map<uint32_t, uint32_t>& exploreFlags) const {
+    for (uint32_t area : overlay.areaIDs) {
+        if (area == 0) continue;
+        const auto flag = exploreFlags.find(area);
+        if (flag != exploreFlags.end() && isBitSet(flag->second)) return true;
+    }
+    return false;
+}
+
 void ExplorationState::update(const std::vector<Zone>& zones,
                                const glm::vec3& playerRenderPos,
                                int currentZoneIdx,
@@ -61,16 +71,7 @@ void ExplorationState::update(const std::vector<Zone>& zones,
             const auto& curZoneData = zones[currentZoneIdx];
             for (int oi = 0; oi < static_cast<int>(curZoneData.overlays.size()); oi++) {
                 const auto& ov = curZoneData.overlays[oi];
-                bool revealed = false;
-                for (unsigned int areaID : ov.areaIDs) {
-                    if (areaID == 0) continue;
-                    auto flagIt = exploreFlagByAreaId.find(areaID);
-                    if (flagIt != exploreFlagByAreaId.end() && isBitSet(flagIt->second)) {
-                        revealed = true;
-                        break;
-                    }
-                }
-                if (revealed) newExploredOverlays.insert(oi);
+                if (isOverlayExplored(ov, exploreFlagByAreaId)) newExploredOverlays.insert(oi);
             }
         }
         if (newExploredOverlays != exploredOverlays_) {
