@@ -155,7 +155,7 @@ void OverlaySystem::initSelectionCircle() {
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setColorBlendAttachment(PipelineBuilder::blendAlpha())
+        .setColorBlendAttachment(PipelineBuilder::blendAdditive())
         .setMultisample(vkCtx_->getMsaaSamples())
         .setLayout(selCirclePipelineLayout_)
         .setRenderPass(vkCtx_->getImGuiRenderPass())

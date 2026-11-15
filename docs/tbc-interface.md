@@ -251,3 +251,9 @@ encodes a backwards stride, not a disabled speed track. DwarfMale's backwards
 sequence has duration 800 ms and movingSpeed -2.5; at 4.5 yards/s its playback
 rate is 1.8, giving a roughly 444 ms cycle. Diagonal input uses normalized
 movement speed.
+
+Selection ground artwork uses source-alpha additive blending. This preserves
+the ground brightness beneath its glow; ordinary alpha blending turns the
+unflagged player ring dark violet despite its pale blue tint. Depth testing
+and terrain fitting remain enabled. Visual evidence: workspace experiment
+20261115T132046.645965Z.selection_ground_blend.
