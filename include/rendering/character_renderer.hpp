@@ -114,7 +114,7 @@ public:
     [[nodiscard]] float getInstanceScale(uint32_t instanceId) const;
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
-    void setHoveredInstance(uint32_t instanceId) { hoveredInstance_ = instanceId; }
+    void setHoveredInstance(uint32_t instanceId);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
     [[nodiscard]] const pipeline::M2Model* getInstanceModelData(uint32_t instanceId) const;
     void setActiveGeosets(uint32_t instanceId, const std::unordered_set<uint16_t>& geosets);
@@ -140,6 +140,7 @@ public:
 
     /// How tall this character stands, from its feet to the top of its head,
     /// with its scale applied. The model origin is at the feet.
+    bool getInstanceNamePosition(uint32_t instanceId, bool mounted, glm::vec3& outPosition);
     bool getInstanceHeight(uint32_t instanceId, float& outHeight) const;
 
     /// Where one of the skeleton's named bones sits, in model Z with the
@@ -253,7 +254,7 @@ private:
     };
 
     // Character instance
-    uint32_t hoveredInstance_ = 0;
+    std::vector<uint32_t> hoveredInstances_;
 
     struct CharacterInstance {
         uint32_t id;

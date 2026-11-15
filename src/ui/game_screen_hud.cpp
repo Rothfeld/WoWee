@@ -53,6 +53,7 @@
 #include "core/logger.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <backends/imgui_impl_vulkan.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -934,12 +935,15 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                              * settingsPanel_.nameplateScale_;
     static VkDescriptorSet plateBorder = VK_NULL_HANDLE;
     static VkDescriptorSet plateFill = VK_NULL_HANDLE;
+    static VkDescriptorSet plateGlow = VK_NULL_HANDLE;
     if (legacyPlates && (settingsPanel_.showFriendlyNameplates_ || settingsPanel_.showEnemyNameplates_)) {
         if (!plateBorder) plateBorder = uploadUiTextureFromBlp(services_.assetManager,
             "Interface/Tooltips/Nameplate-Border.blp", services_.window);
         if (!plateFill) plateFill = uploadUiTextureFromBlp(services_.assetManager,
             "Interface/TargetingFrame/UI-TargetingFrame-BarFill.blp", services_.window);
-        if (!plateBorder || !plateFill) throw std::runtime_error("Missing original nameplate textures");
+        if (!plateGlow) plateGlow = uploadUiTextureFromBlp(services_.assetManager,
+            "Interface/Tooltips/Nameplate-Glow.blp", services_.window);
+        if (!plateBorder || !plateFill || !plateGlow) throw std::runtime_error("Missing original nameplate textures");
     }
 
     refreshQuestObjectiveCache(gameHandler);
@@ -982,7 +986,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     for (const auto& entityPtr : nameplateEntities) {
         if (!entityPtr) continue;
         const uint64_t guid = entityPtr->getGuid();
-        if (!entityPtr || guid == playerGuid) continue;
+        if (guid == playerGuid && addons::storedCVarValue("unitNameOwn", "0") == "0") continue;
 
         if (!entityPtr->isUnit()) continue;
         auto* unit = static_cast<game::Unit*>(entityPtr.get());
@@ -1034,6 +1038,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             showPlate = showPlate && addons::storedCVarValue(plateCVar, "1") != "0";
         }
 
+        if (guid == playerGuid) showPlate = false;
+
         // For corpses (dead units), only show a minimal grey nameplate if selected
         bool isCorpse = (unit->getHealth() == 0);
         if (isCorpse && (!isTarget || (legacyPlates && showPlate))) continue;
@@ -1045,17 +1051,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             renderPos = core::coords::canonicalToRender(
                 glm::vec3(unit->getX(), unit->getY(), unit->getZ()));
         }
-        float unitHeight = 2.0f;
-        auto& app = core::Application::getInstance();
-        if (auto* spawner = app.getEntitySpawner()) {
-            if (auto* characters = services_.renderer->getCharacterRenderer()) {
-                float modelHeight = 0.0f;
-                if (characters->getInstanceHeight(spawner->characterInstanceIdForGuid(guid), modelHeight))
-                    unitHeight = modelHeight;
-            }
-        }
         const glm::vec3 unitPosition = renderPos;
-        renderPos.z += unitHeight + 0.3f;
+        auto& app = core::Application::getInstance();
+        auto* spawner = app.getEntitySpawner();
+        auto* characters = appRenderer->getCharacterRenderer();
+        if (!spawner || !characters) continue;
+        const auto instanceId = spawner->characterInstanceIdForGuid(guid);
+        if (!characters->getInstanceNamePosition(instanceId, unit->getMountDisplayId() != 0, renderPos))
+            continue; // The model has not spawned yet.
 
         // World-name visibility uses camera distance. Legacy plate range is
         // checked independently against the player below.
@@ -1069,6 +1072,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             if (glm::dot(separation, separation) > 20.0f * 20.0f) showPlate = false;
         }
         if ((!showPlate || !legacyPlates) && distSq > cullDist * cullDist) continue;
+        // CGUnit_C::GetNamePlatePosition in build 8606 adds 2/3 yard to
+        // the authored name attachment. The frame's TOP is placed here.
+        if (showPlate && legacyPlates) renderPos.z += 2.0f / 3.0f;
+        // World names occupy a raised text line above the model's name attachment.
+        // Dimensions calibrated against build 8606 at matching camera poses.
+        else if (!showPlate) renderPos.z += 0.25f;
+
 
         // Behind a building is out of sight, and a name that reads through a
         // wall is worse than no name: it puts a player in a room they are not
@@ -1091,6 +1101,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (clipPos.w <= 0.01f) continue;  // Behind camera
 
         glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
+        if (ndc.z < 0.0f || ndc.z > 1.0f) continue;
         if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f) continue;
 
         // NDC → screen pixels.
@@ -1099,6 +1110,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Map directly: sy = (ndc.y + 1) / 2 * screenH  (no extra inversion).
         float sx = (ndc.x * 0.5f + 0.5f) * screenW;
         float sy = (ndc.y * 0.5f + 0.5f) * screenH;
+        if (showPlate && legacyPlates) sy += 19.0f * plateArtScale;
 
         // Fade out in the last 5 units of cull range
         float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
@@ -1202,9 +1214,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 ImVec2(artX, artY), ImVec2(artX + 128.0f * plateArtScale, artY + 32.0f * plateArtScale));
             const uint32_t level = unit->getLevel();
             const int difference = static_cast<int>(level) - static_cast<int>(gameHandler.getPlayerLevel());
-            const ImU32 levelColor = difference >= 5 ? IM_COL32(255, 26, 26, 255)
-                : difference >= 3 ? IM_COL32(255, 128, 64, 255)
-                : difference >= -2 ? IM_COL32(255, 255, 0, 255) : IM_COL32(64, 191, 64, 255);
+            const ImU32 levelColor = difference >= 5 ? IM_COL32(255, 25, 25, 255)
+                : difference >= 3 ? IM_COL32(255, 127, 63, 255)
+                : difference >= -2 ? IM_COL32(255, 255, 0, 255) : IM_COL32(63, 178, 63, 255);
             const std::string levelText = std::to_string(level);
             const float fontSize = 11.52f * plateArtScale;
             const ImVec2 size = ImGui::GetFont()->CalcTextSizeA(fontSize, FLT_MAX, 0, levelText.c_str());
@@ -1458,7 +1470,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                             ? "unitNameNonCombatCreatureName"   // critters
                             : "unitNameNPC");
         const bool showThisName =
-            showPlate || isTarget || guid == worldHoverGuid_ || addons::storedCVarValue(nameCVar, "1") != "0";
+            guid == playerGuid || showPlate || isTarget || guid == worldHoverGuid_ || addons::storedCVarValue(nameCVar, "1") != "0";
 
         uint32_t level = unit->getLevel();
         const std::string& unitName = unit->getName();
@@ -1504,14 +1516,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             snprintf(labelBuf, sizeof(labelBuf), "%s", unitName.c_str());
         }
         // Plain world names scale with perspective; nameplates remain screen UI.
-        const glm::vec4 textTop = viewProj * glm::vec4(renderPos + glm::vec3(0, 0, 0.25f), 1.0f);
+        const glm::vec4 textTop = viewProj * glm::vec4(renderPos + glm::vec3(0, 0, 0.20f), 1.0f);
         const float nameFontSize = showPlate ? (legacyPlates ? 12.8f * plateArtScale : ImGui::GetFontSize())
             : std::clamp(std::abs(textTop.y / textTop.w - ndc.y) * screenH * 0.5f, 1.0f, 40.0f);
         ImFont* nameFont = ImGui::GetFont();
         ImVec2 textSize = nameFont->CalcTextSizeA(nameFontSize, FLT_MAX, 0.0f, labelBuf);
         float nameX = sx - textSize.x * 0.5f;
         float nameY = sy - (showPlate ? barH + 12.0f : textSize.y);
-        if (showPlate && legacyPlates) nameY = sy - nameFontSize - 2.0f * plateArtScale;
+        if (showPlate && legacyPlates) nameY = sy - nameFontSize - 4.5f * plateArtScale;
         const ImVec2 pointer = ImGui::GetIO().MousePos;
         const bool plateHovered = showPlate && !ImGui::GetIO().WantCaptureMouse && !frameXmlOwnsMouse()
             && pointer.x >= std::min(nameX, barX) - 2.0f
@@ -1554,6 +1566,31 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (showPlate && legacyPlates) subLabel.clear();
         if (!subLabel.empty()) nameY -= nameFontSize;  // shift name up for sub-label line
 
+        if (showPlate && legacyPlates && (guid == worldHoverGuid_ || plateHovered)) {
+            drawList->AddCallback([](const ImDrawList*, const ImDrawCmd* command) {
+                auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(ImGui::GetPlatformIO().Renderer_RenderState);
+                assert(state);
+                auto* context = static_cast<rendering::VkContext*>(command->UserCallbackData);
+                vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  context->getImGuiAdditivePipeline(state->PipelineLayout));
+            }, window->getVkContext());
+            drawList->AddImage((ImTextureID)(uintptr_t)plateGlow,
+                ImVec2(sx - 64.0f * plateArtScale, sy - 19.0f * plateArtScale),
+                ImVec2(sx + 64.0f * plateArtScale, sy + 13.0f * plateArtScale));
+            drawList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+        }
+
+        if (showThisName && !showPlate) {
+            struct DepthState { rendering::VkContext* context; float depth; };
+            DepthState state{window->getVkContext(), ndc.z};
+            state.context->requestWorldLabelDepth();
+            drawList->AddCallback([](const ImDrawList*, const ImDrawCmd* command) {
+                const auto* depth = static_cast<const DepthState*>(command->UserCallbackData);
+                auto* render = static_cast<ImGui_ImplVulkan_RenderState*>(ImGui::GetPlatformIO().Renderer_RenderState);
+                assert(render);
+                depth->context->bindWorldLabelDepth(render->CommandBuffer, depth->depth);
+            }, &state, sizeof(state));
+        }
         if (showThisName) {
             drawList->AddText(nameFont, nameFontSize, ImVec2(nameX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), labelBuf);
             drawList->AddText(nameFont, nameFontSize, ImVec2(nameX,         nameY),         nameColor, labelBuf);
@@ -1625,6 +1662,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             }
         }
 
+        if (showThisName && !showPlate) drawList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+
         // Click to target / right-click context: detect clicks inside the nameplate region.
         // Use the wider of name text or health bar for the horizontal hit area so short
         // names like "Wolf" don't produce a tiny clickable strip narrower than the bar.
@@ -1650,45 +1689,23 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
     }
 
+    if (frameXmlOwnsMouse() || ImGui::GetIO().WantCaptureMouse) mouseoverGuid = 0;
     gameHandler.setMouseoverGuid(mouseoverGuid);
+    if (services_.addonManager && worldTooltipGuid_ != mouseoverGuid) {
+        auto* lua = services_.addonManager->getLuaEngine();
+        const char* script = mouseoverGuid
+            ? "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); GameTooltip:SetUnit('mouseover')"
+            : "if GameTooltip:GetOwner() == WorldFrame then GameTooltip:Hide() end";
+        if (!lua->executeString(script)) {
+            LOG_ERROR("World unit tooltip update failed: ", lua->lastError());
+        } else {
+            worldTooltipGuid_ = mouseoverGuid;
+        }
+    }
     if (auto* characters = appRenderer->getCharacterRenderer()) {
         auto* spawner = core::Application::getInstance().getEntitySpawner();
         characters->setHoveredInstance(spawner && mouseoverGuid
             ? spawner->characterInstanceIdForGuid(mouseoverGuid) : 0);
-    }
-
-    // My Name. Its own block rather than a case inside the loop above, because
-    // what this draws is a name and not a nameplate: no bar, no border, no
-    // click target. The loop skips the player outright for that reason, and
-    // threading an exception through every draw in it to reach one label would
-    // cost more than the label is worth.
-    if (addons::storedCVarValue("unitNameOwn", "0") != "0") {
-        auto self = gameHandler.getEntityManager().getEntity(playerGuid);
-        if (self && self->isUnit()) {
-            const std::string& ownName = static_cast<game::Unit*>(self.get())->getName();
-            if (!ownName.empty()) {
-                glm::vec3 ownPos;
-                if (!core::Application::getInstance().getRenderPositionForGuid(playerGuid, ownPos)) {
-                    ownPos = core::coords::canonicalToRender(
-                        glm::vec3(self->getX(), self->getY(), self->getZ()));
-                }
-                ownPos.z += 2.3f;
-                const glm::vec4 clip = viewProj * glm::vec4(ownPos, 1.0f);
-                if (clip.w > 0.01f) {
-                    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
-                    if (ndc.x >= -1.2f && ndc.x <= 1.2f && ndc.y >= -1.2f && ndc.y <= 1.2f) {
-                        const float ox = (ndc.x * 0.5f + 0.5f) * screenW;
-                        const float oy = (ndc.y * 0.5f + 0.5f) * screenH;
-                        const ImVec2 sz = ImGui::CalcTextSize(ownName.c_str());
-                        const float tx = ox - sz.x * 0.5f;
-                        drawList->AddText(ImVec2(tx + 1.0f, oy + 1.0f),
-                                          IM_COL32(0, 0, 0, 160), ownName.c_str());
-                        drawList->AddText(ImVec2(tx, oy),
-                                          IM_COL32(220, 220, 220, 230), ownName.c_str());
-                    }
-                }
-            }
-        }
     }
 
     // Render nameplate context popup (uses a tiny overlay window as host)

@@ -3195,7 +3195,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 // Create per-batch material UBO
                 CharMaterialUBO matData{};
-                matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && instance.id == hoveredInstance_ ? 1.0f : 0.0f;
+                matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
                 matData.opacity = instance.opacity * batchColorAlpha;
                 matData.alphaTest = blendNeedsCutout ? 1 : 0;
                 matData.colorKeyBlack = colorKeyBlack ? 1 : 0;
@@ -3312,7 +3312,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             }
 
             CharMaterialUBO matData{};
-            matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && instance.id == hoveredInstance_ ? 1.0f : 0.0f;
+            matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
             matData.opacity = instance.opacity;
             matData.alphaTest = 0;
             matData.colorKeyBlack = 0;
@@ -4310,6 +4310,32 @@ bool CharacterRenderer::getInstanceKeyBonePivotZ(uint32_t instanceId, int32_t ke
         return true;
     }
     return false;
+}
+
+void CharacterRenderer::setHoveredInstance(uint32_t instanceId) {
+    hoveredInstances_.clear();
+    const auto instance = instances.find(instanceId);
+    if (instance == instances.end()) return;
+    hoveredInstances_.push_back(instanceId);
+    for (const auto& attachment : instance->second.weaponAttachments)
+        hoveredInstances_.push_back(attachment.weaponInstanceId);
+}
+
+bool CharacterRenderer::getInstanceNamePosition(uint32_t instanceId, bool mounted, glm::vec3& outPosition) {
+    const auto instance = instances.find(instanceId);
+    if (instance == instances.end()) return false;
+    const auto model = models.find(instance->second.modelId);
+    assert(model != models.end());
+    // Build 8606 CGUnit_C::GetNamePosition uses these authored M2 attachments.
+    glm::mat4 attachment;
+    if (getAttachmentTransform(instanceId, mounted ? 29 : 18, attachment)) {
+        outPosition = glm::vec3(attachment[3]);
+    } else {
+        // Models without a name attachment use a height-derived position.
+        outPosition = instance->second.position;
+        outPosition.z += model->second.data.boundMax.z * instance->second.scale * 1.25f;
+    }
+    return true;
 }
 
 bool CharacterRenderer::getInstanceHeight(uint32_t instanceId, float& outHeight) const {

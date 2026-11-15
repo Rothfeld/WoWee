@@ -1713,6 +1713,13 @@ int lua_Tooltip_AppendText(lua_State* L) {
     return 0;
 }
 
+static void clearTooltipUnit(lua_State* L, wowee::ui::Widget& tooltip) {
+    tooltip.tooltipUnit.clear();
+    if (auto* tree = wowee::addons::getWidgetTree(L)) {
+        if (auto* bar = tree->findByName(tooltip.name + "StatusBar")) bar->shown = false;
+    }
+}
+
 int lua_Tooltip_SetFrameStack(lua_State* L) {
     auto* w = widgetOf(L, 1);
     auto* tree = wowee::addons::getWidgetTree(L);
@@ -1746,6 +1753,7 @@ int lua_Tooltip_SetFrameStack(lua_State* L) {
     });
 
     w->isTooltip = true;
+    clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     auto line = [&](std::string text, float r, float g, float b) {
         wowee::ui::Widget::TooltipLine tl;
@@ -1824,6 +1832,7 @@ int lua_Tooltip_SetOwner(lua_State* L) {
     if (!w) return 0;
     w->isTooltip = true;
     // Cleared here, because SetOwner is what precedes a fresh set of lines.
+    clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
 
     // Remembered, because IsOwned reads it and nothing wrote it - so every
@@ -1899,6 +1908,7 @@ int lua_Tooltip_SetText(lua_State* L) {
     const bool isTooltipFrame = w && (w->isTooltip || w->objectType == "GameTooltip");
     if (!isTooltipFrame) { lua_pushboolean(L, 0); return 1; }
     w->isTooltip = true;
+    clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     // SetText starts a tooltip over, so whatever it was showing is no longer
     // what it is showing. __itemId is what GameTooltip:GetItem() answers from
@@ -1979,6 +1989,7 @@ static bool fillQuestTooltip(wowee::ui::Widget* w, game::GameHandler* gh,
     if (q->title.empty() && q->objectives.empty()) return false;
 
     w->isTooltip = true;
+    w->tooltipUnit.clear();
     w->tooltipLines.clear();
     auto line = [&w](std::string text, float r, float g, float b) {
         wowee::ui::Widget::TooltipLine t;
@@ -2022,6 +2033,7 @@ static bool fillSpellTooltip(wowee::ui::Widget* w, game::GameHandler* gh,
     };
 
     w->isTooltip = true;
+    w->tooltipUnit.clear();
     w->tooltipLines.clear();
     const auto& rank = gh->getSpellRank(spellId);
     // DBC subtext also contains labels such as Racial and Passive. Tooltips
@@ -2272,6 +2284,7 @@ int lua_Tooltip_SetPlayerBuff(lua_State* L) {
     const auto& aura = gh->getPlayerAuras()[slot];
     if (aura.isEmpty()) return 0;
     w->isTooltip = true;
+    clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     const auto addLine = [&](std::string text, bool gold, bool wrap) {
         wowee::ui::Widget::TooltipLine line;
@@ -2387,6 +2400,7 @@ int lua_Tooltip_SetEquipmentSet(lua_State* L) {
     if (!set) { lua_pushboolean(L, 0); return 1; }
 
     w->isTooltip = true;
+    clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     auto line = [&](std::string text, float r, float g, float b) {
         wowee::ui::Widget::TooltipLine tl;
@@ -2470,6 +2484,7 @@ int lua_Tooltip_SetTalent(lua_State* L) {
     if (name.empty()) { lua_pushboolean(L, 0); return 1; }
 
     w->isTooltip = true;
+    clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
 
     wowee::ui::Widget::TooltipLine title;
@@ -2529,6 +2544,7 @@ int lua_Tooltip_SetTradeSkillItem(lua_State* L) {
     if (spellId == 0) { lua_pushboolean(L, 0); return 1; }
 
     w->isTooltip = true;
+    clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
     wowee::ui::Widget::TooltipLine title;
     title.left = recipe->name;
@@ -2578,6 +2594,17 @@ static int lua_Tooltip_IsUnit(lua_State* L) {
     const uint64_t theirs = wowee::addons::resolveUnitGuid(gh, other);
     lua_pushboolean(L, (mine != 0 && mine == theirs) ? 1 : 0);
     return 1;
+}
+
+int lua_Tooltip_GetUnit(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    if (!w || !gh || w->tooltipUnit.empty()) return 0;
+    const uint64_t guid = wowee::addons::resolveUnitGuid(gh, w->tooltipUnit);
+    if (!guid) return 0;
+    lua_pushstring(L, gh->lookupName(guid).c_str());
+    lua_pushstring(L, w->tooltipUnit.c_str());
+    return 2;
 }
 
 int lua_Tooltip_SetUnit(lua_State* L) {
@@ -2635,18 +2662,15 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             if (!guildName.empty()) addLine("<" + guildName + ">", 0.25f, 1.0f, 0.25f);
         }
     } else if (entity) {
-        // The trade an NPC plies, which is the line that tells a vendor from a
-        // guard: <Auctioneer>, <Innkeeper>, <Reagent Vendor>.
+        // NPC tooltip subtitles have no angle brackets (unlike overhead titles).
         const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
         if (unit) {
             const std::string sub = gh->getCachedCreatureSubName(unit->getEntry());
-            if (!sub.empty()) addLine("<" + sub + ">", 1.0f, 1.0f, 1.0f);
+            if (!sub.empty()) addLine(sub, 1.0f, 1.0f, 1.0f);
         }
     }
 
-    // "Level 50", and the class after it for a player. Yellow, as WoW draws a
-    // level the player's own is a match for; the difficulty colouring proper
-    // needs the same table the nameplates use and is not invented here.
+    // Native NPC tooltips use white level text, independently of level difficulty.
     if (entity) {
         const uint32_t level =
             entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_LEVEL));
@@ -2662,10 +2686,56 @@ int lua_Tooltip_SetUnit(lua_State* L) {
                     levelLine += wowee::addons::kLuaClasses[classId];
                 }
             }
-            addLine(levelLine, 1.0f, 0.82f, 0.0f);
+            addLine(levelLine, 1.0f, 1.0f, 1.0f);
         }
     }
 
+    if (!isPlayer && entity) {
+        auto* assets = gh->services().assetManager;
+        const auto* layouts = wowee::pipeline::getActiveDBCLayout();
+        const auto* layout = layouts ? layouts->getLayout("FactionTemplate") : nullptr;
+        const auto templates = assets ? assets->loadDBC("FactionTemplate.dbc") : nullptr;
+        if (templates && layout) {
+            const uint32_t templateId = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FACTIONTEMPLATE));
+            const int32_t record = templates->findRecordById(templateId);
+            if (record >= 0) {
+                const uint32_t faction = templates->getUInt32(record, (*layout)["Faction"]);
+                addLine(gh->getFactionNamePublic(faction), 1.0f, 1.0f, 1.0f);
+            }
+        }
+    }
+    if (entity && (entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS)) & 0x1000))
+        addLine("PvP", 1.0f, 1.0f, 1.0f);
+
+    // Unit tooltip health bars are engine-owned children, not declared in FrameXML.
+    // Keep the public named StatusBar so addons can inspect and restyle it.
+    const char* healthBarScript = R"lua(
+        local tip = ...
+        local name = tip:GetName() .. "StatusBar"
+        local bar = _G[name]
+        if not bar then
+            bar = CreateFrame("StatusBar", name, tip)
+            bar:SetPoint("TOPLEFT", tip, "BOTTOMLEFT", 0, -2)
+            bar:SetPoint("TOPRIGHT", tip, "BOTTOMRIGHT", 0, -2)
+            bar:SetHeight(6)
+            bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+            bar:SetStatusBarColor(0, 1, 0)
+            bar:SetBackdrop({bgFile="Interface\\Tooltips\\UI-Tooltip-Background", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=8, insets={left=2,right=2,top=2,bottom=2}})
+            bar:SetScript("OnUpdate", function(self)
+                local _, unit = self:GetParent():GetUnit()
+                if not unit then self:Hide(); return end
+                self:SetMinMaxValues(0, UnitHealthMax(unit))
+                self:SetValue(UnitHealth(unit))
+            end)
+        end
+        local _, unit = tip:GetUnit()
+        bar:SetMinMaxValues(0, UnitHealthMax(unit))
+        bar:SetValue(UnitHealth(unit))
+        bar:Show()
+    )lua";
+    if (luaL_loadstring(L, healthBarScript) != 0) return lua_error(L);
+    lua_pushvalue(L, 1);
+    if (lua_pcall(L, 1, 0, 0) != 0) return lua_error(L);
     w->shown = true;
     // The unit counterpart of fireTooltipSetItem, and it was the one of the
     // pair that was never fired. GameTooltip declares
@@ -2700,6 +2770,7 @@ static void fillItemTooltip(wowee::ui::Widget* w, const game::ItemDef& item,
     // it, so a tooltip that only filled itself in stayed hidden and hovering a
     // bag said nothing.
     w->shown = true;
+    w->tooltipUnit.clear();
     w->tooltipLines.clear();
     wowee::ui::Widget::TooltipLine title;
     // The suffix an instance rolled, which is part of the name a player reads:
@@ -2875,6 +2946,7 @@ static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
     lua_getglobal(L, "_WoweePopulateItemTooltip");
     if (lua_isfunction(L, -1)) {
         w->isTooltip = true;
+        clearTooltipUnit(L, *w);
         w->tooltipLines.clear();
         lua_pushvalue(L, 1);                                  // self
         lua_pushnumber(L, static_cast<lua_Number>(itemId));
@@ -2883,6 +2955,7 @@ static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
             lua_settop(L, top);
             if (ok) { w->shown = true; fireTooltipSetItem(L); return true; }
             // Nothing written, so leave the frame as the fallback finds it.
+            clearTooltipUnit(L, *w);
             w->tooltipLines.clear();
         } else {
             lua_settop(L, top);
@@ -3258,6 +3331,7 @@ int lua_Tooltip_SetBagItem(lua_State* L) {
         // caller that shows the tooltip anyway - which is what a bag window
         // does, one call for every slot it draws - showed the last item's
         // tooltip over an empty square.
+        clearTooltipUnit(L, *w);
         w->tooltipLines.clear();
         w->shown = false;
         lua_pushboolean(L, 0);
@@ -3310,7 +3384,10 @@ int lua_Tooltip_SetGuildBankItem(lua_State* L) {
 }
 
 int lua_Tooltip_ClearLines(lua_State* L) {
-    if (auto* w = widgetOf(L, 1)) w->tooltipLines.clear();
+    if (auto* w = widgetOf(L, 1)) {
+        clearTooltipUnit(L, *w);
+        w->tooltipLines.clear();
+    }
     // And what the tooltip was showing, which is a different question from
     // what is written in it.
     //
@@ -6368,6 +6445,7 @@ void LuaEngine::registerCoreAPI() {
         {"SetTradeSkillItem", lua_Tooltip_SetTradeSkillItem},
         {"SetUnit",         lua_Tooltip_SetUnit},
         {"IsUnit",          lua_Tooltip_IsUnit},
+        {"GetUnit",         lua_Tooltip_GetUnit},
         {"AddDoubleLine",   lua_Tooltip_AddDoubleLine},
         {"ClearLines",      lua_Tooltip_ClearLines},
         {"SetFrameStack",   lua_Tooltip_SetFrameStack},

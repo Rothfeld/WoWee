@@ -7,6 +7,14 @@ yellow hovered names, a separate level field, and reaction-colored health.
 Friendly unflagged player plates use blue health. NPC subtitles, percentage
 text, and custom aura dots are omitted from legacy plates.
 
+Plate anchors use M2 attachment 18 (29 when mounted), plus the native
+2/3-yard plate offset. The frame's top aligns to that point; its health bar
+sits below it according to the original artwork geometry. Plain names use
+perspective-scaled text with a raised baseline, calibrated against build 8606.
+They sample scene depth per pixel, so tent fabric and other model geometry
+can hide part of a name. The final water pass must preserve resolved depth
+with STORE for this to work. Character hover also illuminates attached weapons.
+
 Plate range is measured from the player, independently of camera zoom. Units
 outside plate range can still show a plain world name according to name settings.
 Neutral attackable creatures use the enemy-plate toggle. A visible plate retains
@@ -32,3 +40,22 @@ In TBC, `ShowFriendNameplates()` / `HideFriendNameplates()` and the saved
 `FRIENDNAMEPLATES_ON` variable control friendly plates. Stock FrameXML restores
 this variable through `UpdateNameplates()`. A comparison restart must close the
 client normally: SIGTERM bypasses saved-variable shutdown and resets this state.
+
+NPC equipment uses the three server update slots. In TBC these contain
+ItemDisplayInfo IDs, with inventory type in UNIT_VIRTUAL_ITEM_INFO; in Wrath
+these contain item entries, resolved through Item.dbc. Main hand, off hand,
+and ranged weapons use the same model attachments and sheath transforms as
+player equipment. Changes to slot metadata or sheath state rebuild attachments.
+Non-humanoid creature models can carry weapons when their M2 defines the required
+attachment; CreatureDisplayInfoExtra is not a prerequisite.
+
+NPC corner tooltips use GameTooltip:SetUnit and the default FrameXML anchor.
+The engine supplies trade title, level, faction, PvP flag, and a named child
+health StatusBar. Non-unit tooltip setters clear the unit identity so item and
+spell tooltips cannot retain an NPC health bar. TBC Faction.dbc's English name
+is field 19; Wrath uses field 23. Always consult the active DBC layout.
+
+Shader-only builds must refresh `build/bin/assets/shaders`, where the running
+executable loads SPIR-V. Copying assets only on executable POST_BUILD leaves
+shader-only edits stale. The shader build target copies changed outputs on each
+build. For validation, compare source and runtime shader hashes.

@@ -572,3 +572,5 @@ Entertainment, Inc.
 - [StormLib](https://github.com/ladislav-zezula/StormLib) - MPQ library
 
 Optional development tool: [external comparison camera](docs/view-sync.md).
+
+TBC comparison behavior and debugging notes: [overhead labels, hover, NPC tooltips and equipment](docs/tbc-overhead-labels.md).

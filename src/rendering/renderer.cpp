@@ -1453,6 +1453,16 @@ void Renderer::endFrame() {
     // point where the shafts can copy it down, before the overlay pass opens.
     recordSunShafts();
 
+    VkImage labelDepth = vkCtx->getDepthCopySourceImage();
+    bool labelDepthMsaa = vkCtx->isDepthCopySourceMsaa();
+    VkImageLayout labelDepthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    if (postProcessPipeline_ && postProcessPipeline_->getSceneFramebuffer() != VK_NULL_HANDLE) {
+        labelDepth = postProcessPipeline_->getSceneDepthImage();
+        labelDepthMsaa = postProcessPipeline_->sceneDepthIsMsaa();
+        if (postProcessPipeline_->isFSR2Enabled()) labelDepthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    }
+    vkCtx->prepareWorldLabelDepth(currentCmd, labelDepth, labelDepthMsaa, labelDepthLayout);
+
     const auto& overlayFbs = vkCtx->getOverlayFramebuffers();
     if (vkCtx->getOverlayRenderPass() != VK_NULL_HANDLE && currentImageIndex < overlayFbs.size()) {
         VkRenderPassBeginInfo overlayRp{};
@@ -1483,6 +1493,8 @@ void Renderer::endFrame() {
     } else {
         LOG_ERROR("Overlay render pass missing - UI not drawn this frame");
     }
+
+    vkCtx->finishWorldLabelDepth(currentCmd);
 
     // Water now renders in the main pass (renderWorld), no separate 1x pass needed.
 

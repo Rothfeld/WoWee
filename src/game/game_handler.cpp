@@ -2830,33 +2830,17 @@ void GameHandler::loadFactionNameCache() const {
     auto dbc = am->loadDBC("Faction.dbc");
     if (!dbc || !dbc->isLoaded()) return;
 
-    // Faction.dbc WotLK 3.3.5a field layout:
-    //   0: ID
-    //   1: ReputationListID  (-1 / 0xFFFFFFFF = no reputation tracking)
-    //   2-5:  ReputationRaceMask[4]
-    //   6-9:  ReputationClassMask[4]
-    //  10-13: ReputationBase[4]
-    //  14-17: ReputationFlags[4]
-    //  18:    ParentFactionID
-    //  19-20: SpilloverRateIn, SpilloverRateOut (floats)
-    //  21-22: SpilloverMaxRankIn, SpilloverMaxRankOut
-    //  23:    Name (English locale, string ref)
-    constexpr uint32_t ID_FIELD      = 0;
+    constexpr uint32_t ID_FIELD = 0;
     constexpr uint32_t REPLIST_FIELD = 1;
-    constexpr uint32_t PARENT_FIELD  = 18;
-    constexpr uint32_t NAME_FIELD    = 23;  // enUS name string
-
-    // Classic/TBC have fewer fields; fall back gracefully
+    constexpr uint32_t PARENT_FIELD = 18;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    assert(layouts);
+    const auto* layout = layouts->getLayout("Faction");
+    assert(layout);
+    const uint32_t nameField = (*layout)["Name"];
+    assert(nameField < dbc->getFieldCount());
     const bool hasRepListField = dbc->getFieldCount() > REPLIST_FIELD;
-    // The parent chain is what groups the reputation panel into the headers
-    // the original interface draws. Read here rather than in a second pass so
-    // there is one opinion about which field holds it.
     const bool hasParentField = dbc->getFieldCount() > PARENT_FIELD;
-    if (dbc->getFieldCount() <= NAME_FIELD) {
-        LOG_WARNING("Faction.dbc: unexpected field count ", dbc->getFieldCount());
-        // Don't abort - still try to load names from a shorter layout
-    }
-    const uint32_t nameField = (dbc->getFieldCount() > NAME_FIELD) ? NAME_FIELD : 22u;
 
     uint32_t count = dbc->getRecordCount();
     for (uint32_t i = 0; i < count; ++i) {

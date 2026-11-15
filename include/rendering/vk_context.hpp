@@ -220,6 +220,11 @@ public:
     [[nodiscard]] const FrameData& getCurrentFrameData() const { return frames[currentFrame]; }
 
     VkPipeline getImGuiAdditivePipeline(VkPipelineLayout layout);
+    void requestWorldLabelDepth() { worldLabelDepthRequested_ = true; }
+    void prepareWorldLabelDepth(VkCommandBuffer cmd, VkImage image, bool multisampled, VkImageLayout layout);
+    void bindWorldLabelDepth(VkCommandBuffer cmd, float depth);
+    void finishWorldLabelDepth(VkCommandBuffer cmd);
+
 
     // For ImGui
     [[nodiscard]] VkRenderPass getImGuiRenderPass() const { return imguiRenderPass; }
@@ -577,6 +582,22 @@ private:
     // ImGui resources
     VkRenderPass imguiRenderPass = VK_NULL_HANDLE;
     VkPipeline imguiAdditivePipeline_ = VK_NULL_HANDLE;
+    struct WorldLabelDepth {
+        VkImage source = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkDescriptorSet descriptor = VK_NULL_HANDLE;
+        VkImageLayout originalLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bool multisampled = false;
+    };
+    WorldLabelDepth worldLabelDepth_[MAX_FRAMES_IN_FLIGHT];
+    bool worldLabelDepthRequested_ = false;
+    VkDescriptorPool worldLabelPool_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout worldLabelDepthLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout worldLabelPipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline worldLabelPipelines_[2]{};
+    VkSampler worldLabelSampler_ = VK_NULL_HANDLE;
+    void destroyWorldLabelDepth();
+
     VkRenderPass overlayRenderPass = VK_NULL_HANDLE;
     VkRenderPass overlayClearRenderPass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> overlayFramebuffers;

@@ -2274,6 +2274,7 @@ bool VkContext::createSceneContinueRenderPass() {
 }
 
 void VkContext::destroyOverlayRenderPass() {
+    destroyWorldLabelDepth();
     for (VkFramebuffer fb : overlayFramebuffers) {
         if (fb) vkDestroyFramebuffer(device, fb, nullptr);
     }
@@ -2316,7 +2317,133 @@ VkPipeline VkContext::getImGuiAdditivePipeline(VkPipelineLayout layout) {
     return imguiAdditivePipeline_;
 }
 
+void VkContext::prepareWorldLabelDepth(VkCommandBuffer cmd, VkImage image, bool multisampled, VkImageLayout layout) {
+    if (!worldLabelDepthRequested_) return;
+    assert(image != VK_NULL_HANDLE);
+    const auto check = [](VkResult result) {
+        if (result != VK_SUCCESS) throw std::runtime_error("World label depth resource creation failed: " + std::to_string(result));
+    };
+    if (!worldLabelDepthLayout_) {
+        if (!ensureUiTextureDescriptorPool()) throw std::runtime_error("World label texture pool unavailable");
+        VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        info.bindingCount = 1;
+        info.pBindings = &binding;
+        check(vkCreateDescriptorSetLayout(device, &info, nullptr, &worldLabelDepthLayout_));
+        const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT};
+        VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool.maxSets = MAX_FRAMES_IN_FLIGHT;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &poolSize;
+        check(vkCreateDescriptorPool(device, &pool, nullptr, &worldLabelPool_));
+        const VkDescriptorSetLayout sets[] = {uiTextureLayout_, worldLabelDepthLayout_};
+        const VkPushConstantRange transform{VK_SHADER_STAGE_VERTEX_BIT, 0, 16};
+        VkPipelineLayoutCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pipelineInfo.setLayoutCount = 2;
+        pipelineInfo.pSetLayouts = sets;
+        pipelineInfo.pushConstantRangeCount = 1;
+        pipelineInfo.pPushConstantRanges = &transform;
+        check(vkCreatePipelineLayout(device, &pipelineInfo, nullptr, &worldLabelPipelineLayout_));
+        VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sampler.magFilter = sampler.minFilter = VK_FILTER_NEAREST;
+        sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        check(vkCreateSampler(device, &sampler, nullptr, &worldLabelSampler_));
+    }
+    auto& frame = worldLabelDepth_[currentFrame];
+    if (frame.source != image) {
+        if (frame.view) vkDestroyImageView(device, frame.view, nullptr);
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = depthFormat;
+        view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        check(vkCreateImageView(device, &view, nullptr, &frame.view));
+        frame.source = image;
+        if (!frame.descriptor) {
+            VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocation.descriptorPool = worldLabelPool_;
+            allocation.descriptorSetCount = 1;
+            allocation.pSetLayouts = &worldLabelDepthLayout_;
+            check(vkAllocateDescriptorSets(device, &allocation, &frame.descriptor));
+        }
+        VkDescriptorImageInfo imageInfo{worldLabelSampler_, frame.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = frame.descriptor;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+    frame.originalLayout = layout;
+    frame.multisampled = multisampled;
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = layout;
+    barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+void VkContext::bindWorldLabelDepth(VkCommandBuffer cmd, float depth) {
+    assert(worldLabelDepthRequested_);
+    const auto& frame = worldLabelDepth_[currentFrame];
+    assert(frame.descriptor);
+    auto& pipeline = worldLabelPipelines_[frame.multisampled ? 1 : 0];
+    if (!pipeline) {
+        auto shaders = loadShaderPair(device, "assets/shaders/world_label.vert.spv",
+            frame.multisampled ? "assets/shaders/world_label_ms.frag.spv" : "assets/shaders/world_label.frag.spv", "world labels");
+        if (!shaders) throw std::runtime_error("World label shaders unavailable");
+        pipeline = PipelineBuilder()
+            .setShaders(shaders.vertStage, shaders.fragStage)
+            .setVertexInput({{0, sizeof(ImDrawVert), VK_VERTEX_INPUT_RATE_VERTEX}}, {
+                {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ImDrawVert, pos)},
+                {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ImDrawVert, uv)},
+                {2, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(ImDrawVert, col)}})
+            .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+            .setNoDepthTest().setColorBlendAttachment(PipelineBuilder::blendAlpha())
+            .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+            .setLayout(worldLabelPipelineLayout_).setRenderPass(overlayRenderPass)
+            .build(device, pipelineCache_);
+        if (!pipeline) throw std::runtime_error("World label pipeline creation failed");
+    }
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldLabelPipelineLayout_, 1, 1, &frame.descriptor, 0, nullptr);
+    // Constant depth per camera-facing label. The ImGui vertex format stays unchanged.
+    VkViewport viewport{0, 0, static_cast<float>(swapchainExtent.width), static_cast<float>(swapchainExtent.height), depth, depth};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+}
+
+void VkContext::finishWorldLabelDepth(VkCommandBuffer cmd) {
+    if (!worldLabelDepthRequested_) return;
+    const auto& frame = worldLabelDepth_[currentFrame];
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    barrier.newLayout = frame.originalLayout;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = frame.source;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barrier);
+    worldLabelDepthRequested_ = false;
+}
+
+void VkContext::destroyWorldLabelDepth() {
+    for (auto& frame : worldLabelDepth_) { if (frame.view) vkDestroyImageView(device, frame.view, nullptr); frame = {}; }
+    for (auto& pipeline : worldLabelPipelines_) destroy(device, pipeline);
+    destroy(device, worldLabelPool_);
+    destroy(device, worldLabelPipelineLayout_);
+    destroy(device, worldLabelDepthLayout_);
+    destroy(device, worldLabelSampler_);
+}
+
 void VkContext::destroyImGuiResources() {
+    destroyWorldLabelDepth();
     if (imguiAdditivePipeline_ != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, imguiAdditivePipeline_, nullptr);
         imguiAdditivePipeline_ = VK_NULL_HANDLE;
