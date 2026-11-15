@@ -2893,7 +2893,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         if (!gpuModel.vertexBuffer) continue;
 
         // Skip fully transparent instances
-        if (instance.opacity <= 0.0f) continue;
+        const float renderOpacity = instance.opacity * instance.cameraOpacity;
+        if (renderOpacity <= 0.0f) continue;
 
         // Set model matrix (use override for weapon instances)
         glm::mat4 modelMat = instance.hasOverrideModelMatrix
@@ -3178,7 +3179,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     // frame the pulse was not at full, and the cards showed as
                     // black roughly half the time.
                     desiredPipeline = additivePipeline_;
-                } else if (instance.opacity * batchColorAlpha < 0.999f) {
+                } else if (renderOpacity * batchColorAlpha < 0.999f) {
                     // Whole-instance fade (ghost form, spawn fade-in): the opaque and
                     // alpha-test pipelines have blending disabled, so the shader's
                     // texColor.a * opacity output is discarded and only hair (via
@@ -3252,7 +3253,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 // Create per-batch material UBO
                 CharMaterialUBO matData{};
                 matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
-                matData.opacity = instance.opacity * batchColorAlpha;
+                matData.opacity = renderOpacity * batchColorAlpha;
                 matData.alphaTest = blendNeedsCutout ? 1 : 0;
                 matData.colorKeyBlack = colorKeyBlack ? 1 : 0;
                 matData.unlit = unlit ? 1 : 0;
@@ -3360,7 +3361,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
             // Whole-model fallback inherits whatever pipeline was bound last;
             // pick it explicitly so instance fades blend here too.
-            VkPipeline fallbackPipeline = (instance.opacity < 0.999f)
+            VkPipeline fallbackPipeline = (renderOpacity < 0.999f)
                 ? translucentPipeline_ : opaquePipeline_;
             if (fallbackPipeline != currentPipeline) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fallbackPipeline);
@@ -3369,7 +3370,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
             CharMaterialUBO matData{};
             matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
-            matData.opacity = instance.opacity;
+            matData.opacity = renderOpacity;
             matData.alphaTest = 0;
             matData.colorKeyBlack = 0;
             matData.unlit = 0;
@@ -3968,6 +3969,19 @@ void CharacterRenderer::setInstanceScale(uint32_t instanceId, float scale) {
     }
 }
 
+void CharacterRenderer::setInstanceCameraOpacity(uint32_t instanceId, float opacity) {
+    assert(std::isfinite(opacity) && opacity >= 0.0f && opacity <= 1.0f);
+    auto& instance = instances.at(instanceId);
+    instance.cameraOpacity = opacity;
+    // Keep camera fading independent of ghost, stealth and spawn opacity.
+    for (const auto& attachment : instance.weaponAttachments) {
+        instances.at(attachment.weaponInstanceId).cameraOpacity = opacity;
+        for (const auto& effect : attachment.effects) {
+            instances.at(effect.effectInstanceId).cameraOpacity = opacity;
+        }
+    }
+}
+
 void CharacterRenderer::setInstanceOpacity(uint32_t instanceId, float opacity) {
     auto it = instances.find(instanceId);
     if (it != instances.end()) {
@@ -4333,6 +4347,7 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
     if (weapIt != instances.end()) {
         weapIt->second.hasOverrideModelMatrix = true;
         weapIt->second.opacity = charInstance.opacity;
+        weapIt->second.cameraOpacity = charInstance.cameraOpacity;
     }
 
     // Store attachment on parent character instance
@@ -4535,6 +4550,7 @@ bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t att
     fxIt->second.isEffectModel = true;
     fxIt->second.animationLoop = true;
     fxIt->second.opacity = charIt->second.opacity;
+    fxIt->second.cameraOpacity = charIt->second.cameraOpacity;
 
     WeaponEffectAttachment fx;
     fx.effectModelId = effectModelId;

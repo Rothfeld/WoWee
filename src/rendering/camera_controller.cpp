@@ -310,7 +310,7 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
 
         if (includeDoodads && m2Renderer && !externalFollow_) {
             glm::vec3 adjusted;
-            if (m2Renderer->checkCollision(stepPos, candidate, adjusted)) {
+            if (m2Renderer->checkCollision(stepPos, candidate, adjusted, 0.5f, grounded)) {
                 candidate.x = adjusted.x;
                 candidate.y = adjusted.y;
             }
@@ -2390,7 +2390,9 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // request. Share this visibility decision with the renderer so its
         // recovery path cannot immediately reveal the intersecting mesh again.
         const float eyeDistance = glm::distance(smoothedCamPos, pivot);
-        cameraInsidePlayer_ = eyeDistance < (cameraInsidePlayer_ ? 0.85f : 0.75f);
+        playerCameraOpacity_ = glm::clamp((eyeDistance - 0.5f) / 1.0f, 0.0f, 1.0f);
+        characterRenderer->setInstanceCameraOpacity(playerInstanceId,
+            playerCameraOpacity_);
         characterRenderer->setInstanceVisible(playerInstanceId, !shouldHidePlayer());
 
         // Note: the Renderer's CharAnimState machine drives player character animations

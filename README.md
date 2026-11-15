@@ -639,11 +639,13 @@ feet. A nearby log rim must not hide terrain crossed beneath it. Terrain retains
 its endpoint crossing rule for uphill landings; grounded step-up is separate.
 
 Authored M2 wall collision clips triangles to the upright world-space body above
-its step budget before measuring horizontal separation. Query both local floor
+its grounded step budget before measuring horizontal separation. Airborne contact
+includes the feet and vertical sweep; a jump has no walking step clearance. Query both local floor
 and wall triangle grids: pitched props can turn a local floor into a world wall.
 A closest point measured only from the feet misses torso-height overhangs.
 
-Player self-visibility uses actual camera-to-pivot distance as well as requested
-first-person zoom. Collision can shorten that distance while the requested zoom
-stays far away. The camera controller owns this state; renderer visibility
-recovery must respect it. Separate hide/show distances prevent boundary flicker.
+Player camera fade uses actual camera-to-pivot distance, becoming transparent
+between 1.5 and 0.5 yards. Collision can shorten that distance while requested
+zoom stays far away. Camera opacity multiplies ghost/stealth/spawn opacity and
+propagates to weapons and their effects. Renderer visibility recovery respects
+the camera controller's fully transparent state.

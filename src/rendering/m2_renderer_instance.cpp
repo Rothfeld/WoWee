@@ -1151,7 +1151,7 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
 }
 
 bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
-                                 glm::vec3& adjustedPos, float playerRadius) const {
+                                 glm::vec3& adjustedPos, float playerRadius, bool grounded) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     adjustedPos = to;
     bool collided = false;
@@ -1241,7 +1241,11 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
                 if (length < 0.00001f) continue;
                 const glm::vec3 normal = cross / length;
                 if (std::abs(normal.z) >= movement::kMinWalkableNormalZ) continue;
-                const float bottom = adjustedPos.z + movement::kMaxStepUp;
+                // Only supported walking can step over a low edge. In flight,
+                // include feet and their vertical sweep so ankles cannot enter
+                // a prop before the descending floor query reaches its top.
+                const float bottom = std::min(from.z, adjustedPos.z) +
+                    (grounded ? movement::kMaxStepUp : 0.0f);
                 const float top = adjustedPos.z + 2.0f;
                 const auto closest = closestHorizontalPointInSlab(glm::vec2(adjustedPos),a,b,c,bottom,top);
                 if (!closest) continue;

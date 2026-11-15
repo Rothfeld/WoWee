@@ -112,7 +112,7 @@ public:
     [[nodiscard]] float getTravelYaw() const { return travelYaw_; }
     [[nodiscard]] bool isThirdPerson() const { return thirdPerson; }
     [[nodiscard]] bool isFirstPersonView() const { return thirdPerson && (userTargetDistance <= MIN_DISTANCE + 0.15f); }
-    [[nodiscard]] bool shouldHidePlayer() const { return isFirstPersonView() || cameraInsidePlayer_; }
+    [[nodiscard]] bool shouldHidePlayer() const { return playerCameraOpacity_ <= 0.0f; }
     [[nodiscard]] bool isGrounded() const { return grounded; }
     [[nodiscard]] float getAirborneSeconds() const { return airborneSeconds_; }
     [[nodiscard]] bool isJumping() const { return !grounded && verticalVelocity > 0.0f; }
@@ -320,7 +320,7 @@ public:
     }
 
 private:
-    bool cameraInsidePlayer_ = false;
+    float playerCameraOpacity_ = 1.0f;
     Camera* camera;
     TerrainManager* terrainManager = nullptr;
     /// One frame's input and physics setup, handed to whichever camera mode is

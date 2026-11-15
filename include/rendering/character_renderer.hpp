@@ -117,6 +117,7 @@ public:
     [[nodiscard]] float getInstanceScale(uint32_t instanceId) const;
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
+    void setInstanceCameraOpacity(uint32_t instanceId, float opacity);
     void setHoveredInstance(uint32_t instanceId);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
     [[nodiscard]] const pipeline::M2Model* getInstanceModelData(uint32_t instanceId) const;
@@ -315,6 +316,7 @@ private:
 
         // Opacity (for fade-in)
         float opacity = 1.0f;
+        float cameraOpacity = 1.0f;
         float fadeInTime = 0.0f;     // elapsed fade time (seconds)
         float fadeInDuration = 0.0f; // total fade duration (0 = no fade)
 
