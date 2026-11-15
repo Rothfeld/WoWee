@@ -1381,15 +1381,13 @@ bool CombatHandler::isSelectableUnit(uint64_t guid) const {
     // Not re-gated here, because that would be trading a working behaviour for
     // a theory. Anyone who wants the gate back should first confirm against a
     // live corpse that the flag now reads what it should.
-    // Empty, fully-looted corpses are already removed locally by the
-    // lootableCleared -> despawnCreatureLocally path (see
-    // EntityController::onValuesUpdateUnit), so they don't return as click targets.
+    // Empty corpses remain selectable until the server removes them.
     return true;
 }
 
 void CombatHandler::setTarget(uint64_t guid) {
     if (guid == owner_.getTargetGuid()) return;
-    // Looted-out, unskinnable corpses cannot be selected.
+    // Apply the same unit-selection rules as scene picking.
     if (!isSelectableUnit(guid)) return;
 
     // Save previous target - once as "the last one whatever it was", which is
