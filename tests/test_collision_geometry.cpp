@@ -226,3 +226,15 @@ TEST_CASE("horizontal wall collision retains entry side across thin surfaces", "
         {-0.7f, 0.0f}, {-0.6f, 0.0f}, {1.0f, 0.0f}, 0.5f);
     REQUIRE(clear == glm::vec2(0.0f));
 }
+
+TEST_CASE("cylinder contact clips ramp edges below the step height", "[collision]") {
+    using wowee::rendering::closestHorizontalPointInSlab;
+    const glm::vec3 a(0,0,0), b(0,4,0), c(0,4,2);
+    const auto low = closestHorizontalPointInSlab({0.1f,0.2f}, a,b,c,0.6f,2.0f);
+    REQUIRE(low);
+    CHECK(glm::distance(*low,glm::vec2(0.1f,0.2f)) > 0.5f);
+    const auto tall = closestHorizontalPointInSlab({0.1f,3.0f}, a,b,c,0.6f,2.0f);
+    REQUIRE(tall);
+    CHECK(glm::distance(*tall,glm::vec2(0.1f,3.0f)) < 0.11f);
+    CHECK_FALSE(closestHorizontalPointInSlab({0,0},a,b,c,2.1f,4.0f));
+}

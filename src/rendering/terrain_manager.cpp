@@ -2329,7 +2329,7 @@ const pipeline::MapChunk* TerrainManager::findChunkAt(float glX, float glY,
     return nullptr;
 }
 
-std::optional<float> TerrainManager::getHeightAt(float glX, float glY) const {
+std::optional<float> TerrainManager::getHeightAt(float glX, float glY, glm::vec3* surfaceNormal) const {
     float fracX = 0.0f, fracY = 0.0f;
     const pipeline::MapChunk* chunk = findChunkAt(glX, glY, fracX, fracY);
     if (!chunk) return std::nullopt;
@@ -2342,7 +2342,7 @@ std::optional<float> TerrainManager::getHeightAt(float glX, float glY) const {
     // it. The two answers differed by whatever the centre was offset by, so the
     // floor came out below the visible ground and the player sank into a slope.
     const glm::vec3 surface = pipeline::TerrainMeshGenerator::chunkSurfacePoint(
-        chunk->position, chunk->heightMap, fracX, fracY, CHUNK_SIZE / 8.0f);
+        chunk->position, chunk->heightMap, fracX, fracY, CHUNK_SIZE / 8.0f, surfaceNormal);
     return surface.z;
 }
 

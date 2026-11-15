@@ -1420,10 +1420,10 @@ void Application::run() {
         // together from one clock reading so the two cannot disagree about
         // where the frame began.
         const std::int64_t deltaNs = pacer.tickNs();
-        // Capped, so a stall - a breakpoint, a swapchain rebuild, a machine
-        // coming back from sleep - does not teleport everything that
-        // integrates over it.
-        const float deltaTime = FramePacer::toSeconds(deltaNs);
+        // Movement integrates in bounded collision substeps. Preserve elapsed
+        // time here so low rendering rates do not slow movement relative to
+        // the server clock.
+        const float deltaTime = FramePacer::toSeconds(deltaNs, std::numeric_limits<float>::max());
 
         if (renderer && renderer->getCameraController() && ImGui::GetIO().WantCaptureMouse) {
             renderer->getCameraController()->releaseMouseCapture();

@@ -111,7 +111,8 @@ public:
      */
     static glm::vec3 chunkSurfacePoint(const float chunkPosition[3],
                                        const HeightMap& heightMap,
-                                       float fracX, float fracY, float unitSize);
+                                       float fracX, float fracY, float unitSize,
+                                       glm::vec3* surfaceNormal = nullptr);
 
     /**
      * Where a world position falls inside a chunk, in the 0..8 grid fractions

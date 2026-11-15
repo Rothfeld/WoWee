@@ -64,9 +64,9 @@ float heightfieldNormalZ(SampleFn&& sample, float x, float y, float spacing) {
 /// Only a step that crosses the surface is touched. One that starts under it is
 /// in a cave or a tunnel, or somewhere else this cannot vouch for, and ground
 /// that answers nothing - a hole, a tile not loaded - is no ground.
-template <typename SampleFn>
-glm::vec3 flightStepAgainstGround(SampleFn&& sample, const glm::vec3& from,
-                                  const glm::vec3& to, float normalSpacing) {
+template <typename SampleFn, typename NormalFn>
+glm::vec3 surfaceStepAgainstGround(SampleFn&& sample, const glm::vec3& from,
+                                   const glm::vec3& to, NormalFn&& normalAt) {
     const auto endGround = sample(to.x, to.y);
     if (!endGround || to.z >= *endGround) return to;
     // Feet on the ground read a hair either side of it.
@@ -89,7 +89,7 @@ glm::vec3 flightStepAgainstGround(SampleFn&& sample, const glm::vec3& from,
     const glm::vec3 contact = from + step * above;
 
     glm::vec3 rest = step * (1.0f - above);
-    const glm::vec3 n = heightfieldNormal(sample, contact.x, contact.y, normalSpacing);
+    const glm::vec3 n = normalAt(contact.x, contact.y);
     const float into = glm::dot(rest, n);
     if (into < 0.0f) rest -= into * n;
 
@@ -97,6 +97,37 @@ glm::vec3 flightStepAgainstGround(SampleFn&& sample, const glm::vec3& from,
     if (const auto ground = sample(end.x, end.y); ground && end.z < *ground) end.z = *ground;
     return end;
 }
+
+template <typename SampleFn>
+glm::vec3 flightStepAgainstGround(SampleFn&& sample, const glm::vec3& from,
+                                  const glm::vec3& to, float normalSpacing) {
+    return surfaceStepAgainstGround(sample, from, to, [&](float x, float y) {
+        return heightfieldNormal(sample, x, y, normalSpacing);
+    });
+}
+
+// A walker may move along or down an unwalkable slope, but may not use
+// grounding to turn horizontal movement into an uphill climb. Airborne feet
+// above the surface remain free to cross it; underground structures are left
+// to their own collision queries.
+template <typename SampleFn>
+glm::vec3 walkStepAgainstGround(SampleFn&& sample, const glm::vec3& from,
+                                const glm::vec3& to, const glm::vec3& normal) {
+    const auto start = sample(from.x, from.y);
+    const auto end = sample(to.x, to.y);
+    if (!start || !end || from.z < *start - 0.25f || to.z > *end + 0.05f)
+        return to;
+    if (isWalkableNormal(normal.z)) return to;
+    const glm::vec2 horizontalNormal(normal.x, normal.y);
+    const float lengthSquared = glm::dot(horizontalNormal, horizontalNormal);
+    const glm::vec2 step(to.x - from.x, to.y - from.y);
+    const float into = glm::dot(step, horizontalNormal);
+    if (into >= 0.0f) return to;
+    const glm::vec2 slide = step - horizontalNormal * (into / lengthSquared);
+    return {from.x + slide.x, from.y + slide.y, to.z};
+}
+
+
 
 inline bool isReachableStep(float deltaZ) {
     return deltaZ >= -0.25f && deltaZ <= kMaxStepUp;

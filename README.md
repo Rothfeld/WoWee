@@ -597,3 +597,11 @@ Particle births retain their time within each render frame. Existing particles a
 before emission; new particles start at their elapsed age since birth, including
 ballistic displacement. Short effects such as LootFX's 0.2-second stars must retain
 their authored live population even at low rendering rates.
+
+Terrain height queries can return the selected fan triangle's exact normal.
+Walking collision must use that face normal: averaging heights across triangle
+creases changes the 50-degree classification. Steep contact currently projects
+falling motion onto terrain; the paired rockface route still shows a 3-5 yard
+endpoint discrepancy and needs further native support-contact investigation.
+WMO wall distance is measured after clipping the triangle to the player's body
+span above the step budget, so low ramp edges do not block entry.

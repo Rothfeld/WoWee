@@ -14,6 +14,7 @@
 #include <future>
 #include <sstream>
 #include <string>
+#include <stdexcept>
 #include "core/thread_pool.hpp"
 #include <imgui.h>
 #include "rendering/terrain_manager.hpp"
@@ -885,6 +886,30 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
     // Sweep collisions in small steps to reduce tunneling through thin walls/floors.
     // Skip entirely when stationary to avoid wasting collision calls.
     // Use tighter steps when inside WMO for more precise collision.
+    if (terrainManager && !externalFollow_ && !swimming && !isFlightAirborne() && !ignoreSlopeLimit_) {
+        const auto terrainHeight = [this](float x, float y) -> std::optional<float> {
+            if (terrainManager->isHoleAt(x, y)) return std::nullopt;
+            return terrainManager->getHeightAt(x, y);
+        };
+        const auto terrainNormal = [this](float x, float y) {
+            glm::vec3 normal(0.0f, 0.0f, 1.0f);
+            if (!terrainManager->getHeightAt(x, y, &normal)) {
+                LOG_ERROR("Terrain normal requested outside loaded terrain: ", x, ", ", y);
+                throw std::logic_error("Terrain normal requires loaded terrain");
+            }
+            return normal;
+        };
+        if (terrainHeight(targetPos.x, targetPos.y)) {
+            targetPos = movement::walkStepAgainstGround(terrainHeight, *followTarget,
+                targetPos, terrainNormal(targetPos.x, targetPos.y));
+        }
+        const auto height = terrainHeight(followTarget->x, followTarget->y);
+        if (height && std::abs(followTarget->z - *height) < 0.25f &&
+            !movement::isWalkableNormal(terrainNormal(followTarget->x, followTarget->y).z)) {
+            targetPos = movement::surfaceStepAgainstGround(terrainHeight,
+                *followTarget, targetPos, terrainNormal);
+        }
+    }
     targetPos = sweepAgainstWalls(*followTarget, targetPos, true);
 
     return targetPos;
@@ -1004,44 +1029,9 @@ CameraController::FloorSample CameraController::sampleFloorUnderFeet(const glm::
         }
         if (terrainManager) {
             terrainH = terrainManager->getHeightAt(targetPos.x, targetPos.y);
-            // ...and how steep it is there, which the height alone cannot say.
-            // Sampled at a third of a yard: wide enough not to read the
-            // interpolation inside one heightfield cell as a cliff, narrow
-            // enough to still see the face of one.
-            if (terrainH) {
-                // Half a heightfield cell, so the difference measures the
-                // slope of the ground rather than the seam between two of the
-                // triangles it is built from.
-                //
-                // This was a third of a yard, chosen when the floor query
-                // interpolated the four corners of a cell and was smooth
-                // across it. It samples the real surface now - four triangles
-                // fanned from the cell's centre vertex - and at that spacing
-                // the two samples routinely land in different wedges, so the
-                // difference reads the crease between them and calls a walkable
-                // hillside a cliff. A cell is 4.17 yards; a real cliff spans
-                // several of them and is still seen.
-                constexpr float kSlopeSampleSpacing = 2.0f;
-                const float nz = movement::heightfieldNormalZ(
-                    [this](float sx, float sy) {
-                        return terrainManager->getHeightAt(sx, sy);
-                    },
-                    targetPos.x, targetPos.y, kSlopeSampleSpacing);
-                // The slope limit does NOT remove the ground.
-                //
-                // It used to: too steep, and terrainH was cleared. But a floor
-                // that is not there is not a wall - the player does not fail to
-                // climb the hill, they fall through it and keep going, which is
-                // how this was reported. Whatever the limit is worth, it is not
-                // worth dropping someone out of the world.
-                //
-                // A slope limit belongs on the movement: refuse the step onto
-                // ground too steep to stand on, and leave the ground where it
-                // is. Until that is written, a steep hillside is climbable
-                // again, which is what it was before the limit was added and is
-                // the lesser of the two faults.
-                (void)nz;
-            }
+            // Keep the surface available to grounding. Horizontal movement
+            // applies the slope limit before this floor query.
+
         }
         if (wmoAsync) {
             try { auto [h, nz] = wmoFuture.get(); wmoH = h; wmoNormalZ = nz; }
@@ -1906,7 +1896,7 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             // 2. Airborne feet crossed the floor while descending. Proximity
             //    alone must not truncate the final part of the jump arc.
             // 3. Was grounded + ground is close (grace for slopes)
-            bool nearGround = (dz >= 0.0f && dz <= stepUp);
+            bool nearGround = (grounded && dz >= 0.0f && dz <= stepUp);
             bool airFalling = (!grounded && verticalVelocity <= 0.0f
                                && dz >= 0.0f && prevTargetPos.z >= *groundH);
             // Not while climbing in flight: a frame's climb at a high frame
@@ -1921,8 +1911,17 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
                 static constexpr float HOVER_HEIGHT = 4.0f;  // ~4 yards above ground
                 const float snapH = hoverActive_ ? (*groundH + HOVER_HEIGHT) : *groundH;
                 targetPos.z = snapH;
-                verticalVelocity = 0.0f;
-                grounded = true;
+                bool steepTerrain = false;
+                if (terrainManager && !ignoreSlopeLimit_ && !hoverActive_ && !externalFollow_) {
+                    glm::vec3 normal(0.0f, 0.0f, 1.0f);
+                    const auto height = terrainManager->getHeightAt(targetPos.x, targetPos.y, &normal);
+                    steepTerrain = height && !terrainManager->isHoleAt(targetPos.x, targetPos.y) &&
+                        std::abs(*height - *groundH) < 0.05f && !movement::isWalkableNormal(normal.z);
+                }
+                // Steep surfaces block penetration but cannot support standing.
+                // Preserve falling velocity for downhill contact projection.
+                if (!steepTerrain) verticalVelocity = 0.0f;
+                grounded = !steepTerrain;
                 lastGroundZ = *groundH;
             } else {
                 grounded = false;
@@ -2587,7 +2586,7 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
             // 1. Near ground (within step-up range above) - handles walking
             // 2. Actually falling from height (was airborne + falling fast)
             // 3. Was grounded + ground is close (grace for slopes)
-            bool nearGround = (dz >= 0.0f && dz <= stepUp);
+            bool nearGround = (grounded && dz >= 0.0f && dz <= stepUp);
             bool airFalling = (!grounded && verticalVelocity < -5.0f);
             bool slopeGrace = (grounded && dz >= -1.0f && dz <= stepUp * 2.0f);
 
@@ -3104,6 +3103,7 @@ void CameraController::update(float deltaTime) {
         // Physics has already cleared grounded. Report its successful takeoff
         // event, including buffered jumps, rather than rechecking input/ground.
         if (f.startedJump) {
+            jumpReported_ = true;
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_JUMP));
         }
 
@@ -3119,8 +3119,10 @@ void CameraController::update(float deltaTime) {
         // real drop - a jump is airborne for about a second - so nothing a
         // player would call a fall is lost.
         constexpr float kFallReportSeconds = 0.15f;
-        if (wasFalling && grounded && airborneSeconds_ >= kFallReportSeconds) {
+        if (grounded && (jumpReported_ ||
+                (wasFalling && airborneSeconds_ >= kFallReportSeconds))) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_FALL_LAND));
+            jumpReported_ = false;
         }
     }
 

@@ -328,7 +328,7 @@ bool TerrainMeshGenerator::chunkFractionsAt(const float chunkPosition[3],
 glm::vec3 TerrainMeshGenerator::chunkSurfacePoint(const float chunkPosition[3],
                                                   const HeightMap& heightMap,
                                                   float fracX, float fracY,
-                                                  float unitSize) {
+                                                  float unitSize, glm::vec3* surfaceNormal) {
     // The axes cross: world X runs against grid Y and world Y against grid X.
     const float worldX = chunkPosition[0] - fracY * unitSize;
     const float worldY = chunkPosition[1] - fracX * unitSize;
@@ -361,19 +361,25 @@ glm::vec3 TerrainMeshGenerator::chunkSurfacePoint(const float chunkPosition[3],
     // weights are the corner heights and the third is always the centre.
     float hA, hB;      // the two corners of the wedge
     float wA, wB;      // their weights
+    float du, dv;     // exact derivatives within the selected triangle
     if (u > v) {
         if (u + v < 1.0f) {          // top wedge: TL, TR
             hA = hTL; hB = hTR; wA = 1.0f - u - v; wB = u - v;
+            du = hTR - hTL; dv = 2.0f * hC - hTL - hTR;
         } else {                      // right wedge: TR, BR
             hA = hTR; hB = hBR; wA = u - v;        wB = u + v - 1.0f;
+            du = hTR + hBR - 2.0f * hC; dv = hBR - hTR;
         }
     } else {
         if (u + v < 1.0f) {          // left wedge: TL, BL
             hA = hTL; hB = hBL; wA = 1.0f - u - v; wB = v - u;
+            du = 2.0f * hC - hTL - hBL; dv = hBL - hTL;
         } else {                      // bottom wedge: BL, BR
             hA = hBL; hB = hBR; wA = v - u;        wB = u + v - 1.0f;
+            du = hBR - hBL; dv = hBL + hBR - 2.0f * hC;
         }
     }
+    if (surfaceNormal) *surfaceNormal = glm::normalize(glm::vec3(dv / unitSize, du / unitSize, 1.0f));
     const float wC = 1.0f - wA - wB;
     const float worldZ = chunkPosition[2] + (hA * wA + hB * wB + hC * wC);
     return glm::vec3(worldX, worldY, worldZ);

@@ -258,3 +258,22 @@ TEST_CASE("a flight step that ends in the ground slides along it", "[movement][f
         CHECK(flightStepAgainstGround(holed, from, to, 2.0f) == to);
     }
 }
+
+TEST_CASE("walking into steep terrain preserves contour travel without climbing") {
+    using namespace wowee::rendering::movement;
+    const auto steep = [](float x, float) -> std::optional<float> { return 2.0f * x; };
+    const auto gentle = [](float x, float) -> std::optional<float> { return 0.5f * x; };
+    const glm::vec3 start(0.0f);
+    const glm::vec3 step(0.2f, 0.15f, -0.01f);
+    const auto slid = walkStepAgainstGround(steep, start, step, glm::normalize(glm::vec3(-2,0,1)));
+    CHECK(std::abs(slid.x) < 0.00001f);
+    CHECK(slid.y == step.y);
+    CHECK(slid.z == step.z);
+    CHECK(walkStepAgainstGround(gentle, start, step, glm::normalize(glm::vec3(-0.5f,0,1))) == step);
+    const glm::vec3 airborne(0.2f, 0.15f, 2.0f);
+    CHECK(walkStepAgainstGround(steep, glm::vec3(0,0,2), airborne, glm::normalize(glm::vec3(-2,0,1))) == airborne);
+    const glm::vec3 underground(0.2f, 0.15f, -5.0f);
+    CHECK(walkStepAgainstGround(steep, glm::vec3(0,0,-5), underground, glm::normalize(glm::vec3(-2,0,1))) == underground);
+    const glm::vec3 downhill(-0.2f, 0.15f, -0.4f);
+    CHECK(walkStepAgainstGround(steep, start, downhill, glm::normalize(glm::vec3(-2,0,1))) == downhill);
+}

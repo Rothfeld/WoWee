@@ -2889,50 +2889,6 @@ static void transformAABB(const glm::mat4& modelMatrix,
     }
 }
 
-// Closest point on triangle (from Real-Time Collision Detection).
-static glm::vec3 closestPointOnTriangle(const glm::vec3& p, const glm::vec3& a,
-                                        const glm::vec3& b, const glm::vec3& c) {
-    glm::vec3 ab = b - a;
-    glm::vec3 ac = c - a;
-    glm::vec3 ap = p - a;
-    float d1 = glm::dot(ab, ap);
-    float d2 = glm::dot(ac, ap);
-    if (d1 <= 0.0f && d2 <= 0.0f) return a;
-
-    glm::vec3 bp = p - b;
-    float d3 = glm::dot(ab, bp);
-    float d4 = glm::dot(ac, bp);
-    if (d3 >= 0.0f && d4 <= d3) return b;
-
-    float vc = d1 * d4 - d3 * d2;
-    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
-        float v = d1 / (d1 - d3);
-        return a + v * ab;
-    }
-
-    glm::vec3 cp = p - c;
-    float d5 = glm::dot(ab, cp);
-    float d6 = glm::dot(ac, cp);
-    if (d6 >= 0.0f && d5 <= d6) return c;
-
-    float vb = d5 * d2 - d1 * d6;
-    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
-        float w = d2 / (d2 - d6);
-        return a + w * ac;
-    }
-
-    float va = d3 * d6 - d5 * d4;
-    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
-        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return b + w * (c - b);
-    }
-
-    float denom = 1.0f / (va + vb + vc);
-    float v = vb * denom;
-    float w = vc * denom;
-    return a + ab * v + ac * w;
-}
-
 // ---- Per-group 2D collision grid ----
 
 void WMORenderer::GroupResources::buildCollisionGrid() {
@@ -3792,79 +3748,23 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
                 glm::vec3 normal = group.triNormals[triStart / 3];
                 if (glm::dot(normal, normal) < 0.5f) continue;  // degenerate
 
-                // Recompute plane distances with current (possibly pushed) localTo
-                float fromDist = glm::dot(localFrom - v0, normal);
-                float toDist = glm::dot(localTo - v0, normal);
-
-                // Swept test: prevent tunneling when crossing a wall between frames
-                if ((fromDist > PLAYER_RADIUS && toDist < -PLAYER_RADIUS) ||
-                    (fromDist < -PLAYER_RADIUS && toDist > PLAYER_RADIUS)) {
-                    float denom = (fromDist - toDist);
-                    if (std::abs(denom) > 1e-6f) {
-                        float tHit = fromDist / denom;
-                        if (tHit >= 0.0f && tHit <= 1.0f) {
-                            glm::vec3 hitPoint = localFrom + (localTo - localFrom) * tHit;
-                            glm::vec3 hitClosest = closestPointOnTriangle(hitPoint, v0, v1, v2);
-                            float hitErrSq = glm::dot(hitClosest - hitPoint, hitClosest - hitPoint);
-                            if (hitErrSq <= 0.25f * 0.25f) {
-                                float side = fromDist > 0.0f ? 1.0f : -1.0f;
-                                glm::vec3 safeLocal = hitPoint + normal * side * (PLAYER_RADIUS + 0.05f);
-                                glm::vec3 pushLocal(safeLocal.x - localTo.x, safeLocal.y - localTo.y, 0.0f);
-                                // Cap swept pushback so walls don't shove the player violently
-                                float pushLenSq = pushLocal.x * pushLocal.x + pushLocal.y * pushLocal.y;
-                                const float MAX_SWEPT_PUSH = insideWMO ? 0.45f : 0.25f;
-                                if (pushLenSq > MAX_SWEPT_PUSH * MAX_SWEPT_PUSH) {
-                                    float scale = MAX_SWEPT_PUSH * glm::inversesqrt(pushLenSq);
-                                    pushLocal.x *= scale;
-                                    pushLocal.y *= scale;
-                                }
-                                localTo.x += pushLocal.x;
-                                localTo.y += pushLocal.y;
-                                glm::vec3 pushWorld = glm::vec3(instance.modelMatrix * glm::vec4(pushLocal, 0.0f));
-                                adjustedPos.x += pushWorld.x;
-                                adjustedPos.y += pushWorld.y;
-                                blocked = true;
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                // Horizontal cylinder collision: closest point + horizontal distance
-                glm::vec3 closest = closestPointOnTriangle(localTo, v0, v1, v2);
-                glm::vec3 delta = localTo - closest;
-                float horizDistSq = delta.x * delta.x + delta.y * delta.y;
-
-                if (horizDistSq <= PLAYER_RADIUS * PLAYER_RADIUS) {
-                    // Skip floor-like surfaces - grounding handles them, not wall
-                    // collision. The same cutoff the static pass sorted by.
-                    float absNz = std::abs(normal.z);
-                    if (absNz >= kWallMaxAbsNormalZ) continue;
-
-                    const float SKIN = 0.005f;        // small separation so we don't re-collide immediately
-                    // Push must cover full penetration to prevent gradual clip-through
-                    const float MAX_PUSH = PLAYER_RADIUS;
-                    float horizDist = std::sqrt(horizDistSq);
-                    float penetration = (PLAYER_RADIUS - horizDist);
-                    float pushDist = glm::clamp(penetration + SKIN, 0.0f, MAX_PUSH);
-                    glm::vec2 pushDir2;
-                    if (horizDistSq > 1e-8f) {
-                        pushDir2 = glm::vec2(delta.x, delta.y) * (1.0f / horizDist);
-                    } else {
-                        glm::vec2 n2(normal.x, normal.y);
-                        float n2LenSq = glm::dot(n2, n2);
-                        if (n2LenSq < 1e-8f) continue;
-                        pushDir2 = n2 * glm::inversesqrt(n2LenSq);
-                    }
-                    glm::vec3 pushLocal(pushDir2.x * pushDist, pushDir2.y * pushDist, 0.0f);
-
-                    localTo.x += pushLocal.x;
-                    localTo.y += pushLocal.y;
-                    glm::vec3 pushWorld = glm::vec3(instance.modelMatrix * glm::vec4(pushLocal, 0.0f));
-                    adjustedPos.x += pushWorld.x;
-                    adjustedPos.y += pushWorld.y;
-                    blocked = true;
-                }
+                if (std::abs(normal.z) >= kWallMaxAbsNormalZ) continue;
+                const auto closest = closestHorizontalPointInSlab(
+                    glm::vec2(localTo), v0, v1, v2,
+                    localFeetZ + movement::kMaxStepUp, localFeetZ + PLAYER_HEIGHT);
+                if (!closest) continue;
+                const auto priorClosest = closestHorizontalPointInSlab(
+                    glm::vec2(localFrom), v0, v1, v2,
+                    localFeetZ + movement::kMaxStepUp, localFeetZ + PLAYER_HEIGHT);
+                const glm::vec2 push = horizontalWallSeparation(
+                    glm::vec2(localFrom) - *priorClosest, glm::vec2(localTo) - *closest,
+                    glm::vec2(normal), PLAYER_RADIUS + 0.005f);
+                if (glm::dot(push, push) == 0.0f) continue;
+                const glm::vec3 pushLocal(push, 0.0f);
+                localTo += pushLocal;
+                const glm::vec3 pushWorld(instance.modelMatrix * glm::vec4(pushLocal, 0.0f));
+                adjustedPos += pushWorld;
+                blocked = true;
             }
         }
     }

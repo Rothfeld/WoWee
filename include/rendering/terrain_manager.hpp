@@ -272,7 +272,7 @@ public:
      * @param glY GL Y position
      * @return Height (GL Z) if terrain loaded at that position, empty otherwise
      */
-    [[nodiscard]] std::optional<float> getHeightAt(float glX, float glY) const;
+    [[nodiscard]] std::optional<float> getHeightAt(float glX, float glY, glm::vec3* surfaceNormal = nullptr) const;
 
     /**
      * True when the MCNK chunk containing this position is cut by terrain holes.

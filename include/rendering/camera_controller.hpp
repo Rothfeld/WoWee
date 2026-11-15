@@ -715,6 +715,7 @@ private:
     bool wasTurningRight = false;
     bool wasJumping = false;
     bool wasFalling = false;
+    bool jumpReported_ = false;
     /// How long the player has been off the ground and moving downward.
     ///
     /// A landing is only worth telling the server about if there was a fall.

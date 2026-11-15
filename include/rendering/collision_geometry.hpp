@@ -15,6 +15,9 @@
 /// method in the building one.
 
 #include <algorithm>
+#include <array>
+#include <optional>
+#include <limits>
 
 #include <glm/glm.hpp>
 
@@ -59,6 +62,56 @@ inline float rayTriangleIntersect(const glm::vec3& origin, const glm::vec3& dir,
 
     const float t = f * glm::dot(e2, q);
     return t > EPSILON ? t : -1.0f;  // behind the origin counts as a miss
+}
+
+// Clip a triangle to the cylinder's vertical span before measuring horizontal
+// distance. A nearest 3D point at the feet incorrectly treats a low ramp edge
+// as a wall even when the body can step above it.
+inline std::optional<glm::vec2> closestHorizontalPointInSlab(
+        const glm::vec2& point, const glm::vec3& a, const glm::vec3& b,
+        const glm::vec3& c, float bottom, float top) {
+    std::array<glm::vec3, 8> polygon{a, b, c};
+    int count = 3;
+    for (int plane = 0; plane < 2; ++plane) {
+        std::array<glm::vec3, 8> clipped{};
+        int size = 0;
+        const float height = plane == 0 ? bottom : top;
+        for (int i = 0; i < count; ++i) {
+            const auto& previous = polygon[(i + count - 1) % count];
+            const auto& current = polygon[i];
+            const bool previousInside = plane == 0 ? previous.z >= height : previous.z <= height;
+            const bool currentInside = plane == 0 ? current.z >= height : current.z <= height;
+            if (previousInside != currentInside)
+                clipped[size++] = previous + (current - previous) *
+                    ((height - previous.z) / (current.z - previous.z));
+            if (currentInside) clipped[size++] = current;
+        }
+        polygon = clipped;
+        count = size;
+        if (count == 0) return std::nullopt;
+    }
+    float nearestSquared = std::numeric_limits<float>::max();
+    glm::vec2 nearest(0.0f);
+    bool positive = false, negative = false;
+    float area = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        const glm::vec2 start(polygon[i]), end(polygon[(i + 1) % count]);
+        const glm::vec2 edge = end - start, offset = point - start;
+        const float cross = edge.x * offset.y - edge.y * offset.x;
+        positive |= cross > 0.00001f;
+        negative |= cross < -0.00001f;
+        area += start.x * end.y - start.y * end.x;
+        const float lengthSquared = glm::dot(edge, edge);
+        const float t = lengthSquared > 0.0f ? glm::clamp(glm::dot(offset, edge) / lengthSquared, 0.0f, 1.0f) : 0.0f;
+        const glm::vec2 candidate = start + edge * t;
+        const float distanceSquared = glm::dot(point - candidate, point - candidate);
+        if (distanceSquared < nearestSquared) {
+            nearestSquared = distanceSquared;
+            nearest = candidate;
+        }
+    }
+    if (std::abs(area) > 0.00001f && !(positive && negative)) return point;
+    return nearest;
 }
 
 /// Resolve horizontal overlap fully, retaining the approach side if a step

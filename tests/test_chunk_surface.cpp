@@ -202,3 +202,24 @@ TEST_CASE("a tilted plane is exact in all four wedges", "[chunksurface]") {
               Catch::Approx(3.0f * s[0] + 7.0f * s[1] + 5.0f));
     }
 }
+
+TEST_CASE("surface normals follow individual fan triangles across a crease", "[chunksurface]") {
+    HeightMap map = gridWhere([](float, float) { return 0.0f; });
+    map.heights[9] = 3.0f;
+    const float position[3] = {0.0f, 0.0f, 0.0f};
+    const glm::vec2 samples[] = {{0.50f, 0.49f}, {0.51f, 0.50f},
+                                  {0.49f, 0.50f}, {0.50f, 0.51f}};
+    const glm::vec3 expected[] = {{6.0f, 0.0f, kUnitSize},
+                                  {0.0f, -6.0f, kUnitSize},
+                                  {0.0f, 6.0f, kUnitSize},
+                                  {-6.0f, 0.0f, kUnitSize}};
+    for (size_t i = 0; i < 4; ++i) {
+        glm::vec3 normal;
+        TerrainMeshGenerator::chunkSurfacePoint(position, map, samples[i].x,
+            samples[i].y, kUnitSize, &normal);
+        const glm::vec3 direction = glm::normalize(expected[i]);
+        CHECK(normal.x == Catch::Approx(direction.x));
+        CHECK(normal.y == Catch::Approx(direction.y));
+        CHECK(normal.z == Catch::Approx(direction.z));
+    }
+}
