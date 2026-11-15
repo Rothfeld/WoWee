@@ -156,6 +156,7 @@ public:
         }
         activeSpline_.emplace(std::move(keys), /*timeClosed=*/false);
         splineDurationMs_ = durationMs;
+        locomotionSpeed_ = totalDist / totalDuration;
 
         // Snap position if in overrun phase
         if (isMoving_ && moveElapsed_ >= moveDuration_) {
@@ -230,6 +231,8 @@ public:
         moveStartX_ = x; moveStartY_ = y; moveStartZ_ = z;
         moveEndX_ = destX; moveEndY_ = destY; moveEndZ_ = destZ;
         moveDuration_ = durationSec;
+        locomotionSpeed_ = std::sqrt((destX - x) * (destX - x) +
+            (destY - y) * (destY - y) + (destZ - z) * (destZ - z)) / durationSec;
         moveElapsed_ = 0.0f;
         orientation = destO;
         isMoving_ = true;
@@ -270,6 +273,10 @@ public:
                 isMoving_ = false;
             }
         }
+    }
+
+    [[nodiscard]] float getLocomotionSpeed() const {
+        return isActivelyMoving() ? locomotionSpeed_ : 0.0f;
     }
 
     [[nodiscard]] bool isEntityMoving() const { return isMoving_; }
@@ -331,6 +338,7 @@ protected:
     bool usePathMode_ = false;
     float moveStartX_ = 0, moveStartY_ = 0, moveStartZ_ = 0;
     float moveEndX_ = 0, moveEndY_ = 0, moveEndZ_ = 0;
+    float locomotionSpeed_ = 0.0f; // Authoritative path length / duration, before render projection.
     float moveDuration_ = 0;
     float moveElapsed_ = 0;
     float velX_ = 0, velY_ = 0, velZ_ = 0;  // Smoothed velocity for dead reckoning

@@ -110,6 +110,7 @@ public:
     void moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
                         bool updateAnimation = true);
     void startFadeIn(uint32_t instanceId, float durationSeconds);
+    void setLocomotionSpeed(uint32_t instanceId, float speed);
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
@@ -269,6 +270,7 @@ private:
         int upperBodySequenceIndex = -1;
         float upperBodyAnimationTime = 0.0f;
         std::vector<bool> upperBodyBones;
+        float locomotionSpeed = -1.0f; // Negative: caller does not supply movement speed.
         float animationTime = 0.0f;
         float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)
         bool animationLoop = true;

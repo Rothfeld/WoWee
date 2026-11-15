@@ -3393,6 +3393,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // drifts past the destination at the last known velocity;
             // using getLatest (== moveEnd while isMoving_) avoids the
             // visible forward-drift followed by a backward snap.
+            charRenderer->setLocomotionSpeed(instanceId, entity->getLocomotionSpeed());
             const bool inOverrun = entity->isEntityMoving() && !entity->isActivelyMoving();
             glm::vec3 canonical(
                 inOverrun ? entity->getLatestX() : entity->getX(),

@@ -2041,6 +2041,11 @@ uint32_t CharacterRenderer::createInstance(uint32_t modelId, const glm::vec3& po
     return id;
 }
 
+void CharacterRenderer::setLocomotionSpeed(uint32_t instanceId, float speed) {
+    assert(std::isfinite(speed) && speed >= 0.0f);
+    instances.at(instanceId).locomotionSpeed = speed;
+}
+
 void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId, bool loop,
                                       uint32_t oneShotReturnAnim, bool holdFinalPose) {
     auto it = instances.find(instanceId);
@@ -2184,7 +2189,13 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                 inst.currentAnimationId = inst.cachedModel->data.sequences[0].id;
             }
             const auto& seq = inst.cachedModel->data.sequences[inst.currentSequenceIndex];
-            inst.animationTime += deltaTime * 1000.0f;
+            float playbackRate = 1.0f;
+            if ((seq.id == anim::WALK || seq.id == anim::RUN) &&
+                inst.locomotionSpeed >= 0.0f && seq.movingSpeed > 0.0f) {
+                assert(inst.scale > 0.0f);
+                playbackRate = inst.locomotionSpeed / (seq.movingSpeed * inst.scale);
+            }
+            inst.animationTime += deltaTime * 1000.0f * playbackRate;
             if (seq.duration > 0 && inst.animationTime >= static_cast<float>(seq.duration)) {
                 if (inst.animationLoop) {
                     // Subtract duration instead of fmod to preserve float precision
