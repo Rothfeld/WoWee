@@ -748,3 +748,76 @@ TEST_CASE_METHOD(Integration, "Virtual pointer edges retain held state across fr
     input.update();
     CHECK_FALSE(input.isMouseButtonJustReleased(SDL_BUTTON_RIGHT));
 }
+
+TEST_CASE_METHOD(Integration, "Merchant usability follows equipment requirements", "[merchant]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.serverPlayerLevelRef() = 2;
+    auto& info = handler.itemInfoCacheRef()[100];
+    info.valid = true;
+    info.name = "Test armor";
+    info.itemClass = 4;
+    info.subClass = 3; // Mail requires a proficiency this rogue does not have.
+    info.requiredLevel = 1;
+    wowee::network::Packet proficiency(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_SET_PROFICIENCY));
+    proficiency.writeUInt8(4);
+    proficiency.writeUInt32((1u << 1) | (1u << 2));
+    session.receive(proficiency);
+    wowee::network::Packet inventory(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_LIST_INVENTORY));
+    inventory.writeUInt64(123);
+    inventory.writeUInt8(1);
+    for (uint32_t value : {1u, 100u, 0u, 0xffffffffu, 10000u, 0u, 1u, 0u}) inventory.writeUInt32(value);
+    session.receive(inventory);
+    truth("select(6, GetMerchantItemInfo(1)) == false");
+    info.subClass = 2; // Leather usable even when unaffordable.
+    truth("select(6, GetMerchantItemInfo(1)) == true");
+    info.requiredLevel = 3;
+    truth("select(6, GetMerchantItemInfo(1)) == false");
+    info.requiredLevel = 1;
+    info.requiredSkill = 164;
+    info.requiredSkillRank = 90;
+    truth("select(6, GetMerchantItemInfo(1)) == false");
+    handler.playerSkillsRef()[164].value = 100;
+    truth("select(6, GetMerchantItemInfo(1)) == true");
+    lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration, "Repeated vendor gossip refreshes without closing the shop", "[merchant]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    std::vector<std::string> events;
+    handler.setAddonEventCallback([&](const std::string& name, const std::vector<std::string>&) {
+        events.push_back(name);
+        if (name == "GOSSIP_SHOW") handler.selectGossipOption(0);
+    });
+    wowee::network::Packet inventory(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_LIST_INVENTORY));
+    inventory.writeUInt64(123);
+    inventory.writeUInt8(0);
+    session.receive(inventory);
+    REQUIRE(handler.isVendorWindowOpen());
+    CHECK(std::count(events.begin(), events.end(), "MERCHANT_SHOW") == 1);
+    events.clear();
+    wowee::network::Packet gossip(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_MESSAGE));
+    gossip.writeUInt64(123);
+    gossip.writeUInt32(0); // menu
+    gossip.writeUInt32(0); // NPC text
+    gossip.writeUInt32(1); // options
+    gossip.writeUInt32(0); // option id
+    gossip.writeUInt8(1);  // vendor icon
+    gossip.writeUInt8(0);  // not coded
+    gossip.writeUInt32(0); // no money prompt
+    gossip.writeString("I want to browse your goods.");
+    gossip.writeString("");
+    gossip.writeUInt32(0); // quests
+    session.receive(gossip);
+    REQUIRE(handler.isVendorWindowOpen());
+    handler.selectGossipOption(0); // A repeated selection while response pending is ignored.
+    CHECK(session.sent().of(wowee::game::Opcode::CMSG_GOSSIP_SELECT_OPTION).size() == 1);
+    CHECK(session.sent().of(wowee::game::Opcode::CMSG_LIST_INVENTORY).empty());
+    session.receive(inventory);
+    CHECK(handler.isVendorWindowOpen());
+    CHECK(std::count(events.begin(), events.end(), "MERCHANT_UPDATE") == 1);
+    CHECK(std::count(events.begin(), events.end(), "MERCHANT_SHOW") == 0);
+    CHECK(std::count(events.begin(), events.end(), "MERCHANT_CLOSED") == 0);
+}

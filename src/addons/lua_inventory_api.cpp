@@ -460,7 +460,30 @@ static int lua_GetMerchantItemInfo(lua_State* L) {
     lua_pushnumber(L, vi.buyPrice);                     // price (copper)
     lua_pushnumber(L, vi.stackCount > 0 ? vi.stackCount : 1); // stackCount
     lua_pushnumber(L, vi.maxCount == -1 ? -1 : vi.maxCount);  // numAvailable (-1=unlimited)
-    lua_pushboolean(L, 1);                              // isUsable
+    // FrameXML tints unavailable equipment red using this value, independent
+    // of whether the player has enough money to buy it.
+    bool usable = info && info->valid;
+    if (usable) {
+        const auto classId = gh->getPlayerClass();
+        const auto raceId = gh->getPlayerRace();
+        usable = info->requiredLevel <= gh->getPlayerLevel();
+        if (info->allowableClass != 0 && info->allowableClass != 0xffffffffu)
+            usable = usable && classId > 0 && classId <= 32 && (info->allowableClass & (1u << (classId - 1)));
+        if (info->allowableRace != 0 && info->allowableRace != 0xffffffffu)
+            usable = usable && raceId > 0 && raceId <= 32 && (info->allowableRace & (1u << (raceId - 1)));
+        if (info->itemClass == 2 /* weapon */)
+            usable = usable && info->subClass < 32 && gh->canUseWeaponSubclass(info->subClass);
+        if (info->itemClass == 4 /* armor */ && info->subClass != 0)
+            usable = usable && info->subClass < 32 && gh->canUseArmorSubclass(info->subClass);
+        if (info->requiredSkill != 0) {
+            const auto skill = gh->getPlayerSkills().find(info->requiredSkill);
+            usable = usable && skill != gh->getPlayerSkills().end() && skill->second.value >= info->requiredSkillRank;
+        }
+        if (info->requiredReputationFaction != 0)
+            usable = usable && game::reputationStandingFor(gh->getFactionStanding(info->requiredReputationFaction)).id - 1 >=
+                static_cast<int>(info->requiredReputationRank);
+    }
+    lua_pushboolean(L, usable);                         // isUsable
     // The extended cost - tokens, honour, arena points - which merchantframe
     // reads as `if ( extendedCost and (price <= 0) )` to decide whether to
     // show a token price instead of a coin one. It was not returned at all, so

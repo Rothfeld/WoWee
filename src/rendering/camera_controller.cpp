@@ -3325,6 +3325,7 @@ void CameraController::processMouseButton(const SDL_MouseButtonEvent& event) {
 
     bool anyDown = leftMouseDown || rightMouseDown;
     if (anyDown && !mouseButtonDown) {
+        mouseCapturePosition_ = {event.x, event.y};
         // SDL3 captures per window rather than globally. The focused window is the one the player is pointing at, and relative mode means nothing for any other - so that is the one to ask.
         if (!SDL_SetWindowRelativeMouseMode(SDL_GetKeyboardFocus(), true)) {
             LOG_ERROR("Cannot enable mouse look: ", SDL_GetError());
@@ -3345,6 +3346,10 @@ void CameraController::processMouseButton(const SDL_MouseButtonEvent& event) {
         dragOffsetX_ = 0.0f;
         dragOffsetY_ = 0.0f;
     } else if (!anyDown && mouseButtonDown) {
+        // SDL accumulates relative motion into its virtual pointer position.
+        // WoW restores the press anchor when mouse-look ends. Warp while still
+        // relative so this does not generate another camera-motion event.
+        SDL_WarpMouseInWindow(SDL_GetKeyboardFocus(), mouseCapturePosition_.x, mouseCapturePosition_.y);
         SDL_SetWindowRelativeMouseMode(SDL_GetKeyboardFocus(), false);
         rotateArmed_ = false;
     }
@@ -3352,6 +3357,8 @@ void CameraController::processMouseButton(const SDL_MouseButtonEvent& event) {
 }
 
 void CameraController::releaseMouseCapture() {
+    if (mouseButtonDown)
+        SDL_WarpMouseInWindow(SDL_GetKeyboardFocus(), mouseCapturePosition_.x, mouseCapturePosition_.y);
     leftMouseDown = false;
     rightMouseDown = false;
     mouseButtonDown = false;

@@ -2645,6 +2645,7 @@ void InventoryHandler::useItemById(uint32_t itemId, uint64_t unitTarget) {
 }
 
 void InventoryHandler::handleListInventory(network::Packet& packet) {
+    const uint64_t previousVendor = vendorWindowOpen_ ? currentVendorItems_.vendorGuid : 0;
     if (!ListInventoryParser::parse(packet, currentVendorItems_)) return;
 
     // Detect repair capability from NPC flags (covers direct vendors without gossip).
@@ -2658,7 +2659,8 @@ void InventoryHandler::handleListInventory(network::Packet& packet) {
     }
     vendorWindowOpen_ = true;
     owner_.closeGossip();
-    if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("MERCHANT_SHOW", {});
+    if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()(
+        previousVendor == currentVendorItems_.vendorGuid ? "MERCHANT_UPDATE" : "MERCHANT_SHOW", {});
 
     // Auto-sell grey items
     if (autoSellGrey_ && currentVendorItems_.vendorGuid != 0 && owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {

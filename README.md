@@ -749,3 +749,18 @@ mouse buttons retain their sampled held-state transitions.
 
 `WOWEE_INPUT_TRACE=1` logs SDL button/motion events, sampled cursor coordinates,
 button mask, and relative-mode state for diagnosing capture problems.
+
+Mouse-look release restores the pointer to its press position. SDL's accumulated
+relative movement remains available to click-versus-drag detection; it does not
+change the visible cursor's restoration point.
+
+### Merchant refresh and item usability
+
+Merchant items report level, class/race, equipment proficiency, skill, and
+reputation eligibility to FrameXML. Its red icons and row backgrounds indicate
+unusable items; lack of money does not make otherwise usable items red.
+
+Selecting gossip sends one selection packet. NPC-text updates cannot select the
+same pending option again, and vendor selection does not send an additional
+inventory request. Repeated interaction with the same vendor refreshes inventory
+with `MERCHANT_UPDATE`, preserving the open shop and backpack.

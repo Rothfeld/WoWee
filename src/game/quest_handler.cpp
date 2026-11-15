@@ -1309,6 +1309,9 @@ void QuestHandler::selectGossipOption(uint32_t optionId, const std::string& code
     auto packet = GossipSelectOptionPacket::build(currentGossip_.npcGuid,
                                                   currentGossip_.menuId, optionId, code);
     owner_.getSocket()->send(packet);
+    // A late NPC-text reply must not auto-select this option again while
+    // waiting for the service response. Keep its data for that response.
+    gossipWindowOpen_ = false;
 
     for (const auto& opt : currentGossip_.options) {
         if (opt.id != optionId) continue;
@@ -1346,18 +1349,8 @@ void QuestHandler::selectGossipOption(uint32_t optionId, const std::string& code
             LOG_INFO("Sent CMSG_BANKER_ACTIVATE (text) for npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
         }
 
-        const bool isVendor = (text == "GOSSIP_OPTION_VENDOR" ||
-                               (textLower.find("browse") != std::string::npos &&
-                                (textLower.find("goods") != std::string::npos || textLower.find("wares") != std::string::npos)));
-        const bool isArmorer = (text == "GOSSIP_OPTION_ARMORER" || textLower.find("repair") != std::string::npos);
-        if (isVendor || isArmorer) {
-            if (isArmorer) {
-                owner_.setVendorCanRepair(true);
-            }
-            auto pkt = ListInventoryPacket::build(currentGossip_.npcGuid);
-            owner_.getSocket()->send(pkt);
-            LOG_DEBUG("Sent CMSG_LIST_INVENTORY (gossip) to npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
-        }
+        // CMSG_GOSSIP_SELECT_OPTION already asks the server to open the
+        // selected service. A second LIST_INVENTORY duplicates the response.
 
         // Only while this client draws the gossip window. It has no confirm
         // step, so matching the option's text and sending the activate is the
@@ -2203,7 +2196,9 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
     }
 
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
-    owner_.closeVendor(); // Close vendor if gossip opens
+    // Auto-selected service gossip never opens a panel. Preserve the current
+    // merchant until its refreshed inventory arrives; real gossip closes it.
+    if (gossipWindowOpen_) owner_.closeVendor();
 
     // Classify gossip quests and update quest log + overhead NPC markers.
     classifyGossipQuests(true);

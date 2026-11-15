@@ -422,6 +422,7 @@ private:
     float mouseSensitivity = 0.2f;
     bool invertMouse = false;
     bool mouseButtonDown = false;
+    glm::vec2 mouseCapturePosition_{0.0f};
     bool leftMouseDown = false;
     bool rightMouseDown = false;
     // Camera rotation only begins once the mouse moves past a small dead-zone while a
