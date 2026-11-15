@@ -1,3 +1,4 @@
+#include "rendering/visual_mesh_pick.hpp"
 // Which of ScenePick's answers a caller wants.
 //
 // The struct carries several, and two of them are easy to confuse: closestGuid
@@ -128,4 +129,19 @@ TEST_CASE("Terrain holes do not create invisible vertical selection walls") {
     CHECK(terrainOccludesSceneRay(ray, 10.0f, [](float x, float) -> std::optional<float> {
         return std::abs(x - 5.0f);
     }));
+}
+
+TEST_CASE("Visual prop occlusion leaves gaps between solid parts selectable") {
+    // Two separate candle faces share one broad bounding box.
+    const std::vector<glm::vec3> vertices{
+        {-2,-1,0}, {-1,-1,0}, {-1,1,0}, {-2,1,0},
+        {1,-1,0}, {2,-1,0}, {2,1,0}, {1,1,0}};
+    const std::vector<uint16_t> indices{0,1,2, 0,2,3, 4,5,6, 4,6,7};
+    using wowee::rendering::pickVisualTriangles;
+    CHECK(pickVisualTriangles(vertices, indices, {0,0,5}, {0,0,-1}, 10) == 10);
+    CHECK(pickVisualTriangles(vertices, indices, {-1.5f,0,5}, {0,0,-1}, 10) == 5);
+    CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,5}, {0,0,-1}, 10) == 5);
+    CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,5}, {0,0,-0.5f}, 20) == 10);
+    CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,-5}, {0,0,1}, 10) == 5);
+    CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,5}, {0,0,-1}, 3) == 3);
 }

@@ -111,6 +111,9 @@ struct M2ModelGPU {
     VmaAllocation indexAlloc = VK_NULL_HANDLE;
     uint32_t indexCount = 0;
     uint32_t vertexCount = 0;
+    // Render geometry retained for cursor occlusion; collision hulls fill gaps.
+    std::vector<pipeline::M2Vertex> pickVertices;
+    std::vector<uint16_t> pickIndices;
     std::vector<BatchGPU> batches;
 
     glm::vec3 boundMin;
@@ -629,6 +632,7 @@ public:
     /// trace at all beyond "m2=-99999".
     void debugDumpFloorCandidatesAt(float glX, float glY, float glZ) const;
     [[nodiscard]] float raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId = 0) const;
+    [[nodiscard]] float raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId = 0) const;
     void setCollisionFocus(const glm::vec3& worldPos, float radius);
 
     void resetQueryStats();

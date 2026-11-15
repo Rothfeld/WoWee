@@ -1777,6 +1777,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     }
     gpuModel.indexCount = static_cast<uint32_t>(model.indices.size());
     gpuModel.vertexCount = static_cast<uint32_t>(model.vertices.size());
+    gpuModel.pickVertices = model.vertices;
+    gpuModel.pickIndices = model.indices;
 
     // Store bone/sequence data for animation
     gpuModel.bones = model.bones;

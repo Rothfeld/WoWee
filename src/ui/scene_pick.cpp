@@ -131,9 +131,9 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                 continue;
             }
             if (auto* m2 = renderer->getM2Renderer(); m2 &&
-                m2->raycastBoundingBoxes(ray.origin, ray.direction, hitT, pickedM2) < hitT) {
+                m2->raycastVisibleGeometry(ray.origin, ray.direction, hitT, pickedM2) < hitT) {
                 if (params.trace) LOG_DEBUG("Scene pick M2 blocked guid=", guid, " hit=", hitT,
-                    " blocker=", m2->raycastBoundingBoxes(ray.origin, ray.direction, hitT, pickedM2));
+                    " blocker=", m2->raycastVisibleGeometry(ray.origin, ray.direction, hitT, pickedM2));
                 continue;
             }
             if (auto* terrain = renderer->getTerrainManager(); terrain &&

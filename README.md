@@ -710,7 +710,10 @@ Cursor selection receives quest status separately from the overhead symbol. An u
 `scene_pick.hpp` tests terrain surface crossings, not the solid volume beneath
 outdoor height samples. Terrain holes break the crossing interval. A camera in
 Anvilmar can see NPCs beneath adjacent outdoor terrain without crossing any
-rendered terrain surface. WMO walls and foreground M2 geometry still occlude.
+rendered terrain surface. WMO walls and foreground M2 geometry still occlude. Cursor rays test the
+retained, skinned M2 render triangles, so gaps between candelabra branches
+remain clickable. Transparent/additive effect batches do not occlude these
+rays. Body and camera collision use their collision meshes.
 Click diagnostics in `scene_pick.cpp` identify mesh misses and WMO/M2/terrain
 rejection; hover does not emit these logs. Run `build/bin/test_scene_pick` for
 selection ordering and terrain-hole regression checks.

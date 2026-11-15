@@ -15,6 +15,7 @@
 #include "pipeline/blp_loader.hpp"
 #include "core/logger.hpp"
 #include "rendering/movement_limits.hpp"
+#include "rendering/visual_mesh_pick.hpp"
 #include "rendering/body_collision.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -1418,6 +1419,52 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
     }
 
     return collided;
+}
+
+float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction,
+                                        float maxDistance, uint32_t excludedInstanceId) const {
+    float closest = maxDistance;
+    const glm::vec3 end = origin + direction * maxDistance;
+    gatherCandidates(glm::min(origin, end), glm::max(origin, end), tl_m2_candidateScratch);
+    for (size_t index : tl_m2_candidateScratch) {
+        const auto& instance = instances[index];
+        if (instance.id == excludedInstanceId || !instance.cachedModel) continue;
+        const auto& model = *instance.cachedModel;
+        if (model.isInvisibleTrap || model.isSpellEffect || model.isSmoke) continue;
+        float enter = 0.0f;
+        if (!segmentIntersectsAABB(origin, end, instance.worldBoundsMin,
+                                   instance.worldBoundsMax, enter)) continue;
+        const glm::vec3 localOrigin(instance.invModelMatrix * glm::vec4(origin, 1));
+        const glm::vec3 localDirection(instance.invModelMatrix * glm::vec4(direction, 0));
+        const bool useBones = model.hasAnimation && !model.disableAnimation &&
+                              !instance.boneMatrices.empty();
+        std::vector<glm::vec3> positions;
+        positions.reserve(model.pickVertices.size());
+        for (const auto& vertex : model.pickVertices) {
+            glm::vec4 position(vertex.position, 1.0f);
+            if (useBones) {
+                position = glm::vec4(0.0f);
+                for (size_t b = 0; b < 4; ++b) {
+                    if (!vertex.boneWeights[b]) continue;
+                    const size_t bone = std::min<size_t>(vertex.boneIndices[b], instance.boneMatrices.size() - 1);
+                    position += instance.boneMatrices[bone] * glm::vec4(vertex.position, 1.0f) *
+                                (vertex.boneWeights[b] / 255.0f);
+                }
+            }
+            positions.emplace_back(position);
+        }
+        for (const auto& batch : model.batches) {
+            // Additive flame/glow cards and invisible/alternate batches do not
+            // turn empty space between the solid candles into an occluder.
+            if (batch.submeshLevel != 0 || batch.blendMode >= 2 ||
+                batch.batchOpacity < 0.01f || batch.volumetricBeam || batch.starLayer) continue;
+            assert(batch.indexStart + batch.indexCount <= model.pickIndices.size());
+            closest = pickVisualTriangles(positions,
+                std::span<const uint16_t>(model.pickIndices).subspan(batch.indexStart, batch.indexCount),
+                localOrigin, localDirection, closest);
+        }
+    }
+    return closest;
 }
 
 float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId) const {
