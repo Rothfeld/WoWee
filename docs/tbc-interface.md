@@ -231,3 +231,10 @@ Clearing selection (including Escape) sends attack stop and zero selection to
 the server. Attack-button toggling and stop-on-target-change use local attack
 intent, including the interval before server swing confirmation. Cancelling
 attack does not require a currently selected target.
+
+CMaNGOS emits melee range errors only when its swing error changes. The client
+repeats the active range warning at the UI warning interval until a successful
+swing, a different swing error, or attack cancellation clears it. This does
+not resend attacks or cancel attack intent. TBC melee uses ERR_BADATTACKPOS
+("You are too far away!"). MessageFrame text and shadows honor justifyH,
+including UIErrorsFrame's CENTER and chat frames' LEFT alignment.

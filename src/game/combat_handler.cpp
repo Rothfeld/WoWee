@@ -106,11 +106,12 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_ATTACKSWING_NOTINRANGE] = [this](network::Packet& /*packet*/) {
         autoAttackOutOfRange_ = true;
         if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            owner_.raiseUiError("Target is too far away.");
+            owner_.raiseUiError("You are too far away!");
             autoAttackRangeWarnCooldown_ = 1.25f;
         }
     };
     table[Opcode::SMSG_ATTACKSWING_BADFACING] = [this](network::Packet& /*packet*/) {
+        autoAttackOutOfRange_ = false;
         // Reported, not corrected. This used to turn the character to face the
         // target, which is not something the server may do to a player: the
         // facing is the player's. Running away from something with auto-attack
@@ -685,6 +686,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     if (!isPlayerAttacker && !isPlayerTarget) return;  // Not our combat
 
     if (isPlayerAttacker) {
+        autoAttackOutOfRange_ = false;
         lastMeleeSwingMs_ = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
@@ -861,6 +863,14 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
     // Decrement range warn cooldown
     if (autoAttackRangeWarnCooldown_ > 0.0f) {
         autoAttackRangeWarnCooldown_ = std::max(0.0f, autoAttackRangeWarnCooldown_ - deltaTime);
+    }
+
+    // CMaNGOS reports swing errors only when they change. Repeat the active
+    // range warning without resending attacks or changing attack intent.
+    // A successful swing, another swing error, or stopping clears the latch.
+    if (autoAttackRequested_ && autoAttackOutOfRange_ && autoAttackRangeWarnCooldown_ <= 0.0f) {
+        owner_.raiseUiError("You are too far away!");
+        autoAttackRangeWarnCooldown_ = 1.25f;
     }
 
     // Do not cancel or resend attacks based on a guessed melee radius.

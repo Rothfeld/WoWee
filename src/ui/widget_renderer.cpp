@@ -2581,11 +2581,11 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                         drawMarkupText(dl, font, size,
                                        ImVec2(x0 + w->shadowX * s, top - w->shadowY * s),
                                        packColor(sc, w->alpha * w->shadowColor[3]),
-                                       w->alpha, m.text, wrapW, false, nullptr, true);
+                                       w->alpha, m.text, wrapW, false, w->justifyH.c_str(), true);
                     }
                     drawMarkupText(dl, font, size, ImVec2(x0, top),
                                    packColor(rgba, w->alpha), w->alpha, m.text,
-                                   wrapW, false, nullptr, false, &tree, w->id);
+                                   wrapW, false, w->justifyH.c_str(), false, &tree, w->id);
                     y -= lineH * static_cast<float>(rows);
                     ++painted;
                 }
