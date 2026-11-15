@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/window.hpp"
+#include "core/npc_interaction_facing.hpp"
 #include <chrono>
 #include "core/gamepad.hpp"
 #include "ui/unit_portrait.hpp"
@@ -346,6 +347,7 @@ private:
 
     // Callback handlers (extracted from setupUICallbacks)
     std::unique_ptr<NPCInteractionCallbackHandler> npcInteractionCallbacks_;
+    std::unordered_map<uint64_t, float> npcInteractionFacing_;
     std::unique_ptr<AudioCallbackHandler> audioCallbacks_;
     std::unique_ptr<EntitySpawnCallbackHandler> entitySpawnCallbacks_;
     std::unique_ptr<AnimationCallbackHandler> animationCallbacks_;

@@ -1,3 +1,4 @@
+#include "core/npc_interaction_facing.hpp"
 #include "input_test_support.hpp"
 #include "game_replay.hpp"
 #include "ui/game_screen.hpp"
@@ -796,6 +797,7 @@ TEST_CASE_METHOD(Integration, "Repeated vendor gossip refreshes without closing 
     inventory.writeUInt8(0);
     session.receive(inventory);
     REQUIRE(handler.isVendorWindowOpen());
+    CHECK(handler.getInteractNpcGuid() == 123);
     CHECK(std::count(events.begin(), events.end(), "MERCHANT_SHOW") == 1);
     events.clear();
     wowee::network::Packet gossip(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_MESSAGE));
@@ -820,4 +822,28 @@ TEST_CASE_METHOD(Integration, "Repeated vendor gossip refreshes without closing 
     CHECK(std::count(events.begin(), events.end(), "MERCHANT_UPDATE") == 1);
     CHECK(std::count(events.begin(), events.end(), "MERCHANT_SHOW") == 0);
     CHECK(std::count(events.begin(), events.end(), "MERCHANT_CLOSED") == 0);
+    CHECK(handler.getInteractNpcGuid() == 123);
+    handler.closeVendor();
+    CHECK(handler.getInteractNpcGuid() == 0);
+}
+
+TEST_CASE("Conversation facing takes shortest arc and returns without a snap", "[npc-facing]") {
+    using wowee::core::advanceNpcInteractionFacing;
+    using wowee::core::coords::normalizeAngleRad;
+    float heading = 3.0f;
+    const float target = -3.0f;
+    const float next = advanceNpcInteractionFacing(heading, target, 0.01f);
+    CHECK(normalizeAngleRad(next - heading) > 0.0f);
+    CHECK(normalizeAngleRad(next - heading) < 0.064f);
+    for (int frame = 0; frame < 60; ++frame)
+        heading = advanceNpcInteractionFacing(heading, target, 1.0f / 60.0f);
+    CHECK(std::abs(normalizeAngleRad(heading - target)) < 0.0001f);
+    // Repeated interaction does not reset the heading or overshoot.
+    CHECK(advanceNpcInteractionFacing(heading, target, 0.01f) == heading);
+    const float returning = advanceNpcInteractionFacing(heading, 0.0f, 0.01f);
+    CHECK(std::abs(normalizeAngleRad(returning - heading)) < 0.064f);
+    for (int frame = 0; frame < 60; ++frame)
+        heading = advanceNpcInteractionFacing(heading, 0.0f, 1.0f / 60.0f);
+    CHECK(std::abs(heading) < 0.0001f);
+    CHECK(advanceNpcInteractionFacing(0.2f, 1.0f, 0.0f) == 0.2f);
 }

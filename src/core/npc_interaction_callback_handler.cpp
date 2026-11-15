@@ -2,9 +2,6 @@
 #include "core/entity_spawner.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
-#include "rendering/renderer.hpp"
-#include "rendering/character_renderer.hpp"
-#include "rendering/animation/animation_ids.hpp"
 #include "game/game_handler.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/npc_voice_manager.hpp"
@@ -13,11 +10,9 @@ namespace wowee { namespace core {
 
 NPCInteractionCallbackHandler::NPCInteractionCallbackHandler(
     EntitySpawner& entitySpawner,
-    rendering::Renderer* renderer,
     game::GameHandler& gameHandler,
     audio::AudioCoordinator* audioCoordinator)
     : entitySpawner_(entitySpawner)
-    , renderer_(renderer)
     , gameHandler_(gameHandler)
     , audioCoordinator_(audioCoordinator)
 {
@@ -37,14 +32,8 @@ audio::VoiceType NPCInteractionCallbackHandler::resolveNpcVoiceType(uint64_t gui
 void NPCInteractionCallbackHandler::setupCallbacks() {
     // NPC greeting callback - play voice line
     gameHandler_.setNpcGreetingCallback([this](uint64_t guid, const glm::vec3& position) {
-        // Play NPC_WELCOME animation on the NPC
-        if (renderer_) {
-            auto* cr = renderer_->getCharacterRenderer();
-            if (cr) {
-                uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
-                if (instanceId != 0) cr->playAnimation(instanceId, rendering::anim::NPC_WELCOME, false);
-            }
-        }
+        // Greeting audio does not imply a body emote. Server emote packets
+        // own NPC animations; replaying a welcome here resets every click.
         if (audioCoordinator_ && audioCoordinator_->getNpcVoiceManager()) {
             // Convert canonical to render coords for 3D audio
             glm::vec3 renderPos = core::coords::canonicalToRender(position);

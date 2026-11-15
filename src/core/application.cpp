@@ -3404,6 +3404,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         const uint64_t currentTargetGuid = gameHandler->hasTarget()
             ? gameHandler->getTargetGuid() : 0;
         const uint64_t autoAttackGuid = gameHandler->getAutoAttackTargetGuid();
+        const uint64_t interactionGuid = gameHandler->getInteractNpcGuid();
+        std::erase_if(npcInteractionFacing_, [&](const auto& entry) {
+            return !_creatureInstances.contains(entry.first);
+        });
         for (const auto& [guid, instanceId] : _creatureInstances) {
             auto entity = gameHandler->getEntityManager().getEntity(guid);
             if (!entity || entity->getType() != game::ObjectType::UNIT) continue;
@@ -3581,7 +3585,26 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     }
                 }
             }
-            float renderYaw = entity->getOrientation() + glm::radians(90.0f);
+            // Native turns the local conversation partner toward this player.
+            // This is presentation only: other clients and patrol splines retain
+            // the authoritative heading. Closing the panel turns it back.
+            std::optional<float> interactionYaw;
+            const auto* unit = static_cast<const game::Unit*>(entity.get());
+            if (guid == interactionGuid && havePlayerPos && unit->getHealth() > 0 &&
+                !entity->isActivelyMoving()) {
+                const glm::vec2 delta(playerPos.x - canonical.x, playerPos.y - canonical.y);
+                if (glm::dot(delta, delta) > 0.0001f)
+                    interactionYaw = std::atan2(-delta.y, delta.x);
+            }
+            float facing = entity->getOrientation();
+            if (interactionYaw || npcInteractionFacing_.contains(guid)) {
+                auto [it, inserted] = npcInteractionFacing_.try_emplace(guid, facing);
+                facing = advanceNpcInteractionFacing(it->second, interactionYaw.value_or(facing), deltaTime);
+                it->second = facing;
+                if (!interactionYaw && std::abs(coords::normalizeAngleRad(facing - entity->getOrientation())) < 0.0001f)
+                    npcInteractionFacing_.erase(it);
+            }
+            float renderYaw = facing + glm::radians(90.0f);
             glm::vec3 groundRotation(0.0f, 0.0f, renderYaw);
             if (groundCreature && !onTransport) {
                 const auto* model = charRenderer->getInstanceModelData(instanceId);
@@ -5396,7 +5419,7 @@ void Application::setupUICallbacks() {
 
     // ── NPC interaction: greeting, farewell, vendor, aggro voice ──
     npcInteractionCallbacks_ = std::make_unique<NPCInteractionCallbackHandler>(
-        *entitySpawner_, renderer.get(), *gameHandler, audioCoordinator_.get());
+        *entitySpawner_, *gameHandler, audioCoordinator_.get());
     npcInteractionCallbacks_->setupCallbacks();
 
     // ── Audio: music, sound effects, level-up, achievement, LFG ──

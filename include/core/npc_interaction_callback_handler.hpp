@@ -6,7 +6,6 @@
 
 namespace wowee {
 
-namespace rendering { class Renderer; }
 namespace game { class GameHandler; }
 namespace audio { class AudioCoordinator; }
 namespace core { class EntitySpawner; }
@@ -17,7 +16,6 @@ namespace core {
 class NPCInteractionCallbackHandler {
 public:
     NPCInteractionCallbackHandler(EntitySpawner& entitySpawner,
-                                  rendering::Renderer* renderer,
                                   game::GameHandler& gameHandler,
                                   audio::AudioCoordinator* audioCoordinator);
 
@@ -28,7 +26,6 @@ private:
     [[nodiscard]] audio::VoiceType resolveNpcVoiceType(uint64_t guid) const;
 
     EntitySpawner& entitySpawner_;
-    rendering::Renderer* renderer_;
     game::GameHandler& gameHandler_;
     audio::AudioCoordinator* audioCoordinator_;
 };

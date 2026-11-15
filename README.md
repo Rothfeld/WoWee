@@ -709,6 +709,17 @@ Cursor selection receives quest status separately from the overhead symbol. An u
 
 Stand variants blend from their outgoing final pose using the incoming sequence's authored blend time. This also applies when the same variant repeats, either through random selection or its replay count. TBC `DwarfMale.m2` sequence 40 has different first and last spine poses; a direct wrap produces a visible snap.
 
+### NPC conversation facing
+
+Greeting callbacks play voice audio. Body emotes come from server animation
+messages; opening or refreshing gossip does not restart the NPC body animation.
+While an NPC service or quest panel is open, its stationary living NPC turns
+toward the local player. Closing the panel returns it to the server heading.
+This facing is local presentation and never changes entity movement or patrol
+orientation. Other clients can see a different facing for the same vendor.
+`build/bin/test_input_integration '[npc-facing],[merchant]'` checks turning and merchant
+interaction lifetime.
+
 ### Held weapon grips
 
 Palm attachments 1 and 2 apply the model's `HandsClosed` animation (15) at 1 ms

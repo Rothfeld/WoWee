@@ -2192,7 +2192,7 @@ bool GameHandler::applyInventoryFields(const FlatFieldMap& fields) {
 uint64_t GameHandler::getInteractNpcGuid() const {
     if (inventoryHandler_) {
         if (const uint64_t peer = inventoryHandler_->getTradePeerGuid()) return peer;
-        if (const uint64_t vendor = getVendorGuid()) return vendor;
+        if (isVendorWindowOpen()) return getVendorGuid();
     }
     // The trainer, which the list above this function has always named and
     // this function never asked.
@@ -2215,8 +2215,14 @@ uint64_t GameHandler::getInteractNpcGuid() const {
     if (movementHandler_ && movementHandler_->isTaxiWindowOpen()) {
         if (const uint64_t taxiNpc = movementHandler_->getTaxiNpcGuid()) return taxiNpc;
     }
+    if (isBankOpen()) return getBankerGuid();
+    if (isAuctionHouseOpen()) return getAuctioneerGuid();
+    if (isStableWindowOpen()) return getStableMasterGuid();
     if (questHandler_) {
-        if (const uint64_t gossip = questHandler_->getCurrentGossip().npcGuid) return gossip;
+        if (questHandler_->isQuestDetailsOpen()) return getQuestDetails().npcGuid;
+        if (isQuestRequestItemsOpen()) return getQuestRequestItems().npcGuid;
+        if (isQuestOfferRewardOpen()) return getQuestOfferReward().npcGuid;
+        if (isGossipWindowOpen()) return getCurrentGossip().npcGuid;
     }
     return 0;
 }
