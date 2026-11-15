@@ -698,3 +698,9 @@ click targets. Repair takes precedence over vendor when both flags are set.
 Unavailable quest status 1 uses the grey world exclamation model and no minimap
 dot. Local speech creates its bubble before the duplicated server echo is
 suppressed; bubbles use the client tooltip backdrop and tail assets.
+
+### Quest marker rendering and hover
+
+World quest markers use the client M2 materials, including each batch's authored opacity. `TalkToMeGrey.m2` has an opaque gradient base and a 40% alpha-additive highlight. Marker instances skip collision without being classified as spell effects; that classification overrides material blending.
+
+Cursor selection receives quest status separately from the overhead symbol. An unavailable quest can show a grey exclamation mark while keeping the NPC's ordinary cursor. Felix Whindlebolt uses the plain gauntlet in this state.

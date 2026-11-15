@@ -516,5 +516,8 @@ void main() {
         if (blendMode >= 3) result *= tipFade;
     }
 
+    // Authored batch opacity is independent of per-instance distance fading.
+    // For example TalkToMeGrey uses a 0.4-alpha additive highlight layer.
+    outAlpha *= fadeAlpha;
     outColor = vec4(result, outAlpha);
 }

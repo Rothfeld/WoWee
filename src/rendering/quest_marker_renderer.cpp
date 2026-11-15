@@ -45,7 +45,8 @@ void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManage
                 LOG_ERROR("Cannot load quest marker model: ", paths[variant]);
                 throw std::runtime_error("Quest marker model failed to load");
             }
-            renderer.markModelAsSpellEffect(modelId); // animated, no world collision
+            // Keep authored base and highlight materials. Spell-effect overrides
+            // turn the grey marker additive and wash it out to white.
             LOG_INFO("Quest marker model loaded: ", paths[variant]);
         }
         glm::vec3 position = marker.position;
@@ -61,6 +62,7 @@ void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManage
         if (it == placements_.end()) {
             const uint32_t instance = renderer.createInstance(modelId, position, glm::vec3(0), 1.0f, false);
             if (!instance) throw std::runtime_error("Quest marker instance failed to create");
+            renderer.setSkipCollision(instance, true);
             placements_[guid] = {instance, modelId};
         } else {
             renderer.setInstancePosition(it->second.instanceId, position);

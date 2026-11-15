@@ -1079,11 +1079,11 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     if (!entity || (entity->getType() != game::ObjectType::UNIT &&
                     entity->getType() != game::ObjectType::PLAYER)) return false;
     const auto unit = std::static_pointer_cast<game::Unit>(entity);
-    const auto marker = game::questGiverMarker(gameHandler.getQuestGiverStatus(guid));
+    const auto questStatus = gameHandler.getQuestGiverStatus(guid);
     const char* path = ui::unitCursorPath(
         !game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()),
         unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
-        unit->getNpcFlags(), marker.symbol);
+        unit->getNpcFlags(), questStatus);
     const auto texture = cursorTexture(services_.assetManager, services_.window, path);
     if (!texture) return false;
     drawCursorTexture(texture);

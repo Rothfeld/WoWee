@@ -2507,7 +2507,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
             vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &bgpu.materialUBO, &bgpu.materialUBOAlloc, &matAllocInfo);
 
-            // Write initial material data (static per-batch - fadeAlpha/interiorDarken updated at draw time)
+            // Material opacity is per batch; instance distance fading lives in the SSBO.
             M2MaterialUBO mat{};
             mat.hasTexture = (bgpu.texture != nullptr && bgpu.texture != whiteTexture_.get()) ? 1 : 0;
             mat.alphaTest = m2BatchNeedsAlphaTest(bgpu.blendMode, bgpu.hasAlpha) ? 1 : 0;
@@ -2520,7 +2520,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             mat.unlit = (bgpu.materialFlags & 0x01) ? 1 : 0;
             mat.blendMode = bgpu.blendMode;
             mat.volumetricBeam = bgpu.volumetricBeam ? 1 : 0;
-            mat.fadeAlpha = 1.0f;
+            mat.fadeAlpha = bgpu.batchOpacity;
             mat.interiorDarken = 0.0f;
             mat.specularIntensity = 0.5f;
             mat.emissiveBoost = bgpu.preserveGlowMesh ? 2.4f : 1.0f;
