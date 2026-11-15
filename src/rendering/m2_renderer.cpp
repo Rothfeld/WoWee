@@ -1514,6 +1514,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
 
     M2ModelGPU gpuModel;
     gpuModel.name = model.name;
+    gpuModel.pickVertices = model.vertices;
+    gpuModel.pickIndices = model.indices;
 
     // Use tight bounds from actual vertices for collision/camera occlusion.
     // Header bounds in some M2s are overly conservative.

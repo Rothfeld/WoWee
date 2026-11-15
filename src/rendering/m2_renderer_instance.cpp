@@ -179,6 +179,50 @@ float M2Renderer::getInstanceAnimDuration(uint32_t instanceId) const {
     return seqs[seqIdx].duration; // in milliseconds
 }
 
+bool M2Renderer::intersectInstance(uint32_t instanceId, const glm::vec3& origin,
+                                   const glm::vec3& direction, float& distance) const {
+    const auto found = instanceIndexById.find(instanceId);
+    if (found == instanceIndexById.end()) return false;
+    const auto& instance = instances[found->second];
+    const auto& model = *instance.cachedModel;
+    const glm::vec3 localOrigin(instance.invModelMatrix * glm::vec4(origin, 1));
+    // Keep world-distance ray parameter through scale and rotation.
+    const glm::vec3 localDirection(instance.invModelMatrix * glm::vec4(direction, 0));
+    std::vector<glm::vec3> positions;
+    positions.reserve(model.pickVertices.size());
+    for (const auto& vertex : model.pickVertices) {
+        if (!model.hasAnimation || model.disableAnimation || instance.boneMatrices.empty()) {
+            positions.push_back(vertex.position);
+            continue;
+        }
+        glm::vec4 position(0);
+        for (size_t bone = 0; bone < 4; ++bone) {
+            if (vertex.boneWeights[bone] == 0) continue;
+            const auto index = std::min<size_t>(std::min<uint8_t>(vertex.boneIndices[bone], 127),
+                                                instance.boneMatrices.size() - 1);
+            const glm::mat4& transform = instance.boneMatrices[index];
+            position += (transform * glm::vec4(vertex.position, 1)) *
+                (vertex.boneWeights[bone] / 255.0f);
+        }
+        positions.push_back(glm::vec3(position));
+    }
+    float nearest = std::numeric_limits<float>::max();
+    for (const auto& batch : model.batches) {
+        // Additive glow cards are not solid cursor targets.
+        if (batch.blendMode > 2 || batch.batchOpacity <= 0.0f) continue;
+        for (size_t i = batch.indexStart; i + 2 < batch.indexStart + batch.indexCount; i += 3) {
+            const float hit = rayTriangleIntersect(localOrigin, localDirection,
+                positions.at(model.pickIndices.at(i)),
+                positions.at(model.pickIndices.at(i + 1)),
+                positions.at(model.pickIndices.at(i + 2)));
+            if (hit > 0) nearest = std::min(nearest, hit);
+        }
+    }
+    if (nearest == std::numeric_limits<float>::max()) return false;
+    distance = nearest;
+    return true;
+}
+
 bool M2Renderer::getInstanceBounds(uint32_t instanceId, glm::vec3& outCenter, float& outRadius) const {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return false;
@@ -1414,7 +1458,7 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
     return collided;
 }
 
-float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
+float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     float closestHit = maxDistance;
 
@@ -1425,6 +1469,7 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
 
     for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
+        if (instance.id == excludedInstanceId) continue;
         if (collisionFocus.excludes(instance.worldBoundsMin,
                                     instance.worldBoundsMax)) {
             continue;

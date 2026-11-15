@@ -721,3 +721,12 @@ pose.
 The animation and keybone convention also appears in
 [WoW Model Viewer](https://github.com/wowmodelviewer/wowmodelviewer/blob/develop/Source/games/wow/WoWModel.cpp).
 `test_hand_grip` checks finger mapping and hierarchy validation.
+
+### Chair clicks and object picking
+
+Right-clicking a chair sends the normal game-object use request. Camera drags
+are rejected before picking; a previously selected chair cannot activate from
+a click elsewhere. Hover and clicks test M2 render triangles after the broad
+sphere test, using the instance transform and animated bones. Additive glow
+geometry does not catch the cursor. The picked object is excluded from its own
+collision-hull occlusion test. WMO object picking still uses its bounds.

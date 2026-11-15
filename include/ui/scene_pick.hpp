@@ -75,10 +75,6 @@ struct ScenePickParams {
     /// picker uses a slightly taller, tighter sphere than the target picker.
     float unitHitRadius = 1.8f;
     float unitHeightOffset = 1.0f;
-    /// Skip chair-type game objects. Their fallback sphere is wide enough to be
-    /// caught while right-drag-rotating the camera near one, which sits the
-    /// player down. Left-clicking a chair to target it still works.
-    bool skipChairs = false;
 };
 
 /// Everything the traversal found, before either caller applies its own rules.
