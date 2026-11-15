@@ -3617,13 +3617,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 if (glm::dot(d, d) > pSyncRadiusSq && !activeCombatTarget) continue;
             }
 
-            // Position sync - clamp to destination during dead-reckoning
-            // overrun to avoid drift + backward snap (same as creature loop).
-            const bool inOverrun = entity->isEntityMoving() && !entity->isActivelyMoving();
-            glm::vec3 canonical(
-                inOverrun ? entity->getLatestX() : entity->getX(),
-                inOverrun ? entity->getLatestY() : entity->getY(),
-                inOverrun ? entity->getLatestZ() : entity->getZ());
+            // Entity owns evaluated movement, including remote ground prediction
+            // and the final correction after a stop packet.
+            glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
             glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
             auto posIt = _pCreatureRenderPosCache.find(guid);
             const std::optional<glm::vec3> previousRenderPos =

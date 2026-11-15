@@ -2569,6 +2569,11 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
         glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
+        if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
+            entity->groundWalkSpeed = block.walkSpeed;
+            entity->groundRunSpeed = block.runSpeed;
+            entity->groundBackSpeed = block.runBackSpeed;
+        }
         LOG_DEBUG("  Position: (", pos.x, ", ", pos.y, ", ", pos.z, ")");
         if (block.guid == owner_.getPlayerGuid() && block.runSpeed > 0.1f && block.runSpeed < 100.0f) {
             if (auto* movement = owner_.getMovementHandler()) {
@@ -2623,6 +2628,11 @@ void EntityController::handleValuesUpdate(const UpdateBlock& block) {
         glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
+        if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
+            entity->groundWalkSpeed = block.walkSpeed;
+            entity->groundRunSpeed = block.runSpeed;
+            entity->groundBackSpeed = block.runBackSpeed;
+        }
         updateNonPlayerTransportAttachment(block, entity, entity->getType());
     }
 
@@ -2652,6 +2662,11 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                 glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
                 float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
                 entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
+                if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
+                    entity->groundWalkSpeed = block.walkSpeed;
+                    entity->groundRunSpeed = block.runSpeed;
+                    entity->groundBackSpeed = block.runBackSpeed;
+                }
                 LOG_DEBUG("Updated entity position: 0x", std::hex, block.guid, std::dec);
 
                 updateNonPlayerTransportAttachment(block, entity, entity->getType());

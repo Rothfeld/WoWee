@@ -274,3 +274,16 @@ frame. Movement packet callbacks do not also schedule CharacterRenderer motion:
 that second interpolation competes with the per-frame sync and repeatedly
 restarts movement. Remote movement packet logs include timestamp, flags,
 interpolation duration and position for diagnosing packet-cadence stalls.
+
+Remote ground players integrate movement flags at the speeds supplied by their
+server movement blocks and speed updates. Heartbeats correct position over
+100 ms; they do not define spline destinations or stop the locomotion clock.
+Stopping a turn/strafe uses the remaining movement flags, so forward movement
+continues when another input ends. Prediction expires after two seconds without
+packets, preserving the last rendered position. Explicit position/spline changes
+cancel ground prediction. Airborne, swimming and transported movement retain
+separate packet interpolation. TBC MSG_MOVE_SET_*_SPEED broadcasts use packed
+GUIDs (CMaNGOS MovementHandler.cpp, HandleForceSpeedChangeAck).
+Regression coverage: test_entity continuous motion, correction, stop and timeout.
+Live evidence: workspace 20261115T134433.233751Z.remote_prediction_strafe,
+210 paired frames at 30 fps; tracked moving segments have no stationary frames.

@@ -4,6 +4,7 @@
 #include "game/update_field_table.hpp"
 
 #include <cstdint>
+#include <cassert>
 #include <cmath>
 #include <string>
 #include <array>
@@ -118,6 +119,7 @@ public:
         y = py;
         z = pz;
         orientation = o;
+        remoteGroundMotion_ = false;
         isMoving_ = false; // Instant position set cancels interpolation
         usePathMode_ = false;
         activeSpline_.reset();
@@ -125,6 +127,7 @@ public:
 
     // Multi-segment path movement (Catmull-Rom spline interpolation)
     void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration) {
+        remoteGroundMotion_ = false;
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
             startMoveTo(path.back()[0], path.back()[1], path.back()[2], destO, totalDuration);
@@ -182,6 +185,7 @@ public:
 
     // Movement interpolation (syncs entity position with renderer during movement)
     void startMoveTo(float destX, float destY, float destZ, float destO, float durationSec) {
+        remoteGroundMotion_ = false;
         usePathMode_ = false;
         activeSpline_.reset();
         if (durationSec <= 0.0f) {
@@ -238,8 +242,47 @@ public:
         isMoving_ = true;
     }
 
+    // Player movement packets are observations of ongoing motion, not spline
+    // destinations. Integrate their velocity immediately; blend only positional
+    // correction so heartbeat boundaries do not stop or restart locomotion.
+    void updateRemoteGroundMotion(const glm::vec3& position, float yaw,
+                                  const glm::vec2& velocity) {
+        remoteGroundMotion_ = true;
+        usePathMode_ = false;
+        activeSpline_.reset();
+        remoteVelocity_ = velocity;
+        remoteCorrection_ = position - glm::vec3(x, y, z);
+        remoteCorrectionRemaining_ = 0.1f;
+        remotePacketAge_ = 0.0f;
+        moveEndX_ = position.x; moveEndY_ = position.y; moveEndZ_ = position.z;
+        orientation = yaw;
+        locomotionSpeed_ = glm::length(velocity);
+        isMoving_ = true;
+    }
+
+    // Ground speeds come from the server's movement block, including mounts
+    // and movement-speed auras. Zero means not initialized, never a guessed speed.
+    float groundWalkSpeed = 0.0f;
+    float groundRunSpeed = 0.0f;
+    float groundBackSpeed = 0.0f;
+
     void updateMovement(float deltaTime) {
         if (!isMoving_) return;
+        if (remoteGroundMotion_) {
+            // Bound extrapolation if the connection stops delivering packets.
+            const float motionDt = std::min(deltaTime, std::max(0.0f, 2.0f - remotePacketAge_));
+            x += remoteVelocity_.x * motionDt;
+            y += remoteVelocity_.y * motionDt;
+            remotePacketAge_ += deltaTime;
+            if (remoteCorrectionRemaining_ > 0.0f) {
+                const float fraction = std::min(1.0f, deltaTime / remoteCorrectionRemaining_);
+                const glm::vec3 correction = remoteCorrection_ * fraction;
+                x += correction.x; y += correction.y; z += correction.z;
+                remoteCorrection_ -= correction;
+                remoteCorrectionRemaining_ = std::max(0.0f, remoteCorrectionRemaining_ - deltaTime);
+            }
+            return;
+        }
         moveElapsed_ += deltaTime;
         if (moveElapsed_ < moveDuration_) {
             if (usePathMode_ && activeSpline_) {
@@ -285,6 +328,8 @@ public:
     /// Unlike isEntityMoving(), this does NOT include the dead-reckoning overrun window,
     /// so animations (Run/Walk) should use this to avoid "running in place" after arrival.
     [[nodiscard]] bool isActivelyMoving() const {
+        if (remoteGroundMotion_)
+            return remotePacketAge_ < 2.0f && glm::dot(remoteVelocity_, remoteVelocity_) > 0.0001f;
         return isMoving_ && moveElapsed_ < moveDuration_;
     }
 
@@ -334,6 +379,11 @@ protected:
     FlatFieldMap fields;
 
     // Movement interpolation state
+    bool remoteGroundMotion_ = false;
+    glm::vec2 remoteVelocity_{0.0f};
+    glm::vec3 remoteCorrection_{0.0f};
+    float remoteCorrectionRemaining_ = 0.0f;
+    float remotePacketAge_ = 0.0f;
     bool isMoving_ = false;
     bool usePathMode_ = false;
     float moveStartX_ = 0, moveStartY_ = 0, moveStartZ_ = 0;

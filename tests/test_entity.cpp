@@ -281,3 +281,49 @@ TEST_CASE("EntityManager spatial query filters nearby entities", "[entity][spati
     REQUIRE(std::any_of(result.begin(), result.end(), [](const auto& e) { return e->getGuid() == 2; }));
     REQUIRE_FALSE(std::any_of(result.begin(), result.end(), [](const auto& e) { return e->getGuid() == 3; }));
 }
+
+TEST_CASE("Remote ground movement continues across heartbeat gaps", "[entity][movement]") {
+    Player p;
+    p.setPosition(0, 0, 0, 0);
+    p.updateRemoteGroundMotion({0, 0, 0}, 0, {7, 0});
+    for (int i = 1; i <= 40; ++i) {
+        p.updateMovement(0.025f);
+        REQUIRE(p.getX() == Catch::Approx(i * 0.175f).margin(0.0001f));
+        REQUIRE(p.isActivelyMoving());
+        if (i == 20) p.updateRemoteGroundMotion({3.5f, 0, 0}, 0, {7, 0});
+    }
+    // Stop at the observed position, with no half-second catch-up teleport.
+    p.updateRemoteGroundMotion({7, 0, 0}, 0, {0, 0});
+    REQUIRE_FALSE(p.isActivelyMoving());
+    p.updateMovement(0.5f);
+    REQUIRE(p.getX() == Catch::Approx(7));
+}
+
+TEST_CASE("Remote ground correction blends without restarting motion", "[entity][movement]") {
+    Player p;
+    p.setPosition(0, 0, 0, 0);
+    p.updateRemoteGroundMotion({0, 0, 0}, 0, {7, 0});
+    p.updateMovement(0.5f);
+    p.updateRemoteGroundMotion({3.6f, 0, 0}, 0, {7, 0});
+    REQUIRE(p.getX() == Catch::Approx(3.5f));
+    p.updateMovement(0.05f);
+    REQUIRE(p.getX() == Catch::Approx(3.9f));
+    p.updateMovement(0.05f);
+    REQUIRE(p.getX() == Catch::Approx(4.3f));
+    p.updateMovement(0.1f);
+    REQUIRE(p.getX() == Catch::Approx(5.0f));
+}
+
+TEST_CASE("Remote prediction stops on stale connection without rewinding", "[entity][movement]") {
+    Player p;
+    p.setPosition(0, 0, 0, 0);
+    p.updateRemoteGroundMotion({0, 0, 0}, 0, {7, 0});
+    p.updateMovement(3.0f);
+    REQUIRE(p.getX() == Catch::Approx(14));
+    REQUIRE_FALSE(p.isActivelyMoving());
+    p.updateMovement(1.0f);
+    REQUIRE(p.getX() == Catch::Approx(14));
+    p.setPosition(1, 2, 3, 0);
+    p.updateMovement(0.5f);
+    REQUIRE(p.getX() == Catch::Approx(1));
+}

@@ -159,8 +159,14 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
             uint64_t guid = packet.readPackedGuid();
             if (!packet.hasRemaining(4)) return;
             float speed = packet.readFloat();
-            if (guid == owner_.getPlayerGuid() && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
-                this->*member = speed;
+            if (std::isfinite(speed) && speed > 0.01f && speed < 200.0f) {
+                if (guid == owner_.getPlayerGuid()) this->*member = speed;
+                if (auto entity = owner_.getEntityManager().getEntity(guid)) {
+                    if (member == &MovementHandler::serverRunSpeed_) entity->groundRunSpeed = speed;
+                    if (member == &MovementHandler::serverWalkSpeed_) entity->groundWalkSpeed = speed;
+                    if (member == &MovementHandler::serverRunBackSpeed_) entity->groundBackSpeed = speed;
+                }
+            }
         };
     };
     table[Opcode::SMSG_SPLINE_SET_RUN_SPEED]      = makeSplineSpeedHandler(&MovementHandler::serverRunSpeed_);
@@ -1209,9 +1215,8 @@ void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
 // ============================================================
 
 void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
-    const bool useFull = isPreWotlk();
-    uint64_t moverGuid = useFull
-        ? packet.readUInt64() : packet.readPackedGuid();
+    // Broadcast movement-speed updates use packed GUIDs in TBC too.
+    uint64_t moverGuid = packet.readPackedGuid();
 
     const size_t remaining = packet.getRemainingSize();
     if (remaining < 4) return;
@@ -1222,8 +1227,13 @@ void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
     float speed = packet.readFloat();
     if (!std::isfinite(speed) || speed <= 0.01f || speed > 200.0f) return;
 
-    if (moverGuid != owner_.getPlayerGuid()) return;
     const uint16_t wireOp = packet.getOpcode();
+    if (auto entity = owner_.getEntityManager().getEntity(moverGuid)) {
+        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED)) entity->groundRunSpeed = speed;
+        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_WALK_SPEED)) entity->groundWalkSpeed = speed;
+        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_BACK_SPEED)) entity->groundBackSpeed = speed;
+    }
+    if (moverGuid != owner_.getPlayerGuid()) return;
     if      (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED))        serverRunSpeed_      = speed;
     else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_BACK_SPEED))   serverRunBackSpeed_  = speed;
     else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_WALK_SPEED))       serverWalkSpeed_     = speed;
@@ -1325,7 +1335,32 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
               " time=", info.time, " flags=", info.flags, " duration=", durationMs,
               " stop=", isStopOpcode, " position=", canonical.x, ",", canonical.y, ",", canonical.z);
     const float entityDuration = isStopOpcode ? 0.0f : (durationMs / 1000.0f);
-    entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, entityDuration);
+    const uint32_t nonGroundFlags = static_cast<uint32_t>(MovementFlags::FALLING) |
+        static_cast<uint32_t>(MovementFlags::FALLINGFAR) |
+        static_cast<uint32_t>(MovementFlags::SWIMMING) |
+        static_cast<uint32_t>(MovementFlags::FLYING) |
+        static_cast<uint32_t>(MovementFlags::LEVITATING);
+    if (entity->getType() == ObjectType::PLAYER && !onTransport && !(info.flags & nonGroundFlags) && !isJumpOpcode) {
+        float forward = (info.hasFlag(MovementFlags::FORWARD) ? 1.0f : 0.0f) -
+                        (info.hasFlag(MovementFlags::BACKWARD) ? 1.0f : 0.0f);
+        float left = (info.hasFlag(MovementFlags::STRAFE_LEFT) ? 1.0f : 0.0f) -
+                     (info.hasFlag(MovementFlags::STRAFE_RIGHT) ? 1.0f : 0.0f);
+        if (info.isPlayerRooted()) forward = left = 0.0f;
+        glm::vec3 velocity(0.0f);
+        const float magnitude = std::hypot(forward, left);
+        if (magnitude > 0.0f) {
+            const float speed = info.hasFlag(MovementFlags::WALKING) ? entity->groundWalkSpeed :
+                                forward < 0.0f ? entity->groundBackSpeed : entity->groundRunSpeed;
+            assert(std::isfinite(speed) && speed > 0.0f);
+            const float cosine = std::cos(info.orientation), sine = std::sin(info.orientation);
+            velocity = core::coords::serverToCanonical(glm::vec3(
+                (cosine * forward - sine * left) * speed / magnitude,
+                (sine * forward + cosine * left) * speed / magnitude, 0.0f));
+        }
+        entity->updateRemoteGroundMotion(canonical, canYaw, glm::vec2(velocity));
+    } else {
+        entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, entityDuration);
+    }
 
     if (owner_.creatureMoveCallbackRef()) {
         const uint32_t notifyDuration = isStopOpcode ? 0u : durationMs;
