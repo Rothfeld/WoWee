@@ -713,7 +713,7 @@ public:
     bool isCloakVisible() const { return cloakVisible_; }
 
     // Follow/Assist
-    void followTarget();
+    void followTarget(uint64_t guid = 0);
     void cancelFollow();   // Stop following current target
     void assistTarget();
 

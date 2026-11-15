@@ -1867,8 +1867,8 @@ void GameHandler::toggleCloak() {
     if (socialHandler_) socialHandler_->toggleCloak();
 }
 
-void GameHandler::followTarget() {
-    if (movementHandler_) movementHandler_->followTarget();
+void GameHandler::followTarget(uint64_t guid) {
+    if (movementHandler_) movementHandler_->followTarget(guid);
 }
 
 void GameHandler::cancelFollow() {

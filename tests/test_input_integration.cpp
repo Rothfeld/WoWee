@@ -909,3 +909,22 @@ TEST_CASE("FontString alpha gradient reports quest reveal completion", "[quest-t
     CHECK(widget->alphaGradientStart == 0.0f);
     CHECK(widget->alphaGradientLength == 5.0f);
 }
+
+
+TEST_CASE_METHOD(Integration, "Named follow skips non-units and preserves selection", "[follow]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    auto player = std::make_shared<wowee::game::Player>(3);
+    player->setName("Graulberto");
+    handler.getEntityManager().addEntity(3, player);
+    handler.getEntityManager().addEntity(4, std::make_shared<wowee::game::Entity>(4));
+    handler.getEntityManager().addEntity(5, std::make_shared<wowee::game::GameObject>(5));
+    run("FollowUnit('gRaUlBeRtO')");
+    CHECK(handler.followTargetGuidRef() == 3);
+    CHECK(handler.getTargetGuid() == 0);
+    handler.cancelFollow();
+    run("FollowUnit('missing player')");
+    CHECK(handler.followTargetGuidRef() == 0);
+    lua.setGameHandler(nullptr);
+}

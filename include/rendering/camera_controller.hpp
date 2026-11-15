@@ -278,7 +278,10 @@ public:
     // Auto-follow: walk toward a target position each frame (WoW /follow).
     // The caller updates *targetPos every frame with the followed entity's render position.
     // Stops within FOLLOW_STOP_DIST; cancels on manual WASD input.
-    void setAutoFollow(const glm::vec3* targetPos) { autoFollowTarget_ = targetPos; }
+    void setAutoFollow(const glm::vec3* targetPos) {
+        autoRunning = false;
+        autoFollowTarget_ = targetPos;
+    }
     void cancelAutoFollow() { autoFollowTarget_ = nullptr; }
     [[nodiscard]] bool isAutoFollowing() const { return autoFollowTarget_ != nullptr; }
 

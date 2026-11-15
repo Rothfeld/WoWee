@@ -37,7 +37,7 @@ public:
     void dismount();
 
     // Follow target (moved from GameHandler)
-    void followTarget();
+    void followTarget(uint64_t guid = 0);
     void cancelFollow();
     // Per-frame movement toward the followed target's live position, called
     // from GameHandler::update() alongside the existing followRenderPos_

@@ -433,9 +433,10 @@ inline uint64_t resolveUnitOrName(game::GameHandler* gh, const std::string& text
     // Units only - a name aimed at a doodad is not what anyone meant, and
     // getName lives on the concrete types rather than on Entity.
     for (const auto& [guid, entity] : gh->getEntityManager().getEntities()) {
-        if (!entity || entity->getType() == game::ObjectType::GAMEOBJECT) continue;
-        auto unit = std::static_pointer_cast<game::Unit>(entity);
-        std::string name = unit->getName();
+        if (!entity || !entity->isUnit()) continue;
+        std::string name = entity->getType() == game::ObjectType::PLAYER
+            ? std::static_pointer_cast<game::Player>(entity)->getName()
+            : std::static_pointer_cast<game::Unit>(entity)->getName();
         if (name.empty()) continue;
         toLowerInPlace(name);
         if (name == lower) return guid;

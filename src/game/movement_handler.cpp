@@ -3684,25 +3684,26 @@ void MovementHandler::updateAttachedTransportChildren(float /*deltaTime*/) {
 // Follow target (moved from GameHandler)
 // ============================================================
 
-void MovementHandler::followTarget() {
+void MovementHandler::followTarget(uint64_t guid) {
     if (owner_.getState() != WorldState::IN_WORLD) {
         LOG_WARNING("Cannot follow: not in world");
         return;
     }
 
-    if (owner_.getTargetGuid() == 0) {
+    if (guid == 0) guid = owner_.getTargetGuid();
+    if (guid == 0) {
         owner_.raiseUiError("You must target someone to follow.");
         return;
     }
 
-    auto target = owner_.getTarget();
+    auto target = owner_.getEntityManager().getEntity(guid);
     if (!target) {
         owner_.raiseUiError("Invalid target.");
         return;
     }
 
     // Set follow target
-    owner_.followTargetGuidRef() = owner_.getTargetGuid();
+    owner_.followTargetGuidRef() = guid;
 
     // Initialize render-space position from entity's canonical coords
     owner_.followRenderPosRef() = core::coords::canonicalToRender(glm::vec3(target->getX(), target->getY(), target->getZ()));
@@ -3725,7 +3726,7 @@ void MovementHandler::followTarget() {
     }
 
     owner_.addSystemChatMessage("Now following " + targetName + ".");
-    LOG_INFO("Following target: ", targetName, " (GUID: 0x", std::hex, owner_.getTargetGuid(), std::dec, ")");
+    LOG_INFO("Following target: ", targetName, " (GUID: 0x", std::hex, guid, std::dec, ")");
     // The name goes with it: the status text is formatted from this argument,
     // and without one it formats a nil.
     owner_.fireAddonEvent("AUTOFOLLOW_BEGIN", {targetName});
@@ -3753,6 +3754,9 @@ void MovementHandler::cancelFollow() {
 // instead of a stored waypoint, and stops at kFollowStopDistance rather
 // than snapping onto the target.
 void MovementHandler::updateFollowMovement(float deltaTime) {
+    // The graphical controller owns collision, movement and packet emission.
+    // Direct position stepping is only for clients without that controller.
+    if (owner_.autoFollowCallbackRef()) return;
     const uint64_t guid = owner_.followTargetGuidRef();
     if (guid == 0) {
         return;

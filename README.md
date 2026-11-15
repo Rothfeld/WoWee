@@ -824,3 +824,13 @@ keeps objectives and rewards hidden until the description finishes, then fades
 them in. Local `GetAlpha()` values remain unchanged.
 `test_input_integration '[quest-text]'` checks markup-aware completion and reset.
 `test_widget_tree '[alpha]'` checks inherited opacity and draw visibility.
+
+### Following another character
+
+`/follow Graulberto` resolves a nearby character by name without changing the
+selected target. `FollowUnit("target")` and party unit tokens use the same path.
+The graphical camera controller owns movement, collision and movement packets;
+the headless direct-position driver runs only without that controller. Follow
+uses render-space facing, stops within three yards and resumes when the target
+moves away. Forward/backward, strafe and turn input cancel follow. Follow does
+not latch the independent autorun toggle.

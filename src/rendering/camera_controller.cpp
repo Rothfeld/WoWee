@@ -2842,8 +2842,8 @@ void CameraController::update(float deltaTime) {
         if (distSq2D > FOLLOW_MAX_DIST * FOLLOW_MAX_DIST) {
             doCancelAutoFollow();
         } else if (distSq2D > FOLLOW_STOP_DIST * FOLLOW_STOP_DIST) {
-            // Face target (render-space yaw: atan2(-dx, -dy) -> degrees)
-            float targetYawRad = std::atan2(-dx, -dy);
+            // Match forward = (cos(yaw), sin(yaw)) in render coordinates.
+            float targetYawRad = std::atan2(dy, dx);
             float targetYawDeg = targetYawRad * 180.0f / core::coords::PI;
             facingYaw = targetYawDeg;
             yaw = targetYawDeg;
@@ -2861,8 +2861,7 @@ void CameraController::update(float deltaTime) {
     // When the server has rooted the player, suppress all horizontal movement input.
     const bool movBlocked = movementRooted_;
     // Auto-follow uses run speed (same as auto-run), not walk speed
-    if (autoFollowMove) autoRunning = true;
-    bool nowForward = !movBlocked && (keyW || mouseAutorun || autoRunning);
+    bool nowForward = !movBlocked && (keyW || mouseAutorun || autoRunning || autoFollowMove);
     bool nowBackward = !movBlocked && keyS;
     bool nowStrafeLeft = false;
     bool nowStrafeRight = false;
