@@ -561,7 +561,14 @@ function(compile_shaders TARGET_NAME)
         list(APPEND SPV_OUTPUTS ${SPV_DIR}/${VARIANT_OUT})
     endforeach()
 
-    add_custom_target(${TARGET_NAME}_shaders ALL DEPENDS ${SPV_OUTPUTS})
+    # Shader-only edits do not relink the executable, so POST_BUILD is insufficient.
+    # Keep runtime shaders current even on an otherwise unchanged build.
+    add_custom_target(${TARGET_NAME}_shaders ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/assets/shaders
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SPV_OUTPUTS} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/assets/shaders
+        DEPENDS ${SPV_OUTPUTS}
+        VERBATIM
+    )
     add_dependencies(${TARGET_NAME} ${TARGET_NAME}_shaders)
 endfunction()
 
