@@ -695,7 +695,7 @@ static bool isFriendlyUnit(game::GameHandler* gh, const game::Unit& unit) {
 /// Attackable unless its faction is friendly: neutral wildlife can be fought,
 /// a faction with a standing only while at war with it.
 static bool canAttackUnit(game::GameHandler* gh, const game::Unit& unit) {
-    return unit.isHostile() || !gh->isFriendlyFaction(unit.getFactionTemplate());
+    return gh->unitReactionToPlayer(unit) <= 4;
 }
 
 static game::Unit* unitAskedAbout(lua_State* L);

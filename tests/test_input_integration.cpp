@@ -969,6 +969,13 @@ TEST_CASE_METHOD(Integration, "Duel teams override friendly faction only for mat
     CHECK(handler.isDuelOpponent(*opponent));
     CHECK(handler.unitReactionToPlayer(*opponent) == 2);
     CHECK(opponent->isHostile());
+    lua.setGameHandler(&handler);
+    handler.setTarget(opponent->getGuid());
+    // Cached presentation state must not override authoritative duel fields.
+    opponent->setHostile(false);
+    truth("UnitCanAttack('player', 'target') and not UnitIsFriend('player', 'target')");
+    lua.setGameHandler(nullptr);
+    handler.refreshUnitHostility();
     opponent->setField(flag, 124);
     CHECK_FALSE(handler.isDuelOpponent(*opponent));
     opponent->setField(flag, 123);
@@ -976,4 +983,28 @@ TEST_CASE_METHOD(Integration, "Duel teams override friendly faction only for mat
     handler.refreshUnitHostility();
     CHECK_FALSE(handler.isDuelOpponent(*opponent));
     CHECK_FALSE(opponent->isHostile());
+}
+
+TEST_CASE_METHOD(Integration, "Duel countdown prints localized chat once per second and cancels", "[duel]") {
+    run(R"(
+        duelClock = 0
+        GetTime = function() return duelClock end
+        DUEL_COUNTDOWN = "Duel starting: %d"
+        duelLines = {}
+        DEFAULT_CHAT_FRAME = {AddMessage = function(self, text) table.insert(duelLines, text) end}
+    )");
+    lua.fireEvent("WOWEE_DUEL_COUNTDOWN", {"3000"});
+    truth("#duelLines == 1 and duelLines[1] == 'Duel starting: 3'");
+    run("duelClock = 0.5; __WoweeDuelCountdown:GetScript('OnUpdate')(__WoweeDuelCountdown)");
+    truth("#duelLines == 1");
+    run("duelClock = 1.1; __WoweeDuelCountdown:GetScript('OnUpdate')(__WoweeDuelCountdown)");
+    truth("#duelLines == 2 and duelLines[2] == 'Duel starting: 2'");
+    run("duelClock = 2.1; __WoweeDuelCountdown:GetScript('OnUpdate')(__WoweeDuelCountdown)");
+    truth("#duelLines == 3 and duelLines[3] == 'Duel starting: 1'");
+    run("duelClock = 3.1; __WoweeDuelCountdown:GetScript('OnUpdate')(__WoweeDuelCountdown)");
+    truth("#duelLines == 3 and not __WoweeDuelCountdown:IsShown()");
+    lua.fireEvent("WOWEE_DUEL_COUNTDOWN", {"3000"});
+    truth("__WoweeDuelCountdown:IsShown()");
+    lua.fireEvent("DUEL_FINISHED");
+    truth("not __WoweeDuelCountdown:IsShown()");
 }

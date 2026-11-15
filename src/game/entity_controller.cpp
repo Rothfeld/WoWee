@@ -2613,6 +2613,10 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
     auto* handler = getTypeHandler(block.objectType);
     if (handler) handler->onCreate(block, entity, newItemCreated);
 
+    // Either duellist can arrive first on reconnect. Creating the local player
+    // completes the pair and must refresh opponents that already exist.
+    if (block.objectType == ObjectType::PLAYER) owner_.refreshUnitHostility();
+
     flushPendingEvents();
 }
 

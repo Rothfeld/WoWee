@@ -898,7 +898,8 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                     } else if (target->getType() == game::ObjectType::PLAYER) {
                         // Players: blue unflagged, green friendly flagged, yellow hostile
                         // flagged while we are not, red when both are flagged.
-                        if (!pvpFlagged(target->getGuid())) circleColor = kBlue;
+                        if (gameHandler.isDuelOpponent(*unit)) circleColor = kRed;
+                        else if (!pvpFlagged(target->getGuid())) circleColor = kBlue;
                         else if (!unit->isHostile()) circleColor = kGreen;
                         else circleColor = pvpFlagged(gameHandler.getPlayerGuid()) ? kRed : kYellow;
                     } else {
@@ -1908,7 +1909,10 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         gameHandler.interactWithGameObject(target->getGuid());
                     }
                 } else if (target->getType() == game::ObjectType::PLAYER) {
-                    // Right-click another player could start attack in PvP context
+                    const auto unit = std::static_pointer_cast<game::Unit>(target);
+                    if (gameHandler.unitReactionToPlayer(*unit) <= 4) {
+                        gameHandler.startAutoAttack(target->getGuid());
+                    }
                 }
             }
         }

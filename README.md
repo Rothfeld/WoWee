@@ -855,3 +855,10 @@ Duel hostility follows public PLAYER_DUEL_TEAM and PLAYER_DUEL_ARBITER updates.
 Opposing nonzero teams with the same flag are hostile even when factions match.
 Zero teams retain normal faction reactions during invitation/countdown and after
 completion. Player field updates refresh cached hostility and UNIT_FACTION UI.
+
+Duel countdown uses the localized DUEL_COUNTDOWN chat string once per remaining
+second. Right-clicking a hostile player starts auto-attack; active duel opponents
+use the red selection circle regardless of PvP flags. Player creation refreshes
+hostility for both duel participants, including reconnects where the opponent
+arrives before the local player. UnitCanAttack uses the live reaction rather
+than cached presentation state. Friendly target cycling excludes opponents.

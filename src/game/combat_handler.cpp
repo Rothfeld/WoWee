@@ -1525,8 +1525,9 @@ bool CombatHandler::isEnemyTarget(uint64_t guid, const Unit& unit) const {
 
 void CombatHandler::targetFriend(bool reverse) {
     // Dead friends stay targetable - you need to select them to resurrect them.
-    cycleTarget(reverse, "No friendly targets in range.", [](uint64_t, Entity& e) {
-        return e.getType() == ObjectType::PLAYER;
+    cycleTarget(reverse, "No friendly targets in range.", [this](uint64_t, Entity& e) {
+        return e.getType() == ObjectType::PLAYER &&
+            owner_.unitReactionToPlayer(static_cast<const Unit&>(e)) >= 5;
     });
 }
 
