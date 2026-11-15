@@ -142,3 +142,29 @@ TEST_CASE("the player guid is not written anywhere", "[prewotlk-build]") {
                                                info, 0xFFFFFFFFFFFFFFFFull);
     CHECK(a.getData() == b.getData());
 }
+
+TEST_CASE("TBC jump payload matches CMaNGOS MovementInfo field order", "[prewotlk-build]") {
+    TbcPacketParsers tbc;
+    auto info = sampleMovement();
+    info.flags = 0x1001; // Forward and FALLING, not FALLINGFAR.
+    info.fallTime = 500;
+    info.jumpVelocity = 7.96f; // Upward-positive internal velocity.
+    info.jumpCosAngle = 0.6f;
+    info.jumpSinAngle = 0.8f;
+    info.jumpXYSpeed = 7.0f;
+    auto packet = tbc.buildMovementPacket(LogicalOpcode::MSG_MOVE_JUMP, info, kPlayerGuid);
+    REQUIRE(packet.getSize() == 45);
+    CHECK(packet.readUInt32() == 0x1001);
+    packet.readUInt8();
+    packet.readUInt32();
+    for (int i = 0; i < 4; ++i) packet.readFloat();
+    CHECK(packet.readUInt32() == 500);
+    CHECK(packet.readFloat() == Catch::Approx(-7.96f));
+    CHECK(packet.readFloat() == Catch::Approx(0.6f));
+    CHECK(packet.readFloat() == Catch::Approx(0.8f));
+    CHECK(packet.readFloat() == Catch::Approx(7.0f));
+    CHECK_FALSE(packet.hasData());
+    info.flags = 0;
+    auto land = tbc.buildMovementPacket(LogicalOpcode::MSG_MOVE_FALL_LAND, info, kPlayerGuid);
+    CHECK(land.getSize() == 29);
+}

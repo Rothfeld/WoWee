@@ -7,11 +7,11 @@ namespace wowee {
 namespace game {
 
 // ============================================================================
-// TBC 2.4.3 movement flag constants (shifted relative to WotLK 3.3.5a)
+// TBC 2.4.3 movement flag constants (CMaNGOS Object.h)
 // ============================================================================
 namespace TbcMoveFlags {
     constexpr uint32_t ON_TRANSPORT     = 0x00000200;  // Gates transport data (same as WotLK)
-    constexpr uint32_t JUMPING          = 0x00002000;  // Gates jump data (WotLK: FALLING=0x1000)
+    constexpr uint32_t FALLING          = 0x00001000;  // Gates jump data
     constexpr uint32_t SWIMMING         = 0x00200000;  // Same as WotLK
     constexpr uint32_t ONTRANSPORT      = 0x02000000;  // Secondary pitch check
     constexpr uint32_t SPLINE_ELEVATION = 0x04000000;  // Same as WotLK
@@ -108,12 +108,12 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
         if (rem() < 4) return false;
         /*uint32_t fallTime =*/ packet.readUInt32();
 
-        // Jumping (TBC: JUMPING=0x2000, WotLK: FALLING=0x1000)
-        if (moveFlags & TbcMoveFlags::JUMPING) {
+        // Falling payload: downward zspeed, cosine, sine, horizontal speed.
+        if (moveFlags & TbcMoveFlags::FALLING) {
             if (rem() < 16) return false;
             /*float jumpVelocity =*/ packet.readFloat();
-            /*float jumpSinAngle =*/ packet.readFloat();
             /*float jumpCosAngle =*/ packet.readFloat();
+            /*float jumpSinAngle =*/ packet.readFloat();
             /*float jumpXYSpeed =*/ packet.readFloat();
         }
 
@@ -267,11 +267,11 @@ void TbcPacketParsers::writeMovementPayload(network::Packet& packet, const Movem
     // Fall time (always present)
     packet.writeUInt32(info.fallTime);
 
-    // Jump data (TBC JUMPING = 0x2000, WotLK FALLING = 0x1000)
-    if (info.flags & TbcMoveFlags::JUMPING) {
-        packet.writeFloat(info.jumpVelocity);
-        packet.writeFloat(info.jumpSinAngle);
+    // TBC uses downward-positive zspeed; internal launch velocity is upward-positive.
+    if (info.flags & TbcMoveFlags::FALLING) {
+        packet.writeFloat(-info.jumpVelocity);
         packet.writeFloat(info.jumpCosAngle);
+        packet.writeFloat(info.jumpSinAngle);
         packet.writeFloat(info.jumpXYSpeed);
     }
 }

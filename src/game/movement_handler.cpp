@@ -590,21 +590,18 @@ void MovementHandler::sendMovement(Opcode opcode) {
             movementInfo.fallTime = 0;
             movementInfo.jumpVelocity = 7.96f;
             {
-                const float facingRad = movementInfo.orientation;
-                movementInfo.jumpCosAngle = std::cos(facingRad);
-                movementInfo.jumpSinAngle = std::sin(facingRad);
-                const uint32_t horizFlags =
-                    static_cast<uint32_t>(MovementFlags::FORWARD) |
-                    static_cast<uint32_t>(MovementFlags::BACKWARD) |
-                    static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-                    static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
-                const bool movingHoriz = (movementInfo.flags & horizFlags) != 0;
-                if (movingHoriz) {
-                    const bool isWalking = (movementInfo.flags & static_cast<uint32_t>(MovementFlags::WALKING)) != 0;
-                    movementInfo.jumpXYSpeed = isWalking ? 2.5f : (serverRunSpeed_ > 0.0f ? serverRunSpeed_ : 7.0f);
-                } else {
-                    movementInfo.jumpXYSpeed = 0.0f;
-                }
+                const float facingRad = core::coords::canonicalToServerYaw(movementInfo.orientation);
+                const float forward = (movementInfo.hasFlag(MovementFlags::FORWARD) ? 1.0f : 0.0f) -
+                                      (movementInfo.hasFlag(MovementFlags::BACKWARD) ? 1.0f : 0.0f);
+                const float left = (movementInfo.hasFlag(MovementFlags::STRAFE_LEFT) ? 1.0f : 0.0f) -
+                                   (movementInfo.hasFlag(MovementFlags::STRAFE_RIGHT) ? 1.0f : 0.0f);
+                const float length = std::hypot(forward, left);
+                const float travelAngle = facingRad + (length > 0.0f ? std::atan2(left, forward) : 0.0f);
+                movementInfo.jumpCosAngle = std::cos(travelAngle);
+                movementInfo.jumpSinAngle = std::sin(travelAngle);
+                const float speed = movementInfo.hasFlag(MovementFlags::WALKING) ? serverWalkSpeed_ :
+                    (forward < 0.0f ? serverRunBackSpeed_ : serverRunSpeed_);
+                movementInfo.jumpXYSpeed = length > 0.0f ? speed : 0.0f;
             }
             break;
         case Opcode::MSG_MOVE_START_TURN_LEFT:
@@ -696,17 +693,12 @@ void MovementHandler::sendMovement(Opcode opcode) {
         lastFacingSentOrientation_ = movementInfo.orientation;
     }
 
-    // Keep fallTime current
-    if (isFalling_ && movementInfo.hasFlag(MovementFlags::FALLING)) {
-        uint32_t elapsed = (movementInfo.time >= fallStartMs_)
-                               ? (movementInfo.time - fallStartMs_)
-                               : 0u;
-        movementInfo.fallTime = elapsed;
-    } else if (!movementInfo.hasFlag(MovementFlags::FALLING)) {
-        if (isFalling_) {
-            isFalling_ = false;
-            fallStartMs_ = 0;
-        }
+    // Airborne fallTime is sampled with position by Application. Using send
+    // time here gives native clients a velocity belonging to a different point
+    // on the arc, so each heartbeat snaps their prediction.
+    if (!movementInfo.hasFlag(MovementFlags::FALLING)) {
+        isFalling_ = false;
+        fallStartMs_ = 0;
         movementInfo.fallTime = 0;
     }
 

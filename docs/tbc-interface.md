@@ -313,3 +313,17 @@ momentum, descent below takeoff height, landing and explicit position resets.
 Matched-camera stationary/running jump and landing evidence: workspace experiment
 20261115T135427.190485Z.remote_jump; final paired footage
 20261115T140204.621244Z.remote_jump_verified. Mounted jumps were not exercised.
+
+Outgoing TBC jump packets use FALLING=0x1000 and a 45-byte untransported
+MovementInfo payload (29 bytes after landing). Internal upward-positive launch
+speed is negated for the TBC wire; cosine precedes sine. Launch heading includes
+strafe/backpedal direction in server coordinates and uses server movement speeds.
+The physics step emits a successful-takeoff event; checking grounded after
+physics loses the jump opcode. Third-person physics consumes the full frame in
+steps no longer than 1/30 second, with constant-acceleration vertical displacement.
+Airborne heartbeats sample position and airborne elapsed time from the same
+completed physics frame before network update; landing packets use the grounded
+position immediately. This keeps
+fallTime, position and native prediction consistent across frame boundaries.
+Packet regression: test_prewotlk_build_packets. Native observer recordings and
+frame measurements: workspace experiment 20261115T140724.449882Z.outgoing_jump.

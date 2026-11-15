@@ -113,6 +113,7 @@ public:
     [[nodiscard]] bool isThirdPerson() const { return thirdPerson; }
     [[nodiscard]] bool isFirstPersonView() const { return thirdPerson && (userTargetDistance <= MIN_DISTANCE + 0.15f); }
     [[nodiscard]] bool isGrounded() const { return grounded; }
+    [[nodiscard]] float getAirborneSeconds() const { return airborneSeconds_; }
     [[nodiscard]] bool isJumping() const { return !grounded && verticalVelocity > 0.0f; }
     // A swimming character is not grounded and is not rising, but it is not
     // falling either - treating it as falling made leaving the water register as
@@ -345,6 +346,7 @@ private:
         bool nowTurnLeft = false;
         bool nowTurnRight = false;
         bool nowJump = false;
+        bool startedJump = false;    ///< successful physics takeoff this frame
         bool spaceHeld = false;       ///< held, not pressed: rising in water and in flight
         bool xDown = false;
         bool uiWantsKeyboard = false;

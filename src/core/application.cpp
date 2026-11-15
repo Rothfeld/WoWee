@@ -2299,6 +2299,12 @@ void Application::setState(AppState newState) {
                 auto* cc = renderer->getCameraController();
                 cc->setMovementCallback([this](uint32_t opcode) {
                     if (gameHandler) {
+                        if (opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_FALL_LAND)) {
+                            // Physics has landed; the normal game position sync
+                            // still contains the previous airborne frame.
+                            const auto position = core::coords::renderToCanonical(renderer->getCharacterPosition());
+                            gameHandler->setPosition(position.x, position.y, position.z);
+                        }
                         gameHandler->sendMovement(static_cast<game::Opcode>(opcode));
                     }
                 });
@@ -3862,6 +3868,18 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
 #endif
     runInGameStage("gameHandler->update", [&] {
         if (gameHandler) {
+            // Heartbeats run before the regular render/game position sync.
+            // During local flight, use the last completed physics sample;
+            // otherwise fallTime advances with a position one frame older.
+            if (renderer && !gameHandler->isOnTransport() &&
+                gameHandler->getMovementInfo().hasFlag(game::MovementFlags::FALLING)) {
+                const auto position = core::coords::renderToCanonical(renderer->getCharacterPosition());
+                gameHandler->setPosition(position.x, position.y, position.z);
+                auto* camera = renderer->getCameraController();
+                assert(camera);
+                gameHandler->getMovementHandler()->getMovementInfoMut().fallTime =
+                    static_cast<uint32_t>(std::lround(camera->getAirborneSeconds() * 1000.0f));
+            }
             gameHandler->update(deltaTime);
         }
     });

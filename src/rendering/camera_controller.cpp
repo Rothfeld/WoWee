@@ -804,6 +804,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
 
         bool canJump = (coyoteTimer > 0.0f) && (jumpBufferTimer > 0.0f) && !mounted_;
         if (canJump) {
+            f.startedJump = true;
             verticalVelocity = f.jumpVel;
             grounded = false;
             jumpBufferTimer = 0.0f;
@@ -841,6 +842,9 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             if (verticalVelocity < 0.0f) verticalVelocity = 0.0f;
             else verticalVelocity *= std::max(0.0f, 1.0f - 3.0f * f.physicsDeltaTime);
         } else {
+            // Constant-acceleration position matches the arc reconstructed by
+            // native clients, independent of the number of physics substeps.
+            targetPos.z -= 0.5f * f.gravity * f.physicsDeltaTime * f.physicsDeltaTime;
             verticalVelocity += f.gravity * f.physicsDeltaTime;
             // Feather Fall / Slow Fall: cap downward terminal velocity to ~2 m/s
             if (featherFallActive_ && verticalVelocity < -2.0f)
@@ -2386,8 +2390,18 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
 void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
     glm::vec3 prevTargetPos(0.0f);
-    glm::vec3 targetPos = moveFollowedCharacter(deltaTime, f, prevTargetPos);
-    groundFollowedCharacter(deltaTime, f, targetPos, prevTargetPos);
+    // Consume the entire frame in collision-safe steps. Dropping time makes
+    // movement lag the network clock and forces remote heartbeat corrections.
+    const int steps = std::max(1, static_cast<int>(std::ceil(deltaTime / kMaxPhysicsDelta)));
+    f.physicsDeltaTime = deltaTime / steps;
+    glm::vec3 targetPos(0.0f);
+    const bool jumpPressed = f.nowJump;
+    for (int step = 0; step < steps; ++step) {
+        f.nowJump = jumpPressed && step == 0;
+        targetPos = moveFollowedCharacter(f.physicsDeltaTime, f, prevTargetPos);
+        groundFollowedCharacter(f.physicsDeltaTime, f, targetPos, prevTargetPos);
+    }
+    f.nowJump = jumpPressed;
     // Landing: flying down onto real ground, or skimming it, without climbing.
     // Grounding has just put the feet on the floor if they were within reach
     // of it; on a floor that was actually found, that is touching down.
@@ -2506,6 +2520,7 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
         if (grounded) coyoteTimer = COYOTE_TIME;
 
         if (coyoteTimer > 0.0f && jumpBufferTimer > 0.0f && !mounted_) {
+            f.startedJump = true;
             verticalVelocity = f.jumpVel;
             grounded = false;
             jumpBufferTimer = 0.0f;
@@ -3086,10 +3101,9 @@ void CameraController::update(float deltaTime) {
             }
         }
 
-        // Jump. Not in flight, where space climbs - and where grounded is held
-        // true only to keep the fall-damage checks quiet, so every press sent
-        // the server a jump from mid-air.
-        if (nowJump && !wasJumping && grounded && !isFlightAirborne()) {
+        // Physics has already cleared grounded. Report its successful takeoff
+        // event, including buffered jumps, rather than rechecking input/ground.
+        if (f.startedJump) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_JUMP));
         }
 
