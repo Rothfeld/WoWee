@@ -27,6 +27,8 @@
 #include "game/transport_manager.hpp"
 
 #include <cmath>
+#include <bit>
+#include <cassert>
 #include <algorithm>
 #include <cctype>
 #include <sstream>
@@ -81,10 +83,10 @@ void EntitySpawner::update() {
     processPendingTransportDoodads();
     processPendingMount();
     processPendingRemotePlayerMounts();
-    syncCreatureStealthVisuals();
+    syncCreatureVisualState();
 }
 
-void EntitySpawner::syncCreatureStealthVisuals() {
+void EntitySpawner::syncCreatureVisualState() {
     if (!renderer_ || !gameHandler_) return;
     auto* characterRenderer = renderer_->getCharacterRenderer();
     if (!characterRenderer) return;
@@ -109,6 +111,14 @@ void EntitySpawner::syncCreatureStealthVisuals() {
         if (entity->getType() != game::ObjectType::UNIT &&
             entity->getType() != game::ObjectType::PLAYER) continue;
         const auto* unit = static_cast<const game::Unit*>(entity);
+
+        // Query metadata may arrive after the model. Re-evaluate family/level
+        // and object scale here so packet arrival order cannot freeze its size.
+        const auto field = unit->getFields().find(game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X));
+        if (field != unit->getFields().end()) {
+            characterRenderer->setInstanceScale(instanceId,
+                creatureRenderScale(*unit, unit->getDisplayId(), std::bit_cast<float>(field->second)));
+        }
 
         const bool stealthed = unit->hasCreepVisibility();
         auto [it, inserted] = creatureWasStealthed_.try_emplace(guid, stealthed);
@@ -564,6 +574,17 @@ void EntitySpawner::buildCreatureDisplayLookups() {
     if (creatureLookupsBuilt_ || !assetManager_ || !assetManager_->isInitialized()) return;
 
     LOG_INFO("Building creature display lookups from DBC files");
+
+    // These first five columns are shared by Vanilla/TBC/Wrath.
+    auto families = assetManager_->loadDBC("CreatureFamily.dbc");
+    assert(families && families->isLoaded() && families->getFieldCount() >= 5);
+    creatureFamilyScales_.clear();
+    for (uint32_t i = 0; i < families->getRecordCount(); ++i) {
+        CreatureFamilyScale family{families->getFloat(i, 1), families->getUInt32(i, 2),
+                                   families->getFloat(i, 3), families->getUInt32(i, 4)};
+        assert(family.maxLevel >= family.minLevel);
+        creatureFamilyScales_.emplace(families->getUInt32(i, 0), family);
+    }
 
     // CreatureDisplayInfo.dbc structure (3.3.5a):
     // Col 0: displayId
@@ -2138,6 +2159,19 @@ float EntitySpawner::creatureDisplayScale(uint32_t displayId) const {
     return it != displayDataMap_.end() ? it->second.displayScale : 1.0f;
 }
 
+float EntitySpawner::creatureRenderScale(const game::Unit& unit, uint32_t displayId, float serverScale) const {
+    const float base = creatureDisplayScale(displayId) * creatureModelScale(displayId);
+    const CreatureFamilyScale* family = nullptr;
+    const auto& cache = gameHandler_->getCreatureInfoCache();
+    if (const auto info = cache.find(unit.getEntry()); info != cache.end()) {
+        if (const auto found = creatureFamilyScales_.find(info->second.family); found != creatureFamilyScales_.end())
+            family = &found->second;
+    }
+    const uint16_t petField = game::fieldIndex(game::UF::UNIT_FIELD_PETNUMBER);
+    const bool pet = petField != 0xFFFF && unit.getField(petField) != 0;
+    return serverScale * resolveCreatureFamilyScale(base, unit.getLevel(), pet, family);
+}
+
 void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x, float y, float z, float orientation, float scale) {
     if (!renderer_ || !renderer_->getCharacterRenderer() || !assetManager_) return;
 
@@ -2184,14 +2218,14 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     }
     const uint32_t modelId = cacheIt->second;
 
-    // OBJECT_FIELD_SCALE_X already includes the server's selected display
-    // size or creature-template override. CMaNGOS ObjectMgr loads the display
-    // scale only when the template has no override; Creature::InitEntry sends
-    // that resolved value. Multiplying the display scale again shrinks/grows
-    // creatures twice (Ragged Young Wolf: server 1.0, display 0.4).
+    // Native TBC model size includes display/model scale and a family-level
+    // lower bound. OBJECT_FIELD_SCALE_X multiplies that resolved model size.
     const float dispScale = creatureDisplayScale(displayId);
     const float serverScale = scale;
-    scale *= creatureModelScale(displayId);
+    auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    assert(entity && entity->getType() == game::ObjectType::UNIT);
+    const auto& unit = static_cast<const game::Unit&>(*entity);
+    scale = creatureRenderScale(unit, displayId, serverScale);
 
     {
         static std::set<uint32_t> saidDisplay;
@@ -2221,8 +2255,8 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
             LOG_DEBUG("Creature display ", displayId, " (", (name.empty() ? "?" : name),
                         ", entry ", entry, ") draws ", path,
                         " at ", scale, " (server ", serverScale,
-                        " x model ", creatureModelScale(displayId),
-                        "; display default ", dispScale, ")");
+                        "; display ", dispScale, " model ", creatureModelScale(displayId),
+                        " level ", unit.getLevel(), ")");
         }
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/character.hpp"
+#include "core/creature_scale.hpp"
 #include "game/game_services.hpp"
 #include "pipeline/blp_loader.hpp"
 #include <memory>
@@ -23,7 +24,7 @@ namespace wowee {
 namespace rendering { class Renderer; }
 namespace pipeline { class AssetManager; struct M2Model; struct WMOModel; }
 namespace audio { enum class VoiceType; }
-namespace game { class GameHandler; }
+namespace game { class GameHandler; class Unit; }
 
 namespace core {
 
@@ -340,6 +341,8 @@ private:
     /// the display is unknown - an unknown display is already drawn at the
     /// model's own size, and guessing smaller would hide it.
     float creatureDisplayScale(uint32_t displayId) const;
+    float creatureRenderScale(const game::Unit& unit, uint32_t displayId, float serverScale) const;
+    std::unordered_map<uint32_t, CreatureFamilyScale> creatureFamilyScales_;
 
     /// Apply the textures a creature display names: its own skin variations,
     /// and for a humanoid the composited body, face, hair and equipment. Once
@@ -427,12 +430,12 @@ private:
     // temporarily overrides them, then the idle transition restores this loop.
     std::unordered_map<uint64_t, uint32_t> creatureActiveEmotes_;
     std::unordered_map<uint64_t, bool> creatureWasStealthed_;
-    uint32_t stealthSyncFrameCounter_ = 0;  // throttles syncCreatureStealthVisuals()
+    uint32_t stealthSyncFrameCounter_ = 0;  // throttles syncCreatureVisualState()
     std::unordered_set<uint64_t> creatureWeaponsAttached_;
     std::unordered_map<uint64_t, uint8_t> creatureWeaponAttachAttempts_;
     std::unordered_map<uint32_t, bool> modelIdIsWolfLike_;
 
-    void syncCreatureStealthVisuals();
+    void syncCreatureVisualState();
 
     // --- Creature async loads ---
     struct PreparedCreatureModel {

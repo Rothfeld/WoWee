@@ -3839,6 +3839,15 @@ void CharacterRenderer::startFadeIn(uint32_t instanceId, float durationSeconds) 
     it->second.fadeInDuration = durationSeconds;
 }
 
+void CharacterRenderer::setInstanceScale(uint32_t instanceId, float scale) {
+    assert(std::isfinite(scale) && scale > 0.0f);
+    auto& instance = instances.at(instanceId);
+    if (instance.scale != scale) {
+        LOG_DEBUG("Creature scale update: instance=", instanceId, " from=", instance.scale, " to=", scale);
+        instance.scale = scale;
+    }
+}
+
 void CharacterRenderer::setInstanceOpacity(uint32_t instanceId, float opacity) {
     auto it = instances.find(instanceId);
     if (it != instances.end()) {

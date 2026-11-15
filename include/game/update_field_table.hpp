@@ -44,6 +44,7 @@ enum class UF : uint16_t {
     UNIT_NPC_FLAGS,
     UNIT_NPC_EMOTESTATE,       // Persistent NPC emote animation ID (uint32)
     UNIT_DYNAMIC_FLAGS,
+    UNIT_FIELD_PETNUMBER,      // Persistent pet identity used by model scaling
     UNIT_FIELD_PETEXPERIENCE,   // A hunter pet's experience toward its next level
     UNIT_FIELD_PETNEXTLEVELEXP, // ...and what that level costs
     UNIT_FIELD_RESISTANCES,   // Physical armor (index 0 of the resistance array)

@@ -101,8 +101,18 @@ of points (CMaNGOS Player::SendComboPoints). GetComboPoints() reports the stored
 points only when the selected target matches that GUID. Original ComboFrame
 handles PLAYER_COMBO_POINTS and PLAYER_TARGET_CHANGED.
 
-Online creature scale uses OBJECT_FIELD_SCALE_X times CreatureModelData scale.
-CMaNGOS resolves CreatureDisplayInfo scale or the creature-template override
-before sending the object field; do not multiply the display default again.
-Ragged Young Wolf (entry 705, display 855) has display default 0.4 but receives
-server scale 1.0. Keep offline display previews separate from online unit scale.
+Online creature size combines display/model size with CreatureFamily's
+level-dependent size. Wild creatures use the larger of these; pets use family
+size. OBJECT_FIELD_SCALE_X multiplies the result. Creature query metadata may
+arrive after spawning, so live instance scale is refreshed as metadata and
+levels change.
+
+Original build 8606 routine 0x60bc70, executed with installed DBC records, gives
+Ragged Young Wolf (entry 705, display 855, family 1) model scale 0.7 at level 1
+and approximately 0.705084741 at level 2. Display scale alone is 0.4; object
+scale alone is 1.0. Neither alone gives the native size.
+
+Reference: https://gist.github.com/robinsch/6ab8e96227b991db1a7c572aa77f5779
+The published reconstruction identified the family rule; local executable
+execution verifies it for build 8606. Model scaling for humanoid display extras
+and other client builds needs separate validation.

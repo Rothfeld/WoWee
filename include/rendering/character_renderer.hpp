@@ -110,6 +110,7 @@ public:
     void moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
                         bool updateAnimation = true);
     void startFadeIn(uint32_t instanceId, float durationSeconds);
+    void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
     [[nodiscard]] const pipeline::M2Model* getInstanceModelData(uint32_t instanceId) const;
