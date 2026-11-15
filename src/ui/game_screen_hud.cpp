@@ -1092,12 +1092,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
         if (hideOwnName) continue;
 
-        // World-name visibility uses camera distance. Legacy plate range is
-        // checked independently against the player below.
+        // Modern name visibility uses camera distance. Legacy plate range
+        // was checked independently against the player above.
         glm::vec3 nameDelta = renderPos - camPos;
         float distSq = glm::dot(nameDelta, nameDelta);
-        float cullDist = legacyPlates ? 40.0f : (isTarget ? 60.0f : ((!showPlate || isPlayer) ? 40.0f : 20.0f));
-        if ((!showPlate || !legacyPlates) && distSq > cullDist * cullDist) continue;
+        float cullDist = isTarget ? 60.0f : ((!showPlate || isPlayer) ? 40.0f : 20.0f);
+        // Legacy plain names follow visible world units. The health-plate
+        // range must not impose an additional camera-distance limit on them.
+        if (!legacyPlates && distSq > cullDist * cullDist) continue;
         // CGUnit_C::GetNamePlatePosition in build 8606 adds 2/3 yard to
         // the authored name attachment. The frame's TOP is placed here.
         if (showPlate && legacyPlates) renderPos.z += 2.0f / 3.0f;
@@ -1136,7 +1138,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
         float dist = std::sqrt(distSq);
         float alpha = distSq < fadeSq ? 1.0f : 1.0f - (dist - (cullDist - 5.0f)) / 5.0f;
-        if (showPlate && legacyPlates) alpha = 1.0f;
+        if (legacyPlates) alpha = 1.0f;
         auto A = [&](int v) { return static_cast<int>(v * alpha); };
 
         // Bar colour by hostility (grey for corpses)
