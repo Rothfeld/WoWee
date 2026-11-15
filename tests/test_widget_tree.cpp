@@ -3079,3 +3079,38 @@ TEST_CASE("a hidden frame still answers for its own rect") {
     CHECK(tree.get(inner)->rectW == Catch::Approx(200.0f));
     CHECK(tree.get(inner)->rectH == Catch::Approx(60.0f));
 }
+
+TEST_CASE("Parent opacity controls descendant quest regions", "[widget][alpha]") {
+    WidgetTree tree;
+    const auto parent = tree.create(WidgetKind::Frame, tree.uiParentId(), "TextAlphaDependentFrame");
+    Anchor anchor;
+    anchor.point = "CENTER";
+    anchor.relativePoint = "CENTER";
+    tree.addPoint(parent, anchor);
+    const auto child = tree.create(WidgetKind::Frame, parent, "QuestRewards");
+    tree.addPoint(child, anchor);
+    const auto text = tree.create(WidgetKind::FontString, child, "QuestObjectiveText");
+    tree.get(text)->text = "Quest objectives";
+    tree.get(text)->width = 200.0f;
+    tree.get(text)->height = 20.0f;
+    tree.get(child)->alpha = 0.4f;
+    tree.get(text)->alpha = 0.8f;
+    tree.get(parent)->alpha = 0.0f;
+    tree.layout(kScreenW, kScreenH);
+    REQUIRE(tree.get(text)->effAlpha == 0.0f);
+    for (const auto* drawn : tree.drawOrder()) REQUIRE(drawn->id != text);
+
+    tree.get(parent)->alpha = 0.5f;
+    tree.layout(kScreenW, kScreenH);
+    REQUIRE(tree.get(text)->effAlpha == Catch::Approx(0.16f));
+    bool found = false;
+    for (const auto* drawn : tree.drawOrder()) if (drawn->id == text) found = true;
+    REQUIRE(found);
+    REQUIRE(tree.get(text)->alpha == 0.8f);
+
+    tree.get(parent)->alpha = 1.0f;
+    tree.get(tree.uiParentId())->alpha = 0.5f;
+    tree.get(tree.root())->alpha = 0.5f;
+    tree.layout(kScreenW, kScreenH);
+    REQUIRE(tree.get(text)->effAlpha == Catch::Approx(0.08f));
+}

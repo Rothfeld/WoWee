@@ -184,6 +184,7 @@ struct Widget {
 
     float scale = 1.0f;
     float effScale = 1.0f;
+    float effAlpha = 1.0f; // Local alpha multiplied by every ancestor alpha.
     bool dragLeft = false;
     bool dragRight = false;
     /// Whether a drag put this frame where it is. The single anchor a move

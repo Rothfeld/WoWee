@@ -819,4 +819,8 @@ FontString `SetAlphaGradient(start, length)` applies a character-edge alpha fade
 and returns 1 while text remains to reveal, or nil when complete. TBC FrameXML
 uses this to reveal quest descriptions, then show objectives and enable Accept.
 The Instant Quest Text option uses the same path with a completed reveal.
+Widget opacity multiplies through the parent chain, so `TextAlphaDependentFrame`
+keeps objectives and rewards hidden until the description finishes, then fades
+them in. Local `GetAlpha()` values remain unchanged.
 `test_input_integration '[quest-text]'` checks markup-aware completion and reset.
+`test_widget_tree '[alpha]'` checks inherited opacity and draw visibility.

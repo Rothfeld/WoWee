@@ -768,6 +768,7 @@ void WidgetTree::layout(float pixelW, float pixelH) {
     rootW.effStrata = rootW.strata;
     rootW.effLevel = 0;
     rootW.effScale = 1.0f;
+    rootW.effAlpha = rootW.alpha;
 
     // UIParent fills the screen and is laid out here rather than by anchors:
     // it is created before any XML is read, so it has none, and a frame with
@@ -786,6 +787,7 @@ void WidgetTree::layout(float pixelW, float pixelH) {
         ui->effStrata = ui->strata;
         ui->effLevel = 0;
         ui->effScale = 1.0f;
+        ui->effAlpha = rootW.effAlpha * ui->alpha;
         for (uint32_t child : ui->children) layoutWidget(child, screenW, screenH);
     }
 
@@ -953,6 +955,7 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     }
     // Multiplied down the chain, so scaling a window scales everything in it.
     w->effScale  = (parent ? parent->effScale : 1.0f) * w->scale;
+    w->effAlpha = (parent ? parent->effAlpha : 1.0f) * w->alpha;
     const float es = w->effScale;
 
     // Solve each axis from the anchors. An anchor says "this fraction of my rect
@@ -1276,7 +1279,7 @@ void WidgetTree::collectDrawOrder() {
     for (const Widget& w : widgets_) {
         if (w.id == 0) continue;
         if (!w.visible) continue;
-        if (w.alpha <= 0.001f) continue;
+        if (w.effAlpha <= 0.001f) continue;
         // Frames are containers, except when they carry a backdrop or are a
         // status bar - then the frame itself has something to paint, and it
         // paints underneath its own regions because they sit a level above it.
