@@ -1,4 +1,5 @@
 #include "game/game_handler.hpp"
+#include "game/stationery.hpp"
 #include "game/reputation_standing.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "game/spell_description_eval.hpp"
@@ -2101,6 +2102,7 @@ const std::vector<std::string>& GameHandler::getJoinedChannels() const {
 // Resolved on demand rather than stored, so a name that arrives after the inbox
 // was parsed shows up on the next frame instead of staying blank.
 std::string GameHandler::getMailSenderName(const MailMessage& mail) const {
+    if (isGmStationery(mail.stationeryId)) return "Blizzard Support";
     switch (mail.messageType) {
         case 0: {  // from another player
             // The name-query response backfills senderName, and Reply uses that

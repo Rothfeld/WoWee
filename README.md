@@ -865,7 +865,7 @@ than cached presentation state. Friendly target cycling excludes opponents.
 
 ## TBC interaction compatibility
 
-`build/bin/test_input_integration '[guard-gossip],[npc-attack],[mail-coin],[mail-stationery]'`
+`build/bin/test_input_integration '[guard-gossip],[npc-attack],[mail-coin],[mail-stationery],[gm-mail]'`
 checks server gossip dispatch, direction-map refresh, NPC attack immunity,
 coin artwork boundaries, and the TBC stationery callback.
 
@@ -880,3 +880,7 @@ TBC mail uses `StationeryPopupButton_OnClick(index)`. Coin attachments use
 `Interface\Icons\INV_Misc_Coin_01` through `_06`, including separate
 single-coin and ten-coin denomination thresholds. WMO area names use the
 MOGP authored group ID, which differs from the numbered group filename.
+
+GM stationery (61) identifies support mail, including console mail with sender
+GUID zero. Its sender label is `Blizzard Support`; `GetInboxHeaderInfo` reports
+`isGM` and disables replies independently of player-name resolution.

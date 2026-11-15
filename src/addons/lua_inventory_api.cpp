@@ -4884,8 +4884,8 @@ void registerInventoryLuaAPI(lua_State* L) {
             lua_pushboolean(L, mail.read ? 1 : 0);               // wasRead
             lua_pushboolean(L, 0);                                // wasReturned
             lua_pushboolean(L, !mail.body.empty() ? 1 : 0);      // textCreated
-            lua_pushboolean(L, mail.messageType == 0 ? 1 : 0);   // canReply (player mail only)
-            lua_pushboolean(L, 0);                                // isGM
+            lua_pushboolean(L, mail.messageType == 0 && !game::isGmStationery(mail.stationeryId)); // canReply
+            lua_pushboolean(L, game::isGmStationery(mail.stationeryId)); // isGM
             // How many of the first attachment there are, which is what the
             // inbox button prints in its corner.
             lua_pushnumber(L, mail.attachments.empty()

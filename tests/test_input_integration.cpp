@@ -1097,3 +1097,24 @@ TEST_CASE_METHOD(Integration, "Guard directions replace destination and refresh 
     CHECK(handler.getGossipPois().front().icon == 6);
     CHECK(updates == 2);
 }
+
+TEST_CASE_METHOD(Integration, "GM stationery identifies support mail without a player sender", "[gm-mail]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    wowee::game::MailMessage mail;
+    mail.stationeryId = 61;
+    mail.money = 1000000;
+    handler.mailInboxRef().push_back(mail);
+    CHECK(handler.getMailSenderName(mail) == "Blizzard Support");
+    run("header = {GetInboxHeaderInfo(1)}");
+    truth("header[3] == 'Blizzard Support' and header[5] == 1000000 and header[12] == false and header[13] == true");
+    mail.senderGuid = 123;
+    mail.senderName = "Player";
+    CHECK(handler.getMailSenderName(mail) == "Blizzard Support");
+    mail.stationeryId = 41;
+    handler.mailInboxRef()[0] = mail;
+    run("header = {GetInboxHeaderInfo(1)}");
+    truth("header[3] == 'Player' and header[12] == true and header[13] == false");
+    lua.setGameHandler(nullptr);
+}

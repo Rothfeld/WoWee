@@ -5,6 +5,10 @@
 namespace wowee {
 namespace game {
 
+inline bool isGmStationery(uint32_t stationeryId) {
+    return stationeryId == 61;
+}
+
 /// The letterhead a letter is written on, by its Stationery.dbc id.
 ///
 /// FrameXML appends "1" and "2" to this and hangs the two halves behind the
