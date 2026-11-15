@@ -1518,6 +1518,10 @@ const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() 
     std::vector<uint32_t> general;
 
     for (uint32_t spellId : knownSpells_) {
+        // SPELL_ATTR_DO_NOT_DISPLAY: internal spells stay known for gameplay
+        // but must not appear as entries in the player's spellbook.
+        const auto cached = owner_.spellNameCacheRef().find(spellId);
+        if (cached != owner_.spellNameCacheRef().end() && (cached->second.attr & 0x80u)) continue;
         if (spellDbc && spellLayout) {
             const auto field = spellLayout->field("AttributesEx4");
             const auto row = spellDbc->findRecordById(spellId);
