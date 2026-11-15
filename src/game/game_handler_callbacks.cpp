@@ -249,17 +249,19 @@ LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
 // own frame, so a big object is usable from anywhere along its length and a
 // small one only from close by. The reach is 5 yards, or the open spell's range
 // when one opens it; every OPEN_LOCK and gather spell in Spell.dbc has the
-// 5-yard Combat Range, so the two agree. Fishing nodes reach 100 and spell
+// 5-yard Combat Range, so the two agree. Chairs reach 3 yards.
+// Fishing nodes reach 100 and spell
 // focuses test a sphere. The client uses the door's animation bounds for type
 // 0; the display box stands in for them, as it does on the server. nullopt
-// when the layout has no box (only WotLK's maps one) or the display has no row.
+// when the layout has no box or the display has no row.
 std::optional<bool> withinGameObjectReach(pipeline::AssetManager* assets,
                                           const GameObjectQueryResponseData* info,
                                           const Entity& go, const glm::vec3& point) {
     if (!assets || !info) return std::nullopt;
     constexpr uint32_t kGoTypeSpellFocus = 8;
     constexpr uint32_t kGoTypeFishingNode = 17;
-    const float reach = info->type == kGoTypeFishingNode ? 100.0f : 5.0f;
+    const float reach = info->type == kGoTypeFishingNode ? 100.0f :
+                        info->type == 7 ? 3.0f : 5.0f;
     const glm::vec3 offset = point - glm::vec3(go.getX(), go.getY(), go.getZ());
     if (info->type == kGoTypeSpellFocus) return glm::length(offset) <= reach;
 
@@ -3045,6 +3047,14 @@ void GameHandler::queueAreaSpiritHeal() {
     packet.writeUInt64(areaSpiritHealerGuid_);
     socket->send(packet);
     LOG_INFO("CMSG_AREA_SPIRIT_HEALER_QUEUE: 0x", std::hex, areaSpiritHealerGuid_, std::dec);
+}
+
+std::optional<bool> GameHandler::isGameObjectInRange(uint64_t guid) {
+    const auto entity = getEntityManager().getEntity(guid);
+    if (!entity || entity->getType() != ObjectType::GAMEOBJECT) return std::nullopt;
+    const auto go = std::static_pointer_cast<GameObject>(entity);
+    return withinGameObjectReach(services_.assetManager, getCachedGameObjectInfo(go->getEntry()),
+                                 *entity, glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z));
 }
 
 void GameHandler::interactWithGameObject(uint64_t guid) {

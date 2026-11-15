@@ -89,7 +89,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                 glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
             hitCenter.z += heightOffset;
         } else if (type == game::ObjectType::GAMEOBJECT) {
-            // Broad phase only. The rendered mesh determines the final hit.
+            // Model-space sphere transformed without rotation-dependent inflation.
         } else {
             hitRadius = std::max(hitRadius * 1.25f, 1.0f);
         }
@@ -115,8 +115,6 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             if (found == objects.end()) continue;
             if (!found->second.isWmo) {
                 pickedM2 = found->second.instanceId;
-                auto* m2 = renderer->getM2Renderer();
-                if (!m2 || !m2->intersectInstance(pickedM2, ray.origin, ray.direction, hitT)) continue;
             }
         }
         // Exclude the picked mesh from its own occlusion query: its collision

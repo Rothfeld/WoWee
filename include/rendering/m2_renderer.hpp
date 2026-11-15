@@ -111,9 +111,6 @@ struct M2ModelGPU {
     VmaAllocation indexAlloc = VK_NULL_HANDLE;
     uint32_t indexCount = 0;
     uint32_t vertexCount = 0;
-    // Render geometry retained for precise game-object cursor picking.
-    std::vector<pipeline::M2Vertex> pickVertices;
-    std::vector<uint16_t> pickIndices;
     std::vector<BatchGPU> batches;
 
     glm::vec3 boundMin;
@@ -564,10 +561,6 @@ public:
     /// Check if a model instance has a specific animation ID in its sequence table.
     [[nodiscard]] bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
     [[nodiscard]] float getInstanceAnimDuration(uint32_t instanceId) const;
-    /// Nearest rendered triangle hit; distance is in world units.
-    bool intersectInstance(uint32_t instanceId, const glm::vec3& origin,
-                           const glm::vec3& direction, float& distance) const;
-
     /// World-space visual bounding sphere of an instance (center + radius),
     /// used for cursor picking and selection circles. Returns false for an
     /// unknown instance or a degenerate (zero-radius) model.

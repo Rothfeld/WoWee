@@ -2131,6 +2131,7 @@ public:
 
     // NPC Gossip
     void interactWithNpc(uint64_t guid);
+    std::optional<bool> isGameObjectInRange(uint64_t guid);
     void interactWithGameObject(uint64_t guid);
     uint64_t getHookedFishingBobberGuid() const { return hookedFishingBobberGuid_; }
     void selectGossipOption(uint32_t optionId, const std::string& code = "");

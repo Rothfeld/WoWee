@@ -1111,11 +1111,17 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
     auto go = std::static_pointer_cast<game::GameObject>(entity);
     const auto* info = gameHandler.getCachedGameObjectInfo(go->getEntry());
     if (usable) {
-        VkDescriptorSet tex = cursorTexture(services_.assetManager, services_.window,
-                                            objectCursorPath(info ? info->type : 0u));
+        std::string path = objectCursorPath(info ? info->type : 0u);
+        // Fishing has a single cursor asset; bobbers use their own reach.
+        if (info && info->type != 17 && gameHandler.isGameObjectInRange(guid) == false)
+            path.insert(path.rfind('\\') + 1, "Unable");
+        VkDescriptorSet tex = cursorTexture(services_.assetManager, services_.window, path.c_str());
         if (!tex) return false;
         drawCursorTexture(tex);
     }
+
+    // Native chairs show only the interaction cursor, with no name tooltip.
+    if (info && info->type == 7) return usable;
 
     // ...and what it is, beside the pointer, which is the whole of what the
     // real client shows for an object: a cursor saying what it is for and a

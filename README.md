@@ -726,7 +726,13 @@ The animation and keybone convention also appears in
 
 Right-clicking a chair sends the normal game-object use request. Camera drags
 are rejected before picking; a previously selected chair cannot activate from
-a click elsewhere. Hover and clicks test M2 render triangles after the broad
-sphere test, using the instance transform and animated bones. Additive glow
-geometry does not catch the cursor. The picked object is excluded from its own
-collision-hull occlusion test. WMO object picking still uses its bounds.
+a click elsewhere. M2 cursor spheres use the local geometry box center and
+half-diagonal, transformed without rotation-dependent radius inflation or
+extra padding. Native TBC chair hover includes gaps between the chair's parts.
+The picked object is excluded from its own collision-hull occlusion test.
+
+TBC `GameObjectDisplayInfo.dbc` contains range-box fields 12 through 17. Chair
+reach expands that local box by 3 yards. Object cursor color uses the same range
+check as interaction; chairs have no name tooltip. When updating extracted
+assets, update their `dbc_layouts.json` as well: the running client reads it from
+its expansion asset directory, not the source `Data` directory.
