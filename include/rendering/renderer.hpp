@@ -167,6 +167,7 @@ public:
     const std::string& getCurrentZoneName() const;
     uint32_t getCurrentZoneId() const;
     uint32_t getCurrentAreaId() const;
+    const std::string& getInteriorAreaName() const { return interiorAreaName_; }
     /// The area under the player, asked of AreaTable rather than resolved to a
     /// zone first - the world PvP flag is on the subzone. See ZoneManager.
     bool isOnOutdoorPvpObjective() const;
@@ -313,6 +314,7 @@ private:
     /// getCurrentZoneId() is const and this is a cache of what it last learnt.
     mutable uint32_t lastResolvedZoneId_ = 0;
     uint32_t announcedAreaId_ = 0;
+    std::string interiorAreaName_;
     /// The map that answer belongs to, so it is dropped on a
     /// continent change rather than held across one.
     mutable uint32_t lastResolvedZoneMapId_ = 0xFFFFFFFFu;

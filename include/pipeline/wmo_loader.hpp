@@ -180,6 +180,7 @@ struct WMOModel {
     std::string sourcePath;
 
     // Root WMO data (from MOHD chunk)
+    uint32_t rootId = 0;
     uint32_t version;
     uint32_t nTextures;  // Added - was missing, caused offset issues
     uint32_t nGroups;

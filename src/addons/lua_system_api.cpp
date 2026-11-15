@@ -2018,6 +2018,10 @@ static int lua_GetZoneText(lua_State* L) {
 static int lua_GetSubZoneText(lua_State* L) {
     auto* svc = getLuaServices(L);
     auto* gh = getGameHandler(L);
+    if (svc && svc->getInteriorAreaName) {
+        const auto name = svc->getInteriorAreaName();
+        if (!name.empty()) { lua_pushstring(L, name.c_str()); return 1; }
+    }
     if (svc && gh && svc->getLiveAreaId && svc->getLiveZoneId) {
         const uint32_t area = svc->getLiveAreaId();
         if (area != 0 && area != svc->getLiveZoneId()) {

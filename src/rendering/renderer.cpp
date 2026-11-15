@@ -2008,16 +2008,25 @@ void Renderer::update(float deltaTime) {
     uint32_t insideWmoId = 0;
     const bool insideWmo = canQueryWmo &&
         wmoRenderer->isInsideWMO(camPos.x, camPos.y, camPos.z, &insideWmoId);
+    const auto playerInterior = wmoRenderer
+        ? wmoRenderer->getInteriorLocation(characterPosition + glm::vec3(0, 0, 0.1f))
+        : std::optional<WMORenderer::InteriorLocation>{};
+    const std::string interiorName = playerInterior && zoneManager
+        ? zoneManager->getWmoAreaName(playerInterior->rootId, playerInterior->nameSet,
+                                      playerInterior->groupId) : std::string{};
+    const bool interiorNameChanged = interiorName != interiorAreaName_;
+    interiorAreaName_ = interiorName;
     // Announce the crossing. zonetext.lua and worldstateframe.lua both listen
     // for ZONE_CHANGED_INDOORS, and WoW answers the way back out with a plain
     // ZONE_CHANGED - there is no outdoors counterpart. Nothing fired either,
     // so the state was known here and never left this file.
-    if (insideWmo != playerIndoors_) {
+    const bool indoorStateChanged = playerInterior.has_value() != playerIndoors_;
+    playerIndoors_ = playerInterior.has_value();
+    if (indoorStateChanged || interiorNameChanged) {
         if (auto* gh = core::Application::getInstance().getGameHandler()) {
-            gh->fireAddonEvent(insideWmo ? "ZONE_CHANGED_INDOORS" : "ZONE_CHANGED", {});
+            gh->fireAddonEvent(playerInterior ? "ZONE_CHANGED_INDOORS" : "ZONE_CHANGED", {});
         }
     }
-    playerIndoors_ = insideWmo;
 
     const uint32_t areaId = getCurrentAreaId();
     if (areaId != 0 && areaId != announcedAreaId_) {
@@ -4799,6 +4808,7 @@ void Renderer::buildFrameGraph(game::GameHandler* gameHandler) {
                 glm::vec3 minimapCenter = camera->getPosition();
                 if (cameraController && cameraController->isThirdPerson())
                     minimapCenter = characterPosition;
+                minimap->setWMORenderer(wmoRenderer.get());
                 minimap->compositePass(cmd, minimapCenter);
             }
         });

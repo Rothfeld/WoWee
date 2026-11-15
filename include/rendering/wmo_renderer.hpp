@@ -130,7 +130,7 @@ public:
      */
     uint32_t createInstance(uint32_t modelId, const glm::vec3& position,
                            const glm::vec3& rotation = glm::vec3(0.0f),
-                           float scale = 1.0f);
+                           float scale = 1.0f, uint32_t nameSet = 0);
 
     /**
      * Update the world position of an existing instance (e.g., for transports)
@@ -399,6 +399,16 @@ public:
      */
     bool isInsideInteriorWMO(float glX, float glY, float glZ) const;
 
+    struct InteriorLocation {
+        uint32_t rootId, nameSet, groupId, groupIndex, instanceId;
+        std::string sourcePath;
+        glm::vec3 localPosition, boundsMin, boundsMax;
+        glm::mat4 transform;
+    };
+    std::optional<InteriorLocation> getInteriorLocation(const glm::vec3& position) const;
+    struct InteriorMapGroup { uint32_t index; glm::vec3 min, max; };
+    std::vector<InteriorMapGroup> getInteriorMapGroups(const InteriorLocation& location) const;
+
     /** Gather local orange point lights derived from visible lava materials. */
     uint32_t gatherLavaLights(const glm::vec3& cameraPos,
                               glm::vec4* outPosRadius,
@@ -495,6 +505,9 @@ private:
         glm::vec3 boundingBoxMin;
         glm::vec3 boundingBoxMax;
 
+        uint32_t groupId = 0;
+        uint32_t authoredIndex = 0;
+        glm::vec3 authoredMin{}, authoredMax{};
         uint32_t groupFlags = 0;
         bool allUntextured = false;  // True if ALL batches use fallback white texture (collision/placeholder group)
         bool isLOD = false;          // Distance-only group (skip when camera is close)
@@ -622,6 +635,8 @@ private:
      * Loaded WMO model data
      */
     struct ModelData {
+        uint32_t rootId = 0;
+        std::string sourcePath;
         uint32_t id;
         std::vector<GroupResources> groups;
         glm::vec3 boundingBoxMin;
@@ -678,6 +693,7 @@ private:
      * WMO instance in the world
      */
     struct WMOInstance {
+        uint32_t nameSet = 0;
         uint32_t id;
         uint32_t modelId;
         glm::vec3 position;

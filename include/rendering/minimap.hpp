@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <deque>
 #include <algorithm>
+#include <map>
 
 namespace wowee {
 namespace pipeline { class AssetManager; }
@@ -18,6 +19,7 @@ class Camera;
 class VkContext;
 class VkTexture;
 class VkRenderTarget;
+class WMORenderer;
 
 class Minimap {
 public:
@@ -102,9 +104,16 @@ public:
     // Public accessors for WorldMap
     VkTexture* getOrLoadTileTexture(int tileX, int tileY);
     void ensureTRSParsed() { if (!trsParsed) parseTRS(); }
+    void setWMORenderer(WMORenderer* renderer) { wmoRenderer_ = renderer; }
     [[nodiscard]] const std::string& getMapName() const { return mapName; }
 
 private:
+    VkTexture* getOrLoadNamedTile(std::string key);
+    void compositeInterior(VkCommandBuffer cmd, const glm::vec3& center);
+    WMORenderer* wmoRenderer_ = nullptr;
+    bool interiorComposite_ = false;
+    uint32_t interiorInstance_ = 0;
+    static constexpr float INTERIOR_SPAN = 512.0f;
     void parseTRS();
     void updateTileDescriptors(uint32_t frameIdx, int centerTileX, int centerTileY);
 
@@ -116,12 +125,12 @@ private:
     std::string mapName = "Azeroth";
 
     // TRS lookup: "Azeroth\map32_49" → "e7f0dea73ee6baca78231aaf4b7e772a"
-    std::unordered_map<std::string, std::string> trsLookup;
+    std::map<std::string, std::string> trsLookup;
     bool trsParsed = false;
 
     // Tile texture cache: hash → VkTexture
     // Evicted (FIFO) when the count of successfully-loaded tiles exceeds MAX_TILE_CACHE.
-    static constexpr size_t MAX_TILE_CACHE = 128;
+    static constexpr size_t MAX_TILE_CACHE = 1024;
     std::unordered_map<std::string, std::unique_ptr<VkTexture>> tileTextureCache;
     std::deque<std::string> tileInsertionOrder;  // hashes of successfully loaded tiles, oldest first
     std::unique_ptr<VkTexture> noDataTexture;
@@ -138,12 +147,13 @@ private:
     // Descriptor resources (shared layout: 1 combined image sampler at binding 0)
     VkDescriptorSetLayout samplerSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool descPool = VK_NULL_HANDLE;
-    static constexpr uint32_t MAX_DESC_SETS = 24;
+    static constexpr uint32_t MAX_TILES = 512;
+    static constexpr uint32_t MAX_DESC_SETS = 2 * MAX_TILES + 1;
 
     // Tile composite pipeline (renders into VkRenderTarget)
     VkPipeline tilePipeline = VK_NULL_HANDLE;
     VkPipelineLayout tilePipelineLayout = VK_NULL_HANDLE;
-    VkDescriptorSet tileDescSets[2][9] = {};  // [frameInFlight][tileSlot]
+    VkDescriptorSet tileDescSets[2][MAX_TILES] = {};
 
     // Display pipeline (renders into main render pass)
     VkPipeline displayPipeline = VK_NULL_HANDLE;

@@ -95,6 +95,7 @@ struct PendingTile {
 
     // Pre-loaded WMO data
     struct WMOReady {
+        uint32_t nameSet = 0;
         uint32_t modelId;
         uint32_t uniqueId;
         pipeline::WMOModel model;

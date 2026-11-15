@@ -913,6 +913,7 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                 ready.modelId = static_cast<uint32_t>(std::hash<std::string>{}(wmoPath));
                 if (ready.modelId == 0) ready.modelId = 1;
                 ready.uniqueId = placement.uniqueId;
+                ready.nameSet = placement.nameSet;
                 ready.model = std::move(wmoModel);
                 ready.position = pos;
                 ready.rotation = rot;
@@ -1181,7 +1182,7 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                 // Create the instance on first visit (liquidGroupIndex == 0)
                 if (ft.wmoLiquidGroupIndex == 0) {
                     uint32_t wmoInstId = wmoRenderer->createInstance(
-                        wmoReady.modelId, wmoReady.position, wmoReady.rotation, wmoReady.scale);
+                        wmoReady.modelId, wmoReady.position, wmoReady.rotation, wmoReady.scale, wmoReady.nameSet);
                     if (!wmoInstId) {
                         ft.wmoInstanceIndex++;
                         continue;

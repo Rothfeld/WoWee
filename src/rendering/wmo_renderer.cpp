@@ -459,6 +459,8 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     // textures, materials and the groups already uploaded.
     ModelData& modelData = loadingModels_[id];
     modelData.id = id;
+    modelData.rootId = model.rootId;
+    modelData.sourcePath = model.sourcePath;
     modelData.boundingBoxMin = model.boundingBoxMin;
     modelData.boundingBoxMax = model.boundingBoxMax;
     modelData.wmoAmbientColor = model.ambientColor;
@@ -613,6 +615,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         }
 
         GroupResources resources;
+        resources.authoredIndex = static_cast<uint32_t>(gi);
         if (createGroupResources(wmoGroup, resources, wmoGroup.flags)) {
             // Detect distance-only LOD/exterior shell groups:
             // 1. Very low vertex count (<100) - portal connectors, tiny shells
@@ -1125,7 +1128,7 @@ void WMORenderer::cleanupUnusedModels() {
 }
 
 uint32_t WMORenderer::createInstance(uint32_t modelId, const glm::vec3& position,
-                                     const glm::vec3& rotation, float scale) {
+                                     const glm::vec3& rotation, float scale, uint32_t nameSet) {
     // Check if model is loaded
     if (loadedModels.find(modelId) == loadedModels.end()) {
         core::Logger::getInstance().error("Cannot create instance of unloaded WMO model ", modelId);
@@ -1134,6 +1137,7 @@ uint32_t WMORenderer::createInstance(uint32_t modelId, const glm::vec3& position
 
     WMOInstance instance;
     instance.id = nextInstanceId++;
+    instance.nameSet = nameSet;
     instance.modelId = modelId;
     instance.position = position;
     instance.rotation = rotation;
@@ -2036,6 +2040,9 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         return false;
     }
 
+    resources.groupId = group.groupId;
+    resources.authoredMin = group.boundingBoxMin;
+    resources.authoredMax = group.boundingBoxMax;
     resources.groupFlags = groupFlags;
 
     resources.vertexCount = group.vertices.size();
@@ -4002,6 +4009,49 @@ bool WMORenderer::isInsideWMO(float glX, float glY, float glZ, uint32_t* outMode
 
 bool WMORenderer::isInsideInteriorWMO(float glX, float glY, float glZ) const {
     return isInsideWMOGroups(glX, glY, glZ, /*interiorOnly=*/true, nullptr);
+}
+
+std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(const glm::vec3& position) const {
+    gatherCandidates(position - glm::vec3(0.5f), position + glm::vec3(0.5f), tl_candidateScratch);
+    std::optional<InteriorLocation> result;
+    float bestVolume = std::numeric_limits<float>::max();
+    for (size_t index : tl_candidateScratch) {
+        const auto& instance = instances[index];
+        const auto modelIt = loadedModels.find(instance.modelId);
+        if (modelIt == loadedModels.end()) continue;
+        const auto& model = modelIt->second;
+        const glm::vec3 local(instance.invModelMatrix * glm::vec4(position, 1));
+        for (size_t groupIndex = 0; groupIndex < model.groups.size(); ++groupIndex) {
+            const auto& group = model.groups[groupIndex];
+            if (!(group.groupFlags & kWMOGroupIndoor)) continue;
+            if (glm::any(glm::lessThan(local, group.boundingBoxMin)) ||
+                glm::any(glm::greaterThan(local, group.boundingBoxMax))) continue;
+            const auto size = group.boundingBoxMax - group.boundingBoxMin;
+            const float volume = size.x * size.y * size.z;
+            if (volume >= bestVolume) continue;
+            bestVolume = volume;
+            result = InteriorLocation{model.rootId, instance.nameSet, group.groupId,
+                static_cast<uint32_t>(groupIndex), instance.id, model.sourcePath,
+                local, group.boundingBoxMin, group.boundingBoxMax, instance.modelMatrix};
+        }
+    }
+    return result;
+}
+
+std::vector<WMORenderer::InteriorMapGroup> WMORenderer::getInteriorMapGroups(const InteriorLocation& location) const {
+    const auto instance = std::find_if(instances.begin(), instances.end(),
+        [&](const auto& value) { return value.id == location.instanceId; });
+    assert(instance != instances.end());
+    const auto& model = loadedModels.at(instance->modelId);
+    std::vector<InteriorMapGroup> groups;
+    for (size_t index = 0; index < model.groups.size(); ++index) {
+        const auto& group = model.groups[index];
+        if (!(group.groupFlags & kWMOGroupIndoor)) continue;
+        if (location.localPosition.z < group.authoredMin.z ||
+            location.localPosition.z > group.authoredMax.z) continue;
+        groups.push_back({group.authoredIndex, group.authoredMin, group.authoredMax});
+    }
+    return groups;
 }
 
 float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
