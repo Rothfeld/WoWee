@@ -94,6 +94,7 @@ TEST_CASE("World cursors distinguish unit actions and corpse priority") {
     CHECK(std::string(unitCursorPath(false, 0, 2, 0, nullptr)) == "Interface\\Cursor\\Point.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP, nullptr)) == "Interface\\Cursor\\Speak.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, nullptr)) == "Interface\\Cursor\\Buy.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_VENDOR | NPC_FLAG_REPAIR, nullptr)) == "Interface\\Cursor\\RepairNPC.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, "!")) == "Interface\\Cursor\\Quest.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, 0, "?")) == "Interface\\Cursor\\QuestTurnIn.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, 0, nullptr)) == "Interface\\Cursor\\Point.blp");

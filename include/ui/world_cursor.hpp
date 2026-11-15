@@ -15,8 +15,8 @@ inline const char* unitCursorPath(bool alive, uint32_t dynamicFlags, int reactio
     if (reaction <= 4) return "Interface\\Cursor\\Attack.blp";
     if (questSymbol) return questSymbol[0] == '!'
         ? "Interface\\Cursor\\Quest.blp" : "Interface\\Cursor\\QuestTurnIn.blp";
-    if (npcFlags & game::NPC_FLAG_ANY_VENDOR) return "Interface\\Cursor\\Buy.blp";
     if (npcFlags & game::NPC_FLAG_REPAIR) return "Interface\\Cursor\\RepairNPC.blp";
+    if (npcFlags & game::NPC_FLAG_ANY_VENDOR) return "Interface\\Cursor\\Buy.blp";
     if (npcFlags & game::NPC_FLAG_TRAINER) return "Interface\\Cursor\\Trainer.blp";
     if (npcFlags & game::NPC_FLAG_FLIGHT_MASTER) return "Interface\\Cursor\\Taxi.blp";
     if (npcFlags & game::NPC_FLAG_INNKEEPER) return "Interface\\Cursor\\Innkeeper.blp";

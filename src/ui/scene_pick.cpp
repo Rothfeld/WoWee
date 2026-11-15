@@ -65,6 +65,10 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         if (type == game::ObjectType::GAMEOBJECT) {
             auto go = std::static_pointer_cast<game::GameObject>(entity);
             goInfo = gameHandler.getCachedGameObjectInfo(go->getEntry());
+            // Spell-focus objects mark crafting facilities (anvils, forges).
+            // They satisfy nearby spell requirements; they are not clickable
+            // and must not steal hover or clicks from the visible scene.
+            if (goInfo && goInfo->type == 8) continue;
             if (params.skipChairs && goInfo && goInfo->type == kGoTypeChair) continue;
         }
 
