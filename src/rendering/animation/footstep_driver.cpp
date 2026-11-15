@@ -62,7 +62,8 @@ void spawnFootprint(Renderer* renderer, CharacterRenderer* characterRenderer,
     std::string modelName;
     characterRenderer->getInstanceModelName(instanceId, modelName);
     footprints->spawn(modelName, renderer->getCharacterPosition(),
-                      glm::radians(renderer->getCharacterYaw()), leftFoot, fallback);
+                      glm::radians(renderer->getCharacterYaw()), leftFoot, fallback,
+                      characterRenderer->getInstanceScale(instanceId));
 }
 
 } // namespace

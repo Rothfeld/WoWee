@@ -1,4 +1,5 @@
 #include "rendering/footprint_renderer.hpp"
+#include <cassert>
 #include "pipeline/m2_loader.hpp"
 
 #include "core/logger.hpp"
@@ -29,7 +30,7 @@ namespace {
 
 constexpr float kLifetime = 12.0f;
 constexpr float kFadeStart = 1.5f;
-constexpr size_t kMaxPrints = 72;
+constexpr size_t kMaxPrints = 512;
 
 struct FootprintPushConstants {
     glm::mat4 model{1.0f};
@@ -41,7 +42,8 @@ std::string normalizeModelPath(std::string path) {
         if (c == '/') return '\\';
         return static_cast<char>(std::tolower(c));
     });
-    // .mdx and .mdl both mean the .m2 that shipped; this knew only the first.
+    // Internal M2 names omit the extension; DBC paths can use .mdx or .mdl.
+    if (path.find_last_of('.') == std::string::npos) path += ".m2";
     return pipeline::modelPathToM2(path);
 }
 
@@ -240,15 +242,11 @@ bool FootprintRenderer::loadFootprintData(pipeline::AssetManager* assets) {
         auto textureIt = indexById.find(modelDbc->getUInt32(row, 6));
         if (textureIt == indexById.end()) continue;
         std::string path = normalizeModelPath(modelDbc->getString(row, 2));
-        // FootprintTextureLength/Width are inches; world units are yards, so the
-        // conversion is /36.  Dividing by 12 yields feet and renders every print
-        // three times its real size - a human's came out a yard long.
-        const float length = modelDbc->getFloat(row, 7) / 36.0f;
-        const float width = modelDbc->getFloat(row, 8) / 36.0f;
-        // Reject degenerate rows on the raw inches, so the /36 correction doesn't
-        // also quietly raise the cutoff and drop small creatures that used to
-        // resolve a profile.
-        if (path.empty() || length * 36.0f <= 0.6f || width * 36.0f <= 0.6f) continue;
+        // Full decal dimensions, calibrated against matched-camera TBC captures.
+        // The mask includes transparent padding; these are not shoe dimensions.
+        const float length = modelDbc->getFloat(row, 7) / 24.0f;
+        const float width = modelDbc->getFloat(row, 8) / 24.0f;
+        if (path.empty() || length <= 0.05f || width <= 0.05f) continue;
         Profile profile{.textureIndex = textureIt->second, .length = length, .width = width};
         profilesByPath_[path] = profile;
     }
@@ -262,6 +260,11 @@ bool FootprintRenderer::loadFootprintData(pipeline::AssetManager* assets) {
         if (basenameCounts[base] == 1) profilesByBasename_[base] = profile;
     }
     return !profilesByPath_.empty();
+}
+
+bool FootprintRenderer::hasProfile(const std::string& modelName) const {
+    const auto path = normalizeModelPath(modelName);
+    return profilesByPath_.contains(path) || profilesByBasename_.contains(basenameOf(path));
 }
 
 FootprintRenderer::Profile FootprintRenderer::resolveProfile(
@@ -299,23 +302,30 @@ float FootprintRenderer::resolveFloorHeight(const glm::vec3& position) const {
 }
 
 void FootprintRenderer::spawn(const std::string& modelName, const glm::vec3& basePosition,
-                              float yawRadians, bool leftFoot, FootprintFallback fallback) {
+                              float yawRadians, bool leftFoot, FootprintFallback fallback, float scale) {
     if (!vkCtx_) return;
-    const Profile profile = resolveProfile(modelName, fallback);
+    Profile profile = resolveProfile(modelName, fallback);
+    assert(std::isfinite(scale) && scale > 0.0f);
+    profile.length *= scale;
+    profile.width *= scale;
     const glm::vec2 forward(std::cos(yawRadians), std::sin(yawRadians));
     const glm::vec2 right(-forward.y, forward.x);
-    // Stance is how far each foot sits off the centreline - a body dimension,
-    // roughly three quarters of a footprint's width to either side.  The
-    // coefficient carries the /12-to-/36 correction so the gait stays as wide
-    // as it was while the prints themselves shrink to life size.
-    const float side = (leftFoot ? -1.0f : 1.0f) * profile.width * 0.72f;
+    const float side = (leftFoot ? -1.0f : 1.0f) * profile.width * 0.48f;
     const glm::vec2 xy = glm::vec2(basePosition) + right * side - forward * profile.length * 0.16f;
     glm::vec3 position(xy.x, xy.y, basePosition.z);
     position.z = resolveFloorHeight(position) + 0.035f;
 
+    // Fit the decal plane to the supporting surface, rather than cutting half
+    // the mask into the ground on slopes.
+    const float radius = std::max(profile.width, profile.length) * 0.5f;
+    const glm::vec3 dx(radius, 0.0f, 0.0f), dy(0.0f, radius, 0.0f);
+    const glm::vec2 slope(
+        (resolveFloorHeight(position + dx) - resolveFloorHeight(position - dx)) / (2.0f * radius),
+        (resolveFloorHeight(position + dy) - resolveFloorHeight(position - dy)) / (2.0f * radius));
+
     if (prints_.size() >= kMaxPrints) prints_.erase(prints_.begin());
     // A negative width mirrors the one-foot mask laterally for the opposite foot.
-    prints_.push_back({.position = position, .yaw = yawRadians, .length = profile.length,
+    prints_.push_back({.position = position, .slope = slope, .yaw = yawRadians, .length = profile.length,
                        .signedWidth = leftFoot ? -profile.width : profile.width, .age = 0.0f,
                        .textureIndex = profile.textureIndex});
 }
@@ -361,6 +371,8 @@ void FootprintRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // the model's +X forward direction and mirror across local X.
         model = glm::rotate(model, print.yaw - 1.57079632679f, glm::vec3(0.0f, 0.0f, 1.0f));
         model = glm::scale(model, glm::vec3(print.signedWidth, print.length, 1.0f));
+        model[0].z = glm::dot(print.slope, glm::vec2(model[0]));
+        model[1].z = glm::dot(print.slope, glm::vec2(model[1]));
         FootprintPushConstants push;
         push.model = model;
         push.tint.a = alpha;

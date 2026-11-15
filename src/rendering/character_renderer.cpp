@@ -17,6 +17,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/footprint_renderer.hpp"
 #include "rendering/pom_quality.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/normal_map.hpp"
@@ -4061,6 +4062,36 @@ bool CharacterRenderer::getAnimationState(uint32_t instanceId, uint32_t& animati
     animationTimeMs = instance.animationTime;
     animationDurationMs = static_cast<float>(sequences[instance.currentSequenceIndex].duration);
     return true;
+}
+
+void CharacterRenderer::emitRemoteFootprints(FootprintRenderer& footprints,
+                                            uint32_t playerId, uint32_t mountId, const glm::vec3& viewerPosition) {
+    for (auto& [id, instance] : instances) {
+        if (id == playerId || id == mountId || instance.isEffectModel ||
+            instance.hasOverrideModelMatrix || instance.isDead) continue;
+        const auto animId = instance.currentAnimationId;
+        if (animId != anim::WALK && animId != anim::RUN && animId != anim::WALK_BACKWARDS) {
+            instance.footprintEvents.shouldTriggerFootstepEvent(0, 0, 0);
+            continue;
+        }
+        uint32_t actualId = 0;
+        float time = 0.0f, duration = 0.0f;
+        if (!getAnimationState(id, actualId, time, duration)) continue;
+        if (!instance.footprintEvents.shouldTriggerFootstepEvent(
+                actualId, time, duration, getFootstepEventTimes(id))) continue;
+        const glm::vec3 distance = instance.position - viewerPosition;
+        if (glm::dot(distance, distance) > 40.0f * 40.0f) continue;
+        std::string modelName;
+        if (!getInstanceModelName(id, modelName) || !footprints.hasProfile(modelName)) continue;
+        glm::vec3 position = instance.position;
+        float footZ = 0.0f;
+        if (getInstanceFootZ(id, footZ)) position.z = footZ;
+        footprints.spawn(modelName, position, instance.rotation.z,
+                         instance.nextFootprintLeft, FootprintFallback::BIPED, instance.scale);
+        LOG_DEBUG("Remote footprint: instance=", id, " model=", modelName,
+                  " scale=", instance.scale, " position=", position.x, ",", position.y, ",", position.z);
+        instance.nextFootprintLeft = !instance.nextFootprintLeft;
+    }
 }
 
 const std::vector<uint32_t>* CharacterRenderer::getFootstepEventTimes(uint32_t instanceId) const {

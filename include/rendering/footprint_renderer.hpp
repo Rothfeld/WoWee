@@ -46,7 +46,8 @@ public:
     void update(float deltaTime);
     void clear();
     void spawn(const std::string& modelName, const glm::vec3& basePosition,
-               float yawRadians, bool leftFoot, FootprintFallback fallback);
+               float yawRadians, bool leftFoot, FootprintFallback fallback, float scale = 1.0f);
+    bool hasProfile(const std::string& modelName) const;
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera);
 
 private:
@@ -58,6 +59,7 @@ private:
 
     struct Print {
         glm::vec3 position{0.0f};
+        glm::vec2 slope{0.0f};
         float yaw = 0.0f;
         float length = 1.0f;
         float signedWidth = 0.8f;

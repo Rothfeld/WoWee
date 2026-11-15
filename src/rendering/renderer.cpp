@@ -2279,7 +2279,12 @@ void Renderer::update(float deltaTime) {
     }
 
     // Footsteps: age visual prints, then let authored footfall events add new ones.
-    if (footprintRenderer) footprintRenderer->update(deltaTime);
+    if (footprintRenderer) {
+        footprintRenderer->update(deltaTime);
+        if (characterRenderer) characterRenderer->emitRemoteFootprints(
+            *footprintRenderer, characterInstanceId,
+            animationController_ ? animationController_->getMountInstanceId() : 0, characterPosition);
+    }
     if (animationController_) animationController_->updateFootsteps(deltaTime);
 
     // Activity SFX + mount ambient sounds: delegated to AnimationController (§4.2)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendering/vk_shader.hpp"
+#include "rendering/animation/footstep_driver.hpp"
 #include "rendering/shadow_params.hpp"
 
 #include "pipeline/m2_loader.hpp"
@@ -25,6 +26,7 @@ namespace pipeline { class AssetManager; }
 namespace rendering {
 
 // Forward declarations
+class FootprintRenderer;
 class Camera;
 class VkContext;
 class VkTexture;
@@ -111,6 +113,7 @@ public:
                         bool updateAnimation = true);
     void startFadeIn(uint32_t instanceId, float durationSeconds);
     void setLocomotionSpeed(uint32_t instanceId, float speed);
+    void emitRemoteFootprints(FootprintRenderer& footprints, uint32_t playerId, uint32_t mountId, const glm::vec3& viewerPosition);
     [[nodiscard]] float getInstanceScale(uint32_t instanceId) const;
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
@@ -281,6 +284,8 @@ private:
         float blendElapsed = 0.0f;
         float blendDuration = 0.0f;
         float playbackRate = 1.0f;
+        FootstepDriver footprintEvents;
+        bool nextFootprintLeft = true;
         float locomotionSpeed = -1.0f; // Negative: caller does not supply movement speed.
         float animationTime = 0.0f;
         float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)

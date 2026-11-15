@@ -257,3 +257,14 @@ the ground brightness beneath its glow; ordinary alpha blending turns the
 unflagged player ring dark violet despite its pale blue tint. Depth testing
 and terrain fitting remain enabled. Visual evidence: workspace experiment
 20261115T132046.645965Z.selection_ground_blend.
+
+Footprint profiles match both CreatureModelData paths and extensionless internal
+M2 names such as DwarfMale and Wolf. Instance scale applies to decal dimensions.
+DBC dimensions are calibrated as full decal extents (including transparent mask
+padding), using matched-camera original-client captures; do not infer a physical
+unit from the column names. Decal planes follow the supporting surface slope.
+Remote characters keep independent footfall-event trackers, sharing the local
+player's authored M2 event detection. Nearby walking/running players and creatures
+with a DBC footprint profile emit prints; local player and mount remain owned by
+FootstepDriver to prevent duplicate emissions. The shared pool holds 512 prints.
+Evidence: workspace experiment 20261115T132510.671257Z.footprint_size_remote.
