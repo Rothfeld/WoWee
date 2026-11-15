@@ -110,7 +110,8 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
             if (in.swimming) {
                 state_ = State::SWIM_IDLE;
             } else if (in.grounded) {
-                state_ = State::JUMP_END;
+                state_ = effectiveMoving
+                    ? (effectiveSprinting ? State::RUN : State::WALK) : State::JUMP_END;
                 jumpEndSeen_ = false;
             } else if (caps.resolvedJumpStart == 0) {
                 // Model doesn't have JUMP_START animation - skip to mid-air
@@ -134,7 +135,9 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
             if (in.swimming) {
                 state_ = State::SWIM_IDLE;
             } else if (in.grounded) {
-                state_ = State::JUMP_END;
+                state_ = effectiveMoving
+                    ? (effectiveSprinting ? State::RUN : State::WALK) : State::JUMP_END;
+                jumpEndSeen_ = false;
             }
             break;
 
@@ -142,7 +145,7 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
             if (in.swimming) {
                 state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
             } else if (effectiveMoving) {
-                // Movement overrides landing animation
+                // Renderer blends the current jump/landing pose into the stride.
                 state_ = effectiveSprinting ? State::RUN : State::WALK;
             } else if (caps.resolvedJumpEnd == 0) {
                 // Model doesn't have JUMP_END animation - go straight to IDLE

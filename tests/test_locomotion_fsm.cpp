@@ -163,3 +163,22 @@ TEST_CASE("LocomotionFSM: reset restores IDLE", "[locomotion]") {
     fsm.reset();
     CHECK(fsm.getState() == LocomotionFSM::State::IDLE);
 }
+
+TEST_CASE("Moving landings resolve directly to stride without a transient landing pose", "[locomotion]") {
+    auto caps = makeLocoCaps();
+    for (auto airborne : {LocomotionFSM::State::JUMP_START, LocomotionFSM::State::JUMP_MID}) {
+        for (bool running : {false, true}) {
+            LocomotionFSM fsm;
+            fsm.setState(airborne);
+            auto in = idle();
+            in.moving = true;
+            in.sprinting = running;
+            fsm.resolve(in, caps);
+            CHECK(fsm.getState() == (running ? LocomotionFSM::State::RUN : LocomotionFSM::State::WALK));
+        }
+        LocomotionFSM fsm;
+        fsm.setState(airborne);
+        fsm.resolve(idle(), caps);
+        CHECK(fsm.getState() == LocomotionFSM::State::JUMP_END);
+    }
+}

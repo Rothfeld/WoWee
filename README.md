@@ -628,3 +628,8 @@ Airborne terrain contact compares feet against the terrain height at each end
 of the movement segment. Comparing both endpoints against the destination floor
 misses uphill landings and leaves jump momentum active after penetration recovery.
 Regression target: `test_hill_climbing`.
+
+Moving landings resolve directly to walk/run. Character rendering cross-fades
+jump, landing and locomotion sequences using the destination sequence's authored
+blend time. Outgoing one-shots clamp at their final frame during the blend;
+looping sequences wrap. Stationary landings retain JumpEnd.

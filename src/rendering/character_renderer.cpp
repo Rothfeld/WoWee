@@ -2071,6 +2071,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     // Find animation sequence index by ID
     const uint32_t previousId = instance.currentAnimationId;
     const float previousTime = instance.animationTime;
+    const bool previousLoop = instance.animationLoop;
     const int previousSequence = instance.currentSequenceIndex;
     instance.currentAnimationId = animationId;
     instance.currentSequenceIndex = -1;
@@ -2135,6 +2136,11 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             case anim::STAND:
             case anim::WALK:
             case anim::RUN:
+            case anim::SPRINT:
+            case anim::WALK_BACKWARDS:
+            case anim::JUMP_START:
+            case anim::JUMP:
+            case anim::JUMP_END:
             case anim::READY_UNARMED:
             case anim::READY_1H:
             case anim::READY_2H:
@@ -2157,6 +2163,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             instance.blendSequenceIndex = previousSequence;
             instance.blendAnimationTime = previousTime;
             instance.blendPlaybackRate = instance.playbackRate;
+            instance.blendAnimationLoop = previousLoop;
             instance.blendElapsed = 0.0f;
         }
     }
@@ -2240,8 +2247,10 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                 const auto& outgoing = inst.cachedModel->data.sequences[inst.blendSequenceIndex];
                 inst.blendAnimationTime += deltaTime * 1000.0f * inst.blendPlaybackRate;
                 if (outgoing.duration > 0) {
-                    inst.blendAnimationTime = std::fmod(inst.blendAnimationTime,
-                                                       static_cast<float>(outgoing.duration));
+                    const float duration = static_cast<float>(outgoing.duration);
+                    inst.blendAnimationTime = inst.blendAnimationLoop
+                        ? std::fmod(inst.blendAnimationTime, duration)
+                        : std::min(inst.blendAnimationTime, duration);
                 }
                 if (inst.blendElapsed >= inst.blendDuration) inst.blendSequenceIndex = -1;
             }
@@ -2277,6 +2286,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                             inst.blendSequenceIndex = previous;
                             inst.blendAnimationTime = 0.0f;
                             inst.blendPlaybackRate = 1.0f;
+                            inst.blendAnimationLoop = true;
                             inst.blendElapsed = 0.0f;
                             inst.blendDuration = next.blendTime;
                         }

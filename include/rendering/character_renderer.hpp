@@ -280,6 +280,7 @@ private:
         std::vector<bool> upperBodyBones;
         int blendSequenceIndex = -1;
         float blendAnimationTime = 0.0f;
+        bool blendAnimationLoop = true;
         float blendPlaybackRate = 1.0f;
         float blendElapsed = 0.0f;
         float blendDuration = 0.0f;
