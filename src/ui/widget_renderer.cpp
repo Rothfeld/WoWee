@@ -241,7 +241,7 @@ void WidgetRenderer::sizeTextureWidget(Widget* w) {
 }
 
 /// One label, sized from its own text. See sizeArtAndText.
-void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font) {
+void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font, float pixelScale) {
     if (w->text.empty()) return;
     // Anchors that span an axis give the size on that axis, and the string
     // does not get a say about it. Asked per axis, the way the texture
@@ -294,7 +294,7 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font) {
     // rather than whichever face this measure happened to be handed.
     ImFont* runFont = interfaceFaceOrDefault(w->fontFace);
     if (!runFont) runFont = font;
-    const float size = interfaceFontSize(w->fontHeight);
+    const float size = interfaceFontSize(w->fontHeight, pixelScale);
     const auto measureRun = [&](const std::string& piece) {
         return runFont->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
     };
@@ -598,7 +598,7 @@ void WidgetRenderer::sizeArtAndText(WidgetTree& tree) {
     for (size_t id = 1; id < tree.size(); ++id) {
         Widget* w = tree.get(static_cast<uint32_t>(id));
         if (!w) continue;
-        if (font && w->kind == WidgetKind::FontString) sizeFontStringWidget(w, font);
+        if (font && w->kind == WidgetKind::FontString) sizeFontStringWidget(w, font, tree.uiScale() * w->effScale);
         else if (w->kind == WidgetKind::Texture) sizeTextureWidget(w);
     }
 }
@@ -707,7 +707,7 @@ void WidgetRenderer::drawSimpleHtml(ImDrawList* dl, WidgetTree& tree,
                                     const Widget& w, float ws,
                                     float x0, float y0, float x1) {
     ImFont* font = interfaceFaceOrDefault(w.fontFace);
-    const float size = interfaceFontSize(w.fontHeight) * ws;
+    const float size = interfaceFontSize(w.fontHeight, ws) * ws;
     const float boxW = x1 - x0;
     const float wrapW = boxW > size ? boxW : 0.0f;
     float y = y0;
@@ -2512,7 +2512,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // rather than moving the lines.
             if (w->isMessageFrame && !w->messages.empty()) {
                 ImFont* font = interfaceFaceOrDefault(w->fontFace);
-                const float size = interfaceFontSize(w->fontHeight) * ws;
+                const float size = interfaceFontSize(w->fontHeight, ws) * ws;
                 const float lineH = size * 1.15f + w->messagePadding * ws;
                 // A chat line is wrapped to the frame, not run off the end of
                 // it. Every other label in the interface has wrapped for as
@@ -2652,7 +2652,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                 "': ", w->text.size(), " chars, box (", x0, ",",
                                 y0, " to ", x1, ",", y1, "), font height ",
                                 w->fontHeight, " scaled ",
-                                interfaceFontSize(w->fontHeight) * s,
+                                interfaceFontSize(w->fontHeight, s) * s,
                                 ", colour a=", w->color[3], " alpha=", w->alpha,
                                 ", visible=", w->visible ? 1 : 0);
                 }
@@ -2661,7 +2661,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 drawSimpleHtml(dl, tree, *w, ws, x0, y0, x1);
             } else if (w->isSimpleHtml && !w->text.empty()) {
                 ImFont* font = interfaceFaceOrDefault(w->fontFace);
-                const float size = interfaceFontSize(w->fontHeight) * ws;
+                const float size = interfaceFontSize(w->fontHeight, ws) * ws;
                 const float wrapW = (x1 - x0) > size ? (x1 - x0) : 0.0f;
                 // The shadow under the words, the single offset copy a font
                 // string draws, for the same reason it does.
@@ -2684,7 +2684,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 // Its own text, drawn where a label would be, with a caret
                 // while it has focus so it is clear which box is listening.
                 ImFont* font = interfaceFaceOrDefault(w->fontFace);
-                const float size = interfaceFontSize(w->fontHeight) * ws;
+                const float size = interfaceFontSize(w->fontHeight, ws) * ws;
                 const uint32_t col = packColor(w->color, w->alpha);
                 // Between the top and bottom insets rather than the whole
                 // frame, so a box with art above its text does not sit high.
@@ -2920,7 +2920,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // face so this client's panels are left alone.
             if (!font) font = interfaceFace("frizqt__");
             if (!font) font = ImGui::GetFont();
-            const float size = interfaceFontSize(w->fontHeight) * ws;
+            const float size = interfaceFontSize(w->fontHeight, ws) * ws;
             // A label whose width came from its own text has nothing to wrap
             // to; one given a width by its XML or by two anchors wraps inside
             // it. Nothing wrapped before, so every label of the second kind

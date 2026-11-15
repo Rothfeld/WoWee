@@ -45,3 +45,14 @@ TEST_CASE("A newline breaks a line at any width", "[fonts][wrap]") {
     // anything is wrapping.
     REQUIRE(interfaceTextLines("one|ntwo", "", 0.0f, 0.0f, false) == 2);
 }
+
+TEST_CASE("TBC font rasterization limit applies after UI scaling", "[fonts][scale]") {
+    using wowee::ui::interfaceFontSize;
+    wowee::ui::setInterfaceFontSizeLimit(32.0f);
+    for (float scale : {0.5f, 0.9375f, 1.0f, 2.0f}) {
+        CHECK(interfaceFontSize(102.0f, scale) * scale == Catch::Approx(32.0f));
+        CHECK(interfaceFontSize(12.0f, scale) * scale == Catch::Approx(12.0f * scale));
+    }
+    wowee::ui::setInterfaceFontSizeLimit(0.0f);
+    CHECK(interfaceFontSize(102.0f, 2.0f) == 102.0f);
+}

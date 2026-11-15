@@ -35,7 +35,7 @@ ImFont* interfaceFace(const std::string& pathOrName);
 /// `fontFace` is the widget's own, `fontHeight` its own point size; zero for
 /// either means the default, which is what the renderer falls back to too.
 float interfaceTextWidth(const std::string& text, const std::string& fontFace,
-                         float fontHeight);
+                         float fontHeight, float pixelScale = 1.0f);
 
 /// How many lines a piece of text takes when it is drawn.
 ///
@@ -45,14 +45,14 @@ float interfaceTextWidth(const std::string& text, const std::string& fontFace,
 /// sets a string's text and reads its height in the same breath, long before
 /// the next frame is laid out, and the quest tracker sizes every row that way.
 int interfaceTextLines(const std::string& text, const std::string& fontFace,
-                       float fontHeight, float wrapWidth, bool nonSpaceWrap);
+                       float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale = 1.0f);
 
 /// The face a widget draws in, resolved the way the renderer resolves it: its
 /// own, then the interface default, then whatever is current.
 ImFont* interfaceFaceOrDefault(const std::string& fontFace);
 
-/// The point size a widget draws at, given the height it asked for.
-float interfaceFontSize(float fontHeight);
+/// Logical font size, with the rasterization limit applied in physical pixels.
+float interfaceFontSize(float fontHeight, float pixelScale = 1.0f);
 
 /// Configure the source client's font rasterization limit; zero means uncapped.
 void setInterfaceFontSizeLimit(float maximum);

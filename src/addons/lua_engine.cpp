@@ -750,14 +750,14 @@ int lua_Region_SetHeight(lua_State* L) {
 /// the alternative was answering nil, and MoneyFrame does
 /// SetWidth(GetTextWidth() + iconWidth) - arithmetic that loses the file.
 float measureTextWidth(const std::string& text, const std::string& fontFace,
-                       float fontHeight) {
+                       float fontHeight, float pixelScale) {
     // Through the same function the renderer draws with, so a widget sized to
     // its own text gets the width its own text will occupy. Measuring in this
     // client's face at a flat twelve while drawing in the interface's at its
     // real height made every self-sized label narrower than what went in it -
     // MoneyFrame sizes all three coin buttons that way, and the gold, silver
     // and copper ran into one another.
-    return wowee::ui::interfaceTextWidth(text, fontFace, fontHeight);
+    return wowee::ui::interfaceTextWidth(text, fontFace, fontHeight, pixelScale);
 }
 
 /// The font string a widget measures: itself if it is one, and otherwise the
@@ -776,7 +776,7 @@ const wowee::ui::Widget* textWidgetOf(lua_State* L, int index) {
 
 int lua_Region_GetTextWidth(lua_State* L) {
     const auto* w = textWidgetOf(L, 1);
-    lua_pushnumber(L, w ? measureTextWidth(w->text, w->fontFace, w->fontHeight) : 0.0);
+    lua_pushnumber(L, w ? measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale) : 0.0);
     return 1;
 }
 
@@ -846,24 +846,24 @@ int lua_Region_GetFieldSize(lua_State* L) {
 /// no height is a paragraph, and so is anything the interface has marked as
 /// wrapping. A label sized by its own text wraps at nothing and is one line
 /// unless it carries a |n.
-double fontStringTextHeight(const wowee::ui::Widget& w) {
+double fontStringTextHeight(const wowee::ui::Widget& w, float pixelScale) {
     // The size it is actually drawn at, which is what interfaceFontSize
     // answers. Three places asked this question with three different
     // fallbacks - twelve here, twelve below, fourteen in the edit box - and a
     // label with no declared height is drawn at none of them.
-    const float line = wowee::ui::interfaceFontSize(w.fontHeight);
+    const float line = wowee::ui::interfaceFontSize(w.fontHeight, pixelScale);
     const float wrapWidth =
         (w.wrapsToWidth || (!w.autoSized && w.width > 0.0f)) ? w.width : 0.0f;
     const int lines = std::max(1, wowee::ui::interfaceTextLines(
                                       w.text, w.fontFace, w.fontHeight,
-                                      wrapWidth, w.nonSpaceWrap));
+                                      wrapWidth, w.nonSpaceWrap, pixelScale));
     return wowee::ui::textBlockHeight(line, lines);
 }
 
 int lua_Region_GetTextHeight(lua_State* L) {
     const auto* w = textWidgetOf(L, 1);
     if (!w) { lua_pushnumber(L, 0.0); return 1; }
-    lua_pushnumber(L, fontStringTextHeight(*w));
+    lua_pushnumber(L, fontStringTextHeight(*w, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale));
     return 1;
 }
 
@@ -904,7 +904,7 @@ int lua_Region_GetWidth(lua_State* L) {
         // _G[name.."Text"]:GetWidth(), so answering zero made every tab on the
         // character sheet collapse to the width of its two end textures, with
         // the label clipped out of sight inside it.
-        lua_pushnumber(L, measureTextWidth(w->text, w->fontFace, w->fontHeight));
+        lua_pushnumber(L, measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale));
         return 1;
     }
     lua_pushnumber(L, w ? (w->rectW > 0.0f ? w->rectW / es : w->width) : 0.0);
@@ -929,7 +929,7 @@ int lua_Region_GetHeight(lua_State* L) {
         // against one line and gives a two-line objective a taller row. Zero
         // failed that test always, so every wrapped objective was drawn over
         // the row beneath it.
-        lua_pushnumber(L, fontStringTextHeight(*w));
+        lua_pushnumber(L, fontStringTextHeight(*w, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale));
         return 1;
     }
     lua_pushnumber(L, w ? (w->rectH > 0.0f ? w->rectH / es : w->height) : 0.0);

@@ -2,6 +2,8 @@
 
 #include <imgui.h>
 #include <cfloat>
+#include <cassert>
+#include <cmath>
 
 #include "ui/text_markup.hpp"
 #include "ui/text_wrap.hpp"
@@ -73,16 +75,17 @@ ImFont* interfaceFaceOrDefault(const std::string& fontFace) {
 
 void setInterfaceFontSizeLimit(float maximum) { maximumFontSize = maximum; }
 
-float interfaceFontSize(float fontHeight) {
-    if (fontHeight > 0.0f) return maximumFontSize > 0.0f ? std::min(fontHeight, maximumFontSize) : fontHeight;
+float interfaceFontSize(float fontHeight, float pixelScale) {
+    assert(std::isfinite(pixelScale) && pixelScale > 0.0f);
+    if (fontHeight > 0.0f) return maximumFontSize > 0.0f ? std::min(fontHeight, maximumFontSize / pixelScale) : fontHeight;
     // What the renderer falls back to: the current size, not a flat twelve.
     return (ImGui::GetCurrentContext() != nullptr) ? ImGui::GetFontSize() : 12.0f;
 }
 
 float interfaceTextWidth(const std::string& text, const std::string& fontFace,
-                         float fontHeight) {
+                         float fontHeight, float pixelScale) {
     if (text.empty()) return 0.0f;
-    const float size = interfaceFontSize(fontHeight);
+    const float size = interfaceFontSize(fontHeight, pixelScale);
     if (ImFont* font = interfaceFaceOrDefault(fontFace)) {
         return font->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str()).x;
     }
@@ -94,9 +97,9 @@ float interfaceTextWidth(const std::string& text, const std::string& fontFace,
 }
 
 int interfaceTextLines(const std::string& text, const std::string& fontFace,
-                       float fontHeight, float wrapWidth, bool nonSpaceWrap) {
+                       float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale) {
     if (text.empty()) return 0;
-    const float size = interfaceFontSize(fontHeight);
+    const float size = interfaceFontSize(fontHeight, pixelScale);
     ImFont* font = interfaceFaceOrDefault(fontFace);
     const auto measure = [&](const std::string& piece) {
         if (font) return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;

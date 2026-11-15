@@ -98,7 +98,7 @@ private:
     /// Labels and textures, in one pass. See sizeArtAndText.
     void sizeArtAndText(WidgetTree& tree);
     void sizeTextureWidget(Widget* w);
-    void sizeFontStringWidget(Widget* w, ImFont* font);
+    void sizeFontStringWidget(Widget* w, ImFont* font, float pixelScale);
     void sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree);
     /// How big the picture is, without uploading it. No Vulkan context needed:
     /// asking a file its dimensions does not require a GPU, and requiring one
