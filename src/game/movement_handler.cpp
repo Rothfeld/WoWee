@@ -1288,6 +1288,26 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         }
     }
 
+    // Remaining MovementInfo fields follow transport data. TBC relays use
+    // FALLING=0x1000 and z-speed, cosine, sine, horizontal-speed order (CMaNGOS
+    // MovementInfo::Read/Write), not the order suggested by old parser comments.
+    const uint32_t wireFallingFlag = flags2Size == 0 ? 0x00002000u : 0x00001000u;
+    const bool airborne = (info.flags & wireFallingFlag) != 0;
+    if ((info.flags & (static_cast<uint32_t>(MovementFlags::SWIMMING) |
+                       static_cast<uint32_t>(MovementFlags::FLYING))) || (info.flags2 & 0x20)) {
+        info.pitch = packet.readFloat();
+    }
+    info.fallTime = packet.readUInt32();
+    if (airborne) {
+        info.jumpVelocity = packet.readFloat();
+        info.jumpCosAngle = packet.readFloat();
+        info.jumpSinAngle = packet.readFloat();
+        info.jumpXYSpeed = packet.readFloat();
+        LOG_DEBUG("Remote fall: guid=", moverGuid, " elapsed=", info.fallTime,
+                  " launchSpeed=", info.jumpVelocity, " cos=", info.jumpCosAngle,
+                  " sin=", info.jumpSinAngle, " horizontalSpeed=", info.jumpXYSpeed);
+    }
+
     auto entity = owner_.getEntityManager().getEntity(moverGuid);
     if (!entity) {
         return;
@@ -1340,7 +1360,14 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         static_cast<uint32_t>(MovementFlags::SWIMMING) |
         static_cast<uint32_t>(MovementFlags::FLYING) |
         static_cast<uint32_t>(MovementFlags::LEVITATING);
-    if (entity->getType() == ObjectType::PLAYER && !onTransport && !(info.flags & nonGroundFlags) && !isJumpOpcode) {
+    if (entity->getType() == ObjectType::PLAYER && !onTransport && airborne) {
+        // Wire zspeed is downward-positive; native takeoff sends -7.95555.
+        const glm::vec3 velocity = core::coords::serverToCanonical(glm::vec3(
+            info.jumpCosAngle * info.jumpXYSpeed, info.jumpSinAngle * info.jumpXYSpeed,
+            -info.jumpVelocity - Entity::remoteGravity * (info.fallTime / 1000.0f)));
+        entity->updateRemoteAirMotion(canonical, canYaw, velocity,
+                                     info.hasFlag(MovementFlags::FEATHER_FALL));
+    } else if (entity->getType() == ObjectType::PLAYER && !onTransport && !(info.flags & nonGroundFlags) && !isJumpOpcode) {
         float forward = (info.hasFlag(MovementFlags::FORWARD) ? 1.0f : 0.0f) -
                         (info.hasFlag(MovementFlags::BACKWARD) ? 1.0f : 0.0f);
         float left = (info.hasFlag(MovementFlags::STRAFE_LEFT) ? 1.0f : 0.0f) -
@@ -1368,7 +1395,7 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
     }
 
     if (owner_.unitAnimHintCallbackRef() && isJumpOpcode) {
-        owner_.unitAnimHintCallbackRef()(moverGuid, 38u);
+        owner_.unitAnimHintCallbackRef()(moverGuid, 37u);
     }
 
     if (owner_.unitMoveFlagsCallbackRef()) {

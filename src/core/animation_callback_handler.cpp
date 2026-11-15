@@ -295,9 +295,8 @@ void AnimationCallbackHandler::setupCallbacks() {
         ac->setLowHealth(lowHp);
     });
 
-    // Unit animation hint callback - plays jump (38=JumpMid) animation on other players/NPCs.
-    // Swim/walking state is now authoritative from the move-flags callback below.
-    // animId=38 (JumpMid): airborne jump animation; land detection is via per-frame sync.
+    // Takeoff plays once, then holds the airborne loop. Landing is owned by
+    // the remote movement state transition in the per-frame render sync.
     gameHandler_.setUnitAnimHintCallback([this](uint64_t guid, uint32_t animId) {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
@@ -307,7 +306,9 @@ void AnimationCallbackHandler::setupCallbacks() {
         // Don't override Death animation
         uint32_t curAnim = 0; float curT = 0.0f, curDur = 0.0f;
         if (cr->getAnimationState(instanceId, curAnim, curT, curDur) && curAnim == rendering::anim::DEATH) return;
-        cr->playAnimation(instanceId, animId, /*loop=*/true);
+        const bool takeoff = animId == rendering::anim::JUMP_START;
+        cr->playAnimation(instanceId, animId, !takeoff,
+                          takeoff ? rendering::anim::JUMP : 0);
     });
 
     // Unit move-flags callback - updates swimming and walking state from every MSG_MOVE_* packet.

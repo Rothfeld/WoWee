@@ -243,6 +243,7 @@ public:
     std::unordered_map<uint64_t, bool>& getCreatureWasSwimming() { return creatureWasSwimming_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasFlying() { return creatureWasFlying_; }
     std::unordered_map<uint64_t, uint32_t>& getRemoteMovementFlags() { return remoteMovementFlags_; }
+    std::unordered_map<uint64_t, bool>& getRemoteWasAirborne() { return remoteWasAirborne_; }
     std::unordered_map<uint64_t, bool>& getRemoteWasMovingBackward() { return remoteWasMovingBackward_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasWalking() { return creatureWasWalking_; }
     std::unordered_map<uint64_t, bool>& getCreatureSwimmingState() { return creatureSwimmingState_; }
@@ -426,6 +427,7 @@ private:
     std::unordered_map<uint64_t, bool> creatureWasFlying_;
     std::unordered_map<uint64_t, uint32_t> remoteMovementFlags_;
     std::unordered_map<uint64_t, bool> remoteWasMovingBackward_;
+    std::unordered_map<uint64_t, bool> remoteWasAirborne_;
     std::unordered_map<uint64_t, bool> creatureWasWalking_;
     std::unordered_map<uint64_t, bool> creatureSwimmingState_;
     std::unordered_map<uint64_t, bool> creatureWalkingState_;

@@ -119,7 +119,7 @@ public:
         y = py;
         z = pz;
         orientation = o;
-        remoteGroundMotion_ = false;
+        remotePredictedMotion_ = false;
         isMoving_ = false; // Instant position set cancels interpolation
         usePathMode_ = false;
         activeSpline_.reset();
@@ -127,7 +127,7 @@ public:
 
     // Multi-segment path movement (Catmull-Rom spline interpolation)
     void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration) {
-        remoteGroundMotion_ = false;
+        remotePredictedMotion_ = false;
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
             startMoveTo(path.back()[0], path.back()[1], path.back()[2], destO, totalDuration);
@@ -185,7 +185,7 @@ public:
 
     // Movement interpolation (syncs entity position with renderer during movement)
     void startMoveTo(float destX, float destY, float destZ, float destO, float durationSec) {
-        remoteGroundMotion_ = false;
+        remotePredictedMotion_ = false;
         usePathMode_ = false;
         activeSpline_.reset();
         if (durationSec <= 0.0f) {
@@ -247,7 +247,8 @@ public:
     // correction so heartbeat boundaries do not stop or restart locomotion.
     void updateRemoteGroundMotion(const glm::vec3& position, float yaw,
                                   const glm::vec2& velocity) {
-        remoteGroundMotion_ = true;
+        remotePredictedMotion_ = true;
+        remoteAirborne_ = false;
         usePathMode_ = false;
         activeSpline_.reset();
         remoteVelocity_ = velocity;
@@ -260,6 +261,21 @@ public:
         isMoving_ = true;
     }
 
+    static constexpr float remoteGravity = 19.29110527038574f;
+    static constexpr float remoteTerminalVelocity = 60.148003f;
+
+    void updateRemoteAirMotion(const glm::vec3& position, float yaw,
+                               const glm::vec3& velocity, bool slowFall = false) {
+        updateRemoteGroundMotion(position, yaw, glm::vec2(velocity));
+        remoteAirborne_ = true;
+        remoteVerticalVelocity_ = velocity.z;
+        remoteTerminalSpeed_ = slowFall ? 7.0f : remoteTerminalVelocity;
+    }
+
+    [[nodiscard]] bool isRemoteAirborne() const {
+        return remotePredictedMotion_ && remoteAirborne_;
+    }
+
     // Ground speeds come from the server's movement block, including mounts
     // and movement-speed auras. Zero means not initialized, never a guessed speed.
     float groundWalkSpeed = 0.0f;
@@ -268,11 +284,21 @@ public:
 
     void updateMovement(float deltaTime) {
         if (!isMoving_) return;
-        if (remoteGroundMotion_) {
+        if (remotePredictedMotion_) {
             // Bound extrapolation if the connection stops delivering packets.
             const float motionDt = std::min(deltaTime, std::max(0.0f, 2.0f - remotePacketAge_));
             x += remoteVelocity_.x * motionDt;
             y += remoteVelocity_.y * motionDt;
+            if (remoteAirborne_) {
+                remoteVerticalVelocity_ = std::max(remoteVerticalVelocity_, -remoteTerminalSpeed_);
+                const float accelerationTime = std::min(motionDt,
+                    (remoteVerticalVelocity_ + remoteTerminalSpeed_) / remoteGravity);
+                z += remoteVerticalVelocity_ * accelerationTime -
+                     0.5f * remoteGravity * accelerationTime * accelerationTime -
+                     remoteTerminalSpeed_ * (motionDt - accelerationTime);
+                remoteVerticalVelocity_ = std::max(-remoteTerminalSpeed_,
+                    remoteVerticalVelocity_ - remoteGravity * motionDt);
+            }
             remotePacketAge_ += deltaTime;
             if (remoteCorrectionRemaining_ > 0.0f) {
                 const float fraction = std::min(1.0f, deltaTime / remoteCorrectionRemaining_);
@@ -328,8 +354,8 @@ public:
     /// Unlike isEntityMoving(), this does NOT include the dead-reckoning overrun window,
     /// so animations (Run/Walk) should use this to avoid "running in place" after arrival.
     [[nodiscard]] bool isActivelyMoving() const {
-        if (remoteGroundMotion_)
-            return remotePacketAge_ < 2.0f && glm::dot(remoteVelocity_, remoteVelocity_) > 0.0001f;
+        if (remotePredictedMotion_)
+            return remotePacketAge_ < 2.0f && (remoteAirborne_ || glm::dot(remoteVelocity_, remoteVelocity_) > 0.0001f);
         return isMoving_ && moveElapsed_ < moveDuration_;
     }
 
@@ -379,7 +405,10 @@ protected:
     FlatFieldMap fields;
 
     // Movement interpolation state
-    bool remoteGroundMotion_ = false;
+    bool remotePredictedMotion_ = false;
+    bool remoteAirborne_ = false;
+    float remoteVerticalVelocity_ = 0.0f;
+    float remoteTerminalSpeed_ = remoteTerminalVelocity;
     glm::vec2 remoteVelocity_{0.0f};
     glm::vec3 remoteCorrection_{0.0f};
     float remoteCorrectionRemaining_ = 0.0f;

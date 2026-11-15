@@ -351,3 +351,37 @@ TEST_CASE("Directional ground pose preserves facing while aligning legs", "[move
     REQUIRE(stopped.modelYawOffset == 0);
     REQUIRE(stopped.torsoYawOffset == 0);
 }
+
+TEST_CASE("Remote jump follows an arc across heartbeats and lands", "[entity][movement]") {
+    Player p;
+    constexpr float launch = 7.955547f;
+    p.setPosition(0, 0, 100, 0);
+    p.updateRemoteAirMotion({0, 0, 100}, 0, {0, 0, launch});
+    REQUIRE(p.isActivelyMoving());
+    REQUIRE(p.isRemoteAirborne());
+    for (int i = 0; i < 20; ++i) p.updateMovement(0.025f);
+    const float apexSample = 100 + launch * 0.5f - 0.5f * Entity::remoteGravity * 0.25f;
+    REQUIRE(p.getZ() == Catch::Approx(apexSample).margin(0.0001f));
+    p.updateRemoteAirMotion({0, 0, apexSample}, 0,
+                           {0, 0, launch - Entity::remoteGravity * 0.5f});
+    p.updateMovement(0.25f);
+    REQUIRE(p.getZ() == Catch::Approx(100 + launch * 0.75f - 0.5f * Entity::remoteGravity * 0.75f * 0.75f).margin(0.0001f));
+    p.updateRemoteGroundMotion({0, 0, 100}, 0, {0, 0});
+    p.updateMovement(0.1f);
+    REQUIRE_FALSE(p.isRemoteAirborne());
+    REQUIRE_FALSE(p.isActivelyMoving());
+    REQUIRE(p.getZ() == Catch::Approx(100));
+}
+
+TEST_CASE("Remote moving jump keeps momentum below takeoff height", "[entity][movement]") {
+    Player p;
+    p.setPosition(0, 0, 100, 0);
+    p.updateRemoteAirMotion({0, 0, 100}, 0, {3, 4, 7.955547f});
+    for (int i = 0; i < 40; ++i) p.updateMovement(0.025f);
+    REQUIRE(p.getX() == Catch::Approx(3));
+    REQUIRE(p.getY() == Catch::Approx(4));
+    REQUIRE(p.getZ() == Catch::Approx(98.30999f).margin(0.0001f));
+    REQUIRE(p.isRemoteAirborne());
+    p.setPosition(0, 0, 100, 0);
+    REQUIRE_FALSE(p.isRemoteAirborne());
+}

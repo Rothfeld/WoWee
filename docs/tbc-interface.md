@@ -281,8 +281,8 @@ server movement blocks and speed updates. Heartbeats correct position over
 Stopping a turn/strafe uses the remaining movement flags, so forward movement
 continues when another input ends. Prediction expires after two seconds without
 packets, preserving the last rendered position. Explicit position/spline changes
-cancel ground prediction. Airborne, swimming and transported movement retain
-separate packet interpolation. TBC MSG_MOVE_SET_*_SPEED broadcasts use packed
+cancel prediction. Swimming and transported movement retain separate packet
+interpolation. TBC MSG_MOVE_SET_*_SPEED broadcasts use packed
 GUIDs (CMaNGOS MovementHandler.cpp, HandleForceSpeedChangeAck).
 Regression coverage: test_entity continuous motion, correction, stop and timeout.
 Live evidence: workspace 20261115T134433.233751Z.remote_prediction_strafe,
@@ -298,3 +298,18 @@ Directional state is removed with the instance. Regression coverage includes
 left/right, forward/backward diagonals, backpedal and idle pose reset in test_entity.
 Paired native/remote clips and unobscured avatar crops: workspace experiment
 20261115T134821.271647Z.remote_directional_animation.
+
+Remote player jumps integrate horizontal launch velocity and vertical gravity
+between movement packets. TBC MovementInfo has FALLING=0x1000, followed by
+fallTime and downward-positive zspeed, cosine, sine, horizontal speed. Native
+2.4.3 takeoff sends zspeed=-7.95555; heartbeat fallTime measures milliseconds
+since takeoff. Gravity is 19.29110527038574, terminal speed 60.148003, matching
+CMaNGOS Movement/util.cpp. Heartbeats correct the current arc without restarting
+it. Airborne players bypass floor projection. Remote render state explicitly
+advances JumpStart -> Jump and JumpEnd -> idle/locomotion: CharacterRenderer
+holds these one-shot end poses until their owning state machine advances them.
+Regression tests cover stationary flight, heartbeat continuity, horizontal
+momentum, descent below takeoff height, landing and explicit position resets.
+Matched-camera stationary/running jump and landing evidence: workspace experiment
+20261115T135427.190485Z.remote_jump; final paired footage
+20261115T140204.621244Z.remote_jump_verified. Mounted jumps were not exercised.

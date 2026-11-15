@@ -1979,6 +1979,7 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     creatureWasWalking_.erase(guid);
     remoteMovementFlags_.erase(guid);
     remoteWasMovingBackward_.erase(guid);
+    remoteWasAirborne_.erase(guid);
     creatureSwimmingState_.erase(guid);
     creatureWalkingState_.erase(guid);
     creatureFlyingState_.erase(guid);

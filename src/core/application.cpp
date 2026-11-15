@@ -3622,6 +3622,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             const auto hasMoveFlag = [&](game::MovementFlags flag) {
                 return (moveFlags & static_cast<uint32_t>(flag)) != 0;
             };
+            const bool airborne = entity->isRemoteAirborne() ||
+                hasMoveFlag(game::MovementFlags::FALLING) || hasMoveFlag(game::MovementFlags::FALLINGFAR);
             const auto direction = rendering::groundDirection(
                 hasMoveFlag(game::MovementFlags::FORWARD), hasMoveFlag(game::MovementFlags::BACKWARD),
                 hasMoveFlag(game::MovementFlags::STRAFE_LEFT), hasMoveFlag(game::MovementFlags::STRAFE_RIGHT));
@@ -3645,7 +3647,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
 
             // Match creature projection: terrain alone is not a valid floor in
             // WMO overlap regions (tunnels, buildings, bridges).
-            const bool groundPlayer = !_pCreatureFlyingState.count(guid) &&
+            const bool groundPlayer = !airborne && !_pCreatureFlyingState.count(guid) &&
                                       !_pCreatureSwimmingState.count(guid);
             if (entity->isActivelyMoving() && groundPlayer) {
                 if (auto floorZ = movingEntityFloor(renderer.get(), renderPos,
@@ -3710,50 +3712,69 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 bool prevWalking  = _pCreatureWasWalking[guid];
                 const bool movingBackward = isMovingNow && direction.backwards;
                 const bool prevBackward = entitySpawner_->getRemoteWasMovingBackward()[guid];
+                const bool wasAirborne = entitySpawner_->getRemoteWasAirborne()[guid];
+                uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
+                const bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
+                const bool jumpFinished = gotState && curDur > 0.0f && curT >= curDur &&
+                    (curAnimId == rendering::anim::JUMP_START || curAnimId == rendering::anim::JUMP_END);
                 const bool stateChanged = (isMovingNow  != prevMoving)   ||
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
                                           (isWalkingNow  != prevWalking && isMovingNow) ||
-                                          (movingBackward != prevBackward);
+                                          (movingBackward != prevBackward) || (airborne != wasAirborne) || jumpFinished;
                 if (stateChanged) {
                     _pCreatureWasMoving[guid]   = isMovingNow;
                     _pCreatureWasSwimming[guid] = isSwimmingNow;
                     _pCreatureWasFlying[guid]   = isFlyingNow;
                     _pCreatureWasWalking[guid]  = isWalkingNow;
                     entitySpawner_->getRemoteWasMovingBackward()[guid] = movingBackward;
-                    uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
-                    bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
+                    entitySpawner_->getRemoteWasAirborne()[guid] = airborne;
                     if (!gotState || curAnimId != rendering::anim::DEATH) {
                         uint32_t targetAnim;
-                        if (remoteMount) {
-                            // The rider keeps the mounted seat pose; locomotion
-                            // belongs to the separately rendered mount model.
-                            targetAnim = mountedRiderAnim;
-                            uint32_t mountAnim = rendering::anim::STAND;
-                            if (isMovingNow) {
-                                if (isFlyingNow) mountAnim = rendering::anim::FLY_FORWARD;
-                                else if (movingBackward) mountAnim = rendering::anim::WALK_BACKWARDS;
-                                else if (isWalkingNow) mountAnim = rendering::anim::WALK;
-                                else mountAnim = rendering::anim::RUN;
-                            } else if (isFlyingNow) {
-                                mountAnim = rendering::anim::FLY_IDLE;
-                            }
-                            if (!charRenderer->hasAnimation(remoteMount->instanceId, mountAnim)) {
-                                mountAnim = isMovingNow ? rendering::anim::RUN : rendering::anim::STAND;
-                            }
-                            charRenderer->playAnimation(remoteMount->instanceId, mountAnim, true);
-                        } else if (isMovingNow) {
-                            if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
-                            else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
-                            else if (movingBackward) targetAnim = rendering::anim::WALK_BACKWARDS;
-                            else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
-                            else                    targetAnim = rendering::anim::RUN;
+                        if (airborne) {
+                            // Preserve takeoff's one-shot -> airborne chain across
+                            // heartbeats and horizontal movement-state changes.
+                            if (jumpFinished && curAnimId == rendering::anim::JUMP_START)
+                                charRenderer->playAnimation(instanceId, rendering::anim::JUMP, true);
+                            else if (curAnimId != rendering::anim::JUMP_START &&
+                                curAnimId != rendering::anim::JUMP && curAnimId != rendering::anim::FALL)
+                                charRenderer->playAnimation(instanceId, rendering::anim::FALL, true);
                         } else {
-                            if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
-                            else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
-                            else                    targetAnim = entitySpawner_->remoteIdleAnimation(guid);
+                            if (remoteMount) {
+                                // The rider keeps the mounted seat pose; locomotion
+                                // belongs to the separately rendered mount model.
+                                targetAnim = mountedRiderAnim;
+                                uint32_t mountAnim = rendering::anim::STAND;
+                                if (isMovingNow) {
+                                    if (isFlyingNow) mountAnim = rendering::anim::FLY_FORWARD;
+                                    else if (movingBackward) mountAnim = rendering::anim::WALK_BACKWARDS;
+                                    else if (isWalkingNow) mountAnim = rendering::anim::WALK;
+                                    else mountAnim = rendering::anim::RUN;
+                                } else if (isFlyingNow) {
+                                    mountAnim = rendering::anim::FLY_IDLE;
+                                }
+                                if (!charRenderer->hasAnimation(remoteMount->instanceId, mountAnim)) {
+                                    mountAnim = isMovingNow ? rendering::anim::RUN : rendering::anim::STAND;
+                                }
+                                charRenderer->playAnimation(remoteMount->instanceId, mountAnim, true);
+                            } else if (isMovingNow) {
+                                if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
+                                else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
+                                else if (movingBackward) targetAnim = rendering::anim::WALK_BACKWARDS;
+                                else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
+                                else                    targetAnim = rendering::anim::RUN;
+                            } else {
+                                if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
+                                else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
+                                else                    targetAnim = entitySpawner_->remoteIdleAnimation(guid);
+                            }
+                            if (wasAirborne && !remoteMount && !isSwimmingNow && !isFlyingNow) {
+                                charRenderer->playAnimation(instanceId, rendering::anim::JUMP_END,
+                                                            false, targetAnim);
+                            } else {
+                                charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
+                            }
                         }
-                        charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
                     }
                 }
 
@@ -3779,7 +3800,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
 
             // Orientation sync
             const float facingYaw = entity->getOrientation() + glm::radians(90.0f);
-            const bool groundLocomotion = entity->isActivelyMoving() &&
+            const bool groundLocomotion = !airborne && entity->isActivelyMoving() &&
                 !_pCreatureFlyingState.count(guid) && !_pCreatureSwimmingState.count(guid);
             const float renderYaw = facingYaw + (groundLocomotion ? direction.modelYawOffset : 0.0f);
             charRenderer->setInstanceTorsoYaw(instanceId,
