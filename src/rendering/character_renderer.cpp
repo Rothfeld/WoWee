@@ -2292,9 +2292,11 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                             next.replayMin, next.replayMax)(variationRandom);
                         if (previous != inst.currentSequenceIndex && next.blendTime > 0) {
                             inst.blendSequenceIndex = previous;
-                            inst.blendAnimationTime = 0.0f;
+                            // The outgoing fidget ended here. Blending from its
+                            // first frame creates a visible snap at the boundary.
+                            inst.blendAnimationTime = static_cast<float>(sequences[previous].duration);
                             inst.blendPlaybackRate = 1.0f;
-                            inst.blendAnimationLoop = true;
+                            inst.blendAnimationLoop = false;
                             inst.blendElapsed = 0.0f;
                             inst.blendDuration = next.blendTime;
                         }
