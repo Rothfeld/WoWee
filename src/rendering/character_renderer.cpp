@@ -4457,6 +4457,21 @@ bool CharacterRenderer::getInstanceNamePosition(uint32_t instanceId, bool mounte
     return true;
 }
 
+bool CharacterRenderer::getInstanceCollisionDimensions(uint32_t instanceId, float& radius, float& height) const {
+    const auto instance = instances.find(instanceId);
+    if (instance == instances.end()) return false;
+    const auto model = models.find(instance->second.modelId);
+    if (model == models.end()) return false;
+    // The M2 collision box is separate from animated/visual bounds. Y is
+    // model width, Z is height; character models face along model X.
+    const glm::vec3 size = model->second.data.boundMax - model->second.data.boundMin;
+    const float scale = instance->second.scale;
+    assert(size.y > 0.0f && size.z > 0.0f && scale > 0.0f);
+    radius = size.y * 0.5f * scale;
+    height = size.z * scale;
+    return true;
+}
+
 bool CharacterRenderer::getInstanceHeight(uint32_t instanceId, float& outHeight) const {
     auto it = instances.find(instanceId);
     if (it == instances.end()) return false;

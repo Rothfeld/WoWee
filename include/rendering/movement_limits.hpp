@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <optional>
 #include <glm/glm.hpp>
 
 namespace wowee::rendering::movement {

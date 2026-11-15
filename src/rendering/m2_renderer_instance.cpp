@@ -15,6 +15,7 @@
 #include "pipeline/blp_loader.hpp"
 #include "core/logger.hpp"
 #include "rendering/movement_limits.hpp"
+#include "rendering/body_collision.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -1151,13 +1152,14 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
 }
 
 bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
-                                 glm::vec3& adjustedPos, float playerRadius, bool grounded) const {
+                                 glm::vec3& adjustedPos, float playerRadius, float playerHeight) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
+    assert(playerRadius > 0.0f && playerHeight >= movement::kBodyBevel * playerRadius);
     adjustedPos = to;
     bool collided = false;
 
     glm::vec3 queryMin = glm::min(from, to) - glm::vec3(7.0f, 7.0f, 5.0f);
-    glm::vec3 queryMax = glm::max(from, to) + glm::vec3(7.0f, 7.0f, 5.0f);
+    glm::vec3 queryMax = glm::max(from, to) + glm::vec3(7.0f, 7.0f, std::max(5.0f, playerHeight));
     gatherCandidates(queryMin, queryMax, tl_m2_candidateScratch);
 
     // Check against all M2 instances in local space (rotation-aware).
@@ -1174,7 +1176,7 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
         if (from.y < instance.worldBoundsMin.y - broadMargin && adjustedPos.y < instance.worldBoundsMin.y - broadMargin) continue;
         if (from.y > instance.worldBoundsMax.y + broadMargin && adjustedPos.y > instance.worldBoundsMax.y + broadMargin) continue;
         if (from.z > instance.worldBoundsMax.z + 2.5f && adjustedPos.z > instance.worldBoundsMax.z + 2.5f) continue;
-        if (from.z + 2.5f < instance.worldBoundsMin.z && adjustedPos.z + 2.5f < instance.worldBoundsMin.z) continue;
+        if (from.z + playerHeight < instance.worldBoundsMin.z && adjustedPos.z + playerHeight < instance.worldBoundsMin.z) continue;
 
         if (!instance.cachedModel) continue;
 
@@ -1215,8 +1217,8 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
             // The body is vertical in world space, even for pitched/rolled
             // doodads. Query every triangle classification touched by its span:
             // a model-local floor can become a world-space wall after placement.
-            const glm::vec3 localTopFrom(instance.invModelMatrix * glm::vec4(from + glm::vec3(0,0,2), 1));
-            const glm::vec3 localTopTo(instance.invModelMatrix * glm::vec4(adjustedPos + glm::vec3(0,0,2), 1));
+            const glm::vec3 localTopFrom(instance.invModelMatrix * glm::vec4(from + glm::vec3(0,0,playerHeight), 1));
+            const glm::vec3 localTopTo(instance.invModelMatrix * glm::vec4(adjustedPos + glm::vec3(0,0,playerHeight), 1));
             const glm::vec3 queryLow = glm::min(glm::min(localFrom, localPos), glm::min(localTopFrom, localTopTo));
             const glm::vec3 queryHigh = glm::max(glm::max(localFrom, localPos), glm::max(localTopFrom, localTopTo));
             model.collision.getWallTrisInRange(
@@ -1229,35 +1231,20 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
             tl_m2_collisionTriScratch.insert(tl_m2_collisionTriScratch.end(), floorTriangles.begin(), floorTriangles.end());
             std::sort(tl_m2_collisionTriScratch.begin(), tl_m2_collisionTriScratch.end());
             tl_m2_collisionTriScratch.erase(std::unique(tl_m2_collisionTriScratch.begin(), tl_m2_collisionTriScratch.end()), tl_m2_collisionTriScratch.end());
-            bool pushed = false;
+            thread_local std::vector<movement::BodyTriangle> triangles;
+            triangles.clear();
             for (uint32_t ti : tl_m2_collisionTriScratch) {
-                const auto& verts = model.collision.vertices;
-                const auto& ix = model.collision.indices;
-                const glm::vec3 a(instance.modelMatrix * glm::vec4(verts[ix[ti*3]],1));
-                const glm::vec3 b(instance.modelMatrix * glm::vec4(verts[ix[ti*3+1]],1));
-                const glm::vec3 c(instance.modelMatrix * glm::vec4(verts[ix[ti*3+2]],1));
-                const glm::vec3 cross = glm::cross(b-a,c-a);
-                const float length = glm::length(cross);
-                if (length < 0.00001f) continue;
-                const glm::vec3 normal = cross / length;
-                if (std::abs(normal.z) >= movement::kMinWalkableNormalZ) continue;
-                // Only supported walking can step over a low edge. In flight,
-                // include feet and their vertical sweep so ankles cannot enter
-                // a prop before the descending floor query reaches its top.
-                const float bottom = std::min(from.z, adjustedPos.z) +
-                    (grounded ? movement::kMaxStepUp : 0.0f);
-                const float top = adjustedPos.z + 2.0f;
-                const auto closest = closestHorizontalPointInSlab(glm::vec2(adjustedPos),a,b,c,bottom,top);
-                if (!closest) continue;
-                const auto prior = closestHorizontalPointInSlab(glm::vec2(from),a,b,c,bottom,top);
-                const glm::vec2 push = horizontalWallSeparation(
-                    glm::vec2(from)-*prior, glm::vec2(adjustedPos)-*closest,
-                    glm::vec2(normal),playerRadius);
-                if (glm::dot(push,push)==0) continue;
-                adjustedPos.x += push.x;
-                adjustedPos.y += push.y;
-                pushed = true;
+                movement::BodyTriangle triangle;
+                for (size_t corner=0;corner<3;++corner) {
+                    triangle[corner]=glm::vec3(instance.modelMatrix * glm::vec4(
+                        model.collision.vertices[model.collision.indices[ti*3+corner]],1.0f));
+                }
+                triangles.push_back(triangle);
             }
+            glm::vec3 contactPosition;
+            const bool pushed=movement::moveBody(from,adjustedPos,playerRadius,playerHeight,
+                triangles,contactPosition);
+            adjustedPos=contactPosition;
 
             if (pushed) {
                 collided = true;
@@ -1298,15 +1285,15 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
         float toR = glm::length(glm::vec2(localPos.x, localPos.y) - localCenter);
 
         // Feet-based vertical overlap test: ignore objects fully above/below us.
-        constexpr float PLAYER_HEIGHT = 2.0f;
-        if (localPos.z + PLAYER_HEIGHT < localMin.z || localPos.z > effectiveTop) {
+        const float playerLocalHeight = playerHeight / instance.scale;
+        if (localPos.z + playerLocalHeight < localMin.z || localPos.z > effectiveTop) {
             continue;
         }
 
         bool fromInsideXY =
             (localFrom.x >= localMin.x && localFrom.x <= localMax.x &&
              localFrom.y >= localMin.y && localFrom.y <= localMax.y);
-        bool fromInsideZ = (localFrom.z + PLAYER_HEIGHT >= localMin.z && localFrom.z <= effectiveTop);
+        bool fromInsideZ = (localFrom.z + playerLocalHeight >= localMin.z && localFrom.z <= effectiveTop);
         bool escapingOverlap = (fromInsideXY && fromInsideZ && (toR > fromR + 1e-4f));
         bool allowEscapeRelax = escapingOverlap && !model.collisionSmallSolidProp;
 

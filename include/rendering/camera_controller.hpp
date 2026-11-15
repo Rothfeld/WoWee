@@ -571,6 +571,8 @@ private:
     /// The followed character's height, refreshed as it is followed. Zero
     /// until something has been measured, which reads as the old behaviour.
     float followedHeight_ = 0.0f;
+    float collisionHeight_ = 2.0f; // Free-camera body dimensions until a character is assigned.
+    float collisionRadius_ = 0.5f;
     /// The followed character's head bone in model Z, zero until measured or
     /// if its skeleton names no head.
     float followedHeadZ_ = 0.0f;

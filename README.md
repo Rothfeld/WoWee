@@ -638,11 +638,27 @@ Descending floor selection excludes prop/structure candidates above previous
 feet. A nearby log rim must not hide terrain crossed beneath it. Terrain retains
 its endpoint crossing rule for uphill landings; grounded step-up is separate.
 
-Authored M2 wall collision clips triangles to the upright world-space body above
-its grounded step budget before measuring horizontal separation. Airborne contact
-includes the feet and vertical sweep; a jump has no walking step clearance. Query both local floor
-and wall triangle grids: pitched props can turn a local floor into a world wall.
-A closest point measured only from the feet misses torso-height overhangs.
+Authored M2 contact uses an upright beveled box. TBC build 8606's shape
+constructor at `0x632650` supplies nine points: the sole, four corners at
+`radius * 1.8493989706039429`, and four corners at collision height. Its flat
+head and tapered foot both participate in contact. Radius/height use the scaled
+M2 collision bounds; the dwarf's 0.30556/1.60660-yard dimensions agree with
+CreatureModelData's width/height to file rounding.
+
+Continuous separating-axis tests sweep that body against placed triangles,
+including triangles classified as local floors. Native collision geometry stays
+solid regardless of the name or local orientation of its model. Resolve lateral
+motion before vertical motion. Lateral overhang contact preserves feet height;
+vertical head contact stops ascent; foot support clears falling velocity.
+Grounded step-up remains a separate floor-selection decision.
+
+`test_collision_geometry` covers fast thin-wall crossings in both directions,
+ceiling winding, and sustained contact with an overhang without downward drift.
+
+Paired movement tests must wait for teleport acknowledgement and world entry.
+Use established movement or obstacle contact before jump input; simultaneous
+start/jump events produced different native outcomes across runs. A blocked
+jump alone is insufficient evidence: compare valid climbs and landings too.
 
 Player camera fade uses actual camera-to-pivot distance, becoming transparent
 between 1.5 and 0.5 yards. Collision can shorten that distance while requested

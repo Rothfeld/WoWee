@@ -309,10 +309,28 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
         }
 
         if (includeDoodads && m2Renderer && !externalFollow_) {
+            // Resolve lateral movement before vertical movement. A diagonal
+            // head contact can come from running into a side, not from the
+            // jump itself; only the vertical sweep may cancel ascent.
+            glm::vec3 horizontal(candidate.x, candidate.y, stepPos.z);
+            glm::vec3 horizontalAdjusted;
+            m2Renderer->checkCollision(stepPos, horizontal, horizontalAdjusted,
+                collisionRadius_, collisionHeight_);
+            candidate = horizontalAdjusted + glm::vec3(0.0f, 0.0f, candidate.z - stepPos.z);
             glm::vec3 adjusted;
-            if (m2Renderer->checkCollision(stepPos, candidate, adjusted, 0.5f, grounded)) {
-                candidate.x = adjusted.x;
-                candidate.y = adjusted.y;
+            if (m2Renderer->checkCollision(horizontalAdjusted, candidate, adjusted,
+                    collisionRadius_, collisionHeight_)) {
+                // Publish beveled-foot support so gravity cannot accumulate
+                // while collision holds the player above the center floor ray.
+                if (adjusted.z > candidate.z + 0.00001f && verticalVelocity <= 0.0f &&
+                    !swimming && !isFlightAirborne()) {
+                    grounded = true;
+                    verticalVelocity = 0.0f;
+                }
+                if (adjusted.z < candidate.z - 0.00001f && verticalVelocity > 0.0f) {
+                    verticalVelocity = 0.0f;
+                }
+                candidate = adjusted;
             }
         }
 
@@ -2383,6 +2401,11 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
                             kPivotReferenceHeadZ, " head reference)");
             }
             followedHeight_ = height;
+            if (!characterRenderer->getInstanceCollisionDimensions(
+                    playerInstanceId, collisionRadius_, collisionHeight_)) {
+                LOG_ERROR("Collision bounds missing after successful character height query");
+                throw std::logic_error("Character collision bounds unavailable");
+            }
             if (measuredHead) followedHeadZ_ = headZ;
         }
 

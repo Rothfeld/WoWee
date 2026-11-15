@@ -7,6 +7,7 @@
 // The expectations below are computed independently - a brute-force scan of
 // the box surface for the distance test, and a plane-intersection solved by
 // hand for the ray test - rather than by calling the functions a second way.
+#include "rendering/body_collision.hpp"
 #include <catch_amalgamated.hpp>
 
 #include <cmath>
@@ -237,4 +238,51 @@ TEST_CASE("cylinder contact clips ramp edges below the step height", "[collision
     REQUIRE(tall);
     CHECK(glm::distance(*tall,glm::vec2(0.1f,3.0f)) < 0.11f);
     CHECK_FALSE(closestHorizontalPointInSlab({0,0},a,b,c,2.1f,4.0f));
+}
+
+
+TEST_CASE("beveled body cannot tunnel through a thin wall") {
+    using namespace wowee::rendering::movement;
+    const std::array wall = {
+        BodyTriangle{glm::vec3(0,-10,-5),glm::vec3(0,10,-5),glm::vec3(0,10,10)},
+        BodyTriangle{glm::vec3(0,-10,-5),glm::vec3(0,10,10),glm::vec3(0,-10,10)}};
+    for (float sign : {-1.0f, 1.0f}) {
+        for (float travel : {3.0f, 10.0f, 100.0f}) {
+            glm::vec3 result;
+            REQUIRE(moveBody({sign*2,0,0},{sign*(2-travel),0,0},.5f,2.0f,wall,result));
+            CHECK(std::abs(result.x-sign*.5014f)<.001f);
+            CHECK(std::abs(result.z)<.001f);
+        }
+    }
+}
+
+TEST_CASE("flat character head stops on either winding of a ceiling") {
+    using namespace wowee::rendering::movement;
+    std::array ceiling = {
+        BodyTriangle{glm::vec3(-5,-5,1.8f),glm::vec3(5,-5,1.8f),glm::vec3(5,5,1.8f)},
+        BodyTriangle{glm::vec3(-5,-5,1.8f),glm::vec3(5,5,1.8f),glm::vec3(-5,5,1.8f)}};
+    for (int winding=0;winding<2;++winding) {
+        glm::vec3 result;
+        REQUIRE(moveBody({0,0,0},{0,0,1},.30555f,1.607f,ceiling,result));
+        CHECK(std::abs(result.z-(1.8f-1.607f-.0014f))<.001f);
+        CHECK(std::abs(result.x)<.001f);
+        CHECK(std::abs(result.y)<.001f);
+        for (auto& triangle:ceiling) std::swap(triangle[0],triangle[1]);
+    }
+}
+
+TEST_CASE("overhang contact cannot push walking feet downward") {
+    using namespace wowee::rendering::movement;
+    const std::array overhang = {
+        BodyTriangle{glm::vec3(1,-3,0),glm::vec3(-1,-3,3),glm::vec3(-1,3,3)},
+        BodyTriangle{glm::vec3(1,-3,0),glm::vec3(-1,3,3),glm::vec3(1,3,0)}};
+    glm::vec3 position(-2,0,0);
+    for (int frame=0;frame<100;++frame) {
+        glm::vec3 result;
+        moveBody(position,position+glm::vec3(.1f,0,0),.5f,2.0f,overhang,result);
+        position=result;
+        CHECK(std::abs(position.z)<.001f);
+    }
+    // Plane x+2z/3=1 intersects the body's leading top corner.
+    CHECK(std::abs(position.x+5.0f/6.0f)<.003f);
 }
