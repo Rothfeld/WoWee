@@ -2736,6 +2736,9 @@ if(NOT ANDROID)
     register_test_target(test_input_integration)
 endif()
 
+# Finger pose selection for held equipment.
+wowee_add_test(test_hand_grip SOURCES test_hand_grip.cpp)
+
 # Weapon attachment changes own sheath animations; combat stance does not.
 wowee_add_test(test_character_animator
     SOURCES test_character_animator.cpp ${TEST_COMMON_SOURCES}

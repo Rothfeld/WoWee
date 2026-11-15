@@ -1785,6 +1785,7 @@ bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
 
     M2ModelGPU gpuModel;
     gpuModel.data = model;
+    gpuModel.handGrip = makeHandGripPose(model);
     if (!model.vertices.empty()) {
         gpuModel.visualBoundMin = glm::vec3(std::numeric_limits<float>::max());
         gpuModel.visualBoundMax = glm::vec3(-std::numeric_limits<float>::max());
@@ -2592,6 +2593,15 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     const bool armsOwnSequences = (instance.armSequenceIndex[0] >= 0 || instance.armSequenceIndex[1] >= 0) &&
                                   instance.boneArm.size() == numBones;
 
+    const auto& grip = instance.cachedModel->handGrip;
+    bool heldHand[3] = {false, false, false};
+    for (const auto& attachment : instance.weaponAttachments) {
+        if (attachment.attachmentId == 1 || attachment.attachmentId == 2)
+            heldHand[attachment.attachmentId] = true;
+    }
+    const bool hasGrip = grip.sequence >= 0 && (heldHand[1] || heldHand[2]);
+    assert(!hasGrip || grip.boneHand.size() == numBones);
+
     for (size_t i = 0; i < numBones; i++) {
         const auto& bone = model.bones[i];
 
@@ -2612,11 +2622,19 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
             }
         }
 
+        // Fingers grip the held item independently of body/arm animation.
+        // Wrists and weapon attachment bones retain their animated transforms.
+        const bool gripping = hasGrip && heldHand[grip.boneHand[i]];
+        if (gripping) {
+            sequence = grip.sequence;
+            time = 1.0f;
+        }
+
         // Local transform includes pivot bracket: T(pivot)*T*R*S*T(-pivot)
         // At rest this is identity, so no separate bind pose is needed
         glm::mat4 localTransform = getBoneTransform(bone, time, instance.globalSequenceTime,
                                                     sequence, gsd,
-            sequence == instance.currentSequenceIndex ? instance.blendSequenceIndex : -1,
+            !gripping && sequence == instance.currentSequenceIndex ? instance.blendSequenceIndex : -1,
             instance.blendAnimationTime,
             instance.blendSequenceIndex >= 0
                 ? 1.0f - glm::smoothstep(0.0f, instance.blendDuration, instance.blendElapsed) : 0.0f);

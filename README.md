@@ -708,3 +708,16 @@ Cursor selection receives quest status separately from the overhead symbol. An u
 ### Idle loop boundaries
 
 Stand variants blend from their outgoing final pose using the incoming sequence's authored blend time. This also applies when the same variant repeats, either through random selection or its replay count. TBC `DwarfMale.m2` sequence 40 has different first and last spine poses; a direct wrap produces a visible snap.
+
+### Held weapon grips
+
+Palm attachments 1 and 2 apply the model's `HandsClosed` animation (15) at 1 ms
+to right and left finger keybones and their descendants. Wrists and arms retain
+their body animation. The shared character renderer applies this to NPCs and
+players; removing or sheathing the weapon removes the grip. Shield attachment 0
+does not force a closed hand. Models without `HandsClosed` retain their authored
+pose.
+
+The animation and keybone convention also appears in
+[WoW Model Viewer](https://github.com/wowmodelviewer/wowmodelviewer/blob/develop/Source/games/wow/WoWModel.cpp).
+`test_hand_grip` checks finger mapping and hierarchy validation.

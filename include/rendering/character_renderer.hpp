@@ -3,6 +3,7 @@
 #include "rendering/vk_shader.hpp"
 #include "rendering/animation/footstep_driver.hpp"
 #include "rendering/shadow_params.hpp"
+#include "rendering/hand_grip.hpp"
 
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/blp_loader.hpp"
@@ -238,6 +239,7 @@ private:
         uint32_t vertexCount = 0;
 
         pipeline::M2Model data;  // Original model data
+        HandGripPose handGrip;
         std::vector<glm::mat4> bindPose;  // Inverse bind pose matrices
 
         // Tight bind-pose bounds from rendered vertices. M2 header
