@@ -2256,6 +2256,7 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     const bool hasRoles = isActiveExpansion("wotlk");
     const bool hasBattleGroupFlag = isActiveExpansion("tbc");
     const uint8_t prevLootMethod = partyData.lootMethod;
+    const uint64_t previousLeader = partyData.leaderGuid;
     const bool wasInGroup = !partyData.isEmpty();
     partyData = GroupListData{};
     if (!GroupListParser::parse(packet, partyData, hasRoles, hasBattleGroupFlag)) return;
@@ -2281,6 +2282,13 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
         }
         owner_.addSystemChatMessage("You joined a group with: " + members);
         LOG_INFO("Joined group with ", partyData.memberCount, " members: ", members);
+        // The roster does not carry existing raid targets. Request the
+        // authoritative icon list on join/reconnect before rendering marks.
+        if (owner_.getSocket()) {
+            network::Packet request(wireOpcode(Opcode::MSG_RAID_TARGET_UPDATE));
+            request.writeUInt8(0xFF);
+            owner_.getSocket()->send(request);
+        }
     }
     // Loot method change notification
     if (wasInGroup && nowInGroup && partyData.lootMethod != prevLootMethod) {
@@ -2296,6 +2304,8 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});
         owner_.addonEventCallbackRef()("PARTY_MEMBERS_CHANGED", {});
+        if (partyData.leaderGuid != previousLeader)
+            owner_.addonEventCallbackRef()("PARTY_LEADER_CHANGED", {});
         // The roles came with this roster and UnitGroupRolesAssigned reads them
         // straight out of it. The player frame draws its tank or healer badge
         // on this event and nothing else, so the roles were parsed, readable,
@@ -4819,8 +4829,15 @@ void SocialHandler::handleGroupSetLeader(network::Packet& packet) {
     if (!packet.hasData()) return;
     std::string leaderName = packet.readString();
     auto& pd = mutablePartyData();
-    for (const auto& m : pd.members) {
-        if (m.name == leaderName) { pd.leaderGuid = m.guid; break; }
+    // The server's member list excludes this player. Resolve self before
+    // notifying FrameXML, otherwise its party crown reads the previous leader.
+    const auto* character = owner_.getActiveCharacter();
+    if (character && character->name == leaderName) {
+        pd.leaderGuid = owner_.getPlayerGuid();
+    } else {
+        for (const auto& m : pd.members) {
+            if (m.name == leaderName) { pd.leaderGuid = m.guid; break; }
+        }
     }
     if (!leaderName.empty())
         owner_.addSystemChatMessage(leaderName + " is now the group leader.");

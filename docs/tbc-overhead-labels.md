@@ -59,3 +59,17 @@ Shader-only builds must refresh `build/bin/assets/shaders`, where the running
 executable loads SPIR-V. Copying assets only on executable POST_BUILD leaves
 shader-only edits stale. The shader build target copies changed outputs on each
 build. For validation, compare source and runtime shader hashes.
+
+Raid targets use `Interface/TargetingFrame/UI-RaidTargetingIcons.blp`, a 4-column
+atlas with 64-pixel cells. Build 8606 uses a one-yard camera-facing quad above
+the name attachment when the unit has no visible plate. A visible legacy plate
+uses an icon anchored to its left edge. Own markers use the player's renderer
+instance and remain visible when `unitNameOwn` is disabled. The native quad
+vertices are at executable VA 0xbbf124; atlas UVs start at 0xbbf154, and drawing
+starts at 0x6d46b0. Nameplate icon setup is at 0x7bdd52.
+
+Group rosters exclude the local character. Leader-name notifications must resolve
+the active character separately, and roster leader changes must emit
+`PARTY_LEADER_CHANGED`: stock party crowns do not refresh on roster events alone.
+Joining or reconnecting to a group requests the authoritative raid target list
+with MSG_RAID_TARGET_UPDATE payload 0xff; the roster itself contains no marks.

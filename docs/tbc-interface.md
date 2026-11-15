@@ -205,3 +205,7 @@ minimap quest markers remain separate from world-map quest pins.
 
 Evidence: workspace experiment `20261115T094832.882389Z.world_map_completion`,
 including paired zone/continent hover captures and native API probes.
+
+Minimap terrain renders opaque. The custom ImGui panel opacity setting does not
+fade its terrain; otherwise a saved `ui_opacity=65` leaks the world scene through
+an otherwise opaque FrameXML minimap border.

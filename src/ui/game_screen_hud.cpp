@@ -986,7 +986,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     for (const auto& entityPtr : nameplateEntities) {
         if (!entityPtr) continue;
         const uint64_t guid = entityPtr->getGuid();
-        if (guid == playerGuid && addons::storedCVarValue("unitNameOwn", "0") == "0") continue;
+        const bool hideOwnName = guid == playerGuid && addons::storedCVarValue("unitNameOwn", "0") == "0";
 
         if (!entityPtr->isUnit()) continue;
         auto* unit = static_cast<game::Unit*>(entityPtr.get());
@@ -1056,21 +1056,47 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         auto* spawner = app.getEntitySpawner();
         auto* characters = appRenderer->getCharacterRenderer();
         if (!spawner || !characters) continue;
-        const auto instanceId = spawner->characterInstanceIdForGuid(guid);
+        const auto instanceId = guid == playerGuid ? appRenderer->getCharacterInstanceId()
+                                                   : spawner->characterInstanceIdForGuid(guid);
         if (!characters->getInstanceNamePosition(instanceId, unit->getMountDisplayId() != 0, renderPos))
             continue; // The model has not spawned yet.
 
-        // World-name visibility uses camera distance. Legacy plate range is
-        // checked independently against the player below.
-        glm::vec3 nameDelta = renderPos - camPos;
-        float distSq = glm::dot(nameDelta, nameDelta);
-        float cullDist = legacyPlates ? 40.0f : (isTarget ? 60.0f : ((!showPlate || isPlayer) ? 40.0f : 20.0f));
         if (showPlate && legacyPlates) {
             const glm::vec3 playerRender = core::coords::canonicalToRender(playerCanonical);
             const glm::vec3 separation = unitPosition - playerRender;
             // Plate visibility is a unit-to-player range, independent of camera zoom.
             if (glm::dot(separation, separation) > 20.0f * 20.0f) showPlate = false;
         }
+
+        // Build 8606 draws the raid atlas on a one-yard camera-facing quad,
+        // bottom anchored to the name attachment when no nameplate is visible.
+        // Render before name filtering: own raid marker survives hidden names.
+        const uint8_t raidMark = gameHandler.getEntityRaidMark(guid);
+        static VkDescriptorSet texture = VK_NULL_HANDLE;
+        if (raidMark < game::GameHandler::kRaidMarkCount) {
+            if (!texture) texture = uploadUiTextureFromBlp(services_.assetManager,
+                "Interface/TargetingFrame/UI-RaidTargetingIcons.blp", services_.window);
+            if (!texture) throw std::runtime_error("Missing raid target atlas");
+            const glm::vec4 anchor = viewProj * glm::vec4(renderPos, 1.0f);
+            if (!showPlate && anchor.w > 0.01f && anchor.z >= 0.0f && anchor.z <= anchor.w) {
+                const glm::vec2 bottom((anchor.x / anchor.w + 1.0f) * screenW * 0.5f,
+                                       (anchor.y / anchor.w + 1.0f) * screenH * 0.5f);
+                const float size = std::abs(camera->getProjectionMatrix()[1][1]) *
+                                   screenH * 0.5f / anchor.w;
+                drawList->AddImage((ImTextureID)(uintptr_t)texture,
+                    ImVec2(bottom.x - size * 0.5f, bottom.y - size),
+                    ImVec2(bottom.x + size * 0.5f, bottom.y),
+                    ImVec2((raidMark % 4) * 0.25f, (raidMark / 4) * 0.25f),
+                    ImVec2((raidMark % 4 + 1) * 0.25f, (raidMark / 4 + 1) * 0.25f));
+            }
+        }
+        if (hideOwnName) continue;
+
+        // World-name visibility uses camera distance. Legacy plate range is
+        // checked independently against the player below.
+        glm::vec3 nameDelta = renderPos - camPos;
+        float distSq = glm::dot(nameDelta, nameDelta);
+        float cullDist = legacyPlates ? 40.0f : (isTarget ? 60.0f : ((!showPlate || isPlayer) ? 40.0f : 20.0f));
         if ((!showPlate || !legacyPlates) && distSq > cullDist * cullDist) continue;
         // CGUnit_C::GetNamePlatePosition in build 8606 adds 2/3 yard to
         // the authored name attachment. The frame's TOP is placed here.
@@ -1210,6 +1236,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 ImVec2(0, 0), ImVec2(healthPct, 1), fill);
             const float artX = sx - 64.0f * plateArtScale;
             const float artY = sy - 19.0f * plateArtScale;
+            if (raidMark < game::GameHandler::kRaidMarkCount) {
+                // Native nameplate: atlas texture RIGHT anchored to frame LEFT.
+                const float size = 20.48f * plateArtScale;
+                const float centerY = artY + 16.0f * plateArtScale;
+                drawList->AddImage((ImTextureID)(uintptr_t)texture,
+                    ImVec2(artX - size, centerY - size * 0.5f),
+                    ImVec2(artX, centerY + size * 0.5f),
+                    ImVec2((raidMark % 4) * 0.25f, (raidMark / 4) * 0.25f),
+                    ImVec2((raidMark % 4 + 1) * 0.25f, (raidMark / 4 + 1) * 0.25f));
+            }
             drawList->AddImage((ImTextureID)(uintptr_t)plateBorder,
                 ImVec2(artX, artY), ImVec2(artX + 128.0f * plateArtScale, artY + 32.0f * plateArtScale));
             const uint32_t level = unit->getLevel();
@@ -1607,38 +1643,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             drawList->AddText(nameFont, nameFontSize, ImVec2(subX,         subY),         (isPlayer ? IM_COL32(180, 180, 180, A(200)) : nameColor), subLabel.c_str());
         }
 
-        // Group leader crown to the right of the name on player nameplates
-        if (isPlayer && gameHandler.isInGroup() &&
-            gameHandler.getPartyData().leaderGuid == guid) {
-            float crownX = nameX + textSize.x + 3.0f;
-            const char* crownSym = "\xe2\x99\x9b";  // ♛
-            drawList->AddText(ImVec2(crownX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), crownSym);
-            drawList->AddText(ImVec2(crownX,         nameY),         IM_COL32(255, 215, 0, A(240)), crownSym);
-        }
-
-        // Raid mark: the real Blizzard icon art floating above the unit, the way
-        // the original client presents it. This used to be a text glyph beside
-        // the name, but the ImGui font carries no skull/moon/cross code points,
-        // so every mark drew as a '?' box.
         {
-            uint8_t raidMark = gameHandler.getEntityRaidMark(guid);
-            if (raidMark < game::GameHandler::kRaidMarkCount) {
-                VkDescriptorSet markTex = ui::getRaidTargetIcon(raidMark, services_.assetManager);
-                if (markTex) {
-                    // Sits above the name, and above the target chevron when this
-                    // is the current target, so the three never overlap.
-                    constexpr float kMarkSize = 32.0f;
-                    const float markBottom = nameY - (isTarget ? 16.0f : 3.0f);
-                    const float markTop    = markBottom - kMarkSize;
-                    drawList->AddImage(
-                        (ImTextureID)(uintptr_t)markTex,
-                        ImVec2(sx - kMarkSize * 0.5f, markTop),
-                        ImVec2(sx + kMarkSize * 0.5f, markBottom),
-                        ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
-                        IM_COL32(255, 255, 255, A(255)));
-                }
-            }
-
             // Quest kill objective indicator: small yellow sword icon to the right of the name
             float questIconX = nameX + textSize.x + 4.0f;
             if (!game::isPreWotlk() && !isPlayer && questKillEntries.count(unit->getEntry())) {

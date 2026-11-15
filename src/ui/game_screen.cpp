@@ -358,12 +358,12 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     float prevAlpha = ImGui::GetStyle().Alpha;
     ImGui::GetStyle().Alpha = settingsPanel_.uiOpacity_;
 
-    // Sync minimap opacity with UI opacity
+    // Minimap terrain is opaque; custom ImGui panel opacity does not fade it.
     {
         auto* renderer = services_.renderer;
         if (renderer) {
             if (auto* minimap = renderer->getMinimap()) {
-                minimap->setOpacity(settingsPanel_.uiOpacity_);
+                minimap->setOpacity(1.0f);
             }
         }
     }
