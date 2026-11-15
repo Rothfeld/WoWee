@@ -1,6 +1,7 @@
 // Entity, Unit, Player, GameObject, EntityManager tests
 #include <catch_amalgamated.hpp>
 #include "game/entity.hpp"
+#include "rendering/animation/ground_direction.hpp"
 #include <algorithm>
 #include <memory>
 
@@ -326,4 +327,27 @@ TEST_CASE("Remote prediction stops on stale connection without rewinding", "[ent
     p.setPosition(1, 2, 3, 0);
     p.updateMovement(0.5f);
     REQUIRE(p.getX() == Catch::Approx(1));
+}
+
+TEST_CASE("Directional ground pose preserves facing while aligning legs", "[movement][animation]") {
+    using wowee::rendering::groundDirection;
+    constexpr float halfPi = 1.57079632679f;
+    const auto left = groundDirection(false, false, true, false);
+    REQUIRE(left.modelYawOffset == Catch::Approx(halfPi));
+    REQUIRE(left.torsoYawOffset == Catch::Approx(-halfPi));
+    REQUIRE_FALSE(left.backwards);
+    const auto right = groundDirection(false, false, false, true);
+    REQUIRE(right.modelYawOffset == Catch::Approx(-halfPi));
+    const auto backward = groundDirection(false, true, false, false);
+    REQUIRE(backward.modelYawOffset == Catch::Approx(0));
+    REQUIRE(backward.backwards);
+    const auto forwardLeft = groundDirection(true, false, true, false);
+    REQUIRE(forwardLeft.modelYawOffset == Catch::Approx(halfPi / 2));
+    const auto backwardLeft = groundDirection(false, true, true, false);
+    REQUIRE(backwardLeft.modelYawOffset == Catch::Approx(-halfPi / 2));
+    REQUIRE(backwardLeft.backwards);
+    REQUIRE(backwardLeft.modelYawOffset + backwardLeft.torsoYawOffset == Catch::Approx(0));
+    const auto stopped = groundDirection(false, false, false, false);
+    REQUIRE(stopped.modelYawOffset == 0);
+    REQUIRE(stopped.torsoYawOffset == 0);
 }

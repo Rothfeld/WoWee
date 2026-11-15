@@ -17,6 +17,7 @@
 #include "core/ui_screen_callback_handler.hpp"
 #include "game/spell_classification.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/ground_direction.hpp"
 #include "rendering/animation_controller.hpp"
 #include <bit>
 #include <unordered_set>
@@ -3617,6 +3618,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 if (glm::dot(d, d) > pSyncRadiusSq && !activeCombatTarget) continue;
             }
 
+            const uint32_t moveFlags = entitySpawner_->getRemoteMovementFlags()[guid];
+            const auto hasMoveFlag = [&](game::MovementFlags flag) {
+                return (moveFlags & static_cast<uint32_t>(flag)) != 0;
+            };
+            const auto direction = rendering::groundDirection(
+                hasMoveFlag(game::MovementFlags::FORWARD), hasMoveFlag(game::MovementFlags::BACKWARD),
+                hasMoveFlag(game::MovementFlags::STRAFE_LEFT), hasMoveFlag(game::MovementFlags::STRAFE_RIGHT));
+            charRenderer->setLocomotionSpeed(instanceId, entity->getLocomotionSpeed());
+
             // Entity owns evaluated movement, including remote ground prediction
             // and the final correction after a stop packet.
             glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
@@ -3627,6 +3637,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     ? std::optional<glm::vec3>(posIt->second)
                     : std::nullopt;
             const auto* remoteMount = entitySpawner_->getRemotePlayerMount(guid);
+            if (remoteMount) charRenderer->setLocomotionSpeed(remoteMount->instanceId, entity->getLocomotionSpeed());
             std::optional<glm::vec3> previousMountPos = previousRenderPos;
             if (remoteMount && previousMountPos) {
                 previousMountPos->z -= remoteMount->riderHeight;
@@ -3697,15 +3708,19 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 bool prevSwimming = _pCreatureWasSwimming[guid];
                 bool prevFlying   = _pCreatureWasFlying[guid];
                 bool prevWalking  = _pCreatureWasWalking[guid];
+                const bool movingBackward = isMovingNow && direction.backwards;
+                const bool prevBackward = entitySpawner_->getRemoteWasMovingBackward()[guid];
                 const bool stateChanged = (isMovingNow  != prevMoving)   ||
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
-                                          (isWalkingNow  != prevWalking && isMovingNow);
+                                          (isWalkingNow  != prevWalking && isMovingNow) ||
+                                          (movingBackward != prevBackward);
                 if (stateChanged) {
                     _pCreatureWasMoving[guid]   = isMovingNow;
                     _pCreatureWasSwimming[guid] = isSwimmingNow;
                     _pCreatureWasFlying[guid]   = isFlyingNow;
                     _pCreatureWasWalking[guid]  = isWalkingNow;
+                    entitySpawner_->getRemoteWasMovingBackward()[guid] = movingBackward;
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
                     if (!gotState || curAnimId != rendering::anim::DEATH) {
@@ -3717,6 +3732,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                             uint32_t mountAnim = rendering::anim::STAND;
                             if (isMovingNow) {
                                 if (isFlyingNow) mountAnim = rendering::anim::FLY_FORWARD;
+                                else if (movingBackward) mountAnim = rendering::anim::WALK_BACKWARDS;
                                 else if (isWalkingNow) mountAnim = rendering::anim::WALK;
                                 else mountAnim = rendering::anim::RUN;
                             } else if (isFlyingNow) {
@@ -3729,6 +3745,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         } else if (isMovingNow) {
                             if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
                             else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
+                            else if (movingBackward) targetAnim = rendering::anim::WALK_BACKWARDS;
                             else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
                             else                    targetAnim = rendering::anim::RUN;
                         } else {
@@ -3761,7 +3778,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 entity->isActivelyMoving(), remoteMount != nullptr);
 
             // Orientation sync
-            float renderYaw = entity->getOrientation() + glm::radians(90.0f);
+            const float facingYaw = entity->getOrientation() + glm::radians(90.0f);
+            const bool groundLocomotion = entity->isActivelyMoving() &&
+                !_pCreatureFlyingState.count(guid) && !_pCreatureSwimmingState.count(guid);
+            const float renderYaw = facingYaw + (groundLocomotion ? direction.modelYawOffset : 0.0f);
+            charRenderer->setInstanceTorsoYaw(instanceId,
+                groundLocomotion && !remoteMount ? direction.torsoYawOffset : 0.0f);
             charRenderer->setInstanceRotation(instanceId, glm::vec3(0.0f, 0.0f, renderYaw));
             if (remoteMount) {
                 charRenderer->setInstanceRotation(remoteMount->instanceId,

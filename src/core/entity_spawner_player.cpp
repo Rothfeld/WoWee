@@ -928,6 +928,8 @@ void EntitySpawner::despawnPlayer(uint64_t guid) {
     creatureWasSwimming_.erase(guid);
     creatureWasFlying_.erase(guid);
     creatureWasWalking_.erase(guid);
+    remoteMovementFlags_.erase(guid);
+    remoteWasMovingBackward_.erase(guid);
 }
 
 // ---------------------------------------------------------------------------

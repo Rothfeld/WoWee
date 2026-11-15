@@ -320,6 +320,8 @@ void AnimationCallbackHandler::setupCallbacks() {
         // mask of all ones; the spline opcodes each pass the one bit they are
         // named after, so starting to swim no longer says anything about
         // whether the creature is also flying.
+        auto& retainedFlags = entitySpawner_.getRemoteMovementFlags()[guid];
+        retainedFlags = (retainedFlags & ~mask) | (moveFlags & mask);
         const auto apply = [&](game::MovementFlags flag, auto& state) {
             const uint32_t bit = static_cast<uint32_t>(flag);
             if ((mask & bit) == 0) return;

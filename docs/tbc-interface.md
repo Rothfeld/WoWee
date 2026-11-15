@@ -287,3 +287,14 @@ GUIDs (CMaNGOS MovementHandler.cpp, HandleForceSpeedChangeAck).
 Regression coverage: test_entity continuous motion, correction, stop and timeout.
 Live evidence: workspace 20261115T134433.233751Z.remote_prediction_strafe,
 210 paired frames at 30 fps; tracked moving segments have no stationary frames.
+
+Remote player rendering retains the full masked movement flags. Ground legs
+rotate onto the travel axis; backpedal faces opposite travel and selects M2
+WalkBackwards (13). Torso counter-rotation retains gameplay facing. Forward/back
+transitions change animation even when movement never stops; strafe direction
+changes retain the locomotion cycle. Instance playback uses actual movement
+speed, authored movingSpeed magnitude and model scale, including remote mounts.
+Directional state is removed with the instance. Regression coverage includes
+left/right, forward/backward diagonals, backpedal and idle pose reset in test_entity.
+Paired native/remote clips and unobscured avatar crops: workspace experiment
+20261115T134821.271647Z.remote_directional_animation.
