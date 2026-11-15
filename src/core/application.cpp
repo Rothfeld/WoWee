@@ -5592,19 +5592,10 @@ bool Application::getRenderPositionForGuid(uint64_t guid, glm::vec3& outPos) con
 }
 
 void Application::loadQuestMarkerModels() {
-    if (!assetManager || !renderer) return;
-
-    // Quest markers are billboard sprites; the renderer's QuestMarkerRenderer handles
-    // texture loading and pipeline setup during world initialization.
-    // Calling initialize() here is a no-op if already done; harmless if called early.
-    if (auto* qmr = renderer->getQuestMarkerRenderer()) {
-        if (auto* vkCtx = renderer->getVkContext()) {
-            VkDescriptorSetLayout pfl = renderer->getPerFrameSetLayout();
-            if (pfl != VK_NULL_HANDLE) {
-                if (!qmr->initialize(vkCtx, pfl, assetManager.get()))
-                    LOG_WARNING("Quest marker renderer re-init failed (non-fatal)");
-            }
-        }
+    // The shared M2 renderer loads each authored variant when its first
+    // quest status arrives. A world transition drops the previous placements.
+    if (renderer && renderer->getQuestMarkerRenderer()) {
+        renderer->getQuestMarkerRenderer()->clear();
     }
 }
 
@@ -5706,15 +5697,16 @@ void Application::updateQuestMarkers() {
         glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
         glm::vec3 renderPos = coords::canonicalToRender(canonical);
 
-        // Get NPC bounding height for proper marker positioning
-        glm::vec3 boundsCenter;
-        float boundsRadius = 0.0f;
-        float boundingHeight = 2.0f;  // Default
-        if (getRenderBoundsForGuid(guid, boundsCenter, boundsRadius)) {
-            boundingHeight = boundsRadius * 2.0f;
-        }
+        // Use the rendered head height, not the enclosing sphere diameter.
+        // A wide weapon must not push its owner's quest marker higher.
+        auto* characters = renderer->getCharacterRenderer();
+        if (!entitySpawner_ || !characters) continue;
+        const uint32_t instanceId = entitySpawner_->characterInstanceIdForGuid(guid);
+        float boundingHeight = 0.0f;
+        if (!instanceId || !characters->getInstanceHeight(instanceId, boundingHeight)) continue;
+        if (!characters->getInstancePosition(instanceId, renderPos)) continue;
 
-        // Set the marker (renderer will handle positioning, bob, glow, etc.)
+        // M2 assets carry the marker geometry and animation.
         questMarkerRenderer->setMarker(guid, renderPos, markerType, boundingHeight, markerGrayscale);
         {
             static std::unordered_set<uint64_t> said;
@@ -5725,6 +5717,10 @@ void Application::updateQuestMarkers() {
             }
         }
         markersAdded++;
+    }
+
+    if (auto* m2 = renderer->getM2Renderer(); m2 && assetManager) {
+        questMarkerRenderer->syncModels(*m2, *assetManager);
     }
 
     if (firstRun && markersAdded > 0) {

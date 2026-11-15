@@ -1129,7 +1129,6 @@ void Renderer::applyMsaaChange() {
     if (m2Renderer) m2Renderer->recreatePipelines();
     if (skyboxModelRenderer_) skyboxModelRenderer_->recreatePipelines();
     if (characterRenderer) characterRenderer->recreatePipelines();
-    if (questMarkerRenderer) questMarkerRenderer->recreatePipelines();
     if (footprintRenderer) footprintRenderer->recreatePipelines();
     if (weather) weather->recreatePipelines();
     if (lightning) lightning->recreatePipelines();
@@ -2356,8 +2355,6 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
             if (audioCoordinator_->getMovementSoundManager()) audioCoordinator_->getMovementSoundManager()->initialize(cachedAssetManager);
             break;
         case 5:
-            if (questMarkerRenderer && !questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
-                LOG_WARNING("Quest marker renderer re-init failed (non-fatal)");
             if (footprintRenderer && !footprintRenderer->initialize(this, vkCtx, perFrameSetLayout, cachedAssetManager))
                 LOG_WARNING("Footprint renderer re-init failed (non-fatal)");
             break;
@@ -3119,7 +3116,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (mountDust && camera) mountDust->render(cmd, perFrameSet);
             if (chargeEffect && camera) chargeEffect->render(cmd, perFrameSet);
             if (footprintRenderer && camera) footprintRenderer->render(cmd, perFrameSet, *camera);
-            if (questMarkerRenderer && camera) questMarkerRenderer->render(cmd, perFrameSet, *camera);
 
             renderUnderwaterOverlay(cmd);
             renderPostSceneOverlays(cmd, gameHandler);
@@ -3308,7 +3304,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         if (mountDust && camera) mountDust->render(currentCmd, perFrameSet);
         if (chargeEffect && camera) chargeEffect->render(currentCmd, perFrameSet);
         if (footprintRenderer && camera) footprintRenderer->render(currentCmd, perFrameSet, *camera);
-        if (questMarkerRenderer && camera) questMarkerRenderer->render(currentCmd, perFrameSet, *camera);
         // The same one-line total the parallel path reports, so a profile taken
         // either way can be compared against the other.
         if (vkCtx) vkCtx->gpuMark(currentCmd, "world total");
@@ -3865,10 +3860,6 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
             }
             if (audioCoordinator_->getMovementSoundManager()) {
                 audioCoordinator_->getMovementSoundManager()->initialize(assetManager);
-            }
-            if (questMarkerRenderer) {
-                if (!questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, assetManager))
-                    LOG_WARNING("Quest marker renderer initialization failed (non-fatal)");
             }
             if (footprintRenderer) {
                 if (!footprintRenderer->initialize(this, vkCtx, perFrameSetLayout, assetManager))
