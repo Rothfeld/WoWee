@@ -1642,6 +1642,7 @@ public:
     /// Re-judge every unit's hostility, after the at-war state it came from
     /// has changed. A unit's is worked out when it appears and kept.
     void refreshUnitHostility();
+    bool isDuelOpponent(const Unit& unit) const;
     /// How a unit regards the player, numbered as UnitReaction numbers it:
     /// 1 hated to 8 exalted. For a faction the player has a standing with,
     /// that standing - no better than neutral while at war - and otherwise 2

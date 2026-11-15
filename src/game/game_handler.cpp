@@ -2905,7 +2905,23 @@ GameHandler::SpellDataInfo GameHandler::getSpellData(uint32_t spellId) const {
     return info;
 }
 
+bool GameHandler::isDuelOpponent(const Unit& unit) const {
+    if (unit.getType() != ObjectType::PLAYER || unit.getGuid() == getPlayerGuid()) return false;
+    const auto self = getEntityManager().getEntity(getPlayerGuid());
+    if (!self) return false;
+    const auto team = fieldIndex(UF::PLAYER_DUEL_TEAM);
+    const auto arbiter = fieldIndex(UF::PLAYER_DUEL_ARBITER);
+    if (team == 0xFFFF || arbiter == 0xFFFF) return false;
+    const auto ownTeam = self->getField(team);
+    const auto otherTeam = unit.getField(team);
+    return ownTeam != 0 && otherTeam != 0 && ownTeam != otherTeam &&
+        (self->getField(arbiter) != 0 || self->getField(arbiter + 1) != 0) &&
+        self->getField(arbiter) == unit.getField(arbiter) &&
+        self->getField(arbiter + 1) == unit.getField(arbiter + 1);
+}
+
 int GameHandler::unitReactionToPlayer(const Unit& unit) const {
+    if (isDuelOpponent(unit)) return 2;
     const uint32_t ft = unit.getFactionTemplate();
     if (auto it = factionTemplateRepList_.find(ft);
         it != factionTemplateRepList_.end() && it->second < initialFactions_.size()) {
@@ -2919,11 +2935,10 @@ int GameHandler::unitReactionToPlayer(const Unit& unit) const {
 }
 
 void GameHandler::refreshUnitHostility() {
-    if (factionTemplateRepList_.empty()) return;
     for (const auto& [guid, entity] : getEntityManager().getEntities()) {
         if (!entity || !entity->isUnit()) continue;
         auto* unit = static_cast<Unit*>(entity.get());
-        unit->setHostile(isHostileFaction(unit->getFactionTemplate()));
+        unit->setHostile(isDuelOpponent(*unit) || isHostileFaction(unit->getFactionTemplate()));
     }
 }
 

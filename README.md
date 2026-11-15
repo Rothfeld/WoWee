@@ -850,3 +850,8 @@ Spawn first. Level-up effects start Stand at time zero and hold its final pose
 until effect cleanup; they do not loop during the particle drain interval.
 Both skeletal and particle-only instance clocks honor animation speed and
 hold-at-end playback.
+
+Duel hostility follows public PLAYER_DUEL_TEAM and PLAYER_DUEL_ARBITER updates.
+Opposing nonzero teams with the same flag are hostile even when factions match.
+Zero teams retain normal faction reactions during invitation/countdown and after
+completion. Player field updates refresh cached hostility and UNIT_FACTION UI.

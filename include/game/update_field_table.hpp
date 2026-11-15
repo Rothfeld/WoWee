@@ -67,6 +67,8 @@ enum class UF : uint16_t {
     UNIT_FIELD_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER, // ...and the reduced rate during the five-second rule
 
     // Player fields
+    PLAYER_DUEL_ARBITER,
+    PLAYER_DUEL_TEAM,
     PLAYER_FLAGS,
     PLAYER_BYTES,
     PLAYER_BYTES_2,

@@ -949,3 +949,31 @@ TEST_CASE_METHOD(Integration, "TBC duel menu sends expansion-correct spell packe
     CHECK(packet.getSize() == 11);
     lua.setGameHandler(nullptr);
 }
+
+
+TEST_CASE_METHOD(Integration, "Duel teams override friendly faction only for matching arbiter", "[duel]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto self = std::make_shared<wowee::game::Player>(handler.getPlayerGuid());
+    auto opponent = std::make_shared<wowee::game::Player>(3);
+    handler.getEntityManager().addEntity(self->getGuid(), self);
+    handler.getEntityManager().addEntity(3, opponent);
+    handler.setFactionHostileMap({{0, false}});
+    handler.setFactionFriendlyMap({{0, true}});
+    const auto team = wowee::game::fieldIndex(wowee::game::UF::PLAYER_DUEL_TEAM);
+    const auto flag = wowee::game::fieldIndex(wowee::game::UF::PLAYER_DUEL_ARBITER);
+    self->setField(flag, 123); opponent->setField(flag, 123);
+    CHECK_FALSE(handler.isDuelOpponent(*opponent));
+    self->setField(team, 1); opponent->setField(team, 2);
+    handler.refreshUnitHostility();
+    CHECK(handler.isDuelOpponent(*opponent));
+    CHECK(handler.unitReactionToPlayer(*opponent) == 2);
+    CHECK(opponent->isHostile());
+    opponent->setField(flag, 124);
+    CHECK_FALSE(handler.isDuelOpponent(*opponent));
+    opponent->setField(flag, 123);
+    self->setField(team, 0);
+    handler.refreshUnitHostility();
+    CHECK_FALSE(handler.isDuelOpponent(*opponent));
+    CHECK_FALSE(opponent->isHostile());
+}

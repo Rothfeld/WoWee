@@ -1237,7 +1237,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         }
         else if (key == ufi.faction) {
             unit->setFactionTemplate(val);
-            unit->setHostile(owner_.isHostileFaction(val));
+            unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(val));
         } else if (key == ufi.boundingRadius) {
             unit->setBoundingRadius(bitsToFloat(val));
         } else if (key == ufi.combatReach) {
@@ -2052,7 +2052,7 @@ void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<En
     bool unitInitiallyDead = applyUnitFieldsOnCreate(block, unit, ufi);
 
     // Hostility
-    unit->setHostile(owner_.isHostileFaction(unit->getFactionTemplate()));
+    unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(unit->getFactionTemplate()));
 
     // Spawn dispatch
     if (unit->getDisplayId() == 0) {
@@ -2129,7 +2129,7 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
     }
 
     // Hostility
-    unit->setHostile(owner_.isHostileFaction(unit->getFactionTemplate()));
+    unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(unit->getFactionTemplate()));
 
     // Spawn dispatch
     if (unit->getDisplayId() != 0) {
@@ -2360,6 +2360,16 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
+
+    const auto duelTeam = fieldIndex(UF::PLAYER_DUEL_TEAM);
+    const auto duelArbiter = fieldIndex(UF::PLAYER_DUEL_ARBITER);
+    if (duelTeam != 0xFFFF && duelArbiter != 0xFFFF &&
+        (block.fields.find(duelTeam) != block.fields.end() || block.fields.find(duelArbiter) != block.fields.end() ||
+         block.fields.find(duelArbiter + 1) != block.fields.end())) {
+        owner_.refreshUnitHostility();
+        pendingEvents_.emit("UNIT_FACTION", {"target"});
+        pendingEvents_.emit("UNIT_FACTION", {"player"});
+    }
 
     // Pre-WotLK aura sync from UNIT_FIELD_AURAS when those fields are updated
     if (block.guid == owner_.getPlayerGuid()) {
