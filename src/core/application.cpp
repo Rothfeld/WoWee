@@ -3682,11 +3682,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         charRenderer->setInstancePosition(remoteMount->instanceId, mountRenderPos);
                     }
                 } else if (planarDistSq > kMoveThreshSq2 || dz > 0.08f) {
-                    float planarDist = std::sqrt(planarDistSq);
-                    float duration = std::clamp(planarDist / 5.5f, 0.05f, 0.22f);
-                    charRenderer->moveInstanceTo(instanceId, renderPos, duration, false);
+                    // Entity already evaluates movement once per frame. Do not
+                    // restart a second interpolation toward its evaluated result.
+                    charRenderer->setInstancePosition(instanceId, renderPos);
                     if (remoteMount) {
-                        charRenderer->moveInstanceTo(remoteMount->instanceId, mountRenderPos, duration, false);
+                        charRenderer->setInstancePosition(remoteMount->instanceId, mountRenderPos);
                     }
                 }
                 posIt->second = renderPos;

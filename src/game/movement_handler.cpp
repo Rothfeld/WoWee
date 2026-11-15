@@ -1321,6 +1321,9 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         (wireOp == wireOpcode(Opcode::MSG_MOVE_FALL_LAND));
     const bool isJumpOpcode  = (wireOp == wireOpcode(Opcode::MSG_MOVE_JUMP));
 
+    LOG_DEBUG("Remote movement packet: guid=", moverGuid, " opcode=", wireOp,
+              " time=", info.time, " flags=", info.flags, " duration=", durationMs,
+              " stop=", isStopOpcode, " position=", canonical.x, ",", canonical.y, ",", canonical.z);
     const float entityDuration = isStopOpcode ? 0.0f : (durationMs / 1000.0f);
     entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, entityDuration);
 

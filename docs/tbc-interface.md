@@ -268,3 +268,9 @@ player's authored M2 event detection. Nearby walking/running players and creatur
 with a DBC footprint profile emit prints; local player and mount remain owned by
 FootstepDriver to prevent duplicate emissions. The shared pool holds 512 prints.
 Evidence: workspace experiment 20261115T132510.671257Z.footprint_size_remote.
+
+Online player and remote mount positions copy Entity's evaluated position each
+frame. Movement packet callbacks do not also schedule CharacterRenderer motion:
+that second interpolation competes with the per-frame sync and repeatedly
+restarts movement. Remote movement packet logs include timestamp, flags,
+interpolation duration and position for diagnosing packet-cadence stalls.

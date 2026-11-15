@@ -128,7 +128,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
     });
 
     // Creature move callback (online mode) - update creature positions
-    gameHandler_.setCreatureMoveCallback([this](uint64_t guid, float x, float y, float z, uint32_t durationMs) {
+    gameHandler_.setCreatureMoveCallback([this](uint64_t guid, float, float, float, uint32_t durationMs) {
         if (!renderer_.getCharacterRenderer()) return;
         uint32_t instanceId = 0;
         bool isPlayer = false;
@@ -138,15 +138,9 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
             instanceId = entitySpawner_.getCreatureInstanceId(guid);
         }
         if (instanceId != 0) {
-            // Nearby NPC position is evaluated from Entity's server spline in
-            // Application::update. Starting a second renderer interpolation here
-            // makes the two owners chase each other and produces jerky movement.
-            // Online players retain their existing interpolation path.
-            if (isPlayer) {
-                glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
-                float durationSec = static_cast<float>(durationMs) / 1000.0f;
-                renderer_.getCharacterRenderer()->moveInstanceTo(instanceId, renderPos, durationSec, false);
-            }
+            // Entity evaluates positions for both players and NPCs. The per-frame
+            // render sync copies that result; a renderer interpolation here would
+            // compete with it and restart on every movement packet.
             // Play the server-selected ground locomotion animation for the
             // duration of the spline move. Monster patrols report Walk through
             // SMSG_MONSTER_MOVE's spline flags before this callback runs.
