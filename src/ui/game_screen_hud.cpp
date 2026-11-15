@@ -1040,9 +1040,11 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         if (guid == playerGuid) showPlate = false;
 
-        // For corpses (dead units), only show a minimal grey nameplate if selected
-        bool isCorpse = (unit->getHealth() == 0);
-        if (isCorpse && (!isTarget || (legacyPlates && showPlate))) continue;
+        // Legacy corpses retain plain names, governed by the usual name
+        // settings and target/hover overrides, but never a health plate.
+        const bool isCorpse = (unit->getHealth() == 0);
+        if (isCorpse && legacyPlates) showPlate = false;
+        if (isCorpse && !legacyPlates && !isTarget) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
         // rendered model exactly (avoids drift from the parallel entity interpolator).
@@ -1564,7 +1566,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             && pointer.y >= nameY - 1.0f && pointer.y <= sy + barH + 2.0f;
         // Name color communicates reaction too: friendly players blue, enemies red.
         ImU32 nameColor;
-        if (isPlayer) {
+        if (isCorpse && legacyPlates) {
+            nameColor = IM_COL32(128, 128, 128, A(255));
+        } else if (isPlayer) {
             nameColor = isHostile
                 ? IM_COL32(220, 80, 80, A(255))
                 : IM_COL32(128, 128, 255, A(255));

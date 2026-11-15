@@ -19,6 +19,8 @@ Plate range is measured from the player, independently of camera zoom. Units
 outside plate range can still show a plain world name according to name settings.
 Legacy world names follow visible units without an additional 40-yard camera
 cutoff or five-yard label fade. Scene depth still occludes their pixels.
+Dead units retain gray plain names under the normal category-name settings and
+target/hover overrides. Their health plates are hidden regardless of plate toggles.
 Neutral attackable creatures use the enemy-plate toggle. A visible plate retains
 its name even when the ordinary NPC-name setting is disabled. Plain names scale
 with perspective and have no clickable plate rectangle.
