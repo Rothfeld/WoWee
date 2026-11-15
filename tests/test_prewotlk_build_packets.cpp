@@ -168,3 +168,28 @@ TEST_CASE("TBC jump payload matches CMaNGOS MovementInfo field order", "[prewotl
     auto land = tbc.buildMovementPacket(LogicalOpcode::MSG_MOVE_FALL_LAND, info, kPlayerGuid);
     CHECK(land.getSize() == 29);
 }
+
+TEST_CASE("TBC patrol packets retain intermediate corners", "[tbc][spline]") {
+    // CMaNGOS WriteLinearPath: endpoint followed by packed offsets from
+    // (start + endpoint) / 2. Route turns at (10, 0, 0).
+    wowee::network::Packet packet(0);
+    packet.writePackedGuid(kNpcGuid);
+    packet.writeFloat(0); packet.writeFloat(0); packet.writeFloat(0);
+    packet.writeUInt32(42);
+    packet.writeUInt8(0);
+    packet.writeUInt32(0x100);
+    packet.writeUInt32(8000);
+    packet.writeUInt32(2);
+    packet.writeFloat(10); packet.writeFloat(10); packet.writeFloat(0);
+    packet.writeUInt32((static_cast<uint32_t>(-20) & 0x7ffu) | (20u << 11));
+    TbcPacketParsers parser;
+    wowee::game::MonsterMoveData move;
+    REQUIRE(parser.parseMonsterMove(packet, move));
+    REQUIRE(move.waypoints.size() == 1);
+    CHECK(move.waypoints[0].x == 10);
+    CHECK(move.waypoints[0].y == 0);
+    CHECK(move.waypoints[0].z == 0);
+    CHECK(move.destX == 10);
+    CHECK(move.destY == 10);
+    CHECK(packet.getRemainingSize() == 0);
+}

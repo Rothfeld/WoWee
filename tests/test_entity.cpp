@@ -385,3 +385,24 @@ TEST_CASE("Remote moving jump keeps momentum below takeoff height", "[entity][mo
     p.setPosition(0, 0, 100, 0);
     REQUIRE_FALSE(p.isRemoteAirborne());
 }
+
+TEST_CASE("Linear patrols follow corners without cutting across obstacles", "[entity][spline]") {
+    Entity entity(1);
+    entity.setPosition(0, 0, 0, 0);
+    entity.startMoveAlongPath({{0, 0, 0}, {10, 0, 0}, {10, 10, 0}}, 0, 8,
+                             false, true);
+    entity.updateMovement(2);
+    CHECK(entity.getX() == Catch::Approx(5));
+    CHECK(entity.getY() == Catch::Approx(0));
+    CHECK(entity.getOrientation() == Catch::Approx(0));
+    entity.updateMovement(2);
+    CHECK(entity.getX() == Catch::Approx(10));
+    CHECK(entity.getY() == Catch::Approx(0));
+    entity.updateMovement(2);
+    CHECK(entity.getX() == Catch::Approx(10));
+    CHECK(entity.getY() == Catch::Approx(5));
+    CHECK(entity.getOrientation() == Catch::Approx(-1.570796327f));
+    entity.updateMovement(2);
+    CHECK(entity.getX() == Catch::Approx(10));
+    CHECK(entity.getY() == Catch::Approx(10));
+}

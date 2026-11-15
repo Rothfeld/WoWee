@@ -126,7 +126,8 @@ public:
     }
 
     // Multi-segment path movement (Catmull-Rom spline interpolation)
-    void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration) {
+    void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration,
+                            bool smooth = true, bool followPathFacing = false) {
         remotePredictedMotion_ = false;
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
@@ -159,6 +160,8 @@ public:
         }
         activeSpline_.emplace(std::move(keys), /*timeClosed=*/false);
         splineDurationMs_ = durationMs;
+        smoothPath_ = smooth;
+        followPathFacing_ = followPathFacing;
         locomotionSpeed_ = totalDist / totalDuration;
 
         // Snap position if in overrun phase
@@ -315,7 +318,25 @@ public:
                 // Catmull-Rom spline interpolation
                 uint32_t pathTimeMs = static_cast<uint32_t>(moveElapsed_ * 1000.0f);
                 if (pathTimeMs >= splineDurationMs_) pathTimeMs = splineDurationMs_ - 1;
-                glm::vec3 pos = activeSpline_->evaluatePosition(pathTimeMs);
+                glm::vec3 pos;
+                glm::vec3 tangent;
+                if (smoothPath_) {
+                    const auto sample = activeSpline_->evaluate(pathTimeMs);
+                    pos = sample.position;
+                    tangent = sample.tangent;
+                } else {
+                    const auto& keys = activeSpline_->keys();
+                    auto end = std::upper_bound(keys.begin(), keys.end(), pathTimeMs,
+                        [](uint32_t time, const math::SplineKey& key) { return time < key.timeMs; });
+                    if (end == keys.end()) end = keys.end() - 1;
+                    const auto& begin = *(end - 1);
+                    const float fraction = static_cast<float>(pathTimeMs - begin.timeMs) /
+                        static_cast<float>(end->timeMs - begin.timeMs);
+                    tangent = end->position - begin.position;
+                    pos = begin.position + tangent * fraction;
+                }
+                if (followPathFacing_ && glm::dot(glm::vec2(tangent), glm::vec2(tangent)) > 0.000001f)
+                    orientation = std::atan2(-tangent.y, tangent.x);
                 x = pos.x;
                 y = pos.y;
                 z = pos.z;
@@ -424,6 +445,8 @@ protected:
     // CatmullRom spline for multi-segment path movement (replaces linear pathPoints_/pathSegDists_)
     std::optional<math::CatmullRomSpline> activeSpline_;
     uint32_t splineDurationMs_ = 0;
+    bool smoothPath_ = true;
+    bool followPathFacing_ = false;
 };
 
 /**

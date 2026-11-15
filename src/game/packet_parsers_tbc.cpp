@@ -577,6 +577,10 @@ bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData
             return false;
         }
         data.duration = spline.duration;
+        data.waypoints.clear();
+        for (const auto& point : spline.waypoints) {
+            data.waypoints.push_back({point.x, point.y, point.z});
+        }
         if (spline.hasDest) {
             data.destX = spline.destination.x;
             data.destY = spline.destination.y;

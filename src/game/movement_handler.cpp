@@ -1760,7 +1760,11 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
                 path.push_back({wpCanonical.x, wpCanonical.y, wpCanonical.z});
             }
             path.push_back({destCanonical.x, destCanonical.y, destCanonical.z});
-            entity->startMoveAlongPath(path, orientation, data.duration / 1000.0f);
+            // TBC ground splines are piecewise linear; only Flying (0x200)
+            // selects Catmull-Rom in CMaNGOS MoveSplineFlag.
+            const bool smooth = !isActiveExpansion("tbc") || (data.splineFlags & 0x200u) != 0;
+            entity->startMoveAlongPath(path, orientation, data.duration / 1000.0f,
+                                      smooth, data.moveType == 0);
         } else {
             entity->startMoveTo(destCanonical.x, destCanonical.y, destCanonical.z,
                                 orientation, data.duration / 1000.0f);
