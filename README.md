@@ -834,3 +834,10 @@ the headless direct-position driver runs only without that controller. Follow
 uses render-space facing, stops within three yards and resumes when the target
 moves away. Forward/backward, strafe and turn input cancel follow. Follow does
 not latch the independent autorun toggle.
+
+### Duel requests
+
+The duel menu casts spell 7266 through the active expansion packet parser.
+TBC writes spell ID first, then cast count and target mask; it has no Wrath
+cast-flags byte. `test_input_integration '[duel]'` checks the actual Lua menu
+API through the outgoing packet, including the opponent GUID.

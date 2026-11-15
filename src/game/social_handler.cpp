@@ -17,6 +17,7 @@
 #include "core/logger.hpp"
 #include "core/application.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -1805,7 +1806,9 @@ void SocialHandler::forfeitDuel() {
 void SocialHandler::proposeDuel(uint64_t targetGuid) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     if (targetGuid == 0) { owner_.raiseUiError("You must target a player to challenge to a duel."); return; }
-    auto packet = DuelProposedPacket::build(targetGuid);
+    auto* parsers = owner_.getPacketParsers();
+    assert(parsers && "Duel requests require the active expansion packet parsers");
+    auto packet = parsers->buildCastSpell(7266, targetGuid, 1);
     owner_.getSocket()->send(packet);
     owner_.addSystemChatMessage("You have challenged your target to a duel.");
 }

@@ -928,3 +928,24 @@ TEST_CASE_METHOD(Integration, "Named follow skips non-units and preserves select
     CHECK(handler.followTargetGuidRef() == 0);
     lua.setGameHandler(nullptr);
 }
+
+
+TEST_CASE_METHOD(Integration, "TBC duel menu sends expansion-correct spell packet", "[duel]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    auto player = std::make_shared<wowee::game::Player>(3);
+    player->setName("Graulberto");
+    handler.getEntityManager().addEntity(3, player);
+    handler.setTarget(3);
+    run("StartDuel('target', 1)");
+    auto packets = session.sent().of(wowee::game::Opcode::CMSG_CAST_SPELL);
+    REQUIRE(packets.size() == 1);
+    auto& packet = packets.front();
+    CHECK(packet.readUInt32() == 7266);
+    CHECK(packet.readUInt8() == 1);
+    CHECK(packet.readUInt32() == 2);
+    CHECK(packet.readPackedGuid() == 3);
+    CHECK(packet.getSize() == 11);
+    lua.setGameHandler(nullptr);
+}
