@@ -51,6 +51,8 @@ void LevelUpEffect::trigger(const glm::vec3& position) {
         return;
     }
 
+    // Play from the beginning once; retain the final pose while particles drain.
+    m2Renderer_->setInstanceAnimationHeld(instanceId, 0, false);
     activeEffects_.push_back({.instanceId = instanceId, .elapsed = 0.0f});
 }
 

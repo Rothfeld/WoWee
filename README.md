@@ -841,3 +841,12 @@ The duel menu casts spell 7266 through the active expansion packet parser.
 TBC writes spell ID first, then cast count and target mask; it has no Wrath
 cast-flags byte. `test_input_integration '[duel]'` checks the actual Lua menu
 API through the outgoing packet, including the opponent GUID.
+
+### One-shot world effects
+
+Duel arbiters play Spawn (animation 145) once, then Stand (animation 0).
+M2 sequence order does not identify the idle sequence: DuelingFlag.m2 stores
+Spawn first. Level-up effects start Stand at time zero and hold its final pose
+until effect cleanup; they do not loop during the particle drain interval.
+Both skeletal and particle-only instance clocks honor animation speed and
+hold-at-end playback.

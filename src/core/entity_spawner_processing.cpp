@@ -2031,6 +2031,9 @@ void EntitySpawner::applyGameObjectAnimationPolicy(uint64_t guid, uint32_t entry
 
     const bool freeze = gameObjectPoseIsStateDriven(info->type);
     m2Renderer->setInstanceAnimationFrozen(instanceId, freeze);
+    if (info->type == 16u) { // DUEL_ARBITER: Spawn once, then Stand.
+        m2Renderer->setInstanceAnimation(instanceId, 145u, false);
+    }
     LOG_DEBUG("GO animation policy: guid=0x", std::hex, guid, std::dec,
               " entry=", entry, " type=", info->type, " frozen=", freeze);
 }
@@ -2122,6 +2125,9 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
         for (uint32_t instanceId : it->second) {
             // No-op for instances that despawned while the query was in flight.
             m2Renderer->setInstanceAnimationFrozen(instanceId, false);
+            if (info->type == 16u) {
+                m2Renderer->setInstanceAnimation(instanceId, 145u, false);
+            }
         }
         LOG_DEBUG("GO animation policy resolved: entry=", entry,
                   " type=", info->type, " unfroze ", it->second.size(), " instance(s)");

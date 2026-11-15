@@ -59,6 +59,12 @@ void M2Renderer::seedInstanceAnimation(const M2ModelGPU& model, uint32_t modelId
         if (!model.sequences.empty()) {
             instance.currentSequenceIndex = 0;
             instance.idleSequenceIndex = 0;
+            for (int i = 0; i < static_cast<int>(model.sequences.size()); ++i) {
+                if (model.sequences[i].id == 0) {
+                    instance.idleSequenceIndex = i;
+                    break;
+                }
+            }
             instance.animDuration = static_cast<float>(model.sequences[0].duration);
             instance.animTime = static_cast<float>(randRange(std::max(1u, model.sequences[0].duration)));
             instance.variationTimer = randFloat(rendering::M2_VARIATION_TIMER_MIN_MS, rendering::M2_VARIATION_TIMER_MAX_MS);
@@ -441,7 +447,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     // then stood still, and one with emitters - wrapped at a fixed 3.3 s
     // below, whatever its sequence - stopped for the rest of each lap.
     for (auto& instance : instances) {
-        instance.animTime += dtMs;
+        instance.animTime += dtMs * instance.animSpeed;
         instance.globalSequenceTime += dtMs;
         // A boat asks once whether it is on water - the canal may stream in
         // after it does, so it keeps asking for a while - and rides it if so.
@@ -462,7 +468,12 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         const bool steppedBelow = instance.cachedHasAnimation && !instance.cachedDisableAnimation;
         if (!steppedBelow && instance.animDuration > 0.0f &&
             instance.animTime >= instance.animDuration) {
-            instance.animTime = std::fmod(instance.animTime, instance.animDuration);
+            if (instance.holdAtEnd) {
+                instance.animTime = instance.animDuration;
+                instance.animSpeed = 0.0f;
+            } else {
+                instance.animTime = std::fmod(instance.animTime, instance.animDuration);
+            }
         }
     }
 
@@ -532,7 +543,6 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
             if (glm::dot(toCam, toCam) > clutterAnimCutoffSq) continue;
         }
 
-        instance.animTime += dtMs * (instance.animSpeed - 1.0f);
 
         // For animation looping/variation, we need the actual model data.
         if (!instance.cachedModel) continue;
