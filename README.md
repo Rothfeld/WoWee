@@ -623,3 +623,8 @@ Looping Stand animations choose among authored M2 sequences using their frequenc
 weights and repetition bounds. The TBC wolf has four Stand sequences, all with
 variationIndex zero; filtering on that field cannot identify its fidgets.
 Selection happens at sequence boundaries and uses authored transition blend time.
+
+Airborne terrain contact compares feet against the terrain height at each end
+of the movement segment. Comparing both endpoints against the destination floor
+misses uphill landings and leaves jump momentum active after penetration recovery.
+Regression target: `test_hill_climbing`.

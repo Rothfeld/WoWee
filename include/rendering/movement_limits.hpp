@@ -129,6 +129,14 @@ glm::vec3 walkStepAgainstGround(SampleFn&& sample, const glm::vec3& from,
 
 
 
+// Contact is a crossing of the surface at each endpoint, not a comparison
+// against the destination floor at both endpoints. Rising ground can intersect
+// an airborne path while its destination floor is above the previous feet.
+inline bool crossesGroundSurface(float previousFeet, float previousFloor,
+                                 float feet, float floor) {
+    return previousFeet >= previousFloor - 0.001f && feet <= floor;
+}
+
 inline bool isReachableStep(float deltaZ) {
     return deltaZ >= -0.25f && deltaZ <= kMaxStepUp;
 }

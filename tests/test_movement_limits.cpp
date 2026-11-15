@@ -277,3 +277,17 @@ TEST_CASE("walking into steep terrain preserves contour travel without climbing"
     const glm::vec3 downhill(-0.2f, 0.15f, -0.4f);
     CHECK(walkStepAgainstGround(steep, start, downhill, glm::normalize(glm::vec3(-2,0,1))) == downhill);
 }
+
+TEST_CASE("Airborne terrain contact uses both endpoint surface heights", "[movement][slope]") {
+    using namespace wowee::rendering::movement;
+    // Rising terrain intercepts a descending jump before feet reach the
+    // previous height. This must end flight instead of invoking rescue forever.
+    CHECK(crossesGroundSurface(385.0f, 384.95f, 384.98f, 385.10f));
+    // A jump can hit a rising slope while still ascending.
+    CHECK(crossesGroundSurface(385.0f, 384.95f, 385.05f, 385.10f));
+    CHECK_FALSE(crossesGroundSurface(385.0f, 384.95f, 385.20f, 385.10f));
+    // Do not catch a descent early or pull a subterranean player onto a roof.
+    CHECK_FALSE(crossesGroundSurface(385.0f, 384.0f, 384.50f, 384.0f));
+    CHECK_FALSE(crossesGroundSurface(380.0f, 384.0f, 379.90f, 384.0f));
+    CHECK(crossesGroundSurface(385.0f, 384.0f, 383.99f, 384.0f));
+}

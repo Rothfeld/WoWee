@@ -1899,6 +1899,16 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             bool nearGround = (grounded && dz >= 0.0f && dz <= stepUp);
             bool airFalling = (!grounded && verticalVelocity <= 0.0f
                                && dz >= 0.0f && prevTargetPos.z >= *groundH);
+            if (!grounded && centerTerrainH && terrainManager &&
+                std::abs(*groundH - *centerTerrainH) < 0.001f &&
+                !terrainManager->isHoleAt(prevTargetPos.x, prevTargetPos.y)) {
+                const auto previousTerrain = terrainManager->getHeightAt(
+                    prevTargetPos.x, prevTargetPos.y);
+                if (previousTerrain) {
+                    airFalling = movement::crossesGroundSurface(
+                        prevTargetPos.z, *previousTerrain, feetZ, *groundH);
+                }
+            }
             // Not while climbing in flight: a frame's climb at a high frame
             // rate is less than the quarter yard this reaches down, so taking
             // off was pulled back to the ground every frame and never left it.
