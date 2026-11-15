@@ -17,6 +17,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/collision_geometry.hpp"
 #include "rendering/footprint_renderer.hpp"
 #include "rendering/pom_quality.hpp"
 #include "rendering/shadow_params.hpp"
@@ -4383,6 +4384,54 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
     core::Logger::getInstance().debug("Attached weapon model ", weaponModelId,
         " to instance ", charInstanceId, " at attachment ", attachmentId,
         " (bone ", boneIndex, ", offset ", offset.x, ",", offset.y, ",", offset.z, ")");
+    return true;
+}
+
+bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& origin,
+                                           const glm::vec3& direction, float& distance) const {
+    const auto found = instances.find(instanceId);
+    if (found == instances.end()) return false;
+    const auto& instance = found->second;
+    const auto& model = models.at(instance.modelId).data;
+    const glm::mat4 inverse = glm::inverse(instance.hasOverrideModelMatrix
+        ? instance.overrideModelMatrix : getModelMatrix(instance));
+    const glm::vec3 localOrigin(inverse * glm::vec4(origin, 1));
+    // Do not normalize: ray parameter must remain a world-space distance.
+    const glm::vec3 localDirection(inverse * glm::vec4(direction, 0));
+    std::vector<glm::vec3> positions(model.vertices.size());
+    for (size_t i = 0; i < model.vertices.size(); ++i) {
+        const auto& vertex = model.vertices[i];
+        glm::vec4 position(0);
+        for (size_t bone = 0; bone < 4; ++bone) {
+            if (vertex.boneWeights[bone] == 0) continue;
+            const auto index = std::min<uint32_t>(vertex.boneIndices[bone], MAX_BONES - 1);
+            const glm::mat4 transform = index < instance.boneMatrices.size()
+                ? instance.boneMatrices[index] : glm::mat4(1);
+            position += (transform * glm::vec4(vertex.position, 1)) *
+                (vertex.boneWeights[bone] / 255.0f);
+        }
+        positions[i] = glm::vec3(position);
+    }
+    float nearest = std::numeric_limits<float>::max();
+    for (const auto& batch : model.batches) {
+        if (!instance.activeGeosets.empty()) {
+            if (!instance.activeGeosets.contains(batch.submeshId)) continue;
+        } else {
+            const auto group = batch.submeshId / 100;
+            if (group == 15 || group == 17 || group == 18) continue;
+        }
+        if (batch.materialIndex < model.materials.size() &&
+            model.materials[batch.materialIndex].blendMode > 1) continue;
+        assert(batch.indexStart + batch.indexCount <= model.indices.size());
+        for (size_t index = batch.indexStart; index + 2 < batch.indexStart + batch.indexCount; index += 3) {
+            const float hit = rayTriangleIntersect(localOrigin, localDirection,
+                positions.at(model.indices[index]), positions.at(model.indices[index + 1]),
+                positions.at(model.indices[index + 2]));
+            if (hit > 0) nearest = std::min(nearest, hit);
+        }
+    }
+    if (nearest == std::numeric_limits<float>::max()) return false;
+    distance = nearest;
     return true;
 }
 

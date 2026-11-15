@@ -2,6 +2,8 @@
 
 #include "core/application.hpp"
 #include "core/coordinates.hpp"
+#include "core/entity_spawner.hpp"
+#include "rendering/character_renderer.hpp"
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
 #include "rendering/camera.hpp"
@@ -113,6 +115,14 @@ ScenePick pickScene(game::GameHandler& gameHandler,
 
         float hitT = 0.0f;
         if (!raySphereIntersect(ray, hitCenter, hitRadius, hitT)) continue;
+        if (type == game::ObjectType::UNIT || type == game::ObjectType::PLAYER) {
+            auto& app = core::Application::getInstance();
+            auto* spawner = app.getEntitySpawner();
+            auto* renderer = app.getRenderer();
+            if (!spawner || !renderer || !renderer->getCharacterRenderer()) continue;
+            if (!renderer->getCharacterRenderer()->intersectInstance(
+                    spawner->characterInstanceIdForGuid(guid), ray.origin, ray.direction, hitT)) continue;
+        }
         // Hover and clicks share this visibility gate. Compare against the
         // sphere's front surface so the target's own mesh does not hide it.
         if (auto* renderer = core::Application::getInstance().getRenderer()) {
