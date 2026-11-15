@@ -2069,6 +2069,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     // Find animation sequence index by ID
     const uint32_t previousId = instance.currentAnimationId;
     const float previousTime = instance.animationTime;
+    const int previousSequence = instance.currentSequenceIndex;
     instance.currentAnimationId = animationId;
     instance.currentSequenceIndex = -1;
     instance.armSequenceIndex[0] = instance.armSequenceIndex[1] = -1;
@@ -2123,6 +2124,24 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             LOG_WARNING("Animation ", animationId, " not found in model ", mId, ", using default");
         }
     }
+    // Use the authored cross-fade for locomotion state changes. One-shot and
+    // caller-owned animation chains retain their own completion semantics.
+    const auto locomotionState = [](uint32_t id) {
+        return id == anim::STAND || id == anim::WALK || id == anim::RUN;
+    };
+    instance.blendSequenceIndex = -1;
+    if (previousSequence >= 0 && previousId != instance.currentAnimationId &&
+        locomotionState(previousId) && locomotionState(instance.currentAnimationId) &&
+        instance.currentSequenceIndex >= 0) {
+        instance.blendDuration = model.sequences[instance.currentSequenceIndex].blendTime;
+        if (instance.blendDuration > 0.0f) {
+            instance.blendSequenceIndex = previousSequence;
+            instance.blendAnimationTime = previousTime;
+            instance.blendPlaybackRate = instance.playbackRate;
+            instance.blendElapsed = 0.0f;
+        }
+    }
+
 }
 
 void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
@@ -2195,7 +2214,18 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                 assert(inst.scale > 0.0f);
                 playbackRate = inst.locomotionSpeed / (seq.movingSpeed * inst.scale);
             }
+            inst.playbackRate = playbackRate;
             inst.animationTime += deltaTime * 1000.0f * playbackRate;
+            if (inst.blendSequenceIndex >= 0) {
+                inst.blendElapsed += deltaTime * 1000.0f;
+                const auto& outgoing = inst.cachedModel->data.sequences[inst.blendSequenceIndex];
+                inst.blendAnimationTime += deltaTime * 1000.0f * inst.blendPlaybackRate;
+                if (outgoing.duration > 0) {
+                    inst.blendAnimationTime = std::fmod(inst.blendAnimationTime,
+                                                       static_cast<float>(outgoing.duration));
+                }
+                if (inst.blendElapsed >= inst.blendDuration) inst.blendSequenceIndex = -1;
+            }
             if (seq.duration > 0 && inst.animationTime >= static_cast<float>(seq.duration)) {
                 if (inst.animationLoop) {
                     // Subtract duration instead of fmod to preserve float precision
@@ -2515,7 +2545,11 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
         // Local transform includes pivot bracket: T(pivot)*T*R*S*T(-pivot)
         // At rest this is identity, so no separate bind pose is needed
         glm::mat4 localTransform = getBoneTransform(bone, time, instance.globalSequenceTime,
-                                                    sequence, gsd);
+                                                    sequence, gsd,
+            sequence == instance.currentSequenceIndex ? instance.blendSequenceIndex : -1,
+            instance.blendAnimationTime,
+            instance.blendSequenceIndex >= 0
+                ? 1.0f - glm::smoothstep(0.0f, instance.blendDuration, instance.blendElapsed) : 0.0f);
 
         if (bone.keyBoneId == kKeyBoneSpineLow && instance.torsoYawOverrideRad != 0.0f) {
             glm::mat4 extraYaw = glm::translate(glm::mat4(1.0f), bone.pivot)
@@ -2562,7 +2596,8 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
 }
 
 glm::mat4 CharacterRenderer::getBoneTransform(const pipeline::M2Bone& bone, float animTime, float globalSeqTime,
-                                               int sequenceIndex, const std::vector<uint32_t>& globalSeqDurations) {
+                                               int sequenceIndex, const std::vector<uint32_t>& globalSeqDurations,
+                                               int blendSequence, float blendTime, float blendWeight) {
     // Resolve global sequences: bones with globalSequence >= 0 use sequence 0
     // with time wrapped at the global sequence duration, independent of the
     // character's current animation.
@@ -2575,6 +2610,18 @@ glm::mat4 CharacterRenderer::getBoneTransform(const pipeline::M2Bone& bone, floa
     glm::vec3 scale = m2_track::sampleVec3(
         bone.scale, sequenceIndex, animTime, globalSeqTime,
         globalSeqDurations, glm::vec3(1.0f));
+
+    if (blendSequence >= 0 && blendWeight > 0.0f) {
+        translation = glm::mix(translation, m2_track::sampleVec3(
+            bone.translation, blendSequence, blendTime, globalSeqTime,
+            globalSeqDurations, glm::vec3(0.0f)), blendWeight);
+        rotation = glm::slerp(rotation, m2_track::sampleQuat(
+            bone.rotation, blendSequence, blendTime, globalSeqTime,
+            globalSeqDurations), blendWeight);
+        scale = glm::mix(scale, m2_track::sampleVec3(
+            bone.scale, blendSequence, blendTime, globalSeqTime,
+            globalSeqDurations, glm::vec3(1.0f)), blendWeight);
+    }
 
     // M2 bone transform: T(pivot) * T(trans) * R(rot) * S(scale) * T(-pivot).
     // Build directly instead of chaining glm::translate/rotate/scale (each of

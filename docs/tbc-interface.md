@@ -125,3 +125,28 @@ must not replace that state: CMaNGOS TBC packet_builder.cpp deliberately sets
 Runmode (0x100) even on walking paths. The same rule applies to transport paths.
 Source: mangos-tbc/src/game/Movement/packet_builder.cpp, WriteCommonMonsterMovePart;
 mangos-tbc/src/game/Entities/Creature.cpp, Creature::SetWalk.
+
+### Creature locomotion cadence and stopping
+
+Creature Walk/Run clocks use authoritative path length divided by duration,
+then divide by the M2 sequence's `movingSpeed` and rendered instance scale.
+Ground projection does not feed this clock. Global sequences and stationary
+animations keep real-time clocks. For `creature/troglodyte/troglodyte.m2`, Walk
+is 900 ms at 2.5 yards/s; display 606 has scale 0.55. At 2.5 yards/s this means
+1.81818 playback rate and a 495 ms stride cycle.
+
+Stand/Walk/Run transitions use the incoming sequence's authored `blendTime`
+(150 ms for the trogg). Translation and scale blend linearly with smoothstep
+weight; rotation uses shortest-arc slerp. The outgoing sequence continues at
+its previous playback rate during the transition. One-shot chains and
+independent arm/upper-body layers keep their existing ownership.
+
+Format reference: https://skarndev.github.io/wowlib/python/m2/records/
+Cross-fade mechanism reference (1.12.1, not a TBC binary proof):
+https://github.com/samwhosung/wow-1121-client-internals/blob/main/docs/animation.md
+
+Validation: production renderer probe loads original trogg/wolf M2 files and
+checks clocks, global-time independence, pose continuity at stop, blend expiry,
+and death transition exclusion. Workspace experiments named `trogg_stride_rate`,
+`locomotion_stop_blend`, and `trogg_stride_stop` hold probe and paired footage.
+Exact TBC transition easing remains a visual comparison, not binary-verified.

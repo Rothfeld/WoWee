@@ -270,6 +270,12 @@ private:
         int upperBodySequenceIndex = -1;
         float upperBodyAnimationTime = 0.0f;
         std::vector<bool> upperBodyBones;
+        int blendSequenceIndex = -1;
+        float blendAnimationTime = 0.0f;
+        float blendPlaybackRate = 1.0f;
+        float blendElapsed = 0.0f;
+        float blendDuration = 0.0f;
+        float playbackRate = 1.0f;
         float locomotionSpeed = -1.0f; // Negative: caller does not supply movement speed.
         float animationTime = 0.0f;
         float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)
@@ -344,7 +350,8 @@ private:
     void calculateBindPose(M2ModelGPU& gpuModel);
     void calculateBoneMatrices(CharacterInstance& instance);
     glm::mat4 getBoneTransform(const pipeline::M2Bone& bone, float animTime, float globalSeqTime,
-                               int sequenceIndex, const std::vector<uint32_t>& globalSeqDurations);
+                               int sequenceIndex, const std::vector<uint32_t>& globalSeqDurations,
+                               int blendSequence = -1, float blendTime = 0.0f, float blendWeight = 0.0f);
     [[nodiscard]] glm::mat4 getModelMatrix(const CharacterInstance& instance) const;
     void destroyModelGPU(M2ModelGPU& gpuModel, bool defer = false);
     void destroyInstanceBones(CharacterInstance& inst, bool defer = false);
