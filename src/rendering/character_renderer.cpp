@@ -2275,23 +2275,26 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                         if (inst.currentAnimationId != anim::STAND) continue;
                         if (inst.sequenceRepeatsRemaining > 0) {
                             --inst.sequenceRepeatsRemaining;
-                            continue;
+                        } else {
+                            static std::mt19937 variationRandom(std::random_device{}());
+                            std::vector<double> weights(sequences.size(), 0.0);
+                            for (size_t i = 0; i < sequences.size(); ++i) {
+                                if (sequences[i].id == anim::STAND && sequences[i].duration > 0)
+                                    weights[i] = std::max<int>(0, sequences[i].frequency);
+                            }
+                            if (std::accumulate(weights.begin(), weights.end(), 0.0) > 0.0) {
+                                inst.currentSequenceIndex = std::discrete_distribution<int>(
+                                    weights.begin(), weights.end())(variationRandom);
+                                const auto& next = sequences[inst.currentSequenceIndex];
+                                assert(next.replayMin <= next.replayMax);
+                                inst.sequenceRepeatsRemaining = std::uniform_int_distribution<uint32_t>(
+                                    next.replayMin, next.replayMax)(variationRandom);
+                            }
                         }
-                        static std::mt19937 variationRandom(std::random_device{}());
-                        std::vector<double> weights(sequences.size(), 0.0);
-                        for (size_t i = 0; i < sequences.size(); ++i) {
-                            if (sequences[i].id == anim::STAND && sequences[i].duration > 0)
-                                weights[i] = std::max<int>(0, sequences[i].frequency);
-                        }
-                        if (std::accumulate(weights.begin(), weights.end(), 0.0) == 0.0)
-                            continue; // No authored probability distribution.
-                        inst.currentSequenceIndex = std::discrete_distribution<int>(
-                            weights.begin(), weights.end())(variationRandom);
                         const auto& next = sequences[inst.currentSequenceIndex];
-                        assert(next.replayMin <= next.replayMax);
-                        inst.sequenceRepeatsRemaining = std::uniform_int_distribution<uint32_t>(
-                            next.replayMin, next.replayMax)(variationRandom);
-                        if (previous != inst.currentSequenceIndex && next.blendTime > 0) {
+                        // Repeating a Stand variant also crosses a pose boundary.
+                        // DwarfMale sequence 40 has different first/last spine poses.
+                        if (next.blendTime > 0) {
                             inst.blendSequenceIndex = previous;
                             // The outgoing fidget ended here. Blending from its
                             // first frame creates a visible snap at the boundary.
