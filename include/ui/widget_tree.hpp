@@ -537,6 +537,8 @@ struct Widget {
 
     // FontString regions.
     std::string text;
+    float alphaGradientStart = -1.0f; // Negative disables the character reveal.
+    float alphaGradientLength = 0.0f;
     float fontHeight = 12.0f;
     /// Items a model frame has been asked to try on, as ItemDisplayInfo id
     /// and inventory type. The dressing room's contents belong to the frame

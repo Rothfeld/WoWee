@@ -890,3 +890,22 @@ TEST_CASE_METHOD(Integration, "WMO building names and room names have distinct z
     truth("GetZoneText() == '' and GetSubZoneText() == ''");
     lua.setLuaServices({});
 }
+
+TEST_CASE("FontString alpha gradient reports quest reveal completion", "[quest-text]") {
+    Integration f;
+    f.run(R"lua(
+        revealHost = CreateFrame("Frame", "RevealHost", UIParent)
+        reveal = revealHost:CreateFontString("RevealText", "ARTWORK")
+        reveal:SetText("|cffffd200Hello|r world")
+        assert(reveal:SetAlphaGradient(0, 5) == 1)
+        assert(reveal:SetAlphaGradient(10, 5) == 1)
+        assert(reveal:SetAlphaGradient(11, 5) == nil)
+        assert(reveal:SetAlphaGradient(1024, 5) == nil)
+        reveal:SetText("")
+        assert(reveal:SetAlphaGradient(0, 5) == nil)
+    )lua");
+    const auto* widget = f.lua.widgets().findByName("RevealText");
+    REQUIRE(widget);
+    CHECK(widget->alphaGradientStart == 0.0f);
+    CHECK(widget->alphaGradientLength == 5.0f);
+}

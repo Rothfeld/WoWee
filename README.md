@@ -812,3 +812,11 @@ contact using streamed collision meshes.
 M2 floor rays query both local floor and wall triangle grids. A barrel placed
 on its side can support a player on triangles classified as walls before
 placement. Walkability is evaluated using transformed world-space normals.
+
+### Quest text reveal
+
+FontString `SetAlphaGradient(start, length)` applies a character-edge alpha fade
+and returns 1 while text remains to reveal, or nil when complete. TBC FrameXML
+uses this to reveal quest descriptions, then show objectives and enable Accept.
+The Instant Quest Text option uses the same path with a completed reveal.
+`test_input_integration '[quest-text]'` checks markup-aware completion and reset.

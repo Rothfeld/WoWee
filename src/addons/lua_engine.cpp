@@ -774,6 +774,26 @@ const wowee::ui::Widget* textWidgetOf(lua_State* L, int index) {
     return fs ? fs : w;
 }
 
+int lua_Region_SetAlphaGradient(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    if (!w) return luaL_error(L, "SetAlphaGradient requires a FontString");
+    const float start = static_cast<float>(luaL_checknumber(L, 2));
+    const float length = static_cast<float>(luaL_checknumber(L, 3));
+    luaL_argcheck(L, std::isfinite(start) && start >= 0.0f, 2, "nonnegative start required");
+    luaL_argcheck(L, std::isfinite(length) && length >= 0.0f, 3, "nonnegative length required");
+    size_t characters = 0;
+    for (const auto& run : wowee::ui::parseMarkup(w->text)) {
+        for (unsigned char byte : run.text)
+            if ((byte & 0xc0u) != 0x80u) ++characters;
+        if (!run.texture.empty()) ++characters;
+    }
+    w->alphaGradientStart = std::floor(start);
+    w->alphaGradientLength = std::floor(length);
+    if (w->alphaGradientStart < static_cast<float>(characters)) lua_pushnumber(L, 1);
+    else lua_pushnil(L);
+    return 1;
+}
+
 int lua_Region_GetTextWidth(lua_State* L) {
     const auto* w = textWidgetOf(L, 1);
     lua_pushnumber(L, w ? measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale) : 0.0);
@@ -4454,6 +4474,7 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
     set("GetWidth", lua_Region_GetWidth);
     set("GetTextWidth", lua_Region_GetTextWidth);
     set("GetStringWidth", lua_Region_GetTextWidth);
+    set("SetAlphaGradient", lua_Region_SetAlphaGradient);
     set("GetTextHeight", lua_Region_GetTextHeight);
     set("GetStringHeight", lua_Region_GetTextHeight);
     set("GetFieldSize", lua_Region_GetFieldSize);
@@ -6386,6 +6407,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetEffectiveScale", lua_Region_GetEffectiveScale},
         {"GetTextWidth",    lua_Region_GetTextWidth},
         {"GetStringWidth",  lua_Region_GetTextWidth},
+        {"SetAlphaGradient", lua_Region_SetAlphaGradient},
         {"GetTextHeight",   lua_Region_GetTextHeight},
         {"GetStringHeight", lua_Region_GetTextHeight},
         {"GetFieldSize",    lua_Region_GetFieldSize},

@@ -1,3 +1,4 @@
+#include <imgui_internal.h>
 #include <cstring>
 #include "ui/widget_renderer.hpp"
 #include "ui/text_markup.hpp"
@@ -610,7 +611,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                                      const std::string& text, float wrapWidth,
                                      bool nonSpaceWrap, const char* justifyH,
                                      bool forceColor, WidgetTree* linkSink,
-                                     uint32_t linkOwner) {
+                                     uint32_t linkOwner, float gradientStart, float gradientLength) {
     const auto lines = wrapText(parseMarkup(text), wrapWidth, nonSpaceWrap,
                                 [&](const std::string& piece) {
                                     return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
@@ -627,6 +628,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
     const float glyphScale = size / baked->Size;
     const float glyphOffsetY = (size - (capital->Y0 + capital->Y1) * glyphScale) * 0.5f;
     float y = at.y;
+    int characterIndex = 0;
     for (const auto& line : lines) {
         // A picture contributes its own width, not its (empty) text's, or a
         // centred line of coins would be justified as if it were blank.
@@ -677,7 +679,38 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                 float rgba[4] = {run.rgba[0], run.rgba[1], run.rgba[2], run.rgba[3]};
                 col = packColor(rgba, alpha);
             }
-            dl->AddText(font, size, ImVec2(x, y + glyphOffsetY), col, run.text.c_str());
+            if (gradientStart < 0.0f) {
+                dl->AddText(font, size, ImVec2(x, y + glyphOffsetY), col, run.text.c_str());
+            } else {
+                float glyphX = x;
+                const char* glyph = run.text.c_str();
+                const char* end = glyph + run.text.size();
+                while (glyph < end) {
+                    unsigned int codepoint = 0;
+                    const int bytes = ImTextCharFromUtf8(&codepoint, glyph, end);
+                    assert(bytes > 0);
+                    const int firstVertex = dl->VtxBuffer.Size;
+                    dl->AddText(font, size, ImVec2(glyphX, y + glyphOffsetY), col, glyph, glyph + bytes);
+                    // Build 8606 (0x5c8810) subtracts floor(alpha / length)
+                    // at each vertical glyph edge. Spaces advance the reveal too.
+                    const int start = static_cast<int>(gradientStart);
+                    const int length = static_cast<int>(gradientLength);
+                    if (characterIndex >= start) {
+                        for (int i = firstVertex; i < dl->VtxBuffer.Size; ++i) {
+                            auto& vertex = dl->VtxBuffer[i];
+                            const int corner = (i - firstVertex) % 4;
+                            const int edge = 2 * (characterIndex - start) + ((corner == 1 || corner == 2) ? 1 : 0);
+                            const int alphaByte = (vertex.col >> IM_COL32_A_SHIFT) & 255u;
+                            const unsigned faded = length > 0 && characterIndex < start + length
+                                ? static_cast<unsigned>(std::max(0, alphaByte - edge * (alphaByte / length))) : 0u;
+                            vertex.col = (vertex.col & ~IM_COL32_A_MASK) | (faded << IM_COL32_A_SHIFT);
+                        }
+                    }
+                    glyphX += font->CalcTextSizeA(size, FLT_MAX, 0.0f, glyph, glyph + bytes).x;
+                    glyph += bytes;
+                    ++characterIndex;
+                }
+            }
             const float runW = font->CalcTextSizeA(size, FLT_MAX, 0.0f,
                                                    run.text.c_str()).x;
             // Where the link landed, for the click that arrives in another
@@ -3082,7 +3115,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // the ones on top of it.
                     drawMarkupText(dl, font, size, ImVec2(tx + o.x, ty + o.y),
                                    shadow, w->alpha, shown, wrapW,
-                                   w->nonSpaceWrap, w->justifyH.c_str(), true);
+                                   w->nonSpaceWrap, w->justifyH.c_str(), true, nullptr, 0,
+                                   w->alphaGradientStart, w->alphaGradientLength);
                 }
             }
             // The shadow sits under the text and over the outline: it is a
@@ -3096,7 +3130,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                ImVec2(tx + w->shadowX * s, ty - w->shadowY * s),
                                packColor(sc, w->alpha * w->shadowColor[3]),
                                w->alpha, shown, wrapW, w->nonSpaceWrap,
-                               w->justifyH.c_str(), true);
+                               w->justifyH.c_str(), true, nullptr, 0,
+                               w->alphaGradientStart, w->alphaGradientLength);
             }
             // A button's label takes its colour from the button's state. The
             // colour lives on the parent because that is where the template
@@ -3114,7 +3149,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             drawMarkupText(dl, font, size, ImVec2(tx, ty),
                            packColor(textColor, w->alpha), w->alpha, shown,
                            wrapW, w->nonSpaceWrap, w->justifyH.c_str(), false,
-                           &tree, w->id);
+                           &tree, w->id, w->alphaGradientStart, w->alphaGradientLength);
         }
     }
 }
