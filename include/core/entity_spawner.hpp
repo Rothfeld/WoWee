@@ -431,6 +431,8 @@ private:
     std::unordered_map<uint64_t, uint32_t> creatureActiveEmotes_;
     std::unordered_map<uint64_t, bool> creatureWasStealthed_;
     uint32_t stealthSyncFrameCounter_ = 0;  // throttles syncCreatureVisualState()
+    std::unordered_map<uint64_t, std::array<uint32_t, 10>> creatureWeaponStates_;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> creatureWeaponAttachments_;
     std::unordered_set<uint64_t> creatureWeaponsAttached_;
     std::unordered_map<uint64_t, uint8_t> creatureWeaponAttachAttempts_;
     std::unordered_map<uint32_t, bool> modelIdIsWolfLike_;

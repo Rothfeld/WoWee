@@ -51,6 +51,8 @@ TEST_CASE("TBC 8606 character fields match the server wire layout", "[updatefiel
     UpdateFieldTable table;
     REQUIRE(table.loadFromJson(fieldsPath("tbc")));
     // CMaNGOS TBC UpdateFields.h, generated for client build 8606.
+    REQUIRE(table.index(UF::UNIT_VIRTUAL_ITEM_SLOT_ID) == 6 + 0x1F);
+    REQUIRE(table.index(UF::UNIT_VIRTUAL_ITEM_INFO) == 6 + 0x22);
     REQUIRE(table.index(UF::UNIT_FIELD_BYTES_1) == 6 + 0x99);
     REQUIRE(table.index(UF::UNIT_FIELD_STAT0) == 6 + 0xA5);
     REQUIRE(table.index(UF::UNIT_FIELD_STAT4) == 6 + 0xA9);

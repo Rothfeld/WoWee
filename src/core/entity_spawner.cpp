@@ -1,3 +1,4 @@
+#include "core/weapon_attachment.hpp"
 #include "core/entity_spawner.hpp"
 #include "rendering/m2_model_classifier.hpp"
 #include "core/appearance_composer.hpp"
@@ -147,6 +148,8 @@ void EntitySpawner::shutdown() {
     creatureFlyingState_.clear();
     creatureActiveEmotes_.clear();
     creatureWasStealthed_.clear();
+    creatureWeaponStates_.clear();
+    creatureWeaponAttachments_.clear();
     creatureWeaponsAttached_.clear();
     creatureWeaponAttachAttempts_.clear();
     playerInstances_.clear();
@@ -198,6 +201,8 @@ void EntitySpawner::resetAllState() {
     // suppresses the opacity call that would apply it, so a stealthed NPC came
     // back fully opaque after a relog. shutdown() already cleared this.
     creatureWasStealthed_.clear();
+    creatureWeaponStates_.clear();
+    creatureWeaponAttachments_.clear();
     creatureWeaponsAttached_.clear();
     creatureWeaponAttachAttempts_.clear();
     modelIdIsWolfLike_.clear();
@@ -395,129 +400,87 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
     auto unit = std::static_pointer_cast<game::Unit>(entity);
     if (!unit) return false;
 
-    // Virtual weapons are only appropriate for humanoid-style displays.
-    // Non-humanoids (wolves/boars/etc.) can expose non-zero virtual item fields
-    // and otherwise end up with comedic floating weapons.
-    uint32_t displayId = unit->getDisplayId();
-    auto dIt = displayDataMap_.find(displayId);
-    if (dIt == displayDataMap_.end()) return false;
-    uint32_t extraDisplayId = dIt->second.extraDisplayId;
-    if (extraDisplayId == 0 || humanoidExtraMap_.find(extraDisplayId) == humanoidExtraMap_.end()) {
-        return false;
-    }
-
+    const uint16_t slots = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+    const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
+    assert(slots != 0xFFFF);
+    const bool displayIds = info != 0xFFFF;
+    const uint8_t sheathState = unit->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
     auto itemDisplayDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
     if (!itemDisplayDbc) return false;
-    // Item.dbc is not distributed to clients in Vanilla 1.12; on those expansions
-    // item display IDs are resolved via the server-sent item cache instead.
-    auto itemDbc = assetManager_->loadDBCOptional("Item.dbc");
-    const auto* itemL = pipeline::getActiveDBCLayout()
-        ? pipeline::getActiveDBCLayout()->getLayout("Item") : nullptr;
+    auto itemDbc = displayIds ? nullptr : assetManager_->loadDBC("Item.dbc");
+    if (!displayIds && !itemDbc) return false;
 
-    auto resolveDisplayInfoId = [&](uint32_t rawId) -> uint32_t {
-        if (rawId == 0) return 0;
-        // Primary path: AzerothCore uses item entries in UNIT_VIRTUAL_ITEM_SLOT_ID.
-        // Resolve strictly through Item.dbc entry -> DisplayID to avoid
-        // accidental ItemDisplayInfo ID collisions (staff/hilt mismatches).
-        if (itemDbc) {
-            int32_t itemRec = itemDbc->findRecordById(rawId); // treat as item entry
-            if (itemRec >= 0) {
-                const uint32_t dispFieldPrimary = itemL ? (*itemL)["DisplayID"] : 5u;
-                uint32_t displayIdA = itemDbc->getUInt32(static_cast<uint32_t>(itemRec), dispFieldPrimary);
-                if (displayIdA != 0 && itemDisplayDbc->findRecordById(displayIdA) >= 0) {
-                    return displayIdA;
-                }
+    for (const uint32_t attachment : creatureWeaponAttachments_[guid])
+        charRenderer->detachWeapon(instanceId, attachment);
+    creatureWeaponAttachments_[guid].clear();
+    for (uint16_t slot = 0; slot < 3; ++slot) {
+        uint32_t displayId = unit->getField(slots + slot);
+        if (!displayId) continue;
+        uint8_t inventoryType;
+        if (displayIds) {
+            inventoryType = unit->getField(info + slot * 2 + 1) & 0xFF;
+        } else {
+            const int32_t record = itemDbc->findRecordById(displayId);
+            if (record < 0) {
+                LOG_ERROR("NPC equipment item missing: guid=", guid, " item=", displayId);
+                return false;
             }
+            inventoryType = itemDbc->getUInt32(record, 6);
+            displayId = itemDbc->getUInt32(record, 5);
         }
-        // Fallback: Vanilla 1.12 does not distribute Item.dbc to clients.
-        // Items arrive via SMSG_ITEM_QUERY_SINGLE_RESPONSE and are cached in
-        // itemInfoCache_. Use the server-sent displayInfoId when available.
-        if (!itemDbc && gameHandler_) {
-            if (const auto* info = gameHandler_->getItemInfo(rawId)) {
-                uint32_t displayIdB = info->displayInfoId;
-                if (displayIdB != 0 && itemDisplayDbc->findRecordById(displayIdB) >= 0) {
-                    return displayIdB;
-                }
-            }
+        const bool ranged = slot == 2;
+        const bool sheathed = sheathState != (ranged ? 2 : 1);
+        const auto equipSlot = slot == 1 ? game::EquipSlot::OFF_HAND : game::EquipSlot::MAIN_HAND;
+        const uint32_t attachment = ranged ? (sheathed ? kAttachBack : kAttachRightHand)
+            : weaponAttachment(sheathed, equipSlot, inventoryType);
+        if (attachment == UINT32_MAX) continue;
+        const int32_t record = itemDisplayDbc->findRecordById(displayId);
+        if (record < 0) {
+            LOG_ERROR("NPC equipment display missing: guid=", guid, " display=", displayId);
+            return false;
         }
-        return 0;
-    };
-
-    auto attachNpcWeaponDisplay = [&](uint32_t itemDisplayId, uint32_t attachmentId) -> bool {
-        uint32_t resolvedDisplayId = resolveDisplayInfoId(itemDisplayId);
-        if (resolvedDisplayId == 0) return false;
-        int32_t recIdx = itemDisplayDbc->findRecordById(resolvedDisplayId);
-        if (recIdx < 0) return false;
-
-        const auto art = pipeline::readItemDisplayArt(*itemDisplayDbc,
-                                                      static_cast<uint32_t>(recIdx));
-        if (art.modelFile.empty()) return false;
-        const std::string& modelFile = art.modelFile;
-        const std::string& textureName = art.textureName;
-
-        // Main-hand NPC weapon path: only use actual weapon models.
-        std::string m2Path = "Item\\ObjectComponents\\Weapon\\" + modelFile;
-        pipeline::M2Model weaponModel;
-        if (!loadWeaponM2(m2Path, weaponModel)) return false;
-
-        std::string texturePath;
-        if (!textureName.empty()) {
-            texturePath = "Item\\ObjectComponents\\Weapon\\" + textureName + ".blp";
-            if (!assetManager_->fileExists(texturePath)) texturePath.clear();
+        const auto art = pipeline::readItemDisplayArt(*itemDisplayDbc, record);
+        if (art.modelFile.empty()) continue; // This slot has no visible model.
+        const std::string directory = inventoryType == game::InvType::SHIELD
+            ? "Item\\ObjectComponents\\Shield\\" : "Item\\ObjectComponents\\Weapon\\";
+        pipeline::M2Model model;
+        if (!loadWeaponM2(directory + art.modelFile, model)) {
+            LOG_ERROR("NPC equipment model failed: ", directory, art.modelFile);
+            return false;
         }
-
-        uint32_t weaponModelId = nextWeaponModelId_++;
-        return charRenderer->attachWeapon(instanceId, attachmentId, weaponModel, weaponModelId, texturePath);
-    };
-
-    auto hasResolvableWeaponModel = [&](uint32_t itemDisplayId) -> bool {
-        uint32_t resolvedDisplayId = resolveDisplayInfoId(itemDisplayId);
-        if (resolvedDisplayId == 0) return false;
-        int32_t recIdx = itemDisplayDbc->findRecordById(resolvedDisplayId);
-        if (recIdx < 0) return false;
-        const auto art = pipeline::readItemDisplayArt(*itemDisplayDbc,
-                                                      static_cast<uint32_t>(recIdx));
-        if (art.modelFile.empty()) return false;
-        const std::string& modelFile = art.modelFile;
-        return assetManager_->fileExists("Item\\ObjectComponents\\Weapon\\" + modelFile);
-    };
-
-    bool attachedMain = false;
-    bool hadWeaponCandidate = false;
-
-    const uint16_t candidateBases[] = {56, 57, 58, 70, 148, 149, 150, 151, 152};
-    for (uint16_t base : candidateBases) {
-        uint32_t v0 = entity->getField(static_cast<uint16_t>(base + 0));
-        if (v0 != 0) hadWeaponCandidate = true;
-        if (!attachedMain && v0 != 0) attachedMain = attachNpcWeaponDisplay(v0, 1);
-        if (attachedMain) break;
+        const std::string texture = art.textureName.empty() ? "" : directory + art.textureName + ".blp";
+        if (!charRenderer->attachWeapon(instanceId, attachment, model, nextWeaponModelId_++,
+                texture, weaponLocalTransform(sheathed, equipSlot,
+                    ranged ? game::InvType::TWO_HAND : inventoryType))) {
+            LOG_ERROR("NPC equipment attachment failed: guid=", guid, " display=", displayId,
+                      " attachment=", attachment);
+            return false;
+        }
+        creatureWeaponAttachments_[guid].push_back(attachment);
+        LOG_INFO("NPC equipment: guid=", guid, " slot=", slot, " display=", displayId,
+                 " attachment=", attachment, " sheathed=", sheathed);
     }
-
-    uint16_t unitEnd = game::fieldIndex(game::UF::UNIT_END);
-    uint16_t scanLo = 60;
-    uint16_t scanHi = (unitEnd != 0xFFFF) ? static_cast<uint16_t>(unitEnd + 96) : 320;
-    std::map<uint16_t, uint32_t> candidateByIndex;
-    for (const auto& [idx, val] : entity->getFields()) {
-        if (idx < scanLo || idx > scanHi) continue;
-        if (val == 0) continue;
-        if (hasResolvableWeaponModel(val)) {
-            candidateByIndex[idx] = val;
-            hadWeaponCandidate = true;
-        }
-    }
-    for (const auto& [idx, val] : candidateByIndex) {
-        if (!attachedMain) attachedMain = attachNpcWeaponDisplay(val, 1);
-        if (attachedMain) break;
-    }
-
-    // Force off-hand clear in NPC path to avoid incorrect shields/placeholder hilts.
-    charRenderer->detachWeapon(instanceId, 2);
-    // Success if main-hand attached when there was at least one candidate.
-    return hadWeaponCandidate && attachedMain;
+    return true;
 }
 
 bool EntitySpawner::retryCreatureVirtualWeapons(uint64_t guid, uint32_t instanceId,
                                                 uint8_t maxAttempts) {
+    const auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    if (!entity) return false;
+    const uint16_t slots = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+    const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
+    assert(slots != 0xFFFF);
+    std::array<uint32_t, 10> state{};
+    for (uint16_t i = 0; i < 3; ++i) state[i] = entity->getField(slots + i);
+    if (info != 0xFFFF)
+        for (uint16_t i = 0; i < 6; ++i) state[3 + i] = entity->getField(info + i);
+    state[9] = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
+    const auto previous = creatureWeaponStates_.find(guid);
+    if (previous == creatureWeaponStates_.end() || previous->second != state) {
+        creatureWeaponStates_[guid] = state;
+        creatureWeaponsAttached_.erase(guid);
+        creatureWeaponAttachAttempts_.erase(guid);
+    }
     if (creatureWeaponsAttached_.count(guid)) return false;
     const auto attemptIt = creatureWeaponAttachAttempts_.find(guid);
     const uint8_t attempts = attemptIt != creatureWeaponAttachAttempts_.end()

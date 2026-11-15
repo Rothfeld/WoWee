@@ -22,6 +22,8 @@ enum class UF : uint16_t {
     UNIT_FIELD_BYTES_0,
     UNIT_FIELD_BYTES_1,  // byte2 = visibility flags; byte3 is expansion-dependent
     UNIT_FIELD_BYTES_2,  // WotLK: byte3 = shapeshift form (BYTES_1 byte3 is the anim tier there)
+    UNIT_VIRTUAL_ITEM_SLOT_ID, // Three display IDs before Wrath; item entries in Wrath.
+    UNIT_VIRTUAL_ITEM_INFO,    // Pre-Wrath: two packed metadata fields per slot.
     UNIT_FIELD_HEALTH,
     UNIT_FIELD_POWER1,
     UNIT_FIELD_MAXHEALTH,
