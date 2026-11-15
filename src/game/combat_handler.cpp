@@ -1316,7 +1316,7 @@ void CombatHandler::setTarget(uint64_t guid) {
     // Only when the target actually changes, and only when something is being
     // swung at: re-selecting the same unit is not a change, and stopping an
     // attack nobody started would send a cancel for nothing.
-    if (guid != owner_.getTargetGuid() && autoAttacking_ &&
+    if (guid != owner_.getTargetGuid() && autoAttackRequested_ &&
         addons::storedCVarValue("stopAutoAttackOnTargetChange", "0") != "0") {
         stopAutoAttack();
     }
@@ -1364,6 +1364,11 @@ void CombatHandler::setTarget(uint64_t guid) {
 }
 
 void CombatHandler::clearTarget() {
+    stopAutoAttack();
+    if (owner_.isInWorld()) {
+        auto packet = SetSelectionPacket::build(0);
+        owner_.getSocket()->send(packet);
+    }
     if (owner_.getTargetGuid() != 0) {
         LOG_INFO("Target cleared");
         // Zero the GUID before firing the event so callbacks/addons that query

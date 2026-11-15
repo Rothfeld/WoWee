@@ -226,3 +226,8 @@ AppearanceComposer owns weapon attachment changes and requests draw animations
 through ActivityFSM. Combat stance transitions do not draw or sheath again.
 Explicit draw animation completes over combat idle; attack animations retain
 priority. Regression test: `test_character_animator`.
+
+Clearing selection (including Escape) sends attack stop and zero selection to
+the server. Attack-button toggling and stop-on-target-change use local attack
+intent, including the interval before server swing confirmation. Cancelling
+attack does not require a currently selected target.

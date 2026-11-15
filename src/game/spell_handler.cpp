@@ -773,8 +773,8 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // Attack routes to auto-attack instead of cast
     if (spellId == SPELL_ID_ATTACK) {
         uint64_t target = targetGuid != 0 ? targetGuid : owner_.getTargetGuid();
-        if (target != 0) {
-            if (owner_.isAutoAttacking()) {
+        if (target != 0 || owner_.hasAutoAttackIntent()) {
+            if (owner_.hasAutoAttackIntent()) {
                 // Ability Toggle, which the panel describes exactly: protection
                 // from turning an ability off by hitting its button twice in a
                 // short space of time. Offered, and read by nothing - so a
