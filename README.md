@@ -670,3 +670,31 @@ Camera fades render a depth-only pass for solid character batches before color
 blending. Blending while writing depth in one pass leaves previously drawn
 backfaces visible through the front. The color pass tests equal depth; transparent
 cards retain their authored blending and depth behavior.
+
+## TBC scene integration
+
+Interior area names use the WMO root ID, placement name-set and authored group
+ID with `WMOAreaTable.dbc`. A named building can have area ID zero: Anvilmar is
+root 752, name-set 1, with its name on the group -1 row. `GetSubZoneText` uses
+that building name without inventing an AreaTable ID. Indoor events follow the
+player, independently of the camera's room.
+
+Interior minimaps use the authored WMO tiles in `md5translate.trs`, at two pixels
+per local yard. Group filenames use the original group index, including empty
+groups omitted from rendering. Match minimap zoom before comparing screenshots;
+indoor and outdoor zoom levels have different radii.
+
+TBC `SMSG_MONSTER_MOVE` intermediate points must reach entity interpolation.
+Ground routes follow linear segments; facing follows each segment. Discarding
+those points turns an obstacle-avoiding patrol into a straight line. Stand
+variation blends sample the outgoing final pose, rather than restarting it.
+
+World names use per-pixel scene depth. A whole-label anchor test can erase a
+visible name when a beam covers only its anchor. Unit picking tests the current
+skinned body after the broad sphere test, so a nearby player's sphere does not
+steal a vendor hover. Crafting spell-focus objects, including anvils, are not
+click targets. Repair takes precedence over vendor when both flags are set.
+
+Unavailable quest status 1 uses the grey world exclamation model and no minimap
+dot. Local speech creates its bubble before the duplicated server echo is
+suppressed; bubbles use the client tooltip backdrop and tail assets.
