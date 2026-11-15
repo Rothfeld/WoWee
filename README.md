@@ -610,3 +610,16 @@ Warden scan-boundary validation must include payload semantics. A code-scan
 address can decode as a DRIVER opcode by chance; a driver request still requires
 a valid nonzero string-table index. Accepting an invented driver consumes later
 memory checks and makes the server disconnect on a truncated response.
+
+### Creature support and idle variations
+
+Grounded creatures select the nearest reachable terrain, WMO or M2 floor.
+Terrain corrections do not require a previous corrected render position; static
+server spawn Z can differ from the ADT triangle. Structure corrections retain
+continuity checks for overlapping floors. `WOWEE_CREATURE_GROUND_TRACE=<GUID>`
+logs one creature's server position, support position and slope rotation each second.
+
+Looping Stand animations choose among authored M2 sequences using their frequency
+weights and repetition bounds. The TBC wolf has four Stand sequences, all with
+variationIndex zero; filtering on that field cannot identify its fidgets.
+Selection happens at sequence boundaries and uses authored transition blend time.

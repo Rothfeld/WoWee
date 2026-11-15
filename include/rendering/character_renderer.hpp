@@ -290,6 +290,7 @@ private:
         float animationTime = 0.0f;
         float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)
         bool animationLoop = true;
+        uint32_t sequenceRepeatsRemaining = 0;
         uint32_t oneShotReturnAnim = 0; // Anim to resume when a one-shot ends (0 = Stand)
         bool holdFinalPose = false; // Caller owns the transition after completion
         bool isDead = false;  // Prevents movement while in death state

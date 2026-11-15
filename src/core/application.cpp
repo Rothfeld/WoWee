@@ -133,16 +133,18 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
     constexpr float kMaxGroundDrop = 3.0f;
     const float probeZ = renderPos.z + kMaxStepUp;
     std::optional<float> best;
+    bool bestIsTerrain = false;
 
-    auto consider = [&](const std::optional<float>& floor) {
+    auto consider = [&](const std::optional<float>& floor, bool isTerrain = false) {
         if (!floor || *floor > probeZ || *floor < renderPos.z - kMaxGroundDrop) return;
         if (!best || std::abs(*floor - renderPos.z) < std::abs(*best - renderPos.z)) {
             best = floor;
+            bestIsTerrain = isTerrain;
         }
     };
 
     if (auto* terrain = renderer->getTerrainManager()) {
-        consider(terrain->getHeightAt(renderPos.x, renderPos.y));
+        consider(terrain->getHeightAt(renderPos.x, renderPos.y), true);
     }
     // Outdoor movers almost always match the terrain heightfield. Avoid the
     // expensive WMO/M2 collision walks in that common case. Tunnel, bridge,
@@ -194,11 +196,15 @@ std::optional<float> movingEntityFloor(rendering::Renderer* renderer,
         }
     }
 
+    // Terrain is a continuous support surface: server spawn heights can differ
+    // from its triangles even for stationary creatures. Requiring continuity
+    // with an uncorrected spawn height would reject that correction forever.
+    // Structure candidates still need continuity near overlapping floors.
     // A broader floor candidate is useful on stairs and uneven terrain, but it is
     // ambiguous near overlapping shells or non-collidable authored props. Require
     // continuity with the last rendered ground position before accepting it. This
     // preserves server-authored waypoint height without creature-entry exceptions.
-    if (best && std::abs(*best - renderPos.z) > 0.35f) {
+    if (best && !bestIsTerrain && std::abs(*best - renderPos.z) > 0.35f) {
         if (!previousRenderPos) return std::nullopt;
         const glm::vec2 planarDelta = glm::vec2(renderPos) - glm::vec2(*previousRenderPos);
         const float maxContinuousStep = 0.35f + glm::length(planarDelta) * 1.5f;
@@ -3572,6 +3578,25 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     });
             }
             charRenderer->setInstanceRotation(instanceId, groundRotation);
+            static const char* traceGround = std::getenv("WOWEE_CREATURE_GROUND_TRACE");
+            if (traceGround && guid == std::stoull(traceGround, nullptr, 0)) {
+                static double lastTrace = -1.0;
+                const double now = SDL_GetTicks() / 1000.0;
+                if (now - lastTrace >= 1.0) {
+                    lastTrace = now;
+                    glm::vec3 actual;
+                    const bool found = charRenderer->getInstancePosition(instanceId, actual);
+                    assert(found);
+                    (void)found;
+                    LOG_INFO("Creature ground trace guid=", guid,
+                        " server=", canonical.x, ",", canonical.y, ",", canonical.z,
+                        " sampled=", renderPos.x, ",", renderPos.y, ",", renderPos.z,
+                        " actual=", actual.x, ",", actual.y, ",", actual.z,
+                        " rotation=", groundRotation.x, ",", groundRotation.y, ",", groundRotation.z,
+                        " grounded=", groundCreature, " transport=", onTransport,
+                        " scale=", charRenderer->getInstanceScale(instanceId));
+                }
+            }
         }
     }
     {

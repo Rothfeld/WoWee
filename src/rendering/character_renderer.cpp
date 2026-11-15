@@ -50,6 +50,7 @@
 #include <filesystem>
 #include <future>
 #include <numeric>
+#include <random>
 #include <thread>
 #include <functional>
 #include <unordered_map>
@@ -2076,6 +2077,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     instance.armSequenceIndex[0] = instance.armSequenceIndex[1] = -1;
     instance.animationTime = 0.0f;
     instance.animationLoop = loop;
+    instance.sequenceRepeatsRemaining = 0;
 
     // Prefer variationIndex==0 (primary animation); fall back to first match
     int firstMatch = -1;
@@ -2245,12 +2247,39 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             }
             if (seq.duration > 0 && inst.animationTime >= static_cast<float>(seq.duration)) {
                 if (inst.animationLoop) {
-                    // Subtract duration instead of fmod to preserve float precision
-                    // fmod() loses precision with large animationTime values
-                    inst.animationTime -= static_cast<float>(seq.duration);
-                    // Clamp to [0, duration) to handle multiple loops in one frame
-                    while (inst.animationTime >= static_cast<float>(seq.duration)) {
-                        inst.animationTime -= static_cast<float>(seq.duration);
+                    const auto& sequences = inst.cachedModel->data.sequences;
+                    while (sequences[inst.currentSequenceIndex].duration > 0 &&
+                           inst.animationTime >= sequences[inst.currentSequenceIndex].duration) {
+                        const int previous = inst.currentSequenceIndex;
+                        inst.animationTime -= sequences[previous].duration;
+                        // Stand variations contain authored fidgets, not separate
+                        // emotes. Select only at complete sequence boundaries.
+                        if (inst.currentAnimationId != anim::STAND) continue;
+                        if (inst.sequenceRepeatsRemaining > 0) {
+                            --inst.sequenceRepeatsRemaining;
+                            continue;
+                        }
+                        static std::mt19937 variationRandom(std::random_device{}());
+                        std::vector<double> weights(sequences.size(), 0.0);
+                        for (size_t i = 0; i < sequences.size(); ++i) {
+                            if (sequences[i].id == anim::STAND && sequences[i].duration > 0)
+                                weights[i] = std::max<int>(0, sequences[i].frequency);
+                        }
+                        if (std::accumulate(weights.begin(), weights.end(), 0.0) == 0.0)
+                            continue; // No authored probability distribution.
+                        inst.currentSequenceIndex = std::discrete_distribution<int>(
+                            weights.begin(), weights.end())(variationRandom);
+                        const auto& next = sequences[inst.currentSequenceIndex];
+                        assert(next.replayMin <= next.replayMax);
+                        inst.sequenceRepeatsRemaining = std::uniform_int_distribution<uint32_t>(
+                            next.replayMin, next.replayMax)(variationRandom);
+                        if (previous != inst.currentSequenceIndex && next.blendTime > 0) {
+                            inst.blendSequenceIndex = previous;
+                            inst.blendAnimationTime = 0.0f;
+                            inst.blendPlaybackRate = 1.0f;
+                            inst.blendElapsed = 0.0f;
+                            inst.blendDuration = next.blendTime;
+                        }
                     }
                 } else {
                     // Caller-owned completion holds the final pose until its FSM
