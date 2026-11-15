@@ -1489,7 +1489,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             uint32_t base = header.ofsParticleEmitters + ei * emitterSize;
 
             M2ParticleEmitter em;
-            // Header fields (0x00-0x33) are the same for both versions
+            // Legacy blend and emitter types are uint16; Wrath packs them into bytes.
             em.particleId = readValue<int32_t>(m2Data, base + 0x00);
             em.flags      = readValue<uint32_t>(m2Data, base + 0x04);
             em.position.x = readValue<float>(m2Data, base + 0x08);
@@ -1498,7 +1498,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             em.bone       = readValue<uint16_t>(m2Data, base + 0x14);
             em.texture    = readValue<uint16_t>(m2Data, base + 0x16);
             em.blendingType = readValue<uint8_t>(m2Data, base + 0x28);
-            em.emitterType  = readValue<uint8_t>(m2Data, base + 0x29);
+            em.emitterType  = readValue<uint8_t>(m2Data, base + (isVanilla ? 0x2A : 0x29));
             em.textureTileRotation = readValue<int16_t>(m2Data, base + 0x2E);
             em.textureRows = readValue<uint16_t>(m2Data, base + 0x30);
             em.textureCols = readValue<uint16_t>(m2Data, base + 0x32);

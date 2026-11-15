@@ -27,9 +27,9 @@ void main() {
         if (lum < 0.05) discard;
     }
 
-    // Soft circular falloff for point-sprite edges.
-    float edge = 1.0 - smoothstep(0.4, 0.5, length(p - 0.5));
-    float alpha = texColor.a * vColor.a * edge * vFogVisibility;
-    vec3 rgb = texColor.rgb * vColor.rgb * alpha;
+    // Texture supplies the sprite silhouette. Both pipelines use SRC_ALPHA,
+    // so multiplying RGB by alpha here would apply opacity twice.
+    float alpha = texColor.a * vColor.a * vFogVisibility;
+    vec3 rgb = texColor.rgb * vColor.rgb;
     outColor = vec4(rgb, alpha);
 }

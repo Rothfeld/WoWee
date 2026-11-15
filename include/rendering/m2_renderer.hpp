@@ -1135,6 +1135,7 @@ private:
     /// Vertices the particle buffer holds. Not MAX_M2_PARTICLES, which is the
     /// cap on one instance's particles: this has to hold a whole frame's.
     static constexpr size_t MAX_M2_PARTICLE_VERTS = 32768;
+    size_t particleVertexCapacity_ = MAX_M2_PARTICLE_VERTS;
 
     // Animation update buffers (avoid per-frame allocation)
     std::vector<size_t> boneWorkIndices_;        // Reused each frame

@@ -744,6 +744,7 @@ register_test_target(test_srp)
 # bytes rather than floats. Real-asset coverage; skips when unextracted.
 add_executable(test_m2_ribbon_tracks
     test_m2_ribbon_tracks.cpp
+    test_m2_particle_layout.cpp
     ${TEST_COMMON_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
 )

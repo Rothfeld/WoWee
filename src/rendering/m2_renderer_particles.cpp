@@ -18,6 +18,7 @@
 #include <random>
 #include <limits>
 #include <set>
+#include <stdexcept>
 
 namespace wowee {
 namespace rendering {
@@ -95,7 +96,6 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         inst.emitterAccumulators.resize(gpu.particleEmitters.size(), 0.0f);
     }
 
-    std::uniform_real_distribution<float> dist01(0.0f, 1.0f);
     std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
     std::uniform_int_distribution<int> distTile;
 
@@ -162,6 +162,14 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
             // Position: emitter position transformed by bone matrix
             glm::vec3 localPos = em.position;
+            if (em.emitterType == 1) {
+                const float length = interpFloat(em.emissionAreaLength, inst.animTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float width = interpFloat(em.emissionAreaWidth, inst.animTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                localPos.x += distN(particleRng_) * length * 0.5f;
+                localPos.y += distN(particleRng_) * width * 0.5f;
+            }
             glm::mat4 boneXform = glm::mat4(1.0f);
             if (em.bone < inst.boneMatrices.size()) {
                 boneXform = inst.boneMatrices[em.bone];
@@ -177,38 +185,18 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             float hRange = interpFloat(em.horizontalRange, inst.animTime, inst.globalSequenceTime,
                                        inst.currentSequenceIndex, gpu.globalSequenceDurations);
 
-            // Base direction: up in model space, transformed to world
-            glm::vec3 dir(0.0f, 0.0f, 1.0f);
-            // Add random spread
-            dir.x += distN(particleRng_) * hRange;
-            dir.y += distN(particleRng_) * hRange;
-            dir.z += distN(particleRng_) * vRange;
-            float lenSq = glm::dot(dir, dir);
-            if (lenSq > 0.001f * 0.001f) dir *= glm::inversesqrt(lenSq);
-
-            // Transform direction by bone + model orientation (rotation only)
-            glm::mat3 rotMat = glm::mat3(inst.modelMatrix * boneXform);
+            // Ranges are angles, not Cartesian velocity components. Zero
+            // inclination stays vertical even with a full azimuth range.
+            const float inclination = distN(particleRng_) * vRange;
+            const float azimuth = distN(particleRng_) * hRange;
+            const glm::vec3 dir(std::sin(inclination) * std::cos(azimuth),
+                                std::sin(inclination) * std::sin(azimuth),
+                                std::cos(inclination));
+            const float variation = interpFloat(em.speedVariation, inst.animTime,
+                inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+            speed *= 1.0f + distN(particleRng_) * variation;
+            const glm::mat3 rotMat(inst.modelMatrix * boneXform);
             p.velocity = rotMat * dir * speed;
-
-            // When emission speed is ~0 and bone animation isn't loaded (.anim files),
-            // particles pile up at the same position. Give them a drift so they
-            // spread outward like a mist/spray effect instead of clustering.
-            if (std::abs(speed) < 0.01f) {
-                if (gpu.isFireflyEffect) {
-                    // Fireflies: gentle random drift in all directions
-                    p.velocity = rotMat * glm::vec3(
-                        distN(particleRng_) * 0.6f,
-                        distN(particleRng_) * 0.6f,
-                        distN(particleRng_) * 0.3f
-                    );
-                } else {
-                    p.velocity = rotMat * glm::vec3(
-                        distN(particleRng_) * 1.0f,
-                        distN(particleRng_) * 1.0f,
-                        -dist01(particleRng_) * 0.5f
-                    );
-                }
-            }
 
             const uint32_t tilesX = std::max<uint16_t>(em.textureCols, 1);
             const uint32_t tilesY = std::max<uint16_t>(em.textureRows, 1);
@@ -593,6 +581,49 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     }
     auto& groups = particleGroups_;
 
+    // Size the upload for this frame. A fixed shared cap discarded later
+    // instances (including newly created loot/spell effects) once scenery filled it.
+    size_t requiredVertices = 0;
+    for (size_t idx : particleInstanceIndices_) {
+        if (idx >= instances.size()) continue;
+        const auto& inst = instances[idx];
+        if (!inst.cachedModel || inst.cachedModel->isInstancePortal) continue;
+        const glm::vec3 distance = inst.position - cachedCamPos_;
+        if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
+        requiredVertices += inst.particles.size();
+    }
+    if (requiredVertices > particleVertexCapacity_) {
+        const size_t capacity = std::max(requiredVertices, particleVertexCapacity_ * 2);
+        VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = capacity * 9 * sizeof(float);
+        info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        VmaAllocationCreateInfo allocationInfo{};
+        allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        ::VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VmaAllocationInfo mapped{};
+        const auto allocator = vkCtx_->getAllocator();
+        const VkResult result = vmaCreateBuffer(allocator, &info, &allocationInfo,
+                                                &buffer, &allocation, &mapped);
+        if (result != VK_SUCCESS) {
+            LOG_ERROR("Particle vertex buffer allocation failed: ", result,
+                      " vertices=", capacity);
+            throw std::runtime_error("Particle vertex buffer allocation failed");
+        }
+        const ::VkBuffer previousBuffer = m2ParticleVB_;
+        const VmaAllocation previousAllocation = m2ParticleVBAlloc_;
+        vkCtx_->deferAfterAllFrameFences([allocator, previousBuffer, previousAllocation] {
+            vmaDestroyBuffer(allocator, previousBuffer, previousAllocation);
+        });
+        m2ParticleVB_ = buffer;
+        m2ParticleVBAlloc_ = allocation;
+        m2ParticleVBMapped_ = mapped.pMappedData;
+        particleVertexCapacity_ = capacity;
+        LOG_INFO("Particle vertex capacity grown to ", capacity,
+                 " for ", requiredVertices, " live particles");
+    }
+
     // Written straight into the mapped buffer rather than accumulated into a
     // vector per group and copied in afterwards; see ParticleRun.
     if (!m2ParticleVBMapped_) return;
@@ -618,7 +649,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         if (!inst.cachedModel) continue;
         const auto& gpu = *inst.cachedModel;
         if (gpu.isInstancePortal) continue;
-
+        const glm::vec3 distance = inst.position - cachedCamPos_;
+        if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
 
         // Cache the last emitter's per-emitter state so adjacent particles
         // sharing an emitter (the common case - particles from one source
@@ -726,7 +758,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 }
             }
 
-            if (vbWritten >= MAX_M2_PARTICLE_VERTS) break;
+            assert(vbWritten < particleVertexCapacity_);
             // A run per stretch of particles sharing a group. The group only
             // changes when the emitter does, and particles from one emitter
             // are adjacent, so this closes a run about once per emitter.
@@ -757,6 +789,27 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             ++vbWritten;
             ++particleRuns_.back().count;
             totalParticles++;
+        }
+
+        // Opt-in effect diagnostics for captured visual comparisons.
+        static const char* traceModel = std::getenv("WOWEE_PARTICLE_TRACE");
+        if (traceModel && gpu.name == traceModel) {
+            static uint32_t traceFrame = 0;
+            if (++traceFrame % 60 == 1) {
+                LOG_INFO("Particle trace: model=", gpu.name, " origin=", inst.position.x,
+                         ",", inst.position.y, ",", inst.position.z, " count=", inst.particles.size(),
+                         " highestZ=", highestParticleZ, " largest=", widestParticle,
+                         " scale=", inst.scale, " time=", inst.animTime);
+                for (size_t ei = 0; ei < gpu.particleEmitters.size(); ++ei) {
+                    const auto& em = gpu.particleEmitters[ei];
+                    LOG_INFO("Particle emitter ", ei, " color=",
+                        interpFBlockVec3(em.particleColor, 0.5f).x, ",",
+                        interpFBlockVec3(em.particleColor, 0.5f).y, ",",
+                        interpFBlockVec3(em.particleColor, 0.5f).z,
+                        " alpha=", interpFBlockFloat(em.particleAlpha, 0.5f),
+                        " texture=", static_cast<const void*>(gpu.particleTextures[ei]));
+                }
+            }
         }
 
         // Said once per model, on an absolute reach rather than a ratio

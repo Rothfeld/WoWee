@@ -574,3 +574,13 @@ Entertainment, Inc.
 Optional development tool: [external comparison camera](docs/view-sync.md).
 
 TBC comparison behavior and debugging notes: [overhead labels, hover, NPC tooltips and equipment](docs/tbc-overhead-labels.md).
+
+### Legacy particle rendering
+
+TBC particle headers store the emitter type at byte 0x2a; Wrath stores it at
+0x29. Plane emitters use their authored area, angular ranges and speed variation.
+Particle textures supply their silhouette, and SRC_ALPHA blending consumes
+unpremultiplied shader color. The upload buffer grows to fit visible particles;
+a fixed global cap can hide newly created loot and spell effects behind scenery.
+Set `WOWEE_PARTICLE_TRACE=LootFX` to log emitter colors, sizes and submitted bounds.
+The particle layout regression runs in `test_m2_ribbon_tracks`.
