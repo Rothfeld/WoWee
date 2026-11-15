@@ -1205,6 +1205,9 @@ void AnimationController::updateCharacterAnimation() {
         dbgLastAnim = animId;
     }
 
+    characterRenderer->setLocomotionSpeed(characterInstanceId,
+        cameraController->getGroundLocomotionSpeed());
+
     if (shouldPlay) {
         characterRenderer->playAnimation(characterInstanceId, animId, loop, 0, true);
         lastPlayerAnimRequest_ = animId;

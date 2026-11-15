@@ -103,6 +103,7 @@ public:
     [[nodiscard]] bool isIdleOrbitEnabled() const { return idleOrbitEnabled_; }
 
     [[nodiscard]] float getMovementSpeed() const { return movementSpeed; }
+    [[nodiscard]] float getGroundLocomotionSpeed() const { return groundLocomotionSpeed_; }
     [[nodiscard]] const glm::vec3& getDefaultPosition() const { return defaultPosition; }
     [[nodiscard]] bool isMoving() const;
     [[nodiscard]] float getYaw() const { return yaw; }
@@ -408,6 +409,7 @@ private:
     float travelYaw_ = 180.0f; // Heading of actual movement vector (see getTravelYaw)
 
     // Movement settings
+    float groundLocomotionSpeed_ = 0.0f;
     float movementSpeed = 50.0f;
     float sprintMultiplier = 3.0f;
     float slowMultiplier = 0.3f;

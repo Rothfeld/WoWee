@@ -2225,10 +2225,10 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             }
             const auto& seq = inst.cachedModel->data.sequences[inst.currentSequenceIndex];
             float playbackRate = 1.0f;
-            if ((seq.id == anim::WALK || seq.id == anim::RUN) &&
-                inst.locomotionSpeed >= 0.0f && seq.movingSpeed > 0.0f) {
+            if ((seq.id == anim::WALK || seq.id == anim::RUN || seq.id == anim::WALK_BACKWARDS) &&
+                inst.locomotionSpeed >= 0.0f && seq.movingSpeed != 0.0f) {
                 assert(inst.scale > 0.0f);
-                playbackRate = inst.locomotionSpeed / (seq.movingSpeed * inst.scale);
+                playbackRate = inst.locomotionSpeed / (std::abs(seq.movingSpeed) * inst.scale);
             }
             inst.playbackRate = playbackRate;
             inst.animationTime += deltaTime * 1000.0f * playbackRate;

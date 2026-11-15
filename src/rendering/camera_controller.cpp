@@ -3016,6 +3016,7 @@ void CameraController::update(float deltaTime) {
     f.gravity = gravity;
     f.jumpVel = jumpVel;
     f.speed = speed;
+    groundLocomotionSpeed_ = glm::dot(movement, movement) > 0.0001f ? speed : 0.0f;
     f.forward = forward;
     f.right = right;
     f.forward3D = forward3D;

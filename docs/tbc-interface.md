@@ -243,3 +243,11 @@ Standing, locomotion, and weapon-ready poses cross-fade using the destination
 M2 sequence's blendTime. DwarfMale TBC Stand and Ready1H both specify 150 ms.
 This skeletal transition does not request a draw/sheath animation. One-shot
 attack and activity chains retain their own completion handling.
+
+Local-player ground locomotion supplies the movement controller's selected
+speed to the renderer. Walk, Run, and WalkBackwards playback uses movement
+speed divided by abs(M2 movingSpeed) and model scale. Negative movingSpeed
+encodes a backwards stride, not a disabled speed track. DwarfMale's backwards
+sequence has duration 800 ms and movingSpeed -2.5; at 4.5 yards/s its playback
+rate is 1.8, giving a roughly 444 ms cycle. Diagonal input uses normalized
+movement speed.
