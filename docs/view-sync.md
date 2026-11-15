@@ -26,3 +26,9 @@ Workspace `tools/client-loop/sync-view.py` drives this protocol alongside a
 console-only server alignment command and read-only native camera supervisor.
 It stores both screenshots and acknowledgement evidence outside this repository.
 This interface does not teleport characters or alter gameplay by itself.
+
+Same-map teleport handling must update both renderer character yaw and camera
+controller facing from the server orientation. Updating movementInfo alone is
+insufficient: per-frame movement synchronization copies renderer facing back
+into outgoing packets. Live repeated server snapshots verify facing remains
+aligned after the teleport acknowledgement, rather than only at acknowledgement.

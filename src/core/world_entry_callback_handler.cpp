@@ -218,6 +218,13 @@ void WorldEntryCallbackHandler::setupCallbacks() {
             LOG_INFO("Same-map teleport (map ", mapId, "), skipping full world reload");
             // canonical and renderPos already computed above for distance check
             renderer_.getCharacterPosition() = renderPos;
+            // Same-map teleports must replace render/controller facing too.
+            // Otherwise per-frame movement sync sends the pre-teleport yaw back.
+            const float facing = coords::canonicalToCharacterYawDeg(gameHandler_.getMovementInfo().orientation);
+            renderer_.setCharacterYaw(facing);
+            if (auto* cameraController = renderer_.getCameraController()) {
+                cameraController->setFacingYaw(facing);
+            }
             if (renderer_.getCameraController()) {
                 auto* ft = renderer_.getCameraController()->getFollowTargetMutable();
                 if (ft) *ft = renderPos;
