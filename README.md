@@ -739,3 +739,13 @@ its expansion asset directory, not the source `Data` directory.
 
 Chair stand states retain the server seat heading while mouse, touch, or idle
 orbit moves the camera. Leaving the chair restores normal camera-driven facing.
+
+### World mouse clicks
+
+Mouse press and release edges survive between rendered frames. NPC interaction,
+loot, and targeting use the event's press/release coordinates, so a short click
+is not lost when both edges arrive before the next frame. Virtual controller
+mouse buttons retain their sampled held-state transitions.
+
+`WOWEE_INPUT_TRACE=1` logs SDL button/motion events, sampled cursor coordinates,
+button mask, and relative-mode state for diagnosing capture problems.

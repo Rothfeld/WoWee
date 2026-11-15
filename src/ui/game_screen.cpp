@@ -1550,7 +1550,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     // Record press position on mouse-down
     if (!io.WantCaptureMouse && !frameXmlOwnsMouse() &&
         input.isMouseButtonJustPressed(SDL_BUTTON_LEFT) && !input.isMouseButtonPressed(SDL_BUTTON_RIGHT)) {
-        leftClickPressPos_ = input.getMousePosition();
+        leftClickPressPos_ = input.getMousePressPosition(SDL_BUTTON_LEFT);
         leftClickWasPress_ = true;
 
         // Light the object being pressed on.
@@ -1590,7 +1590,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
     if (leftClickWasPress_ && input.isMouseButtonJustReleased(SDL_BUTTON_LEFT)) {
         leftClickWasPress_ = false;
-        glm::vec2 releasePos = input.getMousePosition();
+        glm::vec2 releasePos = input.getMouseReleasePosition(SDL_BUTTON_LEFT);
         glm::vec2 dragDelta = releasePos - leftClickPressPos_;
         float dragDistSq = glm::dot(dragDelta, dragDelta);
         const float CLICK_THRESHOLD = clickDragThreshold();
@@ -1715,14 +1715,16 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     // mob would auto-attack it without the player intending to engage.
     if (!io.WantCaptureMouse && !frameXmlOwnsMouse() &&
         input.isMouseButtonJustPressed(SDL_BUTTON_RIGHT) && !input.isMouseButtonPressed(SDL_BUTTON_LEFT)) {
-        rightClickPressPos_ = input.getMousePosition();
+        rightClickPressPos_ = input.getMousePressPosition(SDL_BUTTON_RIGHT);
         rightClickWasPress_ = true;
     }
 
     // On right mouse-up, act only if it was a click (not a drag / camera rotate).
     if (tapInteract || (rightClickWasPress_ && input.isMouseButtonJustReleased(SDL_BUTTON_RIGHT))) {
         rightClickWasPress_ = false;
-        glm::vec2 rDragDelta = input.getMousePosition() - rightClickPressPos_;
+        const glm::vec2 rightClickReleasePos = input.getMouseReleasePosition(
+            tapInteract ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT);
+        glm::vec2 rDragDelta = rightClickReleasePos - rightClickPressPos_;
         const float RCLICK_THRESHOLD = clickDragThreshold();
         if (glm::dot(rDragDelta, rDragDelta) >= RCLICK_THRESHOLD * RCLICK_THRESHOLD) {
             // Treated as a camera rotate - do not interact/attack.
@@ -1739,7 +1741,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             auto* camera = renderer ? renderer->getCamera() : nullptr;
             auto* window = services_.window;
             if (bobber && bobber->getType() == game::ObjectType::GAMEOBJECT && camera && window) {
-                const glm::vec2 mousePos = input.getMousePosition();
+                const glm::vec2 mousePos = rightClickReleasePos;
                 const rendering::Ray ray = camera->screenToWorldRay(
                     mousePos.x, mousePos.y,
                     static_cast<float>(window->getWidth()),
@@ -1802,7 +1804,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     }
                 }
 
-                glm::vec2 mousePos = input.getMousePosition();
+                glm::vec2 mousePos = rightClickReleasePos;
                 float screenW = static_cast<float>(window->getWidth());
                 float screenH = static_cast<float>(window->getHeight());
                 rendering::Ray ray = camera->screenToWorldRay(mousePos.x, mousePos.y, screenW, screenH);

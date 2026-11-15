@@ -1469,6 +1469,17 @@ void Application::run() {
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (core::envFlagEnabled("WOWEE_INPUT_TRACE") &&
+                (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_MOTION)) {
+                float mx = 0, my = 0;
+                const auto buttons = SDL_GetMouseState(&mx, &my);
+                LOG_INFO("INPUT_TRACE type=", event.type, " sample=", mx, ",", my, " buttons=", buttons,
+                         " event=", event.type == SDL_EVENT_MOUSE_MOTION ? event.motion.x : event.button.x,
+                         ",", event.type == SDL_EVENT_MOUSE_MOTION ? event.motion.y : event.button.y,
+                         " rel=", event.type == SDL_EVENT_MOUSE_MOTION ? event.motion.xrel : 0,
+                         ",", event.type == SDL_EVENT_MOUSE_MOTION ? event.motion.yrel : 0,
+                         " mode=", SDL_GetWindowRelativeMouseMode(window->getSDLWindow()));
+            }
             // Sound in Background. Off in the real client and off here: losing
             // focus silences the client rather than playing on behind whatever
             // the player switched to. Read at the moment focus changes, so
@@ -1507,6 +1518,7 @@ void Application::run() {
                     renderer->getCameraController()->releaseMouseCapture();
             }
             if (mapWindow_ && mapWindow_->handleEvent(event)) continue;
+            Input::getInstance().processEvent(event);
 
             // Submit native edges only after the UI has had first refusal,
             // including branches that leave this iteration with continue.

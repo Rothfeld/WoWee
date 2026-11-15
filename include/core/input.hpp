@@ -12,6 +12,7 @@ public:
     static Input& getInstance();
 
     void update();
+    void processEvent(const SDL_Event& event);
 
     // Keyboard
     [[nodiscard]] bool isKeyPressed(SDL_Scancode key) const;
@@ -41,6 +42,9 @@ public:
     [[nodiscard]] bool isMouseButtonJustPressed(int button) const;
     [[nodiscard]] bool isMouseButtonJustReleased(int button) const;
 
+    [[nodiscard]] glm::vec2 getMousePressPosition(int button) const { return mousePressPosition.at(button); }
+    [[nodiscard]] glm::vec2 getMouseReleasePosition(int button) const { return mouseReleasePosition.at(button); }
+
     [[nodiscard]] glm::vec2 getMousePosition() const { return mousePosition; }
     [[nodiscard]] glm::vec2 getMouseDelta() const { return mouseDelta; }
 
@@ -62,6 +66,13 @@ private:
     std::array<bool, NUM_MOUSE_BUTTONS> currentMouseState = {};
     std::array<bool, NUM_MOUSE_BUTTONS> virtualMouseState = {};
     std::array<bool, NUM_MOUSE_BUTTONS> previousMouseState = {};
+
+    std::array<bool, NUM_MOUSE_BUTTONS> pendingMousePress = {};
+    std::array<bool, NUM_MOUSE_BUTTONS> pendingMouseRelease = {};
+    std::array<bool, NUM_MOUSE_BUTTONS> mousePressed = {};
+    std::array<bool, NUM_MOUSE_BUTTONS> mouseReleased = {};
+    std::array<glm::vec2, NUM_MOUSE_BUTTONS> mousePressPosition = {};
+    std::array<glm::vec2, NUM_MOUSE_BUTTONS> mouseReleasePosition = {};
 
     glm::vec2 mousePosition = glm::vec2(0.0f);
     glm::vec2 previousMousePosition = glm::vec2(0.0f);

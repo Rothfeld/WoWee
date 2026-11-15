@@ -707,3 +707,44 @@ TEST_CASE_METHOD(Integration, "Existing binding editor isolates device capture, 
     lua.dispatchPadKey("SHIFT-PAD4", false);
     truth("select(2, WoweeGetControllerBindingKey('TOGGLEAUTORUN')) == 'SHIFT-PAD4'");
 }
+
+TEST_CASE_METHOD(Integration, "Mouse clicks survive a complete press and release between frames", "[input][mouse-edges]") {
+    auto& input = core::Input::getInstance();
+    for (const auto button : {SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT}) {
+        SDL_Event event{};
+        event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+        event.button.button = button;
+        event.button.x = 620;
+        event.button.y = 310;
+        input.processEvent(event);
+        event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+        event.button.x = 622;
+        input.processEvent(event);
+        input.update();
+        CHECK(input.isMouseButtonJustPressed(button));
+        CHECK(input.isMouseButtonJustReleased(button));
+        CHECK(input.getMousePressPosition(button) == glm::vec2(620, 310));
+        CHECK(input.getMouseReleasePosition(button) == glm::vec2(622, 310));
+        input.update();
+        CHECK_FALSE(input.isMouseButtonJustPressed(button));
+        CHECK_FALSE(input.isMouseButtonJustReleased(button));
+    }
+}
+
+TEST_CASE_METHOD(Integration, "Virtual pointer edges retain held state across frames", "[input][mouse-edges]") {
+    auto& input = core::Input::getInstance();
+    input.setVirtualMouseButton(SDL_BUTTON_RIGHT, true);
+    input.update();
+    CHECK(input.isMouseButtonPressed(SDL_BUTTON_RIGHT));
+    CHECK(input.isMouseButtonJustPressed(SDL_BUTTON_RIGHT));
+    CHECK_FALSE(input.isMouseButtonJustReleased(SDL_BUTTON_RIGHT));
+    input.update();
+    CHECK(input.isMouseButtonPressed(SDL_BUTTON_RIGHT));
+    CHECK_FALSE(input.isMouseButtonJustPressed(SDL_BUTTON_RIGHT));
+    input.setVirtualMouseButton(SDL_BUTTON_RIGHT, false);
+    input.update();
+    CHECK_FALSE(input.isMouseButtonPressed(SDL_BUTTON_RIGHT));
+    CHECK(input.isMouseButtonJustReleased(SDL_BUTTON_RIGHT));
+    input.update();
+    CHECK_FALSE(input.isMouseButtonJustReleased(SDL_BUTTON_RIGHT));
+}

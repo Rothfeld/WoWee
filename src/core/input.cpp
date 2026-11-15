@@ -8,6 +8,19 @@ Input& Input::getInstance() {
     return instance;
 }
 
+void Input::processEvent(const SDL_Event& event) {
+    if (event.type != SDL_EVENT_MOUSE_BUTTON_DOWN && event.type != SDL_EVENT_MOUSE_BUTTON_UP) return;
+    const auto button = event.button.button;
+    if (button == 0 || button >= NUM_MOUSE_BUTTONS) return;
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        pendingMousePress[button] = true;
+        mousePressPosition[button] = {event.button.x, event.button.y};
+    } else {
+        pendingMouseRelease[button] = true;
+        mouseReleasePosition[button] = {event.button.x, event.button.y};
+    }
+}
+
 void Input::update() {
     // Copy current state to previous
     previousKeyState = currentKeyState;
@@ -33,7 +46,18 @@ void Input::update() {
     currentMouseState[0] = false;
     for (int i = 1; i < NUM_MOUSE_BUTTONS; ++i) {
         currentMouseState[i] = ((mouseState & SDL_BUTTON_MASK(i)) != 0) || virtualMouseState[i];
+        // Both edges can arrive between rendered frames. Sampling only held
+        // state loses that click entirely, including NPC interaction and loot.
+        const bool pressed = currentMouseState[i] && !previousMouseState[i];
+        const bool released = !currentMouseState[i] && previousMouseState[i];
+        mousePressed[i] = pendingMousePress[i] || pressed;
+        mouseReleased[i] = pendingMouseRelease[i] || released;
+        if (pressed && !pendingMousePress[i]) mousePressPosition[i] = mousePosition;
+        if (released && !pendingMouseRelease[i]) mouseReleasePosition[i] = mousePosition;
     }
+
+    pendingMousePress.fill(false);
+    pendingMouseRelease.fill(false);
 
     // Calculate mouse delta
     mouseDelta = mousePosition - previousMousePosition;
@@ -69,12 +93,12 @@ bool Input::isMouseButtonPressed(int button) const {
 
 bool Input::isMouseButtonJustPressed(int button) const {
     if (button < 0 || button >= NUM_MOUSE_BUTTONS) return false;
-    return currentMouseState[button] && !previousMouseState[button];
+    return mousePressed[button];
 }
 
 bool Input::isMouseButtonJustReleased(int button) const {
     if (button < 0 || button >= NUM_MOUSE_BUTTONS) return false;
-    return !currentMouseState[button] && previousMouseState[button];
+    return mouseReleased[button];
 }
 } // namespace core
 } // namespace wowee
