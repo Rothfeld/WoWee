@@ -1039,6 +1039,9 @@ VkDescriptorSet cursorTexture(pipeline::AssetManager* assets, core::Window* wind
 /// Draw one in place of the pointer. The tip sits at the mouse position, the
 /// way the art is authored.
 void drawCursorTexture(VkDescriptorSet tex) {
+    SDL_Window* focused = SDL_GetMouseFocus();
+    if (!focused || SDL_GetWindowRelativeMouseMode(focused) ||
+        !ImGui::IsMousePosValid()) return;
     ImGui::SetMouseCursor(ImGuiMouseCursor_None);
     const ImVec2 at = ImGui::GetIO().MousePos;
     constexpr float kSize = 32.0f;
@@ -1518,6 +1521,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 }
             }
         }
+    }
+
+    // World and FrameXML share the WoW gauntlet when no contextual cursor
+    // was drawn. ImGui otherwise restores its desktop arrow each frame.
+    if (ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
+        const auto texture = cursorTexture(services_.assetManager, services_.window,
+                                           "Interface\\Cursor\\Point.blp");
+        if (!texture) throw std::runtime_error("Missing default WoW cursor texture");
+        drawCursorTexture(texture);
     }
 
     // Left-click targeting: only on mouse-up if the mouse didn't drag (camera rotate)

@@ -209,3 +209,7 @@ including paired zone/continent hover captures and native API probes.
 Minimap terrain renders opaque. The custom ImGui panel opacity setting does not
 fade its terrain; otherwise a saved `ui_opacity=65` leaks the world scene through
 an otherwise opaque FrameXML minimap border.
+
+The in-game default cursor uses `Interface/Cursor/Point.blp` over empty world
+space and FrameXML. Contextual world cursors take precedence. Software cursor
+rendering stops while SDL relative mouse mode is active or mouse focus is absent.
