@@ -11,6 +11,25 @@
 
 namespace wowee::addons {
 
+// Social APIs accept either a unit token or a literal player name. Resolve
+// tokens before constructing name-based party packets, including remote members.
+static std::string partyRecipient(lua_State* L, game::GameHandler* gh) {
+    const char* argument = luaL_optstring(L, 1, "");
+    const std::string recipient = *argument ? argument : "target";
+    std::string token = recipient;
+    toLowerInPlace(token);
+    const uint64_t guid = resolveUnitGuid(gh, token);
+    if (guid == 0) return *argument ? recipient : std::string();
+    if (auto* unit = resolveUnit(L, token.c_str()); unit && !unit->getName().empty())
+        return unit->getName();
+    for (const auto& member : gh->getPartyData().members) {
+        if (member.guid == guid && !member.name.empty()) return member.name;
+    }
+    const auto& name = gh->lookupName(guid);
+    if (name.empty()) LOG_WARNING("Party recipient name unavailable for unit ", token);
+    return name;
+}
+
 // The languages a character can speak: their racial one, plus the faction
 // tongue every member of that faction is taught. Human and Orc are the two
 // where those are the same, so they know exactly one.
@@ -2927,12 +2946,18 @@ void registerSocialLuaAPI(lua_State* L) {
         }},
                 {"InviteUnit", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            if (gh) gh->inviteToGroup(luaL_checkstring(L, 1));
+            if (gh) {
+                const std::string recipient = partyRecipient(L, gh);
+                if (!recipient.empty()) gh->inviteToGroup(recipient);
+            }
             return 0;
         }},
                 {"UninviteUnit", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            if (gh) gh->uninvitePlayer(luaL_checkstring(L, 1));
+            if (gh) {
+                const std::string recipient = partyRecipient(L, gh);
+                if (!recipient.empty()) gh->uninvitePlayer(recipient);
+            }
             return 0;
         }},
                 {"LeaveParty", [](lua_State* L) -> int {

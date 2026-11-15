@@ -291,6 +291,9 @@ Wowee follows a modular architecture with clear separation of concerns:
 **FrameXML interface** (`src/addons/`, `src/ui/`) - Blizzard's own interface, run through this client's Lua engine and widget tree. In game it draws the unit frames, action bars, bags, chat, quest log, spellbook, talents and the rest. See `docs/widget-system.md`
 - `AddonManager` - Loads FrameXML from its own manifest, then addons from their `.toc` files. `WOWEE_LOAD_FRAMEXML=0` turns FrameXML off
 - `LuaEngine` - Lua 5.1 state and the WoW API bindings (`lua_engine.cpp`, `lua_*_api.cpp`)
+  - Party name-based packets resolve `InviteUnit`/`UninviteUnit` unit tokens
+    (for example `target` and `party1`) before sending. Explicit player names
+    remain valid, including names outside the nearby entity list.
 - `WidgetTree` / `WidgetRenderer` - Retained frames, anchors and hit testing; drawn through ImGui draw lists with `Interface\` art
 - `emitFrameXml` (`framexml_emitter.cpp`) - Turns FrameXML's XML into the Lua that builds it
 
