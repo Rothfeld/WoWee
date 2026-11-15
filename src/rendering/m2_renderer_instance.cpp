@@ -935,6 +935,25 @@ bool M2Renderer::getInstanceWorldBounds(uint32_t instanceId, glm::vec3& outMin,
     return true;
 }
 
+namespace {
+
+// Grid categories use model-local normals. Pitch and roll can turn local walls
+// into world-space floors, so world-down rays must query both categories.
+void gatherPlacedFloorTriangles(const M2ModelGPU::CollisionMesh& mesh,
+        const glm::vec3& rayOrigin, const glm::vec3& rayEnd,
+        std::vector<uint32_t>& out) {
+    const glm::vec2 low = glm::min(glm::vec2(rayOrigin), glm::vec2(rayEnd)) - glm::vec2(1);
+    const glm::vec2 high = glm::max(glm::vec2(rayOrigin), glm::vec2(rayEnd)) + glm::vec2(1);
+    mesh.getFloorTrisInRange(low.x, low.y, high.x, high.y, out);
+    thread_local std::vector<uint32_t> walls;
+    mesh.getWallTrisInRange(low.x, low.y, high.x, high.y, walls);
+    out.insert(out.end(), walls.begin(), walls.end());
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+}
+
+} // namespace
+
 std::optional<float> M2Renderer::getInstanceFloorHeight(uint32_t instanceId,
                                                        float glX, float glY,
                                                        float glZ) const {
@@ -958,12 +977,8 @@ std::optional<float> M2Renderer::getInstanceFloorHeight(uint32_t instanceId,
     if (localRayLength <= 1e-5f) return std::nullopt;
     const glm::vec3 localRayDir = localRayVector / localRayLength;
 
-    model.collision.getFloorTrisInRange(
-        std::min(localRayOrigin.x, localRayEnd.x) - 1.0f,
-        std::min(localRayOrigin.y, localRayEnd.y) - 1.0f,
-        std::max(localRayOrigin.x, localRayEnd.x) + 1.0f,
-        std::max(localRayOrigin.y, localRayEnd.y) + 1.0f,
-        tl_m2_collisionTriScratch);
+    gatherPlacedFloorTriangles(model.collision, localRayOrigin, localRayEnd,
+                               tl_m2_collisionTriScratch);
 
     std::optional<float> best;
     for (uint32_t ti : tl_m2_collisionTriScratch) {
@@ -1036,12 +1051,8 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
             if (localRayLength <= 1e-5f) continue;
             const glm::vec3 localRayDir = localRayVector / localRayLength;
 
-            model.collision.getFloorTrisInRange(
-                std::min(localRayOrigin.x, localRayEnd.x) - 1.0f,
-                std::min(localRayOrigin.y, localRayEnd.y) - 1.0f,
-                std::max(localRayOrigin.x, localRayEnd.x) + 1.0f,
-                std::max(localRayOrigin.y, localRayEnd.y) + 1.0f,
-                tl_m2_collisionTriScratch);
+            gatherPlacedFloorTriangles(model.collision, localRayOrigin, localRayEnd,
+                                       tl_m2_collisionTriScratch);
 
             float bestWorldHitZ = -std::numeric_limits<float>::max();
             float bestHitNormalZ = 1.0f;

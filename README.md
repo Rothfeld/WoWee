@@ -806,3 +806,9 @@ Camera reset preserves the server spawn elevation. Floor searches above outdoor
 terrain can select an interior ceiling or roof; they must not relocate an online
 spawn. Reset invalidates cached floor contact, then normal movement resolves
 contact using streamed collision meshes.
+
+### Tilted doodad floors
+
+M2 floor rays query both local floor and wall triangle grids. A barrel placed
+on its side can support a player on triangles classified as walls before
+placement. Walkability is evaluated using transformed world-space normals.
