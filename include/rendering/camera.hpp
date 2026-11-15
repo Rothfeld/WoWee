@@ -24,6 +24,7 @@ public:
     }
     void setRotation(float yaw, float pitch) {
         if (!std::isfinite(yaw) || !std::isfinite(pitch)) return;
+        externalPose = false;
         this->yaw = yaw; this->pitch = pitch; updateViewMatrix();
     }
     void setAspectRatio(float aspect) {
@@ -36,6 +37,11 @@ public:
         if (!std::isfinite(fov) || fov <= 0.0f || fov >= 180.0f) return;
         this->fov = fov; updateProjectionMatrix();
     }
+
+    // Explicit comparison/debug camera. Angles and FOV are degrees.
+    void setExternalPose(const glm::vec3& pos, const glm::vec3& forward,
+                         const glm::vec3& up, float verticalFov);
+    void clearExternalPose() { externalPose = false; updateViewMatrix(); }
 
     [[nodiscard]] const glm::vec3& getPosition() const { return position; }
     [[nodiscard]] const glm::mat4& getViewMatrix() const { return viewMatrix; }
@@ -63,6 +69,9 @@ private:
     void updateViewMatrix();
     void updateProjectionMatrix();
 
+    bool externalPose = false;
+    glm::vec3 externalForward{1, 0, 0};
+    glm::vec3 externalUp{0, 0, 1};
     glm::vec3 position = glm::vec3(0.0f);
     float yaw = 0.0f;
     float pitch = 0.0f;

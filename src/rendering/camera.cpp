@@ -1,6 +1,7 @@
 #include "rendering/camera.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
+#include <stdexcept>
 
 namespace wowee {
 namespace rendering {
@@ -10,10 +11,28 @@ Camera::Camera() {
     updateProjectionMatrix();
 }
 
+void Camera::setExternalPose(const glm::vec3& pos, const glm::vec3& forward,
+                             const glm::vec3& up, float verticalFov) {
+    const auto finite = [](const glm::vec3& v) {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    };
+    if (!finite(pos) || !finite(forward) || !finite(up) ||
+        !std::isfinite(verticalFov) || verticalFov <= 1 || verticalFov >= 179 ||
+        std::abs(glm::length(forward) - 1) > .002f ||
+        std::abs(glm::length(up) - 1) > .002f || std::abs(glm::dot(forward, up)) > .002f)
+        throw std::invalid_argument("Invalid external camera pose");
+    position = pos;
+    externalForward = glm::normalize(forward);
+    externalUp = glm::normalize(up);
+    externalPose = true;
+    setFov(verticalFov);
+    updateViewMatrix();
+}
+
 void Camera::updateViewMatrix() {
     glm::vec3 front = getForward();
     // Use Z-up for WoW coordinate system
-    viewMatrix = glm::lookAt(position, position + front, glm::vec3(0.0f, 0.0f, 1.0f));
+    viewMatrix = glm::lookAt(position, position + front, externalPose ? externalUp : glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
 void Camera::updateProjectionMatrix() {
@@ -30,6 +49,7 @@ void Camera::updateProjectionMatrix() {
 }
 
 glm::vec3 Camera::getForward() const {
+    if (externalPose) return externalForward;
     // WoW coordinate system: X/Y horizontal, Z vertical
     glm::vec3 front;
     front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
@@ -39,6 +59,7 @@ glm::vec3 Camera::getForward() const {
 }
 
 glm::vec3 Camera::getRight() const {
+    if (externalPose) return glm::normalize(glm::cross(externalForward, externalUp));
     // Use Z-up for WoW coordinate system. If forward is parallel to the up
     // axis (camera staring straight up/down), cross is zero and normalize
     // returns NaN - fall back to world +X so view/proj stay finite.
@@ -49,6 +70,7 @@ glm::vec3 Camera::getRight() const {
 }
 
 glm::vec3 Camera::getUp() const {
+    if (externalPose) return externalUp;
     glm::vec3 c = glm::cross(getRight(), getForward());
     float len = glm::length(c);
     if (len < 1e-6f) return glm::vec3(0.0f, 0.0f, 1.0f);

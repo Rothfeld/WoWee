@@ -570,3 +570,5 @@ Entertainment, Inc.
 - [TrinityCore](https://github.com/TrinityCore/TrinityCore) - server reference
 - [MaNGOS](https://github.com/cmangos/mangos-wotlk) - server reference
 - [StormLib](https://github.com/ladislav-zezula/StormLib) - MPQ library
+
+Optional development tool: [external comparison camera](docs/view-sync.md).

@@ -1,3 +1,4 @@
+#include "rendering/view_sync.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/sun_direction.hpp"
 
@@ -1951,6 +1952,7 @@ void Renderer::update(float deltaTime) {
     if (cameraController) {
         auto cameraStart = std::chrono::steady_clock::now();
         cameraController->update(deltaTime);
+        if (camera) updateViewSync(*camera);
         auto cameraEnd = std::chrono::steady_clock::now();
         lastCameraUpdateMs = std::chrono::duration<double, std::milli>(cameraEnd - cameraStart).count();
         if (lastCameraUpdateMs > 50.0) {
