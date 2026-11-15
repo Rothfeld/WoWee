@@ -605,3 +605,8 @@ falling motion onto terrain; the paired rockface route still shows a 3-5 yard
 endpoint discrepancy and needs further native support-contact investigation.
 WMO wall distance is measured after clipping the triangle to the player's body
 span above the step budget, so low ramp edges do not block entry.
+
+Warden scan-boundary validation must include payload semantics. A code-scan
+address can decode as a DRIVER opcode by chance; a driver request still requires
+a valid nonzero string-table index. Accepting an invented driver consumes later
+memory checks and makes the server disconnect on a truncated response.

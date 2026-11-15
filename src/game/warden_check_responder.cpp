@@ -185,7 +185,16 @@ std::vector<uint8_t> buildWardenCheckResponse(const std::vector<uint8_t>& reques
         const CheckType ct = decode(at);
         if (ct != CT_UNKNOWN) {
             for (size_t size : requestSizes(ct)) {
-                if (at + 1 + size <= checkEnd && canParseFrom(at + 1 + size)) { ok = true; break; }
+                if (at + 1 + size > checkEnd) continue;
+                const size_t payload = at + 1;
+                // A candidate boundary must describe a valid request, not just
+                // bytes that happen to decode as opcodes inside a scan's hash.
+                if (ct == CT_MEM && (request[payload] > strings.size() || request[payload + 5] == 0)) continue;
+                if ((ct == CT_LUA || ct == CT_MPQ) &&
+                    (request[payload] == 0 || request[payload] > strings.size())) continue;
+                if (ct == CT_DRIVER &&
+                    (request[payload + 24] == 0 || request[payload + 24] > strings.size())) continue;
+                if (canParseFrom(at + 1 + size)) { ok = true; break; }
             }
         }
         parseMemo[at] = ok;
