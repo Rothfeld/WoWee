@@ -1106,19 +1106,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         else if (!showPlate) renderPos.z += 0.25f;
 
 
-        // Behind a building is out of sight, and a name that reads through a
-        // wall is worse than no name: it puts a player in a room they are not
-        // in. Distance and the frustum were the only tests here, so every
-        // nameplate drew over whatever stood in front of it.
-        //
-        // Cached per unit, because this is a collision query and there can be
-        // a dozen plates up. Recomputed when either end has moved far enough
-        // to change the answer, and every so often regardless, since the
-        // geometry between them streams in and out - the same treatment the
-        // selection circle gives its floor query.
+        // World names use the scene depth per text pixel below. Rejecting the
+        // entire label at its anchor hides visible text when a beam crosses
+        // only the anchor. Screen-space nameplates still need a sight query.
         static SightCache sight;
-        if (sight.blocked(services_.renderer ? services_.renderer->getWMORenderer() : nullptr,
-                          guid, camPos, renderPos)) {
+        if (showPlate && sight.blocked(
+                services_.renderer ? services_.renderer->getWMORenderer() : nullptr,
+                guid, camPos, renderPos)) {
             continue;
         }
 
@@ -1222,6 +1216,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ? std::clamp(static_cast<float>(unit->getHealth()) / static_cast<float>(unit->getMaxHealth()), 0.0f, 1.0f)
             : 0.0f;
 
+        const int plateVertexStart = drawList->VtxBuffer.Size;
         if (showPlate) {
         if (legacyPlates) {
             const int reaction = gameHandler.unitReactionToPlayer(*unit);
@@ -1668,6 +1663,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
 
         if (showThisName && !showPlate) drawList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+
+        // TBC dims every non-target plate while a target is selected. Apply
+        // frame opacity to border, fill, name, level and hover glow together.
+        if (showPlate && legacyPlates && targetGuid != 0 && !isTarget) {
+            for (int vertex = plateVertexStart; vertex < drawList->VtxBuffer.Size; ++vertex) {
+                auto& color = drawList->VtxBuffer[vertex].col;
+                const ImU32 alphaByte = ((color >> IM_COL32_A_SHIFT) & 0xffu) / 2u;
+                color = (color & ~IM_COL32_A_MASK) | (alphaByte << IM_COL32_A_SHIFT);
+            }
+        }
 
         // Click to target / right-click context: detect clicks inside the nameplate region.
         // Use the wider of name text or health bar for the horizontal hit area so short
