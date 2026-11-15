@@ -3897,6 +3897,10 @@ void CharacterRenderer::startFadeIn(uint32_t instanceId, float durationSeconds) 
     it->second.fadeInDuration = durationSeconds;
 }
 
+float CharacterRenderer::getInstanceScale(uint32_t instanceId) const {
+    return instances.at(instanceId).scale;
+}
+
 void CharacterRenderer::setInstanceScale(uint32_t instanceId, float scale) {
     assert(std::isfinite(scale) && scale > 0.0f);
     auto& instance = instances.at(instanceId);

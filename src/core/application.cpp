@@ -1,3 +1,4 @@
+#include "core/creature_ground_alignment.hpp"
 #include "core/application.hpp"
 #include "core/frame_pacer.hpp"
 #include "core/env_flag.hpp"
@@ -3540,7 +3541,17 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 }
             }
             float renderYaw = entity->getOrientation() + glm::radians(90.0f);
-            charRenderer->setInstanceRotation(instanceId, glm::vec3(0.0f, 0.0f, renderYaw));
+            glm::vec3 groundRotation(0.0f, 0.0f, renderYaw);
+            if (groundCreature && !onTransport) {
+                const auto* model = charRenderer->getInstanceModelData(instanceId);
+                assert(model);
+                groundRotation = creatureGroundRotation(*model,
+                    charRenderer->getInstanceScale(instanceId), renderPos, renderYaw,
+                    [&](const glm::vec3& sample) {
+                        return movingEntityFloor(renderer.get(), sample, std::nullopt);
+                    });
+            }
+            charRenderer->setInstanceRotation(instanceId, groundRotation);
         }
     }
     {

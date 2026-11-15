@@ -111,6 +111,7 @@ public:
                         bool updateAnimation = true);
     void startFadeIn(uint32_t instanceId, float durationSeconds);
     void setLocomotionSpeed(uint32_t instanceId, float speed);
+    [[nodiscard]] float getInstanceScale(uint32_t instanceId) const;
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;

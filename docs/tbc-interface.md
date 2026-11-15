@@ -150,3 +150,22 @@ checks clocks, global-time independence, pose continuity at stop, blend expiry,
 and death transition exclusion. Workspace experiments named `trogg_stride_rate`,
 `locomotion_stop_blend`, and `trogg_stride_stop` hold probe and paired footage.
 Exact TBC transition easing remains a visual comparison, not binary-verified.
+
+### Creature ground tilt
+
+Grounded creature orientation honors M2 global flags `0x1` (slope along local X)
+and `0x2` (slope along local Y). The original TBC wolf and boar models carry
+`0x1`; trogg and dwarf models carry zero. These are M2 header flags, not
+CreatureModelData flags. Flag reference:
+https://skarndev.github.io/wowlib/python/m2/root/
+
+The local +X forward axis pitches around -Y on an uphill slope. Floor probes
+span the inner half of the scaled collision footprint and use the same floor
+arbitration as creature placement, including WMO/M2 support. Unknown support
+leaves that axis upright. Flying, swimming and transport-attached creatures
+skip ground alignment. Probe spacing is an implementation choice; exact native
+sampling distances and tilt smoothing have not been reverse-engineered.
+
+The `creature_ground_tilt` experiment loads original models and checks rendered
+forward vectors on uphill/downhill/flat planes at four headings, flags-disabled
+models, and missing floor samples. Paired clips preserve visual comparisons.
