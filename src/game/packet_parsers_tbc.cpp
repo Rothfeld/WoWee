@@ -586,7 +586,7 @@ bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData
     }
 
     LOG_DEBUG("[TBC] MonsterMove: guid=0x", std::hex, data.guid, std::dec,
-              " type=", static_cast<int>(data.moveType), " dur=", data.duration, "ms",
+              " type=", static_cast<int>(data.moveType), " flags=0x", std::hex, data.splineFlags, std::dec, " dur=", data.duration, "ms",
               " dest=(", data.destX, ",", data.destY, ",", data.destZ, ")");
     return true;
 }

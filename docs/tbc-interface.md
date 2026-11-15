@@ -116,3 +116,12 @@ Reference: https://gist.github.com/robinsch/6ab8e96227b991db1a7c572aa77f5779
 The published reconstruction identified the family rule; local executable
 execution verifies it for build 8606. Model scaling for humanoid display extras
 and other client builds needs separate validation.
+
+## Creature walk/run state
+
+Creature gait comes from movement-block WALKING and explicit
+SMSG_SPLINE_MOVE_SET_WALK_MODE / SET_RUN_MODE messages. MonsterMove path flags
+must not replace that state: CMaNGOS TBC packet_builder.cpp deliberately sets
+Runmode (0x100) even on walking paths. The same rule applies to transport paths.
+Source: mangos-tbc/src/game/Movement/packet_builder.cpp, WriteCommonMonsterMovePart;
+mangos-tbc/src/game/Entities/Creature.cpp, Creature::SetWalk.

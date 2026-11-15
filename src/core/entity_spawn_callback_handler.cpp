@@ -167,6 +167,11 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     if (!gotState || (curAnimId != rendering::anim::DEATH && curAnimId != targetAnim)) {
                         cr->playAnimation(instanceId, targetAnim, /*loop=*/true);
                     }
+                    uint32_t actualAnim = 0; float actualTime = 0.0f, actualDuration = 0.0f;
+                    cr->getAnimationState(instanceId, actualAnim, actualTime, actualDuration);
+                    LOG_DEBUG("Creature locomotion: guid=0x", std::hex, guid, std::dec,
+                              " walking=", walking, " requested=", targetAnim,
+                              " actual=", actualAnim, " duration=", actualDuration);
                     entitySpawner_.getCreatureWasMoving()[guid] = true;
                 }
             }

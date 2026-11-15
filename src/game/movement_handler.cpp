@@ -1643,21 +1643,9 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         return;
     }
 
-    // Classic/TBC creature patrols encode ground locomotion in the spline:
-    // RUNMODE set means Run, while a clear bit means Walk. Publish it before
-    // the render callback. WotLK uses the separate spline mode opcodes already
-    // registered above, and 0x100 means DONE there, so do not reinterpret it.
-    const bool usesPreWotlkSplineFlags = isActiveExpansion("classic") ||
-                                          isActiveExpansion("turtle") ||
-                                          isActiveExpansion("tbc");
-    if (usesPreWotlkSplineFlags && entity->getType() == ObjectType::UNIT &&
-        owner_.unitMoveFlagsCallbackRef()) {
-        const uint32_t locomotionFlags =
-            isPreWotlkSplineWalking(data.splineFlags)
-                ? static_cast<uint32_t>(MovementFlags::WALKING)
-                : 0u;
-        owner_.unitMoveFlagsCallbackRef()(data.guid, locomotionFlags, ~0u);
-    }
+    // MonsterMove spline flags do not choose gait. CMaNGOS deliberately sets
+    // Runmode on walking splines too. Preserve movement-block walk state and
+    // explicit SMSG_SPLINE_MOVE_SET_WALK_MODE / SET_RUN_MODE updates.
 
     if (data.hasDest) {
         glm::vec3 destCanonical = core::coords::serverToCanonical(
@@ -1838,17 +1826,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
     float destLocalZ = spline.hasDest ? spline.destination.z : localZ;
     bool hasDest = spline.hasDest;
 
-    const bool usesPreWotlkSplineFlags = isActiveExpansion("classic") ||
-                                          isActiveExpansion("turtle") ||
-                                          isActiveExpansion("tbc");
-    if (usesPreWotlkSplineFlags && entity->getType() == ObjectType::UNIT &&
-        owner_.unitMoveFlagsCallbackRef()) {
-        const uint32_t locomotionFlags =
-            isPreWotlkSplineWalking(splineFlags)
-                ? static_cast<uint32_t>(MovementFlags::WALKING)
-                : 0u;
-        owner_.unitMoveFlagsCallbackRef()(moverGuid, locomotionFlags, ~0u);
-    }
+    // Transport splines also preserve the independently supplied gait.
 
     if (!owner_.getTransportManager()) {
         LOG_WARNING("SMSG_MONSTER_MOVE_TRANSPORT: TransportManager not available for mover 0x",
