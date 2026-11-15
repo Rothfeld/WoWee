@@ -1376,3 +1376,15 @@ TEST_CASE("A texture with only Color creates a solid fill", "[framexml][emit]") 
     const auto result = emitFrameXml(root);
     REQUIRE(has(result.lua, "SetTexture(0.000000, 0.000000, 0.000000, 1.000000)"));
 }
+
+TEST_CASE("Top-level XML frames preserve absent parents", "[framexml][emit]") {
+    // DropDownList1 must survive UIParent:Hide() while WorldMapFrame is open.
+    const auto root = parseOrFail(
+        "<Ui><Button name='DropDownList1'><Frames>"
+        "<Button name='$parentButton1'/></Frames></Button>"
+        "<Frame name='CharacterFrame' parent='UIParent'/></Ui>");
+    const auto result = emitFrameXml(root);
+    REQUIRE(has(result.lua, "CreateFrame(\"Button\", \"DropDownList1\", nil)"));
+    REQUIRE_FALSE(has(result.lua, "CreateFrame(\"Button\", \"DropDownList1Button1\", nil)"));
+    REQUIRE(has(result.lua, "CreateFrame(\"Frame\", \"CharacterFrame\", UIParent)"));
+}
