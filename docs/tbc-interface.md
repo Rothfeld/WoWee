@@ -238,3 +238,8 @@ swing, a different swing error, or attack cancellation clears it. This does
 not resend attacks or cancel attack intent. TBC melee uses ERR_BADATTACKPOS
 ("You are too far away!"). MessageFrame text and shadows honor justifyH,
 including UIErrorsFrame's CENTER and chat frames' LEFT alignment.
+
+Standing, locomotion, and weapon-ready poses cross-fade using the destination
+M2 sequence's blendTime. DwarfMale TBC Stand and Ready1H both specify 150 ms.
+This skeletal transition does not request a draw/sheath animation. One-shot
+attack and activity chains retain their own completion handling.

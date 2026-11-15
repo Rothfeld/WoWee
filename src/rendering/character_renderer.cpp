@@ -2124,14 +2124,30 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             LOG_WARNING("Animation ", animationId, " not found in model ", mId, ", using default");
         }
     }
-    // Use the authored cross-fade for locomotion state changes. One-shot and
-    // caller-owned animation chains retain their own completion semantics.
-    const auto locomotionState = [](uint32_t id) {
-        return id == anim::STAND || id == anim::WALK || id == anim::RUN;
+    // Locomotion and weapon-ready poses share authored cross-fades. Entering
+    // or leaving combat must blend the skeleton, without replaying a weapon
+    // draw. One-shot animation chains retain their completion semantics.
+    const auto blendablePose = [](uint32_t id) {
+        switch (id) {
+            case anim::STAND:
+            case anim::WALK:
+            case anim::RUN:
+            case anim::READY_UNARMED:
+            case anim::READY_1H:
+            case anim::READY_2H:
+            case anim::READY_2H_LOOSE:
+            case anim::READY_BOW:
+            case anim::READY_RIFLE:
+            case anim::READY_THROWN:
+            case anim::READY_SPELL_DIRECTED:
+                return true;
+            default:
+                return false;
+        }
     };
     instance.blendSequenceIndex = -1;
     if (previousSequence >= 0 && previousId != instance.currentAnimationId &&
-        locomotionState(previousId) && locomotionState(instance.currentAnimationId) &&
+        blendablePose(previousId) && blendablePose(instance.currentAnimationId) &&
         instance.currentSequenceIndex >= 0) {
         instance.blendDuration = model.sequences[instance.currentSequenceIndex].blendTime;
         if (instance.blendDuration > 0.0f) {
