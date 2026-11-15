@@ -11,6 +11,7 @@
 #include "ui/display_modes.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "ui/scene_pick.hpp"
+#include "ui/world_cursor.hpp"
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
 #include "ui/ui_texture_load.hpp"
@@ -1060,64 +1061,21 @@ const char* objectCursorPath(uint32_t goType) {
     }
 }
 
-/// Interface\\Cursor\\Buy.blp under the pointer while it is over a vendor.
-///
-/// Every interactable answered the same hand cursor, so a merchant looked like
-/// a door: what a unit is for is known before it is clicked, and the real
-/// client says so with the art. The bag is the one WoW uses for a vendor.
-///
-/// False when the unit is not a vendor to trade with, and the caller falls back
-/// to the hand. A hostile is not one - it is the attack cursor's business - and
-/// neither is a corpse, which is loot.
 bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
                                   const ui::ScenePick& pick) {
-    // resolve(), not closestGuid. closestGuid is whatever the ray touched
-    // nearest of anything pickable - and a game object's fallback sphere is 2.5
-    // yards against a unit's 1.8, so the rug, the stall or the chair a merchant
-    // stands on was usually nearer than the merchant. resolve() is what a click
-    // acts on, which is the whole reason the hover uses the click's picker:
-    // asking it a different question put the two back into disagreement, and
-    // the vendor cursor lost every argument to the scenery around the vendor.
     const uint64_t guid = pick.resolve();
-    if (guid == 0 || guid == pick.hostileUnitGuid || guid == pick.deadUnitGuid) {
-        return false;
-    }
-    auto entity = gameHandler.getEntityManager().getEntity(guid);
-    if (!entity || entity->getType() != game::ObjectType::UNIT) return false;
-    auto unit = std::static_pointer_cast<game::Unit>(entity);
-    if ((unit->getNpcFlags() & game::NPC_FLAG_ANY_VENDOR) == 0) return false;
-
-    // Only a successful upload is cached, so a transient descriptor-pool
-    // failure is retried rather than leaving the cursor plain for good.
-    static VkDescriptorSet cursorTex = VK_NULL_HANDLE;
-    if (!cursorTex) {
-        ui::UiTextureLoad why = ui::UiTextureLoad::Ok;
-        cursorTex = ui::uploadUiTextureFromBlp(
-            services_.assetManager, "Interface\\Cursor\\Buy.blp", services_.window, &why);
-        // Said once. A cursor that will not load and a unit that is not a
-        // vendor both end as the plain hand, and from the chair they are the
-        // same thing - so the one that is a fault has to name itself.
-        if (!cursorTex) {
-            static bool said = false;
-            if (!said) {
-                said = true;
-                LOG_WARNING("Vendor cursor: Interface\\Cursor\\Buy.blp did not load (",
-                            static_cast<int>(why),
-                            ") - the pointer stays the plain hand over merchants");
-            }
-        }
-    }
-    if (!cursorTex) return false;
-
-    // Drawn in place of the pointer rather than beside it, which is what a
-    // cursor is - so the arrow goes for as long as the bag is up. The tip sits
-    // at the mouse position, the way the art is authored.
-    ImGui::SetMouseCursor(ImGuiMouseCursor_None);
-    const ImVec2 at = ImGui::GetIO().MousePos;
-    constexpr float kSize = 32.0f;
-    ImGui::GetForegroundDrawList()->AddImage(
-        (ImTextureID)(uintptr_t)cursorTex, at,
-        ImVec2(at.x + kSize, at.y + kSize));
+    const auto entity = gameHandler.getEntityManager().getEntity(guid);
+    if (!entity || (entity->getType() != game::ObjectType::UNIT &&
+                    entity->getType() != game::ObjectType::PLAYER)) return false;
+    const auto unit = std::static_pointer_cast<game::Unit>(entity);
+    const auto marker = game::questGiverMarker(gameHandler.getQuestGiverStatus(guid));
+    const char* path = ui::unitCursorPath(
+        !game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()),
+        unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
+        unit->getNpcFlags(), marker.symbol);
+    const auto texture = cursorTexture(services_.assetManager, services_.window, path);
+    if (!texture) return false;
+    drawCursorTexture(texture);
     return true;
 }
 

@@ -81,3 +81,20 @@ TEST_CASE("an empty pick resolves to nothing") {
     CHECK(pick.resolve() == 0u);
     CHECK(pick.unitGuid() == 0u);
 }
+
+#include "ui/world_cursor.hpp"
+#include <string>
+
+TEST_CASE("World cursors distinguish unit actions and corpse priority") {
+    using wowee::ui::unitCursorPath;
+    using namespace wowee::game;
+    CHECK(std::string(unitCursorPath(true, 0, 2, NPC_FLAG_ANY_VENDOR, "!")) == "Interface\\Cursor\\Attack.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 4, 0, nullptr)) == "Interface\\Cursor\\Attack.blp");
+    CHECK(std::string(unitCursorPath(false, UNIT_DYNFLAG_LOOTABLE, 2, NPC_FLAG_ANY_VENDOR, "!")) == "Interface\\Cursor\\LootAll.blp");
+    CHECK(std::string(unitCursorPath(false, 0, 2, 0, nullptr)) == "Interface\\Cursor\\Point.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP, nullptr)) == "Interface\\Cursor\\Speak.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, nullptr)) == "Interface\\Cursor\\Buy.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, "!")) == "Interface\\Cursor\\Quest.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, 0, "?")) == "Interface\\Cursor\\QuestTurnIn.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, 0, nullptr)) == "Interface\\Cursor\\Point.blp");
+}
