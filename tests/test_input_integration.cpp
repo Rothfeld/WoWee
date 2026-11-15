@@ -853,3 +853,18 @@ TEST_CASE("Conversation facing settles in native 50 ms interval", "[npc-facing]"
         CHECK(std::abs(turn.current - 2.0f) < 0.0001f);
     }
 }
+
+TEST_CASE("Conversation shuffle starts only on directional heading changes", "[npc-facing]") {
+    wowee::core::NpcInteractionFacing facing(3.0f);
+    facing.advance(-3.0f, 0.01f);
+    CHECK(facing.turnDirection == 1); // shortest arc crosses +pi
+    facing.advance(-3.0f, 0.01f);
+    CHECK(facing.turnDirection == 0); // repeated gossip cannot restart feet
+    facing.advance(-3.0f, 0.05f);
+    CHECK(facing.turnDirection == 0); // settling does not restart feet
+    facing.advance(3.0f, 0.01f);
+    CHECK(facing.turnDirection == -1); // closing turns the other way
+    facing.advance(3.0f, 0.05f);
+    facing.advance(3.001f, 0.01f);
+    CHECK(facing.turnDirection == 0); // tiny facing corrections need no step
+}

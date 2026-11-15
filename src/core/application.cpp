@@ -3600,6 +3600,22 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             if (interactionYaw || npcInteractionFacing_.contains(guid)) {
                 auto [it, inserted] = npcInteractionFacing_.try_emplace(guid, facing);
                 facing = it->second.advance(interactionYaw.value_or(facing), deltaTime);
+                // Facing settles before the authored foot shuffle finishes.
+                // Start it once for a real turn, never for another gossip reply.
+                // Server emotes, combat, and locomotion retain their animation.
+                if (it->second.turnDirection != 0 && groundCreature &&
+                    unit->getHealth() > 0 && !entity->isActivelyMoving()) {
+                    const uint32_t shuffle = it->second.turnDirection > 0
+                        ? rendering::anim::SHUFFLE_LEFT : rendering::anim::SHUFFLE_RIGHT;
+                    uint32_t current = 0; float time = 0.0f, duration = 0.0f;
+                    if (charRenderer->getAnimationState(instanceId, current, time, duration) &&
+                        (current == rendering::anim::STAND ||
+                         current == rendering::anim::SHUFFLE_LEFT ||
+                         current == rendering::anim::SHUFFLE_RIGHT) &&
+                        current != shuffle && charRenderer->hasAnimation(instanceId, shuffle)) {
+                        charRenderer->playAnimation(instanceId, shuffle, false);
+                    }
+                }
                 if (!interactionYaw && std::abs(coords::normalizeAngleRad(facing - entity->getOrientation())) < 0.0001f)
                     npcInteractionFacing_.erase(it);
             }

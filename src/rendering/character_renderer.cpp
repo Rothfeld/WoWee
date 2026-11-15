@@ -2148,6 +2148,8 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             case anim::RUN:
             case anim::SPRINT:
             case anim::WALK_BACKWARDS:
+            case anim::SHUFFLE_LEFT:
+            case anim::SHUFFLE_RIGHT:
             case anim::JUMP_START:
             case anim::JUMP:
             case anim::JUMP_END:

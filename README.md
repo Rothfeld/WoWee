@@ -712,10 +712,14 @@ Stand variants blend from their outgoing final pose using the incoming sequence'
 ### NPC conversation facing
 
 Greeting callbacks play voice audio. Body emotes come from server animation
-messages; opening or refreshing gossip does not restart the NPC body animation.
+messages. Local conversation turns play the authored directional `ShuffleLeft`
+or `ShuffleRight` once, then return to idle; repeated gossip does not restart
+the shuffle. Combat, locomotion, and server emotes keep their animation.
 While an NPC service or quest panel is open, its stationary living NPC turns
 toward the local player. Closing the panel returns it to the server heading.
-Turns settle over 50 ms, matching native frame captures. Repeated clicks do not restart this interval.
+Facing settles over 50 ms, matching native frame captures. The foot shuffle
+finishes at its authored duration (500 ms for DwarfMale). Repeated clicks do not
+restart either interval.
 This facing is local presentation and never changes entity movement or patrol
 orientation. Other clients can see a different facing for the same vendor.
 `build/bin/test_input_integration '[npc-facing],[merchant]'` checks turning and merchant
