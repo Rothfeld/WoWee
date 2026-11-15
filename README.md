@@ -799,3 +799,10 @@ Selecting gossip sends one selection packet. NPC-text updates cannot select the
 same pending option again, and vendor selection does not send an additional
 inventory request. Repeated interaction with the same vendor refreshes inventory
 with `MERCHANT_UPDATE`, preserving the open shop and backpack.
+
+### Online spawn floor
+
+Camera reset preserves the server spawn elevation. Floor searches above outdoor
+terrain can select an interior ceiling or roof; they must not relocate an online
+spawn. Reset invalidates cached floor contact, then normal movement resolves
+contact using streamed collision meshes.

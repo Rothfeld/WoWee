@@ -3435,16 +3435,12 @@ void CameraController::reset() {
         return h;
     };
 
-    // In online mode, try to snap to a nearby floor but fall back to the server
-    // position when no WMO floor is found (e.g. WMO not loaded yet in cities).
-    // This prevents spawning under WMO cities like Stormwind.
+    // The server supplies the occupied floor. Searching upward from terrain
+    // can select a ceiling or roof when the player is inside a building.
+    // Normal movement resolves contact once the collision meshes are loaded.
     if (onlineMode) {
-        auto h = evalFloorAt(spawnPos.x, spawnPos.y, spawnPos.z);
-        if (h && std::abs(*h - spawnPos.z) < 16.0f) {
-            spawnPos.z = *h + 0.05f;
-        }
-        // else: keep server Z as-is
-        lastGroundZ = spawnPos.z - 0.05f;
+        lastGroundZ = spawnPos.z;
+        hasCachedFloor_ = false;
 
         camera->setRotation(yaw, pitch);
         glm::vec3 forward3D = camera->getForward();
