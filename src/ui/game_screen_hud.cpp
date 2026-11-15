@@ -31,6 +31,7 @@
 #include "audio/audio_engine.hpp"
 #include "audio/music_manager.hpp"
 #include "game/zone_manager.hpp"
+#include "game/game_utils.hpp"
 #include "audio/footstep_manager.hpp"
 #include "audio/activity_sound_manager.hpp"
 #include "audio/mount_sound_manager.hpp"
@@ -1532,7 +1533,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
             // Quest kill objective indicator: small yellow sword icon to the right of the name
             float questIconX = nameX + textSize.x + 4.0f;
-            if (!isPlayer && questKillEntries.count(unit->getEntry())) {
+            if (!game::isPreWotlk() && !isPlayer && questKillEntries.count(unit->getEntry())) {
                 const char* objSym = "\xe2\x9a\x94";  // ⚔ crossed swords (UTF-8)
                 drawList->AddText(ImVec2(questIconX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), objSym);
                 drawList->AddText(ImVec2(questIconX,         nameY),         IM_COL32(255, 220, 0, A(230)), objSym);
