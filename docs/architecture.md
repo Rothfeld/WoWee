@@ -135,6 +135,14 @@ Wowee follows a modular architecture with clear separation of concerns:
 
 **World Map System** (`src/rendering/world_map/`) - Modular map architecture:
 - `WorldMapFacade` - Public API (PIMPL pattern), composes all components
+  - `showPlayerZone(position)` resolves map data and selection synchronously before
+    Lua emits `WORLD_MAP_UPDATE`. `SetMapToCurrentZone(); GetPlayerMapPosition("player")`
+    works with the map hidden. Rendering shares the same preparation path.
+  - Negative DBC `DisplayMapID` values are sentinels, not virtual continents;
+    do not resolve them through the synthetic World/Cosmic navigation IDs.
+  - `SetMapZoom` loads the selected continent before resolving zone indices.
+    Position queries on an unrelated physical map return zero; returning to the
+    player uses the physical map remembered independently of manual navigation.
 - `CompositeRenderer` - Vulkan tile pipeline + off-screen FBO compositing (1024×768 FBO, 1002×668 visible)
 - `DataRepository` - DBC zone loading, ZMP pixel map, POI/overlay storage
 - `CoordinateProjection` - UV projection, zone/continent spatial lookups

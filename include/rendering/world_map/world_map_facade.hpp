@@ -191,6 +191,9 @@ public:
     /// every time the map is shown, and used to reach nothing.
     void showPlayerZone();
 
+    /// Resolve selection immediately, including when the map is hidden.
+    void showPlayerZone(const glm::vec3& playerRenderPos);
+
     /// The WorldMapArea id of the zone being shown, or zero when the map is
     /// not showing one. This is the id the interface passes back to
     /// showWorldMapArea - not the AreaTable id, and not the physical map the
@@ -206,6 +209,7 @@ public:
     bool showAreaZone(uint32_t areaTableId);
 
 private:
+    void preparePlayerZone(const glm::vec3& playerRenderPos);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

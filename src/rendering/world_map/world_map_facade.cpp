@@ -387,17 +387,9 @@ void WorldMapFacade::compositePass(VkCommandBuffer cmd) {
                                      impl_->exploration.hasServerMask());
 }
 
-void WorldMapFacade::render(const glm::vec3& playerRenderPos,
-                             int screenWidth, int screenHeight,
-                             float playerYawDeg) {
+void WorldMapFacade::preparePlayerZone(const glm::vec3& playerRenderPos) {
     auto& d = *impl_;
     if (!d.initialized || !d.assetManager) return;
-
-    // Update transition animation
-    float now = static_cast<float>(ImGui::GetTime());
-    float dt = now - d.lastFrameTime;
-    d.lastFrameTime = now;
-    d.viewState.updateTransition(dt);
 
     const int physicalMapId = folderToMapId(d.physicalMapName);
     auto displayedPlayerPosition = [&]() {
@@ -407,18 +399,6 @@ void WorldMapFacade::render(const glm::vec3& playerRenderPos,
             : playerRenderPos;
     };
     glm::vec3 displayPlayerRenderPos = displayedPlayerPosition();
-
-    // Update exploration state
-    if (!d.data.zones().empty()) {
-        d.exploration.update(d.data.zones(), displayPlayerRenderPos,
-                             d.viewState.currentZoneIdx(),
-                             d.data.exploreFlagByAreaId(), d.playerZoneId);
-        if (d.exploration.overlaysChanged() && d.viewState.currentZoneIdx() >= 0) {
-            d.viewChanged = true;
-            d.compositor.invalidateComposite();
-            d.compositor.requestComposite(d.viewState.currentZoneIdx());
-        }
-    }
 
     // First-time open, zones lost after a map change, or the interface asking
     // to go back to the player's own zone
@@ -450,7 +430,9 @@ void WorldMapFacade::render(const glm::vec3& playerRenderPos,
         // instead of opening Outland merely because the terrain map is 530.
         if (!d.virtualMapOverride && playerZone >= 0) {
             const Zone& zone = d.data.zones()[playerZone];
-            if (zone.displayMapID != 0 &&
+            // Negative DBC values mean no display-map override. They also
+            // overlap the synthetic World/Cosmic IDs used by map navigation.
+            if (zone.displayMapID != 0 && zone.displayMapID < UINT32_MAX - 1 &&
                 zone.displayMapID != static_cast<uint32_t>(d.data.currentMapId())) {
                 const char* virtualFolder = mapIdToFolder(zone.displayMapID);
                 if (virtualFolder && *virtualFolder) {
@@ -518,17 +500,43 @@ void WorldMapFacade::render(const glm::vec3& playerRenderPos,
             d.viewState.setCurrentZoneIdx(d.viewState.continentIdx());
             d.viewState.setLevel(ViewLevel::CONTINENT);
         }
-        // The view has only now become the player's zone, and the interface
-        // asked before it did.
-        //
-        // SetMapToCurrentZone runs on every open and fires WORLD_MAP_UPDATE on
-        // the spot, which is when both dropdowns rebuild themselves. All this
-        // call does here is raise the recenter flag - the move happens in this
-        // block, one frame later - so GetCurrentMapContinent answered 0 while
-        // the dropdowns were being built, and 0 is what makes watchframe's
-        // ClearAll branch run and GetMapZones(0) return an empty list. Both
-        // came up blank and stayed blank, because nothing asked again.
         d.viewChanged = true;
+    }
+}
+
+void WorldMapFacade::render(const glm::vec3& playerRenderPos,
+                             int screenWidth, int screenHeight,
+                             float playerYawDeg) {
+    auto& d = *impl_;
+    if (!d.initialized || !d.assetManager) return;
+
+    // Update transition animation
+    float now = static_cast<float>(ImGui::GetTime());
+    float dt = now - d.lastFrameTime;
+    d.lastFrameTime = now;
+    d.viewState.updateTransition(dt);
+
+    preparePlayerZone(playerRenderPos);
+
+    const int physicalMapId = folderToMapId(d.physicalMapName);
+    auto displayedPlayerPosition = [&]() {
+        return physicalMapId >= 0
+            ? d.data.transformRenderPosition(
+                  static_cast<uint32_t>(physicalMapId), playerRenderPos)
+            : playerRenderPos;
+    };
+    glm::vec3 displayPlayerRenderPos = displayedPlayerPosition();
+
+    // Update exploration state
+    if (!d.data.zones().empty()) {
+        d.exploration.update(d.data.zones(), displayPlayerRenderPos,
+                             d.viewState.currentZoneIdx(),
+                             d.data.exploreFlagByAreaId(), d.playerZoneId);
+        if (d.exploration.overlaysChanged() && d.viewState.currentZoneIdx() >= 0) {
+            d.viewChanged = true;
+            d.compositor.invalidateComposite();
+            d.compositor.requestComposite(d.viewState.currentZoneIdx());
+        }
     }
 
     // Process input
@@ -839,6 +847,9 @@ std::vector<OverlayEntry> WorldMapFacade::currentOverlays() const {
 }
 bool WorldMapFacade::mapUVForCanonical(float wowX, float wowY, float wowZ,
                                        float& u, float& v) const {
+    const int physicalMapId = folderToMapId(impl_->physicalMapName);
+    if (!impl_->virtualMapOverride && physicalMapId != impl_->data.currentMapId())
+        return false;
     const int idx = impl_->viewState.currentZoneIdx();
     const auto& zones = impl_->data.zones();
     if (idx < 0 || idx >= static_cast<int>(zones.size())) return false;
@@ -1642,6 +1653,8 @@ bool WorldMapFacade::showMap(int continentIndex, int zoneIndex) {
         return true;
     }
     if (continentIndex > kContinentCount) return false;
+    impl_->switchToMap(mapIdToFolder(kContinents[continentIndex - 1].mapId));
+    impl_->userMapOverride = true;
     const auto& zones = impl_->data.zones();
     const int contIdx = continentZoneIdx(
         zones, kContinents[continentIndex - 1].mapId);
@@ -1695,7 +1708,16 @@ bool WorldMapFacade::takeViewChanged() {
 
 void WorldMapFacade::showPlayerZone() {
     impl_->userMapOverride = false;
+    const std::string mapName = impl_->pendingMapName.empty()
+        ? impl_->physicalMapName : impl_->pendingMapName;
+    impl_->pendingMapName.clear();
+    setMapName(mapName);
     impl_->recenterOnPlayer = true;
+}
+
+void WorldMapFacade::showPlayerZone(const glm::vec3& playerRenderPos) {
+    showPlayerZone();
+    preparePlayerZone(playerRenderPos);
 }
 
 uint32_t WorldMapFacade::currentWorldMapAreaId() const {
