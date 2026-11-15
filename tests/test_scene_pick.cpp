@@ -102,3 +102,30 @@ TEST_CASE("World cursors distinguish unit actions and corpse priority") {
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::UNAVAILABLE)) == "Interface\\Cursor\\Speak.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, 0, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Point.blp");
 }
+
+TEST_CASE("Terrain holes do not create invisible vertical selection walls") {
+    using wowee::ui::terrainOccludesSceneRay;
+    const wowee::rendering::Ray ray{{0, 0, 2}, {1, 0, 0}};
+    // Anvilmar camera starts in a terrain hole; the room continues beneath
+    // outdoor ground. There is no terrain surface along the viewing ray.
+    CHECK_FALSE(terrainOccludesSceneRay(ray, 10.0f, [](float x, float) -> std::optional<float> {
+        if (x < 3.0f) return std::nullopt;
+        return 5.0f;
+    }));
+    // Entering a hole from above and leaving below also crosses no surface.
+    CHECK_FALSE(terrainOccludesSceneRay(ray, 10.0f, [](float x, float) -> std::optional<float> {
+        if (x < 2.0f) return 0.0f;
+        if (x < 4.0f) return std::nullopt;
+        return 5.0f;
+    }));
+    CHECK(terrainOccludesSceneRay(ray, 10.0f, [](float x, float) -> std::optional<float> {
+        return x; // A real hillside crosses the ray.
+    }));
+    CHECK_FALSE(terrainOccludesSceneRay(ray, 10.0f, [](float, float) -> std::optional<float> {
+        return 5.0f; // Camera and target both beneath the surface.
+    }));
+    // A ray that emerges from underground can still hit a later real hill.
+    CHECK(terrainOccludesSceneRay(ray, 10.0f, [](float x, float) -> std::optional<float> {
+        return std::abs(x - 5.0f);
+    }));
+}

@@ -705,6 +705,16 @@ World quest markers use the client M2 materials, including each batch's authored
 
 Cursor selection receives quest status separately from the overhead symbol. An unavailable quest can show a grey exclamation mark while keeping the NPC's ordinary cursor. Felix Whindlebolt uses the plain gauntlet in this state.
 
+### Indoor selection and terrain holes
+
+`scene_pick.hpp` tests terrain surface crossings, not the solid volume beneath
+outdoor height samples. Terrain holes break the crossing interval. A camera in
+Anvilmar can see NPCs beneath adjacent outdoor terrain without crossing any
+rendered terrain surface. WMO walls and foreground M2 geometry still occlude.
+Click diagnostics in `scene_pick.cpp` identify mesh misses and WMO/M2/terrain
+rejection; hover does not emit these logs. Run `build/bin/test_scene_pick` for
+selection ordering and terrain-hole regression checks.
+
 ### Idle loop boundaries
 
 Stand variants blend from their outgoing final pose using the incoming sequence's authored blend time. This also applies when the same variant repeats, either through random selection or its replay count. TBC `DwarfMale.m2` sequence 40 has different first and last spine poses; a direct wrap produces a visible snap.

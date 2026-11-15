@@ -1628,7 +1628,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 }
 
                 const ui::ScenePick pick = ui::pickScene(
-                    gameHandler, ray, ui::ScenePickParams{});
+                    gameHandler, ray, ui::ScenePickParams{.trace = true});
                 uint64_t closestGuid = pick.resolve();
 
                 // Dropping what the cursor is carrying onto another player

@@ -50,21 +50,29 @@ inline bool raySphereIntersect(const rendering::Ray& ray, const glm::vec3& cente
     return true;
 }
 
-/// Test the visible heightfield between the camera and an entity hit. Missing
-/// samples represent unloaded terrain or holes. Below-ground cameras belong
-/// to caves/interiors, where the overlying outdoor heightfield is irrelevant.
+/// Occlude only when a ray crosses a rendered terrain surface from above.
+/// A hole has no surface or vertical side wall: starting below a later valid
+/// height sample is not an intersection. WMO geometry handles interior walls.
 template<class HeightAt>
 bool terrainOccludesSceneRay(const rendering::Ray& ray, float hitDistance,
                              HeightAt&& heightAt) {
-    const auto originHeight = heightAt(ray.origin.x, ray.origin.y);
-    if (originHeight && ray.origin.z < *originHeight - 0.02f) return false;
+    auto height = heightAt(ray.origin.x, ray.origin.y);
+    std::optional<float> previousClearance;
+    if (height) previousClearance = ray.origin.z - *height;
     constexpr float step = 0.5f;
     const int steps = std::max(1, static_cast<int>(std::ceil(hitDistance / step)));
     for (int i = 1; i <= steps; ++i) {
         const glm::vec3 point = ray.origin + ray.direction *
             (hitDistance * static_cast<float>(i) / static_cast<float>(steps));
-        const auto height = heightAt(point.x, point.y);
-        if (height && point.z < *height - 0.02f) return true;
+        height = heightAt(point.x, point.y);
+        if (!height) {
+            previousClearance.reset();
+            continue;
+        }
+        const float clearance = point.z - *height;
+        if (previousClearance && *previousClearance >= -0.02f && clearance < -0.02f)
+            return true;
+        previousClearance = clearance;
     }
     return false;
 }
@@ -75,6 +83,7 @@ struct ScenePickParams {
     /// picker uses a slightly taller, tighter sphere than the target picker.
     float unitHitRadius = 1.8f;
     float unitHeightOffset = 1.0f;
+    bool trace = false; // Click diagnostics; hover stays quiet.
 };
 
 /// Everything the traversal found, before either caller applies its own rules.

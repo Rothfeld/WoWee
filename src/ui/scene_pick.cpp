@@ -1,6 +1,7 @@
 #include "ui/scene_pick.hpp"
 
 #include "core/application.hpp"
+#include "core/logger.hpp"
 #include "core/coordinates.hpp"
 #include "core/entity_spawner.hpp"
 #include "rendering/character_renderer.hpp"
@@ -102,7 +103,10 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             auto* renderer = app.getRenderer();
             if (!spawner || !renderer || !renderer->getCharacterRenderer()) continue;
             if (!renderer->getCharacterRenderer()->intersectInstance(
-                    spawner->characterInstanceIdForGuid(guid), ray.origin, ray.direction, hitT)) continue;
+                    spawner->characterInstanceIdForGuid(guid), ray.origin, ray.direction, hitT)) {
+                if (params.trace) LOG_DEBUG("Scene pick mesh miss guid=", guid);
+                continue;
+            }
         }
         uint32_t pickedM2 = 0;
         if (type == game::ObjectType::GAMEOBJECT) {
@@ -121,14 +125,26 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         // hull can protrude beyond the visible surface.
         if (auto* renderer = core::Application::getInstance().getRenderer()) {
             if (auto* wmo = renderer->getWMORenderer(); wmo &&
-                wmo->raycastBoundingBoxes(ray.origin, ray.direction, hitT) < hitT) continue;
+                wmo->raycastBoundingBoxes(ray.origin, ray.direction, hitT) < hitT) {
+                if (params.trace) LOG_DEBUG("Scene pick WMO blocked guid=", guid, " hit=", hitT,
+                    " blocker=", wmo->raycastBoundingBoxes(ray.origin, ray.direction, hitT));
+                continue;
+            }
             if (auto* m2 = renderer->getM2Renderer(); m2 &&
-                m2->raycastBoundingBoxes(ray.origin, ray.direction, hitT, pickedM2) < hitT) continue;
+                m2->raycastBoundingBoxes(ray.origin, ray.direction, hitT, pickedM2) < hitT) {
+                if (params.trace) LOG_DEBUG("Scene pick M2 blocked guid=", guid, " hit=", hitT,
+                    " blocker=", m2->raycastBoundingBoxes(ray.origin, ray.direction, hitT, pickedM2));
+                continue;
+            }
             if (auto* terrain = renderer->getTerrainManager(); terrain &&
                 terrainOccludesSceneRay(ray, hitT, [terrain](float x, float y) {
                     return terrain->isHoleAt(x, y) ? std::optional<float>{}
                                                   : terrain->getHeightAt(x, y);
-                })) continue;
+                })) {
+                if (params.trace) LOG_DEBUG("Scene pick terrain blocked guid=", guid, " hit=", hitT,
+                    " origin=", ray.origin.x, ",", ray.origin.y, ",", ray.origin.z);
+                continue;
+            }
         }
         const float centerT = glm::dot(hitCenter - ray.origin, ray.direction);
 
