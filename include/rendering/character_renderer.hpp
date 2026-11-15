@@ -419,6 +419,8 @@ private:
     // write kept on, so the faded model still self-occludes instead of showing
     // backfaces and under-armor skin through the body.
     VkPipeline translucentPipeline_ = VK_NULL_HANDLE;
+    VkPipeline cameraDepthPipeline_ = VK_NULL_HANDLE;
+    VkPipeline cameraFadePipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
 
     // Descriptor set layouts

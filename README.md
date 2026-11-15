@@ -649,3 +649,8 @@ between 1.5 and 0.5 yards. Collision can shorten that distance while requested
 zoom stays far away. Camera opacity multiplies ghost/stealth/spawn opacity and
 propagates to weapons and their effects. Renderer visibility recovery respects
 the camera controller's fully transparent state.
+
+Camera fades render a depth-only pass for solid character batches before color
+blending. Blending while writing depth in one pass leaves previously drawn
+backfaces visible through the front. The color pass tests equal depth; transparent
+cards retain their authored blending and depth behavior.
