@@ -1,0 +1,50 @@
+#include <catch_amalgamated.hpp>
+#include "rendering/animation/character_animator.hpp"
+#include "rendering/animation/animation_ids.hpp"
+#include "game/inventory.hpp"
+
+using namespace wowee::rendering;
+
+TEST_CASE("Attack mode transitions do not draw already-held weapons", "[animation][combat]") {
+    CharacterAnimator animator;
+    AnimCapabilitySet caps;
+    caps.resolvedStand = anim::STAND;
+    caps.resolvedCombatIdle = anim::READY_1H;
+    caps.resolvedReady1H = anim::READY_1H;
+    caps.resolvedUnsheathe = anim::SHEATHE;
+    caps.resolvedSheathe = anim::SHEATHE;
+    animator.setCapabilities(caps);
+    WeaponLoadout weapon;
+    weapon.inventoryType = wowee::game::InvType::ONE_HAND;
+    animator.setWeaponLoadout(weapon);
+    CharacterAnimator::FrameInput frame;
+    frame.grounded = true;
+    animator.setFrameInput(frame);
+
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        animator.setInCombat(true);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == anim::READY_1H);
+        animator.setInCombat(false);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == anim::STAND);
+    }
+
+    // A real attachment transition asks for exactly one draw. Combat idle
+    // must not truncate it, and it must not replay after completion.
+    animator.setInCombat(true);
+    animator.playEmote(anim::HIP_SHEATHE, false);
+    frame.haveAnimState = true;
+    frame.currentAnimId = anim::HIP_SHEATHE;
+    frame.currentAnimDuration = 1.0f;
+    frame.currentAnimTime = 0.3f;
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::HIP_SHEATHE);
+    frame.currentAnimTime = 1.0f;
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::READY_1H);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::READY_1H);
+}

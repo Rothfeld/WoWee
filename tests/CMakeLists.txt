@@ -2735,6 +2735,15 @@ if(NOT ANDROID)
     register_test_target(test_input_integration)
 endif()
 
+# Weapon attachment changes own sheath animations; combat stance does not.
+wowee_add_test(test_character_animator
+    SOURCES test_character_animator.cpp ${TEST_COMMON_SOURCES}
+        ${CMAKE_SOURCE_DIR}/src/rendering/animation/character_animator.cpp
+        ${CMAKE_SOURCE_DIR}/src/rendering/animation/combat_fsm.cpp
+        ${CMAKE_SOURCE_DIR}/src/rendering/animation/activity_fsm.cpp
+        ${CMAKE_SOURCE_DIR}/src/rendering/animation/locomotion_fsm.cpp
+        ${CMAKE_SOURCE_DIR}/src/rendering/animation/mount_fsm.cpp)
+
 # ── Sanitizers, once every test target exists ────────────────
 # This must be the last thing in this file. The loop walks ALL_TEST_TARGETS,
 # which register_test_target appends to as each test is declared, so the

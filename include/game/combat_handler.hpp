@@ -72,10 +72,7 @@ public:
 
     // Auto-attack timing state (read by GameHandler::update for retry/resend logic)
     bool& autoAttackOutOfRangeRef() { return autoAttackOutOfRange_; }
-    float& autoAttackOutOfRangeTimeRef() { return autoAttackOutOfRangeTime_; }
     float& autoAttackRangeWarnCooldownRef() { return autoAttackRangeWarnCooldown_; }
-    float& autoAttackResendTimerRef() { return autoAttackResendTimer_; }
-    bool& autoAttackRetryPendingRef() { return autoAttackRetryPending_; }
 
     // Combat text creation (used by other handlers, e.g. spell handler for periodic damage)
     void addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId,
@@ -202,12 +199,9 @@ private:
     // --- Combat state ---
     bool autoAttacking_ = false;
     bool autoAttackRequested_ = false;
-    bool autoAttackRetryPending_ = false;
     uint64_t autoAttackTarget_ = 0;
     bool autoAttackOutOfRange_ = false;
-    float autoAttackOutOfRangeTime_ = 0.0f;
     float autoAttackRangeWarnCooldown_ = 0.0f;
-    float autoAttackResendTimer_ = 0.0f;
     std::unordered_set<uint64_t> hostileAttackers_;
     std::vector<CombatTextEntry> combatText_;
     static constexpr size_t MAX_COMBAT_LOG = 500;

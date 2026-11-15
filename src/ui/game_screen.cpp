@@ -827,7 +827,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // Update renderer face-target position and selection circle
     auto* renderer = services_.renderer;
     if (renderer) {
-        if (auto* ac = renderer->getAnimationController()) ac->setInCombat(gameHandler.isInCombat() &&
+        if (auto* ac = renderer->getAnimationController()) ac->setInCombat((gameHandler.hasAutoAttackIntent() || gameHandler.isInCombat()) &&
                               !gameHandler.isPlayerDead() &&
                               !gameHandler.isPlayerGhost());
         if (auto* cr = renderer->getCharacterRenderer()) {
@@ -915,6 +915,14 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                 // a bank vault is used rather than selected, and a ring on the
                 // floor around one reads as a creature being fought.
                 if (showSelectionCircle) {
+                    if (gameHandler.hasAutoAttackIntent() &&
+                        gameHandler.getAutoAttackTargetGuid() == target->getGuid()) {
+                        // Build 8606 attack selection alternates pink/red and
+                        // pale yellow once per second, even outside melee range.
+                        const float pulse = 0.5f + 0.5f * std::sin(
+                            static_cast<float>(ImGui::GetTime() * 6.283185307179586));
+                        circleColor = glm::vec3(1.0f, 0.5f + 0.5f * pulse, 0.5f);
+                    }
                     renderer->setSelectionCircle(targetGLPos, circleRadius, circleColor);
                 } else {
                     renderer->clearSelectionCircle();

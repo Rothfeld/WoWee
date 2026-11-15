@@ -213,3 +213,16 @@ an otherwise opaque FrameXML minimap border.
 The in-game default cursor uses `Interface/Cursor/Point.blp` over empty world
 space and FrameXML. Contextual world cursors take precedence. Software cursor
 rendering stops while SDL relative mouse mode is active or mouse focus is absent.
+
+Attack mode stays armed outside melee range. Local attack intent drives the
+action-button checked state, combat ready pose, and selected attack target's
+ground-circle pulse. Server swing-error packets report range; explicit stop,
+target death, or server attack stop ends attack mode. No local distance timer
+cancels or periodically resends attack commands.
+
+The ground-circle pulse approximates the roughly one-second pink/yellow cycle
+observed in build 8606 footage; exact native color curve is not established.
+AppearanceComposer owns weapon attachment changes and requests draw animations
+through ActivityFSM. Combat stance transitions do not draw or sheath again.
+Explicit draw animation completes over combat idle; attack animations retain
+priority. Regression test: `test_character_animator`.

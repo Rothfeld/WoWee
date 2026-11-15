@@ -73,8 +73,7 @@ bool CombatHandler::threatWarningWanted() const {
 void CombatHandler::registerOpcodes(DispatchTable& table) {
     // ---- Combat clearing ----
     table[Opcode::SMSG_ATTACKSWING_DEADTARGET] = [this](network::Packet& /*packet*/) {
-        autoAttacking_ = false;
-        autoAttackTarget_ = 0;
+        stopAutoAttack();
     };
     table[Opcode::SMSG_THREAT_CLEAR] = [this](network::Packet& /*packet*/) {
         threatLists_.clear();
@@ -98,7 +97,6 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
         autoAttacking_ = false;
         autoAttackTarget_ = 0;
         autoAttackRequested_ = false;
-        autoAttackRetryPending_ = false;
         hostileAttackers_.clear();
     };
 
@@ -129,7 +127,6 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     };
     table[Opcode::SMSG_ATTACKSWING_NOTSTANDING] = [this](network::Packet& /*packet*/) {
         autoAttackOutOfRange_ = false;
-        autoAttackOutOfRangeTime_ = 0.0f;
         if (autoAttackRangeWarnCooldown_ <= 0.0f) {
             owner_.raiseUiError("You need to stand up to fight.");
             autoAttackRangeWarnCooldown_ = 1.25f;
@@ -335,35 +332,8 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
         }
     }
 
-    // Client-side range gate to avoid starting "swing forever" loops when
-    // target is already clearly out of range.
-    if (auto target = owner_.getEntityManager().getEntity(targetGuid)) {
-        float dx = owner_.movementInfoRef().x - target->getLatestX();
-        float dy = owner_.movementInfoRef().y - target->getLatestY();
-        float dz = owner_.movementInfoRef().z - target->getLatestZ();
-        float dist3d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        // Use longer range limit when a ranged weapon is equipped
-        const auto& rangedSlot = owner_.getInventory().getEquipSlot(game::EquipSlot::RANGED);
-        bool hasRangedWeapon = !rangedSlot.empty() &&
-            (rangedSlot.item.inventoryType == game::InvType::RANGED_BOW ||
-             rangedSlot.item.inventoryType == game::InvType::RANGED_GUN ||
-             rangedSlot.item.inventoryType == game::InvType::THROWN);
-        float maxRange = hasRangedWeapon ? 40.0f : 8.0f;
-        if (dist3d > maxRange) {
-            if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-                owner_.raiseUiError("Target is too far away.");
-                autoAttackRangeWarnCooldown_ = 1.25f;
-            }
-            return;
-        }
-    }
-
-    // Only dismount once this is a valid attack attempt. Doing it before the
-    // target/range gate knocked the player off a mount even though no combat
-    // request was sent.
-    //
-    // Never in the air, unless Auto Dismount in Flight asks for it: a hostile
-    // right-clicked from a flying mount dropped the player out of the sky.
+    // Range errors belong to the server. Attack intent remains armed while
+    // approaching a target, so entering melee range needs no second click.
     if (owner_.isMounted()) {
         if (owner_.isPlayerFlying() && !owner_.isTaxiMountActive() &&
             addons::storedCVarValue("autoDismountFlying", "0") == "0") {
@@ -373,15 +343,14 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
         owner_.dismount();
     }
 
+    if (autoAttackRequested_ && autoAttackTarget_ == targetGuid) return;
+    const bool enteringAttack = !autoAttackRequested_;
     autoAttackRequested_ = true;
-    autoAttackRetryPending_ = true;
-    // Keep combat animation/state server-authoritative. We only flip autoAttacking
-    // on SMSG_ATTACKSTART where attackerGuid == playerGuid.
+    // Server confirmation is distinct from local attack intent. Range errors
+    // leave intent armed while the server waits for a valid melee swing.
     autoAttacking_ = false;
     autoAttackTarget_ = targetGuid;
     autoAttackOutOfRange_ = false;
-    autoAttackOutOfRangeTime_ = 0.0f;
-    autoAttackResendTimer_ = 0.0f;
     // Face the target, once, on the command to attack it. This is the only
     // place combat turns the player: it used to be re-aimed every fifth of a
     // second for as long as the attack lasted.
@@ -405,6 +374,7 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
         auto packet = AttackSwingPacket::build(targetGuid);
         owner_.getSocket()->send(packet);
     }
+    if (enteringAttack) owner_.fireAddonEvent("PLAYER_ENTER_COMBAT", {});
     LOG_INFO("Starting auto-attack on 0x", std::hex, targetGuid, std::dec);
 }
 
@@ -412,11 +382,8 @@ void CombatHandler::stopAutoAttack() {
     if (!autoAttacking_ && !autoAttackRequested_) return;
     autoAttackRequested_ = false;
     autoAttacking_ = false;
-    autoAttackRetryPending_ = false;
     autoAttackTarget_ = 0;
     autoAttackOutOfRange_ = false;
-    autoAttackOutOfRangeTime_ = 0.0f;
-    autoAttackResendTimer_ = 0.0f;
     if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
         auto packet = AttackStopPacket::build();
         owner_.getSocket()->send(packet);
@@ -654,12 +621,11 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
     revealCombatant(data.victimGuid);
 
     if (data.attackerGuid == owner_.getPlayerGuid()) {
+        const bool enteringAttack = !autoAttackRequested_;
         autoAttackRequested_ = true;
         autoAttacking_ = true;
-        autoAttackRetryPending_ = false;
         autoAttackTarget_ = data.victimGuid;
-        if (owner_.addonEventCallbackRef())
-            owner_.addonEventCallbackRef()("PLAYER_ENTER_COMBAT", {});
+        if (enteringAttack) owner_.fireAddonEvent("PLAYER_ENTER_COMBAT", {});
     } else if (data.victimGuid == owner_.getPlayerGuid() && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
@@ -693,12 +659,14 @@ void CombatHandler::handleAttackStop(network::Packet& packet) {
     AttackStopData data;
     if (!AttackStopParser::parse(packet, data)) return;
 
-    // Keep intent, but clear server-confirmed active state until ATTACKSTART resumes.
+    // A server stop cancels attack mode; range errors do not send this packet.
     if (data.attackerGuid == owner_.getPlayerGuid()) {
         autoAttacking_ = false;
-        autoAttackRetryPending_ = autoAttackRequested_;
-        autoAttackResendTimer_ = 0.0f;
-        LOG_DEBUG("SMSG_ATTACKSTOP received (keeping auto-attack intent)");
+        autoAttackRequested_ = false;
+        autoAttackTarget_ = 0;
+        autoAttackOutOfRange_ = false;
+        owner_.fireAddonEvent("PLAYER_LEAVE_COMBAT", {});
+        LOG_DEBUG("SMSG_ATTACKSTOP cleared auto-attack intent");
     } else if (data.victimGuid == owner_.getPlayerGuid()) {
         hostileAttackers_.erase(data.attackerGuid);
     }
@@ -895,72 +863,8 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
         autoAttackRangeWarnCooldown_ = std::max(0.0f, autoAttackRangeWarnCooldown_ - deltaTime);
     }
 
-    // Leave combat if auto-attack target is too far away (leash range)
-    // and keep melee intent tightly synced while stationary.
-    if (autoAttackRequested_ && autoAttackTarget_ != 0) {
-        auto targetEntity = owner_.getEntityManager().getEntity(autoAttackTarget_);
-        if (targetEntity) {
-            const float targetX = targetEntity->getLatestX();
-            const float targetY = targetEntity->getLatestY();
-            const float targetZ = targetEntity->getLatestZ();
-            float dx = owner_.movementInfoRef().x - targetX;
-            float dy = owner_.movementInfoRef().y - targetY;
-            float dz = owner_.movementInfoRef().z - targetZ;
-            float dist = std::sqrt(dx * dx + dy * dy);
-            float dist3d = std::sqrt(dx * dx + dy * dy + dz * dz);
-            const bool classicLike = isPreWotlk();
-            if (dist > 40.0f) {
-                stopAutoAttack();
-                LOG_INFO("Left combat: target too far (", dist, " yards)");
-            } else if (owner_.isInWorld()) {
-                bool allowResync = true;
-                const float meleeRange = classicLike ? 5.25f : 5.75f;
-                if (dist3d > meleeRange) {
-                    autoAttackOutOfRange_ = true;
-                    autoAttackOutOfRangeTime_ += deltaTime;
-                    if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-                        owner_.raiseUiError("Target is too far away.");
-                        owner_.addUIError("Target is too far away.");
-                        autoAttackRangeWarnCooldown_ = 1.25f;
-                    }
-                    // Stop chasing stale swings when the target remains out of range.
-                    if (autoAttackOutOfRangeTime_ > 2.0f && dist3d > 9.0f) {
-                        stopAutoAttack();
-                        owner_.raiseUiError("Auto-attack stopped: target out of range.");
-                        allowResync = false;
-                    }
-                } else {
-                    autoAttackOutOfRange_ = false;
-                    autoAttackOutOfRangeTime_ = 0.0f;
-                }
-
-                if (allowResync) {
-                    autoAttackResendTimer_ += deltaTime;
-
-                    // Classic/Turtle servers do not tolerate steady attack-start
-                    // reissues well. Only retry once after local start or an
-                    // explicit server-side attack stop while intent is still set.
-                    const float resendInterval = classicLike ? 1.0f : 0.50f;
-                    if (!autoAttacking_ && !autoAttackOutOfRange_ && autoAttackRetryPending_ &&
-                        autoAttackResendTimer_ >= resendInterval) {
-                        autoAttackResendTimer_ = 0.0f;
-                        autoAttackRetryPending_ = false;
-                        auto pkt = AttackSwingPacket::build(autoAttackTarget_);
-                        owner_.getSocket()->send(pkt);
-                    }
-
-                    // No periodic facing sync. The player is turned to face the
-                    // target once, where the attack is commanded, and after
-                    // that their facing is theirs: turning away mid-fight
-                    // means the swing misses, which is what it means in the
-                    // real client. Re-aiming them every fifth of a second so
-                    // the server would accept the swing fought the mouse for
-                    // the whole fight and made it impossible to back away from
-                    // something while attacked by it.
-                }
-            }
-        }
-    }
+    // Do not cancel or resend attacks based on a guessed melee radius.
+    // CMaNGOS keeps melee intent while out of range and reports swing errors.
 
     // Keep active melee attackers visually facing the player as positions change.
     if (!hostileAttackers_.empty()) {
@@ -984,12 +888,9 @@ void CombatHandler::resetAllCombatState() {
     combatText_.clear();
     autoAttacking_ = false;
     autoAttackRequested_ = false;
-    autoAttackRetryPending_ = false;
     autoAttackTarget_ = 0;
     autoAttackOutOfRange_ = false;
-    autoAttackOutOfRangeTime_ = 0.0f;
     autoAttackRangeWarnCooldown_ = 0.0f;
-    autoAttackResendTimer_ = 0.0f;
     lastMeleeSwingMs_ = 0;
 }
 

@@ -216,7 +216,7 @@ static int lua_IsCurrentAction(lua_State* L) {
         if (slot < static_cast<int>(bar.size()) &&
             bar[slot].type == game::ActionBarSlot::SPELL) {
             current = game::isCurrentSpellAction(bar[slot].id, gh->getActiveActionSpellId(),
-                                                 gh->isAutoAttacking());
+                                                 gh->hasAutoAttackIntent());
         }
     }
     lua_pushboolean(L, current);
