@@ -2356,12 +2356,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         castTimeRemaining_ = 0.0f;
         castTimeTotal_ = 0.0f;
 
-        // Gather node looting: re-send CMSG_LOOT now that the cast completed.
-        if (wasInTimedCast && owner_.lastInteractedGoGuidRef() != 0) {
-            LOG_DEBUG("[GO-DIAG] Sending CMSG_LOOT for GO 0x", std::hex,
-                        owner_.lastInteractedGoGuidRef(), std::dec);
-            owner_.lootTarget(owner_.lastInteractedGoGuidRef());
-        }
+        // Open-lock/gather spell effects open loot on the server. A second
+        // CMSG_LOOT races that response and is rejected as already looting.
         // Clear the GO interaction guard so future cancelCast() calls work
         // normally. Without this, pendingGameObjectInteractGuid_ stays stale
         // and suppresses CMSG_CANCEL_CAST for ALL subsequent spell casts.

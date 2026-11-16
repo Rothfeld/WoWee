@@ -1740,6 +1740,69 @@ TEST_CASE_METHOD(Integration, "TBC remote aura fields survive target selection a
     lua.setGameHandler(nullptr);
 }
 
+TEST_CASE_METHOD(Integration, "Mining loot survives rejected duplicate open and uses server slot", "[mining-loot]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.setAutoLoot(false);
+    constexpr uint64_t guid = 0xf1100006c3596cedull;
+    auto node = std::make_shared<GameObject>(guid);
+    node->setEntry(1731);
+    node->setName("Copper Vein");
+    handler.getEntityManager().addEntity(guid, node);
+    wowee::network::Packet query(wireOpcode(Opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE));
+    query.writeUInt32(1731); query.writeUInt32(3); query.writeUInt32(310);
+    query.writeString("Copper Vein");
+    for (int i = 0; i < 6; ++i) query.writeString("");
+    for (int i = 0; i < 24; ++i) query.writeUInt32(0);
+    session.receive(query);
+    handler.getSpellHandler()->addKnownSpell(2575);
+    handler.interactWithGameObject(guid);
+    REQUIRE(session.sent().of(Opcode::CMSG_CAST_SPELL).size() == 1);
+    CHECK_FALSE(handler.hasPendingGameObjectLootOpen(guid));
+    handler.lastInteractedGoGuidRef() = guid;
+    handler.spellNameCacheLoadedRef() = true;
+    handler.spellNameCacheRef()[2575].name = "Mining";
+    wowee::network::Packet start(wireOpcode(Opcode::SMSG_SPELL_START));
+    start.writePackedGuid(replay::Session::kPlayerGuid);
+    start.writePackedGuid(replay::Session::kPlayerGuid);
+    start.writeUInt32(2575); start.writeUInt8(1); start.writeUInt16(0);
+    start.writeUInt32(3000); start.writeUInt32(0);
+    session.receive(start);
+    REQUIRE(handler.isCasting());
+    wowee::network::Packet go(wireOpcode(Opcode::SMSG_SPELL_GO));
+    go.writePackedGuid(replay::Session::kPlayerGuid);
+    go.writePackedGuid(replay::Session::kPlayerGuid);
+    go.writeUInt32(2575); go.writeUInt16(0); go.writeUInt32(1000);
+    go.writeUInt8(1); go.writeUInt64(guid); go.writeUInt8(0); go.writeUInt32(0);
+    session.receive(go);
+    CHECK_FALSE(handler.isCasting());
+    CHECK(session.sent().of(Opcode::CMSG_LOOT).empty());
+    for (const uint8_t type : {2, 3}) {
+        wowee::network::Packet loot(wireOpcode(Opcode::SMSG_LOOT_RESPONSE));
+        loot.writeUInt64(guid); loot.writeUInt8(type); loot.writeUInt32(0); loot.writeUInt8(1);
+        loot.writeUInt8(4); // Server slot is independent of Lua's visible slot 1.
+        loot.writeUInt32(2770); loot.writeUInt32(2); loot.writeUInt32(4681);
+        loot.writeUInt32(0); loot.writeUInt32(0); loot.writeUInt8(0);
+        session.receive(loot);
+        truth(type == 3 ? "IsFishingLoot()" : "not IsFishingLoot()");
+        truth("GetNumLootItems() == 1 and LootSlotIsItem(1)");
+        wowee::network::Packet denied(wireOpcode(Opcode::SMSG_LOOT_RESPONSE));
+        denied.writeUInt64(guid); denied.writeUInt8(0); denied.writeUInt8(6);
+        session.receive(denied);
+        REQUIRE(handler.getCurrentLoot().items.size() == 1);
+        CHECK(handler.getCurrentLoot().lootGuid == guid);
+        CHECK(handler.getCurrentLoot().items[0].itemId == 2770);
+        truth("GetNumLootItems() == 1 and LootSlotIsItem(1)");
+        run("LootSlot(1)");
+    }
+    auto sent = session.sent().of(Opcode::CMSG_AUTOSTORE_LOOT_ITEM);
+    REQUIRE(sent.size() == 2);
+    for (auto& packet : sent) CHECK(packet.readUInt8() == 4);
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Moonkin tooltip keeps creature type on unwrapped level line", "[unit-tooltip]") {
     using namespace wowee::game;
     replay::Session session("tbc");

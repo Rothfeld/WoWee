@@ -13,6 +13,7 @@
 #include "rendering/animation/emote_registry.hpp"
 #include "game/game_handler.hpp"
 #include "game/spell_classification.hpp"
+#include "game/gather_spells.hpp"
 #include "game/world_packets.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/audio_engine.hpp"
@@ -447,7 +448,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             };
 
             bool isBandage = false;
-            bool isMining = false;
+            bool isMining = game::isMiningRank(currentSpell);
             bool isGathering = false;
             game::spellclass::RestChannelKind restChannel =
                 game::spellclass::RestChannelKind::NONE;
@@ -515,14 +516,23 @@ void AnimationCallbackHandler::setupCallbacks() {
                     }
                 }
             } else if (isMining) {
-                appearanceComposer_.showMiningPick(true);
-                uint32_t mineAnim = pickFirst({
-                    rendering::anim::ATTACK_1H,
-                    rendering::anim::EMOTE_WORK,
-                    rendering::anim::EMOTE_USE_STANDING
-                });
-                if (auto* ac = renderer_.getAnimationController()) {
-                    ac->startSpellCast(0, mineAnim ? mineAnim : rendering::anim::STAND, true, 0);
+                gameHandler_.loadSpellNameCache();
+                const auto spell = gameHandler_.spellNameCacheRef().find(currentSpell);
+                assert(spell != gameHandler_.spellNameCacheRef().end());
+                auto* visuals = renderer_.getSpellVisualSystem();
+                assert(visuals);
+                const auto mineAnim = visuals->precastAnimation(spell->second.spellVisualId);
+                if (mineAnim == 0xffffffffu || !cr->hasAnimation(instanceId, mineAnim)) {
+                    LOG_ERROR("Mining precast animation unavailable: spell=", currentSpell,
+                              " visual=", spell->second.spellVisualId, " animation=", mineAnim);
+                    return;
+                }
+                if (isLocalPlayer) {
+                    appearanceComposer_.showMiningPick(true);
+                    if (auto* ac = renderer_.getAnimationController())
+                        ac->startSpellCast(0, mineAnim, true, 0);
+                } else {
+                    cr->playAnimation(instanceId, mineAnim, true);
                 }
             } else if (isBandage || isGathering) {
                 uint32_t useStart = isChannel ? 0 : pickFirst({

@@ -3320,7 +3320,8 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             : CastSpellPacket::buildGameObjectTarget(gatherSpellId, guid, 0);
         socket->send(castPacket);
         lastInteractedGoGuid_ = guid;
-        scheduleGameObjectLootOpen(guid, 0.50f, 8);
+        // OPEN_LOCK spell effects send SMSG_LOOT_RESPONSE themselves. A timed
+        // retry would also loot after a failed skill roll and invalidate loot.
         sendReportUse();
         LOG_INFO("GO gather cast: spell=", gatherSpellId, " guid=0x",
                  std::hex, guid, std::dec, " name='", goName, "'");
@@ -3343,7 +3344,6 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                 plan.spellId, guid, 0);
             socket->send(castPacket);
             lastInteractedGoGuid_ = guid;
-            scheduleGameObjectLootOpen(guid, 0.60f, 8);
             sendReportUse();
             LOG_INFO("GO open-lock cast: spell=", plan.spellId,
                      " guid=0x", std::hex, guid, std::dec,
@@ -3392,7 +3392,6 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                                                                   keyUseSpell, 0, 0, guid);
                 socket->send(usePacket);
                 lastInteractedGoGuid_ = guid;
-                scheduleGameObjectLootOpen(guid, 0.60f, 8);
                 sendReportUse();
                 LOG_INFO("GO key-item use: keyItem=", plan.keyItemId,
                          " spell=", keyUseSpell, " keySlot(bag=", (int)keyBag,

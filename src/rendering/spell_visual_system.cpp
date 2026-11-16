@@ -152,6 +152,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         if (!vid) continue;
         const uint32_t channelField = (*svLayout)["ChannelKit"];
         if (channelField < svFc) channelKits_[vid] = svDbc->getUInt32(i, channelField);
+        assert(svPrecastKitField < svFc);
+        precastKits_[vid] = svDbc->getUInt32(i, svPrecastKitField);
         const uint32_t stateField = (*svLayout)["StateKit"];
         assert(stateField < svFc);
         stateKits_[vid] = svDbc->getUInt32(i, stateField);
@@ -474,6 +476,14 @@ uint32_t SpellVisualSystem::channelAnimation(uint32_t visualId) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     const auto kit = channelKits_.find(visualId);
     if (kit == channelKits_.end() || !kit->second) return 0xffffffffu;
+    const auto animation = kitAnimations_.find(kit->second);
+    return animation == kitAnimations_.end() ? 0xffffffffu : animation->second;
+}
+
+uint32_t SpellVisualSystem::precastAnimation(uint32_t visualId) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto kit = precastKits_.find(visualId);
+    if (kit == precastKits_.end() || !kit->second) return 0xffffffffu;
     const auto animation = kitAnimations_.find(kit->second);
     return animation == kitAnimations_.end() ? 0xffffffffu : animation->second;
 }

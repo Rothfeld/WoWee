@@ -3127,7 +3127,7 @@ static int lua_IsFishingLoot(lua_State* L) {
     auto* gh = getGameHandler(L);
     // LOOT_TYPE_FISHING, as the server sends it.
     const bool fishing = gh && gh->isLootWindowOpen() &&
-                         gh->getCurrentLoot().lootType == 2;
+                         gh->getCurrentLoot().lootType == 3;
     lua_pushboolean(L, fishing ? 1 : 0);
     return 1;
 }

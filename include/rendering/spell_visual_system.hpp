@@ -38,6 +38,7 @@ public:
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
     uint32_t channelAnimation(uint32_t visualId);
+    uint32_t precastAnimation(uint32_t visualId);
     // Persistent StateKit effects follow the unit's current aura set.
     void syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds);
 
@@ -116,6 +117,7 @@ private:
     struct KitEffect { std::string path; uint32_t attachment; };
     std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;
     std::unordered_map<uint32_t, uint32_t> channelKits_;
+    std::unordered_map<uint32_t, uint32_t> precastKits_;
     std::unordered_map<uint32_t, uint32_t> stateKits_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> unitAuraVisuals_;
     // Model ID for a cast, impact or missile model, loading it on first use.

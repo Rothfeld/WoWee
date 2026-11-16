@@ -1175,7 +1175,9 @@ void InventoryHandler::lootMasterGive(uint8_t lootSlot, uint64_t targetGuid) {
 
 void InventoryHandler::handleLootResponse(network::Packet& packet) {
     const bool wotlkLoot = isActiveExpansion("wotlk");
-    if (!LootResponseParser::parse(packet, currentLoot_, wotlkLoot)) return;
+    LootResponseData receivedLoot;
+    if (!LootResponseParser::parse(packet, receivedLoot, wotlkLoot)) return;
+    currentLoot_ = std::move(receivedLoot);
     const bool hasLoot = !currentLoot_.items.empty() || currentLoot_.gold > 0;
     LOG_INFO("SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,
              " items=", currentLoot_.items.size(), " gold=", currentLoot_.gold);
