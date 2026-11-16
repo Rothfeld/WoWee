@@ -134,11 +134,12 @@ enum class UF : uint16_t {
 
     // GameObject fields
     GAMEOBJECT_DISPLAYID,
+    GAMEOBJECT_FLAGS,
     GAMEOBJECT_BYTES_1,
     // MO_TRANSPORT route clock. LEVEL carries the route's period in ms; the high
     // int16 of DYNAMIC carries how far through that period the transport is, as a
-    // fraction of 65535. Both are WotLK-only - nothing before it published a
-    // transport's phase, so those expansions keep animating on their own clock.
+    // fraction of 65535. Transport phase is WotLK-only; the low bits carry
+    // per-player quest-object activation in earlier expansions too.
     GAMEOBJECT_DYNAMIC,
     GAMEOBJECT_LEVEL,
 

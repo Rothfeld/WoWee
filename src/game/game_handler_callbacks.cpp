@@ -1,5 +1,6 @@
 #include "game/game_handler.hpp"
 #include "game/game_object_lock.hpp"
+#include "game/game_object_interaction.hpp"
 #include "game/stationery.hpp"
 #include "game/reputation_standing.hpp"
 #include "addons/lua_api_registrations.hpp"
@@ -3193,6 +3194,10 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
     if (entity) {
         if (entity->getType() == ObjectType::GAMEOBJECT) {
             auto go = std::static_pointer_cast<GameObject>(entity);
+            if (!gameObjectInteractionEnabled(*go)) {
+                LOG_DEBUG("Ignoring unavailable game object interaction: ", guid);
+                return;
+            }
             goEntry = go->getEntry();
             goName = go->getName();
             goInfo = getCachedGameObjectInfo(goEntry);

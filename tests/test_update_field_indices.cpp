@@ -140,3 +140,11 @@ TEST_CASE("the summoner field sits where the target field says it does",
     const auto wotlk = declaredFields("wotlk");
     CHECK(wotlk.at("UNIT_FIELD_SUMMONEDBY_LO") == 14);
 }
+
+TEST_CASE("Game object interaction fields match expansion wire layouts", "[update-fields][quest-object]") {
+    for (const std::string expansion : {"classic", "turtle", "tbc", "wotlk"}) {
+        const auto fields = declaredFields(expansion);
+        REQUIRE(fields.at("GAMEOBJECT_FLAGS") == 9);
+        REQUIRE(fields.at("GAMEOBJECT_DYNAMIC") == (expansion == "wotlk" ? 14 : 19));
+    }
+}

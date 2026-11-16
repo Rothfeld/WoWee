@@ -7,6 +7,7 @@
 #include "rendering/character_renderer.hpp"
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
+#include "game/game_object_interaction.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/m2_renderer.hpp"
@@ -59,6 +60,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         const game::GameObjectQueryResponseData* goInfo = nullptr;
         if (type == game::ObjectType::GAMEOBJECT) {
             auto go = std::static_pointer_cast<game::GameObject>(entity);
+            if (!game::gameObjectInteractionEnabled(*go)) continue;
             goInfo = gameHandler.getCachedGameObjectInfo(go->getEntry());
             // Spell-focus objects mark crafting facilities (anvils, forges).
             // They satisfy nearby spell requirements; they are not clickable

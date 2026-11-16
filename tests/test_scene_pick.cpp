@@ -17,6 +17,7 @@
 
 #include "ui/scene_pick.hpp"
 #include "game/corpse_harvesting.hpp"
+#include "game/game_object_interaction.hpp"
 
 using wowee::ui::ScenePick;
 
@@ -204,4 +205,16 @@ TEST_CASE("Innkeeper vendor and battlemaster cursors retain service priority", "
         QuestGiverStatus::NONE, "Buy")) == "Interface\\Cursor\\Innkeeper.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_BATTLEMASTER,
         QuestGiverStatus::NONE)) == "Interface\\Cursor\\Speak.blp");
+}
+
+TEST_CASE("Conditional quest objects require server activation", "[quest-object]") {
+    using wowee::game::gameObjectInteractionEnabled;
+    CHECK_FALSE(gameObjectInteractionEnabled(0x04, 0)); // Beached Sea Creature, quest inactive
+    CHECK(gameObjectInteractionEnabled(0x04, 0x01));    // eligible questgiver
+    CHECK(gameObjectInteractionEnabled(0x04, 0x09));    // eligible quest chest
+    CHECK_FALSE(gameObjectInteractionEnabled(0x04, 0x08)); // sparkle alone does not activate
+    CHECK(gameObjectInteractionEnabled(0, 0));         // ordinary door/chair
+    CHECK(gameObjectInteractionEnabled(0x02, 0));      // locked chest still has a key interaction
+    CHECK_FALSE(gameObjectInteractionEnabled(0x10, 0x09));
+    CHECK_FALSE(gameObjectInteractionEnabled(0x01, 0x01));
 }
