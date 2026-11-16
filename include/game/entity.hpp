@@ -725,6 +725,20 @@ inline uint64_t unitTargetGuid(const std::shared_ptr<Entity>& entity) {
     return entity ? unitTargetGuid(*entity) : 0;
 }
 
+// CMaNGOS Unit::Attack sets this field because stationary creatures turn to
+// their selected target client-side. Player selections never control facing.
+inline std::optional<float> creatureTargetFacing(const Entity& entity,
+                                                const EntityManager& entities) {
+    if (entity.getType() != ObjectType::UNIT || entity.isActivelyMoving() ||
+        static_cast<const Unit&>(entity).getHealth() == 0) return std::nullopt;
+    const auto target = entities.getEntity(unitTargetGuid(entity));
+    if (!target) return std::nullopt;
+    const float dx = target->getX() - entity.getX();
+    const float dy = target->getY() - entity.getY();
+    if (dx * dx + dy * dy < 0.0001f) return std::nullopt;
+    return std::atan2(-dy, dx);
+}
+
 /// Who summoned this unit, or 0 for a unit nobody did.
 ///
 /// Answers 0 on an expansion whose table has no entry for the field, which is

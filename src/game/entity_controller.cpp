@@ -2143,9 +2143,9 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
     if (block.guid == owner_.getPlayerGuid()) {
         const bool deadFlag = (unit->getDynamicFlags() & UNIT_DYNFLAG_DEAD) != 0;
         playerFeigningDeath_ = deadFlag && isFeigningDeath(*entity, *unit);
-        if (deadFlag && !playerFeigningDeath_) {
+        if (unitInitiallyDead && !playerFeigningDeath_) {
             owner_.playerDeadRef() = true;
-            LOG_INFO("Player logged in dead (dynamic flags)");
+            LOG_INFO("Player logged in dead (initial corpse state)");
         }
     }
     // Detect ghost state on login via PLAYER_FLAGS

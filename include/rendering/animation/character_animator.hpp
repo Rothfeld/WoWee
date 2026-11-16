@@ -80,6 +80,8 @@ public:
 
     // ── Input injection (set per-frame from AnimationController) ────────
     struct FrameInput {
+        // Authoritative corpse state; ghosts and resurrected players are alive.
+        bool dead = false;
         // From camera controller
         bool moving = false;
         bool sprinting = false;
@@ -135,6 +137,7 @@ private:
     bool lowHealth_ = false;
     bool inCombat_ = false;
     bool rangedWeaponActive_ = false;
+    bool wasDead_ = false;
 
     float lastDt_ = 0.0f;
     FrameInput frameInput_;

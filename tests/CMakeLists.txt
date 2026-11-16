@@ -1074,6 +1074,7 @@ wowee_add_test(test_entity
     SOURCES test_entity.cpp
             ${TEST_COMMON_SOURCES}
             ${CMAKE_SOURCE_DIR}/src/game/entity.cpp
+            ${CMAKE_SOURCE_DIR}/src/game/update_field_table.cpp
             ${CMAKE_SOURCE_DIR}/src/math/spline.cpp)
 
 # ── test_dbc_loader ──────────────────────────────────────────

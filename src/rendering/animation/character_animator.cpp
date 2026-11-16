@@ -121,6 +121,16 @@ void CharacterAnimator::clearMountFSM() {
 AnimOutput CharacterAnimator::resolveAnimation() {
     const auto& fi = frameInput_;
 
+    if (fi.dead) {
+        if (!wasDead_) {
+            combat_.reset();
+            activity_.reset();
+        }
+        wasDead_ = true;
+        return AnimOutput::ok(anim::DEATH, false);
+    }
+    wasDead_ = false;
+
     // ── Mount takes over everything ─────────────────────────────────────
     if (mount_.isActive()) {
         // MountFSM returns mount-specific output; rider anim is separate

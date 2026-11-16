@@ -20,6 +20,7 @@
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "game/inventory.hpp"
+#include "game/game_handler.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
 #include "audio/audio_coordinator.hpp"
@@ -1121,6 +1122,8 @@ void AnimationController::updateCharacterAnimation() {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     auto* cameraController = renderer_->getCameraController();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
+    const auto* handler = core::Application::getInstance().getGameHandler();
+    const bool dead = handler && handler->isPlayerDead() && !handler->isPlayerGhost();
 
     // Lazy probe: populate capability set once per model.
     // Re-probe if melee capabilities are missing (model may not have been fully
@@ -1135,13 +1138,14 @@ void AnimationController::updateCharacterAnimation() {
     }
 
     // When mounted, delegate to MountFSM and handle positioning
-    if (isMounted()) {
+    if (!dead && isMounted()) {
         updateMountedAnimation(lastDeltaTime_);
         return;
     }
 
     // Build FrameInput for CharacterAnimator from camera/renderer state
     CharacterAnimator::FrameInput fi;
+    fi.dead = dead;
     fi.moving = cameraController->isMoving();
     fi.sprinting = cameraController->isSprinting();
     fi.movingForward = cameraController->isMovingForward();
@@ -1193,7 +1197,7 @@ void AnimationController::updateCharacterAnimation() {
     // playAnimation call).  One-shot animations must NOT be re-asserted after the
     // animation reaches its end - the FSM consumes the completed duration and
     // chooses its successor while the renderer holds the final pose.
-    const bool drifted = haveState && currentAnimId != animId && loop;
+    const bool drifted = haveState && currentAnimId != animId && (loop || dead);
     const bool shouldPlay = requestChanged || drifted;
 
     // Debug: log animation decisions (only when animation changes or replays)

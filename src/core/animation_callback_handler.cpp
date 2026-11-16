@@ -197,6 +197,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (!renderer_.getCharacterRenderer()) return;
         uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
+        if (guid == gameHandler_.getPlayerGuid()) instanceId = renderer_.getCharacterInstanceId();
         if (instanceId != 0) {
             renderer_.getCharacterRenderer()->playAnimation(instanceId, rendering::anim::DEATH, false);
         }
@@ -208,6 +209,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (!renderer_.getCharacterRenderer()) return;
         uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
+        if (guid == gameHandler_.getPlayerGuid()) instanceId = renderer_.getCharacterInstanceId();
         if (instanceId != 0) {
             auto* cr = renderer_.getCharacterRenderer();
             // Play RISE one-shot (auto-returns to STAND when finished), fall back to STAND
@@ -260,6 +262,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         // For local player: use AnimationController state
         bool isLocalPlayer = (victimGuid == gameHandler_.getPlayerGuid());
         if (isLocalPlayer) {
+            if (gameHandler_.isPlayerDead() && !gameHandler_.isPlayerGhost()) return;
             auto* ac = renderer_.getAnimationController();
             if (ac) {
                 uint32_t charInstId = renderer_.getCharacterInstanceId();
@@ -340,6 +343,8 @@ void AnimationCallbackHandler::setupCallbacks() {
     // SMSG_EMOTE): they loop until cleared and are retained across model
     // reloads. One-shots play once and resume the retained state loop.
     gameHandler_.setEmoteAnimCallback([this](uint64_t guid, uint32_t emoteAnim, bool isState) {
+        if (guid == gameHandler_.getPlayerGuid() && gameHandler_.isPlayerDead() &&
+            !gameHandler_.isPlayerGhost()) return;
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
         auto entity = gameHandler_.getEntityManager().getEntity(guid);

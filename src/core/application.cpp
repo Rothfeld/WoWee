@@ -3647,7 +3647,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 if (glm::dot(delta, delta) > 0.0001f)
                     interactionYaw = std::atan2(-delta.y, delta.x);
             }
-            float facing = entity->getOrientation();
+            float facing = game::creatureTargetFacing(*entity, gameHandler->getEntityManager())
+                .value_or(entity->getOrientation());
             if (interactionYaw || npcInteractionFacing_.contains(guid)) {
                 auto [it, inserted] = npcInteractionFacing_.try_emplace(guid, facing);
                 facing = it->second.advance(interactionYaw.value_or(facing), deltaTime);
@@ -4261,6 +4262,9 @@ void Application::update(float deltaTime) {
             addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
             addonManager_->fireEvent("PLAYER_LOGIN");
             addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+            if (gameHandler && gameHandler->isPlayerDead() && !gameHandler->isPlayerGhost()) {
+                addonManager_->fireEvent("PLAYER_DEAD");
+            }
             if (renderer) renderer->invalidateAreaAnnouncement();
             addons::LuaEngine::setUiSoundsSuppressed(false);
         }

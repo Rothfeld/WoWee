@@ -5,6 +5,35 @@
 
 using namespace wowee::rendering;
 
+TEST_CASE("Death overrides combat and locomotion until the corpse state clears", "[animation][death]") {
+    CharacterAnimator animator;
+    AnimCapabilitySet caps;
+    caps.resolvedStand = anim::STAND;
+    animator.setCapabilities(caps);
+    animator.setStunned(true);
+    animator.startSpellCast(0, anim::SPELL_CAST, true, 0);
+    animator.playEmote(anim::EMOTE_DANCE, true);
+    CharacterAnimator::FrameInput frame;
+    frame.dead = true;
+    frame.moving = true;
+    frame.swimming = true;
+    frame.meleeSwingTimer = 1.0f;
+    frame.haveAnimState = true;
+    frame.currentAnimId = anim::DEATH;
+    frame.currentAnimDuration = 1.0f;
+    for (float time : {0.0f, 0.5f, 1.0f, 5.0f}) {
+        frame.currentAnimTime = time;
+        animator.setFrameInput(frame);
+        animator.update(0.016f);
+        REQUIRE(animator.getLastOutput().animId == anim::DEATH);
+        REQUIRE_FALSE(animator.getLastOutput().loop);
+    }
+    frame = {};
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::STAND);
+}
+
 TEST_CASE("Attack mode transitions do not draw already-held weapons", "[animation][combat]") {
     CharacterAnimator animator;
     AnimCapabilitySet caps;

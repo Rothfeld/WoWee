@@ -8,6 +8,45 @@
 
 using namespace wowee::game;
 
+TEST_CASE("Stationary creatures track selected targets while players preserve facing", "[entity][target-facing]") {
+    UpdateFieldTable fields;
+    fields.setIndex(UF::UNIT_FIELD_TARGET_LO, 16);
+    fields.setIndex(UF::UNIT_FIELD_TARGET_HI, 17);
+    struct RestoreTable {
+        const UpdateFieldTable* previous;
+        ~RestoreTable() { setActiveUpdateFieldTable(previous); }
+    } restore{getActiveUpdateFieldTable()};
+    setActiveUpdateFieldTable(&fields);
+    EntityManager entities;
+    constexpr uint64_t targetGuid = 0xf130000123000456ULL;
+    auto target = std::make_shared<Player>(targetGuid);
+    entities.addEntity(targetGuid, target);
+    Unit creature(77);
+    creature.setHealth(100);
+    creature.setPosition(0, 0, 0, 0.7f);
+    creature.setField(fieldIndex(UF::UNIT_FIELD_TARGET_LO), static_cast<uint32_t>(targetGuid));
+    creature.setField(fieldIndex(UF::UNIT_FIELD_TARGET_HI), static_cast<uint32_t>(targetGuid >> 32));
+    target->setPosition(0, 5, 0, 0);
+    REQUIRE(creatureTargetFacing(creature, entities).value() == Catch::Approx(-1.5707963f));
+    target->setPosition(-5, 0, 0, 0);
+    REQUIRE(std::abs(creatureTargetFacing(creature, entities).value()) == Catch::Approx(3.1415927f));
+    REQUIRE(creature.getOrientation() == Catch::Approx(0.7f));
+
+    creature.startMoveTo(10, 0, 0, 0, 2);
+    REQUIRE_FALSE(creatureTargetFacing(creature, entities).has_value());
+    creature.setPosition(0, 0, 0, 0.7f);
+    creature.setHealth(0);
+    REQUIRE_FALSE(creatureTargetFacing(creature, entities).has_value());
+    Player player(78);
+    player.setHealth(100);
+    player.setField(fieldIndex(UF::UNIT_FIELD_TARGET_LO), static_cast<uint32_t>(targetGuid));
+    player.setField(fieldIndex(UF::UNIT_FIELD_TARGET_HI), static_cast<uint32_t>(targetGuid >> 32));
+    REQUIRE_FALSE(creatureTargetFacing(player, entities).has_value());
+    creature.setHealth(100);
+    entities.removeEntity(targetGuid);
+    REQUIRE_FALSE(creatureTargetFacing(creature, entities).has_value());
+}
+
 TEST_CASE("Entity default construction", "[entity]") {
     Entity e;
     REQUIRE(e.getGuid() == 0);

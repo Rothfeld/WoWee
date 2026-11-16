@@ -1561,3 +1561,29 @@ TEST_CASE_METHOD(Integration, "Recipe item data resolves learned craft and reage
     CHECK(tip->tooltipLines[1].lc[1] == 1.0f);
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE_METHOD(Integration, "TBC local creation restores omitted zero health and ghost state", "[death-login]") {
+    using namespace wowee::game;
+    for (const bool ghost : {false, true}) {
+        replay::Session session("tbc");
+        wowee::network::Packet packet(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+        packet.writeUInt32(1);
+        packet.writeUInt8(0);
+        packet.writeUInt8(static_cast<uint8_t>(UpdateType::CREATE_OBJECT2));
+        packet.writePackedGuid(replay::Session::kPlayerGuid);
+        packet.writeUInt8(static_cast<uint8_t>(ObjectType::PLAYER));
+        packet.writeUInt8(0x01); // UPDATEFLAG_SELF, no movement payload
+        std::map<uint16_t, uint32_t> fields{{fieldIndex(UF::UNIT_FIELD_MAXHEALTH), 100}};
+        if (ghost) fields.emplace(fieldIndex(UF::PLAYER_FLAGS), 0x10);
+        const auto blocks = static_cast<uint8_t>(fields.rbegin()->first / 32 + 1);
+        packet.writeUInt8(blocks);
+        std::vector<uint32_t> mask(blocks, 0);
+        for (const auto& [index, value] : fields) mask[index / 32] |= 1u << (index % 32);
+        for (const auto word : mask) packet.writeUInt32(word);
+        for (const auto& [index, value] : fields) packet.writeUInt32(value);
+        session.receive(packet);
+        CHECK(session.handler().isPlayerDead());
+        CHECK(session.handler().isPlayerGhost() == ghost);
+        CHECK(session.handler().showDeathDialog() == !ghost);
+    }
+}

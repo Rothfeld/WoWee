@@ -1024,19 +1024,21 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         auto* cr = renderer_->getCharacterRenderer();
         auto* spawner = entitySpawner_;
 
-        gameHandler_->setNpcDeathCallback([cr, spawner](uint64_t guid) {
+        gameHandler_->setNpcDeathCallback([this, cr, spawner](uint64_t guid) {
             spawner->markCreatureDead(guid);
             uint32_t instanceId = spawner->getCreatureInstanceId(guid);
             if (instanceId == 0) instanceId = spawner->getPlayerInstanceId(guid);
+            if (guid == gameHandler_->getPlayerGuid()) instanceId = renderer_->getCharacterInstanceId();
             if (instanceId != 0 && cr) {
                 cr->playAnimation(instanceId, rendering::anim::DEATH, false);
             }
         });
 
-        gameHandler_->setNpcRespawnCallback([cr, spawner](uint64_t guid) {
+        gameHandler_->setNpcRespawnCallback([this, cr, spawner](uint64_t guid) {
             spawner->unmarkCreatureDead(guid);
             uint32_t instanceId = spawner->getCreatureInstanceId(guid);
             if (instanceId == 0) instanceId = spawner->getPlayerInstanceId(guid);
+            if (guid == gameHandler_->getPlayerGuid()) instanceId = renderer_->getCharacterInstanceId();
             if (instanceId != 0 && cr) {
                 cr->playAnimation(instanceId, rendering::anim::STAND, true);
             }
@@ -1276,6 +1278,9 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
         addonManager_->fireEvent("PLAYER_LOGIN");
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+        if (gameHandler_ && gameHandler_->isPlayerDead() && !gameHandler_->isPlayerGhost()) {
+            addonManager_->fireEvent("PLAYER_DEAD");
+        }
     } else if (addonManager_ && app_.addonsLoaded_) {
         // Subsequent world entries (e.g. teleport, instance entry)
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
