@@ -4016,6 +4016,13 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
             gameHandler->update(deltaTime);
         }
     });
+    // The socket pump can disconnect and remove the local entity/camera during
+    // this frame. The pre-frame state check cannot cover that transition.
+    if (state != AppState::IN_GAME) return;
+    if (gameHandler && gameHandler->getState() == game::WorldState::DISCONNECTED) {
+        handleWorldDisconnect();
+        return;
+    }
     // NEW_WORLD removes the old entities and queues a world load. Finish that
     // load in update() before any stage reads the former player's render state.
     if (worldLoader_ && worldLoader_->hasPendingEntry()) return;
