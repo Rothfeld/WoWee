@@ -740,5 +740,10 @@ inline uint64_t unitSummonedByGuid(const Entity& entity) {
     return guid;
 }
 
+inline uint64_t unitCreatedByGuid(const Entity& entity) {
+    return static_cast<uint64_t>(entity.getField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_LO))) |
+           (static_cast<uint64_t>(entity.getField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_HI))) << 32);
+}
+
 } // namespace game
 } // namespace wowee

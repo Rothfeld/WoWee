@@ -1000,16 +1000,12 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         bool isTarget = (guid == targetGuid);
         const bool isHostile = unit->isHostile();
 
-        // Totems are their own row in both the Names and the Nameplates panel,
-        // and creature type 11 is the whole of what this client can tell them
-        // by. The pet and guardian rows next to them stay unread on purpose:
-        // separating those needs to know who summoned a unit, and no
-        // expansion's update fields here carry SUMMONEDBY or CREATEDBY.
-        //
-        // An entry whose creature info has not arrived yet answers 0, which is
-        // not 11, so an unknown unit keeps its plate rather than losing it.
-        const bool isTotem =
-            !isPlayer && gameHandler.getCreatureType(unit->getEntry()) == 11;
+        const uint32_t creatureType = isPlayer ? 0 : gameHandler.getCreatureType(unit->getEntry());
+        const bool isTotem = creatureType == 11;
+        // Non-combat pets have their own creature type. Their PLAYER_CONTROLLED
+        // flag and summoner also occur on combat pets, but companions show names
+        // without health plates even when friendly pet plates are enabled.
+        const bool isCompanion = creatureType == 12;
 
         // Pets and guardians, which the panels separate and which separate the
         // same way the game does: both are summons carrying a summoner, and
@@ -1039,7 +1035,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             showPlate = showPlate && addons::storedCVarValue(plateCVar, "1") != "0";
         }
 
-        if (guid == playerGuid) showPlate = false;
+        if (guid == playerGuid || isCompanion) showPlate = false;
 
         // Legacy corpses retain plain names, governed by the usual name
         // settings and target/hover overrides, but never a health plate.
@@ -1500,6 +1496,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         const char* nameCVar =
             isPlayer ? (isHostile ? "unitNameEnemyPlayerName"
                                   : "unitNameFriendlyPlayerName")
+            : isCompanion ? "unitNameCompanionName"
             : isTotem ? (isHostile ? "unitNameEnemyTotemName"
                                    : "unitNameFriendlyTotemName")
             : isPet ? (isHostile ? "unitNameEnemyPetName"
@@ -1573,7 +1570,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         ImU32 nameColor;
         if (isCorpse && legacyPlates) {
             nameColor = IM_COL32(128, 128, 128, A(255));
-        } else if (isPlayer) {
+        } else if (isPlayer || (isCompanion &&
+                   (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0)) {
             nameColor = isHostile
                 ? IM_COL32(220, 80, 80, A(255))
                 : IM_COL32(128, 128, 255, A(255));
@@ -1600,6 +1598,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 const std::string& gn = gameHandler.lookupGuildName(guildId);
                 if (!gn.empty()) subLabel = "<" + gn + ">";
             }
+        } else if (isCompanion) {
+            const std::string& owner = gameHandler.lookupName(game::unitCreatedByGuid(*unit));
+            if (!owner.empty()) subLabel = "<" + owner + "'s Companion>";
         } else {
             // NPC subtitle (e.g. "<Reagent Vendor>", "<Innkeeper>")
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());

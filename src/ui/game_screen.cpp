@@ -897,8 +897,9 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                     };
                     if (unit->getHealth() == 0 && unit->getMaxHealth() > 0) {
                         circleColor = glm::vec3(0.5f, 0.5f, 0.5f); // gray (dead)
-                    } else if (target->getType() == game::ObjectType::PLAYER) {
-                        // Players: blue unflagged, green friendly flagged, yellow hostile
+                    } else if (target->getType() == game::ObjectType::PLAYER ||
+                               (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED)) {
+                        // Player-controlled units: blue unflagged, green friendly flagged, yellow hostile
                         // flagged while we are not, red when both are flagged.
                         if (gameHandler.isDuelOpponent(*unit)) circleColor = kRed;
                         else if (!pvpFlagged(target->getGuid())) circleColor = kBlue;

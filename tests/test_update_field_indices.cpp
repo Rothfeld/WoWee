@@ -130,6 +130,10 @@ TEST_CASE("the summoner field sits where the target field says it does",
               fields.at("UNIT_FIELD_SUMMONEDBY_LO") + 1);
         CHECK(fields.at("UNIT_FIELD_SUMMONEDBY_LO") + 4 ==
               fields.at("UNIT_FIELD_TARGET_LO"));
+        CHECK(fields.at("UNIT_FIELD_CREATEDBY_LO") ==
+              fields.at("UNIT_FIELD_SUMMONEDBY_LO") + 2);
+        CHECK(fields.at("UNIT_FIELD_CREATEDBY_HI") ==
+              fields.at("UNIT_FIELD_CREATEDBY_LO") + 1);
     }
 
     // And the one absolute the server header states outright.

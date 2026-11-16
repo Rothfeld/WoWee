@@ -128,6 +128,9 @@ enum class UF : uint16_t {
     /// separates them is UNIT_FLAG_PLAYER_CONTROLLED and the creature type.
     UNIT_FIELD_SUMMONEDBY_LO,
     UNIT_FIELD_SUMMONEDBY_HI,
+    /// Creature owner; non-combat pets publish CREATEDBY without SUMMONEDBY.
+    UNIT_FIELD_CREATEDBY_LO,
+    UNIT_FIELD_CREATEDBY_HI,
 
     // GameObject fields
     GAMEOBJECT_DISPLAYID,

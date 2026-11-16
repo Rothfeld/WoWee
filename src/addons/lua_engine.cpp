@@ -2690,11 +2690,25 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     // replaced was already doing.
     const auto entity = gh->getEntityManager().getEntity(guid);
     const bool isPlayer = entity && entity->getType() == game::ObjectType::PLAYER;
+    const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+    const bool isCompanion = unit && !isPlayer && gh->getCreatureType(unit->getEntry()) == 12;
 
     if (isPlayer) {
         if (const uint32_t guildId = gh->getEntityGuildId(guid); guildId != 0) {
             const std::string& guildName = gh->lookupGuildName(guildId);
             if (!guildName.empty()) addLine("<" + guildName + ">", 0.25f, 1.0f, 0.25f);
+        }
+    } else if (isCompanion) {
+        const std::string owner = gh->lookupName(game::unitCreatedByGuid(*entity));
+        if (!owner.empty()) {
+            lua_getglobal(L, "UNITNAME_TITLE_COMPANION");
+            assert(lua_isstring(L, -1));
+            std::string title = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            const auto placeholder = title.find("%s");
+            assert(placeholder != std::string::npos);
+            title.replace(placeholder, 2, owner);
+            addLine(title, 1.0f, 1.0f, 1.0f);
         }
     } else if (entity) {
         // NPC tooltip subtitles have no angle brackets (unlike overhead titles).
@@ -2743,7 +2757,7 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         }
     }
 
-    if (!isPlayer && entity) {
+    if (!isPlayer && !isCompanion && entity) {
         auto* assets = gh->services().assetManager;
         const auto* layouts = wowee::pipeline::getActiveDBCLayout();
         const auto* layout = layouts ? layouts->getLayout("FactionTemplate") : nullptr;

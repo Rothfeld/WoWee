@@ -812,7 +812,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // The four kinds of unit this client can tell apart on a nameplate. On,
     // which is what it drew before any of them were read.
     else if (n == "unitnameenemyplayername" || n == "unitnamefriendlyplayername" ||
-             n == "unitnamenpc" || n == "unitnamenoncombatcreaturename")
+             n == "unitnamenpc" || n == "unitnamenoncombatcreaturename" ||
+             n == "unitnamecompanionname")
         lua_pushstring(L, "1");
     // Off, as the real client has it: bars start unlocked and a player who
     // wants them held down says so.
