@@ -27,6 +27,16 @@ macOS, Windows and Android.
 [Hear the soundtrack](https://kelsidavis.bandcamp.com/album/wowee-soundtrack)
 
 TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-effects.md).
+Ground clutter uses expansion-specific DBC layouts. Vanilla/TBC
+`GroundEffectTexture.dbc` has seven columns: ID, four doodad IDs, density,
+terrain type. Its doodad slots have equal weights; `0xffffffff` means empty.
+Wrath has eleven columns with four explicit weights. Vanilla/TBC
+`GroundEffectDoodad.dbc` stores the model path in column 2 (zero-based),
+while Wrath stores it in column 1. Reading the Wrath offsets on TBC yields
+zero density and malformed model paths. Validate both tables together when
+changing terrain detail rendering. TBC model references use `DoodadIdTag`
+(column 1, zero is valid), rather than the DBC row ID. Placement uses authored
+models only; it does not substitute Elwynn grass for missing data or empty tiles.
 M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
 asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U

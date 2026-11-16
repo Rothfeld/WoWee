@@ -1808,7 +1808,10 @@ void TerrainManager::ensureGroundEffectTablesLoaded() {
         return;
     }
 
-    // GroundEffectTexture: id + 4 doodad IDs + 4 weights + density + sound
+    // Vanilla/TBC have no weight columns: id, four doodads, density, sound.
+    // Wrath adds four explicit weights before density.
+    const auto effectFields = groundEffectTex->getFieldCount();
+    assert(effectFields == 7 || effectFields == 11);
     for (uint32_t i = 0; i < groundEffectTex->getRecordCount(); ++i) {
         uint32_t effectId = groundEffectTex->getUInt32(i, 0);
         if (effectId == 0) continue;
@@ -1818,19 +1821,21 @@ void TerrainManager::ensureGroundEffectTablesLoaded() {
         e.doodadIds[1] = groundEffectTex->getUInt32(i, 2);
         e.doodadIds[2] = groundEffectTex->getUInt32(i, 3);
         e.doodadIds[3] = groundEffectTex->getUInt32(i, 4);
-        e.weights[0] = groundEffectTex->getUInt32(i, 5);
-        e.weights[1] = groundEffectTex->getUInt32(i, 6);
-        e.weights[2] = groundEffectTex->getUInt32(i, 7);
-        e.weights[3] = groundEffectTex->getUInt32(i, 8);
-        e.density = groundEffectTex->getUInt32(i, 9);
+        for (size_t slot = 0; slot < 4; ++slot)
+            e.weights[slot] = (effectFields != 7 && e.doodadIds[slot] == 0) || e.doodadIds[slot] == UINT32_MAX
+                ? 0 : effectFields == 7 ? 1 : groundEffectTex->getUInt32(i, 5 + slot);
+        e.density = groundEffectTex->getUInt32(i, effectFields - 2);
         groundEffectById_[effectId] = e;
     }
 
-    // GroundEffectDoodad: id + modelName(offset) + flags
+    // Vanilla/TBC: id, doodad tag, modelName. Wrath: id, modelName, flags.
+    assert(groundEffectDoodad->getFieldCount() == 3);
+    const uint32_t modelColumn = effectFields == 7 ? 2 : 1;
     for (uint32_t i = 0; i < groundEffectDoodad->getRecordCount(); ++i) {
-        uint32_t doodadId = groundEffectDoodad->getUInt32(i, 0);
-        std::string modelName = groundEffectDoodad->getString(i, 1);
-        if (doodadId == 0 || modelName.empty()) continue;
+        // TBC texture records refer to zero-based DoodadIdTag, not row ID.
+        uint32_t doodadId = groundEffectDoodad->getUInt32(i, effectFields == 7 ? 1 : 0);
+        std::string modelName = groundEffectDoodad->getString(i, modelColumn);
+        if (modelName.empty()) continue;
 
         std::string lower = toLowerCopy(modelName);
         if (lower.size() > 4 && lower.substr(lower.size() - 4) == ".mdl") {
@@ -1852,18 +1857,8 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
     if (taxiStreamingMode_) return;  // Skip clutter while on taxi flights.
     if (!pending || groundEffectById_.empty() || groundDoodadModelById_.empty()) return;
 
-    static const std::string kGroundClutterProxyModel = "World\\NoDXT\\Detail\\ElwGra01.m2";
-    static bool loggedProxy = false;
-    if (!loggedProxy) {
-        LOG_INFO("Ground clutter: forcing proxy model ", kGroundClutterProxyModel);
-        loggedProxy = true;
-    }
-
     size_t modelMissing = 0;
     size_t modelInvalid = 0;
-    // How many placements ended up as the Elwynn proxy because the doodad the
-    // texture actually asked for would not load.
-    size_t proxyFallbackUsed = 0;
     auto ensureModelPrepared = [&](const std::string& m2Path, uint32_t modelId) -> bool {
         if (preparedModelIds.count(modelId)) return true;
 
@@ -1907,8 +1902,10 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
     // why standing in the wrong part of a tile showed no ground cover
     // whatsoever. The ceiling is now shared out as a per-chunk budget, so it
     // bounds the tile the same way while covering all of it.
-    constexpr size_t kBaseMaxGroundClutterPerTile = 880;
     constexpr uint32_t kBaseMaxAttemptsPerLayer = 12;
+    // Budget all four layers of all 256 chunks. A smaller tile allowance
+    // truncated authored density to only two clumps per chunk at 70%.
+    constexpr size_t kBaseMaxGroundClutterPerTile = 256 * 4 * kBaseMaxAttemptsPerLayer;
     const float densityScaleRaw = glm::clamp(groundClutterDensityScale_, 0.0f, 1.5f);
     // Keep runtime density bounded to avoid large streaming spikes in dense tiles.
     const float densityScale = std::min(densityScaleRaw, 1.0f);
@@ -1928,7 +1925,6 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
     size_t alphaRejected = 0;
     size_t roadRejected = 0;
     size_t noEffectMatch = 0;
-    size_t textureIdFallbackMatch = 0;
     size_t noDoodadModel = 0;
     std::array<uint16_t, 256> perChunkAdded{};
 
@@ -1995,12 +1991,6 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                 if (layer.effectId == 0) continue;
 
                 auto geIt = groundEffectById_.find(layer.effectId);
-                if (geIt == groundEffectById_.end() && layer.textureId != 0) {
-                    geIt = groundEffectById_.find(layer.textureId);
-                    if (geIt != groundEffectById_.end()) {
-                        textureIdFallbackMatch++;
-                    }
-                }
                 if (geIt == groundEffectById_.end()) {
                     noEffectMatch++;
                     continue;
@@ -2008,7 +1998,7 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                 const GroundEffectEntry& ge = geIt->second;
 
                 uint32_t totalWeight = ge.weights[0] + ge.weights[1] + ge.weights[2] + ge.weights[3];
-                if (totalWeight == 0) totalWeight = 4;
+                if (totalWeight == 0) continue;
 
                 uint32_t density = std::min<uint32_t>(ge.density, 16u);
                 density = static_cast<uint32_t>(std::lround(static_cast<float>(density) * densityScale));
@@ -2052,12 +2042,12 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                     int pick = 0;
                     uint32_t acc = 0;
                     for (int i = 0; i < 4; ++i) {
-                        uint32_t w = ge.weights[i] > 0 ? ge.weights[i] : 1;
+                        uint32_t w = ge.weights[i];
                         acc += w;
                         if (roll < acc) { pick = i; break; }
                     }
                     uint32_t doodadId = ge.doodadIds[pick];
-                    if (doodadId == 0) continue;
+                    if (doodadId == UINT32_MAX) continue;
 
                     auto doodadIt = groundDoodadModelById_.find(doodadId);
                     if (doodadIt == groundDoodadModelById_.end()) {
@@ -2067,11 +2057,9 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                     const std::string& doodadModelPath = doodadIt->second;
                     uint32_t modelId = static_cast<uint32_t>(std::hash<std::string>{}(doodadModelPath));
                     if (!ensureModelPrepared(doodadModelPath, modelId)) {
-                        modelId = static_cast<uint32_t>(std::hash<std::string>{}(kGroundClutterProxyModel));
-                        if (!ensureModelPrepared(kGroundClutterProxyModel, modelId)) {
-                            continue;
-                        }
-                        ++proxyFallbackUsed;
+                        LOG_ERROR("Ground clutter model could not load: ", doodadModelPath);
+                        assert(false && "Authored ground detail model failed to load");
+                        continue;
                     }
 
                     const glm::vec3 surfacePoint = pipeline::TerrainMeshGenerator::chunkSurfacePoint(
@@ -2100,80 +2088,13 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
         }
     }
 
-    size_t fallbackAdded = 0;
-    const size_t kMinGroundClutterPerTile = static_cast<size_t>(std::lround(40.0f * densityScale));
-    size_t fallbackNeeded = (added < kMinGroundClutterPerTile) ? (kMinGroundClutterPerTile - added) : 0;
-    if (fallbackNeeded > 0) {
-        const uint32_t proxyModelId = static_cast<uint32_t>(std::hash<std::string>{}(kGroundClutterProxyModel));
-        if (ensureModelPrepared(kGroundClutterProxyModel, proxyModelId)) {
-            constexpr uint32_t kFallbackPerChunk = 2;
-            for (int cy = 0; cy < 16; ++cy) {
-                for (int cx = 0; cx < 16; ++cx) {
-                    if (fallbackAdded >= fallbackNeeded || added >= kMaxGroundClutterPerTile) break;
-                    const auto& chunk = pending->terrain.getChunk(cx, cy);
-                    if (!chunk.hasHeightMap()) continue;
-
-                    for (uint32_t i = 0; i < kFallbackPerChunk; ++i) {
-                        if (fallbackAdded >= fallbackNeeded || added >= kMaxGroundClutterPerTile) break;
-                        // Deterministic scatter so the tile stays visually stable.
-                        uint32_t seed = static_cast<uint32_t>(
-                            ((pending->coord.x & 0xFF) << 24) ^
-                            ((pending->coord.y & 0xFF) << 16) ^
-                            ((cx & 0x1F) << 8) ^
-                            ((cy & 0x1F) << 3) ^
-                            (i & 0x7));
-                        auto nextRand = [&seed]() -> uint32_t {
-                            seed = seed * 1664525u + 1013904223u;
-                            return seed;
-                        };
-
-                        float fracX = (nextRand() & 0xFFFFu) / kRand16Max * 8.0f;
-                        float fracY = (nextRand() & 0xFFFFu) / kRand16Max * 8.0f;
-                        if (hasRoadLikeTextureAt(chunk, fracX, fracY)) {
-                            roadRejected++;
-                            continue;
-                        }
-                        const glm::vec3 surfacePoint = pipeline::TerrainMeshGenerator::chunkSurfacePoint(
-                            chunk.position, chunk.heightMap, fracX, fracY, unitSize);
-                        const float worldX = surfacePoint.x;
-                        const float worldY = surfacePoint.y;
-                        const float worldZ = surfacePoint.z;
-
-                        PendingTile::M2Placement p;
-                        p.modelId = proxyModelId;
-                        p.uniqueId = 0;
-                        p.rotation = glm::vec3(0.0f, 0.0f, (nextRand() & 0xFFFFu) / kRand16Max * (2.0f * pi));
-                        p.scale = 0.75f + ((nextRand() & 0xFFFFu) / kRand16Max) * 0.40f;
-                        p.position = glm::vec3(worldX, worldY, worldZ + 0.01f);
-                        pending->m2Placements.push_back(p);
-                        fallbackAdded++;
-                        added++;
-                        perChunkAdded[cy * 16 + cx]++;
-                    }
-                }
-                if (fallbackAdded >= fallbackNeeded || added >= kMaxGroundClutterPerTile) break;
-            }
-        }
-    }
-
-    // Baseline pass disabled: one-per-chunk fill caused large instance spikes and hitches
-    // when streaming tiles around the player.
-    size_t baselineAdded = 0;
-
     if (added > 0) {
         static int clutterLogCount = 0;
         if (clutterLogCount < 12) {
-            // With the counts beside it. Elwynn grass was reported growing in
-            // Hellfire Peninsula, and the two places that can put it there - a
-            // doodad whose model will not load, and the minimum-per-tile floor
-            // below - both report only here. At debug: a tile that got its
-            // clutter is the ordinary case, twelve lines of it every session.
-            // A tile that got none says so at warning, below.
+            // Keep placement diagnostics beside data failures; never replace
+            // missing authored models with unrelated vegetation.
             LOG_DEBUG("Ground clutter tile [", pending->coord.x, ",", pending->coord.y,
                      "] added=", added, " attempts=", attemptsTotal,
-                     " proxyFallback=", proxyFallbackUsed,
-                     " fallbackAdded=", fallbackAdded,
-                     " baselineAdded=", baselineAdded,
                      " roadRejected=", roadRejected);
             clutterLogCount++;
         }
@@ -2185,7 +2106,6 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                      " alphaRejected=", alphaRejected,
                      " roadRejected=", roadRejected,
                      " noEffect=", noEffectMatch,
-                     " textureFallback=", textureIdFallbackMatch,
                      " noDoodadModel=", noDoodadModel,
                      " modelMissing=", modelMissing,
                      " modelInvalid=", modelInvalid);
@@ -2247,7 +2167,7 @@ void TerrainManager::getGroundEffectDoodads(uint32_t effectId,
 
     for (size_t i = 0; i < it->second.doodadIds.size(); ++i) {
         const uint32_t doodadId = it->second.doodadIds[i];
-        if (doodadId == 0) continue;
+        if (it->second.weights[i] == 0) continue;
         const auto model = groundDoodadModelById_.find(doodadId);
         if (model == groundDoodadModelById_.end()) continue;
         outModels.push_back(model->second);
