@@ -1,7 +1,8 @@
-// SRP6a challenge/proof smoke tests
+// SRP6a challenge/proof tests
 #include <catch_amalgamated.hpp>
 #include "auth/srp.hpp"
 #include "auth/crypto.hpp"
+#include <stdexcept>
 
 using wowee::auth::SRP;
 using wowee::auth::Crypto;
@@ -19,6 +20,91 @@ static const std::vector<uint8_t> kWoWPrime = {
     0x53, 0x50, 0x06, 0x29, 0x8B, 0x5B, 0xAD, 0xBD,
     0x5B, 0x53, 0xE1, 0x89, 0x5E, 0x64, 0x4B, 0x89
 };
+
+TEST_CASE("SRP agrees with server for zero-padded public values", "[srp]") {
+    using wowee::auth::BigNum;
+    const BigNum modulus(kWoWPrime), generator(7);
+    const std::string username = "SYNTHETIC";
+    std::vector<uint8_t> salt(32, 0x31);
+    salt.back() = 0; // A wire salt remains 32 bytes even when its integer is shorter.
+    auto saltedHash = salt;
+    const auto identity = Crypto::sha1(username + ":TESTPASSWORD");
+    saltedHash.insert(saltedHash.end(), identity.begin(), identity.end());
+    const BigNum verifier = generator.modPow(BigNum(Crypto::sha1(saltedHash)), modulus);
+
+    // Find a reproducible server ephemeral whose wire value ends in a zero byte.
+    // Client randomness cannot change this required 32-byte B hash input.
+    BigNum serverPrivate, serverPublic;
+    for (uint32_t candidate = 1; candidate <= 4096; ++candidate) {
+        serverPrivate = BigNum(candidate);
+        serverPublic = verifier.multiply(BigNum(3)).add(
+            generator.modPow(serverPrivate, modulus)).mod(modulus);
+        if (serverPublic.toArray(true).size() < 32) break;
+    }
+    REQUIRE(serverPublic.toArray(true).size() < 32);
+    SRP client;
+    client.initialize(username, "TESTPASSWORD");
+    client.feed(serverPublic.toArray(true, 32), kWoWGenerator, kWoWPrime, salt);
+
+    auto scrambleInput = client.getA();
+    const auto publicBytes = serverPublic.toArray(true, 32);
+    scrambleInput.insert(scrambleInput.end(), publicBytes.begin(), publicBytes.end());
+    const BigNum scramble(Crypto::sha1(scrambleInput));
+    const auto secret = BigNum(client.getA()).multiply(verifier.modPow(scramble, modulus))
+        .modPow(serverPrivate, modulus).toArray(true, 32);
+    size_t first = 0;
+    while (first < secret.size() && secret[first] == 0) ++first;
+    first += (secret.size() - first) % 2;
+    std::vector<uint8_t> even, odd;
+    for (size_t i = first; i < secret.size(); i += 2) {
+        even.push_back(secret[i]);
+        odd.push_back(secret[i + 1]);
+    }
+    const auto evenHash = Crypto::sha1(even), oddHash = Crypto::sha1(odd);
+    std::vector<uint8_t> key;
+    for (size_t i = 0; i < evenHash.size(); ++i) {
+        key.push_back(evenHash[i]);
+        key.push_back(oddHash[i]);
+    }
+    CHECK(client.getSessionKey() == key);
+
+    auto proofInput = Crypto::sha1(kWoWPrime);
+    const auto generatorHash = Crypto::sha1(kWoWGenerator);
+    for (size_t i = 0; i < proofInput.size(); ++i) proofInput[i] ^= generatorHash[i];
+    for (const auto& part : {Crypto::sha1(username), salt, client.getA(), publicBytes, key})
+        proofInput.insert(proofInput.end(), part.begin(), part.end());
+    const auto proof = Crypto::sha1(proofInput);
+    CHECK(client.getM1() == proof);
+    auto serverProof = client.getA();
+    serverProof.insert(serverProof.end(), proof.begin(), proof.end());
+    serverProof.insert(serverProof.end(), key.begin(), key.end());
+    CHECK(client.verifyServerProof(Crypto::sha1(serverProof)));
+}
+
+TEST_CASE("SRP interleave trims zero prefix and pairs remaining bytes", "[srp]") {
+    const std::vector<std::pair<size_t, std::string>> vectors{
+        {0, "ed2976c475109d044df3443c9cc86c31077e9c7db8e04d3d699f68bd6bcc6c6b20df81f6b7d66fa0"},
+        {1, "324ee42a4dc3379278dea177486fba3715c1d9173be0101572fd5f0cc9b6708075b5b8928c829c52"},
+        {2, "324ee42a4dc3379278dea177486fba3715c1d9173be0101572fd5f0cc9b6708075b5b8928c829c52"},
+        {3, "249481298dd8dc043490ee550d33ace31ca8ba9aa8a8e322fdeb1c6f2c27e8622184c4131a7916b1"},
+        {32, "dada3939a3a3eeee5e5e6b6b4b4b0d0d32325555bfbfefef9595606018189090afafd8d807070909"},
+    };
+    // Fixed SHA-1 vectors independently generated with Python hashlib.
+    for (const auto& [zeros, expected] : vectors) {
+        CAPTURE(zeros);
+        std::vector<uint8_t> secret;
+        for (size_t i = 0; i < 32; ++i)
+            secret.push_back(i < zeros ? 0 : static_cast<uint8_t>(i + 1));
+        const auto bytes = SRP::interleaveSessionKey(secret);
+        std::string hex;
+        for (const auto byte : bytes) {
+            hex += "0123456789abcdef"[byte >> 4];
+            hex += "0123456789abcdef"[byte & 15];
+        }
+        CHECK(hex == expected);
+    }
+    CHECK_THROWS_AS(SRP::interleaveSessionKey(std::vector<uint8_t>(31)), std::invalid_argument);
+}
 
 TEST_CASE("SRP initialize stores credentials", "[srp]") {
     SRP srp;

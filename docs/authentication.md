@@ -1,5 +1,24 @@
 # Complete Authentication Guide - Auth Server to World Server
 
+## SRP byte encoding
+
+Run protocol regressions with `build/bin/test_srp '[srp]'` after building
+`test_srp`.
+
+WoW hashes SRP public values A/B and salt at their 32-byte wire width, including
+zero padding. M2 likewise uses 32-byte A and the full 20-byte M1 and 40-byte key.
+For session-key interleave, serialize S as 32 little-endian bytes, skip its zero
+prefix, then skip one more byte if the remaining length is odd. Hash alternating
+bytes separately and interleave both SHA-1 digests. CMaNGOS implements these rules
+in `src/shared/Auth/SRP6.cpp`.
+
+Integer serialization without padding causes intermittent status 4 proof
+rejection when A or B is shorter than 32 bytes. The regression uses a synthetic
+short B and zero-padded salt, checks the server-derived session key and both
+proofs, and covers zero-prefix interleave with fixed vectors. Historical failed
+sessions also showed short A; unchanged-credential retries succeeded with full
+width A. Authentication retries must not substitute for correct serialization.
+
 ## Overview
 
 This guide demonstrates the complete authentication flow in wowee, from connecting to the auth server through world server authentication. This represents the complete implementation of WoW 3.3.5a client authentication.

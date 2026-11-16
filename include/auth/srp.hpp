@@ -48,6 +48,11 @@ public:
     // Get session key (K) - used for encryption
     [[nodiscard]] std::vector<uint8_t> getSessionKey() const;
 
+    // WoW interleave of a 32-byte little-endian shared secret. Removes its
+    // zero prefix and rounds the remaining byte count down to an even value.
+    [[nodiscard]] static std::vector<uint8_t> interleaveSessionKey(
+        const std::vector<uint8_t>& secret);
+
     // Securely erase stored plaintext credentials from memory.
     // Called automatically at the end of feed() once the SRP values are computed.
     void clearCredentials();

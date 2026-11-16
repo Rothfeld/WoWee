@@ -5,6 +5,7 @@
 #include <cctype>
 #include <sstream>
 #include <iomanip>
+#include <stdexcept>
 
 namespace wowee {
 namespace auth {
@@ -163,9 +164,9 @@ void SRP::computeSessionKey() {
     LOG_DEBUG("Computing session key");
 
     // u = H(A | B) - scrambling parameter
-    // Use natural BigNum sizes to match TrinityCore's UpdateBigNumbers behavior
-    std::vector<uint8_t> A_bytes_u = A.toArray(true);
-    std::vector<uint8_t> B_bytes_u = B.toArray(true);
+    // Public values are hashed at their wire width, including zero padding.
+    std::vector<uint8_t> A_bytes_u = A.toArray(true, 32);
+    std::vector<uint8_t> B_bytes_u = B.toArray(true, 32);
 
     std::vector<uint8_t> AB;
     AB.insert(AB.end(), A_bytes_u.begin(), A_bytes_u.end());
@@ -195,14 +196,23 @@ void SRP::computeSessionKey() {
 
     LOG_DEBUG("Session key S calculated");
 
-    // Interleave the session key to create K
-    // Split S into even and odd bytes, hash each half, then interleave
-    std::vector<uint8_t> S_bytes = S.toArray(true, 32);  // 32 bytes for WoW
+    K = interleaveSessionKey(S.toArray(true, 32));
+    LOG_DEBUG("Interleaved session key K created (", K.size(), " bytes)");
+}
+
+std::vector<uint8_t> SRP::interleaveSessionKey(const std::vector<uint8_t>& secret) {
+    if (secret.size() != 32) {
+        LOG_ERROR("SRP shared secret must contain 32 bytes; got ", secret.size());
+        throw std::invalid_argument("SRP shared secret must contain 32 bytes");
+    }
+    size_t first = 0;
+    while (first < secret.size() && secret[first] == 0) ++first;
+    first += (secret.size() - first) % 2;
 
     std::vector<uint8_t> S1, S2;
-    for (size_t i = 0; i < 16; ++i) {
-        S1.push_back(S_bytes[i * 2]);       // Even indices
-        S2.push_back(S_bytes[i * 2 + 1]);   // Odd indices
+    for (size_t i = first; i < secret.size(); i += 2) {
+        S1.push_back(secret[i]);
+        S2.push_back(secret[i + 1]);
     }
 
     // Hash each half
@@ -210,14 +220,13 @@ void SRP::computeSessionKey() {
     std::vector<uint8_t> S2_hash = Crypto::sha1(S2);  // 20 bytes
 
     // Interleave the hashes to create K (40 bytes total)
-    K.clear();
-    K.reserve(40);
+    std::vector<uint8_t> key;
+    key.reserve(40);
     for (size_t i = 0; i < 20; ++i) {
-        K.push_back(S1_hash[i]);
-        K.push_back(S2_hash[i]);
+        key.push_back(S1_hash[i]);
+        key.push_back(S2_hash[i]);
     }
-
-    LOG_DEBUG("Interleaved session key K created (", K.size(), " bytes)");
+    return key;
 }
 
 void SRP::computeProofs(const std::string& username) {
@@ -244,10 +253,10 @@ void SRP::computeProofs(const std::string& username) {
     // Compute H(username)
     std::vector<uint8_t> user_hash = Crypto::sha1(upperUser);
 
-    // Get A, B, and salt as byte arrays - natural sizes for hash inputs
-    std::vector<uint8_t> A_bytes = A.toArray(true);
-    std::vector<uint8_t> B_bytes = B.toArray(true);
-    std::vector<uint8_t> s_bytes = s.toArray(true);
+    // Proof inputs use the same fixed 32-byte wire values as the challenge.
+    std::vector<uint8_t> A_bytes = A.toArray(true, 32);
+    std::vector<uint8_t> B_bytes = B.toArray(true, 32);
+    std::vector<uint8_t> s_bytes = s.toArray(true, 32);
 
     // M1 = H( H(N)^H(g) | H(I) | s | A | B | K )
     std::vector<uint8_t> M1_input;
