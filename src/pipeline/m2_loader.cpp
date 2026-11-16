@@ -1301,6 +1301,10 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         core::Logger::getInstance().debug("  BoneLookupTable: ", model.boneLookupTable.size(), " entries");
     }
 
+    if (header.nTexUnits > 0) {
+        model.textureCoordLookup = readArray<int16_t>(m2Data, header.ofsTexUnits, header.nTexUnits);
+    }
+
     // Read render flags / materials (blend modes)
     if (header.nRenderFlags > 0 && header.ofsRenderFlags > 0) {
         struct M2MaterialDisk { uint16_t flags; uint16_t blendMode; };

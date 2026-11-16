@@ -52,6 +52,9 @@ inline constexpr uint32_t kMaxBonesPerInstance = 512;
 struct M2ModelGPU {
     struct BatchGPU {
         VkTexture* texture = nullptr;  // from cache, NOT owned
+        VkTexture* texture2 = nullptr;
+        int16_t textureUnit2 = 0;
+        uint16_t textureAnimIndex2 = 0xFFFF;
         VkDescriptorSet materialSet = VK_NULL_HANDLE;  // set 1
         ::VkBuffer materialUBO = VK_NULL_HANDLE;
         VmaAllocation materialUBOAlloc = VK_NULL_HANDLE;
@@ -68,7 +71,7 @@ struct M2ModelGPU {
         uint16_t materialFlags = 0; // M2 material flags (0x01=Unlit, 0x04=TwoSided, 0x10=NoDepthWrite)
         bool hasAuthoredMaterial = false; // missing flags must not be guessed as one-sided
         uint16_t submeshLevel = 0; // LOD level: 0=base, 1=LOD1, 2=LOD2, 3=LOD3
-        uint8_t textureUnit = 0;  // UV set index (0=texCoords[0], 1=texCoords[1])
+        int16_t textureUnit = 0; // UV set, or -1 for environment mapping
         uint8_t texFlags = 0;     // M2Texture.flags (bit0=WrapS, bit1=WrapT)
         bool lanternGlowHint = false; // Texture/model hints this batch is a glow-card billboard
         bool glowCardLike = false; // Batch likely is a flat emissive card that should be sprite-replaced
@@ -426,6 +429,7 @@ struct M2MaterialUBO {
     /// A flame card. Fades out over the top of its own model, so the card's
     /// upper edge is not where the fire stops.
     int32_t fireCard;
+    int32_t textureCount;
 };
 
 // M2 params UBO - matches M2Params in m2.vert.glsl (set 1, binding 1)
@@ -857,6 +861,7 @@ private:
         int32_t boneCount;         //  4 bytes @ offset 84 - clamps skinning reads
         float highlight = 0.0f;    //  4 bytes @ offset 88 - pressed-on lift
         int32_t flags = {};        //  4 bytes @ offset 92 - bit 0: afloat (bobs on the water)
+        glm::vec4 uvOffset2{};     // xy: second texture translation; zw reserved
     };
     // How many instances one frame may hand the GPU, not how many exist. Ground
     // clutter is what fills it: it is drawn by the thousand and every tuft

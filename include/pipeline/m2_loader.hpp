@@ -238,6 +238,7 @@ struct M2Model {
     std::vector<M2Batch> batches;
     std::vector<M2Texture> textures;
     std::vector<uint16_t> textureLookup;  // Batch texture index lookup
+    std::vector<int16_t> textureCoordLookup; // 0/1: mesh UV, -1: environment mapping
     std::vector<M2Material> materials;    // Render flags / blend modes
 
     // Texture transforms (UV animation)

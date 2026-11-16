@@ -25,6 +25,7 @@ layout(set = 0, binding = 0) uniform PerFrame {
 #include "rt_lighting.glsli"
 
 layout(set = 1, binding = 0) uniform sampler2D uTexture;
+layout(set = 1, binding = 3) uniform sampler2D uTexture2;
 
 layout(set = 1, binding = 2) uniform M2Material {
     int hasTexture;
@@ -42,6 +43,7 @@ layout(set = 1, binding = 2) uniform M2Material {
     float tintB;
     int volumetricBeam;
     int fireCard;
+    int textureCount;
 };
 
 layout(set = 0, binding = 1) uniform sampler2DShadow uShadowMap;
@@ -57,6 +59,7 @@ layout(location = 6) flat in int vSkyMode;
 layout(location = 7) flat in float vHighlight;
 layout(location = 8) flat in vec4 vIndoorLighting;
 layout(location = 9) in vec3 VertexLighting;
+layout(location = 10) in vec2 TexCoord2;
 
 layout(location = 0) out vec4 outColor;
 
@@ -167,6 +170,7 @@ vec4 fogVolumeSky(vec2 uv) {
 
 void main() {
     vec4 texColor = hasTexture != 0 ? texture(uTexture, TexCoord) : vec4(1.0);
+    if (textureCount == 2) texColor *= texture(uTexture2, TexCoord2);
     // The batch's authored colour. A glow card is painted white and coloured
     // here - Orgrimmar's bonfire carries (1.0, 0.329, 0.0) - so without it
     // every fire in the world burns white.

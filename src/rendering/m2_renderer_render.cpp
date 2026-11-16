@@ -1339,6 +1339,26 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         float swayRefHeight;        // Model-space height the wind normalises against
         float swayAmp;              // Wind amplitude scale; 1.0 = the tree-sized default
         float plantHeight;          // The model's own height, for the player brush
+        int32_t texCoordSet2;
+    };
+    auto secondTextureOffset = [](const M2ModelGPU& model, const M2ModelGPU::BatchGPU& batch,
+                                  const M2Instance& instance) {
+        // Static models may carry a zero transform combo without any tracks.
+        if (model.textureTransforms.empty()) return glm::vec4(0.0f);
+        if (batch.textureAnimIndex2 == 0xFFFF) return glm::vec4(0.0f);
+        const auto lookup = batch.textureAnimIndex2;
+        if (lookup >= model.textureTransformLookup.size()) return glm::vec4(0.0f);
+        const auto index = model.textureTransformLookup[lookup];
+        if (index == 0xFFFF) return glm::vec4(0.0f);
+        if (index >= model.textureTransforms.size()) {
+            LOG_ERROR("Invalid second texture transform in ", model.name,
+                ": combo=", lookup, " transform=", index, " count=", model.textureTransforms.size());
+            throw std::runtime_error("Invalid M2 texture transform");
+        }
+        const auto translation = m2_track::sampleVec3(model.textureTransforms[index].translation,
+            instance.currentSequenceIndex, instance.animTime, instance.globalSequenceTime,
+            model.globalSequenceDurations, glm::vec3(0.0f));
+        return glm::vec4(translation.x, translation.y, 0.0f, 0.0f);
     };
 
     // Fill the sway half of the push constants for one model.
@@ -1510,6 +1530,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 auto& e = instSSBO[instanceDataCount_];
                 e.model = inst.modelMatrix;
                 e.uvOffset = glm::vec2(0.0f);
+                e.uvOffset2 = glm::vec4(0.0f);
                 e.fadeAlpha = p.fadeAlpha;
                 e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
                 e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
@@ -1809,6 +1830,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             auto& e = instSSBO[instanceDataCount_];
                             e.model = inst.modelMatrix;
                             e.uvOffset = uvOffset;
+                            e.uvOffset2 = secondTextureOffset(model, batch, inst);
                             e.fadeAlpha = p.fadeAlpha;
                             e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
                             e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
@@ -1932,6 +1954,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     // Push constants + instanced draw
                     M2PushConstants pc;
                     pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
+                    pc.texCoordSet2 = batch.textureUnit2;
                     fillSway(pc, model, skyMode_);
                     pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
                     vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
@@ -2123,6 +2146,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             auto& e = instSSBO[instanceDataCount_];
             e.model = instance.modelMatrix;
             e.uvOffset = uvOffset;
+            e.uvOffset2 = secondTextureOffset(model, batch, instance);
             e.fadeAlpha = instanceFadeAlpha;
             e.useBones = (needsBones && !kM2NoSkinning) ? 1 : 0;
             e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
@@ -2198,6 +2222,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             // Push constants + single-instance draw
             M2PushConstants pc;
             pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
+            pc.texCoordSet2 = batch.textureUnit2;
             fillSway(pc, model, skyMode_);
             pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
             vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);

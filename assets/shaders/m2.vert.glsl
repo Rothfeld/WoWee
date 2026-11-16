@@ -23,6 +23,7 @@ layout(push_constant) uniform Push {
     float swayRefHeight;     // Model height the sway normalises against (model space)
     float swayAmp;           // Sway amplitude scale; 1.0 = the tree-sized default
     float plantHeight;       // The model's own height (model space), for the player brush
+    int texCoordSet2;
 } push;
 
 layout(set = 2, binding = 0) readonly buffer BoneSSBO {
@@ -42,6 +43,7 @@ struct InstanceData {
     float highlight;
     // Bit 0: a boat afloat, which rides the water. Also in what was padding.
     int flags;
+    vec4 uvOffset2;
 };
 layout(set = 3, binding = 0) readonly buffer InstanceSSBO {
     InstanceData instanceData[];
@@ -64,6 +66,7 @@ layout(location = 6) flat out int vSkyMode;
 layout(location = 7) flat out float vHighlight;
 layout(location = 8) flat out vec4 vIndoorLighting;
 layout(location = 9) out vec3 VertexLighting;
+layout(location = 10) out vec2 TexCoord2;
 
 void main() {
     // Fetch per-instance data from SSBO
@@ -283,6 +286,12 @@ void main() {
     VertexLighting = clamp(ambientColor.rgb + diffuse * lightColor.rgb, 0.0, 1.0);
 
     TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;
+    vec3 eyeNormal = normalize(mat3(view) * Normal);
+    vec2 environmentUV = eyeNormal.xy * 0.5 + 0.5;
+    if (push.texCoordSet == -1) TexCoord = environmentUV + uvOff;
+    TexCoord2 = (push.texCoordSet2 == -1 ? environmentUV :
+        (push.texCoordSet2 == 1 ? aTexCoord2 : aTexCoord)) +
+        instanceData[push.instanceDataOffset + gl_InstanceIndex].uvOffset2.xy;
 
     InstanceOrigin = model[3].xyz;
     // How far up the plant this vertex is, as a fraction of the plant's own

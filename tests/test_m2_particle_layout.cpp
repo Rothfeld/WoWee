@@ -4,6 +4,22 @@
 #include <vector>
 #include "rendering/m2_track_sampler.hpp"
 
+TEST_CASE("TBC texture coordinate combos preserve secondary UV and environment mapping", "[m2][material]") {
+    std::vector<uint8_t> bytes(518, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t at, uint32_t value) {
+        std::memcpy(bytes.data() + at, &value, sizeof(value));
+    };
+    put32(4, 260);
+    put32(156, 3);
+    put32(160, 512);
+    const int16_t coordinates[] = {0, 1, -1};
+    std::memcpy(bytes.data() + 512, coordinates, sizeof(coordinates));
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.textureCoordLookup.size() == 3);
+    CHECK(model.textureCoordLookup == std::vector<int16_t>{0, 1, -1});
+}
+
 TEST_CASE("Hidden portal mesh opacity differs from animated fade-in", "[m2][particle]") {
     wowee::pipeline::M2AnimationTrack track;
     using wowee::rendering::m2_track::isAlwaysZero;
