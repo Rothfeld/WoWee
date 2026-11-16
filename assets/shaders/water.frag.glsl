@@ -80,6 +80,8 @@ vec3 contactLight() {
         vec2 delta = FragPos.xy - point.xy;
         vec2 local = vec2(dot(delta, vec2(-style.z, style.y)), dot(delta, style.yz));
         vec2 uv = local / (2.0 * point.w) + 0.5;
+        // Wake tip is at V=0; its widening arms trail opposite travel.
+        if (style.w > 0.5) uv.y = 1.0 - uv.y;
         if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) continue;
         // Original splash alpha is zero. Both decals use additive RGB.
         vec3 texel = style.w > 0.5 ? texture(WakeTexture, uv).rgb : texture(SplashTexture, uv).rgb;

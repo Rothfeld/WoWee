@@ -13,7 +13,8 @@ Disassembly and comparisons live in workspace experiment
 `_experiments/20261116T090238.015332Z.native_water_contact`.
 
 Contact effects use original additive splash and wake textures. Stationary
-actors emit rings; translating actors emit directional wakes. Effects remain
+actors emit rings; translating actors emit directional wakes. The wake texture
+tip at V=0 points along travel, with its arms trailing behind. Effects remain
 at their emission positions, grow, and expire. Current timing uses central
 values from native ranges: 0.65-second lifetime and 0.425-second idle interval.
 Exact contact size and visual parity still require paired footage review.
