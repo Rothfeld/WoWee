@@ -111,12 +111,6 @@ void spawnInstancePortalVisuals(uint32_t mapId,
         // Deeprun Tram -> Stormwind station
         {.mapId = 369, .canonicalPos = glm::vec3(2490.91f, 68.30f, -2.30f),
          .canonicalYaw = 3.12f, .scale = 4.25f},
-        // The Stockade exit. The WMO contains this InstancePortal doodad, but
-        // WMO-child matrix instances bypass the standalone portal presentation.
-        // Position and scale come from StormwindJail.wmo's authored doodad after
-        // applying the instance's 180-degree placement rotation.
-        {.mapId = 34,  .canonicalPos = glm::vec3(0.6882f, 45.7492f, -16.1133f),
-         .canonicalYaw = 0.0f, .scale = 1.36f},
     };
 
     for (const auto& portal : kPortals) {

@@ -2,6 +2,12 @@
 
 ## Dungeon entrance swirl
 
+Stockades uses the portal doodad embedded in `StormwindJail.wmo`, including its
+authored placement matrix. Do not add a second Stockades entry to
+`spawnInstancePortalVisuals` in `src/core/world_loader.cpp`: that creates an
+overlapping portal with a different rotation. WMO-child instances render their
+own particle emitters.
+
 `InstancePortal.m2` uses two spherical emitters with flags `0x39`. Bit `0x20`
 keeps living particles in emitter space: simulation contracts their radius,
 and the current model and bone matrices rotate their positions and velocities
