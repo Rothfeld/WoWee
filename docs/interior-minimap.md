@@ -17,6 +17,12 @@ Territory color comes from `GetZonePVPInfo`. The renderer emits
 become available after the server packet's zone event. WMO-only maps must update
 this state even when the current group has no AreaTable assignment.
 
+WMO-only instances use Map.dbc's linked zone when geometry supplies no area.
+TBC's `Map.LinkedZone` column is 27. Keep the extracted runtime
+`expansions/tbc/dbc_layouts.json` synchronized with the shipped layout when
+adding columns. A fresh Stockades login must resolve zone 717 without first
+crossing the entrance; territory color must not depend on a world-state packet.
+
 For validation, compare equal positions and zoom levels, then cross an instance
 boundary. Keep room layout, scale, player marker, compass, title, and party portrait
 in the review; matching one widget does not validate the whole frame.

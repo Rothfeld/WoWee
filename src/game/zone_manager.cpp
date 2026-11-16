@@ -1,5 +1,6 @@
 #include "game/zone_manager.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_layout.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -468,6 +469,11 @@ bool ZoneManager::isOutdoorPvpArea(uint32_t areaId) const {
     return (it->second & (kOutdoorPvp | kWintergrasp)) != 0;
 }
 
+uint32_t ZoneManager::getMapZoneId(uint32_t mapId) const {
+    const auto it = mapZones_.find(mapId);
+    return it == mapZones_.end() ? 0 : resolveAreaZoneId(it->second);
+}
+
 uint32_t ZoneManager::resolveAreaZoneId(uint32_t areaId) const {
     uint32_t current = areaId;
     // AreaTable parent chains are shallow; cap traversal to tolerate malformed
@@ -546,6 +552,21 @@ std::vector<std::string> ZoneManager::getAllMusicPaths() const {
 
 void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
     if (!assets) return;
+
+    mapZones_.clear();
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* mapLayout = layouts ? layouts->getLayout("Map") : nullptr;
+    if (mapLayout && mapLayout->tryField("LinkedZone") != UINT32_MAX) {
+        const auto maps = assets->loadDBC("Map.dbc");
+        const auto zoneColumn = (*mapLayout)["LinkedZone"];
+        if (!maps || !maps->isLoaded() || maps->getFieldCount() <= zoneColumn)
+            throw std::runtime_error("Map.dbc missing or invalid linked-zone column");
+        for (uint32_t row = 0; row < maps->getRecordCount(); ++row) {
+            const auto zone = maps->getUInt32(row, zoneColumn);
+            if (zone) mapZones_[maps->getUInt32(row, (*mapLayout)["ID"])] = zone;
+        }
+        LOG_INFO("Loaded map linked zones: ", mapZones_.size());
+    }
 
     wmoAreaNames_.clear();
     wmoAreaIds_.clear();

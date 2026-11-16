@@ -36,6 +36,7 @@ public:
 
     [[nodiscard]] uint32_t getZoneId(int tileX, int tileY) const;
     [[nodiscard]] uint32_t resolveAreaZoneId(uint32_t areaId) const;
+    [[nodiscard]] uint32_t getMapZoneId(uint32_t mapId) const;
     uint32_t getWmoAreaId(uint32_t root, uint32_t nameSet, uint32_t group) const;
     std::string getWmoAreaName(uint32_t root, uint32_t nameSet, uint32_t group) const;
 
@@ -62,6 +63,7 @@ public:
     [[nodiscard]] bool getUseOriginalSoundtrack() const { return useOriginalSoundtrack_; }
 
 private:
+    std::unordered_map<uint32_t, uint32_t> mapZones_;
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, uint32_t> wmoAreaIds_;
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::string> wmoAreaNames_;
     // tile key = tileX * 100 + tileY

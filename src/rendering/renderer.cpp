@@ -1901,6 +1901,12 @@ uint32_t Renderer::getCurrentZoneId() const {
     if (lastResolvedZoneId_ != 0) return lastResolvedZoneId_;
 
     const auto* gh = core::Application::getInstance().getGameHandler();
+    // WMO-only instances may have neither an ADT area nor a WMOAreaTable
+    // assignment. Map.dbc supplies their territory even on a fresh login.
+    if (gh && zoneManager) {
+        const uint32_t mapZone = zoneManager->getMapZoneId(gh->getCurrentMapId());
+        if (mapZone != 0) return mapZone;
+    }
     if (gh && gh->getWorldStateZoneId() != 0) {
         const uint32_t areaId = gh->getWorldStateZoneId();
         return zoneManager ? zoneManager->resolveAreaZoneId(areaId) : areaId;
