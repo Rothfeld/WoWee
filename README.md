@@ -1034,3 +1034,5 @@ name. Addon saved globals restore after source files and before ADDON_LOADED;
 loading them before source lets Blizzard_TrainerUI defaults erase saved filters.
 Recipe item previews follow the spellTrigger=6 taught spell to its crafted item
 and reagents rather than displaying the generic Learning spell.
+
+Repeated rebuilds of unchanged objects: see [incremental build cache repair](docs/incremental-builds.md).
