@@ -27,6 +27,11 @@ macOS, Windows and Android.
 [Hear the soundtrack](https://kelsidavis.bandcamp.com/album/wowee-soundtrack)
 
 TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-effects.md).
+M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
+asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
+`barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U
+coordinates reaching 2.915. Sharing their sampler stretches edge pixels across
+the repeated barrel faces. File decoding remains keyed by asset path.
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).

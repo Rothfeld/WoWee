@@ -749,10 +749,14 @@ VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags) {
         return key;
     };
     std::string key = normalizeKey(path);
+    // A cached VkTexture owns both image and sampler. Models sharing a BLP
+    // can request different WrapS/WrapT modes (barrel01 vs barrellowpoly).
+    // Keep asset lookup keyed by path, but GPU entries by path and sampling.
+    const std::string cacheKey = key + "|wrap=" + std::to_string(texFlags & 0x3u);
     const uint64_t lookupSerial = ++textureLookupSerial_;
 
     // Check cache
-    auto it = textureCache.find(key);
+    auto it = textureCache.find(cacheKey);
     if (it != textureCache.end()) {
         it->second.lastUse = ++textureCacheCounter_;
         return it->second.texture.get();
@@ -869,13 +873,14 @@ VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags) {
     e.approxBytes = approxBytes;
     e.lastUse = ++textureCacheCounter_;
     textureCacheBytes_ += e.approxBytes;
-    textureCache[key] = std::move(e);
+    textureCache[cacheKey] = std::move(e);
     failedTextureCache_.erase(key);
     failedTextureRetryAt_.erase(key);
     texturePropsByPtr_[texPtr] = {.hasAlpha = hasAlpha,
                                   .alphaIsSilhouette = alphaIsSilhouette,
                                   .colorKeyBlack = colorKeyBlackHint};
-    LOG_DEBUG("M2: Loaded texture: ", path, " (", blp.width, "x", blp.height, ")");
+    core::Logger::getInstance().debug("M2: Loaded texture: ", path, " (", blp.width, "x", blp.height,
+                                     ") wrap=", texFlags & 0x3u);
 
     return texPtr;
 }
