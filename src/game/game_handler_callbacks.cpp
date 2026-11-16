@@ -1885,6 +1885,17 @@ void GameHandler::togglePvp() {
     if (combatHandler_) combatHandler_->togglePvp();
 }
 
+void GameHandler::setPvp(bool enabled) {
+    if (!isInWorld()) {
+        LOG_WARNING("Cannot set PvP: not in world or not connected");
+        return;
+    }
+    auto packet = TogglePvpPacket::build();
+    packet.writeUInt8(enabled ? 1 : 0);
+    getSocket()->send(packet);
+    LOG_INFO("Requested PvP preference: ", enabled);
+}
+
 void GameHandler::requestGuildInfo() {
     if (socialHandler_) socialHandler_->requestGuildInfo();
 }

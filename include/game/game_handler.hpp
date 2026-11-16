@@ -720,6 +720,7 @@ public:
 
     // PvP
     void togglePvp();
+    void setPvp(bool enabled);
 
     // Minimap ping (Ctrl+click on minimap; wowX/wowY in canonical WoW coords)
     void sendMinimapPing(float wowX, float wowY);

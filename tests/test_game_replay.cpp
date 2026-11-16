@@ -515,6 +515,38 @@ bool petCanBeRenamed(Session& s) {
 
 }  // namespace
 
+TEST_CASE("PvP menu sets explicit preference independently of active flag", "[replay][pvp]") {
+    Session s;
+    s.spawnPlayer({{UF::UNIT_FIELD_FLAGS, 0x1000}, {UF::PLAYER_FLAGS, 0}});
+    lua_State* L = luaL_newstate();
+    lua_pushlightuserdata(L, &s.handler());
+    lua_setfield(L, LUA_REGISTRYINDEX, "wowee_game_handler");
+    wowee::addons::registerSocialLuaAPI(L);
+    REQUIRE(luaL_dostring(L, "return GetPVPDesired()") == 0);
+    CHECK(lua_tonumber(L, -1) == 0);
+    REQUIRE(luaL_dostring(L, "SetPVP(1); SetPVP(1); SetPVP(nil)") == 0);
+    const auto packets = s.sent().of(wowee::game::Opcode::CMSG_TOGGLE_PVP);
+    REQUIRE(packets.size() == 3);
+    CHECK(packets[0].getData() == std::vector<uint8_t>{1});
+    CHECK(packets[1].getData() == std::vector<uint8_t>{1});
+    CHECK(packets[2].getData() == std::vector<uint8_t>{0});
+    s.receive(UpdateObject().values(Session::kPlayerGuid, {{UF::PLAYER_FLAGS, 0x200}}));
+    REQUIRE(luaL_dostring(L, "return GetPVPDesired()") == 0);
+    CHECK(lua_tonumber(L, -1) == 1);
+    lua_close(L);
+}
+
+TEST_CASE("PvP flag updates notify Blizzard portrait listeners", "[replay][pvp]") {
+    Session s;
+    s.spawnPlayer({{UF::UNIT_FIELD_FLAGS, 0}});
+    bool notified = false;
+    s.handler().setAddonEventCallback([&](const std::string& event, const std::vector<std::string>& args) {
+        if (event == "UNIT_FACTION" && args == std::vector<std::string>{"player"}) notified = true;
+    });
+    s.receive(UpdateObject().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_FLAGS, 0x1000}}));
+    CHECK(notified);
+}
+
 // Pet::LoadPetFromDB sets UNIT_CAN_BE_RENAMED (0x01) beside
 // UNIT_CAN_BE_ABANDONED only on a pet never named, and
 // WorldSession::HandlePetRename clears it.

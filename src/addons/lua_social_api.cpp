@@ -3011,9 +3011,8 @@ void registerSocialLuaAPI(lua_State* L) {
             bool on = false;
             if (gh) {
                 if (auto e = gh->getEntityManager().getEntity(gh->getPlayerGuid())) {
-                    // UNIT_FIELD_FLAGS index 59, bit 0x1000 = UNIT_FLAG_PVP,
-                    // read the same way CombatHandler::togglePvp reads it.
-                    on = (e->getField(59) & 0x00001000u) != 0;
+                    // Preference differs from the active flag during expiry.
+                    on = (e->getField(game::fieldIndex(game::UF::PLAYER_FLAGS)) & 0x00000200u) != 0;
                 }
             }
             lua_pushnumber(L, on ? 1 : 0);   // the menu compares it against 1 and 0
@@ -3024,14 +3023,7 @@ void registerSocialLuaAPI(lua_State* L) {
             if (!gh) return 0;
             const bool want = lua_isnumber(L, 1) ? (lua_tonumber(L, 1) != 0)
                                                  : (lua_toboolean(L, 1) != 0);
-            bool on = false;
-            if (auto e = gh->getEntityManager().getEntity(gh->getPlayerGuid())) {
-                on = (e->getField(59) & 0x00001000u) != 0;
-            }
-            // The client can only toggle, so only toggle when it would land on
-            // what was asked for - otherwise SetPVP(1) while already flagged
-            // would turn it off.
-            if (want != on) gh->togglePvp();
+            gh->setPvp(want);
             return 0;
         }},
                 {"UnitIsInMyGuild", [](lua_State* L) -> int {

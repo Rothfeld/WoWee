@@ -953,11 +953,9 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
         }
         else if (key == ufi.flags) {
             unit->setUnitFlags(val);
-            if (owner_.addonEventCallbackRef()) {
-                auto uid = owner_.guidToUnitId(block.guid);
-                if (!uid.empty())
-                    pendingEvents_.emit("UNIT_FLAGS", {uid});
-            }
+            emitForUnit("UNIT_FLAGS");
+            // Blizzard player/party PvP icons listen to UNIT_FACTION.
+            emitForUnit("UNIT_FACTION");
         }
         else if (ufi.auraState != 0xFFFF && key == ufi.auraState) {
             unit->setAuraState(val);
@@ -1138,6 +1136,11 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         } else if (key == ufi.flags) {
             uint32_t oldFlags = unit->getUnitFlags();
             unit->setUnitFlags(val);
+            for (const auto& uid : unitEventTokens(owner_, block.guid)) {
+                pendingEvents_.emit("UNIT_FLAGS", {uid});
+                if ((oldFlags ^ val) & 0x00001000u)
+                    pendingEvents_.emit("UNIT_FACTION", {uid});
+            }
             // UNIT_FIELD_FLAGS is the server's authoritative combat state. Spell-only
             // attackers do not necessarily produce SMSG_ATTACKSTOP, so retaining them
             // after this bit clears leaves the client permanently "in combat".

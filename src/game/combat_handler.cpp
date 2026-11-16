@@ -1747,18 +1747,7 @@ void CombatHandler::togglePvp() {
 
     auto packet = TogglePvpPacket::build();
     owner_.getSocket()->send(packet);
-    auto entity = owner_.getEntityManager().getEntity(owner_.getPlayerGuid());
-    bool currentlyPvp = false;
-    if (entity) {
-        // UNIT_FIELD_FLAGS (index 59), bit 0x1000 = UNIT_FLAG_PVP
-        currentlyPvp = (entity->getField(59) & 0x00001000) != 0;
-    }
-    if (currentlyPvp) {
-        owner_.addSystemChatMessage("PvP flag disabled.");
-    } else {
-        owner_.addSystemChatMessage("PvP flag enabled.");
-    }
-    LOG_INFO("Toggled PvP flag");
+    LOG_INFO("Requested PvP preference toggle");
 }
 
 // ============================================================
