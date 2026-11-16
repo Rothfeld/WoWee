@@ -1280,6 +1280,9 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         // Subsequent world entries (e.g. teleport, instance entry)
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
     }
+    // FrameXML loads after the initial packet events. Announce the resolved
+    // destination on the next renderer update, when WMO containment is current.
+    if (renderer_) renderer_->invalidateAreaAnnouncement();
 }
 
 void WorldLoader::startWorldPreload(uint32_t mapId, const std::string& mapName,

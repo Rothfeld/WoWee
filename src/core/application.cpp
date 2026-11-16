@@ -937,6 +937,14 @@ bool Application::initialize() {
             // Wire generic game events to addon dispatch
             gameHandler->setAddonEventCallback([this](const std::string& event, const std::vector<std::string>& args) {
                 if (addonManager_ && addonsLoaded_) {
+                    if (event.starts_with("ZONE_CHANGED")) {
+                        LOG_INFO("UI area event ", event, " map=", gameHandler->getCurrentMapId(),
+                                 " serverZone=", gameHandler->getWorldStateZoneId(),
+                                 " liveZone=", renderer->getCurrentZoneId(),
+                                 " liveArea=", renderer->getCurrentAreaId(),
+                                 " wmoZone='", renderer->getInteriorZoneName(),
+                                 "' wmoArea='", renderer->getInteriorAreaName(), "'");
+                    }
                     addonManager_->fireEvent(event, args);
                 }
             });
@@ -4225,6 +4233,7 @@ void Application::update(float deltaTime) {
             addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
             addonManager_->fireEvent("PLAYER_LOGIN");
             addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+            if (renderer) renderer->invalidateAreaAnnouncement();
             addons::LuaEngine::setUiSoundsSuppressed(false);
         }
     }

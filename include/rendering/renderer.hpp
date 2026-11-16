@@ -167,6 +167,7 @@ public:
     const std::string& getCurrentZoneName() const;
     uint32_t getCurrentZoneId() const;
     uint32_t getCurrentAreaId() const;
+    void invalidateAreaAnnouncement() { announcedZoneId_ = 0; announcedAreaId_ = 0; }
     const std::string& getInteriorZoneName() const { return interiorZoneName_; }
     const std::string& getInteriorAreaName() const { return interiorAreaName_; }
     /// The area under the player, asked of AreaTable rather than resolved to a

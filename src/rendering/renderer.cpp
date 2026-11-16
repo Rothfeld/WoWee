@@ -2063,32 +2063,25 @@ void Renderer::update(float deltaTime) {
     // A named WMO can span outdoor stairs and indoor rooms. Crossing its
     // lighting boundary does not change the displayed zone or repeat its title.
     playerIndoors_ = playerInterior.has_value();
-    if (interiorNameChanged) {
-        if (auto* gh = core::Application::getInstance().getGameHandler()) {
-            gh->fireAddonEvent(playerInterior ? "ZONE_CHANGED_INDOORS" : "ZONE_CHANGED", {});
-        }
-    }
-
-    // Packet events can arrive before destination geometry/area resolution.
-    // Notify again when the authoritative live zone becomes available, even
-    // for WMO-only maps without an AreaTable assignment on the current group.
+    // Publish one event after all area sources agree. World entry and UI
+    // reload invalidate this snapshot so Lua never starts with an empty cache
+    // while the renderer believes the current zone was already announced.
     const uint32_t liveZoneId = getCurrentZoneId();
+    const uint32_t areaId = getCurrentAreaId();
+    const char* areaEvent = nullptr;
     if (liveZoneId != 0 && liveZoneId != announcedZoneId_) {
         announcedZoneId_ = liveZoneId;
-        if (auto* gh = core::Application::getInstance().getGameHandler()) {
-            LOG_DEBUG("Resolved UI zone changed: ", liveZoneId);
-            gh->fireAddonEvent("ZONE_CHANGED_NEW_AREA", {});
-        }
+        areaEvent = "ZONE_CHANGED_NEW_AREA";
+    } else if (interiorNameChanged) {
+        areaEvent = playerInterior ? "ZONE_CHANGED_INDOORS" : "ZONE_CHANGED";
+    } else if (areaId != 0 && areaId != announcedAreaId_ &&
+               interiorName.empty() && interiorZone.empty()) {
+        areaEvent = "ZONE_CHANGED";
     }
-
-    const uint32_t areaId = getCurrentAreaId();
-    if (areaId != 0 && areaId != announcedAreaId_) {
-        announcedAreaId_ = areaId;
-        if (interiorName.empty() && interiorZone.empty() && !interiorNameChanged) {
-            if (auto* gh = core::Application::getInstance().getGameHandler()) {
-                gh->fireAddonEvent("ZONE_CHANGED", {});
-            }
-        }
+    if (areaId != 0) announcedAreaId_ = areaId;
+    if (areaEvent) {
+        if (auto* gh = core::Application::getInstance().getGameHandler())
+            gh->fireAddonEvent(areaEvent, {});
     }
 
     // Update lighting system

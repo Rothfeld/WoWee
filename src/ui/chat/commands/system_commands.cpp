@@ -76,6 +76,7 @@ public:
             am->fireEvent("UPDATE_CHAT_WINDOWS");
             am->fireEvent("PLAYER_LOGIN");
             am->fireEvent("PLAYER_ENTERING_WORLD");
+            if (ctx.services.renderer) ctx.services.renderer->invalidateAreaAnnouncement();
             game::MessageChatData rlMsg;
             rlMsg.type = game::ChatType::SYSTEM;
             rlMsg.language = game::ChatLanguage::UNIVERSAL;
