@@ -76,9 +76,10 @@ private:
     /// Descriptor set for an Interface\ path, loading it on first use. Returns
     /// VK_NULL_HANDLE for anything missing, and remembers the failure so a
     /// mistyped path is not re-read every frame.
-    VkDescriptorSet texture(const std::string& path, bool add = false);
+    VkDescriptorSet texture(const std::string& path, bool add = false, bool desaturated = false);
     /// Already-uploaded texture for a path, without triggering an upload.
-    [[nodiscard]] VkDescriptorSet resident(const std::string& path, bool add = false) const;
+    [[nodiscard]] VkDescriptorSet resident(const std::string& path, bool add = false,
+                                           bool desaturated = false) const;
 
     /// scale is pixels per interface unit. The rect arrives in pixels, but a
     /// backdrop's insets and edge size are authored in units like everything
@@ -165,7 +166,7 @@ private:
     /// look it up. The draw pass does that twice for every texture on screen,
     /// every frame.
     [[nodiscard]] const VkDescriptorSet* cachedTexture(const std::string& path,
-                                                       bool add) const;
+                                                       bool add, bool desaturated = false) const;
     /// Image dimensions by path, including the ones that could not be read -
     /// stored as zero so a missing file is looked for once and not once a frame.
     std::unordered_map<std::string, std::pair<float, float>> textureSizes_;

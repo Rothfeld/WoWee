@@ -585,6 +585,7 @@ struct Widget {
     /// what adds nothing. Drawn the ordinary way it is a black slab instead,
     /// which is what covered the player frame while it pulsed.
     bool blendAdd = false;
+    bool desaturated = false;
 
     /// A texture the client renders rather than one read from a file - a unit
     /// portrait is a live view of the character, not an image on disk. Zero

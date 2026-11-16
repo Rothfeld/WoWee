@@ -1955,6 +1955,12 @@ int lua_Tooltip_SetText(lua_State* L) {
     }
     wowee::ui::Widget::TooltipLine line;
     line.left = luaL_optstring(L, 2, "");
+    // Merchant tabs deliberately set an empty title to suppress their tooltip.
+    if (line.left.empty()) {
+        w->shown = false;
+        lua_pushboolean(L, 1);
+        return 1;
+    }
     line.lc[0] = static_cast<float>(luaL_optnumber(L, 3, 1.0));
     line.lc[1] = static_cast<float>(luaL_optnumber(L, 4, 210.0 / 255.0));
     line.lc[2] = static_cast<float>(luaL_optnumber(L, 5, 0.0));
@@ -3927,6 +3933,12 @@ int lua_Texture_GetBlendMode(lua_State* L) {
     lua_pushstring(L, (w && w->blendAdd) ? "ADD" : "BLEND");
     return 1;
 }
+int lua_Texture_SetDesaturated(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    if (w) w->desaturated = lua_toboolean(L, 2) != 0;
+    lua_pushboolean(L, w != nullptr);
+    return 1;
+}
 int lua_Region_SetVertexColor(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         // Lenient, because the interface passes junk into the fourth argument
@@ -4547,6 +4559,7 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
         set("GetTexture", lua_Texture_GetTexture);
         set("SetTexCoord", lua_Texture_SetTexCoord);
         set("SetBlendMode", lua_Texture_SetBlendMode);
+        set("SetDesaturated", lua_Texture_SetDesaturated);
         set("GetBlendMode", lua_Texture_GetBlendMode);
     }
     if (isFontString) {
