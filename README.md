@@ -42,13 +42,13 @@ names for shipped `.m2` files. Placements use MCNK's 8x8 layer and suppression
 maps, including terrain holes. Cached placements become live instances only
 near the camera, within the ground-detail distance plus patch bounds. Models
 stay pinned while their terrain tiles reference them, and unpin on unload.
-World M2 opaque/alpha-key batches execute before characters; blended M2 batches
-and particles execute afterward. This preserves depth-disabled creature wings
-against distant trees. Parallel recording uses separate M2 command buffers
-from one worker pool; inline recording uses the same opaque-pass boundary.
-Character drawing completes opaque/alpha-key geometry across all instances,
-then composites blended surfaces in camera-depth order, far to near. Sorting
-each model's batches alone cannot order overlapping moth wings. Visible
+World M2 and character opaque/alpha-key batches complete before blending.
+Their blended meshes share one camera-depth-ordered stream, far to near:
+crystal surface layers and moth wings must sort across renderer boundaries.
+One worker records both streams; inline recording uses the same merge.
+Particles follow the mesh passes. Billboard bones require per-frame updates
+even without animation tracks, and cannot reuse another instance's camera-facing
+pose. Silvermyst crystal glow cards are an example. Visible
 character and M2 bones update every frame; distance/frustum culling still
 limits work. Character animation uses the same radius as character drawing.
 Remote NPCs and players consume `UNIT_FIELD_BYTES_1` stand states. Persistent

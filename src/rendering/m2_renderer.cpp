@@ -1788,7 +1788,11 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     gpuModel.globalSequenceDurations = model.globalSequenceDurations;
     gpuModel.hasAnimation = false;
     for (const auto& bone : model.bones) {
-        if (bone.translation.hasData() || bone.rotation.hasData() || bone.scale.hasData()) {
+        // Billboard bones depend on the camera even without animation tracks.
+        // Silvermyst crystal glow cards have only this flag; identity bones
+        // leave their authored offset beside the crystal and turn them edge-on.
+        if (bone.translation.hasData() || bone.rotation.hasData() || bone.scale.hasData() ||
+            (bone.flags & (m2_internal::kM2BoneSphericalBillboard | m2_internal::kM2BoneCylindricalBillboardZ))) {
             gpuModel.hasAnimation = true;
             break;
         }

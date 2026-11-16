@@ -3023,6 +3023,29 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     const bool skipTerrain = envSkipTerrain || ablated(AblationPass::Terrain);
     const bool skipSky = envSkipSky || ablated(AblationPass::Sky);
     const bool skipGrass = ablated(AblationPass::Grass);
+    // One ordered blended stream for scenery and creatures. Independent
+    // character/M2 secondaries cannot composite overlapping transparent meshes.
+    const auto recordWorldModels = [&](VkCommandBuffer solid, VkCommandBuffer blended) {
+        const bool haveCharacters = characterRenderer && camera && !skipChars;
+        const auto order = haveCharacters ? characterRenderer->drawOrder(*camera)
+                                         : std::vector<std::pair<float, uint32_t>>{};
+        size_t next = 0;
+        const auto drawSolidCharacters = [&]() {
+            if (haveCharacters) characterRenderer->render(solid, perFrameSet, *camera,
+                CharacterRenderer::RenderPhase::Solid);
+        };
+        const auto drawCharactersBefore = [&](float depth) {
+            const size_t first = next;
+            while (next < order.size() && order[next].first <= depth) {
+                characterRenderer->render(blended, perFrameSet, *camera,
+                    CharacterRenderer::RenderPhase::Blended, order[next].second);
+                ++next;
+            }
+            return next != first;
+        };
+        m2Renderer->render(solid, perFrameSet, *camera, blended,
+                           drawSolidCharacters, drawCharactersBefore);
+    };
     if (m2Renderer) {
         m2Renderer->setSkipGroundDetail(ablated(AblationPass::Clutter));
         // 250 yards: past the shadow distance and well past where a tree with
@@ -3118,7 +3141,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 VkCommandBuffer opaqueCmd = beginSecondary(SEC_M2_OPAQUE);
                 setSecondaryViewportScissor(opaqueCmd);
                 const auto tBegin = std::chrono::steady_clock::now();
-                m2Renderer->render(opaqueCmd, perFrameSet, *camera, cmd);
+                recordWorldModels(opaqueCmd, cmd);
                 vkEndCommandBuffer(opaqueCmd);
                 const auto tModels = std::chrono::steady_clock::now();
                 m2Renderer->renderSmokeParticles(cmd, perFrameSet);
@@ -3191,13 +3214,13 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             vkEndCommandBuffer(cmd);
         }
 
-        // Character recording is independent after prepareRender() and no
-        // longer shares the selection-circle overlay command buffer.
+        // When M2 rendering is active its worker merges character transparency.
+        // This buffer carries characters only when that world pass is disabled.
         charFuture = core::ThreadPool::frameWorkers().submit([&]() -> double {
             auto t0 = std::chrono::steady_clock::now();
             VkCommandBuffer cmd = beginSecondary(SEC_CHARS);
             setSecondaryViewportScissor(cmd);
-            if (characterRenderer && camera && !skipChars) {
+            if (characterRenderer && camera && !skipChars && (!m2Renderer || skipM2)) {
                 characterRenderer->render(cmd, perFrameSet, *camera);
             }
             vkEndCommandBuffer(cmd);
@@ -3393,8 +3416,9 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 m2Renderer->setInsideInterior(cameraController->isInsideInteriorWMO());
             }
             m2Renderer->prepareRender(frameIdx, *camera);
+            if (characterRenderer && !skipChars) characterRenderer->prepareRender(frameIdx);
             auto m2Start = std::chrono::steady_clock::now();
-            m2Renderer->render(currentCmd, perFrameSet, *camera, VK_NULL_HANDLE, drawCharacters);
+            recordWorldModels(currentCmd, currentCmd);
             m2Renderer->renderSmokeParticles(currentCmd, perFrameSet);
             m2Renderer->renderM2Particles(currentCmd, perFrameSet);
             m2Renderer->renderM2Ribbons(currentCmd, perFrameSet);

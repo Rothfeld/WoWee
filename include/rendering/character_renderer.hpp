@@ -95,7 +95,10 @@ public:
 
     /** Pre-allocate GPU resources (bone SSBOs, descriptors) on main thread before parallel render. */
     void prepareRender(uint32_t frameIndex);
-    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera);
+    enum class RenderPhase { All, Solid, Blended };
+    std::vector<std::pair<float, uint32_t>> drawOrder(const Camera& camera) const;
+    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
+                RenderPhase phase = RenderPhase::All, uint32_t onlyInstance = 0);
     void recreatePipelines();
     /// The five main-pass pipelines, which initialize() and
     /// recreatePipelines() both need and each used to describe.

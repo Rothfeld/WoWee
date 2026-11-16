@@ -72,7 +72,10 @@ void M2Renderer::seedInstanceAnimation(const M2ModelGPU& model, uint32_t modelId
         }
 
     auto seedIt = boneSeedInstanceByModel_.find(modelId);
-    if (seedIt != boneSeedInstanceByModel_.end()) {
+    const bool cameraDependent = std::any_of(model.bones.begin(), model.bones.end(), [](const auto& bone) {
+        return (bone.flags & (kM2BoneSphericalBillboard | kM2BoneCylindricalBillboardZ)) != 0;
+    });
+    if (!cameraDependent && seedIt != boneSeedInstanceByModel_.end()) {
         auto idxIt = instanceIndexById.find(seedIt->second);
         if (idxIt != instanceIndexById.end() && idxIt->second < instances.size()) {
             const auto& existing = instances[idxIt->second];
@@ -1005,9 +1008,11 @@ void M2Renderer::dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, c
 
 void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
                         VkCommandBuffer transparentCmd,
-                        const std::function<void()>& afterOpaque) {
+                        const std::function<void()>& afterOpaque,
+                        const std::function<bool(float)>& beforeTransparentDepth) {
     if (instances.empty() || !opaquePipeline_) {
         if (afterOpaque) afterOpaque();
+        if (beforeTransparentDepth) beforeTransparentDepth(std::numeric_limits<float>::infinity());
         return;
     }
 
@@ -1365,6 +1370,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     if (!perFrameSet) {
         LOG_ERROR("M2Renderer::render: perFrameSet is VK_NULL_HANDLE - skipping M2 render");
         if (afterOpaque) afterOpaque();
+        if (beforeTransparentDepth) beforeTransparentDepth(std::numeric_limits<float>::infinity());
         return;
     }
 
@@ -1951,6 +1957,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     if (transparentCmd) cmd = transparentCmd;
     // The boundary may switch buffers or record another renderer. Restore all
     // shared bindings; per-model and material bindings are reset below.
+    auto restoreTransparentBindings = [&]() {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
     const VkDescriptorSet boneSet = megaBoneSet_[frameIndex] ? megaBoneSet_[frameIndex] : dummyBoneSet_;
@@ -1959,8 +1966,18 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     if (instanceSet_[frameIndex]) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipelineLayout_, 3, 1, &instanceSet_[frameIndex], 0, nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaquePipeline_);
+    currentModelId = UINT32_MAX;
+    currentModel = nullptr;
+    currentModelValid = false;
+    currentPipeline = opaquePipeline_;
+    currentMaterialSet = VK_NULL_HANDLE;
+    };
+    restoreTransparentBindings();
+    const auto viewDepth = [&](const VisibleEntry& entry) {
+        return (camera.getViewMatrix() * glm::vec4(instances[entry.index].position, 1.0f)).z;
+    };
     std::sort(transparentVisible_.begin(), transparentVisible_.end(),
-              [](const VisibleEntry& a, const VisibleEntry& b) { return a.distSq > b.distSq; });
+              [&](const VisibleEntry& a, const VisibleEntry& b) { return viewDepth(a) < viewDepth(b); });
 
     currentModelId = UINT32_MAX;
     currentModel = nullptr;
@@ -1970,6 +1987,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
     for (const auto& entry : transparentVisible_) {
         if (entry.index >= instances.size()) continue;
+        if (beforeTransparentDepth && beforeTransparentDepth(viewDepth(entry)))
+            restoreTransparentBindings();
         auto& instance = instances[entry.index];
 
         // Model boundary: read cachedModel off the instance - was doing a
@@ -2187,6 +2206,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             lastDrawCallCount++;
         }
     }
+
+    if (beforeTransparentDepth) beforeTransparentDepth(std::numeric_limits<float>::infinity());
 
     // Render glow sprites as billboarded additive point lights
     if (!glowSprites_.empty() && particleAdditivePipeline_ && glowVB_ && glowTexDescSet_) {

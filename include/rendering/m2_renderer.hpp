@@ -484,7 +484,8 @@ public:
     // Inline recording uses afterOpaque to insert characters at the same boundary.
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
                 VkCommandBuffer transparentCmd = VK_NULL_HANDLE,
-                const std::function<void()>& afterOpaque = {});
+                const std::function<void()>& afterOpaque = {},
+                const std::function<bool(float)>& beforeTransparentDepth = {});
 
     /** Gather the nearest authored glow cards as inexpensive scene point lights. */
     uint32_t gatherLocalLights(const glm::vec3& cameraPos,

@@ -2794,7 +2794,22 @@ void CharacterRenderer::prepareRender(uint32_t frameIndex) {
     }
 }
 
-void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera) {
+std::vector<std::pair<float, uint32_t>> CharacterRenderer::drawOrder(const Camera& camera) const {
+    std::vector<std::pair<float, uint32_t>> order;
+    order.reserve(instances.size());
+    const auto& view = camera.getViewMatrix();
+    for (const auto& [id, instance] : instances) {
+        if (!instance.visible) continue;
+        const glm::vec3 position = instance.hasOverrideModelMatrix
+            ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
+        order.emplace_back((view * glm::vec4(position, 1.0f)).z, id);
+    }
+    std::sort(order.begin(), order.end());
+    return order;
+}
+
+void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
+                               RenderPhase phase, uint32_t onlyInstance) {
     if (instances.empty() || !opaquePipeline_) {
         return;
     }
@@ -2889,20 +2904,13 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     // table iteration lets a distant moth paint over a nearer one. Establish
     // camera depth order, then finish solid geometry for ALL instances before
     // compositing their blended surfaces back to front.
-    std::vector<std::pair<float, CharacterInstance*>> drawOrder;
-    drawOrder.reserve(instances.size());
-    const auto view = camera.getViewMatrix();
-    for (auto& [id, instance] : instances) {
-        const glm::vec3 position = instance.hasOverrideModelMatrix
-            ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
-        drawOrder.emplace_back((view * glm::vec4(position, 1.0f)).z, &instance);
-    }
-    std::sort(drawOrder.begin(), drawOrder.end(), [](const auto& a, const auto& b) {
-        return a.first != b.first ? a.first < b.first : a.second->id < b.second->id;
-    });
-    for (int pass = -1; pass < 2; ++pass) {
-    for (const auto& [depth, instancePtr] : drawOrder) {
-        auto& instance = *instancePtr;
+    const auto order = onlyInstance ? std::vector<std::pair<float, uint32_t>>{{0, onlyInstance}}
+                                    : drawOrder(camera);
+    const int firstPass = phase == RenderPhase::Blended ? 1 : -1;
+    const int endPass = phase == RenderPhase::Solid ? 1 : 2;
+    for (int pass = firstPass; pass < endPass; ++pass) {
+    for (const auto& [depth, id] : order) {
+        auto& instance = instances.at(id);
         const bool cameraFade = instance.cameraOpacity < 0.999f && !instance.isEffectModel;
         if (pass == -1 && !cameraFade) continue;
 
