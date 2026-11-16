@@ -1,5 +1,6 @@
 #include "core/creature_ground_alignment.hpp"
 #include "core/application.hpp"
+#include "game/game_utils.hpp"
 #include "core/frame_pacer.hpp"
 #include "core/env_flag.hpp"
 #include "core/character_paths.hpp"
@@ -2772,6 +2773,9 @@ void Application::applyServerMovementState(float deltaTime) {
         renderer->getCameraController()->setRunSpeedOverride(gameHandler->getServerRunSpeed());
         renderer->getCameraController()->setWalkSpeedOverride(gameHandler->getServerWalkSpeed());
         renderer->getCameraController()->setSwimSpeedOverride(gameHandler->getServerSwimSpeed());
+        if (game::isActiveExpansion("tbc") && playerCharacterSpawned && entitySpawner_) {
+            renderer->getCameraController()->setSwimmingDepth(entitySpawner_->getPlayerSwimmingDepth());
+        }
         renderer->getCameraController()->setSwimBackSpeedOverride(gameHandler->getServerSwimBackSpeed());
         renderer->getCameraController()->setFlightSpeedOverride(gameHandler->getServerFlightSpeed());
         renderer->getCameraController()->setFlightBackSpeedOverride(gameHandler->getServerFlightBackSpeed());

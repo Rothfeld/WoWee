@@ -69,7 +69,8 @@
   "CreatureModelData": {
     "ID": 0,
     "ModelPath": 2,
-    "ModelScale": 4
+    "ModelScale": 4,
+    "CollisionHeight": 15
   },
   "Emotes": {
     "AnimID": 2,

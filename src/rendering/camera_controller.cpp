@@ -468,7 +468,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                     // Measured from where a swimmer actually floats, not from
                     // a bare number.
                     //
-                    // depthFromFeet is WATER_SURFACE_OFFSET exactly while
+                    // depthFromFeet is swimSurfaceOffset_ exactly while
                     // swimming - the feet are pinned that far under the
                     // surface - so this constant was really "the float depth
                     // plus a little". It was 1.45 against a float depth of 0.9.
@@ -477,7 +477,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                     // and the assist that walks a swimmer up a shore stopped
                     // firing: the character stayed swimming in ankle-deep water,
                     // shuddering on the boundary, and never fully left it.
-                    bool nearSurface = depthFromFeet <= WATER_SURFACE_OFFSET + 0.55f;
+                    bool nearSurface = depthFromFeet <= swimSurfaceOffset_ + 0.55f;
                     bool reachableRamp = (floorDelta >= -0.30f && floorDelta <= 1.10f);
                     bool shallowRampWater = waterOverFloor <= 1.55f;
                     bool notDiving = f.forward3D.z > -0.20f && !f.xDown;
@@ -543,13 +543,13 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // Space applies one upward impulse, including below the surface.
         // Underwater ascent stops at the apex; a surface jump completes its
         // arc before returning to swimming. Holding Space cannot retrigger it.
-        if (waterJumpAirborne_ && waterH && targetPos.z >= *waterH - WATER_SURFACE_OFFSET)
+        if (waterJumpAirborne_ && waterH && targetPos.z >= *waterH - swimSurfaceOffset_)
             waterJumpCrossedSurface_ = true;
         if (waterJumpAirborne_ &&
             (grounded || !waterH || (verticalVelocity <= 0.0f &&
-             targetPos.z <= *waterH - WATER_SURFACE_OFFSET))) {
+             targetPos.z <= *waterH - swimSurfaceOffset_))) {
             if (!grounded && waterH) {
-                if (waterJumpCrossedSurface_) targetPos.z = *waterH - WATER_SURFACE_OFFSET;
+                if (waterJumpCrossedSurface_) targetPos.z = *waterH - swimSurfaceOffset_;
                 verticalVelocity = 0.0f;
             }
             waterJumpAirborne_ = false;
@@ -557,7 +557,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         const bool startWaterJump = inWater && waterH && f.nowJump && !mounted_;
         if (startWaterJump) {
             waterJumpAirborne_ = true;
-            waterJumpCrossedSurface_ = targetPos.z >= *waterH - WATER_SURFACE_OFFSET;
+            waterJumpCrossedSurface_ = targetPos.z >= *waterH - swimSurfaceOffset_;
         }
         if (waterJumpAirborne_) inWater = false;
 
@@ -567,7 +567,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // lateral for stable control.
         float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 100.0f && !std::isnan(swimSpeedOverride_))
                               ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR;
-        float waterSurfaceZ = waterH ? (*waterH - WATER_SURFACE_OFFSET) : targetPos.z;
+        float waterSurfaceZ = waterH ? (*waterH - swimSurfaceOffset_) : targetPos.z;
 
         // For auto-run/auto-swim: use character facing (immune to camera pan)
         // For manual W key: use camera direction (swim where you look)
@@ -636,8 +636,8 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         targetPos.z += verticalVelocity * f.physicsDeltaTime;
 
         // Don't rise above water surface
-        if (waterH && targetPos.z > *waterH - WATER_SURFACE_OFFSET) {
-            targetPos.z = *waterH - WATER_SURFACE_OFFSET;
+        if (waterH && targetPos.z > *waterH - swimSurfaceOffset_) {
+            targetPos.z = *waterH - swimSurfaceOffset_;
             if (verticalVelocity > 0.0f) verticalVelocity = 0.0f;
         }
 
@@ -920,6 +920,17 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                 verticalVelocity = -2.0f;
         }
         targetPos.z += verticalVelocity * f.physicsDeltaTime;
+        // Resolve re-entry in the step that crosses the swimming height.
+        // Waiting until the next step exposes one frame below the surface
+        // and lets the camera follow that overshoot before the clamp runs.
+        if (waterJumpAirborne_ && waterH && verticalVelocity <= 0.0f &&
+            targetPos.z <= *waterH - swimSurfaceOffset_) {
+            if (waterJumpCrossedSurface_) targetPos.z = *waterH - swimSurfaceOffset_;
+            verticalVelocity = 0.0f;
+            waterJumpAirborne_ = false;
+            swimming = true;
+            grounded = false;
+        }
         } // end ground physics (not airborne in flight)
         } // end !inWater
     } else {
@@ -2581,7 +2592,7 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
         swimming = true;
         float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 100.0f && !std::isnan(swimSpeedOverride_))
                               ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR;
-        float waterSurfaceCamZ = waterH ? (*waterH - WATER_SURFACE_OFFSET + eyeHeight) : newPos.z;
+        float waterSurfaceCamZ = waterH ? (*waterH - swimSurfaceOffset_ + eyeHeight) : newPos.z;
         bool diveIntent = f.nowForward && (f.forward3D.z < -0.28f);
 
         float movLenSq = glm::dot(f.movement, f.movement);
@@ -2610,8 +2621,8 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
         newPos.z += verticalVelocity * f.physicsDeltaTime;
 
         // Don't rise above water surface (feet at water level)
-        if (waterH && (newPos.z - eyeHeight) > *waterH - WATER_SURFACE_OFFSET) {
-            newPos.z = *waterH - WATER_SURFACE_OFFSET + eyeHeight;
+        if (waterH && (newPos.z - eyeHeight) > *waterH - swimSurfaceOffset_) {
+            newPos.z = *waterH - swimSurfaceOffset_ + eyeHeight;
             if (verticalVelocity > 0.0f) verticalVelocity = 0.0f;
         }
 

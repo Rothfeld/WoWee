@@ -117,6 +117,7 @@ public:
 
     // Render bounds/position queries (used by click targeting, etc.)
     bool getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const;
+    float getPlayerSwimmingDepth() const;
     uint32_t characterInstanceIdForGuid(uint64_t guid) const;
     bool getRenderFootZForGuid(uint64_t guid, float& outFootZ) const;
     bool getRenderPositionForGuid(uint64_t guid, glm::vec3& outPos) const;
@@ -387,6 +388,7 @@ private:
     std::unordered_map<uint32_t, HumanoidDisplayExtra> humanoidExtraMap_;  // extraDisplayId → humanoid data
     std::unordered_map<uint32_t, std::string> modelIdToPath_;   // modelId → M2 path (from CreatureModelData.dbc)
     std::unordered_map<uint32_t, float> modelIdToScale_;        // modelId → CreatureModelData.ModelScale
+    std::unordered_map<uint32_t, float> modelIdToCollisionHeight_;
     // CharHairGeosets.dbc: key = (raceId<<16)|(sexId<<8)|variationId → geosetId (skinSectionId)
     std::unordered_map<uint32_t, uint16_t> hairGeosetMap_;
     // CharFacialHairStyles.dbc: key = (raceId<<16)|(sexId<<8)|variationId → {geoset100, geoset300, geoset200}

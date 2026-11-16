@@ -650,6 +650,11 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             }
             const uint32_t modelId = cmd->getUInt32(i, cmdL ? (*cmdL)["ID"] : 0);
             modelIdToPath_[modelId] = mdx;
+            if (cmdL) {
+                const auto heightField = (*cmdL)["CollisionHeight"];
+                if (heightField != 0xFFFFFFFF && heightField < cmd->getFieldCount())
+                    modelIdToCollisionHeight_[modelId] = cmd->getFloat(i, heightField);
+            }
             // The other half of a creature's size. Zero appears in the file
             // and means unset rather than invisible, so it keeps 1.0.
             const uint32_t scaleField = cmdL ? (*cmdL)["ModelScale"] : 4;
@@ -976,6 +981,17 @@ uint32_t EntitySpawner::characterInstanceIdForGuid(uint64_t guid) const {
     auto cit = creatureInstances_.find(guid);
     if (cit != creatureInstances_.end()) return cit->second;
     return 0;
+}
+
+float EntitySpawner::getPlayerSwimmingDepth() const {
+    const auto player = std::dynamic_pointer_cast<game::Unit>(
+        gameHandler_->getEntityManager().getEntity(gameHandler_->getPlayerGuid()));
+    assert(player);
+    const auto& display = displayDataMap_.at(player->getDisplayId());
+    const float height = modelIdToCollisionHeight_.at(display.modelId);
+    assert(height > 0.0f);
+    const auto* cr = renderer_->getCharacterRenderer();
+    return 0.75f * height * cr->getInstanceScale(renderer_->getCharacterInstanceId());
 }
 
 bool EntitySpawner::getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const {
