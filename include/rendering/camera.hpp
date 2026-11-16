@@ -42,6 +42,7 @@ public:
     void setExternalPose(const glm::vec3& pos, const glm::vec3& forward,
                          const glm::vec3& up, float verticalFov);
     void clearExternalPose() { externalPose = false; updateViewMatrix(); }
+    [[nodiscard]] bool hasExternalPose() const { return externalPose; }
 
     [[nodiscard]] const glm::vec3& getPosition() const { return position; }
     [[nodiscard]] const glm::mat4& getViewMatrix() const { return viewMatrix; }

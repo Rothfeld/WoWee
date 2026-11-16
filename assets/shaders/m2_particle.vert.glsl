@@ -32,10 +32,12 @@ layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec4 aColor;
 layout(location = 2) in float aSize;
 layout(location = 3) in float aTile;
+layout(location = 4) in vec3 aTail;
 
 layout(location = 0) out vec4 vColor;
 layout(location = 1) out float vTile;
 layout(location = 2) out float vFogVisibility;
+layout(location = 3) out vec2 vUV;
 
 // The air between the camera and this point, out of the fog volume: rgb is
 // the light it scatters toward the camera, a how much of the point shows
@@ -52,11 +54,19 @@ vec4 fogVolumeAt(vec3 worldPos) {
 
 void main() {
     vec4 viewPos4 = view * vec4(aPos, 1.0);
-    float dist = -viewPos4.z;
-    // Authored size is a billboard half-extent. Project its diameter into
-    // viewport pixels: 2 * radius * projectionY * height / (2 * depth).
-    gl_PointSize = clamp(aSize * abs(projection[1][1]) * push.viewportHeight /
-                         max(dist, 0.001), 1.0, 128.0);
+    const vec2 corners[6] = vec2[](vec2(0,0), vec2(1,0), vec2(1,1),
+                                   vec2(0,0), vec2(1,1), vec2(0,1));
+    vUV = corners[gl_VertexIndex];
+    if (dot(aTail, aTail) > 0.00000001) {
+        vec3 tailView = mat3(view) * aTail;
+        float projectedLength = length(tailView.xy);
+        vec2 side = projectedLength > 0.00001
+            ? vec2(-tailView.y, tailView.x) / projectedLength : vec2(1,0);
+        viewPos4.xyz += tailView * vUV.y;
+        viewPos4.xy += side * ((vUV.x * 2.0 - 1.0) * aSize);
+    } else {
+        viewPos4.xy += (vUV * 2.0 - 1.0) * aSize;
+    }
     vColor = aColor;
     vTile = aTile;
     float worldDist = length(viewPos.xyz - aPos);

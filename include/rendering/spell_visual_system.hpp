@@ -34,6 +34,10 @@ public:
                          bool useImpactKit = false, uint32_t attachInstanceId = 0);
 
     void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId);
+    void startChannelVisual(uint32_t visualId, const glm::vec3& position,
+                            uint32_t durationMs, uint32_t attachInstanceId);
+    void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
+    uint32_t channelAnimation(uint32_t visualId);
 
     // Spawn a precast visual effect at a world position.
     // castTimeMs: server cast time in milliseconds (0 = use anim duration).
@@ -78,6 +82,7 @@ private:
         bool isPrecast;  // true for precast effects (removed on cancel/interrupt)
         uint32_t attachmentId;  // character attachment point to track (0=none/static)
         uint32_t attachInstanceId;  // CharacterRenderer instance the attachment belongs to
+        bool isChannel = false;
     };
 
     struct PhysicalProjectile {
@@ -105,6 +110,9 @@ private:
                          bool useImpactKit, uint32_t attachInstanceId);
     std::unordered_map<uint32_t, std::string> kitPaths_;
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
+    struct KitEffect { std::string path; uint32_t attachment; };
+    std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;
+    std::unordered_map<uint32_t, uint32_t> channelKits_;
     // Model ID for a cast, impact or missile model, loading it on first use.
     // 0 when it cannot be loaded.
     uint32_t loadSpellModel(const std::string& modelPath);

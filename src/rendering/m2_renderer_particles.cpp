@@ -91,7 +91,6 @@ std::vector<glm::vec3> M2Renderer::getWaterVegetationPositions(const glm::vec3& 
 }
 
 void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt) {
-    if (gpu.isInstancePortal) return;
 
     if (inst.emitterAccumulators.size() != gpu.particleEmitters.size()) {
         inst.emitterAccumulators.resize(gpu.particleEmitters.size(), 0.0f);
@@ -306,7 +305,6 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
 // Ribbon emitter simulation
 // ---------------------------------------------------------------------------
 void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt) {
-    if (gpu.isInstancePortal) return;
 
     const auto& emitters = gpu.ribbonEmitters;
     if (emitters.empty()) return;
@@ -444,7 +442,6 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     for (const auto& inst : instances) {
         if (!inst.cachedModel) continue;
         const auto& gpu = *inst.cachedModel;
-        if (gpu.isInstancePortal) continue;
         if (gpu.ribbonEmitters.empty()) continue;
 
         for (size_t ri = 0; ri < gpu.ribbonEmitters.size(); ri++) {
@@ -614,15 +611,18 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
         const auto& inst = instances[idx];
-        if (!inst.cachedModel || inst.cachedModel->isInstancePortal) continue;
+        if (!inst.cachedModel) continue;
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
-        requiredVertices += inst.particles.size();
+        for (const auto& particle : inst.particles) {
+            const auto& emitter = inst.cachedModel->particleEmitters.at(particle.emitterIndex);
+            requiredVertices += emitter.headOrTail == 2 ? 2 : 1;
+        }
     }
     if (requiredVertices > particleVertexCapacity_) {
         const size_t capacity = std::max(requiredVertices, particleVertexCapacity_ * 2);
         VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        info.size = capacity * 9 * sizeof(float);
+        info.size = capacity * 12 * sizeof(float);
         info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         VmaAllocationCreateInfo allocationInfo{};
         allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
@@ -675,7 +675,6 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         if (inst.particles.empty()) continue;
         if (!inst.cachedModel) continue;
         const auto& gpu = *inst.cachedModel;
-        if (gpu.isInstancePortal) continue;
         const glm::vec3 distance = inst.position - cachedCamPos_;
         if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
 
@@ -790,25 +789,34 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             highestParticleZ = std::max(highestParticleZ, p.position.z);
             widestParticle = std::max(widestParticle, scale);
 
-            float* vd = vbBase + static_cast<size_t>(vbWritten) * 9;
-            vd[0] = p.position.x;
-            vd[1] = p.position.y;
-            vd[2] = p.position.z;
-            vd[3] = color.r;
-            vd[4] = color.g;
-            vd[5] = color.b;
-            vd[6] = alpha;
-            vd[7] = scale * inst.scale;
-            float tileIndex = p.tileIndex;
-            if (cachedIsTiled) {
-                tileIndex = p.tileIndex + static_cast<float>(cachedAnimFrame);
-                while (tileIndex >= cachedTilesFloat) {
-                    tileIndex -= cachedTilesFloat;
+            const unsigned sprites = em.headOrTail == 2 ? 2 : 1;
+            for (unsigned sprite = 0; sprite < sprites; ++sprite) {
+                assert(vbWritten < particleVertexCapacity_);
+                float* vd = vbBase + static_cast<size_t>(vbWritten) * 12;
+                vd[0] = p.position.x;
+                vd[1] = p.position.y;
+                vd[2] = p.position.z;
+                vd[3] = color.r;
+                vd[4] = color.g;
+                vd[5] = color.b;
+                vd[6] = alpha;
+                vd[7] = scale * inst.scale;
+                float tileIndex = p.tileIndex;
+                if (cachedIsTiled) {
+                    tileIndex = p.tileIndex + static_cast<float>(cachedAnimFrame);
+                    while (tileIndex >= cachedTilesFloat) {
+                        tileIndex -= cachedTilesFloat;
+                    }
                 }
+                vd[8] = tileIndex;
+                const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
+                const glm::vec3 displacement = tail ? -p.velocity * em.tailLength : glm::vec3(0);
+                vd[9] = displacement.x;
+                vd[10] = displacement.y;
+                vd[11] = displacement.z;
+                ++vbWritten;
+                ++particleRuns_.back().count;
             }
-            vd[8] = tileIndex;
-            ++vbWritten;
-            ++particleRuns_.back().count;
             totalParticles++;
         }
 
@@ -932,7 +940,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         // Both used to be wrong: every group copied to offset zero and drew
         // from vertex zero, so with more than one group up they all drew
         // whatever had been copied last.
-        vkCmdDraw(cmd, run.count, 1, run.first, 0);
+        vkCmdDraw(cmd, 6, run.count, 0, run.first);
     }
 }
 

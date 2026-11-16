@@ -1978,6 +1978,14 @@ void Renderer::update(float deltaTime) {
         auto cameraStart = std::chrono::steady_clock::now();
         cameraController->update(deltaTime);
         if (camera) updateViewSync(*camera);
+        if (camera && camera->hasExternalPose() && characterRenderer && characterInstanceId) {
+            // Comparison cameras must not inherit first-person hiding from the
+            // gameplay camera that the controller updated earlier this frame.
+            const float distance = glm::distance(camera->getPosition(), characterPosition);
+            const float opacity = glm::clamp((distance - 0.5f) / 1.0f, 0.0f, 1.0f);
+            characterRenderer->setInstanceCameraOpacity(characterInstanceId, opacity);
+            characterRenderer->setInstanceVisible(characterInstanceId, opacity > 0.0f);
+        }
         auto cameraEnd = std::chrono::steady_clock::now();
         lastCameraUpdateMs = std::chrono::duration<double, std::milli>(cameraEnd - cameraStart).count();
         if (lastCameraUpdateMs > 50.0) {

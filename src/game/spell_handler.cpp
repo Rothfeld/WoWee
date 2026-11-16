@@ -2222,7 +2222,7 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
 
     // Trigger cast visual effect (precast/cast kit M2) at the caster's position.
     // Skip profession spells (crafting has no flashy cast effects).
-    if (!owner_.isProfessionSpell(data.spellId) && !rangedWeaponAttack) {
+    if (data.castTime > 0 && !owner_.isProfessionSpell(data.spellId) && !rangedWeaponAttack) {
         triggerCastVisual(data.spellId, data.casterUnit, data.castTime);
     }
 }
@@ -5295,10 +5295,7 @@ void SpellHandler::handleResumeCastBar(network::Packet& packet) {
 
 void SpellHandler::handleChannelStart(network::Packet& packet) {
     // casterGuid + uint32 spellId + uint32 totalDurationMs
-    const bool tbcOrClassic = isPreWotlk();
-    uint64_t chanCaster = tbcOrClassic
-        ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
-        : packet.readPackedGuid();
+    uint64_t chanCaster = packet.readPackedGuid();
     if (!packet.hasRemaining(8)) return;
     uint32_t chanSpellId = packet.readUInt32();
     uint32_t chanTotalMs = packet.readUInt32();
@@ -5329,6 +5326,14 @@ void SpellHandler::handleChannelStart(network::Packet& packet) {
         if (owner_.spellCastAnimCallbackRef()) {
             owner_.spellCastAnimCallbackRef()(chanCaster, true, true, chanType);
         }
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* visuals = renderer->getSpellVisualSystem()) {
+                glm::vec3 position;
+                if (resolveUnitPosition(chanCaster, position))
+                    visuals->startChannelVisual(resolveSpellVisualId(chanSpellId), position,
+                        chanTotalMs, owner_.resolveUnitRenderInstance(chanCaster));
+            }
+        }
 
         // Fire UNIT_SPELLCAST_CHANNEL_START for Lua addons
         if (owner_.addonEventCallbackRef()) {
@@ -5341,12 +5346,13 @@ void SpellHandler::handleChannelStart(network::Packet& packet) {
 
 void SpellHandler::handleChannelUpdate(network::Packet& packet) {
     // casterGuid + uint32 remainingMs
-    const bool tbcOrClassic2 = isPreWotlk();
-    uint64_t chanCaster2 = tbcOrClassic2
-        ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
-        : packet.readPackedGuid();
+    uint64_t chanCaster2 = packet.readPackedGuid();
     if (!packet.hasRemaining(4)) return;
     uint32_t chanRemainMs = packet.readUInt32();
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* visuals = renderer->getSpellVisualSystem())
+            visuals->updateChannelVisual(owner_.resolveUnitRenderInstance(chanCaster2), chanRemainMs);
+    }
     if (chanCaster2 == owner_.getPlayerGuid()) {
         castTimeRemaining_ = chanRemainMs / 1000.0f;
         if (chanRemainMs == 0) {

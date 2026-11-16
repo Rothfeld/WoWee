@@ -303,6 +303,7 @@
     "MinRange": 1
   },
   "SpellVisual": {
+    "ChannelKit": 5,
     "CastKit": 2,
     "ID": 0,
     "ImpactKit": 3,

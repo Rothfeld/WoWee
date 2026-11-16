@@ -1,5 +1,6 @@
 #include "rendering/animation/melee_anim_chains.hpp"
 #include "core/animation_callback_handler.hpp"
+#include "rendering/spell_visual_system.hpp"
 #include "core/appearance_composer.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/coordinates.hpp"
@@ -430,7 +431,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             const uint32_t currentSpell = isLocalPlayer
                 ? (gameHandler_.isRestoring() ? gameHandler_.getActiveActionSpellId()
                                               : gameHandler_.getCurrentCastSpellId())
-                : 0;
+                : (gameHandler_.getUnitCastState(guid) ? gameHandler_.getUnitCastState(guid)->spellId : 0);
             bool isFishing = isChannel && game::spellclass::isFishingCast(currentSpell);
 
             // Helper: pick first animation the model supports from a list
@@ -559,6 +560,10 @@ void AnimationCallbackHandler::setupCallbacks() {
                     cr->playAnimation(instanceId, rendering::anim::FISHING_LOOP, true);
                 }
             } else {
+            if (isLocalPlayer && isChannel && !appearanceComposer_.isWeaponsSheathed()) {
+                appearanceComposer_.setWeaponsSheathed(true);
+                appearanceComposer_.loadEquippedWeapons();
+            }
             // Precast wind-up (one-shot, non-channels only)
             uint32_t precastAnim = 0;
             if (!isChannel) {
@@ -604,6 +609,17 @@ void AnimationCallbackHandler::setupCallbacks() {
                         rendering::anim::SPELL_CAST,
                         rendering::anim::SPELL
                     });
+                }
+            }
+            if (isChannel && currentSpell) {
+                gameHandler_.loadSpellNameCache();
+                const auto spell = gameHandler_.spellNameCacheRef().find(currentSpell);
+                if (spell != gameHandler_.spellNameCacheRef().end()) {
+                    if (auto* visuals = renderer_.getSpellVisualSystem()) {
+                        const auto animation = visuals->channelAnimation(spell->second.spellVisualId);
+                        if (animation != 0xffffffffu && cr->hasAnimation(instanceId, animation))
+                            castAnim = animation;
+                    }
                 }
             }
             // TBC models may omit the legacy SPELL (2) sequence; idle is a

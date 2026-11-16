@@ -382,14 +382,15 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
     if (particleVert.isValid() && particleFrag.isValid()) {
         VkVertexInputBindingDescription pBind{};
         pBind.binding = 0;
-        pBind.stride = 9 * sizeof(float); // pos3 + color4 + size1 + tile1
-        pBind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        pBind.stride = 12 * sizeof(float); // pos3 + color4 + size1 + tile1 + tail3
+        pBind.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
         std::vector<VkVertexInputAttributeDescription> pAttrs = {
             {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},                    // position
             {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 3 * sizeof(float)}, // color
             {.location = 2, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 7 * sizeof(float)},          // size
             {.location = 3, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 8 * sizeof(float)},          // tile
+            {.location = 4, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 9 * sizeof(float)}, // tail displacement
         };
 
         auto buildParticlePipeline = [&](VkPipelineColorBlendAttachmentState blend) -> VkPipeline {
@@ -397,7 +398,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                 .setShaders(particleVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                             particleFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
                 .setVertexInput({pBind}, pAttrs)
-                .setTopology(VK_PRIMITIVE_TOPOLOGY_POINT_LIST)
+                .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
                 .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
                 .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
                 .setColorBlendAttachment(blend)
@@ -1013,7 +1014,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
 
         // M2 particle buffer
         particleVertexCapacity_ = MAX_M2_PARTICLE_VERTS;
-        bci.size = MAX_M2_PARTICLE_VERTS * 9 * sizeof(float);
+        bci.size = MAX_M2_PARTICLE_VERTS * 12 * sizeof(float);
         vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &m2ParticleVB_, &m2ParticleVBAlloc_, &allocInfo);
         m2ParticleVBMapped_ = allocInfo.pMappedData;
 
@@ -2478,20 +2479,9 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         gpuModel.batches.push_back(bgpu);
     }
 
-    // Detect particle emitter volume models: box mesh (24 verts, 36 indices)
-    // with disproportionately large bounds. These are invisible bounding volumes
-    // that only exist to spawn particles - their mesh should never be rendered.
-    if (!isInvisibleTrap && !groundDetailModel &&
-        gpuModel.vertexCount <= 24 && gpuModel.indexCount <= 36
-        && !model.particleEmitters.empty()) {
-        glm::vec3 size = gpuModel.boundMax - gpuModel.boundMin;
-        float maxDim = std::max({size.x, size.y, size.z});
-        if (maxDim > 5.0f) {
-            gpuModel.isInvisibleTrap = true;
-            LOG_DEBUG("M2 emitter volume hidden: '", model.name, "' size=(",
-                      size.x, " x ", size.y, " x ", size.z, ")");
-        }
-    }
+    // Particle emitters do not make a model's mesh invisible. Portals such as
+    // Summon_Ritual contain a single textured quad plus surrounding particles.
+    // Render their authored batches; explicit invisible models were classified above.
 
     vkCtx_->endUploadBatch();
 

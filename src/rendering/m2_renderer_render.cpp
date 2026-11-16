@@ -424,19 +424,6 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         ++i;
     }
 
-    // --- Spin instance portals ---
-    static constexpr float PORTAL_SPIN_SPEED = 1.2f; // radians/sec
-    static constexpr float kTwoPi = 6.2831853f;
-    for (size_t idx : portalInstanceIndices_) {
-        if (idx >= instances.size()) continue;
-        auto& inst = instances[idx];
-        inst.portalSpinAngle += PORTAL_SPIN_SPEED * deltaTime;
-        if (inst.portalSpinAngle > kTwoPi)
-            inst.portalSpinAngle -= kTwoPi;
-        inst.rotation.z = inst.portalSpinAngle;
-        inst.updateModelMatrix();
-    }
-
     // --- Normal M2 animation update ---
     // Advance animTime for ALL instances (needed for texture UV animation on static doodads).
     // This is a tight loop touching only one float per instance - no hash lookups.
@@ -1379,21 +1366,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         pc.plantHeight = sway.plantHeight;
     };
 
-    auto appendInstancePortalGlow = [&](const M2Instance& instance, float distSq) {
-        if (distSq >= 400.0f * 400.0f) return;
-        glm::vec3 center = glm::vec3(instance.modelMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        GlowSprite core;
-        core.worldPos = center;
-        core.color = glm::vec4(0.35f, 0.55f, 1.0f, 1.25f);
-        core.size = instance.scale * 7.0f;
-        glowSprites_.push_back(core);
-
-        GlowSprite halo = core;
-        halo.color.a *= 0.35f;
-        halo.size *= 2.4f;
-        glowSprites_.push_back(halo);
-    };
-
     // Validate per-frame descriptor set before any Vulkan commands
     if (!perFrameSet) {
         LOG_ERROR("M2Renderer::render: perFrameSet is VK_NULL_HANDLE - skipping M2 render");
@@ -1466,15 +1438,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 visStart = groupEnd;
                 continue;
             }
-            if (model.isInstancePortal) {
-                for (size_t vi = visStart; vi < groupEnd; vi++) {
-                    const auto& entry = sortedVisible_[vi];
-                    if (entry.index >= instances.size()) continue;
-                    appendInstancePortalGlow(instances[entry.index], entry.distSq);
-                }
-                visStart = groupEnd;
-                continue;
-            }
             if (!model.vertexBuffer || !model.indexBuffer) {
                 visStart = groupEnd;
                 continue;
@@ -1482,8 +1445,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
             bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
             const bool foliageLikeModel = model.isFoliageLike;
-            const bool particleDominantEffect = model.isSpellEffect &&
-                !model.particleEmitters.empty() && model.batches.size() <= 2;
 
             // Collect per-instance data for this model group
             pending.clear();
@@ -1803,8 +1764,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     const bool rawTransparent = (batch.blendMode >= 2) || model.isSpellEffect;
                     if (rawTransparent) continue;
 
-                    // Particle-dominant effects: emission geometry - skip opaque
-                    if (particleDominantEffect && batch.blendMode <= 1) continue;
 
                     // Handle texture animation: if this batch has per-instance uvOffset,
                     // write a separate SSBO range with the correct offsets.
@@ -2013,7 +1972,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             currentModelValid = false;
             currentModel = instance.cachedModel;
             if (!currentModel) continue;
-            if (currentModel->isInstancePortal) continue;
             if (!currentModel->hasTransparentBatches && !currentModel->isSpellEffect) continue;
             if (!currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
             currentModelValid = true;
@@ -2036,7 +1994,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         float instanceFadeAlpha = fadeAlpha * instance.fade;
         const bool instanceFaded = instance.fade < 0.999f;
         if (model.isGroundDetail) instanceFadeAlpha *= 0.82f;
-        if (model.isInstancePortal) instanceFadeAlpha *= 0.72f;
 
         bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
         if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;
@@ -2051,8 +2008,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         uint16_t targetLOD = desiredLOD;
         while (targetLOD > 0 && !(model.availableLODs & (1u << targetLOD))) --targetLOD;
 
-        const bool particleDominantEffect = model.isSpellEffect &&
-            !model.particleEmitters.empty() && model.batches.size() <= 2;
 
         for (const auto& batch : model.batches) {
             if (batch.indexCount == 0) continue;
@@ -2103,7 +2058,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 continue;
             }
 
-            if (particleDominantEffect) continue; // emission-only mesh
 
             // Compute UV offset for this instance + batch
             //
@@ -2152,7 +2106,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
             // Pipeline selection
             uint8_t effectiveBlendMode = batch.blendMode;
-            if (model.isSpellEffect || batch.forgeFireCard) {
+            if ((model.isSpellEffect && !batch.hasAuthoredMaterial) || batch.forgeFireCard) {
                 // Matches the opaque pass: a forge's flame cards are additive,
                 // the forge itself is not.
                 if (effectiveBlendMode <= 1) effectiveBlendMode = 3;

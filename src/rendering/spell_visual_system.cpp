@@ -13,6 +13,7 @@
 #include "core/logger.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cassert>
 #include <glm/gtc/constants.hpp>
 
 namespace wowee {
@@ -100,6 +101,14 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             uint32_t kitId = kitDbc->getUInt32(i, 0);
             if (!kitId) continue;
             kitAnimations_[kitId] = kitDbc->getUInt32(i, 2);
+            // Attachment semantics come from the kit slot, not the filename.
+            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 5, 11, 19, 0, 0};
+            for (size_t k = 0; k < numKitFields; ++k) {
+                if (kitFields[k] >= fc) continue;
+                const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
+                if (const auto path = effectPaths.find(effectId); path != effectPaths.end())
+                    kitEffects_[kitId].push_back({path->second, attachments[k]});
+            }
             uint32_t eff = 0;
             for (size_t k = 0; k < numKitFields && !eff; ++k) {
                 if (kitFields[k] < fc)
@@ -135,10 +144,13 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         return;
     }
     uint32_t svFc = svDbc->getFieldCount();
+    assert(svLayout && "SpellVisual layout required for channel kits");
     uint32_t loadedPrecast = 0, loadedCast = 0, loadedImpact = 0, loadedMissile = 0;
     for (uint32_t i = 0; i < svDbc->getRecordCount(); ++i) {
         uint32_t vid = svDbc->getUInt32(i, 0);
         if (!vid) continue;
+        const uint32_t channelField = (*svLayout)["ChannelKit"];
+        if (channelField < svFc) channelKits_[vid] = svDbc->getUInt32(i, channelField);
 
         // Precast path: PrecastKit → SpecialEffect0/BaseEffect
         {
@@ -234,11 +246,9 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
 
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
 
-    // Try precast path first, fall back to cast path
+    // An absent stage has no effect; do not substitute a different stage.
     auto pathIt = spellVisualPrecastPath_.find(visualId);
     if (pathIt == spellVisualPrecastPath_.end()) {
-        // No precast kit - fall back to playing cast kit
-        playSpellVisual(visualId, worldPosition, false, attachInstanceId);
         return;
     }
 
@@ -446,18 +456,67 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
 
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
 
-    // Select cast or impact path map; fall back to the other if missing
+    // Cast and impact stages are independent, including deliberately empty kits.
     auto& primaryMap = useImpactKit ? spellVisualImpactPath_ : spellVisualCastPath_;
-    auto& fallbackMap = useImpactKit ? spellVisualCastPath_ : spellVisualImpactPath_;
     auto pathIt = primaryMap.find(visualId);
     if (pathIt == primaryMap.end()) {
-        pathIt = fallbackMap.find(visualId);
-        if (pathIt == fallbackMap.end()) {
-            return;
-        }
+        return;
     }
 
     playModelEffect(visualId, pathIt->second, worldPosition, useImpactKit, attachInstanceId);
+}
+
+uint32_t SpellVisualSystem::channelAnimation(uint32_t visualId) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto kit = channelKits_.find(visualId);
+    if (kit == channelKits_.end() || !kit->second) return 0xffffffffu;
+    const auto animation = kitAnimations_.find(kit->second);
+    return animation == kitAnimations_.end() ? 0xffffffffu : animation->second;
+}
+
+void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& position,
+                                          uint32_t durationMs, uint32_t attachInstanceId) {
+    if (!m2Renderer_ || !attachInstanceId) return;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    updateChannelVisual(attachInstanceId, 0);
+    const auto kit = channelKits_.find(visualId);
+    if (kit == channelKits_.end() || !kit->second) return;
+    const auto effects = kitEffects_.find(kit->second);
+    if (effects == kitEffects_.end()) return;
+    auto* characters = renderer_->getCharacterRenderer();
+    for (const auto& effect : effects->second) {
+        const uint32_t model = loadSpellModel(effect.path);
+        if (!model) continue;
+        glm::vec3 spawn = position;
+        if (effect.attachment) {
+            glm::mat4 transform;
+            if (!characters || !characters->getAttachmentTransform(attachInstanceId, effect.attachment, transform)) {
+                LOG_ERROR("Channel attachment unavailable: ", effect.attachment, " model=", effect.path);
+                continue;
+            }
+            spawn = glm::vec3(transform[3]);
+        }
+        const uint32_t instance = m2Renderer_->createInstance(model, spawn, glm::vec3(0), 1.0f);
+        if (!instance) { LOG_ERROR("Channel effect instance failed: ", effect.path); continue; }
+        m2Renderer_->restartInstanceAnimation(instance);
+        activeSpellVisuals_.push_back({instance, 0.0f, durationMs / 1000.0f,
+            false, effect.attachment, attachInstanceId, true});
+        LOG_INFO("Channel visual: kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
+    }
+}
+
+void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {
+    for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
+        if (it->isChannel && it->attachInstanceId == attachInstanceId) {
+            if (!remainingMs) {
+                m2Renderer_->removeInstance(it->instanceId);
+                it = activeSpellVisuals_.erase(it);
+                continue;
+            }
+            it->duration = it->elapsed + remainingMs / 1000.0f;
+        }
+        ++it;
+    }
 }
 
 void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition,

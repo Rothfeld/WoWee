@@ -26,6 +26,8 @@ macOS, Windows and Android.
 [Read the project status](docs/status.md) ·
 [Hear the soundtrack](https://kelsidavis.bandcamp.com/album/wowee-soundtrack)
 
+TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-effects.md).
+
 <p align="center">
   <img src="assets/hellfire-peninsula.png" alt="WoWee rendering Honor Hold in Hellfire Peninsula" width="100%" />
 </p>

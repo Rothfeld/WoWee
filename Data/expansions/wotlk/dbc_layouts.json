@@ -323,6 +323,7 @@
     "Name": 2
   },
   "SpellVisual": {
+    "ChannelKit": 6,
     "CastKit": 2,
     "ID": 0,
     "ImpactKit": 3,

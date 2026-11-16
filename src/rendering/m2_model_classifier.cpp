@@ -248,7 +248,8 @@ M2ClassificationResult classifyM2Model(
                     || has(n, "lavapool");
 
     r.isInstancePortal  = has(n, "instanceportal") || has(n, "instancenewportal")
-                        || has(n, "portalfx")       || has(n, "spellportal");
+                        || has(n, "portalfx")       || has(n, "spellportal")
+                        || has(fullPath, "\\instanceportal\\") || has(fullPath, "/instanceportal/");
 
     r.isWaterVegetation = has(n, "cattail") || has(n, "reed")     || has(n, "bulrush")
                         || has(n, "seaweed") || has(n, "kelp")    || has(n, "lilypad")

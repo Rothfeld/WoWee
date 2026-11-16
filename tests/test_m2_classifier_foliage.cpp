@@ -22,6 +22,15 @@ wowee::rendering::M2ClassificationResult classify(const std::string& name,
 
 } // namespace
 
+TEST_CASE("summoning portal art stays nonblocking without discarding its mesh", "[m2][classifier]") {
+    const auto portal = classifyM2Model(
+        "World\\Generic\\ActiveDoodads\\InstancePortal\\Summon_Ritual.m2",
+        glm::vec3(0, -2.11842f, 0), glm::vec3(0, 2.11842f, 5.72386f), 4, 4);
+    CHECK(portal.isInstancePortal);
+    CHECK(portal.isSpellEffect);
+    CHECK_FALSE(portal.isInvisibleTrap);
+}
+
 // Foliage tokens are substring-matched because model names concatenate words
 // with no separator, so a short token can land inside an unrelated word. Every
 // name here is a real asset that swayed in the wind because of it.

@@ -1499,6 +1499,8 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             em.texture    = readValue<uint16_t>(m2Data, base + 0x16);
             em.blendingType = readValue<uint8_t>(m2Data, base + 0x28);
             em.emitterType  = readValue<uint8_t>(m2Data, base + (isVanilla ? 0x2A : 0x29));
+            em.headOrTail = readValue<uint8_t>(m2Data, base + (isVanilla ? 0x2C : 0x2D));
+            em.tailLength = readValue<float>(m2Data, base + (isVanilla ? 0x17C : 0x15C));
             em.textureTileRotation = readValue<int16_t>(m2Data, base + 0x2E);
             em.textureRows = readValue<uint16_t>(m2Data, base + 0x30);
             em.textureCols = readValue<uint16_t>(m2Data, base + 0x32);
