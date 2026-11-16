@@ -182,3 +182,27 @@ TEST_CASE("Moving landings resolve directly to stride without a transient landin
         CHECK(fsm.getState() == LocomotionFSM::State::JUMP_END);
     }
 }
+
+TEST_CASE("LocomotionFSM: swim stop grace preserves direction until idle", "[locomotion][swim]") {
+    auto caps = makeLocoCaps();
+    caps.resolvedSwimBackwards = anim::SWIM_BACKWARDS;
+    caps.resolvedSwimLeft = anim::SWIM_LEFT;
+    caps.resolvedSwimRight = anim::SWIM_RIGHT;
+    for (auto direction : {anim::SWIM, anim::SWIM_BACKWARDS, anim::SWIM_LEFT, anim::SWIM_RIGHT}) {
+        LocomotionFSM fsm;
+        auto in = idle();
+        in.swimming = true;
+        in.moving = true;
+        in.movingBackward = direction == anim::SWIM_BACKWARDS;
+        in.strafeLeft = direction == anim::SWIM_LEFT;
+        in.strafeRight = direction == anim::SWIM_RIGHT;
+        REQUIRE(fsm.resolve(in, caps).animId == direction);
+        in.moving = in.movingBackward = in.strafeLeft = in.strafeRight = false;
+        for (int frame = 0; frame < 7; ++frame) {
+            CHECK(fsm.resolve(in, caps).animId == direction);
+        }
+        CHECK(fsm.resolve(in, caps).animId == anim::SWIM_IDLE);
+        in.moving = true;
+        CHECK(fsm.resolve(in, caps).animId == anim::SWIM);
+    }
+}

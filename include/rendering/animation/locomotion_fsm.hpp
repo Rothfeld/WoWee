@@ -63,6 +63,9 @@ private:
     // to avoid flickering on network jitter
     float graceTimer_ = 0.0f;
     bool wasSprinting_ = false;
+    bool wasMovingBackward_ = false;
+    bool wasStrafeLeft_ = false;
+    bool wasStrafeRight_ = false;
 
     // One-shot tracking for jump start/end animations
     bool jumpStartSeen_ = false;

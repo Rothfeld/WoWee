@@ -689,6 +689,12 @@ upward views can place the eye below the player. Real geometry still obstructs
 the camera. Validate with live pitch sweeps in both swimming states and
 camera-only above/below captures while leaving the swimmer submerged.
 
+Swimming movement preserves backward/strafe direction during the locomotion
+stop grace period. Swim, swim-backward, swim-left/right, and swim-idle poses
+cross-fade using the destination M2 sequence's authored blend time, including
+transitions to ground locomotion. `WOWEE_SWIM_ANIMATION_TRACE=1` logs animation
+IDs and applied blend durations for live stop/start verification.
+
 Player camera fade uses actual camera-to-pivot distance, becoming transparent
 between 1.5 and 0.5 yards. Collision can shorten that distance while requested
 zoom stays far away. Camera opacity multiplies ghost/stealth/spawn opacity and

@@ -2150,6 +2150,11 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             case anim::WALK_BACKWARDS:
             case anim::SHUFFLE_LEFT:
             case anim::SHUFFLE_RIGHT:
+            case anim::SWIM_IDLE:
+            case anim::SWIM:
+            case anim::SWIM_LEFT:
+            case anim::SWIM_RIGHT:
+            case anim::SWIM_BACKWARDS:
             case anim::JUMP_START:
             case anim::JUMP:
             case anim::JUMP_END:
@@ -2178,6 +2183,13 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             instance.blendAnimationLoop = previousLoop;
             instance.blendElapsed = 0.0f;
         }
+    }
+    if (core::envFlagEnabled("WOWEE_SWIM_ANIMATION_TRACE") &&
+        ((previousId >= anim::SWIM_IDLE && previousId <= anim::SWIM_BACKWARDS) ||
+         (animationId >= anim::SWIM_IDLE && animationId <= anim::SWIM_BACKWARDS))) {
+        LOG_INFO("Swim animation instance=", instanceId, " from=", previousId,
+                 " to=", instance.currentAnimationId, " outgoingTimeMs=", previousTime,
+                 " blendMs=", instance.blendSequenceIndex >= 0 ? instance.blendDuration : 0.0f);
     }
 
 }

@@ -53,6 +53,9 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
     if (in.moving) {
         graceTimer_ = kGraceSec;
         wasSprinting_ = in.sprinting;
+        wasMovingBackward_ = in.movingBackward;
+        wasStrafeLeft_ = in.strafeLeft;
+        wasStrafeRight_ = in.strafeRight;
     } else {
         graceTimer_ = std::max(0.0f, graceTimer_ - in.deltaTime);
     }
@@ -185,8 +188,14 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
 AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps) {
     updateTransitions(in, caps);
 
-    const bool anyStrafeLeft = in.strafeLeft && !in.strafeRight && !in.movingBackward;
-    const bool anyStrafeRight = in.strafeRight && !in.strafeLeft && !in.movingBackward;
+    // Stop grace preserves the whole movement pose, including direction.
+    // Released input must not insert a forward stride before reaching idle.
+    const bool stopping = !in.moving && graceTimer_ > 0.0f;
+    const bool movingBackward = stopping ? wasMovingBackward_ : in.movingBackward;
+    const bool strafeLeft = stopping ? wasStrafeLeft_ : in.strafeLeft;
+    const bool strafeRight = stopping ? wasStrafeRight_ : in.strafeRight;
+    const bool anyStrafeLeft = strafeLeft && !strafeRight && !movingBackward;
+    const bool anyStrafeRight = strafeRight && !strafeLeft && !movingBackward;
 
     uint32_t animId = anim::STAND;
     bool animSelected = true;
@@ -198,7 +207,7 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
             break;
 
         case State::WALK:
-            if (in.movingBackward) {
+            if (movingBackward) {
                 animId = caps.resolvedWalkBackwards ? caps.resolvedWalkBackwards
                        : caps.resolvedWalk           ? caps.resolvedWalk
                        :                               anim::WALK_BACKWARDS;
@@ -208,7 +217,7 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
             break;
 
         case State::RUN:
-            if (in.movingBackward) {
+            if (movingBackward) {
                 animId = caps.resolvedWalkBackwards ? caps.resolvedWalkBackwards
                        : caps.resolvedWalk           ? caps.resolvedWalk
                        :                               anim::WALK_BACKWARDS;
@@ -237,7 +246,7 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
             break;
 
         case State::SWIM:
-            if (in.movingBackward) {
+            if (movingBackward) {
                 animId = caps.resolvedSwimBackwards ? caps.resolvedSwimBackwards
                        : caps.resolvedSwim           ? caps.resolvedSwim
                        :                               anim::SWIM;
@@ -265,6 +274,9 @@ void LocomotionFSM::reset() {
     state_ = State::IDLE;
     graceTimer_ = 0.0f;
     wasSprinting_ = false;
+    wasMovingBackward_ = false;
+    wasStrafeLeft_ = false;
+    wasStrafeRight_ = false;
     jumpStartSeen_ = false;
     jumpEndSeen_ = false;
 }
