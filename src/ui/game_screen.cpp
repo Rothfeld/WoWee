@@ -13,6 +13,7 @@
 #include "ui/framexml_takeover.hpp"
 #include "ui/scene_pick.hpp"
 #include "ui/world_cursor.hpp"
+#include "ui/corpse_harvesting.hpp"
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
 #include "ui/ui_texture_load.hpp"
@@ -1092,6 +1093,7 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     const uint64_t guid = pick.resolve();
     const auto entity = gameHandler.getEntityManager().getEntity(guid);
     if (!entity || (entity->getType() != game::ObjectType::UNIT &&
+    const auto harvesting = ui::corpseHarvestPresentation(gameHandler, *unit);
                     entity->getType() != game::ObjectType::PLAYER)) return false;
     const auto unit = std::static_pointer_cast<game::Unit>(entity);
     const auto questStatus = gameHandler.getQuestGiverStatus(guid);
@@ -1101,7 +1103,9 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     const char* path = ui::unitCursorPath(
         !game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()),
         unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
-        unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit), unit->getUnitFlags());
+        unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit), unit->getUnitFlags(),
+        harvesting && harvesting->difficulty != game::HarvestDifficulty::Unavailable,
+        harvesting && harvesting->knowsProfession);
     const auto texture = cursorTexture(services_.assetManager, services_.window, path);
     if (!texture) return false;
     selectCursorTexture(texture);

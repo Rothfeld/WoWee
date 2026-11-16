@@ -16,6 +16,7 @@
 #include <cstdint>
 
 #include "ui/scene_pick.hpp"
+#include "game/corpse_harvesting.hpp"
 
 using wowee::ui::ScenePick;
 
@@ -165,7 +166,33 @@ TEST_CASE("Skinnable corpse retains loot priority", "[gather-cursor]") {
     using namespace wowee::game;
     using wowee::ui::unitCursorPath;
     CHECK(std::string(unitCursorPath(false, 0, 2, 0,
-        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE)) == "Interface\\Cursor\\Skin.blp");
+        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE, true, true)) == "Interface\\Cursor\\Skin.blp");
+    CHECK(std::string(unitCursorPath(false, 0, 2, 0,
+        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE, false, true)) == "Interface\\Cursor\\SkinError.blp");
+    CHECK(std::string(unitCursorPath(false, 0, 2, 0,
+        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE, false, false)) == "Interface\\Cursor\\Point.blp");
     CHECK(std::string(unitCursorPath(false, UNIT_DYNFLAG_LOOTABLE, 2, 0,
         QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE)) == "Interface\\Cursor\\LootAll.blp");
+}
+
+TEST_CASE("Corpse gathering requires profession rank and compatible carried tool", "[gather-cursor]") {
+    using namespace wowee::game;
+    CHECK(corpseHarvestRequirements(0).skill == 393);
+    CHECK(corpseHarvestRequirements(0x100).skill == 182);
+    CHECK(corpseHarvestRequirements(0x200).skill == 186);
+    CHECK(corpseHarvestRequirements(0x100).toolCategory == 0);
+    CHECK(corpseHarvestRequiredRank(9) == 0);
+    CHECK(corpseHarvestRequiredRank(12) == 20);
+    CHECK(corpseHarvestRequiredRank(20) == 100);
+    CHECK(corpseHarvestDifficulty(5, 0, true) == HarvestDifficulty::Unavailable);
+    CHECK(corpseHarvestDifficulty(12, 19, true) == HarvestDifficulty::Unavailable);
+    CHECK(corpseHarvestDifficulty(12, 20, false) == HarvestDifficulty::Unavailable);
+    CHECK(corpseHarvestDifficulty(12, 20, true) == HarvestDifficulty::Orange);
+    CHECK(corpseHarvestDifficulty(12, 45, true) == HarvestDifficulty::Yellow);
+    CHECK(corpseHarvestDifficulty(12, 70, true) == HarvestDifficulty::Green);
+    CHECK(corpseHarvestDifficulty(12, 120, true) == HarvestDifficulty::Gray);
+    CHECK(compatibleGatheringTool(1, 1, 1, 1));
+    CHECK(compatibleGatheringTool(1, 3, 1, 1));
+    CHECK_FALSE(compatibleGatheringTool(21, 1, 1, 1));
+    CHECK_FALSE(compatibleGatheringTool(1, 2, 1, 1));
 }

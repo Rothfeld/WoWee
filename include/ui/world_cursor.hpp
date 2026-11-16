@@ -11,10 +11,12 @@ namespace wowee::ui {
 inline const char* unitCursorPath(bool alive, uint32_t dynamicFlags, int reaction,
                                   uint32_t npcFlags, game::QuestGiverStatus questStatus,
                                   std::string_view iconName = {}, bool attackable = true,
-                                  uint32_t unitFlags = 0) {
+                                  uint32_t unitFlags = 0, bool canHarvest = false,
+                                  bool knowsHarvestProfession = false) {
     if (!alive) {
         if (dynamicFlags & game::UNIT_DYNFLAG_LOOTABLE) return "Interface\\Cursor\\LootAll.blp";
-        if (unitFlags & game::UNIT_FLAG_SKINNABLE) return "Interface\\Cursor\\Skin.blp";
+        if ((unitFlags & game::UNIT_FLAG_SKINNABLE) && knowsHarvestProfession) return canHarvest
+            ? "Interface\\Cursor\\Skin.blp" : "Interface\\Cursor\\SkinError.blp";
         return "Interface\\Cursor\\Point.blp";
     }
     if (attackable && reaction <= 4) return "Interface\\Cursor\\Attack.blp";

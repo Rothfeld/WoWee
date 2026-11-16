@@ -2000,6 +2000,7 @@ struct ItemQueryResponseData {
     /// Zero for the great majority of items, which any bag will hold. On a
     /// bag it is what that bag accepts.
     uint32_t bagFamily   = 0;
+    uint32_t totemCategory = 0; // Gathering/crafting tool category, including alternate knives.
     // Requirement fields
     uint32_t requiredSkill = 0;       // SkillLine.dbc ID (0 = no skill required)
     uint32_t requiredSkillRank = 0;   // Minimum skill value

@@ -1368,6 +1368,53 @@ TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of pl
     info.writeUInt32(entry);
     info.writeString("Blue Moth");
     for (int i = 0; i < 5; ++i) info.writeString("");
+
+TEST_CASE_METHOD(Integration, "Untrained corpse tooltip exposes red skinning requirement", "[skinning][tooltip]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    constexpr uint64_t guid = 0xf13000087a000123ull;
+    auto corpse = std::make_shared<Unit>(guid);
+    corpse->setName("Thistle Bear");
+    corpse->setEntry(2163);
+    corpse->setLevel(12);
+    corpse->setHealth(0);
+    corpse->setMaxHealth(200);
+    corpse->setUnitFlags(UNIT_FLAG_SKINNABLE);
+    corpse->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 12);
+    handler.getEntityManager().addEntity(guid, corpse);
+    wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
+    info.writeUInt32(2163);
+    info.writeString("Thistle Bear");
+    for (int i = 0; i < 5; ++i) info.writeString("");
+    info.writeUInt32(0);
+    info.writeUInt32(1); // Beast
+    for (int i = 0; i < 8; ++i) info.writeUInt32(0);
+    info.writeFloat(1.0f);
+    info.writeFloat(1.0f);
+    info.writeUInt8(0);
+    session.receive(info);
+    handler.setTarget(guid);
+    run(R"lua(
+        UNIT_SKINNABLE_LEATHER = 'Skinnable'
+        CORPSE = 'Corpse'
+        skinTip = CreateFrame('GameTooltip', 'SkinTip', UIParent)
+        assert(skinTip:SetUnit('target'))
+    )lua");
+    const auto* tip = lua.widgets().findByName("SkinTip");
+    REQUIRE(tip);
+    REQUIRE(tip->tooltipLines.size() == 3);
+    CHECK(tip->tooltipLines[1].left == "Level 12 Corpse");
+    CHECK(tip->tooltipLines.back().left == "Skinnable");
+    CHECK(tip->tooltipLines.back().lc[0] == 1.0f);
+    CHECK(tip->tooltipLines.back().lc[1] == 0.1f);
+    corpse->setUnitFlags(0);
+    run("assert(skinTip:SetUnit('target'))");
+    CHECK(tip->tooltipLines.size() == 2);
+    lua.setGameHandler(nullptr);
+}
+
     info.writeUInt32(0); // Type flags
     info.writeUInt32(12); // Non-combat Pet
     for (int i = 0; i < 8; ++i) info.writeUInt32(0);

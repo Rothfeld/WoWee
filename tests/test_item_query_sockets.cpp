@@ -115,7 +115,7 @@ Packet buildResponse(const std::array<std::pair<uint32_t, uint32_t>, 3>& sockets
     p.writeUInt32(0);            // Area
     p.writeUInt32(0xFFFFFFFF);   // Map
     p.writeUInt32(0);            // BagFamily
-    p.writeUInt32(0);            // TotemCategory
+    p.writeUInt32(1);            // TotemCategory: skinning-compatible tool
 
     for (const auto& [color, content] : sockets) {
         p.writeUInt32(color);
@@ -141,6 +141,7 @@ TEST_CASE("item query reads socket colour and content per socket", "[item_query]
         auto packet = buildResponse({{{2, 0}, {4, 0}, {8, 0}}});
         ItemQueryResponseData data;
         REQUIRE(ItemQueryResponseParser::parse(packet, data));
+        CHECK(data.totemCategory == 1);
 
         REQUIRE(data.entry == kEntry);
         REQUIRE(data.name == "Test Helm");

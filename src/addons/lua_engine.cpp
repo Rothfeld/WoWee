@@ -3,6 +3,7 @@
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "ui/link_hit.hpp"
+#include "ui/corpse_harvesting.hpp"
 #include "ui/text_markup.hpp"
 #include "ui/plural_escape.hpp"
 #include "ui/widget_tree.hpp"
@@ -2692,6 +2693,8 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     const bool isPlayer = entity && entity->getType() == game::ObjectType::PLAYER;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     const bool isCompanion = unit && !isPlayer && gh->getCreatureType(unit->getEntry()) == 12;
+    const bool isCorpse = unit && game::isUnitCorpseState(
+        unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags());
 
     if (isPlayer) {
         if (const uint32_t guildId = gh->getEntityGuildId(guid); guildId != 0) {
@@ -2725,7 +2728,12 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_LEVEL));
         if (level > 0) {
             std::string levelLine = "Level " + std::to_string(level);
-            if (isPlayer) {
+            if (isCorpse) {
+                lua_getglobal(L, "CORPSE");
+                assert(lua_isstring(L, -1));
+                levelLine += std::string(" ") + lua_tostring(L, -1);
+                lua_pop(L, 1);
+            } else if (isPlayer) {
                 const uint32_t bytes0 =
                     entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
                 const unsigned classId = (bytes0 >> 8) & 0xFFu;
@@ -2735,7 +2743,7 @@ int lua_Tooltip_SetUnit(lua_State* L) {
                     levelLine += wowee::addons::kLuaClasses[classId];
                 }
             }
-            if (!isPlayer) {
+            if (!isPlayer && !isCorpse) {
                 const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
                 const int rank = unit ? gh->getCreatureRank(unit->getEntry()) : 0;
                 const char* label = nullptr;
@@ -2757,7 +2765,7 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         }
     }
 
-    if (!isPlayer && !isCompanion && entity) {
+    if (!isPlayer && !isCompanion && !isCorpse && entity) {
         auto* assets = gh->services().assetManager;
         const auto* layouts = wowee::pipeline::getActiveDBCLayout();
         const auto* layout = layouts ? layouts->getLayout("FactionTemplate") : nullptr;
@@ -2773,6 +2781,22 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     }
     if (entity && (entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS)) & 0x1000))
         addLine("PvP", 1.0f, 1.0f, 1.0f);
+
+    if (unit) {
+        if (const auto harvesting = ui::corpseHarvestPresentation(*gh, *unit)) {
+            lua_getglobal(L, harvesting->tooltipGlobal);
+            assert(lua_isstring(L, -1));
+            const std::string text = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            switch (harvesting->difficulty) {
+                case game::HarvestDifficulty::Unavailable: addLine(text, 1.0f, 0.1f, 0.1f); break;
+                case game::HarvestDifficulty::Orange: addLine(text, 1.0f, 0.5f, 0.25f); break;
+                case game::HarvestDifficulty::Yellow: addLine(text, 1.0f, 1.0f, 0.0f); break;
+                case game::HarvestDifficulty::Green: addLine(text, 0.25f, 0.75f, 0.25f); break;
+                case game::HarvestDifficulty::Gray: addLine(text, 0.5f, 0.5f, 0.5f); break;
+            }
+        }
+    }
 
     // Unit tooltip health bars are engine-owned children, not declared in FrameXML.
     // Keep the public named StatusBar so addons can inspect and restyle it.
@@ -2790,12 +2814,13 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             bar:SetBackdrop({bgFile="Interface\\Tooltips\\UI-Tooltip-Background", edgeFile="Interface\\Tooltips\\UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=8, insets={left=2,right=2,top=2,bottom=2}})
             bar:SetScript("OnUpdate", function(self)
                 local _, unit = self:GetParent():GetUnit()
-                if not unit then self:Hide(); return end
+                if not unit or UnitIsDead(unit) then self:Hide(); return end
                 self:SetMinMaxValues(0, UnitHealthMax(unit))
                 self:SetValue(UnitHealth(unit))
             end)
         end
         local _, unit = tip:GetUnit()
+        if UnitIsDead(unit) then bar:Hide(); return end
         bar:SetMinMaxValues(0, UnitHealthMax(unit))
         bar:SetValue(UnitHealth(unit))
         bar:Show()
