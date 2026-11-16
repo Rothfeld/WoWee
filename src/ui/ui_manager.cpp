@@ -569,6 +569,9 @@ void UIManager::finishImGuiFrame() {
         textInputUp_ = wantsText;
     }
 
+    // FrameXML may append foreground menus after GameScreen selects a cursor.
+    // Append cursor art last so every popup remains below it.
+    if (gameScreen) gameScreen->renderCursor();
     ImGui::Render();
 }
 

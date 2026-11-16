@@ -1047,11 +1047,21 @@ VkDescriptorSet cursorTexture(pipeline::AssetManager* assets, core::Window* wind
 
 /// Draw one in place of the pointer. The tip sits at the mouse position, the
 /// way the art is authored.
-void drawCursorTexture(VkDescriptorSet tex) {
+void GameScreen::selectCursorTexture(VkDescriptorSet tex) {
     SDL_Window* focused = SDL_GetMouseFocus();
     if (!focused || SDL_GetWindowRelativeMouseMode(focused) ||
         !ImGui::IsMousePosValid()) return;
     ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+    cursorTexture_ = tex;
+}
+
+void GameScreen::renderCursor() {
+    const auto tex = cursorTexture_;
+    cursorTexture_ = VK_NULL_HANDLE;
+    if (!tex) return;
+    SDL_Window* focused = SDL_GetMouseFocus();
+    if (!focused || SDL_GetWindowRelativeMouseMode(focused) ||
+        !ImGui::IsMousePosValid()) return;
     const ImVec2 at = ImGui::GetIO().MousePos;
     constexpr float kSize = 32.0f;
     ImGui::GetForegroundDrawList()->AddImage(
@@ -1090,7 +1100,7 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
         unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit));
     const auto texture = cursorTexture(services_.assetManager, services_.window, path);
     if (!texture) return false;
-    drawCursorTexture(texture);
+    selectCursorTexture(texture);
     return true;
 }
 
@@ -1116,7 +1126,7 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
             path.insert(path.rfind('\\') + 1, "Unable");
         VkDescriptorSet tex = cursorTexture(services_.assetManager, services_.window, path.c_str());
         if (!tex) return false;
-        drawCursorTexture(tex);
+        selectCursorTexture(tex);
     }
 
     // Generic signs opt into labels through their server template.
@@ -1534,7 +1544,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         const auto texture = cursorTexture(services_.assetManager, services_.window,
                                            "Interface\\Cursor\\Point.blp");
         if (!texture) throw std::runtime_error("Missing default WoW cursor texture");
-        drawCursorTexture(texture);
+        selectCursorTexture(texture);
     }
 
     // Left-click targeting: only on mouse-up if the mouse didn't drag (camera rotate)

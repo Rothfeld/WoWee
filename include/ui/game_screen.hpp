@@ -101,6 +101,8 @@ public:
      * @param gameHandler Reference to game handler
      */
     void render(game::GameHandler& gameHandler);
+    // Flush the selected cursor after FrameXML menus and tooltips are drawn.
+    void renderCursor();
 
     /**
      * Check if chat input is active
@@ -134,6 +136,8 @@ public:
     void toggleRecording();
 
 private:
+    void selectCursorTexture(VkDescriptorSet texture);
+    VkDescriptorSet cursorTexture_ = VK_NULL_HANDLE;
     void applyCameraControlSettings();
     /// Say in the chat why a recording stopped by itself, if one did.
     void reportRecordingFailure();
