@@ -1177,3 +1177,64 @@ TEST_CASE_METHOD(Integration, "Learning a spell refreshes stance bar", "[learned
     CHECK(std::count(events.begin(), events.end(), "UPDATE_SHAPESHIFT_FORMS") == 1);
     session.handler().setAddonEventCallback({});
 }
+
+TEST_CASE("Observed TBC melee dispatches visuals without local combat UI", "[remote-combat]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    using HR = wowee::game::GameHandler::HitReaction;
+    std::vector<uint64_t> swings;
+    std::vector<std::pair<uint64_t, HR>> reactions;
+    handler.setNpcSwingCallback([&](uint64_t guid) { swings.push_back(guid); });
+    handler.setHitReactionCallback([&](uint64_t guid, HR reaction) { reactions.emplace_back(guid, reaction); });
+    // CMaNGOS TBC SendAttackStateUpdate: packed participants, one damage
+    // component, victim state, unknown, spell ID, blocked amount.
+    for (uint32_t state : {1u, 2u, 3u, 5u, 6u, 7u, 8u}) {
+        wowee::network::Packet packet(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_ATTACKERSTATEUPDATE));
+        packet.writeUInt32(state == 6 ? 0x10 : 0);
+        packet.writePackedGuid(3); packet.writePackedGuid(4);
+        packet.writeUInt32(state == 1 ? 7 : 0); packet.writeUInt8(1);
+        packet.writeUInt32(1); packet.writeFloat(7); packet.writeUInt32(7);
+        packet.writeUInt32(0); packet.writeUInt32(0);
+        packet.writeUInt32(state); packet.writeUInt32(0); packet.writeUInt32(0); packet.writeUInt32(0);
+        session.receive(packet);
+    }
+    CHECK(swings == std::vector<uint64_t>(7, 3));
+    REQUIRE(reactions.size() == 4);
+    CHECK(reactions[0] == std::pair<uint64_t, HR>{4, HR::WOUND});
+    CHECK(reactions[1] == std::pair<uint64_t, HR>{4, HR::DODGE});
+    CHECK(reactions[2] == std::pair<uint64_t, HR>{4, HR::PARRY});
+    CHECK(reactions[3] == std::pair<uint64_t, HR>{4, HR::BLOCK});
+    CHECK(handler.getCombatText().empty());
+    CHECK(handler.getTargetGuid() == 0);
+}
+
+TEST_CASE("Attack start preserves both participants movement facing", "[remote-facing]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto wolf = std::make_shared<wowee::game::Unit>(3);
+    auto player = std::make_shared<wowee::game::Player>(4);
+    wolf->setPosition(10, 5, 0, .4f);
+    player->setPosition(0, 0, 0, 1.7f);
+    handler.getEntityManager().addEntity(3, wolf);
+    handler.getEntityManager().addEntity(4, player);
+    wowee::network::Packet packet(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_ATTACKSTART));
+    packet.writeUInt64(3); packet.writeUInt64(4);
+    session.receive(packet);
+    CHECK(wolf->getOrientation() == Catch::Approx(.4f));
+    CHECK(player->getOrientation() == Catch::Approx(1.7f));
+}
+
+TEST_CASE("Skill gain uses SKILL chat category", "[skill-chat]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    const auto base = wowee::game::fieldIndex(wowee::game::UF::PLAYER_SKILL_INFO_START);
+    wowee::game::FlatFieldMap fields;
+    fields[base] = 95;
+    fields[base + 1] = (200u << 16) | 40;
+    handler.extractSkillFields(fields);
+    const auto before = handler.getChatHistory().size();
+    fields[base + 1] = (200u << 16) | 41;
+    handler.extractSkillFields(fields);
+    REQUIRE(handler.getChatHistory().size() == before + 1);
+    CHECK(handler.getChatHistory().back().type == wowee::game::ChatType::SKILL);
+}

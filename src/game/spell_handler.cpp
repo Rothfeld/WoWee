@@ -4114,7 +4114,7 @@ void SpellHandler::extractSkillFields(const FlatFieldMap& fields) {
 
             const std::string& name = owner_.getSkillName(skillId);
             std::string skillName = name.empty() ? ("Skill #" + std::to_string(skillId)) : name;
-            owner_.addSystemChatMessage("Your skill in " + skillName + " has increased to " + std::to_string(skill.value) + ".");
+            owner_.addLocalChatLine(ChatType::SKILL, "Your skill in " + skillName + " has increased to " + std::to_string(skill.value) + ".");
         }
     }
 

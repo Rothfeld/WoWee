@@ -641,19 +641,8 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
         }
     }
 
-    // Force both participants to face each other at combat start.
-    // Uses atan2(-dy, dx): canonical orientation convention where the West/Y
-    // component is negated (renderYaw = orientation + 90°, model-forward = render+X).
-    auto attackerEnt = owner_.getEntityManager().getEntity(data.attackerGuid);
-    auto victimEnt   = owner_.getEntityManager().getEntity(data.victimGuid);
-    if (attackerEnt && victimEnt) {
-        float dx = victimEnt->getX() - attackerEnt->getX();
-        float dy = victimEnt->getY() - attackerEnt->getY();
-        if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-            attackerEnt->setOrientation(std::atan2(-dy,  dx));   // attacker → victim
-            victimEnt->setOrientation  (std::atan2( dy, -dx));   // victim   → attacker
-        }
-    }
+    // Attack intent carries no facing. Movement and facing packets own each
+    // participant's orientation, including a player attacked from behind.
 }
 
 void CombatHandler::handleAttackStop(network::Packet& packet) {
@@ -683,7 +672,6 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
 
     bool isPlayerAttacker = (data.attackerGuid == owner_.getPlayerGuid());
     bool isPlayerTarget = (data.targetGuid == owner_.getPlayerGuid());
-    if (!isPlayerAttacker && !isPlayerTarget) return;  // Not our combat
 
     if (isPlayerAttacker) {
         autoAttackOutOfRange_ = false;
@@ -702,6 +690,19 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     if (!isPlayerAttacker && owner_.npcSwingCallbackRef()) {
         owner_.npcSwingCallbackRef()(data.attackerGuid);
     }
+    // Observers must see the same victim reaction as the combatants. Miss,
+    // evade and immunity do not wound; dodge/parry/block are explicit outcomes.
+    if (owner_.hitReactionCallbackRef()) {
+        using HR = GameHandler::HitReaction;
+        std::optional<HR> reaction;
+        if (data.victimState == VICTIMSTATE_DODGE) reaction = HR::DODGE;
+        else if (data.victimState == VICTIMSTATE_PARRY) reaction = HR::PARRY;
+        else if (data.victimState == VICTIMSTATE_BLOCKS || data.blocked > 0) reaction = HR::BLOCK;
+        else if (!data.isMiss() && data.victimState != VICTIMSTATE_EVADES &&
+                 data.victimState != VICTIMSTATE_IS_IMMUNE && data.victimState != VICTIMSTATE_DEFLECTS)
+            reaction = data.isCrit() ? HR::CRIT_WOUND : HR::WOUND;
+        if (reaction) owner_.hitReactionCallbackRef()(data.targetGuid, *reaction);
+    }
     if (!isPlayerAttacker) {
         auto entity = owner_.getEntityManager().getEntity(data.attackerGuid);
         auto* audioCoordinator = owner_.services().audioCoordinator;
@@ -713,6 +714,9 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
                 data.attackerGuid, unit->getDisplayId(), core::coords::canonicalToRender(canonical));
         }
     }
+
+    // Local combat UI, targeting and non-positional player audio remain local.
+    if (!isPlayerAttacker && !isPlayerTarget) return;
 
     if (isPlayerTarget && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
@@ -786,17 +790,6 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         // A partial block is a hit like any other, with the blocked part beside it.
         if (data.blocked > 0)
             addCombatText(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    }
-
-    // Fire hit reaction animation on the victim
-    if (owner_.hitReactionCallbackRef() && !data.isMiss()) {
-        using HR = GameHandler::HitReaction;
-        HR reaction = HR::WOUND;
-        if (data.victimState == VICTIMSTATE_DODGE) reaction = HR::DODGE;
-        else if (data.victimState == VICTIMSTATE_PARRY) reaction = HR::PARRY;
-        else if (data.victimState == VICTIMSTATE_BLOCKS || data.blocked > 0) reaction = HR::BLOCK;
-        else if (data.isCrit()) reaction = HR::CRIT_WOUND;
-        owner_.hitReactionCallbackRef()(data.targetGuid, reaction);
     }
 
 }

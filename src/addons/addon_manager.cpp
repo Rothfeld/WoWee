@@ -823,6 +823,7 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
             {"MONSTER_WHISPER", 1.0f, 0.72f, 0.72f},
             {"CHANNEL", 1.0f, 0.75f, 0.75f}, {"LOOT", 0.0f, 0.67f, 0.0f},
             {"MONEY", 1.0f, 1.0f, 0.0f},
+            {"SKILL", 1.0f / 3.0f, 1.0f / 3.0f, 1.0f},
             {"BG_SYSTEM_NEUTRAL", 1.0f, 1.0f, 0.5f},
             {"BG_SYSTEM_ALLIANCE", 0.25f, 0.75f, 1.0f},
             {"BG_SYSTEM_HORDE", 1.0f, 0.1f, 0.1f},
