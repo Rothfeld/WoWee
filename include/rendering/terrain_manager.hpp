@@ -51,6 +51,18 @@ struct TileCoord {
 /**
  * Loaded terrain tile data
  */
+struct GroundDetailPlacement {
+    uint32_t modelId;
+    glm::vec3 position;
+    glm::vec3 rotation;
+    float scale;
+};
+
+struct GroundDetailPatch {
+    std::vector<GroundDetailPlacement> placements;
+    std::vector<uint32_t> instanceIds;
+};
+
 struct TerrainTile {
     TileCoord coord;
     pipeline::ADTTerrain terrain;
@@ -65,6 +77,8 @@ struct TerrainTile {
     std::vector<uint32_t> wmoUniqueIds;  // For WMO dedup cleanup on unload
     std::vector<uint32_t> m2InstanceIds;
     std::vector<uint32_t> doodadUniqueIds;  // For dedup cleanup on unload
+    std::array<GroundDetailPatch, 256> groundDetail;
+    std::unordered_set<uint32_t> groundDetailModels;
 };
 
 /**
@@ -74,6 +88,8 @@ struct PendingTile {
     TileCoord coord;
     pipeline::ADTTerrain terrain;
     pipeline::TerrainMesh mesh;
+    std::array<GroundDetailPatch, 256> groundDetail;
+    std::unordered_set<uint32_t> groundDetailModels;
 
     // Pre-loaded M2 data
     struct M2Ready {
@@ -364,6 +380,7 @@ public:
 
     /** Unload a bounded batch of distant tiles queued by streamTiles() (no frame-spike) */
     void processPendingUnloads();
+    void updateGroundDetail(const Camera& camera);
 
 private:
     /**
@@ -545,6 +562,7 @@ private:
     std::unordered_map<uint32_t, GroundEffectEntry> groundEffectById_; // effectId -> config
     std::unordered_map<uint32_t, std::string> groundDoodadModelById_;  // doodadId -> model path
     float groundClutterDensityScale_ = 1.0f;
+    std::unordered_map<uint32_t, size_t> groundDetailModelUsers_;
     std::unordered_map<std::string, TerrainTextureTones> terrainTextureTones_;
 };
 

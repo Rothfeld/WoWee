@@ -480,7 +480,11 @@ public:
     void prepareRender(uint32_t frameIndex, const Camera& camera);
     /** Dispatch GPU frustum culling compute shader on primary cmd before render pass. */
     void dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, const Camera& camera);
-    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera);
+    // Split command buffers let world opaque geometry execute before characters.
+    // Inline recording uses afterOpaque to insert characters at the same boundary.
+    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
+                VkCommandBuffer transparentCmd = VK_NULL_HANDLE,
+                const std::function<void()>& afterOpaque = {});
 
     /** Gather the nearest authored glow cards as inexpensive scene point lights. */
     uint32_t gatherLocalLights(const glm::vec3& cameraPos,

@@ -1016,8 +1016,11 @@ void M2Renderer::dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, c
     cmdPipelineBarrier2(cmd, dep);
 }
 
-void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera) {
+void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
+                        VkCommandBuffer transparentCmd,
+                        const std::function<void()>& afterOpaque) {
     if (instances.empty() || !opaquePipeline_) {
+        if (afterOpaque) afterOpaque();
         return;
     }
 
@@ -1374,6 +1377,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // Validate per-frame descriptor set before any Vulkan commands
     if (!perFrameSet) {
         LOG_ERROR("M2Renderer::render: perFrameSet is VK_NULL_HANDLE - skipping M2 render");
+        if (afterOpaque) afterOpaque();
         return;
     }
 
@@ -1956,6 +1960,18 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // Transparent geometry must be drawn individually per instance in back-to-
     // front order for correct alpha compositing.  Each draw writes one
     // M2InstanceGPU entry and issues a single-instance indexed draw.
+    if (afterOpaque) afterOpaque();
+    if (transparentCmd) cmd = transparentCmd;
+    // The boundary may switch buffers or record another renderer. Restore all
+    // shared bindings; per-model and material bindings are reset below.
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
+    const VkDescriptorSet boneSet = megaBoneSet_[frameIndex] ? megaBoneSet_[frameIndex] : dummyBoneSet_;
+    if (boneSet) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout_, 2, 1, &boneSet, 0, nullptr);
+    if (instanceSet_[frameIndex]) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout_, 3, 1, &instanceSet_[frameIndex], 0, nullptr);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaquePipeline_);
     std::sort(transparentVisible_.begin(), transparentVisible_.end(),
               [](const VisibleEntry& a, const VisibleEntry& b) { return a.distSq > b.distSq; });
 

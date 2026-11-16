@@ -507,7 +507,8 @@ private:
     static constexpr uint32_t SEC_M2        = 5;  // M2 + particles + glow (worker 3)
     static constexpr uint32_t SEC_POST      = 6;  // water + weather + effects (worker 4)
     static constexpr uint32_t SEC_IMGUI     = 7;  // ImGui (main thread, non-FSR only)
-    static constexpr uint32_t NUM_SECONDARIES = 8;
+    static constexpr uint32_t SEC_M2_OPAQUE = 8;  // same worker/pool as SEC_M2
+    static constexpr uint32_t NUM_SECONDARIES = 9;
     static constexpr uint32_t NUM_WORKERS = 5;
 
     // Per-worker command pools (thread-safe: one pool per thread)

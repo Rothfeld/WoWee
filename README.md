@@ -37,6 +37,15 @@ zero density and malformed model paths. Validate both tables together when
 changing terrain detail rendering. TBC model references use `DoodadIdTag`
 (column 1, zero is valid), rather than the DBC row ID. Placement uses authored
 models only; it does not substitute Elwynn grass for missing data or empty tiles.
+Detail paths pass through `modelPathToM2`: TBC uses both `.mdl` and `.mdx`
+names for shipped `.m2` files. Placements use MCNK's 8x8 layer and suppression
+maps, including terrain holes. Cached placements become live instances only
+near the camera, within the ground-detail distance plus patch bounds. Models
+stay pinned while their terrain tiles reference them, and unpin on unload.
+World M2 opaque/alpha-key batches execute before characters; blended M2 batches
+and particles execute afterward. This preserves depth-disabled creature wings
+against distant trees. Parallel recording uses separate M2 command buffers
+from one worker pool; inline recording uses the same opaque-pass boundary.
 M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
 asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U

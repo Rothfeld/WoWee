@@ -3115,8 +3115,11 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 auto t0 = std::chrono::steady_clock::now();
                 VkCommandBuffer cmd = beginSecondary(SEC_M2);
                 setSecondaryViewportScissor(cmd);
+                VkCommandBuffer opaqueCmd = beginSecondary(SEC_M2_OPAQUE);
+                setSecondaryViewportScissor(opaqueCmd);
                 const auto tBegin = std::chrono::steady_clock::now();
-                m2Renderer->render(cmd, perFrameSet, *camera);
+                m2Renderer->render(opaqueCmd, perFrameSet, *camera, cmd);
+                vkEndCommandBuffer(opaqueCmd);
                 const auto tModels = std::chrono::steady_clock::now();
                 m2Renderer->renderSmokeParticles(cmd, perFrameSet);
                 const auto tSmoke = std::chrono::steady_clock::now();
@@ -3293,7 +3296,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         }
 
         // --- Execute all secondary buffers in correct draw order ---
-        VkCommandBuffer validCmds[8];
+        VkCommandBuffer validCmds[NUM_SECONDARIES];
         uint32_t numCmds = 0;
         // Terrain first, then the sky. Every sky layer sits on the far plane
         // and depth-tests against what is already there, so drawing it after
@@ -3310,6 +3313,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         if (wmoRenderer && camera && !skipWMO)
             queue(secondaryCmds_[SEC_WMO][frameIdx]);
         queue(secondaryCmds_[SEC_SELECTION][frameIdx]);
+        if (m2Renderer && camera && !skipM2)
+            queue(secondaryCmds_[SEC_M2_OPAQUE][frameIdx]);
         queue(secondaryCmds_[SEC_CHARS][frameIdx]);
         if (m2Renderer && camera && !skipM2)
             queue(secondaryCmds_[SEC_M2][frameIdx]);
@@ -3374,11 +3379,13 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{});
         }
 
-        if (characterRenderer && camera && !skipChars) {
-            characterRenderer->prepareRender(frameIdx);
-            characterRenderer->render(currentCmd, perFrameSet, *camera);
-            if (vkCtx) vkCtx->gpuMark(currentCmd, "characters");
-        }
+        const auto drawCharacters = [&]() {
+            if (characterRenderer && camera && !skipChars) {
+                characterRenderer->prepareRender(frameIdx);
+                characterRenderer->render(currentCmd, perFrameSet, *camera);
+                if (vkCtx) vkCtx->gpuMark(currentCmd, "characters");
+            }
+        };
 
         if (m2Renderer && camera && !skipM2) {
             if (cameraController) {
@@ -3387,13 +3394,15 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             }
             m2Renderer->prepareRender(frameIdx, *camera);
             auto m2Start = std::chrono::steady_clock::now();
-            m2Renderer->render(currentCmd, perFrameSet, *camera);
+            m2Renderer->render(currentCmd, perFrameSet, *camera, VK_NULL_HANDLE, drawCharacters);
             m2Renderer->renderSmokeParticles(currentCmd, perFrameSet);
             m2Renderer->renderM2Particles(currentCmd, perFrameSet);
             m2Renderer->renderM2Ribbons(currentCmd, perFrameSet);
             if (vkCtx) vkCtx->gpuMark(currentCmd, "m2");
             lastM2RenderMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - m2Start).count();
+        } else {
+            drawCharacters();
         }
 
         if (waterRenderer && camera && !waterDrawsInContinuePass()) {
@@ -4328,6 +4337,15 @@ bool Renderer::createSecondaryCommandResources() {
                 LOG_ERROR("Failed to allocate worker secondary buffer w=", w, " f=", f);
                 return false;
             }
+        }
+    }
+
+    // Both M2 buffers record sequentially on worker 3, so share its pool.
+    allocInfo.commandPool = workerCmdPools_[3];
+    for (uint32_t f = 0; f < MAX_FRAMES; ++f) {
+        if (vkAllocateCommandBuffers(device, &allocInfo, &secondaryCmds_[SEC_M2_OPAQUE][f]) != VK_SUCCESS) {
+            LOG_ERROR("Failed to allocate M2 opaque secondary buffer f=", f);
+            return false;
         }
     }
 
