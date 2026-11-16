@@ -285,6 +285,12 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
             owner_.clearPlayerTransport();
         }
         entityManager.removeEntity(guid);
+        if (guid == owner_.getTargetGuid()) owner_.clearTarget();
+        if (owner_.getCombatHandler()) {
+            if (guid == owner_.getCombatHandler()->getAutoAttackTargetGuid())
+                owner_.stopAutoAttack();
+            owner_.getCombatHandler()->removeHostileAttacker(guid);
+        }
     }
 
     // Once, after the whole batch: a vendor sale can take several items out of
@@ -2884,7 +2890,7 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
         owner_.stopAutoAttack();
     }
     if (data.guid == owner_.getTargetGuid()) {
-        owner_.setTargetGuidRaw(0);
+        owner_.clearTarget();
     }
     if (owner_.getCombatHandler()) owner_.getCombatHandler()->removeHostileAttacker(data.guid);
 

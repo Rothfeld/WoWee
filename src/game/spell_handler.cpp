@@ -7,6 +7,7 @@
 #include "game/spell_classification.hpp"
 #include "game/pet_action.hpp"
 #include "game/game_handler.hpp"
+#include "game/combat_handler.hpp"
 #include "game/game_utils.hpp"
 #include "game/packet_parsers.hpp"
 #include "game/entity.hpp"
@@ -1188,6 +1189,19 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
               " castCount=", static_cast<int>(castCount_), " packetSize=", packet.getSize());
     owner_.getSocket()->send(packet);
     LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
+
+    // Spell.dbc explicitly marks abilities that enable melee autoattack.
+    // Harmful spells without this attribute must not start weapon swings.
+    owner_.loadSpellNameCache();
+    const auto attackSpell = owner_.spellNameCacheRef().find(spellId);
+    constexpr uint32_t kInitiatesCombatEnablesAutoAttack = 0x00000200u;
+    if (attackSpell != owner_.spellNameCacheRef().end() &&
+        (attackSpell->second.attrEx & kInitiatesCombatEnablesAutoAttack) != 0 &&
+        target != 0 && target != owner_.getPlayerGuid() &&
+        (!owner_.hasAutoAttackIntent() ||
+         owner_.getCombatHandler()->getAutoAttackTargetGuid() != target)) {
+        owner_.startAutoAttack(target);
+    }
 
     // Auto Shot and the wand's Shoot keep going once started, and the action
     // button flashes for as long as they do. Only once the cast is sent: a

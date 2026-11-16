@@ -35,6 +35,11 @@ constexpr uint64_t kOtherHunter = 0x0000000000000077ull;
 
 // A hunter in the world with a mob to shoot.
 void huntMob(Session& s) {
+    // This packet-only fixture has no asset manager. Supply the two hunter
+    // spells used by its cast tests so prerequisite validation can resolve them.
+    s.handler().spellNameCacheRef()[75].name = "Auto Shot";
+    s.handler().spellNameCacheRef()[3044].name = "Arcane Shot";
+    s.handler().spellNameCacheLoadedRef() = true;
     s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 181}, {UF::UNIT_FIELD_LEVEL, 9}});
     s.receive(UpdateObject().create(kMob, wowee::game::ObjectType::UNIT,
                                     {{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 8}}));
@@ -806,5 +811,50 @@ TEST_CASE("TBC party stats use packed GUID without a full-update prefix", "[part
         CHECK(member.onlineStatus == 1);
         CHECK(member.curHealth == 417);
         CHECK(member.maxHealth == 530);
+    }
+}
+
+TEST_CASE("spell attack attribute starts melee autoattack", "[replay][strike-autoattack]") {
+    for (const uint32_t attributes : {0u, 0x200u}) {
+        Session s;
+        huntMob(s);
+        constexpr uint32_t sinisterStrike = 1752;
+        s.handler().spellNameCacheRef()[sinisterStrike].attrEx = attributes;
+        s.handler().spellNameCacheLoadedRef() = true;
+        s.handler().castSpell(sinisterStrike, kMob);
+        REQUIRE(s.sent().of(wowee::game::Opcode::CMSG_CAST_SPELL).size() == 1);
+        CHECK(s.handler().hasAutoAttackIntent() == (attributes != 0));
+        CHECK(s.sent().of(wowee::game::Opcode::CMSG_ATTACKSWING).size() == (attributes ? 1 : 0));
+    }
+}
+
+TEST_CASE("removed target notifies FrameXML after clearing selection", "[replay][target-removal]") {
+    for (const bool destroy : {false, true}) {
+        Session s;
+        huntMob(s);
+        s.handler().setTarget(kMob);
+        int changes = 0;
+        s.handler().setAddonEventCallback([&](const std::string& event, const std::vector<std::string>&) {
+            if (event == "PLAYER_TARGET_CHANGED") {
+                ++changes;
+                CHECK(s.handler().getTargetGuid() == 0);
+                CHECK_FALSE(s.handler().getTarget());
+            }
+        });
+        using wowee::game::Opcode;
+        wowee::network::Packet p(wowee::game::wireOpcode(destroy ? Opcode::SMSG_DESTROY_OBJECT : Opcode::SMSG_UPDATE_OBJECT));
+        if (destroy) {
+            p.writeUInt64(kMob);
+            p.writeUInt8(0);
+        } else {
+            p.writeUInt32(1);
+            p.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::OUT_OF_RANGE_OBJECTS));
+            p.writeUInt32(1);
+            p.writePackedGuid(kMob);
+        }
+        s.receive(p);
+        CHECK(s.handler().getTargetGuid() == 0);
+        CHECK(changes == 1);
+        CHECK_FALSE(s.handler().getEntityManager().hasEntity(kMob));
     }
 }
