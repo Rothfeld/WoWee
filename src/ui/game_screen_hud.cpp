@@ -497,7 +497,7 @@ void GameScreen::feedWorldMap(game::GameHandler& gameHandler,
     // they happen to sit deepest inside. The boxes are axis-aligned rectangles
     // around irregular zones and overlap their neighbours heavily, so opening
     // the map could land on a zone the player was only near.
-    wm->setPlayerZoneId(gameHandler.getWorldStateZoneId());
+    wm->setPlayerZoneId(renderer->getCurrentZoneId());
 
     // Party member dots on world map
     {

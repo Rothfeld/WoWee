@@ -317,6 +317,7 @@ private:
     uint32_t announcedAreaId_ = 0;
     std::string interiorZoneName_;
     std::string interiorAreaName_;
+    uint32_t interiorAreaId_ = 0;
     /// The map that answer belongs to, so it is dropped on a
     /// continent change rather than held across one.
     mutable uint32_t lastResolvedZoneMapId_ = 0xFFFFFFFFu;

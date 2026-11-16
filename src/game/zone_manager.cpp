@@ -548,10 +548,13 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
     if (!assets) return;
 
     wmoAreaNames_.clear();
+    wmoAreaIds_.clear();
     const auto wmoAreas = assets->loadDBC("WMOAreaTable.dbc");
     if (!wmoAreas || !wmoAreas->isLoaded() || wmoAreas->getFieldCount() < 12)
         throw std::runtime_error("WMOAreaTable.dbc missing or invalid");
     for (uint32_t row = 0; row < wmoAreas->getRecordCount(); ++row) {
+        wmoAreaIds_[{wmoAreas->getUInt32(row, 1), wmoAreas->getUInt32(row, 2),
+                     wmoAreas->getUInt32(row, 3)}] = wmoAreas->getUInt32(row, 10);
         const auto name = wmoAreas->getString(row, 11);
         if (!name.empty()) wmoAreaNames_[{wmoAreas->getUInt32(row, 1),
             wmoAreas->getUInt32(row, 2), wmoAreas->getUInt32(row, 3)}] = name;
@@ -681,6 +684,15 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         LOG_WARNING("Zone music: ", dropped, " track(s) named for zones are not in the data and "
                     "were left out, first ", firstDropped);
     }
+}
+
+uint32_t ZoneManager::getWmoAreaId(uint32_t root, uint32_t nameSet, uint32_t group) const {
+    // A group without an AreaTable assignment inherits its WMO's root area.
+    for (const uint32_t candidate : {group, UINT32_MAX}) {
+        const auto entry = wmoAreaIds_.find({root, nameSet, candidate});
+        if (entry != wmoAreaIds_.end() && entry->second != 0) return entry->second;
+    }
+    return 0;
 }
 
 std::string ZoneManager::getWmoAreaName(uint32_t root, uint32_t nameSet, uint32_t group) const {

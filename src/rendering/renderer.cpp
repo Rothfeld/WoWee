@@ -1845,6 +1845,7 @@ bool Renderer::isOnOutdoorPvpObjective() const {
 }
 
 uint32_t Renderer::getCurrentAreaId() const {
+    if (interiorAreaId_ != 0) return interiorAreaId_;
     if (!terrainManager) return 0;
     return terrainManager->getAreaIdAt(characterPosition.x, characterPosition.y).value_or(0);
 }
@@ -1860,6 +1861,9 @@ uint32_t Renderer::getCurrentZoneId() const {
             lastResolvedZoneId_ = 0;
         }
     }
+
+    if (interiorAreaId_ != 0 && zoneManager)
+        return zoneManager->resolveAreaZoneId(interiorAreaId_);
 
     uint32_t tileZoneId = 0;
     if (zoneManager && terrainManager) {
@@ -2020,6 +2024,9 @@ void Renderer::update(float deltaTime) {
         if (ground && *ground > playerArea->surfaceHeight && *ground <= characterPosition.z + 0.1f)
             playerArea.reset();
     }
+    interiorAreaId_ = playerArea && zoneManager
+        ? zoneManager->getWmoAreaId(playerArea->rootId, playerArea->nameSet,
+                                   playerArea->groupId) : 0;
     const std::string interiorName = playerArea && zoneManager
         ? zoneManager->getWmoAreaName(playerArea->rootId, playerArea->nameSet,
                                       playerArea->groupId) : std::string{};

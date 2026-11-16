@@ -775,7 +775,7 @@ bool Application::initialize() {
         luaSvc.showPlayerMapZone = [r = renderer.get(), gh = gameHandler.get()]() {
             if (auto* wmap = r ? r->getWorldMap() : nullptr; wmap && gh) {
                 const auto& movement = gh->getMovementInfo();
-                wmap->setPlayerZoneId(gh->getWorldStateZoneId());
+                wmap->setPlayerZoneId(r->getCurrentZoneId());
                 wmap->showPlayerZone(core::coords::canonicalToRender(
                     glm::vec3(movement.x, movement.y, movement.z)));
             }
