@@ -1803,6 +1803,37 @@ TEST_CASE_METHOD(Integration, "Mining loot survives rejected duplicate open and 
     lua.setGameHandler(nullptr);
 }
 
+TEST_CASE_METHOD(Integration, "TargetUnit resolves nearby names and exact commands", "[target-name]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    auto player = std::make_shared<Player>(replay::Session::kPlayerGuid);
+    player->setName("Edric");
+    handler.getEntityManager().addEntity(player->getGuid(), player);
+    auto near = std::make_shared<Unit>(0xf130000001000001ull);
+    near->setName("Nessa Shadowsong");
+    near->setPosition(4, 0, 0, 0);
+    handler.getEntityManager().addEntity(near->getGuid(), near);
+    auto far = std::make_shared<Unit>(0xf130000001000002ull);
+    far->setName("Nessa Shadowsong");
+    far->setPosition(20, 0, 0, 0);
+    handler.getEntityManager().addEntity(far->getGuid(), far);
+    run("TargetUnit('nEsSa sHaDoWsOnG', 1)");
+    CHECK(handler.getTargetGuid() == near->getGuid());
+    run("ClearTarget(); TargetUnit('Nessa')");
+    CHECK(handler.getTargetGuid() == near->getGuid());
+    run("TargetUnit('player'); TargetUnit('Shadowsong')");
+    CHECK(handler.getTargetGuid() == player->getGuid());
+    run("ClearTarget(); TargetUnit('Nessa', 1)");
+    CHECK(handler.getTargetGuid() == 0);
+    run("TargetUnit('player'); TargetUnit('Nobody here'); TargetUnit('')");
+    CHECK(handler.getTargetGuid() == player->getGuid());
+    run("TargetUnit('edric', 1)");
+    CHECK(handler.getTargetGuid() == player->getGuid());
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Moonkin tooltip keeps creature type on unwrapped level line", "[unit-tooltip]") {
     using namespace wowee::game;
     replay::Session session("tbc");

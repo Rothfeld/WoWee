@@ -7,6 +7,7 @@
 #include "addons/lua_engine.hpp"
 #include "core/logger.hpp"
 #include <set>
+#include <limits>
 
 namespace wowee::addons {
 
@@ -880,7 +881,8 @@ static int lua_HasTarget(lua_State* L) {
     return 1;
 }
 
-// TargetUnit(unitId) - set current target
+// TargetUnit(unitIdOrName, exactMatch) is also the entry point for TBC's
+// /target and /targetexact commands in ChatFrame.lua.
 static int lua_TargetUnit(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
@@ -888,6 +890,29 @@ static int lua_TargetUnit(lua_State* L) {
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0 && !uidStr.empty()) {
+        const bool exactMatch = lua_toboolean(L, 2) != 0;
+        const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+        if (!player) return 0;
+        float nearestDistanceSq = std::numeric_limits<float>::infinity();
+        for (const auto& [candidateGuid, entity] : gh->getEntityManager().getEntities()) {
+            if (!entity || !entity->isUnit()) continue;
+            std::string name = entity->getType() == game::ObjectType::PLAYER
+                ? std::static_pointer_cast<game::Player>(entity)->getName()
+                : std::static_pointer_cast<game::Unit>(entity)->getName();
+            toLowerInPlace(name);
+            if (exactMatch ? name != uidStr : !name.starts_with(uidStr)) continue;
+            const float dx = entity->getX() - player->getX();
+            const float dy = entity->getY() - player->getY();
+            const float dz = entity->getZ() - player->getZ();
+            const float distanceSq = dx * dx + dy * dy + dz * dz;
+            if (distanceSq < nearestDistanceSq ||
+                (distanceSq == nearestDistanceSq && candidateGuid < guid)) {
+                guid = candidateGuid;
+                nearestDistanceSq = distanceSq;
+            }
+        }
+    }
     if (guid != 0) gh->setTarget(guid);
     return 0;
 }
