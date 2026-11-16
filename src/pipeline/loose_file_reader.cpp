@@ -7,6 +7,10 @@ namespace wowee {
 namespace pipeline {
 
 std::vector<uint8_t> LooseFileReader::readFile(const std::string& filesystemPath) {
+    if (!fileExists(filesystemPath)) {
+        LOG_WARNING("Asset path is not a regular file: ", filesystemPath);
+        return {};
+    }
     std::ifstream file(filesystemPath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         return {};
@@ -31,7 +35,7 @@ std::vector<uint8_t> LooseFileReader::readFile(const std::string& filesystemPath
 
 bool LooseFileReader::fileExists(const std::string& filesystemPath) {
     std::error_code ec;
-    return std::filesystem::exists(filesystemPath, ec);
+    return std::filesystem::is_regular_file(filesystemPath, ec);
 }
 } // namespace pipeline
 } // namespace wowee

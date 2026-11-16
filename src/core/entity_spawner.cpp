@@ -2362,7 +2362,8 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
         const auto helm = resolveHelmVisual(*assetManager_, extra.equipDisplayId[0],
                                             extra.raceId, extra.sexId);
         if (helm.valid()) {
-            const std::string path = assetManager_->fileExists(helm.racialModelPath)
+            const std::string path = !helm.racialModelPath.empty() &&
+                assetManager_->fileExists(helm.racialModelPath)
                 ? helm.racialModelPath : helm.baseModelPath;
             pipeline::M2Model model;
             if (!loadWeaponM2(path, model) ||
