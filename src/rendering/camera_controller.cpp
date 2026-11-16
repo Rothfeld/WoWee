@@ -327,6 +327,7 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
                     candidate = adjusted;
                 }
             } else if (wmoRenderer->checkWallCollision(stepPos, candidate, adjusted, cachedInsideWMO)) {
+                ++movementTraceWmoContacts_;
                 candidate.x = adjusted.x;
                 candidate.y = adjusted.y;
                 // Up is a ramp; down would be a wall pulling the feet under the floor.
@@ -346,6 +347,7 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
             glm::vec3 adjusted;
             if (m2Renderer->checkCollision(horizontalAdjusted, candidate, adjusted,
                     collisionRadius_, collisionHeight_)) {
+                ++movementTraceM2Contacts_;
                 // Publish beveled-foot support so gravity cannot accumulate
                 // while collision holds the player above the center floor ray.
                 if (adjusted.z > candidate.z + 0.00001f && verticalVelocity <= 0.0f &&
@@ -2450,6 +2452,8 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 }
 
 void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
+    movementTraceWmoContacts_ = 0;
+    movementTraceM2Contacts_ = 0;
     glm::vec3 prevTargetPos(0.0f);
     // Consume the entire frame in collision-safe steps. Dropping time makes
     // movement lag the network clock and forces remote heartbeat corrections.
@@ -2472,6 +2476,29 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
         LOG_WARNING("Flight: landed");
     }
     updateOrbitCamera(deltaTime, f, targetPos);
+    static const bool traceMovement = core::envFlagEnabled("WOWEE_MOVEMENT_TRACE");
+    if (traceMovement && followTarget) {
+        // Render coordinates, yards, degrees, seconds. SDL ticks are process-relative.
+        // Contact counts report sweep hits, not distinct objects or defect verdicts.
+        LOG_INFO("PLAYTESTER_MOVEMENT {\"tick_ns\":", SDL_GetTicksNS(),
+            ",\"dt\":", deltaTime, ",\"physics_dt\":", f.physicsDeltaTime,
+            ",\"position\":[", followTarget->x, ",", followTarget->y, ",", followTarget->z,
+            "],\"previous\":[", prevTargetPos.x, ",", prevTargetPos.y, ",", prevTargetPos.z,
+            "],\"facing_deg\":", facingYaw, ",\"camera_yaw_deg\":", yaw,
+            ",\"vertical_velocity\":", verticalVelocity, ",\"floor_z\":", lastGroundZ,
+            ",\"grounded\":", grounded ? "true" : "false",
+            ",\"real_ground\":", hasRealGround_ ? "true" : "false",
+            ",\"swimming\":", swimming ? "true" : "false",
+            ",\"forward\":", f.nowForward ? "true" : "false",
+            ",\"backward\":", f.nowBackward ? "true" : "false",
+            ",\"strafe_left\":", f.nowStrafeLeft ? "true" : "false",
+            ",\"strafe_right\":", f.nowStrafeRight ? "true" : "false",
+            ",\"jump_pressed\":", f.nowJump ? "true" : "false",
+            ",\"ui_keyboard\":", f.uiWantsKeyboard ? "true" : "false",
+            ",\"rooted\":", movementRooted_ ? "true" : "false",
+            ",\"wmo_contacts\":", movementTraceWmoContacts_,
+            ",\"m2_contacts\":", movementTraceM2Contacts_, "}");
+    }
 }
 
 // The camera that flies itself, used when nothing is being followed.

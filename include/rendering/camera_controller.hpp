@@ -323,6 +323,8 @@ public:
     }
 
 private:
+    unsigned movementTraceWmoContacts_ = 0;
+    unsigned movementTraceM2Contacts_ = 0;
     float playerCameraOpacity_ = 1.0f;
     Camera* camera;
     TerrainManager* terrainManager = nullptr;
