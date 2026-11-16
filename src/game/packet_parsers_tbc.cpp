@@ -770,10 +770,8 @@ bool TbcPacketParsers::parseAuraUpdate(network::Packet& /*packet*/, AuraUpdateDa
 // ============================================================================
 // TBC/Classic parseNameQueryResponse
 //
-// WotLK uses: packedGuid + uint8 found + name + realmName + u8 race + u8 gender + u8 class
-// Classic/TBC commonly use: uint64 guid + [optional uint8 found] + CString name + uint32 race + uint32 gender + uint32 class
-//
-// Implement a robust parser that handles both classic-era variants.
+// TBC uses uint64 GUID, name and realm C strings, three uint32 identity
+// fields, then the declined-name flag and optional five strings.
 // ============================================================================
 static bool hasNullWithin(const network::Packet& p, size_t start, size_t maxLen) {
     const auto& d = p.getData();
@@ -785,59 +783,26 @@ static bool hasNullWithin(const network::Packet& p, size_t start, size_t maxLen)
 }
 
 bool TbcPacketParsers::parseNameQueryResponse(network::Packet& packet, NameQueryResponseData& data) {
-    // Default all fields
     data = NameQueryResponseData{};
-
-    size_t start = packet.getReadPos();
-    if (packet.getSize() - start < 8) return false;
-
-    // Variant A: guid(u64) + name + race(u32) + gender(u32) + class(u32)
-    {
-        packet.setReadPos(start);
-        data.guid = packet.readUInt64();
-        data.found = 0;
-        data.name = packet.readString();
-        if (!data.name.empty() && packet.hasRemaining(12)) {
-            uint32_t race = packet.readUInt32();
-            uint32_t gender = packet.readUInt32();
-            uint32_t cls = packet.readUInt32();
-            data.race = static_cast<uint8_t>(race & 0xFF);
-            data.gender = static_cast<uint8_t>(gender & 0xFF);
-            data.classId = static_cast<uint8_t>(cls & 0xFF);
-            data.realmName.clear();
-            return true;
+    if (!packet.hasRemaining(8)) return false;
+    data.guid = packet.readUInt64();
+    if (!hasNullWithin(packet, packet.getReadPos(), packet.getRemainingSize())) return false;
+    data.name = packet.readString();
+    if (!hasNullWithin(packet, packet.getReadPos(), packet.getRemainingSize())) return false;
+    data.realmName = packet.readString();
+    if (!packet.hasRemaining(13)) return false;
+    data.race = static_cast<uint8_t>(packet.readUInt32());
+    data.gender = static_cast<uint8_t>(packet.readUInt32());
+    data.classId = static_cast<uint8_t>(packet.readUInt32());
+    const bool declined = packet.readUInt8() != 0;
+    if (declined) {
+        for (int i = 0; i < 5; ++i) {
+            if (!hasNullWithin(packet, packet.getReadPos(), packet.getRemainingSize())) return false;
+            packet.readString();
         }
     }
-
-    // Variant B: guid(u64) + found(u8) + [if found==0: name + race(u32)+gender(u32)+class(u32)]
-    {
-        packet.setReadPos(start);
-        data.guid = packet.readUInt64();
-        if (!packet.hasRemaining(1)) {
-            packet.setReadPos(start);
-            return false;
-        }
-        uint8_t found = packet.readUInt8();
-        // Guard: only treat it as a found flag if a CString likely follows.
-        if ((found == 0 || found == 1) && hasNullWithin(packet, packet.getReadPos(), 64)) {
-            data.found = found;
-            if (data.found != 0) return true;
-            data.name = packet.readString();
-            if (!data.name.empty() && packet.hasRemaining(12)) {
-                uint32_t race = packet.readUInt32();
-                uint32_t gender = packet.readUInt32();
-                uint32_t cls = packet.readUInt32();
-                data.race = static_cast<uint8_t>(race & 0xFF);
-                data.gender = static_cast<uint8_t>(gender & 0xFF);
-                data.classId = static_cast<uint8_t>(cls & 0xFF);
-                data.realmName.clear();
-                return true;
-            }
-        }
-    }
-
-    packet.setReadPos(start);
-    return false;
+    data.found = 0;
+    return !data.name.empty();
 }
 
 // ============================================================================

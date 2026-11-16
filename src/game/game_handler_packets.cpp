@@ -3351,10 +3351,6 @@ void GameHandler::registerRemainingOpcodes() {
         Opcode::SMSG_LFG_PENDING_INVITE,
         Opcode::SMSG_LFG_PENDING_MATCH,
         Opcode::SMSG_LFG_PENDING_MATCH_DONE,
-        Opcode::SMSG_LFG_UPDATE,
-        Opcode::SMSG_LFG_UPDATE_LFG,
-        Opcode::SMSG_LFG_UPDATE_LFM,
-        Opcode::SMSG_LFG_UPDATE_QUEUED,
         Opcode::SMSG_MOVE_CHARACTER_CHEAT,
         Opcode::SMSG_NOTIFY_DANCE,
         Opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST,
@@ -3389,6 +3385,44 @@ void GameHandler::registerRemainingOpcodes() {
         Opcode::SMSG_VOICE_SET_TALKER_MUTED
     }) { registerSkipHandler(op); }
 
+    const auto lfgChanged = [this]() {
+        if (addonEventCallback_) addonEventCallback_("MEETINGSTONE_CHANGED", {});
+    };
+    dispatchTable_[Opcode::SMSG_LFG_UPDATE] = [this, lfgChanged](network::Packet& packet) {
+        requireLfgBytes(packet, 3);
+        tbcLfg_.queued = packet.readUInt8() != 0;
+        tbcLfg_.lfg = packet.readUInt8() != 0;
+        tbcLfg_.lfm = packet.readUInt8() != 0;
+        if (tbcLfg_.lfm) { requireLfgBytes(packet, 4); tbcLfg_.more = packet.readUInt32(); }
+        lfgChanged();
+    };
+    dispatchTable_[Opcode::SMSG_LFG_UPDATE_LFG] = [this, lfgChanged](network::Packet& packet) {
+        requireLfgBytes(packet, 12);
+        for (auto& slot : tbcLfg_.slots) slot = packet.readUInt32();
+        lfgChanged();
+    };
+    dispatchTable_[Opcode::SMSG_LFG_UPDATE_LFM] = [this, lfgChanged](network::Packet& packet) {
+        requireLfgBytes(packet, 1);
+        tbcLfg_.lfm = packet.readUInt8() != 0;
+        tbcLfg_.more = 0;
+        if (tbcLfg_.lfm) { requireLfgBytes(packet, 4); tbcLfg_.more = packet.readUInt32(); }
+        lfgChanged();
+    };
+    dispatchTable_[Opcode::SMSG_LFG_UPDATE_QUEUED] = [this, lfgChanged](network::Packet& packet) {
+        requireLfgBytes(packet, 1);
+        tbcLfg_.queued = packet.readUInt8() != 0;
+        lfgChanged();
+    };
+    dispatchTable_[Opcode::MSG_LOOKING_FOR_GROUP] = [this](network::Packet& packet) {
+        readTbcLfgResults(packet, tbcLfg_);
+        for (const auto& row : tbcLfg_.results) {
+            queryPlayerName(row.guid);
+            for (const auto& member : row.members) queryPlayerName(member.guid);
+        }
+        LOG_INFO("TBC LFG results: type=", tbcLfg_.queryType, " entry=", tbcLfg_.queryEntry,
+                 " displayed=", tbcLfg_.results.size(), " total=", tbcLfg_.total);
+        if (addonEventCallback_) addonEventCallback_("UPDATE_LFG_LIST", {});
+    };
 }
 
 // The domain handlers registering their own.

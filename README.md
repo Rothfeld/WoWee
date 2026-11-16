@@ -27,6 +27,7 @@ macOS, Windows and Android.
 [Hear the soundtrack](https://kelsidavis.bandcamp.com/album/wowee-soundtrack)
 
 TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-effects.md).
+TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 
 <p align="center">
   <img src="assets/hellfire-peninsula.png" alt="WoWee rendering Honor Hold in Hellfire Peninsula" width="100%" />

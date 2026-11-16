@@ -12,6 +12,7 @@
 #include "game/spell_defines.hpp"
 #include "game/group_defines.hpp"
 #include "game/handler_types.hpp"
+#include "game/tbc_lfg.hpp"
 #include "game/combat_handler.hpp"
 #include "game/spell_handler.hpp"
 #include "game/quest_handler.hpp"
@@ -3891,6 +3892,7 @@ public:
         loadLfgDungeonDbc();
         return lfgDungeons_;
     }
+    TbcLfgState& tbcLfg() { return tbcLfg_; }
     void queryItemInfo(uint32_t entry, uint64_t guid);
 
     // --- Inner types exposed for former friend classes ---
@@ -4879,6 +4881,7 @@ private:
     void loadMapNameCache() const;
 
     // LFG dungeon name cache (lazy-loaded from LFGDungeons.dbc; WotLK only)
+    TbcLfgState tbcLfg_;
     mutable std::unordered_map<uint32_t, std::string> lfgDungeonNameCache_;
     mutable std::vector<LfgDungeon> lfgDungeons_;
     mutable std::vector<Companion> mountSpells_;

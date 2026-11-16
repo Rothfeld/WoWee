@@ -2972,6 +2972,13 @@ void EntityController::handleNameQueryResponse(network::Packet& packet) {
             playerClassRaceCache_[data.guid] = {.classId = data.classId, .raceId = data.race,
                                                 .gender = data.gender};
         }
+        for (const auto& row : owner_.tbcLfg().results) {
+            if (row.guid == data.guid || std::any_of(row.members.begin(), row.members.end(),
+                    [&data](const auto& member) { return member.guid == data.guid; })) {
+                owner_.fireAddonEvent("UPDATE_LFG_LIST", {});
+                break;
+            }
+        }
         // Chat lines held back for this name can go out now, with it on them.
         // After the cache above, which a held NPC line reads for its $-tokens.
         if (owner_.getChatHandler()) owner_.getChatHandler()->flushChatAwaitingName(data.guid);

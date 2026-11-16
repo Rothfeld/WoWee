@@ -740,6 +740,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     playerXp_ = 0;
     playerNextLevelXp_ = 0;
     serverPlayerLevel_ = 1;
+    tbcLfg_ = {};
     std::fill(playerExploredZones_.begin(), playerExploredZones_.end(), 0u);
     hasPlayerExploredZones_ = false;
     playerSkills_.clear();

@@ -160,6 +160,52 @@ void pushInfoRow(lua_State* L, const char* name, int typeId, int minLevel,
     set(12, [&]{ lua_pushinteger(L, maxPlayers); });
 }
 
+// TBC dropdown indices are one-based positions in a level/faction-filtered
+// catalogue, not DBC IDs. The wire carries the DBC ID and type in its high byte.
+std::vector<const game::LfgDungeon*> tbcChoices(game::GameHandler* gh, int type) {
+    std::vector<const game::LfgDungeon*> choices;
+    const auto player = std::dynamic_pointer_cast<game::Unit>(
+        gh->getEntityManager().getEntity(gh->getPlayerGuid()));
+    if (!player) return choices;
+    const auto level = player->getLevel();
+    for (const auto& d : gh->getLfgDungeons()) {
+        if (d.typeId != static_cast<uint32_t>(type - 1)) continue;
+        if (level < d.minLevel || (d.maxLevel && level > d.maxLevel)) continue;
+        if (d.faction != -1 && d.faction != (gh->isPlayerAlliance() ? 1 : 0)) continue;
+        choices.push_back(&d);
+    }
+    std::sort(choices.begin(), choices.end(), [](const auto* a, const auto* b) { return a->name < b->name; });
+    return choices;
+}
+uint32_t tbcSlot(lua_State* L, game::GameHandler* gh, int typeArg, int nameArg) {
+    const int type = static_cast<int>(luaL_optinteger(L, typeArg, 1));
+    const int name = static_cast<int>(luaL_optinteger(L, nameArg, 0));
+    luaL_argcheck(L, type >= 1 && type <= 6, typeArg, "invalid LFG type");
+    if (type == 1 || name == 0) return 0;
+    const auto choices = tbcChoices(gh, type);
+    luaL_argcheck(L, name > 0 && static_cast<size_t>(name) <= choices.size(), nameArg, "invalid LFG entry index");
+    return choices.at(name - 1)->id | (uint32_t(type - 1) << 24);
+}
+int tbcIndex(game::GameHandler* gh, uint32_t slot) {
+    const auto choices = tbcChoices(gh, (slot >> 24) + 1);
+    for (size_t i = 0; i < choices.size(); ++i) if (choices[i]->id == (slot & 0xffff)) return i + 1;
+    return 0;
+}
+void sendTbc(lua_State* L, game::GameHandler* gh, game::Opcode op, const std::vector<uint32_t>& words = {}) {
+    if (!gh || !gh->getSocket()) { luaL_error(L, "LFG requires a world connection"); return; }
+    network::Packet packet(game::wireOpcode(op));
+    for (auto word : words) packet.writeUInt32(word);
+    gh->getSocket()->send(packet);
+}
+const char* tbcClassToken(uint8_t id) {
+    const char* token = luaClassToken(id);
+    return token ? token : "";
+}
+void pushTbcClass(lua_State* L, uint8_t id) {
+    if (luaClassToken(id)) lua_pushstring(L, kLuaClasses[id]);
+    else lua_pushstring(L, "");
+}
+
 }  // namespace
 
 void registerLfgLuaAPI(lua_State* L) {
@@ -181,6 +227,7 @@ void registerLfgLuaAPI(lua_State* L) {
     }},
     {"SetLFMAutofill", [](lua_State* L) -> int {
         if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            gh->tbcLfg().autofill = true;
             network::Packet packet(game::wireOpcode(game::Opcode::CMSG_LFM_SET_AUTOFILL));
             gh->getSocket()->send(packet);
         }
@@ -188,6 +235,7 @@ void registerLfgLuaAPI(lua_State* L) {
     }},
     {"ClearLFMAutofill", [](lua_State* L) -> int {
         if (auto* gh = getGameHandler(L); gh && gh->getSocket()) {
+            gh->tbcLfg().autofill = false;
             network::Packet packet(game::wireOpcode(game::Opcode::CMSG_LFM_CLEAR_AUTOFILL));
             gh->getSocket()->send(packet);
         }
@@ -202,18 +250,147 @@ void registerLfgLuaAPI(lua_State* L) {
     {"GetLFGTypeEntries", [](lua_State* L) -> int {
         auto* gh = getGameHandler(L);
         if (!gh) return 0;
-        const int type = static_cast<int>(luaL_checkinteger(L, 1)) - 1;
+        const int type = static_cast<int>(luaL_checkinteger(L, 1));
         int count = 0;
-        for (const auto& dungeon : gh->getLfgDungeons()) {
-            if (static_cast<int>(dungeon.typeId) != type) continue;
+        for (const auto* dungeon : tbcChoices(gh, type)) {
             luaL_checkstack(L, 2, "LFG entry list exceeds Lua stack");
-            lua_pushstring(L, dungeon.name.c_str());
-            lua_pushinteger(L, dungeon.id);
+            lua_pushstring(L, dungeon->name.c_str());
+            // FrameXML treats the second value as an icon suffix, not an ID.
+            // Empty selects its category icon; selection uses the row index.
+            lua_pushstring(L, "");
             count += 2;
         }
         return count;
     }},
 
+    {"IsRealPartyLeader", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L);
+        lua_pushboolean(L, gh && gh->getPartyData().leaderGuid == gh->getPlayerGuid()); return 1;
+    }},
+    {"IsInLFGQueue", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); lua_pushboolean(L, gh && gh->tbcLfg().queued); return 1;
+    }},
+    {"SortLFG", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return 0;
+        const std::string key = luaL_checkstring(L, 1);
+        luaL_argcheck(L, key == "name" || key == "zone" || key == "level" || key == "class", 1, "invalid LFG sort column");
+        auto& rows = gh->tbcLfg().results;
+        std::stable_sort(rows.begin(), rows.end(), [&](const auto& a, const auto& b) {
+            if (key == "level") return a.level < b.level;
+            if (key == "zone") return gh->getWhoAreaName(a.zone) < gh->getWhoAreaName(b.zone);
+            if (key == "class") return std::string(tbcClassToken(gh->lookupPlayerClass(a.guid))) < tbcClassToken(gh->lookupPlayerClass(b.guid));
+            return gh->getCachedPlayerName(a.guid) < gh->getCachedPlayerName(b.guid);
+        });
+        gh->fireAddonEvent("UPDATE_LFG_LIST", {}); return 0;
+    }},
+    {"SetLFMType", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return luaL_error(L, "No game session");
+        const int type = luaL_checkinteger(L, 1);
+        luaL_argcheck(L, type >= 1 && type <= 6, 1, "invalid LFM type");
+        gh->tbcLfg().moreType = type; return 0;
+    }},
+    {"SetLFGType", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return luaL_error(L, "No game session");
+        const int slot = luaL_checkinteger(L, 1), type = luaL_checkinteger(L, 2);
+        luaL_argcheck(L, slot >= 1 && slot <= 3, 1, "invalid LFG slot");
+        luaL_argcheck(L, type >= 1 && type <= 6, 2, "invalid LFG type");
+        gh->tbcLfg().types[slot - 1] = type; return 0;
+    }},
+    {"GetLookingForGroup", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return 0;
+        const auto& state = gh->tbcLfg();
+        for (size_t i = 0; i < 3; ++i) {
+            lua_pushinteger(L, state.slots[i] ? (state.slots[i] >> 24) + 1 : state.types[i]);
+            lua_pushinteger(L, tbcIndex(gh, state.slots[i]));
+        }
+        lua_pushinteger(L, state.more ? (state.more >> 24) + 1 : state.moreType);
+        lua_pushinteger(L, tbcIndex(gh, state.more));
+        lua_pushstring(L, state.comment.c_str());
+        lua_pushboolean(L, state.queued); lua_pushboolean(L, state.lfg);
+        lua_pushboolean(L, state.lfm); lua_pushboolean(L, state.autofill); return 13;
+    }},
+    {"SetLookingForMore", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return luaL_error(L, "No game session");
+        const auto slot = tbcSlot(L, gh, 1, 2);
+        sendTbc(L, gh, game::Opcode::CMSG_SET_LOOKING_FOR_MORE, {slot});
+        gh->tbcLfg().more = slot; return 0;
+    }},
+    {"SetLookingForGroup", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return luaL_error(L, "No game session");
+        const int index = luaL_checkinteger(L, 1);
+        luaL_argcheck(L, index >= 1 && index <= 3, 1, "invalid LFG slot");
+        const auto slot = tbcSlot(L, gh, 2, 3);
+        sendTbc(L, gh, game::Opcode::CMSG_SET_LOOKING_FOR_GROUP, {uint32_t(index - 1), slot});
+        gh->tbcLfg().slots[index - 1] = slot; return 0;
+    }},
+    {"ClearLookingForMore", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L);
+        sendTbc(L, gh, game::Opcode::CMSG_CLEAR_LOOKING_FOR_MORE);
+        gh->tbcLfg().more = 0; gh->tbcLfg().lfm = false; return 0;
+    }},
+    {"ClearLookingForGroup", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L);
+        sendTbc(L, gh, game::Opcode::CMSG_CLEAR_LOOKING_FOR_GROUP);
+        gh->tbcLfg().slots = {}; gh->tbcLfg().lfg = false; return 0;
+    }},
+    {"SetLFGComment", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh || !gh->getSocket()) return luaL_error(L, "No world connection");
+        gh->tbcLfg().comment = luaL_optstring(L, 1, "");
+        network::Packet packet(game::wireOpcode(game::Opcode::CMSG_SET_LFG_COMMENT));
+        packet.writeString(gh->tbcLfg().comment); gh->getSocket()->send(packet); return 0;
+    }},
+    {"CanSendLFGQuery", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L);
+        lua_pushboolean(L, gh && std::chrono::steady_clock::now() >= gh->tbcLfg().nextQuery &&
+            luaL_optinteger(L, 1, 1) > 1 && luaL_optinteger(L, 2, 0) > 0); return 1;
+    }},
+    {"LFGQuery", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return luaL_error(L, "No game session");
+        const auto slot = tbcSlot(L, gh, 1, 2);
+        if (!slot || std::chrono::steady_clock::now() < gh->tbcLfg().nextQuery) return 0;
+        sendTbc(L, gh, game::Opcode::MSG_LOOKING_FOR_GROUP, {slot >> 24, slot & 0xffff, 0});
+        gh->tbcLfg().nextQuery = std::chrono::steady_clock::now() + std::chrono::seconds(5); return 0;
+    }},
+    {"GetNumLFGResults", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) { lua_pushinteger(L, 0); lua_pushinteger(L, 0); return 2; }
+        const auto slot = tbcSlot(L, gh, 1, 2);
+        const auto& state = gh->tbcLfg();
+        const bool matches = slot && (slot >> 24) == state.queryType && (slot & 0xffff) == state.queryEntry;
+        lua_pushinteger(L, matches ? state.results.size() : 0); lua_pushinteger(L, matches ? state.total : 0); return 2;
+    }},
+    {"GetLFGResults", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return 0;
+        const int index = luaL_checkinteger(L, 3);
+        const auto& rows = gh->tbcLfg().results;
+        if (index < 1 || static_cast<size_t>(index) > rows.size()) return 0;
+        const auto& row = rows[index - 1];
+        const auto name = gh->getCachedPlayerName(row.guid);
+        const auto classId = gh->lookupPlayerClass(row.guid);
+        if (name.empty() || !luaClassToken(classId)) { gh->queryPlayerName(row.guid); return 0; }
+        lua_pushstring(L, name.c_str()); lua_pushinteger(L, row.level);
+        lua_pushstring(L, gh->getWhoAreaName(row.zone).c_str());
+        pushTbcClass(L, classId);
+        for (auto slot : row.slots) {
+            const auto& entries = gh->getLfgDungeons();
+            const auto it = std::find_if(entries.begin(), entries.end(), [slot](const auto& d) { return d.id == (slot & 0xffff); });
+            if (it == entries.end()) lua_pushnil(L); else lua_pushstring(L, it->name.c_str());
+        }
+        lua_pushstring(L, row.comment.c_str()); lua_pushinteger(L, row.members.size());
+        lua_pushboolean(L, row.lfm);
+        if (classId) lua_pushstring(L, tbcClassToken(classId)); else lua_pushnil(L);
+        return 11;
+    }},
+    {"GetLFGPartyResults", [](lua_State* L) -> int {
+        auto* gh = getGameHandler(L); if (!gh) return 0;
+        const int row = luaL_checkinteger(L, 3), member = luaL_checkinteger(L, 4);
+        const auto& rows = gh->tbcLfg().results;
+        if (row < 1 || static_cast<size_t>(row) > rows.size()) return 0;
+        const auto& members = rows[row - 1].members;
+        if (member < 1 || static_cast<size_t>(member) > members.size()) return 0;
+        const auto& value = members[member - 1];
+        lua_pushstring(L, gh->getCachedPlayerName(value.guid).c_str()); lua_pushinteger(L, value.level);
+        pushTbcClass(L, gh->lookupPlayerClass(value.guid)); return 3;
+    }},
     // ---- The catalogue ----
 
     // GetLFDChoiceInfo(t) / GetLFRChoiceInfo - every listable row keyed by id,

@@ -65,3 +65,49 @@ TEST_CASE("CMSG_LFG_JOIN carries every slot at the server's widths",
         CHECK(wowee::test::readU32(p.getData(), 0) == 0x00000007u);
     }
 }
+
+#include "game/tbc_lfg.hpp"
+
+TEST_CASE("TBC LFM results decode packed players and their party", "[lfg][tbc]") {
+    wowee::network::Packet packet;
+    packet.writeUInt32(1); packet.writeUInt32(12);
+    packet.writeUInt32(1); packet.writeUInt32(1);
+    packet.writePackedGuid(0x12340056);
+    packet.writeUInt32(21); packet.writeUInt32(1519); packet.writeUInt8(1);
+    packet.writeUInt32(0x0100000c); packet.writeUInt32(0x01000000); packet.writeUInt32(0x01000000);
+    packet.writeString("Stockades group"); packet.writeUInt32(1);
+    packet.writePackedGuid(0x1234); packet.writeUInt32(22);
+    TbcLfgState state;
+    readTbcLfgResults(packet, state);
+    REQUIRE(state.results.size() == 1);
+    CHECK(state.queryType == 1); CHECK(state.queryEntry == 12);
+    CHECK(state.results[0].guid == 0x12340056);
+    CHECK(state.results[0].level == 21); CHECK(state.results[0].zone == 1519);
+    CHECK(state.results[0].lfm); CHECK(state.results[0].comment == "Stockades group");
+    REQUIRE(state.results[0].members.size() == 1);
+    CHECK(state.results[0].members[0].guid == 0x1234);
+    CHECK(state.results[0].members[0].level == 22);
+    CHECK(packet.getRemainingSize() == 0);
+    const auto bytes = packet.getData();
+    for (size_t size = 0; size < bytes.size(); ++size) {
+        wowee::network::Packet truncated(0, std::vector<uint8_t>(bytes.begin(), bytes.begin() + size));
+        CHECK_THROWS_AS(readTbcLfgResults(truncated, state), std::runtime_error);
+        REQUIRE(state.results.size() == 1);
+        CHECK(state.results[0].comment == "Stockades group");
+    }
+}
+
+#include "game/packet_parsers.hpp"
+TEST_CASE("TBC names include realm before uint32 race gender class", "[lfg][tbc]") {
+    TbcPacketParsers parser;
+    for (const std::string realm : {"", "Test Realm"}) {
+        wowee::network::Packet packet;
+        packet.writeUInt64(3); packet.writeString("Graulberto"); packet.writeString(realm);
+        packet.writeUInt32(1); packet.writeUInt32(0); packet.writeUInt32(4); packet.writeUInt8(0);
+        NameQueryResponseData data;
+        REQUIRE(parser.parseNameQueryResponse(packet, data));
+        CHECK(data.guid == 3); CHECK(data.name == "Graulberto"); CHECK(data.realmName == realm);
+        CHECK(data.race == 1); CHECK(data.gender == 0); CHECK(data.classId == 4);
+        CHECK(packet.getRemainingSize() == 0);
+    }
+}
