@@ -6,6 +6,7 @@
 #include <iterator>
 #include "addons/lua_api_registrations.hpp"
 #include "core/env_flag.hpp"
+#include "game/game_utils.hpp"
 #include "rendering/sky_params_from_lighting.hpp"
 #include "core/coordinates.hpp"
 #include "rendering/camera.hpp"
@@ -614,13 +615,17 @@ void Renderer::updatePerFrameUBO() {
         currentFrameData.localLightPosRadius[i] = glm::vec4(0.0f);
         currentFrameData.localLightColorIntensity[i] = glm::vec4(0.0f);
     }
-    uint32_t localLightCount = wmoRenderer
+    // These lights are synthesized from fixture names/glow meshes and lava,
+    // not authored light records. TBC already bakes those pools into WMO
+    // textures/vertex colors; adding them again produces orange patches.
+    const bool synthesizeLocalLights = !game::isActiveExpansion("tbc");
+    uint32_t localLightCount = wmoRenderer && synthesizeLocalLights
         ? wmoRenderer->gatherLavaLights(camera->getPosition(),
               currentFrameData.localLightPosRadius,
               currentFrameData.localLightColorIntensity,
               MAX_LOCAL_LIGHTS)
         : 0;
-    if (m2Renderer && localLightCount < MAX_LOCAL_LIGHTS) {
+    if (m2Renderer && synthesizeLocalLights && localLightCount < MAX_LOCAL_LIGHTS) {
         localLightCount += m2Renderer->gatherLocalLights(camera->getPosition(),
             currentFrameData.localLightPosRadius + localLightCount,
             currentFrameData.localLightColorIntensity + localLightCount,

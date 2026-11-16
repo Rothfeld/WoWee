@@ -861,7 +861,7 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                         doodadReady.worldPosition = worldPos;
                         doodadReady.modelMatrix = worldMatrix;
                         for (const auto& group : wmoModel.groups) {
-                            if ((group.flags & 0x2000) && std::find(group.doodadRefs.begin(),
+                            if (pipeline::wmoUsesLocalLighting(group.flags) && std::find(group.doodadRefs.begin(),
                                     group.doodadRefs.end(), doodadIdx) != group.doodadRefs.end()) {
                                 doodadReady.indoorLighting = glm::vec3(doodad.color);
                                 break;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -8,6 +9,12 @@
 
 namespace wowee {
 namespace pipeline {
+
+// MOGP 0x40 disables local lighting even for portal-managed indoor groups.
+// Stormwind streets use this combination; interior visibility is independent.
+constexpr bool wmoUsesLocalLighting(uint32_t groupFlags) {
+    return (groupFlags & 0x2000u) != 0 && (groupFlags & 0x40u) == 0;
+}
 
 /**
  * WMO (World Model Object) Format

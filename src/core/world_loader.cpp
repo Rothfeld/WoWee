@@ -497,7 +497,7 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                                     doodadInstId, m2Model.collisionIndices.empty());
                                 if (doodadInstId) {
                                     for (const auto& group : wmoModel.groups) {
-                                        if ((group.flags & 0x2000) && std::find(group.doodadRefs.begin(),
+                                        if (pipeline::wmoUsesLocalLighting(group.flags) && std::find(group.doodadRefs.begin(),
                                                 group.doodadRefs.end(), doodadIdx) != group.doodadRefs.end()) {
                                             m2Renderer->setInstanceIndoorLighting(doodadInstId, glm::vec3(doodad.color));
                                             break;

@@ -17,6 +17,17 @@
 // Uldaman's stained glass has neither. Either test alone drops around 400
 // materials that look right today.
 #include <catch_amalgamated.hpp>
+#include "pipeline/wmo_loader.hpp"
+
+TEST_CASE("Stormwind exterior-lighting override is independent of indoor visibility", "[wmo-material]") {
+    using wowee::pipeline::wmoUsesLocalLighting;
+    CHECK_FALSE(wmoUsesLocalLighting(0x2841)); // Stormwind street group
+    CHECK_FALSE(wmoUsesLocalLighting(0x2a41)); // Stormwind thief01
+    CHECK_FALSE(wmoUsesLocalLighting(0xb841)); // Stormwind canal505
+    CHECK(wmoUsesLocalLighting(0x2a05));       // Stormwind AuctionHouse
+    CHECK(wmoUsesLocalLighting(0x2805));       // Ironforge interior
+    CHECK_FALSE(wmoUsesLocalLighting(0x8809)); // Outdoor group
+}
 
 #include "rendering/wmo_material_class.hpp"
 

@@ -309,7 +309,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                                VkPipelineCreateFlags flags = 0, VkPipeline basePipeline = VK_NULL_HANDLE,
                                bool alphaToCoverage = false,
                                VkCullModeFlags cullMode = VK_CULL_MODE_NONE,
-                               VkFrontFace frontFace = VK_FRONT_FACE_CLOCKWISE) -> VkPipeline {
+                               VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE) -> VkPipeline {
         auto builder = PipelineBuilder()
             .setShaders(m2Vert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                         m2Frag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))

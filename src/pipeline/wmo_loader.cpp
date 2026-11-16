@@ -684,7 +684,7 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                         assert(entry <= 65535);
                         group.liquid.liquidType = static_cast<uint16_t>(entry);
                         assert(group.liquid.materialId < model.materials.size());
-                        group.liquid.indoor = (group.flags & 0x2000) != 0;
+                        group.liquid.indoor = wmoUsesLocalLighting(group.flags);
                         group.liquid.materialColor = model.materials[group.liquid.materialId].color2;
                     }
                 }

@@ -92,6 +92,8 @@ bool WMORenderer::buildMainPassPipelines(VkDevice device,
     const std::vector<VkVertexInputAttributeDescription> vertexAttribs =
         toVkAttributes(kWmoVertexAttributes);
 
+    // Authored outward faces are counter-clockwise with our Vulkan projection.
+    // Even without culling, this controls gl_FrontFacing and normal reversal.
     // --- Build opaque pipeline (base for derivatives - shared state optimization) ---
     VkRenderPass mainPass = vkCtx_->getImGuiRenderPass();
 
@@ -100,7 +102,7 @@ bool WMORenderer::buildMainPassPipelines(VkDevice device,
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertexBinding }, vertexAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(vkCtx_->getMsaaSamples())
@@ -121,7 +123,7 @@ bool WMORenderer::buildMainPassPipelines(VkDevice device,
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertexBinding }, vertexAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx_->getMsaaSamples())
@@ -142,7 +144,7 @@ bool WMORenderer::buildMainPassPipelines(VkDevice device,
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertexBinding }, vertexAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
         .setMultisample(vkCtx_->getMsaaSamples())
@@ -159,7 +161,7 @@ bool WMORenderer::buildMainPassPipelines(VkDevice device,
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertexBinding }, vertexAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_LINE, VK_CULL_MODE_NONE)
+        .setRasterization(VK_POLYGON_MODE_LINE, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(vkCtx_->getMsaaSamples())
@@ -836,7 +838,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         // Allocate descriptor sets and UBOs for each merged batch
         groupRes.mergedBatches.reserve(batchMap.size());
         bool anyTextured = false;
-        bool isInterior = (groupRes.groupFlags & 0x2000) != 0;
+        bool isInterior = pipeline::wmoUsesLocalLighting(groupRes.groupFlags);
         for (auto& [key, mb] : batchMap) {
             if (mb.hasTexture) anyTextured = true;
 
