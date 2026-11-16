@@ -45,7 +45,7 @@ layout(set = 1, binding = 1) uniform WMOMaterial {
     float wmoAmbientB;
     int emissive;
     int hasVertexColors;
-    int padding1;
+    int specularAlphaMask;
     int padding2;
 };
 
@@ -354,6 +354,7 @@ void main() {
         vec3 viewDir = normalize(viewPos.xyz - FragPos);
         vec3 halfDir = normalize(ldir + viewDir);
         float spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * specularIntensity;
+        if (specularAlphaMask != 0) spec *= texColor.a;
 
         result = rtAmbient(rt, ambientColor.rgb) * texColor.rgb
                + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb);

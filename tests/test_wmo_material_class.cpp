@@ -31,6 +31,16 @@ TEST_CASE("Stormwind exterior-lighting override is independent of indoor visibil
 
 #include "rendering/wmo_material_class.hpp"
 
+TEST_CASE("WMO diffuse materials remain matte", "[wmo-material]") {
+    using wowee::rendering::wmoShaderUsesSpecular;
+    for (uint32_t shader : {0u, 4u, 6u, 8u, 9u, 13u, 14u, 16u}) {
+        CHECK_FALSE(wmoShaderUsesSpecular(shader));
+    }
+    for (uint32_t shader : {1u, 2u, 5u, 7u, 11u, 12u}) {
+        CHECK(wmoShaderUsesSpecular(shader));
+    }
+}
+
 using wowee::rendering::wmoMaterialIsGlass;
 using wowee::rendering::wmoTextureIsPaintedWall;
 using wowee::rendering::wmoTextureNamedGlass;

@@ -493,7 +493,7 @@ private:
         float wmoAmbientB;         // 60 (interior ambient color B)
         int32_t emissive;           // 64 (0 none, 1 lamp glass, 2 firelit)
         int32_t hasVertexColors;    // 68: the group carries MOCV (MOGP flag 0x4)
-        int32_t padding1;           // 72
+        int32_t specularAlphaMask;  // 72: texture alpha masks the specular term
         int32_t padding2;           // 76
     };  // 80 bytes total
 
@@ -663,6 +663,7 @@ private:
 
         // Material blend modes (materialId -> blendMode; 1 = alpha-test cutout)
         std::vector<uint32_t> materialBlendModes;
+        std::vector<uint32_t> materialShaders;
 
         // Material flags (materialId -> flags; 0x01 = unlit)
         std::vector<uint32_t> materialFlags;

@@ -26,6 +26,21 @@ TBC uses authored textures, vertex colors and environment lighting without
 the extra point lights synthesized from fixture names, glow meshes or lava.
 Those synthetic lights are not authored light records.
 
+TBC window surfaces also retain their authored MOMT blend modes and normal
+material shading. Texture names do not enable the synthetic glass pipeline,
+its Fresnel reflections, or its view-dependent opacity. For example,
+`MM_STRMWND_WINDOWS_01` is painted window artwork, not a request for transparency.
+The ray-tracing geometry uses the same rule: opaque windows remain occluders.
+
+TBC specular highlights follow the MOMT shader variant. Diffuse stone, paving,
+wood, and cloth do not receive the shared pipeline's specular term. Batch merging
+keeps diffuse and specular materials separate even when they share a texture.
+The Specular variant (shader 1) uses texture alpha as its highlight mask.
+For example, `MM_STREET_02.BLP` has mean alpha 19.75/255; treating its mask as
+fully white produces broad orange highlights across the street.
+Name-based lamp/clock emission boosts and flicker are disabled for TBC as well;
+these surfaces use their authored material shading.
+
 Comparison artifacts and asset inspection script:
 `_experiments/20261116T094629Z.stormwind_shading` in the parent workspace.
 Run `python _experiments/20261116T094629Z.stormwind_shading/inspect_assets.py`

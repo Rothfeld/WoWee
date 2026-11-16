@@ -24,6 +24,7 @@
 #include "pipeline/wmo_loader.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "core/logger.hpp"
+#include "game/game_utils.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
@@ -567,6 +568,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
 
         modelData.materialTextureIndices.push_back(texIndex);
         modelData.materialBlendModes.push_back(mat.blendMode);
+        modelData.materialShaders.push_back(mat.shader);
         modelData.materialFlags.push_back(mat.flags);
         modelData.materialTerrainTypes.push_back(mat.terrainType);
 
@@ -681,10 +683,14 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             bool alphaTest;
             bool unlit;
             bool isWindow;
+            bool specular;
+            bool specularAlphaMask;
             uint8_t emissiveLevel;
             bool operator==(const BatchKey& o) const {
                 return texPtr == o.texPtr && alphaTest == o.alphaTest &&
                        unlit == o.unlit && isWindow == o.isWindow &&
+                       specular == o.specular &&
+                       specularAlphaMask == o.specularAlphaMask &&
                        emissiveLevel == o.emissiveLevel;
             }
         };
@@ -694,7 +700,9 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                        (std::hash<bool>()(k.alphaTest) << 1) ^
                        (std::hash<bool>()(k.unlit) << 2) ^
                        (std::hash<bool>()(k.isWindow) << 3) ^
-                       (std::hash<uint8_t>()(k.emissiveLevel) << 4);
+                       (std::hash<uint8_t>()(k.emissiveLevel) << 4) ^
+                       (std::hash<bool>()(k.specular) << 5) ^
+                       (std::hash<bool>()(k.specularAlphaMask) << 6);
             }
         };
         std::unordered_map<BatchKey, GroupResources::MergedBatch, BatchKeyHash> batchMap;
@@ -734,10 +742,9 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 unlit = (matFlags & 0x01) != 0;
             }
 
-            // Glass comes from the flags the artist set on the material, not
-            // from the texture's file name: most textures named for a window
-            // are walls with window openings painted into them. See
-            // rendering/wmo_material_class.hpp.
+            // TBC uses the authored MOMT blend mode. The optional glass
+            // treatment changes both shading and opacity, including opaque
+            // painted windows such as MM_STRMWND_WINDOWS_01.
             bool isWindow = false;
             bool isLava = false;
             bool isCloth = false;
@@ -749,14 +756,16 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                     // Case-insensitive search for material types
                     std::string texNameLower = texName;
                     std::transform(texNameLower.begin(), texNameLower.end(), texNameLower.begin(), ::tolower);
-                    if (texNameLower.find("stormwindlampglass.blp") != std::string::npos) {
+                    if (!game::isActiveExpansion("tbc") &&
+                        texNameLower.find("stormwindlampglass.blp") != std::string::npos) {
                         emissiveLevel = 1;  // authored lamp glass: bright
-                    } else if (texNameLower.find("mm_clockface") != std::string::npos) {
+                    } else if (!game::isActiveExpansion("tbc") &&
+                               texNameLower.find("mm_clockface") != std::string::npos) {
                         // Darkshire's town hall clock, and any building sharing the
                         // face: backlit by a flickering fire in the tower.
                         emissiveLevel = 2;
                     }
-                    isWindow = emissiveLevel == 0 &&
+                    isWindow = !game::isActiveExpansion("tbc") && emissiveLevel == 0 &&
                                wmoMaterialIsGlass(matFlags, texName);
                     isLava = (texNameLower.find("lava") != std::string::npos ||
                               texNameLower.find("molten") != std::string::npos ||
@@ -803,7 +812,12 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             }
 
             BatchKey key{ .texPtr = reinterpret_cast<uintptr_t>(tex), .alphaTest = alphaTest, .unlit = unlit,
-                          .isWindow = isWindow, .emissiveLevel = emissiveLevel };
+                          .isWindow = isWindow,
+                          .specular = !game::isActiveExpansion("tbc") ||
+                              wmoShaderUsesSpecular(modelData.materialShaders.at(batch.materialId)),
+                          .specularAlphaMask = game::isActiveExpansion("tbc") &&
+                              modelData.materialShaders.at(batch.materialId) == 1,
+                          .emissiveLevel = emissiveLevel };
             auto& mb = batchMap[key];
             if (mb.draws.empty()) {
                 mb.texture = tex;
@@ -857,7 +871,8 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             matData.unlit = mb.unlit ? 1 : 0;
             matData.isInterior = isInterior ? 1 : 0;
             matData.hasVertexColors = (groupRes.groupFlags & 0x4) != 0 ? 1 : 0;
-            matData.specularIntensity = 0.5f;
+            matData.specularIntensity = key.specular ? 0.5f : 0.0f;
+            matData.specularAlphaMask = key.specularAlphaMask ? 1 : 0;
             matData.isWindow = mb.isWindow ? (wmoOnlyMap_ ? 2 : 1) : 0;
             matData.enableNormalMap = normalMappingEnabled_ ? 1 : 0;
             matData.enablePOM = pomEnabled_ ? 1 : 0;
@@ -4324,7 +4339,8 @@ void WMORenderer::registerRtModel(uint32_t modelId, const ModelData& model) {
             float opacity = 1.0f;
             if (mat < model.materialTextureIndices.size()) {
                 const uint32_t ti = model.materialTextureIndices[mat];
-                if (ti < model.textureNames.size() && wmoMaterialIsGlass(flags, model.textureNames[ti])) {
+                if (!game::isActiveExpansion("tbc") && ti < model.textureNames.size() &&
+                    wmoMaterialIsGlass(flags, model.textureNames[ti])) {
                     continue;
                 }
                 if (ti < model.textures.size() && model.textures[ti]) {

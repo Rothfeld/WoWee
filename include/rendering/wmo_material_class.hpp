@@ -41,6 +41,13 @@
 
 namespace wowee::rendering {
 
+/// MOMT shader variants with a specular term. Diffuse and emissive variants
+/// do not acquire highlights merely because they use the same GPU pipeline.
+constexpr bool wmoShaderUsesSpecular(uint32_t shader) {
+    return shader == 1 || shader == 2 || shader == 5 || shader == 7 ||
+           shader == 11 || shader == 12;
+}
+
 /// MOMT material flags, as far as the glass path cares.
 enum WmoMaterialFlags : uint32_t {
     WMO_MAT_UNLIT    = 0x01,
