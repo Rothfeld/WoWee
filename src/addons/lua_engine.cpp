@@ -2693,7 +2693,7 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     const bool isPlayer = entity && entity->getType() == game::ObjectType::PLAYER;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     const bool isCompanion = unit && !isPlayer && gh->getCreatureType(unit->getEntry()) == 12;
-    const bool isCorpse = unit && game::isUnitCorpseState(
+    const bool isCorpse = !isPlayer && unit && game::isUnitCorpseState(
         unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags());
 
     if (isPlayer) {
