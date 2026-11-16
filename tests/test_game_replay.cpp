@@ -685,6 +685,32 @@ TEST_CASE("TBC local speech produces one bubble despite suppressed server echo",
     CHECK(bubbles == 1);
 }
 
+TEST_CASE("TBC leadership promotion resolves menu tokens and names", "[party][tbc][promote]") {
+    Session s("tbc");
+    using wowee::game::Opcode;
+    wowee::network::Packet roster(wowee::game::wireOpcode(Opcode::SMSG_GROUP_LIST));
+    roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt64(1);
+    roster.writeUInt32(1);
+    roster.writeString("Graulberto"); roster.writeUInt64(3);
+    roster.writeUInt8(1); roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt64(Session::kPlayerGuid);
+    s.receive(roster);
+    lua_State* L = luaL_newstate();
+    lua_pushlightuserdata(L, &s.handler());
+    lua_setfield(L, LUA_REGISTRYINDEX, "wowee_game_handler");
+    wowee::addons::registerSocialLuaAPI(L);
+    REQUIRE(luaL_dostring(L, "PromoteToLeader('party1', 1); PromoteToLeader('Graulberto')") == 0);
+    const auto packets = s.sent().of(Opcode::CMSG_GROUP_SET_LEADER);
+    REQUIRE(packets.size() == 2);
+    for (auto packet : packets) {
+        REQUIRE(packet.getSize() == 8);
+        CHECK(packet.readUInt64() == 3);
+    }
+    lua_close(L);
+}
+
 TEST_CASE("TBC party stats use packed GUID without a full-update prefix", "[party][tbc]") {
     Session s("tbc");
     using wowee::game::Opcode;

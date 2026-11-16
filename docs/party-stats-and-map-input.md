@@ -9,6 +9,12 @@ Protocol reference: CMaNGOS TBC `src/game/Groups/GroupHandler.cpp`,
 Roster packets omit health; the client requests full stats for remote members.
 Object health/power updates notify party/raid unit tokens as well as target tokens.
 
+`PromoteToLeader` accepts both unit tokens and character names. Blizzard's party
+portrait menu passes `party1`; its raid menu passes a name. Resolve the recipient
+through the roster before sending `CMSG_GROUP_SET_LEADER` with the 64-bit GUID.
+The `[promote]` replay test covers both forms with a TBC roster and no visible
+world entity for the recipient.
+
 Map loading pumps SDL events outside the application's normal input dispatch.
 `WorldLoader::loadOnlineWorldTerrain` releases camera capture and held Lua bindings
 before entering that loop. Otherwise releasing right mouse during loading leaves

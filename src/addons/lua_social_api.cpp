@@ -3075,20 +3075,23 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"CanChangePlayerDifficulty", [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
                 {"IsSilenced",                [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
                 {"IsDisplayChannelModerator", [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
-                // PromoteToLeader(name) - /promote, /pr, and the unit menu's
-                // "Promote to Leader". The client had no outgoing side for this
-                // at all: SMSG_GROUP_SET_LEADER was handled and CMSG was never
-                // sent, so leadership could be received and never given.
+                // The party menu passes a unit token; /promote and the raid
+                // menu can pass a name. Resolve both against the party roster.
                 {"PromoteToLeader", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            std::string name(luaL_optstring(L, 1, ""));
-            if (!gh || name.empty()) return 0;
+            if (!gh) return 0;
+            std::string name = partyRecipient(L, gh);
+            if (name.empty()) {
+                LOG_WARNING("PromoteToLeader could not resolve recipient");
+                return 0;
+            }
             toLowerInPlace(name);
             for (const auto& m : gh->getPartyData().members) {
                 std::string n = m.name;
                 toLowerInPlace(n);
                 if (n == name) { gh->promoteToLeader(m.guid); return 0; }
             }
+            LOG_WARNING("PromoteToLeader recipient is not in party: ", name);
             return 0;
         }},
                 // Raid assistant, given and taken. The unit menu passes a
