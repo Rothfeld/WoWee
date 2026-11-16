@@ -9,6 +9,14 @@
 
 #include "rendering/water_mask.hpp"
 
+TEST_CASE("Only corners of visible water cells contribute heights", "[water]") {
+    const uint64_t cells = uint64_t{1} << (2 * 8 + 3);
+    for (int y = 0; y <= 8; ++y)
+        for (int x = 0; x <= 8; ++x)
+            CHECK(wowee::rendering::waterVertexUsed(cells, x, y) ==
+                  ((x == 3 || x == 4) && (y == 2 || y == 3)));
+}
+
 #include <vector>
 
 using wowee::rendering::chunkWaterMask;
@@ -163,4 +171,3 @@ TEST_CASE("a cell past the end of the mask is water") {
 }
 
 }  // namespace
-

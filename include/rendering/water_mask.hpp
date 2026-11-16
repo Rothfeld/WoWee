@@ -20,6 +20,14 @@
 
 namespace wowee::rendering {
 
+inline bool waterVertexUsed(uint64_t mask, int x, int y) {
+    for (int row = y - 1; row <= y; ++row)
+        for (int col = x - 1; col <= x; ++col)
+            if (row >= 0 && row < 8 && col >= 0 && col < 8 &&
+                (mask & (uint64_t{1} << (row * 8 + col)))) return true;
+    return false;
+}
+
 /// The sub-tiles of one chunk that should be drawn, as an 8x8 bitmask packed
 /// into a uint64_t with the same row*8+col, LSB-first ordering.
 ///

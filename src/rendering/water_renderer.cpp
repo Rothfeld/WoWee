@@ -842,16 +842,25 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                 surface.height = layer.height;
 
                 size_t numVertices = (layer.width + 1) * (layer.height + 1);
-                bool useFlat = true;
-                if (layer.heights.size() == numVertices) {
-                    bool sane = true;
-                    for (float h : layer.heights) {
-                        if (!std::isfinite(h) || std::abs(h) > 50000.0f) { sane = false; break; }
-                        if (h < layer.minHeight - 8.0f || h > layer.maxHeight + 8.0f) { sane = false; break; }
-                    }
-                    if (sane) { useFlat = false; surface.heights = layer.heights; }
+                if (!layer.heights.empty() && layer.heights.size() != numVertices) {
+                    LOG_ERROR("Water height grid size mismatch");
+                    throw std::runtime_error("Water height grid size mismatch");
                 }
-                if (useFlat) surface.heights.resize(numVertices, layer.minHeight);
+                surface.heights.resize(numVertices, layer.minHeight);
+                const uint64_t usedCells = chunkWaterMask(layer.mask, layer.x, layer.y,
+                                                          layer.width, layer.height, false);
+                for (int y = 0; y <= layer.height; ++y) {
+                    for (int x = 0; x <= layer.width; ++x) {
+                        if (!waterVertexUsed(usedCells, layer.x + x, layer.y + y)) continue;
+                        const size_t index = y * (layer.width + 1) + x;
+                        const float h = layer.heights.empty() ? layer.minHeight : layer.heights[index];
+                        if (!std::isfinite(h) || std::abs(h) > 50000.0f) {
+                            LOG_ERROR("Invalid visible water vertex: ", h, " tile=", tileX, ",", tileY);
+                            throw std::runtime_error("Invalid visible water vertex");
+                        }
+                        surface.heights[index] = h;
+                    }
+                }
 
                 surface.depths = layer.depths;
 
@@ -930,28 +939,32 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
             // Copy heights
             int layerGridW = layer.width + 1;
             size_t numVertices = static_cast<size_t>(layerGridW) * (layer.height + 1);
-            bool useFlat = true;
-            if (layer.heights.size() == numVertices) {
-                bool sane = true;
-                for (float h : layer.heights) {
-                    if (!std::isfinite(h) || std::abs(h) > 50000.0f) { sane = false; break; }
-                    if (h < layer.minHeight - 8.0f || h > layer.maxHeight + 8.0f) { sane = false; break; }
-                }
-                if (sane) useFlat = false;
+            if (!layer.heights.empty() && layer.heights.size() != numVertices) {
+                LOG_ERROR("Water height grid size mismatch");
+                throw std::runtime_error("Water height grid size mismatch");
             }
+            const uint64_t authoredCells = chunkWaterMask(layer.mask, layer.x, layer.y,
+                                                           layer.width, layer.height, false);
 
             for (int ly = 0; ly <= layer.height; ly++) {
                 for (int lx = 0; lx <= layer.width; lx++) {
+                    // Dry MCLQ vertices carry FLT_MAX. They neither flatten
+                    // this chunk nor overwrite an adjacent chunk's wet edge.
+                    if (!waterVertexUsed(authoredCells, layer.x + lx, layer.y + ly)) continue;
                     int mgx = baseGx + layer.y + ly;
                     int mgy = baseGy + layer.x + lx;
                     if (mgx >= gridW || mgy >= gridH) continue;
 
                     float h;
-                    if (!useFlat) {
+                    if (!layer.heights.empty()) {
                         int layerIdx = ly * layerGridW + lx;
                         h = layer.heights[layerIdx];
                     } else {
                         h = layer.minHeight;
+                    }
+                    if (!std::isfinite(h) || std::abs(h) > 50000.0f) {
+                        LOG_ERROR("Invalid visible water vertex: ", h, " tile=", tileX, ",", tileY);
+                        throw std::runtime_error("Invalid visible water vertex");
                     }
 
                     surface.heights[mgy * gridW + mgx] = h;
