@@ -1271,7 +1271,9 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
     uint64_t transportGuid = 0;
     float tLocalX = 0, tLocalY = 0, tLocalZ = 0, tLocalO = 0;
     if (onTransport) {
-        transportGuid = packet.readPackedGuid();
+        // The mover GUID is packed, but TBC MovementInfo embeds a raw
+        // uint64 transport GUID. Packing was added to this field in Wrath.
+        transportGuid = flags2Size < 2 ? packet.readUInt64() : packet.readPackedGuid();
         tLocalX = packet.readFloat();
         tLocalY = packet.readFloat();
         tLocalZ = packet.readFloat();

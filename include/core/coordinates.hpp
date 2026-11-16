@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace wowee::core::coords {
@@ -46,9 +47,8 @@ inline glm::vec3 canonicalToServer(const glm::vec3& canonical) {
 
 // Normalize angle to [-PI, PI].
 inline float normalizeAngleRad(float a) {
-    while (a > PI) a -= TWO_PI;
-    while (a < -PI) a += TWO_PI;
-    return a;
+    if (!std::isfinite(a)) throw std::invalid_argument("Cannot normalize non-finite angle");
+    return std::remainder(a, TWO_PI);
 }
 
 // Convert server/wire yaw (radians) → canonical yaw (radians).

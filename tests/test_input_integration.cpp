@@ -1,4 +1,5 @@
 #include "core/npc_interaction_facing.hpp"
+#include "core/coordinates.hpp"
 #include "input_test_support.hpp"
 #include "game_replay.hpp"
 #include "ui/game_screen.hpp"
@@ -788,6 +789,33 @@ TEST_CASE_METHOD(Integration, "Merchant usability follows equipment requirements
     info.subClass = 0; // Axes still require their proficiency.
     truth("select(6, GetMerchantItemInfo(1)) == false");
     lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration, "TBC remote boat passengers use a raw transport GUID", "[transport]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t rider = 3;
+    constexpr uint64_t boat = 0x000000000002B074ull;
+    handler.getEntityManager().addEntity(rider, std::make_shared<wowee::game::Player>(rider));
+    wowee::network::Packet packet(wowee::game::wireOpcode(wowee::game::Opcode::MSG_MOVE_HEARTBEAT));
+    packet.writePackedGuid(rider);
+    packet.writeUInt32(0x200); // TBC ONTRANSPORT
+    packet.writeUInt8(0);
+    packet.writeUInt32(12345);
+    for (float value : {8500.f, 600.f, 8.f, 1.f}) packet.writeFloat(value);
+    packet.writeUInt64(boat);
+    for (float value : {4.f, -6.f, 8.f, 2.5f}) packet.writeFloat(value);
+    packet.writeUInt32(12340);
+    packet.writeUInt32(0);
+    session.receive(packet);
+    const auto& attachments = handler.transportAttachmentsRef();
+    REQUIRE(attachments.contains(rider));
+    const auto& attachment = attachments.at(rider);
+    CHECK(attachment.transportGuid == boat);
+    CHECK(attachment.localOffset == wowee::core::coords::serverToCanonical(glm::vec3(4.f, -6.f, 8.f)));
+    CHECK(attachment.localOrientation == Catch::Approx(wowee::core::coords::serverToCanonicalYaw(2.5f)));
+    CHECK(std::abs(wowee::core::coords::normalizeAngleRad(1e30f)) <= wowee::core::coords::PI);
+    CHECK_THROWS_AS(wowee::core::coords::normalizeAngleRad(INFINITY), std::invalid_argument);
 }
 
 TEST_CASE_METHOD(Integration, "Charter query, rename and close share petition state", "[petition]") {
