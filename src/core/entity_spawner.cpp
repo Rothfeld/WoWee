@@ -4,6 +4,7 @@
 #include "core/appearance_composer.hpp"
 #include "pipeline/char_sections.hpp"
 #include "core/geoset_rules.hpp"
+#include "core/npc_equipment_geosets.hpp"
 #include "pipeline/item_textures.hpp"
 #include "core/helm_visual.hpp"
 
@@ -1358,6 +1359,8 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
         uint16_t selectedFacial200 = 200;
         uint16_t selectedFacial300 = 300;
         uint32_t equipChestGG = 0, equipLegsGG = 0, equipFeetGG = 0, equipGlovesGG = 0, equipCapeGG = 0;
+        uint32_t equipRobeGG = 0;
+        uint32_t equipKneepadsGG = 0;
         if (itDisplayData != displayDataMap_.end() &&
             itDisplayData->second.extraDisplayId != 0) {
             auto itExtra = humanoidExtraMap_.find(itDisplayData->second.extraDisplayId);
@@ -1430,20 +1433,28 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
                         }
                 }
 
-                // Read GeosetGroup1 from equipment to drive clothed mesh selection
+                // Sleeves, gloves and boots use GeosetGroup1. Robes and
+                // leg-slot kilts use GeosetGroup3, with chest taking priority.
                 if (itemDisplayDbc) {
                     const uint32_t fGG1 = idiL ? (*idiL)["GeosetGroup1"] : 7;
-                    auto readGG = [&](uint32_t did) -> uint32_t {
+                    const uint32_t fGG2 = fGG1 + 1; // Three contiguous GeosetGroup columns.
+                    const uint32_t fGG3 = idiL ? (*idiL)["GeosetGroup3"] : 9;
+                    auto readField = [&](uint32_t did, uint32_t field) -> uint32_t {
                         if (did == 0) return 0;
                         int32_t idx = itemDisplayDbc->findRecordById(did);
-                        return (idx >= 0) ? itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), fGG1) : 0;
+                        return (idx >= 0) ? itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), field) : 0;
                     };
+                    auto readGG = [&](uint32_t did) { return readField(did, fGG1); };
                     equipChestGG = readGG(itExtra->second.equipDisplayId[3]);
                     if (equipChestGG == 0) equipChestGG = readGG(itExtra->second.equipDisplayId[2]); // shirt fallback
                     equipLegsGG = readGG(itExtra->second.equipDisplayId[5]);
+                    equipKneepadsGG = readField(itExtra->second.equipDisplayId[5], fGG2);
                     equipFeetGG = readGG(itExtra->second.equipDisplayId[6]);
                     equipGlovesGG = readGG(itExtra->second.equipDisplayId[8]);
                     equipCapeGG = readGG(itExtra->second.equipDisplayId[10]);
+                    equipRobeGG = readField(itExtra->second.equipDisplayId[3], fGG3);
+                    if (equipRobeGG == 0)
+                        equipRobeGG = readField(itExtra->second.equipDisplayId[5], fGG3);
                 }
             }
         }
@@ -1451,7 +1462,7 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
         std::unordered_set<uint16_t> normalizedGeosets;
         for (uint16_t sid : allGeosets) {
             const uint16_t group = static_cast<uint16_t>(sid / 100);
-            if (group == 3 || group == 4 || group == 8 || group == 12 || group == 13 || group == 15) continue;
+            if (group == 3 || group == 4 || group == 5 || group == 8 || group == 12 || group == 13 || group == 15) continue;
             // Group 17 = eye glow (DK/Night Elf "shining eyes" overlay), group 18 = related
             // glow geosets. NPCs are never DK/NE players opting into eye glow, so strip
             // these groups so creatures don't get unwanted glowing blue night-elf eyes.
@@ -1499,20 +1510,6 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
                 : kGeosetBareForearms;
             uint16_t forearmSid = resolveGeoset(wantForearms, allGeosets);
             if (forearmSid != 0) normalizedGeosets.insert(forearmSid);
-        }
-
-        // Group 5 is the shins, driven by the boots. equipFeetGG was read out
-        // of equipDisplayId[6] beside its three siblings and then never used,
-        // so an NPC's boots changed nothing: the compiler had been reporting it
-        // as an unused variable throughout. The comment on group 4 above records
-        // the other half: the feet value used to be applied to the arm group,
-        // and when that was corrected to gloves no group 5 block was added.
-        if (hasGroup5) {
-            uint16_t wantShins = (equipFeetGG > 0)
-                ? equippedGeoset(equipment::kBootsBare, equipFeetGG)
-                : kGeosetBareShins;
-            uint16_t shinSid = resolveGeoset(wantShins, allGeosets);
-            if (shinSid != 0) normalizedGeosets.insert(shinSid);
         }
 
         // Add sleeve/wrist meshes when chest armor calls for them.
@@ -1574,14 +1571,10 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
             if (eyeGlowSid != 0) normalizedGeosets.insert(eyeGlowSid);
         }
 
-        // Prefer trousers geoset; use covered variant when legs armor exists.
-        if (hasGroup13) {
-            uint16_t wantPants = (equipLegsGG > 0)
-                ? equippedGeoset(equipment::kLegsBare, equipLegsGG)
-                : kGeosetBarePants;
-            uint16_t pantsSid = resolveGeoset(wantPants, allGeosets);
-            if (pantsSid != 0) normalizedGeosets.insert(pantsSid);
-        }
+        // Legs' three authored fields control separate waist, knee and robe
+        // groups. Keep one variant per group, including absent bare variants.
+        selectNpcLowerBodyGeosets(normalizedGeosets, allGeosets,
+            {equipFeetGG, equipLegsGG, equipKneepadsGG, equipRobeGG});
 
         // Group 15: cloak mesh. Use "with cape" when equipped, otherwise
         // use "no cape" back panel to cover the single-sided torso.

@@ -6,8 +6,22 @@
 // wearing an untextured cloak it did not own, and a player with no feet.
 #include <catch_amalgamated.hpp>
 #include "core/geoset_rules.hpp"
+#include "core/npc_equipment_geosets.hpp"
 
 using namespace wowee::core;
+
+TEST_CASE("NPC lower-body equipment removes unselected authored alternatives", "[geoset][npc-equipment]") {
+    // Original Draenei male and Night Elf female carry no bare 901/1101 mesh.
+    const std::unordered_set<uint16_t> available{101, 501, 502, 503, 504,
+                                               902, 903, 1102, 1301, 1302};
+    auto selected = available;
+    selectNpcLowerBodyGeosets(selected, available, {});
+    CHECK(selected == std::unordered_set<uint16_t>{101, 501, 1301});
+    selectNpcLowerBodyGeosets(selected, available, {3, 1, 1, 1});
+    CHECK(selected == std::unordered_set<uint16_t>{101, 504, 902, 1102, 1302});
+    selectNpcLowerBodyGeosets(selected, available, {});
+    CHECK(selected == std::unordered_set<uint16_t>{101, 501, 1301});
+}
 
 TEST_CASE("a geoset id is a group and a variant", "[geoset]") {
     CHECK(geosetGroup(501) == 5);
