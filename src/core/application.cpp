@@ -4015,6 +4015,9 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
             gameHandler->update(deltaTime);
         }
     });
+    // NEW_WORLD removes the old entities and queues a world load. Finish that
+    // load in update() before any stage reads the former player's render state.
+    if (worldLoader_ && worldLoader_->hasPendingEntry()) return;
     if (addonManager_ && addonsLoaded_) {
         addonManager_->update(deltaTime);
     }
