@@ -985,14 +985,18 @@ uint32_t EntitySpawner::characterInstanceIdForGuid(uint64_t guid) const {
 }
 
 float EntitySpawner::getPlayerSwimmingDepth() const {
-    const auto player = std::dynamic_pointer_cast<game::Unit>(
-        gameHandler_->getEntityManager().getEntity(gameHandler_->getPlayerGuid()));
-    assert(player);
-    const auto& display = displayDataMap_.at(player->getDisplayId());
+    return getUnitSwimmingDepth(gameHandler_->getPlayerGuid(), renderer_->getCharacterInstanceId());
+}
+
+float EntitySpawner::getUnitSwimmingDepth(uint64_t guid, uint32_t instanceId) const {
+    const auto unit = std::dynamic_pointer_cast<game::Unit>(
+        gameHandler_->getEntityManager().getEntity(guid));
+    assert(unit);
+    const auto& display = displayDataMap_.at(unit->getDisplayId());
     const float height = modelIdToCollisionHeight_.at(display.modelId);
     assert(height > 0.0f);
     const auto* cr = renderer_->getCharacterRenderer();
-    return 0.75f * height * cr->getInstanceScale(renderer_->getCharacterInstanceId());
+    return 0.75f * height * cr->getInstanceScale(instanceId);
 }
 
 bool EntitySpawner::getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const {

@@ -1,12 +1,34 @@
 // Animation ID validation tests - covers nameFromId() and validateAgainstDBC()
 #include <catch_amalgamated.hpp>
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include <cstring>
 #include <vector>
 
 using wowee::pipeline::DBCFile;
 namespace anim = wowee::rendering::anim;
+
+TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creature-locomotion]") {
+    using wowee::rendering::creatureMovingAnimation;
+    CHECK(creatureMovingAnimation(false, false, false) == anim::RUN);
+    CHECK(creatureMovingAnimation(false, false, true) == anim::WALK);
+    CHECK(creatureMovingAnimation(false, true, false) == anim::SWIM);
+    CHECK(creatureMovingAnimation(false, true, true) == anim::SWIM);
+    CHECK(creatureMovingAnimation(true, false, true) == anim::FLY_FORWARD);
+    CHECK(creatureMovingAnimation(true, true, true) == anim::FLY_FORWARD);
+}
+
+TEST_CASE("Aquatic creature surface limit preserves submerged server coordinates", "[creature-locomotion]") {
+    using wowee::rendering::creatureSwimmingZ;
+    const float depth = 0.75f * 2.083f * 1.15f;
+    CHECK(creatureSwimmingZ(0.183376f, false, true, 0.183376f, depth) ==
+          Catch::Approx(0.183376f - depth));
+    CHECK(creatureSwimmingZ(-5.0f, false, true, 0.183376f, depth) == -5.0f);
+    CHECK(creatureSwimmingZ(0.183376f, true, true, 0.183376f, depth) == 0.183376f);
+    CHECK(creatureSwimmingZ(0.183376f, false, false, 0.183376f, depth) == 0.183376f);
+    CHECK(creatureSwimmingZ(0.183376f, false, true, std::nullopt, depth) == 0.183376f);
+}
 
 // Build a synthetic AnimationData.dbc in memory.
 // AnimationData.dbc layout: each record has at least 1 field (the animation ID).

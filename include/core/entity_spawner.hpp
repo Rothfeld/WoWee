@@ -118,6 +118,7 @@ public:
     // Render bounds/position queries (used by click targeting, etc.)
     bool getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const;
     float getPlayerSwimmingDepth() const;
+    float getUnitSwimmingDepth(uint64_t guid, uint32_t instanceId) const;
     uint32_t characterInstanceIdForGuid(uint64_t guid) const;
     bool getRenderFootZForGuid(uint64_t guid, float& outFootZ) const;
     bool getRenderPositionForGuid(uint64_t guid, glm::vec3& outPos) const;

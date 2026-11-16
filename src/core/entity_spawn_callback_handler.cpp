@@ -7,6 +7,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 #include "game/game_handler.hpp"
 
 namespace wowee { namespace core {
@@ -156,7 +157,9 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     auto* cr = renderer_.getCharacterRenderer();
                     bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
                     const bool walking = entitySpawner_.getCreatureWalkingState().count(guid) > 0;
-                    const uint32_t targetAnim = walking ? rendering::anim::WALK : rendering::anim::RUN;
+                    const bool swimming = entitySpawner_.getCreatureSwimmingState().count(guid) > 0;
+                    const bool flying = entitySpawner_.getCreatureFlyingState().count(guid) > 0;
+                    const uint32_t targetAnim = rendering::creatureMovingAnimation(flying, swimming, walking);
                     // Only restart when the selected locomotion animation changed.
                     if (!gotState || (curAnimId != rendering::anim::DEATH && curAnimId != targetAnim)) {
                         cr->playAnimation(instanceId, targetAnim, /*loop=*/true);

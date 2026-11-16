@@ -18,6 +18,7 @@
 #include "core/ui_screen_callback_handler.hpp"
 #include "game/spell_classification.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include "rendering/animation_controller.hpp"
 #include <bit>
@@ -3499,6 +3500,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             const bool groundCreature = !_creatureFlyingState.count(guid) &&
                                         !_creatureSwimmingState.count(guid);
             const bool onTransport = gameHandler->transportAttachmentsRef().count(guid) != 0;
+            if (!onTransport && _creatureSwimmingState.count(guid) &&
+                !_creatureFlyingState.count(guid) && renderer->getWaterRenderer()) {
+                const auto surface = renderer->getWaterRenderer()->getNearestWaterHeightAt(
+                    renderPos.x, renderPos.y, renderPos.z);
+                if (surface) {
+                    renderPos.z = rendering::creatureSwimmingZ(renderPos.z, false, true, surface,
+                        entitySpawner_->getUnitSwimmingDepth(guid, instanceId));
+                }
+            }
             if (groundCreature && !onTransport) {
                 if (auto floorZ = movingEntityFloor(renderer.get(), renderPos,
                                                     previousRenderPos)) {
@@ -3608,10 +3618,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     if (!gotState || curAnimId != rendering::anim::DEATH) {
                         uint32_t targetAnim;
                         if (isMovingNow) {
-                            if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
-                            else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
-                            else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
-                            else                    targetAnim = rendering::anim::RUN;
+                            targetAnim = rendering::creatureMovingAnimation(
+                                isFlyingNow, isSwimmingNow, isWalkingNow);
                         } else {
                             if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
                             else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
