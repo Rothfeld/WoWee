@@ -62,7 +62,7 @@ void PostProcessPipeline::manageResources() {
 
     // FXAA resource management - FXAA can coexist with FSR1 and FSR3.
     // When both FXAA and FSR3 are enabled, FXAA runs as a post-FSR3 pass.
-    // Do not force this pass for ghost mode; keep AA quality strictly user-controlled.
+    // Death compositing needs scene sampling, independently of the AA switch.
     const bool useFXAA = needsFXAAPass();
     if ((fxaa_.needsRecreate || !useFXAA) && fxaa_.sceneFramebuffer) {
         destroyFXAAResources();
@@ -71,8 +71,8 @@ void PostProcessPipeline::manageResources() {
     }
     if (useFXAA && !fxaa_.sceneFramebuffer) {
         if (!initFXAAResources()) {
-            if (glowEnabled_ && glow_ > 0.0f)
-                throw std::runtime_error("TBC glow: failed to initialize scene compositing resources");
+            if ((glowEnabled_ && glow_ > 0.0f) || (ghost_ && deathEffectEnabled_))
+                throw std::runtime_error("Failed to initialize scene effect compositing resources");
             LOG_ERROR("FXAA: initialization failed, disabling");
             if (fxaa_.enabled) fxaa_.enabled = false;
             intoxication_ = 0.0f;
@@ -1799,11 +1799,11 @@ bool PostProcessPipeline::initFXAAResources() {
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     }
 
-    // Pixel size, sharpening, intoxication, authored glow, and AA switch.
+    // Pixel size, sharpening, intoxication, authored glow, AA and death switches.
     VkPushConstantRange pc{};
     pc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pc.offset = 0;
-    pc.size = 24;
+    pc.size = 28;
     VkPipelineLayoutCreateInfo plCI{};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plCI.setLayoutCount = 1;
@@ -1880,13 +1880,14 @@ void PostProcessPipeline::renderFXAAPass() {
     // RCAS runs before this pass. Its sharpening slot stays zero here.
     // Glow can require compositing while antialiasing remains disabled.
     const float sharpness = 0.0f;
-    float pc[6] = {
+    float pc[7] = {
         1.0f / static_cast<float>(ext.width),
         1.0f / static_cast<float>(ext.height),
         sharpness,
         intoxication_,
         glowEnabled_ ? glow_ : 0.0f,
-        fxaa_.enabled ? 1.0f : 0.0f
+        fxaa_.enabled ? 1.0f : 0.0f,
+        ghost_ && deathEffectEnabled_ ? 1.0f : 0.0f
     };
     vkCmdPushConstants(currentCmd_, fxaa_.pipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), pc);

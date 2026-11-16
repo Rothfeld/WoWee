@@ -120,6 +120,7 @@ struct LuaServices {
     std::function<float()> getGamma;
     std::function<void(float)> setGamma;
     std::function<void(bool)> setGlowEnabled;
+    std::function<void(bool)> setDeathEffectEnabled;
 
     /// What the world map is showing, for the interface's own map.
     ///

@@ -260,8 +260,8 @@ private:
     /// it can be recorded after the water rather than under it. Must run before
     /// the spray's pipelines are built, and again whenever they are rebuilt.
     void syncSwimEffectsTargetPass();
-    /// syncSwimEffectsTargetPass, then rebuild the spray or the minimap if the
-    /// answer moved either of them. Runs from beginFrame every frame, once the
+    /// syncSwimEffectsTargetPass, then rebuild the spray if its pass moved.
+    /// Runs from beginFrame every frame, once the
     /// post-process target for the frame is settled; free when nothing moved.
     void refreshSwimEffectsPass();
 
@@ -269,9 +269,6 @@ private:
     /// pass. Draw sites test this rather than waterDrawsInContinuePass() so a
     /// mid-run mode change cannot record a pipeline into an incompatible pass.
     bool swimEffectsDrawWithWater_ = false;
-    /// Whether the minimap follows water out of the scene pass, for the same
-    /// reason the spray does - see syncSwimEffectsTargetPass.
-    bool minimapDrawsWithWater_ = false;
 
     void runDeferredWorldInitStep(float deltaTime);
 
@@ -543,7 +540,6 @@ private:
     bool terrainEnabled = true;
     bool terrainLoaded = false;
 
-    bool ghostMode_ = false;  // set each frame from gameHandler->isPlayerGhost()
 
     // Render Graph - declarative pass ordering with automatic barriers
     std::unique_ptr<RenderGraph> renderGraph_;

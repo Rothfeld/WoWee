@@ -738,7 +738,7 @@ static void applySoundCVars(lua_State* L) {
 /// with wherever the controls already were.
 
 static void pushCvarDefault(lua_State* L, const std::string& n) {
-    if (n == "ffxglow") {
+    if (n == "ffxglow" || n == "ffxdeath") {
         lua_pushstring(L, "1");
         return;
     }
@@ -1504,6 +1504,10 @@ static std::string cvarLabelFor(const std::string& name) {
 /// somebody changed a setting, which is not what restoring one is.
 static void applyCVarSideEffects(lua_State* L, const std::string& key,
                                  const std::string& value) {
+    if (key == "ffxdeath") {
+        if (auto* svc = getLuaServices(L); svc && svc->setDeathEffectEnabled)
+            svc->setDeathEffectEnabled(value != "0");
+    }
     if (key == "ffxglow") {
         if (auto* svc = getLuaServices(L); svc && svc->setGlowEnabled)
             svc->setGlowEnabled(value != "0");

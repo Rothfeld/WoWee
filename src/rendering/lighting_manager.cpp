@@ -120,6 +120,9 @@ bool LightingManager::loadLightDbc(pipeline::AssetManager* assetManager) {
             volume.lightParamsIdUnderwater = dbc->getUInt32(i, lL ? (*lL)["LightParamsIDUnderwater"] : 9);
         }
 
+        if (dbc->getFieldCount() > 11) {
+            volume.lightParamsIdDeath = dbc->getUInt32(i, 11);
+        }
         // Add to map-specific list
         lightVolumesByMap_[volume.mapId].push_back(volume);
     }
@@ -282,7 +285,7 @@ bool LightingManager::loadLightBandDbcs(pipeline::AssetManager* assetManager) {
 
 void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_t zoneId,
                               float gameTime,
-                              bool isRaining, bool isUnderwater) {
+                              bool isRaining, bool isUnderwater, bool isGhost) {
     if (!initialized_) return;
 
     // Update time
@@ -353,7 +356,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
             const size_t blendCount = std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES);
             for (size_t i = 0; i < blendCount; ++i) {
                 const auto& wv = activeVolumes_[i];
-                const uint32_t paramsId = selectLightParamsId(wv.volume, isRaining, isUnderwater);
+                const uint32_t paramsId = selectLightParamsId(wv.volume, isRaining, isUnderwater, isGhost);
                 auto profileIt = lightParamsProfiles_.find(paramsId);
                 if (profileIt == lightParamsProfiles_.end() ||
                     profileIt->second.lightSkyboxId == 0) continue;
@@ -420,7 +423,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         const size_t blendCount = std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES);
         for (size_t i = 0; i < blendCount; ++i) {
             const auto& wv = activeVolumes_[i];
-            uint32_t lightParamsId = selectLightParamsId(wv.volume, isRaining, isUnderwater);
+            uint32_t lightParamsId = selectLightParamsId(wv.volume, isRaining, isUnderwater, isGhost);
             auto it = lightParamsProfiles_.find(lightParamsId);
 
             if (it != lightParamsProfiles_.end()) {
@@ -694,8 +697,9 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(c
     return weighted;
 }
 
-uint32_t LightingManager::selectLightParamsId(const LightVolume* volume, bool isRaining, bool isUnderwater) const {
+uint32_t LightingManager::selectLightParamsId(const LightVolume* volume, bool isRaining, bool isUnderwater, bool isGhost) const {
     if (!volume) return 0;
+    if (isGhost) return volume->lightParamsIdDeath;
 
     // Select appropriate LightParams based on conditions
     if (isUnderwater && volume->lightParamsIdUnderwater != 0) {

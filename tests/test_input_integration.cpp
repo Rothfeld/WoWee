@@ -1656,3 +1656,19 @@ TEST_CASE_METHOD(Integration, "TBC corpse recreation keeps snapshot and distingu
     CHECK(equipment == 1);
     CHECK(deaths == 1);
 }
+TEST_CASE_METHOD(Integration, "Death effect CVar controls compositor independently of glow", "[death-cvar]") {
+    bool deathEnabled = true;
+    int glowCalls = 0;
+    addons::LuaServices services;
+    services.setDeathEffectEnabled = [&](bool enabled) { deathEnabled = enabled; };
+    services.setGlowEnabled = [&](bool) { ++glowCalls; };
+    lua.setLuaServices(services);
+    truth("GetCVarDefault('ffxDeath') == '1'");
+    run("SetCVar('ffxDeath', '0')");
+    CHECK_FALSE(deathEnabled);
+    truth("GetCVar('ffxDeath') == '0'");
+    run("SetCVar('FFXDEATH', '1')");
+    CHECK(deathEnabled);
+    CHECK(glowCalls == 0);
+    lua.setLuaServices({});
+}

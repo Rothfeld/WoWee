@@ -1263,13 +1263,15 @@ void Renderer::beginFrame() {
 
     // Post-process resource management (§4.3 - delegates to PostProcessPipeline)
     if (postProcessPipeline_) {
+        const auto* gh = core::Application::getInstance().getGameHandler();
+        postProcessPipeline_->setGhost(gh && gh->isPlayerGhost());
         postProcessPipeline_->setGlow(game::isActiveExpansion("tbc") && lightingManager
             ? lightingManager->getLightingParams().glow : 0.0f);
         postProcessPipeline_->manageResources();
     }
 
     // The target that call may have just created or destroyed decides where
-    // the water draws, and with it where the spray and the minimap go. Asked
+    // the water draws, and with it where the spray goes. Asked
     // again here, after the answer can have changed, rather than only at the
     // anti-aliasing rebuild that runs before the target exists.
     refreshSwimEffectsPass();
@@ -1493,6 +1495,10 @@ void Renderer::endFrame() {
 
         // Under the interface, over everything else.
         if (sunShafts_) sunShafts_->composite(currentCmd, vkCtx->getCurrentFrame());
+
+        if (worldDrawnThisFrame_) {
+            renderMinimapOverlay(currentCmd, core::Application::getInstance().getGameHandler());
+        }
 
         // ImGui's pipelines are built against the overlay pass, so it always
         // records inline here rather than into a scene-pass secondary buffer.
@@ -2099,7 +2105,7 @@ void Renderer::update(float deltaTime) {
         const uint32_t resolvedZoneId = getCurrentZoneId();
 
         lightingManager->update(characterPosition, mapId, resolvedZoneId,
-                                gameTime, isRaining, isUnderwater);
+                                gameTime, isRaining, isUnderwater, gh && gh->isPlayerGhost());
 
         // Sync weather visual renderer with game state
         if (weather && gh) {
@@ -2999,9 +3005,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     lastWMORenderMs = 0.0;
     lastM2RenderMs = 0.0;
 
-    // Cache ghost state for use in overlay and FXAA passes this frame.
-    ghostMode_ = (gameHandler && gameHandler->isPlayerGhost());
-
     uint32_t frameIdx = vkCtx->getCurrentFrame();
     VkDescriptorSet perFrameSet = perFrameDescSets[frameIdx];
     const glm::mat4& view = camera ? camera->getViewMatrix() : glm::mat4(1.0f);
@@ -3524,9 +3527,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             swimEffects->render(currentCmd, perFrameSet);
         }
 
-        // And the minimap, last of all: it is the interface rather than the
-        // world, and nothing in the world belongs over it.
-        if (minimapDrawsWithWater_) renderMinimapOverlay(currentCmd, gameHandler);
     }
 
     auto renderEnd = std::chrono::steady_clock::now();
@@ -3542,7 +3542,6 @@ void Renderer::syncSwimEffectsTargetPass() {
     VkRenderPass pass = vkCtx->getImGuiRenderPass();
     VkSampleCountFlagBits samples = vkCtx->getMsaaSamples();
     swimEffectsDrawWithWater_ = false;
-    minimapDrawsWithWater_ = false;
 
     if (waterDrawsInContinuePass()) {
         // Both continuation passes are single-sampled: with MSAA the water draws
@@ -3555,24 +3554,15 @@ void Renderer::syncSwimEffectsTargetPass() {
         if (pass != VK_NULL_HANDLE) {
             samples = VK_SAMPLE_COUNT_1_BIT;
             swimEffectsDrawWithWater_ = true;
-            minimapDrawsWithWater_ = true;
         } else {
             pass = vkCtx->getImGuiRenderPass();
         }
     }
 
     if (swimEffects) swimEffects->setTargetPass(pass, samples);
-    // The minimap for the same reason as the spray, and it is the more visible
-    // of the two: it is a fixed disc in the corner of the screen, so any water
-    // on screen behind it painted straight over the terrain it draws. The
-    // spray at least only lost against water it was thrown off.
-    //
-    // Only when water has actually left the scene pass. Where it has not - MSAA
-    // onto an off-screen scene, or no continuation pass at all - water is drawn
-    // before this and the minimap is already on top of it.
+    // Interface terrain must remain outside world color effects and water.
     if (minimap) {
-        minimap->setTargetPass(minimapDrawsWithWater_ ? pass : VK_NULL_HANDLE,
-                               samples);
+        minimap->setTargetPass(vkCtx->getOverlayRenderPass(), VK_SAMPLE_COUNT_1_BIT);
     }
 }
 
@@ -3682,12 +3672,7 @@ if (overlaySystem_ && waterRenderer && camera) {
 }
 
 void Renderer::renderPostSceneOverlays(VkCommandBuffer cmd,
-                                       game::GameHandler* gameHandler) {
-    // Ghost mode desaturation: cold blue-grey overlay when dead/ghost
-    if (ghostMode_ && overlaySystem_) {
-        overlaySystem_->renderOverlay(glm::vec4(0.30f, 0.35f, 0.42f, 0.45f), cmd);
-    }
-
+                                       game::GameHandler* /*gameHandler*/) {
     // Brightness overlay, applied before the minimap so it doesn't affect UI.
     if (overlaySystem_) {
         float br = postProcessPipeline_ ? postProcessPipeline_->getBrightness() : 1.0f;
@@ -3702,9 +3687,6 @@ void Renderer::renderPostSceneOverlays(VkCommandBuffer cmd,
         }
     }
 
-    // Unless it is following water into the pass after this one, where it is
-    // drawn instead - see renderMinimapOverlay's caller below the water.
-    if (!minimapDrawsWithWater_) renderMinimapOverlay(cmd, gameHandler);
 }
 
 /// The minimap disc, over whatever has been drawn so far.
@@ -3818,6 +3800,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     // Create minimap if not already created
     if (!minimap) {
         minimap = std::make_unique<Minimap>();
+        minimap->setTargetPass(vkCtx->getOverlayRenderPass(), VK_SAMPLE_COUNT_1_BIT);
         if (!minimap->initialize(vkCtx, perFrameSetLayout)) {
             LOG_ERROR("Failed to initialize minimap");
             minimap.reset();
@@ -4312,21 +4295,18 @@ void Renderer::setupWater1xPass() {
 // post-process target exists, and that target is created lazily on the frame
 // after the anti-aliasing rebuild that first made the decision. With MSAA and
 // FXAA together the rebuild chose the single-sample water pass, the FXAA
-// target then moved the water back into the scene pass, and the minimap and
-// the spray - still flagged for a pass that no longer ran - were drawn
+// target then moved the water back into the scene pass, and
+// the spray - still flagged for a pass that no longer ran - was drawn
 // nowhere at all. The same happened, in either direction, whenever FXAA was
 // toggled in the settings.
 void Renderer::refreshSwimEffectsPass() {
     if (!vkCtx) return;
     const bool sprayWasWithWater = swimEffectsDrawWithWater_;
-    const bool minimapWasWithWater = minimapDrawsWithWater_;
     syncSwimEffectsTargetPass();
     const bool sprayMoved = swimEffects && swimEffectsDrawWithWater_ != sprayWasWithWater;
-    const bool minimapMoved = minimap && minimapDrawsWithWater_ != minimapWasWithWater;
-    if (!sprayMoved && !minimapMoved) return;
+    if (!sprayMoved) return;
     vkDeviceWaitIdle(vkCtx->getDevice());
     if (sprayMoved) swimEffects->recreatePipelines();
-    if (minimapMoved) minimap->recreatePipelines();
 }
 
 // ========================= Multithreaded Secondary Command Buffers =========================

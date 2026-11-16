@@ -80,6 +80,7 @@ struct LightVolume {
     uint32_t lightParamsId = 0;        // Normal/clear weather
     uint32_t lightParamsIdRain = 0;    // Rainy weather
     uint32_t lightParamsIdUnderwater = 0;
+    uint32_t lightParamsIdDeath = 0;
     // More variants exist for phases, death, etc.
 };
 
@@ -198,7 +199,7 @@ public:
      */
     void update(const glm::vec3& playerPos, uint32_t mapId, uint32_t zoneId,
                 float gameTime = -1.0f,
-                bool isRaining = false, bool isUnderwater = false);
+                bool isRaining = false, bool isUnderwater = false, bool isGhost = false);
 
     /**
      * Get current lighting parameters
@@ -285,7 +286,7 @@ private:
     /**
      * Get LightParams ID based on conditions
      */
-    uint32_t selectLightParamsId(const LightVolume* volume, bool isRaining, bool isUnderwater) const;
+    uint32_t selectLightParamsId(const LightVolume* volume, bool isRaining, bool isUnderwater, bool isGhost) const;
 
     /**
      * Sample lighting from LightParams profile

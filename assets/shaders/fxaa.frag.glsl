@@ -27,6 +27,7 @@ layout(push_constant) uniform PC {
     float intoxication;
     float glow;
     float enableAA;
+    float deathEffect;
 } pc;
 
 // The reference's default tuning. Subpix 0.75 is what it calls the default
@@ -58,6 +59,15 @@ vec3 compositeGlow(vec3 scene, vec2 uv) {
             blurred += texture(uScene, uv + (vec2(x, y) - 1.5) * stepUV).rgb
                      * weights[x] * weights[y];
     return scene + pc.glow * blurred * blurred;
+}
+
+vec3 compositeDeath(vec3 scene) {
+    if (pc.deathEffect == 0.0) return scene;
+    // Legacy death compositing: luminance plus cyan midtone lift. The blue
+    // coefficient is 0.144, not the regular FXAA luminance coefficient.
+    float gray = clamp(dot(scene, vec3(0.299, 0.587, 0.144)), 0.0, 1.0);
+    float midtone = 4.0 * gray * (1.0 - gray);
+    return min(vec3(gray) + (vec3(83.0, 147.0, 168.0) / 255.0) * midtone, vec3(1.0));
 }
 
 void main() {
@@ -95,7 +105,7 @@ void main() {
     float range    = rangeMax - rangeMin;
 
     if (pc.enableAA == 0.0 || range < max(FXAA_EDGE_THRESHOLD_MIN, rangeMax * FXAA_EDGE_THRESHOLD)) {
-        outColor = vec4(compositeGlow(rgbM, uv), 1.0);
+        outColor = vec4(compositeDeath(compositeGlow(rgbM, uv)), 1.0);
         return;
     }
 
@@ -203,5 +213,5 @@ void main() {
         fxaaResult = clamp(fxaaResult + s * (fxaaResult - blur), 0.0, 1.0);
     }
 
-    outColor = vec4(compositeGlow(fxaaResult, uv), 1.0);
+    outColor = vec4(compositeDeath(compositeGlow(fxaaResult, uv)), 1.0);
 }

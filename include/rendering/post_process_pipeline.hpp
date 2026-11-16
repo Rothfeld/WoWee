@@ -141,6 +141,8 @@ public:
     void setBrightness(float b) { brightness_ = b; }
     void setGlow(float amount) { glow_ = glm::clamp(amount, 0.0f, 1.0f); }
     void setGlowEnabled(bool enabled) { glowEnabled_ = enabled; }
+    void setGhost(bool ghost) { ghost_ = ghost; }
+    void setDeathEffectEnabled(bool enabled) { deathEffectEnabled_ = enabled; }
     [[nodiscard]] float getBrightness() const { return brightness_; }
     void setIntoxication(float amount) { intoxication_ = glm::clamp(amount, 0.0f, 1.0f); }
     [[nodiscard]] float getIntoxication() const { return intoxication_; }
@@ -159,8 +161,10 @@ private:
     float intoxication_ = 0.0f;
     float glow_ = 0.0f;
     bool glowEnabled_ = true;
+    bool ghost_ = false;
+    bool deathEffectEnabled_ = true;
 
-    [[nodiscard]] bool needsFXAAPass() const { return fxaa_.enabled || intoxication_ > 0.001f || (glowEnabled_ && glow_ > 0.0f); }
+    [[nodiscard]] bool needsFXAAPass() const { return fxaa_.enabled || intoxication_ > 0.001f || (glowEnabled_ && glow_ > 0.0f) || (ghost_ && deathEffectEnabled_); }
 
     // FSR 1.0 upscaling state
     struct FSRState {

@@ -672,6 +672,10 @@ bool Application::initialize() {
             if (rend && rend->getPostProcessPipeline())
                 rend->getPostProcessPipeline()->setGlowEnabled(enabled);
         };
+        luaSvc.setDeathEffectEnabled = [rend = renderer.get()](bool enabled) {
+            if (rend && rend->getPostProcessPipeline())
+                rend->getPostProcessPipeline()->setDeathEffectEnabled(enabled);
+        };
         // The world map's own data, for the interface's map. The client keeps
         // the zones, their overlays and the area POIs and drew them only
         // itself; FrameXML's map has readers for exactly these and had nothing
