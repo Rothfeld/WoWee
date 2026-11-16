@@ -2708,6 +2708,24 @@ int lua_Tooltip_SetUnit(lua_State* L) {
                     levelLine += wowee::addons::kLuaClasses[classId];
                 }
             }
+            if (!isPlayer) {
+                const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+                const int rank = unit ? gh->getCreatureRank(unit->getEntry()) : 0;
+                const char* label = nullptr;
+                switch (rank) {
+                    case 1: label = "ELITE"; break;
+                    case 2: label = "ELITE"; break;
+                    case 3: label = "BOSS"; break;
+                    case 4: label = "ITEM_QUALITY3_DESC"; break;
+                    default: break;
+                }
+                if (label) {
+                    lua_getglobal(L, label);
+                    assert(lua_isstring(L, -1));
+                    levelLine += std::string(" (") + lua_tostring(L, -1) + ")";
+                    lua_pop(L, 1);
+                }
+            }
             addLine(levelLine, 1.0f, 1.0f, 1.0f);
         }
     }
