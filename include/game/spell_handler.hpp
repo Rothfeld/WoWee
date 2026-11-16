@@ -158,6 +158,7 @@ public:
 
     // Target aura mutation (formerly accessed via friend)
     void clearTargetAuras() { for (auto& slot : targetAuras_) slot = AuraSlot{}; }
+    void restoreTargetAuras(uint64_t guid);
 
     // Player aura mutation (formerly accessed via friend)
     void resetPlayerAuras(size_t capacity) { playerAuras_.clear(); playerAuras_.resize(capacity); }

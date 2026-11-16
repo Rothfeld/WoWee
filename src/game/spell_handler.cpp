@@ -2583,10 +2583,17 @@ void SpellHandler::handleCooldownEvent(network::Packet& packet) {
 /// soon as they clicked on them, and a buff cast on them while they were
 /// targeted never appeared there at all - which reads exactly like the buff
 /// being cancelled, or never landing.
+void SpellHandler::restoreTargetAuras(uint64_t guid) {
+    if (guid == owner_.getPlayerGuid()) targetAuras_ = playerAuras_;
+    else if (const auto* cached = getUnitAuras(guid)) targetAuras_ = *cached;
+    else clearTargetAuras();
+}
+
 void SpellHandler::mirrorAurasByGuid(uint64_t guid, const std::vector<AuraSlot>& auras) {
     if (guid == 0 || guid == owner_.getPlayerGuid()) return;
     auto& cached = unitAurasCache_[guid];
     if (&cached != &auras) cached = auras;
+    if (guid == owner_.getTargetGuid()) targetAuras_ = cached;
 }
 
 void SpellHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {

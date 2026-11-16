@@ -1204,6 +1204,28 @@ void GameScreen::renderMinimapBattlegroundPositions(const MinimapFrame& frame, g
 // skipped - it becomes an arrow at the rim pointing at it, which is why this
 // one keeps the render position rather than only the projected point.
 void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::GameHandler& gameHandler) {
+    auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+    const auto tooltip = [&](bool shown) {
+        if (!engine) return;
+        const char* script = shown ? R"lua(
+            if not WoweeCorpseMinimapTooltip then
+                CreateFrame("GameTooltip", "WoweeCorpseMinimapTooltip", UIParent, "GameTooltipTemplate")
+            end
+            local tip = WoweeCorpseMinimapTooltip
+            tip:SetOwner(UIParent, "ANCHOR_NONE")
+            tip:ClearAllPoints()
+            local x, y = GetCursorPosition()
+            local scale = UIParent:GetEffectiveScale()
+            tip:SetPoint("BOTTOM", UIParent, "BOTTOMLEFT", x / scale, y / scale)
+            tip:SetText(CORPSE_RED)
+            tip:Show()
+        )lua" : "if WoweeCorpseMinimapTooltip then WoweeCorpseMinimapTooltip:Hide() end";
+        if (!engine->executeString(script)) {
+            LOG_ERROR("Corpse minimap tooltip: ", engine->lastError());
+            throw std::runtime_error("Corpse minimap tooltip failed");
+        }
+    };
+    tooltip(false);
     // Corpse direction indicator - shown when player is a ghost
     if (gameHandler.isPlayerGhost()) {
         float corpseCanX = 0.0f, corpseCanY = 0.0f;
@@ -1217,23 +1239,19 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
             const bool onMap = frame.project(corpseRender, csx, csy);
 
             if (onMap) {
-                // Draw a small skull-like X marker at the corpse position
-                const float r = 5.0f;
-                frame.drawList->AddCircleFilled(ImVec2(csx, csy), r + 1.0f, IM_COL32(0, 0, 0, 140), 12);
-                frame.drawList->AddCircle(ImVec2(csx, csy), r + 1.0f, IM_COL32(200, 200, 220, 220), 12, 1.5f);
-                // Draw an X in the circle
-                frame.drawList->AddLine(ImVec2(csx - 3.0f, csy - 3.0f), ImVec2(csx + 3.0f, csy + 3.0f),
-                                  IM_COL32(180, 180, 220, 255), 1.5f);
-                frame.drawList->AddLine(ImVec2(csx + 3.0f, csy - 3.0f), ImVec2(csx - 3.0f, csy + 3.0f),
-                                  IM_COL32(180, 180, 220, 255), 1.5f);
-                // Tooltip on hover
-                if (cursorNearBlip(csx, csy)) {
-                    float dist = gameHandler.getCorpseDistance();
-                    if (dist >= 0.0f)
-                        ImGui::SetTooltip("Your corpse (%.0f yd)", dist);
-                    else
-                        ImGui::SetTooltip("Your corpse");
+                // Original POI atlas cell 7 is the brown corpse tombstone.
+                static VkDescriptorSet atlas = VK_NULL_HANDLE;
+                if (!atlas) {
+                    atlas = uploadUiTextureFromBlp(services_.assetManager,
+                        "Interface\\Minimap\\POIIcons.blp", services_.window);
+                    if (!atlas) throw std::runtime_error("Corpse minimap atlas failed to load");
                 }
+                const float scale = engine ? engine->widgets().uiScale() : 1.0f;
+                const float half = 8.0f * scale;
+                frame.drawList->AddImage((ImTextureID)(uintptr_t)atlas,
+                    ImVec2(csx - half, csy - half), ImVec2(csx + half, csy + half),
+                    ImVec2(7.0f / 8, 0), ImVec2(1, 1.0f / 8));
+                if (cursorNearBlip(csx, csy)) tooltip(true);
             } else {
                 // Corpse is outside minimap - draw an edge arrow pointing toward it
                 float dx = corpseRender.x - frame.playerRender.x;
@@ -1252,24 +1270,26 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
                     float edgeR = frame.mapRadius - 7.0f;
                     float ax = frame.centerX + nx * edgeR;
                     float ay = frame.centerY + ny * edgeR;
-                    // Arrow pointing outward (toward corpse)
-                    float arrowLen = 6.0f;
-                    float arrowW = 3.5f;
-                    ImVec2 tip(ax + nx * arrowLen, ay + ny * arrowLen);
-                    ImVec2 left(ax - ny * arrowW - nx * arrowLen * 0.4f,
-                                ay + nx * arrowW - ny * arrowLen * 0.4f);
-                    ImVec2 right(ax + ny * arrowW - nx * arrowLen * 0.4f,
-                                 ay - nx * arrowW - ny * arrowLen * 0.4f);
-                    frame.drawList->AddTriangleFilled(tip, left, right, IM_COL32(180, 180, 240, 230));
-                    frame.drawList->AddTriangle(tip, left, right, IM_COL32(0, 0, 0, 180), 1.0f);
-                    // Tooltip on hover
-                    if (cursorNearBlip(ax, ay, kArrowHoverRadius)) {
-                        float dist = gameHandler.getCorpseDistance();
-                        if (dist >= 0.0f)
-                            ImGui::SetTooltip("Your corpse (%.0f yd)", dist);
-                        else
-                            ImGui::SetTooltip("Your corpse");
+                    static VkDescriptorSet arrow = VK_NULL_HANDLE;
+                    if (!arrow) {
+                        arrow = uploadUiTextureFromBlp(services_.assetManager,
+                            "Interface\\Minimap\\Rotating-MinimapCorpseArrow.blp", services_.window);
+                        if (!arrow) throw std::runtime_error("Corpse minimap arrow failed to load");
                     }
+                    // Alpha bounds are x=8..25,y=7..22 in the 32px image.
+                    // Rotate around the glyph center, not the padded image center.
+                    const float scale = engine ? engine->widgets().uiScale() : 1.0f;
+                    const ImVec2 corners[] = {{-16.5f,-14.5f},{15.5f,-14.5f},
+                                             {15.5f,17.5f},{-16.5f,17.5f}};
+                    ImVec2 points[4];
+                    for (int i = 0; i < 4; ++i) {
+                        points[i] = ImVec2(ax + (-ny * corners[i].x - nx * corners[i].y) * scale,
+                                          ay + (nx * corners[i].x - ny * corners[i].y) * scale);
+                    }
+                    frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
+                        points[0], points[1], points[2], points[3],
+                        ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
+                    if (cursorNearBlip(ax, ay, kArrowHoverRadius)) tooltip(true);
                 }
             }
         }

@@ -4873,6 +4873,7 @@ void Application::render() {
                     // rebuilt - and drawing from that is a use-after-free
                     // rather than a stale picture.
                     portrait->externalTexture = unitPortrait_.textureId();
+                    portrait->desaturated = gameHandler->isPlayerGhost();
                 }
 
                 // Every texture SetPortraitTexture was told to fill with the

@@ -220,6 +220,7 @@ public:
     [[nodiscard]] const FrameData& getCurrentFrameData() const { return frames[currentFrame]; }
 
     VkPipeline getImGuiAdditivePipeline(VkPipelineLayout layout);
+    VkPipeline getImGuiDesaturatedPipeline(VkPipelineLayout layout, bool additive);
     void requestWorldLabelDepth() { worldLabelDepthRequested_ = true; }
     void prepareWorldLabelDepth(VkCommandBuffer cmd, VkImage image, bool multisampled, VkImageLayout layout);
     void bindWorldLabelDepth(VkCommandBuffer cmd, float depth);
@@ -582,6 +583,7 @@ private:
     // ImGui resources
     VkRenderPass imguiRenderPass = VK_NULL_HANDLE;
     VkPipeline imguiAdditivePipeline_ = VK_NULL_HANDLE;
+    VkPipeline imguiDesaturatedPipelines_[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
     struct WorldLabelDepth {
         VkImage source = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;

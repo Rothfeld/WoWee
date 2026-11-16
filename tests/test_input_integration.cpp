@@ -1401,6 +1401,8 @@ TEST_CASE_METHOD(Integration, "Untrained corpse tooltip exposes red skinning req
         CORPSE = 'Corpse'
         skinTip = CreateFrame('GameTooltip', 'SkinTip', UIParent)
         assert(skinTip:SetUnit('target'))
+        assert(select(2, skinTip:GetUnit()) == 'target')
+        assert(not SkinTipStatusBar:IsShown())
     )lua");
     const auto* tip = lua.widgets().findByName("SkinTip");
     REQUIRE(tip);
@@ -1412,6 +1414,11 @@ TEST_CASE_METHOD(Integration, "Untrained corpse tooltip exposes red skinning req
     corpse->setUnitFlags(0);
     run("assert(skinTip:SetUnit('target'))");
     CHECK(tip->tooltipLines.size() == 2);
+    corpse->setHealth(200);
+    run("assert(skinTip:SetUnit('target'))");
+    REQUIRE(tip->tooltipLines.size() == 2);
+    CHECK(tip->tooltipLines[1].left == "Level 12 Beast");
+    CHECK_FALSE(tip->tooltipLines[1].wrap);
     lua.setGameHandler(nullptr);
 }
 
@@ -1671,4 +1678,75 @@ TEST_CASE_METHOD(Integration, "Death effect CVar controls compositor independent
     CHECK(deathEnabled);
     CHECK(glowCalls == 0);
     lua.setLuaServices({});
+}
+
+TEST_CASE_METHOD(Integration, "TBC remote aura fields survive target selection and update", "[remote-aura]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    constexpr uint64_t guid = 0xf13000087a000777ull;
+    auto unit = std::make_shared<Unit>(guid);
+    unit->setName("Ghost reference");
+    handler.getEntityManager().addEntity(guid, unit);
+    handler.spellNameCacheLoadedRef() = true;
+    handler.spellNameCacheRef()[8326].name = "Ghost";
+    const uint16_t field = fieldIndex(UF::UNIT_FIELD_AURAS) + 40;
+    const auto receiveAura = [&](uint32_t spell) {
+        wowee::network::Packet packet(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+        packet.writeUInt32(1); packet.writeUInt8(0);
+        packet.writeUInt8(static_cast<uint8_t>(UpdateType::VALUES));
+        packet.writePackedGuid(guid);
+        const uint8_t words = field / 32 + 1;
+        packet.writeUInt8(words);
+        for (uint8_t i = 0; i < words; ++i) packet.writeUInt32(i == field / 32 ? 1u << (field % 32) : 0);
+        packet.writeUInt32(spell);
+        session.receive(packet);
+    };
+    receiveAura(8326);
+    handler.setTarget(guid);
+    truth("UnitDebuff('target', 1) == 'Ghost'");
+    truth("UnitBuff('target', 1) == nil");
+    handler.setTarget(0);
+    handler.setTarget(guid);
+    truth("UnitDebuff('target', 1) == 'Ghost'");
+    receiveAura(0);
+    truth("UnitDebuff('target', 1) == nil");
+    lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration, "Moonkin tooltip keeps creature type on unwrapped level line", "[unit-tooltip]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    constexpr uint64_t guid = 0xf1300027ae000777ull;
+    auto unit = std::make_shared<Unit>(guid);
+    unit->setName("Moonkin");
+    unit->setEntry(10158);
+    unit->setLevel(12);
+    unit->setHealth(100);
+    unit->setMaxHealth(100);
+    unit->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 12);
+    handler.getEntityManager().addEntity(guid, unit);
+    wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
+    info.writeUInt32(10158);
+    info.writeString("Moonkin");
+    for (int i = 0; i < 5; ++i) info.writeString("");
+    info.writeUInt32(0);
+    info.writeUInt32(7); // Humanoid, as declared by the server template.
+    for (int i = 0; i < 8; ++i) info.writeUInt32(0);
+    info.writeFloat(1); info.writeFloat(1); info.writeUInt8(0);
+    session.receive(info);
+    handler.setTarget(guid);
+    run("moonkinTip = CreateFrame('GameTooltip', 'MoonkinTip', UIParent); assert(moonkinTip:SetUnit('target'))");
+    const auto* tip = lua.widgets().findByName("MoonkinTip");
+    REQUIRE(tip);
+    REQUIRE(tip->tooltipLines.size() == 2);
+    CHECK(tip->tooltipLines[1].left == "Level 12 Humanoid");
+    CHECK(tip->tooltipLines[0].lc[0] == 1.0f);
+    CHECK(tip->tooltipLines[0].lc[1] == 0.82f);
+    CHECK(tip->tooltipLines[0].lc[2] == 0.0f);
+    CHECK_FALSE(tip->tooltipLines[1].wrap);
+    lua.setGameHandler(nullptr);
 }

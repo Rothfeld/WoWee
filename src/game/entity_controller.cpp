@@ -516,7 +516,9 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
 
     const int positiveSlots = isActiveExpansion("tbc") ? 40 : 32;
     const int auraSlots = positiveSlots + 16;
-    const auto previousAuras = owner_.getPlayerAuras();
+    const bool localPlayer = entity->getGuid() == owner_.getPlayerGuid();
+    const auto* cached = localPlayer ? &owner_.getPlayerAuras() : owner_.getUnitAuras(entity->getGuid());
+    const auto previousAuras = cached ? *cached : std::vector<AuraSlot>{};
     const auto& allFields = entity->getFields();
     bool hasAuraField = false;
     for (const auto& [fk, fv] : allFields) {
@@ -524,14 +526,14 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     }
     if (!hasAuraField) return;
 
-    owner_.getSpellHandler()->resetPlayerAuras(auraSlots);
+    std::vector<AuraSlot> rebuilt(auraSlots);
     uint64_t nowMs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
     for (int slot = 0; slot < auraSlots; ++slot) {
         auto it = allFields.find(static_cast<uint16_t>(ufAuras + slot));
         if (it != allFields.end() && it->second != 0) {
-            AuraSlot& a = owner_.getSpellHandler()->getPlayerAuraSlotRef(slot);
+            AuraSlot& a = rebuilt[slot];
             a.spellId = it->second;
             // Read aura flag byte: packed 4-per-uint32 at ufAuraFlags
             uint8_t aFlag = 0;
@@ -552,13 +554,24 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
             } else {
                 a.receivedAtMs = nowMs;
             }
-            a.casterGuid = owner_.getPlayerGuid();
+            a.casterGuid = localPlayer ? owner_.getPlayerGuid() : 0;
         } else if (static_cast<size_t>(slot) < previousAuras.size() &&
                    previousAuras[slot].isEmpty() && previousAuras[slot].durationMs >= 0) {
             // An unrelated fields packet must not discard a duration waiting
             // for its spell ID. Empty slots remain invisible to the UI.
-            owner_.getSpellHandler()->getPlayerAuraSlotRef(slot) = previousAuras[slot];
+            rebuilt[slot] = previousAuras[slot];
         }
+    }
+    if (!localPlayer) {
+        owner_.getSpellHandler()->mirrorAurasByGuid(entity->getGuid(), rebuilt);
+        if (entity->getGuid() == owner_.getTargetGuid()) pendingEvents_.emit("UNIT_AURA", {"target"});
+        if (entity->getGuid() == owner_.getFocusGuid()) pendingEvents_.emit("UNIT_AURA", {"focus"});
+        return;
+    }
+    owner_.getSpellHandler()->getPlayerAurasMut() = std::move(rebuilt);
+    if (entity->getGuid() == owner_.getTargetGuid()) {
+        owner_.getSpellHandler()->restoreTargetAuras(entity->getGuid());
+        pendingEvents_.emit("UNIT_AURA", {"target"});
     }
     LOG_DEBUG("[pre-WotLK] Rebuilt playerAuras from UNIT_FIELD_AURAS");
     owner_.getSpellHandler()->refreshRestorationState();
@@ -2166,9 +2179,7 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
         }
     }
     // Pre-WotLK aura sync on initial object create
-    if (block.guid == owner_.getPlayerGuid()) {
-        syncPreWotlkAurasFromFields(entity);
-    }
+    syncPreWotlkAurasFromFields(entity);
 
     // Hostility
     unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(unit->getFactionTemplate()));
@@ -2417,9 +2428,7 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
     }
 
     // Pre-WotLK aura sync from UNIT_FIELD_AURAS when those fields are updated
-    if (block.guid == owner_.getPlayerGuid()) {
-        syncPreWotlkAurasFromFields(entity);
-    }
+    syncPreWotlkAurasFromFields(entity);
 
     // Display ID changed - re-spawn/model-change
     handleDisplayIdChange(block, entity, unit, result);

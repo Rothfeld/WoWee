@@ -1226,7 +1226,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 : reaction <= 4 ? IM_COL32(255, 255, 0, 255) : IM_COL32(0, 255, 0, 255);
             const uint32_t flags = unit->getDynamicFlags();
             if ((flags & 0x0004) && !(flags & 0x0008)) fill = IM_COL32(128, 128, 128, 255);
-            drawList->AddRectFilled(ImVec2(barX, sy), ImVec2(barX + barW, sy + barH), IM_COL32(0, 0, 0, 255));
+            // Original Nameplate-Border leaves its interior transparent. Empty
+            // health shows the world through that opening, including ghosts.
             drawList->AddImage((ImTextureID)(uintptr_t)plateFill,
                 ImVec2(barX, sy), ImVec2(barX + barW * healthPct, sy + barH),
                 ImVec2(0, 0), ImVec2(healthPct, 1), fill);

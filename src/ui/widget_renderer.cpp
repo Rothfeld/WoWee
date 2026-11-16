@@ -2906,7 +2906,23 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     uv1 = ImVec2(0.5f + halfU, 0.5f + halfV);
                 }
             }
-            if (w->blendAdd) {
+            const bool liveDesaturated = live && w->desaturated;
+            if (liveDesaturated) {
+                const bool additive = w->blendAdd;
+                dl->AddCallback(additive ? +[](const ImDrawList*, const ImDrawCmd* cmd) {
+                    auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(ImGui::GetPlatformIO().Renderer_RenderState);
+                    assert(state);
+                    auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                    vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        context->getImGuiDesaturatedPipeline(state->PipelineLayout, true));
+                } : +[](const ImDrawList*, const ImDrawCmd* cmd) {
+                    auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(ImGui::GetPlatformIO().Renderer_RenderState);
+                    assert(state);
+                    auto* context = static_cast<rendering::VkContext*>(cmd->UserCallbackData);
+                    vkCmdBindPipeline(state->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        context->getImGuiDesaturatedPipeline(state->PipelineLayout, false));
+                }, vkCtx_);
+            } else if (w->blendAdd) {
                 dl->AddCallback([](const ImDrawList*, const ImDrawCmd* cmd) {
                     auto* state = static_cast<ImGui_ImplVulkan_RenderState*>(
                         ImGui::GetPlatformIO().Renderer_RenderState);
@@ -2975,7 +2991,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                              ImVec2(x0, y0), ImVec2(x1, y1), uv0, uv1,
                              packColor(w->color, w->effAlpha));
             }
-            if (w->blendAdd) dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+            if (w->blendAdd || liveDesaturated) dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
         } else if (w->kind == WidgetKind::FontString) {
             // Font objects carry a height, and honouring it is most of what
             // makes a label look right - a heading and a footnote are the same

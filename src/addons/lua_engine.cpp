@@ -2678,7 +2678,7 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         w->tooltipLines.push_back(std::move(line));
     };
 
-    addLine(name, 1.0f, 1.0f, 1.0f);
+    addLine(name, 1.0f, 0.82f, 0.0f);
 
     // What the name alone does not say, which in WoW is most of a unit
     // tooltip: the guild under a player's name, the trade under an NPC's, and
@@ -2744,6 +2744,15 @@ int lua_Tooltip_SetUnit(lua_State* L) {
                 }
             }
             if (!isPlayer && !isCorpse) {
+                if (!isCompanion) {
+                    lua_getglobal(L, "UnitCreatureType");
+                    lua_pushstring(L, uidStr.c_str());
+                    lua_call(L, 1, 1);
+                    if (lua_isstring(L, -1)) {
+                        levelLine += std::string(" ") + lua_tostring(L, -1);
+                    }
+                    lua_pop(L, 1);
+                }
                 const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
                 const int rank = unit ? gh->getCreatureRank(unit->getEntry()) : 0;
                 const char* label = nullptr;
@@ -2775,7 +2784,14 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             const int32_t record = templates->findRecordById(templateId);
             if (record >= 0) {
                 const uint32_t faction = templates->getUInt32(record, (*layout)["Faction"]);
-                addLine(gh->getFactionNamePublic(faction), 1.0f, 1.0f, 1.0f);
+                const auto factions = assets->loadDBC("Faction.dbc");
+                const auto* factionLayout = layouts->getLayout("Faction");
+                const int32_t factionRecord = factions ? factions->findRecordById(faction) : -1;
+                if (factionRecord >= 0 && factionLayout &&
+                    static_cast<int32_t>(factions->getUInt32(factionRecord,
+                        (*factionLayout)["ReputationListID"])) >= 0) {
+                    addLine(gh->getFactionNamePublic(faction), 1.0f, 1.0f, 1.0f);
+                }
             }
         }
     }
@@ -8384,7 +8400,6 @@ void LuaEngine::registerCoreAPI() {
         "    end\n"
         "    return nil\n"
         "end\n"
-        "function __WoweeFrameMT:GetUnit() return nil end\n"
         // NumLines and GetText come from the widget itself, which is where
         // the lines now live.
         "function __WoweeFrameMT:SetUnitBuff(unit, index, filter)\n"
