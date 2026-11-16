@@ -2911,8 +2911,12 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     for (int pass = firstPass; pass < endPass; ++pass) {
     for (const auto& [depth, id] : order) {
         auto& instance = instances.at(id);
-        const bool cameraFade = instance.cameraOpacity < 0.999f && !instance.isEffectModel;
-        if (pass == -1 && !cameraFade) continue;
+        // Whole-model fades need the same nearest-surface depth prepass as
+        // camera fading. Blending triangles while writing depth exposes mesh
+        // submission order as dark patches on ghosts and stealth models.
+        const bool surfaceFade = instance.opacity * instance.cameraOpacity < 0.999f &&
+                                 !instance.isEffectModel;
+        if (pass == -1 && !surfaceFade) continue;
 
         // Skip invisible instances (e.g., player in first-person mode)
         if (!instance.visible) continue;
@@ -3130,9 +3134,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     materialFlags = gpuModel.data.materials[batch.materialIndex].flags;
                 }
 
-                const bool cameraSolid = cameraFade && blendMode <= 1 && !(materialFlags & 0x10);
-                if (pass == -1 && !cameraSolid) continue;
-                const bool blended = cameraSolid || blendMode >= 2 ||
+                const bool fadingSolid = surfaceFade && blendMode <= 1 && !(materialFlags & 0x10);
+                if (pass == -1 && !fadingSolid) continue;
+                const bool blended = fadingSolid || blendMode >= 2 ||
                     (materialFlags & 0x10) || renderOpacity * batchColorAlpha < 0.999f;
                 if (pass == 0 && blended) continue;
                 if (pass == 1 && !blended) continue;
@@ -3264,7 +3268,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                         default: desiredPipeline = alphaPipeline_; break;
                     }
                 }
-                if (cameraSolid) {
+                if (fadingSolid) {
                     desiredPipeline = pass == -1 ? cameraDepthPipeline_ : cameraFadePipeline_;
                 }
                 if (desiredPipeline != currentPipeline) {

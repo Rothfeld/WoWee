@@ -915,6 +915,11 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
 void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bool moving, bool mounted) {
     auto entity = gameHandler_->getEntityManager().getEntity(guid);
     if (!entity) return;
+    if (entity->getType() == game::ObjectType::PLAYER) {
+        constexpr uint32_t playerFlagsGhost = 0x10;
+        const bool ghost = (entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS)) & playerFlagsGhost) != 0;
+        renderer_->getCharacterRenderer()->setInstanceOpacity(instanceId, ghost ? 0.5f : 1.0f);
+    }
     if (auto* visuals = renderer_->getSpellVisualSystem()) {
         std::vector<uint32_t> auraVisuals;
         gameHandler_->loadSpellNameCache();
