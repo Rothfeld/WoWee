@@ -148,7 +148,8 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
     // Immutable texture descriptors: animation selects a frame without updating
     // a descriptor that an in-flight draw may still use.
     legacyWater = game::isPreWotlk();
-    const uint32_t frameCount = legacyWater ? 30 : 1;
+    // Two authored 30-frame sequences: freshwater first, ocean second.
+    const uint32_t frameCount = legacyWater ? 60 : 1;
     VkDescriptorSetLayoutBinding lakeBinding{};
     lakeBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     lakeBinding.descriptorCount = 1;
@@ -174,13 +175,14 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
                 !texture->createSampler(device))
             throw std::runtime_error(std::string("Water contact texture upload failed: ") + path);
     }
-    lakeFrames.resize(frameCount);
-    lakeSets.resize(frameCount);
+    liquidFrames.resize(frameCount);
+    liquidSets.resize(frameCount);
     for (uint32_t frame = 0; frame < frameCount; ++frame) {
-        auto& texture = lakeFrames[frame];
+        auto& texture = liquidFrames[frame];
         if (legacyWater) {
             assert(assets);
-            const std::string path = "XTextures/river/lake_a." + std::to_string(frame + 1) + ".blp";
+            const std::string prefix = frame < 30 ? "XTextures/river/lake_a." : "XTextures/ocean/ocean_h.";
+            const std::string path = prefix + std::to_string(frame % 30 + 1) + ".blp";
             const auto image = assets->loadTexture(path);
             if (!texture.uploadBLP(*vkCtx, image))
                 throw std::runtime_error("Water texture upload failed: " + path);
@@ -194,11 +196,11 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         allocate.descriptorPool = lakePool;
         allocate.descriptorSetCount = 1;
         allocate.pSetLayouts = &lakeSetLayout;
-        if (vkAllocateDescriptorSets(device, &allocate, &lakeSets[frame]) != VK_SUCCESS)
+        if (vkAllocateDescriptorSets(device, &allocate, &liquidSets[frame]) != VK_SUCCESS)
             throw std::runtime_error("Water texture descriptor allocation failed");
         const auto imageInfo = texture.descriptorInfo();
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = lakeSets[frame];
+        write.dstSet = liquidSets[frame];
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &imageInfo;
@@ -421,8 +423,8 @@ void WaterRenderer::shutdown() {
     destroy(device, materialSetLayout);
     destroy(device, lakePool);
     destroy(device, lakeSetLayout);
-    lakeSets.clear();
-    lakeFrames.clear();
+    liquidSets.clear();
+    liquidFrames.clear();
     splashTexture.destroy(device, vkCtx->getAllocator());
     wakeTexture.destroy(device, vkCtx->getAllocator());
 
@@ -1226,9 +1228,6 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
     const uint32_t lakeFrame = legacyWater
         ? static_cast<uint32_t>(std::max(0.0f, time) / (1.25f / 30.0f)) % 30 : 0;
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-                           3, 1, &lakeSets.at(lakeFrame), 0, nullptr);
-
     for (const auto& surface : surfaces) {
         if (surface.vertexBuffer == VK_NULL_HANDLE || surface.indexCount == 0) continue;
         if (!surface.materialSet) continue;
@@ -1257,6 +1256,9 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         bool isWmoWater = (surface.wmoId != 0);
         bool canalProfile = isWmoWater || (surface.liquidType == 5);
         uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+        const uint32_t textureFrame = lakeFrame + (legacyWater && !isWmoWater && basicType == 1 ? 30 : 0);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                               3, 1, &liquidSets.at(textureFrame), 0, nullptr);
         // WMO water gets no wave displacement - prevents visible slosh at
         // geometry edges (bridges, docks) where water is far below the surface.
         float waveAmp = isWmoWater ? 0.0f : (basicType == 1 ? 0.35f : 0.08f);
@@ -1276,11 +1278,10 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // against a near plane of 0.05 while the camera's is 0.5.
         push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
-        // Legacy freshwater shares authored texture/depth shading across ADT
-        // rivers and WMO pools. Ocean rendering retains its separate material.
-        // 1 = indoor material color, 2 = outdoor zone lighting.
-        push.legacyWmoMode = legacyWater && (basicType == 0 || (isWmoWater && basicType == 1))
-            ? (surface.indoorColor ? 1.0f : 2.0f) : 0.0f;
+        // 1 = indoor WMO, 2 = exterior WMO, 3 = terrain depth-color ramp.
+        // ADT ocean and freshwater both use authored animation and lighting.
+        push.legacyWmoMode = legacyWater && basicType < 2
+            ? (isWmoWater ? (surface.indoorColor ? 1.0f : 2.0f) : 3.0f) : 0.0f;
         // ADT freshwater repeats once per four terrain cells (two repeats
         // per 8-cell chunk); WMO liquid textures repeat once per liquid cell.
         const float textureRepeatsPerCell = isWmoWater ? 1.0f : 0.25f;

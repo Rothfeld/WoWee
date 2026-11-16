@@ -157,6 +157,10 @@ bool LightingManager::loadLightParamsDbc(pipeline::AssetManager* assetManager) {
             profile.glow = dbc->getFloat(i, 4);
         if (dbc->getFieldCount() >= 9)
             profile.riverAlpha = {dbc->getFloat(i, 5), dbc->getFloat(i, 6)};
+        // Original TBC rows end with five floats: glow, river shallow/deep,
+        // ocean shallow/deep. Field 3 is the cloud-type integer, not glow.
+        if (dbc->getFieldCount() >= 9)
+            profile.oceanAlpha = {dbc->getFloat(i, 7), dbc->getFloat(i, 8)};
         if (dbc->getFieldCount() > 2) {
             profile.lightSkyboxId = dbc->getUInt32(i, 2);
         }
@@ -413,7 +417,11 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
         newParams.cloudDensity = newParams.horizonGlow = 0.0f;
         newParams.riverAlpha = glm::vec2(0.0f);
+        newParams.oceanAlpha = glm::vec2(0.0f);
+        newParams.riverShallowColor = glm::vec3(0.0f);
         newParams.riverDeepColor = glm::vec3(0.0f);
+        newParams.oceanShallowColor = glm::vec3(0.0f);
+        newParams.oceanDeepColor = glm::vec3(0.0f);
         newParams.glow = 0.0f;
         glm::vec3 blendedDir(0.0f);  // Accumulate weighted directions
 
@@ -431,7 +439,11 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
 
                 // Blend this volume's contribution
                 newParams.riverAlpha += params.riverAlpha * wv.weight;
+                newParams.oceanAlpha += params.oceanAlpha * wv.weight;
+                newParams.riverShallowColor += params.riverShallowColor * wv.weight;
                 newParams.riverDeepColor += params.riverDeepColor * wv.weight;
+                newParams.oceanShallowColor += params.oceanShallowColor * wv.weight;
+                newParams.oceanDeepColor += params.oceanDeepColor * wv.weight;
                 newParams.glow += params.glow * wv.weight;
                 newParams.ambientColor += params.ambientColor * wv.weight;
                 newParams.diffuseColor += params.diffuseColor * wv.weight;
@@ -581,7 +593,11 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     // blendFactor above.
 
     currentParams_.riverAlpha = glm::mix(currentParams_.riverAlpha, newParams.riverAlpha, blendFactor);
+    currentParams_.oceanAlpha = glm::mix(currentParams_.oceanAlpha, newParams.oceanAlpha, blendFactor);
+    currentParams_.riverShallowColor = glm::mix(currentParams_.riverShallowColor, newParams.riverShallowColor, blendFactor);
     currentParams_.riverDeepColor = glm::mix(currentParams_.riverDeepColor, newParams.riverDeepColor, blendFactor);
+    currentParams_.oceanShallowColor = glm::mix(currentParams_.oceanShallowColor, newParams.oceanShallowColor, blendFactor);
+    currentParams_.oceanDeepColor = glm::mix(currentParams_.oceanDeepColor, newParams.oceanDeepColor, blendFactor);
     currentParams_.glow = glm::mix(currentParams_.glow, newParams.glow, blendFactor);
     currentParams_.ambientColor = glm::mix(currentParams_.ambientColor, newParams.ambientColor, blendFactor);
     currentParams_.diffuseColor = glm::mix(currentParams_.diffuseColor, newParams.diffuseColor, blendFactor);
@@ -723,6 +739,7 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     LightingParams params;
 
     params.riverAlpha = profile->riverAlpha;
+    params.oceanAlpha = profile->oceanAlpha;
     params.glow = profile->glow;
 
     // Sample color bands
@@ -730,6 +747,9 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     params.diffuseColor = sampleColorBand(profile->colorBands[LightParamsProfile::DIFFUSE_COLOR], timeHalfMinutes);
     params.specularColor = sampleColorBand(profile->colorBands[LightParamsProfile::SUN_COLOR], timeHalfMinutes);
     params.riverDeepColor = sampleColorBand(profile->colorBands[LightParamsProfile::RIVER_DEEP_COLOR], timeHalfMinutes);
+    params.riverShallowColor = sampleColorBand(profile->colorBands[LightParamsProfile::RIVER_SHALLOW_COLOR], timeHalfMinutes);
+    params.oceanShallowColor = sampleColorBand(profile->colorBands[LightParamsProfile::OCEAN_SHALLOW_COLOR], timeHalfMinutes);
+    params.oceanDeepColor = sampleColorBand(profile->colorBands[LightParamsProfile::OCEAN_DEEP_COLOR], timeHalfMinutes);
     params.fogColor = sampleColorBand(profile->colorBands[LightParamsProfile::FOG_COLOR], timeHalfMinutes);
     params.skyTopColor = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_TOP_COLOR], timeHalfMinutes);
     params.skyMiddleColor = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_MIDDLE_COLOR], timeHalfMinutes);

@@ -58,6 +58,9 @@ layout(set = 2, binding = 3) uniform WaterFrameData {
     vec4 contactStyles[64];
     vec4 wakePoints[MAX_WAKE_POINTS]; // xy = world pos, z = age 0..1, w = strength
     vec4 riverDeepColor;
+    vec4 riverShallowColor;
+    vec4 oceanShallowColor;
+    vec4 oceanDeepColor;
 };
 
 layout(location = 0) in vec3 FragPos;
@@ -295,6 +298,13 @@ void main() {
             color = riverDeepColor.rgb * VertexLighting + texel.rgb + (VertexSpecular + 0.25) * texel.a;
         }
         float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth, 0.0, 1.0));
+        if (push.legacyWmoMode > 2.5) {
+            vec4 shallow = basicType > 0.5 ? oceanShallowColor : vec4(riverShallowColor.rgb, liquidParams.x);
+            vec4 deep = basicType > 0.5 ? oceanDeepColor : vec4(riverDeepColor.rgb, liquidParams.y);
+            vec4 depthColor = mix(shallow, deep, clamp(LiquidDepth, 0.0, 1.0));
+            color = depthColor.rgb * VertexLighting + texel.rgb + (VertexSpecular + 0.25) * texel.a;
+            alpha = depthColor.a;
+        }
         color += contactLight() / max(alpha, 0.001);
         outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), alpha);
         return;

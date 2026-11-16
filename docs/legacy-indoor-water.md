@@ -13,10 +13,22 @@ term as indoor water plus a vertex sun-specular term. Lighting volumes blend the
 river color spatially and temporally. Both WMO paths preserve the flat authored
 mesh and use texture animation and contact decals for surface motion.
 
+TBC terrain water uses an authored shallow/deep color ramp and opacity ramp.
+Its MCLQ liquid kind selects river `lake_a` or ocean `ocean_h` animation frames
+and the matching LightIntBand colors. Both sequences have 30 frames. Terrain
+depth bytes interpolate the ramp; zone names do not determine liquid kind.
+Cliffspring River, for example, contains ocean liquid. Geometry retains its
+authored heights. Ocean terrain does not use procedural Gerstner waves or foam.
+See [water lighting fields](water-lighting.md) for table layout and blending.
+Cliffspring comparison evidence is in workspace experiment
+`_experiments/20261116T223600Z.cliffspring_water/`. Six-frame captures verify
+gray translucent water and authored detail. Open-water luminance remains about
+10 byte levels below native in that scene; exact lighting parity is unverified.
+
 Stormwind canal comparison: six matched-camera native/WoWee captures, including
 water-patch measurements, live in workspace experiment
 `_experiments/20261116T105955.187294Z.stormwind_water/`. This validates that WMO
-exterior path; ADT oceans and rivers have a separate rendering path.
+exterior path; ADT oceans and rivers use their own depth-color ramp.
 
 These rules come from build 8606 shader assets `psLiquidWater.bls` and
 `vsLiquidWater.bls`, WMO setup at 0x695e90, UV generation at 0x6A77F0,

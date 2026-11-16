@@ -158,7 +158,7 @@ void main() {
     float time = fogParams.z;
     vec4 worldPos = push.model * vec4(aPos, 1.0);
 
-    // Legacy WMO liquids are authored flat grids. Motion comes from the
+    // Legacy liquids are authored grids. Motion comes from the
     // animated texture and contact decals, not displaced geometry.
     if (push.legacyWmoMode > 0.5) {
         FragPos = worldPos.xyz;

@@ -2298,6 +2298,10 @@ void Renderer::update(float deltaTime) {
         if (lightingManager) {
             waterRenderer->setRiverAlpha(lightingManager->getLightingParams().riverAlpha);
             waterRenderer->setRiverDeepColor(lightingManager->getLightingParams().riverDeepColor);
+            waterRenderer->setRiverShallowColor(lightingManager->getLightingParams().riverShallowColor);
+            waterRenderer->setOceanColors(lightingManager->getLightingParams().oceanShallowColor,
+                                          lightingManager->getLightingParams().oceanDeepColor,
+                                          lightingManager->getLightingParams().oceanAlpha);
         }
         waterRenderer->updateContacts(deltaTime, actors);
     }

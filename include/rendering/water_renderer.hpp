@@ -90,6 +90,9 @@ struct WaterFrameUBOData {
     glm::vec4 contactStyles[kMaxWaterContacts]{}; // strength, direction xy, wake
     glm::vec4 wakePoints[kMaxWakePoints]{};  // xy = pos, z = age 0..1, w = strength
     glm::vec4 riverDeepColor{};
+    glm::vec4 riverShallowColor{};
+    glm::vec4 oceanShallowColor{}; // alpha in w
+    glm::vec4 oceanDeepColor{};    // alpha in w
 };
 
 class WaterRenderer {
@@ -151,6 +154,11 @@ public:
     /// shoulders. Call once per frame.
     void setRiverAlpha(const glm::vec2& alpha) { frameUBO_.liquidParams.x = alpha.x; frameUBO_.liquidParams.y = alpha.y; }
     void setRiverDeepColor(const glm::vec3& color) { frameUBO_.riverDeepColor = glm::vec4(color, 1.0f); }
+    void setRiverShallowColor(const glm::vec3& color) { frameUBO_.riverShallowColor = glm::vec4(color, 1.0f); }
+    void setOceanColors(const glm::vec3& shallow, const glm::vec3& deep, const glm::vec2& alpha) {
+        frameUBO_.oceanShallowColor = glm::vec4(shallow, alpha.x);
+        frameUBO_.oceanDeepColor = glm::vec4(deep, alpha.y);
+    }
     void updateContacts(float deltaTime, const std::vector<WaterContactActor>& actors);
 
     void updateWake(float deltaTime, const glm::vec2& pos, const glm::vec2& travelDir,
@@ -212,9 +220,9 @@ private:
 
     VkContext* vkCtx = nullptr;
     bool legacyWater = false;
-    std::vector<VkTexture> lakeFrames;
+    std::vector<VkTexture> liquidFrames;
     VkTexture splashTexture, wakeTexture;
-    std::vector<VkDescriptorSet> lakeSets;
+    std::vector<VkDescriptorSet> liquidSets;
     VkDescriptorSetLayout lakeSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool lakePool = VK_NULL_HANDLE;
 

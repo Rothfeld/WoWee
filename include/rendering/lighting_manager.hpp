@@ -18,7 +18,11 @@ namespace rendering {
 struct LightingParams {
     float glow = 0.0f;
     glm::vec2 riverAlpha{0.5f, 1.0f};
+    glm::vec2 oceanAlpha{0.75f, 1.0f};
+    glm::vec3 riverShallowColor{0.0f};
     glm::vec3 riverDeepColor{0.0f};
+    glm::vec3 oceanShallowColor{0.0f};
+    glm::vec3 oceanDeepColor{0.0f};
     glm::vec3 ambientColor{0.4f, 0.4f, 0.5f};      // Fill lighting
     glm::vec3 diffuseColor{1.0f, 0.95f, 0.8f};     // Directional sun color
     glm::vec3 specularColor{1.0f};
@@ -108,6 +112,7 @@ struct FloatBand {
 struct LightParamsProfile {
     float glow = 0.0f;
     glm::vec2 riverAlpha{0.5f, 1.0f};
+    glm::vec2 oceanAlpha{0.75f, 1.0f};
     uint32_t lightParamsId = 0;
     uint32_t lightSkyboxId = 0;
 
@@ -140,6 +145,9 @@ struct LightParamsProfile {
         SKY_SMOG_COLOR = 6,
         FOG_COLOR = 7,
         SUN_COLOR = 9,
+        OCEAN_SHALLOW_COLOR = 14,
+        OCEAN_DEEP_COLOR = 15,
+        RIVER_SHALLOW_COLOR = 16,
         RIVER_DEEP_COLOR = 17,
         // ... more channels exist (clouds, ocean, river)
         COLOR_CHANNEL_COUNT = 18
