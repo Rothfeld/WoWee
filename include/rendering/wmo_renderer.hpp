@@ -380,7 +380,9 @@ public:
      * @param insideWMO If true, use tighter collision for indoor precision
      * @return true if collision occurred
      */
-    bool checkWallCollision(const glm::vec3& from, const glm::vec3& to, glm::vec3& adjustedPos, bool insideWMO = false) const;
+    bool checkWallCollision(const glm::vec3& from, const glm::vec3& to, glm::vec3& adjustedPos, bool insideWMO = false,
+                            bool airborne = false, float playerRadius = 0.5f,
+                            float playerHeight = 2.0f) const;
 
     /// Whether solid WMO geometry stands between two points - a sight line
     /// rather than a step, so no player radius and no step height. See the

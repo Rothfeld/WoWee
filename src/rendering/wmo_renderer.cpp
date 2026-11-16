@@ -1,4 +1,5 @@
 #include "rendering/collision_geometry.hpp"
+#include "rendering/body_collision.hpp"
 #include "rendering/movement_limits.hpp"
 #include "rendering/pom_quality.hpp"
 #include "rendering/placement_transform.hpp"
@@ -3636,7 +3637,8 @@ bool WMORenderer::segmentBlocked(const glm::vec3& from, const glm::vec3& to) con
     return false;
 }
 
-bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to, glm::vec3& adjustedPos, bool insideWMO) const {
+bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to, glm::vec3& adjustedPos, bool insideWMO,
+                                      bool airborne, float playerRadius, float playerHeight) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     adjustedPos = to;
     bool blocked = false;
@@ -3647,8 +3649,10 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
 
     // Player collision parameters - WoW-style horizontal cylinder
     // Tighter radius when inside for more responsive indoor collision
-    const float PLAYER_RADIUS = insideWMO ? 0.45f : 0.50f;
-    const float PLAYER_HEIGHT = 2.0f;       // Cylinder height for Z bounds
+    const float PLAYER_RADIUS = airborne ? playerRadius : (insideWMO ? 0.45f : 0.50f);
+    const float PLAYER_HEIGHT = airborne ? playerHeight : 2.0f;
+    thread_local std::vector<movement::BodyTriangle> bodyTriangles;
+    bodyTriangles.clear();
 
     glm::vec3 queryMin = glm::min(from, to) - glm::vec3(8.0f, 8.0f, 5.0f);
     glm::vec3 queryMax = glm::max(from, to) + glm::vec3(8.0f, 8.0f, 5.0f);
@@ -3724,13 +3728,13 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
                 const auto& tb = group.triBounds[triStart / 3];
 
                 // Only collide with walls in player's vertical range
-                if (tb.maxZ < localFeetZ + 0.3f) continue;
-                if (tb.minZ > localFeetZ + PLAYER_HEIGHT) continue;
+                if (tb.maxZ < (airborne ? std::min(localFrom.z, localTo.z) : localFeetZ + 0.3f)) continue;
+                if (tb.minZ > std::max(localFrom.z, localTo.z) + PLAYER_HEIGHT) continue;
 
                 // Only skip geometry the movement controller can step onto.
                 // A separate, larger threshold lets waist-high railings pass
                 // through wall collision while grounding rejects their tops.
-                if (tb.maxZ <= localFeetZ + movement::kMaxStepUp) continue;
+                if (!airborne && tb.maxZ <= localFeetZ + movement::kMaxStepUp) continue;
 
                 // Use MOPY flags to filter wall collision. Blocking set is the
                 // union of both flag conventions seen in the assets:
@@ -3764,6 +3768,17 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
                 const glm::vec3& v1 = verts[indices[triStart + 1]];
                 const glm::vec3& v2 = verts[indices[triStart + 2]];
 
+                if (airborne) {
+                    // Step allowance belongs to grounded movement. In flight,
+                    // sweep the complete upright body against every solid face,
+                    // including the underside and top of a railing.
+                    bodyTriangles.push_back({
+                        glm::vec3(instance.modelMatrix * glm::vec4(v0, 1.0f)),
+                        glm::vec3(instance.modelMatrix * glm::vec4(v1, 1.0f)),
+                        glm::vec3(instance.modelMatrix * glm::vec4(v2, 1.0f))});
+                    continue;
+                }
+
                 // Use precomputed normal for swept test and push fallback
                 glm::vec3 normal = group.triNormals[triStart / 3];
                 if (glm::dot(normal, normal) < 0.5f) continue;  // degenerate
@@ -3789,6 +3804,8 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
         }
     }
 
+    if (airborne)
+        return movement::moveBody(from, to, playerRadius, playerHeight, bodyTriangles, adjustedPos, false);
     return blocked;
 }
 

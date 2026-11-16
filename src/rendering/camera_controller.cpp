@@ -300,7 +300,33 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
 
         if (wmoRenderer) {
             glm::vec3 adjusted;
-            if (wmoRenderer->checkWallCollision(stepPos, candidate, adjusted, cachedInsideWMO)) {
+            if (!grounded) {
+                // Airborne bodies have no step-up allowance. Separate lateral
+                // contact from head/foot contact, as for authored M2 geometry.
+                const glm::vec3 horizontal(candidate.x, candidate.y, stepPos.z);
+                glm::vec3 horizontalAdjusted;
+                wmoRenderer->checkWallCollision(stepPos, horizontal, horizontalAdjusted,
+                    cachedInsideWMO, true, collisionRadius_, collisionHeight_);
+                candidate = horizontalAdjusted + glm::vec3(0, 0, candidate.z - stepPos.z);
+                if (wmoRenderer->checkWallCollision(horizontalAdjusted, candidate, adjusted,
+                        cachedInsideWMO, true, collisionRadius_, collisionHeight_)) {
+                    if (adjusted.z > candidate.z + 0.00001f && verticalVelocity <= 0.0f &&
+                            !swimming && !isFlightAirborne()) {
+                        // Beveled-foot contact against a rail side is not a
+                        // landing. Marking it grounded enables a step-up onto
+                        // a top that the jump never reached.
+                        const auto support = wmoRenderer->getFloorHeight(
+                            adjusted.x, adjusted.y, adjusted.z + 0.01f);
+                        if (support && std::abs(*support - adjusted.z) <= 0.02f) {
+                            grounded = true;
+                            verticalVelocity = 0.0f;
+                        }
+                    }
+                    if (adjusted.z < candidate.z - 0.00001f && verticalVelocity > 0.0f)
+                        verticalVelocity = 0.0f;
+                    candidate = adjusted;
+                }
+            } else if (wmoRenderer->checkWallCollision(stepPos, candidate, adjusted, cachedInsideWMO)) {
                 candidate.x = adjusted.x;
                 candidate.y = adjusted.y;
                 // Up is a ramp; down would be a wall pulling the feet under the floor.

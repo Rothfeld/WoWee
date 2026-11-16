@@ -72,7 +72,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
 
 inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
         float radius, float height, std::span<const BodyTriangle> triangles,
-        glm::vec3& result) {
+        glm::vec3& result, bool allowHorizontalRise = true) {
     result=from;
     glm::vec3 remaining=to-from;
     bool collided=false;
@@ -86,8 +86,10 @@ inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
         collided=true;
         result+=remaining*first->time;
         glm::vec3 responseNormal=first->normal;
-        if (std::abs(to.z-from.z)<1e-6f && responseNormal.z<0.0f) {
-            // Running into an overhang cannot force the feet below the floor.
+        if (std::abs(to.z-from.z)<1e-6f &&
+                (responseNormal.z<0.0f || !allowHorizontalRise)) {
+            // Horizontal contact cannot force feet down. Airborne movement
+            // cannot climb a beveled contact as though stepping up either.
             responseNormal.z=0.0f;
             const float horizontalLength=glm::length(responseNormal);
             if (horizontalLength>1e-6f) responseNormal/=horizontalLength;
