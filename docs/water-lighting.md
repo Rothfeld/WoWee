@@ -20,3 +20,17 @@ data before changing these offsets.
 LightIntBand stores packed color values and half-minute time keys. Darkshore
 profile 204 has different noon river/ocean shallow values (82 versus 86), while
 both deep colors are 60. This distinction must survive sampling and blending.
+
+## Paired capture settings
+
+Query `GetCVar("ffxGlow")` in both running clients before comparing brightness.
+The dedicated WoWee profile can differ from the shared client profile. A saved
+native Config.wtf may omit a CVar that still has a nonzero runtime default.
+
+The Cliffspring comparison on 2026-11-16 had native ffxGlow=1 and dedicated
+WoWee ffxGlow=0, confirmed by runtime chat queries. Profile204's authored glow
+is1. Applying the existing glow compositor to the captured WoWee pixels predicts
+water RGB (61.04,60.70,60.80), close to native (60.82,60.60,60.60). Dry terrain
+also becomes brighter. Brightness differences in screenshot averages alone
+cannot justify water shader compensation; establish matching runtime settings,
+camera, time and weather first.
