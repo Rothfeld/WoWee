@@ -5216,10 +5216,10 @@ static std::vector<uint32_t> taxiNodeOrder(game::GameHandler* gh) {
     const auto current = nodes.find(gh->getTaxiCurrentNode());
     if (current == nodes.end()) return ids;
 
-    const uint32_t mapId = current->second.mapId;
+    const uint32_t mapId = current->second.displayMapId;
     ids.reserve(nodes.size());
     for (const auto& [id, node] : nodes) {
-        if (node.mapId == mapId) ids.push_back(id);
+        if (node.displayMapId == mapId) ids.push_back(id);
     }
     std::sort(ids.begin(), ids.end());
     return ids;
@@ -5251,11 +5251,11 @@ static bool taxiNodeMapPos(game::GameHandler* gh, uint32_t nodeId,
     const auto it = nodes.find(nodeId);
     if (it == nodes.end()) return false;
 
-    const auto& bounds = gh->getContinentBounds(it->second.mapId);
+    const auto& bounds = gh->getContinentBounds(it->second.displayMapId);
     if (!bounds.valid) return false;
 
     const glm::vec3 canonical = core::coords::serverToCanonical(
-        glm::vec3(it->second.x, it->second.y, it->second.z));
+        glm::vec3(it->second.displayX, it->second.displayY, it->second.z));
     const glm::vec3 render = core::coords::canonicalToRender(canonical);
 
     rendering::world_map::ZoneBounds zb;

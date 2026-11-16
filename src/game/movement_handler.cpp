@@ -2351,6 +2351,8 @@ void MovementHandler::loadTaxiDbc() {
         // second pair to fall back to; a node without a mount has none.
         const uint32_t mountAllianceField = tnL ? (*tnL)["MountDisplayIdAlliance"] : 22;
         const uint32_t mountHordeField    = tnL ? (*tnL)["MountDisplayIdHorde"]    : 23;
+        const auto transforms = am->loadDBC("WorldMapTransforms.dbc");
+        assert(transforms && transforms->isLoaded() && transforms->getFieldCount() >= 9);
         uint32_t fieldCount = nodesDbc->getFieldCount();
         for (uint32_t i = 0; i < nodesDbc->getRecordCount(); i++) {
             TaxiNode node;
@@ -2359,6 +2361,18 @@ void MovementHandler::loadTaxiDbc() {
             node.x = nodesDbc->getFloat(i, tnXField);
             node.y = nodesDbc->getFloat(i, tnYField);
             node.z = nodesDbc->getFloat(i, tnZField);
+            node.displayMapId = node.mapId;
+            node.displayX = node.x;
+            node.displayY = node.y;
+            for (uint32_t row = 0; row < transforms->getRecordCount(); ++row) {
+                if (transforms->getUInt32(row, 1) != node.mapId) continue;
+                if (node.x < transforms->getFloat(row, 2) || node.x > transforms->getFloat(row, 4) ||
+                    node.y < transforms->getFloat(row, 3) || node.y > transforms->getFloat(row, 5)) continue;
+                node.displayMapId = transforms->getUInt32(row, 6);
+                node.displayX += transforms->getFloat(row, 7);
+                node.displayY += transforms->getFloat(row, 8);
+                break;
+            }
             node.name = nodesDbc->getString(i, tnNameField);
             if (fieldCount > mountHordeField) {
                 node.mountDisplayIdAlliance = nodesDbc->getUInt32(i, mountAllianceField);

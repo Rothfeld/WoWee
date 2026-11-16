@@ -112,6 +112,8 @@ public:
         uint32_t id = 0;
         uint32_t mapId = 0;
         float x = 0, y = 0, z = 0;
+        uint32_t displayMapId = 0;
+        float displayX = 0, displayY = 0;
         std::string name;
         uint32_t mountDisplayIdAlliance = 0;
         uint32_t mountDisplayIdHorde = 0;
