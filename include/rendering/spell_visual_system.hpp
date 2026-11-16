@@ -38,6 +38,8 @@ public:
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
     uint32_t channelAnimation(uint32_t visualId);
+    // Persistent StateKit effects follow the unit's current aura set.
+    void syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds);
 
     // Spawn a precast visual effect at a world position.
     // castTimeMs: server cast time in milliseconds (0 = use anim duration).
@@ -83,6 +85,7 @@ private:
         uint32_t attachmentId;  // character attachment point to track (0=none/static)
         uint32_t attachInstanceId;  // CharacterRenderer instance the attachment belongs to
         bool isChannel = false;
+        uint32_t auraVisualId = 0;
     };
 
     struct PhysicalProjectile {
@@ -113,6 +116,8 @@ private:
     struct KitEffect { std::string path; uint32_t attachment; };
     std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;
     std::unordered_map<uint32_t, uint32_t> channelKits_;
+    std::unordered_map<uint32_t, uint32_t> stateKits_;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> unitAuraVisuals_;
     // Model ID for a cast, impact or missile model, loading it on first use.
     // 0 when it cannot be loaded.
     uint32_t loadSpellModel(const std::string& modelPath);

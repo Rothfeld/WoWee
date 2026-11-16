@@ -3616,9 +3616,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                 // but only if this model ships the animation -
                                 // display swaps can land on models without it
                                 // (the log-carrying peasant has no chop anim).
-                                targetAnim = rendering::anim::STAND;
+                                targetAnim = entitySpawner_->remoteIdleAnimation(guid);
                                 auto emoteIt = _creatureActiveEmotes.find(guid);
-                                if (emoteIt != _creatureActiveEmotes.end() &&
+                                if (targetAnim == rendering::anim::STAND && emoteIt != _creatureActiveEmotes.end() &&
                                     charRenderer->hasAnimation(instanceId, emoteIt->second)) {
                                     targetAnim = emoteIt->second;
                                 }
@@ -3633,6 +3633,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     }
                 }
             }
+            entitySpawner_->updateRemoteUnitState(guid, instanceId,
+                entity->isActivelyMoving(), creatureMount != nullptr);
+
             // Native turns the local conversation partner toward this player.
             // This is presentation only: other clients and patrol splines retain
             // the authoritative heading. Closing the panel turns it back.
@@ -3930,7 +3933,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 }
             }
 
-            entitySpawner_->updateRemoteStandPose(guid, instanceId,
+            entitySpawner_->updateRemoteUnitState(guid, instanceId,
                 entity->isActivelyMoving(), remoteMount != nullptr);
 
             // Orientation sync

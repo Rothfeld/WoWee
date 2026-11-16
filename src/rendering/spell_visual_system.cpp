@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cassert>
+#include <limits>
 #include <glm/gtc/constants.hpp>
 
 namespace wowee {
@@ -151,6 +152,9 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         if (!vid) continue;
         const uint32_t channelField = (*svLayout)["ChannelKit"];
         if (channelField < svFc) channelKits_[vid] = svDbc->getUInt32(i, channelField);
+        const uint32_t stateField = (*svLayout)["StateKit"];
+        assert(stateField < svFc);
+        stateKits_[vid] = svDbc->getUInt32(i, stateField);
 
         // Precast path: PrecastKit → SpecialEffect0/BaseEffect
         {
@@ -505,6 +509,46 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
     }
 }
 
+void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
+                                       const std::vector<uint32_t>& visualIds) {
+    if (!m2Renderer_ || !attachInstanceId) return;
+    auto found = unitAuraVisuals_.find(attachInstanceId);
+    if (found != unitAuraVisuals_.end() && found->second == visualIds) return;
+    if (found == unitAuraVisuals_.end() && visualIds.empty()) return;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    auto* characters = renderer_->getCharacterRenderer();
+    glm::vec3 position;
+    if (!characters || !characters->getInstancePosition(attachInstanceId, position)) return;
+
+    for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
+        if (it->attachInstanceId == attachInstanceId && it->auraVisualId &&
+            std::find(visualIds.begin(), visualIds.end(), it->auraVisualId) == visualIds.end()) {
+            m2Renderer_->removeInstance(it->instanceId);
+            it = activeSpellVisuals_.erase(it);
+        } else ++it;
+    }
+    const auto previous = found == unitAuraVisuals_.end() ? std::vector<uint32_t>{} : found->second;
+    for (uint32_t visual : visualIds) {
+        if (std::find(previous.begin(), previous.end(), visual) != previous.end()) continue;
+        const auto kit = stateKits_.find(visual);
+        if (kit == stateKits_.end() || !kit->second) continue;
+        const auto effects = kitEffects_.find(kit->second);
+        if (effects == kitEffects_.end()) continue;
+        for (const auto& effect : effects->second) {
+            const uint32_t model = loadSpellModel(effect.path);
+            if (!model) { LOG_ERROR("Aura model unavailable: ", effect.path); continue; }
+            const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f);
+            if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
+            activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
+                false, effect.attachment, attachInstanceId, false, visual});
+            LOG_INFO("Aura visual: owner=", attachInstanceId, " visual=", visual,
+                     " kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
+        }
+    }
+    if (visualIds.empty()) unitAuraVisuals_.erase(attachInstanceId);
+    else unitAuraVisuals_[attachInstanceId] = visualIds;
+}
+
 void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->isChannel && it->attachInstanceId == attachInstanceId) {
@@ -728,6 +772,12 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
 }
 
 void SpellVisualSystem::update(float deltaTime) {
+    if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
+        std::erase_if(unitAuraVisuals_, [&](const auto& entry) {
+            glm::vec3 position;
+            return !characters->getInstancePosition(entry.first, position);
+        });
+    }
     if (activeSpellVisuals_.empty() && physicalProjectiles_.empty() && spellMissiles_.empty())
         return;
 
@@ -753,6 +803,16 @@ void SpellVisualSystem::update(float deltaTime) {
     CharacterRenderer* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
+        if (it->auraVisualId) {
+            glm::vec3 position;
+            if (!charRenderer || !charRenderer->getInstancePosition(it->attachInstanceId, position)) {
+                unitAuraVisuals_.erase(it->attachInstanceId);
+                m2Renderer_->removeInstance(it->instanceId);
+                it = activeSpellVisuals_.erase(it);
+                continue;
+            }
+            if (!it->attachmentId) m2Renderer_->setInstancePosition(it->instanceId, position);
+        }
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
             m2Renderer_->removeInstance(it->instanceId);
@@ -806,6 +866,7 @@ void SpellVisualSystem::cancelAllPrecastVisuals() {
 }
 
 void SpellVisualSystem::reset() {
+    unitAuraVisuals_.clear();
     // Clear lingering spell visual instances from the previous map/combat session.
     // Without this, old effects could remain visible after teleport or map change.
     for (auto& sv : activeSpellVisuals_) {

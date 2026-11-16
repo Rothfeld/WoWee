@@ -323,6 +323,7 @@
     "Name": 2
   },
   "SpellVisual": {
+    "StateKit": 4,
     "ChannelKit": 6,
     "CastKit": 2,
     "ID": 0,

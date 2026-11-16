@@ -1954,6 +1954,7 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     pendingCreatureSpawnGuids_.erase(guid);
     requestedCreatureDisplayIds_.erase(guid);
     creatureActiveEmotes_.erase(guid);
+    remoteStandStates_.erase(guid);
     creatureSpawnRetryDeadlines_.erase(guid);
     // Cleared with the rest, so the map does not grow and a creature that
     // comes back into range starts with its full allowance again.

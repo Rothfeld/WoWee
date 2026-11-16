@@ -15,6 +15,8 @@
 #include "rendering/character_renderer.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
+#include "rendering/spell_visual_system.hpp"
+#include "game/game_utils.hpp"
 #include "audio/npc_voice_manager.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
@@ -884,14 +886,36 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     return unit ? rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState()) : 0;
 }
 
-void EntitySpawner::updateRemoteStandPose(uint64_t guid, uint32_t instanceId, bool moving, bool mounted) {
+void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bool moving, bool mounted) {
     auto entity = gameHandler_->getEntityManager().getEntity(guid);
     if (!entity) return;
+    if (auto* visuals = renderer_->getSpellVisualSystem()) {
+        std::vector<uint32_t> auraVisuals;
+        gameHandler_->loadSpellNameCache();
+        const auto& spells = gameHandler_->spellNameCacheRef();
+        auto addAura = [&](uint32_t spellId) {
+            const auto spell = spells.find(spellId);
+            if (spell != spells.end() && spell->second.spellVisualId)
+                auraVisuals.push_back(spell->second.spellVisualId);
+        };
+        if (game::isPreWotlk()) {
+            const auto first = game::fieldIndex(game::UF::UNIT_FIELD_AURAS);
+            const int slots = game::isActiveExpansion("tbc") ? 56 : 48;
+            for (int slot = 0; slot < slots; ++slot) addAura(entity->getField(first + slot));
+        } else if (const auto* auras = gameHandler_->getUnitAuras(guid)) {
+            for (const auto& aura : *auras) addAura(aura.spellId);
+        }
+        std::sort(auraVisuals.begin(), auraVisuals.end());
+        auraVisuals.erase(std::unique(auraVisuals.begin(), auraVisuals.end()), auraVisuals.end());
+        visuals->syncAuraVisuals(instanceId, auraVisuals);
+    }
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
     const uint8_t previous = it->second;
     it->second = state;
-    if ((!initial && previous == state) || moving || mounted) return;
+    // A newly visible standing unit keeps its spawn/emote animation. Nonzero
+    // stand states must override that spawn pose immediately.
+    if ((initial && state == 0) || (!initial && previous == state) || moving || mounted) return;
     auto unit = std::static_pointer_cast<game::Unit>(entity);
     if (unit->getHealth() == 0) return;
     auto* cr = renderer_->getCharacterRenderer();

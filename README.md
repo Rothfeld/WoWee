@@ -46,6 +46,16 @@ World M2 opaque/alpha-key batches execute before characters; blended M2 batches
 and particles execute afterward. This preserves depth-disabled creature wings
 against distant trees. Parallel recording uses separate M2 command buffers
 from one worker pool; inline recording uses the same opaque-pass boundary.
+Character drawing completes opaque/alpha-key geometry across all instances,
+then composites blended surfaces in camera-depth order, far to near. Sorting
+each model's batches alone cannot order overlapping moth wings. Visible
+character and M2 bones update every frame; distance/frustum culling still
+limits work. Character animation uses the same radius as character drawing.
+Remote NPCs and players consume `UNIT_FIELD_BYTES_1` stand states. Persistent
+aura visuals use `SpellVisual.StateKit` and its authored attachment slots;
+their lifetime follows aura fields and owner existence, not cast duration.
+For example, Draenei Survivor (16483) sleeps (state 3) under spell 35046,
+visual 8270, kit 6608, `Spells/RedGhost_state.m2`.
 M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
 asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U

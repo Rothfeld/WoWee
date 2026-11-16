@@ -238,7 +238,7 @@ public:
     std::unordered_map<uint64_t, uint32_t>& getCreatureModelIds() { return creatureModelIds_; }
     const std::unordered_map<uint64_t, uint32_t>& getCreatureDisplayIds() const { return creatureDisplayIds_; }
     std::unordered_map<uint64_t, glm::vec3>& getCreatureRenderPosCache() { return creatureRenderPosCache_; }
-    void updateRemoteStandPose(uint64_t guid, uint32_t instanceId, bool moving, bool mounted);
+    void updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bool moving, bool mounted);
     uint32_t remoteIdleAnimation(uint64_t guid) const;
     std::unordered_map<uint64_t, bool>& getCreatureWasMoving() { return creatureWasMoving_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasSwimming() { return creatureWasSwimming_; }

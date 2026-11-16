@@ -244,6 +244,7 @@
     "MinRange": 1
   },
   "SpellVisual": {
+    "StateKit": 4,
     "ChannelKit": 5,
     "CastKit": 2,
     "ID": 0,

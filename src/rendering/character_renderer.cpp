@@ -2196,14 +2196,8 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
 
 void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
     // Distance culling for animation updates in dense areas.
-    const float animUpdateRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_ANIM_RADIUS", 120));
+    const float animUpdateRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_RENDER_RADIUS", 130));
     const float animUpdateRadiusSq = animUpdateRadius * animUpdateRadius;
-    // Creature birds are rendered by this path rather than M2Renderer.  Their
-    // rapid wing motion remains conspicuous at distance, and the render radius
-    // can be larger than the generic animation radius.  Use the same boundary
-    // as rendering so a visible bird never holds its last bone pose.
-    const float birdUpdateRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_RENDER_RADIUS", 130));
-    const float birdUpdateRadiusSq = birdUpdateRadius * birdUpdateRadius;
 
     // Single pass: fade-in, movement, and animation bone collection
     toUpdate_.clear();
@@ -2237,9 +2231,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         if (inst.hasOverrideModelMatrix && !inst.isEffectModel) continue;
 
         float distSq = glm::distance2(inst.position, cameraPos);
-        const bool isSkyBird = inst.cachedModel && inst.cachedModel->isSkyBird;
-        const float updateRadiusSq = isSkyBird ? birdUpdateRadiusSq : animUpdateRadiusSq;
-        if (distSq > updateRadiusSq && !inst.isSceneModel) continue;
+        if (distSq > animUpdateRadiusSq && !inst.isSceneModel) continue;
 
         // Advance global sequence timer (accumulates independently of animation wrapping)
         inst.globalSequenceTime += deltaTime * 1000.0f;
@@ -2340,23 +2332,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             }
         }
 
-        // Keep combat-range creatures at the render frame rate. Aggressive
-        // throttling used to begin at 10 yards and reached every eighth frame
-        // at 40 yards, making ordinary monster locomotion look like a slideshow.
-        // Reserve frame skipping for models far enough away that bone detail is
-        // much less noticeable, consistent with the generic M2 renderer.
-        uint32_t boneInterval = 1;
-        if (!isSkyBird) {
-            if (distSq > 90.0f * 90.0f) boneInterval = 4;
-            else if (distSq > 45.0f * 45.0f) boneInterval = 2;
-        }
-
-        inst.boneUpdateCounter++;
-        bool needsBones = (inst.boneUpdateCounter >= boneInterval) || inst.boneMatrices.empty();
-        if (needsBones) {
-            inst.boneUpdateCounter = 0;
-            toUpdate_.push_back(std::ref(inst));
-        }
+        // Visible animation advances at the display cadence at every distance.
+        toUpdate_.push_back(std::ref(inst));
     }
 
     const size_t updatedCount = toUpdate_.size();
@@ -2908,8 +2885,26 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     VkPipeline currentPipeline = opaquePipeline_;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, currentPipeline);
 
-    for (auto& pair : instances) {
-        auto& instance = pair.second;
+    // Alpha-blended wings do not write depth. Ordering whole creatures by hash
+    // table iteration lets a distant moth paint over a nearer one. Establish
+    // camera depth order, then finish solid geometry for ALL instances before
+    // compositing their blended surfaces back to front.
+    std::vector<std::pair<float, CharacterInstance*>> drawOrder;
+    drawOrder.reserve(instances.size());
+    const auto view = camera.getViewMatrix();
+    for (auto& [id, instance] : instances) {
+        const glm::vec3 position = instance.hasOverrideModelMatrix
+            ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
+        drawOrder.emplace_back((view * glm::vec4(position, 1.0f)).z, &instance);
+    }
+    std::sort(drawOrder.begin(), drawOrder.end(), [](const auto& a, const auto& b) {
+        return a.first != b.first ? a.first < b.first : a.second->id < b.second->id;
+    });
+    for (int pass = -1; pass < 2; ++pass) {
+    for (const auto& [depth, instancePtr] : drawOrder) {
+        auto& instance = *instancePtr;
+        const bool cameraFade = instance.cameraOpacity < 0.999f && !instance.isEffectModel;
+        if (pass == -1 && !cameraFade) continue;
 
         // Skip invisible instances (e.g., player in first-person mode)
         if (!instance.visible) continue;
@@ -3021,15 +3016,6 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 instance.isSceneModel, instance.creatureMaterialRules,
                 instance.hasOverrideModelMatrix, instance.isEffectModel);
 
-            // Draw batches in two passes: opaque (blendMode 0) first, then
-            // alpha-key/blend after.  This ensures capes and body parts write
-            // depth before hair overlay, preventing hair→cape z-fight.
-            auto getBatchBlendMode = [&](const pipeline::M2Batch& b) -> uint16_t {
-                if (b.materialIndex < gpuModel.data.materials.size())
-                    return gpuModel.data.materials[b.materialIndex].blendMode;
-                return 0;
-            };
-
             // Use precomputed batch render order (cached on gpuModel at load time;
             // depends only on static batch metadata, so per-frame re-sorting was waste).
             const auto& sortedBatchIndices = gpuModel.sortedBatchIndices;
@@ -3037,13 +3023,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             // Fill depth for the entire fading surface before blending any
             // color. A single blended depth-writing pass still composites back
             // faces drawn before the front, making the head look hollow.
-            const bool cameraFade = instance.cameraOpacity < 0.999f && !instance.isEffectModel;
-            for (int pass = cameraFade ? -1 : 0; pass < 2; ++pass) {
             for (size_t bi : sortedBatchIndices) {
                 const auto& batch = gpuModel.data.batches[bi];
-                uint16_t bm = getBatchBlendMode(batch);
-                if (pass == 0 && bm != 0) continue;  // pass 0: opaque only
-                if (pass == 1 && bm == 0) continue;   // pass 1: non-opaque only
                 if (applyGeosetFilter) {
                     if (instance.activeGeosets.find(batch.submeshId) == instance.activeGeosets.end()) {
                         continue;
@@ -3088,7 +3069,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     // white texture, and they resolve to a texture. Twenty-four
                     // of them a session is noise in a log read for faults.
                     core::Logger::getInstance().debug(
-                        "Head batch: instance=", pair.first, " model=", instance.modelId,
+                        "Head batch: instance=", instance.id, " model=", instance.modelId,
                         " geoset=", batch.submeshId, " firstSlotType=", chosenType,
                         " resolved=", (rt == whiteTexture_.get() ? "WHITE"
                                        : (rt == nullptr ? "null" : "texture")),
@@ -3143,6 +3124,10 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 const bool cameraSolid = cameraFade && blendMode <= 1 && !(materialFlags & 0x10);
                 if (pass == -1 && !cameraSolid) continue;
+                const bool blended = cameraSolid || blendMode >= 2 ||
+                    (materialFlags & 0x10) || renderOpacity * batchColorAlpha < 0.999f;
+                if (pass == 0 && blended) continue;
+                if (pass == 1 && !blended) continue;
 
                 const bool hairTexture = batchUsesTextureType(gpuModel, batch, 6);
                 const bool hairMaterial = characterBatchIsHair(
@@ -3409,8 +3394,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             }
-            } // end pass loop
         } else {
+            if (pass == -1 || (pass == 1) != (renderOpacity < 0.999f)) continue;
             // Draw entire model with first texture
             VkTexture* texPtr = !gpuModel.textureIds.empty() ? gpuModel.textureIds[0] : whiteTexture_.get();
             if (!texPtr || !texPtr->isValid()) texPtr = whiteTexture_.get();
@@ -3469,6 +3454,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
             vkCmdDrawIndexed(cmd, gpuModel.indexCount, 1, 0, 0, 0);
         }
+    }
     }
 }
 

@@ -623,21 +623,8 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         float paddedRadius = instance.cachedPaddedRadius;
         if (paddedRadius > 0.0f && !updateFrustum.intersectsSphere(instance.cachedCullCenter, paddedRadius)) continue;
 
-        // Distant meshes retain animated vertices. Freezing their bones makes
-        // visible machinery stop or jump when crossing the distance boundary.
-        // Keep the clock and poses advancing, with reduced update frequency.
-        const bool needsDistantBones = instance.cachedIsSkyBird || instance.cachedIsLightBeam ||
-                                       instance.cachedIsTransportDoodad;
-
-        // Distance-based frame skipping: update distant bones less frequently
-        uint32_t boneInterval = 1;
-        if (!needsDistantBones) {
-            if (distSq > rendering::M2_BONE_SKIP_DIST_FAR * rendering::M2_BONE_SKIP_DIST_FAR) boneInterval = 4;
-            else if (distSq > rendering::M2_BONE_SKIP_DIST_MID * rendering::M2_BONE_SKIP_DIST_MID) boneInterval = 2;
-        }
-        instance.frameSkipCounter++;
-        if ((instance.frameSkipCounter % boneInterval) != 0) continue;
-
+        // Distance and frustum culling above limit work; visible meshes retain
+        // a fresh pose every frame, including distant wings and machinery.
         boneWorkIndices_.push_back(idx);
     }
 
