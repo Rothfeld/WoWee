@@ -17,6 +17,12 @@ actors emit rings; translating actors emit directional wakes. The wake texture
 tip at V=0 points along travel, with its arms trailing behind. Effects remain
 at their emission positions, grow, and expire. Current timing uses central
 values from native ranges: 0.65-second lifetime and 0.425-second idle interval.
+Moving emission interval is `0.25 * depthScale * 2.5 / min(speed, 20)` seconds,
+with speed in yards per second. At shallow depth this gives 0.625-yard spacing
+up to the speed cap. Overdue emissions retain their age and interpolated
+position, so frame delays do not discard wakes or stack them at one point.
+Set `WOWEE_WATER_CONTACT_TRACE=1` when launching the client to log each
+emission's actor, speed, interval, depth, position, age, and active count.
 Exact contact size and visual parity still require paired footage review.
 CPU checks cover rings, wakes, multiple actors, expiry, dry/submerged suppression,
 and despawn. Surface captures show fine ripples and visible submerged legs.

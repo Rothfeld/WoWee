@@ -1,4 +1,5 @@
 #include "core/coordinates.hpp"
+#include "core/env_flag.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "game/game_utils.hpp"
 #include <stdexcept>
@@ -1996,6 +1997,9 @@ void WaterRenderer::uploadFrameUBO() {
 // the character, so the froth stays where the water was churned and the
 // character runs out of it - froth pinned under the feet reads as a decal.
 void WaterRenderer::updateContacts(float deltaTime, const std::vector<WaterContactActor>& actors) {
+    static const bool traceContacts = core::envFlagEnabled("WOWEE_WATER_CONTACT_TRACE");
+    assert(std::isfinite(deltaTime) && deltaTime >= 0.0f);
+    if (deltaTime == 0.0f) return;
     constexpr float lifetime = 0.65f;
     for (auto& point : contactPoints_) point.age += deltaTime;
     std::erase_if(contactPoints_, [](const auto& point) { return point.age >= lifetime; });
@@ -2003,13 +2007,13 @@ void WaterRenderer::updateContacts(float deltaTime, const std::vector<WaterConta
     for (const auto& actor : actors) {
         auto& emitter = contactEmitters_[actor.guid];
         emitter.seen = true;
-        const glm::vec2 displacement = glm::vec2(actor.position - emitter.previous);
+        const glm::vec2 displacement = emitter.initialized
+            ? glm::vec2(actor.position - emitter.previous) : glm::vec2(0.0f);
         const float distance = glm::length(displacement);
         const bool moving = emitter.initialized && distance > deltaTime * 0.1f;
         const bool teleported = emitter.initialized && distance > 2.0f;
         emitter.previous = actor.position;
         emitter.initialized = true;
-        emitter.remaining -= deltaTime;
         const float extent = std::max(1.0f, actor.radius * 2.0f);
         const auto height = getNearestWaterHeightAt(actor.position.x, actor.position.y, actor.position.z, extent);
         const float depth = height ? *height - actor.position.z : -1.0f;
@@ -2017,17 +2021,34 @@ void WaterRenderer::updateContacts(float deltaTime, const std::vector<WaterConta
             emitter.remaining = 0.0f;
             continue;
         }
-        if (emitter.remaining > 0.0f) continue;
         // Build 8606: stationary rings every 400-450 ms, moving wakes every
-        // 250 ms at base speed. Both fade in for 40% of their ~650 ms life.
+        // 250 ms at 2.5 yards/s, scaled inversely with speed (capped at 20).
+        // Carry overdue time forward instead of discarding it each frame.
         const float depthScale = depth > extent * 0.5f
             ? 1.5f - depth / extent : 1.0f;
-        emitter.remaining = moving ? 0.25f * depthScale : 0.425f;
+        const float speed = distance / deltaTime;
+        const float interval = moving
+            ? 0.25f * depthScale * 2.5f / std::min(speed, 20.0f) : 0.425f;
+        emitter.remaining = std::min(emitter.remaining, interval) - deltaTime;
         const glm::vec2 direction = moving ? displacement / distance : glm::vec2(1.0f, 0.0f);
         const float radius = std::sqrt(extent / 3.0f) * depthScale * (moving ? 1.0f : 0.6f);
-        if (contactPoints_.size() == kMaxWaterContacts) contactPoints_.erase(contactPoints_.begin());
-        contactPoints_.push_back({{actor.position.x, actor.position.y, *height}, direction,
-            radius, moving ? 1.25f : 0.3125f, depthScale * (moving ? 1.0f : 0.8f), 0.0f, moving});
+        while (emitter.remaining <= 0.0f) {
+            const float age = -emitter.remaining;
+            if (age < lifetime) {
+                // Recover emission positions within a long frame, rather than
+                // stacking overdue decals at the actor's current position.
+                const glm::vec2 position = glm::vec2(actor.position) - displacement * (age / deltaTime);
+                if (contactPoints_.size() == kMaxWaterContacts) contactPoints_.erase(contactPoints_.begin());
+                contactPoints_.push_back({{position.x, position.y, *height}, direction,
+                    radius, moving ? 1.25f : 0.3125f, depthScale * (moving ? 1.0f : 0.8f), age, moving});
+                if (traceContacts)
+                    LOG_INFO("Water contact guid=", actor.guid, " wake=", moving,
+                        " speed=", speed, " interval=", interval, " depth=", depth,
+                        " position=", position.x, ",", position.y, ",", *height,
+                        " age=", age, " active=", contactPoints_.size());
+            }
+            emitter.remaining += interval;
+        }
     }
     std::erase_if(contactEmitters_, [](const auto& entry) { return !entry.second.seen; });
     frameUBO_.contactMeta.x = static_cast<float>(contactPoints_.size());
