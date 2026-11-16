@@ -3495,6 +3495,7 @@ void SocialHandler::handleBattlefieldStatus(network::Packet& packet) {
     BattlefieldStatusData status;
     if (!BattlefieldStatusPacket::parse(packet, status, isClassicLikeExpansion(),
                                         !isPreWotlk())) {
+        LOG_ERROR("Malformed SMSG_BATTLEFIELD_STATUS for current expansion");
         return;
     }
     const uint32_t queueSlot = status.queueSlot;
@@ -3567,24 +3568,36 @@ void SocialHandler::handleBattlefieldStatus(network::Packet& packet) {
 }
 
 void SocialHandler::handleBattlefieldList(network::Packet& packet) {
-    if (!packet.hasRemaining(5)) return;
     AvailableBgInfo info;
-    info.bgTypeId = packet.readUInt32();
-    info.isRegistered = packet.readUInt8() != 0;
     const bool isWotlk = isActiveExpansion("wotlk");
     const bool isTbc = isActiveExpansion("tbc");
-    if (isTbc || isWotlk) { if (!packet.hasRemaining(1)) return; info.isHoliday = packet.readUInt8() != 0; }
+    if (!packet.hasRemaining(isTbc ? 17 : 5)) {
+        LOG_ERROR("Truncated SMSG_BATTLEFIELD_LIST header");
+        return;
+    }
+    if (isTbc) info.battlemasterGuid = packet.readUInt64();
+    info.bgTypeId = packet.readUInt32();
+    const uint8_t listFlags = packet.readUInt8();
+    if (!isTbc) info.isRegistered = listFlags != 0;
+    if (isWotlk) { if (!packet.hasRemaining(1)) return; info.isHoliday = packet.readUInt8() != 0; }
     if (isWotlk) { if (!packet.hasRemaining(8)) return; info.minLevel = packet.readUInt32(); info.maxLevel = packet.readUInt32(); }
     if (!packet.hasRemaining(4)) return;
-    uint32_t count = std::min(packet.readUInt32(), 256u);
+    const uint32_t count = packet.readUInt32();
+    if (count > packet.getRemainingSize() / sizeof(uint32_t)) {
+        LOG_ERROR("Truncated SMSG_BATTLEFIELD_LIST instances: ", count);
+        return;
+    }
     info.instanceIds.reserve(count);
     for (uint32_t i = 0; i < count; ++i) {
         if (!packet.hasRemaining(4)) break;
         info.instanceIds.push_back(packet.readUInt32());
     }
-    bool updated = false;
-    for (auto& existing : availableBgs_) { if (existing.bgTypeId == info.bgTypeId) { existing = std::move(info); updated = true; break; } }
-    if (!updated) availableBgs_.push_back(std::move(info));
+    // Lua's battlemaster panel reads the most recently received offering.
+    std::erase_if(availableBgs_, [&](const auto& existing) { return existing.bgTypeId == info.bgTypeId; });
+    availableBgs_.push_back(std::move(info));
+    if (isTbc && owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("BATTLEFIELDS_SHOW", {});
+    }
 }
 
 bool SocialHandler::hasPendingBgInvite() const {

@@ -1678,6 +1678,46 @@ bool BattlefieldStatusPacket::parse(network::Packet& packet, BattlefieldStatusDa
     if (!packet.hasRemaining(4)) return false;
     data.queueSlot = packet.readUInt32();
 
+    // TBC uses a uint64 battleground identifier, then instance/rated/status.
+    // Unlike Wrath, it has no min/max level bytes. A zero identifier clears
+    // this queue slot and is the entire remaining payload.
+    if (!classicFormat && !wotlkFormat) {
+        if (!packet.hasRemaining(8)) return false;
+        const uint64_t identifier = packet.readUInt64();
+        if (identifier == 0) {
+            data.statusId = 0;
+            return true;
+        }
+        data.arenaType = static_cast<uint8_t>(identifier);
+        data.bgTypeId = static_cast<uint32_t>(identifier >> 16);
+        if (!packet.hasRemaining(9)) return false;
+        data.instanceId = packet.readUInt32();
+        data.isRated = packet.readUInt8() != 0;
+        data.statusId = packet.readUInt32();
+        switch (data.statusId) {
+            case 1:
+                if (!packet.hasRemaining(8)) return false;
+                data.avgWaitMs = packet.readUInt32();
+                data.timeInQueueMs = packet.readUInt32();
+                break;
+            case 2:
+                if (!packet.hasRemaining(8)) return false;
+                data.mapId = packet.readUInt32();
+                data.inviteTimeoutMs = packet.readUInt32();
+                break;
+            case 3:
+                if (!packet.hasRemaining(13)) return false;
+                data.mapId = packet.readUInt32();
+                data.inviteTimeoutMs = packet.readUInt32();
+                packet.readUInt32(); // Elapsed battleground time.
+                packet.readUInt8(); // Arena team.
+                break;
+            default:
+                return false;
+        }
+        return true;
+    }
+
     // The server writes the next stretch as one uint64 and says so in a comment,
     // which is what makes it easy to read as fewer, wider fields than it holds:
     //

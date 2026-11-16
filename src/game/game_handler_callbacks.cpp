@@ -2992,6 +2992,12 @@ void GameHandler::interactWithNpc(uint64_t guid) {
                           " has no NPC flags; no gossip hello sent");
                 return;
             }
+            if (unit->getNpcFlags() & NPC_FLAG_BATTLEMASTER) {
+                network::Packet packet(wireOpcode(Opcode::CMSG_BATTLEMASTER_HELLO));
+                packet.writeUInt64(guid);
+                socket->send(packet);
+                return;
+            }
             // Sent anyway - the server is the judge - but said, because the
             // server says nothing: an NPC whose faction regards the player as
             // Unfriendly or worse is refused the conversation in silence.

@@ -818,6 +818,31 @@ TEST_CASE_METHOD(Integration, "TBC remote boat passengers use a raw transport GU
     CHECK_THROWS_AS(wowee::core::coords::normalizeAngleRad(INFINITY), std::invalid_argument);
 }
 
+TEST_CASE_METHOD(Integration, "TBC battlemaster offerings preserve GUID and newest selection", "[battlemaster]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    std::vector<std::string> events;
+    handler.setAddonEventCallback([&](const std::string& event, const auto&) { events.push_back(event); });
+    constexpr uint64_t guid = 0xF130004E94000001ull;
+    for (const uint32_t type : {2u, 3u, 2u}) {
+        wowee::network::Packet packet(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_BATTLEFIELD_LIST));
+        packet.writeUInt64(guid);
+        packet.writeUInt32(type);
+        packet.writeUInt8(0);
+        packet.writeUInt32(2);
+        packet.writeUInt32(17);
+        packet.writeUInt32(23);
+        session.receive(packet);
+        REQUIRE_FALSE(handler.getAvailableBgs().empty());
+        const auto& offering = handler.getAvailableBgs().back();
+        CHECK(offering.bgTypeId == type);
+        CHECK(offering.battlemasterGuid == guid);
+        CHECK(offering.instanceIds == std::vector<uint32_t>{17, 23});
+        CHECK(events.back() == "BATTLEFIELDS_SHOW");
+    }
+    CHECK(handler.getAvailableBgs().size() == 2);
+}
+
 TEST_CASE_METHOD(Integration, "Charter query, rename and close share petition state", "[petition]") {
     replay::Session session("tbc");
     auto& handler = session.handler();

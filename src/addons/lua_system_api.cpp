@@ -4098,7 +4098,11 @@ static int lua_CloseArenaTeamRoster(lua_State* L) { (void)L; return 0; }
 static int lua_IsArenaTeamCaptain(lua_State* L) { lua_pushboolean(L, 0); return 1; }
 
 // Closing the battlemaster's window, which is a client-side dismissal.
-static int lua_CloseBattlefield(lua_State* L) { (void)L; return 0; }
+static int lua_CloseBattlefield(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (gh && gh->addonEventCallbackRef()) gh->addonEventCallbackRef()("BATTLEFIELDS_CLOSED", {});
+    return 0;
+}
 
 // Leaving a vehicle, and whether its aim can be raised or lowered. Vehicles
 // are not modelled here, so neither is possible.
@@ -4275,7 +4279,9 @@ static int lua_LFGTeleport(lua_State* L) {
 // each read as "not an arena". That is right until the player is in one.
 static int lua_IsBattlefieldArena(lua_State* L) {
     auto* gh = getGameHandler(L);
-    lua_pushboolean(L, gh && gh->isArenaMap(gh->getCurrentMapId()) ? 1 : 0);
+    const auto* info = gh && !gh->getAvailableBgs().empty()
+        ? gh->getBattlemasterInfo(gh->getAvailableBgs().back().bgTypeId) : nullptr;
+    lua_pushboolean(L, info && info->instanceType == 4);
     return 1;
 }
 
@@ -4402,15 +4408,9 @@ static int lua_PlayerIsPVPInactive(lua_State* L) { lua_pushboolean(L, 0); return
 
 // ---- The battlemaster's battleground list ----
 //
-// GetBattlefieldInfo() → mapName, mapDescription, maxGroup, canEnter,
-//                        isHoliday, isRandom
-//
-// About the battleground the battlemaster being spoken to offers, which is
-// what the last SMSG_BATTLEFIELD_LIST described. The frame returns early on a
-// nil name, so before this the list drew nothing at all.
-//
-// The description is nil: BattlemasterList.dbc carries no blurb, and the panel
-// treats a missing one as "no description" rather than raising on it.
+// The latest battlemaster offering uses the expansion's FrameXML signature.
+// TBC returns ten values, including the faction-specific Map.dbc description
+// and level bounds; Wrath returns six values for its rewards-oriented panel.
 static int lua_GetBattlefieldInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return luaReturnNil(L);
@@ -4419,6 +4419,20 @@ static int lua_GetBattlefieldInfo(lua_State* L) {
     const auto* info = gh->getBattlemasterInfo(bgs.back().bgTypeId);
     if (!info || info->name.empty()) return luaReturnNil(L);
     const auto& bg = bgs.back();
+    if (interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000) {
+        lua_pushstring(L, info->name.c_str());
+        const auto& description = gh->isPlayerAlliance() ? info->allianceDescription : info->hordeDescription;
+        lua_pushstring(L, description.c_str());
+        lua_pushnumber(L, info->minLevel);
+        lua_pushnumber(L, info->maxLevel);
+        lua_pushnumber(L, info->mapIds.empty() ? 0 : info->mapIds.front());
+        lua_pushnil(L); // No world-map entrance coordinates in the offering.
+        lua_pushnil(L);
+        lua_pushboolean(L, false);
+        lua_pushnumber(L, info->maxLevel);
+        lua_pushnumber(L, info->maxGroupSize);
+        return 10;
+    }
     lua_pushstring(L, info->name.c_str());   // 1: mapName
     lua_pushnil(L);                          // 2: mapDescription
     lua_pushnumber(L, info->maxGroupSize);   // 3: maxGroup
@@ -4546,6 +4560,8 @@ static int lua_JoinBattlefield(lua_State* L) {
 
     const auto& bgs = gh->getAvailableBgs();
     uint32_t bgTypeId = selectedBattlegroundTypeId();
+    const bool tbc = interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000;
+    if (tbc && !bgs.empty()) bgTypeId = bgs.back().bgTypeId;
     // Nothing selected can still happen - a queue asked for before the panel
     // has told anyone what it is showing - and one battleground on offer is
     // then not a guess.
@@ -4570,8 +4586,9 @@ static int lua_JoinBattlefield(lua_State* L) {
     // done standing anywhere, and the guid then belongs to whoever was last
     // spoken to - a vendor, a flight master - which is not a battlemaster and
     // is not what the real client sends. Nought is.
-    const uint64_t battlemaster =
-        gh->isGossipWindowOpen() ? gh->getCurrentGossip().npcGuid : 0;
+    const uint64_t battlemaster = tbc && !bgs.empty()
+        ? bgs.back().battlemasterGuid
+        : (gh->isGossipWindowOpen() ? gh->getCurrentGossip().npcGuid : 0);
     LOG_WARNING("CMSG_BATTLEMASTER_JOIN: bgTypeId=", bgTypeId, " instance=", instanceId,
              " asGroup=", asGroup, " battlemaster=0x", std::hex, battlemaster, std::dec);
     gh->joinBattlefield(battlemaster, bgTypeId, instanceId, asGroup);
@@ -5912,6 +5929,12 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"CanJoinBattlefieldAsGroup", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             if (!gh) { lua_pushboolean(L, 0); return 1; }
+            if (interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000) {
+                const auto& offerings = gh->getAvailableBgs();
+                const auto* info = offerings.empty() ? nullptr : gh->getBattlemasterInfo(offerings.back().bgTypeId);
+                lua_pushboolean(L, info && info->maxGroupSize > 1);
+                return 1;
+            }
             const auto& pd = gh->getPartyData();
             const bool leadsAParty = !pd.isEmpty() && pd.leaderGuid == gh->getPlayerGuid();
             lua_pushboolean(L, leadsAParty ? 1 : 0);

@@ -108,13 +108,33 @@ TEST_CASE("SMSG_BATTLEFIELD_STATUS reads the status the server sent",
     }
 
     SECTION("before Wrath the invitation has no eight unused bytes") {
-        auto p = packetOf(serverStatusBytes(0, 0, 3, 10, 19, 5, false, 2,
-                                            {529, 80000}));
+        // CMaNGOS TBC header has no min/max level bytes.
+        auto bytes = serverStatusBytes(0, 0, 3, 10, 19, 5, false, 2, {529, 80000});
+        bytes.erase(bytes.begin() + 12, bytes.begin() + 14);
+        auto p = packetOf(bytes);
         BattlefieldStatusData d;
         REQUIRE(BattlefieldStatusPacket::parse(p, d, /*classicFormat=*/false,
                                                /*wotlkFormat=*/false));
         CHECK(d.mapId == 529u);
         CHECK(d.inviteTimeoutMs == 80000u);
+    }
+
+    SECTION("TBC live Arathi queue packet retains queued status") {
+        auto p = packetOf({0,0,0,0, 0,13,3,0,0,0,144,31,
+                           0,0,0,0, 0, 1,0,0,0, 0,0,0,0, 0,0,0,0});
+        BattlefieldStatusData d;
+        REQUIRE(BattlefieldStatusPacket::parse(p, d, false, false));
+        CHECK(d.bgTypeId == 3);
+        CHECK(d.statusId == 1);
+        CHECK(d.instanceId == 0);
+    }
+
+    SECTION("TBC zero identifier clears queue without status tail") {
+        auto p = packetOf({1,0,0,0, 0,0,0,0,0,0,0,0});
+        BattlefieldStatusData d;
+        REQUIRE(BattlefieldStatusPacket::parse(p, d, false, false));
+        CHECK(d.queueSlot == 1);
+        CHECK(d.statusId == 0);
     }
 
     SECTION("an arena carries its team size") {

@@ -1312,8 +1312,7 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
         "    self:SetPoint('CENTER', UIParent, 'CENTER')\n"
         "  end)\n"
         "end\n"
-        "centered(PVPParentFrame)\n"
-        "centered(BattlefieldFrame)\n");
+        "centered(PVPParentFrame)\n");
 
     LOG_WARNING("FrameXML: ", lua, " Lua files and ", xml, " XML files loaded, ",
                 failed, " failed in ", sinceMs(loadStart), "ms");

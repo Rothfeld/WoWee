@@ -179,6 +179,7 @@ struct BgQueueSlot {
 };
 
 struct AvailableBgInfo {
+    uint64_t battlemasterGuid = 0;
     uint32_t bgTypeId         = 0;
     bool     isRegistered     = false;
     bool     isHoliday        = false;

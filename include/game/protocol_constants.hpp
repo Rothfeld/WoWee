@@ -68,6 +68,7 @@ constexpr uint32_t NPC_FLAG_SPIRIT_HEALER  = 0x00004000;
 constexpr uint32_t NPC_FLAG_SPIRIT_GUIDE   = 0x00008000;
 constexpr uint32_t NPC_FLAG_INNKEEPER      = 0x00010000;
 constexpr uint32_t NPC_FLAG_BANKER         = 0x00020000;
+constexpr uint32_t NPC_FLAG_BATTLEMASTER   = 0x00100000;
 constexpr uint32_t NPC_FLAG_AUCTIONEER     = 0x00200000;
 
 // ---------------------------------------------------------------------------

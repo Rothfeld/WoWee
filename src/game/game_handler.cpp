@@ -2500,16 +2500,18 @@ const GameHandler::BattlemasterEntry* GameHandler::getBattlemasterInfo(uint32_t 
         if (!am || !am->isInitialized()) return nullptr;
         battlemasterListLoaded_ = true;
         auto dbc = am->loadDBC("BattlemasterList.dbc");
+        const bool tbc = isActiveExpansion("tbc");
+        auto mapDbc = tbc ? am->loadDBC("Map.dbc") : nullptr;
         if (dbc && dbc->isLoaded() && dbc->getFieldCount() > 31) {
             for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
                 const uint32_t id = dbc->getUInt32(i, 0);
                 if (id == 0) continue;
                 BattlemasterEntry e;
                 e.id           = id;
-                e.name         = dbc->getString(i, 11);
-                e.maxGroupSize = dbc->getUInt32(i, 28);
-                e.minLevel     = dbc->getUInt32(i, 30);
-                e.maxLevel     = dbc->getUInt32(i, 31);
+                e.name         = dbc->getString(i, tbc ? 15 : 11);
+                e.maxGroupSize = dbc->getUInt32(i, tbc ? 12 : 28);
+                e.minLevel     = dbc->getUInt32(i, tbc ? 10 : 30);
+                e.maxLevel     = dbc->getUInt32(i, tbc ? 11 : 31);
                 // Fields 1-8 are map ids, 0xFFFFFFFF where unused, and field 9
                 // is the instance type - verified against the file rather than
                 // taken from a layout table, which does not carry this row.
@@ -2519,6 +2521,14 @@ const GameHandler::BattlemasterEntry* GameHandler::getBattlemasterInfo(uint32_t 
                     if (mapId == 0xFFFFFFFFu) continue;
                     e.mapCount++;
                     e.mapIds.push_back(mapId);
+                }
+                if (mapDbc && mapDbc->isLoaded() && mapDbc->getFieldCount() > 45 && !e.mapIds.empty()) {
+                    for (uint32_t row = 0; row < mapDbc->getRecordCount(); ++row) {
+                        if (mapDbc->getUInt32(row, 0) != e.mapIds.front()) continue;
+                        e.hordeDescription = mapDbc->getString(row, 28);
+                        e.allianceDescription = mapDbc->getString(row, 45);
+                        break;
+                    }
                 }
                 if (e.instanceType == 3 && !e.name.empty()) battlegroundTypes_.push_back(e);
                 battlemasterList_[id] = std::move(e);

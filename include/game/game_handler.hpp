@@ -2747,6 +2747,8 @@ public:
     struct BattlemasterEntry {
         uint32_t    id = 0;
         std::string name;
+        std::string hordeDescription;
+        std::string allianceDescription;
         uint32_t    maxGroupSize = 0;
         uint32_t    minLevel = 0;
         uint32_t    maxLevel = 0;

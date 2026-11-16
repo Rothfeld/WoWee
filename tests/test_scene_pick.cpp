@@ -196,3 +196,12 @@ TEST_CASE("Corpse gathering requires profession rank and compatible carried tool
     CHECK_FALSE(compatibleGatheringTool(21, 1, 1, 1));
     CHECK_FALSE(compatibleGatheringTool(1, 2, 1, 1));
 }
+
+TEST_CASE("Innkeeper vendor and battlemaster cursors retain service priority", "[npc-cursor]") {
+    using namespace wowee::game;
+    using wowee::ui::unitCursorPath;
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_INNKEEPER | NPC_FLAG_VENDOR,
+        QuestGiverStatus::NONE, "Buy")) == "Interface\\Cursor\\Innkeeper.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_BATTLEMASTER,
+        QuestGiverStatus::NONE)) == "Interface\\Cursor\\Speak.blp");
+}

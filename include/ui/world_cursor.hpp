@@ -33,7 +33,7 @@ inline const char* unitCursorPath(bool alive, uint32_t dynamicFlags, int reactio
     if (npcFlags & (game::NPC_FLAG_ANY_VENDOR | game::NPC_FLAG_BANKER | game::NPC_FLAG_AUCTIONEER)) return "Interface\\Cursor\\Buy.blp";
     if (npcFlags & game::NPC_FLAG_TRAINER) return "Interface\\Cursor\\Trainer.blp";
     if (npcFlags & game::NPC_FLAG_FLIGHT_MASTER) return "Interface\\Cursor\\Taxi.blp";
-    if (npcFlags & game::NPC_FLAG_GOSSIP) return "Interface\\Cursor\\Speak.blp";
+    if (npcFlags & (game::NPC_FLAG_GOSSIP | game::NPC_FLAG_BATTLEMASTER)) return "Interface\\Cursor\\Speak.blp";
     return "Interface\\Cursor\\Point.blp";
 }
 
