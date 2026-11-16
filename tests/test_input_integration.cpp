@@ -1343,31 +1343,6 @@ TEST_CASE("Skill gain uses SKILL chat category", "[skill-chat]") {
     REQUIRE(handler.getChatHistory().size() == before + 1);
     CHECK(handler.getChatHistory().back().type == wowee::game::ChatType::SKILL);
 }
-TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of player faction metadata", "[companion][tooltip]") {
-    using namespace wowee::game;
-    replay::Session session("tbc");
-    auto& handler = session.handler();
-    lua.setGameHandler(&handler);
-    constexpr uint64_t ownerGuid = 123;
-    constexpr uint64_t petGuid = 0xf140000000000456ull;
-    constexpr uint32_t entry = 21010;
-    auto owner = std::make_shared<Player>(ownerGuid);
-    owner->setName("Edrik");
-    handler.getEntityManager().addEntity(ownerGuid, owner);
-    auto pet = std::make_shared<Unit>(petGuid);
-    pet->setName("Blue Moth");
-    pet->setEntry(entry);
-    pet->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 1);
-    // Mini pets carry CREATEDBY but omit SUMMONEDBY (Pet::SetOwnerGuid).
-    pet->setField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_LO), ownerGuid);
-    pet->setField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_HI), 0);
-    pet->setField(fieldIndex(UF::UNIT_FIELD_FLAGS), UNIT_FLAG_PLAYER_CONTROLLED);
-    handler.getEntityManager().addEntity(petGuid, pet);
-    // CMaNGOS QueryHandler::HandleCreatureQueryOpcode, TBC response layout.
-    wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
-    info.writeUInt32(entry);
-    info.writeString("Blue Moth");
-    for (int i = 0; i < 5; ++i) info.writeString("");
 
 TEST_CASE_METHOD(Integration, "Untrained corpse tooltip exposes red skinning requirement", "[skinning][tooltip]") {
     using namespace wowee::game;
@@ -1415,6 +1390,31 @@ TEST_CASE_METHOD(Integration, "Untrained corpse tooltip exposes red skinning req
     lua.setGameHandler(nullptr);
 }
 
+TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of player faction metadata", "[companion][tooltip]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    constexpr uint64_t ownerGuid = 123;
+    constexpr uint64_t petGuid = 0xf140000000000456ull;
+    constexpr uint32_t entry = 21010;
+    auto owner = std::make_shared<Player>(ownerGuid);
+    owner->setName("Edrik");
+    handler.getEntityManager().addEntity(ownerGuid, owner);
+    auto pet = std::make_shared<Unit>(petGuid);
+    pet->setName("Blue Moth");
+    pet->setEntry(entry);
+    pet->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 1);
+    // Mini pets carry CREATEDBY but omit SUMMONEDBY (Pet::SetOwnerGuid).
+    pet->setField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_LO), ownerGuid);
+    pet->setField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_HI), 0);
+    pet->setField(fieldIndex(UF::UNIT_FIELD_FLAGS), UNIT_FLAG_PLAYER_CONTROLLED);
+    handler.getEntityManager().addEntity(petGuid, pet);
+    // CMaNGOS QueryHandler::HandleCreatureQueryOpcode, TBC response layout.
+    wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
+    info.writeUInt32(entry);
+    info.writeString("Blue Moth");
+    for (int i = 0; i < 5; ++i) info.writeString("");
     info.writeUInt32(0); // Type flags
     info.writeUInt32(12); // Non-combat Pet
     for (int i = 0; i < 8; ++i) info.writeUInt32(0);

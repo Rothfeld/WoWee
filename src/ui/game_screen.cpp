@@ -1093,13 +1093,13 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     const uint64_t guid = pick.resolve();
     const auto entity = gameHandler.getEntityManager().getEntity(guid);
     if (!entity || (entity->getType() != game::ObjectType::UNIT &&
-    const auto harvesting = ui::corpseHarvestPresentation(gameHandler, *unit);
                     entity->getType() != game::ObjectType::PLAYER)) return false;
     const auto unit = std::static_pointer_cast<game::Unit>(entity);
     const auto questStatus = gameHandler.getQuestGiverStatus(guid);
     const auto& creatureInfo = gameHandler.getCreatureInfoCache();
     const auto info = creatureInfo.find(unit->getEntry());
     const std::string_view iconName = info != creatureInfo.end() ? std::string_view(info->second.iconName) : std::string_view{};
+    const auto harvesting = ui::corpseHarvestPresentation(gameHandler, *unit);
     const char* path = ui::unitCursorPath(
         !game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()),
         unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
