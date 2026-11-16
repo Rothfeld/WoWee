@@ -7,6 +7,7 @@
 #include "core/logger.hpp"
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -1488,12 +1489,15 @@ network::Packet BuyItemPacket::build(uint64_t vendorGuid, uint32_t itemId, uint3
     network::Packet packet(wireOpcode(Opcode::CMSG_BUY_ITEM));
     packet.writeUInt64(vendorGuid);
     packet.writeUInt32(itemId);  // item entry
-    packet.writeUInt32(slot);    // vendor slot index from SMSG_LIST_INVENTORY
-    packet.writeUInt32(count);
-    // Note: WotLK/AzerothCore expects a trailing byte; Classic/TBC do not.
-    // This static helper always adds it (appropriate for CMaNGOS/AzerothCore).
-    // For Classic/TBC, use the GameHandler::buyItem() path which checks expansion.
-    packet.writeUInt8(0);
+    if (isPreWotlk()) {
+        assert(count > 0 && count <= 255);
+        packet.writeUInt8(static_cast<uint8_t>(count));
+        packet.writeUInt8(1);
+    } else {
+        packet.writeUInt32(slot);
+        packet.writeUInt32(count);
+        packet.writeUInt8(0);
+    }
     return packet;
 }
 

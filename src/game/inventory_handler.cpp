@@ -1546,15 +1546,7 @@ void InventoryHandler::buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t sl
              " wire=0x", std::hex, wireOpcode(Opcode::CMSG_BUY_ITEM), std::dec);
     pendingBuyItemId_ = itemId;
     pendingBuyItemSlot_ = slot;
-    network::Packet packet(wireOpcode(Opcode::CMSG_BUY_ITEM));
-    packet.writeUInt64(vendorGuid);
-    packet.writeUInt32(itemId);
-    packet.writeUInt32(slot);
-    packet.writeUInt32(count);
-    const bool isWotLk = isActiveExpansion("wotlk");
-    if (isWotLk) {
-        packet.writeUInt8(0);
-    }
+    auto packet = BuyItemPacket::build(vendorGuid, itemId, slot, count);
     owner_.getSocket()->send(packet);
 }
 

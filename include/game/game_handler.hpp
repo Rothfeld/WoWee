@@ -1150,7 +1150,11 @@ public:
     // itemClass 4 = Armor (subClassMask bits: 1=Cloth,2=Leather,3=Mail,4=Plate,6=Shield)
     uint32_t getWeaponProficiency() const { return weaponProficiency_; }
     uint32_t getArmorProficiency()  const { return armorProficiency_; }
-    bool canUseWeaponSubclass(uint32_t subClass) const { return (weaponProficiency_ >> subClass) & 1u; }
+    bool canUseWeaponSubclass(uint32_t subClass) const {
+        // Miscellaneous weapons (mining picks, blacksmith hammers) have no
+        // weapon proficiency skill. They are usable by every class.
+        return subClass == 14 || (subClass < 32 && ((weaponProficiency_ >> subClass) & 1u));
+    }
     bool canUseArmorSubclass(uint32_t subClass)  const { return (armorProficiency_  >> subClass) & 1u; }
 
     // Minimap pings from party members

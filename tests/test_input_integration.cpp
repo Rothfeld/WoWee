@@ -781,7 +781,25 @@ TEST_CASE_METHOD(Integration, "Merchant usability follows equipment requirements
     truth("select(6, GetMerchantItemInfo(1)) == false");
     handler.playerSkillsRef()[164].value = 100;
     truth("select(6, GetMerchantItemInfo(1)) == true");
+    info.itemClass = 2;
+    info.subClass = 14; // Profession tools require no weapon proficiency.
+    info.requiredSkill = 0;
+    truth("select(6, GetMerchantItemInfo(1)) == true");
+    info.subClass = 0; // Axes still require their proficiency.
+    truth("select(6, GetMerchantItemInfo(1)) == false");
     lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration, "TBC purchases encode quantity without vendor slot", "[merchant]") {
+    replay::Session session("tbc");
+    for (const uint32_t slot : {11u, 13u}) {
+        auto packet = wowee::game::BuyItemPacket::build(123, 10648, slot, 1);
+        CHECK(packet.readUInt64() == 123);
+        CHECK(packet.readUInt32() == 10648);
+        CHECK(packet.readUInt8() == 1);
+        CHECK(packet.readUInt8() == 1);
+        CHECK(packet.getRemainingSize() == 0);
+    }
 }
 
 TEST_CASE_METHOD(Integration, "Repeated vendor gossip refreshes without closing the shop", "[merchant]") {
