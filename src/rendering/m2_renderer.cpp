@@ -10,6 +10,7 @@
 #include "pipeline/model_bounds.hpp"
 #include "rendering/render_constants.hpp"
 #include "rendering/m2_model_classifier.hpp"
+#include "rendering/m2_track_sampler.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/bone_slots.hpp"
 #include "rendering/vk_buffer.hpp"
@@ -2280,8 +2281,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
 
             // Apply at-rest transparency and color alpha from the M2 animation tracks.
             // These provide per-batch opacity for ghosts, ethereal effects, fading doodads, etc.
-            // Skip zero values: some animated tracks start at 0 and animate up, and baking
-            // that first keyframe would make the entire batch permanently invisible.
+            // A zero first key may animate up, but an entirely zero track
+            // deliberately hides geometry (for example InstancePortal's ring).
             if (bgpu.batchOpacity > 0.0f) {
                 float animAlpha = 1.0f;
                 if (batch.colorIndex < model.colorRGB.size()) {
@@ -2293,10 +2294,16 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                 if (batch.colorIndex < model.colorAlphas.size()) {
                     float ca = model.colorAlphas[batch.colorIndex];
                     if (ca > 0.001f) animAlpha *= ca;
+                    if (batch.colorIndex < model.colorAlphaTracks.size() &&
+                        m2_track::isAlwaysZero(model.colorAlphaTracks[batch.colorIndex])) animAlpha = 0.0f;
                 }
-                if (batch.transparencyIndex < model.textureWeights.size()) {
-                    float tw = model.textureWeights[batch.transparencyIndex];
+                const uint16_t weightIndex = batch.transparencyIndex < model.textureWeightLookup.size()
+                    ? model.textureWeightLookup[batch.transparencyIndex] : uint16_t(0xffff);
+                if (weightIndex < model.textureWeights.size()) {
+                    float tw = model.textureWeights[weightIndex];
                     if (tw > 0.001f) animAlpha *= tw;
+                    if (weightIndex < model.textureWeightTracks.size() &&
+                        m2_track::isAlwaysZero(model.textureWeightTracks[weightIndex])) animAlpha = 0.0f;
                 }
                 bgpu.batchOpacity *= animAlpha;
             }

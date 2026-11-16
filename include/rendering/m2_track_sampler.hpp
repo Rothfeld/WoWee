@@ -11,6 +11,15 @@
 
 namespace wowee::rendering::m2_track {
 
+inline bool isAlwaysZero(const pipeline::M2AnimationTrack& track) {
+    if (track.sequences.empty()) return false;
+    return std::all_of(track.sequences.begin(), track.sequences.end(), [](const auto& sequence) {
+        return !sequence.floatValues.empty() &&
+            std::all_of(sequence.floatValues.begin(), sequence.floatValues.end(),
+                        [](float value) { return value == 0.0f; });
+    });
+}
+
 struct SampleTime {
     int sequenceIndex = -1;
     float timeMs = 0.0f;

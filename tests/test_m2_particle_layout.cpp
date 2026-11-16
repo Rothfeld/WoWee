@@ -2,6 +2,25 @@
 #include "pipeline/m2_loader.hpp"
 #include <cstring>
 #include <vector>
+#include "rendering/m2_track_sampler.hpp"
+
+TEST_CASE("Hidden portal mesh opacity differs from animated fade-in", "[m2][particle]") {
+    wowee::pipeline::M2AnimationTrack track;
+    using wowee::rendering::m2_track::isAlwaysZero;
+    CHECK_FALSE(isAlwaysZero(track));
+    track.sequences.resize(1);
+    CHECK_FALSE(isAlwaysZero(track));
+    track.sequences[0].floatValues = {0};
+    CHECK(isAlwaysZero(track));
+    track.sequences[0].floatValues = {0, 0, 0};
+    CHECK(isAlwaysZero(track));
+    track.sequences[0].floatValues = {0, 1, 0};
+    CHECK_FALSE(isAlwaysZero(track));
+    track.sequences[0].floatValues = {0};
+    track.sequences.resize(2);
+    track.sequences[1].floatValues = {1};
+    CHECK_FALSE(isAlwaysZero(track));
+}
 
 TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particle]") {
     for (const uint32_t version : {260u, 264u}) {

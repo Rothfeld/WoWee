@@ -9,6 +9,13 @@ at draw time. Applying the bone matrix only at birth loses the swirl.
 `Summon_Ritual.m2` uses `0x19`; its particles remain in world space after birth.
 Static skeletons also need initialized bone matrices before particle drawing.
 
+The dungeon portal's mesh has a permanently zero texture-weight track. Resolve
+the batch's transparency index through `textureWeightLookup`, and preserve zero
+when every authored sequence/key is zero. Treating all zero first keys as full
+opacity exposes solid white ring segments from inside the dungeon. An animated
+fade-in or sequence-dependent visibility must not be classified as permanently
+hidden. Particle emitters remain visible independently of mesh opacity.
+
 The regression fixture checks a contracting portal particle under a rotated
 bone and verifies that detached particles receive no second transform.
 Paired four-second Stockades entrance recordings are stored in
