@@ -666,6 +666,20 @@ Use established movement or obstacle contact before jump input; simultaneous
 start/jump events produced different native outcomes across runs. A blocked
 jump alone is insufficient evidence: compare valid climbs and landings too.
 
+Water-jump packets use the ballistic clock, excluding time spent swimming.
+Takeoff resets that clock; heartbeat position and fallTime describe the same
+completed physics sample. START_SWIM reports the current water-contact position
+and ends the arc. JUMP already clears swimming, so it needs no STOP_SWIM packet.
+The camera compares swimming against the reported network state, which can reset
+at login or teleport without a physical water transition.
+
+Captured TBC stationary water jumps advertise a 9.09675 yards/s upward launch
+(negative on the wire) and 4.72222 yards/s horizontal speed despite having no
+directional movement flags. Preserve the mode speed field; directional flags
+determine horizontal travel. Validate outgoing jumps on a native observer as well
+as checking packet trajectories. A server session still marked teleporting drops
+movement packets even while local physics and outgoing client logs look valid.
+
 Player camera fade uses actual camera-to-pivot distance, becoming transparent
 between 1.5 and 0.5 yards. Collision can shorten that distance while requested
 zoom stays far away. Camera opacity multiplies ghost/stealth/spawn opacity and

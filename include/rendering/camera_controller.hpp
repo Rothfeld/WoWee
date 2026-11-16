@@ -143,6 +143,8 @@ public:
     [[nodiscard]] bool isRightMouseHeld() const { return rightMouseDown; }
     [[nodiscard]] bool isSitting() const { return sitting; }
     [[nodiscard]] bool isSwimming() const { return swimming; }
+    // The network state can reset at login/teleport without a physics transition.
+    void setReportedSwimming(bool reported) { wasSwimming = reported; }
     [[nodiscard]] bool isInsideWMO() const { return cachedInsideWMO; }
     [[nodiscard]] bool isInsideInteriorWMO() const { return cachedInsideInteriorWMO; }
     void setGrounded(bool g) { grounded = g; }

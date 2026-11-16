@@ -2350,9 +2350,10 @@ void Application::setState(AppState newState) {
                 auto* cc = renderer->getCameraController();
                 cc->setMovementCallback([this](uint32_t opcode) {
                     if (gameHandler) {
-                        if (opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_FALL_LAND)) {
-                            // Physics has landed; the normal game position sync
-                            // still contains the previous airborne frame.
+                        if (opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_FALL_LAND) ||
+                            opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_SWIM)) {
+                            // Physics has landed on ground or water; regular
+                            // position sync still contains the airborne frame.
                             const auto position = core::coords::renderToCanonical(renderer->getCharacterPosition());
                             gameHandler->setPosition(position.x, position.y, position.z);
                         }
@@ -2772,6 +2773,7 @@ void Application::applyServerMovementState(float deltaTime) {
     if (renderer && gameHandler && renderer->getCameraController()) {
         renderer->getCameraController()->setRunSpeedOverride(gameHandler->getServerRunSpeed());
         renderer->getCameraController()->setWalkSpeedOverride(gameHandler->getServerWalkSpeed());
+        renderer->getCameraController()->setReportedSwimming(gameHandler->isSwimming());
         renderer->getCameraController()->setSwimSpeedOverride(gameHandler->getServerSwimSpeed());
         if (game::isActiveExpansion("tbc") && playerCharacterSpawned && entitySpawner_) {
             renderer->getCameraController()->setSwimmingDepth(entitySpawner_->getPlayerSwimmingDepth());

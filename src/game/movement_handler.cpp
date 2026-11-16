@@ -604,7 +604,9 @@ void MovementHandler::sendMovement(Opcode opcode) {
                     ? (forward < 0.0f ? serverSwimBackSpeed_ : serverSwimSpeed_)
                     : movementInfo.hasFlag(MovementFlags::WALKING) ? serverWalkSpeed_ :
                     (forward < 0.0f ? serverRunBackSpeed_ : serverRunSpeed_);
-                movementInfo.jumpXYSpeed = length > 0.0f ? speed : 0.0f;
+                // Native retains the movement-mode speed even for a stationary
+                // jump. Directional flags determine whether it travels in XY.
+                movementInfo.jumpXYSpeed = speed;
             }
             movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::SWIMMING);
             break;
@@ -848,6 +850,8 @@ void MovementHandler::sendMovement(Opcode opcode) {
               " time=", wireInfo.time,
               " position=(", wireInfo.x, ",", wireInfo.y, ",", wireInfo.z,
               ") facing=", wireInfo.orientation,
+              " fallTime=", wireInfo.fallTime, " jumpVelocity=", wireInfo.jumpVelocity,
+              " jumpXYSpeed=", wireInfo.jumpXYSpeed,
               (includeTransportInWire ? " ONTRANSPORT" : ""));
 
     // Build and send movement packet (expansion-specific format)

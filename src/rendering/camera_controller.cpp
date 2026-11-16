@@ -3254,7 +3254,10 @@ void CameraController::update(float deltaTime) {
     if (movementCallback) {
         if (swimming && !wasSwimming) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_SWIM));
-        } else if (!swimming && wasSwimming) {
+            jumpReported_ = false;
+        } else if (!swimming && wasSwimming && !f.startedJump) {
+            // JUMP already leaves swimming. A second transition would restart
+            // the observer's movement prediction at the takeoff position.
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_STOP_SWIM));
         }
     }
@@ -3305,9 +3308,11 @@ void CameraController::update(float deltaTime) {
     wasTurningRight = nowTurnRight;
     wasJumping = nowJump;
     wasFalling = !grounded && verticalVelocity <= 0.0f;
-    // Counted while airborne and zeroed the moment the ground is back, so the
-    // landing test above reads the length of the fall that just ended.
-    airborneSeconds_ = grounded ? 0.0f : (airborneSeconds_ + deltaTime);
+    // This is also the wire fallTime: swimming is not part of a ballistic arc.
+    // Takeoff starts a new clock even when no ground contact preceded it.
+    // Include this frame's physics, since heartbeats sample its final position.
+    airborneSeconds_ = (grounded || swimming || isFlightAirborne()) ? 0.0f :
+        (f.startedJump ? deltaTime : airborneSeconds_ + deltaTime);
 
     // R key is now handled above with chat safeguard (WantTextInput check)
 
