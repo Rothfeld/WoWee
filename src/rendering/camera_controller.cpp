@@ -410,7 +410,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // not for shallow wading.
         std::optional<float> waterH;
         if (waterRenderer) {
-            waterH = waterRenderer->getWaterHeightAt(targetPos.x, targetPos.y);
+            waterH = waterRenderer->getNearestWaterHeightAt(targetPos.x, targetPos.y, targetPos.z, 400.0f);
         }
         constexpr float MAX_SWIM_DEPTH_FROM_SURFACE = 12.0f;
         // Hysteresis: starting to swim needs deeper water than continuing to
@@ -2575,7 +2575,7 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
     // Check for water at feet position
     std::optional<float> waterH;
     if (waterRenderer) {
-        waterH = waterRenderer->getWaterHeightAt(newPos.x, newPos.y);
+        waterH = waterRenderer->getNearestWaterHeightAt(newPos.x, newPos.y, feetZ, 400.0f);
     }
     constexpr float MAX_SWIM_DEPTH_FROM_SURFACE = 12.0f;
     bool inWater = false;

@@ -3800,6 +3800,15 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     // Create water renderer if not already created
     if (!waterRenderer) {
         waterRenderer = std::make_unique<WaterRenderer>();
+        waterRenderer->setWaterColumnBlockedQuery([this](const glm::vec3& position, float surface) {
+            if (terrainManager) {
+                const auto terrain = terrainManager->getHeightAt(position.x, position.y);
+                if (terrain && *terrain > position.z + 0.2f && *terrain < surface) return true;
+            }
+            const float distance = surface - position.z;
+            return wmoRenderer && distance > 0.2f &&
+                wmoRenderer->raycastBoundingBoxes(position, glm::vec3(0, 0, 1), distance) < distance;
+        });
         if (!waterRenderer->initialize(vkCtx, perFrameSetLayout, assetManager)) {
             LOG_ERROR("Failed to initialize water renderer");
             waterRenderer.reset();
