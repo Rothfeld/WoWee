@@ -711,6 +711,35 @@ TEST_CASE("TBC leadership promotion resolves menu tokens and names", "[party][tb
     lua_close(L);
 }
 
+TEST_CASE("TBC daze speed changes and recovery are applied and acknowledged", "[movement][tbc][speed]") {
+    Session s("tbc");
+    using wowee::game::Opcode;
+    uint32_t counter = 10;
+    for (float speed : {3.5f, 7.0f}) {
+        wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_FORCE_RUN_SPEED_CHANGE));
+        p.writePackedGuid(Session::kPlayerGuid);
+        p.writeUInt32(counter);
+        p.writeUInt8(0);
+        p.writeFloat(speed);
+        s.receive(p);
+        CHECK(s.handler().getServerRunSpeed() == Catch::Approx(speed));
+        auto acks = s.sent().of(Opcode::CMSG_FORCE_RUN_SPEED_CHANGE_ACK);
+        REQUIRE_FALSE(acks.empty());
+        auto ack = acks.back();
+        CHECK(ack.readUInt64() == Session::kPlayerGuid);
+        CHECK(ack.readUInt32() == counter);
+        ack.setReadPos(ack.getSize() - 4);
+        CHECK(ack.readFloat() == Catch::Approx(speed));
+        ++counter;
+    }
+    wowee::network::Packet walk(wowee::game::wireOpcode(Opcode::SMSG_FORCE_WALK_SPEED_CHANGE));
+    walk.writePackedGuid(Session::kPlayerGuid);
+    walk.writeUInt32(counter);
+    walk.writeFloat(2.5f);
+    s.receive(walk);
+    CHECK(s.handler().getServerWalkSpeed() == Catch::Approx(2.5f));
+}
+
 TEST_CASE("TBC loot setting feedback follows server changes once", "[party][tbc][loot-settings]") {
     Session s("tbc");
     auto roster = [&](uint8_t method, uint8_t threshold, uint64_t master) {

@@ -1062,15 +1062,13 @@ network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counte
 
 void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char* name,
                                               Opcode ackOpcode, float* speedStorage) {
-    const bool fscTbcLike = isPreWotlk();
-    uint64_t guid = fscTbcLike
+    const bool legacyGuid = isActiveExpansion("classic") || isActiveExpansion("turtle");
+    uint64_t guid = legacyGuid
         ? packet.readUInt64() : packet.readPackedGuid();
     uint32_t counter = packet.readUInt32();
 
-    size_t remaining = packet.getRemainingSize();
-    if (remaining >= 8) {
-        packet.readUInt32();
-    } else if (remaining >= 5) {
+    // TBC 2.1+ adds a tracking byte only to forced run-speed changes.
+    if (!legacyGuid && ackOpcode == Opcode::CMSG_FORCE_RUN_SPEED_CHANGE_ACK) {
         packet.readUInt8();
     }
     float newSpeed = packet.readFloat();

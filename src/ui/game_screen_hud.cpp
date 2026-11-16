@@ -9,6 +9,7 @@
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
 #include "ui/nameplate_stacking.hpp"
+#include "game/level_difficulty.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
 #include "core/appearance_composer.hpp"
@@ -1248,10 +1249,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             drawList->AddImage((ImTextureID)(uintptr_t)plateBorder,
                 ImVec2(artX, artY), ImVec2(artX + 128.0f * plateArtScale, artY + 32.0f * plateArtScale));
             const uint32_t level = unit->getLevel();
-            const int difference = static_cast<int>(level) - static_cast<int>(gameHandler.getPlayerLevel());
-            const ImU32 levelColor = difference >= 5 ? IM_COL32(255, 25, 25, 255)
-                : difference >= 3 ? IM_COL32(255, 127, 63, 255)
-                : difference >= -2 ? IM_COL32(255, 255, 0, 255) : IM_COL32(63, 178, 63, 255);
+            ImU32 levelColor;
+            switch (game::creatureLevelDifficulty(gameHandler.getPlayerLevel(), level)) {
+                case game::LevelDifficulty::Red: levelColor = IM_COL32(255, 25, 25, 255); break;
+                case game::LevelDifficulty::Orange: levelColor = IM_COL32(255, 127, 63, 255); break;
+                case game::LevelDifficulty::Yellow: levelColor = IM_COL32(255, 255, 0, 255); break;
+                case game::LevelDifficulty::Green: levelColor = IM_COL32(63, 191, 63, 255); break;
+                case game::LevelDifficulty::Gray: levelColor = IM_COL32(127, 127, 127, 255); break;
+            }
             const std::string levelText = std::to_string(level);
             const float fontSize = 11.52f * plateArtScale;
             const ImVec2 size = ImGui::GetFont()->CalcTextSizeA(fontSize, FLT_MAX, 0, levelText.c_str());

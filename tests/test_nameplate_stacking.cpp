@@ -5,8 +5,23 @@
 // by so little the two bars still read as touching.
 #include <catch_amalgamated.hpp>
 #include "ui/nameplate_stacking.hpp"
+#include "game/level_difficulty.hpp"
 
 using namespace wowee::ui;
+
+TEST_CASE("Creature level colors include the no-XP gray boundary", "[nameplates][difficulty]") {
+    using namespace wowee::game;
+    CHECK(creatureLevelDifficulty(40, 24) == LevelDifficulty::Gray);
+    CHECK(creatureLevelDifficulty(40, 31) == LevelDifficulty::Gray);
+    CHECK(creatureLevelDifficulty(40, 32) == LevelDifficulty::Green);
+    CHECK(creatureLevelDifficulty(40, 38) == LevelDifficulty::Yellow);
+    CHECK(creatureLevelDifficulty(40, 43) == LevelDifficulty::Orange);
+    CHECK(creatureLevelDifficulty(40, 45) == LevelDifficulty::Red);
+    CHECK(grayLevel(5) == 0);
+    CHECK(grayLevel(39) == 31);
+    CHECK(grayLevel(59) == 47);
+    CHECK(grayLevel(60) == 51);
+}
 
 namespace {
 constexpr float kBarH = 8.0f;
