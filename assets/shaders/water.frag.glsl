@@ -30,7 +30,7 @@ layout(push_constant) uniform Push {
     vec2 screenSize;  // size of the target being drawn into
     vec2 depthRange;  // the camera's own near and far, for linearising SceneDepth
     float sceneValid; // 1 once the refraction capture holds a frame, 0 before it
-    float legacyIndoor, textureRepeatX, textureRepeatY;
+    float legacyWmoMode, textureRepeatX, textureRepeatY;
 } push;
 
 layout(set = 1, binding = 0) uniform WaterMaterial {
@@ -57,6 +57,7 @@ layout(set = 2, binding = 3) uniform WaterFrameData {
     vec4 contactPositions[64];
     vec4 contactStyles[64];
     vec4 wakePoints[MAX_WAKE_POINTS]; // xy = world pos, z = age 0..1, w = strength
+    vec4 riverDeepColor;
 };
 
 layout(location = 0) in vec3 FragPos;
@@ -65,6 +66,8 @@ layout(location = 2) in vec2 TexCoord;
 layout(location = 3) in float WaveOffset;
 layout(location = 4) in vec2 ScreenUV;
 layout(location = 5) in float LiquidDepth;
+layout(location = 6) in vec3 VertexLighting;
+layout(location = 7) in vec3 VertexSpecular;
 
 layout(location = 0) out vec4 outColor;
 layout(set = 3, binding = 0) uniform sampler2D LakeTexture;
@@ -280,12 +283,17 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 void main() {
     float time = fogParams.z;
     float basicType = push.liquidBasicType;
-    if (push.legacyIndoor > 0.5) {
+    if (push.legacyWmoMode > 0.5) {
         // TBC psLiquidWater: indoor depth lookup is white RGB, with alpha
         // interpolated between LightParams river shallow/deep values. The
         // animated texture alpha supplies the quarter-strength highlight.
         vec4 texel = texture(LakeTexture, TexCoord * vec2(push.textureRepeatX, push.textureRepeatY));
         vec3 color = waterColor.rgb + texel.rgb + 0.25 * texel.a;
+        if (push.legacyWmoMode > 1.5) {
+            // Exterior WMO liquid uses the zone's deep river color, flat
+            // vertex lighting and texture-masked sun sheen.
+            color = riverDeepColor.rgb * VertexLighting + texel.rgb + (VertexSpecular + 0.25) * texel.a;
+        }
         float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth, 0.0, 1.0));
         color += contactLight() / max(alpha, 0.001);
         outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), alpha);

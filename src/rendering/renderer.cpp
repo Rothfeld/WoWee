@@ -2262,7 +2262,10 @@ void Renderer::update(float deltaTime) {
                 actors.push_back({guid, position, unit->getBoundingRadius()});
             }
         }
-        if (lightingManager) waterRenderer->setRiverAlpha(lightingManager->getLightingParams().riverAlpha);
+        if (lightingManager) {
+            waterRenderer->setRiverAlpha(lightingManager->getLightingParams().riverAlpha);
+            waterRenderer->setRiverDeepColor(lightingManager->getLightingParams().riverDeepColor);
+        }
         waterRenderer->updateContacts(deltaTime, actors);
     }
 

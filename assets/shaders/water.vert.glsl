@@ -13,6 +13,14 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 shadowParams;
     vec4 playerPos;   // xyz = player world position, w = horizontal speed
     vec4 playerWake;  // xyz = trailing player position (springback reference)
+    vec4 localLightPosRadius[64];
+    vec4 localLightColorIntensity[64];
+    ivec4 localLightMeta;
+    vec4 volumetricParams;
+    mat4 rtViewProj;
+    vec4 rtCameraPos;
+    vec4 rtParams;
+    vec4 specularColor;
 };
 
 layout(push_constant) uniform Push {
@@ -29,7 +37,7 @@ layout(push_constant) uniform Push {
     vec2 screenSize;
     vec2 depthRange;
     float sceneValid;
-    float legacyIndoor, textureRepeatX, textureRepeatY;
+    float legacyWmoMode, textureRepeatX, textureRepeatY;
 } push;
 
 layout(location = 0) in vec3 aPos;
@@ -42,6 +50,8 @@ layout(location = 2) out vec2 TexCoord;
 layout(location = 3) out float WaveOffset;
 layout(location = 4) out vec2 ScreenUV;
 layout(location = 5) out float LiquidDepth;
+layout(location = 6) out vec3 VertexLighting;
+layout(location = 7) out vec3 VertexSpecular;
 
 // --- Gerstner wave ---
 // Coordinate system: X,Y = horizontal plane, Z = up (height)
@@ -147,6 +157,25 @@ GerstnerResult evaluateGerstnerWaves(vec2 pos, float time, float amp, float freq
 void main() {
     float time = fogParams.z;
     vec4 worldPos = push.model * vec4(aPos, 1.0);
+
+    // Legacy WMO liquids are authored flat grids. Motion comes from the
+    // animated texture and contact decals, not displaced geometry.
+    if (push.legacyWmoMode > 0.5) {
+        FragPos = worldPos.xyz;
+        Normal = vec3(0.0, 0.0, 1.0);
+        TexCoord = aTexCoord;
+        LiquidDepth = aLiquidDepth;
+        WaveOffset = 0.0;
+        vec3 toLight = normalize(-lightDir.xyz);
+        VertexLighting = clamp(ambientColor.rgb + lightColor.rgb * max(toLight.z, 0.0), 0.0, 1.0);
+        vec3 halfDir = normalize(toLight + normalize(viewPos.xyz - FragPos));
+        VertexSpecular = specularColor.rgb * pow(max(halfDir.z, 0.0), 6.0);
+        gl_Position = projection * view * worldPos;
+        ScreenUV = gl_Position.xy / gl_Position.w * 0.5 + 0.5;
+        return;
+    }
+    VertexLighting = vec3(0.0);
+    VertexSpecular = vec3(0.0);
 
     // Evaluate Gerstner waves using X,Y horizontal plane
     GerstnerResult waves = evaluateGerstnerWaves(

@@ -47,7 +47,7 @@ struct WaterPushConstants {
     glm::vec2 screenSize;  // target size, for screen-space UVs
     glm::vec2 depthRange;  // camera near, far - the shader linearises SceneDepth with these
     float sceneValid = 0.0f; // 1 once captureSceneHistory has run; the shader used to guess this per pixel
-    float legacyIndoor = 0.0f, textureRepeatX = 0.0f, textureRepeatY = 0.0f;
+    float legacyWmoMode = 0.0f, textureRepeatX = 0.0f, textureRepeatY = 0.0f;
 };
 static_assert(sizeof(WaterPushConstants) == 112, "the two shader declarations of this range are laid out for 112 bytes");
 
@@ -1286,7 +1286,9 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // against a near plane of 0.05 while the camera's is 0.5.
         push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
-        push.legacyIndoor = legacyWater && surface.indoorColor && basicType < 2 ? 1.0f : 0.0f;
+        // Legacy WMO water: 1 = indoor material color, 2 = outdoor zone lighting.
+        push.legacyWmoMode = legacyWater && isWmoWater && basicType < 2
+            ? (surface.indoorColor ? 1.0f : 2.0f) : 0.0f;
         push.textureRepeatX = surface.width;
         push.textureRepeatY = surface.height;
 

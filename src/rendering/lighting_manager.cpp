@@ -410,6 +410,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
         newParams.cloudDensity = newParams.horizonGlow = 0.0f;
         newParams.riverAlpha = glm::vec2(0.0f);
+        newParams.riverDeepColor = glm::vec3(0.0f);
         newParams.glow = 0.0f;
         glm::vec3 blendedDir(0.0f);  // Accumulate weighted directions
 
@@ -427,6 +428,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
 
                 // Blend this volume's contribution
                 newParams.riverAlpha += params.riverAlpha * wv.weight;
+                newParams.riverDeepColor += params.riverDeepColor * wv.weight;
                 newParams.glow += params.glow * wv.weight;
                 newParams.ambientColor += params.ambientColor * wv.weight;
                 newParams.diffuseColor += params.diffuseColor * wv.weight;
@@ -576,6 +578,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     // blendFactor above.
 
     currentParams_.riverAlpha = glm::mix(currentParams_.riverAlpha, newParams.riverAlpha, blendFactor);
+    currentParams_.riverDeepColor = glm::mix(currentParams_.riverDeepColor, newParams.riverDeepColor, blendFactor);
     currentParams_.glow = glm::mix(currentParams_.glow, newParams.glow, blendFactor);
     currentParams_.ambientColor = glm::mix(currentParams_.ambientColor, newParams.ambientColor, blendFactor);
     currentParams_.diffuseColor = glm::mix(currentParams_.diffuseColor, newParams.diffuseColor, blendFactor);
@@ -722,6 +725,7 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     params.ambientColor = sampleColorBand(profile->colorBands[LightParamsProfile::AMBIENT_COLOR], timeHalfMinutes);
     params.diffuseColor = sampleColorBand(profile->colorBands[LightParamsProfile::DIFFUSE_COLOR], timeHalfMinutes);
     params.specularColor = sampleColorBand(profile->colorBands[LightParamsProfile::SUN_COLOR], timeHalfMinutes);
+    params.riverDeepColor = sampleColorBand(profile->colorBands[LightParamsProfile::RIVER_DEEP_COLOR], timeHalfMinutes);
     params.fogColor = sampleColorBand(profile->colorBands[LightParamsProfile::FOG_COLOR], timeHalfMinutes);
     params.skyTopColor = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_TOP_COLOR], timeHalfMinutes);
     params.skyMiddleColor = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_MIDDLE_COLOR], timeHalfMinutes);

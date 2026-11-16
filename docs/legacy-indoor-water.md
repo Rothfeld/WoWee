@@ -1,10 +1,22 @@
-# Legacy indoor water
+# Legacy WMO water
 
 TBC indoor WMO water uses `XTextures/river/lake_a.1.blp` through
 `lake_a.30.blp`, with one repeat per 4.1666665-yard liquid grid tile.
 The sequence lasts 1.25 seconds. Surface RGB is MOMT color2 plus lake RGB
 plus one quarter of lake alpha. Opacity interpolates LightParams river shallow
 and deep alpha using the authored MLIQ vertex depth byte.
+
+Exterior TBC WMO water uses LightIntBand channel 17 (deep river color),
+multiplied by clamped flat-surface vertex lighting. Texture RGB and texture-alpha
+highlights add to that body color; the alpha highlight includes the same 0.25
+term as indoor water plus a vertex sun-specular term. Lighting volumes blend the
+river color spatially and temporally. Both WMO paths preserve the flat authored
+mesh and use texture animation and contact decals for surface motion.
+
+Stormwind canal comparison: six matched-camera native/WoWee captures, including
+water-patch measurements, live in workspace experiment
+`_experiments/20261116T105955.187294Z.stormwind_water/`. This validates that WMO
+exterior path; ADT oceans and rivers have a separate rendering path.
 
 These rules come from build 8606 shader assets `psLiquidWater.bls` and
 `vsLiquidWater.bls`, WMO setup at 0x695e90, UV generation at 0x6A77F0,

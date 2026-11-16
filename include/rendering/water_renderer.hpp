@@ -89,6 +89,7 @@ struct WaterFrameUBOData {
     glm::vec4 contactPositions[kMaxWaterContacts]{}; // xyz, radius
     glm::vec4 contactStyles[kMaxWaterContacts]{}; // strength, direction xy, wake
     glm::vec4 wakePoints[kMaxWakePoints]{};  // xy = pos, z = age 0..1, w = strength
+    glm::vec4 riverDeepColor{};
 };
 
 class WaterRenderer {
@@ -149,6 +150,7 @@ public:
     /// churned-up froth underfoot; swimming instead lays a V wake off the
     /// shoulders. Call once per frame.
     void setRiverAlpha(const glm::vec2& alpha) { frameUBO_.liquidParams.x = alpha.x; frameUBO_.liquidParams.y = alpha.y; }
+    void setRiverDeepColor(const glm::vec3& color) { frameUBO_.riverDeepColor = glm::vec4(color, 1.0f); }
     void updateContacts(float deltaTime, const std::vector<WaterContactActor>& actors);
 
     void updateWake(float deltaTime, const glm::vec2& pos, const glm::vec2& travelDir,
