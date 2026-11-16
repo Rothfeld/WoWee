@@ -3880,6 +3880,14 @@ const GameHandler::PetitionInfo& GameHandler::getPetitionInfo() const {
     return empty;
 }
 
+void GameHandler::clearPetitionSignaturesUI() {
+    if (socialHandler_) socialHandler_->clearPetitionSignaturesUI();
+}
+
+const GameHandler::PetitionInfo* GameHandler::queryPetitionItem(uint64_t itemGuid) {
+    return socialHandler_ ? socialHandler_->queryPetitionItem(itemGuid) : nullptr;
+}
+
 bool GameHandler::hasPetitionSignaturesUI() const {
     return socialHandler_ ? socialHandler_->hasPetitionSignaturesUI() : false;
 }

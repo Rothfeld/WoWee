@@ -719,6 +719,22 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_PETITION_QUERY_RESPONSE] = [this](network::Packet& packet) { handlePetitionQueryResponse(packet); };
     table[Opcode::SMSG_PETITION_SHOW_SIGNATURES] = [this](network::Packet& packet) { handlePetitionShowSignatures(packet); };
     table[Opcode::SMSG_PETITION_SIGN_RESULTS] = [this](network::Packet& packet) { handlePetitionSignResults(packet); };
+    table[Opcode::MSG_PETITION_RENAME] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(9)) {
+            LOG_ERROR("Truncated MSG_PETITION_RENAME");
+            return;
+        }
+        const uint64_t guid = packet.readUInt64();
+        const std::string name = packet.readString();
+        auto& item = petitionItems_[static_cast<uint32_t>(guid)];
+        item.petitionGuid = guid;
+        item.guildName = name;
+        if (petitionInfo_.petitionGuid == guid) {
+            petitionInfo_.guildName = name;
+            if (petitionInfo_.showUI && owner_.addonEventCallbackRef())
+                owner_.addonEventCallbackRef()("PETITION_SHOW", {});
+        }
+    };
 
     // ---- Battlefield / BG ----
     table[Opcode::SMSG_BATTLEFIELD_STATUS] = [this](network::Packet& packet) { handleBattlefieldStatus(packet); };
@@ -2975,11 +2991,22 @@ void SocialHandler::closePetitionVendor() {
     }
 }
 
+const PetitionInfo* SocialHandler::queryPetitionItem(uint64_t itemGuid) {
+    const uint32_t id = static_cast<uint32_t>(itemGuid);
+    if (const auto it = petitionItems_.find(id); it != petitionItems_.end())
+        return it->second.guildName.empty() ? nullptr : &it->second;
+    if (!owner_.getSocket() || itemGuid == 0) return nullptr;
+    petitionItems_[id].petitionGuid = itemGuid;
+    auto packet = PetitionQueryPacket::build(id, itemGuid);
+    owner_.getSocket()->send(packet);
+    return nullptr;
+}
+
 void SocialHandler::handlePetitionQueryResponse(network::Packet& packet) {
     auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 12) return;
-    /*uint32_t entry =*/ packet.readUInt32();
-    uint64_t petGuid = packet.readUInt64();
+    const uint32_t petitionId = packet.readUInt32();
+    const uint64_t ownerGuid = packet.readUInt64();
     std::string guildName = packet.readString();
     /*std::string body =*/ packet.readString();
 
@@ -3003,7 +3030,13 @@ void SocialHandler::handlePetitionQueryResponse(network::Packet& packet) {
     }
     packet.skipAll();
 
-    if (petitionInfo_.petitionGuid != petGuid) return;
+    auto& item = petitionItems_[petitionId];
+    item.ownerGuid = ownerGuid;
+    item.guildName = guildName;
+    item.signaturesRequired = needed;
+    item.isArena = arenaType != 0;
+    if (static_cast<uint32_t>(petitionInfo_.petitionGuid) != petitionId) return;
+    petitionInfo_.ownerGuid = ownerGuid;
     petitionInfo_.guildName = guildName;
     if (needed > 0) petitionInfo_.signaturesRequired = needed;
     petitionInfo_.isArena = arenaType != 0;

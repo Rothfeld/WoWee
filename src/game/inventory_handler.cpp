@@ -1872,6 +1872,12 @@ void InventoryHandler::dispatchUseItem(uint8_t wowBag, uint8_t wowSlot, uint64_t
     }
 
     const auto* itemInfo = owner_.getItemInfo(item.itemId);
+    if (itemInfo && (itemInfo->itemFlags & 0x00002000u)) {
+        network::Packet packet(wireOpcode(Opcode::CMSG_PETITION_SHOW_SIGNATURES));
+        packet.writeUInt64(itemGuid);
+        owner_.getSocket()->send(packet);
+        return;
+    }
     uint32_t useSpellId = 0;
     if (itemInfo) {
         for (const auto& sp : itemInfo->spells) {

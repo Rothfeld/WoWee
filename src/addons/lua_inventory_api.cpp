@@ -3464,6 +3464,24 @@ void registerInventoryLuaAPI(lua_State* L) {
                 {"GetTargetTradeMoney", lua_GetTargetTradeMoney},
                 {"GetMerchantNumItems",  lua_GetMerchantNumItems},
                 {"GetMerchantItemInfo",  lua_GetMerchantItemInfo},
+                {"_GetPetitionItemTooltip", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const int bag = static_cast<int>(luaL_checknumber(L, 1));
+            const int slot = static_cast<int>(luaL_checknumber(L, 2));
+            const auto* item = gh ? containerItemSlot(gh->getInventory(), bag, slot) : nullptr;
+            if (!item || item->empty()) return 0;
+            const auto* info = gh->getItemInfo(item->item.itemId);
+            if (!info || !(info->itemFlags & 0x2000u)) return 0;
+            lua_pushboolean(L, true);
+            const auto* petition = gh->queryPetitionItem(containerSlotGuid(gh, bag, slot));
+            if (!petition) return 1;
+            lua_pushstring(L, petition->guildName.c_str());
+            lua_pushstring(L, gh->lookupName(petition->ownerGuid).c_str());
+            lua_pushboolean(L, petition->isArena);
+            lua_pushboolean(L, item->item.soulbound);
+            lua_pushboolean(L, info->maxCount == 1);
+            return 6;
+        }},
                 {"GetMerchantItemLink",  lua_GetMerchantItemLink},
                 {"CanMerchantRepair",    lua_CanMerchantRepair},
                 {"GetContainerItemCooldown",  lua_GetContainerItemCooldown},

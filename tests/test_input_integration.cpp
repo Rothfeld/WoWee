@@ -790,6 +790,41 @@ TEST_CASE_METHOD(Integration, "Merchant usability follows equipment requirements
     lua.setGameHandler(nullptr);
 }
 
+TEST_CASE_METHOD(Integration, "Charter query, rename and close share petition state", "[petition]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    using wowee::game::Opcode;
+    using wowee::game::wireOpcode;
+    constexpr uint64_t guid = 0x4000000000000148ull;
+    wowee::network::Packet signatures(wireOpcode(Opcode::SMSG_PETITION_SHOW_SIGNATURES));
+    signatures.writeUInt64(guid);
+    signatures.writeUInt64(replay::Session::kPlayerGuid);
+    signatures.writeUInt32(328);
+    signatures.writeUInt8(0);
+    session.receive(signatures);
+    REQUIRE(handler.hasPetitionSignaturesUI());
+    wowee::network::Packet query(wireOpcode(Opcode::SMSG_PETITION_QUERY_RESPONSE));
+    query.writeUInt32(328);
+    query.writeUInt64(replay::Session::kPlayerGuid);
+    query.writeString("Test Guild");
+    query.writeString("");
+    query.writeUInt32(9);
+    query.writeUInt32(9);
+    query.writeUInt32(0);
+    session.receive(query);
+    REQUIRE(handler.queryPetitionItem(guid));
+    CHECK(handler.queryPetitionItem(guid)->ownerGuid == replay::Session::kPlayerGuid);
+    CHECK(handler.getPetitionInfo().guildName == "Test Guild");
+    wowee::network::Packet rename(wireOpcode(Opcode::MSG_PETITION_RENAME));
+    rename.writeUInt64(guid);
+    rename.writeString("Renamed Guild");
+    session.receive(rename);
+    CHECK(handler.queryPetitionItem(guid)->guildName == "Renamed Guild");
+    CHECK(handler.getPetitionInfo().guildName == "Renamed Guild");
+    handler.clearPetitionSignaturesUI();
+    CHECK_FALSE(handler.hasPetitionSignaturesUI());
+}
+
 TEST_CASE_METHOD(Integration, "TBC purchases encode quantity without vendor slot", "[merchant]") {
     replay::Session session("tbc");
     for (const uint32_t slot : {11u, 13u}) {

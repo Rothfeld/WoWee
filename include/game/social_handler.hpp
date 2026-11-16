@@ -268,6 +268,7 @@ public:
     [[nodiscard]] uint32_t getPetitionCost() const { return petitionCost_; }
     [[nodiscard]] uint64_t getPetitionNpcGuid() const { return petitionNpcGuid_; }
     [[nodiscard]] const PetitionInfo& getPetitionInfo() const { return petitionInfo_; }
+    const PetitionInfo* queryPetitionItem(uint64_t itemGuid);
     [[nodiscard]] bool hasPetitionSignaturesUI() const { return petitionInfo_.showUI; }
     void clearPetitionSignaturesUI() { petitionInfo_.showUI = false; }
     void signPetition(uint64_t petitionGuid);
@@ -642,6 +643,7 @@ private:
     /// opcode, and closing has to name the same one that opened.
     bool petitionIsGuildCharter_ = false;
     std::vector<PetitionShowlistData::Charter> petitionCharters_;
+    std::unordered_map<uint32_t, PetitionInfo> petitionItems_;
     uint32_t petitionCost_ = 0;
     uint64_t petitionNpcGuid_ = 0;
     PetitionInfo petitionInfo_;

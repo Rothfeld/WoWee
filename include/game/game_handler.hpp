@@ -890,8 +890,9 @@ public:
     using PetitionSignature = game::PetitionSignature;
     using PetitionInfo = game::PetitionInfo;
     const PetitionInfo& getPetitionInfo() const;
+    const PetitionInfo* queryPetitionItem(uint64_t itemGuid);
     bool hasPetitionSignaturesUI() const;
-    void clearPetitionSignaturesUI() { petitionInfo_.showUI = false; }
+    void clearPetitionSignaturesUI();
     void signPetition(uint64_t petitionGuid);
     void turnInPetition(uint64_t petitionGuid);
     void offerPetition(uint64_t petitionGuid, uint64_t targetGuid);
