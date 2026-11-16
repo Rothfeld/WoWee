@@ -1026,3 +1026,11 @@ M2 alpha-key materials use a fixed 224/255 alpha threshold, as in Noggit's
 alpha with mip level or replace edge RGB with a blurred mip: these change the
 authored silhouette and expose dark backing around DXT1 leaves. Reference:
 https://github.com/wowdev/noggit3/blob/master/src/noggit/Model.cpp
+
+Trainer service indices include collapsible Recipes headings. All service APIs
+resolve the same filtered rows so selecting or buying a row uses its actual
+spell. Profession ranks precede recipes; recipe rows sort by requirements and
+name. Addon saved globals restore after source files and before ADDON_LOADED;
+loading them before source lets Blizzard_TrainerUI defaults erase saved filters.
+Recipe item previews follow the spellTrigger=6 taught spell to its crafted item
+and reagents rather than displaying the generic Learning spell.

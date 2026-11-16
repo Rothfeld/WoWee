@@ -105,3 +105,22 @@ TEST_CASE_METHOD(PackagedAddon, "Legacy addon settings seed config without overr
         CHECK(manager.interfaceCommandBoolean("CharacterSettings.value == 48"));
     }
 }
+
+TEST_CASE_METHOD(PackagedAddon, "Saved globals replace source defaults before ADDON_LOADED",
+                 "[addons][saved-variables][trainer]") {
+    writeFile(code / "PersistenceTest.lua",
+              "PackagedSettings = { columns = 10 }\n"
+              "CharacterSettings = { value = 0 }\n"
+              "local frame = CreateFrame('Frame')\n"
+              "frame:RegisterEvent('ADDON_LOADED')\n"
+              "frame:SetScript('OnEvent', function() "
+              "LoadedColumns = PackagedSettings.columns; "
+              "LoadedCharacter = CharacterSettings.value end)\n");
+    fs::create_directories(saved);
+    writeFile(saved / "PersistenceTest.lua.saved", "PackagedSettings = { columns = 18 }\n");
+    writeFile(saved / "PersistenceTest.Alice.lua.saved", "CharacterSettings = { value = 42 }\n");
+    addons::AddonManager manager;
+    load(manager);
+    CHECK(manager.interfaceCommandBoolean("LoadedColumns == 18"));
+    CHECK(manager.interfaceCommandBoolean("LoadedCharacter == 42"));
+}

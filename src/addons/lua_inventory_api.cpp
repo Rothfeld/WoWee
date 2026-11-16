@@ -2120,6 +2120,53 @@ static int lua_GetItemTooltipData(lua_State* L) {
     // Required level
     lua_pushnumber(L, info->requiredLevel);
     lua_setfield(L, -2, "requiredLevel");
+    if (info->requiredSkill != 0) {
+        lua_pushstring(L, gh->getSkillLineName(info->requiredSkill).c_str());
+        lua_setfield(L, -2, "requiredSkillName");
+        lua_pushnumber(L, info->requiredSkillRank);
+        lua_setfield(L, -2, "requiredSkillRank");
+        const auto skill = gh->getPlayerSkills().find(info->requiredSkill);
+        lua_pushboolean(L, skill != gh->getPlayerSkills().end() &&
+            skill->second.effectiveValue() >= info->requiredSkillRank);
+        lua_setfield(L, -2, "requiredSkillMet");
+    }
+    lua_pushboolean(L, info->itemClass != 2 || gh->canUseWeaponSubclass(info->subClass));
+    lua_setfield(L, -2, "weaponProficiencyMet");
+    // Recipe items encode the taught spell separately from the Learning use
+    // spell. Its created item and reagents form the embedded recipe preview.
+    if (info->itemClass == 9) {
+        gh->loadSpellNameCache();
+        for (const auto& spell : info->spells) {
+            if (spell.spellId == 0 || spell.spellTrigger != 6) continue;
+            const auto recipe = gh->spellNameCacheRef().find(spell.spellId);
+            if (recipe == gh->spellNameCacheRef().end()) continue;
+            lua_newtable(L);
+            lua_pushstring(L, recipe->second.name.c_str());
+            lua_setfield(L, -2, "name");
+            lua_pushnumber(L, recipe->second.createdItemId);
+            lua_setfield(L, -2, "itemId");
+            lua_pushboolean(L, gh->getKnownSpells().count(spell.spellId) != 0);
+            lua_setfield(L, -2, "known");
+            lua_pushstring(L, gh->formatSpellDescription(spell.spellId, recipe->second.description).c_str());
+            lua_setfield(L, -2, "description");
+            gh->ensureItemInfo(recipe->second.createdItemId);
+            lua_newtable(L);
+            int index = 0;
+            for (const auto& reagent : recipe->second.reagents) {
+                if (!reagent.itemId) continue;
+                gh->ensureItemInfo(reagent.itemId);
+                lua_newtable(L);
+                lua_pushnumber(L, reagent.itemId);
+                lua_setfield(L, -2, "itemId");
+                lua_pushnumber(L, reagent.count);
+                lua_setfield(L, -2, "count");
+                lua_rawseti(L, -2, ++index);
+            }
+            lua_setfield(L, -2, "reagents");
+            lua_setfield(L, -2, "recipe");
+            break;
+        }
+    }
     // Who may use it and what standing it asks for, which the real tooltip
     // writes as its "Classes:", "Races:" and "Requires <faction> - <standing>"
     // lines. Empty when the mask does not narrow anything.

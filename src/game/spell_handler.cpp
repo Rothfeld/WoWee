@@ -4143,8 +4143,10 @@ void SpellHandler::extractSkillFields(const FlatFieldMap& fields) {
         }
     }
     owner_.playerSkillsRef() = std::move(newSkills);
-    if (skillsChanged)
+    if (skillsChanged) {
         owner_.fireAddonEvent("SKILL_LINES_CHANGED", {});
+        if (owner_.isTrainerWindowOpen()) owner_.fireAddonEvent("TRAINER_UPDATE", {});
+    }
 }
 
 void SpellHandler::extractExploredZoneFields(const FlatFieldMap& fields) {

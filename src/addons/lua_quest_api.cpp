@@ -2155,9 +2155,27 @@ static bool trainerCategoryShowing(const char* category) {
 /// takes a service index has to agree about which service index 3 is: filtering
 /// in one of them and not the rest would train a different spell than the row
 /// that was clicked.
-static std::vector<const game::TrainerSpell*> shownTrainerServices(game::GameHandler* gh) {
-    std::vector<const game::TrainerSpell*> shown;
+struct TrainerRow {
+    const game::TrainerSpell* spell = nullptr;
+    const char* header = nullptr;
+};
+
+static bool& trainerRecipesCollapsed() {
+    static bool collapsed = false;
+    return collapsed;
+}
+
+static bool& trainerDevelopmentCollapsed() {
+    static bool collapsed = false;
+    return collapsed;
+}
+
+static std::vector<TrainerRow> shownTrainerServices(game::GameHandler* gh) {
+    std::vector<TrainerRow> shown;
     if (!gh) return shown;
+    gh->loadSpellNameCache();
+    std::vector<const game::TrainerSpell*> services;
+    std::vector<const game::TrainerSpell*> recipes;
     const std::string& search = trainerSearch();
     for (const auto& sp : gh->getTrainerSpells().spells) {
         if (!trainerCategoryShowing(trainerServiceCategory(gh, sp))) continue;
@@ -2168,7 +2186,39 @@ static std::vector<const game::TrainerSpell*> shownTrainerServices(game::GameHan
                 std::string::npos) {
             continue;
         }
-        shown.push_back(&sp);
+        const auto& cache = gh->spellNameCacheRef();
+        const auto entry = cache.find(sp.spellId);
+        bool recipe = false;
+        if (gh->getTrainerSpells().trainerType == 2 && entry != cache.end()) {
+            recipe = entry->second.createdItemId != 0;
+            for (const auto& reagent : entry->second.reagents) recipe |= reagent.itemId != 0;
+        }
+        (recipe ? recipes : services).push_back(&sp);
+    }
+    const auto order = [gh](const auto* a, const auto* b) {
+        if (a->reqLevel != b->reqLevel) return a->reqLevel < b->reqLevel;
+        if (a->reqSkillValue != b->reqSkillValue) return a->reqSkillValue < b->reqSkillValue;
+        return gh->getSpellName(a->spellId) < gh->getSpellName(b->spellId);
+    };
+    std::stable_sort(services.begin(), services.end(), order);
+    std::stable_sort(recipes.begin(), recipes.end(), order);
+    // Native offers the profession ranks before a collapsible Recipes section.
+    // Before learning the profession, its recipes remain an ungrouped preview.
+    const bool heading = std::any_of(recipes.begin(), recipes.end(), [gh](const auto* spell) {
+        return gh->getPlayerSkills().count(spell->reqSkill) != 0;
+    });
+    const bool development = gh->getTrainerSpells().trainerType == 2 &&
+        (!services.empty() || (!heading && !recipes.empty()));
+    if (development) shown.push_back({nullptr, "Development Skills"});
+    if (!development || !trainerDevelopmentCollapsed()) {
+        for (const auto* spell : services) shown.push_back({spell, nullptr});
+        if (!heading) {
+            for (const auto* spell : recipes) shown.push_back({spell, nullptr});
+        }
+    }
+    if (heading) shown.push_back({nullptr, "Recipes"});
+    if (heading && !trainerRecipesCollapsed()) {
+        for (const auto* spell : recipes) shown.push_back({spell, nullptr});
     }
     return shown;
 }
@@ -2177,7 +2227,24 @@ static std::vector<const game::TrainerSpell*> shownTrainerServices(game::GameHan
 static const game::TrainerSpell* shownTrainerService(game::GameHandler* gh, int index) {
     const auto shown = shownTrainerServices(gh);
     if (index < 1 || index > static_cast<int>(shown.size())) return nullptr;
-    return shown[index - 1];
+    return shown[index - 1].spell;
+}
+
+static int setTrainerHeaderCollapsed(lua_State* L, bool collapsed) {
+    auto* gh = getGameHandler(L);
+    const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+    const auto rows = shownTrainerServices(gh);
+    if (index == 0) {
+        trainerRecipesCollapsed() = collapsed;
+        trainerDevelopmentCollapsed() = collapsed;
+    } else if (index > 0 && index <= static_cast<int>(rows.size()) && rows[index - 1].header) {
+        if (std::string_view(rows[index - 1].header) == "Recipes") trainerRecipesCollapsed() = collapsed;
+        else trainerDevelopmentCollapsed() = collapsed;
+    } else {
+        return 0;
+    }
+    if (gh) gh->fireAddonEvent("TRAINER_UPDATE", {});
+    return 0;
 }
 
 /// (tabIndex, talentIndex) → talent id, or 0.
@@ -3961,6 +4028,15 @@ void registerQuestLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             const int i = static_cast<int>(luaL_optnumber(L, 1, 0));
             if (!gh) return luaReturnNil(L);
+            const auto rows = shownTrainerServices(gh);
+            if (i > 0 && i <= static_cast<int>(rows.size()) && rows[i - 1].header) {
+                const bool recipes = std::string_view(rows[i - 1].header) == "Recipes";
+                lua_pushstring(L, rows[i - 1].header);
+                lua_pushstring(L, "");
+                lua_pushstring(L, "header");
+                lua_pushboolean(L, !(recipes ? trainerRecipesCollapsed() : trainerDevelopmentCollapsed()));
+                return 4;
+            }
             const auto* svc = shownTrainerService(gh, i);
             if (!svc) return luaReturnNil(L);
             const auto& sp = *svc;
@@ -4177,7 +4253,28 @@ void registerQuestLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"GetTrainerSelectionIndex", [](lua_State* L) -> int {
-            lua_pushnumber(L, trainerSelection());
+            auto* gh = getGameHandler(L);
+            if (!gh) return luaReturnNil(L);
+            static uint64_t trainerGuid = 0;
+            if (trainerGuid != gh->getTrainerSpells().trainerGuid) {
+                trainerGuid = gh->getTrainerSpells().trainerGuid;
+                trainerSelection() = 0;
+            }
+            const auto rows = shownTrainerServices(gh);
+            int& selected = trainerSelection();
+            if (selected < 1 || selected > static_cast<int>(rows.size()) || !rows[selected - 1].spell) {
+                selected = 0;
+                for (size_t i = 0; i < rows.size(); ++i) {
+                    if (!rows[i].spell) continue;
+                    if (!selected) selected = static_cast<int>(i + 1);
+                    if (std::string_view(trainerServiceCategory(gh, *rows[i].spell)) == "available") {
+                        selected = static_cast<int>(i + 1);
+                        break;
+                    }
+                }
+            }
+            if (!selected) return luaReturnNil(L);
+            lua_pushnumber(L, selected);
             return 1;
         }},
                 {"SetTrainerServiceTypeFilter", [](lua_State* L) -> int {
@@ -4238,23 +4335,12 @@ void registerQuestLuaAPI(lua_State* L) {
             lua_pushboolean(L, it == trainerFilters().end() ? 1 : (it->second ? 1 : 0));
             return 1;
         }},
-                // Inert, and this one really is - unlike the three other
-                // Collapse/Expand pairs, which all turned out to have their
-                // grouping sitting in data the client already held.
-                //
-                // Blizzard's name says the heading is a skill line, and the
-                // only skill line in the packet is ReqSkillLine. Across
-                // AzerothCore's whole npc_trainer table - 880 trainers, 4934
-                // rows - not one trainer has more than a single distinct
-                // non-zero value, and 816 have none at all. So grouping by it
-                // yields one heading over the entire list, or none, which is
-                // strictly worse than the flat list it would replace.
-                //
-                // Checked against the table rather than argued from the packet,
-                // because the packet plainly *could* carry several and the
-                // question is whether any server sends them.
-                {"CollapseTrainerSkillLine", [](lua_State* L) -> int { (void)L; return 0; }},
-                {"ExpandTrainerSkillLine",   [](lua_State* L) -> int { (void)L; return 0; }},
+                {"CollapseTrainerSkillLine", [](lua_State* L) -> int {
+            return setTrainerHeaderCollapsed(L, true);
+        }},
+                {"ExpandTrainerSkillLine", [](lua_State* L) -> int {
+            return setTrainerHeaderCollapsed(L, false);
+        }},
                 // GetGlyphLink(socket [, talentGroup]) → hyperlink, or nil
                 {"GetGlyphLink", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
