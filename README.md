@@ -920,6 +920,10 @@ sends the selected option to the server; destination labels such as "Auction
 House" do not identify service activation requests. Guard destinations enter
 both the FrameXML map landmark API and the minimap POI atlas renderer.
 
+Readable game objects (type 9), including the Valley of Heroes monument
+plaques, use `Interface\\Cursor\\Inspect.blp`. Out-of-range readable objects
+use `UnableInspect.blp` through the shared interaction-range check.
+
 TBC mail uses `StationeryPopupButton_OnClick(index)`. Coin attachments use
 `Interface\Icons\INV_Misc_Coin_01` through `_06`, including separate
 single-coin and ten-coin denomination thresholds. WMO area names use the

@@ -1071,12 +1071,13 @@ void GameScreen::renderCursor() {
 /// Which cursor a game object wears, by its GameObjectType.
 ///
 /// The numbers are 3.3.5's own: 0 door, 1 button, 2 questgiver, 3 chest,
-/// 7 chair, 17 fishing node, 19 mailbox, 20 auction house. Anything else is
+/// 7 chair, 9 readable text, 17 fishing node, 19 mailbox, 20 auction house. Anything else is
 /// something to interact with, which is what the hand with the gear says.
 const char* objectCursorPath(uint32_t goType) {
     switch (goType) {
         case 2:  return "Interface\\Cursor\\Quest.blp";
         case 3:  return "Interface\\Cursor\\LootAll.blp";
+        case 9:  return "Interface\\Cursor\\Inspect.blp";
         case 17: return "Interface\\Cursor\\Fishing.blp";
         case 19: return "Interface\\Cursor\\Mail.blp";
         default: return "Interface\\Cursor\\Interact.blp";
