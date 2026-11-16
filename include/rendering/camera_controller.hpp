@@ -667,6 +667,9 @@ private:
     // Swimming
     bool swimming = false;
     bool wasSwimming = false;
+    bool waterJumpAirborne_ = false;
+    bool waterJumpCrossedSurface_ = false;
+    static constexpr float WATER_JUMP_VELOCITY = 9.1f;
     static constexpr float SWIM_SPEED_FACTOR = 0.67f;
     static constexpr float SWIM_GRAVITY = -5.0f;
     static constexpr float SWIM_BUOYANCY = 8.0f;

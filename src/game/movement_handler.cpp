@@ -588,7 +588,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
             isFalling_ = true;
             fallStartMs_ = movementInfo.time;
             movementInfo.fallTime = 0;
-            movementInfo.jumpVelocity = 7.96f;
+            movementInfo.jumpVelocity = movementInfo.hasFlag(MovementFlags::SWIMMING) ? 9.1f : 7.96f;
             {
                 const float facingRad = core::coords::canonicalToServerYaw(movementInfo.orientation);
                 const float forward = (movementInfo.hasFlag(MovementFlags::FORWARD) ? 1.0f : 0.0f) -
@@ -599,10 +599,13 @@ void MovementHandler::sendMovement(Opcode opcode) {
                 const float travelAngle = facingRad + (length > 0.0f ? std::atan2(left, forward) : 0.0f);
                 movementInfo.jumpCosAngle = std::cos(travelAngle);
                 movementInfo.jumpSinAngle = std::sin(travelAngle);
-                const float speed = movementInfo.hasFlag(MovementFlags::WALKING) ? serverWalkSpeed_ :
+                const float speed = movementInfo.hasFlag(MovementFlags::SWIMMING)
+                    ? (forward < 0.0f ? serverSwimBackSpeed_ : serverSwimSpeed_)
+                    : movementInfo.hasFlag(MovementFlags::WALKING) ? serverWalkSpeed_ :
                     (forward < 0.0f ? serverRunBackSpeed_ : serverRunSpeed_);
                 movementInfo.jumpXYSpeed = length > 0.0f ? speed : 0.0f;
             }
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::SWIMMING);
             break;
         case Opcode::MSG_MOVE_START_TURN_LEFT:
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::TURN_LEFT);

@@ -540,6 +540,26 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             inWater = true;
         }
 
+        // Space applies one upward impulse, including below the surface.
+        // Underwater ascent stops at the apex; a surface jump completes its
+        // arc before returning to swimming. Holding Space cannot retrigger it.
+        if (waterJumpAirborne_ && waterH && targetPos.z >= *waterH - WATER_SURFACE_OFFSET)
+            waterJumpCrossedSurface_ = true;
+        if (waterJumpAirborne_ &&
+            (grounded || !waterH || (verticalVelocity <= 0.0f &&
+             targetPos.z <= *waterH - WATER_SURFACE_OFFSET))) {
+            if (!grounded && waterH) {
+                if (waterJumpCrossedSurface_) targetPos.z = *waterH - WATER_SURFACE_OFFSET;
+                verticalVelocity = 0.0f;
+            }
+            waterJumpAirborne_ = false;
+        }
+        const bool startWaterJump = inWater && waterH && f.nowJump && !mounted_;
+        if (startWaterJump) {
+            waterJumpAirborne_ = true;
+            waterJumpCrossedSurface_ = targetPos.z >= *waterH - WATER_SURFACE_OFFSET;
+        }
+        if (waterJumpAirborne_) inWater = false;
 
         if (inWater) {
         swimming = true;
@@ -583,13 +603,12 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             targetPos += swimMove * applySpeed * f.physicsDeltaTime;
         }
 
-        // Spacebar = swim up, X = swim down (both continuous, not a jump)
+        // Space's upward impulse is handled above. X swims down continuously
+        // at the server's swim speed, rather than an unrelated buoyancy speed.
         bool diveKey = f.xDown;
         bool diveIntent = diveKey || (f.nowForward && (f.forward3D.z < -0.28f));
-        if (f.spaceHeld) {
-            verticalVelocity = SWIM_BUOYANCY;
-        } else if (diveKey) {
-            verticalVelocity = -SWIM_BUOYANCY;
+        if (diveKey) {
+            verticalVelocity = -swimSpeed;
         } else {
             // No vertical key held. Retail holds depth here rather than
             // pulling the swimmer back to the surface: a character can idle
@@ -738,7 +757,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         grounded = false;
         } else {
         // Exiting water - boost upward to help climb onto shore/stairs.
-        if (wasSwimming) {
+        if (swimming) {
             // Anchor lastGroundZ to current position so WMO floor probes
             // start from a sensible height instead of stale pre-swim values.
             lastGroundZ = targetPos.z;
@@ -823,11 +842,14 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             // Running jumps retain takeoff velocity even when facing, input,
             // or movement speed changes in flight. Stationary jumps have a
             // distinct drift mode and do not acquire running-jump momentum.
-            airborneHorizontalVelocity_ = f.movement * f.speed;
+            const float takeoffSpeed = startWaterJump
+                ? (swimSpeedOverride_ > 0.0f ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR)
+                : f.speed;
+            airborneHorizontalVelocity_ = f.movement * takeoffSpeed;
             preserveAirborneMomentum_ = moveLenSq > 1e-6f;
         }
         const glm::vec3 horizontalVelocity =
-            !grounded && preserveAirborneMomentum_ && !knockbackActive_
+            (!grounded || startWaterJump) && preserveAirborneMomentum_ && !knockbackActive_
                 ? airborneHorizontalVelocity_ : f.movement * f.speed;
         targetPos += horizontalVelocity * f.physicsDeltaTime;
 
@@ -852,7 +874,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         bool canJump = (coyoteTimer > 0.0f) && (jumpBufferTimer > 0.0f) && !mounted_;
         if (canJump) {
             f.startedJump = true;
-            verticalVelocity = f.jumpVel;
+            verticalVelocity = startWaterJump ? WATER_JUMP_VELOCITY : f.jumpVel;
             grounded = false;
             jumpBufferTimer = 0.0f;
             coyoteTimer = 0.0f;
@@ -3430,6 +3452,7 @@ void CameraController::resetAngles() {
 }
 
 void CameraController::reset() {
+    waterJumpAirborne_ = false;
     if (!camera) {
         return;
     }
@@ -3662,6 +3685,7 @@ void CameraController::reset() {
 }
 
 void CameraController::teleportTo(const glm::vec3& pos) {
+    waterJumpAirborne_ = false;
     if (!camera) return;
 
     verticalVelocity = 0.0f;
