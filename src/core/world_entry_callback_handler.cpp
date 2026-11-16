@@ -198,12 +198,11 @@ void WorldEntryCallbackHandler::setupCallbacks() {
             bool farTeleport = (teleportDistSq > 500.0f * 500.0f);
 
             if (farTeleport) {
-                // Far same-map teleport (hearthstone, etc.): defer full world reload
-                // to next frame to avoid blocking the packet handler for 20+ seconds.
-                LOG_WARNING("Far same-map teleport (dist=", std::sqrt(teleportDistSq),
-                            "), deferring world reload to next frame");
-                // Update position immediately so the player doesn't keep moving at old location
-                renderer_.getCharacterPosition() = renderPos;
+                // Keep the live entity render instances on same-map teleports.
+                // The server retains nearby entities and can send VALUES without
+                // another CREATE; a full renderer reset would make them invisible.
+                LOG_INFO("Far same-map teleport (dist=", std::sqrt(teleportDistSq),
+                         "), streaming destination without resetting entities");
                 if (renderer_.getCameraController()) {
                     auto* ft = renderer_.getCameraController()->getFollowTargetMutable();
                     if (ft) *ft = renderPos;
@@ -212,8 +211,6 @@ void WorldEntryCallbackHandler::setupCallbacks() {
                     renderer_.getCameraController()->suspendGravityFor(10.0f);
                     renderer_.getCameraController()->setEntryFloorAnchor(renderPos.z, 10.0f);
                 }
-                if (worldLoader_) worldLoader_->setPendingEntry(mapId, x, y, z);
-                return;
             }
             LOG_INFO("Same-map teleport (map ", mapId, "), skipping full world reload");
             // canonical and renderPos already computed above for distance check
@@ -223,6 +220,9 @@ void WorldEntryCallbackHandler::setupCallbacks() {
             const float facing = coords::canonicalToCharacterYawDeg(gameHandler_.getMovementInfo().orientation);
             renderer_.setCharacterYaw(facing);
             if (auto* cameraController = renderer_.getCameraController()) {
+                // Reset prior floor/fall state as well as the follow position;
+                // otherwise void recovery can undo an underground teleport.
+                cameraController->teleportTo(renderPos);
                 cameraController->setFacingYaw(facing);
             }
             if (renderer_.getCameraController()) {

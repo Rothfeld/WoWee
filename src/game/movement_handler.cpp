@@ -231,9 +231,10 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_MOVE_KNOCK_BACK] = [this](network::Packet& packet) { handleMoveKnockBack(packet); };
 
     // Teleport
-    for (auto op : { Opcode::MSG_MOVE_TELEPORT, Opcode::MSG_MOVE_TELEPORT_ACK }) {
-        table[op] = [this](network::Packet& packet) { handleTeleportAck(packet); };
-    }
+    // Observer broadcasts contain MovementInfo directly. Only the mover's
+    // acknowledgement request includes an order counter before MovementInfo.
+    table[Opcode::MSG_MOVE_TELEPORT] = [this](network::Packet& packet) { handleOtherPlayerMovement(packet); };
+    table[Opcode::MSG_MOVE_TELEPORT_ACK] = [this](network::Packet& packet) { handleTeleportAck(packet); };
     table[Opcode::SMSG_NEW_WORLD] = [this](network::Packet& packet) { handleNewWorld(packet); };
 
     // Taxi
@@ -1341,7 +1342,9 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
     otherPlayerMoveTimeMs_[moverGuid] = info.time;
 
     const uint16_t wireOp = packet.getOpcode();
+    const bool isTeleportOpcode = wireOp == wireOpcode(Opcode::MSG_MOVE_TELEPORT);
     const bool isStopOpcode =
+        isTeleportOpcode ||
         (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP)) ||
         (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_STRAFE)) ||
         (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_TURN)) ||
@@ -1358,7 +1361,9 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         static_cast<uint32_t>(MovementFlags::SWIMMING) |
         static_cast<uint32_t>(MovementFlags::FLYING) |
         static_cast<uint32_t>(MovementFlags::LEVITATING);
-    if (entity->getType() == ObjectType::PLAYER && !onTransport && airborne) {
+    if (isTeleportOpcode) {
+        entity->setPosition(canonical.x, canonical.y, canonical.z, canYaw);
+    } else if (entity->getType() == ObjectType::PLAYER && !onTransport && airborne) {
         // Wire zspeed is downward-positive; native takeoff sends -7.95555.
         const bool retainedMomentum = !isJumpOpcode && entity->isRemoteAirborne() &&
             entity->getLocomotionSpeed() > 0.0001f;
@@ -1983,9 +1988,9 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
     packet.readUInt32();  // moveFlags
     if (!taNoFlags2)
         packet.readUInt16();  // moveFlags2 (WotLK only)
-    uint32_t moveTime = packet.readUInt32();
     if (taByteFlags2)
-        packet.readUInt8();  // TBC's uint8 moveFlags2 (see comment above)
+        packet.readUInt8();  // TBC moveFlags2 precedes movement timestamp.
+    uint32_t moveTime = packet.readUInt32();
     float serverX = packet.readFloat();
     float serverY = packet.readFloat();
     float serverZ = packet.readFloat();
