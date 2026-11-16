@@ -2271,6 +2271,13 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     // every member would read as offline.
     for (auto& m : partyData.members) {
         if (m.isOnline) m.onlineStatus |= 0x0001;
+        // The roster has no health/power fields. Seed the party cache even
+        // when a member is outside object visibility or changing maps.
+        if (m.guid != owner_.getPlayerGuid() && owner_.getSocket()) {
+            network::Packet request(wireOpcode(Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS));
+            request.writeUInt64(m.guid);
+            owner_.getSocket()->send(request);
+        }
     }
 
     const bool nowInGroup = !partyData.isEmpty();
@@ -2366,12 +2373,12 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
     auto remaining = [&]() { return packet.getRemainingSize(); };
     const bool isWotLK = isActiveExpansion("wotlk");
 
-    if (isFull) { if (remaining() < 1) return; packet.readUInt8(); }
+    // TBC full and incremental updates both begin with a packed GUID.
+    // Only Wrath's full update carries the leading arena byte.
+    if (isFull && isWotLK) { if (remaining() < 1) return; packet.readUInt8(); }
 
-    const bool pmsTbc = isActiveExpansion("tbc");
-    if (remaining() < (pmsTbc ? 8u : 1u)) return;
-    uint64_t memberGuid = pmsTbc
-        ? packet.readUInt64() : packet.readPackedGuid();
+    if (remaining() < 1) return;
+    uint64_t memberGuid = packet.readPackedGuid();
     if (remaining() < 4) return;
     uint32_t updateFlags = packet.readUInt32();
 
@@ -2480,7 +2487,8 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             }
         }
         if (!unitId.empty()) {
-            if (updateFlags & (0x0002 | 0x0004)) owner_.addonEventCallbackRef()("UNIT_HEALTH", {unitId});
+            if (updateFlags & (0x0001 | 0x0002 | 0x0004)) owner_.addonEventCallbackRef()("UNIT_HEALTH", {unitId});
+            if (updateFlags & 0x0004) owner_.addonEventCallbackRef()("UNIT_MAXHEALTH", {unitId});
             if (updateFlags & (0x0010 | 0x0020)) owner_.addonEventCallbackRef()("UNIT_POWER", {unitId});
             if (updateFlags & 0x0200) {
                 owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});

@@ -25,6 +25,23 @@ namespace game {
 
 namespace {
 
+std::vector<std::string> unitEventTokens(const GameHandler& owner, uint64_t guid) {
+    std::vector<std::string> tokens;
+    const auto primary = owner.guidToUnitId(guid);
+    if (!primary.empty()) tokens.push_back(primary);
+    const auto& party = owner.getPartyData();
+    const bool raid = groupIsRaid(party.groupType);
+    size_t index = 0;
+    for (const auto& member : party.members) {
+        if (!raid && member.guid == owner.getPlayerGuid()) continue;
+        ++index;
+        if (member.guid == guid) {
+            tokens.push_back(std::string(raid ? "raid" : "party") + std::to_string(index));
+            break;
+        }
+    }
+    return tokens;
+}
 
 void restoreMovementSpline(const UpdateBlock& block, Entity& entity) {
     if (entity.getType() != ObjectType::UNIT || block.splinePath.size() < 2 ||
@@ -904,8 +921,8 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
         // was to the unit it is showing.
         auto emitForUnit = [&](const char* event) {
             if (!owner_.addonEventCallbackRef()) return;
-            const auto uid = owner_.guidToUnitId(block.guid);
-            if (!uid.empty()) pendingEvents_.emit(event, {uid});
+            for (const auto& uid : unitEventTokens(owner_, block.guid))
+                pendingEvents_.emit(event, {uid});
         };
 
         if (key == ufi.health) {
@@ -1343,9 +1360,8 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
     }
 
     // Fire UNIT_HEALTH / UNIT_POWER events for Lua addons
-    if ((result.healthChanged || result.powerChanged)) {
-        auto unitId = owner_.guidToUnitId(block.guid);
-        if (!unitId.empty()) {
+    if (result.healthChanged || result.maxHealthChanged || result.powerChanged) {
+        for (const auto& unitId : unitEventTokens(owner_, block.guid)) {
             if (result.healthChanged) pendingEvents_.emit("UNIT_HEALTH", {unitId});
             if (result.maxHealthChanged) pendingEvents_.emit("UNIT_MAXHEALTH", {unitId});
             if (result.powerChanged) {

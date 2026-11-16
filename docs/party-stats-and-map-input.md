@@ -1,0 +1,19 @@
+# Party stats and map input
+
+`cmake --build build --target test_game_replay && build/bin/test_game_replay '[party][tbc]'`
+
+TBC party stat packets, both full and incremental, start with a packed GUID and
+32-bit update mask. Health fields are 16-bit. The full packet has no prefix byte.
+Protocol reference: CMaNGOS TBC `src/game/Groups/GroupHandler.cpp`,
+`BuildPartyMemberStatsChangedPacket` and `HandleRequestPartyMemberStatsOpcode`.
+Roster packets omit health; the client requests full stats for remote members.
+Object health/power updates notify party/raid unit tokens as well as target tokens.
+
+Map loading pumps SDL events outside the application's normal input dispatch.
+`WorldLoader::loadOnlineWorldTerrain` releases camera capture and held Lua bindings
+before entering that loop. Otherwise releasing right mouse during loading leaves
+the camera's held-button state set after the transfer.
+
+Live regression: hold right mouse, transfer out of an instance, release during
+loading, then move the pointer without buttons. Camera must stay fixed. Repeat
+entering the instance. Check the alive party member's frame after both transfers.

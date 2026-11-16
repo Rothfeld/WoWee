@@ -652,3 +652,38 @@ TEST_CASE("TBC local speech produces one bubble despite suppressed server echo",
     s.handler().addLocalChatMessage(local);
     CHECK(bubbles == 1);
 }
+
+TEST_CASE("TBC party stats use packed GUID without a full-update prefix", "[party][tbc]") {
+    Session s("tbc");
+    using wowee::game::Opcode;
+    using wowee::game::wireOpcode;
+    constexpr uint64_t memberGuid = 3;
+    // Group::SendUpdate: TBC roster, one remote member.
+    wowee::network::Packet roster(wireOpcode(Opcode::SMSG_GROUP_LIST));
+    roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt64(1);
+    roster.writeUInt32(1);
+    roster.writeString("Graulberto"); roster.writeUInt64(memberGuid);
+    roster.writeUInt8(1); roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt64(memberGuid);
+    s.receive(roster);
+    REQUIRE(s.handler().getPartyData().members.size() == 1);
+
+    for (const auto opcode : {Opcode::SMSG_PARTY_MEMBER_STATS_FULL,
+                              Opcode::SMSG_PARTY_MEMBER_STATS}) {
+        // WorldSession::HandleRequestPartyMemberStatsOpcode / changed packet.
+        wowee::network::Packet stats(wireOpcode(opcode));
+        stats.writePackedGuid(memberGuid);
+        stats.writeUInt32(0x7);
+        stats.writeUInt16(1);
+        stats.writeUInt16(417);
+        stats.writeUInt16(530);
+        s.receive(stats);
+        const auto& member = s.handler().getPartyData().members.front();
+        CHECK(member.hasPartyStats);
+        CHECK(member.onlineStatus == 1);
+        CHECK(member.curHealth == 417);
+        CHECK(member.maxHealth == 530);
+    }
+}

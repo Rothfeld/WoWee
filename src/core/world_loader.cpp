@@ -24,6 +24,7 @@
 #include "rendering/footprint_renderer.hpp"
 #include "rendering/loading_screen.hpp"
 #include "addons/addon_manager.hpp"
+#include "addons/lua_engine.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/m2_loader.hpp"
@@ -723,6 +724,13 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
     // entries while this flag is set; we process them at the end.
     loadingWorld_ = true;
     pendingWorldEntry_.reset();
+
+    // Loading pumps SDL events outside Application's input dispatch. A button
+    // released here would otherwise leave camera and script bindings held.
+    if (auto* camera = renderer_->getCameraController())
+        camera->releaseMouseCapture();
+    if (addonManager_ && addonManager_->getLuaEngine())
+        addonManager_->getLuaEngine()->releaseInput();
 
     // --- Loading screen for online mode ---
     rendering::LoadingScreen loadingScreen;
