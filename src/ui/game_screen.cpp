@@ -828,7 +828,8 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // Update renderer face-target position and selection circle
     auto* renderer = services_.renderer;
     if (renderer) {
-        if (auto* ac = renderer->getAnimationController()) ac->setInCombat((gameHandler.hasAutoAttackIntent() || gameHandler.isInCombat()) &&
+        // Receiving damage enters combat without enabling melee attack stance.
+        if (auto* ac = renderer->getAnimationController()) ac->setInCombat(gameHandler.hasAutoAttackIntent() &&
                               !gameHandler.isPlayerDead() &&
                               !gameHandler.isPlayerGhost());
         if (auto* cr = renderer->getCharacterRenderer()) {
