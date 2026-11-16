@@ -1612,3 +1612,47 @@ TEST_CASE_METHOD(Integration, "TBC local creation restores omitted zero health a
         CHECK(session.handler().showDeathDialog() == !ghost);
     }
 }
+
+TEST_CASE_METHOD(Integration, "TBC corpse recreation keeps snapshot and distinguishes bones", "[corpse-bones]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t guid = 0xF101000000000123ull;
+    int spawns = 0, equipment = 0, deaths = 0;
+    handler.setPlayerSpawnCallback([&](uint64_t id, uint32_t, uint8_t race, uint8_t gender,
+                                      uint32_t appearance, uint8_t facial, float, float, float, float) {
+        CHECK(id == guid); CHECK(race == 3); CHECK(gender == 1);
+        CHECK(appearance == 0x04030201); CHECK(facial == 5); ++spawns;
+    });
+    handler.setPlayerEquipmentCallback([&](uint64_t, const auto& display, const auto& types) {
+        CHECK(display[0] == 1234); CHECK(types[0] == 1); ++equipment;
+    });
+    handler.setNpcDeathCallback([&](uint64_t) { ++deaths; });
+    for (const bool bones : {false, true}) {
+        if (bones) {
+            wowee::network::Packet destroy(wireOpcode(Opcode::SMSG_DESTROY_OBJECT));
+            destroy.writeUInt64(guid);
+            session.receive(destroy);
+            handler.corpseGuidRef() = 0; // resurrection cleared reclaim state
+        }
+        wowee::network::Packet packet(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+        packet.writeUInt32(1); packet.writeUInt8(0);
+        packet.writeUInt8(static_cast<uint8_t>(UpdateType::CREATE_OBJECT2));
+        packet.writePackedGuid(guid); packet.writeUInt8(static_cast<uint8_t>(ObjectType::CORPSE));
+        packet.writeUInt8(0);
+        std::map<uint16_t, uint32_t> fields{{6, replay::Session::kPlayerGuid},
+            {34, 3u << 8 | 1u << 16 | 1u << 24}, {35, 0x05040302}};
+        if (bones) fields.emplace(37, 1);
+        else fields.emplace(15, 1234u | 1u << 24);
+        packet.writeUInt8(2);
+        std::array<uint32_t, 2> mask{};
+        for (const auto& [index, value] : fields) mask[index / 32] |= 1u << (index % 32);
+        for (auto word : mask) packet.writeUInt32(word);
+        for (const auto& [index, value] : fields) packet.writeUInt32(value);
+        session.receive(packet);
+        CHECK(handler.corpseGuidRef() == (bones ? 0 : guid));
+    }
+    CHECK(spawns == 2);
+    CHECK(equipment == 1);
+    CHECK(deaths == 1);
+}

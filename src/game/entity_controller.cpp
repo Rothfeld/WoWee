@@ -1,4 +1,5 @@
 #include "game/entity_controller.hpp"
+#include "game/corpse_fields.hpp"
 #include "core/env_flag.hpp"
 #include "game/game_handler.hpp"
 #include "game/protocol_constants.hpp"
@@ -2302,8 +2303,15 @@ void EntityController::onCreateCorpse(const UpdateBlock& block) {
         auto ownerHighIt = block.fields.find(ownerLowIdx + 1);
         uint32_t ownerHigh = (ownerHighIt != block.fields.end()) ? ownerHighIt->second : 0;
         uint64_t ownerGuid = (static_cast<uint64_t>(ownerHigh) << 32) | ownerLow;
-        if (ownerGuid == owner_.getPlayerGuid() || ownerLow == static_cast<uint32_t>(owner_.getPlayerGuid())) {
-            owner_.corpseGuidRef()  = block.guid;
+        const auto fields = CorpseFields::resolve();
+        const auto value = [&](uint16_t index) {
+            const auto it = block.fields.find(index);
+            return it == block.fields.end() ? 0u : it->second;
+        };
+        const bool bones = (value(fields.flags) & corpseFlagBones) != 0;
+        const bool ownCorpse = ownerGuid == owner_.getPlayerGuid();
+        if (ownCorpse && !bones) {
+            owner_.corpseGuidRef() = block.guid;
             // The position only where the block actually carried one; a
             // stationary create may not, and overwriting a good answer from
             // MSG_CORPSE_QUERY with three zeroes would put the corpse at the
@@ -2315,41 +2323,37 @@ void EntityController::onCreateCorpse(const UpdateBlock& block) {
                 owner_.corpseMapIdRef() = owner_.currentMapIdRef();
                 owner_.corpsePositionValidRef() = true;
             }
+        }
+        // Appearance and equipment belong to the corpse snapshot, including
+        // other players' corpses and bones recreated under the same GUID.
+        const uint32_t bytes1 = value(fields.bytes1);
+        const uint32_t bytes2 = value(fields.bytes2);
+        const uint8_t race = (bytes1 >> 8) & 0xff;
+        const uint8_t gender = (bytes1 >> 16) & 0xff;
+        const uint32_t appearance = (bytes1 >> 24) | ((bytes2 & 0x00ffffffu) << 8);
+        if (race != 0 && owner_.playerSpawnCallbackRef()) {
+            glm::vec3 canonical = core::coords::serverToCanonical(
+                glm::vec3(block.x, block.y, block.z));
+            float orientation = core::coords::serverToCanonicalYaw(block.orientation);
+            owner_.playerSpawnCallbackRef()(
+                block.guid, 0, race, gender, appearance, bytes2 >> 24,
+                canonical.x, canonical.y, canonical.z, orientation);
 
-            // Corpse objects carry ownership and position but not a standalone
-            // render model. Reuse the owning character's appearance and equipment
-            // under the corpse GUID, then force the queued instance into DEATH.
-            auto characterIt = std::find_if(owner_.charactersRef().begin(), owner_.charactersRef().end(),
-                [&](const Character& character) { return character.guid == owner_.getPlayerGuid(); });
-            if (characterIt != owner_.charactersRef().end() && owner_.playerSpawnCallbackRef()) {
-                glm::vec3 canonical = core::coords::serverToCanonical(
-                    glm::vec3(block.x, block.y, block.z));
-                float orientation = core::coords::serverToCanonicalYaw(block.orientation);
-                owner_.playerSpawnCallbackRef()(
-                    block.guid, 0,
-                    static_cast<uint8_t>(characterIt->race),
-                    static_cast<uint8_t>(characterIt->gender),
-                    characterIt->appearanceBytes,
-                    characterIt->facialFeatures,
-                    canonical.x, canonical.y, canonical.z, orientation);
-
-                if (owner_.playerEquipmentCallbackRef()) {
-                    std::array<uint32_t, 19> displayInfoIds{};
-                    std::array<uint8_t, 19> inventoryTypes{};
-                    const size_t count = std::min<size_t>(19, characterIt->equipment.size());
-                    for (size_t i = 0; i < count; ++i) {
-                        displayInfoIds[i] = characterIt->equipment[i].displayModel;
-                        inventoryTypes[i] = characterIt->equipment[i].inventoryType;
-                    }
-                    owner_.playerEquipmentCallbackRef()(block.guid, displayInfoIds, inventoryTypes);
+            if (!bones && owner_.playerEquipmentCallbackRef()) {
+                std::array<uint32_t, 19> displayInfoIds{};
+                std::array<uint8_t, 19> inventoryTypes{};
+                for (size_t i = 0; i < 19; ++i) {
+                    const auto item = value(fields.item + i);
+                    displayInfoIds[i] = item & 0x00ffffffu;
+                    inventoryTypes[i] = item >> 24;
                 }
+                owner_.playerEquipmentCallbackRef()(block.guid, displayInfoIds, inventoryTypes);
             }
-            if (owner_.npcDeathCallbackRef()) {
+            if (!bones && owner_.npcDeathCallbackRef()) {
                 owner_.npcDeathCallbackRef()(block.guid);
             }
-            LOG_INFO("Corpse object detected: guid=0x", std::hex, owner_.corpseGuidRef(), std::dec,
-                     " server=(", block.x, ", ", block.y, ", ", block.z,
-                     ") map=", owner_.corpseMapIdRef());
+            LOG_INFO("Corpse object detected: guid=0x", std::hex, block.guid, std::dec,
+                     " bones=", bones, " race=", unsigned(race), " gender=", unsigned(gender));
         }
     }
 }

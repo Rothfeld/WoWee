@@ -17,6 +17,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/spell_visual_system.hpp"
 #include "game/game_utils.hpp"
+#include "game/corpse_fields.hpp"
 #include "audio/npc_voice_manager.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
@@ -100,6 +101,31 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
         }
     }
     auto* charRenderer = renderer_->getCharacterRenderer();
+
+    const auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    const bool bones = entity && entity->getType() == game::ObjectType::CORPSE &&
+        (entity->getField(game::CorpseFields::resolve().flags) & game::corpseFlagBones) != 0;
+    if (bones) {
+        const auto playerPath = game::getPlayerModelPath(static_cast<game::Race>(raceId),
+            genderId == 1 ? game::Gender::FEMALE : game::Gender::MALE);
+        const auto start = playerPath.find_last_of("/\\");
+        const auto end = playerPath.find_last_of('.');
+        assert(start != std::string::npos && end != std::string::npos && end > start);
+        const std::string path = "World/Generic/PassiveDoodads/DeathSkeletons/" +
+            playerPath.substr(start + 1, end - start - 1) + "DeathSkeleton.m2";
+        const auto data = assetManager_->readFile(path);
+        auto model = pipeline::M2Loader::load(data);
+        if (!model.isValid()) { LOG_ERROR("Invalid corpse skeleton model: ", path); return; }
+        const uint32_t modelId = nextPlayerModelId_++;
+        if (!charRenderer->loadModel(model, modelId)) { LOG_ERROR("Cannot load corpse skeleton: ", path); return; }
+        const auto position = coords::canonicalToRender(glm::vec3(x, y, z));
+        const auto instance = charRenderer->createInstance(modelId, position,
+            glm::vec3(0, 0, orientation + glm::radians(90.0f)), 1.0f);
+        if (!instance) { LOG_ERROR("Cannot create corpse skeleton: ", path); return; }
+        playerInstances_[guid] = instance;
+        LOG_INFO("Corpse bones spawned guid=", guid, " model=", path);
+        return;
+    }
 
     // Base geometry model: cache by (race, gender)
     uint32_t cacheKey = (static_cast<uint32_t>(raceId) << 8) | static_cast<uint32_t>(genderId & 0xFF);
