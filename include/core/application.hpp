@@ -141,7 +141,7 @@ public:
     /// A game object is used rather than selected, so it has no circle under
     /// it; the press lighting the model is what says the click landed on this
     /// one. Guid 0 takes the light off whatever had it.
-    void setPressedGameObject(uint64_t guid);
+    void setGameObjectHighlight(uint64_t guid, float strength);
     bool getRenderPositionForGuid(uint64_t guid, glm::vec3& outPos) const;
 
     // Character skin composite state - delegated to AppearanceComposer

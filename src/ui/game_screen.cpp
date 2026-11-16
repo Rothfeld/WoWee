@@ -1119,8 +1119,9 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
         drawCursorTexture(tex);
     }
 
-    // Generic scenery has no hover label; chairs only show their cursor.
-    if (info && (info->type == 5 || info->type == 7)) return usable;
+    // Generic signs opt into labels through their server template.
+    // Chairs and unlabelled decorative scenery only retain their cursor.
+    if (info && ((info->type == 5 && info->data[0] == 0) || info->type == 7)) return usable;
 
     // ...and what it is, beside the pointer, which is the whole of what the
     // real client shows for an object: a cursor saying what it is for and a
@@ -1508,6 +1509,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     }
 
     worldHoverGuid_ = 0;
+    uint64_t highlightedSign = 0;
+    constexpr float signHoverStrength = 0.25f;
     // Cursor affordance: show hand cursor over interactable entities.
     // Not while the cursor is over a frame FrameXML owns: ImGui has never heard
     // of those, so its own answer is no wherever they are.
@@ -1527,6 +1530,13 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 ui::pickScene(gameHandler, ray, ui::ScenePickParams{});
             const auto hovered = gameHandler.getEntityManager().getEntity(hoverPick.resolve());
             if (hovered && hovered->isUnit()) worldHoverGuid_ = hovered->getGuid();
+            if (const auto named = gameHandler.getEntityManager().getEntity(hoverPick.namedObjectGuid);
+                    named && named->getType() == game::ObjectType::GAMEOBJECT) {
+                const auto object = std::static_pointer_cast<game::GameObject>(named);
+                const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
+                if (info && info->type == 5 && info->data[1] != 0)
+                    highlightedSign = named->getGuid();
+            }
             if (hoverPick.closestGuid != 0) {
                 if (!drawVendorCursor(gameHandler, hoverPick) &&
                     !drawWorldObjectCursor(gameHandler, hoverPick)) {
@@ -1535,6 +1545,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             }
         }
     }
+
+    if (!input.isMouseButtonPressed(SDL_BUTTON_LEFT))
+        core::Application::getInstance().setGameObjectHighlight(highlightedSign, signHoverStrength);
 
     // World and FrameXML share the WoW gauntlet when no contextual cursor
     // was drawn. ImGui otherwise restores its desktop arrow each frame.
@@ -1569,8 +1582,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     ui::pickScene(gameHandler, pressRay, ui::ScenePickParams{}).resolve();
                 auto entity = pressed ? gameHandler.getEntityManager().getEntity(pressed)
                                       : nullptr;
-                core::Application::getInstance().setPressedGameObject(
-                    entity && entity->getType() == game::ObjectType::GAMEOBJECT ? pressed : 0);
+                core::Application::getInstance().setGameObjectHighlight(
+                    entity && entity->getType() == game::ObjectType::GAMEOBJECT ? pressed : 0, 1.0f);
             }
         }
     }
@@ -1581,10 +1594,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
     // On mouse-up, check if it was a click (not a drag)
     if (input.isMouseButtonJustReleased(SDL_BUTTON_LEFT)) {
-        // Dark again the moment the button comes up, whatever the release
-        // turns out to mean - a click, a drag that turned the camera, or a
-        // press that ended somewhere else entirely.
-        core::Application::getInstance().setPressedGameObject(0);
+        // Restore the current hover strength after releasing pressed feedback.
+        core::Application::getInstance().setGameObjectHighlight(highlightedSign, signHoverStrength);
     }
 
     if (leftClickWasPress_ && input.isMouseButtonJustReleased(SDL_BUTTON_LEFT)) {
