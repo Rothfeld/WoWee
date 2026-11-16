@@ -449,12 +449,13 @@ static int lua_GetPlayerMapPosition(lua_State* L) {
     auto* gh = getGameHandler(L);
     auto* svc = getLuaServices(L);
     const char* uid = luaL_optstring(L, 1, "player");
-    if (!gh || !svc || !svc->mapUVForWorldPos || !uid) {
+    if (!gh || !svc || !svc->mapUVForMapPos || !uid) {
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 0);
         return 2;
     }
     float wx = 0.0f, wy = 0.0f, wz = 0.0f;
+    std::optional<uint32_t> mapId = gh->getCurrentMapId();
     std::string unit(uid);
     toLowerInPlace(unit);
     if (unit == "player") {
@@ -466,17 +467,20 @@ static int lua_GetPlayerMapPosition(lua_State* L) {
         // about, and they have no entity here.
         if (auto e = gh->getEntityManager().getEntity(guid)) {
             wx = e->getX(); wy = e->getY(); wz = e->getZ();
-        } else if (const auto* m = findPartyMember(gh, guid)) {
+        } else if (const auto* m = findPartyMember(gh, guid); m && m->hasPartyStats) {
             // The group list carries a coarse position - SMSG_PARTY_MEMBER_STATS
             // truncates it to a pair of int16 yards - which is ample for a dot
             // on a zone map and is the only position there is for someone out
             // of range.
-            wx = static_cast<float>(m->posX);
-            wy = static_cast<float>(m->posY);
+            const auto canonical = core::coords::serverToCanonical(
+                {static_cast<float>(m->posX), static_cast<float>(m->posY), 0});
+            wx = canonical.x;
+            wy = canonical.y;
+            mapId = gh->getAreaMapId(m->zoneId);
         }
     }
     float u = 0.0f, v = 0.0f;
-    if ((wx == 0.0f && wy == 0.0f) || !svc->mapUVForWorldPos(wx, wy, wz, u, v)) {
+    if (!mapId || (wx == 0.0f && wy == 0.0f) || !svc->mapUVForMapPos(*mapId, wx, wy, wz, u, v)) {
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 0);
         return 2;

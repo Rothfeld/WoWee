@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <optional>
 #include <vulkan/vulkan.h>
 
 namespace wowee {
@@ -146,7 +147,7 @@ public:
     /// world coordinate handed over unconverted puts the player arrow thousands
     /// of pixels off the parchment.
     bool mapUVForCanonical(float wowX, float wowY, float wowZ,
-                           float& u, float& v) const;
+                           float& u, float& v, std::optional<uint32_t> sourceMapId = std::nullopt) const;
 
     /// Step out one level: zone to continent, continent to world.
     void zoomOutOneLevel();

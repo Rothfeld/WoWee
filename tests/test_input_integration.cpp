@@ -1869,3 +1869,59 @@ TEST_CASE_METHOD(Integration, "Moonkin tooltip keeps creature type on unwrapped 
     CHECK_FALSE(tip->tooltipLines[1].wrap);
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE_METHOD(Integration, "Party roster identity and map coordinates survive reconnect", "[party-reconnect]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    const auto roster = [&](bool online) {
+        wowee::network::Packet packet(wireOpcode(Opcode::SMSG_GROUP_LIST));
+        packet.writeUInt8(0); packet.writeUInt8(0); packet.writeUInt8(0); packet.writeUInt8(0);
+        packet.writeUInt64(1); packet.writeUInt32(1);
+        packet.writeString("Graulberto"); packet.writeUInt64(3);
+        packet.writeUInt8(online); packet.writeUInt8(0); packet.writeUInt8(0);
+        packet.writeUInt64(3);
+        session.receive(packet);
+    };
+    roster(true);
+    REQUIRE_FALSE(handler.getPartyData().members.front().hasPartyStats);
+    truth("UnitName('party1') == 'Graulberto'");
+    truth("UnitExists('party1') and not UnitIsDead('party1')");
+    int mapCalls = 0;
+    addons::LuaServices services;
+    services.mapUVForMapPos = [&](uint32_t map, float x, float y, float, float& u, float& v) {
+        ++mapCalls;
+        CHECK(map == 1);
+        CHECK(x == -350);
+        CHECK(y == 7300);
+        u = .25f; v = .75f;
+        return true;
+    };
+    lua.setLuaServices(services);
+    GameHandlerTestAccess::setAreaMap(handler, 148, 1);
+    truth("GetPlayerMapPosition('party1') == 0");
+    CHECK(mapCalls == 0);
+    wowee::network::Packet stats(wireOpcode(Opcode::SMSG_PARTY_MEMBER_STATS_FULL));
+    stats.writePackedGuid(3); stats.writeUInt32(0x187);
+    stats.writeUInt16(1); stats.writeUInt16(417); stats.writeUInt16(530);
+    stats.writeUInt16(148);
+    stats.writeUInt16(7300); stats.writeUInt16(static_cast<uint16_t>(-350));
+    session.receive(stats);
+    truth("select(1, GetPlayerMapPosition('party1')) == .25 and select(2, GetPlayerMapPosition('party1')) == .75");
+    roster(false);
+    roster(true);
+    truth("UnitName('party1') == 'Graulberto' and UnitHealth('party1') == 417");
+    truth("GetPlayerMapPosition('party1') == .25");
+    bool partyNameEvent = false;
+    handler.setAddonEventCallback([&](const std::string& event, const std::vector<std::string>& args) {
+        if (event == "UNIT_NAME_UPDATE" && args == std::vector<std::string>{"party1"}) partyNameEvent = true;
+    });
+    wowee::network::Packet name(wireOpcode(Opcode::SMSG_NAME_QUERY_RESPONSE));
+    name.writeUInt64(3); name.writeString("Graulberto"); name.writeString("");
+    name.writeUInt32(3); name.writeUInt32(0); name.writeUInt32(4); name.writeUInt8(0);
+    session.receive(name);
+    CHECK(partyNameEvent);
+    handler.setAddonEventCallback({});
+    lua.setLuaServices({});
+}

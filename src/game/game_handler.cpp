@@ -3073,6 +3073,7 @@ void GameHandler::loadAreaNameCache() const {
         for (uint32_t i = 0; i < areaDbc->getRecordCount(); ++i) {
             uint32_t areaId = areaDbc->getUInt32(i, 0);
             if (areaId == 0) continue;
+            areaMapCache_[areaId] = areaDbc->getUInt32(i, 1);
             std::string name = areaDbc->getString(i, 11);
             if (!name.empty()) {
                 areaNameCache_[areaId] = std::move(name);
@@ -3109,6 +3110,13 @@ void GameHandler::loadAreaNameCache() const {
     }
 
     LOG_INFO("Area name cache: loaded ", areaNameCache_.size(), " entries");
+}
+
+std::optional<uint32_t> GameHandler::getAreaMapId(uint32_t areaId) const {
+    loadAreaNameCache();
+    const auto found = areaMapCache_.find(areaId);
+    if (found == areaMapCache_.end()) return std::nullopt;
+    return found->second;
 }
 
 std::string GameHandler::getAreaName(uint32_t areaId) const {

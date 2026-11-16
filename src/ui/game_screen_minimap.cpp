@@ -1098,40 +1098,63 @@ void GameScreen::renderMinimapPings(const MinimapFrame& frame, game::GameHandler
 // There were two of these drawing at the same point until recently - a square
 // from one pass and this circle over it.
 void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHandler& gameHandler) {
+    auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+    std::string hoveredName;
     // Party member dots on minimap
     {
         const auto& partyData = gameHandler.getPartyData();
-        const uint64_t leaderGuid = partyData.leaderGuid;
         for (const auto& member : partyData.members) {
-            if (!member.isOnline || !member.hasPartyStats) continue;
-            if (member.posX == 0 && member.posY == 0) continue;
-
-            // posX/posY follow same server axis convention as minimap pings:
-            // server posX = east/west axis → canonical Y (west)
-            // server posY = north/south axis → canonical X (north)
-            float wowX = static_cast<float>(member.posY);
-            float wowY = static_cast<float>(member.posX);
-            float sx = 0.0f, sy = 0.0f;
-            if (!frame.projectCanonical(wowX, wowY, sx, sy)) continue;
-
-            ImU32 dotColor;
-            {
-                // Grey for a corpse or a ghost, which the other party-dot pass
-                // that used to draw over this one was the only thing saying.
-                const bool isDead  = (member.onlineStatus & 0x0020) != 0;
-                const bool isGhost = (member.onlineStatus & 0x0010) != 0;
-                auto mEnt = gameHandler.getEntityManager().getEntity(member.guid);
-                uint8_t cid = entityClassId(mEnt.get());
-                dotColor = (isDead || isGhost)
-                    ? IM_COL32(140, 140, 140, 200)
-                    : (cid != 0)
-                        ? classColorU32(cid, 235)
-                        : (member.guid == leaderGuid)
-                            ? IM_COL32(255, 210, 0, 235)
-                            : IM_COL32(100, 180, 255, 235);
+            if (!member.isOnline || member.guid == gameHandler.getPlayerGuid()) continue;
+            const auto entity = gameHandler.getEntityManager().getEntity(member.guid);
+            if (!entity && (!member.hasPartyStats || (member.posX == 0 && member.posY == 0))) continue;
+            if (!entity) {
+                const auto memberMap = gameHandler.getAreaMapId(member.zoneId);
+                if (!memberMap || *memberMap != gameHandler.getCurrentMapId()) continue;
             }
-            frame.drawList->AddCircleFilled(ImVec2(sx, sy), 4.0f, dotColor);
-            frame.drawList->AddCircle(ImVec2(sx, sy), 4.0f, IM_COL32(255, 255, 255, 160), 12, 1.0f);
+            const glm::vec3 canonical = entity
+                ? glm::vec3(entity->getX(), entity->getY(), entity->getZ())
+                : core::coords::serverToCanonical({float(member.posX), float(member.posY), 0});
+            float sx = 0.0f, sy = 0.0f;
+            if (!frame.projectCanonical(canonical.x, canonical.y, sx, sy)) {
+                const auto render = core::coords::canonicalToRender(canonical);
+                const glm::vec2 offset = renderDeltaToMinimapOffset(
+                    render.x - frame.playerRender.x, render.y - frame.playerRender.y, frame.view);
+                const float length = glm::length(offset);
+                if (length <= 0) continue;
+                const glm::vec2 direction = offset / length;
+                const float ax = frame.centerX + direction.x * (frame.mapRadius - 7);
+                const float ay = frame.centerY + direction.y * (frame.mapRadius - 7);
+                static VkDescriptorSet arrow = VK_NULL_HANDLE;
+                if (!arrow) {
+                    arrow = uploadUiTextureFromBlp(services_.assetManager,
+                        "Interface\\Minimap\\Rotating-MinimapGroupArrow.blp", services_.window);
+                    if (!arrow) throw std::runtime_error("Party minimap arrow failed to load");
+                }
+                // Authored 32px image has alpha bounds (8,7)-(25,22).
+                const ImVec2 corners[] = {{-16.5f,-14.5f},{15.5f,-14.5f},
+                                         {15.5f,17.5f},{-16.5f,17.5f}};
+                ImVec2 points[4];
+                for (size_t i = 0; i < 4; ++i) {
+                    points[i] = ImVec2(ax - direction.y * corners[i].x - direction.x * corners[i].y,
+                                      ay + direction.x * corners[i].x - direction.y * corners[i].y);
+                }
+                frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
+                    points[0], points[1], points[2], points[3],
+                    ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
+                if (cursorNearBlip(ax, ay, kArrowHoverRadius)) hoveredName = member.name;
+                continue;
+            }
+
+            static VkDescriptorSet partyAtlas = VK_NULL_HANDLE;
+            if (!partyAtlas) {
+                partyAtlas = uploadUiTextureFromBlp(services_.assetManager,
+                    "Interface\\Minimap\\ObjectIcons.blp", services_.window);
+                if (!partyAtlas) throw std::runtime_error("Party minimap icon atlas failed to load");
+            }
+            // Original blue party marker is independent of class and leadership.
+            frame.drawList->AddImage((ImTextureID)(uintptr_t)partyAtlas,
+                ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
+                ImVec2(0, 0), ImVec2(0.125f, 0.5f));
 
             // Raid mark: the marker artwork drawn small above the dot
             {
@@ -1147,16 +1170,33 @@ void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHan
             }
 
             if (!member.name.empty() && cursorNearBlip(sx, sy)) {
-                uint8_t pmk2 = gameHandler.getEntityRaidMark(member.guid);
-                if (const char* markName = game::raidMarkName(pmk2)) {
-                    ImGui::SetTooltip("%s {%s}", member.name.c_str(), markName);
-                } else {
-                    ImGui::SetTooltip("%s", member.name.c_str());
-                }
+                hoveredName = member.name;
             }
         }
     }
-
+    if (!engine) return;
+    lua_pushlstring(engine->getState(), hoveredName.data(), hoveredName.size());
+    lua_setglobal(engine->getState(), "WoweePartyMinimapName");
+    if (!engine->executeString(R"lua(
+        if WoweePartyMinimapName ~= '' then
+            if not WoweePartyMinimapTooltip then
+                CreateFrame('GameTooltip', 'WoweePartyMinimapTooltip', UIParent, 'GameTooltipTemplate')
+            end
+            local tip = WoweePartyMinimapTooltip
+            tip:SetOwner(UIParent, 'ANCHOR_NONE')
+            tip:ClearAllPoints()
+            local x, y = GetCursorPosition()
+            local scale = UIParent:GetEffectiveScale()
+            tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', x / scale, y / scale)
+            tip:SetText(WoweePartyMinimapName, 1, 0.82, 0)
+            tip:Show()
+        elseif WoweePartyMinimapTooltip then
+            WoweePartyMinimapTooltip:Hide()
+        end
+    )lua")) {
+        LOG_ERROR("Party minimap tooltip: ", engine->lastError());
+        throw std::runtime_error("Party minimap tooltip failed");
+    }
 }
 
 // Flag carriers and the other positions a battleground reports.

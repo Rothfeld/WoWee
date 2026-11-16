@@ -861,7 +861,7 @@ inline bool itemUseCooldown(game::GameHandler* gh, uint32_t itemId,
 inline const game::GroupMember* findPartyMember(game::GameHandler* gh, uint64_t guid) {
     if (!gh || guid == 0) return nullptr;
     for (const auto& m : gh->getPartyData().members) {
-        if (m.guid == guid && m.hasPartyStats) return &m;
+        if (m.guid == guid) return &m;
     }
     return nullptr;
 }

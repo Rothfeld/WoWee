@@ -3060,11 +3060,7 @@ void EntityController::handleNameQueryResponse(network::Packet& packet) {
 
         // Fire UNIT_NAME_UPDATE so nameplate/unit frame addons know the name is available
         if (owner_.addonEventCallbackRef()) {
-            std::string unitId;
-            if (data.guid == owner_.getTargetGuid()) unitId = "target";
-            else if (data.guid == owner_.focusGuidRef()) unitId = "focus";
-            else if (data.guid == owner_.getPlayerGuid()) unitId = "player";
-            if (!unitId.empty())
+            for (const auto& unitId : unitEventTokens(owner_, data.guid))
                 owner_.fireAddonEvent("UNIT_NAME_UPDATE", {unitId});
         }
     }

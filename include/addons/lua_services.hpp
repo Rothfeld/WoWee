@@ -187,6 +187,7 @@ struct LuaServices {
     /// across the image. False when it is off this map. GetPlayerMapPosition
     /// answers in this space - FrameXML multiplies it by the map frame's width.
     std::function<bool(float, float, float, float&, float&)> mapUVForWorldPos;
+    std::function<bool(uint32_t, float, float, float, float&, float&)> mapUVForMapPos;
     std::function<uint32_t()> getMapWorldAreaId;
     std::function<void(uint32_t)> setMapWorldAreaId;
 

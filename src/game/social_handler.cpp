@@ -2279,8 +2279,24 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     const uint64_t prevLooter = partyData.looterGuid;
     const uint64_t previousLeader = partyData.leaderGuid;
     const bool wasInGroup = !partyData.isEmpty();
-    partyData = GroupListData{};
-    if (!GroupListParser::parse(packet, partyData, hasRoles, hasBattleGroupFlag)) return;
+    GroupListData next;
+    if (!GroupListParser::parse(packet, next, hasRoles, hasBattleGroupFlag)) return;
+    for (auto& member : next.members) {
+        const auto previous = std::find_if(partyData.members.begin(), partyData.members.end(),
+            [&](const auto& old) { return old.guid == member.guid; });
+        if (previous == partyData.members.end()) continue;
+        // Roster packets replace identity/status, not the independently updated
+        // health and position snapshot. Keep that snapshot through roster churn.
+        auto retained = *previous;
+        retained.name = member.name;
+        retained.isOnline = member.isOnline;
+        retained.subGroup = member.subGroup;
+        retained.flags = member.flags;
+        retained.roles = member.roles;
+        retained.onlineStatus = (retained.onlineStatus & ~0x0001u) | (member.isOnline ? 1u : 0u);
+        member = std::move(retained);
+    }
+    partyData = std::move(next);
 
     // The roster carries online state in isOnline; the per-member stat updates
     // carry it in the onlineStatus bitmask. Seed the bitmask from the roster so
@@ -2509,6 +2525,9 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
     if (isWotLK && (updateFlags & 0x80000)) { if (remaining() >= 4) packet.readUInt32(); }
 
     member->hasPartyStats = true;
+    LOG_DEBUG("Party stats guid=", memberGuid, " online=", member->isOnline,
+              " zone=", member->zoneId, " serverXY=", member->posX, ",", member->posY,
+              " flags=", updateFlags);
 
     if (owner_.addonEventCallbackRef()) {
         std::string unitId;

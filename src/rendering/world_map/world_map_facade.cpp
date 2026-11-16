@@ -846,14 +846,16 @@ std::vector<OverlayEntry> WorldMapFacade::currentOverlays() const {
     return visible;
 }
 bool WorldMapFacade::mapUVForCanonical(float wowX, float wowY, float wowZ,
-                                       float& u, float& v) const {
+                                       float& u, float& v, std::optional<uint32_t> sourceMapId) const {
     const int physicalMapId = folderToMapId(impl_->physicalMapName);
-    if (!impl_->virtualMapOverride && physicalMapId != impl_->data.currentMapId())
+    if (!sourceMapId && !impl_->virtualMapOverride && physicalMapId != impl_->data.currentMapId())
         return false;
     const int idx = impl_->viewState.currentZoneIdx();
     const auto& zones = impl_->data.zones();
     if (idx < 0 || idx >= static_cast<int>(zones.size())) return false;
     const Zone& zone = zones[static_cast<size_t>(idx)];
+    if (sourceMapId && *sourceMapId != zone.mapID &&
+        !(impl_->virtualMapOverride && static_cast<int>(*sourceMapId) == physicalMapId)) return false;
     const bool isContinent = (zone.areaID == 0);
 
     // The same bounds every marker layer projects against.

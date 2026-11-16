@@ -756,6 +756,11 @@ bool Application::initialize() {
             auto* wmap = r ? r->getWorldMap() : nullptr;
             return wmap ? wmap->mapUVForCanonical(x, y, z, u, v) : false;
         };
+        luaSvc.mapUVForMapPos = [r = renderer.get()](uint32_t mapId, float x, float y, float z,
+                                                   float& u, float& v) -> bool {
+            auto* wmap = r ? r->getWorldMap() : nullptr;
+            return wmap && wmap->mapUVForCanonical(x, y, z, u, v, mapId);
+        };
         luaSvc.zoomMapOut = [r = renderer.get()]() {
             if (auto* wmap = r ? r->getWorldMap() : nullptr) wmap->zoomOutOneLevel();
         };
