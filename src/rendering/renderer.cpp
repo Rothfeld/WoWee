@@ -2179,7 +2179,10 @@ void Renderer::update(float deltaTime) {
         // characterYaw is also sent as gameplay facing. Turning the legs toward
         // strafe travel must not rotate the heading used with movement flags.
         float modelYaw = characterYaw;
-        if (!taxiFlight && cameraController->isMoving() && activeStrafe) {
+        // Swim-left/right sequences already contain the lateral body pose.
+        // Applying the land-stride yaw and spine counter-rotation twists it twice.
+        if (!taxiFlight && !cameraController->isSwimming() &&
+            cameraController->isMoving() && activeStrafe) {
             modelYaw = cameraController->getTravelYaw();
             torsoYawDeltaDeg = characterYaw - modelYaw;
         }

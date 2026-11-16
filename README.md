@@ -694,6 +694,10 @@ stop grace period. Swim, swim-backward, swim-left/right, and swim-idle poses
 cross-fade using the destination M2 sequence's authored blend time, including
 transitions to ground locomotion. `WOWEE_SWIM_ANIMATION_TRACE=1` logs animation
 IDs and applied blend durations for live stop/start verification.
+Local swim strafing keeps the model aligned with gameplay facing. The authored
+swim-left/right poses provide the lateral lean; land-stride travel yaw and
+spine counter-rotation must not be applied on top of those poses. Verify both
+Q and E underwater, where the whole body is visible.
 
 Player camera fade uses actual camera-to-pivot distance, becoming transparent
 between 1.5 and 0.5 yards. Collision can shorten that distance while requested
