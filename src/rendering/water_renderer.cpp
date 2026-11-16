@@ -1268,8 +1268,11 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // 1 = indoor material color, 2 = outdoor zone lighting.
         push.legacyWmoMode = legacyWater && (basicType == 0 || (isWmoWater && basicType == 1))
             ? (surface.indoorColor ? 1.0f : 2.0f) : 0.0f;
-        push.textureRepeatX = surface.width;
-        push.textureRepeatY = surface.height;
+        // ADT freshwater repeats once per four terrain cells (two repeats
+        // per 8-cell chunk); WMO liquid textures repeat once per liquid cell.
+        const float textureRepeatsPerCell = isWmoWater ? 1.0f : 0.25f;
+        push.textureRepeatX = surface.width * textureRepeatsPerCell;
+        push.textureRepeatY = surface.height * textureRepeatsPerCell;
 
         vkCmdPushConstants(cmd, pipelineLayout,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
