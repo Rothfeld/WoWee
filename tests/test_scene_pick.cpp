@@ -236,3 +236,19 @@ TEST_CASE("Resource tracking matches authored lock skill types", "[resource-trac
     CHECK_FALSE(resourceTrackingAvailable(0x04, 0));
     CHECK(resourceTrackingAvailable(0x05, 1));
 }
+
+TEST_CASE("Large object mesh is nearer than its enclosing sphere exit", "[quest-object]") {
+    const wowee::rendering::Ray ray{{0, 0, 5}, {0, 0, -1}};
+    float sphereExit = 0;
+    REQUIRE(wowee::ui::raySphereIntersect(ray, {0, 0, 0}, 20, sphereExit));
+    REQUIRE(sphereExit == 25);
+    const std::vector<glm::vec3> mesh{{-5,-5,3}, {5,-5,3}, {0,5,3}};
+    const std::vector<uint16_t> indices{0,1,2};
+    const float surface = wowee::rendering::pickVisualTriangles(
+        mesh, indices, ray.origin, ray.direction, sphereExit + 40);
+    CHECK(surface == 2);
+    CHECK_FALSE(wowee::ui::terrainOccludesSceneRay(ray, surface,
+        [](float, float) { return std::optional<float>{0}; }));
+    CHECK(wowee::ui::terrainOccludesSceneRay(ray, sphereExit,
+        [](float, float) { return std::optional<float>{0}; }));
+}

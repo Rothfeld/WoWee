@@ -643,7 +643,7 @@ public:
     /// trace at all beyond "m2=-99999".
     void debugDumpFloorCandidatesAt(float glX, float glY, float glZ) const;
     [[nodiscard]] float raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId = 0) const;
-    [[nodiscard]] float raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId = 0) const;
+    [[nodiscard]] float raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t excludedInstanceId = 0, uint32_t requiredInstanceId = 0) const;
     void setCollisionFocus(const glm::vec3& worldPos, float radius);
 
     void resetQueryStats();

@@ -60,7 +60,21 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         const game::GameObjectQueryResponseData* goInfo = nullptr;
         if (type == game::ObjectType::GAMEOBJECT) {
             auto go = std::static_pointer_cast<game::GameObject>(entity);
-            if (!game::gameObjectInteractionEnabled(*go)) continue;
+            const bool enabled = game::gameObjectInteractionEnabled(*go);
+            if (params.trace) {
+                glm::vec3 center;
+                float radius = 0.0f, distance = 0.0f;
+                const bool bounds = core::Application::getInstance().getRenderBoundsForGuid(
+                    guid, center, radius);
+                if (bounds && raySphereIntersect(ray, center, radius, distance)) {
+                    LOG_DEBUG("Scene pick object candidate guid=", guid,
+                        " entry=", go->getEntry(),
+                        " flags=", go->getField(game::fieldIndex(game::UF::GAMEOBJECT_FLAGS)),
+                        " dynamic=", go->getField(game::fieldIndex(game::UF::GAMEOBJECT_DYNAMIC)),
+                        " enabled=", enabled, " boundsDistance=", distance);
+                }
+            }
+            if (!enabled) continue;
             goInfo = gameHandler.getCachedGameObjectInfo(go->getEntry());
             // Spell-focus objects mark crafting facilities (anvils, forges).
             // They satisfy nearby spell requirements; they are not clickable
@@ -120,6 +134,17 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             if (found == objects.end()) continue;
             if (!found->second.isWmo) {
                 pickedM2 = found->second.instanceId;
+                // Bounds are broad phase, not the surface occlusion must test.
+                // When the camera is inside a large object's sphere its far
+                // exit can lie behind terrain despite the mesh being visible.
+                const float limit = hitT + 2.0f * hitRadius;
+                auto* m2 = renderer->getM2Renderer();
+                if (!m2) continue;
+                hitT = m2->raycastVisibleGeometry(
+                    ray.origin, ray.direction, limit, 0, pickedM2);
+                if (hitT >= limit) continue;
+                if (params.trace) LOG_DEBUG("Scene pick object mesh guid=", guid,
+                    " instance=", pickedM2, " hit=", hitT);
             }
         }
         // Exclude the picked mesh from its own occlusion query: its collision

@@ -1445,12 +1445,14 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
 }
 
 float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction,
-                                        float maxDistance, uint32_t excludedInstanceId) const {
+                                        float maxDistance, uint32_t excludedInstanceId,
+                                        uint32_t requiredInstanceId) const {
     float closest = maxDistance;
     const glm::vec3 end = origin + direction * maxDistance;
     gatherCandidates(glm::min(origin, end), glm::max(origin, end), tl_m2_candidateScratch);
     for (size_t index : tl_m2_candidateScratch) {
         const auto& instance = instances[index];
+        if (requiredInstanceId != 0 && instance.id != requiredInstanceId) continue;
         if (instance.id == excludedInstanceId || !instance.cachedModel) continue;
         const auto& model = *instance.cachedModel;
         if (model.isInvisibleTrap || model.isSpellEffect || model.isSmoke) continue;

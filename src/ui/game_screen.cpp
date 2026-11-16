@@ -1146,8 +1146,10 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
                 assert(typeRow >= 0);
                 // CursorName is the final, non-localized LockType column.
                 const auto cursor = types->getString(typeRow, types->getFieldCount() - 1);
-                if (cursor.empty()) continue; // This lock type has no cursor override.
-                path = "Interface\\Cursor\\" + cursor + ".blp";
+                // Lock slots are alternative opening methods. A blank cursor
+                // on the first method uses the normal opening/gear cursor;
+                // it must not borrow an icon from a later profession method.
+                path = "Interface\\Cursor\\" + (cursor.empty() ? std::string("Interact") : cursor) + ".blp";
                 break;
             }
         }
