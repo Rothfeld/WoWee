@@ -1022,8 +1022,7 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
         else if (key == ufi.mountDisplayId) {
             if (block.guid == owner_.getPlayerGuid()) {
                 detectPlayerMountChange(val, block.fields);
-            } else if (block.objectType == ObjectType::PLAYER &&
-                       owner_.otherPlayerMountCallbackRef()) {
+            } else if (owner_.otherPlayerMountCallbackRef()) {
                 owner_.otherPlayerMountCallbackRef()(block.guid, val);
             }
             unit->setMountDisplayId(val);
@@ -1288,8 +1287,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         } else if (key == ufi.mountDisplayId) {
             if (block.guid == owner_.getPlayerGuid()) {
                 detectPlayerMountChange(val, block.fields);
-            } else if (entity->getType() == ObjectType::PLAYER &&
-                       val != unit->getMountDisplayId() &&
+            } else if (val != unit->getMountDisplayId() &&
                        owner_.otherPlayerMountCallbackRef()) {
                 owner_.otherPlayerMountCallbackRef()(block.guid, val);
             }

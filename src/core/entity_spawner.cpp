@@ -267,9 +267,9 @@ void EntitySpawner::removeRemotePlayerMount(uint64_t guid) {
     if (renderer_) {
         if (auto* cr = renderer_->getCharacterRenderer()) {
             if (it->second.instanceId != 0) cr->removeInstance(it->second.instanceId);
-            auto playerIt = playerInstances_.find(guid);
-            if (playerIt != playerInstances_.end()) {
-                cr->playAnimation(playerIt->second, rendering::anim::STAND, true);
+            const auto riderInstance = characterInstanceIdForGuid(guid);
+            if (riderInstance) {
+                cr->playAnimation(riderInstance, rendering::anim::STAND, true);
             }
         }
     }

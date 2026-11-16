@@ -3475,6 +3475,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // using getLatest (== moveEnd while isMoving_) avoids the
             // visible forward-drift followed by a backward snap.
             charRenderer->setLocomotionSpeed(instanceId, entity->getLocomotionSpeed());
+            const auto* creatureMount = entitySpawner_->getRemotePlayerMount(guid);
             const bool inOverrun = entity->isEntityMoving() && !entity->isActivelyMoving();
             glm::vec3 canonical(
                 inOverrun ? entity->getLatestX() : entity->getX(),
@@ -3482,10 +3483,11 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 inOverrun ? entity->getLatestZ() : entity->getZ());
             glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
             auto posIt = _creatureRenderPosCache.find(guid);
-            const std::optional<glm::vec3> previousRenderPos =
+            std::optional<glm::vec3> previousRenderPos =
                 posIt != _creatureRenderPosCache.end()
                     ? std::optional<glm::vec3>(posIt->second)
                     : std::nullopt;
+            if (creatureMount && previousRenderPos) previousRenderPos->z -= creatureMount->riderHeight;
 
             // Grounded creatures need floor projection both between spline points
             // and after stopping. Stopping must not restore stale server Z. Use the floor nearest server Z so outdoor terrain
@@ -3505,6 +3507,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     }
                     renderPos.z = *floorZ;
                 }
+            }
+
+            if (creatureMount) {
+                charRenderer->setInstancePosition(creatureMount->instanceId, renderPos);
+                charRenderer->setLocomotionSpeed(creatureMount->instanceId, entity->getLocomotionSpeed());
+                renderPos.z += creatureMount->riderHeight;
             }
 
             // No visual collision guard here any more.
@@ -3616,7 +3624,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                 }
                             }
                         }
-                        charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
+                        if (creatureMount) {
+                            charRenderer->playAnimation(creatureMount->instanceId, targetAnim, true);
+                            charRenderer->playAnimation(instanceId, rendering::anim::MOUNT, true);
+                        } else {
+                            charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
+                        }
                     }
                 }
             }
@@ -3656,7 +3669,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             }
             float renderYaw = facing + glm::radians(90.0f);
             glm::vec3 groundRotation(0.0f, 0.0f, renderYaw);
-            if (groundCreature && !onTransport) {
+            if (groundCreature && !onTransport && !creatureMount) {
                 const auto* model = charRenderer->getInstanceModelData(instanceId);
                 assert(model);
                 groundRotation = creatureGroundRotation(*model,
@@ -3666,6 +3679,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     });
             }
             charRenderer->setInstanceRotation(instanceId, groundRotation);
+            if (creatureMount) {
+                charRenderer->setInstanceRotation(creatureMount->instanceId, groundRotation);
+            }
             static const char* traceGround = std::getenv("WOWEE_CREATURE_GROUND_TRACE");
             if (traceGround && guid == std::stoull(traceGround, nullptr, 0)) {
                 static double lastTrace = -1.0;

@@ -948,3 +948,11 @@ emitters. Spherical emitters use their authored area and radial velocity;
 flag 0x100 selects vertical velocity. Ordinary particle colors retain their
 authored values. `build/bin/test_m2_classifier_foliage` and
 `build/bin/test_m2_ribbon_tracks '[m2][particle]'` cover these rules.
+
+Mounted NPCs use the same mount-display field and mount instances as remote
+players. `EntityController` dispatches mount changes for every unit;
+`EntitySpawner` resolves either a creature or player render instance. Creature
+updates place the horse on the sampled floor, raise the rider to the saddle,
+and animate locomotion on the mount while keeping the rider in the mount pose.
+Despawn removes both instances. Mounted nameplates use attachment 29 on the
+posed rider. General Marcus Jonathan uses mount display 2410.

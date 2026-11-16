@@ -1882,8 +1882,9 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
             pendingRemotePlayerMounts_.erase(it);
             return;
         }
-        auto playerIt = playerInstances_.find(guid);
-        if (playerIt == playerInstances_.end()) continue; // initial fields can precede rendering
+        // The mount update field belongs to every unit, including NPCs.
+        const uint32_t riderInstance = characterInstanceIdForGuid(guid);
+        if (!riderInstance) continue; // initial fields can precede rendering
 
         auto current = remotePlayerMounts_.find(guid);
         if (current != remotePlayerMounts_.end() && current->second.displayId == displayId) {
@@ -1903,7 +1904,7 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
         }
 
         glm::vec3 pos(0.0f);
-        cr->getInstancePosition(playerIt->second, pos);
+        cr->getInstancePosition(riderInstance, pos);
         uint32_t mountInstance = cr->createInstance(modelId, pos, glm::vec3(0.0f), 1.0f);
         if (mountInstance != 0) {
             cr->setInstanceCreatureMaterialRules(mountInstance, true);
@@ -1921,7 +1922,7 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
                 mountAnim = moving ? rendering::anim::RUN : rendering::anim::STAND;
             }
             cr->playAnimation(mountInstance, mountAnim, true);
-            cr->playAnimation(playerIt->second, rendering::anim::MOUNT, true);
+            cr->playAnimation(riderInstance, rendering::anim::MOUNT, true);
             remotePlayerMounts_[guid] = {.displayId = displayId, .modelId = modelId,
                                          .instanceId = mountInstance, .riderHeight = riderHeight};
             LOG_INFO("Remote player mounted: guid=0x", std::hex, guid, std::dec,
@@ -1948,6 +1949,8 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
         return;
     }
 
+    pendingRemotePlayerMounts_.erase(guid);
+    removeRemotePlayerMount(guid);
     pendingCreatureSpawnGuids_.erase(guid);
     requestedCreatureDisplayIds_.erase(guid);
     creatureActiveEmotes_.erase(guid);
