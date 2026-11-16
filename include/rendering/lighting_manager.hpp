@@ -16,6 +16,7 @@ namespace rendering {
  * Time-of-day lighting parameters sampled from DBC curves
  */
 struct LightingParams {
+    glm::vec2 riverAlpha{0.5f, 1.0f};
     glm::vec3 ambientColor{0.4f, 0.4f, 0.5f};      // Fill lighting
     glm::vec3 diffuseColor{1.0f, 0.95f, 0.8f};     // Directional sun color
     glm::vec3 directionalDir{0.0f, -1.0f, 0.5f};   // Sun direction (normalized)
@@ -101,6 +102,7 @@ struct FloatBand {
  * LightParams profile with 18 color bands + 6 float bands
  */
 struct LightParamsProfile {
+    glm::vec2 riverAlpha{0.5f, 1.0f};
     uint32_t lightParamsId = 0;
     uint32_t lightSkyboxId = 0;
 

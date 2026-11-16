@@ -52,6 +52,10 @@ const int MAX_WAKE_POINTS = 32;
 layout(set = 2, binding = 3) uniform WaterFrameData {
     mat4 reflViewProj;
     vec4 wakeBounds;                  // xy = centre, z = cull radius, w = count
+    vec4 liquidParams;
+    vec4 contactMeta;
+    vec4 contactPositions[64];
+    vec4 contactStyles[64];
     vec4 wakePoints[MAX_WAKE_POINTS]; // xy = world pos, z = age 0..1, w = strength
 };
 
@@ -60,9 +64,30 @@ layout(location = 1) in vec3 Normal;
 layout(location = 2) in vec2 TexCoord;
 layout(location = 3) in float WaveOffset;
 layout(location = 4) in vec2 ScreenUV;
+layout(location = 5) in float LiquidDepth;
 
 layout(location = 0) out vec4 outColor;
 layout(set = 3, binding = 0) uniform sampler2D LakeTexture;
+layout(set = 3, binding = 1) uniform sampler2D SplashTexture;
+layout(set = 3, binding = 2) uniform sampler2D WakeTexture;
+
+vec3 contactLight() {
+    vec3 light = vec3(0.0);
+    for (int i = 0; i < int(contactMeta.x); ++i) {
+        vec4 point = contactPositions[i];
+        vec4 style = contactStyles[i];
+        if (abs(FragPos.z - point.z) > 0.1) continue;
+        vec2 delta = FragPos.xy - point.xy;
+        vec2 local = vec2(dot(delta, vec2(-style.z, style.y)), dot(delta, style.yz));
+        vec2 uv = local / (2.0 * point.w) + 0.5;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) continue;
+        // Original splash alpha is zero. Both decals use additive RGB.
+        vec3 texel = style.w > 0.5 ? texture(WakeTexture, uv).rgb : texture(SplashTexture, uv).rgb;
+        light += texel * style.x;
+    }
+    return light;
+}
+
 
 // ============================================================
 // Dual-scroll detail normals (multi-octave ripple overlay)
@@ -254,10 +279,14 @@ void main() {
     float time = fogParams.z;
     float basicType = push.liquidBasicType;
     if (push.legacyIndoor > 0.5) {
-        // Legacy indoor water uses an animated diffuse texture over MOMT color.
-        vec3 texel = texture(LakeTexture, TexCoord * vec2(push.textureRepeatX, push.textureRepeatY)).rgb;
-        vec3 color = waterColor.rgb + texel;
-        outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), waterAlpha);
+        // TBC psLiquidWater: indoor depth lookup is white RGB, with alpha
+        // interpolated between LightParams river shallow/deep values. The
+        // animated texture alpha supplies the quarter-strength highlight.
+        vec4 texel = texture(LakeTexture, TexCoord * vec2(push.textureRepeatX, push.textureRepeatY));
+        vec3 color = waterColor.rgb + texel.rgb + 0.25 * texel.a;
+        float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth, 0.0, 1.0));
+        color += contactLight() / max(alpha, 0.001);
+        outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), alpha);
         return;
     }
 
@@ -733,6 +762,7 @@ void main() {
     // edge straight back.
     alpha *= smoothstep(2400.0, 600.0, dist);
 
+    color += contactLight() / max(alpha, 0.001);
     color = applyFog(color, FragPos, dist);
 
     outColor = vec4(color, alpha);

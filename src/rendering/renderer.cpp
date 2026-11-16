@@ -2238,6 +2238,24 @@ void Renderer::update(float deltaTime) {
                                   travelDir, intensity, wading);
     }
 
+    if (waterRenderer) {
+        auto& app = core::Application::getInstance();
+        std::vector<WaterContactActor> actors;
+        if (auto* gh = app.getGameHandler()) {
+            for (const auto& [guid, entity] : gh->getEntityManager().getEntities()) {
+                const auto* unit = dynamic_cast<const game::Unit*>(entity.get());
+                if (!unit || unit->getHealth() == 0) continue;
+                glm::vec3 position;
+                if (guid == gh->getPlayerGuid()) position = characterPosition;
+                else if (!app.getRenderPositionForGuid(guid, position)) continue;
+                if (glm::distance(position, characterPosition) > 60.0f) continue;
+                actors.push_back({guid, position, unit->getBoundingRadius()});
+            }
+        }
+        if (lightingManager) waterRenderer->setRiverAlpha(lightingManager->getLightingParams().riverAlpha);
+        waterRenderer->updateContacts(deltaTime, actors);
+    }
+
     // Update mount dust effects
     if (mountDust) {
         mountDust->update(deltaTime);

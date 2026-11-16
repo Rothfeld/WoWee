@@ -6,6 +6,7 @@
 #include <optional>
 #include <cstdint>
 #include <functional>
+#include <unordered_map>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <glm/glm.hpp>
@@ -45,6 +46,7 @@ struct WaterSurface {
     uint8_t height = 8;
 
     std::vector<float> heights;
+    std::vector<uint8_t> depths;
     std::vector<uint8_t> mask;
 
     // Vulkan render data
@@ -72,9 +74,20 @@ struct WaterSurface {
 // the MAX_WAKE_POINTS constant declared there.
 constexpr int kMaxWakePoints = 32;
 
+constexpr int kMaxWaterContacts = 64;
+struct WaterContactActor {
+    uint64_t guid;
+    glm::vec3 position;
+    float radius;
+};
+
 struct WaterFrameUBOData {
     glm::mat4 reflViewProj{1.0f};
     glm::vec4 wakeBounds{0.0f};              // xy = centre, z = cull radius, w = count
+    glm::vec4 liquidParams{0.5f, 1.0f, 0.0f, 0.0f};
+    glm::vec4 contactMeta{};
+    glm::vec4 contactPositions[kMaxWaterContacts]{}; // xyz, radius
+    glm::vec4 contactStyles[kMaxWaterContacts]{}; // strength, direction xy, wake
     glm::vec4 wakePoints[kMaxWakePoints]{};  // xy = pos, z = age 0..1, w = strength
 };
 
@@ -135,6 +148,9 @@ public:
     /// `intensity` is 0 when nothing is disturbing the surface. `wading` picks
     /// churned-up froth underfoot; swimming instead lays a V wake off the
     /// shoulders. Call once per frame.
+    void setRiverAlpha(const glm::vec2& alpha) { frameUBO_.liquidParams.x = alpha.x; frameUBO_.liquidParams.y = alpha.y; }
+    void updateContacts(float deltaTime, const std::vector<WaterContactActor>& actors);
+
     void updateWake(float deltaTime, const glm::vec2& pos, const glm::vec2& travelDir,
                     float intensity, bool wading);
 
@@ -190,6 +206,7 @@ private:
     VkContext* vkCtx = nullptr;
     bool legacyWater = false;
     std::vector<VkTexture> lakeFrames;
+    VkTexture splashTexture, wakeTexture;
     std::vector<VkDescriptorSet> lakeSets;
     VkDescriptorSetLayout lakeSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool lakePool = VK_NULL_HANDLE;
@@ -249,6 +266,20 @@ private:
         float life = 1.0f;       // seconds
         float strength = 0.0f;
     };
+    struct ContactEmitter {
+        glm::vec3 previous{};
+        float remaining = 0.0f;
+        bool initialized = false;
+        bool seen = false;
+    };
+    struct ContactPoint {
+        glm::vec3 position;
+        glm::vec2 direction;
+        float radius, growth, strength, age;
+        bool wake;
+    };
+    std::unordered_map<uint64_t, ContactEmitter> contactEmitters_;
+    std::vector<ContactPoint> contactPoints_;
     std::vector<WakePoint> wakePoints_;
     WaterFrameUBOData frameUBO_{};
     glm::vec2 lastWakeEmitPos_{0.0f};

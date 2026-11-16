@@ -34,12 +34,14 @@ layout(push_constant) uniform Push {
 
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aTexCoord;
+layout(location = 2) in float aLiquidDepth;
 
 layout(location = 0) out vec3 FragPos;
 layout(location = 1) out vec3 Normal;
 layout(location = 2) out vec2 TexCoord;
 layout(location = 3) out float WaveOffset;
 layout(location = 4) out vec2 ScreenUV;
+layout(location = 5) out float LiquidDepth;
 
 // --- Gerstner wave ---
 // Coordinate system: X,Y = horizontal plane, Z = up (height)
@@ -170,6 +172,7 @@ void main() {
 
     FragPos = worldPos.xyz;
     TexCoord = aTexCoord;
+    LiquidDepth = aLiquidDepth;
     vec4 clipPos = projection * view * worldPos;
     gl_Position = clipPos;
     vec2 ndc = clipPos.xy / max(clipPos.w, 1e-5);

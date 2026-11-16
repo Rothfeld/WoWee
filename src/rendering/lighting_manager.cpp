@@ -150,6 +150,8 @@ bool LightingManager::loadLightParamsDbc(pipeline::AssetManager* assetManager) {
         uint32_t paramId = dbc->getUInt32(i, lpL ? (*lpL)["LightParamsID"] : 0);
         LightParamsProfile profile;
         profile.lightParamsId = paramId;
+        if (dbc->getFieldCount() >= 9)
+            profile.riverAlpha = {dbc->getFloat(i, 5), dbc->getFloat(i, 6)};
         if (dbc->getFieldCount() > 2) {
             profile.lightSkyboxId = dbc->getUInt32(i, 2);
         }
@@ -404,6 +406,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.skyBand2Color = glm::vec3(0.0f);
         newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
         newParams.cloudDensity = newParams.horizonGlow = 0.0f;
+        newParams.riverAlpha = glm::vec2(0.0f);
         glm::vec3 blendedDir(0.0f);  // Accumulate weighted directions
 
         // The first MAX_BLEND_VOLUMES only: the list is the whole
@@ -419,6 +422,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
                 LightingParams params = sampleLightParams(&it->second, timeHalfMinutes);
 
                 // Blend this volume's contribution
+                newParams.riverAlpha += params.riverAlpha * wv.weight;
                 newParams.ambientColor += params.ambientColor * wv.weight;
                 newParams.diffuseColor += params.diffuseColor * wv.weight;
                 newParams.fogColor += params.fogColor * wv.weight;
@@ -565,6 +569,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     // Smooth temporal blending to avoid snapping (5.0 = blend rate); see
     // blendFactor above.
 
+    currentParams_.riverAlpha = glm::mix(currentParams_.riverAlpha, newParams.riverAlpha, blendFactor);
     currentParams_.ambientColor = glm::mix(currentParams_.ambientColor, newParams.ambientColor, blendFactor);
     currentParams_.diffuseColor = glm::mix(currentParams_.diffuseColor, newParams.diffuseColor, blendFactor);
     currentParams_.fogColor = glm::mix(currentParams_.fogColor, newParams.fogColor, blendFactor);
@@ -701,6 +706,8 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     if (!profile) return fallbackParams_;
 
     LightingParams params;
+
+    params.riverAlpha = profile->riverAlpha;
 
     // Sample color bands
     params.ambientColor = sampleColorBand(profile->colorBands[LightParamsProfile::AMBIENT_COLOR], timeHalfMinutes);

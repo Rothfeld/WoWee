@@ -152,15 +152,27 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
     lakeBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     lakeBinding.descriptorCount = 1;
     lakeBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    lakeSetLayout = createDescriptorSetLayout(device, {lakeBinding});
+    auto splashBinding = lakeBinding;
+    splashBinding.binding = 1;
+    auto wakeBinding = lakeBinding;
+    wakeBinding.binding = 2;
+    lakeSetLayout = createDescriptorSetLayout(device, {lakeBinding, splashBinding, wakeBinding});
     if (!lakeSetLayout) throw std::runtime_error("Water texture layout creation failed");
-    VkDescriptorPoolSize lakeSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, frameCount};
+    VkDescriptorPoolSize lakeSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, frameCount * 3};
     VkDescriptorPoolCreateInfo lakePoolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     lakePoolInfo.maxSets = frameCount;
     lakePoolInfo.poolSizeCount = 1;
     lakePoolInfo.pPoolSizes = &lakeSize;
     if (vkCreateDescriptorPool(device, &lakePoolInfo, nullptr, &lakePool) != VK_SUCCESS)
         throw std::runtime_error("Water texture descriptor pool creation failed");
+    assert(assets);
+    for (auto [texture, path] : {
+            std::pair{&splashTexture, "XTextures/splash/splash.blp"},
+            std::pair{&wakeTexture, "XTextures/splash/wake.blp"}}) {
+        if (!texture->uploadBLP(*vkCtx, assets->loadTexture(path)) ||
+                !texture->createSampler(device))
+            throw std::runtime_error(std::string("Water contact texture upload failed: ") + path);
+    }
     lakeFrames.resize(frameCount);
     lakeSets.resize(frameCount);
     for (uint32_t frame = 0; frame < frameCount; ++frame) {
@@ -189,6 +201,14 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        const auto splashInfo = splashTexture.descriptorInfo();
+        write.dstBinding = 1;
+        write.pImageInfo = &splashInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        const auto wakeInfo = wakeTexture.descriptorInfo();
+        write.dstBinding = 2;
+        write.pImageInfo = &wakeInfo;
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     }
     LOG_INFO("Water: loaded ", frameCount, " liquid animation textures");
@@ -236,6 +256,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
     std::vector<VkVertexInputAttributeDescription> vertAttribs = {
         { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 },                     // aPos
         { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 6 * sizeof(float) },        // aTexCoord (skip normal)
+        { .location = 2, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 3 * sizeof(float) },
     };
 
     VkRenderPass mainPass = vkCtx->getImGuiRenderPass();
@@ -300,6 +321,7 @@ void WaterRenderer::recreatePipelines() {
     std::vector<VkVertexInputAttributeDescription> vertAttribs = {
         { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 },
         { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 6 * sizeof(float) },
+        { .location = 2, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 3 * sizeof(float) },
     };
 
     VkRenderPass mainPass = vkCtx->getImGuiRenderPass();
@@ -400,6 +422,8 @@ void WaterRenderer::shutdown() {
     destroy(device, lakeSetLayout);
     lakeSets.clear();
     lakeFrames.clear();
+    splashTexture.destroy(device, vkCtx->getAllocator());
+    wakeTexture.destroy(device, vkCtx->getAllocator());
 
     vkCtx = nullptr;
 }
@@ -1060,6 +1084,7 @@ void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liqu
     const int vertexCount = gridWidth * gridHeight;
 
     assert(liquid.heights.size() == static_cast<size_t>(vertexCount));
+    surface.depths = liquid.depths;
     surface.heights.resize(vertexCount);
     surface.minHeight = std::numeric_limits<float>::max();
     surface.maxHeight = std::numeric_limits<float>::lowest();
@@ -1164,6 +1189,9 @@ void WaterRenderer::clear() {
         destroyWaterMesh(surface);
     }
     surfaces.clear();
+    contactPoints_.clear();
+    contactEmitters_.clear();
+    frameUBO_.contactMeta.x = 0.0f;
 }
 
 // ==============================================================
@@ -1206,7 +1234,7 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                              2, 1, &activeSceneSet, 0, nullptr);
 
     const uint32_t lakeFrame = legacyWater
-        ? static_cast<uint32_t>(std::max(0.0f, time) / 0.06f) % 30 : 0;
+        ? static_cast<uint32_t>(std::max(0.0f, time) / (1.25f / 30.0f)) % 30 : 0;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                            3, 1, &lakeSets.at(lakeFrame), 0, nullptr);
 
@@ -1258,8 +1286,8 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
         push.legacyIndoor = legacyWater && surface.indoorColor && basicType < 2 ? 1.0f : 0.0f;
-        push.textureRepeatX = surface.width / 4.0f;
-        push.textureRepeatY = surface.height / 4.0f;
+        push.textureRepeatX = surface.width;
+        push.textureRepeatY = surface.height;
 
         vkCmdPushConstants(cmd, pipelineLayout,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1447,8 +1475,8 @@ void WaterRenderer::createWaterMesh(WaterSurface& surface) {
             vertices.push_back(pos.x);
             vertices.push_back(pos.y);
             vertices.push_back(pos.z);
-            // normal (3 floats) - up
-            vertices.push_back(0.0f);
+            // Depth uses the spare normal-X slot; normals are generated in shader.
+            vertices.push_back(surface.depths.empty() ? 0.0f : surface.depths.at(index) / 255.0f);
             vertices.push_back(0.0f);
             vertices.push_back(1.0f);
             // texcoord (2 floats)
@@ -1967,6 +1995,53 @@ void WaterRenderer::uploadFrameUBO() {
 // Disturbance trail. Points are dropped along the path rather than parented to
 // the character, so the froth stays where the water was churned and the
 // character runs out of it - froth pinned under the feet reads as a decal.
+void WaterRenderer::updateContacts(float deltaTime, const std::vector<WaterContactActor>& actors) {
+    constexpr float lifetime = 0.65f;
+    for (auto& point : contactPoints_) point.age += deltaTime;
+    std::erase_if(contactPoints_, [](const auto& point) { return point.age >= lifetime; });
+    for (auto& [guid, emitter] : contactEmitters_) emitter.seen = false;
+    for (const auto& actor : actors) {
+        auto& emitter = contactEmitters_[actor.guid];
+        emitter.seen = true;
+        const glm::vec2 displacement = glm::vec2(actor.position - emitter.previous);
+        const float distance = glm::length(displacement);
+        const bool moving = emitter.initialized && distance > deltaTime * 0.1f;
+        const bool teleported = emitter.initialized && distance > 2.0f;
+        emitter.previous = actor.position;
+        emitter.initialized = true;
+        emitter.remaining -= deltaTime;
+        const float extent = std::max(1.0f, actor.radius * 2.0f);
+        const auto height = getNearestWaterHeightAt(actor.position.x, actor.position.y, actor.position.z, extent);
+        const float depth = height ? *height - actor.position.z : -1.0f;
+        if (depth <= 0.0f || depth > extent || teleported) {
+            emitter.remaining = 0.0f;
+            continue;
+        }
+        if (emitter.remaining > 0.0f) continue;
+        // Build 8606: stationary rings every 400-450 ms, moving wakes every
+        // 250 ms at base speed. Both fade in for 40% of their ~650 ms life.
+        const float depthScale = depth > extent * 0.5f
+            ? 1.5f - depth / extent : 1.0f;
+        emitter.remaining = moving ? 0.25f * depthScale : 0.425f;
+        const glm::vec2 direction = moving ? displacement / distance : glm::vec2(1.0f, 0.0f);
+        const float radius = std::sqrt(extent / 3.0f) * depthScale * (moving ? 1.0f : 0.6f);
+        if (contactPoints_.size() == kMaxWaterContacts) contactPoints_.erase(contactPoints_.begin());
+        contactPoints_.push_back({{actor.position.x, actor.position.y, *height}, direction,
+            radius, moving ? 1.25f : 0.3125f, depthScale * (moving ? 1.0f : 0.8f), 0.0f, moving});
+    }
+    std::erase_if(contactEmitters_, [](const auto& entry) { return !entry.second.seen; });
+    frameUBO_.contactMeta.x = static_cast<float>(contactPoints_.size());
+    for (size_t i = 0; i < contactPoints_.size(); ++i) {
+        const auto& point = contactPoints_[i];
+        const float age = point.age / lifetime;
+        const float fade = age < 0.4f ? age / 0.4f : (1.0f - age) / 0.6f;
+        frameUBO_.contactPositions[i] = glm::vec4(point.position, point.radius + point.growth * point.age);
+        frameUBO_.contactStyles[i] = {point.strength * fade, point.direction.x,
+                                      point.direction.y, point.wake ? 1.0f : 0.0f};
+    }
+    uploadFrameUBO();
+}
+
 void WaterRenderer::updateWake(float deltaTime, const glm::vec2& pos,
                                const glm::vec2& travelDir, float intensity, bool wading) {
     // Age the existing trail. Drift is what spreads a swimmer's two emission
@@ -2217,6 +2292,7 @@ bool WaterRenderer::createWater1xPass(VkFormat colorFormat, VkFormat depthFormat
     std::vector<VkVertexInputAttributeDescription> vertAttribs = {
         { .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 },
         { .location = 1, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 6 * sizeof(float) },
+        { .location = 2, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 3 * sizeof(float) },
     };
 
     water1xPipeline = PipelineBuilder()

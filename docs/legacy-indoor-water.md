@@ -1,25 +1,26 @@
 # Legacy indoor water
 
-Legacy indoor WMO water uses the original `XTextures/river/lake_a.1.blp` through
-`lake_a.30.blp` sequence, repeated every four liquid grid tiles. The frame changes
-every 60 milliseconds. This path adds the texture RGB to the WMO material's
-`color2` tint and blends with alpha 0.9. It bypasses procedural refraction, foam,
-reflection and wave shading. Other liquid paths retain their existing renderer.
+TBC indoor WMO water uses `XTextures/river/lake_a.1.blp` through
+`lake_a.30.blp`, with one repeat per 4.1666665-yard liquid grid tile.
+The sequence lasts 1.25 seconds. Surface RGB is MOMT color2 plus lake RGB
+plus one quarter of lake alpha. Opacity interpolates LightParams river shallow
+and deep alpha using the authored MLIQ vertex depth byte.
 
-The implementation follows the legacy texture/material path documented in
-[WoW Map Viewer's liquid renderer](https://github.com/cleverca22/wowmapviewer/blob/master/src/liquid.cpp)
-and [water shader](https://github.com/cleverca22/wowmapviewer/blob/master/bin/shaders/wateroutdoor.fs).
-These sources are independent implementations; their timing and opacity are
-not proof of exact original-client parity. A saved native Mystic Ward screenshot
-confirms the fine ripple appearance; exact timing and opacity remain unverified.
+These rules come from build 8606 shader assets `psLiquidWater.bls` and
+`vsLiquidWater.bls`, WMO setup at 0x695e90, UV generation at 0x6A77F0,
+texture animation at 0x69EAA0, and depth lookup construction at 0x69B6F0.
+Disassembly and comparisons live in workspace experiment
+`_experiments/20261116T090238.015332Z.native_water_contact`.
 
-MLIQ's material index addresses MOMT. It is not a LiquidType ID. Resolve the
-liquid type using the WMO root flags, group type and tile flags. Preserve authored
-vertex heights. Group flag 0x2000 marks an interior; it does not hide water.
-Loading a WMO over multiple frame budgets must resume its liquid groups rather
-than discard it as an already-placed duplicate.
+Contact effects use original additive splash and wake textures. Stationary
+actors emit rings; translating actors emit directional wakes. Effects remain
+at their emission positions, grow, and expire. Current timing uses central
+values from native ranges: 0.65-second lifetime and 0.425-second idle interval.
+Exact contact size and visual parity still require paired footage review.
+CPU checks cover rings, wakes, multiple actors, expiry, dry/submerged suppression,
+and despawn. Surface captures show fine ripples and visible submerged legs.
 
-Animation descriptors are immutable and shared across water surfaces. Choosing
-another frame binds another descriptor, avoiding writes to descriptors still in
-use by the GPU. Texture mips and repeat filtering come from the BLP upload and
-texture sampler. Missing assets or failed uploads abort initialization explicitly.
+MLIQ material indices address MOMT, not LiquidType. Preserve authored vertex
+heights and depths. Group flag 0x2000 identifies interiors. Missing liquid data
+or failed texture uploads fail explicitly. Animation descriptors are immutable
+and shared across surfaces; frame changes select another descriptor.
