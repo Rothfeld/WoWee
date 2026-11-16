@@ -18,6 +18,7 @@
 #include "ui/scene_pick.hpp"
 #include "game/corpse_harvesting.hpp"
 #include "game/game_object_interaction.hpp"
+#include "game/resource_tracking.hpp"
 
 using wowee::ui::ScenePick;
 
@@ -217,4 +218,21 @@ TEST_CASE("Conditional quest objects require server activation", "[quest-object]
     CHECK(gameObjectInteractionEnabled(0x02, 0));      // locked chest still has a key interaction
     CHECK_FALSE(gameObjectInteractionEnabled(0x10, 0x09));
     CHECK_FALSE(gameObjectInteractionEnabled(0x01, 0x01));
+}
+
+TEST_CASE("Resource tracking matches authored lock skill types", "[resource-tracking]") {
+    using wowee::game::tracksResourceLock;
+    CHECK(tracksResourceLock(4, 2, 3)); // Find Minerals / Copper Vein lock 38.
+    CHECK(tracksResourceLock(2, 2, 2)); // Find Herbs.
+    CHECK_FALSE(tracksResourceLock(2, 2, 3));
+    CHECK_FALSE(tracksResourceLock(4, 2, 2));
+    CHECK_FALSE(tracksResourceLock(0, 2, 3));
+    CHECK_FALSE(tracksResourceLock(4, 1, 3)); // Item key ID is not a lock type.
+    CHECK_FALSE(tracksResourceLock(4, 2, 0));
+    CHECK_FALSE(tracksResourceLock(4, 2, 33));
+    using wowee::game::resourceTrackingAvailable;
+    CHECK(resourceTrackingAvailable(0x01, 0)); // In use remains tracked.
+    CHECK(resourceTrackingAvailable(0x10, 0)); // Interaction disabled is not hidden.
+    CHECK_FALSE(resourceTrackingAvailable(0x04, 0));
+    CHECK(resourceTrackingAvailable(0x05, 1));
 }

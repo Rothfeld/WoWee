@@ -3,6 +3,7 @@
 #include "game/entity.hpp"
 #include "game/update_field_table.hpp"
 #include <cassert>
+#include <stdexcept>
 
 namespace wowee::game {
 
@@ -17,7 +18,8 @@ inline bool gameObjectInteractionEnabled(uint32_t flags, uint32_t dynamicFlags) 
 inline bool gameObjectInteractionEnabled(const GameObject& object) {
     const auto flags = fieldIndex(UF::GAMEOBJECT_FLAGS);
     const auto dynamic = fieldIndex(UF::GAMEOBJECT_DYNAMIC);
-    assert(flags != 0xFFFF && dynamic != 0xFFFF);
+    if (flags == 0xFFFF || dynamic == 0xFFFF)
+        throw std::runtime_error("update_fields.json lacks game-object interaction fields; deploy current expansion metadata");
     return gameObjectInteractionEnabled(object.getField(flags), object.getField(dynamic));
 }
 

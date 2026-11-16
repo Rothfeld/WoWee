@@ -1,5 +1,11 @@
 #include "game/group_defines.hpp"
 #include "game/tracking_services.hpp"
+#include "game/resource_tracking.hpp"
+#include "game/game_object_lock.hpp"
+
+extern "C" {
+#include <lua.h>
+}
 
 #include <set>
 #include "ui/game_screen.hpp"
@@ -1198,11 +1204,95 @@ void GameScreen::renderMinimapBattlegroundPositions(const MinimapFrame& frame, g
 
 }
 
-// Where the corpse is, while the player is a ghost.
-//
-// Unlike every marker above it, a corpse off the edge of the map is not
-// skipped - it becomes an arrow at the rim pointing at it, which is why this
-// one keeps the render position rather than only the projected point.
+// Tracking is server-owned; learning a profession alone does not enable markers.
+void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityList& objects,
+                                      game::GameHandler& gameHandler) {
+    if (!game::isActiveExpansion("tbc")) return;
+    auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+    bool hoverAllowed = ImGui::GetCurrentContext()->HoveredWindow == nullptr;
+    if (engine && frameXmlOwns(UiElement::Minimap)) {
+        auto& tree = engine->widgets();
+        const auto cursor = ImGui::GetMousePos();
+        const float uiScale = tree.uiScale();
+        bool overMap = false;
+        for (auto* widget = tree.get(tree.hitTest(cursor.x / uiScale,
+                (ImGui::GetIO().DisplaySize.y - cursor.y) / uiScale)); widget;
+             widget = tree.get(widget->parent)) {
+            if (widget->name == "Minimap") { overMap = true; break; }
+        }
+        hoverAllowed &= overMap;
+    }
+    std::string hoveredName;
+    const auto player = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
+    const auto field = game::fieldIndex(game::UF::PLAYER_TRACK_RESOURCES);
+    const auto flagsField = game::fieldIndex(game::UF::GAMEOBJECT_FLAGS);
+    const auto dynamicField = game::fieldIndex(game::UF::GAMEOBJECT_DYNAMIC);
+    if (field == 0xFFFF || flagsField == 0xFFFF || dynamicField == 0xFFFF)
+        throw std::runtime_error("TBC update_fields.json lacks resource tracking fields; deploy current expansion metadata");
+    const uint32_t mask = player ? player->getField(field) : 0;
+    if (mask != 0) {
+        assert(services_.assetManager);
+        const auto locks = services_.assetManager->loadDBC("Lock.dbc");
+        assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
+        static VkDescriptorSet atlas = VK_NULL_HANDLE;
+        if (!atlas) {
+            atlas = uploadUiTextureFromBlp(services_.assetManager,
+                "Interface\\Minimap\\ObjectIcons.blp", services_.window);
+            if (!atlas) throw std::runtime_error("Resource minimap atlas failed to load");
+        }
+        for (const auto& entity : objects) {
+            const auto object = std::static_pointer_cast<game::GameObject>(entity);
+            const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
+            if (!info || info->type != 3 || !game::resourceTrackingAvailable(
+                    object->getField(flagsField), object->getField(dynamicField))) continue;
+            const uint32_t lock = game::gameObjectLockId(info);
+            if (lock == 0) continue;
+            const auto row = locks->findRecordById(lock);
+            assert(row >= 0);
+            bool tracked = false;
+            for (uint32_t slot = 0; slot < 8; ++slot) {
+                tracked |= game::tracksResourceLock(mask, locks->getUInt32(row, 1 + slot),
+                                                    locks->getUInt32(row, 9 + slot));
+            }
+            if (!tracked) continue;
+            float x = 0, y = 0;
+            if (!frame.projectEntity(*object, x, y)) continue;
+            const float scale = engine ? engine->widgets().uiScale() : 1.0f;
+            const float half = 8.0f * scale;
+            // Original ObjectIcons: eight columns, two rows; gold resource circle.
+            frame.drawList->AddImage((ImTextureID)(uintptr_t)atlas,
+                ImVec2(x - half, y - half), ImVec2(x + half, y + half),
+                ImVec2(0, 0.5f), ImVec2(1.0f / 8, 1));
+            if (hoverAllowed && cursorNearBlip(x, y)) hoveredName = info->name;
+        }
+    }
+    if (!engine) return;
+    lua_pushlstring(engine->getState(), hoveredName.data(), hoveredName.size());
+    lua_setglobal(engine->getState(), "WoweeTrackedResourceName");
+    if (!engine->executeString(R"lua(
+        if WoweeTrackedResourceName ~= '' then
+            if not WoweeResourceMinimapTooltip then
+                CreateFrame('GameTooltip', 'WoweeResourceMinimapTooltip', UIParent, 'GameTooltipTemplate')
+            end
+            local tip = WoweeResourceMinimapTooltip
+            tip:SetOwner(UIParent, 'ANCHOR_NONE')
+            tip:ClearAllPoints()
+            local x, y = GetCursorPosition()
+            local scale = UIParent:GetEffectiveScale()
+            tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', x / scale, y / scale)
+            tip:SetText(WoweeTrackedResourceName, 1, 0.82, 0)
+            tip:Show()
+        elseif WoweeResourceMinimapTooltip then
+            WoweeResourceMinimapTooltip:Hide()
+        end
+    )lua")) {
+        LOG_ERROR("Resource minimap tooltip: ", engine->lastError());
+        throw std::runtime_error("Resource minimap tooltip failed");
+    }
+}
+
+// Where the corpse is, while the player is a ghost. An off-map corpse becomes
+// an arrow at the rim rather than being skipped like ordinary markers.
 void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::GameHandler& gameHandler) {
     auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
     const auto tooltip = [&](bool shown) {
@@ -1760,6 +1850,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     renderMinimapLootCorpses(frame, minimapUnits);
     renderMinimapObjectDots(frame, minimapGameObjects, minimapQuestGoEntries, gameHandler);
     renderMinimapChests(frame, minimapGameObjects, gameHandler);
+    renderMinimapResources(frame, minimapGameObjects, gameHandler);
 
     renderMinimapQuestGivers(frame, statuses, gameHandler);
     // TBC does not have automatic quest-kill tracking on the minimap.

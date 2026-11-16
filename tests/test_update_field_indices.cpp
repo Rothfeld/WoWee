@@ -148,3 +148,7 @@ TEST_CASE("Game object interaction fields match expansion wire layouts", "[updat
         REQUIRE(fields.at("GAMEOBJECT_DYNAMIC") == (expansion == "wotlk" ? 14 : 19));
     }
 }
+
+TEST_CASE("TBC resource tracking uses the server's private player field", "[update-fields][resource-tracking]") {
+    CHECK(declaredFields("tbc").at("PLAYER_TRACK_RESOURCES") == 0x523);
+}
