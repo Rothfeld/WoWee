@@ -16,6 +16,7 @@ constexpr uint32_t MOMT = 0x4D4F4D54;  // Materials
 constexpr uint32_t MOGN = 0x4D4F474E;  // Group names
 constexpr uint32_t MOGI = 0x4D4F4749;  // Group info
 constexpr uint32_t MOLT = 0x4D4F4C54;  // Lights
+constexpr uint32_t MFOG = 0x4D464F47;  // Group fog volumes
 constexpr uint32_t MODN = 0x4D4F444E;  // Doodad names
 constexpr uint32_t MODD = 0x4D4F4444;  // Doodad definitions
 constexpr uint32_t MODS = 0x4D4F4453;  // Doodad sets
@@ -273,6 +274,33 @@ WMOModel WMOLoader::load(const std::vector<uint8_t>& wmoData) {
                 break;
             }
 
+            case MFOG: {
+                if (chunkSize % 48 != 0) {
+                    core::Logger::getInstance().error("Invalid MFOG record size: ", chunkSize);
+                    return {};
+                }
+                const auto color = [](uint32_t bgra) {
+                    return glm::vec4((bgra >> 16) & 255, (bgra >> 8) & 255,
+                                     bgra & 255, (bgra >> 24) & 255) / 255.0f;
+                };
+                while (offset < chunkEnd) {
+                    WMOFog fog{};
+                    fog.flags = read<uint32_t>(wmoData, offset);
+                    fog.position.x = read<float>(wmoData, offset);
+                    fog.position.y = read<float>(wmoData, offset);
+                    fog.position.z = read<float>(wmoData, offset);
+                    fog.smallRadius = read<float>(wmoData, offset);
+                    fog.largeRadius = read<float>(wmoData, offset);
+                    fog.endDist = read<float>(wmoData, offset);
+                    fog.startFactor = read<float>(wmoData, offset);
+                    fog.color1 = color(read<uint32_t>(wmoData, offset));
+                    fog.endDist2 = read<float>(wmoData, offset);
+                    fog.startFactor2 = read<float>(wmoData, offset);
+                    fog.color2 = color(read<uint32_t>(wmoData, offset));
+                    model.fogs.push_back(fog);
+                }
+                break;
+            }
             case MODN: {
                 // Doodad names - stored by byte offset into the MODN chunk
                 // (MODD nameIndex is a byte offset, not a vector index)

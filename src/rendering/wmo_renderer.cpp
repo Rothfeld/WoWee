@@ -468,6 +468,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     modelData.boundingBoxMin = model.boundingBoxMin;
     modelData.boundingBoxMax = model.boundingBoxMax;
     modelData.wmoAmbientColor = model.ambientColor;
+    modelData.fogs = model.fogs;
     std::string lowerSourcePath = model.sourcePath;
     std::replace(lowerSourcePath.begin(), lowerSourcePath.end(), '/', '\\');
     std::transform(lowerSourcePath.begin(), lowerSourcePath.end(), lowerSourcePath.begin(),
@@ -2063,6 +2064,7 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     resources.authoredMin = group.boundingBoxMin;
     resources.authoredMax = group.boundingBoxMax;
     resources.groupFlags = groupFlags;
+    std::copy_n(group.fogIndices, 4, resources.fogIndices.begin());
 
     resources.vertexCount = group.vertices.size();
     resources.indexCount = group.indices.size();
@@ -4056,6 +4058,17 @@ bool WMORenderer::isInsideWMO(float glX, float glY, float glZ, uint32_t* outMode
 
 bool WMORenderer::isInsideInteriorWMO(float glX, float glY, float glZ) const {
     return isInsideWMOGroups(glX, glY, glZ, /*interiorOnly=*/true, nullptr);
+}
+
+std::optional<WMOFogSample> WMORenderer::getFog(const glm::vec3& position, bool underwater) const {
+    const auto location = getInteriorLocation(position);
+    if (!location) return std::nullopt;
+    const auto instance = std::find_if(instances.begin(), instances.end(),
+        [&](const auto& value) { return value.id == location->instanceId; });
+    assert(instance != instances.end());
+    const auto& model = loadedModels.at(instance->modelId);
+    return sampleWMOFog(model.fogs, model.groups[location->groupIndex].fogIndices,
+                        location->localPosition, underwater);
 }
 
 std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(const glm::vec3& position, bool indoorOnly) const {

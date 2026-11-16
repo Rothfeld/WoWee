@@ -594,6 +594,19 @@ void Renderer::updatePerFrameUBO() {
         }
     }
 
+    if (wmoRenderer) {
+        const glm::vec3 position = camera->getPosition();
+        const auto waterHeight = waterRenderer
+            ? waterRenderer->getNearestWaterHeightAt(position.x, position.y, position.z, 400.0f)
+            : std::optional<float>{};
+        const auto fog = wmoRenderer->getFog(position, waterHeight && position.z < *waterHeight);
+        if (fog) {
+            currentFrameData.fogColor = glm::vec4(fog->color, 1);
+            currentFrameData.fogParams.x = fog->start;
+            currentFrameData.fogParams.y = fog->end;
+        }
+    }
+
     currentFrameData.lightSpaceMatrix = lightSpaceMatrix;
     // Scale shadow bias proportionally to ortho extent to avoid acne at close range / gaps at far range
     float shadowBias = glm::clamp(0.8f * (shadowDistance_ / 300.0f), 0.0f, 1.0f);

@@ -5,6 +5,7 @@
 #include "pipeline/wmo_loader.hpp"
 #include "pipeline/wowee_terrain_loader.hpp"
 #include "pipeline/adt_loader.hpp"
+#include "rendering/wmo_fog.hpp"
 #include <filesystem>
 #include <fstream>
 #include <cstring>
@@ -12,6 +13,53 @@
 #include <cmath>
 
 using namespace wowee::pipeline;
+
+TEST_CASE("WMO fog preserves authored colors and group volumes", "[wmo-fog]") {
+    std::vector<uint8_t> bytes;
+    const auto append = [&bytes](auto value) {
+        const auto* data = reinterpret_cast<const uint8_t*>(&value);
+        bytes.insert(bytes.end(), data, data + sizeof(value));
+    };
+    append(uint32_t(0x4D4F4844)); append(uint32_t(64));
+    bytes.resize(bytes.size() + 64, 0);
+    const size_t fogChunk = bytes.size();
+    append(uint32_t(0x4D464F47)); append(uint32_t(48));
+    append(uint32_t(0));
+    for (float value : {1.f, 2.f, 3.f, .2777778f, 2.777778f, 333.33334f, .15f}) append(value);
+    append(uint32_t(0xff9b59ff));
+    append(222.22223f); append(-1.f); append(uint32_t(0xff00bcff));
+    auto model = WMOLoader::load(bytes);
+    REQUIRE(model.fogs.size() == 1);
+    const auto& fog = model.fogs.front();
+    CHECK(fog.position == glm::vec3(1, 2, 3));
+    CHECK(fog.color1.r == Catch::Approx(155.f / 255));
+    CHECK(fog.color1.g == Catch::Approx(89.f / 255));
+    CHECK(fog.color1.b == 1);
+    const auto base = wowee::rendering::sampleWMOFog(model.fogs, {0, 0, 0, 0}, glm::vec3(100), false);
+    REQUIRE(base);
+    CHECK(base->start == Catch::Approx(50));
+    CHECK(base->end == Catch::Approx(333.33334));
+    const auto underwater = wowee::rendering::sampleWMOFog(model.fogs, {0, 0, 0, 0}, {}, true);
+    REQUIRE(underwater);
+    CHECK(underwater->start == Catch::Approx(-222.22223));
+    CHECK(underwater->color.g == Catch::Approx(188.f / 255));
+    auto local = fog;
+    local.position = {}; local.smallRadius = 10; local.largeRadius = 20;
+    local.color1 = glm::vec4(1, 0, 0, 1);
+    model.fogs.push_back(local);
+    const auto sphere = wowee::rendering::sampleWMOFog(model.fogs, {0, 1, 1, 0}, {}, false);
+    REQUIRE(sphere);
+    CHECK(sphere->color == glm::vec3(1, 0, 0));
+    const auto edge = wowee::rendering::sampleWMOFog(model.fogs, {0, 1, 1, 0}, {15, 0, 0}, false);
+    REQUIRE(edge);
+    CHECK(edge->color.r == Catch::Approx((1 + 155.f / 255) / 2));
+    const auto outside = wowee::rendering::sampleWMOFog(model.fogs, {1, 0, 0, 0}, {30, 0, 0}, false);
+    REQUIRE(outside);
+    CHECK(outside->color == glm::vec3(model.fogs[0].color1));
+    CHECK_FALSE(wowee::rendering::sampleWMOFog({}, {0, 0, 0, 0}, {}, false));
+    bytes.push_back(0); bytes[fogChunk + 4] = 49;
+    CHECK(WMOLoader::load(bytes).fogs.empty());
+}
 
 static const std::string TEST_DIR = "test_output_formats";
 

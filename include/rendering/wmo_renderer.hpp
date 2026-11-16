@@ -4,6 +4,7 @@
 #include "rendering/vk_shader.hpp"
 #include "rendering/spatial_grid.hpp"
 #include "rendering/shadow_params.hpp"
+#include "rendering/wmo_fog.hpp"
 
 #include "pipeline/blp_loader.hpp"
 #include "pipeline/grass_clearing.hpp"
@@ -401,6 +402,7 @@ public:
      * Used to dim M2 lighting for doodads placed indoors.
      */
     bool isInsideInteriorWMO(float glX, float glY, float glZ) const;
+    std::optional<WMOFogSample> getFog(const glm::vec3& position, bool underwater) const;
 
     struct InteriorLocation {
         uint32_t rootId, nameSet, groupId, groupIndex, instanceId;
@@ -514,6 +516,7 @@ private:
         uint32_t authoredIndex = 0;
         glm::vec3 authoredMin{}, authoredMax{};
         uint32_t groupFlags = 0;
+        std::array<uint8_t, 4> fogIndices{};
         bool allUntextured = false;  // True if ALL batches use fallback white texture (collision/placeholder group)
         bool isLOD = false;          // Distance-only group (skip when camera is close)
 
@@ -645,6 +648,7 @@ private:
         std::string sourcePath;
         uint32_t id;
         std::vector<GroupResources> groups;
+        std::vector<pipeline::WMOFog> fogs;
         glm::vec3 boundingBoxMin;
         glm::vec3 boundingBoxMax;
         glm::vec3 wmoAmbientColor{0.5f, 0.5f, 0.5f};  // From MOHD, used for interior lighting
