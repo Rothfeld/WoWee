@@ -26,6 +26,24 @@ namespace game {
 namespace {
 
 
+void restoreMovementSpline(const UpdateBlock& block, Entity& entity) {
+    if (entity.getType() != ObjectType::UNIT || block.splinePath.size() < 2 ||
+        block.splineDurationMs == 0 || (block.splineFlags & 1u) != 0) return;
+    std::vector<std::array<float, 3>> path;
+    path.reserve(block.splinePath.size());
+    for (const auto& point : block.splinePath) {
+        const auto p = core::coords::serverToCanonical({point[0], point[1], point[2]});
+        path.push_back({p.x, p.y, p.z});
+    }
+    const bool cyclic = (block.splineFlags & 0x00100000u) != 0;
+    entity.startMoveAlongPath(path, entity.getOrientation(), block.splineDurationMs / 1000.0f,
+                              (block.splineFlags & 0x200u) != 0, true, cyclic);
+    entity.updateMovement(std::min(block.splineElapsedMs, block.splineDurationMs) / 1000.0f);
+    LOG_DEBUG("Restored movement spline: guid=0x", std::hex, block.guid, std::dec,
+              " elapsed=", block.splineElapsedMs, " duration=", block.splineDurationMs,
+              " nodes=", path.size(), " position=(", entity.getX(), ",", entity.getY(), ",", entity.getZ(), ")");
+}
+
 int updateObjectBlocksBudgetPerUpdate(WorldState state) {
     static const int inWorldBudget =
         core::envIntClamped("WOWEE_NET_MAX_UPDATE_OBJECT_BLOCKS", 24, 1, 2048);
@@ -2579,6 +2597,7 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
         glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
+        restoreMovementSpline(block, *entity);
         if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
@@ -2642,6 +2661,7 @@ void EntityController::handleValuesUpdate(const UpdateBlock& block) {
         glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
+        restoreMovementSpline(block, *entity);
         if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
@@ -2676,6 +2696,7 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                 glm::vec3 pos = core::coords::serverToCanonical(glm::vec3(block.x, block.y, block.z));
                 float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
                 entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
+                restoreMovementSpline(block, *entity);
                 if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
                     entity->groundWalkSpeed = block.walkSpeed;
                     entity->groundRunSpeed = block.runSpeed;

@@ -494,11 +494,8 @@ void AnimationCallbackHandler::setupCallbacks() {
                             appearanceComposer_.setWeaponsSheathed(true);
                             appearanceComposer_.loadEquippedWeapons();
                         }
-                        // EmoteEat supplies torso, head and hand motion. Sitting
-                        // remains the base pose so its pelvis and legs stay grounded.
-                        ac->setSeatedUpperBodyAnimation(rendering::anim::EMOTE_EAT);
-                        LOG_DEBUG("Restoration animation: spell=", currentSpell,
-                                  " upperBody=", rendering::anim::EMOTE_EAT);
+                        // Server SpellVisualKit packets schedule individual eating gestures.
+
                     }
                 }
                 // Food/water consume sounds repeat from SpellHandler::updateTimers
@@ -660,7 +657,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 auto* ac = renderer_.getAnimationController();
                 if (ac) {
                     ac->setSeatedLoopAnimation(0);
-                    ac->setSeatedUpperBodyAnimation(0);
+                    cr->setUpperBodyAnimation(instanceId, 0);
                     ac->stopSpellCast();
                 }
             } else {

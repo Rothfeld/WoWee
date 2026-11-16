@@ -24,3 +24,19 @@ TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particl
         CHECK(model.particleEmitters[0].emitterType == 1);
     }
 }
+
+#include "rendering/particle_emission.hpp"
+TEST_CASE("Flat spherical emitters spread across their area and travel radially", "[m2][particle]") {
+    using wowee::rendering::sphericalParticleEmission;
+    const auto horizontal = sphericalParticleEmission(2, 4, 0, 0, 1, 0x429);
+    CHECK(horizontal.offset.x == Catch::Approx(1));
+    CHECK(horizontal.offset.z == 0);
+    CHECK(horizontal.direction.x == Catch::Approx(1));
+    CHECK(horizontal.direction.z == 0);
+    const auto vertical = sphericalParticleEmission(2, 4, 0, 0, 1, 0x529);
+    CHECK(vertical.offset == horizontal.offset);
+    CHECK(vertical.direction == glm::vec3(0, 0, 1));
+    const auto side = sphericalParticleEmission(2, 4, 0, 1.57079632679f, 1, 0x429);
+    CHECK(side.offset.y == Catch::Approx(2));
+    CHECK(side.offset.z == 0);
+}

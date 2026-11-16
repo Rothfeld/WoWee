@@ -127,7 +127,7 @@ public:
 
     // Multi-segment path movement (Catmull-Rom spline interpolation)
     void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration,
-                            bool smooth = true, bool followPathFacing = false) {
+                            bool smooth = true, bool followPathFacing = false, bool cyclic = false) {
         remotePredictedMotion_ = false;
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
@@ -160,6 +160,7 @@ public:
         }
         activeSpline_.emplace(std::move(keys), /*timeClosed=*/false);
         splineDurationMs_ = durationMs;
+        cyclicPath_ = cyclic;
         smoothPath_ = smooth;
         followPathFacing_ = followPathFacing;
         locomotionSpeed_ = totalDist / totalDuration;
@@ -313,6 +314,8 @@ public:
             return;
         }
         moveElapsed_ += deltaTime;
+        if (usePathMode_ && cyclicPath_ && moveDuration_ > 0.0f)
+            moveElapsed_ = std::fmod(moveElapsed_, moveDuration_);
         if (moveElapsed_ < moveDuration_) {
             if (usePathMode_ && activeSpline_) {
                 // Catmull-Rom spline interpolation
@@ -445,6 +448,7 @@ protected:
     // CatmullRom spline for multi-segment path movement (replaces linear pathPoints_/pathSegDists_)
     std::optional<math::CatmullRomSpline> activeSpline_;
     uint32_t splineDurationMs_ = 0;
+    bool cyclicPath_ = false;
     bool smoothPath_ = true;
     bool followPathFacing_ = false;
 };

@@ -884,3 +884,23 @@ MOGP authored group ID, which differs from the numbered group filename.
 GM stationery (61) identifies support mail, including console mail with sender
 GUID zero. Its sender label is `Blizzard Support`; `GetInboxHeaderInfo` reports
 `isGM` and disables replies independently of player-name resolution.
+
+## TBC patrols, learned forms, and visual kits
+
+`build/bin/test_input_integration '[tbc-patrol],[learned-forms]'` checks patrol
+restoration from create packets and the learned-spell stance-bar refresh.
+TBC create splines contain padded control points, elapsed time, and total
+travel time. Discarding them leaves moving NPCs at their initial position until
+the next segment. Single-segment updates start at the position in their packet.
+
+`SMSG_PLAY_SPELL_VISUAL` carries a `SpellVisualKit.dbc` ID, not a
+`SpellVisual.dbc` ID. Kit 406 contains animation 61 and the food-heal effect;
+it schedules one eating gesture. A seated gesture preserves the lower-body
+pose and waits for sit-down to finish. Food auras do not loop the gesture.
+Learning spells emits `UPDATE_SHAPESHIFT_FORMS` so the stance bar refreshes.
+
+Small solid M2 props keep their geometry even when they contain multiple
+emitters. Spherical emitters use their authored area and radial velocity;
+flag 0x100 selects vertical velocity. Ordinary particle colors retain their
+authored values. `build/bin/test_m2_classifier_foliage` and
+`build/bin/test_m2_ribbon_tracks '[m2][particle]'` cover these rules.

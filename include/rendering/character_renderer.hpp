@@ -89,7 +89,7 @@ public:
     /// Play other animations on each arm alone, until the next playAnimation.
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
     // Loop an animation on SpineLow and its descendants; zero removes the layer.
-    void setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId);
+    void setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true);
 
     void update(float deltaTime, const glm::vec3& cameraPos = glm::vec3(0.0f));
 
@@ -284,6 +284,7 @@ private:
         std::vector<int8_t> boneArm;  // Per bone: 0 left arm, 1 right arm, -1 neither; built by setArmAnimations
         int upperBodySequenceIndex = -1;
         float upperBodyAnimationTime = 0.0f;
+        bool upperBodyAnimationLoop = true;
         std::vector<bool> upperBodyBones;
         int blendSequenceIndex = -1;
         float blendAnimationTime = 0.0f;

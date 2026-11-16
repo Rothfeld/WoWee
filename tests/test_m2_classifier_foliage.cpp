@@ -487,3 +487,11 @@ TEST_CASE("the fire sound and the fire rendering agree on what a fire is",
         CHECK(emitter(name) == AmbientEmitterType::None);
     }
 }
+
+TEST_CASE("Small solid props retain geometry when they contain particles", "[m2][classifier][bowl]") {
+    for (const char* name : {"BubblingBowl01", "BubblingBowl02", "SmallPropWithParticles"}) {
+        INFO(name);
+        const auto prop = classifyM2Model(name, glm::vec3(-0.5f), glm::vec3(0.5f), 42, 3);
+        CHECK_FALSE(prop.isSpellEffect);
+    }
+}

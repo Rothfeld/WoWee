@@ -2709,6 +2709,7 @@ void SpellHandler::handleLearnedSpell(network::Packet& packet) {
     if (!alreadyKnown && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("LEARNED_SPELL_IN_TAB", {std::to_string(spellId)});
         owner_.addonEventCallbackRef()("SPELLS_CHANGED", {});
+        owner_.addonEventCallbackRef()("UPDATE_SHAPESHIFT_FORMS", {});
         // The mounts and critters list is built from the spellbook, so a new
         // spell can add to it. petpaperdollframe refreshes on this and on
         // nothing else, which is why the tab stayed as it was first drawn.
@@ -4293,8 +4294,8 @@ void SpellHandler::handlePlaySpellVisual(network::Packet& packet) {
         spawnPos = core::coords::canonicalToRender(canonical);
     }
     if (auto* sv = renderer->getSpellVisualSystem())
-        sv->playSpellVisual(visualId, spawnPos, /*useImpactKit=*/false,
-                            owner_.resolveUnitRenderInstance(casterGuid));
+        sv->playSpellVisualKit(visualId, spawnPos,
+                               owner_.resolveUnitRenderInstance(casterGuid));
 }
 
 void SpellHandler::handleSpellModifier(network::Packet& packet, bool isFlat) {

@@ -1,3 +1,4 @@
+#include "rendering/particle_emission.hpp"
 #include "rendering/m2_renderer.hpp"
 #include <unordered_set>
 #include "rendering/m2_renderer_internal.h"
@@ -165,6 +166,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
             // Position: emitter position transformed by bone matrix
             glm::vec3 localPos = em.position;
+            glm::vec3 sphereDirection(0.0f);
             if (em.emitterType == 1) {
                 const float length = interpFloat(em.emissionAreaLength, inst.animTime,
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
@@ -172,6 +174,21 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
                 localPos.x += distN(particleRng_) * length * 0.5f;
                 localPos.y += distN(particleRng_) * width * 0.5f;
+            }
+            if (em.emitterType == 2) {
+                const float length = interpFloat(em.emissionAreaLength, inst.animTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float width = interpFloat(em.emissionAreaWidth, inst.animTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float vertical = interpFloat(em.verticalRange, inst.animTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float horizontal = interpFloat(em.horizontalRange, inst.animTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const auto emission = sphericalParticleEmission(length, width,
+                    distN(particleRng_) * vertical, distN(particleRng_) * horizontal,
+                    (distN(particleRng_) + 1.0f) * 0.5f, em.flags);
+                localPos += emission.offset;
+                sphereDirection = emission.direction;
             }
             glm::mat4 boneXform = glm::mat4(1.0f);
             if (em.bone < inst.boneMatrices.size()) {
@@ -199,7 +216,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             speed *= 1.0f + distN(particleRng_) * variation;
             const glm::mat3 rotMat(inst.modelMatrix * boneXform);
-            p.velocity = rotMat * dir * speed;
+            p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
 
             const uint32_t tilesX = std::max<uint16_t>(em.textureCols, 1);
             const uint32_t tilesY = std::max<uint16_t>(em.textureRows, 1);
@@ -729,12 +746,6 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f);
             float rawScale = interpFBlockFloat(em.particleScale, lifeRatio);
 
-            if (!gpu.isSpellEffect && !gpu.isFireflyEffect && !gpu.isLanternLike &&
-                !gpu.isTorch && !gpu.isBrazierOrFire && !gpu.isKoboldFlame) {
-                color = glm::mix(color, glm::vec3(1.0f), 0.7f);
-                if (rawScale > 2.0f) alpha *= 0.02f;
-                if (cachedBlendType == 3 || cachedBlendType == 4) alpha *= 0.05f;
-            }
             // Flame fixtures: the authored curves can leave a particle with
             // effectively no colour or alpha for most of its life. CHANDELIER01
             // ramps scale from zero over a six second life and its candles spend

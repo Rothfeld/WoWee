@@ -1,6 +1,8 @@
 #include "rendering/spell_visual_system.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/animation_controller.hpp"
+#include "rendering/animation/animation_ids.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/placement_transform.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -97,6 +99,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         for (uint32_t i = 0; i < kitDbc->getRecordCount(); ++i) {
             uint32_t kitId = kitDbc->getUInt32(i, 0);
             if (!kitId) continue;
+            kitAnimations_[kitId] = kitDbc->getUInt32(i, 2);
             uint32_t eff = 0;
             for (size_t k = 0; k < numKitFields && !eff; ++k) {
                 if (kitFields[k] < fc)
@@ -114,6 +117,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         auto fxIt = effectPaths.find(kitIt->second);
         return (fxIt != effectPaths.end()) ? fxIt->second : std::string{};
     };
+    for (const auto& [kitId, animation] : kitAnimations_) {
+        (void)animation;
+        const auto path = kitPath(kitId);
+        if (!path.empty()) kitPaths_[kitId] = path;
+    }
     auto missilePath = [&](uint32_t effId) -> std::string {
         if (!effId) return {};
         auto fxIt = effectPaths.find(effId);
@@ -449,7 +457,40 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
         }
     }
 
-    const std::string& modelPath = pathIt->second;
+    playModelEffect(visualId, pathIt->second, worldPosition, useImpactKit, attachInstanceId);
+}
+
+void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition,
+                                            uint32_t attachInstanceId) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    auto animation = kitAnimations_.find(kitId);
+    if (animation == kitAnimations_.end()) {
+        LOG_WARNING("Unknown SpellVisualKit: ", kitId);
+        return;
+    }
+    auto* cr = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    if (cr && attachInstanceId && animation->second != 0xffffffffu &&
+        cr->hasAnimation(attachInstanceId, animation->second)) {
+        uint32_t current = 0; float time = 0, duration = 0;
+        cr->getAnimationState(attachInstanceId, current, time, duration);
+        if (current == anim::SITTING || current == anim::SIT_GROUND_DOWN) {
+            cr->setUpperBodyAnimation(attachInstanceId, 0);
+            cr->setUpperBodyAnimation(attachInstanceId, animation->second, false);
+        } else if (attachInstanceId == renderer_->getCharacterInstanceId()) {
+            renderer_->getAnimationController()->playOneShotAnimation(animation->second);
+        } else {
+            cr->playAnimation(attachInstanceId, animation->second, false);
+        }
+    }
+    LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
+    if (auto path = kitPaths_.find(kitId); path != kitPaths_.end())
+        playModelEffect(kitId, path->second, worldPosition, false, attachInstanceId);
+}
+
+void SpellVisualSystem::playModelEffect(uint32_t visualId, const std::string& modelPath,
+                                       const glm::vec3& worldPosition, bool useImpactKit,
+                                       uint32_t attachInstanceId) {
+    if (!m2Renderer_) return;
     LOG_INFO("SpellVisual: ", (useImpactKit ? "impact" : "cast"), " path resolved to: ", modelPath);
 
     const uint32_t modelId = loadSpellModel(modelPath);

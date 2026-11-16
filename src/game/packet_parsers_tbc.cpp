@@ -139,6 +139,7 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
         if (moveFlags & TbcMoveFlags::SPLINE_ENABLED) {
             if (rem() < 4) return false;
             uint32_t splineFlags = packet.readUInt32();
+            block.splineFlags = splineFlags;
             LOG_DEBUG("  [TBC] Spline: flags=0x", std::hex, splineFlags, std::dec);
 
             if (splineFlags & 0x00010000) { // FINAL_POINT
@@ -156,8 +157,8 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
 
             // TBC spline: timePassed, duration, id, pointCount
             if (rem() < 16) return false;
-            /*uint32_t timePassed =*/ packet.readUInt32();
-            /*uint32_t duration =*/ packet.readUInt32();
+            block.splineElapsedMs = packet.readUInt32();
+            block.splineDurationMs = packet.readUInt32();
             /*uint32_t splineId =*/ packet.readUInt32();
 
             uint32_t pointCount = packet.readUInt32();
@@ -167,9 +168,13 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
             // points + endPoint (no splineMode in TBC)
             if (rem() < static_cast<size_t>(pointCount) * 12 + 12) return false;
             for (uint32_t i = 0; i < pointCount; i++) {
-                /*float px =*/ packet.readFloat();
-                /*float py =*/ packet.readFloat();
-                /*float pz =*/ packet.readFloat();
+                const float px = packet.readFloat();
+                const float py = packet.readFloat();
+                const float pz = packet.readFloat();
+                // CMaNGOS sends a leading and trailing interpolation control
+                // point. Interior points include the closing node for cycles.
+                if (i > 0 && i + 1 < pointCount)
+                    block.splinePath.push_back({px, py, pz});
             }
 
             /*float endPointX =*/ packet.readFloat();

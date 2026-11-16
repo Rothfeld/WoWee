@@ -2232,11 +2232,13 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         // Advance global sequence timer (accumulates independently of animation wrapping)
         inst.globalSequenceTime += deltaTime * 1000.0f;
 
-        if (inst.upperBodySequenceIndex >= 0) {
+        if (inst.upperBodySequenceIndex >= 0 && inst.currentAnimationId != anim::SIT_GROUND_DOWN) {
             const auto& upper = inst.cachedModel->data.sequences[inst.upperBodySequenceIndex];
-            inst.upperBodyAnimationTime = std::fmod(
-                inst.upperBodyAnimationTime + deltaTime * 1000.0f,
-                static_cast<float>(upper.duration));
+            inst.upperBodyAnimationTime += deltaTime * 1000.0f;
+            if (inst.upperBodyAnimationLoop)
+                inst.upperBodyAnimationTime = std::fmod(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
+            else if (inst.upperBodyAnimationTime >= upper.duration || inst.currentAnimationId != anim::SITTING)
+                inst.upperBodySequenceIndex = -1;
         }
 
         // Always advance animation time (cheap)
@@ -2530,7 +2532,7 @@ void CharacterRenderer::setArmAnimations(uint32_t instanceId, uint32_t leftArmAn
     }
 }
 
-void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId) {
+void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId, bool loop) {
     auto found = instances.find(instanceId);
     assert(found != instances.end());
     auto& instance = found->second;
@@ -2546,6 +2548,7 @@ void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t anim
     const auto sequence = std::find_if(model.sequences.begin(), model.sequences.end(),
         [animationId](const auto& value) { return value.id == animationId && value.variationIndex == 0; });
     assert(sequence != model.sequences.end() && sequence->duration > 0);
+    instance.upperBodyAnimationLoop = loop;
     instance.upperBodySequenceIndex = static_cast<int>(sequence - model.sequences.begin());
     instance.upperBodyAnimationTime = 0.0f;
     instance.upperBodyBones.assign(model.bones.size(), false);

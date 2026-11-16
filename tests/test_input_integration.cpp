@@ -1118,3 +1118,62 @@ TEST_CASE_METHOD(Integration, "GM stationery identifies support mail without a p
     truth("header[3] == 'Player' and header[12] == true and header[13] == false");
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE_METHOD(Integration, "TBC joining patrol restores route and elapsed time", "[tbc-patrol]") {
+    replay::Session session("tbc");
+    using namespace wowee::game;
+    constexpr uint64_t guid = 0xf130002a7d0007e0ull;
+    wowee::network::Packet packet(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+    packet.writeUInt32(1); packet.writeUInt8(0);
+    packet.writeUInt8(static_cast<uint8_t>(UpdateType::CREATE_OBJECT2));
+    packet.writePackedGuid(guid); packet.writeUInt8(static_cast<uint8_t>(ObjectType::UNIT));
+    packet.writeUInt8(0x20); packet.writeUInt32(0x08000101); packet.writeUInt8(0);
+    packet.writeUInt32(0);
+    packet.writeFloat(10); packet.writeFloat(5); packet.writeFloat(501); packet.writeFloat(0);
+    packet.writeUInt32(0);
+    for (int i = 0; i < 8; ++i) packet.writeFloat(2.5f);
+    packet.writeUInt32(0); // linear spline flags
+    packet.writeUInt32(6000); packet.writeUInt32(8000); packet.writeUInt32(42);
+    packet.writeUInt32(5); // control, start, corner, end, control
+    for (const auto& point : std::vector<std::array<float, 3>>{
+            {-10,0,501}, {0,0,501}, {10,0,501}, {10,10,501}, {10,10,501}})
+        for (float coordinate : point) packet.writeFloat(coordinate);
+    packet.writeFloat(10); packet.writeFloat(10); packet.writeFloat(501);
+    packet.writeUInt8(0); // no fields
+    session.receive(packet);
+    auto entity = session.handler().getEntityManager().getEntity(guid);
+    REQUIRE(entity);
+    CHECK(entity->isActivelyMoving());
+    CHECK(entity->getX() == Catch::Approx(5));
+    CHECK(entity->getY() == Catch::Approx(10));
+    entity->updateMovement(1);
+    CHECK(entity->getX() == Catch::Approx(7.5));
+    CHECK(entity->getY() == Catch::Approx(10));
+    CHECK(entity->getZ() == Catch::Approx(501));
+
+    // Next segment must use the wire start, even if the cached position lags.
+    wowee::network::Packet move(wireOpcode(Opcode::SMSG_MONSTER_MOVE));
+    move.writePackedGuid(guid);
+    move.writeFloat(10); move.writeFloat(10); move.writeFloat(501);
+    move.writeUInt32(43); move.writeUInt8(0); move.writeUInt32(0x100);
+    move.writeUInt32(4000); move.writeUInt32(1);
+    move.writeFloat(20); move.writeFloat(10); move.writeFloat(501);
+    session.receive(move);
+    entity->updateMovement(2);
+    CHECK(entity->getX() == Catch::Approx(10));
+    CHECK(entity->getY() == Catch::Approx(15));
+}
+
+TEST_CASE_METHOD(Integration, "Learning a spell refreshes stance bar", "[learned-forms]") {
+    replay::Session session("tbc");
+    std::vector<std::string> events;
+    session.handler().setAddonEventCallback([&](const std::string& name, const std::vector<std::string>&) {
+        events.push_back(name);
+    });
+    wowee::network::Packet packet(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_LEARNED_SPELL));
+    packet.writeUInt32(1784);
+    session.receive(packet);
+    CHECK(session.handler().getKnownSpells().count(1784) == 1);
+    CHECK(std::count(events.begin(), events.end(), "UPDATE_SHAPESHIFT_FORMS") == 1);
+    session.handler().setAddonEventCallback({});
+}

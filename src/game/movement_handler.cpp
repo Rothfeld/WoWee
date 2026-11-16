@@ -1766,6 +1766,8 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
             entity->startMoveAlongPath(path, orientation, data.duration / 1000.0f,
                                       smooth, data.moveType == 0);
         } else {
+            const auto start = core::coords::serverToCanonical({data.x, data.y, data.z});
+            entity->setPosition(start.x, start.y, start.z, orientation);
             entity->startMoveTo(destCanonical.x, destCanonical.y, destCanonical.z,
                                 orientation, data.duration / 1000.0f);
         }

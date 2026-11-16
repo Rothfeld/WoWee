@@ -33,6 +33,8 @@ public:
     void playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition,
                          bool useImpactKit = false, uint32_t attachInstanceId = 0);
 
+    void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId);
+
     // Spawn a precast visual effect at a world position.
     // castTimeMs: server cast time in milliseconds (0 = use anim duration).
     // attachInstanceId: see playSpellVisual.
@@ -99,6 +101,10 @@ private:
     };
 
     void loadSpellVisualDbc();
+    void playModelEffect(uint32_t visualId, const std::string& modelPath, const glm::vec3& worldPosition,
+                         bool useImpactKit, uint32_t attachInstanceId);
+    std::unordered_map<uint32_t, std::string> kitPaths_;
+    std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     // Model ID for a cast, impact or missile model, loading it on first use.
     // 0 when it cannot be loaded.
     uint32_t loadSpellModel(const std::string& modelPath);

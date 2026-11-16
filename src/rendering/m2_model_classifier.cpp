@@ -642,19 +642,11 @@ M2ClassificationResult classifyM2Model(
     const bool steamVehicle = has(n, "tonk") || has(n, "tank");
     const bool steamVfx = has(n, "steam") && !steamVehicle
                         && emitterCount >= 1 && vertexCount <= 200;
-    // A small mesh carrying several emitters is usually an effect, but a
-    // tree is a tree however few vertices it has. AZR_Tree01 is 197 vertices
-    // with three falling-leaf emitters; taken for an effect, its alpha-keyed
-    // canopy was drawn additively, and Azshara's forest turned translucent.
-    // A light fixture is the same shape: GeneralCandelabra01 is 167 vertices
-    // with one flame emitter per candle. As an effect it was drawn unlit and
-    // additive, and its flames lost the fixture handling and grew into squares.
-    const bool flameFixture = r.isLanternLike || r.isTorch || r.isBrazierOrFire ||
-                              r.isKoboldFlame;
-    const bool particleDominated = emitterCount >= 3 && vertexCount <= 200 && !treeLike &&
-                                   !flameFixture;
-    r.isSpellEffect = hasAny(n, kEffectTokens) || steamVfx || particleEmitterVfx
-                    || particleDominated;
+    // Emitters do not make solid geometry disposable. BubblingBowl01 has
+    // 42 vertices and several emitters, but its bowl must remain opaque.
+    // Only geometry-free emitter models can be identified by counts alone.
+    const bool emitterOnly = emitterCount > 0 && vertexCount == 0;
+    r.isSpellEffect = hasAny(n, kEffectTokens) || steamVfx || particleEmitterVfx || emitterOnly;
     // Instance portals are spell effects too.
     if (r.isInstancePortal) r.isSpellEffect = true;
 
