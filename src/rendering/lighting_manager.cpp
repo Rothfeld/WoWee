@@ -84,8 +84,9 @@ bool LightingManager::loadLightDbc(pipeline::AssetManager* assetManager) {
     // 5: float FalloffStart (inner radius)
     // 6: float FalloffEnd (outer radius)
     // 7: uint32 LightParamsID (clear weather)
-    // 8: uint32 LightParamsID (overcast/rain)
-    // 9: uint32 LightParamsID (underwater)
+    // 8: uint32 LightParamsID (underwater)
+    // 9: uint32 LightParamsID (overcast/rain)
+    // 10: uint32 LightParamsID (underwater during overcast/rain)
     // ... more params for death, phases, etc.
 
     const auto* activeLayout = pipeline::getActiveDBCLayout();
@@ -113,11 +114,14 @@ bool LightingManager::loadLightDbc(pipeline::AssetManager* assetManager) {
 
         // LightParams IDs for different conditions
         volume.lightParamsId = dbc->getUInt32(i, lL ? (*lL)["LightParamsID"] : 7);
-        if (dbc->getFieldCount() > 8) {
-            volume.lightParamsIdRain = dbc->getUInt32(i, lL ? (*lL)["LightParamsIDRain"] : 8);
-        }
         if (dbc->getFieldCount() > 9) {
-            volume.lightParamsIdUnderwater = dbc->getUInt32(i, lL ? (*lL)["LightParamsIDUnderwater"] : 9);
+            volume.lightParamsIdRain = dbc->getUInt32(i, lL ? (*lL)["LightParamsIDRain"] : 9);
+        }
+        if (dbc->getFieldCount() > 8) {
+            volume.lightParamsIdUnderwater = dbc->getUInt32(i, lL ? (*lL)["LightParamsIDUnderwater"] : 8);
+        }
+        if (dbc->getFieldCount() > 10) {
+            volume.lightParamsIdUnderwaterRain = dbc->getUInt32(i, 10);
         }
 
         if (dbc->getFieldCount() > 11) {
@@ -718,6 +722,9 @@ uint32_t LightingManager::selectLightParamsId(const LightVolume* volume, bool is
     if (isGhost) return volume->lightParamsIdDeath;
 
     // Select appropriate LightParams based on conditions
+    if (isUnderwater && isRaining && volume->lightParamsIdUnderwaterRain != 0) {
+        return volume->lightParamsIdUnderwaterRain;
+    }
     if (isUnderwater && volume->lightParamsIdUnderwater != 0) {
         return volume->lightParamsIdUnderwater;
     }

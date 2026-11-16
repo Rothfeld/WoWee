@@ -41,6 +41,19 @@ TEST_CASE("Every expansion ships a loadable DBC layout", "[dbc][layout]") {
     }
 }
 
+TEST_CASE("Light weather profiles distinguish storm from underwater", "[dbc][layout][light-weather]") {
+    for (const auto& expansion : expansions()) {
+        INFO(expansion);
+        DBCLayout layout;
+        REQUIRE(layout.loadFromJson(layoutPath(expansion)));
+        const auto* light = layout.getLayout("Light");
+        REQUIRE(light);
+        CHECK(light->field("LightParamsID") == 7);
+        CHECK(light->field("LightParamsIDUnderwater") == 8);
+        CHECK(light->field("LightParamsIDRain") == 9);
+    }
+}
+
 TEST_CASE("Spell layout exposes the fields the spell logic reads", "[dbc][layout]") {
     for (const auto& expansion : expansions()) {
         INFO("expansion: " << expansion);

@@ -23,6 +23,18 @@ both deep colors are 60. This distinction must survive sampling and blending.
 
 ## Paired capture settings
 
+Light.dbc condition columns are 7 clear, 8 underwater, 9 storm, 10 underwater
+storm and 11 death. Combined underwater storm takes precedence over either
+individual condition when its authored profile is present. Death takes
+precedence over weather. The source expansion layouts must also be deployed
+beside extracted assets; the asset directory supplies the runtime layout.
+
+The production loader was checked against all 580 original TBC Light records
+and their condition combinations. Cliffspring volume199 selects profiles
+204/207/426/207 for clear/underwater/storm/underwater-storm. Rain must not select
+blue underwater profile207. A reconnect may start with weather zero until a
+server weather update arrives; compare received weather state as well as images.
+
 Query `GetCVar("ffxGlow")` in both running clients before comparing brightness.
 The dedicated WoWee profile can differ from the shared client profile. A saved
 native Config.wtf may omit a CVar that still has a nonzero runtime default.

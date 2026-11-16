@@ -84,6 +84,7 @@ struct LightVolume {
     uint32_t lightParamsId = 0;        // Normal/clear weather
     uint32_t lightParamsIdRain = 0;    // Rainy weather
     uint32_t lightParamsIdUnderwater = 0;
+    uint32_t lightParamsIdUnderwaterRain = 0;
     uint32_t lightParamsIdDeath = 0;
     // More variants exist for phases, death, etc.
 };
