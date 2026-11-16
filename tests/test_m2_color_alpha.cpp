@@ -187,12 +187,15 @@ TEST_CASE("Legacy particles preserve zero and tiny lifecycle endpoints", "[m2][p
 }
 
 TEST_CASE("Legacy tracks retain inclusive closing and single keys", "[m2][track]") {
-    std::vector<uint8_t> bytes(540, 0);
+    std::vector<uint8_t> bytes(676, 0);
     std::memcpy(bytes.data(), "MD20", 4);
     const auto put = [&](size_t offset, uint32_t value) {
         std::memcpy(bytes.data() + offset, &value, 4);
     };
     put(4, 263);
+    put(28, 2); put(32, 540); // Two animation windows.
+    put(544, 1000); put(548, 1200);
+    put(612, 2000); put(616, 2100);
     put(52, 1); put(56, 332); // One TBC bone.
     put(348, 0xffff0001); // Linear translation, no global sequence.
     put(352, 2); put(356, 444); // Two inclusive ranges.
@@ -208,8 +211,27 @@ TEST_CASE("Legacy tracks retain inclusive closing and single keys", "[m2][track]
     REQUIRE(model.bones.size() == 1);
     const auto& track = model.bones[0].translation;
     REQUIRE(track.sequences.size() == 2);
-    CHECK(track.sequences[0].timestamps == std::vector<uint32_t>{0, 100, 200});
+    CHECK(track.sequences[0].timestamps == std::vector<uint32_t>{1000, 1100, 1200});
+    CHECK(track.sequences[0].timeOffset == 1000);
     REQUIRE(track.sequences[1].vec3Values.size() == 1);
     CHECK(track.sequences[1].vec3Values[0].x == 5.0f);
     CHECK(wowee::rendering::m2_track::sampleVec3(track, 0, 200, 0, {}, {}).x == 0.0f);
+}
+
+TEST_CASE("Legacy sparse tracks sample within their animation window", "[m2][track]") {
+    using wowee::pipeline::M2AnimationTrack;
+    using namespace wowee::rendering::m2_track;
+    M2AnimationTrack track;
+    track.interpolationType = 1;
+    track.sequences.resize(1);
+    auto& keys = track.sequences[0];
+    keys.timeOffset = 30000;
+    keys.timestamps = {3333, 31000, 32000};
+    keys.vec3Values = {{0,0,0}, {1,0,0}, {2,0,0}};
+    keys.floatValues = {0, 1, 2};
+    keys.quatValues = {glm::quat(1,0,0,0), glm::quat(1,0,0,0), glm::quat(0,0,1,0)};
+    CHECK(sampleVec3(track, 0, 2000, 0, {}, {}).x == 2.0f);
+    CHECK(sampleFloat(track, 0, 2000, 0, {}, 0) == 2.0f);
+    CHECK(sampleQuat(track, 0, 2000, 0, {}).y == Catch::Approx(1));
+    CHECK(sampleFloat(track, 0, 0, 0, {}, 0) == Catch::Approx((30000.0f - 3333) / (31000 - 3333)));
 }

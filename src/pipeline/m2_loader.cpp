@@ -618,6 +618,7 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
                            const M2TrackDiskVanilla& disk,
                            M2AnimationTrack& track,
                            TrackType type,
+                           const std::vector<std::pair<uint32_t, uint32_t>>& sequenceWindows,
                            bool compressedQuat = false) {
     track.interpolationType = disk.interpolationType;
     track.globalSequence = disk.globalSequence;
@@ -647,9 +648,10 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
         ranges = readArray<M2Range>(data, disk.ofsRanges, disk.nRanges);
     }
 
-    // If no ranges, treat entire array as one sequence
+    // An unpartitioned legacy track applies across the model timeline.
     if (ranges.empty()) {
-        ranges.push_back({.start = 0, .end = disk.nTimestamps - 1});
+        const size_t count = disk.globalSequence >= 0 ? 1 : std::max<size_t>(1, sequenceWindows.size());
+        ranges.assign(count, {.start = 0, .end = disk.nTimestamps - 1});
     }
 
     // Read the flat key array ONCE before the per-sequence loop. Previously
@@ -688,12 +690,11 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
 
         track.sequences[i].timestamps.assign(
             allTimestamps.begin() + start, allTimestamps.begin() + end);
-        if (!track.sequences[i].timestamps.empty()) {
-            uint32_t firstTime = track.sequences[i].timestamps[0];
-            for (auto& ts : track.sequences[i].timestamps) {
-                ts -= firstTime;
-            }
-        }
+        // Sparse ranges can start before the animation (HumanMale Death's
+        // pelvis rotation starts at 3333, while Death starts at 30000).
+        // Preserve the interpolation interval and offset the sample clock.
+        if (disk.globalSequence < 0 && i < sequenceWindows.size())
+            track.sequences[i].timeOffset = sequenceWindows[i].first;
 
         if (start >= disk.nKeys) continue;
         uint32_t keyEnd = std::min(end, disk.nKeys);
@@ -1167,9 +1168,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 bone.parentBone = db.parentBone;
                 bone.submeshId = db.submeshId;
                 bone.pivot = glm::vec3(db.pivot[0], db.pivot[1], db.pivot[2]);
-                parseAnimTrackVanilla(m2Data, db.translation, bone.translation, TrackType::VEC3);
-                parseAnimTrackVanilla(m2Data, db.rotation, bone.rotation, TrackType::QUAT_COMPRESSED, /*compressedQuat=*/true);
-                parseAnimTrackVanilla(m2Data, db.scale, bone.scale, TrackType::VEC3);
+                parseAnimTrackVanilla(m2Data, db.translation, bone.translation, TrackType::VEC3, vanillaSeqWindows);
+                parseAnimTrackVanilla(m2Data, db.rotation, bone.rotation, TrackType::QUAT_COMPRESSED, vanillaSeqWindows, /*compressedQuat=*/true);
+                parseAnimTrackVanilla(m2Data, db.scale, bone.scale, TrackType::VEC3, vanillaSeqWindows);
             } else {
                 // Vanilla: 108-byte bone (no boneNameCRC), flat tracks with
                 // ranges, full float[4] rotation quaternions.
@@ -1179,9 +1180,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 bone.parentBone = db.parentBone;
                 bone.submeshId = db.submeshId;
                 bone.pivot = glm::vec3(db.pivot[0], db.pivot[1], db.pivot[2]);
-                parseAnimTrackVanilla(m2Data, db.translation, bone.translation, TrackType::VEC3);
-                parseAnimTrackVanilla(m2Data, db.rotation, bone.rotation, TrackType::QUAT_COMPRESSED);
-                parseAnimTrackVanilla(m2Data, db.scale, bone.scale, TrackType::VEC3);
+                parseAnimTrackVanilla(m2Data, db.translation, bone.translation, TrackType::VEC3, vanillaSeqWindows);
+                parseAnimTrackVanilla(m2Data, db.rotation, bone.rotation, TrackType::QUAT_COMPRESSED, vanillaSeqWindows);
+                parseAnimTrackVanilla(m2Data, db.scale, bone.scale, TrackType::VEC3, vanillaSeqWindows);
             }
 
             if (bone.translation.hasData() || bone.rotation.hasData() || bone.scale.hasData()) {
@@ -1248,7 +1249,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             } else {
                 if (alphaTrackOfs + sizeof(M2TrackDiskVanilla) <= m2Data.size()) {
                     M2TrackDiskVanilla td = readValue<M2TrackDiskVanilla>(m2Data, alphaTrackOfs);
-                    parseAnimTrackVanilla(m2Data, td, track, TrackType::FIXED16);
+                    parseAnimTrackVanilla(m2Data, td, track, TrackType::FIXED16, vanillaSeqWindows);
                 }
             }
             // At-rest alpha (first key of the first sequence with data) - used by
@@ -1341,9 +1342,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 parseAnimTrack(m2Data, dt.scaling, tt.scale, TrackType::VEC3, seqFlags);
             } else {
                 M2TextureTransformDiskVanilla dt = readValue<M2TextureTransformDiskVanilla>(m2Data, ofs);
-                parseAnimTrackVanilla(m2Data, dt.translation, tt.translation, TrackType::VEC3);
-                parseAnimTrackVanilla(m2Data, dt.rotation, tt.rotation, TrackType::QUAT_COMPRESSED, /*compressedQuat=*/isTBC);
-                parseAnimTrackVanilla(m2Data, dt.scaling, tt.scale, TrackType::VEC3);
+                parseAnimTrackVanilla(m2Data, dt.translation, tt.translation, TrackType::VEC3, vanillaSeqWindows);
+                parseAnimTrackVanilla(m2Data, dt.rotation, tt.rotation, TrackType::QUAT_COMPRESSED, vanillaSeqWindows, /*compressedQuat=*/isTBC);
+                parseAnimTrackVanilla(m2Data, dt.scaling, tt.scale, TrackType::VEC3, vanillaSeqWindows);
             }
             model.textureTransforms.push_back(std::move(tt));
         }
@@ -1386,7 +1387,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 parseAnimTrack(m2Data, td, track, TrackType::FIXED16, seqFlags);
             } else {
                 M2TrackDiskVanilla td = readValue<M2TrackDiskVanilla>(m2Data, trackOfs);
-                parseAnimTrackVanilla(m2Data, td, track, TrackType::FIXED16);
+                parseAnimTrackVanilla(m2Data, td, track, TrackType::FIXED16, vanillaSeqWindows);
             }
             float opacity = 1.0f;
             for (const auto& seq : track.sequences) {
@@ -1512,7 +1513,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 auto parseTrackV = [&](uint32_t off, M2AnimationTrack& track) {
                     if (base + off + sizeof(M2TrackDiskVanilla) <= m2Data.size()) {
                         M2TrackDiskVanilla disk = readValue<M2TrackDiskVanilla>(m2Data, base + off);
-                        parseAnimTrackVanilla(m2Data, disk, track, TrackType::FLOAT);
+                        parseAnimTrackVanilla(m2Data, disk, track, TrackType::FLOAT, vanillaSeqWindows);
                     }
                 };
                 parseTrackV(0x34, em.emissionSpeed);       // +28 = 0x50

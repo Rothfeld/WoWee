@@ -45,6 +45,7 @@ struct M2AnimationTrack {
     int16_t globalSequence = -1;    // -1 if not a global sequence
 
     struct SequenceKeys {
+        uint32_t timeOffset = 0;     // Legacy tracks retain absolute model timestamps.
         std::vector<uint32_t> timestamps;   // Milliseconds
         std::vector<glm::vec3> vec3Values;  // For translation/scale tracks
         std::vector<glm::quat> quatValues;  // For rotation tracks

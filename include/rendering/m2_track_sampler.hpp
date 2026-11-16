@@ -81,9 +81,10 @@ inline float sampleFloat(const pipeline::M2AnimationTrack& track,
     const auto& keys = track.sequences[static_cast<size_t>(sampleTime.sequenceIndex)];
     const size_t count = std::min(keys.timestamps.size(), keys.floatValues.size());
     if (count == 0) return defaultValue;
-    const size_t lower = lowerKeyIndex(keys.timestamps, count, sampleTime.timeMs);
+    const float timeMs = sampleTime.timeMs + keys.timeOffset;
+    const size_t lower = lowerKeyIndex(keys.timestamps, count, timeMs);
     const float fraction = interpolationFraction(track, keys.timestamps, lower,
-                                                 count, sampleTime.timeMs);
+                                                 count, timeMs);
     return lower + 1 < count
         ? glm::mix(keys.floatValues[lower], keys.floatValues[lower + 1], fraction)
         : keys.floatValues[lower];
@@ -108,9 +109,10 @@ inline glm::vec3 sampleVec3(const pipeline::M2AnimationTrack& track,
         return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z)
             ? value : defaultValue;
     };
-    const size_t lower = lowerKeyIndex(keys.timestamps, count, sampleTime.timeMs);
+    const float timeMs = sampleTime.timeMs + keys.timeOffset;
+    const size_t lower = lowerKeyIndex(keys.timestamps, count, timeMs);
     const float fraction = interpolationFraction(track, keys.timestamps, lower,
-                                                 count, sampleTime.timeMs);
+                                                 count, timeMs);
     return lower + 1 < count
         ? safe(glm::mix(safe(keys.vec3Values[lower]), safe(keys.vec3Values[lower + 1]), fraction))
         : safe(keys.vec3Values[lower]);
@@ -136,9 +138,10 @@ inline glm::quat sampleQuat(const pipeline::M2AnimationTrack& track,
         return std::isfinite(lengthSquared) && lengthSquared >= 0.000001f
             ? glm::normalize(value) : identity;
     };
-    const size_t lower = lowerKeyIndex(keys.timestamps, count, sampleTime.timeMs);
+    const float timeMs = sampleTime.timeMs + keys.timeOffset;
+    const size_t lower = lowerKeyIndex(keys.timestamps, count, timeMs);
     const float fraction = interpolationFraction(track, keys.timestamps, lower,
-                                                 count, sampleTime.timeMs);
+                                                 count, timeMs);
     return lower + 1 < count
         ? glm::normalize(glm::slerp(safe(keys.quatValues[lower]),
                                    safe(keys.quatValues[lower + 1]), fraction))
