@@ -26,6 +26,8 @@ struct EmoteInfo {
     std::string othersNoTarget;
     std::string othersTarget;
     std::string command;
+    uint32_t flags = 0;
+    std::optional<uint8_t> standState;
 };
 
 class EmoteRegistry {
@@ -35,10 +37,13 @@ public:
     /// Load emotes from DBC files (called once on first use).
     void loadFromDbc();
 
-    struct EmoteResult { uint32_t animId; bool loop; };
+    struct EmoteResult { uint32_t animId; bool loop; uint32_t flags; };
 
     /// Look up an emote by chat command (e.g. "dance", "wave").
     [[nodiscard]] std::optional<EmoteResult> findEmote(const std::string& command) const;
+    [[nodiscard]] std::optional<uint8_t> standStateFor(const std::string& command) const;
+    [[nodiscard]] bool allowsStandState(const std::string& command, uint8_t state) const;
+    [[nodiscard]] bool canOverlaySeatedAnimation(uint32_t animationId) const;
 
 
     /// Get the animation ID for an Emotes.dbc emote ID, as used by SMSG_EMOTE
@@ -76,6 +81,7 @@ private:
     std::unordered_map<uint32_t, const EmoteInfo*> emoteByDbcId_;
     std::unordered_map<uint32_t, uint32_t> animByEmotesId_;
     std::unordered_set<uint32_t> stateEmoteIds_;
+    std::unordered_set<uint32_t> seatedGestureAnimations_;
 };
 
 } // namespace rendering

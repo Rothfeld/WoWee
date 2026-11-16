@@ -1,4 +1,5 @@
 #include "rendering/animation/emote_registry.hpp"
+#include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
@@ -157,8 +158,11 @@ void EmoteRegistry::loadFromDbc() {
     }
 
     std::unordered_map<uint32_t, uint32_t> emoteIdToAnim;
+    std::unordered_map<uint32_t, uint32_t> emoteFlags;
+    std::unordered_map<uint32_t, uint8_t> emoteStances;
     animByEmotesId_.clear();
     stateEmoteIds_.clear();
+    seatedGestureAnimations_.clear();
     if (auto emotesDbc = assetManager->loadDBC("Emotes.dbc"); emotesDbc && emotesDbc->isLoaded()) {
         emoteIdToAnim.reserve(emotesDbc->getRecordCount());
         animByEmotesId_.reserve(emotesDbc->getRecordCount());
@@ -169,6 +173,13 @@ void EmoteRegistry::loadFromDbc() {
         for (uint32_t r = 0; r < emotesDbc->getRecordCount(); ++r) {
             uint32_t emoteId = emotesDbc->getUInt32(r, emL ? (*emL)["ID"] : 0);
             uint32_t animId = emotesDbc->getUInt32(r, emL ? (*emL)["AnimID"] : 2);
+            const uint32_t flags = emotesDbc->getUInt32(r, 3);
+            const uint32_t procedure = emotesDbc->getUInt32(r, specField);
+            emoteFlags.emplace(emoteId, flags);
+            if (const auto stance = emoteStandState(procedure, emotesDbc->getUInt32(r, 5)))
+                emoteStances.emplace(emoteId, *stance);
+            if (animId != 0 && procedure == 0 && emoteAllowsStandState(flags, 1))
+                seatedGestureAnimations_.insert(animId);
             if (emotesDbc->getUInt32(r, specField) != 0) {
                 stateEmoteIds_.insert(emoteId);
             }
@@ -222,6 +233,10 @@ void EmoteRegistry::loadFromDbc() {
             info.othersNoTarget = oNoTarget;
             info.othersTarget = oTarget;
             info.command = cmd;
+            if (const auto flags = emoteFlags.find(emoteRef); flags != emoteFlags.end())
+                info.flags = flags->second;
+            if (const auto stance = emoteStances.find(emoteRef); stance != emoteStances.end())
+                info.standState = stance->second;
             emoteTable_.emplace(cmd, std::move(info));
         }
     }
@@ -310,7 +325,18 @@ std::optional<EmoteRegistry::EmoteResult> EmoteRegistry::findEmote(const std::st
     if (it == emoteTable_.end()) return std::nullopt;
     const auto& info = it->second;
     if (info.animId == 0) return std::nullopt;
-    return EmoteResult{.animId = info.animId, .loop = info.loop};
+    return EmoteResult{.animId = info.animId, .loop = info.loop, .flags = info.flags};
+}
+std::optional<uint8_t> EmoteRegistry::standStateFor(const std::string& command) const {
+    const auto found = emoteTable_.find(command);
+    return found != emoteTable_.end() ? found->second.standState : std::nullopt;
+}
+bool EmoteRegistry::allowsStandState(const std::string& command, uint8_t state) const {
+    const auto found = emoteTable_.find(command);
+    return found != emoteTable_.end() && emoteAllowsStandState(found->second.flags, state);
+}
+bool EmoteRegistry::canOverlaySeatedAnimation(uint32_t animationId) const {
+    return seatedGestureAnimations_.contains(animationId);
 }
 uint32_t EmoteRegistry::animByEmotesId(uint32_t emoteId) const {
     auto it = animByEmotesId_.find(emoteId);

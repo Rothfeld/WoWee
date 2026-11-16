@@ -3,6 +3,7 @@
 #include "rendering/animation/melee_anim_chains.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/emote_registry.hpp"
+#include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/anim_capability_probe.hpp"
 #include "rendering/animation/mount_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
@@ -76,6 +77,17 @@ void AnimationController::playEmote(const std::string& emoteName) {
 
     uint32_t animId = result->animId;
     bool loop = result->loop;
+    const uint8_t standState = characterAnimator_.getActivity().getStandState();
+    if (!emoteAllowsStandState(result->flags, standState)) return;
+    if (isSeatedStandState(standState) && !loop && registry.canOverlaySeatedAnimation(animId)) {
+        auto* cr = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+        const uint32_t instanceId = renderer_ ? renderer_->getCharacterInstanceId() : 0;
+        if (cr && instanceId && cr->hasAnimation(instanceId, animId)) {
+            cr->setUpperBodyAnimation(instanceId, 0, false);
+            cr->setUpperBodyAnimation(instanceId, animId, false);
+        }
+        return;
+    }
 
     // What an emote resolved to, and whether the model can play it. An emote
     // that does nothing is either a name that resolved to no animation or an

@@ -1,4 +1,5 @@
 #include "rendering/animation/stand_pose.hpp"
+#include "rendering/animation/emote_registry.hpp"
 // lua_social_api.cpp - Chat, guild, friends, ignore, gossip, party management, and emotes Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include <iterator>
@@ -2348,17 +2349,18 @@ void registerSocialLuaAPI(lua_State* L) {
                 // EmoteRegistry keys its table on lower-cased command names
                 // out of EmotesText.dbc; FrameXML's tokens are upper case.
                 //
-                // Only the id is needed: the server echoes SMSG_EMOTE back and
-                // chat_handler plays the animation from it, and SMSG_TEXT_EMOTE
-                // carries the wording. Sending is the whole of the client's
-                // part.
+                // Stand-state procedures update the local stance immediately;
+                // gesture procedures preserve compatible seated poses.
                 {"DoEmote", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const char* token = luaL_checkstring(L, 1);
             if (!gh || !token) return 0;
             std::string name(token);
             toLowerInPlace(name);
-            const auto standState = rendering::emoteStandState(name);
+            auto& emotes = rendering::EmoteRegistry::instance();
+            emotes.loadFromDbc();
+            const auto standState = emotes.standStateFor(name);
+            if (!standState && !emotes.allowsStandState(name, gh->getStandState())) return 0;
             if (standState) gh->setStandState(*standState);
             const uint32_t emoteId = rendering::AnimationController::getEmoteDbcId(name);
             if (emoteId == 0) return 0;

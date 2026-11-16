@@ -11,6 +11,7 @@
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/emote_registry.hpp"
+#include "rendering/animation/stand_pose.hpp"
 #include "game/game_handler.hpp"
 #include "game/spell_classification.hpp"
 #include "game/gather_spells.hpp"
@@ -394,6 +395,14 @@ void AnimationCallbackHandler::setupCallbacks() {
         emoteInstanceId = entitySpawner_.getPlayerInstanceId(guid);
         if (emoteInstanceId != 0) {
             const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
+            auto& emotes = rendering::EmoteRegistry::instance();
+            emotes.loadFromDbc();
+            if (!isState && rendering::isSeatedBaseAnimation(idle) &&
+                emotes.canOverlaySeatedAnimation(emoteAnim) && cr->hasAnimation(emoteInstanceId, emoteAnim)) {
+                cr->setUpperBodyAnimation(emoteInstanceId, 0, false);
+                cr->setUpperBodyAnimation(emoteInstanceId, emoteAnim, false);
+                return;
+            }
             cr->playAnimation(emoteInstanceId, emoteAnim != 0 ? emoteAnim : idle,
                               isState || emoteAnim == 0, idle);
         }

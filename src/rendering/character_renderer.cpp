@@ -1,4 +1,5 @@
 #include <cassert>
+#include "rendering/animation/stand_pose.hpp"
 /**
  * CharacterRenderer - GPU rendering of M2 character models with skeletal animation (Vulkan)
  *
@@ -2241,7 +2242,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             inst.upperBodyAnimationTime += deltaTime * 1000.0f;
             if (inst.upperBodyAnimationLoop)
                 inst.upperBodyAnimationTime = std::fmod(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
-            else if (inst.upperBodyAnimationTime >= upper.duration || inst.currentAnimationId != anim::SITTING)
+            else if (inst.upperBodyAnimationTime >= upper.duration || !isSeatedBaseAnimation(inst.currentAnimationId))
                 inst.upperBodySequenceIndex = -1;
         }
 

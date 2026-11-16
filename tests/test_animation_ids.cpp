@@ -4,11 +4,35 @@
 #include "rendering/animation/creature_locomotion.hpp"
 #include "core/game_object_animation_policy.hpp"
 #include "pipeline/dbc_loader.hpp"
+#include "rendering/animation/stand_pose.hpp"
 #include <cstring>
 #include <vector>
 
 using wowee::pipeline::DBCFile;
 namespace anim = wowee::rendering::anim;
+
+TEST_CASE("Emote procedures retain stand states and seated gesture eligibility", "[emote-stance]") {
+    using namespace wowee::rendering;
+    CHECK(emoteStandState(1, 3) == 3); // SLEEP and LIE share the authored sleep state.
+    CHECK(emoteStandState(1, 1) == 1);
+    CHECK(emoteStandState(1, 0) == 0);
+    CHECK_FALSE(emoteStandState(0, 3));
+    CHECK_FALSE(emoteStandState(2, 3));
+    CHECK(standPose(*emoteStandState(1, 3)).idle == anim::SLEEP);
+    for (uint8_t state : {1, 2, 4, 5, 6}) {
+        CHECK(isSeatedStandState(state));
+        CHECK(isSeatedBaseAnimation(standPose(state).idle));
+        CHECK(emoteAllowsStandState(0, state)); // Wave allows sitting.
+        CHECK_FALSE(emoteAllowsStandState(1, state)); // Bow requires standing.
+    }
+    CHECK_FALSE(isSeatedBaseAnimation(anim::STAND));
+    CHECK_FALSE(isSeatedBaseAnimation(anim::SLEEP));
+    CHECK_FALSE(emoteAllowsStandState(0, 3));
+    CHECK(emoteAllowsStandState(0x200, 3));
+    CHECK_FALSE(emoteAllowsStandState(0, 7));
+    CHECK(emoteAllowsStandState(1, 0));
+}
+
 
 TEST_CASE("Readable books retain authored poses when template metadata arrives", "[game-object-pose]") {
     using wowee::core::gameObjectPoseIsStateDriven;
