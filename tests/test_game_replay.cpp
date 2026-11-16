@@ -711,6 +711,40 @@ TEST_CASE("TBC leadership promotion resolves menu tokens and names", "[party][tb
     lua_close(L);
 }
 
+TEST_CASE("TBC loot setting feedback follows server changes once", "[party][tbc][loot-settings]") {
+    Session s("tbc");
+    auto roster = [&](uint8_t method, uint8_t threshold, uint64_t master) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GROUP_LIST));
+        p.writeUInt8(0); p.writeUInt8(0); p.writeUInt8(0); p.writeUInt8(0);
+        p.writeUInt64(1); p.writeUInt32(2);
+        for (const auto& [name, guid] : std::vector<std::pair<std::string, uint64_t>>{{"Graulberto", 3}, {"Edric", 5}}) {
+            p.writeString(name); p.writeUInt64(guid);
+            p.writeUInt8(1); p.writeUInt8(0); p.writeUInt8(0);
+        }
+        p.writeUInt64(Session::kPlayerGuid);
+        p.writeUInt8(method); p.writeUInt64(master); p.writeUInt8(threshold); p.writeUInt8(0);
+        s.receive(p);
+    };
+    roster(3, 2, 0);
+    const auto initial = chatLines(s).size();
+    roster(3, 3, 0);
+    CHECK(chatLines(s).back() == "Loot threshold set to Rare.");
+    roster(2, 3, 3);
+    CHECK(chatLines(s).back() == "Graulberto is now the loot master.");
+    roster(2, 3, 5);
+    CHECK(chatLines(s).back() == "Edric is now the loot master.");
+    roster(4, 3, 0);
+    CHECK(chatLines(s).back() == "Looting set to Need Before Greed.");
+    const auto count = chatLines(s).size();
+    CHECK(count == initial + 5);
+    roster(4, 3, 0);
+    CHECK(chatLines(s).size() == count);
+    s.handler().sendOptOutOfLoot(true);
+    CHECK(chatLines(s).back() == "You are now passing on random loot.");
+    s.handler().sendOptOutOfLoot(false);
+    CHECK(chatLines(s).back() == "You are now eligible for random loot.");
+}
+
 TEST_CASE("TBC party stats use packed GUID without a full-update prefix", "[party][tbc]") {
     Session s("tbc");
     using wowee::game::Opcode;

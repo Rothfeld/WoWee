@@ -15,6 +15,13 @@ through the roster before sending `CMSG_GROUP_SET_LEADER` with the 64-bit GUID.
 The `[promote]` replay test covers both forms with a TBC roster and no visible
 world entity for the recipient.
 
+Loot feedback follows changes in the server roster's method, threshold, and
+master-looter GUID. Unchanged rosters produce no repeated message. Each change
+also notifies `PARTY_LOOT_METHOD_CHANGED`, including threshold-only and master-only
+updates. Personal pass-on-loot feedback follows its outgoing request because TBC
+does not acknowledge that setting. Message wording follows Blizzard's
+`ERR_SET_LOOT_*`, `ERR_NEW_LOOT_MASTER_S`, and `OPT_OUT_LOOT_TOGGLE_*` strings.
+
 Map loading pumps SDL events outside the application's normal input dispatch.
 `WorldLoader::loadOnlineWorldTerrain` releases camera capture and held Lua bindings
 before entering that loop. Otherwise releasing right mouse during loading leaves

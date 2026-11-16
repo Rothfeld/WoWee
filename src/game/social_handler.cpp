@@ -2259,6 +2259,8 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     const bool hasRoles = isActiveExpansion("wotlk");
     const bool hasBattleGroupFlag = isActiveExpansion("tbc");
     const uint8_t prevLootMethod = partyData.lootMethod;
+    const uint8_t prevLootThreshold = partyData.lootThreshold;
+    const uint64_t prevLooter = partyData.looterGuid;
     const uint64_t previousLeader = partyData.leaderGuid;
     const bool wasInGroup = !partyData.isEmpty();
     partyData = GroupListData{};
@@ -2300,16 +2302,36 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
             owner_.getSocket()->send(request);
         }
     }
-    // Loot method change notification
-    if (wasInGroup && nowInGroup && partyData.lootMethod != prevLootMethod) {
-        const char* methodName = lootMethodName(partyData.lootMethod);
-        owner_.addSystemChatMessage(std::string("Loot method changed to ") + methodName + ".");
-        // Already noticed, and only ever said in chat. The party frames read
-        // the method to decide whether to offer the master-looter menu, and
-        // they reread it on this - so the change was announced to the player
-        // and not to the interface standing next to them.
-        if (owner_.addonEventCallbackRef())
-            owner_.addonEventCallbackRef()("PARTY_LOOT_METHOD_CHANGED", {});
+    if (wasInGroup && nowInGroup) {
+        const bool methodChanged = partyData.lootMethod != prevLootMethod;
+        const bool thresholdChanged = partyData.lootThreshold != prevLootThreshold;
+        const bool masterChanged = partyData.lootMethod == 2 &&
+            (methodChanged || partyData.looterGuid != prevLooter);
+        if (methodChanged) {
+            const char* prefix = partyData.lootMethod == 4 ? "Looting set to " : "Looting changed to ";
+            owner_.addSystemChatMessage(std::string(prefix) + lootMethodName(partyData.lootMethod) + ".");
+        }
+        if (masterChanged) {
+            std::string name;
+            if (partyData.looterGuid == owner_.getPlayerGuid()) {
+                if (const auto* character = owner_.getActiveCharacter()) name = character->name;
+            } else {
+                for (const auto& member : partyData.members)
+                    if (member.guid == partyData.looterGuid) name = member.name;
+            }
+            if (name.empty()) LOG_WARNING("Loot master name missing for GUID ", partyData.looterGuid);
+            else owner_.addSystemChatMessage(name + " is now the loot master.");
+        }
+        if (thresholdChanged) {
+            static constexpr const char* qualities[] = {
+                "Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Artifact"
+            };
+            if (partyData.lootThreshold < std::size(qualities))
+                owner_.addSystemChatMessage(std::string("Loot threshold set to ") + qualities[partyData.lootThreshold] + ".");
+            else LOG_WARNING("Invalid loot threshold: ", unsigned(partyData.lootThreshold));
+        }
+        if (methodChanged || thresholdChanged || masterChanged)
+            owner_.fireAddonEvent("PARTY_LOOT_METHOD_CHANGED", {});
     }
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});

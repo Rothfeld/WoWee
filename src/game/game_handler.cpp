@@ -3149,6 +3149,8 @@ void GameHandler::sendOptOutOfLoot(bool optOut) {
     packet.writeUInt32(optOut ? 1u : 0u);
     getSocket()->send(packet);
     LOG_INFO("CMSG_OPT_OUT_OF_LOOT: ", optOut ? "opting out" : "opting in");
+    addSystemChatMessage(optOut ? "You are now passing on random loot."
+                               : "You are now eligible for random loot.");
 }
 
 void GameHandler::runInterfaceCommand(const std::string& lua) const {
