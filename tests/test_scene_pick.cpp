@@ -160,3 +160,12 @@ TEST_CASE("NPC cursor honors server cursor and attack permission") {
     CHECK(std::string(unitCursorPath(true, 0, 4, 0,
         QuestGiverStatus::NONE, "", true)) == "Interface\\Cursor\\Attack.blp");
 }
+
+TEST_CASE("Skinnable corpse retains loot priority", "[gather-cursor]") {
+    using namespace wowee::game;
+    using wowee::ui::unitCursorPath;
+    CHECK(std::string(unitCursorPath(false, 0, 2, 0,
+        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE)) == "Interface\\Cursor\\Skin.blp");
+    CHECK(std::string(unitCursorPath(false, UNIT_DYNFLAG_LOOTABLE, 2, 0,
+        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE)) == "Interface\\Cursor\\LootAll.blp");
+}

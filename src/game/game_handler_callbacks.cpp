@@ -1,4 +1,5 @@
 #include "game/game_handler.hpp"
+#include "game/game_object_lock.hpp"
 #include "game/stationery.hpp"
 #include "game/reputation_standing.hpp"
 #include "addons/lua_api_registrations.hpp"
@@ -95,28 +96,6 @@ bool containsAnyTerm(const std::string& haystack, const char* const* terms, size
 // was still pending, a CMSG_LOOT as well - which the server answers with the
 // hole's loot, harvesting the school in one right-click.
 constexpr uint32_t kGoTypeFishingHole = 25;
-
-// The Lock.dbc row a game object is opened through. Most types keep it in
-// data[0]; doors and buttons in data[1]. The same on every expansion.
-uint32_t gameObjectLockId(const GameObjectQueryResponseData* info) {
-    if (!info || !info->hasData) return 0;
-    switch (info->type) {
-        case 0:  // DOOR
-        case 1:  // BUTTON
-            return info->data[1];
-        case 2:  // QUESTGIVER
-        case 3:  // CHEST
-        case 6:  // TRAP
-        case 10: // GOOBER
-        case 12: // AREADAMAGE
-        case 13: // CAMERA
-        case 24: // FLAGSTAND
-        case 26: // FLAGDROP
-            return info->data[0];
-        default:
-            return 0;
-    }
-}
 
 // How the local player should open a game object, decided from its Lock.dbc row.
 enum class LockOpenMethod {

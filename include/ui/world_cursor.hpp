@@ -10,10 +10,12 @@ namespace wowee::ui {
 // Priority matches the action: a corpse cannot trade and a hostile cannot chat.
 inline const char* unitCursorPath(bool alive, uint32_t dynamicFlags, int reaction,
                                   uint32_t npcFlags, game::QuestGiverStatus questStatus,
-                                  std::string_view iconName = {}, bool attackable = true) {
+                                  std::string_view iconName = {}, bool attackable = true,
+                                  uint32_t unitFlags = 0) {
     if (!alive) {
-        return dynamicFlags & game::UNIT_DYNFLAG_LOOTABLE
-            ? "Interface\\Cursor\\LootAll.blp" : "Interface\\Cursor\\Point.blp";
+        if (dynamicFlags & game::UNIT_DYNFLAG_LOOTABLE) return "Interface\\Cursor\\LootAll.blp";
+        if (unitFlags & game::UNIT_FLAG_SKINNABLE) return "Interface\\Cursor\\Skin.blp";
+        return "Interface\\Cursor\\Point.blp";
     }
     if (attackable && reaction <= 4) return "Interface\\Cursor\\Attack.blp";
     const char* questSymbol = questStatus == game::QuestGiverStatus::UNAVAILABLE

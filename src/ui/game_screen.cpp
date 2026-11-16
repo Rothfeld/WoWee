@@ -1,5 +1,6 @@
 #include "ui/graphics_choices.hpp"
 #include "game/game_utils.hpp"
+#include "game/game_object_lock.hpp"
 #include "ui/game_screen.hpp"
 #include "ui/gamepad_controls.hpp"
 #include "core/gamepad.hpp"
@@ -1098,7 +1099,7 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     const char* path = ui::unitCursorPath(
         !game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()),
         unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
-        unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit));
+        unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit), unit->getUnitFlags());
     const auto texture = cursorTexture(services_.assetManager, services_.window, path);
     if (!texture) return false;
     selectCursorTexture(texture);
@@ -1122,6 +1123,28 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
     const auto* info = gameHandler.getCachedGameObjectInfo(go->getEntry());
     if (usable) {
         std::string path = objectCursorPath(info ? info->type : 0u);
+        const uint32_t lockId = game::gameObjectLockId(info);
+        if (lockId != 0) {
+            assert(services_.assetManager);
+            const auto locks = services_.assetManager->loadDBC("Lock.dbc");
+            const auto types = services_.assetManager->loadDBC("LockType.dbc");
+            assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
+            assert(types && types->isLoaded() && types->getFieldCount() > 1);
+            const int32_t row = locks->findRecordById(lockId);
+            assert(row >= 0);
+            for (uint32_t slot = 0; slot < 8; ++slot) {
+                if (locks->getUInt32(row, 1 + slot) != 2) continue; // Skill lock.
+                const uint32_t typeId = locks->getUInt32(row, 9 + slot);
+                if (typeId == 0) continue;
+                const int32_t typeRow = types->findRecordById(typeId);
+                assert(typeRow >= 0);
+                // CursorName is the final, non-localized LockType column.
+                const auto cursor = types->getString(typeRow, types->getFieldCount() - 1);
+                if (cursor.empty()) continue; // This lock type has no cursor override.
+                path = "Interface\\Cursor\\" + cursor + ".blp";
+                break;
+            }
+        }
         // Fishing has a single cursor asset; bobbers use their own reach.
         if (info && info->type != 17 && gameHandler.isGameObjectInRange(guid) == false)
             path.insert(path.rfind('\\') + 1, "Unable");
