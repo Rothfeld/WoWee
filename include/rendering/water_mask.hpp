@@ -31,20 +31,11 @@ inline bool waterVertexUsed(uint64_t mask, int x, int y) {
 /// The sub-tiles of one chunk that should be drawn, as an 8x8 bitmask packed
 /// into a uint64_t with the same row*8+col, LSB-first ordering.
 ///
-/// `isOcean` is a whole-chunk statement, not a per-tile one: an ocean layer's
-/// own sub-rect is frequently sparse, and honouring it leaves holes in open sea.
-/// A chunk that declares ocean therefore fills completely.
-///
-/// **A chunk that declares no liquid never reaches here.** It contributes no
-/// layer, so it gets no bits. The bug this replaced seeded every sub-tile of the
-/// whole ADT before the chunks were consulted, which gave water to chunks that
-/// had none - invisible against land above sea level, and a ceiling of ocean
-/// over anything below it.
+/// Ocean and river masks both describe authored wet cells. Liquid type changes
+/// shading, never coverage. In kalimdor_30_24.adt, Zoram's ocean chunk (3,6)
+/// has only 35 wet cells; expanding it paints triangles across the dry beach.
 inline uint64_t chunkWaterMask(const std::vector<uint8_t>& layerMask,
-                               int x, int y, int width, int height,
-                               bool isOcean) {
-    if (isOcean) return ~uint64_t{0};
-
+                               int x, int y, int width, int height) {
     uint64_t out = 0;
     for (int row = 0; row < height; ++row) {
         for (int col = 0; col < width; ++col) {

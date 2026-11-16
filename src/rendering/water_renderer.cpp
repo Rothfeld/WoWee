@@ -850,7 +850,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                 }
                 surface.heights.resize(numVertices, layer.minHeight);
                 const uint64_t usedCells = chunkWaterMask(layer.mask, layer.x, layer.y,
-                                                          layer.width, layer.height, false);
+                                                          layer.width, layer.height);
                 for (int y = 0; y <= layer.height; ++y) {
                     for (int x = 0; x <= layer.width; ++x) {
                         if (!waterVertexUsed(usedCells, layer.x + x, layer.y + y)) continue;
@@ -912,20 +912,8 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
         // Initialize mask (128×128 sub-tiles)
         // Mask uses LSB bit order: tileIndex = row * 128 + col
         const int maskBytes = (MERGED_W * MERGED_W + 7) / 8;
-        // Ocean water (basicType 1) at sea level fills each chunk that declares
-        // it, whatever its own bitmap says - an ocean layer's sub-rect is often
-        // sparse and the gaps read as holes in open sea.
-        //
-        // Each chunk that declares it, not the whole tile. This used to seed
-        // the entire 128×128 mask, on the reading that depth testing against
-        // the terrain would hide the water wherever there was land. That holds
-        // only for land *above* sea level. Somewhere the ground drops below it
-        // the water is drawn over the top with nothing to occlude it, and a
-        // chunk that declares no liquid at all got a surface anyway: the
-        // Caverns of Time, a hole in a coastal tile in Tanaris, was roofed with
-        // ocean. Any cave below sea level on an ocean tile had the same.
-        uint8_t basicType = (key.liquidType == 0) ? 0 : ((key.liquidType - 1) % 4);
-        bool isOcean = (basicType == 1) && (std::abs(groupHeight) < 1.0f);
+        // Preserve authored wet cells for every liquid type, including oceans.
+        // Depth testing cannot substitute for dry-cell masks on low beaches.
         surface.mask.resize(maskBytes, 0x00);
 
         // ── Fill from each contributing chunk ──
@@ -946,7 +934,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                 throw std::runtime_error("Water height grid size mismatch");
             }
             const uint64_t authoredCells = chunkWaterMask(layer.mask, layer.x, layer.y,
-                                                           layer.width, layer.height, false);
+                                                           layer.width, layer.height);
 
             for (int ly = 0; ly <= layer.height; ly++) {
                 for (int lx = 0; lx <= layer.width; lx++) {
@@ -983,7 +971,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
             // this places the answer, in the chunk-row-to-render-X order the
             // merged grid uses.
             const uint64_t chunkMask = chunkWaterMask(
-                layer.mask, layer.x, layer.y, layer.width, layer.height, isOcean);
+                layer.mask, layer.x, layer.y, layer.width, layer.height);
             for (int row = 0; row < 8; row++) {
                 for (int col = 0; col < 8; col++) {
                     if (!(chunkMask & (uint64_t{1} << (row * 8 + col)))) continue;
