@@ -252,6 +252,7 @@ struct M2Particle {
 struct M2Instance {
     uint32_t id = 0;     // Unique instance ID
     uint32_t modelId;
+    uint32_t indoorLighting = 0; // packed MODD RGB in bits 8..31, bit 1 enables
     glm::vec3 position;
     glm::vec3 rotation;  // Euler angles in degrees
     float scale;
@@ -553,6 +554,7 @@ public:
                                   bool skipToEnd);
 
     /// Light an instance while it is being pressed on. 0 clears it.
+    void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color);
     void setInstanceHighlight(uint32_t instanceId, float amount);
     /// See M2Instance::fade.
     void setInstanceFade(uint32_t instanceId, float alpha);

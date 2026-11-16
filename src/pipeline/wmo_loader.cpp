@@ -30,6 +30,7 @@ constexpr uint32_t MOBA = 0x4D4F4241;  // Batches
 constexpr uint32_t MOCV = 0x4D4F4356;  // Vertex colors
 constexpr uint32_t MONR = 0x4D4F4E52;  // Normals
 constexpr uint32_t MOTV = 0x4D4F5456;  // Texture coords
+constexpr uint32_t MODR = 0x4D4F4452;
 constexpr uint32_t MLIQ = 0x4D4C4951;  // Liquid
 
 // Read utilities
@@ -612,6 +613,11 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                                 batch.lastVertex, "] mat=", static_cast<int>(batch.materialId), " flags=", static_cast<int>(batch.flags));
                         }
                     }
+                }
+                else if (subChunkId == MODR) {
+                    assert(subChunkSize % 2 == 0);
+                    group.doodadRefs.resize(subChunkSize / 2);
+                    for (auto& ref : group.doodadRefs) ref = read<uint16_t>(groupData, mogpOffset);
                 }
                 else if (subChunkId == MLIQ) { // MLIQ - WMO liquid data
                     // Basic WotLK layout:

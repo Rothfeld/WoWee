@@ -62,6 +62,7 @@ layout(location = 4) out float ModelHeight;
 layout(location = 5) out float vFadeAlpha;
 layout(location = 6) flat out int vSkyMode;
 layout(location = 7) flat out float vHighlight;
+layout(location = 8) flat out vec4 vIndoorLighting;
 
 void main() {
     // Fetch per-instance data from SSBO
@@ -288,6 +289,10 @@ void main() {
     vFadeAlpha = fade;
     vSkyMode = push.isFoliage < 0 ? 1 : 0;
     vHighlight = instanceData[instIdx].highlight;
+    uint lighting = uint(instanceData[instIdx].flags);
+    vIndoorLighting = vec4(vec3((lighting >> 8) & 255u, (lighting >> 16) & 255u,
+                              (lighting >> 24) & 255u) / 255.0,
+                          (lighting & 2u) != 0u ? 1.0 : 0.0);
 
     gl_Position = projection * view * worldPos;
     // A sky model sits on the far plane whatever its radius, so the depth

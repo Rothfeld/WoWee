@@ -1551,7 +1551,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
                 e.boneCount = static_cast<int32_t>(inst.boneMatrices.size());
                 e.highlight = inst.highlight;
-                e.flags = inst.afloat > 0 ? 1 : 0;
+                e.flags = static_cast<int32_t>(inst.indoorLighting | (inst.afloat > 0 ? 1u : 0u));
                 instanceDataCount_++;
                 ++writtenInstances;
             }
@@ -1852,7 +1852,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
                             e.boneCount = static_cast<int32_t>(inst.boneMatrices.size());
                             e.highlight = inst.highlight;
-                            e.flags = inst.afloat > 0 ? 1 : 0;
+                            e.flags = static_cast<int32_t>(inst.indoorLighting | (inst.afloat > 0 ? 1u : 0u));
                             instanceDataCount_++;
                         }
                     }
@@ -2146,7 +2146,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
             e.boneCount = static_cast<int32_t>(instance.boneMatrices.size());
             e.highlight = instance.highlight;
-            e.flags = instance.afloat > 0 ? 1 : 0;
+            e.flags = static_cast<int32_t>(instance.indoorLighting | (instance.afloat > 0 ? 1u : 0u));
             instanceDataCount_++;
 
             // Pipeline selection

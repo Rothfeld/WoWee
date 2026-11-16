@@ -111,6 +111,7 @@ struct PendingTile {
         pipeline::M2Model model;
         glm::vec3 worldPosition;   // For frustum culling
         glm::mat4 modelMatrix;     // Pre-computed world transform
+        std::optional<glm::vec3> indoorLighting;
     };
     std::vector<WMODoodadReady> wmoDoodads;
 

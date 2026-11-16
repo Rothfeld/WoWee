@@ -860,6 +860,13 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                         doodadReady.model = std::move(m2Model);
                         doodadReady.worldPosition = worldPos;
                         doodadReady.modelMatrix = worldMatrix;
+                        for (const auto& group : wmoModel.groups) {
+                            if ((group.flags & 0x2000) && std::find(group.doodadRefs.begin(),
+                                    group.doodadRefs.end(), doodadIdx) != group.doodadRefs.end()) {
+                                doodadReady.indoorLighting = glm::vec3(doodad.color);
+                                break;
+                            }
+                        }
                         pending->wmoDoodads.push_back(std::move(doodadReady));
                     }
                     }
@@ -1249,6 +1256,8 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                 uint32_t wmoDoodadInstId = m2Renderer->createInstanceWithMatrix(
                     doodad.modelId, doodad.modelMatrix, doodad.worldPosition);
                 if (wmoDoodadInstId) {
+                    if (doodad.indoorLighting)
+                        m2Renderer->setInstanceIndoorLighting(wmoDoodadInstId, *doodad.indoorLighting);
                     // Respect authored prop collision; do not invent box walls
                     // for decorative WMO children without a collision mesh.
                     m2Renderer->setSkipWallCollision(wmoDoodadInstId,

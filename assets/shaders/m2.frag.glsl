@@ -55,6 +55,7 @@ layout(location = 4) in float ModelHeight;
 layout(location = 5) in float vFadeAlpha;
 layout(location = 6) flat in int vSkyMode;
 layout(location = 7) flat in float vHighlight;
+layout(location = 8) flat in vec4 vIndoorLighting;
 
 layout(location = 0) out vec4 outColor;
 
@@ -300,6 +301,10 @@ void main() {
             result += vec3(0.32, 0.14, 0.025) * (emissiveBoost - 1.0) *
                       emissiveWeight;
         }
+    } else if (vIndoorLighting.w > 0.5) {
+        // Interior WMO props carry placement lighting in MODD. Outdoor sky
+        // lighting would tint their authored warm surfaces blue/green.
+        result = vIndoorLighting.rgb * texColor.rgb;
     } else {
         vec3 viewDir = normalize(viewPos.xyz - FragPos);
 

@@ -495,6 +495,15 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                                 uint32_t doodadInstId = m2Renderer->createInstanceWithMatrix(doodadModelId, worldMatrix, worldPos);
                                 if (doodadInstId) m2Renderer->setSkipWallCollision(
                                     doodadInstId, m2Model.collisionIndices.empty());
+                                if (doodadInstId) {
+                                    for (const auto& group : wmoModel.groups) {
+                                        if ((group.flags & 0x2000) && std::find(group.doodadRefs.begin(),
+                                                group.doodadRefs.end(), doodadIdx) != group.doodadRefs.end()) {
+                                            m2Renderer->setInstanceIndoorLighting(doodadInstId, glm::vec3(doodad.color));
+                                            break;
+                                        }
+                                    }
+                                }
                                 loadedDoodads++;
                             }
                             LOG_INFO("Loaded ", loadedDoodads, " instance WMO doodads");

@@ -70,6 +70,13 @@ void M2Renderer::setInstanceFade(uint32_t instanceId, float alpha) {
     instances[idxIt->second].fade = std::clamp(alpha, 0.0f, 1.0f);
 }
 
+void M2Renderer::setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color) {
+    const auto index = instanceIndexById.find(instanceId);
+    assert(index != instanceIndexById.end());
+    const auto rgb = glm::uvec3(glm::round(glm::clamp(color, 0.0f, 1.0f) * 255.0f));
+    instances[index->second].indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
+}
+
 void M2Renderer::setInstanceHighlight(uint32_t instanceId, float amount) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;
