@@ -1123,32 +1123,10 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
     // Chairs and unlabelled decorative scenery only retain their cursor.
     if (info && ((info->type == 5 && info->data[0] == 0) || info->type == 7)) return usable;
 
-    // ...and what it is, beside the pointer, which is the whole of what the
-    // real client shows for an object: a cursor saying what it is for and a
-    // name saying what it is. An object whose name has not come back yet is
-    // left silent rather than labelled "Unknown".
     const std::string name = game::entityDisplayName(entity);
-    if (!name.empty() && name != "Unknown") {
-        // ImGui's default tooltip offset assumes its small native cursor.
-        // Our 32px game cursor is drawn afterward and would cover the name.
-        const ImVec2 mouse = ImGui::GetIO().MousePos;
-        const ImVec2 textSize = ImGui::CalcTextSize(name.c_str());
-        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
-        const ImVec2 size(textSize.x + 2.0f * padding.x,
-                          textSize.y + 2.0f * padding.y);
-        const ImVec2 screen = ImGui::GetIO().DisplaySize;
-        float x = mouse.x + 36.0f;
-        float y = mouse.y + 36.0f;
-        if (x + size.x > screen.x) x = mouse.x - size.x - 4.0f;
-        if (y + size.y > screen.y) y = mouse.y - size.y - 4.0f;
-        ImGui::SetNextWindowPos(ImVec2(std::max(0.0f, x), std::max(0.0f, y)));
-        ImGui::BeginTooltip();
-        ImGui::TextUnformatted(name.c_str());
-        ImGui::EndTooltip();
-    } else if (!usable) {
-        // Scenery with nothing to say is not worth taking the pointer for.
-        return false;
-    }
+    if (name.empty() || name == "Unknown") return usable;
+    worldObjectHoverGuid_ = guid;
+    worldObjectTooltipFloating_ = info && info->type == 5 && info->data[0] != 0;
     return true;
 }
 
@@ -1509,6 +1487,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     }
 
     worldHoverGuid_ = 0;
+    worldObjectHoverGuid_ = 0;
     uint64_t highlightedSign = 0;
     constexpr float signHoverStrength = 0.25f;
     // Cursor affordance: show hand cursor over interactable entities.

@@ -2106,6 +2106,22 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             if (!tipFont) continue;
             ++sized;
             sizeTooltipWidget(w, tipFont, tree);
+            if (w->tooltipAnchorCursor) {
+                // Build 8606 anchors the tooltip bottom-center to the cursor.
+                float x = ImGui::GetIO().MousePos.x;
+                float y = ImGui::GetIO().MousePos.y;
+                mouseToTreeSpace(x, y, screenH, tree.uiScale());
+                const auto* root = tree.findByName("UIParent");
+                assert(root);
+                Anchor anchor;
+                anchor.point = "BOTTOM";
+                anchor.relativeTo = root->id;
+                anchor.relativePoint = "BOTTOMLEFT";
+                anchor.x = x / w->effScale;
+                anchor.y = y / w->effScale;
+                tree.clearPoints(w->id);
+                tree.addPoint(w->id, anchor);
+            }
             // Say so, or the re-place below does nothing.
             //
             // sizeTooltipWidget writes width and height as plain fields, and

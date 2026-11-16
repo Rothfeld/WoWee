@@ -336,6 +336,8 @@ private:
     // Left-click targeting: distinguish click from camera drag
     uint64_t worldHoverGuid_ = 0;
     uint64_t worldTooltipGuid_ = 0;
+    uint64_t worldObjectHoverGuid_ = 0;
+    bool worldObjectTooltipFloating_ = false;
     glm::vec2 leftClickPressPos_ = glm::vec2(0.0f);
     bool leftClickWasPress_ = false;
     // Right-click interact/attack fires on release only if the press was a tap, not a

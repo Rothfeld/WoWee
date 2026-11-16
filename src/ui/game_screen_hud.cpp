@@ -1707,15 +1707,37 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
     if (frameXmlOwnsMouse() || ImGui::GetIO().WantCaptureMouse) mouseoverGuid = 0;
     gameHandler.setMouseoverGuid(mouseoverGuid);
-    if (services_.addonManager && worldTooltipGuid_ != mouseoverGuid) {
+    const uint64_t objectTooltipGuid = frameXmlOwnsMouse() || ImGui::GetIO().WantCaptureMouse
+        || mouseoverGuid ? 0 : worldObjectHoverGuid_;
+    const uint64_t tooltipGuid = mouseoverGuid ? mouseoverGuid : objectTooltipGuid;
+    if (services_.addonManager && worldTooltipGuid_ != tooltipGuid) {
         auto* lua = services_.addonManager->getLuaEngine();
-        const char* script = mouseoverGuid
-            ? "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); GameTooltip:SetUnit('mouseover')"
-            : "if GameTooltip:GetOwner() == WorldFrame then GameTooltip:Hide() end";
-        if (!lua->executeString(script)) {
-            LOG_ERROR("World unit tooltip update failed: ", lua->lastError());
+        std::string script;
+        if (objectTooltipGuid) {
+            const auto entity = gameHandler.getEntityManager().getEntity(objectTooltipGuid);
+            assert(entity);
+            // Encode server text as Lua data, including quotes and control bytes.
+            std::string literal = "'";
+            for (const unsigned char c : game::entityDisplayName(entity)) {
+                literal += '\\';
+                literal += static_cast<char>('0' + c / 100);
+                literal += static_cast<char>('0' + c / 10 % 10);
+                literal += static_cast<char>('0' + c % 10);
+            }
+            literal += "'";
+            script = worldObjectTooltipFloating_
+                ? "GameTooltip:SetOwner(WorldFrame, 'ANCHOR_CURSOR'); "
+                : "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); ";
+            script += "GameTooltip:SetText(" + literal + "); GameTooltip:Show()";
         } else {
-            worldTooltipGuid_ = mouseoverGuid;
+            script = mouseoverGuid
+                ? "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); GameTooltip:SetUnit('mouseover')"
+                : "if GameTooltip:GetOwner() == WorldFrame then GameTooltip:Hide() end";
+        }
+        if (!lua->executeString(script)) {
+            LOG_ERROR("World tooltip update failed: ", lua->lastError());
+        } else {
+            worldTooltipGuid_ = tooltipGuid;
         }
     }
     if (auto* characters = appRenderer->getCharacterRenderer()) {

@@ -1869,6 +1869,11 @@ int lua_Tooltip_SetOwner(lua_State* L) {
     const std::string anchor = luaL_optstring(L, 3, "ANCHOR_RIGHT");
     // ANCHOR_PRESERVE is the one that means what it says: keep the anchors.
     if (anchor == "ANCHOR_PRESERVE") return 0;
+    w->tooltipAnchorCursor = anchor == "ANCHOR_CURSOR";
+    if (w->tooltipAnchorCursor) {
+        tree->clearPoints(id);
+        return 0;
+    }
     if (owner == 0 || anchor == "ANCHOR_NONE") {
         // ANCHOR_NONE means the caller places the tooltip itself, and the call
         // that follows is a SetPoint - which is how GameTooltip_SetDefaultAnchor
@@ -1891,9 +1896,6 @@ int lua_Tooltip_SetOwner(lua_State* L) {
         {"ANCHOR_RIGHT",       "BOTTOMLEFT",  "TOPRIGHT"},
         {"ANCHOR_TOP",         "BOTTOM",      "TOP"},
         {"ANCHOR_BOTTOM",      "TOP",         "BOTTOM"},
-        // The cursor is not a frame, so this lands beside the owner instead -
-        // which is where the cursor is, near enough, and better than nowhere.
-        {"ANCHOR_CURSOR",      "TOPLEFT",     "BOTTOMRIGHT"},
     };
     const char* point = "LEFT";
     const char* rel = "RIGHT";
