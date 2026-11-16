@@ -933,6 +933,7 @@ public:
     /// resolved from the parent during layout, so this only has to fix the link
     /// and the two children lists.
     void setParent(uint32_t id, uint32_t newParent);
+    [[nodiscard]] int frameLevel(uint32_t id) const;
 
     void markScrollFrame(uint32_t id);
 

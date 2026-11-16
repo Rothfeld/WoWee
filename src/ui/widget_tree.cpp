@@ -153,10 +153,18 @@ uint32_t WidgetTree::create(WidgetKind kind, uint32_t parent, const std::string&
         // itself to 1 rather than to one above its parent, its buttons
         // followed, and the bar they sit on stayed above all of them and took
         // every click. Elsewhere the same sum went negative.
-        w.effLevel = widgets_[parent].effLevel + 1;
+        w.effLevel = frameLevel(parent) + 1;
         w.effStrata = widgets_[parent].effStrata;
     }
     return id;
+}
+
+int WidgetTree::frameLevel(uint32_t id) const {
+    const Widget* w = get(id);
+    if (!w || id == rootId_ || id == uiParentId_) return 0;
+    const int parentLevel = frameLevel(w->parent);
+    const int level = w->levelExplicit ? w->level : parentLevel + 1;
+    return level < parentLevel ? parentLevel + 1 : level;
 }
 
 void WidgetTree::setParent(uint32_t id, uint32_t newParent) {
@@ -1371,9 +1379,13 @@ void WidgetTree::collectDrawOrder() {
                   const int la = sortLayer(a), lb = sortLayer(b);
                   if (la != lb) return la < lb;
                   if (a->subLevel != b->subLevel) return a->subLevel < b->subLevel;
-                  // Ties resolve by creation order, so a region added later sits
-                  // on top of one added earlier - the same rule the real client
-                  // uses within a layer.
+                  // Text is painted after textures within the same layer.
+                  // MirrorTimer declares its label before its border, but the
+                  // border must not cover the label's ascenders.
+                  const bool textA = a->kind == WidgetKind::FontString || a->isEditBox;
+                  const bool textB = b->kind == WidgetKind::FontString || b->isEditBox;
+                  if (textA != textB) return !textA;
+                  // Regions of the same kind retain creation order.
                   return a->creationOrder < b->creationOrder;
               });
 }

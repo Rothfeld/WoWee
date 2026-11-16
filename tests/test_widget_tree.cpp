@@ -2228,6 +2228,58 @@ TEST_CASE("A bar with no fill still sorts as the frame it is",
     CHECK(indexOf(bar) < indexOf(sibling));
 }
 
+TEST_CASE("Frame levels resolve during template construction before layout",
+          "[widget][level][statusbar]") {
+    WidgetTree tree;
+    const auto timer = tree.create(WidgetKind::Frame, 0, "MirrorTimer1");
+    tree.setParent(timer, tree.uiParentId());
+    const auto text = tree.create(WidgetKind::FontString, timer, "MirrorTimer1Text");
+    const auto bar = tree.create(WidgetKind::Frame, timer, "MirrorTimer1StatusBar");
+    // MirrorTimer.xml puts the fill at its parent's frame level on OnLoad.
+    auto* fill = tree.get(bar);
+    fill->level = tree.frameLevel(bar) - 1;
+    fill->levelExplicit = true;
+    CHECK(tree.frameLevel(bar) == tree.frameLevel(timer));
+    CHECK(tree.frameLevel(text) == tree.frameLevel(timer) + 1);
+    tree.layout(kScreenW, kScreenH);
+    CHECK(tree.get(bar)->effLevel == tree.get(timer)->effLevel);
+
+    const auto raised = tree.create(WidgetKind::Frame, tree.uiParentId(), "Raised");
+    tree.get(raised)->level = 7;
+    tree.get(raised)->levelExplicit = true;
+    tree.setParent(timer, raised);
+    CHECK(tree.frameLevel(timer) == 8);
+    CHECK(tree.frameLevel(text) == 9);
+}
+
+TEST_CASE("Font strings paint above later textures in the same layer",
+          "[widget][layer][statusbar]") {
+    WidgetTree tree;
+    const auto timer = tree.create(WidgetKind::Frame, tree.uiParentId(), "MirrorTimer1");
+    const auto label = tree.create(WidgetKind::FontString, timer, "MirrorTimer1Text");
+    const auto border = tree.create(WidgetKind::Texture, timer, "MirrorTimer1Border");
+    tree.get(label)->text = "Breath";
+    tree.get(label)->layer = DrawLayer::Overlay;
+    tree.get(border)->solidColor = true;
+    tree.get(border)->layer = DrawLayer::Overlay;
+    for (const auto id : {timer, label, border}) {
+        tree.get(id)->width = 100.0f;
+        tree.get(id)->height = 20.0f;
+        Anchor anchor;
+        anchor.point = "CENTER";
+        anchor.relativeTo = tree.get(id)->parent;
+        anchor.relativePoint = "CENTER";
+        tree.addPoint(id, anchor);
+    }
+    tree.layout(kScreenW, kScreenH);
+    const auto& order = tree.drawOrder();
+    const auto textAt = std::find(order.begin(), order.end(), tree.get(label));
+    const auto borderAt = std::find(order.begin(), order.end(), tree.get(border));
+    REQUIRE(textAt != order.end());
+    REQUIRE(borderAt != order.end());
+    CHECK(borderAt < textAt);
+}
+
 TEST_CASE("Raise and Lower are idempotent", "[widget][level]") {
     // ShowUIPanel raises on every panel open, so a Raise that adds one whether
     // or not anything is above it is a leak measured in panel opens. A quest

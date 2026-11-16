@@ -1097,8 +1097,10 @@ int lua_Region_GetEffectiveScale(lua_State* L) {
     return 1;
 }
 int lua_Frame_GetFrameLevel(lua_State* L) {
-    const auto* w = widgetOf(L, 1);
-    lua_pushnumber(L, w ? w->effLevel : 0);
+    const auto* tree = wowee::addons::getWidgetTree(L);
+    // OnLoad can query immediately after a template reparents this frame.
+    // Stacking does not depend on screen layout or the previous frame's cache.
+    lua_pushnumber(L, tree ? tree->frameLevel(widgetIdOf(L, 1)) : 0);
     return 1;
 }
 /// GetPoint(n) → point, relativeTo, relativePoint, x, y.
@@ -4024,7 +4026,7 @@ int lua_Frame_SetFrameLevel(lua_State* L) {
     // Anything inside that set its own level moves by the same amount, because
     // a child's level is relative to its parent. Raising a window by hand and
     // raising it by clicking it must leave the same arrangement behind.
-    if (tree && id) tree->shiftExplicitLevels(id, wanted - w->effLevel);
+    if (tree && id) tree->shiftExplicitLevels(id, wanted - tree->frameLevel(id));
     w->level = wanted;
     w->levelExplicit = true;
     return 0;
