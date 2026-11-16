@@ -3703,7 +3703,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     // Create water renderer if not already created
     if (!waterRenderer) {
         waterRenderer = std::make_unique<WaterRenderer>();
-        if (!waterRenderer->initialize(vkCtx, perFrameSetLayout)) {
+        if (!waterRenderer->initialize(vkCtx, perFrameSetLayout, assetManager)) {
             LOG_ERROR("Failed to initialize water renderer");
             waterRenderer.reset();
         }

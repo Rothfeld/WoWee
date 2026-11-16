@@ -1,4 +1,7 @@
 #include "core/coordinates.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "game/game_utils.hpp"
+#include <stdexcept>
 #include "rendering/water_surface_grid.hpp"
 #include "rendering/water_mask.hpp"
 #include "rendering/water_renderer.hpp"
@@ -43,7 +46,7 @@ struct WaterPushConstants {
     glm::vec2 screenSize;  // target size, for screen-space UVs
     glm::vec2 depthRange;  // camera near, far - the shader linearises SceneDepth with these
     float sceneValid = 0.0f; // 1 once captureSceneHistory has run; the shader used to guess this per pixel
-    float pad0 = 0.0f, pad1 = 0.0f, pad2 = 0.0f;
+    float legacyIndoor = 0.0f, textureRepeatX = 0.0f, textureRepeatY = 0.0f;
 };
 static_assert(sizeof(WaterPushConstants) == 112, "the two shader declarations of this range are laid out for 112 bytes");
 
@@ -55,7 +58,7 @@ WaterRenderer::~WaterRenderer() {
     shutdown();
 }
 
-bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout) {
+bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout, pipeline::AssetManager* assets) {
     vkCtx = ctx;
     if (!vkCtx) return false;
 
@@ -141,13 +144,62 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         return false;
     }
 
+    // Immutable texture descriptors: animation selects a frame without updating
+    // a descriptor that an in-flight draw may still use.
+    legacyWater = game::isPreWotlk();
+    const uint32_t frameCount = legacyWater ? 30 : 1;
+    VkDescriptorSetLayoutBinding lakeBinding{};
+    lakeBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    lakeBinding.descriptorCount = 1;
+    lakeBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    lakeSetLayout = createDescriptorSetLayout(device, {lakeBinding});
+    if (!lakeSetLayout) throw std::runtime_error("Water texture layout creation failed");
+    VkDescriptorPoolSize lakeSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, frameCount};
+    VkDescriptorPoolCreateInfo lakePoolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    lakePoolInfo.maxSets = frameCount;
+    lakePoolInfo.poolSizeCount = 1;
+    lakePoolInfo.pPoolSizes = &lakeSize;
+    if (vkCreateDescriptorPool(device, &lakePoolInfo, nullptr, &lakePool) != VK_SUCCESS)
+        throw std::runtime_error("Water texture descriptor pool creation failed");
+    lakeFrames.resize(frameCount);
+    lakeSets.resize(frameCount);
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        auto& texture = lakeFrames[frame];
+        if (legacyWater) {
+            assert(assets);
+            const std::string path = "XTextures/river/lake_a." + std::to_string(frame + 1) + ".blp";
+            const auto image = assets->loadTexture(path);
+            if (!texture.uploadBLP(*vkCtx, image))
+                throw std::runtime_error("Water texture upload failed: " + path);
+        } else {
+            const uint8_t white[] = {255, 255, 255, 255};
+            if (!texture.upload(*vkCtx, white, 1, 1))
+                throw std::runtime_error("Water inactive sampler initialization failed");
+        }
+        if (!texture.createSampler(device)) throw std::runtime_error("Water sampler creation failed");
+        VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocate.descriptorPool = lakePool;
+        allocate.descriptorSetCount = 1;
+        allocate.pSetLayouts = &lakeSetLayout;
+        if (vkAllocateDescriptorSets(device, &allocate, &lakeSets[frame]) != VK_SUCCESS)
+            throw std::runtime_error("Water texture descriptor allocation failed");
+        const auto imageInfo = texture.descriptorInfo();
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = lakeSets[frame];
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+    LOG_INFO("Water: loaded ", frameCount, " liquid animation textures");
+
     // --- Pipeline layout ---
     VkPushConstantRange pushRange{};
     pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushRange.offset = 0;
     pushRange.size = sizeof(WaterPushConstants);
 
-    std::vector<VkDescriptorSetLayout> setLayouts = { perFrameLayout, materialSetLayout, sceneSetLayout };
+    std::vector<VkDescriptorSetLayout> setLayouts = { perFrameLayout, materialSetLayout, sceneSetLayout, lakeSetLayout };
     pipelineLayout = createPipelineLayout(device, setLayouts, { pushRange });
     if (!pipelineLayout) {
         LOG_ERROR("WaterRenderer: failed to create pipeline layout");
@@ -344,6 +396,10 @@ void WaterRenderer::shutdown() {
     destroy(device, sceneSetLayout);
     destroy(device, materialDescPool);
     destroy(device, materialSetLayout);
+    destroy(device, lakePool);
+    destroy(device, lakeSetLayout);
+    lakeSets.clear();
+    lakeFrames.clear();
 
     vkCtx = nullptr;
 }
@@ -609,6 +665,12 @@ void WaterRenderer::updateMaterialUBO(WaterSurface& surface) {
     if (canalProfile && (surface.liquidType == 0 || (surface.liquidType - 1) % 4 < 2)) {
         color = glm::vec4(0.08f, 0.30f, 0.40f, 1.0f);
         bodyFloor = 0.45f;
+    }
+
+    if (legacyWater && surface.indoorColor &&
+            (surface.liquidType == 0 || (surface.liquidType - 1) % 4 < 2)) {
+        color = *surface.indoorColor;
+        alpha = 0.9f;
     }
 
     WaterMaterialUBO mat{};
@@ -961,7 +1023,12 @@ void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liqu
     surface.tileX = -1;
     surface.tileY = -1;
     surface.wmoId = wmoId;
-    surface.liquidType = liquid.materialId;
+    surface.liquidType = liquid.liquidType;
+    if (liquid.indoor) {
+        const uint32_t color = liquid.materialColor;
+        surface.indoorColor = glm::vec4((color >> 16) & 255, (color >> 8) & 255,
+                                       color & 255, (color >> 24) & 255) / 255.0f;
+    }
     surface.xOffset = 0;
     surface.yOffset = 0;
     surface.width = static_cast<uint8_t>(std::min<uint32_t>(255, liquid.xTiles));
@@ -992,14 +1059,21 @@ void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liqu
     const int gridHeight = static_cast<int>(surface.height) + 1;
     const int vertexCount = gridWidth * gridHeight;
 
-    // WMO liquid base heights sit ~2 units above the visual waterline.
-    constexpr float WMO_WATER_Z_OFFSET = -1.0f;
-    float adjustedZ = surface.origin.z + WMO_WATER_Z_OFFSET;
-    surface.heights.assign(vertexCount, adjustedZ);
-    surface.minHeight = adjustedZ;
-    surface.maxHeight = adjustedZ;
-    surface.origin.z = adjustedZ;
-    surface.position.z = adjustedZ;
+    assert(liquid.heights.size() == static_cast<size_t>(vertexCount));
+    surface.heights.resize(vertexCount);
+    surface.minHeight = std::numeric_limits<float>::max();
+    surface.maxHeight = std::numeric_limits<float>::lowest();
+    for (int y = 0; y < gridHeight; ++y) {
+        for (int x = 0; x < gridWidth; ++x) {
+            const int i = y * gridWidth + x;
+            const glm::vec3 local(localBase.x + x * WMO_LIQUID_TILE_SIZE,
+                                  localBase.y + y * WMO_LIQUID_TILE_SIZE, liquid.heights[i]);
+            const float height = (modelMatrix * glm::vec4(local, 1.0f)).z;
+            surface.heights[i] = height;
+            surface.minHeight = std::min(surface.minHeight, height);
+            surface.maxHeight = std::max(surface.maxHeight, height);
+        }
+    }
 
     if (surface.origin.z > 2000.0f || surface.origin.z < -500.0f) return;
 
@@ -1097,7 +1171,7 @@ void WaterRenderer::clear() {
 // ==============================================================
 
 void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
-                            const Camera& camera, float /*time*/, bool use1x, uint32_t frameIndex) {
+                            const Camera& camera, float time, bool use1x, uint32_t frameIndex) {
     // The wake as it stands, into this frame's slot - safe now, the frame has
     // waited for the GPU to finish with it.
     uploadFrameUBO();
@@ -1130,6 +1204,11 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                              0, 1, &perFrameSet, 0, nullptr);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                              2, 1, &activeSceneSet, 0, nullptr);
+
+    const uint32_t lakeFrame = legacyWater
+        ? static_cast<uint32_t>(std::max(0.0f, time) / 0.06f) % 30 : 0;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                           3, 1, &lakeSets.at(lakeFrame), 0, nullptr);
 
     for (const auto& surface : surfaces) {
         if (surface.vertexBuffer == VK_NULL_HANDLE || surface.indexCount == 0) continue;
@@ -1178,6 +1257,9 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // against a near plane of 0.05 while the camera's is 0.5.
         push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
+        push.legacyIndoor = legacyWater && surface.indoorColor && basicType < 2 ? 1.0f : 0.0f;
+        push.textureRepeatX = surface.width / 4.0f;
+        push.textureRepeatY = surface.height / 4.0f;
 
         vkCmdPushConstants(cmd, pipelineLayout,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,

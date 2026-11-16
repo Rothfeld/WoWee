@@ -130,8 +130,8 @@ WMOModel WMOLoader::load(const std::vector<uint8_t>& wmoData) {
                 model.boundingBoxMax.y = read<float>(wmoData, offset);
                 model.boundingBoxMax.z = read<float>(wmoData, offset);
 
-                // flags and numLod (uint16 each) - skip for now
-                offset += 4;
+                model.flags = read<uint16_t>(wmoData, offset);
+                offset += 2; // numLod
 
                 core::Logger::getInstance().debug("WMO header: nTextures=", model.nTextures, " nGroups=", model.nGroups);
                 break;
@@ -668,9 +668,23 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                             group.liquid.flags.resize(tileCount, 0);
                         }
 
-                        if (group.liquid.materialId == 0) {
-                            group.liquid.materialId = static_cast<uint16_t>(group.liquidType);
+                        // MLIQ materialId indexes MOMT; it is not a liquid type.
+                        uint32_t entry = (model.flags & 4) ? group.liquidType
+                            : (group.liquidType == 15 ? 0 : group.liquidType + 1);
+                        if (entry == 0) {
+                            for (uint8_t tile : group.liquid.flags) {
+                                if ((tile & 15) != 15) { entry = (tile & 15) + 1; break; }
+                            }
                         }
+                        if (entry > 0 && entry < 21) {
+                            const uint32_t basic = (entry - 1) & 3;
+                            entry = basic == 0 ? ((group.flags & 0x80000) ? 2 : 1) : basic + 1;
+                        }
+                        assert(entry <= 65535);
+                        group.liquid.liquidType = static_cast<uint16_t>(entry);
+                        assert(group.liquid.materialId < model.materials.size());
+                        group.liquid.indoor = (group.flags & 0x2000) != 0;
+                        group.liquid.materialColor = model.materials[group.liquid.materialId].color2;
                     }
                 }
 

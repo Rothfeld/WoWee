@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rendering/vk_texture.hpp"
 #include <vector>
 #include <memory>
 #include <optional>
@@ -11,6 +12,7 @@
 
 namespace wowee {
 namespace pipeline {
+    class AssetManager;
     struct ADTTerrain;
     struct LiquidData;
     struct WMOLiquid;
@@ -32,6 +34,7 @@ struct WaterSurface {
     float minHeight;
     float maxHeight;
     uint16_t liquidType;
+    std::optional<glm::vec4> indoorColor;
 
     int tileX = -1, tileY = -1;
     uint32_t wmoId = 0;
@@ -80,7 +83,7 @@ public:
     WaterRenderer();
     ~WaterRenderer();
 
-    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
+    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout, pipeline::AssetManager* assets);
     void shutdown();
 
     void loadFromTerrain(const pipeline::ADTTerrain& terrain, bool append = false,
@@ -185,6 +188,11 @@ private:
     void destroyReflectionResources();
 
     VkContext* vkCtx = nullptr;
+    bool legacyWater = false;
+    std::vector<VkTexture> lakeFrames;
+    std::vector<VkDescriptorSet> lakeSets;
+    VkDescriptorSetLayout lakeSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool lakePool = VK_NULL_HANDLE;
 
     // Pipeline
     VkPipeline waterPipeline = VK_NULL_HANDLE;

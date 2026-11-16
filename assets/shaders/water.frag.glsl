@@ -30,7 +30,7 @@ layout(push_constant) uniform Push {
     vec2 screenSize;  // size of the target being drawn into
     vec2 depthRange;  // the camera's own near and far, for linearising SceneDepth
     float sceneValid; // 1 once the refraction capture holds a frame, 0 before it
-    float pad0, pad1, pad2;
+    float legacyIndoor, textureRepeatX, textureRepeatY;
 } push;
 
 layout(set = 1, binding = 0) uniform WaterMaterial {
@@ -62,6 +62,7 @@ layout(location = 3) in float WaveOffset;
 layout(location = 4) in vec2 ScreenUV;
 
 layout(location = 0) out vec4 outColor;
+layout(set = 3, binding = 0) uniform sampler2D LakeTexture;
 
 // ============================================================
 // Dual-scroll detail normals (multi-octave ripple overlay)
@@ -252,6 +253,13 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 void main() {
     float time = fogParams.z;
     float basicType = push.liquidBasicType;
+    if (push.legacyIndoor > 0.5) {
+        // Legacy indoor water uses an animated diffuse texture over MOMT color.
+        vec3 texel = texture(LakeTexture, TexCoord * vec2(push.textureRepeatX, push.textureRepeatY)).rgb;
+        vec3 color = waterColor.rgb + texel;
+        outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), waterAlpha);
+        return;
+    }
 
     // ============================================================
     // Magma / Slime - self-luminous flowing surfaces, skip water path

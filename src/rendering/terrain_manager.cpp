@@ -1169,7 +1169,8 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
             while (ft.wmoInstanceIndex < pending->wmoModels.size() && created < kWmoInstancesPerStep) {
                 auto& wmoReady = pending->wmoModels[ft.wmoInstanceIndex];
                 // Skip duplicates and unloaded models
-                if (wmoReady.uniqueId != 0 && placedWmoIds.count(wmoReady.uniqueId)) {
+                if (ft.wmoLiquidGroupIndex == 0 && wmoReady.uniqueId != 0 &&
+                        placedWmoIds.count(wmoReady.uniqueId)) {
                     ft.wmoInstanceIndex++;
                     ft.wmoLiquidGroupIndex = 0;
                     continue;
@@ -1206,11 +1207,6 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                         const auto& group = groups[ft.wmoLiquidGroupIndex];
                         ft.wmoLiquidGroupIndex++;
                         if (!group.liquid.hasLiquid()) continue;
-                        if (group.flags & 0x2000) {
-                            uint16_t lt = group.liquid.materialId;
-                            uint8_t basicType = (lt == 0) ? 0 : ((lt - 1) % 4);
-                            if (basicType < 2) continue;
-                        }
                         waterRenderer->loadFromWMO(group.liquid, modelMatrix, wmoInstId);
                         liquidGroupsLoaded++;
                     }

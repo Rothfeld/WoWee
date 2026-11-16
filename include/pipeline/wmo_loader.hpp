@@ -115,7 +115,10 @@ struct WMOLiquid {
     uint32_t xTiles = 0;        // Tiles in X (= xVerts - 1)
     uint32_t yTiles = 0;        // Tiles in Y (= yVerts - 1)
     glm::vec3 basePosition;     // Corner position in model space
-    uint16_t materialId = 0;    // Liquid material/type
+    uint16_t materialId = 0;    // Index into WMO materials
+    uint16_t liquidType = 0;    // Resolved LiquidType entry
+    bool indoor = false;
+    uint32_t materialColor = 0; // MOMT color2, ARGB
     std::vector<float> heights; // Height per vertex (xVerts * yVerts)
     std::vector<uint8_t> flags; // Flags per tile (xTiles * yTiles)
 
@@ -189,6 +192,7 @@ struct WMOModel {
     uint32_t nDoodadNames;
     uint32_t nDoodadDefs;
     uint32_t nDoodadSets;
+    uint16_t flags = 0;
 
     glm::vec3 ambientColor;     // MOHD ambient color (used for interior group lighting)
     glm::vec3 boundingBoxMin;
