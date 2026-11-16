@@ -963,6 +963,17 @@ void GameHandler::update(float deltaTime) {
 
 // NPC dialogs share the same lifetime while the player stays within reach.
 void GameHandler::closeDistantNpcWindows() {
+    if (readingGameObjectGuid_ != 0) {
+        const auto object = getEntityManager().getEntity(readingGameObjectGuid_);
+        const float distance = object ? glm::length(glm::vec3(
+            movementInfo.x - object->getX(), movementInfo.y - object->getY(),
+            movementInfo.z - object->getZ())) : 0.0f;
+        // CMaNGOS TEXT interaction distance (GameObject::GetInteractionDistance).
+        if (!object || distance > 5.5555553f) {
+            clearBook();
+            fireAddonEvent("ITEM_TEXT_CLOSED", {});
+        }
+    }
     auto closeIfTooFar = [&](bool windowOpen, uint64_t npcGuid, auto closeFn, const char* label) {
         if (!windowOpen || npcGuid == 0) return;
         auto npc = entityController_->getEntityManager().getEntity(npcGuid);

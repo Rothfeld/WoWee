@@ -2604,7 +2604,8 @@ public:
     struct BookPage { uint32_t pageId = 0; std::string text; };
     const std::vector<BookPage>& getBookPages() const { return bookPages_; }
     bool hasBookOpen() const { return !bookPages_.empty(); }
-    void clearBook() { bookPages_.clear(); bookTitle_.clear(); bookMaterial_ = 0; }
+    void clearBook();
+    void setReadingGameObject(uint64_t guid);
 
     /// What is being read, for the heading over the page. Known at every point
     /// a book is opened - the game object's name from its query cache, or the
@@ -5015,6 +5016,7 @@ private:
     LevelUpDeltas lastLevelUpDeltas_;
     std::vector<TempEnchantTimer> tempEnchantTimers_;
     std::vector<BookPage> bookPages_;            // pages collected for the current readable item
+    uint64_t readingGameObjectGuid_ = 0;
     std::string bookTitle_;                      // name of the object or item those pages belong to
     uint32_t bookMaterial_ = 0;                  // PageTextMaterial.dbc id, 0 for unknown
     /// PageTextMaterial.dbc is seven rows and is read once on the first ask,

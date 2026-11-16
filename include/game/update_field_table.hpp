@@ -157,6 +157,9 @@ enum class UF : uint16_t {
     UNIT_FIELD_RESISTANCEBUFFMODSNEGATIVE,
     UNIT_FIELD_RANGEDATTACKTIME,
 
+    // TBC carries GO state in a standalone word, unlike Wrath's BYTES_1.
+    GAMEOBJECT_STATE,
+
     COUNT
 };
 

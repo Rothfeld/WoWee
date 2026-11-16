@@ -44,6 +44,15 @@ std::map<std::string, int> declaredFields(const std::string& expansion) {
 
 }  // namespace
 
+TEST_CASE("TBC game object state is a standalone word", "[game-object-pose]") {
+    // CMaNGOS TBC UpdateFields.h: OBJECT_END(6) + 0x8.
+    const auto tbc = declaredFields("tbc");
+    REQUIRE(tbc.count("GAMEOBJECT_STATE") == 1);
+    CHECK(tbc.at("GAMEOBJECT_STATE") == 14);
+    CHECK(tbc.count("GAMEOBJECT_BYTES_1") == 0);
+    CHECK(declaredFields("wotlk").at("GAMEOBJECT_BYTES_1") == 17);
+}
+
 TEST_CASE("the WotLK field indices are what the server sends", "[update-fields]") {
     // Recorded from AzerothCore's UpdateFields.h. Every one of the 75 fields
     // in the table agreed once UNIT_FIELD_TARGET was corrected; these are the

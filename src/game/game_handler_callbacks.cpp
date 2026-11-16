@@ -1318,6 +1318,27 @@ void GameHandler::closeItemText() {
     else itemTextOpen_ = false;
 }
 
+void GameHandler::setReadingGameObject(uint64_t guid) {
+    readingGameObjectGuid_ = guid;
+    if (guid != 0 && gameObjectStateCallback_) gameObjectStateCallback_(guid, 0);
+}
+
+void GameHandler::clearBook() {
+    if (readingGameObjectGuid_ != 0 && gameObjectStateCallback_) {
+        const auto object = getEntityManager().getEntity(readingGameObjectGuid_);
+        if (object) {
+            const auto field = fieldIndex(isActiveExpansion("tbc") ?
+                UF::GAMEOBJECT_STATE : UF::GAMEOBJECT_BYTES_1);
+            gameObjectStateCallback_(readingGameObjectGuid_,
+                static_cast<uint8_t>(object->getField(field) & 0xFF));
+        }
+    }
+    readingGameObjectGuid_ = 0;
+    bookPages_.clear();
+    bookTitle_.clear();
+    bookMaterial_ = 0;
+}
+
 // Loot
 bool GameHandler::isLootWindowOpen() const {
     return inventoryHandler_ ? inventoryHandler_->isLootWindowOpen() : lootWindowOpen;

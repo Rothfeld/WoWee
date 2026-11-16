@@ -94,6 +94,7 @@ static const UFNameEntry kUFNames[] = {
     {.name = "GAMEOBJECT_DISPLAYID", .field = UF::GAMEOBJECT_DISPLAYID},
     {.name = "GAMEOBJECT_FLAGS", .field = UF::GAMEOBJECT_FLAGS},
     {.name = "GAMEOBJECT_BYTES_1", .field = UF::GAMEOBJECT_BYTES_1},
+    {.name = "GAMEOBJECT_STATE", .field = UF::GAMEOBJECT_STATE},
     {.name = "GAMEOBJECT_DYNAMIC", .field = UF::GAMEOBJECT_DYNAMIC},
     {.name = "GAMEOBJECT_LEVEL", .field = UF::GAMEOBJECT_LEVEL},
     {.name = "ITEM_FIELD_STACK_COUNT", .field = UF::ITEM_FIELD_STACK_COUNT},

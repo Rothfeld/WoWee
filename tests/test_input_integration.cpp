@@ -23,6 +23,47 @@ namespace addons = wowee::addons;
 namespace core = wowee::core;
 namespace rendering = wowee::rendering;
 
+TEST_CASE("TBC game object creation and updates deliver authored state", "[game-object-pose]") {
+    using namespace wowee::game;
+    for (const uint32_t initialState : {0u, 1u}) {
+        replay::Session session("tbc");
+        constexpr uint64_t guid = 0xf11002ae7200c228ull;
+        std::vector<uint8_t> states;
+        session.handler().setGameObjectStateCallback([&](uint64_t id, uint8_t state) {
+            CHECK(id == guid);
+            states.push_back(state);
+        });
+        const auto send = [&](bool create, uint32_t state) {
+            wowee::network::Packet packet(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+            packet.writeUInt32(1); packet.writeUInt8(0);
+            packet.writeUInt8(static_cast<uint8_t>(create ? UpdateType::CREATE_OBJECT2 : UpdateType::VALUES));
+            packet.writePackedGuid(guid);
+            if (create) {
+                packet.writeUInt8(static_cast<uint8_t>(ObjectType::GAMEOBJECT));
+                packet.writeUInt8(0); // No movement payload.
+            }
+            // Independent wire oracle: STATE=14. CREATE omits zero-valued fields.
+            const bool present = !create || state != 0;
+            packet.writeUInt8(1);
+            packet.writeUInt32(present ? 1u << 14 : 0u);
+            if (present) packet.writeUInt32(state);
+            session.receive(packet);
+        };
+        send(true, initialState);
+        REQUIRE(states.size() == 1);
+        CHECK(states.back() == initialState);
+        send(false, 1u - initialState);
+        REQUIRE(states.size() == 2);
+        CHECK(states.back() == 1u - initialState);
+        session.handler().setReadingGameObject(guid);
+        REQUIRE(states.size() == 3);
+        CHECK(states.back() == 0);
+        session.handler().clearBook();
+        REQUIRE(states.size() == 4);
+        CHECK(states.back() == 1u - initialState);
+    }
+}
+
 namespace {
 struct Integration : Fixture {
     addons::LuaEngine lua;

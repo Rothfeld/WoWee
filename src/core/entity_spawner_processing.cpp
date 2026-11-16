@@ -1,4 +1,5 @@
 #include "core/entity_spawner.hpp"
+#include "core/game_object_animation_policy.hpp"
 
 #include <set>
 #include "rendering/m2_model_classifier.hpp"
@@ -1991,31 +1992,6 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
 
     LOG_DEBUG("Despawned creature: guid=0x", std::hex, guid, std::dec);
 }
-
-namespace {
-
-// Game object types whose pose is server state rather than a looping idle: they
-// hold one frame until the server says otherwise (a door stands open or shut, a
-// chest sits closed until it is opened), so playing their sequence on a loop
-// would animate them open over and over. Every other type plays its idle
-// continuously, which is what retail does - fishing pools circle their fish,
-// braziers gutter, banners wave.
-bool gameObjectPoseIsStateDriven(uint32_t goType) {
-    switch (goType) {
-        case 0:   // DOOR
-        case 1:   // BUTTON
-        case 3:   // CHEST
-        case 6:   // TRAP
-        case 10:  // GOOBER
-        case 33:  // DESTRUCTIBLE_BUILDING
-        case 35:  // TRAPDOOR
-            return true;
-        default:
-            return false;
-    }
-}
-
-} // namespace
 
 void EntitySpawner::applyGameObjectAnimationPolicy(uint64_t guid, uint32_t entry,
                                                    uint32_t instanceId) {

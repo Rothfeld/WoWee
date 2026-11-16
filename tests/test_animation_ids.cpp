@@ -2,12 +2,26 @@
 #include <catch_amalgamated.hpp>
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/creature_locomotion.hpp"
+#include "core/game_object_animation_policy.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include <cstring>
 #include <vector>
 
 using wowee::pipeline::DBCFile;
 namespace anim = wowee::rendering::anim;
+
+TEST_CASE("Readable books retain authored poses when template metadata arrives", "[game-object-pose]") {
+    using wowee::core::gameObjectPoseIsStateDriven;
+    for (uint32_t type : {0u, 1u, 3u, 6u, 9u, 10u, 33u, 35u}) {
+        CAPTURE(type);
+        CHECK(gameObjectPoseIsStateDriven(type));
+    }
+    // Animated scenery and one-shot duel flags keep their own playback policy.
+    for (uint32_t type : {5u, 16u, 25u}) {
+        CAPTURE(type);
+        CHECK_FALSE(gameObjectPoseIsStateDriven(type));
+    }
+}
 
 TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creature-locomotion]") {
     using wowee::rendering::creatureMovingAnimation;

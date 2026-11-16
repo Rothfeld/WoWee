@@ -19,12 +19,23 @@
 #include <bit>
 #include <set>
 #include <cstring>
+#include <stdexcept>
 #include <zlib.h>
 
 namespace wowee {
 namespace game {
 
 namespace {
+
+uint16_t gameObjectStateField() {
+    const bool tbc = isActiveExpansion("tbc");
+    const uint16_t field = fieldIndex(tbc ? UF::GAMEOBJECT_STATE : UF::GAMEOBJECT_BYTES_1);
+    if (tbc && field == 0xFFFF) {
+        LOG_ERROR("TBC update-field table lacks GAMEOBJECT_STATE; sync packaged update_fields.json");
+        throw std::runtime_error("Missing TBC GAMEOBJECT_STATE mapping");
+    }
+    return field;
+}
 
 std::vector<std::string> unitEventTokens(const GameHandler& owner, uint64_t guid) {
     std::vector<std::string> tokens;
@@ -2239,12 +2250,13 @@ void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_
     // does: a door standing open when the player walks into the room says so
     // here and nowhere else. Only the update path read it, so every object came
     // into view in its closed pose and stayed there until something changed it.
-    const uint16_t ufBytes1 = fieldIndex(UF::GAMEOBJECT_BYTES_1);
+    const uint16_t ufBytes1 = gameObjectStateField();
     if (ufBytes1 != 0xFFFF) {
         auto itBytes = block.fields.find(ufBytes1);
-        if (itBytes != block.fields.end() && owner_.gameObjectStateCallbackRef()) {
+        if (owner_.gameObjectStateCallbackRef()) {
             owner_.gameObjectStateCallbackRef()(
-                block.guid, static_cast<uint8_t>(itBytes->second & 0xFF));
+                block.guid, static_cast<uint8_t>(
+                    itBytes == block.fields.end() ? 0 : itBytes->second & 0xFF));
         }
     }
 
@@ -2491,8 +2503,8 @@ void EntityController::onValuesUpdateGameObject(const UpdateBlock& block, std::s
         }
     }
 
-    // Detect GO state changes from GAMEOBJECT_BYTES_1 (packed: byte0=state, byte1=type, byte2=artKit, byte3=animProgress)
-    const uint16_t ufGoBytes1 = fieldIndex(UF::GAMEOBJECT_BYTES_1);
+    // TBC publishes a standalone state word; Wrath packs state in byte zero.
+    const uint16_t ufGoBytes1 = gameObjectStateField();
     if (ufGoBytes1 != 0xFFFF) {
         auto itB = block.fields.find(ufGoBytes1);
         if (itB != block.fields.end()) {
@@ -3272,7 +3284,10 @@ void EntityController::showGameObjectPageText(uint64_t guid) {
                 " pageId=", pageId, " hasData=", info.hasData);
 
     if (pageId != 0 && owner_.getSocket() && owner_.getState() == WorldState::IN_WORLD) {
-        owner_.bookPagesRef().clear();  // start a fresh book for this interaction
+        owner_.clearBook();
+        // Readable books open locally for this reader; server state stays READY.
+        // Goobers retain their server-controlled interaction animation.
+        if (info.type == 9) owner_.setReadingGameObject(guid);
         owner_.setBookTitle(info.name);
         owner_.setBookMaterial(pageMaterial);
         auto req = PageTextQueryPacket::build(pageId, guid);
