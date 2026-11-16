@@ -23,7 +23,7 @@ TEST_CASE("Hidden portal mesh opacity differs from animated fade-in", "[m2][part
 }
 
 TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particle]") {
-    for (const uint32_t version : {260u, 264u}) {
+    for (const uint32_t version : {256u, 260u, 263u, 264u}) {
         const bool legacy = version < 264;
         constexpr uint32_t emitterOffset = 512;
         std::vector<uint8_t> bytes(emitterOffset + (legacy ? 504 : 476), 0);
@@ -36,8 +36,10 @@ TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particl
         put32(legacy ? 0x140 : 0x12c, emitterOffset);
         // Original LootFX legacy header: 04 00 01 00 at +0x28.
         bytes[emitterOffset + 0x28] = 4;
-        bytes[emitterOffset + (legacy ? 0x2a : 0x29)] = 1;
-        bytes[emitterOffset + (legacy ? 0x2c : 0x2d)] = 1;
+        bytes[emitterOffset + (version < 263 ? 0x2a : 0x29)] = 1;
+        // Particle type and head/tail are separate bytes in every version.
+        bytes[emitterOffset + 0x2c] = 0;
+        bytes[emitterOffset + 0x2d] = 1;
         const float tailLength = 3.0f;
         std::memcpy(bytes.data() + emitterOffset + (legacy ? 0x17c : 0x15c),
                     &tailLength, sizeof(tailLength));

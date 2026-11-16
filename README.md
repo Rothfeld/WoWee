@@ -46,7 +46,11 @@ World M2 and character opaque/alpha-key batches complete before blending.
 Their blended meshes share one camera-depth-ordered stream, far to near:
 crystal surface layers and moth wings must sort across renderer boundaries.
 One worker records both streams; inline recording uses the same merge.
-Particles follow the mesh passes. Billboard bones require per-frame updates
+Particles follow the mesh passes. Particle headers use model version, not
+expansion: `BubblingBowl01.m2`
+(260) has 16-bit blend/emitter fields, while `DR_Cookpot_01.m2` (263) packs
+them into bytes. Both ship in TBC. Head/tail is byte `0x2d` in both layouts.
+Billboard bones require per-frame updates
 even without animation tracks, and cannot reuse another instance's camera-facing
 pose. Silvermyst crystal glow cards are an example. Visible
 character and M2 bones update every frame; distance/frustum culling still

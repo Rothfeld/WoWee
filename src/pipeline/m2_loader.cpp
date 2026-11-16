@@ -1490,7 +1490,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             uint32_t base = header.ofsParticleEmitters + ei * emitterSize;
 
             M2ParticleEmitter em;
-            // Legacy blend and emitter types are uint16; Wrath packs them into bytes.
+            // Through version 260 these are uint16 fields. Version 263 already
+            // packs them into bytes and adds a uint16 particle color index.
+            // DR_Cookpot_01 (263) and BubblingBowl01 (260) coexist in TBC data.
             em.particleId = readValue<int32_t>(m2Data, base + 0x00);
             em.flags      = readValue<uint32_t>(m2Data, base + 0x04);
             em.position.x = readValue<float>(m2Data, base + 0x08);
@@ -1499,8 +1501,8 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             em.bone       = readValue<uint16_t>(m2Data, base + 0x14);
             em.texture    = readValue<uint16_t>(m2Data, base + 0x16);
             em.blendingType = readValue<uint8_t>(m2Data, base + 0x28);
-            em.emitterType  = readValue<uint8_t>(m2Data, base + (isVanilla ? 0x2A : 0x29));
-            em.headOrTail = readValue<uint8_t>(m2Data, base + (isVanilla ? 0x2C : 0x2D));
+            em.emitterType  = readValue<uint8_t>(m2Data, base + (header.version < 263 ? 0x2A : 0x29));
+            em.headOrTail = readValue<uint8_t>(m2Data, base + 0x2D);
             em.tailLength = readValue<float>(m2Data, base + (isVanilla ? 0x17C : 0x15C));
             em.textureTileRotation = readValue<int16_t>(m2Data, base + 0x2E);
             em.textureRows = readValue<uint16_t>(m2Data, base + 0x30);
