@@ -4430,21 +4430,32 @@ bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& 
     const glm::vec3 localOrigin(inverse * glm::vec4(origin, 1));
     // Do not normalize: ray parameter must remain a world-space distance.
     const glm::vec3 localDirection(inverse * glm::vec4(direction, 0));
-    // Units retain a stable hover volume through gaps between limbs and
-    // changes of pose. Scenery occlusion still tests visible prop triangles.
-    const glm::vec3 center = (model.boundMin + model.boundMax) * 0.5f;
-    assert(model.boundRadius > 0.0f);
-    const glm::vec3 offset = localOrigin - center;
-    const float a = glm::dot(localDirection, localDirection);
-    assert(a > 0.0f);
-    const float b = glm::dot(offset, localDirection);
-    const float c = glm::dot(offset, offset) - model.boundRadius * model.boundRadius;
-    const float discriminant = b * b - a * c;
-    if (discriminant < 0.0f) return false;
-    const float nearT = (-b - std::sqrt(discriminant)) / a;
-    const float farT = (-b + std::sqrt(discriminant)) / a;
-    if (farT < 0.0f) return false;
-    distance = std::max(0.0f, nearT);
+    // Animation bounds describe the visible unit. The collision sphere can
+    // retain human dimensions on large creatures such as ForceofNature.
+    // Models without animation use their bind-pose geometry bounds.
+    const auto& gpuModel = models.at(instance.modelId);
+    glm::vec3 boundsMin = gpuModel.visualBoundMin;
+    glm::vec3 boundsMax = gpuModel.visualBoundMax;
+    if (instance.currentSequenceIndex >= 0) {
+        const auto& sequence = model.sequences.at(instance.currentSequenceIndex);
+        boundsMin = glm::min(sequence.boundMin, sequence.boundMax);
+        boundsMax = glm::max(sequence.boundMin, sequence.boundMax);
+    }
+    assert(glm::all(glm::greaterThan(boundsMax, boundsMin)));
+    float nearT = 0.0f;
+    float farT = std::numeric_limits<float>::infinity();
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(localDirection[axis]) < 1e-8f) {
+            if (localOrigin[axis] < boundsMin[axis] || localOrigin[axis] > boundsMax[axis]) return false;
+            continue;
+        }
+        const float t0 = (boundsMin[axis] - localOrigin[axis]) / localDirection[axis];
+        const float t1 = (boundsMax[axis] - localOrigin[axis]) / localDirection[axis];
+        nearT = std::max(nearT, std::min(t0, t1));
+        farT = std::min(farT, std::max(t0, t1));
+        if (nearT > farT) return false;
+    }
+    distance = nearT;
     return true;
 }
 

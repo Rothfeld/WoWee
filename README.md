@@ -957,9 +957,11 @@ Readable game objects (type 9), including the Valley of Heroes monument
 plaques, use `Interface\\Cursor\\Inspect.blp`. Out-of-range readable objects
 use `UnableInspect.blp` through the shared interaction-range check.
 
-Unit cursor picking intersects the model's authored bounding sphere centered
-on its collision bounds, transformed with the rendered instance. It remains
-stable across animation poses and accepts gaps between limbs. Prop occlusion
+Unit cursor picking intersects the active animation's authored bounding box,
+transformed with the rendered instance. Unanimated models use their bind-pose
+geometry box. Collision bounds can retain human dimensions on larger creatures
+such as ForceofNature and must not determine their hover area. Picking accepts
+gaps between limbs. Prop occlusion
 uses visible triangles, so openings in objects such as candelabra remain
 transparent to picking. Do not replace unit hover volumes with skinned-triangle
 hits when changing scenery occlusion.

@@ -145,7 +145,7 @@ public:
     bool getAnimationSequences(uint32_t instanceId, std::vector<pipeline::M2Sequence>& out) const;
     bool getInstanceModelName(uint32_t instanceId, std::string& modelName) const;
     bool getInstanceBounds(uint32_t instanceId, glm::vec3& outCenter, float& outRadius) const;
-    /// Ray hit against the authored unit bounding sphere, independent of pose.
+    /// Ray hit against the active animation's authored box, including limb gaps.
     bool intersectInstance(uint32_t instanceId, const glm::vec3& origin,
                            const glm::vec3& direction, float& distance) const;
 
