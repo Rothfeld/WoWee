@@ -519,6 +519,9 @@ struct Emitter {
     /// this frame does not have, and applying either would resize or move the
     /// frame itself.
     void emitFontInstance(const XmlNode& node, const std::string& var) {
+        if (node.attr("indented"))
+            line(var + ":SetIndentedWordWrap(" +
+                 (node.attrBool("indented") ? "true" : "false") + ")");
         if (const std::string* inh = node.attr("inherits"); inh && !inh->empty()) {
             // Ambiguous the same way a region's is: nearly always a font
             // object, occasionally a virtual FontString. Asked at runtime.

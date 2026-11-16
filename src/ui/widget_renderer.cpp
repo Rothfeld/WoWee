@@ -611,12 +611,13 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                                      const std::string& text, float wrapWidth,
                                      bool nonSpaceWrap, const char* justifyH,
                                      bool forceColor, WidgetTree* linkSink,
-                                     uint32_t linkOwner, float gradientStart, float gradientLength) {
+                                     uint32_t linkOwner, float gradientStart, float gradientLength,
+                                     float continuationIndent) {
     const auto lines = wrapText(parseMarkup(text), wrapWidth, nonSpaceWrap,
                                 [&](const std::string& piece) {
                                     return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
                                                                piece.c_str()).x;
-                                });
+                                }, continuationIndent);
     const float lineH = size * 1.2f;
     // ImGui's glyph origin includes the face's ascender padding. Our layout
     // uses an em-height line box, so center capital ink in that box. A fixed
@@ -644,9 +645,10 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
         for (const TextRun& run : line) lineW += runWidth(run);
         // Each line justifies inside the box on its own, which is what makes a
         // centred paragraph look centred rather than ragged from one offset.
-        float x = at.x;
+        const float indent = &line == &lines.front() ? 0.0f : continuationIndent;
+        float x = at.x + indent;
         if (wrapWidth > 0.0f && justifyH) {
-            if (std::string(justifyH) == "CENTER") x = at.x + (wrapWidth - lineW) * 0.5f;
+            if (std::string(justifyH) == "CENTER") x = at.x + indent + (wrapWidth - indent - lineW) * 0.5f;
             else if (std::string(justifyH) == "RIGHT") x = at.x + wrapWidth - lineW;
         }
         for (const TextRun& run : line) {
@@ -2569,6 +2571,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 // message as one unbroken line, so anything longer than the
                 // window simply left it.
                 const float wrapW = (x1 - x0) > size ? (x1 - x0) : 0.0f;
+                const float indent = w->indentedWordWrap ? size : 0.0f;
                 auto lineCount = [&](const std::string& text) {
                     if (wrapW <= 0.0f) return size_t{1};
                     const auto lines = wrapText(
@@ -2576,7 +2579,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                         [&](const std::string& piece) {
                             return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
                                                        piece.c_str()).x;
-                        });
+                        }, indent);
                     return lines.empty() ? size_t{1} : lines.size();
                 };
                 float y = y1 - lineH;
@@ -2630,11 +2633,13 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                         drawMarkupText(dl, font, size,
                                        ImVec2(x0 + w->shadowX * s, top - w->shadowY * s),
                                        packColor(sc, w->effAlpha * w->shadowColor[3]),
-                                       w->effAlpha, m.text, wrapW, false, w->justifyH.c_str(), true);
+                                       w->effAlpha, m.text, wrapW, false, w->justifyH.c_str(), true,
+                                       nullptr, 0, -1.0f, 0.0f, indent);
                     }
                     drawMarkupText(dl, font, size, ImVec2(x0, top),
                                    packColor(rgba, w->effAlpha), w->effAlpha, m.text,
-                                   wrapW, false, w->justifyH.c_str(), false, &tree, w->id);
+                                   wrapW, false, w->justifyH.c_str(), false, &tree, w->id,
+                                   -1.0f, 0.0f, indent);
                     y -= lineH * static_cast<float>(rows);
                     ++painted;
                 }

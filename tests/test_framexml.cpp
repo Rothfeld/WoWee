@@ -24,6 +24,13 @@ XmlNode parseOrFail(const std::string& src) {
 
 // ── Parser ──────────────────────────────────────────────────────────────────
 
+TEST_CASE("Chat font instance preserves indentation", "[framexml]") {
+    const auto root = parseOrFail("<Ui><ScrollingMessageFrame name='ChatTest'>"
+        "<FontString indented='true'/></ScrollingMessageFrame></Ui>");
+    const auto result = emitFrameXml(root);
+    CHECK(has(result.lua, ":SetIndentedWordWrap(true)"));
+}
+
 TEST_CASE("Attributes, nesting and self-closing elements", "[framexml][xml]") {
     XmlNode root = parseOrFail(
         "<Ui><Frame name='A' hidden='true'><Size><AbsDimension x='10' y='20'/></Size></Frame></Ui>");

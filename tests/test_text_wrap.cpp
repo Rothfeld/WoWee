@@ -12,6 +12,20 @@
 using wowee::ui::WrapRun;
 using wowee::ui::wrapText;
 
+TEST_CASE("Indented continuation lines reserve width and retain links", "[wrap]") {
+    WrapRun run;
+    run.text = "one two tri six ten";
+    run.link = "item:117";
+    const auto lines = wrapText(std::vector<WrapRun>{run}, 8.0f, false,
+        [](const std::string& text) { return static_cast<float>(text.size()); }, 2.0f);
+    REQUIRE(lines.size() == 4);
+    CHECK(lines[0][0].text == "one two ");
+    CHECK(lines[1][0].text == "tri ");
+    CHECK(lines[2][0].text == "six ");
+    CHECK(lines[3][0].text == "ten");
+    for (const auto& line : lines) CHECK(line[0].link == "item:117");
+}
+
 namespace {
 
 /// One unit per character, so the numbers in these tests read as counts.

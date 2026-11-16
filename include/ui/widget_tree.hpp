@@ -375,6 +375,7 @@ struct Widget {
     /// here did, so every one of them drew a single line straight out of its
     /// own frame.
     bool  wordWrap = true;
+    bool  indentedWordWrap = false;
     /// Break inside a word when a single word is wider than the box. Thirty-six
     /// labels ask for it, all of them prose in a narrow column.
     bool  nonSpaceWrap = false;

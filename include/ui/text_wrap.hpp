@@ -74,7 +74,7 @@ inline bool sameStyle(const WrapRun& a, const WrapRun& b) {
 template <typename Measure>
 std::vector<std::vector<WrapRun>> wrapText(const std::vector<WrapRun>& runs,
                                            float wrapWidth, bool nonSpaceWrap,
-                                           Measure measure) {
+                                           Measure measure, float continuationIndent = 0.0f) {
     std::vector<std::vector<WrapRun>> lines;
     lines.emplace_back();
     float x = 0.0f;
@@ -99,9 +99,9 @@ std::vector<std::vector<WrapRun>> wrapText(const std::vector<WrapRun>& runs,
             const float w = run.texWidth > 0.0f    ? run.texWidth
                           : run.texHeight > 0.0f   ? run.texHeight
                                                    : measure("W");
-            if (wrapWidth > 0.0f && x > 0.0f && x + w > wrapWidth) {
+            if (wrapWidth > 0.0f && !lines.back().empty() && x + w > wrapWidth) {
                 lines.emplace_back();
-                x = 0.0f;
+                x = continuationIndent;
             }
             lines.back().push_back(run);
             x += w;
@@ -115,7 +115,7 @@ std::vector<std::vector<WrapRun>> wrapText(const std::vector<WrapRun>& runs,
             // wrapping.
             if (run.text[at] == '\n') {
                 lines.emplace_back();
-                x = 0.0f;
+                x = continuationIndent;
                 ++at;
                 continue;
             }
@@ -141,15 +141,15 @@ std::vector<std::vector<WrapRun>> wrapText(const std::vector<WrapRun>& runs,
             at = end;
 
             float w = measure(word);
-            if (x > 0.0f && x + w > wrapWidth) {
+            if (!lines.back().empty() && x + w > wrapWidth) {
                 lines.emplace_back();
-                x = 0.0f;
+                x = continuationIndent;
                 // The break stands in for the space that separated them.
                 while (!word.empty() && word.front() == ' ') word.erase(0, 1);
                 w = measure(word);
             }
 
-            if (w > wrapWidth && nonSpaceWrap) {
+            if (x + w > wrapWidth && nonSpaceWrap) {
                 // One word wider than the whole box. Broken by character,
                 // which is the only thing left and what the attribute asks for.
                 std::string part;
@@ -157,7 +157,7 @@ std::vector<std::vector<WrapRun>> wrapText(const std::vector<WrapRun>& runs,
                     if (!part.empty() && x + measure(part + c) > wrapWidth) {
                         place(run, part);
                         lines.emplace_back();
-                        x = 0.0f;
+                        x = continuationIndent;
                         part.clear();
                     }
                     part += c;

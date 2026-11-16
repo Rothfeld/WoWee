@@ -1602,6 +1602,11 @@ int lua_FontString_CanWordWrap(lua_State* L) {
     lua_pushboolean(L, (w && w->wordWrap) ? 1 : 0);
     return 1;
 }
+int lua_FontString_SetIndentedWordWrap(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    if (w) w->indentedWordWrap = lua_toboolean(L, 2) != 0;
+    return 0;
+}
 int lua_FontString_SetNonSpaceWrap(lua_State* L) {
     auto* w = widgetOf(L, 1);
     if (w) w->nonSpaceWrap = lua_toboolean(L, 2) != 0;
@@ -4569,6 +4574,7 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
         // first call: Bagnon's options panel sets SetNonSpaceWrap on its
         // description text and took the whole panel down with it.
         set("SetWordWrap", lua_FontString_SetWordWrap);
+        set("SetIndentedWordWrap", lua_FontString_SetIndentedWordWrap);
         set("CanWordWrap", lua_FontString_CanWordWrap);
         set("SetNonSpaceWrap", lua_FontString_SetNonSpaceWrap);
     }
@@ -6499,6 +6505,7 @@ void LuaEngine::registerCoreAPI() {
         {"RemoveMessagesByAccessID", lua_MessageFrame_RemoveMessagesByAccessID},
         {"SetMaxLines",     lua_MessageFrame_SetMaxLines},
         {"SetWordWrap",     lua_FontString_SetWordWrap},
+        {"SetIndentedWordWrap", lua_FontString_SetIndentedWordWrap},
         {"CanWordWrap",     lua_FontString_CanWordWrap},
         {"SetNonSpaceWrap", lua_FontString_SetNonSpaceWrap},
         {"SetReverse",      lua_Cooldown_SetReverse},
