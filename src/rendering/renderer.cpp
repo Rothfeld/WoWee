@@ -2063,6 +2063,18 @@ void Renderer::update(float deltaTime) {
         }
     }
 
+    // Packet events can arrive before destination geometry/area resolution.
+    // Notify again when the authoritative live zone becomes available, even
+    // for WMO-only maps without an AreaTable assignment on the current group.
+    const uint32_t liveZoneId = getCurrentZoneId();
+    if (liveZoneId != 0 && liveZoneId != announcedZoneId_) {
+        announcedZoneId_ = liveZoneId;
+        if (auto* gh = core::Application::getInstance().getGameHandler()) {
+            LOG_DEBUG("Resolved UI zone changed: ", liveZoneId);
+            gh->fireAddonEvent("ZONE_CHANGED_NEW_AREA", {});
+        }
+    }
+
     const uint32_t areaId = getCurrentAreaId();
     if (areaId != 0 && areaId != announcedAreaId_) {
         announcedAreaId_ = areaId;

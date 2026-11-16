@@ -315,6 +315,7 @@ private:
     /// getCurrentZoneId() is const and this is a cache of what it last learnt.
     mutable uint32_t lastResolvedZoneId_ = 0;
     uint32_t announcedAreaId_ = 0;
+    uint32_t announcedZoneId_ = 0;
     std::string interiorZoneName_;
     std::string interiorAreaName_;
     uint32_t interiorAreaId_ = 0;

@@ -12,6 +12,11 @@ cross corridor and cells must remain visible at wide zoom.
 Blizzard FrameXML owns the compass marker and difficulty presentation. Do not hide
 `MinimapNorthTag` or draw an additional difficulty label over its minimap.
 
+Territory color comes from `GetZonePVPInfo`. The renderer emits
+`ZONE_CHANGED_NEW_AREA` when its resolved zone changes: destination geometry may
+become available after the server packet's zone event. WMO-only maps must update
+this state even when the current group has no AreaTable assignment.
+
 For validation, compare equal positions and zoom levels, then cross an instance
 boundary. Keep room layout, scale, player marker, compass, title, and party portrait
 in the review; matching one widget does not validate the whole frame.
