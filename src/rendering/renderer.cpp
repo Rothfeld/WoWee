@@ -577,13 +577,12 @@ void Renderer::updatePerFrameUBO() {
         currentFrameData.fogParams.x = lp.fogStart;
         currentFrameData.fogParams.y = lp.fogEnd;
 
-        // Shift fog to blue when camera is significantly underwater (terrain water only).
+        // Shift fog to blue when the camera is underwater, including WMO pools.
         if (waterRenderer && camera) {
             glm::vec3 camPos = camera->getPosition();
-            auto waterH = waterRenderer->getNearestWaterHeightAt(camPos.x, camPos.y, camPos.z);
+            auto waterH = waterRenderer->getNearestWaterHeightAt(camPos.x, camPos.y, camPos.z, 400.0f);
             constexpr float MIN_SUBMERSION = 2.0f;
-            if (waterH && camPos.z < (*waterH - MIN_SUBMERSION)
-                       && !waterRenderer->isWmoWaterAt(camPos.x, camPos.y)) {
+            if (waterH && camPos.z < (*waterH - MIN_SUBMERSION)) {
                 float depth = *waterH - camPos.z - MIN_SUBMERSION;
                 float blend = glm::clamp(1.0f - std::exp(-depth * 0.08f), 0.0f, 0.7f);
                 glm::vec3 underwaterFog(0.03f, 0.09f, 0.18f);
@@ -2090,7 +2089,13 @@ void Renderer::update(float deltaTime) {
         uint32_t mapId    = gh ? gh->getCurrentMapId() : 0;
         float gameTime    = gh ? gh->getGameTime() : -1.0f;
         bool isRaining    = gh ? gh->isRaining() : false;
-        bool isUnderwater = cameraController ? cameraController->isSwimming() : false;
+        // Lighting follows the eye, including an orbit below the surface while
+        // the player remains above it. Swimming alone does not submerge a view.
+        const auto eye = camera->getPosition();
+        const auto eyeWater = waterRenderer
+            ? waterRenderer->getNearestWaterHeightAt(eye.x, eye.y, eye.z, 400.0f)
+            : std::nullopt;
+        const bool isUnderwater = eyeWater && eye.z < *eyeWater;
         const uint32_t resolvedZoneId = getCurrentZoneId();
 
         lightingManager->update(characterPosition, mapId, resolvedZoneId,
@@ -3600,8 +3605,7 @@ if (overlaySystem_ && waterRenderer && camera) {
         // tinted the lower half of the view. The per-pixel test can - a pixel
         // whose ray enters the world above the surface comes out untouched -
         // so the band above the surface costs nothing where there is no water.
-        if (waterH && eyeDepth > -kCrossingBand
-                   && !waterRenderer->isWmoWaterAt(camPos.x, camPos.y)) {
+        if (waterH && eyeDepth > -kCrossingBand) {
             bool canal = false;
             if (auto lt = waterRenderer->getWaterTypeAt(camPos.x, camPos.y))
                 canal = (*lt == 5 || *lt == 13 || *lt == 17);

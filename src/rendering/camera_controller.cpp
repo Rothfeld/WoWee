@@ -2169,6 +2169,19 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         cachedPivotLift_ = 0.0f;
     }
     glm::vec3 pivot = targetPos + glm::vec3(0.0f, 0.0f, followedPivotHeight() + mountedOffset + pivotLift);
+    // Once the swimmer leaves surface float depth, the water surface becomes
+    // a ceiling for the orbit camera. Keep the requested zoom for resurfacing.
+    std::optional<float> diveCameraCeiling;
+    if (swimming && waterRenderer) {
+        const auto surface = waterRenderer->getNearestWaterHeightAt(
+            targetPos.x, targetPos.y, targetPos.z, 400.0f);
+        if (surface && targetPos.z + swimSurfaceOffset_ < *surface - 0.1f) {
+            const float clearance = std::max(0.05f, camera->getNearPlane()
+                * std::tan(glm::radians(camera->getFovDegrees()) * 0.5f));
+            diveCameraCeiling = *surface - clearance;
+            pivot.z = std::min(pivot.z, *diveCameraCeiling);
+        }
+    }
 
     // Camera direction from yaw/pitch (already computed as forward3D)
     glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
@@ -2267,6 +2280,10 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
     // Use collision distance (don't exceed user target)
     float actualDist = std::min(currentDistance, collisionDistance);
+    if (diveCameraCeiling && camDir.z > 0.0f) {
+        actualDist = std::min(actualDist,
+            std::max(0.0f, (*diveCameraCeiling - pivot.z) / camDir.z));
+    }
 
     // Compute actual camera position
     glm::vec3 actualCam;
@@ -2418,6 +2435,16 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     }
     // Never let camera sink below the character's feet plane.
     smoothedCamPos.z = std::max(smoothedCamPos.z, targetPos.z + 0.15f);
+
+    // Do not let smoothing retain an above-water eye after diving. Shorten
+    // along the pivot-to-eye ray, as for solid camera obstacles.
+    if (diveCameraCeiling && smoothedCamPos.z > *diveCameraCeiling) {
+        const glm::vec3 offset = smoothedCamPos - pivot;
+        if (offset.z > 0.0f) {
+            smoothedCamPos = pivot + offset *
+                std::clamp((*diveCameraCeiling - pivot.z) / offset.z, 0.0f, 1.0f);
+        }
+    }
 
     camera->setPosition(smoothedCamPos);
 

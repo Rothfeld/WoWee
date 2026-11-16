@@ -680,6 +680,12 @@ determine horizontal travel. Validate outgoing jumps on a native observer as wel
 as checking packet trajectories. A server session still marked teleporting drops
 movement packets even while local physics and outgoing client logs look valid.
 
+Underwater lighting uses water height at the camera, independently of swimming.
+Terrain water and WMO pools both receive underwater fog. Diving below surface
+float depth constrains the orbit camera beneath the water plane along its view
+ray; the user's zoom target remains available when resurfacing. Validate this
+with camera-only above/below captures while leaving the swimmer submerged.
+
 Player camera fade uses actual camera-to-pivot distance, becoming transparent
 between 1.5 and 0.5 yards. Collision can shorten that distance while requested
 zoom stays far away. Camera opacity multiplies ghost/stealth/spawn opacity and
