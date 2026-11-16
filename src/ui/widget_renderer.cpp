@@ -2099,7 +2099,12 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             ++seenTooltip;
             if (w->visible) ++seenVisible;
             if (!w->tooltipLines.empty()) ++seenWithLines;
-            if (!w->visible || w->tooltipLines.empty()) continue;
+            // Cursor tooltips receive their anchor below. SetOwner clears the
+            // previous anchor, so layout initially marks them non-drawable.
+            // Admit a shown cursor tooltip before that anchor exists; hidden
+            // ancestors must still suppress it.
+            if ((!w->visible && !(w->tooltipAnchorCursor && w->visibleChain)) ||
+                w->tooltipLines.empty()) continue;
             // The same face the draw uses, not a different lookup: asking for
             // "frizqt__" here and falling back to ImGui's font skipped the
             // whole pass whenever that face was not loaded, which is why four

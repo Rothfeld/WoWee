@@ -1374,14 +1374,12 @@ network::Packet TbcPacketParsers::buildLeaveChannel(const std::string& channelNa
 
 // ============================================================================
 // TBC 2.4.3 SMSG_GAMEOBJECT_QUERY_RESPONSE
-// TBC has 2 extra strings after name[4] (iconName + castBarCaption).
-// WotLK has 3 (adds unk1). Classic has 0.
+// TBC has three strings after name[4]: icon, opening text, closing text.
+// CMaNGOS QueryHandler.cpp writes all three before raw.data[24].
 // ============================================================================
 
 bool TbcPacketParsers::parseGameObjectQueryResponse(network::Packet& packet, GameObjectQueryResponseData& data) {
-    // Two of the 2.0.3 strings, where WotLK reads three. See
-    // parseGameObjectQueryBody for why that difference is not settled.
-    return parseGameObjectQueryBody(packet, data, /*extraStrings=*/2);
+    return parseGameObjectQueryBody(packet, data, /*extraStrings=*/3);
 }
 
 // ============================================================================

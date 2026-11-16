@@ -1,24 +1,6 @@
-// SMSG_GAMEOBJECT_QUERY_RESPONSE, whose layout is written out three times.
-//
-// ClassicPacketParsers, TbcPacketParsers and the shared parser each carry
-// their own copy of forty-odd lines. The three differ in exactly one number:
-// how many strings sit between the four names and the twenty-four
-// type-specific data fields.
-//
-//   Classic  none
-//   TBC      two - iconName, castBarCaption
-//   WotLK    three - iconName, castBarCaption, unk1
-//
-// The order is the server's, off AzerothCore's QueryHandler.cpp:
-// entry, type, displayId, Name, name2, name3, name4, IconName, CastBarCaption,
-// unk1, raw[24], size. The bytes below are written in that order rather than by
-// asking this client's own writer.
-//
-// Getting the count wrong does not raise. The strings are usually empty, so
-// each one costs a single NUL, and reading one too few starts data[0] on that
-// NUL: every type-specific field shifts by a byte and a chest reports a lock
-// it does not have. The count is asserted here for all three expansions
-// precisely because nothing else would notice.
+// SMSG_GAMEOBJECT_QUERY_RESPONSE fixtures exercise expansion-specific strings
+// before the 24 raw template fields. CMaNGOS TBC QueryHandler.cpp writes icon,
+// opening text and closing text; Wrath also has three strings.
 #include <catch_amalgamated.hpp>
 
 #include <cstring>
@@ -66,7 +48,7 @@ std::vector<uint8_t> buildResponse(uint32_t entry, uint32_t type,
     w.cstr("");                    // name2
     w.cstr("");                    // name3
     w.cstr("");                    // name4
-    const char* extras[] = {"Attack", "Collecting", ""};
+    const char* extras[] = {"Attack", "Collecting", "Closing"};
     for (int i = 0; i < extraStrings; ++i) w.cstr(extras[i]);
     for (uint32_t i = 0; i < 24; ++i) w.u32(0xA000 + i);
     w.f32(1.5f);                   // size, which this client does not read
@@ -97,9 +79,9 @@ TEST_CASE("the WotLK gameobject query reads three strings before the data",
     CHECK(data.data[23] == 0xA017);
 }
 
-TEST_CASE("TBC reads two, Classic reads none", "[gameobject][wire]") {
+TEST_CASE("TBC reads three, Classic reads none", "[gameobject][wire]") {
     SECTION("TBC") {
-        auto bytes = buildResponse(180, 0, "Door", 2);
+        auto bytes = buildResponse(180, 0, "Door", 3);
         auto packet = makePacket(bytes);
         GameObjectQueryResponseData data;
         TbcPacketParsers parsers;
@@ -121,45 +103,34 @@ TEST_CASE("TBC reads two, Classic reads none", "[gameobject][wire]") {
 }
 
 TEST_CASE("one string too few shifts every data field", "[gameobject][wire]") {
-    // Not an error - a wrong answer, and the reason the count is asserted at
-    // all. A WotLK packet read by the TBC reader leaves an empty string's NUL
-    // in front of data[0].
+    // Deliberately exercise an incorrect count through the shared helper.
     auto bytes = buildResponse(1731, 3, "Copper Vein", 3);
     auto packet = makePacket(bytes);
     GameObjectQueryResponseData data;
-    TbcPacketParsers parsers;
-    REQUIRE(parsers.parseGameObjectQueryResponse(packet, data));
+    REQUIRE(parseGameObjectQueryBody(packet, data, 2));
     CHECK(data.name == "Copper Vein");
     CHECK(data.data[0] != 0xA000);
 }
 
-TEST_CASE("what is left after the data fields says whether the count was right",
+TEST_CASE("TBC leaves only the size float after all three strings and data",
           "[gameobject][wire]") {
-    // The tell the parser warns on, pinned here so it keeps working.
-    //
-    // Everything past the twenty-four data fields is four bytes wide - the
-    // size float, and the quest item ids where a server sends them - so a
-    // correct string count leaves a whole number of them over. One short
-    // leaves the unread string's NUL in front of the data fields as well, and
-    // the leftover stops dividing by four.
-    //
-    // This is what a TBC server settles the two-or-three question with,
-    // without anyone having to know how long its tail is: only that the tail
-    // is made of four-byte fields, which has been true of every expansion.
+    // "Closing" plus its NUL occupies eight bytes. A wrong string count can
+    // still leave a four-byte-aligned tail; check exact size and field values.
     const auto bytes = buildResponse(1731, 3, "Copper Vein", 3);
 
     SECTION("the right count leaves whole fields") {
         auto packet = makePacket(bytes);
         GameObjectQueryResponseData data;
-        REQUIRE(GameObjectQueryResponseParser::parse(packet, data));
-        CHECK(packet.getRemainingSize() % 4 == 0);
-    }
-    SECTION("one short does not") {
-        auto packet = makePacket(bytes);
-        GameObjectQueryResponseData data;
         TbcPacketParsers parsers;
         REQUIRE(parsers.parseGameObjectQueryResponse(packet, data));
-        CHECK(packet.getRemainingSize() % 4 != 0);
+        CHECK(packet.getRemainingSize() == 4);
+    }
+    SECTION("one short leaves the closing text length in the tail") {
+        auto packet = makePacket(bytes);
+        GameObjectQueryResponseData data;
+        REQUIRE(parseGameObjectQueryBody(packet, data, 2));
+        CHECK(packet.getRemainingSize() == 12);
+        CHECK(data.data[0] != 0xA000);
     }
 }
 

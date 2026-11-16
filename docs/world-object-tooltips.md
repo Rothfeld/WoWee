@@ -13,6 +13,15 @@ FrameXML tooltip supplies the font, gold title, background, border and screen
 clamping. A new owner clears cursor tracking unless it requests `ANCHOR_PRESERVE`.
 World tooltip updates only hide tooltips owned by `WorldFrame`.
 
+Cursor-anchored tooltips enter the renderer's sizing pass when their shown
+ancestor chain is visible, even before they have an anchor. `SetOwner` clears
+the previous anchor; the sizing pass assigns the cursor anchor. Requiring an
+already drawable frame here prevents the first tooltip from ever appearing.
+
+TBC object-query responses contain icon, opening-text and closing-text strings
+before the 24 template fields. All three must be consumed to preserve label
+and highlight flags. This layout matches CMaNGOS TBC's `QueryHandler.cpp`.
+
 For original TBC build 8606, the game-object branch at `0x4A1C40` selects cursor
 anchor 6 for floating labels and calls the object tooltip builder at `0x54FB00`.
 The title color at `0xB9F648` is packed `0xFFFFD200`. Cursor placement at
