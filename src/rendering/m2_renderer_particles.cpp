@@ -193,8 +193,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             if (em.bone < inst.boneMatrices.size()) {
                 boneXform = inst.boneMatrices[em.bone];
             }
-            glm::vec3 worldPos = glm::vec3(inst.modelMatrix * boneXform * glm::vec4(localPos, 1.0f));
-            p.position = worldPos;
+            const glm::mat4 birthTransform = (em.flags & kParticleInModelSpace)
+                ? glm::mat4(1.0f) : inst.modelMatrix * boneXform;
+            p.position = glm::vec3(birthTransform * glm::vec4(localPos, 1.0f));
 
             // Velocity: emission speed in upward direction + random spread
             float speed = interpFloat(em.emissionSpeed, inst.animTime, inst.globalSequenceTime,
@@ -214,7 +215,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             const float variation = interpFloat(em.speedVariation, inst.animTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             speed *= 1.0f + distN(particleRng_) * variation;
-            const glm::mat3 rotMat(inst.modelMatrix * boneXform);
+            const glm::mat3 rotMat(birthTransform);
             p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
 
             const uint32_t tilesX = std::max<uint16_t>(em.textureCols, 1);
@@ -693,6 +694,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         uint32_t cachedAnimFrame = 0;
         float cachedTilesFloat = 1.0f;
         bool cachedIsTiled = false;
+        glm::mat4 cachedParticleTransform(1.0f);
         float invAnimMs = 1.0f / 1000.0f;
 
         // How far this instance's particles actually reach, against how far
@@ -709,6 +711,11 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             if (p.emitterIndex != lastEmitterIdx) {
                 lastEmitterIdx = p.emitterIndex;
                 cachedEm = &gpu.particleEmitters[p.emitterIndex];
+                glm::mat4 bone(1.0f);
+                if ((cachedEm->flags & kParticleInModelSpace) && !gpu.bones.empty()) {
+                    bone = inst.boneMatrices.at(cachedEm->bone);
+                }
+                cachedParticleTransform = particleRenderTransform(cachedEm->flags, inst.modelMatrix, bone);
 
                 cachedTex = whiteTexture_.get();
                 if (p.emitterIndex < static_cast<int>(gpu.particleTextures.size())) {
@@ -786,16 +793,18 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 runGroup = cachedGroup;
                 particleRuns_.push_back({.group = cachedGroup, .first = vbWritten, .count = 0});
             }
-            highestParticleZ = std::max(highestParticleZ, p.position.z);
+            const glm::vec3 worldPosition = glm::vec3(cachedParticleTransform * glm::vec4(p.position, 1));
+            const glm::vec3 worldVelocity = glm::mat3(cachedParticleTransform) * p.velocity;
+            highestParticleZ = std::max(highestParticleZ, worldPosition.z);
             widestParticle = std::max(widestParticle, scale);
 
             const unsigned sprites = em.headOrTail == 2 ? 2 : 1;
             for (unsigned sprite = 0; sprite < sprites; ++sprite) {
                 assert(vbWritten < particleVertexCapacity_);
                 float* vd = vbBase + static_cast<size_t>(vbWritten) * 12;
-                vd[0] = p.position.x;
-                vd[1] = p.position.y;
-                vd[2] = p.position.z;
+                vd[0] = worldPosition.x;
+                vd[1] = worldPosition.y;
+                vd[2] = worldPosition.z;
                 vd[3] = color.r;
                 vd[4] = color.g;
                 vd[5] = color.b;
@@ -810,7 +819,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 }
                 vd[8] = tileIndex;
                 const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
-                const glm::vec3 displacement = tail ? -p.velocity * em.tailLength : glm::vec3(0);
+                const glm::vec3 displacement = tail ? -worldVelocity * em.tailLength : glm::vec3(0);
                 vd[9] = displacement.x;
                 vd[10] = displacement.y;
                 vd[11] = displacement.z;

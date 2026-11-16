@@ -717,6 +717,11 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         float distSq = glm::dot(toCam, toCam);
         if (distSq > cachedMaxRenderDistSq_) continue;
         if (!instance.cachedModel) continue;
+        // Static skeletons still anchor attached particles. They never enter
+        // the animated-bone work list, so initialize their bind transforms here.
+        if (!instance.cachedModel->bones.empty() && instance.boneMatrices.empty()) {
+            computeBoneMatrices(*instance.cachedModel, instance, &cachedCamPos_);
+        }
         updateParticles(instance, deltaTime);
         emitParticles(instance, *instance.cachedModel, deltaTime);
         if (!instance.cachedModel->ribbonEmitters.empty()) {

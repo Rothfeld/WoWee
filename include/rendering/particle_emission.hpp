@@ -4,6 +4,15 @@
 #include <glm/glm.hpp>
 
 namespace wowee::rendering {
+inline constexpr uint32_t kParticleInModelSpace = 0x20;
+
+// Attached particles are simulated before the animated emitter transform.
+// Detached particles have already received that transform at birth.
+inline glm::mat4 particleRenderTransform(uint32_t flags, const glm::mat4& model,
+                                         const glm::mat4& bone) {
+    return (flags & kParticleInModelSpace) ? model * bone : glm::mat4(1.0f);
+}
+
 struct ParticleEmission {
     glm::vec3 offset;
     glm::vec3 direction;
