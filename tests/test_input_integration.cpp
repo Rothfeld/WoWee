@@ -1482,6 +1482,8 @@ TEST_CASE_METHOD(Integration, "Profession trainer recipe headers preserve servic
     handler.spellNameCacheRef()[2658].createdItemId = 2842;
     handler.spellNameCacheRef()[2659].name = "Smelt Bronze";
     handler.spellNameCacheRef()[2659].createdItemId = 2841;
+    handler.spellToSkillLineRef()[2658] = 186;
+    handler.spellToSkillLineRef()[2659] = 186;
     lua.setGameHandler(&handler);
     run("SetTrainerServiceTypeFilter('available', 1); SetTrainerServiceTypeFilter('unavailable', 1); ExpandTrainerSkillLine(0)");
     wowee::network::Packet list(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_TRAINER_LIST));
@@ -1501,7 +1503,7 @@ TEST_CASE_METHOD(Integration, "Profession trainer recipe headers preserve servic
     }
     list.writeString("Mining");
     session.receive(list);
-    truth("GetNumTrainerServices() == 4");
+    truth("GetNumTrainerServices() == 5");
     truth("GetTrainerSelectionIndex() == 2");
     handler.playerSkillsRef()[186].value = 1;
     truth("GetNumTrainerServices() == 5");
@@ -1519,6 +1521,29 @@ TEST_CASE_METHOD(Integration, "Profession trainer recipe headers preserve servic
     truth("GetTrainerServiceInfo(2) == 'Recipes'");
     run("ExpandTrainerSkillLine(0)");
     truth("GetTrainerServiceCost(5) == 2658");
+    // Native also groups the initial profession ability under Recipes. It
+    // creates no item, consumes no reagent and requires no existing skill.
+    handler.playerSkillsRef().clear();
+    handler.spellNameCacheRef()[2575].name = "Mining";
+    handler.spellToSkillLineRef()[2575] = 186;
+    wowee::network::Packet apprentice(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_TRAINER_LIST));
+    apprentice.writeUInt64(123);
+    apprentice.writeUInt32(2);
+    apprentice.writeUInt32(1);
+    apprentice.writeUInt32(2575);
+    apprentice.writeUInt8(0);
+    apprentice.writeUInt32(10);
+    apprentice.writeUInt32(1);
+    apprentice.writeUInt32(1);
+    apprentice.writeUInt8(5);
+    for (int i = 0; i < 5; ++i) apprentice.writeUInt32(0);
+    apprentice.writeString("Mining");
+    session.receive(apprentice);
+    truth("GetNumTrainerServices() == 2");
+    truth("GetTrainerServiceInfo(1) == 'Recipes'");
+    truth("select(3, GetTrainerServiceInfo(1)) == 'header'");
+    truth("GetTrainerServiceInfo(2) == 'Mining'");
+    truth("GetTrainerServiceCost(2) == 10");
     lua.setGameHandler(nullptr);
 }
 

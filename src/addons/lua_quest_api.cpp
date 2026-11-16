@@ -2174,6 +2174,7 @@ static std::vector<TrainerRow> shownTrainerServices(game::GameHandler* gh) {
     std::vector<TrainerRow> shown;
     if (!gh) return shown;
     gh->loadSpellNameCache();
+    gh->loadSkillLineAbilityDbc();
     std::vector<const game::TrainerSpell*> services;
     std::vector<const game::TrainerSpell*> recipes;
     const std::string& search = trainerSearch();
@@ -2186,13 +2187,11 @@ static std::vector<TrainerRow> shownTrainerServices(game::GameHandler* gh) {
                 std::string::npos) {
             continue;
         }
-        const auto& cache = gh->spellNameCacheRef();
-        const auto entry = cache.find(sp.spellId);
-        bool recipe = false;
-        if (gh->getTrainerSpells().trainerType == 2 && entry != cache.end()) {
-            recipe = entry->second.createdItemId != 0;
-            for (const auto& reagent : entry->second.reagents) recipe |= reagent.itemId != 0;
-        }
+        // Profession abilities belong to Recipes even when they create no item
+        // (Mining Apprentice, for example). Rank-teaching spells such as
+        // Journeyman Miner have no SkillLineAbility row: Development Skills.
+        const bool recipe = gh->getTrainerSpells().trainerType == 2 &&
+            gh->spellToSkillLineRef().contains(sp.spellId);
         (recipe ? recipes : services).push_back(&sp);
     }
     const auto order = [gh](const auto* a, const auto* b) {
@@ -2202,19 +2201,13 @@ static std::vector<TrainerRow> shownTrainerServices(game::GameHandler* gh) {
     };
     std::stable_sort(services.begin(), services.end(), order);
     std::stable_sort(recipes.begin(), recipes.end(), order);
-    // Native offers the profession ranks before a collapsible Recipes section.
-    // Before learning the profession, its recipes remain an ungrouped preview.
-    const bool heading = std::any_of(recipes.begin(), recipes.end(), [gh](const auto* spell) {
-        return gh->getPlayerSkills().count(spell->reqSkill) != 0;
-    });
+    // Group by authored ability membership, independent of learned skills.
+    const bool heading = !recipes.empty();
     const bool development = gh->getTrainerSpells().trainerType == 2 &&
-        (!services.empty() || (!heading && !recipes.empty()));
+        !services.empty();
     if (development) shown.push_back({nullptr, "Development Skills"});
     if (!development || !trainerDevelopmentCollapsed()) {
         for (const auto* spell : services) shown.push_back({spell, nullptr});
-        if (!heading) {
-            for (const auto* spell : recipes) shown.push_back({spell, nullptr});
-        }
     }
     if (heading) shown.push_back({nullptr, "Recipes"});
     if (heading && !trainerRecipesCollapsed()) {
