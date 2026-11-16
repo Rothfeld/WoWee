@@ -110,6 +110,11 @@ public:
     /// not drag Vulkan into the widget tree.
     [[nodiscard]] uint64_t textureId() const;
 
+    // A party member remains the same subject outside world visibility. Keep
+    // rendering their last known model, never another slot occupant's face.
+    void setSubjectGuid(uint64_t guid) { subjectGuid_ = guid; }
+    bool updateKnownSubject(uint64_t guid, float deltaTime);
+
     void shutdown(rendering::Renderer* renderer);
 
 private:
@@ -119,6 +124,7 @@ private:
     int targetWidth_ = 640;
     int targetHeight_ = 800;
     bool registered_ = false;
+    uint64_t subjectGuid_ = 0;
 
     // What the loaded model was built from, so a reload happens only on a real
     // change rather than every frame.

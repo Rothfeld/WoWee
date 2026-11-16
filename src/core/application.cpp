@@ -4937,6 +4937,10 @@ void Application::render() {
                         built = face.portrait->updatePlayer(
                             race, gender, appearance, facial, worn,
                             assetManager.get(), renderer.get(), io.DeltaTime);
+                        face.portrait->setSubjectGuid(built ? face.guid : 0);
+                    } else if (std::string_view(face.unit).starts_with("party") &&
+                               face.portrait->updateKnownSubject(face.guid, io.DeltaTime)) {
+                        built = true;
                     } else {
                         uint32_t displayId = 0;
                         if (face.guid != 0) {

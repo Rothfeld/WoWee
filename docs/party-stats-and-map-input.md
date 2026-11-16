@@ -17,3 +17,7 @@ the camera's held-button state set after the transfer.
 Live regression: hold right mouse, transfer out of an instance, release during
 loading, then move the pointer without buttons. Camera must stay fixed. Repeat
 entering the instance. Check the alive party member's frame after both transfers.
+
+Party portrait models retain their subject GUID. When that member leaves object
+visibility, the portrait continues rendering its last known appearance. A different
+GUID cannot reuse that image, and shutdown invalidates the retained subject.
