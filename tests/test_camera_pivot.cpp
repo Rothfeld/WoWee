@@ -9,9 +9,34 @@
 #include <catch_amalgamated.hpp>
 
 #include "rendering/camera_controller.hpp"
+#include "rendering/water_camera.hpp"
 
 using wowee::rendering::CameraController;
 using Catch::Matchers::WithinAbs;
+
+TEST_CASE("Swimming camera stays on its side of water across orbit pitches", "[camera][water]") {
+    for (bool submerged : {false, true}) {
+        const float boundary = submerged ? 95.2f : 95.7f;
+        const glm::vec3 pivot(10.0f, 20.0f, submerged ? 93.0f : 96.0f);
+        for (int degrees = -85; degrees <= 85; degrees += 5) {
+            const float angle = glm::radians(static_cast<float>(degrees));
+            const glm::vec3 offset(12.0f * std::cos(angle), 0.0f, 12.0f * std::sin(angle));
+            const glm::vec3 eye = pivot + offset;
+            const auto result = wowee::rendering::constrainWaterCamera(pivot, eye, boundary, submerged);
+            INFO(submerged << " pitch=" << degrees);
+            CHECK((submerged ? result.z <= boundary + .0001f : result.z >= boundary - .0001f));
+            CHECK(glm::length(result - pivot) <= glm::length(offset) + .0001f);
+            CHECK(glm::length(glm::cross(result - pivot, offset)) < .001f);
+        }
+    }
+}
+
+TEST_CASE("Diving camera can orbit below feet and keeps unobstructed zoom", "[camera][water]") {
+    const glm::vec3 pivot(10.0f, 20.0f, 93.0f);
+    const glm::vec3 eye(15.0f, 20.0f, 89.0f);
+    CHECK(wowee::rendering::constrainWaterCamera(pivot, eye, 95.2f, true) == eye);
+    CHECK(wowee::rendering::constrainWaterCamera(pivot, {15.0f, 20.0f, 99.0f}, 95.2f, true).z == 95.2f);
+}
 
 namespace {
 

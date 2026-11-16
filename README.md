@@ -681,10 +681,13 @@ as checking packet trajectories. A server session still marked teleporting drops
 movement packets even while local physics and outgoing client logs look valid.
 
 Underwater lighting uses water height at the camera, independently of swimming.
-Terrain water and WMO pools both receive underwater fog. Diving below surface
-float depth constrains the orbit camera beneath the water plane along its view
-ray; the user's zoom target remains available when resurfacing. Validate this
-with camera-only above/below captures while leaving the swimmer submerged.
+Terrain water and WMO pools both receive underwater fog. Surface swimmers keep
+the orbit camera above water; diving below surface float depth keeps it below.
+Both limits shorten the pivot-to-eye ray and preserve the requested zoom.
+Swimming disables the artificial camera floor at player feet, so underwater
+upward views can place the eye below the player. Real geometry still obstructs
+the camera. Validate with live pitch sweeps in both swimming states and
+camera-only above/below captures while leaving the swimmer submerged.
 
 Player camera fade uses actual camera-to-pivot distance, becoming transparent
 between 1.5 and 0.5 yards. Collision can shorten that distance while requested

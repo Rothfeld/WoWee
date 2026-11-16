@@ -2,6 +2,7 @@
 
 #include "core/env_flag.hpp"
 #include "rendering/swim_wall.hpp"
+#include "rendering/water_camera.hpp"
 #include "core/click_drag.hpp"
 #include "core/coordinates.hpp"
 #include "ui/keybinding_manager.hpp"
@@ -2169,17 +2170,20 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         cachedPivotLift_ = 0.0f;
     }
     glm::vec3 pivot = targetPos + glm::vec3(0.0f, 0.0f, followedPivotHeight() + mountedOffset + pivotLift);
-    // Once the swimmer leaves surface float depth, the water surface becomes
-    // a ceiling for the orbit camera. Keep the requested zoom for resurfacing.
-    std::optional<float> diveCameraCeiling;
+    // Surface swimmers keep the eye above water; divers keep it below.
+    // Apply the same half-space constraint before and after camera smoothing.
+    std::optional<float> waterCameraBoundary;
+    bool cameraSubmerged = false;
     if (swimming && waterRenderer) {
         const auto surface = waterRenderer->getNearestWaterHeightAt(
             targetPos.x, targetPos.y, targetPos.z, 400.0f);
-        if (surface && targetPos.z + swimSurfaceOffset_ < *surface - 0.1f) {
+        if (surface) {
+            cameraSubmerged = targetPos.z + swimSurfaceOffset_ < *surface - 0.1f;
             const float clearance = std::max(0.05f, camera->getNearPlane()
                 * std::tan(glm::radians(camera->getFovDegrees()) * 0.5f));
-            diveCameraCeiling = *surface - clearance;
-            pivot.z = std::min(pivot.z, *diveCameraCeiling);
+            waterCameraBoundary = *surface + (cameraSubmerged ? -clearance : clearance);
+            pivot.z = cameraSubmerged ? std::min(pivot.z, *waterCameraBoundary)
+                                      : std::max(pivot.z, *waterCameraBoundary);
         }
     }
 
@@ -2280,10 +2284,6 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
     // Use collision distance (don't exceed user target)
     float actualDist = std::min(currentDistance, collisionDistance);
-    if (diveCameraCeiling && camDir.z > 0.0f) {
-        actualDist = std::min(actualDist,
-            std::max(0.0f, (*diveCameraCeiling - pivot.z) / camDir.z));
-    }
 
     // Compute actual camera position
     glm::vec3 actualCam;
@@ -2292,6 +2292,9 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         actualCam = pivot + f.forward3D * 0.1f;  // Slightly forward to not clip head
     } else {
         actualCam = pivot + camDir * actualDist;
+    }
+    if (waterCameraBoundary) {
+        actualCam = constrainWaterCamera(pivot, actualCam, *waterCameraBoundary, cameraSubmerged);
     }
 
     // Prefer a view clearly above the water or clearly below it.
@@ -2312,7 +2315,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // over which the near plane can be half in the water. Lifting eases the
     // camera back a little and dropping draws it in, so the character stays
     // framed rather than sliding down the screen.
-    if (waterRenderer && actualDist >= MIN_DISTANCE + 0.1f) {
+    if (!waterCameraBoundary && waterRenderer && actualDist >= MIN_DISTANCE + 0.1f) {
         const float band = std::max(0.05f, camera->getNearPlane()
                                            * std::tan(glm::radians(camera->getFovDegrees()) * 0.5f));
         auto surfaceZ = waterRenderer->getNearestWaterHeightAt(
@@ -2433,17 +2436,13 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             smoothedCamPos.z = *camFloorH + MIN_FLOOR_CLEARANCE;
         }
     }
-    // Never let camera sink below the character's feet plane.
-    smoothedCamPos.z = std::max(smoothedCamPos.z, targetPos.z + 0.15f);
+    // Land camera clearance does not apply to swimmers. Underwater, looking
+    // upward puts the eye below the feet; only real geometry may obstruct it.
+    if (!swimming) smoothedCamPos.z = std::max(smoothedCamPos.z, targetPos.z + 0.15f);
 
-    // Do not let smoothing retain an above-water eye after diving. Shorten
-    // along the pivot-to-eye ray, as for solid camera obstacles.
-    if (diveCameraCeiling && smoothedCamPos.z > *diveCameraCeiling) {
-        const glm::vec3 offset = smoothedCamPos - pivot;
-        if (offset.z > 0.0f) {
-            smoothedCamPos = pivot + offset *
-                std::clamp((*diveCameraCeiling - pivot.z) / offset.z, 0.0f, 1.0f);
-        }
+    if (waterCameraBoundary) {
+        smoothedCamPos = constrainWaterCamera(
+            pivot, smoothedCamPos, *waterCameraBoundary, cameraSubmerged);
     }
 
     camera->setPosition(smoothedCamPos);
