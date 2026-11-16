@@ -209,49 +209,12 @@ void main() {
 
     bool isFoliage = (alphaTest == 2);
 
-    // Fix DXT fringe: transparent edge texels have garbage (black) RGB, and
-    // bilinear drags it into the leaf's edge. The blurred high mip is the
-    // colour the edge should have been.
-    //
-    // Only where the fringe actually is. This used to run on everything below
-    // full alpha and trust the texel in proportion to it, so a leaf texel at
-    // half alpha - which is leaf, not fringe, and the canopy is full of them -
-    // came out sixty percent a blurred sixteen-pixel average of the whole
-    // sheet. That is what took the contrast and the colour out of a lit
-    // canopy and left it looking milky. A quarter alpha is where the fringe
-    // stops and the leaf starts.
-    if (alphaTest != 0 && texColor.a > 0.01 && texColor.a < 0.25) {
-        vec3 mipColor = textureLod(uTexture, TexCoord, 4.0).rgb;
-        float trust = smoothstep(0.0, 0.25, texColor.a);
-        texColor.rgb = mix(mipColor, texColor.rgb, trust);
-    }
-
-    float alphaCutoff = 0.5;
-    if (alphaTest == 2) {
-        alphaCutoff = 0.4;
-    } else if (alphaTest == 3) {
-        alphaCutoff = 0.25;
-    } else if (alphaTest != 0) {
-        alphaCutoff = 0.4;
-    }
-    // Mip-alpha preservation: alpha mips average downward, thinning distant
-    // canopies to skeletons. Boost alpha with mip level so perceived leaf
-    // density stays constant with distance.
-    if (isFoliage && hasTexture != 0) {
-        // Gentler than it was: at 0.18 a mip-4 canopy came back with every
-        // leaf texel above 0.23 alpha opaque, which is a solid green mass
-        // rather than a thinned one. Coverage carries the rest now.
-        float mip = textureQueryLod(uTexture, TexCoord).x;
-        texColor.a *= 1.0 + clamp(mip, 0.0, 4.0) * 0.11;
-    }
     if (alphaTest != 0) {
-        // Screen-space sharpened alpha: rescale so the cutoff maps to the
-        // texel boundary. With MSAA + alpha-to-coverage on the cutout
-        // pipeline this dithers the edge band across samples, smoothing
-        // leaf silhouettes instead of the old hard binary discard.
-        float aGrad = fwidth(texColor.a);
-        texColor.a = clamp((texColor.a - alphaCutoff) / max(aGrad, 0.001) * 0.5 + 0.5, 0.0, 1.0);
-        if (texColor.a < 1.0 / 255.0) discard;
+        // M2 alpha-key materials use an 8-bit reference of 224. Keep the
+        // authored silhouette at every mip: promoting low-alpha texels to
+        // coverage exposes their dark backing as a border around leaves.
+        if (texColor.a < 224.0 / 255.0) discard;
+        texColor.a = 1.0;
     }
     if (colorKeyBlack != 0 && blendMode <= 1) {
         float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
@@ -391,8 +354,7 @@ void main() {
     }
 
     float outAlpha = texColor.a * vFadeAlpha;
-    // Cutout materials output the sharpened coverage alpha computed above -
-    // alpha-to-coverage turns it into per-sample coverage for smooth edges.
+    // Surviving alpha-key fragments are opaque.
     // Color-key-only materials have no meaningful texture alpha; keep them
     // opaque after the discard.
     if (colorKeyBlack != 0 && alphaTest == 0 && blendMode <= 1) {

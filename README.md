@@ -986,3 +986,18 @@ with exterior WMO pools. Terrain ocean rendering remains a separate material.
 Terrain freshwater repeats its texture every four liquid cells (16.67 yards),
 including merged tile meshes; WMO pools repeat once per liquid cell.
 `build/bin/test_adt_truncation '[adt][water]'` checks MCLQ depth and liquid IDs.
+
+Ground-detail settings preserve fractional internal percentages: native
+`groundEffectDensity=24` maps to `groundclutter=56.25` through the CVar scale
+150/64. Both login and world settings readers retain that fraction.
+
+Selected entities leaving visibility or despawning must use `clearTarget()`;
+raw GUID assignment bypasses `PLAYER_TARGET_CHANGED` and leaves FrameXML showing
+stale names with invalid portrait, level and health. Melee ability autoattack
+follows Spell.dbc `AttributesEx` bit 0x200, including Sinister Strike ranks.
+
+M2 alpha-key materials use a fixed 224/255 alpha threshold, as in Noggit's
+`ModelRenderPass` alpha-key state. Surviving fragments are opaque. Do not boost
+alpha with mip level or replace edge RGB with a blurred mip: these change the
+authored silhouette and expose dark backing around DXT1 leaves. Reference:
+https://github.com/wowdev/noggit3/blob/master/src/noggit/Model.cpp
