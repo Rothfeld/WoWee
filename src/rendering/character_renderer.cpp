@@ -4436,40 +4436,21 @@ bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& 
     const glm::vec3 localOrigin(inverse * glm::vec4(origin, 1));
     // Do not normalize: ray parameter must remain a world-space distance.
     const glm::vec3 localDirection(inverse * glm::vec4(direction, 0));
-    std::vector<glm::vec3> positions(model.vertices.size());
-    for (size_t i = 0; i < model.vertices.size(); ++i) {
-        const auto& vertex = model.vertices[i];
-        glm::vec4 position(0);
-        for (size_t bone = 0; bone < 4; ++bone) {
-            if (vertex.boneWeights[bone] == 0) continue;
-            const auto index = std::min<uint32_t>(vertex.boneIndices[bone], MAX_BONES - 1);
-            const glm::mat4 transform = index < instance.boneMatrices.size()
-                ? instance.boneMatrices[index] : glm::mat4(1);
-            position += (transform * glm::vec4(vertex.position, 1)) *
-                (vertex.boneWeights[bone] / 255.0f);
-        }
-        positions[i] = glm::vec3(position);
-    }
-    float nearest = std::numeric_limits<float>::max();
-    for (const auto& batch : model.batches) {
-        if (!instance.activeGeosets.empty()) {
-            if (!instance.activeGeosets.contains(batch.submeshId)) continue;
-        } else {
-            const auto group = batch.submeshId / 100;
-            if (group == 15 || group == 17 || group == 18) continue;
-        }
-        if (batch.materialIndex < model.materials.size() &&
-            model.materials[batch.materialIndex].blendMode > 1) continue;
-        assert(batch.indexStart + batch.indexCount <= model.indices.size());
-        for (size_t index = batch.indexStart; index + 2 < batch.indexStart + batch.indexCount; index += 3) {
-            const float hit = rayTriangleIntersect(localOrigin, localDirection,
-                positions.at(model.indices[index]), positions.at(model.indices[index + 1]),
-                positions.at(model.indices[index + 2]));
-            if (hit > 0) nearest = std::min(nearest, hit);
-        }
-    }
-    if (nearest == std::numeric_limits<float>::max()) return false;
-    distance = nearest;
+    // Units retain a stable hover volume through gaps between limbs and
+    // changes of pose. Scenery occlusion still tests visible prop triangles.
+    const glm::vec3 center = (model.boundMin + model.boundMax) * 0.5f;
+    assert(model.boundRadius > 0.0f);
+    const glm::vec3 offset = localOrigin - center;
+    const float a = glm::dot(localDirection, localDirection);
+    assert(a > 0.0f);
+    const float b = glm::dot(offset, localDirection);
+    const float c = glm::dot(offset, offset) - model.boundRadius * model.boundRadius;
+    const float discriminant = b * b - a * c;
+    if (discriminant < 0.0f) return false;
+    const float nearT = (-b - std::sqrt(discriminant)) / a;
+    const float farT = (-b + std::sqrt(discriminant)) / a;
+    if (farT < 0.0f) return false;
+    distance = std::max(0.0f, nearT);
     return true;
 }
 

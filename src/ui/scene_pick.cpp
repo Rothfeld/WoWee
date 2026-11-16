@@ -96,7 +96,6 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         }
 
         float hitT = 0.0f;
-        if (!raySphereIntersect(ray, hitCenter, hitRadius, hitT)) continue;
         if (type == game::ObjectType::UNIT || type == game::ObjectType::PLAYER) {
             auto& app = core::Application::getInstance();
             auto* spawner = app.getEntitySpawner();
@@ -104,10 +103,10 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             if (!spawner || !renderer || !renderer->getCharacterRenderer()) continue;
             if (!renderer->getCharacterRenderer()->intersectInstance(
                     spawner->characterInstanceIdForGuid(guid), ray.origin, ray.direction, hitT)) {
-                if (params.trace) LOG_DEBUG("Scene pick mesh miss guid=", guid);
+                if (params.trace) LOG_DEBUG("Scene pick unit volume miss guid=", guid);
                 continue;
             }
-        }
+        } else if (!raySphereIntersect(ray, hitCenter, hitRadius, hitT)) continue;
         uint32_t pickedM2 = 0;
         if (type == game::ObjectType::GAMEOBJECT) {
             auto& app = core::Application::getInstance();
