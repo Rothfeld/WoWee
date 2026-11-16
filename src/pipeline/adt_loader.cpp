@@ -518,11 +518,14 @@ void ADTLoader::parseMCLQ(std::span<const uint8_t> data, int chunkIndex,
     else if (mcnkFlags & 0x10) liquidType = 2;  // magma
     else if (mcnkFlags & 0x20) liquidType = 3;  // slime
 
-    // Read 9x9 height values (skip depth/flow bytes, just read the float height)
+    // Preserve the authored water depth byte as well as surface height.
     const std::span<const uint8_t> vertData = data.subspan(8);
     std::vector<float> heights(81);
+    std::vector<uint8_t> depths;
+    if (liquidType < 2) depths.resize(81);
     for (int i = 0; i < 81; i++) {
         heights[i] = readFloat(vertData, i * 8 + 4);  // float at offset 4 within each 8-byte vertex
+        if (!depths.empty()) depths[i] = vertData[i * 8];
     }
 
     // Read 8x8 tile flags
@@ -558,7 +561,7 @@ void ADTLoader::parseMCLQ(std::span<const uint8_t> data, int chunkIndex,
 
     // Build a WaterLayer matching the MH2O format
     ADTTerrain::WaterLayer layer;
-    layer.liquidType = liquidType;
+    layer.liquidType = liquidType + 1; // Match MH2O/WMO LiquidType ID convention.
     layer.flags = 0;
     layer.minHeight = minHeight;
     layer.maxHeight = maxHeight;
@@ -567,6 +570,7 @@ void ADTLoader::parseMCLQ(std::span<const uint8_t> data, int chunkIndex,
     layer.width = 8;   // 8 tiles = 9 vertices per axis
     layer.height = 8;
     layer.heights = std::move(heights);
+    layer.depths = std::move(depths);
     layer.mask.resize(8);  // 8 bytes = 64 bits for 8x8 tiles
     for (int row = 0; row < 8; row++) {
         uint8_t rowBits = 0;

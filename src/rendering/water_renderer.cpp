@@ -796,16 +796,6 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
     // Tile origin = NW corner = chunk(0,0) position
     const auto& chunk00 = terrain.getChunk(0, 0);
 
-    // Stormwind water lowering check
-    bool isStormwindArea = (tileX >= 28 && tileX <= 50 && tileY >= 28 && tileY <= 52);
-    float tileWorldX = 0, tileWorldY = 0;
-    glm::vec2 moonwellPos2D(0.0f);
-    if (isStormwindArea) {
-        tileWorldX = (32.0f - tileX) * core::coords::TILE_SIZE;
-        tileWorldY = (32.0f - tileY) * core::coords::TILE_SIZE;
-        moonwellPos2D = glm::vec2(-8755.9f, 1108.9f);
-    }
-
     int totalSurfaces = 0;
 
     // Merge threshold: groups with more than this many chunks get merged into
@@ -863,14 +853,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                 }
                 if (useFlat) surface.heights.resize(numVertices, layer.minHeight);
 
-                if (isStormwindArea && layer.minHeight > 94.0f) {
-                    float distToMoonwell = glm::distance(glm::vec2(tileWorldX, tileWorldY), moonwellPos2D);
-                    if (distToMoonwell > 300.0f) {
-                        for (float& h : surface.heights) h -= 1.0f;
-                        surface.minHeight -= 1.0f;
-                        surface.maxHeight -= 1.0f;
-                    }
-                }
+                surface.depths = layer.depths;
 
                 surface.mask = layer.mask;
                 surface.tileX = tileX;
@@ -913,6 +896,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
         const int gridW = MERGED_W + 1;  // 129
         const int gridH = MERGED_W + 1;
         surface.heights.resize(gridW * gridH, groupHeight);
+        surface.depths.resize(gridW * gridH, 0);
 
         // Initialize mask (128×128 sub-tiles)
         // Mask uses LSB bit order: tileIndex = row * 128 + col
@@ -971,6 +955,9 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                     }
 
                     surface.heights[mgy * gridW + mgx] = h;
+                    if (!layer.depths.empty()) {
+                        surface.depths[mgy * gridW + mgx] = layer.depths.at(ly * layerGridW + lx);
+                    }
                     if (h < surface.minHeight) surface.minHeight = h;
                     if (h > surface.maxHeight) surface.maxHeight = h;
                 }
@@ -992,16 +979,6 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                     surface.mask[mergedTileIdx / 8] |=
                         static_cast<uint8_t>(1 << (mergedTileIdx % 8));
                 }
-            }
-        }
-
-        // Stormwind water lowering
-        if (isStormwindArea && surface.minHeight > 94.0f) {
-            float distToMoonwell = glm::distance(glm::vec2(tileWorldX, tileWorldY), moonwellPos2D);
-            if (distToMoonwell > 300.0f) {
-                for (float& h : surface.heights) h -= 1.0f;
-                surface.minHeight -= 1.0f;
-                surface.maxHeight -= 1.0f;
             }
         }
 
@@ -1286,8 +1263,10 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // against a near plane of 0.05 while the camera's is 0.5.
         push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
-        // Legacy WMO water: 1 = indoor material color, 2 = outdoor zone lighting.
-        push.legacyWmoMode = legacyWater && isWmoWater && basicType < 2
+        // Legacy freshwater shares authored texture/depth shading across ADT
+        // rivers and WMO pools. Ocean rendering retains its separate material.
+        // 1 = indoor material color, 2 = outdoor zone lighting.
+        push.legacyWmoMode = legacyWater && (basicType == 0 || (isWmoWater && basicType == 1))
             ? (surface.indoorColor ? 1.0f : 2.0f) : 0.0f;
         push.textureRepeatX = surface.width;
         push.textureRepeatY = surface.height;

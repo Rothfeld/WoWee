@@ -956,3 +956,10 @@ updates place the horse on the sampled floor, raise the rider to the saddle,
 and animate locomotion on the mount while keeping the rider in the mount pose.
 Despawn removes both instances. Mounted nameplates use attachment 29 on the
 posed rider. General Marcus Jonathan uses mount display 2410.
+
+TBC MCLQ freshwater preserves per-vertex depth and authored surface height
+through both individual and merged terrain meshes. Liquid IDs use the same
+1=water, 2=ocean, 3=magma, 4=slime convention as the renderer. Legacy terrain
+freshwater uses the animated lake texture and outdoor zone lighting shared
+with exterior WMO pools. Terrain ocean rendering remains a separate material.
+`build/bin/test_adt_truncation '[adt][water]'` checks MCLQ depth and liquid IDs.

@@ -160,3 +160,34 @@ TEST_CASE("ADT loader rejects a file of random bytes", "[adt][robustness]") {
     }
     REQUIRE_NOTHROW(ADTLoader::load(data));
 }
+
+TEST_CASE("MCLQ preserves depth and normalizes liquid types", "[adt][water]") {
+    for (uint32_t kind = 0; kind < 4; ++kind) {
+        auto chunk = mcnkHeader();
+        writeU32At(chunk, 0, 4u << kind);
+        writeU32At(chunk, 0x60, 128);
+        writeU32At(chunk, 0x64, 720);
+        chunk.resize(128 + 720, 0);
+        const float height = 100.0f;
+        std::memcpy(chunk.data() + 128, &height, 4);
+        std::memcpy(chunk.data() + 132, &height, 4);
+        for (size_t i = 0; i < 81; ++i) {
+            chunk[136 + i * 8] = static_cast<uint8_t>(i * 3);
+            std::memcpy(chunk.data() + 140 + i * 8, &height, 4);
+        }
+        std::vector<uint8_t> file;
+        appendChunk(file, kMCNK, chunk);
+        const auto terrain = ADTLoader::load(file);
+        REQUIRE(terrain.waterData[0].layers.size() == 1);
+        const auto& liquid = terrain.waterData[0].layers[0];
+        CHECK(liquid.liquidType == kind + 1);
+        REQUIRE(liquid.heights.size() == 81);
+        CHECK(liquid.heights[40] == height);
+        if (kind < 2) {
+            REQUIRE(liquid.depths.size() == 81);
+            CHECK(liquid.depths[0] == 0);
+            CHECK(liquid.depths[40] == 120);
+            CHECK(liquid.depths[80] == 240);
+        } else CHECK(liquid.depths.empty());
+    }
+}

@@ -145,7 +145,7 @@ struct ADTTerrain {
 
     // Water/liquid data (from MH2O chunk)
     struct WaterLayer {
-        uint16_t liquidType;      // Type of liquid (0=water, 1=ocean, 2=magma, 3=slime)
+        uint16_t liquidType;      // LiquidType ID (1=water, 2=ocean, 3=magma, 4=slime)
         uint16_t flags;
         float minHeight;
         float maxHeight;
@@ -154,6 +154,7 @@ struct ADTTerrain {
         uint8_t width;            // Width in vertices (1-9)
         uint8_t height;           // Height in vertices (1-9)
         std::vector<float> heights;  // Height values (width * height)
+        std::vector<uint8_t> depths; // Authored opacity/depth at each grid vertex
         std::vector<uint8_t> mask;   // Render mask (which tiles to render)
     };
 
