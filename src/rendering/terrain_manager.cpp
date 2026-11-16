@@ -2403,7 +2403,7 @@ std::optional<uint32_t> TerrainManager::getAreaIdAt(float glX, float glY) const 
     return chunk->areaId;
 }
 
-std::optional<std::string> TerrainManager::getDominantTextureAt(float glX, float glY) const {
+std::optional<std::string> TerrainManager::getDominantTextureAt(float glX, float glY, uint32_t* outEffectId) const {
     // Through the one finder, which was the last copy of "which chunk is under
     // this point" in this file: a bounds test against the chunk's own
     // position, the two fractions, a guess and a widening search - findChunkAt
@@ -2442,6 +2442,7 @@ std::optional<std::string> TerrainManager::getDominantTextureAt(float glX, float
         }
     }
 
+    if (outEffectId) *outEffectId = chunk->layers[bestLayer].effectId;
     const uint32_t texId = chunk->layers[bestLayer].textureId;
     if (texId >= tile->terrain.textures.size()) return std::nullopt;
     return tile->terrain.textures[texId];

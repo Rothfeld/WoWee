@@ -29,6 +29,7 @@ struct WMOMaterial {
     uint32_t color1;
     uint32_t texture2;          // Environment/detail texture
     uint32_t color2;
+    uint32_t terrainType = 0; // MOMT ground_type, TerrainType.dbc key
     uint32_t texture3;
     uint32_t color3;
     float runtime[4];           // Runtime data
@@ -160,6 +161,7 @@ struct WMOGroup {
     std::vector<WMOVertex> vertices;
     std::vector<uint16_t> indices;
     std::vector<WMOBatch> batches;
+    std::vector<uint8_t> triMaterials;
     std::vector<uint16_t> doodadRefs; // MODR indices into root MODD
     std::vector<uint8_t> triFlags;  // Per-triangle MOPY flags (0x04 = detail/no-collide)
 

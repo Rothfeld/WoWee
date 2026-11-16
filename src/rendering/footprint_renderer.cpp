@@ -97,6 +97,8 @@ void FootprintRenderer::shutdown() {
     destroy(device, materialSetLayout_);
 
     textureSets_.fill(VK_NULL_HANDLE);
+    terrainFlags_.clear();
+    groundEffectTerrain_.clear();
     profilesByPath_.clear();
     profilesByBasename_.clear();
     prints_.clear();
@@ -197,6 +199,20 @@ bool FootprintRenderer::createQuad() {
 }
 
 bool FootprintRenderer::loadFootprintData(pipeline::AssetManager* assets) {
+    const auto terrain = assets->loadDBC("TerrainType.dbc");
+    const auto effects = assets->loadDBC("GroundEffectTexture.dbc");
+    if (!terrain || !effects) {
+        LOG_ERROR("FootprintRenderer: required surface DBCs unavailable");
+        return false;
+    }
+    assert(terrain->getFieldCount() == 6);
+    const uint32_t effectFields = effects->getFieldCount();
+    assert(effectFields == 7 || effectFields == 11);
+    for (uint32_t row = 0; row < terrain->getRecordCount(); ++row)
+        terrainFlags_[terrain->getUInt32(row, 0)] = terrain->getUInt32(row, 5);
+    for (uint32_t row = 0; row < effects->getRecordCount(); ++row)
+        groundEffectTerrain_[effects->getUInt32(row, 0)] = effects->getUInt32(row, effectFields - 1);
+
     // FootprintTextures IDs are sparse. These six rows are the original masks.
     const std::array<uint32_t, kTextureCount> textureIds{1, 4, 5, 3, 6, 7};
     std::unordered_map<uint32_t, uint8_t> indexById;
@@ -301,9 +317,45 @@ float FootprintRenderer::resolveFloorHeight(const glm::vec3& position) const {
     return floor.value_or(position.z);
 }
 
+bool FootprintRenderer::surfaceAllowsFootprints(const glm::vec3& position) const {
+    std::optional<float> support;
+    std::optional<uint32_t> terrainType;
+    const auto reachable = [&](std::optional<float> z) {
+        return z && std::abs(*z - position.z) <= 0.85f;
+    };
+    if (auto* terrain = owner_->getTerrainManager(); terrain && !terrain->isHoleAt(position.x, position.y)) {
+        const auto height = terrain->getHeightAt(position.x, position.y);
+        if (reachable(height)) {
+            support = height;
+            uint32_t effectId = 0;
+            if (terrain->getDominantTextureAt(position.x, position.y, &effectId)) {
+                const auto entry = groundEffectTerrain_.find(effectId);
+                if (entry != groundEffectTerrain_.end()) terrainType = entry->second;
+            }
+        }
+    }
+    if (auto* wmo = owner_->getWMORenderer()) {
+        std::optional<uint32_t> materialType;
+        const auto height = wmo->getFloorHeight(position.x, position.y, position.z + 0.85f,
+            nullptr, position.z, &materialType);
+        if (reachable(height) && (!support || *height >= *support - 0.01f)) {
+            support = height;
+            terrainType = materialType;
+        }
+    }
+    if (auto* m2 = owner_->getM2Renderer()) {
+        const auto height = m2->getFloorHeight(position.x, position.y, position.z + 0.85f);
+        // Model surfaces carry no TerrainType footprint permission.
+        if (reachable(height) && (!support || *height > *support + 0.01f)) return false;
+    }
+    if (!support || !terrainType) return false;
+    const auto flags = terrainFlags_.find(*terrainType);
+    return flags != terrainFlags_.end() && (flags->second & 1u) != 0;
+}
+
 void FootprintRenderer::spawn(const std::string& modelName, const glm::vec3& basePosition,
                               float yawRadians, bool leftFoot, FootprintFallback fallback, float scale) {
-    if (!vkCtx_) return;
+    if (!vkCtx_ || !surfaceAllowsFootprints(basePosition)) return;
     Profile profile = resolveProfile(modelName, fallback);
     assert(std::isfinite(scale) && scale > 0.0f);
     profile.length *= scale;

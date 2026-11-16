@@ -565,6 +565,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         modelData.materialTextureIndices.push_back(texIndex);
         modelData.materialBlendModes.push_back(mat.blendMode);
         modelData.materialFlags.push_back(mat.flags);
+        modelData.materialTerrainTypes.push_back(mat.terrainType);
 
     }
 
@@ -2143,6 +2144,7 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     for (const auto& v : group.vertices) {
         resources.collisionVertices.push_back(v.position);
     }
+    resources.triMaterials = group.triMaterials;
     if (!group.triFlags.empty()) {
         // Store all triangles but tag each with MOPY flags for collision filtering
         resources.collisionIndices = group.indices;
@@ -3050,7 +3052,9 @@ void WMORenderer::GroupResources::getWallTrianglesInRange(
     gatherCellTriangles(cellWallTriangles, minX, minY, maxX, maxY, out);
 }
 
-std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ, float* outNormalZ, float referenceZ) const {
+std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ, float* outNormalZ, float referenceZ,
+                                                  std::optional<uint32_t>* outTerrainType) const {
+    if (outTerrainType) outTerrainType->reset();
     const bool byReference = std::isfinite(referenceZ);
     // Per-frame cache disabled: camera and player query the same (x,y) at
     // different Z within a single frame. The allowAbove filter depends on glZ,
@@ -3141,6 +3145,15 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
                                : hitWorld.z > *bestFloor);
                     if (better) {
                         bestFloor = hitWorld.z;
+                        if (outTerrainType) {
+                            outTerrainType->reset();
+                            const size_t triangle = triStart / 3;
+                            if (triangle < group.triMaterials.size()) {
+                                const uint8_t material = group.triMaterials[triangle];
+                                if (material < model.materialTerrainTypes.size())
+                                    *outTerrainType = model.materialTerrainTypes[material];
+                            }
+                        }
                         bestFromLowPlatform = model.isLowPlatform;
 
                         // Use precomputed normal, ensure upward, transform to world

@@ -193,7 +193,8 @@ WMOModel WMOLoader::load(const std::vector<uint8_t>& wmoData) {
                     mat.color1 = fields[4];
                     mat.texture2 = fields[6];  // Skip frameSidnColor at [5]
                     mat.color2 = fields[7];
-                    mat.texture3 = fields[9];  // Skip ground_type at [8]
+                    mat.terrainType = fields[8];
+                    mat.texture3 = fields[9];
                     mat.color3 = fields[10];
 
                     model.materials.push_back(mat);
@@ -539,9 +540,10 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                     // flag 0x04 = detail/decorative geometry (no collision)
                     uint32_t triCount = subChunkSize / 2;
                     group.triFlags.resize(triCount);
+                    group.triMaterials.resize(triCount);
                     for (uint32_t i = 0; i < triCount; i++) {
                         group.triFlags[i] = read<uint8_t>(groupData, mogpOffset);
-                        read<uint8_t>(groupData, mogpOffset); // materialId (skip)
+                        group.triMaterials[i] = read<uint8_t>(groupData, mogpOffset);
                     }
                 }
                 else if (subChunkId == MONR) { // Normals

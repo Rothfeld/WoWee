@@ -351,7 +351,8 @@ public:
     std::optional<float> getFloorHeight(float glX, float glY, float glZ,
                                         float* outNormalZ = nullptr,
                                         float referenceZ =
-                                            std::numeric_limits<float>::quiet_NaN()) const;
+                                            std::numeric_limits<float>::quiet_NaN(),
+                                        std::optional<uint32_t>* outTerrainType = nullptr) const;
 
     /** Query floor collision from one moving WMO instance. */
     std::optional<float> getInstanceFloorHeight(uint32_t instanceId,
@@ -585,6 +586,7 @@ private:
 
         // Per-collision-triangle MOPY flags (indexed by collision tri index, i.e. triStart/3)
         std::vector<uint8_t> triMopyFlags;
+        std::vector<uint8_t> triMaterials;
         /// True when no triangle in this group blocks: no collision hull, and
         /// nothing rendered that is not detail. Detail never blocks, so such a
         /// group is walk-through in its entirety - which is a thing to be
@@ -662,6 +664,7 @@ private:
 
         // Material flags (materialId -> flags; 0x01 = unlit)
         std::vector<uint32_t> materialFlags;
+        std::vector<uint32_t> materialTerrainTypes;
 
         // Portal visibility data
         std::vector<PortalData> portals;

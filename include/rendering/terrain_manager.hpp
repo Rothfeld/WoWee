@@ -344,7 +344,7 @@ public:
      * Get dominant terrain texture name at a GL position.
      * Returns empty if terrain is not loaded at that position.
      */
-    [[nodiscard]] std::optional<std::string> getDominantTextureAt(float glX, float glY) const;
+    [[nodiscard]] std::optional<std::string> getDominantTextureAt(float glX, float glY, uint32_t* outEffectId = nullptr) const;
 
     /**
      * Get statistics

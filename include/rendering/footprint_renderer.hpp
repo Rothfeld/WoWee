@@ -84,6 +84,9 @@ private:
     std::unordered_map<std::string, Profile> profilesByPath_;
     std::unordered_map<std::string, Profile> profilesByBasename_;
     std::vector<Print> prints_;
+    std::unordered_map<uint32_t, uint32_t> terrainFlags_;
+    std::unordered_map<uint32_t, uint32_t> groundEffectTerrain_;
+    [[nodiscard]] bool surfaceAllowsFootprints(const glm::vec3& position) const;
 
     bool createPipeline();
     bool createDescriptorResources();
