@@ -624,7 +624,7 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
             // its own copy of the ten race codes.
             const std::string raceSuffix = raceGenderSuffix(st.raceId, st.genderId);
 
-            // Attach left shoulder (attachment point 5) using LeftModel
+            // Left shoulder is attachment 6 (+Y); right shoulder is 5 (-Y).
             std::string leftModelName = displayInfoDbc->getString(static_cast<uint32_t>(shoulderIdx), leftModelField);
             if (!leftModelName.empty()) {
                 size_t dotPos = leftModelName.rfind('.');
@@ -654,14 +654,14 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
                             leftTexPath = "Item\\ObjectComponents\\Shoulder\\" + leftTexName + ".blp";
                         }
                     }
-                    bool attached = charRenderer->attachWeapon(st.instanceId, 5, leftModel, leftModelId, leftTexPath);
+                    bool attached = charRenderer->attachWeapon(st.instanceId, 6, leftModel, leftModelId, leftTexPath);
                     if (attached) {
                         LOG_DEBUG("Attached left shoulder: ", leftPath, " tex: ", leftTexPath);
                     }
                 }
             }
 
-            // Attach right shoulder (attachment point 6) using RightModel
+            // Attach right shoulder (attachment point 5) using RightModel.
             std::string rightModelName = displayInfoDbc->getString(static_cast<uint32_t>(shoulderIdx), rightModelField);
             if (!rightModelName.empty()) {
                 size_t dotPos = rightModelName.rfind('.');
@@ -691,7 +691,7 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
                             rightTexPath = "Item\\ObjectComponents\\Shoulder\\" + rightTexName + ".blp";
                         }
                     }
-                    bool attached = charRenderer->attachWeapon(st.instanceId, 6, rightModel, rightModelId, rightTexPath);
+                    bool attached = charRenderer->attachWeapon(st.instanceId, 5, rightModel, rightModelId, rightTexPath);
                     if (attached) {
                         LOG_DEBUG("Attached right shoulder: ", rightPath, " tex: ", rightTexPath);
                     }

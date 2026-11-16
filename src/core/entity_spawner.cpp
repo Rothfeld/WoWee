@@ -2324,6 +2324,41 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
 
     if (humanoidAppearance) {
         const auto& extra = humanoidExtraMap_.at(itDisplayData->second.extraDisplayId);
+        if (extra.equipDisplayId[1] != 0) {
+            const auto dbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
+            assert(dbc && dbc->isLoaded());
+            const auto row = dbc->findRecordById(extra.equipDisplayId[1]);
+            assert(row >= 0);
+            const auto* layout = pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo");
+            assert(layout);
+            const std::string directory = "Item\\ObjectComponents\\Shoulder\\";
+            const auto suffix = raceGenderSuffix(extra.raceId, extra.sexId);
+            for (uint32_t side = 0; side < 2; ++side) {
+                std::string modelName = dbc->getString(row,
+                    (*layout)[side == 0 ? "LeftModel" : "RightModel"]);
+                if (modelName.empty()) continue;
+                if (const auto dot = modelName.rfind('.'); dot != std::string::npos)
+                    modelName.resize(dot);
+                const auto racialPath = directory + modelName + suffix + ".m2";
+                const auto path = assetManager_->fileExists(racialPath)
+                    ? racialPath : directory + modelName + ".m2";
+                const auto textureName = dbc->getString(row,
+                    (*layout)[side == 0 ? "LeftModelTexture" : "RightModelTexture"]);
+                std::string texturePath;
+                if (!textureName.empty()) {
+                    const auto racialTexture = directory + textureName + suffix + ".blp";
+                    texturePath = assetManager_->fileExists(racialTexture)
+                        ? racialTexture : directory + textureName + ".blp";
+                }
+                pipeline::M2Model shoulder;
+                if (!loadWeaponM2(path, shoulder) ||
+                    !charRenderer->attachWeapon(instanceId, side == 0 ? 6 : 5, shoulder,
+                                                 nextWeaponModelId_++, texturePath)) {
+                    LOG_ERROR("NPC shoulder attachment failed: display=", displayId,
+                              " side=", side, " path=", path);
+                }
+            }
+        }
         const auto helm = resolveHelmVisual(*assetManager_, extra.equipDisplayId[0],
                                             extra.raceId, extra.sexId);
         if (helm.valid()) {
