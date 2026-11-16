@@ -4,6 +4,12 @@ Hover a labelled sign in game to show its name in `GameTooltip` above the cursor
 
 Generic object templates use `data[0]` for the floating label and `data[1]` for
 model highlighting. These flags are independent. Chairs do not show name labels.
+Meeting stones (type 23) highlight while hovered and show their destination
+from template `data[2]` / AreaTable below the object name. Using an object
+preserves the selected unit: meeting stones need that selection as the summon
+target. Template `data[0]` and `data[1]` bound the summoner's level; an ineligible
+player receives the TBC level-requirement UI error before sending object use.
+CMaNGOS checks group membership and both players' levels in `GameObject::Use`.
 Object names pass through the tooltip API as escaped text; they must never be
 interpreted as Lua source. Unit mouseover remains separate from object hover.
 
@@ -28,5 +34,8 @@ The title color at `0xB9F648` is packed `0xFFFFD200`. Cursor placement at
 `0x54BE20` anchors point 7 (BOTTOM) to root point 6 (BOTTOMLEFT) at cursor
 coordinates. These are executable virtual addresses for this build only.
 
-Hover highlight strength is currently 0.25 of pressed-object strength. Exact
-brightness parity still requires matching native and WoWee captures.
+Sign hover strength is 0.25 of pressed-object strength; meeting stones use 0.7.
+Matched Stockades captures confirm hover illumination, destination text, and
+the ineligible-player error. At level 21, using the stone preserves the party
+target and starts server spell 23598, creating the summoning portal. Highlight
+tint is approximate; the renderer's warm lift differs from native illumination.

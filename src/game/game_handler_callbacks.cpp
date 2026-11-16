@@ -3235,6 +3235,15 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             raiseUiError("Too far away.");
             return;
         }
+        if (goInfo && goType == 23) {
+            // CMaNGOS silently rejects an ineligible summoner. TBC displays
+            // this error locally before sending a meeting-stone use packet.
+            const uint32_t level = getPlayerLevel();
+            if (level < goInfo->data[0] || level > goInfo->data[1]) {
+                raiseUiError("You do not meet the level requirements of this meeting stone.");
+                return;
+            }
+        }
         // Stop movement before interacting - servers may reject GO use or
         // immediately cancel the resulting spell cast if the player is moving.
         const uint32_t moveFlags = movementInfo.flags;

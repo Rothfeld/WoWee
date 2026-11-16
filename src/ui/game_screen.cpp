@@ -1498,8 +1498,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
     worldHoverGuid_ = 0;
     worldObjectHoverGuid_ = 0;
-    uint64_t highlightedSign = 0;
-    constexpr float signHoverStrength = 0.25f;
+    uint64_t highlightedObject = 0;
+    float objectHoverStrength = 0.25f;
     // Cursor affordance: show hand cursor over interactable entities.
     // Not while the cursor is over a frame FrameXML owns: ImGui has never heard
     // of those, so its own answer is no wherever they are.
@@ -1524,7 +1524,12 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 const auto object = std::static_pointer_cast<game::GameObject>(named);
                 const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
                 if (info && info->type == 5 && info->data[1] != 0)
-                    highlightedSign = named->getGuid();
+                    highlightedObject = named->getGuid();
+                if (info && info->type == 23 && hoverPick.resolve() == named->getGuid()) {
+                    highlightedObject = named->getGuid();
+                    // Native hover is weaker than this renderer's pressed lift.
+                    objectHoverStrength = 0.7f;
+                }
             }
             if (hoverPick.closestGuid != 0) {
                 if (!drawVendorCursor(gameHandler, hoverPick) &&
@@ -1536,7 +1541,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     }
 
     if (!input.isMouseButtonPressed(SDL_BUTTON_LEFT))
-        core::Application::getInstance().setGameObjectHighlight(highlightedSign, signHoverStrength);
+        core::Application::getInstance().setGameObjectHighlight(highlightedObject, objectHoverStrength);
 
     // World and FrameXML share the WoW gauntlet when no contextual cursor
     // was drawn. ImGui otherwise restores its desktop arrow each frame.
@@ -1584,7 +1589,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     // On mouse-up, check if it was a click (not a drag)
     if (input.isMouseButtonJustReleased(SDL_BUTTON_LEFT)) {
         // Restore the current hover strength after releasing pressed feedback.
-        core::Application::getInstance().setGameObjectHighlight(highlightedSign, signHoverStrength);
+        core::Application::getInstance().setGameObjectHighlight(highlightedObject, objectHoverStrength);
     }
 
     if (leftClickWasPress_ && input.isMouseButtonJustReleased(SDL_BUTTON_LEFT)) {
@@ -1858,7 +1863,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     if (closestType == game::ObjectType::GAMEOBJECT) {
                         LOG_DEBUG("[GO-DIAG] Right-click: raypick hit GO 0x",
                                     std::hex, closestGuid, std::dec);
-                        gameHandler.setTarget(closestGuid);
+                        // Object use must preserve the selected unit. Meeting
+                        // stones summon that player through the server's selection.
                         gameHandler.prepareLoot(closestGuid, io.KeyShift);
                         gameHandler.interactWithGameObject(closestGuid);
                         return;

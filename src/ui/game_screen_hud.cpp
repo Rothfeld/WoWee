@@ -1716,9 +1716,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (objectTooltipGuid) {
             const auto entity = gameHandler.getEntityManager().getEntity(objectTooltipGuid);
             assert(entity);
+            std::string objectLabel = game::entityDisplayName(entity);
+            const auto object = std::static_pointer_cast<game::GameObject>(entity);
+            const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
+            if (info && info->type == 23) {
+                const std::string area = gameHandler.getWhoAreaName(info->data[2]);
+                if (!area.empty()) objectLabel += "\n" + area;
+            }
             // Encode server text as Lua data, including quotes and control bytes.
             std::string literal = "'";
-            for (const unsigned char c : game::entityDisplayName(entity)) {
+            for (const unsigned char c : objectLabel) {
                 literal += '\\';
                 literal += static_cast<char>('0' + c / 100);
                 literal += static_cast<char>('0' + c / 10 % 10);
