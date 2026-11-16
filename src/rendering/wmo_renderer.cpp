@@ -4115,10 +4115,19 @@ std::vector<WMORenderer::InteriorMapGroup> WMORenderer::getInteriorMapGroups(con
     for (size_t index = 0; index < model.groups.size(); ++index) {
         const auto& group = model.groups[index];
         if (!(group.groupFlags & kWMOGroupIndoor)) continue;
-        if (location.localPosition.z < group.authoredMin.z ||
-            location.localPosition.z > group.authoredMax.z) continue;
         groups.push_back({group.authoredIndex, group.authoredMin, group.authoredMax});
     }
+    // Height controls overlap order, not whether a room exists on the map.
+    // Stairs can place the player above every corridor/cell ceiling nearby.
+    // Draw distant vertical layers first so the occupied layer wins where
+    // authored room textures overlap, without deleting nonoverlapping rooms.
+    const auto verticalDistance = [&](const InteriorMapGroup& group) {
+        return std::max({group.min.z - location.localPosition.z,
+                         location.localPosition.z - group.max.z, 0.0f});
+    };
+    std::stable_sort(groups.begin(), groups.end(), [&](const auto& a, const auto& b) {
+        return verticalDistance(a) > verticalDistance(b);
+    });
     return groups;
 }
 

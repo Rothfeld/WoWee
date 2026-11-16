@@ -29,6 +29,7 @@ macOS, Windows and Android.
 TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-effects.md).
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
+Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).
 
 <p align="center">
   <img src="assets/hellfire-peninsula.png" alt="WoWee rendering Honor Hold in Hellfire Peninsula" width="100%" />

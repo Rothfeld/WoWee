@@ -1495,7 +1495,7 @@ void GameScreen::renderMinimapReadouts(const MinimapFrame& frame, game::GameHand
     }
 
     // Instance difficulty indicator - just below zone name, inside minimap top edge
-    if (gameHandler.isInInstance()) {
+    if (gameHandler.isInInstance() && !frameXmlOwns(UiElement::Minimap)) {
         uint32_t diff = gameHandler.getInstanceDifficulty();
         const char* named = game::instanceDifficultyName(diff);
         const char* label = named ? named : "Unknown";

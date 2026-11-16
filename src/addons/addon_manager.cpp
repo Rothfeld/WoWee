@@ -598,11 +598,6 @@ void AddonManager::giveCoinAmountsClearance() {
         LOG_WARNING("About menu entry did not apply: ", luaEngine_.lastError());
     }
 
-    // The compass N, which sits on top of this client's zone name.
-    if (!luaEngine_.executeString(kMinimapNorthTagLua)) {
-        LOG_WARNING("Minimap north tag did not apply: ", luaEngine_.lastError());
-    }
-
     // Every control for something this client does not do, taken off the panel.
     if (!luaEngine_.executeString(kRemovedControlsLua)) {
         LOG_WARNING("Removed controls did not apply: ", luaEngine_.lastError());
