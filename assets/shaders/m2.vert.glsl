@@ -63,6 +63,7 @@ layout(location = 5) out float vFadeAlpha;
 layout(location = 6) flat out int vSkyMode;
 layout(location = 7) flat out float vHighlight;
 layout(location = 8) flat out vec4 vIndoorLighting;
+layout(location = 9) out vec3 VertexLighting;
 
 void main() {
     // Fetch per-instance data from SSBO
@@ -278,6 +279,8 @@ void main() {
 
     FragPos = worldPos.xyz;
     Normal = mat3(model) * norm.xyz;
+    float diffuse = max(dot(normalize(Normal), normalize(-lightDir.xyz)), 0.0);
+    VertexLighting = clamp(ambientColor.rgb + diffuse * lightColor.rgb, 0.0, 1.0);
 
     TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;
 

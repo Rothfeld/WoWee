@@ -738,6 +738,10 @@ static void applySoundCVars(lua_State* L) {
 /// with wherever the controls already were.
 
 static void pushCvarDefault(lua_State* L, const std::string& n) {
+    if (n == "ffxglow") {
+        lua_pushstring(L, "1");
+        return;
+    }
     // Return sensible defaults for commonly queried CVars
     // The sound ones read back as on and at full, which is what this client
     // starts as. Volume up/down step from whatever is read here, so answering
@@ -1499,6 +1503,10 @@ static std::string cvarLabelFor(const std::string& name) {
 /// somebody changed a setting, which is not what restoring one is.
 static void applyCVarSideEffects(lua_State* L, const std::string& key,
                                  const std::string& value) {
+    if (key == "ffxglow") {
+        if (auto* svc = getLuaServices(L); svc && svc->setGlowEnabled)
+            svc->setGlowEnabled(value != "0");
+    }
     // A sound CVar is a setting, not a note. Without this the interface's
     // volume keys and its Sound options both wrote to a map nobody read, so
     // turning music off left it playing.

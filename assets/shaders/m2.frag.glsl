@@ -56,6 +56,7 @@ layout(location = 5) in float vFadeAlpha;
 layout(location = 6) flat in int vSkyMode;
 layout(location = 7) flat in float vHighlight;
 layout(location = 8) flat in vec4 vIndoorLighting;
+layout(location = 9) in vec3 VertexLighting;
 
 layout(location = 0) out vec4 outColor;
 
@@ -252,7 +253,7 @@ void main() {
         texColor.a = clamp((texColor.a - alphaCutoff) / max(aGrad, 0.001) * 0.5 + 0.5, 0.0, 1.0);
         if (texColor.a < 1.0 / 255.0) discard;
     }
-    if (colorKeyBlack != 0) {
+    if (colorKeyBlack != 0 && blendMode <= 1) {
         float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
         if (lum < colorKeyThreshold) discard;
     }
@@ -265,7 +266,7 @@ void main() {
     // in each other reads as a seam down the middle of the crown rather than
     // as two trees. Enough to break the copy, not enough to be seen as a
     // difference in light.
-    if (isFoliage) {
+    if (isFoliage && lightDir.w == 0.0) {
         float hash = fract(sin(dot(InstanceOrigin.xy, vec2(127.1, 311.7))) * 43758.5453);
         float hueShiftR = 1.0 + (hash - 0.5) * 0.10;       // ±5% red
         float hueShiftB = 1.0 + (fract(hash * 7.13) - 0.5) * 0.10; // ±5% blue
@@ -290,8 +291,9 @@ void main() {
 
     vec3 result;
     if (unlit != 0) {
-        result = texColor.rgb * emissiveBoost;
-        if (emissiveBoost > 1.0) {
+        float boost = lightDir.w != 0.0 ? 1.0 : emissiveBoost;
+        result = texColor.rgb * boost;
+        if (boost > 1.0) {
             // Weighted by the texel's own brightness. Added flat it lit the
             // whole quad, and a glow card is black everywhere but its middle,
             // so the card's rectangle appeared as an orange panel hanging on
@@ -351,6 +353,9 @@ void main() {
         result = ambientTerm * texColor.rgb
                + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb)
                + sss;
+        if (lightDir.w != 0.0) {
+            result = texColor.rgb * (ambientColor.rgb + shadow * (VertexLighting - ambientColor.rgb));
+        }
 
         if (interiorDarken > 0.0) {
             result *= mix(1.0, 0.5, interiorDarken);
@@ -362,7 +367,7 @@ void main() {
     // place on a forty-yard tree and on a knee-high fern; it used to be raw
     // model-space z against a hardcoded eighteen, which put the darkening on
     // the trunk of anything tall and over the whole of anything short.
-    if (isFoliage) {
+    if (isFoliage && lightDir.w == 0.0) {
         float aoFactor = mix(0.55, 1.0, smoothstep(0.0, 0.6, ModelHeight));
         result *= aoFactor;
     }
@@ -390,7 +395,7 @@ void main() {
     // alpha-to-coverage turns it into per-sample coverage for smooth edges.
     // Color-key-only materials have no meaningful texture alpha; keep them
     // opaque after the discard.
-    if (colorKeyBlack != 0 && alphaTest == 0) {
+    if (colorKeyBlack != 0 && alphaTest == 0 && blendMode <= 1) {
         outAlpha = vFadeAlpha;
     }
     // The distance fade, for a batch drawn with no blending to fade through.

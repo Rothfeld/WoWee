@@ -2,7 +2,7 @@
 
 // FXAA 3.11, quality preset 12 (Timothy Lottes). Reads the resolved scene
 // colour and writes the smoothed result.
-// Push constants: rcpFrame, sharpness, intoxication (0 = sober, 1 = smashed).
+// Push constants: pixel size, sharpness, intoxication, glow, AA enable.
 //
 // A port of the reference rather than a paraphrase of it. The pass this
 // replaces had the shape of FXAA and two of its numbers wrong. Its
@@ -25,6 +25,8 @@ layout(push_constant) uniform PC {
     vec2  rcpFrame;
     float sharpness;    // 0 = no sharpen, 2 = max (matches FSR2 RCAS range)
     float intoxication;
+    float glow;
+    float enableAA;
 } pc;
 
 // The reference's default tuning. Subpix 0.75 is what it calls the default
@@ -42,6 +44,20 @@ const float kSearchStep[FXAA_SEARCH_STEPS] =
 
 float luma(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
+}
+
+vec3 compositeGlow(vec3 scene, vec2 uv) {
+    if (pc.glow == 0.0) return scene;
+    // Separable four-tap binomial Gaussian, evaluated as one 16-tap pass.
+    // Normalized footprint keeps the effect stable when resolution changes.
+    const float weights[4] = float[](0.125, 0.375, 0.375, 0.125);
+    vec2 stepUV = vec2(7.0) / vec2(1280.0, 720.0);
+    vec3 blurred = vec3(0.0);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x)
+            blurred += texture(uScene, uv + (vec2(x, y) - 1.5) * stepUV).rgb
+                     * weights[x] * weights[y];
+    return scene + pc.glow * blurred * blurred;
 }
 
 void main() {
@@ -78,8 +94,8 @@ void main() {
     float rangeMin = min(lumaM, min(min(lumaN, lumaS), min(lumaE, lumaW)));
     float range    = rangeMax - rangeMin;
 
-    if (range < max(FXAA_EDGE_THRESHOLD_MIN, rangeMax * FXAA_EDGE_THRESHOLD)) {
-        outColor = vec4(rgbM, 1.0);
+    if (pc.enableAA == 0.0 || range < max(FXAA_EDGE_THRESHOLD_MIN, rangeMax * FXAA_EDGE_THRESHOLD)) {
+        outColor = vec4(compositeGlow(rgbM, uv), 1.0);
         return;
     }
 
@@ -187,5 +203,5 @@ void main() {
         fxaaResult = clamp(fxaaResult + s * (fxaaResult - blur), 0.0, 1.0);
     }
 
-    outColor = vec4(fxaaResult, 1.0);
+    outColor = vec4(compositeGlow(fxaaResult, uv), 1.0);
 }

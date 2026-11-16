@@ -60,6 +60,8 @@ layout(location = 2) in vec2 TexCoord;
 layout(location = 3) in vec4 VertColor;
 layout(location = 4) in vec3 Tangent;
 layout(location = 5) in vec3 Bitangent;
+layout(location = 6) in vec3 VertexLighting;
+layout(location = 7) in vec3 VertexSpecular;
 
 layout(location = 0) out vec4 outColor;
 
@@ -356,8 +358,15 @@ void main() {
         float spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * specularIntensity;
         if (specularAlphaMask != 0) spec *= texColor.a;
 
+        vec3 highlight = lightDir.w != 0.0 && specularAlphaMask != 0
+            ? VertexSpecular * texColor.a : spec * lightColor.rgb;
         result = rtAmbient(rt, ambientColor.rgb) * texColor.rgb
-               + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb);
+               + shadow * (diff * lightColor.rgb * texColor.rgb + highlight);
+        if (lightDir.w != 0.0) {
+            // Legacy primary vertex color saturates before interpolation.
+            result = texColor.rgb * (ambientColor.rgb + shadow * (VertexLighting - ambientColor.rgb))
+                   + shadow * highlight;
+        }
 
         // An exterior group's vertex colour is light baked into it - a lamp's
         // pool on a wall - and it adds to the sun, as it does in the client.

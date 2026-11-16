@@ -151,6 +151,8 @@ bool LightingManager::loadLightParamsDbc(pipeline::AssetManager* assetManager) {
         LightParamsProfile profile;
         profile.lightParamsId = paramId;
         if (dbc->getFieldCount() >= 9)
+            profile.glow = dbc->getFloat(i, 4);
+        if (dbc->getFieldCount() >= 9)
             profile.riverAlpha = {dbc->getFloat(i, 5), dbc->getFloat(i, 6)};
         if (dbc->getFieldCount() > 2) {
             profile.lightSkyboxId = dbc->getUInt32(i, 2);
@@ -399,6 +401,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         // Default member initializers are fallback lighting, not a zero blend.
         newParams.ambientColor = glm::vec3(0.0f);
         newParams.diffuseColor = glm::vec3(0.0f);
+        newParams.specularColor = glm::vec3(0.0f);
         newParams.fogColor = glm::vec3(0.0f);
         newParams.skyTopColor = glm::vec3(0.0f);
         newParams.skyMiddleColor = glm::vec3(0.0f);
@@ -407,6 +410,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.fogStart = newParams.fogEnd = newParams.fogDensity = 0.0f;
         newParams.cloudDensity = newParams.horizonGlow = 0.0f;
         newParams.riverAlpha = glm::vec2(0.0f);
+        newParams.glow = 0.0f;
         glm::vec3 blendedDir(0.0f);  // Accumulate weighted directions
 
         // The first MAX_BLEND_VOLUMES only: the list is the whole
@@ -423,8 +427,10 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
 
                 // Blend this volume's contribution
                 newParams.riverAlpha += params.riverAlpha * wv.weight;
+                newParams.glow += params.glow * wv.weight;
                 newParams.ambientColor += params.ambientColor * wv.weight;
                 newParams.diffuseColor += params.diffuseColor * wv.weight;
+                newParams.specularColor += params.specularColor * wv.weight;
                 newParams.fogColor += params.fogColor * wv.weight;
                 newParams.skyTopColor += params.skyTopColor * wv.weight;
                 newParams.skyMiddleColor += params.skyMiddleColor * wv.weight;
@@ -570,8 +576,10 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     // blendFactor above.
 
     currentParams_.riverAlpha = glm::mix(currentParams_.riverAlpha, newParams.riverAlpha, blendFactor);
+    currentParams_.glow = glm::mix(currentParams_.glow, newParams.glow, blendFactor);
     currentParams_.ambientColor = glm::mix(currentParams_.ambientColor, newParams.ambientColor, blendFactor);
     currentParams_.diffuseColor = glm::mix(currentParams_.diffuseColor, newParams.diffuseColor, blendFactor);
+    currentParams_.specularColor = glm::mix(currentParams_.specularColor, newParams.specularColor, blendFactor);
     currentParams_.fogColor = glm::mix(currentParams_.fogColor, newParams.fogColor, blendFactor);
     currentParams_.skyTopColor = glm::mix(currentParams_.skyTopColor, newParams.skyTopColor, blendFactor);
     currentParams_.skyMiddleColor = glm::mix(currentParams_.skyMiddleColor, newParams.skyMiddleColor, blendFactor);
@@ -708,10 +716,12 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     LightingParams params;
 
     params.riverAlpha = profile->riverAlpha;
+    params.glow = profile->glow;
 
     // Sample color bands
     params.ambientColor = sampleColorBand(profile->colorBands[LightParamsProfile::AMBIENT_COLOR], timeHalfMinutes);
     params.diffuseColor = sampleColorBand(profile->colorBands[LightParamsProfile::DIFFUSE_COLOR], timeHalfMinutes);
+    params.specularColor = sampleColorBand(profile->colorBands[LightParamsProfile::SUN_COLOR], timeHalfMinutes);
     params.fogColor = sampleColorBand(profile->colorBands[LightParamsProfile::FOG_COLOR], timeHalfMinutes);
     params.skyTopColor = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_TOP_COLOR], timeHalfMinutes);
     params.skyMiddleColor = sampleColorBand(profile->colorBands[LightParamsProfile::SKY_MIDDLE_COLOR], timeHalfMinutes);

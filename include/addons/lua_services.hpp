@@ -119,6 +119,7 @@ struct LuaServices {
     /// than a renderer pointer, to keep this header off the rendering ones.
     std::function<float()> getGamma;
     std::function<void(float)> setGamma;
+    std::function<void(bool)> setGlowEnabled;
 
     /// What the world map is showing, for the interface's own map.
     ///

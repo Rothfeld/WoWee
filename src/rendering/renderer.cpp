@@ -569,9 +569,10 @@ void Renderer::updatePerFrameUBO() {
     // Lighting from LightingManager
     if (lightingManager) {
         const auto& lp = lightingManager->getLightingParams();
-        currentFrameData.lightDir = glm::vec4(lightingManager->getSurfaceLightDirection(), 0.0f);
+        currentFrameData.lightDir = glm::vec4(lightingManager->getSurfaceLightDirection(), game::isActiveExpansion("tbc") ? 1.0f : 0.0f);
         currentFrameData.lightColor = glm::vec4(lp.diffuseColor, 1.0f);
         currentFrameData.ambientColor = glm::vec4(lp.ambientColor, 1.0f);
+        currentFrameData.specularColor = glm::vec4(lp.specularColor, 1.0f);
         currentFrameData.fogColor = glm::vec4(lp.fogColor, 1.0f);
         currentFrameData.fogParams.x = lp.fogStart;
         currentFrameData.fogParams.y = lp.fogEnd;
@@ -1262,7 +1263,11 @@ void Renderer::beginFrame() {
     if (vkCtx) vkCtx->pollUploadBatches();
 
     // Post-process resource management (§4.3 - delegates to PostProcessPipeline)
-    if (postProcessPipeline_) postProcessPipeline_->manageResources();
+    if (postProcessPipeline_) {
+        postProcessPipeline_->setGlow(game::isActiveExpansion("tbc") && lightingManager
+            ? lightingManager->getLightingParams().glow : 0.0f);
+        postProcessPipeline_->manageResources();
+    }
 
     // The target that call may have just created or destroyed decides where
     // the water draws, and with it where the spray and the minimap go. Asked

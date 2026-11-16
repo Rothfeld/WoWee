@@ -5,6 +5,7 @@
 #include "rendering/m2_blend_mode.hpp"
 #include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_glow_card.hpp"
+#include "game/game_utils.hpp"
 #include "core/thread_pool.hpp"
 #include "rendering/m2_model_classifier.hpp"
 #include "rendering/hiz_system.hpp"
@@ -1682,7 +1683,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     glowCard.modelIsBrazierOrFire = model.isBrazierOrFire;
                     glowCard.modelIsSpellEffect = model.isSpellEffect;
                     glowCard.modelIsKoboldFlame = model.isKoboldFlame;
-                    const bool shouldUseGlowSprite = m2WantsGlowSprite(glowCard);
+                    const bool shouldUseGlowSprite = !game::isActiveExpansion("tbc") && m2WantsGlowSprite(glowCard);
                     if (shouldUseGlowSprite) {
                         // Generate glow sprites for each instance in the group
                         for (size_t j = lodIdx; j < lodEnd; j++) {
@@ -2098,7 +2099,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             glowCard.modelIsBrazierOrFire = model.isBrazierOrFire;
             glowCard.modelIsSpellEffect = model.isSpellEffect;
             glowCard.modelIsKoboldFlame = model.isKoboldFlame;
-            if (m2WantsGlowSprite(glowCard) && m2GlowSpriteReplacesMesh(glowCard)) {
+            if (!game::isActiveExpansion("tbc") && m2WantsGlowSprite(glowCard) && m2GlowSpriteReplacesMesh(glowCard)) {
                 continue;
             }
 

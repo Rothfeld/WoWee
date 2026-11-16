@@ -28,6 +28,7 @@
 #include "core/logger.hpp"
 #include "core/memory_monitor.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/post_process_pipeline.hpp"
 #include "rendering/loot_sparkles.hpp"
 #include "rendering/vk_context.hpp"
 #include "audio/npc_voice_manager.hpp"
@@ -665,6 +666,10 @@ bool Application::initialize() {
         };
         luaSvc.setGamma = [uim = uiManager.get()](float g) {
             if (uim) uim->getGameScreen().setGamma(g);
+        };
+        luaSvc.setGlowEnabled = [rend = renderer.get()](bool enabled) {
+            if (rend && rend->getPostProcessPipeline())
+                rend->getPostProcessPipeline()->setGlowEnabled(enabled);
         };
         // The world map's own data, for the interface's map. The client keeps
         // the zones, their overlays and the area POIs and drew them only

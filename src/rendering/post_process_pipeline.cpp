@@ -11,6 +11,7 @@
 #include "core/profiler.hpp"
 #include <cstdlib>
 #include <algorithm>
+#include <stdexcept>
 #include <glm/gtc/matrix_inverse.hpp>
 
 namespace wowee {
@@ -70,6 +71,8 @@ void PostProcessPipeline::manageResources() {
     }
     if (useFXAA && !fxaa_.sceneFramebuffer) {
         if (!initFXAAResources()) {
+            if (glowEnabled_ && glow_ > 0.0f)
+                throw std::runtime_error("TBC glow: failed to initialize scene compositing resources");
             LOG_ERROR("FXAA: initialization failed, disabling");
             if (fxaa_.enabled) fxaa_.enabled = false;
             intoxication_ = 0.0f;
@@ -1796,11 +1799,11 @@ bool PostProcessPipeline::initFXAAResources() {
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     }
 
-    // Pipeline layout - push constant holds vec4(rcpFrame.xy, sharpness, pad)
+    // Pixel size, sharpening, intoxication, authored glow, and AA switch.
     VkPushConstantRange pc{};
     pc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pc.offset = 0;
-    pc.size = 16;  // vec4
+    pc.size = 24;
     VkPipelineLayoutCreateInfo plCI{};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plCI.setLayoutCount = 1;
@@ -1874,18 +1877,19 @@ void PostProcessPipeline::renderFXAAPass() {
     vkCmdBindDescriptorSets(currentCmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             fxaa_.pipelineLayout, 0, 1, &fxaa_.descSet[fi], 0, nullptr);
 
-    // Pass rcpFrame + sharpness + effect flag (vec4, 16 bytes). The sharpness
-    // slot drove an unsharp mask that stood in for RCAS while FXAA replaced
-    // it under the upscaler; RCAS runs ahead of FXAA now, so it stays at zero.
+    // RCAS runs before this pass. Its sharpening slot stays zero here.
+    // Glow can require compositing while antialiasing remains disabled.
     const float sharpness = 0.0f;
-    float pc[4] = {
+    float pc[6] = {
         1.0f / static_cast<float>(ext.width),
         1.0f / static_cast<float>(ext.height),
         sharpness,
-        intoxication_
+        intoxication_,
+        glowEnabled_ ? glow_ : 0.0f,
+        fxaa_.enabled ? 1.0f : 0.0f
     };
     vkCmdPushConstants(currentCmd_, fxaa_.pipelineLayout,
-                       VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, pc);
+                       VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), pc);
 
     vkCmdDraw(currentCmd_, 3, 1, 0, 0);  // fullscreen triangle
 }

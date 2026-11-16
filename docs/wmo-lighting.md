@@ -36,10 +36,33 @@ TBC specular highlights follow the MOMT shader variant. Diffuse stone, paving,
 wood, and cloth do not receive the shared pipeline's specular term. Batch merging
 keeps diffuse and specular materials separate even when they share a texture.
 The Specular variant (shader 1) uses texture alpha as its highlight mask.
+Its TBC highlight is evaluated at vertices with exponent 8 and the authored
+sun color (LightIntBand channel 9). Primary vertex lighting is saturated before
+interpolation. The diffuse direction and color remain separate from the
+specular color. M2 exterior primary lighting uses the same vertex evaluation;
+TBC omits synthetic foliage color variation, canopy darkening and replacement
+lamp halo sprites. Authored glow meshes remain visible.
+Alpha-blended M2 cards retain texture alpha even when texture classification
+detects dark texels. Color-key opacity replacement applies only to opaque and
+cutout materials. `torch.m2` uses `gloworange32.blp` with blend mode 2.
 For example, `MM_STREET_02.BLP` has mean alpha 19.75/255; treating its mask as
 fully white produces broad orange highlights across the street.
 Name-based lamp/clock emission boosts and flicker are disabled for TBC as well;
 these surfaces use their authored material shading.
+
+TBC scene glow uses LightParams field 4, blended with the active light volumes.
+It composites `scene + glow * blurredScene * blurredScene` before UI drawing.
+The Gaussian footprint is an approximation measured against native captures;
+the material and glow terms are independent. `/console ffxGlow 0` disables it,
+and `/console ffxGlow 1` enables it. The CVar persists between runs and defaults
+to enabled. Glow does not implicitly enable FXAA. For Stormwind profile 79,
+the authored glow amount is 0.3.
+
+Matched-camera captures at two zoom distances, native glow-on/off isolation,
+shader diagnostics and build logs are in the parent workspace experiment
+`_experiments/20261116T101556Z.stormwind_lighting_parity`.
+Native command injection must use physical base keys plus Shift for punctuation;
+X11's alternate parenthesis keycodes are ignored by Wine.
 
 Comparison artifacts and asset inspection script:
 `_experiments/20261116T094629Z.stormwind_shading` in the parent workspace.

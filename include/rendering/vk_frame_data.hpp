@@ -15,7 +15,7 @@ struct GPUPerFrameData {
     glm::mat4 view;
     glm::mat4 projection;
     glm::mat4 lightSpaceMatrix;
-    glm::vec4 lightDir;       // xyz = direction, w = unused
+    glm::vec4 lightDir;       // xyz = direction, w = TBC vertex-lighting flag
     glm::vec4 lightColor;     // xyz = color, w = unused
     glm::vec4 ambientColor;   // xyz = color, w = unused
     glm::vec4 viewPos;        // xyz = camera pos, w = unused
@@ -43,6 +43,7 @@ struct GPUPerFrameData {
     glm::mat4 rtViewProj;
     glm::vec4 rtCameraPos;
     glm::vec4 rtParams;
+    glm::vec4 specularColor;
 };
 
 // Push constants for the model matrix (most common case)
