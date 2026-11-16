@@ -822,7 +822,7 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
             {"RAID_WARNING", 1.0f, 0.28f, 0.0f},
             {"WHISPER", 1.0f, 0.5f, 1.0f},   {"WHISPER_INFORM", 1.0f, 0.5f, 1.0f},
             {"EMOTE", 1.0f, 0.5f, 0.25f},    {"TEXT_EMOTE", 1.0f, 0.5f, 0.25f},
-            {"MONSTER_SAY", 1.0f, 1.0f, 1.0f},
+            {"MONSTER_SAY", 1.0f, 1.0f, 159.0f / 255.0f},
             {"MONSTER_YELL", 1.0f, 0.25f, 0.25f},
             {"MONSTER_EMOTE", 1.0f, 0.5f, 0.25f},
             {"MONSTER_WHISPER", 1.0f, 0.72f, 0.72f},
