@@ -188,7 +188,7 @@ public:
     float pendingLeftBarOffsetY  = 0.0f;  // Vertical offset from screen center
 
     // ---- Pending graphics quality ----
-    int pendingGroundClutterDensity = kDefaultGroundClutter;
+    float pendingGroundClutterDensity = kDefaultGroundClutter;
     /// The five that used to live only on the game's own Effects panel,
     /// reachable through its cvars and nowhere else. Each is bound to that
     /// cvar in kClientCVars, so the two are one value rather than two that

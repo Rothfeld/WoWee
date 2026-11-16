@@ -1686,7 +1686,7 @@ void AuthScreen::loadLoginGraphicsState() {
         else if (key == "pom_quality")      loginGfx_.pomQuality     = clampI(std::stoi(val), 0, rendering::kPomQualityCount - 1);
         else if (key == "upscaling_mode")   loginGfx_.upscalingMode  = clampI(std::stoi(val), 0, 2);
         else if (key == "water_refraction") loginGfx_.waterRefraction = (val == "1");
-        else if (key == "ground_clutter_density") loginGfx_.groundClutter = clampI(std::stoi(val), 0, 150);
+        else if (key == "ground_clutter_density") loginGfx_.groundClutter = std::clamp(std::stof(val), 0.0f, 150.0f);
         else if (key == "grass_enabled")    loginGfx_.grass          = (val == "1");
         else if (key == "grass_density")    loginGfx_.grassDensity   = clampI(std::stoi(val), 0, 300);
         else if (key == "grass_height")     loginGfx_.grassHeight    = clampI(std::stoi(val), 50, 300);
@@ -1887,7 +1887,7 @@ void AuthScreen::renderLoginSettingsSheet(float screenW, float screenH) {
             // 150, not 200: GameScreen::loadSettings clamps there, so the last
             // fifty units of this slider were silently discarded at login.
             const auto [ra, rb] = labelled("Ground clutter");
-            ui_.sliderInt("gfx.clutter", ra, rb, &loginGfx_.groundClutter, 0, 150);
+            ui_.sliderFloat("gfx.clutter", ra, rb, &loginGfx_.groundClutter, 0.0f, 150.0f);
             right.gap(px(8));
         }
         {

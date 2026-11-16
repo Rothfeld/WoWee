@@ -277,7 +277,7 @@ constexpr FieldBinding kFieldBindings[] = {
     // then multiplied by a hundred and clamped. The cvar keeps its own units
     // through the scale in kClientCVars, which is where that conversion
     // belongs: one place, named, rather than two that have to agree.
-    {.key = "groundclutter",  .asInt   = &SettingsPanel::pendingGroundClutterDensity},
+    {.key = "groundclutter",  .asFloat = &SettingsPanel::pendingGroundClutterDensity},
     {.key = "groundclutterdistance", .asInt = &SettingsPanel::pendingGroundClutterDistance},
     {.key = "particledensity",   .asInt = &SettingsPanel::pendingParticleDensity},
     {.key = "weatherdetail",     .asInt = &SettingsPanel::pendingWeatherDetail},

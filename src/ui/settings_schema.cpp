@@ -133,7 +133,7 @@ constexpr SettingDesc kSchema[] = {
     // pixels, which test_settings_panel_layout measures, and Graphics uses
     // most of them. These are the settings that describe how much of the
     // world is drawn rather than how it is lit.
-    {"groundclutter", "Ground clutter", SettingKind::Int, 0, 150, 5, "Detail", "Ground cover",
+    {"groundclutter", "Ground clutter", SettingKind::Float, 0, 150, 5, "Detail", "Ground cover",
      "How many small plants, tufts and stones are scattered over the\n"
      "ground, as a percentage of what the zone asks for. 100 is as\n"
      "designed; above it is denser than the original client drew.", "", 70},
