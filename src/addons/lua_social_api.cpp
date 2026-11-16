@@ -2876,7 +2876,7 @@ void registerSocialLuaAPI(lua_State* L) {
             // than raising.
             if (!lua_checkstack(L, static_cast<int>(opts.size()) * 2 + 1)) return 0;
             int n = 0;
-            static constexpr const char* kIcons[] = {"gossip","vendor","taxi","trainer","spiritguide","innkeeper","banker","petition","tabard","battlemaster","auctioneer"};
+            static constexpr const char* kIcons[] = {"gossip","vendor","taxi","trainer","healer","binder","banker","petition","tabard","battlemaster","vendor"};
             for (const auto& o : opts) {
                 lua_pushstring(L, o.text.c_str());
                 lua_pushstring(L, o.icon < 11 ? kIcons[o.icon] : "gossip");

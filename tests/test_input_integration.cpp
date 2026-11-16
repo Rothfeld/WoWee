@@ -1141,6 +1141,30 @@ TEST_CASE_METHOD(Integration, "Guard destinations send only gossip selection", "
     CHECK(session.sent().of(wowee::game::Opcode::MSG_LIST_STABLED_PETS).empty());
 }
 
+TEST_CASE_METHOD(Integration, "Gossip icon types match authored TBC texture names", "[gossip-icons]") {
+    replay::Session session("tbc");
+    lua.setGameHandler(&session.handler());
+    wowee::network::Packet gossip(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_MESSAGE));
+    gossip.writeUInt64(123);
+    gossip.writeUInt32(2121);
+    gossip.writeUInt32(0);
+    gossip.writeUInt32(3);
+    for (uint8_t icon : {4, 5, 10}) {
+        gossip.writeUInt32(icon);
+        gossip.writeUInt8(icon);
+        gossip.writeUInt8(0);
+        gossip.writeUInt32(0);
+        gossip.writeString("Service");
+        gossip.writeString("");
+    }
+    gossip.writeUInt32(0);
+    session.receive(gossip);
+    truth("select(2, GetGossipOptions()) == 'healer'");
+    truth("select(4, GetGossipOptions()) == 'binder'");
+    truth("select(6, GetGossipOptions()) == 'vendor'");
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Attack permission respects immunity and peaceful reputation", "[npc-attack]") {
     replay::Session session("tbc");
     auto& handler = session.handler();

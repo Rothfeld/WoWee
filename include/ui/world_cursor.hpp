@@ -22,6 +22,7 @@ inline const char* unitCursorPath(bool alive, uint32_t dynamicFlags, int reactio
         ? nullptr : game::questGiverMarker(questStatus).symbol;
     if (questSymbol) return questSymbol[0] == '!'
         ? "Interface\\Cursor\\Quest.blp" : "Interface\\Cursor\\QuestTurnIn.blp";
+    if (npcFlags & game::NPC_FLAG_INNKEEPER) return "Interface\\Cursor\\Innkeeper.blp";
     if (iconName == "Directions") return "Interface\\Cursor\\Directions.blp";
     if (iconName == "Buy") return "Interface\\Cursor\\Buy.blp";
     if (iconName == "Taxi") return "Interface\\Cursor\\Taxi.blp";
@@ -30,7 +31,6 @@ inline const char* unitCursorPath(bool alive, uint32_t dynamicFlags, int reactio
     if (npcFlags & (game::NPC_FLAG_ANY_VENDOR | game::NPC_FLAG_BANKER | game::NPC_FLAG_AUCTIONEER)) return "Interface\\Cursor\\Buy.blp";
     if (npcFlags & game::NPC_FLAG_TRAINER) return "Interface\\Cursor\\Trainer.blp";
     if (npcFlags & game::NPC_FLAG_FLIGHT_MASTER) return "Interface\\Cursor\\Taxi.blp";
-    if (npcFlags & game::NPC_FLAG_INNKEEPER) return "Interface\\Cursor\\Innkeeper.blp";
     if (npcFlags & game::NPC_FLAG_GOSSIP) return "Interface\\Cursor\\Speak.blp";
     return "Interface\\Cursor\\Point.blp";
 }
