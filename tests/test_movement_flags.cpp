@@ -12,9 +12,25 @@
 #include <catch_amalgamated.hpp>
 
 #include "game/world_packets.hpp"
+#include "game/remote_jump.hpp"
 
 using wowee::game::MovementFlags;
 using wowee::game::MovementInfo;
+
+TEST_CASE("Stationary native water jump ignores inactive horizontal speed", "[movement][jump]") {
+    MovementInfo info;
+    // Captured native dwarf water jump: flags=4096, XY unchanged on heartbeat.
+    info.flags = 4096;
+    info.jumpXYSpeed = 4.72222f;
+    info.jumpVelocity = -9.09675f;
+    CHECK(wowee::game::remoteJumpHorizontalSpeed(info, false) == 0.0f);
+    info.flags |= static_cast<uint32_t>(MovementFlags::TURN_LEFT);
+    CHECK(wowee::game::remoteJumpHorizontalSpeed(info, false) == 0.0f);
+    info.flags |= static_cast<uint32_t>(MovementFlags::FORWARD);
+    CHECK(wowee::game::remoteJumpHorizontalSpeed(info, false) == 4.72222f);
+    info.flags = static_cast<uint32_t>(MovementFlags::FALLING);
+    CHECK(wowee::game::remoteJumpHorizontalSpeed(info, true) == 4.72222f);
+}
 
 namespace {
 

@@ -1,4 +1,5 @@
 #include "game/movement_handler.hpp"
+#include "game/remote_jump.hpp"
 #include "game/game_handler.hpp"
 #include "game/game_utils.hpp"
 #include "game/packet_parsers.hpp"
@@ -1355,8 +1356,11 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         static_cast<uint32_t>(MovementFlags::LEVITATING);
     if (entity->getType() == ObjectType::PLAYER && !onTransport && airborne) {
         // Wire zspeed is downward-positive; native takeoff sends -7.95555.
+        const bool retainedMomentum = !isJumpOpcode && entity->isRemoteAirborne() &&
+            entity->getLocomotionSpeed() > 0.0001f;
+        const float horizontalSpeed = remoteJumpHorizontalSpeed(info, retainedMomentum);
         const glm::vec3 velocity = core::coords::serverToCanonical(glm::vec3(
-            info.jumpCosAngle * info.jumpXYSpeed, info.jumpSinAngle * info.jumpXYSpeed,
+            info.jumpCosAngle * horizontalSpeed, info.jumpSinAngle * horizontalSpeed,
             -info.jumpVelocity - Entity::remoteGravity * (info.fallTime / 1000.0f)));
         entity->updateRemoteAirMotion(canonical, canYaw, velocity,
                                      info.hasFlag(MovementFlags::FEATHER_FALL));

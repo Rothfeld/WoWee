@@ -29,3 +29,10 @@ water launch speed and swim horizontal speed, and clear the swimming flag.
 Native position samples, bounded paired input, screenshots, and WoWee movement
 traces are in workspace experiment `20261116T143220Z.swim_surface`. Native tests
 measure a 2.144-yard rise both underwater and at the surface.
+
+Remote stationary water jumps can carry `jumpXYSpeed=4.72222` without directional
+flags. That field alone does not establish horizontal travel. Direction flags
+establish travel at takeoff; an existing airborne horizontal velocity preserves
+momentum on later packets after those flags are released. Experiment
+`20261116T150355Z.remote_water_jump` records native flags `4096` and unchanged X/Y
+at both takeoff and the following heartbeat despite the nonzero speed field.

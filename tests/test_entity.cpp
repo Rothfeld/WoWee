@@ -1,6 +1,7 @@
 // Entity, Unit, Player, GameObject, EntityManager tests
 #include <catch_amalgamated.hpp>
 #include "game/entity.hpp"
+#include "game/remote_jump.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include <algorithm>
 #include <memory>
@@ -371,6 +372,21 @@ TEST_CASE("Remote jump follows an arc across heartbeats and lands", "[entity][mo
     REQUIRE_FALSE(p.isRemoteAirborne());
     REQUIRE_FALSE(p.isActivelyMoving());
     REQUIRE(p.getZ() == Catch::Approx(100));
+}
+
+TEST_CASE("Native stationary water jump stays vertical between heartbeats", "[entity][movement]") {
+    MovementInfo info;
+    info.flags = 4096;
+    info.jumpXYSpeed = 4.72222f;
+    Player player;
+    player.setPosition(898.263f, -8807.09f, 94.2062f, 0.0f);
+    const float speed = remoteJumpHorizontalSpeed(info, false);
+    player.updateRemoteAirMotion({898.263f, -8807.09f, 94.2062f}, 0.0f,
+                                {-0.635923f * speed, 0.771753f * speed, 9.09675f});
+    for (int frame = 0; frame < 20; ++frame) player.updateMovement(0.025f);
+    CHECK(player.getX() == 898.263f);
+    CHECK(player.getY() == -8807.09f);
+    CHECK(player.getZ() > 96.0f);
 }
 
 TEST_CASE("Remote moving jump keeps momentum below takeoff height", "[entity][movement]") {
