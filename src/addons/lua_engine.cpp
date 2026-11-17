@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <cassert>
 #include <cstdint>
+#include <cstdarg>
 // The clipboard, for paste and copy in an edit box.
 #include <SDL3/SDL.h>
 #include "addons/lua_api_helpers.hpp"
@@ -2152,111 +2153,303 @@ static bool fillQuestTooltip(wowee::ui::Widget* w, game::GameHandler* gh,
     return true;
 }
 
-static bool fillSpellTooltip(wowee::ui::Widget* w, game::GameHandler* gh,
-                             uint32_t spellId) {
-    if (!w || !gh || spellId == 0) return false;
-    const std::string& name = gh->getSpellName(spellId);
-    if (name.empty()) return false;
+namespace {
+/// Tooltip colours of the 2.4.3 spell and talent tooltips: white text, gold
+/// descriptions (NORMAL_FONT_COLOR), unmet requirements in ff2020 (the colour
+/// the client also writes inline into reagent names), green "Click to learn".
+constexpr float kWhite[3] = {1.0f, 1.0f, 1.0f};
+constexpr float kGold[3] = {1.0f, 0.82f, 0.0f};
+constexpr float kUnmet[3] = {1.0f, 32.0f / 255.0f, 32.0f / 255.0f};
+constexpr float kLearn[3] = {0.0f, 1.0f, 0.0f};
 
-    auto line = [&w](std::string l, std::string r, float lr, float lg, float lb) {
-        wowee::ui::Widget::TooltipLine t;
-        t.left = std::move(l);
-        t.right = std::move(r);
-        t.lc[0] = lr; t.lc[1] = lg; t.lc[2] = lb; t.lc[3] = 1.0f;
-        t.rc[0] = t.rc[1] = t.rc[2] = 1.0f; t.rc[3] = 1.0f;
-        w->tooltipLines.push_back(std::move(t));
+void pushTooltipLine(wowee::ui::Widget* w, std::string left, const float* lc,
+                     std::string right = {}, const float* rc = kWhite, bool wrap = false) {
+    wowee::ui::Widget::TooltipLine t;
+    t.left = std::move(left);
+    t.right = std::move(right);
+    for (int i = 0; i < 3; ++i) { t.lc[i] = lc[i]; t.rc[i] = rc[i]; }
+    t.lc[3] = t.rc[3] = 1.0f;
+    t.wrap = wrap;
+    w->tooltipLines.push_back(std::move(t));
+}
+
+/// A FrameXML GlobalStrings.lua entry. These are the client's own tooltip
+/// texts (TOOLTIP_TALENT_RANK, SPELL_EQUIPPED_ITEM, ...); a missing one is
+/// logged and its name shown.
+std::string globalText(lua_State* L, const char* name) {
+    lua_getglobal(L, name);
+    std::string text = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    if (text.empty()) {
+        LOG_ERROR("GlobalStrings lacks ", name);
+        return name;
+    }
+    return text;
+}
+
+std::string formatGlobal(lua_State* L, const char* name, ...) {
+    const std::string pattern = globalText(L, name);
+    char buf[512];
+    va_list args;
+    va_start(args, name);
+    std::vsnprintf(buf, sizeof(buf), pattern.c_str(), args);
+    va_end(args);
+    return wowee::ui::resolvePluralEscapes(buf);
+}
+
+/// One Spell.dbc integer column of a spell through the active layout.
+uint32_t spellColumn(game::GameHandler* gh, uint32_t spellId, const char* name) {
+    auto* assets = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* layout = layouts ? layouts->getLayout("Spell") : nullptr;
+    const auto dbc = assets && layout ? assets->loadDBC("Spell.dbc") : nullptr;
+    const auto row = dbc ? dbc->findRecordById(spellId) : -1;
+    const uint32_t f = layout ? layout->field(name) : 0xFFFFFFFFu;
+    if (row < 0 || f >= dbc->getFieldCount()) return 0;
+    return dbc->getUInt32(row, f);
+}
+
+/// "Requires <weapon>" text: the ItemSubClassMask.dbc name for the exact
+/// class and mask ("Melee Weapon"), else the ItemSubClass.dbc names of every
+/// subclass in the mask joined by ", " ("One-Handed Maces, Two-Handed Maces").
+std::string equippedItemName(game::GameHandler* gh, int32_t itemClass, uint32_t mask) {
+    auto* assets = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    if (!assets || !layouts) return {};
+    if (const auto* l = layouts->getLayout("ItemSubClassMask")) {
+        if (const auto dbc = assets->loadDBC("ItemSubClassMask.dbc"); dbc && dbc->isLoaded()) {
+            for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+                if (static_cast<int32_t>(dbc->getUInt32(r, l->field("ClassID"))) == itemClass &&
+                    dbc->getUInt32(r, l->field("Mask")) == mask)
+                    return dbc->getString(r, l->field("Name"));
+            }
+        }
+    }
+    std::string names;
+    const auto* l = layouts->getLayout("ItemSubClass");
+    const auto dbc = l ? assets->loadDBC("ItemSubClass.dbc") : nullptr;
+    if (!dbc || !dbc->isLoaded()) return {};
+    for (uint32_t sub = 0; sub < 32; ++sub) {
+        if (!(mask & (1u << sub))) continue;
+        for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+            if (static_cast<int32_t>(dbc->getUInt32(r, l->field("ClassID"))) != itemClass ||
+                dbc->getUInt32(r, l->field("SubClassID")) != sub) continue;
+            const std::string name = dbc->getString(r, l->field("VerboseName"));
+            if (!name.empty()) names += (names.empty() ? "" : ", ") + name;
+        }
+    }
+    return names;
+}
+
+/// Whether the equipped weapons satisfy a spell's EquippedItemClass/SubClass:
+/// AttributesEx3 0x400 checks the main hand, 0x01000000 the off hand
+/// (SPELL_ATTR_EX3_REQUIRES_MAIN_HAND_WEAPON / _OFFHAND_WEAPON); otherwise
+/// any equipped weapon may supply it.
+bool equippedItemMet(game::GameHandler* gh, int32_t itemClass, uint32_t mask, uint32_t attributesEx3) {
+    const auto matches = [&](game::EquipSlot slot) {
+        const auto& equipped = gh->getInventory().getEquipSlot(slot);
+        if (equipped.empty()) return false;
+        const auto* info = gh->getItemInfo(equipped.item.itemId);
+        return info && static_cast<int32_t>(info->itemClass) == itemClass &&
+               (mask == 0 || (mask & (1u << info->subClass)));
     };
+    const bool mainHand = (attributesEx3 & 0x400u) != 0;
+    const bool offHand = (attributesEx3 & 0x01000000u) != 0;
+    if (mainHand || offHand)
+        return (!mainHand || matches(game::EquipSlot::MAIN_HAND)) &&
+               (!offHand || matches(game::EquipSlot::OFF_HAND));
+    return matches(game::EquipSlot::MAIN_HAND) || matches(game::EquipSlot::OFF_HAND) ||
+           matches(game::EquipSlot::RANGED);
+}
 
-    w->isTooltip = true;
-    w->tooltipUnit.clear();
-    w->tooltipLines.clear();
-    const auto& rank = gh->getSpellRank(spellId);
-    // DBC subtext also contains labels such as Racial and Passive. Tooltips
-    // show numbered ranks; the spellbook itself shows all DBC subtext.
-    const bool numberedRank = std::any_of(rank.begin(), rank.end(),
-        [](unsigned char c) { return c >= '0' && c <= '9'; });
-    line(name, numberedRank ? rank : "", 1.0f, 1.0f, 1.0f);
-    w->tooltipLines.back().rc[0] = w->tooltipLines.back().rc[1] = w->tooltipLines.back().rc[2] = 0.5f;
+/// SpellShapeshiftForm.dbc names of a Stances mask, joined by ", ".
+std::string stanceNames(game::GameHandler* gh, uint32_t stances) {
+    auto* assets = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* l = layouts ? layouts->getLayout("SpellShapeshiftForm") : nullptr;
+    const auto dbc = l && assets ? assets->loadDBC("SpellShapeshiftForm.dbc") : nullptr;
+    if (!dbc || !dbc->isLoaded()) return {};
+    std::string names;
+    for (uint32_t form = 1; form <= 32; ++form) {
+        if (!(stances & (1u << (form - 1)))) continue;
+        const auto row = dbc->findRecordById(form);
+        if (row < 0) continue;
+        const std::string name = dbc->getString(row, l->field("Name"));
+        if (!name.empty()) names += (names.empty() ? "" : ", ") + name;
+    }
+    return names;
+}
+}  // namespace
+
+/// Cost, range, cast time, cooldown and requirement lines of a castable
+/// spell, as the 2.4.3 spellbook and talent tooltips print them between the
+/// title and the description.
+static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
+                                 uint32_t spellId) {
     const auto info = gh->getSpellData(spellId);
-    const bool passive = gh->isSpellPassive(spellId);
     const auto& entry = gh->spellNameCacheRef().at(spellId);
     auto* assets = gh->services().assetManager;
     const auto* layouts = pipeline::getActiveDBCLayout();
     const auto* layout = layouts ? layouts->getLayout("Spell") : nullptr;
     const auto dbc = assets && layout ? assets->loadDBC("Spell.dbc") : nullptr;
     const auto row = dbc ? dbc->findRecordById(spellId) : -1;
-    const auto attributesEx2Field = layout ? layout->field("AttributesEx2") : 0xFFFFFFFFu;
-    const uint32_t attributesEx2 = row >= 0 && attributesEx2Field < dbc->getFieldCount()
-        ? dbc->getUInt32(row, attributesEx2Field) : 0;
+    const uint32_t attributesEx2 = spellColumn(gh, spellId, "AttributesEx2");
     const bool ranged = (entry.attr & 0x2u) != 0;
     float minimumRange = info.minRange;
     const auto* rangeLayout = layouts ? layouts->getLayout("SpellRange") : nullptr;
     const auto rangeFlagsField = rangeLayout ? rangeLayout->tryField("Flags") : UINT32_MAX;
+    uint32_t rangeFlags = 0;
     if (row >= 0 && rangeFlagsField != UINT32_MAX) {
         const auto ranges = assets->loadDBC("SpellRange.dbc");
         const auto rangeId = dbc->getUInt32(row, layout->field("RangeIndex"));
         const auto rangeRow = ranges ? ranges->findRecordById(rangeId) : -1;
-        if (rangeRow >= 0 && (ranges->getUInt32(rangeRow, rangeFlagsField) & 2u))
+        if (rangeRow >= 0) rangeFlags = ranges->getUInt32(rangeRow, rangeFlagsField);
+        if (rangeFlags & 2u)
             minimumRange += 5.0f; // Ranged range excludes the standard melee reach.
     }
-
-
     const auto seconds = [](float value) {
         std::ostringstream text;
         text << value;
         return text.str();
     };
-    if (!passive && spellId != 6603) {
-        std::string cost, range;
-        if (info.manaCost > 0) {
-            const char* unit = game::powerTypeName(info.powerType);
-            cost = std::to_string(info.manaCost) + (unit ? std::string(" ") + unit : "");
-        }
-        if (info.maxRange > 0.0f && info.maxRange <= 5.0f) range = "Melee Range";
-        else if (info.maxRange > 0.0f) {
-            if (minimumRange > 0.0f) range = seconds(minimumRange) + "-";
-            range += seconds(info.maxRange) + " yd range";
-        }
-        if (!cost.empty() || !range.empty()) line(cost, range, 1, 1, 1);
-        const auto castTimeMs = info.castTimeMs + (ranged && !(attributesEx2 & 0x20u) ? 500 : 0);
-        const std::string cast = castTimeMs > 0
-            ? seconds(castTimeMs / 1000.0f) + " sec cast" : "Instant";
-        float recoveryMs = entry.recoveryMs;
-        if (ranged && !(attributesEx2 & 0x20000u)) {
-            const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
-            const auto field = game::fieldIndex(game::UF::UNIT_FIELD_RANGEDATTACKTIME);
-            if (player && field != 0xFFFF)
-                recoveryMs += static_cast<float>(player->getField(field));
-        }
-        const auto cooldownMs = std::max(recoveryMs, static_cast<float>(entry.categoryRecoveryMs));
-        std::string cooldown;
-        if (cooldownMs >= 60000) cooldown = seconds(cooldownMs / 60000.0f) + " min cooldown";
-        else if (cooldownMs > 0) cooldown = seconds(cooldownMs / 1000.0f) + " sec cooldown";
-        line(cast, cooldown, 1, 1, 1);
+    std::string cost, range;
+    uint32_t powerCost = info.manaCost;
+    // SPELL_ATTR_EX4_WEAPON_SPEED_COST_SCALING (Shiv): plus off-hand attack
+    // time / 100, as Spell::CalculatePowerCost adds it. Native shows Shiv at
+    // 40 Energy with no off-hand (2000 ms).
+    if (info.manaCost > 0 && (spellColumn(gh, spellId, "AttributesEx4") & 0x400u)) {
+        const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+        const auto field = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
+        if (player && field != 0xFFFF) powerCost += player->getField(field + 1) / 100;
     }
-    if (dbc && layout) {
-        const auto classField = layout->field("EquippedItemClass");
-        const auto maskField = layout->field("EquippedItemSubClassMask");
-        if (row >= 0 && classField < dbc->getFieldCount() && maskField < dbc->getFieldCount() &&
-            dbc->getUInt32(row, classField) == 2) {
-            const auto mask = dbc->getUInt32(row, maskField);
-            // Weapon subclass masks used by melee abilities and weapon racials.
-            if (mask == 173555) line("Requires Melee Weapon", "", 1, 1, 1);
-            else if (mask == (1u << 3)) line("Requires Guns", "", 1, 1, 1);
-            else if (mask == (1u << 16)) line("Requires Thrown", "", 1, 1, 1);
-        }
+    if (powerCost > 0) {
+        const char* unit = game::powerTypeName(info.powerType);
+        cost = std::to_string(powerCost) + (unit ? std::string(" ") + unit : "");
     }
+    // "Melee Range" is SpellRange.dbc flag 1 (Combat Range); a 5 yard range
+    // without it prints as yards (Disarm Trap: "5 yd range").
+    if (info.maxRange > 0.0f && (rangeFlags & 1u)) range = globalText(L, "MELEE_RANGE");
+    else if (info.maxRange > 0.0f) {
+        std::string yards = minimumRange > 0.0f ? seconds(minimumRange) + "-" : "";
+        yards += seconds(info.maxRange);
+        range = formatGlobal(L, "SPELL_RANGE", yards.c_str());
+    }
+    // A range without a cost takes the left side: "5-30 yd range" (Throw),
+    // "Melee Range" (Pick Pocket).
+    if (!cost.empty()) pushTooltipLine(w, cost, kWhite, range);
+    else if (!range.empty()) pushTooltipLine(w, range, kWhite);
 
-    const std::string body =
-        gh->formatSpellDescription(spellId, gh->getSpellDescription(spellId));
-    if (!body.empty()) {
-        // Wrapped, as every line of prose in a tooltip is: a line that does
-        // not wrap sets the tooltip's width, and a description is a sentence
-        // or three - the tooltip grew as wide as the screen and ran off it.
-        line(body, "", 1.0f, 0.82f, 0.0f);
-        w->tooltipLines.back().wrap = true;
+    // SpellCastTimes.dbc base. A negative base (index 18, Deadly Throw)
+    // prints SPELL_CAST_TIME_INSTANT "Instant cast" and takes no ranged
+    // wind-up. Zero prints SPELL_CAST_TIME_INSTANT_NO_MANA "Instant" for
+    // spells without a mana cost (every rogue ability, costless or energy).
+    int32_t castBase = 0;
+    if (const uint32_t castIndex = spellColumn(gh, spellId, "CastingTimeIndex"); castIndex != 0) {
+        const auto casts = assets->loadDBC("SpellCastTimes.dbc");
+        const auto castRow = casts && casts->isLoaded() ? casts->findRecordById(castIndex) : -1;
+        if (castRow >= 0) castBase = static_cast<int32_t>(casts->getUInt32(castRow, 1));
     }
+    const auto castTimeMs = castBase < 0 ? 0 : info.castTimeMs + (ranged && !(attributesEx2 & 0x20u) ? 500 : 0);
+    constexpr uint8_t kPowerMana = 0;
+    const std::string cast = castTimeMs > 0 ? seconds(castTimeMs / 1000.0f) + " sec cast"
+        : globalText(L, castBase < 0 || (info.powerType == kPowerMana && powerCost > 0)
+                            ? "SPELL_CAST_TIME_INSTANT" : "SPELL_CAST_TIME_INSTANT_NO_MANA");
+    float recoveryMs = entry.recoveryMs;
+    if (ranged && !(attributesEx2 & 0x20000u)) {
+        const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+        const auto field = game::fieldIndex(game::UF::UNIT_FIELD_RANGEDATTACKTIME);
+        if (player && field != 0xFFFF)
+            recoveryMs += static_cast<float>(player->getField(field));
+    }
+    const auto cooldownMs = std::max(recoveryMs, static_cast<float>(entry.categoryRecoveryMs));
+    std::string cooldown;
+    if (cooldownMs >= 60000) cooldown = seconds(cooldownMs / 60000.0f) + " min cooldown";
+    else if (cooldownMs > 0) cooldown = seconds(cooldownMs / 1000.0f) + " sec cooldown";
+    pushTooltipLine(w, cast, kWhite, cooldown);
 
+    // Tools (Totem0/1 items) and reagents, an unowned one in ff2020.
+    const auto itemText = [&](uint32_t itemId, uint32_t count) {
+        const auto* item = gh->getItemInfo(itemId);
+        if (!item || item->name.empty()) {
+            gh->ensureItemInfo(itemId);
+            return std::string();
+        }
+        std::string text = item->name;
+        if (count > 1) text += " (" + std::to_string(count) + ")";
+        if (gh->countItemInBags(itemId) < std::max<uint32_t>(count, 1)) text = "|cffff2020" + text + "|r";
+        return text;
+    };
+    std::string tools;
+    for (const char* column : {"Totem0", "Totem1"}) {
+        const uint32_t itemId = spellColumn(gh, spellId, column);
+        if (itemId == 0) continue;
+        const std::string text = itemText(itemId, 1);
+        if (!text.empty()) tools += (tools.empty() ? "" : ", ") + text;
+    }
+    if (!tools.empty()) pushTooltipLine(w, globalText(L, "SPELL_TOTEMS") + tools, kWhite);
+    std::string reagents;
+    for (const auto& reagent : entry.reagents) {
+        if (reagent.itemId == 0) continue;
+        const std::string text = itemText(reagent.itemId, reagent.count);
+        if (!text.empty()) reagents += (reagents.empty() ? "" : ", ") + text;
+    }
+    if (!reagents.empty()) pushTooltipLine(w, globalText(L, "SPELL_REAGENTS") + reagents, kWhite);
+}
+
+/// "Requires <weapon>", then "Requires <form>", in white when met and ff2020
+/// when not. Passive spells print these too: Human Mace Specialization reads
+/// "Requires One-Handed Maces, Two-Handed Maces".
+static void appendSpellRequirementLines(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
+                                        uint32_t spellId) {
+    const auto& entry = gh->spellNameCacheRef().at(spellId);
+    if (entry.equippedItemClass >= 0) {
+        const std::string name = equippedItemName(gh, entry.equippedItemClass, entry.equippedItemSubClassMask);
+        if (!name.empty()) {
+            const bool met = equippedItemMet(gh, entry.equippedItemClass, entry.equippedItemSubClassMask,
+                                             spellColumn(gh, spellId, "AttributesEx3"));
+            pushTooltipLine(w, formatGlobal(L, "SPELL_EQUIPPED_ITEM", name.c_str()), met ? kWhite : kUnmet);
+        }
+    }
+    // SPELL_ATTR_EX2_NOT_NEED_SHAPESHIFT: Perception carries Shadowform in
+    // its mask and native prints no form requirement.
+    const uint32_t stances = (spellColumn(gh, spellId, "AttributesEx2") & 0x80000u)
+        ? 0u : spellColumn(gh, spellId, "Stances");
+    if (stances != 0) {
+        const std::string name = stanceNames(gh, stances);
+        const uint8_t form = gh->getShapeshiftFormId();
+        const bool met = form != 0 && (stances & (1u << (form - 1)));
+        if (!name.empty()) pushTooltipLine(w, formatGlobal(L, "SPELL_REQUIRED_FORM", name.c_str()), met ? kWhite : kUnmet);
+    }
+}
+
+/// The spell tooltip of the spellbook and action bar: title, cast lines for
+/// castable spells, description in gold.
+static bool fillSpellTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
+                             uint32_t spellId, bool rankOnTitle = false) {
+    if (!w || !gh || spellId == 0) return false;
+    const std::string& name = gh->getSpellName(spellId);
+    if (name.empty()) return false;
+    w->isTooltip = true;
+    w->tooltipUnit.clear();
+    w->tooltipLines.clear();
+    // The spellbook title carries no rank (the book prints it under the
+    // name); the action bar shows numbered ranks at the right in grey.
+    const std::string& rank = gh->getSpellRank(spellId);
+    const bool numberedRank = std::any_of(rank.begin(), rank.end(),
+        [](unsigned char c) { return c >= '0' && c <= '9'; });
+    constexpr float kRankGrey[3] = {0.5f, 0.5f, 0.5f};
+    pushTooltipLine(w, name, kWhite, rankOnTitle && numberedRank ? rank : std::string(), kRankGrey);
+    // A profession's trade-skill spell (effect 47, Smelting) prints only its
+    // description natively.
+    const auto& entry = gh->spellNameCacheRef().at(spellId);
+    const bool tradeSkill = std::any_of(std::begin(entry.effectIds), std::end(entry.effectIds),
+        [](uint32_t effect) { return effect == 47; });
+    if (!gh->isSpellPassive(spellId) && spellId != 6603 && !tradeSkill)
+        appendSpellCastLines(L, w, gh, spellId);
+    appendSpellRequirementLines(L, w, gh, spellId);
+    const std::string body = gh->formatSpellDescription(spellId, gh->getSpellDescription(spellId));
+    // Wrapped: a description is prose and must not set the tooltip's width.
+    if (!body.empty()) pushTooltipLine(w, body, kGold, {}, kWhite, true);
     w->shown = true;
     return true;
 }
@@ -2281,7 +2474,7 @@ int lua_Tooltip_SetAction(lua_State* L) {
         return 1;
     }
     if (action.type == game::ActionBarSlot::SPELL) {
-        lua_pushboolean(L, fillSpellTooltip(w, gh, action.id) ? 1 : 0);
+        lua_pushboolean(L, fillSpellTooltip(L, w, gh, action.id, /*rankOnTitle=*/true) ? 1 : 0);
         return 1;
     }
     // A macro is the third kind a slot can hold and it has no tooltip of its
@@ -2372,7 +2565,7 @@ int lua_Tooltip_SetHyperlink(lua_State* L) {
 
     bool filled = false;
     if (kind == "spell" || kind == "enchant" || kind == "talent")
-        filled = fillSpellTooltip(w, gh, id);
+        filled = fillSpellTooltip(L, w, gh, id);
     else if (kind == "item") {
         filled = fillItemTooltipById(L, gh, id);
         if (filled) appendEnchantLineById(w, gh, enchantId);
@@ -2403,7 +2596,9 @@ int lua_Tooltip_SetSpellByID(lua_State* L) {
     auto* w = widgetOf(L, 1);
     auto* gh = wowee::addons::getGameHandler(L);
     const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 2, 0));
-    const bool filled = fillSpellTooltip(w, gh, id);
+    // Third argument (WoWee's own SetAction): the action bar title shows the
+    // rank at the right in grey, the spellbook title does not.
+    const bool filled = fillSpellTooltip(L, w, gh, id, lua_toboolean(L, 3) != 0);
     if (filled) lua_pushinteger(L, id); else lua_pushnil(L);
     lua_setfield(L, 1, "__spellId");
     lua_pushboolean(L, filled);
@@ -2486,7 +2681,7 @@ int lua_Tooltip_SetGlyph(lua_State* L) {
     if (glyphId == 0) { lua_pushboolean(L, 0); return 1; }
     gh->ensureGlyphPropertiesLoaded();
     const uint32_t spellId = gh->getGlyphSpellId(glyphId);
-    lua_pushboolean(L, spellId && fillSpellTooltip(w, gh, spellId) ? 1 : 0);
+    lua_pushboolean(L, spellId && fillSpellTooltip(L, w, gh, spellId) ? 1 : 0);
     return 1;
 }
 
@@ -2583,71 +2778,105 @@ int lua_Tooltip_SetQuestLogRewardSpell(lua_State* L) {
         if (const auto* q = wowee::addons::questAtLogRow(gh, gh->getSelectedQuestLogIndex()))
             spellId = q->rewardSpellId;
     }
-    lua_pushboolean(L, spellId && fillSpellTooltip(w, gh, spellId) ? 1 : 0);
+    lua_pushboolean(L, spellId && fillSpellTooltip(L, w, gh, spellId) ? 1 : 0);
     return 1;
 }
 
-/// A talent's name, the rank the player has in it, and what it does.
+/// A talent's tooltip, laid out as 2.4.3 lays it out:
 ///
-/// Hovering a talent used to raise: the metatable had no SetTalent, so the call
-/// landed on nil and took the handler with it. Listing it as a no-op stopped
-/// that and left the tooltip empty; this fills it, which is the whole reason
-/// anyone hovers a talent.
+///     Riposte                                   white
+///     Rank 0/1                                  TOOLTIP_TALENT_RANK, white
+///     Requires 5 points in Deflection           TOOLTIP_TALENT_PREREQ, ff2020, unmet only
+///     Requires 10 points in Combat Talents      TOOLTIP_TALENT_TIER_POINTS, ff2020, unmet only
+///     10 Energy            Melee Range          cast lines of an active ability
+///     Instant              6 sec cooldown
+///     A strike that becomes active ...          description of the rank held (rank 1 at 0), gold
+///     " "                                       gold, then "Next rank:" white and the next
+///                                               rank's description, when 0 < rank < max
+///     Click to learn                            TOOLTIP_TALENT_LEARN, green, when learnable
 ///
-/// The description shown is the rank the player actually has. An unlearned
-/// talent describes its first rank, which is what taking a point in it would
-/// buy - the useful thing to read when deciding.
+/// Recorded from the native client's GameTooltipTextLeft/Right lines on pair 2:
+/// _experiments/20261117T181655.755643Z.talent_tooltip_pair2/r2_native.lua.
 int lua_Tooltip_SetTalent(lua_State* L) {
     auto* w = widgetOf(L, 1);
     auto* gh = wowee::addons::getGameHandler(L);
     const int tabIndex    = static_cast<int>(luaL_optnumber(L, 2, 0));
     const int talentIndex = static_cast<int>(luaL_optnumber(L, 3, 0));
+    const bool inspect = lua_toboolean(L, 4) != 0;
     if (!w || !gh) { lua_pushboolean(L, 0); return 1; }
 
     const auto* talent = wowee::addons::talentAt(gh, tabIndex, talentIndex);
-    if (!talent) { lua_pushboolean(L, 0); return 1; }
-
-    const uint8_t rank = gh->getTalentRank(talent->talentId);
-    // Rank 1's spell names the talent whatever the player has in it, and is the
-    // only entry guaranteed to be filled.
-    const uint32_t titleSpell = talent->rankSpells[0];
-    // The rank being described: what the player has, or the first if none.
-    const uint32_t bodySpell = talent->rankSpells[rank > 0 ? rank - 1 : 0];
-    if (titleSpell == 0) { lua_pushboolean(L, 0); return 1; }
-
-    const std::string& name = gh->getSpellName(titleSpell);
+    if (!talent || talent->rankSpells[0] == 0) { lua_pushboolean(L, 0); return 1; }
+    const std::string& name = gh->getSpellName(talent->rankSpells[0]);
     if (name.empty()) { lua_pushboolean(L, 0); return 1; }
+
+    const auto rankOf = [&](uint32_t talentId) -> int {
+        if (inspect) {
+            const auto* r = gh->getInspectResult();
+            if (!r) return 0;
+            const auto it = r->talentRanks.find(talentId);
+            return it == r->talentRanks.end() ? 0 : it->second;
+        }
+        return gh->getTalentRank(talentId);
+    };
+    const int rank = rankOf(talent->talentId);
+    const int maxRank = talent->maxRank;
 
     w->isTooltip = true;
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
+    pushTooltipLine(w, name, kWhite);
+    pushTooltipLine(w, formatGlobal(L, "TOOLTIP_TALENT_RANK", rank, maxRank), kWhite);
 
-    wowee::ui::Widget::TooltipLine title;
-    title.left = name;
-    title.lc[0] = 1.0f; title.lc[1] = 0.82f; title.lc[2] = 0.0f; title.lc[3] = 1.0f;
-    title.rc[0] = title.rc[1] = title.rc[2] = title.rc[3] = 1.0f;
-    w->tooltipLines.push_back(std::move(title));
-
-    if (talent->maxRank > 0) {
-        wowee::ui::Widget::TooltipLine rankLine;
-        rankLine.left = "Rank " + std::to_string(rank) + "/" +
-                        std::to_string(static_cast<int>(talent->maxRank));
-        rankLine.lc[0] = rankLine.lc[1] = rankLine.lc[2] = 1.0f; rankLine.lc[3] = 1.0f;
-        rankLine.rc[0] = rankLine.rc[1] = rankLine.rc[2] = rankLine.rc[3] = 1.0f;
-        w->tooltipLines.push_back(std::move(rankLine));
+    bool requirementsMet = true;
+    for (int p = 0; p < 3; ++p) {
+        if (talent->prereqTalent[p] == 0) continue;
+        const auto* prereq = gh->getTalentEntry(talent->prereqTalent[p]);
+        if (!prereq) continue;
+        const int needed = talent->prereqRank[p] + 1;
+        if (rankOf(prereq->talentId) >= needed) continue;
+        requirementsMet = false;
+        const std::string& prereqName = gh->getSpellName(prereq->rankSpells[0]);
+        pushTooltipLine(w, formatGlobal(L, "TOOLTIP_TALENT_PREREQ", needed, prereqName.c_str()), kUnmet);
+    }
+    int tabPoints = 0;
+    const auto& ranks = inspect && gh->getInspectResult()
+        ? gh->getInspectResult()->talentRanks : gh->getLearnedTalents();
+    for (const auto& [id, r] : ranks) {
+        const auto* entry = gh->getTalentEntry(id);
+        if (entry && entry->tabId == talent->tabId) tabPoints += r;
+    }
+    const int tierPoints = talent->row * 5;
+    if (tabPoints < tierPoints) {
+        requirementsMet = false;
+        const auto& tabs = gh->getAllTalentTabs();
+        const auto tab = tabs.find(talent->tabId);
+        const std::string tabName = tab == tabs.end() ? std::string() : tab->second.name;
+        pushTooltipLine(w, formatGlobal(L, "TOOLTIP_TALENT_TIER_POINTS", tierPoints, tabName.c_str()), kUnmet);
     }
 
-    // Through the formatter for the same reason SetSpellByID is: a description
-    // arrives as a template of $-tokens and reads as one if handed over raw.
-    const std::string body =
-        gh->formatSpellDescription(bodySpell, gh->getSpellDescription(bodySpell));
-    if (!body.empty()) {
-        wowee::ui::Widget::TooltipLine desc;
-        desc.left = body;
-        desc.lc[0] = desc.lc[1] = desc.lc[2] = 1.0f; desc.lc[3] = 1.0f;
-        desc.rc[0] = desc.rc[1] = desc.rc[2] = desc.rc[3] = 1.0f;
-        desc.wrap = true;  // prose; see fillSpellTooltip
-        w->tooltipLines.push_back(std::move(desc));
+    const uint32_t current = talent->rankSpells[rank > 0 ? rank - 1 : 0];
+    // Active abilities only: passive talents such as Dagger Specialization
+    // print neither cast nor weapon lines natively.
+    if (current != 0 && !gh->isSpellPassive(current)) {
+        appendSpellCastLines(L, w, gh, current);
+        appendSpellRequirementLines(L, w, gh, current);
+    }
+    const auto describe = [&](uint32_t spellId) {
+        const std::string body = gh->formatSpellDescription(spellId, gh->getSpellDescription(spellId));
+        if (!body.empty()) pushTooltipLine(w, body, kGold, {}, kWhite, true);
+    };
+    describe(current);
+    if (rank > 0 && rank < maxRank && talent->rankSpells[rank] != 0) {
+        pushTooltipLine(w, " ", kGold);
+        pushTooltipLine(w, globalText(L, "TOOLTIP_TALENT_NEXT_RANK"), kWhite);
+        describe(talent->rankSpells[rank]);
+    }
+    const bool spellKnown = talent->dependsOnSpell == 0 ||
+        gh->getKnownSpells().count(talent->dependsOnSpell) > 0;
+    if (!inspect && requirementsMet && spellKnown && rank < maxRank &&
+        gh->getUnspentTalentPoints() > 0) {
+        pushTooltipLine(w, globalText(L, "TOOLTIP_TALENT_LEARN"), kLearn);
     }
 
     w->shown = true;
@@ -9251,7 +9480,7 @@ void LuaEngine::registerCoreAPI() {
         "    if not slot then return false end\n"
         "    local actionType, id = GetActionInfo(slot)\n"
         "    if actionType == 'spell' and id and id > 0 then\n"
-        "        self:SetSpellByID(id)\n"
+        "        self:SetSpellByID(id, true)\n"
         "        return self:NumLines() > 0\n"
         "    elseif actionType == 'item' and id and id > 0 then\n"
         "        _WoweePopulateItemTooltip(self, id)\n"

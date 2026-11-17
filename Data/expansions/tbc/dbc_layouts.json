@@ -210,6 +210,16 @@
     "Threshold6": 49,
     "Threshold7": 50
   },
+  "ItemSubClass": {
+    "ClassID": 0,
+    "SubClassID": 1,
+    "VerboseName": 27
+  },
+  "ItemSubClassMask": {
+    "ClassID": 0,
+    "Mask": 1,
+    "Name": 2
+  },
   "Light": {
     "ID": 0,
     "InnerRadius": 5,
@@ -257,6 +267,7 @@
     "Attributes": 5,
     "AttributesEx": 6,
     "AttributesEx2": 7,
+    "AttributesEx3": 8,
     "AttributesEx4": 9,
     "EquippedItemClass": 62,
     "EquippedItemSubClassMask": 63,
@@ -373,6 +384,11 @@
     "Flags": 3,
     "MaxRange": 2,
     "MinRange": 1
+  },
+  "SpellShapeshiftForm": {
+    "BonusActionBar": 1,
+    "ID": 0,
+    "Name": 2
   },
   "SpellVisual": {
     "StateKit": 4,

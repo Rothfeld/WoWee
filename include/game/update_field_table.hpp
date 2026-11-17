@@ -167,6 +167,8 @@ enum class UF : uint16_t {
 
     UNIT_FIELD_RESISTANCEBUFFMODSPOSITIVE,
     UNIT_FIELD_RESISTANCEBUFFMODSNEGATIVE,
+    /// Main-hand and off-hand attack time, ms (2 fields).
+    UNIT_FIELD_BASEATTACKTIME,
     UNIT_FIELD_RANGEDATTACKTIME,
 
     // TBC carries GO state in a standalone word, unlike Wrath's BYTES_1.
