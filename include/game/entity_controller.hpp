@@ -35,6 +35,8 @@ public:
     void queryPlayerName(uint64_t guid);
     void queryCreatureInfo(uint32_t entry, uint64_t guid);
     void queryGameObjectInfo(uint32_t entry, uint64_t guid);
+    /// CMSG_QUESTGIVER_STATUS_QUERY for a quest giver object (type 2).
+    void queryGameObjectQuestStatus(uint64_t guid, uint32_t type);
     [[nodiscard]] std::string getCachedPlayerName(uint64_t guid) const;
     [[nodiscard]] std::string getCachedCreatureName(uint32_t entry) const;
     void invalidatePlayerName(uint64_t guid) { playerNameCache.erase(guid); }

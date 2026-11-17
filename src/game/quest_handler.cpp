@@ -141,6 +141,18 @@ void QuestHandler::tickQuestGiverStatusRequery(float deltaTime) {
 void QuestHandler::sendQuestGiverStatusQueries() {
     if (!owner_.getSocket()) return;
     for (const auto& [guid, entity] : owner_.getEntityManager().getEntities()) {
+        if (entity->getType() == ObjectType::GAMEOBJECT) {
+            // Quest giver objects change status with the quest log too.
+            const auto* info = owner_.getCachedGameObjectInfo(
+                std::static_pointer_cast<GameObject>(entity)->getEntry());
+            constexpr uint32_t kGameObjectTypeQuestGiver = 2;
+            if (info && info->type == kGameObjectTypeQuestGiver) {
+                network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
+                qsPkt.writeUInt64(guid);
+                owner_.getSocket()->send(qsPkt);
+            }
+            continue;
+        }
         if (entity->getType() != ObjectType::UNIT) continue;
         auto unit = std::static_pointer_cast<Unit>(entity);
         if (unit->getNpcFlags() & NPC_FLAG_QUESTGIVER) {

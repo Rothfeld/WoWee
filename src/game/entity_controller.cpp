@@ -2295,6 +2295,7 @@ void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_
         auto cacheIt = gameObjectInfoCache_.find(itEntry->second);
         if (cacheIt != gameObjectInfoCache_.end()) {
             go->setName(cacheIt->second.name);
+            queryGameObjectQuestStatus(block.guid, cacheIt->second.type);
         }
         queryGameObjectInfo(itEntry->second, block.guid);
     }
@@ -3071,6 +3072,18 @@ void EntityController::queryCreatureInfo(uint32_t entry, uint64_t guid) {
     owner_.getSocket()->send(packet);
 }
 
+// A quest giver object's status chooses its cursor (Quest, QuestTurnIn or the
+// gear), as a quest giver NPC's does. Original 2.4.3 (pair 0): Wanted Poster
+// 186426 with an available quest shows Quest; Skull Pile 185913 without one
+// shows the gear.
+void EntityController::queryGameObjectQuestStatus(uint64_t guid, uint32_t type) {
+    constexpr uint32_t kGameObjectTypeQuestGiver = 2;
+    if (type != kGameObjectTypeQuestGiver || !owner_.getSocket()) return;
+    network::Packet packet(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
+    packet.writeUInt64(guid);
+    owner_.getSocket()->send(packet);
+}
+
 void EntityController::queryGameObjectInfo(uint32_t entry, uint64_t guid) {
     if (gameObjectInfoCache_.count(entry) || pendingGameObjectQueries_.count(entry)) return;
     if (!owner_.isInWorld()) return;
@@ -3258,6 +3271,7 @@ void EntityController::handleGameObjectQueryResponse(network::Packet& packet) {
                 auto go = std::static_pointer_cast<GameObject>(entity);
                 if (go->getEntry() == data.entry) {
                     go->setName(data.name);
+                    queryGameObjectQuestStatus(guid, data.type);
                 }
             }
         }
