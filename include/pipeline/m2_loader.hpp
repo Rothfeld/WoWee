@@ -327,6 +327,9 @@ struct M2Model {
 
     // Flags
     uint32_t globalFlags;
+    // Global flag 0x08: per texture stage combiner mode, indexed by a batch's
+    // shaderId (0 Opaque, 1 Mod, 2 Decal, 3 Add, 4 Mod2x). Empty otherwise.
+    std::vector<uint16_t> textureCombinerCombos;
 
     [[nodiscard]] bool isValid() const {
         return !vertices.empty() && !indices.empty();

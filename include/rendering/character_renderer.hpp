@@ -485,6 +485,8 @@ private:
     VkPipeline alphaTestPipeline_ = VK_NULL_HANDLE;
     VkPipeline alphaPipeline_ = VK_NULL_HANDLE;
     VkPipeline additivePipeline_ = VK_NULL_HANDLE;
+    VkPipeline modPipeline_ = VK_NULL_HANDLE;    // M2Blend 5
+    VkPipeline mod2xPipeline_ = VK_NULL_HANDLE;  // M2Blend 6
     // Whole-instance fades (ghost form, spawn fade-in): alpha blend with depth
     // write kept on, so the faded model still self-occludes instead of showing
     // backfaces and under-armor skin through the body.
@@ -505,6 +507,8 @@ private:
         VkImageView normal = VK_NULL_HANDLE;
         VkSampler diffuseSampler = VK_NULL_HANDLE;
         VkSampler normalSampler = VK_NULL_HANDLE;
+        VkImageView second = VK_NULL_HANDLE;
+        VkSampler secondSampler = VK_NULL_HANDLE;
         bool operator==(const MaterialDescriptorKey&) const = default;
     };
     struct MaterialDescriptorKeyHash {
@@ -513,7 +517,9 @@ private:
             const size_t b = std::hash<VkImageView>{}(key.normal);
             const size_t c = std::hash<VkSampler>{}(key.diffuseSampler);
             const size_t d = std::hash<VkSampler>{}(key.normalSampler);
-            return a ^ (b << 1) ^ (c << 2) ^ (d << 3);
+            const size_t e = std::hash<VkImageView>{}(key.second);
+            const size_t f = std::hash<VkSampler>{}(key.secondSampler);
+            return a ^ (b << 1) ^ (c << 2) ^ (d << 3) ^ (e << 4) ^ (f << 5);
         }
     };
     std::unordered_map<MaterialDescriptorKey, VkDescriptorSet, MaterialDescriptorKeyHash>
@@ -628,6 +634,12 @@ private:
     /// built and torn down here and in three other renderers.
     ShadowParamsSet shadowParams_;
 
+    /// The texture of one entry of a batch's texture combo, with the
+    /// instance's slot overrides applied.
+    [[nodiscard]] VkTexture* resolveComboTexture(const CharacterInstance& inst,
+                                                 const M2ModelGPU& gm,
+                                                 const pipeline::M2Batch& b,
+                                                 uint32_t comboIndex) const;
     /// Which texture a batch draws with. Shared by the main pass and the shadow
     /// pass, which needs it to cut a silhouette rather than a rectangle.
     [[nodiscard]] VkTexture* resolveBatchTexture(const CharacterInstance& inst,

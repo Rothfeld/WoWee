@@ -52,22 +52,66 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float kitColorR;
     float kitColorG;
     float kitColorB;
+    int textureCount;
+    int texCoordSet;
+    int texCoordSet2;
+    int blendMode;
+    float uvOffsetX;
+    float uvOffsetY;
+    float uvOffset2X;
+    float uvOffset2Y;
+    int combiner0;
+    int combiner1;
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
+layout(set = 1, binding = 3) uniform sampler2D uTexture2;
 
 layout(set = 0, binding = 1) uniform sampler2DShadow uShadowMap;
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
 
 layout(location = 0) in vec3 FragPos;
 layout(location = 1) in vec3 Normal;
-layout(location = 2) in vec2 TexCoord;
+layout(location = 2) in vec2 TexCoordIn;
 layout(location = 3) in vec3 Tangent;
 layout(location = 4) in vec3 Bitangent;
+layout(location = 5) in vec2 TexCoord2In;
+layout(location = 6) in vec2 EnvCoord;
 
 layout(location = 0) out vec4 outColor;
 
 const int PREVIEW_SIMPLE_TEXTURE_MODE = -31336;
+
+// The M2 texture unit's UV source: 0/1 mesh UV set, -1 environment map.
+vec2 unitCoord(int set, vec2 offset) {
+    return (set == -1 ? EnvCoord : (set == 1 ? TexCoord2In : TexCoordIn)) + offset;
+}
+
+vec2 TexCoord;
+
+// Texture stage combiners (M2 texture combiner combos: 0 Opaque, 1 Mod,
+// 2 Decal, 3 Add, 4 Mod2x), as the pixel shaders listed for the M2 format
+// (wowdev.wiki M2/.skin): a non-Opaque first stage keeps its alpha; the
+// second stage Opaque multiplies colour and keeps alpha, Mod2x doubles both,
+// Add adds colour weighted by its alpha, the rest modulate.
+vec4 combineStages(vec4 t0, vec4 t1) {
+    vec3 rgb = t0.rgb;
+    float a = combiner0 == 0 ? 1.0 : t0.a;
+    if (textureCount == 2) {
+        if (combiner1 == 0) {
+            rgb *= t1.rgb;
+        } else if (combiner1 == 3) {
+            rgb += t1.rgb * t1.a;
+        } else if (combiner1 == 4) {
+            rgb *= t1.rgb * 2.0;
+            a *= t1.a * 2.0;
+        } else {
+            rgb *= t1.rgb;
+            a *= t1.a;
+        }
+    }
+    return vec4(rgb, a);
+}
 
 // One texel of the shadow map, handed in by the renderer. The map is 512,
 // 1024, 2048 or 4096 a side by the quality setting; this used to be a
@@ -251,8 +295,14 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
+    TexCoord = unitCoord(texCoordSet, vec2(uvOffsetX, uvOffsetY));
+    vec4 secondColor = textureCount == 2
+        ? texture(uTexture2, unitCoord(texCoordSet2, vec2(uvOffset2X, uvOffset2Y)))
+        : vec4(1.0);
+    // Clamped: Mod2x can double alpha past one.
     if (enablePOM == PREVIEW_SIMPLE_TEXTURE_MODE) {
-        vec4 texColor = samplePreviewTexture(uTexture, TexCoord);
+        vec4 texColor = combineStages(samplePreviewTexture(uTexture, TexCoord), secondColor);
+        texColor.a = min(texColor.a, 1.0);
         if (isMagentaKeyColor(texColor)) {
             discard;
         }
@@ -308,7 +358,8 @@ void main() {
         finalUV = parallaxOcclusionMap(TexCoord, viewDirTS, lodFactor);
     }
 
-    vec4 texColor = textureGrad(uTexture, finalUV, uvDx, uvDy);
+    vec4 texColor = combineStages(textureGrad(uTexture, finalUV, uvDx, uvDy), secondColor);
+    texColor.a = min(texColor.a, 1.0);
     // Repair dark DXT fringes on alpha-cut character textures such as hair.
     // Transparent edge texels can carry black/garbage RGB even when alpha is
     // valid; pull color from a coarser mip and trust the source more as alpha
@@ -364,7 +415,9 @@ void main() {
     if (unlit != 0) {
         vec3 emissiveTint = vec3(emissiveTintR, emissiveTintG, emissiveTintB);
         vec3 warm = emissiveTint * emissiveBoost;
-        result = texColor.rgb * (1.0 + warm);
+        // TBC legacy light (lightDir.w != 0): unlit is the texture as it is,
+        // as m2.frag.
+        result = lightDir.w != 0.0 ? texColor.rgb : texColor.rgb * (1.0 + warm);
     } else {
         vec3 ldir = normalize(-lightDir.xyz);
         // A hard clamp at zero takes a surface turned away from the sun down to
@@ -417,7 +470,23 @@ void main() {
     result += texColor.rgb * (0.3 * hoverHighlight);
 
     float dist = length(viewPos.xyz - FragPos);
-    result = applyFog(result, FragPos, dist);
+    if (blendMode == 5 || blendMode == 6) {
+        // Mod / Mod2x multiply what is behind: the unlit texture, fogged
+        // toward the factor that leaves the scene unchanged (1 and 0.5).
+        float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
+        vec3 neutral = vec3(blendMode == 5 ? 1.0 : 0.5);
+        outColor = vec4(mix(neutral, texColor.rgb, fogFactor), texColor.a * opacity);
+        return;
+    }
+    if (blendMode == 3 || blendMode == 4 || blendMode == 7) {
+        // Additive, as m2.frag: distance and air only take light away; mixing
+        // toward the fog colour would add that colour over the card's black.
+        float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
+        result *= fogFactor;
+        if (volumetricParams.x > 0.5) result *= fogVolumeAt(FragPos).a;
+    } else {
+        result = applyFog(result, FragPos, dist);
+    }
     if (!finiteVec3(result)) {
         result = texColor.rgb;
     }

@@ -837,6 +837,10 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     }
 
     uint32_t ofsViews = 0;
+    // Global flag 0x08: an M2Array of texture combiner modes follows the
+    // particle emitters (TBC header 0x144, Wrath 0x130).
+    uint32_t nCombinerCombos = 0;
+    uint32_t ofsCombinerCombos = 0;
 
     if (header.version < 264) {
         // Vanilla M2: read remaining header fields using cursor, skipping extra fields
@@ -927,6 +931,10 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         header.ofsRibbonEmitters = r32();
         header.nParticleEmitters = r32();
         header.ofsParticleEmitters = r32();
+        if (header.globalFlags & 0x08) {
+            nCombinerCombos = r32();
+            ofsCombinerCombos = r32();
+        }
 
         core::Logger::getInstance().debug("Vanilla M2 (version ", header.version,
             "): nVerts=", header.nVertices, " nViews=", header.nViews,
@@ -940,6 +948,10 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         }
         std::memcpy(reinterpret_cast<uint8_t*>(&header) + COMMON_PREFIX_SIZE,
                     m2Data.data() + COMMON_PREFIX_SIZE, wotlkSize);
+        if ((header.globalFlags & 0x08) && m2Data.size() >= sizeof(M2Header) + 8) {
+            std::memcpy(&nCombinerCombos, m2Data.data() + sizeof(M2Header), 4);
+            std::memcpy(&ofsCombinerCombos, m2Data.data() + sizeof(M2Header) + 4, 4);
+        }
     }
 
     core::Logger::getInstance().debug("Loading M2 model (version ", header.version, ")");
@@ -951,6 +963,14 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
 
     model.version = header.version;
     model.globalFlags = header.globalFlags;
+    if (header.globalFlags & 0x08) {
+        if (static_cast<size_t>(ofsCombinerCombos) + size_t(nCombinerCombos) * 2 > m2Data.size()) {
+            core::Logger::getInstance().error("M2 texture combiner combos out of range: ", model.name,
+                                              " n=", nCombinerCombos, " ofs=", ofsCombinerCombos);
+            throw std::runtime_error("M2 texture combiner combos out of range");
+        }
+        model.textureCombinerCombos = readArray<uint16_t>(m2Data, ofsCombinerCombos, nCombinerCombos);
+    }
 
     // M2 binary layout splits three ways, not two. TBC (v260-263) shares the
     // extended header / 68-byte sequences / 48-byte attachments / 504-byte
