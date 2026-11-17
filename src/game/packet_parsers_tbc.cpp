@@ -1298,7 +1298,11 @@ bool TbcPacketParsers::parseMessageChat(network::Packet& packet, MessageChatData
 // ============================================================================
 
 uint8_t TbcPacketParsers::readQuestGiverStatus(network::Packet& packet) {
-    uint32_t tbcStatus = packet.readUInt32();
+    // CMaNGOS TBC writes the status as a uint8 (GossipDef.cpp
+    // SendQuestGiverStatus, Player::SendQuestGiverStatusMultiple). Reading a
+    // uint32 swallowed three bytes of the next NPC's guid in the multiple
+    // packet. Values are QuestDef.h DIALOG_STATUS_*, mapped to WotLK's.
+    const uint8_t tbcStatus = packet.readUInt8();
     switch (tbcStatus) {
         case 0: return 0;   // NONE
         case 1: return 1;   // UNAVAILABLE
@@ -1307,7 +1311,7 @@ uint8_t TbcPacketParsers::readQuestGiverStatus(network::Packet& packet) {
         case 4: return 6;   // REWARD_REP → WotLK REWARD_REP
         case 5: return 7;   // AVAILABLE_REP → WotLK AVAILABLE_REP
         case 6: return 8;   // AVAILABLE → WotLK AVAILABLE
-        case 7: return 10;  // REWARD2 → WotLK REWARD
+        case 7: return 9;   // REWARD2 → WotLK REWARD2 (no minimap dot)
         case 8: return 10;  // REWARD → WotLK REWARD
         default: return 0;
     }

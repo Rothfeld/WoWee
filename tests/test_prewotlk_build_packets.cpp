@@ -193,3 +193,16 @@ TEST_CASE("TBC patrol packets retain intermediate corners", "[tbc][spline]") {
     CHECK(move.destY == 10);
     CHECK(packet.getRemainingSize() == 0);
 }
+
+// SMSG_QUESTGIVER_STATUS_MULTIPLE from CMaNGOS TBC: guid then a uint8
+// DIALOG_STATUS per NPC. The status must take one byte, or the next guid is
+// read three bytes late.
+TEST_CASE("TBC quest giver status is one byte and maps to WotLK numbering", "[questgiver]") {
+    std::vector<uint8_t> bytes = {6, 0x11, 7, 0x22};
+    wowee::network::Packet packet(0, bytes);
+    wowee::game::TbcPacketParsers parsers;
+    CHECK(parsers.readQuestGiverStatus(packet) == 8);   // AVAILABLE
+    CHECK(packet.getReadPos() == 1);
+    packet.setReadPos(2);
+    CHECK(parsers.readQuestGiverStatus(packet) == 9);   // REWARD2: no minimap dot
+}
