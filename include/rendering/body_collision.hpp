@@ -15,6 +15,17 @@ namespace wowee::rendering::movement {
 // 1.8493989706039429, four upper corners at collision height. The body
 // is an upright beveled box, including a flat head, not a capsule.
 inline constexpr float kBodyBevel = 1.8493989706039429f;
+
+// Lower body vertices and edge midpoints, expressed relative to the sole.
+// An offset floor supports the sole at floorZ - sample.z, not at floorZ.
+inline std::array<glm::vec3, 9> bodySupportPoints(float radius) {
+    assert(radius > 0.0f && std::isfinite(radius));
+    const float bevel = radius * kBodyBevel;
+    return {{{0, 0, 0}, {radius, 0, bevel}, {-radius, 0, bevel},
+             {0, radius, bevel}, {0, -radius, bevel},
+             {radius, radius, bevel}, {radius, -radius, bevel},
+             {-radius, radius, bevel}, {-radius, -radius, bevel}}};
+}
 using BodyTriangle = std::array<glm::vec3, 3>;
 struct BodyContact {
     float time;

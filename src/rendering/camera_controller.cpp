@@ -8,6 +8,7 @@
 #include "ui/keybinding_manager.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "rendering/movement_limits.hpp"
+#include "rendering/body_collision.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdlib>
@@ -1712,7 +1713,9 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             // Not highestWalkableFloor: this one prefers an M2 floor even when
             // it is slightly lower than the terrain, so a ship's deck wins over
             // the water under it.
-            const auto offsets = feetRing(0.6f);
+            // Sample the swept body's lower envelope. A nearby prop can touch
+            // its beveled side without raising the sole to the prop's top.
+            const auto offsets = movement::bodySupportPoints(collisionRadius_);
             float m2ProbeZ = std::max(targetPos.z, lastGroundZ) + 6.0f;
             for (const auto& o : offsets) {
                 float m2NormalZ = 1.0f;
@@ -1723,6 +1726,8 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
                 if (m2H && m2NormalZ < MIN_WALKABLE_NORMAL_TERRAIN) {
                     continue;  // Skip unwalkable M2 surface
                 }
+
+                if (m2H) *m2H -= o.z;
 
                 // Prefer M2 floors (ships, platforms) even if slightly lower than terrain
                 // to prevent falling through ship decks to water below

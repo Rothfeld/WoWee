@@ -31,6 +31,12 @@ a grounded step. A vertical side collision may block penetration but ends a
 fall only when a walkable M2 floor reaches the feet. This keeps the next lateral
 sweep from gaining a grounded step allowance while hanging against a prop.
 
+M2 support probes use the moving body's radius and lower beveled envelope.
+Each offset sample carries its height above the sole; subtract that height from
+the mesh hit to obtain supported sole height. A prop touching the body's side
+does not place the sole on top of the prop. Probe extent must follow body size,
+including diagonal corners, rather than a fixed world-space square.
+
 Paired native/client recordings and supported-ramp checks are retained in the
 parent workspace under `_experiments/20261117T000028Z.balcony_contact`.
 Cross-map test setup waits for a fresh `World terrain ready: map=N` log entry
@@ -40,6 +46,9 @@ transfer, so an application-state transition alone cannot prove terrain loaded.
 subsequent ground snap. Movement contact counters include horizontal and
 vertical sweeps. Use these together to distinguish collision rejection from
 a later floor snap erasing the resolved height.
+`WOWEE_TRACE_M2_FLOOR=1` logs each winning M2 candidate's model, source mesh or
+bounds, height and query position. This identifies the supporting object when
+a floor probe promotes a nearby decoration over the surface under the feet.
 
 The Exodar table route at server (-4191,-11477.700195,-131.451859), heading
 0.299362, exercises more than wall blocking. Original TBC emits repeated

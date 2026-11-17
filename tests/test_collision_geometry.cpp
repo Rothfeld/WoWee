@@ -306,3 +306,32 @@ TEST_CASE("airborne lateral contact cannot gain grounded step height") {
     CHECK(walking.z > airborne.z + .5f);
     CHECK(airborne.x < walking.x);
 }
+
+TEST_CASE("offset floor support agrees with the swept lower body") {
+    using namespace wowee::rendering::movement;
+    for (float radius : {0.15f, 0.305556f, 0.5f, 1.0f}) {
+        for (const auto& offset : bodySupportPoints(radius)) {
+            CHECK(std::abs(offset.x) <= radius);
+            CHECK(std::abs(offset.y) <= radius);
+            constexpr float floorZ = 0.7f;
+            // Keep triangle area above the collision solver's degeneracy gate.
+            constexpr float halfSize = 0.002f;
+            const glm::vec3 a(offset.x-halfSize, offset.y-halfSize, floorZ);
+            const glm::vec3 b(offset.x+halfSize, offset.y-halfSize, floorZ);
+            const glm::vec3 c(offset.x+halfSize, offset.y+halfSize, floorZ);
+            const glm::vec3 d(offset.x-halfSize, offset.y+halfSize, floorZ);
+            const std::array surface = {BodyTriangle{a,b,c}, BodyTriangle{a,c,d}};
+            std::optional<float> first;
+            for (const auto& triangle : surface) {
+                const auto contact = sweepBodyTriangle({0,0,3}, {0,0,-6}, radius,
+                    radius*kBodyBevel + 1.0f, triangle);
+                if (contact && (!first || contact->time < *first)) first = contact->time;
+            }
+            REQUIRE(first);
+            // Independent continuous collision against a tiny horizontal prop
+            // must place the sole at the sampled lower-envelope height.
+            CHECK(3.0f - 6.0f * *first ==
+                Catch::Approx(floorZ - offset.z).margin(halfSize * kBodyBevel + 0.0001f));
+        }
+    }
+}
