@@ -3420,6 +3420,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
     auto creatureSyncStart = std::chrono::steady_clock::now();
     if (renderer && gameHandler && renderer->getCharacterRenderer()) {
         auto* charRenderer = renderer->getCharacterRenderer();
+        if (entitySpawner_) entitySpawner_->syncLocalFootprintModels();
         static float npcWeaponRetryTimer = 0.0f;
         npcWeaponRetryTimer += deltaTime;
         const bool npcWeaponRetryTick = (npcWeaponRetryTimer >= 1.0f);

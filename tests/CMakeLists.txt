@@ -1114,6 +1114,14 @@ wowee_add_test(test_breath_attachment
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(breath_attachment PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_footfall_events ─────────────────────────────────────
+# Per-foot footfall events that place footprints.
+wowee_add_test(test_footfall_events
+    SOURCES test_footfall_events.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
+set_tests_properties(footfall_events PROPERTIES SKIP_RETURN_CODE 4)
+
 # ── test_m2_color_alpha ──────────────────────────────────────
 # Loads the peasant lumberjack carry models (WotLK v264 + vanilla v256) and
 # pins the M2 color-alpha track parsing that hides the duplicate wood bundle.

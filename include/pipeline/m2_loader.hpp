@@ -237,6 +237,18 @@ struct M2Model {
     // Empty inner list = no footfall events for that sequence.
     std::vector<std::vector<uint32_t>> footstepEventTimes;
 
+    // Per-foot ground contacts: events named '$' + F/R/B/S + L/R + digit,
+    // authored at z = 0 under each foot and timed in Walk (F), Run (R),
+    // WalkBackwards (B) and stop/shuffle (S) sequences. Bear.m2 has $FL0
+    // (front left) at (0.78, 0.47, 0) firing at 134 ms of its Walk.
+    struct FootfallEvent {
+        bool left = false;          // third identifier letter: L or R
+        uint16_t bone = 0;          // position is in this bone's space
+        glm::vec3 position{0.0f};
+        std::vector<std::vector<uint32_t>> times;  // per sequence, ms from its start
+    };
+    std::vector<FootfallEvent> footfallEvents;
+
     // Bone lookup table (vertex bone indices reference this to get global bone index)
     std::vector<uint16_t> boneLookupTable;
 

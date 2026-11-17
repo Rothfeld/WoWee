@@ -37,21 +37,6 @@ struct FootprintPushConstants {
     glm::vec4 tint{0.075f, 0.065f, 0.05f, 1.0f};
 };
 
-std::string normalizeModelPath(std::string path) {
-    std::transform(path.begin(), path.end(), path.begin(), [](unsigned char c) {
-        if (c == '/') return '\\';
-        return static_cast<char>(std::tolower(c));
-    });
-    // Internal M2 names omit the extension; DBC paths can use .mdx or .mdl.
-    if (path.find_last_of('.') == std::string::npos) path += ".m2";
-    return pipeline::modelPathToM2(path);
-}
-
-std::string basenameOf(const std::string& path) {
-    const size_t slash = path.find_last_of("\\/");
-    return slash == std::string::npos ? path : path.substr(slash + 1);
-}
-
 } // namespace
 
 FootprintRenderer::~FootprintRenderer() {
@@ -76,7 +61,7 @@ bool FootprintRenderer::initialize(Renderer* owner, VkContext* ctx,
         shutdown();
         return false;
     }
-    LOG_INFO("FootprintRenderer: loaded ", profilesByPath_.size(),
+    LOG_INFO("FootprintRenderer: loaded ", profilesByModel_.size(),
              " model profiles and ", kTextureCount, " original footprint masks");
     return true;
 }
@@ -99,8 +84,7 @@ void FootprintRenderer::shutdown() {
     textureSets_.fill(VK_NULL_HANDLE);
     terrainFlags_.clear();
     groundEffectTerrain_.clear();
-    profilesByPath_.clear();
-    profilesByBasename_.clear();
+    profilesByModel_.clear();
     prints_.clear();
     owner_ = nullptr;
     vkCtx_ = nullptr;
@@ -213,17 +197,20 @@ bool FootprintRenderer::loadFootprintData(pipeline::AssetManager* assets) {
     for (uint32_t row = 0; row < effects->getRecordCount(); ++row)
         groundEffectTerrain_[effects->getUInt32(row, 0)] = effects->getUInt32(row, effectFields - 1);
 
-    // FootprintTextures IDs are sparse. These six rows are the original masks.
-    const std::array<uint32_t, kTextureCount> textureIds{1, 4, 5, 3, 6, 7};
+    // FootprintTextures IDs are sparse; every row is a mask.
     std::unordered_map<uint32_t, uint8_t> indexById;
     auto textureDbc = assets->loadDBC("FootprintTextures.dbc");
     if (!textureDbc || !textureDbc->isLoaded()) return false;
+    if (textureDbc->getRecordCount() != kTextureCount) {
+        LOG_ERROR("FootprintRenderer: FootprintTextures.dbc has ", textureDbc->getRecordCount(),
+                  " rows, expected ", kTextureCount);
+        return false;
+    }
 
     VkDevice device = vkCtx_->getDevice();
     for (size_t i = 0; i < kTextureCount; ++i) {
-        const int32_t row = textureDbc->findRecordById(textureIds[i]);
-        if (row < 0) return false;
-        std::string path = textureDbc->getString(static_cast<uint32_t>(row), 1);
+        const auto row = static_cast<uint32_t>(i);
+        std::string path = textureDbc->getString(row, 1);
         if (path.find('.') == std::string::npos) path += ".blp";
         pipeline::BLPImage image = assets->loadTexture(path);
         if (!image.isValid() || !textures_[i].upload(*vkCtx_, image.data.data(), image.width, image.height,
@@ -249,7 +236,7 @@ bool FootprintRenderer::loadFootprintData(pipeline::AssetManager* assets) {
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &imageInfo;
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
-        indexById[textureIds[i]] = static_cast<uint8_t>(i);
+        indexById[textureDbc->getUInt32(row, 0)] = static_cast<uint8_t>(i);
     }
 
     auto modelDbc = assets->loadDBC("CreatureModelData.dbc");
@@ -257,49 +244,20 @@ bool FootprintRenderer::loadFootprintData(pipeline::AssetManager* assets) {
     for (uint32_t row = 0; row < modelDbc->getRecordCount(); ++row) {
         auto textureIt = indexById.find(modelDbc->getUInt32(row, 6));
         if (textureIt == indexById.end()) continue;
-        std::string path = normalizeModelPath(modelDbc->getString(row, 2));
         // Full decal dimensions, calibrated against matched-camera TBC captures.
         // The mask includes transparent padding; these are not shoe dimensions.
         const float length = modelDbc->getFloat(row, 7) / 24.0f;
         const float width = modelDbc->getFloat(row, 8) / 24.0f;
-        if (path.empty() || length <= 0.05f || width <= 0.05f) continue;
-        Profile profile{.textureIndex = textureIt->second, .length = length, .width = width};
-        profilesByPath_[path] = profile;
+        // Rows with no size (Creature\Tiger\Tigercub.mdx) leave no print.
+        if (length <= 0.0f || width <= 0.0f) continue;
+        profilesByModel_[modelDbc->getUInt32(row, 0)] =
+            Profile{.textureIndex = textureIt->second, .length = length, .width = width};
     }
-    std::unordered_map<std::string, unsigned> basenameCounts;
-    for (const auto& [path, profile] : profilesByPath_) {
-        (void)profile;
-        ++basenameCounts[basenameOf(path)];
-    }
-    for (const auto& [path, profile] : profilesByPath_) {
-        std::string base = basenameOf(path);
-        if (basenameCounts[base] == 1) profilesByBasename_[base] = profile;
-    }
-    return !profilesByPath_.empty();
+    return !profilesByModel_.empty();
 }
 
-bool FootprintRenderer::hasProfile(const std::string& modelName) const {
-    const auto path = normalizeModelPath(modelName);
-    return profilesByPath_.contains(path) || profilesByBasename_.contains(basenameOf(path));
-}
-
-FootprintRenderer::Profile FootprintRenderer::resolveProfile(
-    const std::string& modelName, FootprintFallback fallback) const {
-    const std::string normalized = normalizeModelPath(modelName);
-    auto exact = profilesByPath_.find(normalized);
-    if (exact != profilesByPath_.end()) return exact->second;
-    auto base = profilesByBasename_.find(basenameOf(normalized));
-    if (base != profilesByBasename_.end()) return base->second;
-
-    // Yards, to match the converted DBC dimensions above.
-    switch (fallback) {
-        case FootprintFallback::HOOF:   return {.textureIndex = 4, .length = 0.50f, .width = 0.33f};
-        case FootprintFallback::PAW:    return {.textureIndex = 5, .length = 0.67f, .width = 0.50f};
-        case FootprintFallback::CLAW:   return {.textureIndex = 2, .length = 0.67f, .width = 0.50f};
-        case FootprintFallback::CLOVEN: return {.textureIndex = 3, .length = 0.60f, .width = 0.43f};
-        case FootprintFallback::BIPED:  return {.textureIndex = 0, .length = 0.33f, .width = 0.28f};
-    }
-    return {};
+bool FootprintRenderer::hasProfile(uint32_t creatureModelDataId) const {
+    return profilesByModel_.contains(creatureModelDataId);
 }
 
 float FootprintRenderer::resolveFloorHeight(const glm::vec3& position) const {
@@ -353,18 +311,14 @@ bool FootprintRenderer::surfaceAllowsFootprints(const glm::vec3& position) const
     return flags != terrainFlags_.end() && (flags->second & 1u) != 0;
 }
 
-void FootprintRenderer::spawn(const std::string& modelName, const glm::vec3& basePosition,
-                              float yawRadians, bool leftFoot, FootprintFallback fallback, float scale) {
-    if (!vkCtx_ || !surfaceAllowsFootprints(basePosition)) return;
-    Profile profile = resolveProfile(modelName, fallback);
+void FootprintRenderer::spawn(uint32_t creatureModelDataId, const glm::vec3& footPosition,
+                              float yawRadians, bool leftFoot, float scale) {
+    if (!vkCtx_ || !surfaceAllowsFootprints(footPosition)) return;
+    Profile profile = profilesByModel_.at(creatureModelDataId);
     assert(std::isfinite(scale) && scale > 0.0f);
     profile.length *= scale;
     profile.width *= scale;
-    const glm::vec2 forward(std::cos(yawRadians), std::sin(yawRadians));
-    const glm::vec2 right(-forward.y, forward.x);
-    const float side = (leftFoot ? -1.0f : 1.0f) * profile.width * 0.48f;
-    const glm::vec2 xy = glm::vec2(basePosition) + right * side - forward * profile.length * 0.16f;
-    glm::vec3 position(xy.x, xy.y, basePosition.z);
+    glm::vec3 position = footPosition;
     position.z = resolveFloorHeight(position) + 0.035f;
 
     // Fit the decal plane to the supporting surface, rather than cutting half

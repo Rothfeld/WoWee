@@ -6,7 +6,6 @@
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/water_renderer.hpp"
 #include "rendering/swim_effects.hpp"
-#include "rendering/footprint_renderer.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/footstep_manager.hpp"
 #include "audio/mount_sound_manager.hpp"
@@ -31,39 +30,6 @@ bool containsAnyToken(const std::string& text, std::initializer_list<const char*
         }
     }
     return false;
-}
-
-FootprintFallback fallbackForMount(audio::MountFamily family) {
-    switch (family) {
-        case audio::MountFamily::HORSE:
-        case audio::MountFamily::UNDEAD_HORSE:
-        case audio::MountFamily::RAM:
-        case audio::MountFamily::MECHANOSTRIDER:
-            return FootprintFallback::HOOF;
-        case audio::MountFamily::WOLF:
-        case audio::MountFamily::TIGER:
-            return FootprintFallback::PAW;
-        case audio::MountFamily::RAPTOR:
-        case audio::MountFamily::TALLSTRIDER:
-        case audio::MountFamily::DRAGON:
-            return FootprintFallback::CLAW;
-        case audio::MountFamily::KODO:
-            return FootprintFallback::CLOVEN;
-        case audio::MountFamily::UNKNOWN:
-            return FootprintFallback::BIPED;
-    }
-    return FootprintFallback::BIPED;
-}
-
-void spawnFootprint(Renderer* renderer, CharacterRenderer* characterRenderer,
-                    uint32_t instanceId, bool leftFoot, FootprintFallback fallback) {
-    auto* footprints = renderer->getFootprintRenderer();
-    if (!footprints || !characterRenderer || instanceId == 0) return;
-    std::string modelName;
-    characterRenderer->getInstanceModelName(instanceId, modelName);
-    footprints->spawn(modelName, renderer->getCharacterPosition(),
-                      glm::radians(renderer->getCharacterYaw()), leftFoot, fallback,
-                      characterRenderer->getInstanceScale(instanceId));
 }
 
 } // namespace
@@ -295,10 +261,6 @@ void FootstepDriver::update(float deltaTime, Renderer* renderer,
                     footstepManager->playMountFootstep(surface, bank);
                     if (surface == audio::FootstepSurface::WATER) {
                         playWaterStepExtras(renderer);
-                    } else {
-                        spawnFootprint(renderer, characterRenderer, mountInstanceId,
-                                       nextMountFootLeft_, fallbackForMount(family));
-                        nextMountFootLeft_ = !nextMountFootLeft_;
                     }
                 }
                 mountFootstepLastNormTime_ = norm;
@@ -318,10 +280,6 @@ void FootstepDriver::update(float deltaTime, Renderer* renderer,
             footstepManager->playFootstep(surface, cameraController->isSprinting());
             if (surface == audio::FootstepSurface::WATER) {
                 playWaterStepExtras(renderer);
-            } else {
-                spawnFootprint(renderer, characterRenderer, characterInstanceId,
-                               nextPlayerFootLeft_, FootprintFallback::BIPED);
-                nextPlayerFootLeft_ = !nextPlayerFootLeft_;
             }
         }
         mountFootstepNormInitialized_ = false;

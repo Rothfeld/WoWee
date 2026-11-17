@@ -20,14 +20,6 @@ class Camera;
 class Renderer;
 class VkContext;
 
-enum class FootprintFallback : uint8_t {
-    BIPED,
-    HOOF,
-    PAW,
-    CLAW,
-    CLOVEN
-};
-
 /**
  * Short-lived ground decals spawned by authored M2 footfall events.
  * CreatureModelData supplies the original-client mask and physical dimensions.
@@ -45,9 +37,11 @@ public:
 
     void update(float deltaTime);
     void clear();
-    void spawn(const std::string& modelName, const glm::vec3& basePosition,
-               float yawRadians, bool leftFoot, FootprintFallback fallback, float scale = 1.0f);
-    bool hasProfile(const std::string& modelName) const;
+    /// One print of CreatureModelData row `creatureModelDataId`'s footprint
+    /// mask, centred on `footPosition` and turned with the body's yaw.
+    void spawn(uint32_t creatureModelDataId, const glm::vec3& footPosition,
+               float yawRadians, bool leftFoot, float scale);
+    [[nodiscard]] bool hasProfile(uint32_t creatureModelDataId) const;
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera);
 
 private:
@@ -67,6 +61,8 @@ private:
         uint8_t textureIndex = 0;
     };
 
+    // FootprintTextures.dbc has six rows in 2.4.3 (Base, Cloven, Bare, Claw,
+    // Hoof, Paw); loading asserts the file still has that many.
     static constexpr size_t kTextureCount = 6;
 
     Renderer* owner_ = nullptr;
@@ -81,8 +77,7 @@ private:
     VkBuffer quadVB_ = VK_NULL_HANDLE;
     VmaAllocation quadVBAlloc_ = VK_NULL_HANDLE;
 
-    std::unordered_map<std::string, Profile> profilesByPath_;
-    std::unordered_map<std::string, Profile> profilesByBasename_;
+    std::unordered_map<uint32_t, Profile> profilesByModel_;  // CreatureModelData id
     std::vector<Print> prints_;
     std::unordered_map<uint32_t, uint32_t> terrainFlags_;
     std::unordered_map<uint32_t, uint32_t> groundEffectTerrain_;
@@ -92,7 +87,6 @@ private:
     bool createDescriptorResources();
     bool createQuad();
     bool loadFootprintData(pipeline::AssetManager* assetManager);
-    [[nodiscard]] Profile resolveProfile(const std::string& modelName, FootprintFallback fallback) const;
     [[nodiscard]] float resolveFloorHeight(const glm::vec3& position) const;
 };
 

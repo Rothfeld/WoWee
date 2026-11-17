@@ -22,6 +22,7 @@
 #include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/footprint_renderer.hpp"
+#include "rendering/footfall_window.hpp"
 #include "rendering/pom_quality.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/normal_map.hpp"
@@ -4165,33 +4166,47 @@ bool CharacterRenderer::getAnimationState(uint32_t instanceId, uint32_t& animati
     return true;
 }
 
-void CharacterRenderer::emitRemoteFootprints(FootprintRenderer& footprints,
-                                            uint32_t playerId, uint32_t mountId, const glm::vec3& viewerPosition) {
+void CharacterRenderer::setInstanceCreatureModel(uint32_t instanceId, uint32_t creatureModelDataId) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    it->second.creatureModelDataId = creatureModelDataId;
+}
+
+void CharacterRenderer::emitFootprints(FootprintRenderer& footprints, const glm::vec3& viewerPosition) {
     for (auto& [id, instance] : instances) {
-        if (id == playerId || id == mountId || instance.isEffectModel ||
-            instance.hasOverrideModelMatrix || instance.isDead) continue;
-        const auto animId = instance.currentAnimationId;
-        if (animId != anim::WALK && animId != anim::RUN && animId != anim::WALK_BACKWARDS) {
-            instance.footprintEvents.shouldTriggerFootstepEvent(0, 0, 0);
+        const auto reset = [&] { instance.footfallSequence = -1; };
+        if (instance.isEffectModel || instance.hasOverrideModelMatrix || instance.isDead ||
+            instance.creatureModelDataId == 0 || instance.currentSequenceIndex < 0) { reset(); continue; }
+        const auto modelIt = models.find(instance.modelId);
+        if (modelIt == models.end()) { reset(); continue; }
+        const auto& model = modelIt->second.data;
+        if (model.footfallEvents.empty() || !footprints.hasProfile(instance.creatureModelDataId)) {
+            reset();
             continue;
         }
-        uint32_t actualId = 0;
-        float time = 0.0f, duration = 0.0f;
-        if (!getAnimationState(id, actualId, time, duration)) continue;
-        if (!instance.footprintEvents.shouldTriggerFootstepEvent(
-                actualId, time, duration, getFootstepEventTimes(id))) continue;
+        const int sequence = instance.currentSequenceIndex;
+        const float from = instance.footfallSequence == sequence ? instance.footfallTime : -1.0f;
+        const float to = instance.animationTime;
+        instance.footfallSequence = sequence;
+        instance.footfallTime = to;
+        if (from == to) continue;
         const glm::vec3 distance = instance.position - viewerPosition;
         if (glm::dot(distance, distance) > 40.0f * 40.0f) continue;
-        std::string modelName;
-        if (!getInstanceModelName(id, modelName) || !footprints.hasProfile(modelName)) continue;
-        glm::vec3 position = instance.position;
-        float footZ = 0.0f;
-        if (getInstanceFootZ(id, footZ)) position.z = footZ;
-        footprints.spawn(modelName, position, instance.rotation.z,
-                         instance.nextFootprintLeft, FootprintFallback::BIPED, instance.scale);
-        LOG_DEBUG("Remote footprint: instance=", id, " model=", modelName,
-                  " scale=", instance.scale, " position=", position.x, ",", position.y, ",", position.z);
-        instance.nextFootprintLeft = !instance.nextFootprintLeft;
+        const glm::mat4 modelMatrix = getModelMatrix(instance);
+        for (const auto& event : model.footfallEvents) {
+            if (static_cast<size_t>(sequence) >= event.times.size()) continue;
+            for (const uint32_t t : event.times[sequence]) {
+                if (!footfallPassed(t, from, to)) continue;
+                glm::mat4 bone(1.0f);
+                if (event.bone < instance.boneMatrices.size()) bone = instance.boneMatrices[event.bone];
+                const glm::vec3 foot(modelMatrix * bone * glm::vec4(event.position, 1.0f));
+                footprints.spawn(instance.creatureModelDataId, foot, instance.rotation.z,
+                                 event.left, instance.scale);
+                LOG_DEBUG("Footprint: instance=", id, " model=", instance.creatureModelDataId,
+                          " sequence=", sequence, " t=", t, " left=", event.left,
+                          " at=", foot.x, ",", foot.y, ",", foot.z);
+            }
+        }
     }
 }
 
