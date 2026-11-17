@@ -967,6 +967,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
     // World picking and visible nameplates share one mouseover identity.
     uint64_t mouseoverGuid = worldHoverGuid_;
+    plateHits_.clear();
 
     auto* appRenderer = services_.renderer;
     if (!appRenderer) return;
@@ -1696,27 +1697,22 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             }
         }
 
-        // Click to target / right-click context: detect clicks inside the nameplate region.
-        // Use the wider of name text or health bar for the horizontal hit area so short
-        // names like "Wolf" don't produce a tiny clickable strip narrower than the bar.
-        if (showPlate && !ImGui::GetIO().WantCaptureMouse && !frameXmlOwnsMouse()) {
-            ImVec2 mouse = ImGui::GetIO().MousePos;
-            float hitLeft  = std::min(nameX, barX) - 2.0f;
-            float hitRight = std::max(nameX + textSize.x, barX + barW) + 2.0f;
-            float ny0 = nameY - 1.0f;
-            float ny1 = sy + barH + 2.0f;
-            float nx0 = hitLeft;
-            float nx1 = hitRight;
-            if (mouse.x >= nx0 && mouse.x <= nx1 && mouse.y >= ny0 && mouse.y <= ny1) {
+        // The plate's click box: the wider of name text or health bar, so short
+        // names like "Wolf" don't produce a strip narrower than the bar. Clicks
+        // are routed by processTargetInput through plateUnitAt, the same way as
+        // a click on the unit itself: left targets, right targets and
+        // interacts or attacks. Recorded for the next frame's input.
+        if (showPlate) {
+            const ui::PlateBox hitBox{.x0 = std::min(nameX, barX) - 2.0f, .y0 = nameY - 1.0f,
+                                      .x1 = std::max(nameX + textSize.x, barX + barW) + 2.0f,
+                                      .y1 = sy + barH + 2.0f};
+            plateHits_.push_back({.guid = guid, .box = hitBox});
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            if (!ImGui::GetIO().WantCaptureMouse && !frameXmlOwnsMouse() &&
+                mouse.x >= hitBox.x0 && mouse.x <= hitBox.x1 &&
+                mouse.y >= hitBox.y0 && mouse.y <= hitBox.y1) {
                 // Track mouseover for [target=mouseover] macro conditionals
                 mouseoverGuid = guid;
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    gameHandler.setTarget(guid);
-                } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-                    nameplateCtxGuid_ = guid;
-                    nameplateCtxPos_  = mouse;
-                    ImGui::OpenPopup("##NameplateCtx");
-                }
             }
         }
     }
@@ -1767,57 +1763,6 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         auto* spawner = core::Application::getInstance().getEntitySpawner();
         characters->setHoveredInstance(spawner && mouseoverGuid
             ? spawner->characterInstanceIdForGuid(mouseoverGuid) : 0);
-    }
-
-    // Render nameplate context popup (uses a tiny overlay window as host)
-    if (nameplateCtxGuid_ != 0) {
-        ImGui::SetNextWindowPos(nameplateCtxPos_, ImGuiCond_Appearing);
-        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
-        ImGuiWindowFlags ctxHostFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                                         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing |
-                                         ImGuiWindowFlags_AlwaysAutoResize;
-        if (ImGui::Begin("##NameplateCtxHost", nullptr, ctxHostFlags)) {
-            if (ImGui::BeginPopup("##NameplateCtx")) {
-                auto entityPtr = gameHandler.getEntityManager().getEntity(nameplateCtxGuid_);
-                std::string ctxName = entityPtr ? game::entityDisplayName(entityPtr) : "";
-                if (!ctxName.empty()) {
-                    ImGui::TextDisabled("%s", ctxName.c_str());
-                    ImGui::Separator();
-                }
-                if (ImGui::MenuItem("Target"))
-                    gameHandler.setTarget(nameplateCtxGuid_);
-                if (ImGui::MenuItem("Set Focus"))
-                    gameHandler.setFocus(nameplateCtxGuid_);
-                bool isPlayer = entityPtr && entityPtr->getType() == game::ObjectType::PLAYER;
-                if (isPlayer && !ctxName.empty()) {
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Whisper")) {
-                        chatPanel_.setWhisperTarget(ctxName);
-                    }
-                    if (ImGui::MenuItem("Invite to Group"))
-                        gameHandler.inviteToGroup(ctxName);
-                    if (ImGui::MenuItem("Trade"))
-                        gameHandler.initiateTrade(nameplateCtxGuid_);
-                    if (ImGui::MenuItem("Duel"))
-                        gameHandler.proposeDuel(nameplateCtxGuid_);
-                    if (ImGui::MenuItem("Inspect")) {
-                        gameHandler.setTarget(nameplateCtxGuid_);
-                        gameHandler.inspectTarget();
-                        openInspectWindow(gameHandler);
-                    }
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Add Friend"))
-                        gameHandler.addFriend(ctxName);
-                    if (ImGui::MenuItem("Ignore"))
-                        gameHandler.addIgnore(ctxName);
-                }
-                ImGui::EndPopup();
-            } else {
-                nameplateCtxGuid_ = 0;
-            }
-        }
-        ImGui::End();
     }
 }
 

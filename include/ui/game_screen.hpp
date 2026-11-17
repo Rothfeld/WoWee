@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/nameplate_stacking.hpp"
 #include "game/game_handler.hpp"
 #include "game/inventory.hpp"
 // WorldMap is now owned by Renderer, accessed via getWorldMap()
@@ -178,8 +179,9 @@ private:
 
     // UI state
     bool showMinimap_ = true;  // M key toggles minimap
-    uint64_t nameplateCtxGuid_ = 0; // GUID of nameplate right-clicked (0 = none)
-    ImVec2 nameplateCtxPos_{};      // Screen position of nameplate right-click
+    // Click boxes of the plates drawn last frame, in draw order (plateUnitAt).
+    std::vector<ui::PlateHit> plateHits_;
+    friend struct GameScreenTestAccess;
     uint32_t lastPlayerHp_ = 0;   // Previous frame HP for damage flash detection
     float damageFlashAlpha_ = 0.0f; // Screen edge flash intensity (fades to 0)
 

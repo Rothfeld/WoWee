@@ -110,3 +110,24 @@ TEST_CASE("the lift gives up rather than spinning", "[nameplates]") {
     const float y = plateTopClearOf(placed, 100.0f, 180.0f, 400.0f, kBarH, kTop);
     CHECK(y <= 400.0f);
 }
+
+TEST_CASE("a click on a plate resolves to that plate's unit", "[nameplate][click]") {
+    using wowee::ui::PlateBox;
+    using wowee::ui::PlateHit;
+    using wowee::ui::plateUnitAt;
+    // Ledger #94: right-clicking an enemy's plate with a corpse selected
+    // looted the corpse, because the click never resolved to the plate's unit.
+    const std::vector<PlateHit> plates = {
+        {.guid = 0xF130000000000A01ull, .box = PlateBox{.x0 = 100, .y0 = 50, .x1 = 230, .y1 = 80}},
+        {.guid = 0xF130000000000B02ull, .box = PlateBox{.x0 = 180, .y0 = 60, .x1 = 310, .y1 = 90}},
+    };
+    CHECK(plateUnitAt(plates, 120, 60) == 0xF130000000000A01ull);
+    CHECK(plateUnitAt(plates, 300, 85) == 0xF130000000000B02ull);
+    // Overlap: the plate drawn last is on top.
+    CHECK(plateUnitAt(plates, 200, 70) == 0xF130000000000B02ull);
+    // Edges belong to the box; outside is nobody.
+    CHECK(plateUnitAt(plates, 100, 50) == 0xF130000000000A01ull);
+    CHECK(plateUnitAt(plates, 99, 60) == 0);
+    CHECK(plateUnitAt(plates, 400, 400) == 0);
+    CHECK(plateUnitAt({}, 120, 60) == 0);
+}

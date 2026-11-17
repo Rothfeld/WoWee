@@ -5,6 +5,7 @@
 #include "game/packet_parsers.hpp"
 #include "game/transport_manager.hpp"
 #include "ui/game_screen.hpp"
+#include "ui/framexml_takeover.hpp"
 #include "addons/lua_engine.hpp"
 #include "addons/addon_lua_snippets.hpp"
 #include "addons/lua_api_registrations.hpp"
@@ -79,6 +80,16 @@ TEST_CASE("TBC boarding and passenger creation use raw transport GUIDs", "[trans
     CHECK(block.runSpeed == 7.f);
     CHECK(create.getRemainingSize() == 0);
 }
+
+namespace wowee::ui {
+// Plates are drawn by renderNameplates, which needs a renderer; the click
+// routing under test reads only the boxes it leaves behind.
+struct GameScreenTestAccess {
+    static void setPlateHits(GameScreen& screen, std::vector<PlateHit> hits) {
+        screen.plateHits_ = std::move(hits);
+    }
+};
+}  // namespace wowee::ui
 
 namespace ui = wowee::ui;
 namespace addons = wowee::addons;
@@ -2376,4 +2387,63 @@ TEST_CASE_METHOD(Integration, "TBC flight discovery queries once and follows ser
     status(0);
     handler.clearTaxiNodeStatuses(); // World transfer / character login path.
     CHECK_FALSE(taxiDiscoveryMarkerVisible(handler.getTaxiNodeStatus(guid), false));
+}
+
+TEST_CASE_METHOD(Integration, "A click on a nameplate acts on the plate's unit, not the current target", "[input][nameplate][O94]") {
+    using namespace wowee::game;
+    // Ledger #94: right-clicking an enemy's plate with a corpse selected
+    // opened the corpse's loot. The world ray misses (the plate floats above
+    // its unit) and the click fell back to the current target.
+    constexpr uint64_t kCorpse = 0xF130000000000C01ull;
+    constexpr uint64_t kPlateUnit = 0xF130000000000D02ull;
+    replay::Session session;
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}});
+    session.receive(replay::UpdateObject()
+        .create(kCorpse, ObjectType::UNIT, {{UF::UNIT_FIELD_HEALTH, 0}, {UF::UNIT_FIELD_MAXHEALTH, 50}})
+        .create(kPlateUnit, ObjectType::UNIT, {{UF::UNIT_FIELD_HEALTH, 50}, {UF::UNIT_FIELD_MAXHEALTH, 50}}));
+    auto& handler = session.handler();
+    handler.setTarget(kCorpse);
+    REQUIRE(handler.getTargetGuid() == kCorpse);
+
+    ui::GameScreen screen;
+    auto& input = core::Input::getInstance();
+    // Earlier cases leave a FrameXML frame owning the pointer; nothing is
+    // drawn over the plate here.
+    ui::frameXmlNoteMouseOwned(false);
+    // No cursor artwork in the test tree: hide the cursor so the frame skips
+    // selecting the gauntlet texture, which is all that needs assets here.
+    const auto frame = [&] {
+        ImGui::NewFrame();
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+        screen.render(handler);
+        ImGui::EndFrame();
+    };
+    const auto click = [&](uint8_t button, float x, float y) {
+        ui::GameScreenTestAccess::setPlateHits(screen,
+            {{.guid = kPlateUnit, .box = ui::PlateBox{.x0 = 100, .y0 = 50, .x1 = 230, .y1 = 80}}});
+        SDL_Event event{};
+        event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+        event.button.button = button;
+        event.button.x = x;
+        event.button.y = y;
+        input.processEvent(event);
+        input.update();
+        frame();
+        event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+        input.processEvent(event);
+        input.update();
+        ui::GameScreenTestAccess::setPlateHits(screen,
+            {{.guid = kPlateUnit, .box = ui::PlateBox{.x0 = 100, .y0 = 50, .x1 = 230, .y1 = 80}}});
+        frame();
+        input.update();
+    };
+
+    click(SDL_BUTTON_RIGHT, 150, 60);
+    CHECK(handler.getTargetGuid() == kPlateUnit);
+    CHECK(session.sent().of(Opcode::CMSG_LOOT).empty());
+
+    handler.setTarget(kCorpse);
+    click(SDL_BUTTON_LEFT, 150, 60);
+    CHECK(handler.getTargetGuid() == kPlateUnit);
+    CHECK(session.sent().of(Opcode::CMSG_LOOT).empty());
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 namespace wowee {
@@ -64,6 +65,25 @@ inline float plateTopClearOf(const std::vector<PlateBox>& placed,
         if (!lifted) break;
     }
     return y;
+}
+
+/// A drawn plate's click box (name line, bar and their margin) and its unit.
+struct PlateHit {
+    uint64_t guid = 0;
+    PlateBox box;
+};
+
+/// The unit whose plate is under the pointer, or 0. Plates are listed in draw
+/// order, so the last one containing the point is the one drawn on top.
+///
+/// The plate is screen UI in front of the world: a click on it means its unit,
+/// never whatever the world ray behind it hits or the current target.
+inline uint64_t plateUnitAt(const std::vector<PlateHit>& plates, float x, float y) {
+    for (auto it = plates.rbegin(); it != plates.rend(); ++it) {
+        const PlateBox& b = it->box;
+        if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return it->guid;
+    }
+    return 0;
 }
 
 } // namespace ui

@@ -1639,7 +1639,14 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         float dragDistSq = glm::dot(dragDelta, dragDelta);
         const float CLICK_THRESHOLD = clickDragThreshold();
 
-        if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD) {
+        // A plate is screen UI in front of the world: a click on it targets
+        // its unit, not what the ray behind it would hit.
+        const uint64_t plateUnit =
+            ui::plateUnitAt(plateHits_, leftClickPressPos_.x, leftClickPressPos_.y);
+        if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD && plateUnit != 0) {
+            if (gameHandler.isAwaitingUnitTarget()) gameHandler.completeItemUseOnUnit(plateUnit);
+            else gameHandler.setTarget(plateUnit);
+        } else if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD) {
             auto* renderer = services_.renderer;
             auto* camera = renderer ? renderer->getCamera() : nullptr;
             auto* window = services_.window;
@@ -1774,11 +1781,18 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // Treated as a camera rotate - do not interact/attack.
             return;
         }
+        // A right-click on a plate is a right-click on its unit: target it,
+        // then interact or attack below. Without this the world ray missed
+        // (the plate floats above the unit) and the click fell back to the
+        // current target - a selected corpse got looted (ledger #94).
+        const uint64_t plateUnit =
+            ui::plateUnitAt(plateHits_, rightClickReleasePos.x, rightClickReleasePos.y);
+        if (plateUnit != 0) gameHandler.setTarget(plateUnit);
         // Fishing bobbers are tiny and partly submerged, so their model bounds can
         // miss a cursor ray that visibly lands on the float. Test the authoritative
         // water position first with a forgiving sphere and reel directly, before
         // normal unit targeting can fall through to the player/self target.
-        const uint64_t hookedBobber = gameHandler.getHookedFishingBobberGuid();
+        const uint64_t hookedBobber = plateUnit ? 0 : gameHandler.getHookedFishingBobberGuid();
         if (hookedBobber != 0) {
             auto bobber = gameHandler.getEntityManager().getEntity(hookedBobber);
             auto* renderer = services_.renderer;
@@ -1808,7 +1822,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         // instead of re-picking under cursor (which can hit nearby decorative GOs).
         // Exclude chair-type GOs (type 7): otherwise any right-click (including the
         // start of a camera rotate) auto-sits the player whenever a chair is targeted.
-        if (gameHandler.hasTarget()) {
+        if (plateUnit == 0 && gameHandler.hasTarget()) {
             auto target = gameHandler.getTarget();
             if (target && target->getType() == game::ObjectType::GAMEOBJECT) {
                 auto go = std::static_pointer_cast<game::GameObject>(target);
@@ -1824,7 +1838,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         }
 
         // If no target or right-clicking in world, try to pick one under cursor
-        {
+        if (plateUnit == 0) {
             auto* renderer = services_.renderer;
             auto* camera = renderer ? renderer->getCamera() : nullptr;
             auto* window = services_.window;
