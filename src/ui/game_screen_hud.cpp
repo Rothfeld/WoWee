@@ -1327,9 +1327,12 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             // Enemy Cast Bars on Nameplates. The control names enemies, so a
             // friendly caster's bar is not what it governs, and the current
             // target keeps its bar for the same reason it keeps its plate.
-            const bool castBarAllowed =
+            //
+            // Build 8606 nameplates carry no cast bar at all (border, health
+            // bar, level and name only; showVKeyCastBar is a 3.x setting).
+            const bool castBarAllowed = !legacyPlates && (
                 isTarget || !isHostile ||
-                addons::storedCVarValue("showVKeyCastBar", "1") != "0";
+                addons::storedCVarValue("showVKeyCastBar", "1") != "0");
             const auto* cs = castBarAllowed ? gameHandler.getUnitCastState(guid) : nullptr;
             if (cs && cs->casting && cs->timeTotal > 0.0f) {
                 float castPct = std::clamp((cs->timeTotal - cs->timeRemaining) / cs->timeTotal, 0.0f, 1.0f);

@@ -4195,9 +4195,21 @@ int lua_Frame_SetFrameStrata(lua_State* L) {
 /// MEDIUM for every frame in the interface however it had been set, including
 /// the ones the XML puts in FULLSCREEN_DIALOG. Anything branching on it was
 /// deciding from a constant.
+///
+/// The stratum the frame draws in: its own if one was set, otherwise its
+/// parent's, as in build 8606 (Minimap declares none and answers its
+/// cluster's BACKGROUND). Walked here rather than read from the layout's
+/// cached value, which is stale until the next layout.
 int lua_Frame_GetFrameStrata(lua_State* L) {
     const auto* w = widgetOf(L, 1);
-    lua_pushstring(L, w ? wowee::ui::strataName(w->strata) : "MEDIUM");
+    if (!w) return luaL_error(L, "GetFrameStrata: not a frame");
+    auto* tree = wowee::addons::getWidgetTree(L);
+    while (w && !w->strataExplicit && w->parent && tree) {
+        const auto* up = tree->get(w->parent);
+        if (!up) break;
+        w = up;
+    }
+    lua_pushstring(L, wowee::ui::strataName(w->strataExplicit ? w->strata : wowee::ui::FrameStrata::Medium));
     return 1;
 }
 
