@@ -28,6 +28,9 @@ children without collision meshes must not gain bounding-box walls.
 
 Paired native/client recordings and supported-ramp checks are retained in the
 parent workspace under `_experiments/20261117T000028Z.balcony_contact`.
+Cross-map test setup waits for a fresh `World terrain ready: map=N` log entry
+before sending movement. The application may already be IN_GAME during a map
+transfer, so an application-state transition alone cannot prove terrain loaded.
 The movement helper regressions run with:
 
 ```sh

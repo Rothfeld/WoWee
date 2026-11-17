@@ -1248,6 +1248,7 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
     // Only enter IN_GAME when this is the final map (no deferred entry pending).
     app_.setState(AppState::IN_GAME);
+    LOG_INFO("World terrain ready: map=", mapId);
 
     // Load addons once per session on first world entry
     if (addonManager_ && !app_.addonsLoaded_) {
