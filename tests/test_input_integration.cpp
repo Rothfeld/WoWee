@@ -894,6 +894,55 @@ TEST_CASE_METHOD(Integration, "Merchant usability follows equipment requirements
     lua.setGameHandler(nullptr);
 }
 
+TEST_CASE_METHOD(Integration, "Merchant recognizes learned proficiencies without a proficiency packet", "[merchant]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.spellNameCacheLoadedRef() = true;
+    auto& leather = handler.spellNameCacheRef()[9077];
+    leather.equippedItemClass = 4;
+    leather.equippedItemSubClassMask = 1u << 2;
+    leather.effectIds[0] = 60;
+    auto& mailAbility = handler.spellNameCacheRef()[10001];
+    mailAbility.equippedItemClass = 4;
+    mailAbility.equippedItemSubClassMask = 1u << 3;
+    mailAbility.effectIds[0] = 6; // An equipment requirement does not grant proficiency.
+    wowee::network::Packet initial(wireOpcode(Opcode::SMSG_INITIAL_SPELLS));
+    initial.writeUInt8(0);
+    initial.writeUInt16(2);
+    for (const auto spell : {9077u, 10001u}) {
+        initial.writeUInt16(spell);
+        initial.writeUInt16(0);
+    }
+    initial.writeUInt16(0);
+    session.receive(initial);
+    auto& info = handler.itemInfoCacheRef()[100];
+    info.valid = true;
+    info.name = "Leather armor";
+    info.itemClass = 4;
+    info.subClass = 2;
+    wowee::network::Packet inventory(wireOpcode(Opcode::SMSG_LIST_INVENTORY));
+    inventory.writeUInt64(123);
+    inventory.writeUInt8(1);
+    for (uint32_t value : {1u, 100u, 0u, 0xffffffffu, 10000u, 0u, 1u, 0u}) inventory.writeUInt32(value);
+    session.receive(inventory);
+    truth("select(6, GetMerchantItemInfo(1)) == true");
+    info.subClass = 3;
+    truth("select(6, GetMerchantItemInfo(1)) == false");
+    info.subClass = 2;
+    wowee::network::Packet removed(wireOpcode(Opcode::SMSG_REMOVED_SPELL));
+    removed.writeUInt32(9077);
+    session.receive(removed);
+    truth("select(6, GetMerchantItemInfo(1)) == false");
+    wowee::network::Packet learned(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+    learned.writeUInt32(9077);
+    session.receive(learned);
+    truth("select(6, GetMerchantItemInfo(1)) == true");
+    CHECK_FALSE(handler.canUseArmorSubclass(32));
+    lua.setGameHandler(nullptr);
+}
+
 static void announceTbcBoat(replay::Session& session, uint64_t guid) {
     using namespace wowee::game;
     wowee::network::Packet create(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));

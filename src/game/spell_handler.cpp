@@ -3308,6 +3308,31 @@ void SpellHandler::handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs) {
 
 static const std::string SPELL_EMPTY_STRING;
 
+uint32_t SpellHandler::getLearnedProficiency(uint32_t itemClass) const {
+    loadSpellNameCache();
+    uint32_t mask = 0;
+    for (const auto spellId : knownSpells_) {
+        const auto& cache = owner_.spellNameCacheRef();
+        const auto found = cache.find(spellId);
+        if (found == cache.end()) continue;
+        const auto& spell = found->second;
+        if (spell.equippedItemClass == static_cast<int32_t>(itemClass) &&
+            std::find(std::begin(spell.effectIds), std::end(spell.effectIds), 60u) !=
+                std::end(spell.effectIds)) { // SPELL_EFFECT_PROFICIENCY
+            mask |= spell.equippedItemSubClassMask;
+        }
+    }
+    return mask;
+}
+
+uint32_t GameHandler::getWeaponProficiency() const {
+    return weaponProficiency_ | (spellHandler_ ? spellHandler_->getLearnedProficiency(2) : 0);
+}
+
+uint32_t GameHandler::getArmorProficiency() const {
+    return armorProficiency_ | (spellHandler_ ? spellHandler_->getLearnedProficiency(4) : 0);
+}
+
 void SpellHandler::loadSpellNameCache() const {
     if (owner_.spellNameCacheLoadedRef()) return;
 
@@ -3449,6 +3474,8 @@ void SpellHandler::loadSpellNameCache() const {
     const uint32_t effect0Field = spellL ? spellL->field("Effect0") : 0xFFFFFFFF;
     const uint32_t effect1Field = spellL ? spellL->field("Effect1") : 0xFFFFFFFF;
     const uint32_t effect2Field = spellL ? spellL->field("Effect2") : 0xFFFFFFFF;
+    const auto equippedClassField = spellL ? spellL->field("EquippedItemClass") : 0xFFFFFFFF;
+    const auto equippedMaskField = spellL ? spellL->field("EquippedItemSubClassMask") : 0xFFFFFFFF;
     // Every column the recipe read needs, named and in range. Named and in
     // range is the whole question: the old test was that the file had enough
     // fields for the WotLK numbers, which says nothing about whether those are
@@ -3549,6 +3576,10 @@ void SpellHandler::loadSpellNameCache() const {
                 entry.implicitTargetA = dbc->getUInt32(i, implicitTargetAField);
             }
             const uint32_t effectFields[3] = {effect0Field, effect1Field, effect2Field};
+            if (equippedClassField < fieldCount && equippedMaskField < fieldCount) {
+                entry.equippedItemClass = static_cast<int32_t>(dbc->getUInt32(i, equippedClassField));
+                entry.equippedItemSubClassMask = dbc->getUInt32(i, equippedMaskField);
+            }
             const uint32_t auraFields[3]   = {aura0Field, aura1Field, aura2Field};
             for (size_t effect = 0; effect < 3; ++effect) {
                 if (effectFields[effect] != 0xFFFFFFFF && effectFields[effect] < fieldCount) {

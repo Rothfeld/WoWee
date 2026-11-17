@@ -184,6 +184,8 @@
     "Description": 138,
     "DispelType": 4,
     "DurationIndex": 30,
+    "EquippedItemClass": 58,
+    "EquippedItemSubClassMask": 59,
     "Effect0": 61,
     "Effect1": 62,
     "Effect2": 63,

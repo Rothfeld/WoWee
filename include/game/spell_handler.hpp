@@ -330,6 +330,7 @@ public:
 
     // DBC cache loading (called from GameHandler during login)
     void loadSpellNameCache() const;
+    uint32_t getLearnedProficiency(uint32_t itemClass) const;
     void loadSkillLineAbilityDbc();
 
     /// Ask the server what the pet is called.

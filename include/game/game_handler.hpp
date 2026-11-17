@@ -1146,17 +1146,19 @@ public:
     /// server does the whole set at once; there is nothing to name.
     void resetInstances();
 
-    // Player proficiency bitmasks (from SMSG_SET_PROFICIENCY)
+    // Learned proficiency spells plus server-granted proficiency bitmasks.
     // itemClass 2 = Weapon (subClassMask bits: 0=Axe1H,1=Axe2H,2=Bow,3=Gun,4=Mace1H,5=Mace2H,6=Polearm,7=Sword1H,8=Sword2H,10=Staff,13=Fist,14=Misc,15=Dagger,16=Thrown,17=Crossbow,18=Wand,19=Fishing)
     // itemClass 4 = Armor (subClassMask bits: 1=Cloth,2=Leather,3=Mail,4=Plate,6=Shield)
-    uint32_t getWeaponProficiency() const { return weaponProficiency_; }
-    uint32_t getArmorProficiency()  const { return armorProficiency_; }
+    uint32_t getWeaponProficiency() const;
+    uint32_t getArmorProficiency() const;
     bool canUseWeaponSubclass(uint32_t subClass) const {
         // Miscellaneous weapons (mining picks, blacksmith hammers) have no
         // weapon proficiency skill. They are usable by every class.
-        return subClass == 14 || (subClass < 32 && ((weaponProficiency_ >> subClass) & 1u));
+        return subClass == 14 || (subClass < 32 && ((getWeaponProficiency() >> subClass) & 1u));
     }
-    bool canUseArmorSubclass(uint32_t subClass)  const { return (armorProficiency_  >> subClass) & 1u; }
+    bool canUseArmorSubclass(uint32_t subClass) const {
+        return subClass < 32 && ((getArmorProficiency() >> subClass) & 1u);
+    }
 
     // Minimap pings from party members
     struct MinimapPing {
@@ -3952,6 +3954,8 @@ public:
         uint32_t descriptionVariableId = 0;
         int32_t effectBasePoints[3] = {0, 0, 0};
         uint32_t effectIds[3] = {0, 0, 0};
+        int32_t equippedItemClass = -1;
+        uint32_t equippedItemSubClassMask = 0;
         // Spell.dbc EffectApplyAuraName - which aura an APPLY_AURA effect
         // applies. The effect id above only says that one is applied; this
         // says which, and it is the only thing that distinguishes a tracking
