@@ -76,6 +76,11 @@ public:
     void playSpellVisualPrecast(uint32_t visualId, const glm::vec3& worldPosition,
                                 uint32_t castTimeMs = 0, uint32_t attachInstanceId = 0);
 
+    // A DynamicObject's ground effect: the visual's PersistentAreaKit models at
+    // worldPosition, held until stopPersistentArea with the same key.
+    void playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition);
+    void stopPersistentArea(uint64_t key);
+
     // Whether this visual has a missile model (SpellVisual.dbc MissileModel).
     bool hasSpellMissile(uint32_t visualId);
 
@@ -161,6 +166,8 @@ private:
     std::unordered_map<uint32_t, uint32_t> castKits_;
     std::unordered_map<uint32_t, uint32_t> impactKits_;
     std::unordered_map<uint32_t, uint32_t> instantAreaKits_;
+    std::unordered_map<uint32_t, uint32_t> persistentAreaKits_;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> persistentAreas_;  // key -> M2 instances
     /// M2 attachment 17, named Breath. SpellVisualKit's BreathEffect slot is
     /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
     /// carries it on bone 82 in front of the face, bone +X forward.

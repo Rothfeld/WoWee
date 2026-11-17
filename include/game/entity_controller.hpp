@@ -313,6 +313,7 @@ private:
     struct GameObjectTypeHandler;
     struct ItemTypeHandler;
     struct CorpseTypeHandler;
+    struct DynamicObjectTypeHandler;
     std::unordered_map<uint8_t, std::unique_ptr<IObjectTypeHandler>> typeHandlers_;
     void initTypeHandlers();
     [[nodiscard]] IObjectTypeHandler* getTypeHandler(ObjectType type) const;
@@ -323,6 +324,7 @@ private:
     void onCreateGameObject(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onCreateItem(const UpdateBlock& block, bool& newItemCreated);
     void onCreateCorpse(const UpdateBlock& block);
+    void onCreateDynamicObject(const UpdateBlock& block);
     void handleDisplayIdChange(const UpdateBlock& block,
                                const std::shared_ptr<Entity>& entity,
                                const std::shared_ptr<Unit>& unit,

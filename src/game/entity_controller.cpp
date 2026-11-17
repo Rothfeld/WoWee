@@ -295,6 +295,8 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
             owner_.gameObjectDespawnCallbackRef()(guid);
         } else if (entity->getType() == ObjectType::CORPSE && owner_.playerDespawnCallbackRef()) {
             owner_.playerDespawnCallbackRef()(guid);
+        } else if (entity->getType() == ObjectType::DYNAMICOBJECT && owner_.getSpellHandler()) {
+            owner_.getSpellHandler()->hidePersistentArea(guid);
         }
         transportGuids_.erase(guid);
         serverUpdatedTransportGuids_.erase(guid);
@@ -2086,6 +2088,14 @@ struct EntityController::CorpseTypeHandler : EntityController::IObjectTypeHandle
     void onCreate(const UpdateBlock& block, std::shared_ptr<Entity>& /*entity*/, bool&) override { ctl_.onCreateCorpse(block); }
 };
 
+struct EntityController::DynamicObjectTypeHandler : EntityController::IObjectTypeHandler {
+    EntityController& ctl_;
+    explicit DynamicObjectTypeHandler(EntityController& c) : ctl_(c) {}
+    void onCreate(const UpdateBlock& block, std::shared_ptr<Entity>& /*entity*/, bool&) override {
+        ctl_.onCreateDynamicObject(block);
+    }
+};
+
 // ============================================================
 // Handler registry infrastructure
 // ============================================================
@@ -2097,6 +2107,7 @@ void EntityController::initTypeHandlers() {
     typeHandlers_[static_cast<uint8_t>(ObjectType::ITEM)] = std::make_unique<ItemTypeHandler>(*this);
     typeHandlers_[static_cast<uint8_t>(ObjectType::CONTAINER)] = std::make_unique<ItemTypeHandler>(*this);
     typeHandlers_[static_cast<uint8_t>(ObjectType::CORPSE)] = std::make_unique<CorpseTypeHandler>(*this);
+    typeHandlers_[static_cast<uint8_t>(ObjectType::DYNAMICOBJECT)] = std::make_unique<DynamicObjectTypeHandler>(*this);
 }
 
 EntityController::IObjectTypeHandler* EntityController::getTypeHandler(ObjectType type) const {
@@ -2347,6 +2358,30 @@ void EntityController::onCreateGameObject(const UpdateBlock& block, std::shared_
 
 void EntityController::onCreateItem(const UpdateBlock& block, bool& newItemCreated) {
     trackItemOnCreate(block, newItemCreated);
+}
+
+// A DynamicObject is a spell's persistent area: Flamestrike's burning ground,
+// Blizzard, Consecration. Its create block names the spell and the spot; the
+// ground effect lasts until the object is destroyed or leaves range.
+void EntityController::onCreateDynamicObject(const UpdateBlock& block) {
+    const uint16_t spellIndex = fieldIndex(UF::DYNAMICOBJECT_SPELLID);
+    if (spellIndex == 0xFFFF) return;  // expansion profile does not declare the fields
+    auto field = [&](UF name) -> uint32_t {
+        const auto it = block.fields.find(fieldIndex(name));
+        return it != block.fields.end() ? it->second : 0;
+    };
+    auto floatField = [&](UF name) { return std::bit_cast<float>(field(name)); };
+    const uint32_t spellId = field(UF::DYNAMICOBJECT_SPELLID);
+    if (spellId == 0) {
+        LOG_WARNING("DynamicObject 0x", std::hex, block.guid, std::dec, " created without a spell");
+        return;
+    }
+    const glm::vec3 server(floatField(UF::DYNAMICOBJECT_POS_X), floatField(UF::DYNAMICOBJECT_POS_Y),
+                           floatField(UF::DYNAMICOBJECT_POS_Z));
+    LOG_INFO("DynamicObject 0x", std::hex, block.guid, std::dec, " spell=", spellId, " at server (", server.x, ",",
+             server.y, ",", server.z, ")");
+    const glm::vec3 position = core::coords::serverToCanonical(server);
+    if (auto* spells = owner_.getSpellHandler()) spells->showPersistentArea(block.guid, spellId, position);
 }
 
 void EntityController::onCreateCorpse(const UpdateBlock& block) {
@@ -2947,6 +2982,8 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
                 owner_.gameObjectDespawnCallbackRef()(data.guid);
             } else if (entity->getType() == ObjectType::CORPSE && owner_.playerDespawnCallbackRef()) {
                 owner_.playerDespawnCallbackRef()(data.guid);
+            } else if (entity->getType() == ObjectType::DYNAMICOBJECT && owner_.getSpellHandler()) {
+                owner_.getSpellHandler()->hidePersistentArea(data.guid);
             }
         }
         if (transportGuids_.count(data.guid) > 0) {

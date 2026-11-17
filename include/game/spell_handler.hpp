@@ -409,6 +409,10 @@ public:
     /// Buy the next stable slot from the stable master currently open.
     void buyStableSlot();
 
+    // A DynamicObject (persistent spell area) appearing and leaving.
+    void showPersistentArea(uint64_t guid, uint32_t spellId, const glm::vec3& canonicalPosition);
+    void hidePersistentArea(uint64_t guid);
+
 private:
     std::unordered_map<uint32_t, uint64_t> pendingPetNameQueries_;
 

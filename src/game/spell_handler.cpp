@@ -800,6 +800,23 @@ void SpellHandler::triggerImpactVisual(uint32_t spellId, uint64_t targetGuid) {
                          owner_.resolveUnitRenderInstance(targetGuid));
 }
 
+void SpellHandler::showPersistentArea(uint64_t guid, uint32_t spellId, const glm::vec3& canonicalPosition) {
+    auto* renderer = owner_.services().renderer;
+    auto* svs = renderer ? renderer->getSpellVisualSystem() : nullptr;
+    if (!svs) return;
+    const uint32_t visualId = resolveSpellVisualId(spellId);
+    if (visualId == 0) {
+        LOG_WARNING("SpellVisual: DynamicObject 0x", std::hex, guid, std::dec, " spell ", spellId, " has no visual");
+        return;
+    }
+    svs->playPersistentArea(guid, visualId, core::coords::canonicalToRender(canonicalPosition));
+}
+
+void SpellHandler::hidePersistentArea(uint64_t guid) {
+    auto* renderer = owner_.services().renderer;
+    if (auto* svs = renderer ? renderer->getSpellVisualSystem() : nullptr) svs->stopPersistentArea(guid);
+}
+
 void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targetGuid) {
     if (targetGuid == 0) targetGuid = owner_.getTargetGuid();
     auto* renderer = owner_.services().renderer;

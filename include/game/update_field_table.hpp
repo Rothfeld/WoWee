@@ -174,6 +174,13 @@ enum class UF : uint16_t {
     // TBC carries GO state in a standalone word, unlike Wrath's BYTES_1.
     GAMEOBJECT_STATE,
 
+    // DynamicObject fields: the spell whose persistent area this is
+    // (Flamestrike, Blizzard, Consecration) and where it lies.
+    DYNAMICOBJECT_SPELLID,
+    DYNAMICOBJECT_POS_X,
+    DYNAMICOBJECT_POS_Y,
+    DYNAMICOBJECT_POS_Z,
+
     COUNT
 };
 

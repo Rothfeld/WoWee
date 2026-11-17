@@ -62,6 +62,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     // Declared for TBC only: columns after ChannelKit were mapped from the
     // 2.4.3 data (MissileModel 7, InstantAreaKit 22 holds summon/portal kits).
     const uint32_t svInstantAreaKitField = svLayout ? svLayout->field("InstantAreaKit") : 0xFFFFFFFFu;
+    const uint32_t svPersistentAreaKitField = svLayout ? svLayout->field("PersistentAreaKit") : 0xFFFFFFFFu;
     const uint32_t svMissileAttachmentField = svLayout ? svLayout->field("MissileAttachment") : 0xFFFFFFFFu;
     const uint32_t svMissileDestinationField =
         svLayout ? svLayout->field("MissileDestinationAttachment") : 0xFFFFFFFFu;
@@ -180,6 +181,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         if (svCastKitField < svFc) castKits_[vid] = svDbc->getUInt32(i, svCastKitField);
         if (svImpactKitField < svFc) impactKits_[vid] = svDbc->getUInt32(i, svImpactKitField);
         if (svInstantAreaKitField < svFc) instantAreaKits_[vid] = svDbc->getUInt32(i, svInstantAreaKitField);
+        if (svPersistentAreaKitField < svFc)
+            persistentAreaKits_[vid] = svDbc->getUInt32(i, svPersistentAreaKitField);
         const uint32_t stateField = (*svLayout)["StateKit"];
         assert(stateField < svFc);
         stateKits_[vid] = svDbc->getUInt32(i, stateField);
@@ -582,6 +585,48 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, /*isPrecast=*/false);
 }
 
+// Flamestrike 2120: visual 10383, PersistentAreaKit 9357 BaseEffect
+// Flamestrike_Impact_Base, the burning ground the original keeps under the
+// area for the DynamicObject's life (8 s). The model loops its own sequence;
+// it is removed with the object, not on a timer.
+void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition) {
+    if (!m2Renderer_ || visualId == 0) return;
+    if (!cachedAssetManager_)
+        cachedAssetManager_ = core::Application::getInstance().getAssetManager();
+    if (!cachedAssetManager_) return;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    stopPersistentArea(key);
+    const auto kit = persistentAreaKits_.find(visualId);
+    if (kit == persistentAreaKits_.end() || kit->second == 0) return;
+    const auto effects = kitEffects_.find(kit->second);
+    if (effects == kitEffects_.end()) {
+        LOG_WARNING("SpellVisual: persistent area kit ", kit->second, " of visual ", visualId, " has no models");
+        return;
+    }
+    auto& instances = persistentAreas_[key];
+    for (const auto& effect : effects->second) {
+        const uint32_t modelId = loadSpellModel(effect.path);
+        if (modelId == 0) continue;
+        const uint32_t instanceId = m2Renderer_->createInstance(modelId, worldPosition, glm::vec3(0.0f), 1.0f);
+        if (instanceId == 0) {
+            LOG_WARNING("SpellVisual: persistent area instance failed, model=", effect.path);
+            continue;
+        }
+        m2Renderer_->restartInstanceAnimation(instanceId);
+        instances.push_back(instanceId);
+        LOG_INFO("SpellVisual: persistent area 0x", std::hex, key, std::dec, " visual=", visualId,
+                 " kit=", kit->second, " model=", effect.path);
+    }
+}
+
+void SpellVisualSystem::stopPersistentArea(uint64_t key) {
+    const auto it = persistentAreas_.find(key);
+    if (it == persistentAreas_.end()) return;
+    if (m2Renderer_)
+        for (uint32_t instanceId : it->second) m2Renderer_->removeInstance(instanceId);
+    persistentAreas_.erase(it);
+}
+
 bool SpellVisualSystem::hasSpellMissile(uint32_t visualId) {
     if (visualId == 0) return false;
     if (!cachedAssetManager_)
@@ -851,6 +896,11 @@ void SpellVisualSystem::reset() {
             renderer_->getCharacterRenderer()->removeInstance(projectile.instanceId);
     }
     physicalProjectiles_.clear();
+    for (const auto& [key, instances] : persistentAreas_) {
+        if (m2Renderer_)
+            for (uint32_t instanceId : instances) m2Renderer_->removeInstance(instanceId);
+    }
+    persistentAreas_.clear();
     // Reset the negative cache so models that failed during asset loading can retry.
     spellVisualFailedModels_.clear();
 }
