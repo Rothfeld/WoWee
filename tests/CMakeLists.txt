@@ -1565,6 +1565,10 @@ wowee_add_test(test_memory_pressure SOURCES test_memory_pressure.cpp)
 # reported by GetReleaseTimeRemaining; -1 picks the no-countdown popup text.
 wowee_add_test(test_death_release SOURCES test_death_release.cpp)
 
+# ── test_object_name_tooltip ─────────────────────────────────
+# Floating label, default tooltip or none, from a generic object's template.
+wowee_add_test(test_object_name_tooltip SOURCES test_object_name_tooltip.cpp)
+
 # ── test_scene_pick ──────────────────────────────────────────
 # Which of ScenePick's answers a caller wants. closestGuid and resolve()
 # disagree exactly where a wide object stands beside an NPC, which is where the

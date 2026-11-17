@@ -1,6 +1,7 @@
 #include "ui/graphics_choices.hpp"
 #include "game/game_utils.hpp"
 #include "game/game_object_lock.hpp"
+#include "game/game_object_interaction.hpp"
 #include "ui/game_screen.hpp"
 #include "ui/gamepad_controls.hpp"
 #include "core/gamepad.hpp"
@@ -1169,14 +1170,17 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
         selectCursorTexture(tex);
     }
 
-    // Generic signs opt into labels through their server template.
-    // Chairs and unlabelled decorative scenery only retain their cursor.
-    if (info && ((info->type == 5 && info->data[0] == 0) || info->type == 7)) return usable;
+    // Generic signs opt into labels through their server template: a floating
+    // label at the cursor, or with highlight alone the default tooltip (guild
+    // master sign, ledger #04). Chairs and unlabelled scenery keep the cursor.
+    const auto tooltip = info ? game::objectNameTooltip(info->type, info->data[0], info->data[1])
+                              : game::ObjectNameTooltip::Default;
+    if (tooltip == game::ObjectNameTooltip::None) return usable;
 
     const std::string name = game::entityDisplayName(entity);
     if (name.empty() || name == "Unknown") return usable;
     worldObjectHoverGuid_ = guid;
-    worldObjectTooltipFloating_ = info && info->type == 5 && info->data[0] != 0;
+    worldObjectTooltipFloating_ = tooltip == game::ObjectNameTooltip::Floating;
     return true;
 }
 
