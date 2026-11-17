@@ -19,12 +19,17 @@ Releasing movement input must not erase the airborne trajectory; FALL_LAND
 clears it. Native TBC captures on this route use zero launch speed and
 7 yards/second horizontal travel without a JUMP opcode.
 
-WMO child props require authored collision geometry for wall blocking. Evaluate
-this policy against the renderer's cached model. Tile preparation intentionally
-uses empty model placeholders for repeated or already uploaded assets; an empty
-placeholder says nothing about collision in the cached model. Both initial and
-reused instances must block against the same authored triangles. Decorative
-children without collision meshes must not gain bounding-box walls.
+Only authored M2 collision triangles (header boundingTriangles) collide - as
+floor, wall or camera blocker - for ADT doodads, WMO children and game objects
+alike; the CMaNGOS vmap extractor reads the same triangles for server-side
+height and line of sight. A model without them
+is walked through; its bounds never become a box wall or a floor. The Blackrock
+Depths rune glyphs (`darkirondwarfrune_*.m2`, GO 170578-170584) are the
+regression: no collision triangles, a 2.7-yard tall vertex box, and a player
+lifted onto that box and left floating. Evaluate the policy against the
+renderer's cached model. Tile preparation intentionally uses empty model
+placeholders for repeated or already uploaded assets; an empty placeholder says
+nothing about collision in the cached model.
 
 Airborne lateral contact against authored M2 geometry cannot raise the body as
 a grounded step. A vertical side collision may block penetration but ends a
@@ -46,8 +51,8 @@ transfer, so an application-state transition alone cannot prove terrain loaded.
 subsequent ground snap. Movement contact counters include horizontal and
 vertical sweeps. Use these together to distinguish collision rejection from
 a later floor snap erasing the resolved height.
-`WOWEE_TRACE_M2_FLOOR=1` logs each winning M2 candidate's model, source mesh or
-bounds, height and query position. This identifies the supporting object when
+`WOWEE_TRACE_M2_FLOOR=1` logs each winning M2 candidate's model, source mesh,
+height and query position. This identifies the supporting object when
 a floor probe promotes a nearby decoration over the surface under the feet.
 
 The Exodar table route at server (-4191,-11477.700195,-131.451859), heading

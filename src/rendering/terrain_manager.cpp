@@ -1261,11 +1261,6 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                 if (wmoDoodadInstId) {
                     if (doodad.indoorLighting)
                         m2Renderer->setInstanceIndoorLighting(wmoDoodadInstId, *doodad.indoorLighting);
-                    // Respect authored prop collision; do not invent box walls
-                    // for decorative WMO children without a collision mesh.
-                    // Reused models arrive as empty preparation placeholders.
-                    // Resolve geometry from the cached model during collision.
-                    m2Renderer->setRequireAuthoredWallCollision(wmoDoodadInstId);
                     ft.m2InstanceIds.push_back(wmoDoodadInstId);
                 }
                 ft.wmoDoodadIndex++;

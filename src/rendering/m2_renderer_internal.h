@@ -124,6 +124,16 @@ inline float computeGroundDetailDownOffset(const M2ModelGPU& model, float scale)
     return pivotComp + terrainSink;
 }
 
+// Whether a model's instances stop the player or the camera. Only authored
+// collision triangles (M2 header boundingTriangles) collide; the CMaNGOS vmap
+// extractor reads the same triangles for server heights and line of sight.
+// A model that ships none - bushes, rugs, the
+// Blackrock Depths rune glyphs - is walked through, and its bounds are never
+// a floor or a wall: a box invented from them lifted players onto the runes.
+inline bool m2BlocksMovement(const M2ModelGPU& model) {
+    return model.collision.valid() && !model.isInvisibleTrap && !model.isSpellEffect;
+}
+
 inline void getTightCollisionBounds(const M2ModelGPU& model, glm::vec3& outMin, glm::vec3& outMax) {
     // Broad-phase bounds must contain every authored collision triangle.
     // Trunk-size guesses can reject contact before the player reaches the mesh.
@@ -189,40 +199,6 @@ inline bool insideTrunkCollision(const M2ModelGPU::CollisionMesh& mesh,
         if (crossings % 2 == 0) return false;
     }
     return true;
-}
-
-inline float getEffectiveCollisionTopLocal(const M2ModelGPU& model,
-                                           const glm::vec3& localPos,
-                                           const glm::vec3& localMin,
-                                           const glm::vec3& localMax) {
-    if (!model.collisionSteppedFountain && !model.collisionSteppedLowPlatform) {
-        return localMax.z;
-    }
-
-    glm::vec2 center((localMin.x + localMax.x) * 0.5f, (localMin.y + localMax.y) * 0.5f);
-    glm::vec2 half((localMax.x - localMin.x) * 0.5f, (localMax.y - localMin.y) * 0.5f);
-    if (half.x < 1e-4f || half.y < 1e-4f) {
-        return localMax.z;
-    }
-
-    float nx = (localPos.x - center.x) / half.x;
-    float ny = (localPos.y - center.y) / half.y;
-    float r = std::sqrt(nx * nx + ny * ny);
-
-    float h = localMax.z - localMin.z;
-    if (model.collisionSteppedFountain) {
-        if (r > 0.85f) return localMin.z + h * 0.18f;
-        if (r > 0.65f) return localMin.z + h * 0.36f;
-        if (r > 0.45f) return localMin.z + h * 0.54f;
-        if (r > 0.28f) return localMin.z + h * 0.70f;
-        if (r > 0.14f) return localMin.z + h * 0.84f;
-        return localMin.z + h * 0.96f;
-    }
-
-    float edge = std::max(std::abs(nx), std::abs(ny));
-    if (edge > 0.92f) return localMin.z + h * 0.06f;
-    if (edge > 0.72f) return localMin.z + h * 0.30f;
-    return localMin.z + h * 0.62f;
 }
 
 inline bool segmentIntersectsAABB(const glm::vec3& from, const glm::vec3& to,

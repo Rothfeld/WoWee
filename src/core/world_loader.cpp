@@ -489,7 +489,6 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                                 uint32_t doodadModelId = static_cast<uint32_t>(std::hash<std::string>{}(m2Path));
                                 if (!m2Renderer->loadModel(m2Model, doodadModelId)) continue;
                                 uint32_t doodadInstId = m2Renderer->createInstanceWithMatrix(doodadModelId, worldMatrix, worldPos);
-                                if (doodadInstId) m2Renderer->setRequireAuthoredWallCollision(doodadInstId);
                                 if (doodadInstId) {
                                     for (const auto& group : wmoModel.groups) {
                                         if (pipeline::wmoUsesLocalLighting(group.flags) && std::find(group.doodadRefs.begin(),

@@ -264,6 +264,28 @@ TEST_CASE("M2Model collections", "[m2]") {
     REQUIRE(model.sequences[0].duration == 1000);
 }
 
+// darkirondwarfrune_g.m2 (BRD Chamber of Enchantment, GO 170584): vertex box
+// -1.75,-1.76,-1.30 .. 1.76,1.76,1.36, no collision triangles, 20 emitters.
+// Build 8606 walks over it; WoWee used to stand the player on its box.
+TEST_CASE("models without authored collision triangles never block", "[m2][collision]") {
+    using wowee::rendering::m2_internal::m2BlocksMovement;
+    wowee::rendering::M2ModelGPU rune;
+    rune.name = "World\\Generic\\DarkIronDwarf\\Active Doodads\\Runes\\DarkIronDwarfRune_G.m2";
+    rune.boundMin = {-1.753f, -1.762f, -1.303f};
+    rune.boundMax = {1.758f, 1.762f, 1.363f};
+    // Whatever a name or size classifier concludes about it.
+    rune.collisionSmallSolidProp = true;
+    rune.collisionSteppedLowPlatform = true;
+    CHECK_FALSE(m2BlocksMovement(rune));
+    wowee::rendering::M2ModelGPU chest;
+    chest.collision.triCount = 52;  // treasurechest01.m2: 156 indices, 28 vertices
+    CHECK(m2BlocksMovement(chest));
+    chest.collisionNoBlock = true;  // a guess does not discard authored geometry
+    CHECK(m2BlocksMovement(chest));
+    chest.isSpellEffect = true;
+    CHECK_FALSE(m2BlocksMovement(chest));
+}
+
 TEST_CASE("authored collision bounds contain the trunk beyond guessed tree radius", "[m2][collision]") {
     wowee::rendering::M2ModelGPU model;
     model.boundMin = {-10.0f, -10.0f, -1.0f};

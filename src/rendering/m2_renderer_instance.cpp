@@ -350,15 +350,6 @@ void M2Renderer::setSkipCollision(uint32_t instanceId, bool skip) {
     }
 }
 
-void M2Renderer::setRequireAuthoredWallCollision(uint32_t instanceId) {
-    for (auto& inst : instances) {
-        if (inst.id == instanceId) {
-            inst.requireAuthoredWallCollision = true;
-            return;
-        }
-    }
-}
-
 void M2Renderer::removeInstances(const std::vector<uint32_t>& instanceIds) {
     if (instanceIds.empty() || instances.empty()) {
         return;
@@ -933,8 +924,9 @@ void M2Renderer::debugDumpFloorCandidatesAt(float glX, float glY, float glZ) con
         const M2ModelGPU* model = instance.cachedModel;
         const bool authored = model && model->collision.valid();
         if (!rejected && model) {
-            if ((model->collisionNoBlock && !authored) || model->isInvisibleTrap ||
-                model->isSpellEffect) {
+            if (!authored) {
+                rejected = "no authored collision triangles";
+            } else if (model->isInvisibleTrap || model->isSpellEffect) {
                 rejected = "classified as non-blocking";
             }
         }
@@ -1052,20 +1044,7 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
         if (instance.scale <= 0.001f) continue;
 
         const M2ModelGPU& model = *instance.cachedModel;
-        // A model that ships collision geometry blocks, whatever its name
-        // suggests. collisionNoBlock is a guess from the name and the unscaled
-        // bounds, and it is only there to stop collision being *invented* for
-        // something soft - it has no business discarding what the artist
-        // authored.
-        //
-        // It was discarding a great deal. hellfiretreethorns03 carries 15,376
-        // collision triangles and is 2.87 wide unscaled, so it failed the
-        // treeWithTrunk gate of horiz > 6, came out a softTree, and was walked
-        // through. Every bush and rug beside it ships zero collision triangles,
-        // so they stay soft on their own evidence and need no rule at all.
-        const bool authoredCollision = model.collision.valid();
-        if ((model.collisionNoBlock && !authoredCollision) ||
-            model.isInvisibleTrap || model.isSpellEffect) continue;
+        if (!m2BlocksMovement(model)) continue;
         if (instance.skipCollision) continue;
 
         // --- Mesh-based floor: vertical ray vs collision triangles ---
@@ -1174,61 +1153,6 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
             }
             // A ray miss is empty space. Using the bounds as a floor here
             // creates invisible platforms beside trunks and across mesh gaps.
-            continue;
-        }
-
-        float zMargin = model.collisionBridge ? 25.0f : 2.0f;
-        if (glX < instance.worldBoundsMin.x || glX > instance.worldBoundsMax.x ||
-            glY < instance.worldBoundsMin.y || glY > instance.worldBoundsMax.y ||
-            glZ < instance.worldBoundsMin.z - zMargin || glZ > instance.worldBoundsMax.z + zMargin) {
-            continue;
-        }
-        glm::vec3 localMin, localMax;
-        getTightCollisionBounds(model, localMin, localMax);
-
-        glm::vec3 localPos = glm::vec3(instance.invModelMatrix * glm::vec4(glX, glY, glZ, 1.0f));
-
-        // Must be within doodad footprint in local XY.
-        // Stepped low platforms get a small pad so walk-up snapping catches edges.
-        float footprintPad = 0.0f;
-        if (model.collisionSteppedLowPlatform) {
-            footprintPad = model.collisionPlanter ? 0.22f : 0.16f;
-            if (model.collisionBridge) {
-                footprintPad = 0.35f;
-            }
-        }
-        if (localPos.x < localMin.x - footprintPad || localPos.x > localMax.x + footprintPad ||
-            localPos.y < localMin.y - footprintPad || localPos.y > localMax.y + footprintPad) {
-            continue;
-        }
-
-        // Construct "top" point at queried XY in local space, then transform back.
-        float localTopZ = getEffectiveCollisionTopLocal(model, localPos, localMin, localMax);
-        glm::vec3 localTop(localPos.x, localPos.y, localTopZ);
-        glm::vec3 worldTop = glm::vec3(instance.modelMatrix * glm::vec4(localTop, 1.0f));
-
-        // Reachability filter: allow a bit more climb for stepped low platforms.
-        float maxStepUp = 1.0f;
-        if (model.collisionStatue) {
-            maxStepUp = 2.5f;
-        } else if (model.collisionSmallSolidProp) {
-            maxStepUp = 2.0f;
-        } else if (model.collisionSteppedFountain) {
-            maxStepUp = 2.5f;
-        } else if (model.collisionSteppedLowPlatform) {
-            maxStepUp = model.collisionPlanter ? 3.0f : 2.4f;
-            if (model.collisionBridge) {
-                maxStepUp = 25.0f;
-            }
-        }
-        if (worldTop.z > glZ + maxStepUp) continue;
-
-        if (!bestFloor || worldTop.z > *bestFloor) {
-            bestFloor = worldTop.z;
-            if (traceFloor) LOG_INFO("M2 floor candidate: model=", model.name,
-                " source=bounds height=", worldTop.z,
-                " requireAuthored=", instance.requireAuthoredWallCollision,
-                " query=", glX, ",", glY, ",", glZ);
         }
     }
 
@@ -1256,7 +1180,7 @@ bool M2Renderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
         if (instance.skipCollision || !instance.cachedModel || instance.scale <= 0.001f ||
             collisionFocus.excludes(instance.worldBoundsMin, instance.worldBoundsMax)) continue;
         const auto& model = *instance.cachedModel;
-        if (!model.collision.valid() || model.isInvisibleTrap || model.isSpellEffect) continue;
+        if (!m2BlocksMovement(model)) continue;
 
         glm::vec3 localLow(std::numeric_limits<float>::max());
         glm::vec3 localHigh(-std::numeric_limits<float>::max());
@@ -1325,22 +1249,8 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
         if (!instance.cachedModel) continue;
 
         const M2ModelGPU& model = *instance.cachedModel;
-        // A model that ships collision geometry blocks, whatever its name
-        // suggests. collisionNoBlock is a guess from the name and the unscaled
-        // bounds, and it is only there to stop collision being *invented* for
-        // something soft - it has no business discarding what the artist
-        // authored.
-        //
-        // It was discarding a great deal. hellfiretreethorns03 carries 15,376
-        // collision triangles and is 2.87 wide unscaled, so it failed the
-        // treeWithTrunk gate of horiz > 6, came out a softTree, and was walked
-        // through. Every bush and rug beside it ships zero collision triangles,
-        // so they stay soft on their own evidence and need no rule at all.
-        const bool authoredCollision = model.collision.valid();
-        if ((model.collisionNoBlock && !authoredCollision) ||
-            model.isInvisibleTrap || model.isSpellEffect) continue;
-        if (instance.skipCollision ||
-            (instance.requireAuthoredWallCollision && !authoredCollision)) continue;
+        if (!m2BlocksMovement(model)) continue;
+        if (instance.skipCollision) continue;
         if (instance.scale <= 0.001f) continue;
 
         // --- Mesh-based wall collision: closest-point push ---
@@ -1412,148 +1322,7 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
                                 "the name the classifier needs");
                 }
             }
-            continue;
         }
-
-        glm::vec3 localFrom = glm::vec3(instance.invModelMatrix * glm::vec4(from, 1.0f));
-        glm::vec3 localPos = glm::vec3(instance.invModelMatrix * glm::vec4(adjustedPos, 1.0f));
-        float radiusScale = model.collisionNarrowVerticalProp ? 0.45f : 1.0f;
-        float localRadius = (playerRadius * radiusScale) / instance.scale;
-
-        glm::vec3 rawMin, rawMax;
-        getTightCollisionBounds(model, rawMin, rawMax);
-        glm::vec3 localMin = rawMin - glm::vec3(localRadius);
-        glm::vec3 localMax = rawMax + glm::vec3(localRadius);
-        float effectiveTop = getEffectiveCollisionTopLocal(model, localPos, rawMin, rawMax) + localRadius;
-        glm::vec2 localCenter((localMin.x + localMax.x) * 0.5f, (localMin.y + localMax.y) * 0.5f);
-        float fromR = glm::length(glm::vec2(localFrom.x, localFrom.y) - localCenter);
-        float toR = glm::length(glm::vec2(localPos.x, localPos.y) - localCenter);
-
-        // Feet-based vertical overlap test: ignore objects fully above/below us.
-        const float playerLocalHeight = playerHeight / instance.scale;
-        if (localPos.z + playerLocalHeight < localMin.z || localPos.z > effectiveTop) {
-            continue;
-        }
-
-        bool fromInsideXY =
-            (localFrom.x >= localMin.x && localFrom.x <= localMax.x &&
-             localFrom.y >= localMin.y && localFrom.y <= localMax.y);
-        bool fromInsideZ = (localFrom.z + playerLocalHeight >= localMin.z && localFrom.z <= effectiveTop);
-        bool escapingOverlap = (fromInsideXY && fromInsideZ && (toR > fromR + 1e-4f));
-        bool allowEscapeRelax = escapingOverlap && !model.collisionSmallSolidProp;
-
-        // Swept hard clamp for taller blockers only.
-        // Low/stepable objects should be climbable and not "shove" the player off.
-        float maxStepUp = 1.20f;
-        if (model.collisionStatue) {
-            maxStepUp = 2.5f;
-        } else if (model.collisionSmallSolidProp) {
-            // Keep box/crate-class props hard-solid to prevent phase-through.
-            maxStepUp = 0.75f;
-        } else if (model.collisionSteppedFountain) {
-            maxStepUp = 2.5f;
-        } else if (model.collisionSteppedLowPlatform) {
-            maxStepUp = model.collisionPlanter ? 2.8f : 2.4f;
-            if (model.collisionBridge) {
-                maxStepUp = 25.0f;
-            }
-        }
-        bool stepableLowObject = (effectiveTop <= localFrom.z + maxStepUp);
-        bool climbingAttempt = (localPos.z > localFrom.z + 0.18f);
-        bool nearTop = (localFrom.z >= effectiveTop - 0.30f);
-        float climbAllowance = model.collisionPlanter ? 0.95f : 0.60f;
-        if (model.collisionSteppedLowPlatform && !model.collisionPlanter) {
-            // Let low curb/planter blocks be stepable without sticky side shoves.
-            climbAllowance = 1.00f;
-        }
-        if (model.collisionBridge) {
-            climbAllowance = 3.0f;
-        }
-        if (model.collisionSmallSolidProp) {
-            climbAllowance = 1.05f;
-        }
-        bool climbingTowardTop = climbingAttempt && (localFrom.z + climbAllowance >= effectiveTop);
-        bool forceHardLateral =
-            model.collisionSmallSolidProp &&
-            !nearTop && !climbingTowardTop;
-        if ((!stepableLowObject || forceHardLateral) && !allowEscapeRelax) {
-            float tEnter = 0.0f;
-            glm::vec3 sweepMax = localMax;
-            sweepMax.z = std::min(sweepMax.z, effectiveTop);
-            if (segmentIntersectsAABB(localFrom, localPos, localMin, sweepMax, tEnter)) {
-                float tSafe = std::clamp(tEnter - 0.03f, 0.0f, 1.0f);
-                glm::vec3 localSafe = localFrom + (localPos - localFrom) * tSafe;
-                glm::vec3 worldSafe = glm::vec3(instance.modelMatrix * glm::vec4(localSafe, 1.0f));
-                adjustedPos.x = worldSafe.x;
-                adjustedPos.y = worldSafe.y;
-                collided = true;
-                // The other way a doodad blocks, and the one that was missing.
-                //
-                // The first of these lines went inside the branch for models
-                // that carry a collision mesh. A model without one is stopped
-                // by its bounding box here instead, so the doodads reported as
-                // wrongly solid - grass among them - were exactly the ones the
-                // diagnostic could not see.
-                static std::set<std::string> saidBoxBlocked;
-                if (!model.name.empty() && saidBoxBlocked.insert(model.name).second) {
-                    LOG_WARNING("Collision: blocked by '", model.name,
-                                "' (bounding box, no collision mesh) - if this "
-                                "should be walked through, that is the name the "
-                                "classifier needs");
-                }
-                continue;
-            }
-        }
-
-        if (localPos.x < localMin.x || localPos.x > localMax.x ||
-            localPos.y < localMin.y || localPos.y > localMax.y) {
-            continue;
-        }
-
-        float pushLeft  = localPos.x - localMin.x;
-        float pushRight = localMax.x - localPos.x;
-        float pushBack  = localPos.y - localMin.y;
-        float pushFront = localMax.y - localPos.y;
-
-        float minPush = std::min({pushLeft, pushRight, pushBack, pushFront});
-        if (allowEscapeRelax) {
-            continue;
-        }
-        if (stepableLowObject && localFrom.z >= effectiveTop - 0.35f) {
-            // Already on/near top surface: don't apply lateral push that ejects
-            // the player from the object (carpets, platforms, etc).
-            continue;
-        }
-        // Gentle fallback push for overlapping cases.
-        float pushAmount;
-        if (model.collisionNarrowVerticalProp) {
-            pushAmount = std::clamp(minPush * 0.10f, 0.001f, 0.010f);
-        } else if (model.collisionSteppedLowPlatform) {
-            if (model.collisionPlanter && stepableLowObject) {
-                pushAmount = std::clamp(minPush * 0.06f, 0.001f, 0.006f);
-            } else {
-            pushAmount = std::clamp(minPush * 0.12f, 0.003f, 0.012f);
-            }
-        } else if (stepableLowObject) {
-            pushAmount = std::clamp(minPush * 0.12f, 0.002f, 0.015f);
-        } else {
-            pushAmount = std::clamp(minPush * 0.28f, 0.010f, 0.045f);
-        }
-        glm::vec3 localPush(0.0f);
-        if (minPush == pushLeft) {
-            localPush.x = -pushAmount;
-        } else if (minPush == pushRight) {
-            localPush.x = pushAmount;
-        } else if (minPush == pushBack) {
-            localPush.y = -pushAmount;
-        } else {
-            localPush.y = pushAmount;
-        }
-
-        glm::vec3 worldPush = glm::vec3(instance.modelMatrix * glm::vec4(localPush, 0.0f));
-        adjustedPos.x += worldPush.x;
-        adjustedPos.y += worldPush.y;
-        collided = true;
     }
 
     return collided;
@@ -1635,20 +1404,7 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
         if (!instance.cachedModel) continue;
 
         const M2ModelGPU& model = *instance.cachedModel;
-        // A model that ships collision geometry blocks, whatever its name
-        // suggests. collisionNoBlock is a guess from the name and the unscaled
-        // bounds, and it is only there to stop collision being *invented* for
-        // something soft - it has no business discarding what the artist
-        // authored.
-        //
-        // It was discarding a great deal. hellfiretreethorns03 carries 15,376
-        // collision triangles and is 2.87 wide unscaled, so it failed the
-        // treeWithTrunk gate of horiz > 6, came out a softTree, and was walked
-        // through. Every bush and rug beside it ships zero collision triangles,
-        // so they stay soft on their own evidence and need no rule at all.
-        const bool authoredCollision = model.collision.valid();
-        if ((model.collisionNoBlock && !authoredCollision) ||
-            model.isInvisibleTrap || model.isSpellEffect) continue;
+        if (!m2BlocksMovement(model)) continue;
         glm::vec3 localMin, localMax;
         getTightCollisionBounds(model, localMin, localMax);
         // Skip tiny doodads for camera occlusion; they cause jitter and false hits.
@@ -1661,49 +1417,27 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
             continue;
         }
 
-        if (authoredCollision) {
-            // Bounds only cull candidates. Their empty corners must not push
-            // the camera into the player when approaching an irregular prop.
-            const glm::vec3 localEnd = glm::vec3(instance.invModelMatrix *
-                glm::vec4(origin + direction * closestHit, 1.0f));
-            const glm::vec2 rangeMin = glm::min(glm::vec2(localOrigin), glm::vec2(localEnd));
-            const glm::vec2 rangeMax = glm::max(glm::vec2(localOrigin), glm::vec2(localEnd));
-            const auto& mesh = model.collision;
-            // Camera rays must test floors and ceilings as well as walls.
-            for (const auto* cells : {&mesh.cellFloorTris, &mesh.cellWallTris}) {
-                mesh.gatherTrisInRange(*cells, rangeMin.x, rangeMin.y,
-                                      rangeMax.x, rangeMax.y, tl_m2_collisionTriScratch);
-                for (uint32_t ti : tl_m2_collisionTriScratch) {
-                    const float t = rayTriangleIntersect(localOrigin, localDir,
-                        mesh.vertices[mesh.indices[ti * 3]],
-                        mesh.vertices[mesh.indices[ti * 3 + 1]],
-                        mesh.vertices[mesh.indices[ti * 3 + 2]]);
-                    if (t < 0.0f) continue;
-                    const glm::vec3 worldHit = glm::vec3(instance.modelMatrix *
-                        glm::vec4(localOrigin + localDir * t, 1.0f));
-                    closestHit = std::min(closestHit, glm::length(worldHit - origin));
-                }
+        // Bounds only cull candidates. Their empty corners must not push
+        // the camera into the player when approaching an irregular prop.
+        const glm::vec3 localEnd = glm::vec3(instance.invModelMatrix *
+            glm::vec4(origin + direction * closestHit, 1.0f));
+        const glm::vec2 rangeMin = glm::min(glm::vec2(localOrigin), glm::vec2(localEnd));
+        const glm::vec2 rangeMax = glm::max(glm::vec2(localOrigin), glm::vec2(localEnd));
+        const auto& mesh = model.collision;
+        // Camera rays must test floors and ceilings as well as walls.
+        for (const auto* cells : {&mesh.cellFloorTris, &mesh.cellWallTris}) {
+            mesh.gatherTrisInRange(*cells, rangeMin.x, rangeMin.y,
+                                  rangeMax.x, rangeMax.y, tl_m2_collisionTriScratch);
+            for (uint32_t ti : tl_m2_collisionTriScratch) {
+                const float t = rayTriangleIntersect(localOrigin, localDir,
+                    mesh.vertices[mesh.indices[ti * 3]],
+                    mesh.vertices[mesh.indices[ti * 3 + 1]],
+                    mesh.vertices[mesh.indices[ti * 3 + 2]]);
+                if (t < 0.0f) continue;
+                const glm::vec3 worldHit = glm::vec3(instance.modelMatrix *
+                    glm::vec4(localOrigin + localDir * t, 1.0f));
+                closestHit = std::min(closestHit, glm::length(worldHit - origin));
             }
-            continue;
-        }
-
-        // Local-space AABB slab intersection.
-        glm::vec3 invDir = 1.0f / localDir;
-        glm::vec3 tMin = (localMin - localOrigin) * invDir;
-        glm::vec3 tMax = (localMax - localOrigin) * invDir;
-        glm::vec3 t1 = glm::min(tMin, tMax);
-        glm::vec3 t2 = glm::max(tMin, tMax);
-
-        float tNear = std::max({t1.x, t1.y, t1.z});
-        float tFar = std::min({t2.x, t2.y, t2.z});
-        if (tNear > tFar || tFar <= 0.0f) continue;
-
-        float tHit = tNear > 0.0f ? tNear : tFar;
-        glm::vec3 localHit = localOrigin + localDir * tHit;
-        glm::vec3 worldHit = glm::vec3(instance.modelMatrix * glm::vec4(localHit, 1.0f));
-        float worldDist = glm::length(worldHit - origin);
-        if (worldDist > 0.0f && worldDist < closestHit) {
-            closestHit = worldDist;
         }
     }
 
