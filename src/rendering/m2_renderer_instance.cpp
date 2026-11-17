@@ -1195,7 +1195,8 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
 }
 
 bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
-                                 glm::vec3& adjustedPos, float playerRadius, float playerHeight) const {
+                                 glm::vec3& adjustedPos, float playerRadius, float playerHeight,
+                                 bool allowHorizontalRise) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     assert(playerRadius > 0.0f && playerHeight >= movement::kBodyBevel * playerRadius);
     adjustedPos = to;
@@ -1287,7 +1288,7 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
             }
             glm::vec3 contactPosition;
             const bool pushed=movement::moveBody(from,adjustedPos,playerRadius,playerHeight,
-                triangles,contactPosition);
+                triangles,contactPosition,allowHorizontalRise);
             adjustedPos=contactPosition;
 
             if (pushed) {

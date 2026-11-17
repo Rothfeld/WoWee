@@ -286,3 +286,23 @@ TEST_CASE("overhang contact cannot push walking feet downward") {
     // Plane x+2z/3=1 intersects the body's leading top corner.
     CHECK(std::abs(position.x+5.0f/6.0f)<.003f);
 }
+
+TEST_CASE("airborne lateral contact cannot gain grounded step height") {
+    using namespace wowee::rendering::movement;
+    const std::array slope = {
+        BodyTriangle{glm::vec3(0,-4,0),glm::vec3(2,-4,3),glm::vec3(2,4,3)},
+        BodyTriangle{glm::vec3(0,-4,0),glm::vec3(2,4,3),glm::vec3(0,4,0)}};
+    glm::vec3 walking(-1,0,.2f), airborne = walking;
+    bool hit = false;
+    for (int frame = 0; frame < 30; ++frame) {
+        glm::vec3 result;
+        moveBody(walking,walking+glm::vec3(.1f,0,0),.3f,2.0f,slope,result,true);
+        walking = result;
+        hit |= moveBody(airborne,airborne+glm::vec3(.1f,0,0),.3f,2.0f,slope,result,false);
+        airborne = result;
+        CHECK(airborne.z == Catch::Approx(.2f));
+    }
+    REQUIRE(hit);
+    CHECK(walking.z > airborne.z + .5f);
+    CHECK(airborne.x < walking.x);
+}

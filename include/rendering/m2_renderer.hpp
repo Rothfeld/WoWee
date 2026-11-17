@@ -637,7 +637,7 @@ public:
 
     bool checkCollision(const glm::vec3& from, const glm::vec3& to,
                         glm::vec3& adjustedPos, float playerRadius = 0.5f,
-                        float playerHeight = 2.0f) const;
+                        float playerHeight = 2.0f, bool allowHorizontalRise = true) const;
     std::optional<float> getFloorHeight(float glX, float glY, float glZ, float* outNormalZ = nullptr) const;
 
     /// Every doodad the floor query would consider here, and what each one

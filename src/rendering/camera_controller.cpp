@@ -343,7 +343,7 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
             glm::vec3 horizontal(candidate.x, candidate.y, stepPos.z);
             glm::vec3 horizontalAdjusted;
             const bool horizontalContact = m2Renderer->checkCollision(stepPos, horizontal, horizontalAdjusted,
-                collisionRadius_, collisionHeight_);
+                collisionRadius_, collisionHeight_, grounded);
             if (horizontalContact) {
                 ++movementTraceM2Contacts_;
                 static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
@@ -359,12 +359,19 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
             if (m2Renderer->checkCollision(horizontalAdjusted, candidate, adjusted,
                     collisionRadius_, collisionHeight_)) {
                 ++movementTraceM2Contacts_;
-                // Publish beveled-foot support so gravity cannot accumulate
-                // while collision holds the player above the center floor ray.
+                // A beveled side contact stops penetration, but only a
+                // walkable surface at the feet can end a fall. Otherwise the
+                // next horizontal sweep would gain a grounded step allowance.
                 if (adjusted.z > candidate.z + 0.00001f && verticalVelocity <= 0.0f &&
                     !swimming && !isFlightAirborne()) {
-                    grounded = true;
-                    verticalVelocity = 0.0f;
+                    float normalZ = 0.0f;
+                    const auto support = m2Renderer->getFloorHeight(
+                        adjusted.x, adjusted.y, adjusted.z + 0.01f, &normalZ);
+                    if (support && movement::isWalkableNormal(normalZ) &&
+                        std::abs(*support - adjusted.z) <= 0.02f) {
+                        grounded = true;
+                        verticalVelocity = 0.0f;
+                    }
                 }
                 if (adjusted.z < candidate.z - 0.00001f && verticalVelocity > 0.0f) {
                     verticalVelocity = 0.0f;

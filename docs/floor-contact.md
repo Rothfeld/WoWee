@@ -26,6 +26,11 @@ placeholder says nothing about collision in the cached model. Both initial and
 reused instances must block against the same authored triangles. Decorative
 children without collision meshes must not gain bounding-box walls.
 
+Airborne lateral contact against authored M2 geometry cannot raise the body as
+a grounded step. A vertical side collision may block penetration but ends a
+fall only when a walkable M2 floor reaches the feet. This keeps the next lateral
+sweep from gaining a grounded step allowance while hanging against a prop.
+
 Paired native/client recordings and supported-ramp checks are retained in the
 parent workspace under `_experiments/20261117T000028Z.balcony_contact`.
 Cross-map test setup waits for a fresh `World terrain ready: map=N` log entry
