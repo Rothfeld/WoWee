@@ -1093,13 +1093,15 @@ bool Application::initialize() {
             {
                 auto castTimeMap = std::make_shared<std::unordered_map<uint32_t, uint32_t>>();
                 auto rangeMap    = std::make_shared<std::unordered_map<uint32_t, std::pair<float,float>>>();
+                // SpellRange.dbc Flags by range index; 2 is a ranged weapon range.
+                auto rangeFlagMap = std::make_shared<std::unordered_map<uint32_t, uint32_t>>();
                 auto spellCastIdx = std::make_shared<std::unordered_map<uint32_t, uint32_t>>(); // spellId→castTimeIdx
                 auto spellRangeIdx = std::make_shared<std::unordered_map<uint32_t, uint32_t>>(); // spellId→rangeIdx
                 struct SpellCostEntry { uint32_t manaCost = 0; uint8_t powerType = 0; uint32_t manaCostPct = 0; };
                 auto spellCostMap = std::make_shared<std::unordered_map<uint32_t, SpellCostEntry>>();
                 auto loaded = std::make_shared<bool>(false);
                 auto* am = assetManager.get();
-                gameHandler->setSpellDataResolver([castTimeMap, rangeMap, spellCastIdx, spellRangeIdx, spellCostMap, loaded, am](uint32_t spellId) -> game::GameHandler::SpellDataInfo {
+                gameHandler->setSpellDataResolver([castTimeMap, rangeMap, rangeFlagMap, spellCastIdx, spellRangeIdx, spellCostMap, loaded, am](uint32_t spellId) -> game::GameHandler::SpellDataInfo {
                     if (!am) return {};
                     if (!*loaded && am->isInitialized()) {
                         // Initialised, not merely present: loadDBC answers
@@ -1119,6 +1121,7 @@ bool Application::initialize() {
                         const auto* srL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("SpellRange") : nullptr;
                         uint32_t minRField = srL ? (*srL)["MinRange"] : 1;
                         uint32_t maxRField = srL ? (*srL)["MaxRange"] : 4;
+                        const uint32_t flagsRField = srL ? srL->tryField("Flags") : 0xFFFFFFFFu;
                         auto rDbc = am->loadDBC("SpellRange.dbc");
                         if (rDbc && rDbc->isLoaded()) {
                             for (uint32_t i = 0; i < rDbc->getRecordCount(); ++i) {
@@ -1126,6 +1129,8 @@ bool Application::initialize() {
                                 float minR = rDbc->getFloat(i, minRField);
                                 float maxR = rDbc->getFloat(i, maxRField);
                                 if (id > 0) (*rangeMap)[id] = {minR, maxR};
+                                if (id > 0 && flagsRField < rDbc->getFieldCount())
+                                    (*rangeFlagMap)[id] = rDbc->getUInt32(i, flagsRField);
                             }
                         }
                         // Load Spell.dbc: extract castTimeIndex and rangeIndex per spell
@@ -1176,6 +1181,8 @@ bool Application::initialize() {
                             info.minRange = rIt->second.first;
                             info.maxRange = rIt->second.second;
                         }
+                        if (const auto fIt = rangeFlagMap->find(riIt->second); fIt != rangeFlagMap->end())
+                            info.rangeFlags = fIt->second;
                     }
                     auto mcIt = spellCostMap->find(spellId);
                     if (mcIt != spellCostMap->end()) {

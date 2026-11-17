@@ -81,28 +81,58 @@ inline int luaReturnZero(lua_State* L) { lua_pushnumber(L, 0); return 1; }
 inline int luaReturnFalse(lua_State* L){ lua_pushboolean(L, 0); return 1; }
 
 /// IsActionInRange and IsSpellInRange's answer for one spell against one unit:
-/// 1 in range, 0 out, and nil where there is no range to speak of - a spell
-/// with none, nothing targeted, either side not known to the client. Edge to
-/// edge, as the server measures it; see spellclass::withinSpellRange.
+/// 1 in range, 0 out, and nil where there is no range to speak of. Native
+/// 2.4.3 answers nil for a spell with no range or not aimed at a unit
+/// (Distract, Pick Lock, Disarm Trap, Fishing), for a harmful spell at a unit
+/// that cannot be attacked (a friendly player, a GM), and for a unit of a
+/// creature type the spell excludes (Sap at a deer). Edge to edge, as the
+/// server measures it; see spellclass::withinSpellRange. A ranged-weapon range
+/// (SpellRange flag 2) is out inside melee reach: Throw at a mob in melee is 0.
 inline int pushSpellRangeAnswer(lua_State* L, game::GameHandler* gh,
                                 uint32_t spellId, uint64_t targetGuid) {
     if (!gh || spellId == 0 || targetGuid == 0) return luaReturnNil(L);
+    const auto* entry = gh->getSpellNameEntry(spellId);
+    if (!entry) return luaReturnNil(L);
     const auto data = gh->getSpellData(spellId);
     // Self-cast spells have no range and show no indicator.
     if (data.maxRange <= 0.0f) return luaReturnNil(L);
+    // CMaNGOS SpellTargetInfoTable: the implicit targets aimed at one chosen
+    // unit; 6 is the harmful one.
+    bool aimedAtUnit = false, harmful = false;
+    for (const uint32_t implicit : entry->implicitTargetsA) {
+        switch (implicit) {
+            case 6: aimedAtUnit = harmful = true; break;
+            case 21: case 25: case 35: case 37: case 45: case 57: case 61: aimedAtUnit = true; break;
+            default: break;
+        }
+    }
+    if (!aimedAtUnit) return luaReturnNil(L);
     const auto target = gh->getEntityManager().getEntity(targetGuid);
     const auto player = gh->getEntityManager().getEntity(gh->getPlayerGuid());
-    if (!target || !player) return luaReturnNil(L);
+    if (!target || !player || !target->isUnit()) return luaReturnNil(L);
+    const auto& targetUnit = static_cast<const game::Unit&>(*target);
+    if (harmful && !gh->canPlayerAttackUnit(targetUnit)) return luaReturnNil(L);
+    if (entry->targetCreatureType != 0) {
+        constexpr uint32_t kCreatureTypeHumanoid = 7;
+        const uint32_t type = target->getType() == game::ObjectType::PLAYER
+            ? kCreatureTypeHumanoid : gh->getCreatureType(targetUnit.getEntry());
+        if (type == 0 || !(entry->targetCreatureType & (1u << (type - 1)))) return luaReturnNil(L);
+    }
     const float dx = player->getX() - target->getX();
     const float dy = player->getY() - target->getY();
     const float dz = player->getZ() - target->getZ();
-    const auto reach = [](const game::Entity& e) {
-        const auto* unit = dynamic_cast<const game::Unit*>(&e);
-        return unit ? unit->getCombatReach() : 0.0f;
-    };
+    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float casterReach = static_cast<const game::Unit&>(*player).getCombatReach();
+    const float targetReach = targetUnit.getCombatReach();
+    constexpr uint32_t kRangeFlagRanged = 2;
+    if ((data.rangeFlags & kRangeFlagRanged) &&
+        game::spellclass::withinSpellRange(distance, 0.0f, game::spellclass::kCombatRangeYards,
+                                           casterReach, targetReach)) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
     const bool inRange = game::spellclass::withinSpellRange(
-        std::sqrt(dx * dx + dy * dy + dz * dz), data.minRange, data.maxRange,
-        reach(*player), reach(*target));
+        distance, data.minRange, data.maxRange, casterReach, targetReach);
     lua_pushnumber(L, inRange ? 1 : 0);
     return 1;
 }
