@@ -1,6 +1,7 @@
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/aura_marker_visibility.hpp"
 #include "core/entity_spawner.hpp"
+#include "core/weapon_attachment.hpp"
 #include "core/helm_visual.hpp"
 #include "core/geoset_rules.hpp"
 #include "core/character_paths.hpp"
@@ -899,7 +900,11 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
 
         uint32_t weaponModelId = nextWeaponModelId_++;
         charRenderer->attachWeapon(st.instanceId, ws.attachmentId,
-                                   weaponModel, weaponModelId, texturePath);
+                                   weaponModel, weaponModelId, texturePath, glm::mat4(1.0f),
+                                   weaponAttachment(true, static_cast<game::EquipSlot>(ws.slotIndex),
+                                                    inventoryTypes[ws.slotIndex]),
+                                   weaponLocalTransform(true, static_cast<game::EquipSlot>(ws.slotIndex),
+                                                        inventoryTypes[ws.slotIndex]));
     }
 }
 

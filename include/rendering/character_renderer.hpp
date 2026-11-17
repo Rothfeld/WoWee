@@ -48,6 +48,8 @@ struct WeaponAttachment {
     uint16_t boneIndex;
     glm::vec3 offset;
     glm::mat4 localTransform{1.0f}; // sheath/hand orientation after attachment point
+    uint32_t sheathAttachmentId = UINT32_MAX;
+    glm::mat4 sheathTransform{1.0f};
     float sheathPush = 0.0f;   // smoothed outward push when the arm swings into the blade
     std::vector<WeaponEffectAttachment> effects;
 };
@@ -173,7 +175,10 @@ public:
     bool attachWeapon(uint32_t charInstanceId, uint32_t attachmentId,
                       const pipeline::M2Model& weaponModel, uint32_t weaponModelId,
                       const std::string& texturePath,
-                      const glm::mat4& localTransform = glm::mat4(1.0f));
+                      const glm::mat4& localTransform = glm::mat4(1.0f),
+                      uint32_t sheathAttachmentId = UINT32_MAX,
+                      const glm::mat4& sheathTransform = glm::mat4(1.0f));
+    void setGestureWeaponPose(uint32_t instanceId, uint32_t animationId, bool sheathe);
 
     /** Detach a weapon from the given attachment point (drops its enchant effects too). */
     void detachWeapon(uint32_t charInstanceId, uint32_t attachmentId);
@@ -281,6 +286,7 @@ private:
 
         // Animation state
         uint32_t currentAnimationId = 0;
+        uint32_t gestureSheathAnimation = 0;
         int currentSequenceIndex = -1;  // Index into M2Model::sequences
         int armSequenceIndex[2] = {-1, -1};  // Left, right arm on their own sequences; -1 follows the body
         bool armSequenceLoops[2] = {false, false};  // Idle arm loops; a reaching arm holds its last frame

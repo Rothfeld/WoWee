@@ -495,7 +495,9 @@ void AppearanceComposer::loadEquippedWeapons() {
             weaponsSheathed_, ws.slot, equipSlot.item.inventoryType);
         bool ok = charRenderer->attachWeapon(charInstanceId, attachmentId,
                                               weaponModel, weaponModelId, texturePath,
-                                              localTransform);
+                                              localTransform,
+                                              weaponAttachment(true, ws.slot, equipSlot.item.inventoryType),
+                                              weaponLocalTransform(true, ws.slot, equipSlot.item.inventoryType));
         if (ok) {
             LOG_INFO("Equipped weapon: ", m2Path, " at attachment ", attachmentId,
                      weaponsSheathed_ ? " (sheathed)" : " (held)");
@@ -543,7 +545,9 @@ void AppearanceComposer::loadEquippedWeapons() {
                         : glm::mat4(1.0f);
                     bool ok = charRenderer->attachWeapon(charInstanceId, rangedAttachment,
                                                           weaponModel, weaponModelId, texturePath,
-                                                          localTransform);
+                                                          localTransform, kAttachBack,
+                                                          weaponLocalTransform(true, game::EquipSlot::MAIN_HAND,
+                                                                               game::InvType::TWO_HAND));
                     if (ok) {
                         LOG_INFO("Equipped ranged weapon: ", m2Path, " at attachment ",
                                  rangedAttachment, weaponsSheathed_ ? " (sheathed)" : " (held)");

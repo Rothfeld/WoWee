@@ -344,11 +344,15 @@ void AnimationCallbackHandler::setupCallbacks() {
     // isState marks persistent STATE_ emotes (UNIT_NPC_EMOTESTATE or state-type
     // SMSG_EMOTE): they loop until cleared and are retained across model
     // reloads. One-shots play once and resume the retained state loop.
-    gameHandler_.setEmoteAnimCallback([this](uint64_t guid, uint32_t emoteAnim, bool isState) {
+    gameHandler_.setEmoteAnimCallback([this](uint64_t guid, uint32_t emoteAnim, bool isState,
+                                           uint32_t emoteId) {
         if (guid == gameHandler_.getPlayerGuid() && gameHandler_.isPlayerDead() &&
             !gameHandler_.isPlayerGhost()) return;
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
+        auto& registry = rendering::EmoteRegistry::instance();
+        registry.loadFromDbc();
+        const bool sheathe = registry.sheathWeaponsFor(emoteId);
         auto entity = gameHandler_.getEntityManager().getEntity(guid);
         const bool isRemote = entity && guid != gameHandler_.getPlayerGuid();
         auto& activeEmotes = entitySpawner_.getCreatureActiveEmotes();
@@ -362,6 +366,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         // Look up creature instance first, then online players
         uint32_t emoteInstanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (emoteInstanceId != 0) {
+            cr->setGestureWeaponPose(emoteInstanceId, emoteAnim, sheathe);
             if (emoteAnim == 0) {
                 // A state clear returns to idle. A one-shot cancel (SMSG_EMOTE 0)
                 // must not stomp a persistent UNIT_NPC_EMOTESTATE work loop -
@@ -394,6 +399,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         }
         emoteInstanceId = entitySpawner_.getPlayerInstanceId(guid);
         if (emoteInstanceId != 0) {
+            cr->setGestureWeaponPose(emoteInstanceId, emoteAnim, sheathe);
             const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
             auto& emotes = rendering::EmoteRegistry::instance();
             emotes.loadFromDbc();

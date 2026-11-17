@@ -457,7 +457,7 @@ public:
     // guid, animId, isState. isState marks persistent STATE_ emotes (from
     // UNIT_NPC_EMOTESTATE or state-type SMSG_EMOTE) that loop until cleared;
     // one-shots play once and return to the prior state.
-    using EmoteAnimCallback = std::function<void(uint64_t, uint32_t, bool)>;
+    using EmoteAnimCallback = std::function<void(uint64_t, uint32_t, bool, uint32_t)>;
     void setEmoteAnimCallback(EmoteAnimCallback cb) { emoteAnimCallback_ = std::move(cb); }
 
     /**

@@ -28,6 +28,7 @@ struct EmoteInfo {
     std::string command;
     uint32_t flags = 0;
     std::optional<uint8_t> standState;
+    bool sheathWeapons = false;
 };
 
 class EmoteRegistry {
@@ -37,7 +38,8 @@ public:
     /// Load emotes from DBC files (called once on first use).
     void loadFromDbc();
 
-    struct EmoteResult { uint32_t animId; bool loop; uint32_t flags; };
+    struct EmoteResult { uint32_t animId; bool loop; uint32_t flags; bool sheathWeapons; };
+    [[nodiscard]] bool sheathWeaponsFor(uint32_t emoteId) const;
 
     /// Look up an emote by chat command (e.g. "dance", "wave").
     [[nodiscard]] std::optional<EmoteResult> findEmote(const std::string& command) const;
@@ -82,6 +84,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> animByEmotesId_;
     std::unordered_set<uint32_t> stateEmoteIds_;
     std::unordered_set<uint32_t> seatedGestureAnimations_;
+    std::unordered_set<uint32_t> sheathingEmoteIds_;
 };
 
 } // namespace rendering

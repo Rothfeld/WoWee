@@ -1373,7 +1373,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 if (val == 0 || animId != 0) {
                     // UNIT_NPC_EMOTESTATE is persistent by definition - a zero
                     // here genuinely clears the state loop.
-                    owner_.emoteAnimCallbackRef()(block.guid, animId, /*isState=*/true);
+                    owner_.emoteAnimCallbackRef()(block.guid, animId, /*isState=*/true, val);
                 } else {
                     LOG_DEBUG("UNIT_NPC_EMOTESTATE emoteId=", val, " had no Emotes.dbc animation mapping");
                 }

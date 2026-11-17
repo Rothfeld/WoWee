@@ -6,11 +6,26 @@
 #include "rendering/aura_marker_visibility.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "rendering/animation/stand_pose.hpp"
+#include "rendering/animation/gesture_weapons.hpp"
 #include <cstring>
 #include <vector>
 
 using wowee::pipeline::DBCFile;
 namespace anim = wowee::rendering::anim;
+
+TEST_CASE("Gesture weapon policy respects NOSHEATHE and both animation layers", "[gesture-weapons]") {
+    using namespace wowee::rendering;
+    CHECK(gestureSheathesWeapons(0x800, 0x10)); // TBC Wave emote 3 / animation 67.
+    CHECK_FALSE(gestureSheathesWeapons(4, 0x10)); // Wave NOSHEATHE 70, same animation.
+    CHECK(gestureSheathesWeapons(0, 4));
+    CHECK_FALSE(gestureSheathesWeapons(0x800, 0));
+    CHECK_FALSE(gestureSheathesWeapons(0, 0x20));
+    CHECK(gestureWeaponPoseActive(67, 67, 0));
+    CHECK(gestureWeaponPoseActive(67, anim::SITTING, 67));
+    CHECK_FALSE(gestureWeaponPoseActive(67, anim::SITTING, 0));
+    CHECK_FALSE(gestureWeaponPoseActive(67, anim::RUN, 0));
+    CHECK_FALSE(gestureWeaponPoseActive(0, anim::STAND, 0));
+}
 
 TEST_CASE("Emote procedures retain stand states and seated gesture eligibility", "[emote-stance]") {
     using namespace wowee::rendering;

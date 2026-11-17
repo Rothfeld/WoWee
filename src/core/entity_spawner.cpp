@@ -458,6 +458,9 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
         const std::string texture = art.textureName.empty() ? "" : directory + art.textureName + ".blp";
         if (!charRenderer->attachWeapon(instanceId, attachment, model, nextWeaponModelId_++,
                 texture, weaponLocalTransform(sheathed, equipSlot,
+                    ranged ? game::InvType::TWO_HAND : inventoryType),
+                ranged ? kAttachBack : weaponAttachment(true, equipSlot, inventoryType),
+                weaponLocalTransform(true, equipSlot,
                     ranged ? game::InvType::TWO_HAND : inventoryType))) {
             LOG_ERROR("NPC equipment attachment failed: guid=", guid, " display=", displayId,
                       " attachment=", attachment);

@@ -1,4 +1,5 @@
 #include "rendering/animation/emote_registry.hpp"
+#include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <unordered_set>
+#include <stdexcept>
 
 namespace wowee {
 namespace rendering {
@@ -163,6 +165,10 @@ void EmoteRegistry::loadFromDbc() {
     animByEmotesId_.clear();
     stateEmoteIds_.clear();
     seatedGestureAnimations_.clear();
+    sheathingEmoteIds_.clear();
+    const auto animations = assetManager->loadDBC("AnimationData.dbc");
+    if (!animations || !animations->isLoaded() || animations->getFieldCount() < 3)
+        throw std::runtime_error("Emote weapon presentation requires AnimationData.dbc");
     if (auto emotesDbc = assetManager->loadDBC("Emotes.dbc"); emotesDbc && emotesDbc->isLoaded()) {
         emoteIdToAnim.reserve(emotesDbc->getRecordCount());
         animByEmotesId_.reserve(emotesDbc->getRecordCount());
@@ -175,6 +181,10 @@ void EmoteRegistry::loadFromDbc() {
             uint32_t animId = emotesDbc->getUInt32(r, emL ? (*emL)["AnimID"] : 2);
             const uint32_t flags = emotesDbc->getUInt32(r, 3);
             const uint32_t procedure = emotesDbc->getUInt32(r, specField);
+            const auto animationRow = animations->findRecordById(animId);
+            if (animationRow >= 0 && gestureSheathesWeapons(flags,
+                    animations->getUInt32(static_cast<uint32_t>(animationRow), 2)))
+                sheathingEmoteIds_.insert(emoteId);
             emoteFlags.emplace(emoteId, flags);
             if (const auto stance = emoteStandState(procedure, emotesDbc->getUInt32(r, 5)))
                 emoteStances.emplace(emoteId, *stance);
@@ -233,6 +243,7 @@ void EmoteRegistry::loadFromDbc() {
             info.othersNoTarget = oNoTarget;
             info.othersTarget = oTarget;
             info.command = cmd;
+            info.sheathWeapons = sheathingEmoteIds_.contains(emoteRef);
             if (const auto flags = emoteFlags.find(emoteRef); flags != emoteFlags.end())
                 info.flags = flags->second;
             if (const auto stance = emoteStances.find(emoteRef); stance != emoteStances.end())
@@ -325,7 +336,11 @@ std::optional<EmoteRegistry::EmoteResult> EmoteRegistry::findEmote(const std::st
     if (it == emoteTable_.end()) return std::nullopt;
     const auto& info = it->second;
     if (info.animId == 0) return std::nullopt;
-    return EmoteResult{.animId = info.animId, .loop = info.loop, .flags = info.flags};
+    return EmoteResult{.animId = info.animId, .loop = info.loop, .flags = info.flags,
+                       .sheathWeapons = info.sheathWeapons};
+}
+bool EmoteRegistry::sheathWeaponsFor(uint32_t emoteId) const {
+    return sheathingEmoteIds_.contains(emoteId);
 }
 std::optional<uint8_t> EmoteRegistry::standStateFor(const std::string& command) const {
     const auto found = emoteTable_.find(command);

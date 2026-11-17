@@ -18,6 +18,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/footprint_renderer.hpp"
 #include "rendering/pom_quality.hpp"
@@ -2398,9 +2399,23 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             ? instance.overrideModelMatrix
             : getModelMatrix(instance);
 
+        const uint32_t upperAnimation = instance.upperBodySequenceIndex >= 0
+            ? instance.cachedModel->data.sequences[instance.upperBodySequenceIndex].id : 0;
+        if (!gestureWeaponPoseActive(instance.gestureSheathAnimation,
+                instance.currentAnimationId, upperAnimation))
+            instance.gestureSheathAnimation = 0;
+
         for (auto& wa : instance.weaponAttachments) {
             auto weapIt = instances.find(wa.weaponInstanceId);
             if (weapIt == instances.end()) continue;
+
+            const bool temporarySheath = instance.gestureSheathAnimation != 0 &&
+                wa.attachmentId <= 2;
+            const bool hiddenHoldable = temporarySheath && wa.sheathAttachmentId == UINT32_MAX;
+            weapIt->second.visible = instance.visible && !hiddenHoldable;
+            for (const auto& effect : wa.effects)
+                instances.at(effect.effectInstanceId).visible = weapIt->second.visible;
+            if (hiddenHoldable) continue;
 
             // Get the bone matrix for the attachment bone
             glm::mat4 boneMat(1.0f);
@@ -2413,6 +2428,12 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             glm::mat4 weaponMat =
                 charModelMat * boneMat * glm::translate(glm::mat4(1.0f), wa.offset) *
                 wa.localTransform;
+            if (temporarySheath) {
+                glm::mat4 sheathAttachment;
+                if (!getAttachmentTransform(pair.first, wa.sheathAttachmentId, sheathAttachment))
+                    throw std::runtime_error("Gesture sheath attachment missing from character model");
+                weaponMat = sheathAttachment * wa.sheathTransform;
+            }
 
             // Back-sheathed weapons: the swinging left arm passes through the
             // canted blade while running. Sample the whole arm - shoulder,
@@ -4339,7 +4360,9 @@ bool CharacterRenderer::findAttachmentBone(uint32_t modelId, uint32_t attachment
 bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmentId,
                                       const pipeline::M2Model& weaponModel, uint32_t weaponModelId,
                                       const std::string& texturePath,
-                                      const glm::mat4& localTransform) {
+                                      const glm::mat4& localTransform,
+                                      uint32_t sheathAttachmentId,
+                                      const glm::mat4& sheathTransform) {
     auto charIt = instances.find(charInstanceId);
     if (charIt == instances.end()) {
         core::Logger::getInstance().warning("attachWeapon: character instance ", charInstanceId, " not found");
@@ -4416,12 +4439,18 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
     wa.boneIndex = boneIndex;
     wa.offset = offset;
     wa.localTransform = localTransform;
+    wa.sheathAttachmentId = sheathAttachmentId;
+    wa.sheathTransform = sheathTransform;
     charInstance.weaponAttachments.push_back(wa);
 
     core::Logger::getInstance().debug("Attached weapon model ", weaponModelId,
         " to instance ", charInstanceId, " at attachment ", attachmentId,
         " (bone ", boneIndex, ", offset ", offset.x, ",", offset.y, ",", offset.z, ")");
     return true;
+}
+
+void CharacterRenderer::setGestureWeaponPose(uint32_t instanceId, uint32_t animationId, bool sheathe) {
+    instances.at(instanceId).gestureSheathAnimation = sheathe ? animationId : 0;
 }
 
 bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& origin,

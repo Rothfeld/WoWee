@@ -220,7 +220,7 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
         const bool isState = emoteId != 0 &&
             rendering::AnimationController::isStateEmoteById(emoteId);
         if (owner_.emoteAnimCallbackRef() && sourceGuid != 0 && (animId != 0 || emoteId == 0)) {
-            owner_.emoteAnimCallbackRef()(sourceGuid, animId, isState);
+            owner_.emoteAnimCallbackRef()(sourceGuid, animId, isState, emoteId);
         } else if (emoteId != 0 && animId == 0) {
             LOG_DEBUG("SMSG_EMOTE emoteId=", emoteId, " had no Emotes.dbc animation mapping");
         }

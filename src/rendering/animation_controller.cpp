@@ -85,6 +85,7 @@ void AnimationController::playEmote(const std::string& emoteName) {
         if (cr && instanceId && cr->hasAnimation(instanceId, animId)) {
             cr->setUpperBodyAnimation(instanceId, 0, false);
             cr->setUpperBodyAnimation(instanceId, animId, false);
+            cr->setGestureWeaponPose(instanceId, animId, result->sheathWeapons);
         }
         return;
     }
@@ -109,6 +110,7 @@ void AnimationController::playEmote(const std::string& emoteName) {
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (characterRenderer && characterInstanceId > 0) {
         characterRenderer->playAnimation(characterInstanceId, animId, loop);
+        characterRenderer->setGestureWeaponPose(characterInstanceId, animId, result->sheathWeapons);
         lastPlayerAnimRequest_ = animId;
         lastPlayerAnimLoopRequest_ = loop;
     }
