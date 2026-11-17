@@ -1158,6 +1158,10 @@ A remote unit holds its aura's `StateKit` animation as its idle while the aura
 lasts (latest applied aura with one): Rend Blackhand's Whirlwind (13736, kit
 370) and Brood Power: Bronze (22291, kit 5769, applied with `.aura`, no cast)
 spin with Whirlwind (126) in the original. The local player does not yet.
+An impact kit's animation plays on the unit it lands on, local player
+included: Knockdown (5164/16790) and Backhand (6253) impact kit 348 throw the
+target down with Knockdown (121). The local player's kit animation plays once
+over its combat state and the stun the spell applies (`CombatFSM::triggerKitAnimation`).
 
 Small solid M2 props keep their geometry even when they contain multiple
 emitters. Spherical emitters use their authored area and radial velocity;

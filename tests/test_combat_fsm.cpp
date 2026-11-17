@@ -285,3 +285,29 @@ TEST_CASE("CombatFSM: a drawn wand takes the directed spell stance, not the rifl
     fsm.setState(CombatFSM::State::COMBAT_IDLE);
     CHECK(fsm.resolve(in, caps, loadout).animId == anim::READY_RIFLE);
 }
+
+TEST_CASE("CombatFSM: a kit animation plays once over the stun its spell applies", "[combat]") {
+    // Knockdown (5164/16790) impact kit 348: Knockdown (121) on the target,
+    // whose stun arrives right after; the original shows the fall first.
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+    fsm.onEvent(AnimEvent::COMBAT_ENTER);
+    fsm.triggerKitAnimation(anim::KNOCKDOWN);
+    fsm.setStunned(true);
+    auto in = combatInput();
+    in.haveAnimState = true;
+    in.currentAnimId = anim::STAND;
+    auto out = fsm.resolve(in, caps, wl);
+    REQUIRE(out.valid);
+    CHECK(out.animId == anim::KNOCKDOWN);
+    CHECK_FALSE(out.loop);
+    // Shown and finished: the stun takes over.
+    in.currentAnimId = anim::KNOCKDOWN;
+    in.currentAnimTime = 0.5f;
+    in.currentAnimDuration = 2.0f;
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::KNOCKDOWN);
+    in.currentAnimTime = 2.0f;
+    out = fsm.resolve(in, caps, wl);
+    CHECK(out.animId == anim::STUN);
+}

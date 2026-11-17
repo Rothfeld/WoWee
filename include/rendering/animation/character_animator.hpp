@@ -40,6 +40,7 @@ public:
     void triggerMeleeSwing() override;
     void triggerRangedShot() override;
     void triggerHitReaction(uint32_t animId) override;
+    void triggerKitAnimation(uint32_t animId) { combat_.triggerKitAnimation(animId); }
     void triggerSpecialAttack(uint32_t spellId) override;
     void setEquippedWeaponType(const WeaponLoadout& loadout) override;
     void setEquippedRangedType(RangedWeaponType type) override;

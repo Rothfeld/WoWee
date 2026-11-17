@@ -141,6 +141,12 @@ void CombatFSM::triggerHitReaction(uint32_t animId) {
     state_ = State::HIT_REACTION;
 }
 
+void CombatFSM::triggerKitAnimation(uint32_t animId) {
+    kitAnimId_ = animId;
+    kitAnimSeen_ = false;
+    kitAnimFrames_ = 0;
+}
+
 void CombatFSM::setStunned(bool stunned) {
     stunned_ = stunned;
     if (stunned) {
@@ -364,6 +370,20 @@ void CombatFSM::updateTransitions(const Input& in) {
 AnimOutput CombatFSM::resolve(const Input& in, const AnimCapabilitySet& caps,
                                const WeaponLoadout& loadout) {
     updateTransitions(in);
+
+    // A kit animation outlasts the stun its spell applies: the original
+    // knocks a stunned player down with Knockdown (121), then stuns.
+    if (kitAnimId_ != 0) {
+        if (in.swimming || in.moving) {
+            kitAnimId_ = 0;
+        } else if (in.haveAnimState) {
+            if (in.currentAnimId == kitAnimId_) kitAnimSeen_ = true;
+            if ((kitAnimSeen_ && oneShotComplete(in, kitAnimId_)) ||
+                (!kitAnimSeen_ && ++kitAnimFrames_ > 10))
+                kitAnimId_ = 0;
+        }
+        if (kitAnimId_ != 0) return AnimOutput::ok(kitAnimId_, false);
+    }
 
     if (state_ == State::INACTIVE) return AnimOutput::stay();
 

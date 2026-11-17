@@ -395,6 +395,14 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     const auto& kits = useImpactKit ? impactKits_ : castKits_;
     const auto kit = kits.find(visualId);
     if (kit == kits.end() || !kit->second) return;
+    // An impact kit's animation plays on the unit it lands on, as a kit sent
+    // by SMSG_PLAY_SPELL_IMPACT does: General Drakkisath's Knockdown (16790)
+    // and Backhand (6253) impact kit 348 throws the target down with
+    // Knockdown (121).
+    if (useImpactKit) {
+        playSpellVisualKit(kit->second, worldPosition, attachInstanceId);
+        return;
+    }
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, /*isPrecast=*/false);
 }
 
@@ -589,7 +597,7 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
             cr->setUpperBodyAnimation(attachInstanceId, 0);
             cr->setUpperBodyAnimation(attachInstanceId, animation->second, false);
         } else if (attachInstanceId == renderer_->getCharacterInstanceId()) {
-            renderer_->getAnimationController()->playOneShotAnimation(animation->second);
+            renderer_->getAnimationController()->playKitAnimation(animation->second);
         } else {
             cr->playAnimation(attachInstanceId, animation->second, false);
         }

@@ -90,6 +90,9 @@ public:
 
     // ── Hit/stun management ─────────────────────────────────────────────
     void triggerHitReaction(uint32_t animId);
+    /// A spell kit's animation on this unit (impact kit 348: Knockdown 121),
+    /// played once over every combat state, stun included; 0 clears it.
+    void triggerKitAnimation(uint32_t animId);
     void setStunned(bool stunned);
     void setCharging(bool charging);
 
@@ -113,6 +116,11 @@ private:
     uint32_t hitReactionAnimId_ = 0;
     bool hitReactionAnimSeen_ = false;
     uint8_t hitReactionFrames_ = 0;
+
+    // Spell kit one-shot; same completion rule as the hit reaction.
+    uint32_t kitAnimId_ = 0;
+    bool kitAnimSeen_ = false;
+    uint8_t kitAnimFrames_ = 0;
 
     // Stun
     bool stunned_ = false;
