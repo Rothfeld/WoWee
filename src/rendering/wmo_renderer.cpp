@@ -733,31 +733,12 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 unlit = (matFlags & 0x01) != 0;
             }
 
-            // TBC uses the authored MOMT blend mode. The optional glass
-            // treatment changes both shading and opacity, including opaque
-            // painted windows such as MM_STRMWND_WINDOWS_01.
-            bool isWindow = false;
-            uint8_t emissiveLevel = 0;
-            if (batch.materialId < modelData.materialTextureIndices.size()) {
-                uint32_t ti = modelData.materialTextureIndices[batch.materialId];
-                if (ti < modelData.textureNames.size()) {
-                    const auto& texName = modelData.textureNames[ti];
-                    // Case-insensitive search for material types
-                    std::string texNameLower = texName;
-                    std::transform(texNameLower.begin(), texNameLower.end(), texNameLower.begin(), ::tolower);
-                    if (!game::isActiveExpansion("tbc") &&
-                        texNameLower.find("stormwindlampglass.blp") != std::string::npos) {
-                        emissiveLevel = 1;  // authored lamp glass: bright
-                    } else if (!game::isActiveExpansion("tbc") &&
-                               texNameLower.find("mm_clockface") != std::string::npos) {
-                        // Darkshire's town hall clock, and any building sharing the
-                        // face: backlit by a flickering fire in the tower.
-                        emissiveLevel = 2;
-                    }
-                    isWindow = !game::isActiveExpansion("tbc") && emissiveLevel == 0 &&
-                               wmoMaterialIsGlass(matFlags, texName);
-                }
-            }
+            // TBC uses the authored MOMT blend mode. Non-TBC profiles add glass
+            // shading for F_WINDOW and a night glow for F_SIDN materials.
+            const bool nightGlow = !game::isActiveExpansion("tbc") && wmoMaterialIsNightGlow(matFlags);
+            const uint8_t emissiveLevel = nightGlow ? 1 : 0;
+            const bool isWindow = !game::isActiveExpansion("tbc") && !nightGlow &&
+                                  wmoMaterialIsGlass(matFlags);
 
 
             BatchKey key{ .texPtr = reinterpret_cast<uintptr_t>(tex), .alphaTest = alphaTest, .unlit = unlit,
@@ -4228,7 +4209,7 @@ void WMORenderer::registerRtModel(uint32_t modelId, const ModelData& model) {
             if (mat < model.materialTextureIndices.size()) {
                 const uint32_t ti = model.materialTextureIndices[mat];
                 if (!game::isActiveExpansion("tbc") && ti < model.textureNames.size() &&
-                    wmoMaterialIsGlass(flags, model.textureNames[ti])) {
+                    wmoMaterialIsGlass(flags)) {
                     continue;
                 }
                 if (ti < model.textures.size() && model.textures[ti]) {
