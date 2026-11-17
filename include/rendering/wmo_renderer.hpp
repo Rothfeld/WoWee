@@ -476,21 +476,21 @@ private:
         int32_t unlit;             // 8
         int32_t isInterior;        // 12
         float specularIntensity;   // 16
-        int32_t isWindow;          // 20
+        int32_t padding0;          // 20
         int32_t enableNormalMap;   // 24
         int32_t enablePOM;         // 28
         float pomScale;            // 32 (height scale)
         int32_t pomMaxSamples;     // 36 (max ray-march steps)
         float heightMapVariance;   // 40 (low variance = skip POM)
         float normalMapStrength;   // 44 (0=flat, 1=full, 2=exaggerated)
-        int32_t isLava;            // 48 (1=lava/magma UV scroll)
+        int32_t padding1;          // 48
         float wmoAmbientR;         // 52 (interior ambient color R)
         float wmoAmbientG;         // 56 (interior ambient color G)
         float wmoAmbientB;         // 60 (interior ambient color B)
-        int32_t emissive;           // 64 (0 none, 1 lamp glass, 2 firelit)
+        int32_t emissive;           // 64 (0 none, 1 MOMT F_SIDN, non-TBC)
         int32_t hasVertexColors;    // 68: the group carries MOCV (MOGP flag 0x4)
         int32_t specularAlphaMask;  // 72: texture alpha masks the specular term
-        int32_t padding2;           // 76
+        int32_t sidnColor;          // 76: MOMT sidnColor (BGRA)
     };  // 80 bytes total
 
     /**
@@ -534,9 +534,9 @@ private:
             bool alphaTest = false;
             bool unlit = false;
             bool isTransparent = false;     // blendMode >= 2
-            bool isWindow = false;          // F_SIDN or F_WINDOW material
-            // 0 = not luminous, 1 = MOMT F_SIDN night glow (non-TBC profiles).
+            // 0 = not luminous, 1 = MOMT F_SIDN sidnColor emission (non-TBC profiles).
             uint8_t emissiveLevel = 0;
+            uint32_t sidnColor = 0;     // MOMT sidnColor (BGRA)
             // For multi-draw: store index ranges
             struct DrawRange { uint32_t firstIndex; uint32_t indexCount; };
             std::vector<DrawRange> draws;
@@ -649,6 +649,7 @@ private:
 
         // Material flags (materialId -> flags; 0x01 = unlit)
         std::vector<uint32_t> materialFlags;
+        std::vector<uint32_t> materialSidnColors;  // MOMT sidnColor per material
         std::vector<uint32_t> materialTerrainTypes;
 
         // Portal visibility data
@@ -835,7 +836,6 @@ private:
     // Vulkan pipelines
     VkPipeline opaquePipeline_ = VK_NULL_HANDLE;
     VkPipeline transparentPipeline_ = VK_NULL_HANDLE;
-    VkPipeline glassPipeline_ = VK_NULL_HANDLE;      // alpha blend + depth write (windows)
     VkPipeline wireframePipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
 

@@ -17,7 +17,7 @@ constexpr bool wmoShaderUsesSpecular(uint32_t shader) {
            shader == 11 || shader == 12;
 }
 
-/// MOMT material flags, as far as the glass path cares.
+/// MOMT material flags.
 enum WmoMaterialFlags : uint32_t {
     WMO_MAT_UNLIT    = 0x01,
     WMO_MAT_UNFOGGED = 0x02,
@@ -27,14 +27,10 @@ enum WmoMaterialFlags : uint32_t {
     WMO_MAT_WINDOW   = 0x20,  ///< marked a window by the artist
 };
 
-/// Glass shading (non-TBC profiles only) follows the authored F_WINDOW flag.
-inline bool wmoMaterialIsGlass(uint32_t materialFlags) {
-    return (materialFlags & WMO_MAT_WINDOW) != 0;
-}
-
-/// Night glow (non-TBC profiles only) follows the authored F_SIDN flag:
-/// MM_CLOCKFACE_01 in townhall.wmo and STORMWINDLAMPGLASS carry 0xd0; the
-/// same clock face in stormwind.wmo carries 0xc0 and does not glow.
+/// Night glow (non-TBC profiles only) follows the authored F_SIDN flag and
+/// emits the material's sidnColor: MM_CLOCKFACE_01 in duskwood_townhall.wmo and
+/// STORMWINDLAMPGLASS carry 0xd0 with white; the same clock face in
+/// stormwind.wmo carries 0xc0 and does not glow.
 inline bool wmoMaterialIsNightGlow(uint32_t materialFlags) {
     return (materialFlags & WMO_MAT_SIDN) != 0;
 }

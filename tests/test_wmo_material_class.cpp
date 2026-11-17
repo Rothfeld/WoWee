@@ -24,17 +24,10 @@ TEST_CASE("WMO diffuse materials remain matte", "[wmo-material]") {
     }
 }
 
-using wowee::rendering::wmoMaterialIsGlass;
 using wowee::rendering::wmoMaterialIsNightGlow;
 using wowee::rendering::WMO_MAT_SIDN;
-using wowee::rendering::WMO_MAT_UNLIT;
-using wowee::rendering::WMO_MAT_WINDOW;
 
-TEST_CASE("glass and night glow follow MOMT flags, not texture names", "[wmo-material]") {
-    // ruinedhumanguardtower01 TOWER_WINDOW_01: flags 0x0.
-    CHECK_FALSE(wmoMaterialIsGlass(0x0));
-    CHECK(wmoMaterialIsGlass(WMO_MAT_WINDOW));
-    CHECK(wmoMaterialIsGlass(WMO_MAT_WINDOW | WMO_MAT_UNLIT));
+TEST_CASE("night glow follows MOMT F_SIDN, not texture names", "[wmo-material]") {
     // townhall.wmo MM_CLOCKFACE_01: 0xd0; stormwind.wmo MM_CLOCKFACE_01: 0xc0.
     CHECK(wmoMaterialIsNightGlow(0xd0));
     CHECK_FALSE(wmoMaterialIsNightGlow(0xc0));

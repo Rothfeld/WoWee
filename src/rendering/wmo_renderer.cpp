@@ -139,23 +139,6 @@ bool WMORenderer::buildMainPassPipelines(VkDevice device,
         core::Logger::getInstance().warning("WMORenderer: transparent pipeline not available");
     }
 
-    // --- Build glass pipeline (derivative - alpha blend WITH depth write for windows) ---
-    glassPipeline_ = PipelineBuilder()
-        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
-                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
-        .setVertexInput({ vertexBinding }, vertexAttribs)
-        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setColorBlendAttachment(PipelineBuilder::blendAlpha())
-        .setMultisample(vkCtx_->getMsaaSamples())
-        .setLayout(pipelineLayout_)
-        .setRenderPass(mainPass)
-        .setDynamicStates(viewportAndScissorDynamic())
-        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
-        .setBasePipeline(opaquePipeline_)
-        .build(device, vkCtx_->getPipelineCache());
-
     // --- Build wireframe pipeline (derivative of opaque) ---
     wireframePipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
@@ -374,7 +357,6 @@ void WMORenderer::shutdown() {
     // Destroy pipelines
     destroy(device, opaquePipeline_);
     destroy(device, transparentPipeline_);
-    destroy(device, glassPipeline_);
     destroy(device, wireframePipeline_);
     destroy(device, pipelineLayout_);
     destroy(device, materialDescPool_);
@@ -571,6 +553,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         modelData.materialBlendModes.push_back(mat.blendMode);
         modelData.materialShaders.push_back(mat.shader);
         modelData.materialFlags.push_back(mat.flags);
+        modelData.materialSidnColors.push_back(mat.color1);
         modelData.materialTerrainTypes.push_back(mat.terrainType);
 
     }
@@ -673,13 +656,13 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             uintptr_t texPtr;
             bool alphaTest;
             bool unlit;
-            bool isWindow;
             bool specular;
             bool specularAlphaMask;
             uint8_t emissiveLevel;
+            uint32_t sidnColor;
             bool operator==(const BatchKey& o) const {
                 return texPtr == o.texPtr && alphaTest == o.alphaTest &&
-                       unlit == o.unlit && isWindow == o.isWindow &&
+                       unlit == o.unlit && sidnColor == o.sidnColor &&
                        specular == o.specular &&
                        specularAlphaMask == o.specularAlphaMask &&
                        emissiveLevel == o.emissiveLevel;
@@ -690,7 +673,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 return std::hash<uintptr_t>()(k.texPtr) ^
                        (std::hash<bool>()(k.alphaTest) << 1) ^
                        (std::hash<bool>()(k.unlit) << 2) ^
-                       (std::hash<bool>()(k.isWindow) << 3) ^
+                       (std::hash<uint32_t>()(k.sidnColor) << 3) ^
                        (std::hash<uint8_t>()(k.emissiveLevel) << 4) ^
                        (std::hash<bool>()(k.specular) << 5) ^
                        (std::hash<bool>()(k.specularAlphaMask) << 6);
@@ -733,21 +716,19 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 unlit = (matFlags & 0x01) != 0;
             }
 
-            // TBC uses the authored MOMT blend mode. Non-TBC profiles add glass
-            // shading for F_WINDOW and a night glow for F_SIDN materials.
+            // TBC uses the authored MOMT blend mode. Non-TBC profiles add the
+            // sidnColor emission of F_SIDN materials to their lighting.
             const bool nightGlow = !game::isActiveExpansion("tbc") && wmoMaterialIsNightGlow(matFlags);
             const uint8_t emissiveLevel = nightGlow ? 1 : 0;
-            const bool isWindow = !game::isActiveExpansion("tbc") && !nightGlow &&
-                                  wmoMaterialIsGlass(matFlags);
+            const uint32_t sidnColor = nightGlow ? modelData.materialSidnColors.at(batch.materialId) : 0u;
 
 
             BatchKey key{ .texPtr = reinterpret_cast<uintptr_t>(tex), .alphaTest = alphaTest, .unlit = unlit,
-                          .isWindow = isWindow,
                           .specular = !game::isActiveExpansion("tbc") ||
                               wmoShaderUsesSpecular(modelData.materialShaders.at(batch.materialId)),
                           .specularAlphaMask = game::isActiveExpansion("tbc") &&
                               modelData.materialShaders.at(batch.materialId) == 1,
-                          .emissiveLevel = emissiveLevel };
+                          .emissiveLevel = emissiveLevel, .sidnColor = sidnColor };
             auto& mb = batchMap[key];
             if (mb.draws.empty()) {
                 mb.texture = tex;
@@ -755,8 +736,8 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 mb.alphaTest = alphaTest;
                 mb.unlit = unlit;
                 mb.isTransparent = (blendMode >= 2);
-                mb.isWindow = isWindow;
                 mb.emissiveLevel = emissiveLevel;
+                mb.sidnColor = sidnColor;
                 // Look up normal/height map from texture cache
                 if (hasTexture && tex != whiteTexture_.get()) {
                     for (const auto& [cacheKey, cacheEntry] : textureCache) {
@@ -798,20 +779,17 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             matData.hasVertexColors = (groupRes.groupFlags & 0x4) != 0 ? 1 : 0;
             matData.specularIntensity = key.specular ? 0.5f : 0.0f;
             matData.specularAlphaMask = key.specularAlphaMask ? 1 : 0;
-            matData.isWindow = mb.isWindow ? (wmoOnlyMap_ ? 2 : 1) : 0;
             matData.enableNormalMap = normalMappingEnabled_ ? 1 : 0;
             matData.enablePOM = pomEnabled_ ? 1 : 0;
             matData.pomScale = 0.012f;
             matData.pomMaxSamples = pomSamplesFor(pomQuality_);
             matData.heightMapVariance = mb.heightMapVariance;
             matData.normalMapStrength = normalMapStrength_;
-            // No UV scroll or self-lighting for lava: MOMT carries no texture
-            // animation, and its flags (0x1 unlit) already decide lighting.
-            matData.isLava = 0;
             matData.wmoAmbientR = modelData.wmoAmbientColor.r;
             matData.wmoAmbientG = modelData.wmoAmbientColor.g;
             matData.wmoAmbientB = modelData.wmoAmbientColor.b;
             matData.emissive = static_cast<int32_t>(mb.emissiveLevel);
+            matData.sidnColor = static_cast<int32_t>(mb.sidnColor);
             if (matBuf.info.pMappedData) {
                 memcpy(matBuf.info.pMappedData, &matData, sizeof(matData));
             }
@@ -1774,9 +1752,7 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
 
                 // Determine which pipeline this batch needs
                 int neededPipeline = 0; // opaque
-                if (mb.isWindow && glassPipeline_) {
-                    neededPipeline = 2; // glass (alpha blend + depth write)
-                } else if (mb.isTransparent && transparentPipeline_) {
+                if (mb.isTransparent && transparentPipeline_) {
                     neededPipeline = 1; // transparent (alpha blend, no depth write)
                 }
 
@@ -1785,7 +1761,6 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
                 if (neededPipeline != currentPipelineKind) {
                     VkPipeline targetPipeline = activePipeline;
                     if (neededPipeline == 1) targetPipeline = transparentPipeline_;
-                    else if (neededPipeline == 2) targetPipeline = glassPipeline_;
                     if (targetPipeline == VK_NULL_HANDLE) continue;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, targetPipeline);
@@ -4131,7 +4106,6 @@ void WMORenderer::recreatePipelines() {
     // Destroy old main-pass pipelines (NOT shadow, NOT pipeline layout)
     destroy(device, opaquePipeline_);
     destroy(device, transparentPipeline_);
-    destroy(device, glassPipeline_);
     destroy(device, wireframePipeline_);
 
     // --- Load shaders ---
@@ -4203,15 +4177,10 @@ void WMORenderer::registerRtModel(uint32_t modelId, const ModelData& model) {
             const uint32_t mat = batch.materialId;
             const uint32_t blend = mat < model.materialBlendModes.size() ? model.materialBlendModes[mat] : 0;
             if (blend >= 2) continue;  // blended: glass, light cards, water sheets
-            const uint32_t flags = mat < model.materialFlags.size() ? model.materialFlags[mat] : 0;
             glm::vec3 albedo(0.5f);
             float opacity = 1.0f;
             if (mat < model.materialTextureIndices.size()) {
                 const uint32_t ti = model.materialTextureIndices[mat];
-                if (!game::isActiveExpansion("tbc") && ti < model.textureNames.size() &&
-                    wmoMaterialIsGlass(flags)) {
-                    continue;
-                }
                 if (ti < model.textures.size() && model.textures[ti]) {
                     albedo = model.textures[ti]->averageColor();
                     if (blend == 1) opacity = model.textures[ti]->alphaCoverage();
