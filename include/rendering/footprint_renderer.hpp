@@ -30,6 +30,8 @@ public:
     FootprintRenderer() = default;
     ~FootprintRenderer();
 
+    /// Whether initialize() has run; terrainTypeAt needs the owning renderer.
+    [[nodiscard]] bool isInitialized() const { return owner_ != nullptr; }
     [[nodiscard]] bool initialize(Renderer* owner, VkContext* ctx,
                                   VkDescriptorSetLayout perFrameLayout,
                                   pipeline::AssetManager* assetManager);

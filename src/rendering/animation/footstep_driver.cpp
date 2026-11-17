@@ -154,7 +154,11 @@ void FootstepDriver::playStep(Renderer* renderer, uint32_t instanceId) {
     const glm::vec3& position = renderer->getCharacterPosition();
     const bool wading = isWading(renderer);
     if (wading) playWaterStepExtras(renderer);
-    const auto terrainType = footprints ? footprints->terrainTypeAt(position) : std::nullopt;
+    // The footprint renderer is created with the renderer but initialised with
+    // the world; a step during world load (an impact or stance animation's
+    // footfall) arrived before that and dereferenced its null owner.
+    const auto terrainType = footprints && footprints->isInitialized()
+        ? footprints->terrainTypeAt(position) : std::nullopt;
     if (!terrainType) {
         LOG_DEBUG("Footstep: no TerrainType under the character at ", position.x, ",", position.y,
                   ",", position.z, "; no sound");
