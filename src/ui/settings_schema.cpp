@@ -467,9 +467,7 @@ constexpr SettingDesc kSchema[] = {
     {"cooldowntracker", "Cooldown tracker", SettingKind::Bool, 0, 0, 0, "HUD", "",
      "Show your longer cooldowns counting down beside the action bar.", "", 0},
     {"raretracker", "Rare tracker", SettingKind::Bool, 0, 0, 0, "HUD", "",
-     "Mark rare creatures near you on the minimap and the world map.", "", 0},
-    {"chesttracker", "Chest tracker", SettingKind::Bool, 0, 0, 0, "HUD", "",
-     "Mark treasure chests near you on the minimap.", "", 0},
+     "Mark rare creatures near you on the world map.", "", 0},
 
     {"damageflash", "Damage flash", SettingKind::Bool, 0, 0, 0, "HUD", "Screen effects",
      "Flash a red edge around the screen when you take a hit.", "", 1},

@@ -284,9 +284,8 @@ public:
     float dpsMeterLeft_ = -1.0f;
     float dpsMeterTop_ = -1.0f;
     bool showCooldownTracker_ = false;
-    bool showRareTracker_ = false;  // Mark nearby spawned rares/rare-elites on both maps
+    bool showRareTracker_ = false;  // Mark nearby spawned rares/rare-elites on the world map
     bool showMapWindow_ = false;    // The world map on a window of its own (Application::updateMapWindow)
-    bool showChestTracker_ = false; // Mark nearby spawned non-gather chests on the minimap
     bool damageFlashEnabled_ = true;
     bool lowHealthVignetteEnabled_ = true; // Persistent pulsing red vignette below 20% HP
 

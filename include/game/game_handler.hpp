@@ -2158,7 +2158,6 @@ public:
     bool isFishingHoleGameObject(uint64_t guid) const;
     void clearPendingGameObjectLootOpen(uint64_t guid);
     bool hasPendingGameObjectLootOpen(uint64_t guid) const;
-    bool isGatherGameObject(uint64_t guid) const;
     void despawnGameObjectLocally(uint64_t guid);
     /// Remove a creature corpse client-side once it has been looted empty.
     void despawnCreatureLocally(uint64_t guid);

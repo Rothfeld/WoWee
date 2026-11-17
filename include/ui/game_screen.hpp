@@ -250,10 +250,6 @@ private:
 
     void renderMinimapFlightMasters(const MinimapFrame& frame, const EntityList& units,
                                     const game::GameHandler& gameHandler);
-    void renderMinimapRares(const MinimapFrame& frame, const EntityList& units,
-                            game::GameHandler& gameHandler);
-    void renderMinimapChests(const MinimapFrame& frame, const EntityList& objects,
-                             game::GameHandler& gameHandler);
 
     void renderMinimapQuestGivers(const MinimapFrame& frame, const QuestStatusMap& statuses,
                                   game::GameHandler& gameHandler);

@@ -2991,16 +2991,6 @@ bool GameHandler::hasPendingGameObjectLootOpen(uint64_t guid) const {
                        });
 }
 
-bool GameHandler::isGatherGameObject(uint64_t guid) const {
-    if (guid == 0 || !entityController_) return false;
-    auto entity = entityController_->getEntityManager().getEntity(guid);
-    if (!entity || entity->getType() != ObjectType::GAMEOBJECT) return false;
-
-    auto go = std::static_pointer_cast<GameObject>(entity);
-    const GameObjectQueryResponseData* goInfo = getCachedGameObjectInfo(go->getEntry());
-    return gatherSpellForGameObject(goInfo, go->getName()) != 0;
-}
-
 void GameHandler::despawnCreatureLocally(uint64_t guid) {
     if (guid == 0 || !entityController_) return;
 
