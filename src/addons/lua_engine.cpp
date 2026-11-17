@@ -8946,7 +8946,7 @@ void LuaEngine::registerCoreAPI() {
         "        local slotText = slotNames[equipSlot] or ''\n"
         "        local subText = (subclass and subclass ~= '') and subclass or ''\n"
         "        if slotText ~= '' or subText ~= '' then\n"
-        "            local met = (not data or data.weaponProficiencyMet) and 1 or 0.1\n"
+        "            local met = (not data or data.subclassProficiencyMet) and 1 or 0.1\n"
         "            self:AddDoubleLine(slotText, subText, 1,1,1, 1,met,met)\n"
         "        end\n"
         // A bag says how much it holds, which is what the class line would

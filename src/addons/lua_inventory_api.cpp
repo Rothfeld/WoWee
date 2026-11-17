@@ -2166,8 +2166,16 @@ static int lua_GetItemTooltipData(lua_State* L) {
             skill->second.effectiveValue() >= info->requiredSkillRank);
         lua_setfield(L, -2, "requiredSkillMet");
     }
-    lua_pushboolean(L, info->itemClass != 2 || gh->canUseWeaponSubclass(info->subClass));
-    lua_setfield(L, -2, "weaponProficiencyMet");
+    // Whether the player has the proficiency for the item's subclass: the
+    // tooltip prints the subclass ("Shield", "Plate", "Bow") in red when not.
+    // Weapons and armour both: SMSG_SET_PROFICIENCY carries one mask for each
+    // (Spell.dbc proficiency spells: Shield 9116 sets armour bit 6, Libram
+    // 27762 bit 7). Other item classes have no proficiency.
+    bool proficient = true;
+    if (info->itemClass == 2) proficient = gh->canUseWeaponSubclass(info->subClass);
+    else if (info->itemClass == 4) proficient = gh->canUseArmorSubclass(info->subClass);
+    lua_pushboolean(L, proficient);
+    lua_setfield(L, -2, "subclassProficiencyMet");
     // Recipe items encode the taught spell separately from the Learning use
     // spell. Its created item and reagents form the embedded recipe preview.
     if (info->itemClass == 9) {
