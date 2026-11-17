@@ -3164,8 +3164,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 recordWorldModels(opaqueCmd, cmd);
                 vkEndCommandBuffer(opaqueCmd);
                 const auto tModels = std::chrono::steady_clock::now();
-                m2Renderer->renderSmokeParticles(cmd, perFrameSet);
-                const auto tSmoke = std::chrono::steady_clock::now();
                 m2Renderer->renderM2Particles(cmd, perFrameSet);
                 const auto tParts = std::chrono::steady_clock::now();
                 m2Renderer->renderM2Ribbons(cmd, perFrameSet);
@@ -3190,8 +3188,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                         };
                         LOG_WARNING("  m2 worker: begin ", ms(t0, tBegin),
                                     "ms, models ", ms(tBegin, tModels),
-                                    "ms, smoke ", ms(tModels, tSmoke),
-                                    "ms, particles ", ms(tSmoke, tParts),
+                                    "ms, particles ", ms(tModels, tParts),
                                     "ms, ribbons ", ms(tParts, tParticles),
                                     "ms, endCommandBuffer ", ms(tParticles, tEnd), "ms");
                     }
@@ -3439,7 +3436,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (characterRenderer && !skipChars) characterRenderer->prepareRender(frameIdx);
             auto m2Start = std::chrono::steady_clock::now();
             recordWorldModels(currentCmd, currentCmd);
-            m2Renderer->renderSmokeParticles(currentCmd, perFrameSet);
             m2Renderer->renderM2Particles(currentCmd, perFrameSet);
             m2Renderer->renderM2Ribbons(currentCmd, perFrameSet);
             if (vkCtx) vkCtx->gpuMark(currentCmd, "m2");

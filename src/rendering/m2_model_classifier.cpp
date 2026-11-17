@@ -243,7 +243,6 @@ M2ClassificationResult classifyM2Model(
     // glow begins.
     const bool particleEmitterVfx = has(fullPath, "\\particleemitters\\")
                                  || has(fullPath, "/particleemitters/");
-    r.isSmoke         = has(n, "smoke");
     r.isLavaModel     = has(n, "forgelava") || has(n, "lavapot") || has(n, "lavaflow")
                     || has(n, "lavapool");
 

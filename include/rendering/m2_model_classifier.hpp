@@ -92,7 +92,6 @@ struct M2ClassificationResult {
     bool isKoboldFlame      = false; ///< Kobold candle/torch model
     bool isGroundDetail     = false; ///< Ground-clutter detail doodad (always non-blocking)
     bool isInvisibleTrap    = false; ///< Event-object invisible trap (no render, no collision)
-    bool isSmoke            = false; ///< Smoke model (UV scroll animation)
     bool isWaterfall        = false; ///< Waterfall model (ambient sound + splash particles)
     bool isBrazierOrFire    = false; ///< Brazier / campfire / bonfire model
     bool isGroundFire       = false; ///< Ground fire whose halo follows its lowest flame emitter
