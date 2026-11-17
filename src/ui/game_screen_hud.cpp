@@ -956,8 +956,10 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
         : pet ? (hostile ? "unitNameEnemyPetName" : "unitNameFriendlyPetName")
         : guardian ? (hostile ? "unitNameEnemyGuardianName" : "unitNameFriendlyGuardianName")
         : creatureType == 8 ? "unitNameNonCombatCreatureName" : "unitNameNPC";
-    const bool name = own || plate || target || guid == worldHoverGuid_ ||
-        addons::storedCVarValue(nameCVar, "1") != "0";
+    // Hover is not a reason to show a name (Daelyshia, UnitNameNPC=0:
+    // 20261117T102218Z.flight_marker_name_offset/h2-hover-original.png).
+    const bool name = ui::unitWorldNameShown(own, plate, target,
+        addons::storedCVarValue(nameCVar, "1") != "0");
     if (own && addons::storedCVarValue("unitNameOwn", "0") == "0") return {};
     return {plate, name};
 }

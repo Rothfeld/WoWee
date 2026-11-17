@@ -131,3 +131,13 @@ TEST_CASE("a click on a plate resolves to that plate's unit", "[nameplate][click
     CHECK(plateUnitAt(plates, 400, 400) == 0);
     CHECK(plateUnitAt({}, 120, 60) == 0);
 }
+
+TEST_CASE("Hovering an NPC does not reveal a name its setting hides") {
+    using wowee::ui::unitWorldNameShown;
+    // UnitNameNPC=0, NPC hovered but not targeted, no plate: no name.
+    CHECK_FALSE(unitWorldNameShown(false, false, false, false));
+    CHECK(unitWorldNameShown(false, false, true, false));   // target
+    CHECK(unitWorldNameShown(false, true, false, false));   // visible plate
+    CHECK(unitWorldNameShown(false, false, false, true));   // UnitNameNPC=1
+    CHECK(unitWorldNameShown(true, false, false, false));   // own character
+}

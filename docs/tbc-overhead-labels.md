@@ -27,13 +27,16 @@ Use `test_nameplate_stacking` for viewport, artwork, and overlap regressions.
 Legacy world names follow visible units without an additional 40-yard camera
 cutoff or five-yard label fade. Scene depth still occludes their pixels.
 Dead units retain gray plain names under the normal category-name settings and
-target/hover overrides. Their health plates are hidden regardless of plate toggles.
+the target override. Their health plates are hidden regardless of plate toggles.
 Neutral attackable creatures use the enemy-plate toggle. A visible plate retains
 its name even when the ordinary NPC-name setting is disabled. Plain names scale
 with perspective and have no clickable plate rectangle.
 
 World picking and visible plate hit tests produce one mouseover GUID. It drives
-NPC name visibility, mouseover macros, and character highlight. FrameXML and
+mouseover macros and character highlight. It does not reveal a world name: with
+`UnitNameNPC` 0 a hovered NPC shows no name in build 8606 (Daelyshia capture,
+`_experiments/20261117T102218Z.flight_marker_name_offset/h2-hover-original.png`);
+only the target, a visible plate, or the category setting shows one. FrameXML and
 ImGui mouse ownership suppress underlying world input. Character hover adds
 neutral texture illumination before fog, without modifying texture alpha or
 preview rendering. Moving off the unit or plate clears the highlighted instance.
@@ -43,7 +46,7 @@ fonts, region geometry, and health colors. Geometry was queried at a 768-unit
 logical UI height with 1280x720 presentation. Native and WoWee captures cover
 Adlin Pridedrift, Balir Frosthammer, Coldridge Mountaineers, and another player.
 They verify plate artwork, name colors, level placement, model/plate hover,
-hover-only NPC names, and range at the comparison camera distance. They do not
+and range at the comparison camera distance. They do not
 establish pixel-exact anchor placement, highlight intensity under every lighting
 condition, or boss/elite artwork parity.
 

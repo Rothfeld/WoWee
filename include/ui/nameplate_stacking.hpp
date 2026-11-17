@@ -14,6 +14,14 @@ inline bool legacyPlateAnchorVisible(float x, float y, float z, float w) {
            x >= -w && x <= w && y >= -w && y <= w;
 }
 
+// Plain world name over a unit: own character, a visible plate, the current
+// target, or the unit category's name setting (UnitNameNPC and siblings).
+// Mouse hover is deliberately absent: build 8606 shows no name over a hovered
+// NPC while UnitNameNPC is 0.
+inline bool unitWorldNameShown(bool own, bool plate, bool target, bool categorySetting) {
+    return own || plate || target || categorySetting;
+}
+
 inline float legacyPlateCenterX(float x, float viewportWidth, float artScale) {
     const float halfWidth = 64.0f * artScale;
     return std::clamp(x, halfWidth, std::max(halfWidth, viewportWidth - halfWidth));
