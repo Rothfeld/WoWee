@@ -11,6 +11,9 @@
 #include "ui/framexml_takeover.hpp"
 #include "core/logger.hpp"
 #include "core/config_paths.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_layout.hpp"
+#include "pipeline/dbc_loader.hpp"
 #include <array>
 #include <fstream>
 #include <filesystem>
@@ -630,6 +633,37 @@ static int lua_GetItemFamily(lua_State* L) {
     const uint32_t itemId = itemIdFromArg(L, 1);
     const auto* info = (gh && itemId) ? gh->getItemInfo(itemId) : nullptr;
     lua_pushnumber(L, info ? info->bagFamily : 0);
+    return 1;
+}
+
+/// GetItemIcon(itemId | "item:..." | link) -> icon texture path.
+///
+/// Answers for any item the client data knows, cached or not: the display id
+/// comes from the item template when it is cached and otherwise from the
+/// client's own Item.dbc, which is how MangAdmin's item search draws an icon
+/// beside every .lookup item result the moment the line arrives. Absent, the
+/// call raised and the result list stayed empty.
+static int lua_GetItemIcon(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const uint32_t itemId = itemIdFromArg(L, 1);
+    if (!gh || itemId == 0) return luaReturnNil(L);
+    uint32_t displayId = 0;
+    if (const auto* info = gh->getItemInfo(itemId)) displayId = info->displayInfoId;
+    if (displayId == 0) {
+        const auto* layouts = pipeline::getActiveDBCLayout();
+        const auto* layout = layouts ? layouts->getLayout("Item") : nullptr;
+        auto* assets = gh->services().assetManager;
+        if (layout && assets) {
+            const auto dbc = assets->loadDBC("Item.dbc");
+            const int32_t row = dbc ? dbc->findRecordById(itemId) : -1;
+            if (row >= 0) displayId = dbc->getUInt32(static_cast<uint32_t>(row),
+                                                     layout->field("DisplayInfoID"));
+        }
+    }
+    if (displayId == 0) return luaReturnNil(L);
+    const std::string path = gh->getItemIconPath(displayId);
+    if (path.empty()) return luaReturnNil(L);
+    lua_pushstring(L, path.c_str());
     return 1;
 }
 
@@ -3605,6 +3639,7 @@ void registerInventoryLuaAPI(lua_State* L) {
                 {"GetMerchantItemCostInfo", lua_GetMerchantItemCostInfo},
                 {"GetMerchantItemCostItem", lua_GetMerchantItemCostItem},
                 {"GetItemInfo",       lua_GetItemInfo},
+                {"GetItemIcon",       lua_GetItemIcon},
                 {"__WoweeTryOn",   lua_WoweeTryOn},
                 {"__WoweeSetModelCreature", lua_WoweeSetModelCreature},
                 {"__WoweeUndress", lua_WoweeUndress},

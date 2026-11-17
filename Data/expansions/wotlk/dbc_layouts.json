@@ -144,6 +144,16 @@
     "ID": 0,
     "ModelName": 1
   },
+  "Item": {
+    "ClassID": 1,
+    "DisplayInfoID": 5,
+    "ID": 0,
+    "InventoryType": 6,
+    "Material": 4,
+    "SheatheType": 7,
+    "SoundOverrideSubclassID": 3,
+    "SubclassID": 2
+  },
   "ItemDisplayInfo": {
     "GeosetGroup1": 7,
     "GeosetGroup3": 9,

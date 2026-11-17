@@ -139,6 +139,12 @@
     "ID": 0,
     "ModelName": 1
   },
+  "Item": {
+    "DisplayInfoID": 1,
+    "ID": 0,
+    "InventoryType": 2,
+    "SheatheType": 3
+  },
   "ItemDisplayInfo": {
     "GeosetGroup1": 7,
     "GeosetGroup3": 9,

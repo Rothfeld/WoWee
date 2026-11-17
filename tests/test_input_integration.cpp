@@ -2462,3 +2462,24 @@ TEST_CASE_METHOD(Integration, "Every widget carries its C handle in slot 0", "[l
     truth("handleFrame[0] ~= handleOther[0] and handleFrame[0] ~= handleTex[0]");
     truth("#handleFrame == 0");
 }
+
+TEST_CASE_METHOD(Integration, "GetItemIcon answers an item's icon path", "[lua][item-icon]") {
+    // MangAdmin's item search sets every result row's icon with
+    // GetItemIcon(id); while it was missing the first row raised and the
+    // list stayed empty.
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.setItemIconPathResolver([](uint32_t displayId) {
+        return displayId == 6442 ? std::string("Interface\\Icons\\INV_Weapon_ShortBlade_05") : std::string();
+    });
+    auto& info = handler.itemInfoCacheRef()[2092];
+    info.valid = true;
+    info.name = "Worn Dagger";
+    info.displayInfoId = 6442;
+    truth("GetItemIcon(2092) == 'Interface\\\\Icons\\\\INV_Weapon_ShortBlade_05'");
+    truth("GetItemIcon('item:2092:0:0:0:0:0:0:0') == GetItemIcon(2092)");
+    truth("GetItemIcon('|cffffffff|Hitem:2092:0:0:0:0:0:0:0|h[Worn Dagger]|h|r') == GetItemIcon(2092)");
+    truth("GetItemIcon(0) == nil");
+    lua.setGameHandler(nullptr);
+}
