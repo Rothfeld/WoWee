@@ -1578,7 +1578,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 // old two-sided path for the whole LOD group instead of
                 // accidentally culling that instance's front faces.
                 bool windingPreserved = true;
-                if (foliageLikeModel && !skyMode_ &&
+                if (!skyMode_ &&
                     (foliageCullOpaquePipeline_ || foliageCullCutoutPipeline_)) {
                     for (size_t j = lodIdx; j < lodEnd; ++j) {
                         if (!m2FoliageTransformPreservesWinding(
@@ -1784,7 +1784,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
                     // Opaque gate - transparent glow cards were handled above so their
                     // sprites are generated before the mesh moves to pass 2.
-                    const bool rawTransparent = (batch.blendMode >= 2) || model.isSpellEffect;
+                    const bool rawTransparent = m2BatchIsTransparent(
+                        batch.blendMode, model.isSpellEffect, batch.hasAuthoredMaterial);
                     if (rawTransparent) continue;
 
 
@@ -1896,7 +1897,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                          batch.colorKeyBlack);
 
                     uint8_t effectiveBlendMode = batch.blendMode;
-                    if (model.isSpellEffect || fireEffectModel) {
+                    if ((model.isSpellEffect && !batch.hasAuthoredMaterial) || fireEffectModel) {
                         if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
                         else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) effectiveBlendMode = 3;
                     }
@@ -1913,9 +1914,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             default: desiredPipeline = additivePipeline_; break;
                         }
                     }
-                    if (m2UseFoliageCull(
+                    if (m2UseAuthoredCull(
                             foliageCullOpaquePipeline_ || foliageCullCutoutPipeline_,
-                            foliageLikeModel, skyMode_, batch.hasAuthoredMaterial,
+                            skyMode_, batch.hasAuthoredMaterial,
                             windingPreserved, batch.materialFlags, batch.blendMode)) {
                         if (desiredPipeline == opaquePipeline_ && foliageCullOpaquePipeline_)
                             desiredPipeline = foliageCullOpaquePipeline_;
@@ -2070,8 +2071,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             // Pass 2 gate: only transparent/additive batches - or, for a faded
             // instance, every batch, since the opaque pass left it out.
             {
-                const bool rawTransparent = (batch.blendMode >= 2) || model.isSpellEffect ||
-                                            instanceFaded;
+                const bool rawTransparent = m2BatchIsTransparent(
+                    batch.blendMode, model.isSpellEffect, batch.hasAuthoredMaterial) || instanceFaded;
                 if (!rawTransparent) continue;
             }
 

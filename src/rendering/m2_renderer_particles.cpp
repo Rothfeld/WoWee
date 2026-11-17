@@ -178,8 +178,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 boneXform = inst.boneMatrices[em.bone];
             }
             const glm::mat4 birthTransform = particleBirthTransform(
-                em.flags, em.emitterType, inst.modelMatrix, boneXform);
+                em.flags, inst.modelMatrix, boneXform);
             p.position = glm::vec3(birthTransform * glm::vec4(localPos, 1.0f));
+            p.gravityDirection = particleGravityDirection(birthTransform);
 
             // Velocity: emission speed in upward direction + random spread
             float speed = interpFloat(em.emissionSpeed, inst.animTime, inst.globalSequenceTime,
@@ -217,8 +218,8 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             const float gravity = interpFloat(em.gravity, inst.animTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             p.position += p.velocity * p.life;
-            p.position.z -= 0.5f * gravity * p.life * p.life;
-            p.velocity.z -= gravity * p.life;
+            p.position += p.gravityDirection * (0.5f * gravity * p.life * p.life);
+            p.velocity += p.gravityDirection * (gravity * p.life);
             inst.particles.push_back(p);
 
             // Diagnostic: log first particle birth per spell effect instance
@@ -279,8 +280,8 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
         p.position += p.velocity * dt;
         if (p.emitterIndex >= 0 && static_cast<size_t>(p.emitterIndex) < numEm) {
             const float gravity = emitterGrav[p.emitterIndex];
-            p.position.z -= 0.5f * gravity * dt * dt;
-            p.velocity.z -= gravity * dt;
+            p.position += p.gravityDirection * (0.5f * gravity * dt * dt);
+            p.velocity += p.gravityDirection * (gravity * dt);
         }
         i++;
     }
@@ -697,11 +698,11 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 lastEmitterIdx = p.emitterIndex;
                 cachedEm = &gpu.particleEmitters[p.emitterIndex];
                 glm::mat4 bone(1.0f);
-                if ((cachedEm->flags & kParticleInModelSpace) && !gpu.bones.empty()) {
+                if ((cachedEm->flags & kParticleNoTrail) && !gpu.bones.empty()) {
                     bone = inst.boneMatrices.at(cachedEm->bone);
                 }
                 cachedParticleTransform = particleRenderTransform(
-                    cachedEm->flags, inst.modelMatrix, bone, cachedEm->emitterType);
+                    cachedEm->flags, inst.modelMatrix, bone);
 
                 cachedTex = whiteTexture_.get();
                 if (p.emitterIndex < static_cast<int>(gpu.particleTextures.size())) {

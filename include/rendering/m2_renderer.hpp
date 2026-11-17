@@ -245,6 +245,7 @@ struct M2ModelGPU {
 struct M2Particle {
     glm::vec3 position;
     glm::vec3 velocity;
+    glm::vec3 gravityDirection; // authored -Z transformed into this particle's simulation space
     float life;        // current age in seconds
     float maxLife;     // total lifespan
     int emitterIndex;  // which emitter spawned this

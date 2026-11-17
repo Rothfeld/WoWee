@@ -89,20 +89,46 @@ TEST_CASE("Living portal particles follow their rotating emitter bone", "[m2][pa
     CHECK(world.y == Catch::Approx(20));
     CHECK(world.z == Catch::Approx(30 + center.z + radius));
     CHECK((attached * velocity).z == Catch::Approx(-3.3333333f));
-    // Summon_Ritual uses 0x19: already-world-space particles must not be
-    // translated or rotated again when the emitter changes its pose.
-    CHECK(particleRenderTransform(0x19, model, bone) * position == position);
-    CHECK(particleRenderTransform(0x19, model, bone) * velocity == velocity);
+    // Lighting is independent of attachment: 0x19 also has NoTrail.
+    CHECK(particleRenderTransform(0x19, model, bone) == attached);
 }
-TEST_CASE("Spline trails retain separate birth poses while their model moves", "[m2][particle]") {
+TEST_CASE("Trailing emitters preserve birth pose independent of emitter shape", "[m2][particle]") {
     using namespace wowee::rendering;
     const auto model = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
     const auto birthBone = glm::translate(glm::mat4(1), glm::vec3(0, 2, 0));
     const auto currentBone = glm::translate(glm::mat4(1), glm::vec3(0, 4, 0));
     const glm::vec4 origin(0,0,0,1);
-    const auto render = particleRenderTransform(0x229, model, currentBone, 3);
-    CHECK(render * particleBirthTransform(0x229,3,model,birthBone) * origin == glm::vec4(10,2,0,1));
-    CHECK(render * particleBirthTransform(0x229,3,model,currentBone) * origin == glm::vec4(10,4,0,1));
+    for (const uint32_t flags : {0x29u, 0x229u}) {
+        const auto render = particleRenderTransform(flags, model, currentBone);
+        CHECK(render * particleBirthTransform(flags,model,birthBone) * origin == glm::vec4(10,2,0,1));
+        CHECK(render * particleBirthTransform(flags,model,currentBone) * origin == glm::vec4(10,4,0,1));
+        const auto movedModel = glm::translate(model, glm::vec3(3,0,0));
+        CHECK(particleRenderTransform(flags,movedModel,currentBone) * particleBirthTransform(flags,model,birthBone) * origin == glm::vec4(10,2,0,1));
+    }
+    // ModelSpace keeps the model's movement, but never today's emitter pose.
+    const auto movedModel = glm::translate(model, glm::vec3(3,0,0));
+    CHECK(particleRenderTransform(0x89,movedModel,currentBone) * particleBirthTransform(0x89,model,birthBone) * origin == glm::vec4(13,2,0,1));
+}
+
+TEST_CASE("Particle gravity retains the authored scaled and rotated basis", "[m2][particle]") {
+    using namespace wowee::rendering;
+    const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(90.0f),glm::vec3(0,1,0)),glm::vec3(2));
+    const auto bone = glm::translate(glm::mat4(1),glm::vec3(1,2,3));
+    const glm::vec4 localPosition(0,0,0,1);
+    const glm::vec4 localVelocity(0,0,3,0);
+    const float gravity = 4;
+    const float seconds = .5f;
+    const auto expected = model * bone * (localPosition + localVelocity * seconds + glm::vec4(0,0,-.5f*gravity*seconds*seconds,0));
+    for (const uint32_t flags : {0x29u,0x89u,0x39u}) {
+        const auto birth = particleBirthTransform(flags,model,bone);
+        const auto render = particleRenderTransform(flags,model,bone);
+        const auto acceleration = particleGravityDirection(birth)*gravity;
+        const auto simulated = birth*localPosition + birth*localVelocity*seconds + glm::vec4(acceleration*(.5f*seconds*seconds),0);
+        const auto actual = render*simulated;
+        CHECK(actual.x == Catch::Approx(expected.x).margin(.00001f));
+        CHECK(actual.y == Catch::Approx(expected.y).margin(.00001f));
+        CHECK(actual.z == Catch::Approx(expected.z).margin(.00001f));
+    }
 }
 
 TEST_CASE("Particle widths follow authored matrix placement scale", "[m2][particle]") {
