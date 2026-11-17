@@ -2826,7 +2826,11 @@ void SpellHandler::handleLearnedSpell(network::Packet& packet) {
 }
 
 void SpellHandler::handleRemovedSpell(network::Packet& packet) {
-    const bool classicSpellId = isClassicLikeExpansion();
+    // uint16 through 2.4.3 (CMaNGOS TBC Player::SendRemovedSpell writes
+    // uint16(spellId), a 2-byte packet). Reading uint32 there dropped every
+    // removal, so a talent reset left its rank spells known and the next
+    // LearnTalent asked for rank 2 of an untrained talent.
+    const bool classicSpellId = isPreWotlk();
     const size_t minSz = classicSpellId ? 2u : 4u;
     if (packet.getRemainingSize() < minSz) return;
     uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
@@ -2886,7 +2890,8 @@ void SpellHandler::handleRemovedSpell(network::Packet& packet) {
 }
 
 void SpellHandler::handleSupercededSpell(network::Packet& packet) {
-    const bool classicSpellId = isClassicLikeExpansion();
+    // Two uint16 through 2.4.3 (CMaNGOS TBC Player::SendSupercededSpell).
+    const bool classicSpellId = isPreWotlk();
     const size_t minSz = classicSpellId ? 4u : 8u;
     if (packet.getRemainingSize() < minSz) return;
     uint32_t oldSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
