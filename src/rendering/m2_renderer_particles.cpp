@@ -676,6 +676,14 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         float highestParticleZ = -std::numeric_limits<float>::max();
         float widestParticle = 0.0f;
         const float placementScale = particlePlacementScale(inst.modelMatrix);
+        // A doodad in an interior WMO group is lit by its MODD colour, and
+        // its particles take the same colour: BFD_WaterFalls01 splash
+        // (authored 190,218,220) shows the blue of its placement (84,125,223)
+        // in the original client.
+        const glm::vec3 placementLight = (inst.indoorLighting & 2u)
+            ? glm::vec3((inst.indoorLighting >> 8) & 255u, (inst.indoorLighting >> 16) & 255u,
+                        (inst.indoorLighting >> 24) & 255u) / 255.0f
+            : glm::vec3(1.0f);
 
         for (const auto& p : inst.particles) {
             if (p.emitterIndex < 0 || p.emitterIndex >= static_cast<int>(gpu.particleEmitters.size())) continue;
@@ -715,7 +723,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
 
             const auto& em = *cachedEm;
             float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
-            glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
+            glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio) * placementLight;
             // Scaled by the instance fade, as its mesh is: an owner fading
             // out (a creature's death, a hidden player) takes its particles
             // with it.
