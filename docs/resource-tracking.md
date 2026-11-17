@@ -15,8 +15,9 @@ ring in original `Interface/Minimap/ObjectIcons.blp`, second row, first column.
 Markers share terrain projection and rotation. Hover uses the original tooltip
 frame and is suppressed when another window covers the minimap.
 
-Tracking is independent of optional custom NPC/chest trackers. The resource field
-is currently mapped only for TBC; other expansion indices must be verified before
+Town tracking (Mailbox, Innkeeper, ...) draws the same gold ring; see
+[minimap markers](minimap-markers.md). The resource field is currently mapped
+only for TBC; other expansion indices must be verified before
 this path is enabled for them. Find Treasure involves chest classification beyond
 Mining/Herbalism skill locks and is not covered by this node path.
 

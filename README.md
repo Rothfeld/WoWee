@@ -79,6 +79,7 @@ the repeated barrel faces. File decoding remains keyed by asset path.
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).
+Minimap blips, rim arrows and tooltips: [original rules](docs/minimap-markers.md).
 PvP menu: [preference, active flag, and validation](docs/pvp-menu.md).
 
 <p align="center">
