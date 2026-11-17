@@ -808,7 +808,7 @@ inline uint32_t spellIdForCall(lua_State* L, game::GameHandler* gh) {
         // one, which is worse than none.
         const char* book = lua_tostring(L, 2);
         if (book && std::string(book) == "pet") {
-            const auto& pet = gh->getPetSpells();
+            const auto pet = gh->getPetSpellbook();
             if (slot < 1 || slot > static_cast<int>(pet.size())) return 0;
             return pet[static_cast<size_t>(slot - 1)];
         }

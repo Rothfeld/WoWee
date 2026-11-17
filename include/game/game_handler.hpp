@@ -1102,6 +1102,10 @@ public:
 
     // Spells the pet knows (from SMSG_PET_SPELLS spell list)
     const std::vector<uint32_t>& getPetSpells() const { return petSpellList_; }
+    /// The pet's spells that have a pet spellbook entry, in SMSG_PET_SPELLS
+    /// order. 2.4.3 lists a felhunter's Devour Magic alone: its "Tamed Pet
+    /// Passive (DND)" and "Pet Passive (DND)" spells carry attribute 0x80.
+    std::vector<uint32_t> getPetSpellbook();
     // Pet autocast set (spellIds that have autocast enabled)
     bool isPetSpellAutocast(uint32_t spellId) const {
         return petAutocastSpells_.count(spellId) != 0;

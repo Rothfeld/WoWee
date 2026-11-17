@@ -3956,6 +3956,14 @@ void GameHandler::loadSkillLineAbilityDbc() {
     if (spellHandler_) spellHandler_->loadSkillLineAbilityDbc();
 }
 
+std::vector<uint32_t> GameHandler::getPetSpellbook() {
+    std::vector<uint32_t> listed;
+    if (!spellHandler_) return listed;
+    for (uint32_t id : petSpellList_)
+        if (spellHandler_->isListedInSpellbook(id)) listed.push_back(id);
+    return listed;
+}
+
 const std::vector<GameHandler::SpellBookTab>& GameHandler::getSpellBookTabs() {
     static const std::vector<SpellBookTab> kEmpty;
     if (spellHandler_) return spellHandler_->getSpellBookTabs();
