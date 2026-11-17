@@ -6,6 +6,7 @@
 #include "rendering/water_surface_grid.hpp"
 #include "rendering/water_mask.hpp"
 #include "rendering/water_renderer.hpp"
+#include "pipeline/wmo_liquid.hpp"
 #include "rendering/water_mask.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_pipeline.hpp"
@@ -1016,13 +1017,16 @@ void WaterRenderer::removeTile(int tileX, int tileY) {
     }
 }
 
-void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liquid,
-                                 [[maybe_unused]] const glm::mat4& modelMatrix,
-                                 [[maybe_unused]] uint32_t wmoId) {
-    if (!liquid.hasLiquid() || liquid.xTiles == 0 || liquid.yTiles == 0) return;
-    if (liquid.xVerts < 2 || liquid.yVerts < 2) return;
-    if (liquid.xTiles != liquid.xVerts - 1 || liquid.yTiles != liquid.yVerts - 1) return;
-    if (liquid.xTiles > 64 || liquid.yTiles > 64) return;
+void WaterRenderer::loadFromWMO(const pipeline::WMOLiquid& liquid,
+                                 const glm::mat4& modelMatrix, uint32_t wmoId) {
+    // Coverage, heights and type come from MLIQ alone: a tile holds liquid
+    // unless its low nibble is 0x0F, and its four corner vertices give the
+    // surface height. Vertices touching only dry tiles store 0 and are unused.
+    assert(liquid.hasLiquid());
+    assert(liquid.xTiles + 1 == liquid.xVerts && liquid.yTiles + 1 == liquid.yVerts);
+    assert(liquid.xTiles <= 255 && liquid.yTiles <= 255);  // WaterSurface grid is uint8
+    assert(liquid.flags.size() == static_cast<size_t>(liquid.xTiles) * liquid.yTiles);
+    assert(liquid.heights.size() == static_cast<size_t>(liquid.xVerts) * liquid.yVerts);
 
     WaterSurface surface;
     surface.tileX = -1;
@@ -1036,120 +1040,60 @@ void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liqu
     }
     surface.xOffset = 0;
     surface.yOffset = 0;
-    surface.width = static_cast<uint8_t>(std::min<uint32_t>(255, liquid.xTiles));
-    surface.height = static_cast<uint8_t>(std::min<uint32_t>(255, liquid.yTiles));
+    surface.width = static_cast<uint8_t>(liquid.xTiles);
+    surface.height = static_cast<uint8_t>(liquid.yTiles);
 
     constexpr float WMO_LIQUID_TILE_SIZE = 4.1666625f;
     const glm::vec3 localBase(liquid.basePosition.x, liquid.basePosition.y, liquid.basePosition.z);
-    const glm::vec3 localStepX(WMO_LIQUID_TILE_SIZE, 0.0f, 0.0f);
-    const glm::vec3 localStepY(0.0f, WMO_LIQUID_TILE_SIZE, 0.0f);
-
     surface.origin = glm::vec3(modelMatrix * glm::vec4(localBase, 1.0f));
-    surface.stepX = glm::vec3(modelMatrix * glm::vec4(localStepX, 0.0f));
-    surface.stepY = glm::vec3(modelMatrix * glm::vec4(localStepY, 0.0f));
+    surface.stepX = glm::vec3(modelMatrix * glm::vec4(WMO_LIQUID_TILE_SIZE, 0.0f, 0.0f, 0.0f));
+    surface.stepY = glm::vec3(modelMatrix * glm::vec4(0.0f, WMO_LIQUID_TILE_SIZE, 0.0f, 0.0f));
     surface.position = surface.origin;
-
-    float stepXLen = glm::length(surface.stepX);
-    float stepYLen = glm::length(surface.stepY);
-    glm::vec3 planeN = glm::cross(surface.stepX, surface.stepY);
-    float planeNLenSq = glm::dot(planeN, planeN);
-    float nz = (planeNLenSq > 1e-8f) ? std::abs(planeN.z * glm::inversesqrt(planeNLenSq)) : 0.0f;
-    float spanX = stepXLen * static_cast<float>(surface.width);
-    float spanY = stepYLen * static_cast<float>(surface.height);
-    if (stepXLen < 0.2f || stepXLen > 12.0f ||
-        stepYLen < 0.2f || stepYLen > 12.0f ||
-        nz < 0.60f || spanX > 450.0f || spanY > 450.0f) return;
 
     const int gridWidth = static_cast<int>(surface.width) + 1;
     const int gridHeight = static_cast<int>(surface.height) + 1;
-    const int vertexCount = gridWidth * gridHeight;
-
-    assert(liquid.heights.size() == static_cast<size_t>(vertexCount));
     surface.depths = liquid.depths;
-    surface.heights.resize(vertexCount);
-    surface.minHeight = std::numeric_limits<float>::max();
-    surface.maxHeight = std::numeric_limits<float>::lowest();
+    surface.heights.resize(static_cast<size_t>(gridWidth) * gridHeight);
     for (int y = 0; y < gridHeight; ++y) {
         for (int x = 0; x < gridWidth; ++x) {
             const int i = y * gridWidth + x;
             const glm::vec3 local(localBase.x + x * WMO_LIQUID_TILE_SIZE,
                                   localBase.y + y * WMO_LIQUID_TILE_SIZE, liquid.heights[i]);
-            const float height = (modelMatrix * glm::vec4(local, 1.0f)).z;
-            surface.heights[i] = height;
-            surface.minHeight = std::min(surface.minHeight, height);
-            surface.maxHeight = std::max(surface.maxHeight, height);
+            surface.heights[i] = (modelMatrix * glm::vec4(local, 1.0f)).z;
         }
     }
 
-    if (surface.origin.z > 2000.0f || surface.origin.z < -500.0f) return;
-
-    // Build tile mask from MLIQ flags
-    size_t tileCount = static_cast<size_t>(surface.width) * static_cast<size_t>(surface.height);
-    size_t maskBytes = (tileCount + 7) / 8;
-    surface.mask.assign(maskBytes, 0x00);
-    for (size_t t = 0; t < tileCount; t++) {
-        bool hasLiquid = true;
-        int tx = static_cast<int>(t) % surface.width;
-        int ty = static_cast<int>(t) / surface.width;
-
-        // Standard WoW check: low nibble 0x0F = "don't render"
-        if (t < liquid.flags.size()) {
-            if ((liquid.flags[t] & 0x0F) == 0x0F) {
-                hasLiquid = false;
-            }
+    const size_t tileCount = liquid.flags.size();
+    surface.mask.assign((tileCount + 7) / 8, 0x00);
+    surface.minHeight = std::numeric_limits<float>::max();
+    surface.maxHeight = std::numeric_limits<float>::lowest();
+    size_t wetTiles = 0;
+    for (size_t t = 0; t < tileCount; ++t) {
+        if (!pipeline::wmoLiquidTileWet(liquid.flags[t])) continue;
+        surface.mask[t / 8] |= static_cast<uint8_t>(1u << (t % 8));
+        ++wetTiles;
+        const int tx = static_cast<int>(t % surface.width);
+        const int ty = static_cast<int>(t / surface.width);
+        for (int corner = 0; corner < 4; ++corner) {
+            const float h = surface.heights[(ty + corner / 2) * gridWidth + tx + corner % 2];
+            surface.minHeight = std::min(surface.minHeight, h);
+            surface.maxHeight = std::max(surface.maxHeight, h);
         }
-        // Suppress water tiles that extend into enclosed WMO areas
-        // (e.g. Stormwind barracks stairway where canal water pokes through)
-        // Render coords: x=wowY(west), y=wowX(north)
-        if (hasLiquid) {
-            glm::vec3 tileWorld = surface.origin +
-                surface.stepX * (static_cast<float>(tx) + 0.5f) +
-                surface.stepY * (static_cast<float>(ty) + 0.5f);
-            // Stormwind Barracks / Stockade stairway:
-            // Stockade entrance at approximately render (-8768, 848)
-            if (tileWorld.x > -8790.0f && tileWorld.x < -8735.0f &&
-                tileWorld.y > 828.0f && tileWorld.y < 878.0f) {
-                hasLiquid = false;
-            }
-        }
-        if (hasLiquid) {
-            size_t byteIdx = t / 8;
-            size_t bitIdx = t % 8;
-            surface.mask[byteIdx] |= (1 << bitIdx);
-        }
+    }
+    if (wetTiles == 0) {
+        LOG_DEBUG("WMO water: no wet tiles, wmoId=", wmoId);
+        return;
     }
 
     createWaterMesh(surface);
-
-    // Count how many tiles passed the flag check and compute bounds
-    size_t activeTiles = 0;
-    float minWX = 1e9f, maxWX = -1e9f, minWY = 1e9f, maxWY = -1e9f;
-    for (size_t t = 0; t < tileCount; t++) {
-        size_t byteIdx = t / 8;
-        size_t bitIdx = t % 8;
-        if (surface.mask[byteIdx] & (1 << bitIdx)) {
-            activeTiles++;
-            int atx = static_cast<int>(t) % surface.width;
-            int aty = static_cast<int>(t) / surface.width;
-            glm::vec3 tw = surface.origin +
-                surface.stepX * (static_cast<float>(atx) + 0.5f) +
-                surface.stepY * (static_cast<float>(aty) + 0.5f);
-            if (tw.x < minWX) minWX = tw.x;
-            if (tw.x > maxWX) maxWX = tw.x;
-            if (tw.y < minWY) minWY = tw.y;
-            if (tw.y > maxWY) maxWY = tw.y;
-        }
-    }
     LOG_DEBUG("WMO water: origin=(", surface.origin.x, ",", surface.origin.y, ",", surface.origin.z,
              ") tiles=", static_cast<int>(surface.width), "x", static_cast<int>(surface.height),
-             " active=", activeTiles, "/", tileCount,
-             " wmoId=", wmoId, " indexCount=", surface.indexCount,
-             " bounds x=[", minWX, "..", maxWX, "] y=[", minWY, "..", maxWY, "]");
-
-    if (surface.indexCount > 0) {
-        if (vkCtx) updateMaterialUBO(surface);
-        surfaces.push_back(std::move(surface));
-    }
+             " wet=", wetTiles, "/", tileCount, " type=", surface.liquidType,
+             " height=[", surface.minHeight, "..", surface.maxHeight, "] wmoId=", wmoId,
+             " indexCount=", surface.indexCount);
+    assert(surface.indexCount > 0);
+    if (vkCtx) updateMaterialUBO(surface);
+    surfaces.push_back(std::move(surface));
 }
 
 void WaterRenderer::removeWMO(uint32_t wmoId) {

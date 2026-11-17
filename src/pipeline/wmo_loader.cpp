@@ -1,6 +1,8 @@
 #include "pipeline/wmo_loader.hpp"
+#include "pipeline/wmo_liquid.hpp"
 #include "core/logger.hpp"
 #include <cstring>
+#include <stdexcept>
 #include <glm/gtc/quaternion.hpp>
 
 namespace wowee {
@@ -649,71 +651,59 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                     group.doodadRefs.resize(subChunkSize / 2);
                     for (auto& ref : group.doodadRefs) ref = read<uint16_t>(groupData, mogpOffset);
                 }
-                else if (subChunkId == MLIQ) { // MLIQ - WMO liquid data
-                    // Basic WotLK layout:
-                    // uint32 xVerts, yVerts, xTiles, yTiles
-                    // float  baseX, baseY, baseZ
-                    // uint16 materialId
-                    // (optional pad/unknown bytes)
-                    // followed by vertex/tile payload
+                else if (subChunkId == MLIQ) {
+                    // MLIQ: uint32 xVerts, yVerts, xTiles, yTiles; float corner[3];
+                    // uint16 materialId; then xVerts*yVerts 8-byte vertices
+                    // (4 bytes depth/flow or s,t texcoords, float height) and
+                    // xTiles*yTiles tile bytes. Nothing follows the tiles.
+                    if (!(group.flags & kWmoGroupHasLiquid))
+                        throw std::runtime_error("MLIQ in a group without MOGP flag 0x1000");
+                    constexpr size_t HEADER_SIZE = 30;
+                    constexpr size_t VERTEX_STRIDE = 8;
+                    if (subChunkSize < HEADER_SIZE)
+                        throw std::runtime_error("Truncated MLIQ header");
                     uint32_t parseOffset = mogpOffset;
-                    if (parseOffset + 30 <= subChunkEnd) {
-                        group.liquid.xVerts = read<uint32_t>(groupData, parseOffset);
-                        group.liquid.yVerts = read<uint32_t>(groupData, parseOffset);
-                        group.liquid.xTiles = read<uint32_t>(groupData, parseOffset);
-                        group.liquid.yTiles = read<uint32_t>(groupData, parseOffset);
-                        group.liquid.basePosition.x = read<float>(groupData, parseOffset);
-                        group.liquid.basePosition.y = read<float>(groupData, parseOffset);
-                        group.liquid.basePosition.z = read<float>(groupData, parseOffset);
-                        group.liquid.materialId = read<uint16_t>(groupData, parseOffset);
+                    auto& liquid = group.liquid;
+                    liquid.xVerts = read<uint32_t>(groupData, parseOffset);
+                    liquid.yVerts = read<uint32_t>(groupData, parseOffset);
+                    liquid.xTiles = read<uint32_t>(groupData, parseOffset);
+                    liquid.yTiles = read<uint32_t>(groupData, parseOffset);
+                    liquid.basePosition.x = read<float>(groupData, parseOffset);
+                    liquid.basePosition.y = read<float>(groupData, parseOffset);
+                    liquid.basePosition.z = read<float>(groupData, parseOffset);
+                    liquid.materialId = read<uint16_t>(groupData, parseOffset);
+                    if (liquid.xTiles + 1 != liquid.xVerts || liquid.yTiles + 1 != liquid.yVerts)
+                        throw std::runtime_error("MLIQ tile grid does not match its vertex grid");
+                    const size_t vertexCount = static_cast<size_t>(liquid.xVerts) * liquid.yVerts;
+                    const size_t tileCount = static_cast<size_t>(liquid.xTiles) * liquid.yTiles;
+                    if (subChunkSize != HEADER_SIZE + vertexCount * VERTEX_STRIDE + tileCount)
+                        throw std::runtime_error("MLIQ size does not match its vertex and tile counts");
 
-                        // Keep parser resilient across minor format variants:
-                        // prefer explicit per-vertex floats, otherwise fall back to flat.
-                        const size_t vertexCount =
-                            static_cast<size_t>(group.liquid.xVerts) * static_cast<size_t>(group.liquid.yVerts);
-                        const size_t tileCount =
-                            static_cast<size_t>(group.liquid.xTiles) * static_cast<size_t>(group.liquid.yTiles);
-                        const size_t bytesRemaining = (subChunkEnd > parseOffset) ? (subChunkEnd - parseOffset) : 0;
+                    const uint32_t vertexOffset = parseOffset;
+                    liquid.heights.resize(vertexCount);
+                    for (size_t i = 0; i < vertexCount; ++i) {
+                        uint32_t heightOffset = vertexOffset + static_cast<uint32_t>(i * VERTEX_STRIDE) + 4;
+                        liquid.heights[i] = read<float>(groupData, heightOffset);
+                    }
+                    parseOffset = vertexOffset + static_cast<uint32_t>(vertexCount * VERTEX_STRIDE);
+                    liquid.flags.assign(groupData.begin() + parseOffset,
+                                        groupData.begin() + parseOffset + tileCount);
 
-                        group.liquid.heights.clear();
-                        group.liquid.flags.clear();
-
-                        // Water stores its depth byte before each vertex height.
-                        constexpr size_t VERTEX_STRIDE = 8;
-                        if (bytesRemaining < vertexCount * VERTEX_STRIDE + tileCount)
-                            throw std::runtime_error("Truncated MLIQ vertex or tile data");
-                        group.liquid.heights.resize(vertexCount);
-                        group.liquid.depths.resize(vertexCount);
-                        for (size_t i = 0; i < vertexCount; ++i) {
-                            group.liquid.depths[i] = groupData[parseOffset];
-                            parseOffset += 4;
-                            group.liquid.heights[i] = read<float>(groupData, parseOffset);
-                        }
-
-                        if (tileCount > 0 && parseOffset + tileCount <= subChunkEnd) {
-                            group.liquid.flags.resize(tileCount);
-                            std::memcpy(group.liquid.flags.data(), &groupData[parseOffset], tileCount);
-                        } else if (tileCount > 0) {
-                            group.liquid.flags.resize(tileCount, 0);
-                        }
-
-                        // MLIQ materialId indexes MOMT; it is not a liquid type.
-                        uint32_t entry = (model.flags & 4) ? group.liquidType
-                            : (group.liquidType == 15 ? 0 : group.liquidType + 1);
-                        if (entry == 0) {
-                            for (uint8_t tile : group.liquid.flags) {
-                                if ((tile & 15) != 15) { entry = (tile & 15) + 1; break; }
-                            }
-                        }
-                        if (entry > 0 && entry < 21) {
-                            const uint32_t basic = (entry - 1) & 3;
-                            entry = basic == 0 ? ((group.flags & 0x80000) ? 2 : 1) : basic + 1;
-                        }
-                        assert(entry <= 65535);
-                        group.liquid.liquidType = static_cast<uint16_t>(entry);
-                        assert(group.liquid.materialId < model.materials.size());
-                        group.liquid.indoor = wmoUsesLocalLighting(group.flags);
-                        group.liquid.materialColor = model.materials[group.liquid.materialId].color2;
+                    liquid.liquidType = static_cast<uint16_t>(resolveWmoLiquidType(
+                        model.flags, group.flags, group.liquidType, liquid.flags));
+                    liquid.depths.clear();
+                    if (wmoLiquidHasDepth(liquid.liquidType)) {
+                        liquid.depths.resize(vertexCount);
+                        for (size_t i = 0; i < vertexCount; ++i)
+                            liquid.depths[i] = groupData[vertexOffset + i * VERTEX_STRIDE];
+                    }
+                    liquid.indoor = wmoUsesLocalLighting(group.flags);
+                    if (liquid.indoor) {
+                        // Indoor liquid takes its colour from the MLIQ material.
+                        // Outdoor groups may name no material (md_fishingholeice
+                        // group 1 stores 0xFFFF).
+                        assert(liquid.materialId < model.materials.size());
+                        liquid.materialColor = model.materials[liquid.materialId].color2;
                     }
                 }
 
