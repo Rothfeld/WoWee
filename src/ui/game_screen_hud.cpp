@@ -532,9 +532,6 @@ void GameScreen::feedWorldMap(game::GameHandler& gameHandler,
         // FrameXML puts there can be seen. Handing the map over made the
         // interface responsible for a layer it cannot show, so the surface
         // that hides it has to draw them instead.
-        //
-        // The same two group colours the minimap uses, so a flag carrier is
-        // the same colour on both.
         {
             for (const auto& bp : gameHandler.getBgPlayerPositions()) {
                 // Packet coords are canonical: wowX north, wowY west.

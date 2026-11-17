@@ -259,8 +259,6 @@ private:
     void renderMinimapGossipPois(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapPings(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapPartyDots(const MinimapFrame& frame, game::GameHandler& gameHandler);
-    void renderMinimapBattlegroundPositions(const MinimapFrame& frame,
-                                            game::GameHandler& gameHandler);
     void renderMinimapCorpseMarker(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapResources(const MinimapFrame& frame,
                                const std::vector<std::shared_ptr<game::Entity>>& objects,

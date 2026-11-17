@@ -1008,51 +1008,6 @@ void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHan
     }
 }
 
-// Flag carriers and the other positions a battleground reports.
-void GameScreen::renderMinimapBattlegroundPositions(const MinimapFrame& frame, game::GameHandler& gameHandler) {
-    // BG flag carrier / important player positions (MSG_BATTLEGROUND_PLAYER_POSITIONS)
-    {
-        const auto& bgPositions = gameHandler.getBgPlayerPositions();
-        if (!bgPositions.empty()) {
-            for (const auto& bp : bgPositions) {
-                // Packet coords: wowX=canonical X (north), wowY=canonical Y (west)
-                float sx = 0.0f, sy = 0.0f;
-                if (!frame.projectCanonical(bp.wowX, bp.wowY, sx, sy)) continue;
-
-                ImU32 col = bgGroupColor(bp.group);
-
-                // Draw a flag-like diamond icon
-                const float r = 5.0f;
-                ImVec2 top  (sx,       sy - r);
-                ImVec2 right(sx + r,   sy    );
-                ImVec2 bot  (sx,       sy + r);
-                ImVec2 left (sx - r,   sy    );
-                frame.drawList->AddQuadFilled(top, right, bot, left, col);
-                frame.drawList->AddQuad(top, right, bot, left, IM_COL32(255, 255, 255, 180), 1.0f);
-
-                if (cursorNearBlip(sx, sy)) {
-                    // Show entity name if available, otherwise guid
-                    auto ent = gameHandler.getEntityManager().getEntity(bp.guid);
-                    if (ent) {
-                        std::string nm;
-                        if (ent->getType() == game::ObjectType::PLAYER) {
-                            auto pl = std::static_pointer_cast<game::Unit>(ent);
-                            nm = pl ? pl->getName() : "";
-                        }
-                        if (!nm.empty())
-                            ImGui::SetTooltip("Flag carrier: %s", nm.c_str());
-                        else
-                            ImGui::SetTooltip("Flag carrier");
-                    } else {
-                        ImGui::SetTooltip("Flag carrier");
-                    }
-                }
-            }
-        }
-    }
-
-}
-
 // Tracking is server-owned; learning a profession alone does not enable markers.
 void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityList& objects,
                                       game::GameHandler& gameHandler) {
@@ -1686,7 +1641,6 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     renderMinimapGossipPois(frame, gameHandler);
     renderMinimapPings(frame, gameHandler);
     renderMinimapPartyDots(frame, gameHandler);
-    renderMinimapBattlegroundPositions(frame, gameHandler);
     renderMinimapCorpseMarker(frame, gameHandler);
     renderMinimapPlayerArrow(frame, gameHandler);
     // Blocked by any window in front, and entirely when FrameXML draws the
