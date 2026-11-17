@@ -1057,10 +1057,6 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         const bool isHostile = unit->isHostile();
 
         const uint32_t creatureType = isPlayer ? 0 : gameHandler.getCreatureType(unit->getEntry());
-        // Non-combat pets have their own creature type. Their PLAYER_CONTROLLED
-        // flag and summoner also occur on combat pets, but companions show names
-        // without health plates even when friendly pet plates are enabled.
-        const bool isCompanion = creatureType == 12;
 
         // Legacy corpses retain plain names, governed by the usual name
         // settings and target/hover overrides, but never a health plate.
@@ -1579,11 +1575,15 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             && pointer.x <= std::max(nameX + textSize.x, barX + barW) + 2.0f
             && pointer.y >= nameY - 1.0f && pointer.y <= sy + barH + 2.0f;
         // Name color communicates reaction too: friendly players blue, enemies red.
+        // Every player-controlled unit takes the player colours: the original
+        // draws a player's Imp, Stoneskin Totem, Skeletal Warrior and Boar
+        // Spirit in the same blue as a friendly player
+        // (_experiments/20261117T165200Z.pair4_kits/original-summons.png),
+        // as it does companions.
         ImU32 nameColor;
         if (isCorpse && legacyPlates) {
             nameColor = IM_COL32(128, 128, 128, A(255));
-        } else if (isPlayer || (isCompanion &&
-                   (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0)) {
+        } else if (isPlayer || (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0) {
             nameColor = isHostile
                 ? IM_COL32(220, 80, 80, A(255))
                 : IM_COL32(128, 128, 255, A(255));
