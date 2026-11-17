@@ -1190,6 +1190,7 @@ public:
         return spellHandler_ ? spellHandler_->isGameObjectInteractionCasting() : false;
     }
     uint32_t getCurrentCastSpellId() const { return spellHandler_ ? spellHandler_->getCurrentCastSpellId() : 0; }
+    std::optional<std::string> getCastBarCaption() const { return spellHandler_ ? spellHandler_->getCastBarCaption() : std::nullopt; }
     uint32_t getAutoRepeatSpellId() const { return spellHandler_ ? spellHandler_->getAutoRepeatSpellId() : 0; }
     uint32_t getActiveActionSpellId() const { return spellHandler_ ? spellHandler_->getActiveActionSpellId() : 0; }
     float getCastProgress() const { return spellHandler_ ? spellHandler_->getCastProgress() : 0.0f; }

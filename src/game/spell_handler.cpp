@@ -4,6 +4,7 @@
 #include "game/protocol_constants.hpp"
 #include "game/current_action.hpp"
 #include "game/gather_spells.hpp"
+#include "game/game_object_lock.hpp"
 #include "game/spell_classification.hpp"
 #include "game/pet_action.hpp"
 #include "game/game_handler.hpp"
@@ -28,6 +29,7 @@
 #include "audio/ui_sound_manager.hpp"
 #include "audio/player_voice_manager.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -231,6 +233,79 @@ std::string gatherCastFailureMessage(GameHandler& owner, uint64_t goGuid,
         return std::string("Your ") + skill + " skill is too low for this node.";
     }
     return fallback;
+}
+
+// What the cast bar says when the player casts an OPEN_LOCK spell at a game
+// object: the object's own text, not the spell's name. The server sends it in
+// the object's query response; CMaNGOS TBC documents the opening text as used
+// "when lock specifies action 0 or 1" and the closing text "when lock
+// specifies action 2" (QueryHandler.cpp). The lock case is the one the spell
+// opens: LOCK_KEY_SKILL whose index is the spell's OPEN_LOCK misc value, else
+// the key-item case.
+//
+// Original 2.4.3, Opening (6477) at three objects with the same lock 93:
+// Scarlet Monastery Torch (97701) and Rizzle's Unguarded Plans (20805), both
+// with empty opening text, show an empty bar; Rizzle's Guarded Plans (179888)
+// show "Examining". UnitCastingInfo returned name "Opening", text "" and
+// "Examining" (_experiments/20261117T171500Z.pair0_go_ghost_pet/).
+//
+// nullopt: not an OPEN_LOCK cast at a locked object, or vanilla, whose query
+// response carries no such text; the bar then shows the spell name.
+std::optional<std::string> openLockCastBarCaption(pipeline::AssetManager* assets,
+                                                  const GameObjectQueryResponseData& info,
+                                                  uint32_t spellId) {
+    const uint32_t lockId = gameObjectLockId(&info);
+    if (lockId == 0 || info.extraStrings.empty()) return std::nullopt;
+    assert(info.extraStrings.size() == 3 && "TBC and WotLK send three strings before data[]");
+    assert(assets);
+    const auto* spellL = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+    assert(spellL);
+    const uint32_t effect0Field = spellL->field("Effect0");
+    const uint32_t misc0Field = spellL->field("EffectMiscValue0");
+    assert(effect0Field != 0xFFFFFFFF && misc0Field != 0xFFFFFFFF);
+    auto spellDbc = assets->loadDBC("Spell.dbc");
+    auto lockDbc = assets->loadDBC("Lock.dbc");
+    assert(spellDbc && spellDbc->isLoaded() && lockDbc && lockDbc->isLoaded());
+    assert(lockDbc->getFieldCount() >= 33);
+
+    const int32_t spellRow = spellDbc->findRecordById(spellId);
+    if (spellRow < 0) return std::nullopt;
+    constexpr uint32_t kSpellEffectOpenLock = 33;
+    std::optional<uint32_t> lockType;
+    for (uint32_t effect = 0; effect < 3 && !lockType; ++effect) {
+        if (spellDbc->getUInt32(spellRow, effect0Field + effect) == kSpellEffectOpenLock)
+            lockType = spellDbc->getUInt32(spellRow, misc0Field + effect);
+    }
+    if (!lockType) return std::nullopt;
+
+    const int32_t lockRow = lockDbc->findRecordById(lockId);
+    if (lockRow < 0) {
+        LOG_WARNING("Cast bar caption: lock ", lockId, " of object ", info.entry,
+                    " is not in Lock.dbc; showing the spell name");
+        return std::nullopt;
+    }
+    // Lock.dbc: Type[8] at 1, Index[8] at 9, Skill[8] at 17, Action[8] at 25.
+    constexpr uint32_t kLockKeyItem = 1;
+    constexpr uint32_t kLockKeySkill = 2;
+    std::optional<uint32_t> action;
+    for (uint32_t slot = 0; slot < 8 && !action; ++slot) {
+        if (lockDbc->getUInt32(lockRow, 1 + slot) == kLockKeySkill &&
+            lockDbc->getUInt32(lockRow, 9 + slot) == *lockType)
+            action = lockDbc->getUInt32(lockRow, 25 + slot);
+    }
+    for (uint32_t slot = 0; slot < 8 && !action; ++slot) {
+        if (lockDbc->getUInt32(lockRow, 1 + slot) == kLockKeyItem)
+            action = lockDbc->getUInt32(lockRow, 25 + slot);
+    }
+    if (!action) return std::nullopt;
+    // WotLK sends a single castBarCaption, then an unknown string.
+    if (!isPreWotlk()) return info.extraStrings[1];
+    if (*action == 0 || *action == 1) return info.extraStrings[1];
+    if (*action == 2) return info.extraStrings[2];
+    LOG_WARNING("Cast bar caption: lock ", lockId, " action ", *action,
+                " has no documented text; showing the spell name");
+    return std::nullopt;
 }
 
 // Map a (WotLK-normalized) SpellCastResult to a character speech response.
@@ -2173,6 +2248,17 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         currentCastSpellId_ = data.spellId;
         castTimeTotal_ = data.castTime / 1000.0f;
         castTimeRemaining_ = castTimeTotal_;
+        castBarCaption_.reset();
+        if (auto target = owner_.getEntityManager().getEntity(data.targetGuid);
+            target && target->getType() == ObjectType::GAMEOBJECT) {
+            const auto* info = owner_.getCachedGameObjectInfo(
+                std::static_pointer_cast<GameObject>(target)->getEntry());
+            if (info && info->hasData) {
+                castBarCaption_ = openLockCastBarCaption(
+                    owner_.services().assetManager, *info, data.spellId);
+            }
+        }
+        castBarCaptionSpellId_ = data.spellId;
 
         // Play precast sound - skip profession/tradeskill spells
         if (!owner_.isProfessionSpell(data.spellId)) {

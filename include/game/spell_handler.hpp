@@ -11,6 +11,7 @@
 #include <chrono>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -93,6 +94,14 @@ public:
     }
     [[nodiscard]] uint32_t getCurrentCastSpellId() const {
         return casting_ ? currentCastSpellId_ : 0;
+    }
+    // The text the player's cast bar shows instead of the spell name: a game
+    // object's opening/closing text for an OPEN_LOCK cast at it. nullopt
+    // means the spell name.
+    [[nodiscard]] std::optional<std::string> getCastBarCaption() const {
+        if (!casting_ || castIsChannel_ || castBarCaptionSpellId_ != currentCastSpellId_)
+            return std::nullopt;
+        return castBarCaption_;
     }
     [[nodiscard]] float getCastProgress() const {
         const float total = casting_ ? castTimeTotal_ : 0.0f;
@@ -467,6 +476,8 @@ private:
     bool casting_ = false;
     bool castIsChannel_ = false;
     uint32_t currentCastSpellId_ = 0;
+    std::optional<std::string> castBarCaption_;
+    uint32_t castBarCaptionSpellId_ = 0;
     uint32_t autoRepeatSpellId_ = 0;
     uint8_t autoRepeatCastCount_ = 0;
     // An on-next-swing ability between its SMSG_SPELL_START and the swing.

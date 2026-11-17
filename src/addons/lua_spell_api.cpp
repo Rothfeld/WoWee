@@ -525,10 +525,14 @@ static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
     // `name`. An empty string there is a bar that fills up saying nothing -
     // no way to tell a Fireball from a Frostbolt, or a cast from a channel.
     //
-    // The spell's own name, because that is what this is for every spell. It
-    // differs only for a trade skill, where the real client puts the item
-    // being made here, and this client has no such cast in flight to name.
-    lua_pushstring(L, name.empty() ? "Unknown" : name.c_str()); // text
+    // The spell's own name, except for an OPEN_LOCK cast at a game object,
+    // where it is the object's opening or closing text - empty for most. The
+    // original shows Opening at the Scarlet Monastery torch as name "Opening"
+    // and text "", and at Rizzle's Guarded Plans as text "Examining".
+    std::optional<std::string> caption;
+    if (uidStr == "player") caption = gh->getCastBarCaption();
+    if (caption) lua_pushstring(L, caption->c_str());           // text
+    else lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
     if (!iconPath.empty()) lua_pushstring(L, iconPath.c_str());
     else lua_pushstring(L, "Interface\\Icons\\INV_Misc_QuestionMark");  // texture
     lua_pushnumber(L, startTimeMs);                              // startTime (ms)

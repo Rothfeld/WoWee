@@ -1836,6 +1836,10 @@ struct GameObjectQueryResponseData {
     uint32_t displayId = 0;
     uint32_t data[24] = {};  // Type-specific data fields (e.g. data[0]=taxiPathId for MO_TRANSPORT)
     bool hasData = false;    // Whether data[] was parsed
+    // The strings between the names and data[] (none on vanilla): icon name,
+    // then on TBC the opening and closing texts, on WotLK castBarCaption and
+    // an unknown string. Rizzle's Guarded Plans (179888) send "Examining".
+    std::vector<std::string> extraStrings;
 
     [[nodiscard]] bool isValid() const { return entry != 0 && !name.empty(); }
 };

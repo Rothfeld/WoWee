@@ -243,7 +243,8 @@ bool parseGameObjectQueryBody(network::Packet& packet,
     packet.readString();
 
     // TBC and Wrath send icon, opening text and closing text before raw data.
-    for (int i = 0; i < extraStrings; ++i) packet.readString();
+    data.extraStrings.clear();
+    for (int i = 0; i < extraStrings; ++i) data.extraStrings.push_back(packet.readString());
 
     // Read 24 type-specific data fields
     size_t remaining = packet.getRemainingSize();
