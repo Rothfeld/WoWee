@@ -168,3 +168,50 @@ TEST_CASE("an entry with the high bit set is an item the server has not got",
     parsers.parseItemQueryResponse(packet, data);
     CHECK(data.name.empty());
 }
+
+// The TBC tail after the description, in the order CMaNGOS TBC writes it
+// (ItemHandler.cpp, HandleItemQuerySingleOpcode). Values from Tunic of
+// Assassination (28204): 292 armour, set 620, three sockets, durability 100.
+TEST_CASE("TBC item query: tail through Duration", "[item_query]") {
+    auto bytes = itemBytes(/*soundOverride=*/true);
+    Writer w;
+    w.bytes = bytes;
+    w.cstr("");                  // description
+    w.u32(0); w.u32(0); w.u32(0); w.u32(0);  // PageText, Language, PageMaterial, StartQuest
+    w.u32(0);                    // LockID
+    w.u32(8);                    // Material
+    w.u32(0);                    // Sheath
+    w.u32(0);                    // RandomProperty
+    w.u32(0);                    // RandomSuffix
+    w.u32(23);                   // Block
+    w.u32(620);                  // ItemSet
+    w.u32(100);                  // MaxDurability
+    w.u32(0); w.u32(0);          // Area, Map
+    w.u32(0);                    // BagFamily
+    w.u32(0);                    // TotemCategory
+    w.u32(2); w.u32(0);          // socket 1 red
+    w.u32(2); w.u32(0);          // socket 2 red
+    w.u32(8); w.u32(0);          // socket 3 blue
+    w.u32(2873);                 // socketBonus
+    w.u32(0);                    // GemProperties
+    w.u32(0xFFFFFFFFu);          // RequiredDisenchantSkill
+    w.f32(0.0f);                 // ArmorDamageModifier
+    w.u32(0);                    // Duration
+    wowee::network::Packet packet(0, w.bytes);
+
+    TbcPacketParsers parsers;
+    ItemQueryResponseData data;
+    REQUIRE(parsers.parseItemQueryResponse(packet, data));
+    checkItem(data);
+    CHECK(data.block == 23u);
+    CHECK(data.itemSetId == 620u);
+    CHECK(data.maxDurability == 100u);
+    CHECK(data.socketColor[0] == 2u);
+    CHECK(data.socketColor[1] == 2u);
+    CHECK(data.socketColor[2] == 8u);
+    CHECK(data.socketBonus == 2873u);
+    CHECK(data.requiredDisenchantSkill == -1);
+    REQUIRE(data.damages.size() == 1);
+    CHECK(data.damages[0].max == 18.0f);
+    CHECK(packet.getRemainingSize() == 0);
+}

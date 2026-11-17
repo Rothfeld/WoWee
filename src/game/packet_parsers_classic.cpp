@@ -1533,6 +1533,7 @@ bool parseItemQueryPreWotlk(network::Packet& packet, ItemQueryResponseData& data
         float dmgMin = packet.readFloat();
         float dmgMax = packet.readFloat();
         uint32_t damageType = packet.readUInt32();
+        if (dmgMax > 0.0f) data.damages.push_back({.min = dmgMin, .max = dmgMax, .school = damageType});
         if (!haveWeaponDamage && dmgMax > 0.0f) {
             // Prefer physical damage (type 0) when present.
             if (damageType == 0 || data.damageMax <= 0.0f) {
@@ -1563,20 +1564,19 @@ bool parseItemQueryPreWotlk(network::Packet& packet, ItemQueryResponseData& data
 
     // AmmoType + RangedModRange (2 fields, 8 bytes)
     if (packet.hasRemaining(8)) {
-        packet.readUInt32(); // AmmoType
+        data.ammoType = packet.readUInt32();
         packet.readFloat();  // RangedModRange
     }
 
-    // 2 item spells in Vanilla (3 fields each: SpellId, Trigger, Charges)
-    // Actually vanilla has 5 spells: SpellId, Trigger, Charges, Cooldown, Category, CatCooldown = 24 bytes each
+    // Five spells: SpellId, Trigger, Charges, Cooldown, Category, CatCooldown.
     for (int i = 0; i < 5; i++) {
         if (!packet.hasRemaining(24)) break;
         data.spells[i].spellId = packet.readUInt32();
         data.spells[i].spellTrigger = packet.readUInt32();
-        packet.readUInt32(); // SpellCharges
-        packet.readUInt32(); // SpellCooldown
-        packet.readUInt32(); // SpellCategory
-        packet.readUInt32(); // SpellCategoryCooldown
+        data.spells[i].charges = static_cast<int32_t>(packet.readUInt32());
+        data.spells[i].cooldownMs = static_cast<int32_t>(packet.readUInt32());
+        data.spells[i].category = packet.readUInt32();
+        data.spells[i].categoryCooldownMs = static_cast<int32_t>(packet.readUInt32());
     }
 
     // Bonding type
@@ -1593,6 +1593,43 @@ bool parseItemQueryPreWotlk(network::Packet& packet, ItemQueryResponseData& data
         packet.readUInt32(); // LanguageID
         data.pageMaterial = packet.readUInt32(); // PageMaterial
         data.startQuestId = packet.readUInt32(); // StartQuest
+    }
+
+    // The tail after StartQuest, in CMaNGOS's order: LockID, Material,
+    // Sheath, RandomProperty, [RandomSuffix], Block, ItemSet, MaxDurability,
+    // Area, Map, BagFamily, then TBC's TotemCategory, three socket
+    // colour/content pairs, socketBonus, GemProperties,
+    // RequiredDisenchantSkill, ArmorDamageModifier and Duration. TBC was
+    // left unread here, so no TBC item had a block value, durability,
+    // sockets or an item set.
+    if (hasSoundOverrideSubclass) {
+        constexpr size_t kTbcTail = 4 * 12 + 6 * 4 + 4 * 5;
+        if (!packet.hasRemaining(kTbcTail)) {
+            LOG_ERROR(tag, " SMSG_ITEM_QUERY_SINGLE_RESPONSE: tail is ", packet.getRemainingSize(),
+                      " bytes, expected ", kTbcTail, " (entry=", data.entry, ")");
+        } else {
+            data.lockId = packet.readUInt32();
+            data.material = static_cast<int32_t>(packet.readUInt32());
+            data.sheath = packet.readUInt32();
+            data.randomProperty = static_cast<int32_t>(packet.readUInt32());
+            data.randomSuffix = packet.readUInt32();
+            data.block = packet.readUInt32();
+            data.itemSetId = packet.readUInt32();
+            data.maxDurability = packet.readUInt32();
+            data.area = packet.readUInt32();
+            data.map = packet.readUInt32();
+            data.bagFamily = packet.readUInt32();
+            data.totemCategory = packet.readUInt32();
+            for (size_t i = 0; i < 3; ++i) {
+                data.socketColor[i] = packet.readUInt32();
+                data.socketContent[i] = packet.readUInt32();
+            }
+            data.socketBonus = packet.readUInt32();
+            data.gemProperties = packet.readUInt32();
+            data.requiredDisenchantSkill = static_cast<int32_t>(packet.readUInt32());
+            data.armorDamageModifier = packet.readFloat();
+            data.durationSec = packet.readUInt32();
+        }
     }
 
     data.valid = !data.name.empty();

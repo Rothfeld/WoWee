@@ -1934,6 +1934,10 @@ struct ItemQueryResponseData {
     struct ItemSpell {
         uint32_t spellId = 0;
         uint32_t spellTrigger = 0; // 0=Use, 1=Equip, 2=ChanceOnHit, 5=Learn
+        int32_t charges = 0;       // negative: consumed with the last charge
+        int32_t cooldownMs = -1;   // -1: the spell's own
+        uint32_t category = 0;
+        int32_t categoryCooldownMs = -1;
     };
     std::array<ItemSpell, 5> spells{};
     uint32_t bindType = 0;      // 0=none, 1=BoP, 2=BoE, 3=BoU, 4=BoQ
@@ -2014,6 +2018,29 @@ struct ItemQueryResponseData {
     uint32_t allowableRace  = 0;      // Race bitmask (0 = all races)
     uint32_t requiredReputationFaction = 0;  // Faction.dbc ID (0 = none)
     uint32_t requiredReputationRank    = 0;  // 0=Hated..8=Exalted
+    uint32_t requiredSpell = 0;
+    uint32_t requiredHonorRank = 0;
+    uint32_t requiredCityRank = 0;
+    /// Every damage entry the template sends with a non-zero maximum, in wire
+    /// order; damageMin/damageMax above are the weapon's main entry.
+    struct Damage { float min = 0.0f; float max = 0.0f; uint32_t school = 0; };
+    std::vector<Damage> damages;
+    uint32_t ammoType = 0;
+    // The pre-WotLK tail after StartQuest (CMaNGOS ItemHandler.cpp
+    // HandleItemQuerySingleOpcode). Classic stops after BagFamily; TBC goes on
+    // through Duration.
+    uint32_t lockId = 0;
+    int32_t material = 0;
+    uint32_t sheath = 0;
+    int32_t randomProperty = 0;
+    uint32_t randomSuffix = 0;
+    uint32_t block = 0;
+    uint32_t maxDurability = 0;
+    uint32_t area = 0;
+    uint32_t map = 0;
+    int32_t requiredDisenchantSkill = -1;
+    float armorDamageModifier = 0.0f;
+    uint32_t durationSec = 0;
     bool valid = false;
 };
 

@@ -80,9 +80,9 @@ bool ItemQueryResponseData::readCommonRequirements(network::Packet& packet) {
     requiredLevel = packet.readUInt32();
     requiredSkill = packet.readUInt32();
     requiredSkillRank = packet.readUInt32();
-    packet.readUInt32();  // RequiredSpell
-    packet.readUInt32();  // RequiredHonorRank
-    packet.readUInt32();  // RequiredCityRank
+    requiredSpell = packet.readUInt32();
+    requiredHonorRank = packet.readUInt32();
+    requiredCityRank = packet.readUInt32();
     requiredReputationFaction = packet.readUInt32();
     requiredReputationRank = packet.readUInt32();
     maxCount = static_cast<int32_t>(packet.readUInt32());  // 1 = Unique
