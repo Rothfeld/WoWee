@@ -33,6 +33,9 @@ uint32_t spellReagentCount(GameHandler& owner, uint32_t spellId);
 /// Hearthstone, Mining Pick and Worn Dagger.
 bool isConsumableAction(GameHandler& owner, const ActionBarSlot& slot);
 
+/// Whether the global cooldown covers this spell: StartRecoveryCategory 133.
+bool onGlobalCooldown(GameHandler& owner, uint32_t spellId);
+
 /// The same answer for an action bar slot: a spell by spellUsability, an item
 /// by being carried (equipped counts) and by its use spell.
 SpellUsability actionUsability(GameHandler& owner, const ActionBarSlot& slot);

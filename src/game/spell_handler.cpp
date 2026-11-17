@@ -1239,6 +1239,12 @@ uint32_t actionItemCount(GameHandler& owner, uint32_t itemId) {
     return count;
 }
 
+bool onGlobalCooldown(GameHandler& owner, uint32_t spellId) {
+    const auto* entry = owner.getSpellNameEntry(spellId);
+    constexpr uint32_t kGlobalCooldownCategory = 133;
+    return entry && entry->startRecoveryCategory == kGlobalCooldownCategory;
+}
+
 uint32_t spellReagentCount(GameHandler& owner, uint32_t spellId) {
     const auto* entry = owner.getSpellNameEntry(spellId);
     if (!entry) return 0;
@@ -1811,8 +1817,16 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     const auto spellInfo = owner_.spellNameCacheRef().find(spellId);
     const bool nextSwing = spellInfo != owner_.spellNameCacheRef().end() &&
                            isOnNextSwingSpell(spellInfo->second.attr);
-    if (!nextSwing && !isGCDActive()) {
-        gcdTotal_ = 1.5f;
+    // Spell.dbc StartRecoveryCategory 133 is the global cooldown and
+    // StartRecoveryTime its length: 1 s for rogue abilities, 1.5 s for
+    // Fireball. Stealth, Vanish and Attack start none (native 2.4.3 sweeps
+    // Sinister Strike's GCD over Eviscerate but not over Stealth or Vanish).
+    constexpr uint32_t kGlobalCooldownCategory = 133;
+    const bool startsGcd = spellInfo != owner_.spellNameCacheRef().end() &&
+                           spellInfo->second.startRecoveryCategory == kGlobalCooldownCategory &&
+                           spellInfo->second.startRecoveryMs > 0;
+    if (!nextSwing && startsGcd && !isGCDActive()) {
+        gcdTotal_ = spellInfo->second.startRecoveryMs / 1000.0f;
         gcdStartedAt_ = std::chrono::steady_clock::now();
         optimisticGcdSpellId_ = spellId;
         optimisticGcdCastCount_ = castCount_;

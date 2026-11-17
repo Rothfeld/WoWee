@@ -869,7 +869,8 @@ static int lua_GetSpellCooldown(lua_State* L) {
     float cd = gh->getSpellCooldown(spellId);
     // Also check GCD - if spell has no individual cooldown but GCD is active,
     // return the GCD timing (this is how WoW handles it)
-    float gcdRem = gh->getGCDRemaining();
+    // Only spells the global cooldown covers (StartRecoveryCategory 133).
+    float gcdRem = game::onGlobalCooldown(*gh, spellId) ? gh->getGCDRemaining() : 0.0f;
     float gcdTotal = gh->getGCDTotal();
 
     // WoW returns (start, duration, enabled) where remaining = start + duration - GetTime()

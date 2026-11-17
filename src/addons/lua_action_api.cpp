@@ -380,7 +380,8 @@ static int lua_GetActionCooldown(lua_State* L) {
         lua_pushnumber(L, start);
         lua_pushnumber(L, action.cooldownTotal);
         lua_pushnumber(L, 1);
-    } else if (action.type == game::ActionBarSlot::SPELL && gh->isGCDActive()) {
+    } else if (action.type == game::ActionBarSlot::SPELL && gh->isGCDActive() &&
+               game::onGlobalCooldown(*gh, action.id)) {
         // No individual cooldown but GCD is active - show GCD sweep
         float gcdRem = gh->getGCDRemaining();
         float gcdTotal = gh->getGCDTotal();
