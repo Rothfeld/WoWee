@@ -1,6 +1,7 @@
 #include <catch_amalgamated.hpp>
 #include "game/tbc_cast_results.hpp"
 #include "game/cast_result_text.hpp"
+#include "game/inventory_result_text.hpp"
 #include <string_view>
 
 using namespace wowee::game;
@@ -55,4 +56,23 @@ TEST_CASE("GlobalStrings patterns fill like Lua format", "[spells]") {
     CHECK(globalStringHasConversions("Missing reagent: %s"));
     CHECK_FALSE(globalStringHasConversions("You can't do that yet"));
     CHECK_FALSE(globalStringHasConversions("100%% sure"));
+}
+
+TEST_CASE("Inventory and mail results name their GlobalStrings line", "[tbc][inventory]") {
+    // A second unique item taken out of mail: MAIL_ERR_EQUIP_ERROR with
+    // EQUIP_ERR_CANT_CARRY_MORE_OF_THIS reads "You can't carry any more of
+    // those items." on the original.
+    CHECK(std::string_view(inventoryResultGlobalName(17)) == "ERR_ITEM_MAX_COUNT");
+    CHECK(std::string_view(inventoryResultGlobalName(1)) == "ERR_CANT_EQUIP_LEVEL_I");
+    CHECK(std::string_view(inventoryResultGlobalName(14)) == "ERR_2HSKILLNOTFOUND");
+    CHECK(std::string_view(inventoryResultGlobalName(80)) == "ERR_CANT_EQUIP_RATING");
+    CHECK(inventoryResultGlobalName(0) == nullptr);
+    CHECK(inventoryResultGlobalName(59) == nullptr);
+    CHECK(inventoryResultGlobalName(81) == nullptr);
+    CHECK(inventoryResultGlobalName(200) == nullptr);
+    CHECK(std::string_view(mailResultGlobalName(2)) == "ERR_MAIL_TO_SELF");
+    CHECK(std::string_view(mailResultGlobalName(4)) == "ERR_MAIL_TARGET_NOT_FOUND");
+    CHECK(mailResultGlobalName(5) == nullptr);
+    CHECK(std::string_view(formatGlobalString("You must reach level %d to use that item.", {"70"})) ==
+          "You must reach level 70 to use that item.");
 }

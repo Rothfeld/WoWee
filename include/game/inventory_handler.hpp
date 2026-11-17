@@ -354,7 +354,6 @@ public:
     /// client printed it bare - "Failed to send mail (error 19)" says nothing
     /// about what to do differently, and 19 is the one a player can actually
     /// act on: something on the letter cannot be mailed.
-    static const char* mailResultText(uint32_t error);
 
     /// Put paper in the compose frame, so its Send button can be enabled.
     void selectDefaultStationery();

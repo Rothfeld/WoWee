@@ -693,6 +693,17 @@ channel shows nothing. Gotcha: the parameterised lines need the `Spell`
 `SpellShapeshiftForm` layouts in the installed `dbc_layouts.json`.
 Evidence: `_experiments/20261117T182446Z.pair7_cast_errors/` in the workspace.
 
+### Inventory and mail results
+
+SMSG_INVENTORY_CHANGE_FAILURE and SMSG_SEND_MAIL_RESULT refusals show the
+GlobalStrings line named in `include/game/inventory_result_text.hpp`, on the
+error line only. A mail refusal of MAIL_ERR_EQUIP_ERROR carries an
+InventoryResult: a second unique item taken from mail reads "You can't carry
+any more of those items." (ERR_ITEM_MAX_COUNT). A sent letter shows
+ERR_MAIL_SENT on the info line; taking an item or money shows nothing. TBC
+MailFrame hears MAIL_FAILED, without an argument, after every mail result,
+successes included.
+
 ### TBC combat feedback
 
 Outgoing melee damage uses white numbers; ability damage uses yellow numbers.

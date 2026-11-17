@@ -1,4 +1,6 @@
 #include "game/inventory_handler.hpp"
+#include "game/inventory_result_text.hpp"
+#include "game/cast_result_text.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "game/spell_classification.hpp"
 #include "game/item_text.hpp"
@@ -600,125 +602,20 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 requiredLevel = packet.readUInt32();
         }
 
-        // Level requirement has its own formatting
-        if (error == 1) {
-            char levelBuf[64];
-            if (requiredLevel > 0) {
-                std::snprintf(levelBuf, sizeof(levelBuf),
-                              "You must reach level %u to use that item.", requiredLevel);
+        // The interface's own line, on the error line only (see
+        // inventory_result_text.hpp). ERR_CANT_EQUIP_LEVEL_I takes the level.
+        const char* name = inventoryResultGlobalName(error);
+        if (!name) {
+            LOG_ERROR("SMSG_INVENTORY_CHANGE_FAILURE: no GlobalStrings line for result ", (int)error);
+        } else {
+            std::string msg = owner_.globalString(name);
+            if (error == 1) msg = formatGlobalString(msg, {std::to_string(requiredLevel)});
+            if (msg.empty()) {
+                LOG_ERROR("SMSG_INVENTORY_CHANGE_FAILURE: GlobalStrings has no usable ", name);
             } else {
-                std::snprintf(levelBuf, sizeof(levelBuf),
-                              "You must reach a higher level to use that item.");
+                owner_.addUIError(msg);
             }
-            owner_.addUIError(levelBuf);
-            owner_.addSystemChatMessage(levelBuf);
-            owner_.playErrorSpeech(audio::PlayerErrorSpeech::CANT_EQUIP_LEVEL);
-            return;
         }
-
-        const char* errMsg = nullptr;
-        switch (error) {
-                    // 1 and 2 name a requirement rather than a mistake, and
-                    // both were missing: a recipe above your profession skill
-                    // answered "Inventory error (2)".
-                    case 1:  errMsg = "You must reach a higher level to use that."; break;
-                    case 2:  errMsg = "You aren't skilled enough to use that."; break;
-                    case 3:  errMsg = "That item doesn't go in that slot."; break;
-                    case 4:  errMsg = "That bag is full."; break;
-                    case 5:  errMsg = "Can't put bags in bags."; break;
-                    case 6:  errMsg = "Can't trade equipped bags."; break;
-                    case 7:  errMsg = "That slot only holds ammo."; break;
-                    case 8:  errMsg = "You can't use that item."; break;
-                    case 9:  errMsg = "No equipment slot available."; break;
-                    case 10: errMsg = "You can never use that item."; break;
-                    case 11: errMsg = "You can never use that item."; break;
-                    case 12: errMsg = "No equipment slot available."; break;
-                    case 13: errMsg = "Can't equip with a two-handed weapon."; break;
-                    case 14: errMsg = "Can't dual-wield."; break;
-                    case 15: errMsg = "That item doesn't go in that bag."; break;
-                    case 16: errMsg = "That item doesn't go in that bag."; break;
-                    case 17: errMsg = "You can't carry any more of those."; break;
-                    case 18: errMsg = "No equipment slot available."; break;
-                    case 19: errMsg = "Can't stack those items."; break;
-                    case 20: errMsg = "That item can't be equipped."; break;
-                    case 21: errMsg = "Can't swap items."; break;
-                    case 22: errMsg = "That slot is empty."; break;
-                    case 23: errMsg = "Item not found."; break;
-                    case 24: errMsg = "Can't drop soulbound items."; break;
-                    case 25: errMsg = "Out of range."; break;
-                    case 26: errMsg = "Need to split more than 1."; break;
-                    case 27: errMsg = "Split failed."; break;
-                    case 28: errMsg = "Not enough reagents."; break;
-                    case 29: errMsg = "Not enough money."; break;
-                    case 30: errMsg = "Not a bag."; break;
-                    case 31: errMsg = "Can't destroy non-empty bag."; break;
-                    case 32: errMsg = "You don't own that item."; break;
-                    case 33: errMsg = "You can only have one quiver."; break;
-                    case 34: errMsg = "No free bank slots."; break;
-                    case 35: errMsg = "No bank here."; break;
-                    case 36: errMsg = "Item is locked."; break;
-                    case 37: errMsg = "You are stunned."; break;
-                    case 38: errMsg = "You are dead."; break;
-                    case 39: errMsg = "Can't do that right now."; break;
-                    case 40: errMsg = "Internal bag error."; break;
-                    case 41: errMsg = "You can only equip one bolt."; break;
-                    case 42: errMsg = "You can only equip one ammo pouch."; break;
-                    case 43: errMsg = "Stackable items can't be wrapped."; break;
-                    case 44: errMsg = "Equipped items can't be wrapped."; break;
-                    case 45: errMsg = "Wrapped items can't be wrapped."; break;
-                    case 46: errMsg = "Soulbound items can't be wrapped."; break;
-                    case 47: errMsg = "Unique items can't be wrapped."; break;
-                    case 48: errMsg = "Bags can't be wrapped."; break;
-                    case 49: errMsg = "Loot is gone."; break;
-                    case 50: errMsg = "Inventory is full."; break;
-                    case 51: errMsg = "Bank is full."; break;
-                    case 52: errMsg = "That item is sold out."; break;
-                    // The server has several codes for one condition - four
-                    // separate bag-full values, two for item-not-found - so
-                    // these repeat a message rather than inventing a new one.
-                    case 53: errMsg = "That bag is full."; break;
-                    case 54: errMsg = "Item not found."; break;
-                    case 55: errMsg = "Can't stack those items."; break;
-                    case 56: errMsg = "That bag is full."; break;
-                    case 57: errMsg = "That item is sold out."; break;
-                    case 58: errMsg = "That object is busy."; break;
-                    case 60: errMsg = "Can't do that in combat."; break;
-                    case 61: errMsg = "Can't do that while disarmed."; break;
-                    case 62: errMsg = "That bag is full."; break;
-                    case 63: errMsg = "Requires a higher rank."; break;
-                    case 64: errMsg = "Requires higher reputation."; break;
-                    case 65: errMsg = "You can't carry any more special bags."; break;
-                    case 66: errMsg = "You can't loot that now."; break;
-                    case 67: errMsg = "That item is unique-equipped."; break;
-                    case 68: errMsg = "You are missing required items."; break;
-                    case 69: errMsg = "Not enough honor points."; break;
-                    case 70: errMsg = "Not enough arena points."; break;
-                    case 71: errMsg = "You can't carry any more of those."; break;
-                    case 72: errMsg = "Soulbound items can't be mailed."; break;
-                    case 73: errMsg = "Can't split a stack while prospecting."; break;
-                    case 75: errMsg = "You can't equip any more of those."; break;
-                    case 76: errMsg = "That item is unique-equipped."; break;
-                    case 77: errMsg = "Too much gold."; break;
-                    case 78: errMsg = "Can't do that during arena match."; break;
-                    case 79: errMsg = "You can't trade that."; break;
-                    case 80: errMsg = "Requires a personal arena rating."; break;
-                    case 82: errMsg = "That belongs to another character."; break;
-                    case 84: errMsg = "You can't carry any more of that kind."; break;
-                    case 85: errMsg = "You can't socket any more of that kind."; break;
-                    case 86: errMsg = "That item's level is too high."; break;
-                    case 87: errMsg = "Requires a higher level."; break;
-                    case 88: errMsg = "Requires the right talent."; break;
-                    case 89: errMsg = "You can't equip any more of that kind."; break;
-                    // 59 is NONE and 81 asks for a bind confirmation rather
-                    // than reporting a failure. Neither is an error to show.
-                    default: break;
-                }
-        std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
-        if (error == 50 && currentLoot_.lootGuid != 0) {
-            msg = "Cannot loot item: Inventory is full.";
-        }
-        owner_.addUIError(msg);
-        owner_.addSystemChatMessage(msg);
         if (auto* ac = owner_.services().audioCoordinator) {
             if (auto* sfx = ac->getUiSoundManager())
                 sfx->playError();
@@ -727,6 +624,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         // Character speech response for errors with a matching voice line
         using audio::PlayerErrorSpeech;
         switch (error) {
+            case 1:  owner_.playErrorSpeech(PlayerErrorSpeech::CANT_EQUIP_LEVEL); break;
             case 4:  owner_.playErrorSpeech(PlayerErrorSpeech::BAG_FULL); break;
             case 7:  owner_.playErrorSpeech(PlayerErrorSpeech::AMMO_ONLY); break;
             case 8:  owner_.playErrorSpeech(PlayerErrorSpeech::CANT_USE_ITEM); break;
@@ -3130,26 +3028,6 @@ void InventoryHandler::refreshMailList() {
     owner_.getSocket()->send(packet);
 }
 
-const char* InventoryHandler::mailResultText(uint32_t error) {
-    // MailResponseResult, as the server sends it.
-    switch (error) {
-        case 1:  return "Those items cannot go in your bags.";
-        case 2:  return "You cannot send mail to yourself.";
-        case 3:  return "You do not have enough money.";
-        case 4:  return "No player by that name.";
-        case 5:  return "You cannot send mail to the other faction.";
-        case 6:  return "The server refused the letter.";
-        case 14: return "Trial accounts cannot send mail.";
-        case 15: return "That player's mailbox is full.";
-        case 16: return "A wrapped item cannot be sent cash on delivery.";
-        case 17: return "Your mail and chat are suspended.";
-        case 18: return "Too many items attached.";
-        case 19: return "One of the attached items cannot be mailed.";
-        case 21: return "One of the attached items has expired.";
-        default: return nullptr;
-    }
-}
-
 void InventoryHandler::refuseSend(const std::string& reason, const char* logLine) {
     // The compose frame disables its Send button the moment it is pressed and
     // re-enables it only when it hears how the send went. A refusal on this
@@ -3427,76 +3305,71 @@ void InventoryHandler::handleSendMailResult(network::Packet& packet) {
     uint32_t mailId = packet.readUInt32();
     uint32_t action = packet.readUInt32();
     uint32_t error  = packet.readUInt32();
-    // WotLK MailResponseType values from SharedDefines.h.
+    // CMaNGOS TBC Player::SendMailResult: an equip error follows
+    // MAIL_ERR_EQUIP_ERROR; a taken item's guid and count follow success.
+    constexpr uint32_t MAIL_ERR_EQUIP_ERROR = 1;
+    uint32_t equipError = 0;
+    if (error == MAIL_ERR_EQUIP_ERROR && packet.hasRemaining(4)) equipError = packet.readUInt32();
+    packet.skipAll();
+    // MailResponseType values from SharedDefines.h.
     constexpr uint32_t MAIL_SEND = 0;
     constexpr uint32_t MAIL_MONEY_TAKEN = 1;
     constexpr uint32_t MAIL_ITEM_TAKEN = 2;
     constexpr uint32_t MAIL_RETURNED_TO_SENDER = 3;
     constexpr uint32_t MAIL_DELETED = 4;
-    constexpr uint32_t MAIL_MADE_PERMANENT = 5;
 
     auto mailIt = std::find_if(mailInbox_.begin(), mailInbox_.end(),
         [mailId](const MailMessage& mail) { return mail.messageId == mailId; });
 
-    if (action == MAIL_SEND) {
-        if (error == 0) {
-            owner_.addSystemChatMessage("Mail sent.");
-            clearMailAttachments();
-            // The frame stays where it is - WoW resets its fields and leaves it
-            // open. This used to close this client's own compose window here,
-            // and that flag now means "the interface's send tab is showing",
-            // which is what decides whether clicking an item in a bag attaches
-            // it. Clearing it made the first letter of a session the last one
-            // that could have anything attached to it.
-            // The send frame waits on these before it will clear its fields and
-            // re-enable the Send button. Without them a mail went out and the
-            // frame sat there as though it had not.
-            if (owner_.addonEventCallbackRef()) {
-                owner_.addonEventCallbackRef()("MAIL_SEND_SUCCESS", {});
-                owner_.addonEventCallbackRef()("MAIL_SUCCESS", {});
-            }
+    // Original 2.4.3 (pair 7): no chat line for any result. A sent letter
+    // shows ERR_MAIL_SENT on the info line; a refusal shows its line on the
+    // error line - a second unique item taken from mail reads
+    // ERR_ITEM_MAX_COUNT. MailFrame hears MAIL_SEND_SUCCESS after a sent
+    // letter, and MAIL_FAILED (no argument) after every result, successes
+    // included, which is what re-enables its Send button.
+    const bool tbc = isPreWotlk() && !isClassicLikeExpansion();
+    if (error != 0) {
+        const char* name = error == MAIL_ERR_EQUIP_ERROR ? inventoryResultGlobalName(equipError)
+                                                         : mailResultGlobalName(error);
+        const std::string text = name ? owner_.globalString(name) : std::string{};
+        if (text.empty()) {
+            LOG_ERROR("SMSG_SEND_MAIL_RESULT: action ", action, " error ", error, " equipError ", equipError,
+                      ": no GlobalStrings line", name ? std::string(" ") + name : std::string{});
         } else {
-            const char* why = mailResultText(error);
-            owner_.addSystemChatMessage(
-                why ? std::string("Mail not sent: ") + why
-                    : "Failed to send mail (error " + std::to_string(error) + ").");
-            // Carries the error so the frame can say which refusal it was.
-            if (owner_.addonEventCallbackRef()) {
-                owner_.addonEventCallbackRef()("MAIL_FAILED", {std::to_string(error)});
-            }
+            owner_.addUIError(text);
         }
+    } else if (action == MAIL_SEND) {
+        clearMailAttachments();
+        // The frame stays where it is - WoW resets its fields and leaves it
+        // open. This used to close this client's own compose window here,
+        // and that flag now means "the interface's send tab is showing",
+        // which is what decides whether clicking an item in a bag attaches
+        // it. Clearing it made the first letter of a session the last one
+        // that could have anything attached to it.
+        if (const std::string sent = owner_.globalString("ERR_MAIL_SENT"); !sent.empty())
+            owner_.addUIInfoMessage(sent);
+        else
+            LOG_ERROR("SMSG_SEND_MAIL_RESULT: GlobalStrings has no ERR_MAIL_SENT");
+        owner_.fireAddonEvent("MAIL_SEND_SUCCESS");
+        // WotLK's MailFrame listens for this as well; not compared with a
+        // WotLK client.
+        if (!tbc) owner_.fireAddonEvent("MAIL_SUCCESS");
     } else if (action == MAIL_ITEM_TAKEN) {
-        if (error == 0) {
-            owner_.addSystemChatMessage("Item taken from mail.");
-            if (owner_.addonEventCallbackRef()) fireBagUpdates();
-        } else {
-            owner_.addSystemChatMessage("Failed to take item (error " + std::to_string(error) + ").");
-        }
+        if (owner_.addonEventCallbackRef()) fireBagUpdates();
     } else if (action == MAIL_MONEY_TAKEN) {
-        if (error == 0) {
-            if (mailIt != mailInbox_.end()) mailIt->money = 0;
-            owner_.addSystemChatMessage("Money taken from mail.");
-            if (owner_.addonEventCallbackRef()) {
-                owner_.addonEventCallbackRef()("PLAYER_MONEY", {});
-                owner_.addonEventCallbackRef()("MAIL_INBOX_UPDATE", {});
-            }
-        } else {
-            owner_.addSystemChatMessage("Failed to take money (error " + std::to_string(error) + ").");
-        }
+        if (mailIt != mailInbox_.end()) mailIt->money = 0;
+        owner_.fireAddonEvent("PLAYER_MONEY");
+        owner_.fireAddonEvent("MAIL_INBOX_UPDATE");
     } else if (action == MAIL_DELETED || action == MAIL_RETURNED_TO_SENDER) {
-        if (error == 0) {
-            owner_.addSystemChatMessage(action == MAIL_DELETED ? "Mail deleted." : "Mail returned.");
-            if (mailIt != mailInbox_.end()) {
-                const int erasedIndex = static_cast<int>(std::distance(mailInbox_.begin(), mailIt));
-                mailInbox_.erase(mailIt);
-                if (selectedMailIndex_ == erasedIndex) selectedMailIndex_ = -1;
-                else if (selectedMailIndex_ > erasedIndex) --selectedMailIndex_;
-            }
-            if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("MAIL_INBOX_UPDATE", {});
+        if (mailIt != mailInbox_.end()) {
+            const int erasedIndex = static_cast<int>(std::distance(mailInbox_.begin(), mailIt));
+            mailInbox_.erase(mailIt);
+            if (selectedMailIndex_ == erasedIndex) selectedMailIndex_ = -1;
+            else if (selectedMailIndex_ > erasedIndex) --selectedMailIndex_;
         }
-    } else if (action == MAIL_MADE_PERMANENT && error == 0) {
-        owner_.addSystemChatMessage("Mail text copied.");
+        owner_.fireAddonEvent("MAIL_INBOX_UPDATE");
     }
+    if (tbc || error != 0) owner_.fireAddonEvent("MAIL_FAILED");
     refreshMailList();
 }
 
