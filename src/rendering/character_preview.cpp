@@ -498,6 +498,15 @@ void CharacterPreview::destroyFBO() {
     VkDevice device = vkCtx_->getDevice();
     VmaAllocator allocator = vkCtx_->getAllocator();
 
+    // Frames still in flight may sample this target and use these buffers and
+    // descriptors. Freeing them under the GPU lost the device (13:13:52, a
+    // preview destroyed when an addon model frame was unbound). Previews are
+    // torn down rarely, so a full wait is cheap enough.
+    if (renderTarget_ || imguiTextureId_ || previewDescPool_) {
+        const VkResult idle = vkDeviceWaitIdle(device);
+        if (idle != VK_SUCCESS) LOG_ERROR("CharacterPreview: vkDeviceWaitIdle failed: ", static_cast<int>(idle));
+    }
+
     if (imguiTextureId_) {
         removeImGuiTexture(imguiTextureId_);
         imguiTextureId_ = VK_NULL_HANDLE;

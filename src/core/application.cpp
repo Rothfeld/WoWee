@@ -4956,7 +4956,14 @@ void Application::render() {
                         }
                         frame->externalTexture = shown ? slot->textureId() : 0;
                     }
-                    std::erase_if(unitModels_, [&](const auto& entry) { return !live.contains(entry.first); });
+                    // Views are kept for the session, like the named passes'
+                    // views: destroying one while its model loads are in
+                    // flight crashed (SIGSEGV 13:21:30 after ClearTarget). A
+                    // frame that is unbound or hidden only stops showing it.
+                    for (const auto& [id, view] : unitModels_) {
+                        if (live.contains(id)) continue;
+                        if (ui::Widget* idle = widgets.get(id)) idle->externalTexture = 0;
+                    }
                 }
 
             });
