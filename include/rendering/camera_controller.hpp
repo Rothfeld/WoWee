@@ -30,20 +30,43 @@ public:
     [[nodiscard]] float getMouseSensitivity() const { return mouseSensitivity; }
     void setInvertMouse(bool invert) { invertMouse = invert; }
     [[nodiscard]] bool isInvertMouse() const { return invertMouse; }
-    /// How far back the camera may be pulled, as a multiple of the original
-    /// client's own limit.
-    ///
-    /// Max Camera Distance, as a multiple of the 22 yards the original client
-    /// gives. The schema's cameramaxdistance row counts the yards themselves
-    /// and kClientCVars scales cameraDistanceMaxFactor - the CVar the game's
-    /// own slider wrote, before that page was retired - onto it. Before both
-    /// there was an extended-zoom checkbox of this client's own, a switch
-    /// between two constants where this is every distance between them.
-    void setMaxDistanceFactor(float factor) {
-        maxDistanceFactor_ = std::clamp(factor, 1.0f, kMaxDistanceFactorLimit);
+    /// How far back the camera may be pulled: the original client's
+    /// cameraDistanceMax times cameraDistanceMaxFactor, never past
+    /// kDistanceCeiling. Defaults are what GetCVar answers on build 8606 with
+    /// neither CVar set: 15 and 1. Lowering either does not pull the camera
+    /// in; the next zoom does, which is when the original applies it too.
+    /// Evidence: _experiments/20261117T202346.492175Z.camera_max_distance.
+    void setDistanceMax(float yards) {
+        assert(yards >= 0.0f && yards <= kDistanceCeiling);
+        distanceMax_ = yards;
     }
-    [[nodiscard]] float maxDistanceFactor() const { return maxDistanceFactor_; }
-    [[nodiscard]] bool isExtendedZoom() const { return extendedZoom_; }
+    void setDistanceMaxFactor(float factor) {
+        assert(factor >= 0.0f);
+        distanceMaxFactor_ = factor;
+    }
+    [[nodiscard]] float maxZoomDistance() const {
+        return std::min(distanceMax_ * distanceMaxFactor_, kDistanceCeiling);
+    }
+    /// cameraDistanceMoveSpeed: yards a second a zoom travels (default 8.33).
+    void setDistanceMoveSpeed(float yardsPerSecond) {
+        assert(yardsPerSecond > 0.0f);
+        distanceMoveSpeed_ = yardsPerSecond;
+    }
+    /// Zoom distance before collision: where the wheel has taken the camera.
+    [[nodiscard]] float zoomDistance() const { return currentDistance; }
+    /// The geometry limit after collision recovery; see kCollisionEaseSeconds.
+    /// obstruction is where geometry stops the camera this frame, or nullopt.
+    float easedCollisionLimit(std::optional<float> obstruction, float deltaTime);
+    /// The original's cameraDistanceMax accepts 0 to 50 and SetCVar leaves
+    /// the old value for anything else; a product of the two CVars past 50
+    /// (20 x 3, 30 x 2, 50 x 2) stopped the camera at 50 yards.
+    static constexpr float kDistanceCeiling = 50.0f;
+    /// Collision recovery. Geometry between pivot and camera pulls the camera
+    /// in on the frame it appears; once it clears, the camera eases back to
+    /// the zoom distance over this many seconds along half a cosine, whatever
+    /// the distance to cover (1.28 and 5.28 yards both took 1.98 s in the
+    /// Shattrath bank) and whatever cameraDistanceSmoothSpeed says.
+    static constexpr float kCollisionEaseSeconds = 2.0f;
     void setEnabled(bool enabled) { this->enabled = enabled; }
     void setTerrainManager(TerrainManager* tm) { terrainManager = tm; }
     void setWMORenderer(WMORenderer* wmo) { wmoRenderer = wmo; }
@@ -476,35 +499,20 @@ private:
     float collisionDistance = 10.0f;    // Max allowed by collision
     bool externalFollow_ = false;
     static constexpr float MIN_DISTANCE = 0.5f;     // Minimum zoom (first-person threshold)
-    static constexpr float MAX_DISTANCE_NORMAL = 22.0f;   // Default max zoom out
-    static constexpr float MAX_DISTANCE_EXTENDED = 50.0f;  // Extended max zoom out
-public:
-    /// The largest multiple worth offering: the camera as far back as this
-    /// client has ever allowed. Declared here because it is built from the two
-    /// constants above. See setMaxDistanceFactor.
-    static constexpr float kMaxDistanceFactorLimit =
-        MAX_DISTANCE_EXTENDED / MAX_DISTANCE_NORMAL;
-private:
-    /// Max zoom indoors.
-    ///
-    /// Twelve still reached the walls of an ordinary room, so the collision
-    /// sweep pulled the camera in and let it back out with every step and every
-    /// turn - and that in-and-out is the motion that makes people ill. Eight
-    /// sat inside most rooms but still met the walls of a corridor, which is
-    /// most of what an interior is: Undercity is corridors, and so are the inns
-    /// and barracks a player spends time in.
-    ///
-    /// A camera that never reaches a wall is never pushed off one, so the only
-    /// way to stop the sweep firing is to keep the camera inside the room. Six
-    /// clears the corridors. It is closer than the game's own default and that
-    /// is the trade: the alternative is a view that swims.
-    ///
-    /// Chosen rather than computed, because the room's own clearance is what
-    /// the sweep already measures and feeding that back would let a doorway set
-    /// the cap for the hall beyond it.
-    static constexpr float MAX_DISTANCE_INTERIOR = 6.0f;
-    bool extendedZoom_ = false;
-    static constexpr float ZOOM_SMOOTH_SPEED = 15.0f;  // How fast zoom eases
+    float distanceMax_ = 15.0f;          // cameraDistanceMax default
+    float distanceMaxFactor_ = 1.0f;     // cameraDistanceMaxFactor default
+    float distanceMoveSpeed_ = 8.33f;    // cameraDistanceMoveSpeed default
+    /// Yards of zoom still to travel; negative is in. CameraZoomIn(n) and
+    /// CameraZoomOut(n) add n in their own direction and replace a zoom the
+    /// other way: on the original, Out(2) then In(1) ends 1 yard in.
+    float zoomPending_ = 0.0f;
+    /// Spend zoomPending_ on userTargetDistance and move currentDistance
+    /// toward it, both at distanceMoveSpeed_. A frame moves its whole step
+    /// even past what was pending, as the original's does (CameraZoomIn(0.25)
+    /// moved 0.43 yards at about 20 frames a second).
+    void advanceZoom(float deltaTime);
+    float collisionEaseFrom_ = 0.0f;
+    float collisionEaseTime_ = kCollisionEaseSeconds;
     static constexpr float CAM_SMOOTH_SPEED_DEFAULT = 30.0f;
     float camSmoothSpeed_ = CAM_SMOOTH_SPEED_DEFAULT;  // User-configurable camera smoothing (higher = tighter)
     // When true the camera keeps its exponential lerp even while actively
@@ -618,7 +626,7 @@ private:
     static constexpr float MAX_PITCH = 88.0f;       // Look almost straight up (WoW standard)
     glm::vec3* followTarget = nullptr;
     glm::vec3 smoothedCamPos = glm::vec3(0.0f);     // For smooth camera movement
-    float smoothedCollisionDist_ = -1.0f;           // Asymmetrically-smoothed WMO collision limit (-1 = uninitialised)
+    float smoothedCollisionDist_ = -1.0f;           // Applied geometry limit; < 0 = none
     /// The ground's own limit, smoothed before it is combined with the built
     /// geometry's. A hillside's marched height moves a little with every step
     /// the player takes, and passing that straight through is a shudder.

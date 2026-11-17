@@ -305,15 +305,12 @@ constexpr SettingDesc kSchema[] = {
     // Max Camera Distance was the game's own Camera page's until 2026-09-06,
     // when it was the one control on that page not already a row here - the
     // other two, follow speed and camera style, wrote camerastiffness and
-    // smoothfollow. In yards rather than the multiple of 22 the game's slider
-    // counted in; kClientCVars scales cameraDistanceMaxFactor by 22 for an
-    // addon or a macro that still writes it. Before either there was an
-    // extended-zoom checkbox of this client's own, a choice between two
-    // positions where this is every distance between them.
-    {"cameramaxdistance", "Max camera distance", SettingKind::Int, 22, 50, 1, "Camera", "",
-     "How far back the camera can be pulled, in yards. 22 is what the\n"
-     "original client gives; further out shows more of a fight and less\n"
-     "of your character.", "", 22},
+    // smoothfollow. It is cameraDistanceMaxFactor, over the range and step
+    // that page's slider had (UIOptionsPanels.lua: 1 to 2 by 0.1); the camera
+    // reaches cameraDistanceMax (15 yards) times this.
+    {"cameramaxdistance", "Max camera distance", SettingKind::Float, 1, 2, 0.1f, "Camera", "",
+     "How far back the camera can be pulled, as a multiple of 15 yards:\n"
+     "1 is 15 yards, 2 is 30.", "", 1.0f},
     {"camerastiffness", "Camera follow speed", SettingKind::Float, 5, 100, 1, "Camera", "",
      "How quickly the camera catches up when you move or turn. Higher\n"
      "is tighter and steadier; lower trails behind and feels floaty.", "", 30},

@@ -350,6 +350,76 @@ TEST_CASE_METHOD(Integration, "Real wheel handlers own fractional UI travel and 
     CHECK(glm::length(camera.getPosition() - before) > 0.0001f);
 }
 
+// Build 8606 measurements: _experiments/20261117T202346.492175Z.camera_max_distance.
+TEST_CASE_METHOD(Integration, "Camera zoom follows the original's distance CVars", "[camera][zoom]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 target(0);
+    controller.setFollowTarget(&target);
+    controller.setIdleOrbitEnabled(false);
+    controller.setGravityDisabled(true);
+    const auto settle = [&] { for (int i = 0; i < 2000; ++i) controller.update(0.01f); };
+    const auto zoomOutFully = [&] { controller.processMouseWheel(-100.0f); settle(); };
+
+    zoomOutFully();
+    CHECK(controller.zoomDistance() == Catch::Approx(15.0f));
+    controller.setDistanceMaxFactor(2.0f);
+    zoomOutFully();
+    CHECK(controller.zoomDistance() == Catch::Approx(30.0f));
+    controller.setDistanceMax(30.0f);
+    zoomOutFully();
+    CHECK(controller.zoomDistance() == Catch::Approx(50.0f));
+    // Lowering the limit leaves the camera until the next zoom.
+    controller.setDistanceMax(15.0f);
+    controller.setDistanceMaxFactor(1.0f);
+    settle();
+    CHECK(controller.zoomDistance() == Catch::Approx(50.0f));
+    controller.processMouseWheel(-1.0f);
+    controller.update(0.01f);
+    CHECK(controller.zoomDistance() == Catch::Approx(15.0f));
+
+    // One notch is one yard at cameraDistanceMoveSpeed, 8.33 yards a second.
+    controller.processMouseWheel(1.0f);
+    controller.update(0.01f);
+    CHECK(controller.zoomDistance() == Catch::Approx(15.0f - 0.0833f));
+    settle();
+    CHECK(controller.zoomDistance() == Catch::Approx(14.0f).margin(0.0833f));
+    // Notches the same way add up; one the other way replaces them.
+    const float before = controller.zoomDistance();
+    controller.processMouseWheel(-1.0f);
+    controller.processMouseWheel(-1.0f);
+    controller.processMouseWheel(1.0f);
+    settle();
+    CHECK(controller.zoomDistance() == Catch::Approx(before - 1.0f).margin(0.0833f));
+}
+
+TEST_CASE_METHOD(Integration, "Camera collision pulls in at once and eases back over two seconds", "[camera][collision]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 target(0);
+    controller.setFollowTarget(&target);
+    controller.setIdleOrbitEnabled(false);
+    controller.setGravityDisabled(true);
+    controller.processMouseWheel(-100.0f);
+    for (int i = 0; i < 2000; ++i) controller.update(0.01f);
+    REQUIRE(controller.zoomDistance() == Catch::Approx(15.0f));
+
+    CHECK(controller.easedCollisionLimit(5.0f, 0.01f) == 5.0f);
+    // Half way through, half a cosine is half way back.
+    for (int i = 0; i < 99; ++i) controller.easedCollisionLimit(std::nullopt, 0.01f);
+    CHECK(controller.easedCollisionLimit(std::nullopt, 0.01f) == Catch::Approx(10.0f).margin(0.01f));
+    // Geometry still in the way caps the ease without restarting it.
+    CHECK(controller.easedCollisionLimit(12.0f, 0.01f) == Catch::Approx(10.0785f).margin(0.001f));
+    for (int i = 0; i < 98; ++i) controller.easedCollisionLimit(std::nullopt, 0.01f);
+    CHECK(controller.easedCollisionLimit(std::nullopt, 0.01f) >= 14.99f);
+    CHECK(controller.easedCollisionLimit(std::nullopt, 0.01f) > 1000.0f);
+    // Held against a wall the ease waits; it starts when the wall goes.
+    for (int i = 0; i < 300; ++i) controller.easedCollisionLimit(4.0f, 0.01f);
+    CHECK(controller.easedCollisionLimit(std::nullopt, 0.01f) < 4.01f);
+    // Moving back into a wall pulls in again on that frame.
+    CHECK(controller.easedCollisionLimit(3.0f, 0.01f) == 3.0f);
+}
+
 TEST_CASE_METHOD(Integration, "Real camera applies temporary Ctrl walking and a rebindable toggle", "[input][camera][O6]") {
     rendering::Camera camera;
     rendering::CameraController controller(&camera);

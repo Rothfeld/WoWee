@@ -260,6 +260,11 @@ struct LuaServices {
     /// unbound - the readiness report reads script bodies, not attributes.
     std::function<void()> barberApply;
 
+    /// cameraDistanceMax and cameraDistanceMoveSpeed, applied to the camera.
+    /// SetCVar has already refused values the original refuses.
+    std::function<void(float yards)> setCameraDistanceMax;
+    std::function<void(float yardsPerSecond)> setCameraDistanceMoveSpeed;
+
     /// Whether the camera is inside a WMO, for IsIndoors and IsOutdoors.
     ///
     /// The renderer has tracked this all along and the macro conditionals

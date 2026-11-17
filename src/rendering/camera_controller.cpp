@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <future>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <stdexcept>
@@ -27,6 +28,7 @@
 #include "game/opcodes.hpp"
 #include "core/logger.hpp"
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <cmath>
 #include <limits>
 
@@ -2205,8 +2207,8 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // Camera direction from yaw/pitch (already computed as forward3D)
     glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
 
-    // Limit max zoom when inside a WMO with a ceiling (building interior)
-    // Throttle: only recheck every 10 frames or when position changes >2 units.
+    // Throttle the active-group refresh: only recheck every 10 frames or when
+    // position changes >2 units.
     if (wmoRenderer) {
         glm::vec3 wmoCheckDelta = targetPos - lastInsideWMOCheckPos;
         float distFromLastCheckSq = glm::dot(wmoCheckDelta, wmoCheckDelta);
@@ -2217,19 +2219,16 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         }
     }
 
-    // Environment limits the current view, never the player's chosen zoom.
-    const float zoomTarget = cachedInsideWMO
-        ? std::min(userTargetDistance, MAX_DISTANCE_INTERIOR) : userTargetDistance;
-    const float zoomLerp = 1.0f - std::exp(-ZOOM_SMOOTH_SPEED * deltaTime);
-    currentDistance += (zoomTarget - currentDistance) * zoomLerp;
+    // Indoors has no limit of its own: in the Shattrath bank, the Lion's Pride
+    // Inn and the Deadmines the original zooms to its full distance and only
+    // the room's geometry stops it.
+    advanceZoom(deltaTime);
 
     // ===== Camera collision (WMO/M2 raycasts + terrain heightfield march) =====
     // Cast a ray from the pivot toward the camera direction to find the
     // nearest building or doodad, and march the terrain heightfield along the same
     // ray so hills between the pivot and camera pull the camera in too.
-    // Uses asymmetric smoothing: pull-in is fast (so the camera never
-    // visibly clips through geometry) but recovery is slow (so passing a
-    // doorway or hill crest doesn't cause a zoom-out snap).
+    // Pull-in is immediate; recovery follows easedCollisionLimit.
     collisionDistance = currentDistance;
 
     if ((wmoRenderer || m2Renderer || terrainManager) && currentDistance > MIN_DISTANCE) {
@@ -2264,28 +2263,12 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             smoothedTerrainDist_ = -1.0f;
         }
 
-        // Initialise smoothed state on first use.
-        if (smoothedCollisionDist_ < 0.0f) {
-            smoothedCollisionDist_ = rawLimit;
-        }
-
-        // Asymmetric smoothing:
-        //   • Pull-in: τ ≈ 60 ms  - react quickly to prevent clipping
-        //     (instant while actively rotating, matching the 1:1 drag snap)
-        //   • Recover: τ ≈ 400 ms - zoom out slowly after leaving geometry
-        bool rotatingNow = mouseButtonDown || f.nowTurnLeft || f.nowTurnRight;
-        if (rawLimit < smoothedCollisionDist_ && rotatingNow) {
-            smoothedCollisionDist_ = rawLimit;
-        } else {
-            const float tau = (rawLimit < smoothedCollisionDist_) ? 0.06f : 0.40f;
-            float alpha = 1.0f - std::exp(-deltaTime / tau);
-            smoothedCollisionDist_ += (rawLimit - smoothedCollisionDist_) * alpha;
-        }
-
-        collisionDistance = std::min(collisionDistance, smoothedCollisionDist_);
-
+        const float applied = easedCollisionLimit(
+            rawLimit < currentDistance ? std::optional<float>(rawLimit) : std::nullopt, deltaTime);
+        collisionDistance = std::min(collisionDistance, applied);
     } else {
         smoothedCollisionDist_ = -1.0f;   // Reset when no collision sources available
+        collisionEaseTime_ = kCollisionEaseSeconds;
         smoothedTerrainDist_ = -1.0f;
     }
 
@@ -2571,7 +2554,9 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
             ",\"ui_keyboard\":", f.uiWantsKeyboard ? "true" : "false",
             ",\"rooted\":", movementRooted_ ? "true" : "false",
             ",\"wmo_contacts\":", movementTraceWmoContacts_,
-            ",\"m2_contacts\":", movementTraceM2Contacts_, "}");
+            ",\"m2_contacts\":", movementTraceM2Contacts_,
+            ",\"zoom_distance\":", currentDistance,
+            ",\"camera_distance\":", std::min(currentDistance, collisionDistance), "}");
     }
 }
 
@@ -2793,8 +2778,7 @@ void CameraController::update(float deltaTime) {
         idleTimer_ = 0.0f;
 
         camera->setRotation(yaw, pitch);
-        float zoomLerp = 1.0f - std::exp(-ZOOM_SMOOTH_SPEED * deltaTime);
-        currentDistance += (userTargetDistance - currentDistance) * zoomLerp;
+        advanceZoom(deltaTime);
         collisionDistance = currentDistance;
 
         // Position camera behind character during taxi
@@ -2845,6 +2829,7 @@ void CameraController::update(float deltaTime) {
         // limit measured somewhere else entirely; starting over takes the
         // ground as it is at the landing.
         smoothedCollisionDist_ = -1.0f;
+        collisionEaseTime_ = kCollisionEaseSeconds;
         smoothedTerrainDist_ = -1.0f;
 
         return;
@@ -3798,15 +3783,63 @@ void CameraController::applyLookDelta(float dxPixels, float dyPixels) {
 }
 
 void CameraController::processMouseWheel(float delta) {
-    // Scale zoom speed proportionally to current distance for fine control up close
-    float zoomSpeed = glm::max(userTargetDistance * 0.15f, 0.3f);
-    userTargetDistance -= delta * zoomSpeed;
-    // A multiple of the original client's limit rather than a choice between
-    // two numbers, so the game's own Max Camera Distance slider means something
-    // at every position instead of only at its ends.
-    float maxDist = MAX_DISTANCE_NORMAL * maxDistanceFactor_;
-    if (cachedInsideWMO) maxDist = std::min(maxDist, MAX_DISTANCE_INTERIOR);
-    userTargetDistance = glm::clamp(userTargetDistance, MIN_DISTANCE, maxDist);
+    // A notch is the CAMERAZOOMIN / CAMERAZOOMOUT binding, whose body in
+    // Bindings.xml is CameraZoomIn(1.0) / CameraZoomOut(1.0): one yard.
+    const float yards = -delta;
+    if (yards == 0.0f) return;
+    zoomPending_ = (yards > 0.0f) == (zoomPending_ > 0.0f) ? zoomPending_ + yards : yards;
+}
+
+void CameraController::advanceZoom(float deltaTime) {
+    const float step = distanceMoveSpeed_ * deltaTime;
+    if (zoomPending_ != 0.0f) {
+        const float direction = zoomPending_ > 0.0f ? 1.0f : -1.0f;
+        const float remaining = std::abs(zoomPending_) - step;
+        zoomPending_ = remaining > 0.0f ? direction * remaining : 0.0f;
+        const float wanted = userTargetDistance + direction * step;
+        userTargetDistance = glm::clamp(wanted, MIN_DISTANCE, std::max(MIN_DISTANCE, maxZoomDistance()));
+        if (userTargetDistance != wanted) {
+            // A zoom past a lowered limit lands on it at once: at 30 yards,
+            // factor 2 -> 1 then CameraZoomOut(1) read 15.0 on the next frame.
+            zoomPending_ = 0.0f;
+            currentDistance = userTargetDistance;
+        }
+    }
+    // Distances set directly (barber chair, camera reset) travel the same way.
+    const float gap = userTargetDistance - currentDistance;
+    currentDistance = std::abs(gap) <= step ? userTargetDistance
+                                            : currentDistance + (gap > 0.0f ? step : -step);
+}
+
+float CameraController::easedCollisionLimit(std::optional<float> obstruction, float deltaTime) {
+    const float limit = obstruction.value_or(std::numeric_limits<float>::infinity());
+    // Geometry closing in or holding still restarts the ease; only geometry
+    // falling away lets it run. Held 1.5 s against a wall then turned clear,
+    // the original still took the full 2 s back; turning away gradually, the
+    // ease ran from the start of the turn.
+    if (smoothedCollisionDist_ >= 0.0f && limit <= smoothedCollisionDist_) {
+        smoothedCollisionDist_ = limit;
+        collisionEaseFrom_ = limit;
+        collisionEaseTime_ = 0.0f;
+        return limit;
+    }
+    if (smoothedCollisionDist_ < 0.0f && obstruction) {
+        // First frame with a collision source: start against the obstruction.
+        smoothedCollisionDist_ = limit;
+        collisionEaseFrom_ = limit;
+        collisionEaseTime_ = 0.0f;
+        return limit;
+    }
+    collisionEaseTime_ = std::min(collisionEaseTime_ + deltaTime, kCollisionEaseSeconds);
+    if (collisionEaseTime_ >= kCollisionEaseSeconds) {
+        smoothedCollisionDist_ = limit;
+        return limit;
+    }
+    const float progress = collisionEaseTime_ / kCollisionEaseSeconds;
+    const float eased = collisionEaseFrom_ + (currentDistance - collisionEaseFrom_) *
+        0.5f * (1.0f - std::cos(glm::pi<float>() * progress));
+    smoothedCollisionDist_ = std::min(limit, eased);
+    return smoothedCollisionDist_;
 }
 
 void CameraController::setFollowTarget(glm::vec3* target) {

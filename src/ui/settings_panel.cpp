@@ -102,11 +102,6 @@ constexpr const char* kGraphicsPresetKeys[] = {
 /// of these is applied it is a number the panel displays and nothing else,
 /// which is why the graphics settings saved from the login screen did nothing
 /// until a slider was touched.
-// The cameramaxdistance row stops at 50 yards, which has to be where the
-// camera itself stops; see cameraDistanceFactor in the header.
-static_assert(cameraDistanceFactor(50) - rendering::CameraController::kMaxDistanceFactorLimit < 0.001f &&
-              rendering::CameraController::kMaxDistanceFactorLimit - cameraDistanceFactor(50) < 0.001f,
-              "the cameramaxdistance row's 50 yards is not the camera's own limit");
 
 constexpr const char* kGraphicsApplyKeys[] = {
     "viewdistance", "shadows", "shadowdistance", "antialiasing", "fxaa",
@@ -325,7 +320,7 @@ constexpr FieldBinding kFieldBindings[] = {
     {.key = "fov",             .asFloat = &SettingsPanel::pendingFov},
     {.key = "camerashake",     .asFloat = &SettingsPanel::pendingCameraShake},
     {.key = "camerastiffness", .asFloat = &SettingsPanel::pendingCameraStiffness},
-    {.key = "cameramaxdistance", .asInt = &SettingsPanel::pendingCameraMaxDistance},
+    {.key = "cameramaxdistance", .asFloat = &SettingsPanel::pendingCameraDistanceMaxFactor},
     {.key = "pivotheight",     .asFloat = &SettingsPanel::pendingPivotHeight},
     {.key = "smoothfollow",    .asBool  = &SettingsPanel::pendingSmoothCameraFollow},
     {.key = "idleorbit",       .asBool  = &SettingsPanel::pendingIdleCameraOrbit},
@@ -548,7 +543,7 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
         if (cameraController) cameraController->setCameraSmoothSpeed(pendingCameraStiffness);
     } else if (key == "cameramaxdistance") {
         if (cameraController) {
-            cameraController->setMaxDistanceFactor(cameraDistanceFactor(pendingCameraMaxDistance));
+            cameraController->setDistanceMaxFactor(pendingCameraDistanceMaxFactor);
         }
     } else if (key == "smoothfollow") {
         if (cameraController) cameraController->setSmoothCameraFollow(pendingSmoothCameraFollow);

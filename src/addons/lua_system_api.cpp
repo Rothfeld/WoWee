@@ -787,9 +787,13 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "nameplateshowenemies") lua_pushstring(L, "1");
     else if (n == "sound_enablesfx") lua_pushstring(L, "1");
     else if (n == "sound_enableerrorspeech") lua_pushstring(L, "1");
-    // One, not zero: the slider is a multiple of the original client's limit
-    // and zero is not a position on it. Answering zero pinned it at minimum.
+    // The camera's distance CVars as build 8606's GetCVar answers them with
+    // none set. cameraDistanceSmoothSpeed changed nothing measurable there
+    // (collision recovery took the same 2 s at 2 and at 30) and is only held.
     else if (n == "cameradistancemaxfactor") lua_pushstring(L, "1");
+    else if (n == "cameradistancemax") lua_pushstring(L, "15");
+    else if (n == "cameradistancemovespeed") lua_pushstring(L, "8.33");
+    else if (n == "cameradistancesmoothspeed") lua_pushstring(L, "8.33");
     else if (n == "weatherdensity") lua_pushstring(L, "3");
     else if (n == "particledensity") lua_pushstring(L, "1");
     else if (n == "environmentdetail") lua_pushstring(L, "1");
@@ -1246,10 +1250,9 @@ constexpr ClientCVarBinding kClientCVars[] = {
     // as well as within one. The branch it replaces wrote the handler directly
     // and never saved.
     {"autolootdefault",      "autoloot"},
-    // How far back the camera may be pulled. The row counts yards; the CVar
-    // the game's slider wrote counts multiples of the 22 the original client
-    // gives, so a 1 here is 22 there and the slider's 2 is 44.
-    {"cameradistancemaxfactor", "cameramaxdistance", 22.0},
+    // How far back the camera may be pulled, as a multiple of
+    // cameraDistanceMax. The row holds the CVar's own number.
+    {"cameradistancemaxfactor", "cameramaxdistance"},
     // Read by the client's own attack handling, not by FrameXML's buttons.
     {"secureabilitytoggle",  "secureabilitytoggle"},
     // The bubbles are drawn by this client, so both boxes are its own.
@@ -1604,6 +1607,16 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
     // CameraController::setCameraSmoothSpeed accepts, so the control covers
     // what this client can do and the number passes through untouched. Same
     // reasoning as farclip's range below.
+    if (key == "cameradistancemax") {
+        if (auto* svc = getLuaServices(L); svc && svc->setCameraDistanceMax) {
+            svc->setCameraDistanceMax(static_cast<float>(std::atof(value.c_str())));
+        }
+    }
+    if (key == "cameradistancemovespeed") {
+        if (auto* svc = getLuaServices(L); svc && svc->setCameraDistanceMoveSpeed) {
+            svc->setCameraDistanceMoveSpeed(static_cast<float>(std::atof(value.c_str())));
+        }
+    }
     if (key == "camerayawsmoothspeed") {
         if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
             svc->setClientSetting("camerastiffness", value);
@@ -1837,6 +1850,21 @@ static int lua_SetCVar(lua_State* L) {
     // would be invisible to a read of "uiscale".
     std::string key(name);
     toLowerInPlace(key);
+    // Build 8606 keeps the previous cameraDistanceMax for anything outside
+    // 0 to 50 (51, 60, 50.5 and -3 were each refused), and a zoom speed has
+    // to be a speed.
+    if (key == "cameradistancemax" || key == "cameradistancemovespeed") {
+        char* end = nullptr;
+        const double number = std::strtod(value.c_str(), &end);
+        const bool valid = end != value.c_str() && *end == '\0' &&
+            (key == "cameradistancemax"
+                 ? number >= 0.0 && number <= rendering::CameraController::kDistanceCeiling
+                 : number > 0.0);
+        if (!valid) {
+            LOG_WARNING("SetCVar(", name, ", ", value, "): out of range, kept");
+            return 0;
+        }
+    }
     const auto existing = cvarStore().find(key);
     const bool changed = (existing == cvarStore().end() || existing->second != value);
     cvarStore()[key] = value;
@@ -5245,11 +5273,8 @@ constexpr CVarRange kCVarRanges[] = {
     // applyCVarSideEffects - these are the bounds the camera itself clamps to,
     // so every position on the slider is a speed this client can actually run.
     {"camerayawsmoothspeed", 5.0f, 100.0f},
-    // Max camera distance, as a multiple of the original client's limit. The
-    // shipped table stops at 2; this client has always been willing to go
-    // further, and did it through a checkbox of its own until this slider was
-    // wired to mean it.
-    {"cameradistancemaxfactor", 1.0f, rendering::CameraController::kMaxDistanceFactorLimit},
+    // Max camera distance: the shipped slider's own range.
+    {"cameradistancemaxfactor", 1.0f, 2.0f},
 };
 
 const CVarRange* findCVarRange(lua_State* L) {
