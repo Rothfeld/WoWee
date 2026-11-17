@@ -821,6 +821,7 @@ void GameHandler::handleLoginSetTimeSpeed(network::Packet& packet) {
     // the sky wants. One meaning for this field, written down here.
     gameTimeSetAt_ = std::chrono::steady_clock::now();
     gameTime_ = static_cast<float>(now.hour) + static_cast<float>(now.minute) / 60.0f;
+    gameClockBaseMinute_ = now.hour * 60 + now.minute;
     timeSpeed_ = timeScale;
 
     LOG_INFO("Server time: ", now.hour, ":", now.minute, " (gameTime=", gameTime_,

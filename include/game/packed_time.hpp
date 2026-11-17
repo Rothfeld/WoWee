@@ -80,5 +80,16 @@ inline float gameClockHour(float hours, double seconds, float minutesPerSecond) 
     return static_cast<float>(std::fmod(hours + seconds * minutesPerSecond / 60.0, 24.0));
 }
 
+/// The clock's minute of the day (0-1439), `seconds` of real time after the
+/// server said it was `baseMinute`. Counted in whole minutes from the packet's
+/// own integer hour and minute: an hour float such as 13 + 44/60 sits a hair
+/// below 13.7333, and splitting it back into minutes truncated 44 to 43 for
+/// 625 of the day's 1440 minutes - the minimap clock one minute behind.
+inline int gameClockMinuteOfDay(int baseMinute, double seconds, float minutesPerSecond) {
+    const auto minutes = static_cast<long long>(
+        std::floor(static_cast<double>(baseMinute) + seconds * static_cast<double>(minutesPerSecond)));
+    return static_cast<int>(((minutes % 1440) + 1440) % 1440);
+}
+
 }  // namespace game
 }  // namespace wowee

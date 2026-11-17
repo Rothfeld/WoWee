@@ -1486,6 +1486,13 @@ public:
         return gameClockHour(gameTime_, since.count(), timeSpeed_);
     }
     float getTimeSpeed() const { return timeSpeed_; }
+    /// GetGameTime's clock: minute of the day (0-1439), or -1 before the
+    /// server has sent the time.
+    int getGameClockMinute() const {
+        if (gameClockBaseMinute_ < 0) return -1;
+        const std::chrono::duration<double> since = std::chrono::steady_clock::now() - gameTimeSetAt_;
+        return gameClockMinuteOfDay(gameClockBaseMinute_, since.count(), timeSpeed_);
+    }
 
     // Global Cooldown (GCD), owned by the spell handler
     float getGCDRemaining() const;
@@ -4985,6 +4992,7 @@ private:
     ///
     /// The old comment said seconds. The code that assigns it writes hours.
     float gameTime_ = -1.0f;
+    int gameClockBaseMinute_ = -1;   // hour * 60 + minute the server last sent
     std::chrono::steady_clock::time_point gameTimeSetAt_{};
     float timeSpeed_ = 0.0166f;   // Game minutes per real second (1/60 keeps realm time)
     void handleLoginSetTimeSpeed(network::Packet& packet);

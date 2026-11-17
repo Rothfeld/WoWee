@@ -157,3 +157,23 @@ TEST_CASE("The game clock does not lose time to small steps", "[packedtime]") {
     }
     CHECK(hour == Catch::Approx(18.0f + 10.0f / 60.0f).margin(1e-4));
 }
+
+TEST_CASE("The game clock reads back every minute the server sent", "[packedtime]") {
+    using wowee::game::gameClockMinuteOfDay;
+    // 13:44, the time CMaNGOS sent at the 13:44 Gnomeregan entry; as an hour
+    // float split back into minutes it read 13:43.
+    CHECK(gameClockMinuteOfDay(13 * 60 + 44, 0.0, 0.01666667f) == 13 * 60 + 44);
+    for (int m = 0; m < 1440; ++m) {
+        CAPTURE(m);
+        REQUIRE(gameClockMinuteOfDay(m, 0.0, 0.01666667f) == m);
+    }
+}
+
+TEST_CASE("The game clock advances one minute per real minute", "[packedtime]") {
+    using wowee::game::gameClockMinuteOfDay;
+    // CMaNGOS SMSG_LOGIN_SETTIMESPEED speed 0.01666667: game minutes per second.
+    CHECK(gameClockMinuteOfDay(600, 59.9, 0.01666667f) == 600);
+    CHECK(gameClockMinuteOfDay(600, 60.0, 0.01666667f) == 601);
+    CHECK(gameClockMinuteOfDay(1439, 60.0, 0.01666667f) == 0);
+    CHECK(gameClockMinuteOfDay(0, 3600.0 * 24.0, 0.01666667f) == 0);
+}
