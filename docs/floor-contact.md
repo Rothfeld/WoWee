@@ -54,6 +54,12 @@ a later floor snap erasing the resolved height.
 `WOWEE_TRACE_M2_FLOOR=1` logs each winning M2 candidate's model, source mesh,
 height and query position. This identifies the supporting object when
 a floor probe promotes a nearby decoration over the surface under the feet.
+`WOWEE_TRACE_M2_COLLISION=<model name substring>` (for example
+`WOWEE_TRACE_M2_COLLISION=DR_TABLE_MEDIUM_01`, the Exodar table; the match is
+case-sensitive against the model path as loaded) logs every wall query that reaches a
+matching model: query position in model space, body radius and height,
+instance scale, collision triangle count and whether the instance skips
+collision.
 
 The Exodar table route at server (-4191,-11477.700195,-131.451859), heading
 0.299362, exercises more than wall blocking. Original TBC emits repeated

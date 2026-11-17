@@ -1227,6 +1227,19 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
 
         const M2ModelGPU& model = *instance.cachedModel;
         if (!m2BlocksMovement(model)) continue;
+        // WOWEE_TRACE_M2_COLLISION=<model name substring>: log every wall
+        // query that reaches that model, in its local space (ledger #12,
+        // Exodar table contact). Read once, like WOWEE_TRACE_M2_FLOOR.
+        static const std::string traceModel = [] {
+            const char* value = std::getenv("WOWEE_TRACE_M2_COLLISION");
+            return std::string(value ? value : "");
+        }();
+        if (!traceModel.empty() && model.name.find(traceModel) != std::string::npos) {
+            const glm::vec3 local(instance.invModelMatrix * glm::vec4(from, 1.0f));
+            LOG_INFO("M2 collision query model=", model.name, " local=", local.x, ",", local.y, ",", local.z,
+                     " body=", playerRadius, ",", playerHeight, " scale=", instance.scale,
+                     " mesh=", model.collision.triCount, " skip=", instance.skipCollision);
+        }
         if (instance.skipCollision) continue;
         if (instance.scale <= 0.001f) continue;
 
