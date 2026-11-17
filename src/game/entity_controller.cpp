@@ -832,7 +832,8 @@ EntityController::PlayerFieldIndices EntityController::PlayerFieldIndices::resol
         // Mana is power index 0, so the flat modifier and its interrupted
         // (while-casting) twin sit at the base of each seven-wide array.
         .manaRegen = fieldIndex(UF::UNIT_FIELD_POWER_REGEN_FLAT_MODIFIER),
-        .manaRegenCasting = fieldIndex(UF::UNIT_FIELD_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER)
+        .manaRegenCasting = fieldIndex(UF::UNIT_FIELD_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER),
+        .characterPoints1 = fieldIndex(UF::PLAYER_CHARACTER_POINTS1)
     };
 }
 
@@ -1499,6 +1500,9 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
             for (auto& ch : owner_.charactersRef()) {
                 if (ch.guid == owner_.getPlayerGuid()) { ch.level = val; break; }
             }
+        }
+        else if (pfi.characterPoints1 != 0xFFFF && key == pfi.characterPoints1) {
+            if (auto* spells = owner_.getSpellHandler()) spells->setCharacterPointsField(val);
         }
         else if (key == pfi.coinage) {
             uint64_t oldMoney = owner_.playerMoneyCopperRef();

@@ -1738,6 +1738,7 @@ void SpellHandler::loadTalentDbc() {
         const uint32_t tRank0 = talL ? (*talL)["RankSpell0"] : 4;
         const uint32_t tPrereq0 = talL ? (*talL)["PrereqTalent0"] : 9;
         const uint32_t tPrereqR0 = talL ? (*talL)["PrereqRank0"] : 12;
+        const uint32_t tDependsOnSpell = talL ? talL->tryField("DependsOnSpell") : 0xFFFFFFFFu;
 
         uint32_t count = talentDbc->getRecordCount();
         for (uint32_t i = 0; i < count; ++i) {
@@ -1757,6 +1758,9 @@ void SpellHandler::loadTalentDbc() {
                 entry.prereqTalent[p] = talentDbc->getUInt32(i, tPrereq0 + p);
                 entry.prereqRank[p] = static_cast<uint8_t>(talentDbc->getUInt32(i, tPrereqR0 + p));
             }
+
+            if (tDependsOnSpell != 0xFFFFFFFFu)
+                entry.dependsOnSpell = talentDbc->getUInt32(i, tDependsOnSpell);
 
             entry.maxRank = 0;
             for (int r = 0; r < 5; ++r) {
@@ -1782,6 +1786,7 @@ void SpellHandler::loadTalentDbc() {
         const uint32_t ttClassField = ttL ? (*ttL)["ClassMask"]      : 20;
         const uint32_t ttOrderField = ttL ? (*ttL)["OrderIndex"]     : 22;
         const uint32_t ttBgField    = ttL ? (*ttL)["BackgroundFile"] : 23;
+        const uint32_t ttIconField  = ttL ? ttL->tryField("SpellIconID") : 0xFFFFFFFFu;
 
         uint32_t count = tabDbc->getRecordCount();
         for (uint32_t i = 0; i < count; ++i) {
@@ -1793,6 +1798,7 @@ void SpellHandler::loadTalentDbc() {
             entry.classMask = tabDbc->getUInt32(i, ttClassField);
             entry.orderIndex = static_cast<uint8_t>(tabDbc->getUInt32(i, ttOrderField));
             entry.backgroundFile = tabDbc->getString(i, ttBgField);
+            if (ttIconField != 0xFFFFFFFFu) entry.spellIconId = tabDbc->getUInt32(i, ttIconField);
 
             talentTabCache_[entry.tabId] = entry;
 
@@ -1808,8 +1814,13 @@ void SpellHandler::loadTalentDbc() {
     syncPreWotlkTalentsFromKnownSpells();
 }
 
+void SpellHandler::setCharacterPointsField(uint32_t points) {
+    characterPointsField_ = points;
+    syncPreWotlkTalentsFromKnownSpells();
+}
+
 void SpellHandler::syncPreWotlkTalentsFromKnownSpells() {
-    if (!isPreWotlk() || talentCache_.empty() || knownSpells_.empty()) return;
+    if (!isPreWotlk() || talentCache_.empty()) return;
 
     std::unordered_map<uint32_t, uint8_t> derived;
     uint32_t spentPoints = 0;
@@ -1827,12 +1838,15 @@ void SpellHandler::syncPreWotlkTalentsFromKnownSpells() {
         }
     }
 
-    const uint32_t playerLevel = owner_.getPlayerLevel();
-    const uint32_t earnedPoints = (playerLevel > 9)
-        ? std::min<uint32_t>(playerLevel - 9, 61u)
-        : 0u;
-    const uint8_t unspent = static_cast<uint8_t>(
-        earnedPoints > spentPoints ? std::min<uint32_t>(earnedPoints - spentPoints, 255u) : 0u);
+    // Unspent points are the server's PLAYER_CHARACTER_POINTS1 field, which
+    // Player::SetFreeTalentPoints writes after every level, learn and reset.
+    // Native UnitCharacterPoints("player") answers it (level 40 rogue with no
+    // talents: 31). It is not derived from the level: GM level changes and
+    // server talent-rate settings make that count diverge.
+    if (fieldIndex(UF::PLAYER_CHARACTER_POINTS1) == 0xFFFF) {
+        LOG_ERROR("update_fields.json lacks PLAYER_CHARACTER_POINTS1; unspent talent points unknown");
+    }
+    const uint8_t unspent = static_cast<uint8_t>(std::min<uint32_t>(characterPointsField_, 255u));
 
     if (learnedTalents_[0] == derived && activeTalentSpec_ == 0 &&
         unspentTalentPoints_[0] == unspent) {
@@ -3340,6 +3354,7 @@ void SpellHandler::resetTalentState() {
     learnedGlyphs_[1].fill(0);
     unspentTalentPoints_[0] = 0;
     unspentTalentPoints_[1] = 0;
+    characterPointsField_ = 0;
     activeTalentSpec_ = 0;
 }
 

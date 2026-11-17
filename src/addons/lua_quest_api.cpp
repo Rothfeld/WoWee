@@ -1634,9 +1634,15 @@ static int lua_GetTalentTabInfo(lua_State* L) {
     }
 
     lua_pushstring(L, tab->name.c_str());              // 1: name
-    lua_pushnil(L);                                     // 2: iconTexture (not resolved)
+    // 2: iconTexture, TalentTab.dbc SpellIconID through SpellIcon.dbc. Native
+    // 2.4.3 answers Combat with Interface\Icons\INV_Weapon_ShortBlade_14.
+    const std::string icon = gh->getIconPath(tab->spellIconId);
+    if (icon.empty()) lua_pushnil(L);
+    else lua_pushstring(L, icon.c_str());
     lua_pushnumber(L, pointsSpent);                     // 3: pointsSpent
     lua_pushstring(L, tab->backgroundFile.c_str());     // 4: background
+    // Native 2.4.3 returns exactly these four; the preview count is WotLK's.
+    if (game::isPreWotlk()) return 4;
     lua_pushnumber(L, previewSpent);                    // 5: previewPointsSpent
     return 5;
 }
@@ -1766,6 +1772,20 @@ static int lua_GetTalentInfo(lua_State* L) {
     lua_pushnumber(L, talent->column + 1);     // 4: column (1-indexed)
     lua_pushnumber(L, rank);                   // 5: rank
     lua_pushnumber(L, talent->maxRank);        // 6: maxRank
+    if (game::isPreWotlk()) {
+        // 2.4.3: name, icon, tier, column, rank, maxRank, isExceptional,
+        // meetsPrereq. meetsPrereq is not the prerequisite talent: native
+        // answers 1 for Riposte with Deflection unlearned, and the frame takes
+        // that chain from GetTalentPrereqs. It answers 1 for every rogue
+        // talent; the remaining server-side condition of Player::LearnTalent
+        // is Talent.dbc m_requiredSpellID (only talent 761 sets it in 2.4.3).
+        lua_pushnil(L);                        // 7: isExceptional
+        const bool spellKnown = talent->dependsOnSpell == 0 ||
+            gh->getKnownSpells().count(talent->dependsOnSpell) > 0;
+        if (spellKnown) lua_pushnumber(L, 1);  // 8: meetsPrereq
+        else lua_pushnil(L);
+        return 8;
+    }
     lua_pushboolean(L, 0);                     // 7: isExceptional
     // Was hardcoded true, which drew every talent as learnable however deep in
     // a chain it sat.
@@ -2334,7 +2354,9 @@ static int lua_GetTalentPrereqs(lua_State* L) {
     const int tabIndex = static_cast<int>(luaL_checknumber(L, 1));
     const int talentIndex = static_cast<int>(luaL_checknumber(L, 2));
     if (wantsPetTalents(L, 4)) return 0;
-    const auto* talent = talentAt(gh, tabIndex, talentIndex);
+    // Third argument: the inspected unit's tree (InspectTalentFrame).
+    const bool inspect = lua_toboolean(L, 3) != 0;
+    const auto* talent = talentAt(gh, tabIndex, talentIndex, talentClassId(gh, inspect));
     if (!talent) return 0;
 
     int pushed = 0;
@@ -2347,12 +2369,21 @@ static int lua_GetTalentPrereqs(lua_State* L) {
         // The DBC counts ranks from zero, so the rank a prerequisite asks for
         // is one more than the number stored beside it.
         const int needed = static_cast<int>(talent->prereqRank[p]) + 1;
-        const int have = gh->getTalentRank(prereqId);
+        const int have = talentRankFor(gh, inspect, prereqId);
         const auto staged = previewPoints().find(prereqId);
         const int previewHave = have + (staged == previewPoints().end() ? 0 : staged->second);
 
         lua_pushnumber(L, prereq->row + 1);
         lua_pushnumber(L, prereq->column + 1);
+        if (game::isPreWotlk()) {
+            // 2.4.3 TalentFrame_SetPrereqs walks these in threes
+            // (tier, column, isLearnable); a fourth value shifts every later
+            // triple and makes TalentFrame_DrawLines fail on a nil column.
+            if (have >= needed) lua_pushnumber(L, 1);
+            else lua_pushnil(L);
+            pushed += 3;
+            continue;
+        }
         lua_pushboolean(L, have >= needed ? 1 : 0);
         lua_pushboolean(L, previewHave >= needed ? 1 : 0);
         pushed += 4;

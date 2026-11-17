@@ -29,6 +29,9 @@ struct TalentEntry {
     uint32_t prereqTalent[3] = {};
     uint8_t prereqRank[3] = {};
     uint8_t maxRank = 0;
+    /// Talent.dbc m_requiredSpellID: a spell the player must know before the
+    /// talent can be learned (Player::LearnTalent DependsOnSpell). 0 for none.
+    uint32_t dependsOnSpell = 0;
 };
 
 struct TalentTabEntry {
@@ -37,6 +40,8 @@ struct TalentTabEntry {
     uint32_t classMask = 0;
     uint8_t orderIndex = 0;
     std::string backgroundFile;
+    /// TalentTab.dbc m_spellIconID (SpellIcon.dbc); 0 when the layout lacks it.
+    uint32_t spellIconId = 0;
 };
 
 // ---- Spell / cast state ----

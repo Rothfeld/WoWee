@@ -72,6 +72,7 @@ static const UFNameEntry kUFNames[] = {
     {.name = "PLAYER_DUEL_TEAM", .field = UF::PLAYER_DUEL_TEAM},
     {.name = "PLAYER_FLAGS", .field = UF::PLAYER_FLAGS},
     {.name = "PLAYER_TRACK_RESOURCES", .field = UF::PLAYER_TRACK_RESOURCES},
+    {.name = "PLAYER_CHARACTER_POINTS1", .field = UF::PLAYER_CHARACTER_POINTS1},
     {.name = "PLAYER_BYTES", .field = UF::PLAYER_BYTES},
     {.name = "PLAYER_BYTES_2", .field = UF::PLAYER_BYTES_2},
     {.name = "PLAYER_XP", .field = UF::PLAYER_XP},

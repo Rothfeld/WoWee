@@ -369,9 +369,10 @@
   },
   "Talent": {
     "Column": 3,
+    "DependsOnSpell": 20,
     "ID": 0,
-    "PrereqRank0": 12,
-    "PrereqTalent0": 9,
+    "PrereqRank0": 16,
+    "PrereqTalent0": 13,
     "RankSpell0": 4,
     "Row": 2,
     "TabID": 1
@@ -381,7 +382,8 @@
     "ClassMask": 20,
     "ID": 0,
     "Name": 1,
-    "OrderIndex": 21
+    "OrderIndex": 21,
+    "SpellIconID": 18
   },
   "TaxiNodes": {
     "ID": 0,

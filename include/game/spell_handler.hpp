@@ -228,6 +228,8 @@ public:
     }
     void loadTalentDbc();
     void syncPreWotlkTalentsFromKnownSpells();
+    /// PLAYER_CHARACTER_POINTS1 changed: the unspent talent point count.
+    void setCharacterPointsField(uint32_t points);
 
     // Auras
     [[nodiscard]] const std::vector<AuraSlot>& getPlayerAuras() const { return playerAuras_; }
@@ -528,6 +530,8 @@ private:
     // Talents (dual-spec support)
     uint8_t activeTalentSpec_ = 0;
     uint8_t unspentTalentPoints_[2] = {0, 0};
+    /// Last PLAYER_CHARACTER_POINTS1 value received (pre-WotLK unspent points).
+    uint32_t characterPointsField_ = 0;
     std::unordered_map<uint32_t, uint8_t> learnedTalents_[2];
     std::array<std::array<uint16_t, MAX_GLYPH_SLOTS>, 2> learnedGlyphs_{};
     std::unordered_map<uint32_t, TalentEntry> talentCache_;
