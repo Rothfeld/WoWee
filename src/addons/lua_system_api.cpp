@@ -6497,7 +6497,10 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"HasDebugZoneMap",          lua_ReturnFalse},
                 {"CanQueueForWintergrasp",   lua_ReturnFalse},
                 {"CancelSkillUps",           lua_ReturnNothing},
-                {"ConvertToRaid",            lua_ReturnNothing},
+                {"ConvertToRaid", [](lua_State* L) -> int {
+            if (auto* gh = getGameHandler(L)) gh->convertToRaid();
+            return 0;
+        }},
                 {"FillLocalizedClassList",   lua_ReturnNothing},
                 // Sends the request rather than doing nothing. The reply is
                 // parsed, fires GUILD_EVENT_LOG_UPDATE and friendsframe
