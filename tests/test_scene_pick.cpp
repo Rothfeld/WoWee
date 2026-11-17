@@ -73,7 +73,8 @@ TEST_CASE("World cursors distinguish unit actions and corpse priority") {
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_AUCTIONEER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_BANKER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Speak.blp");
-    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Pickup.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP | NPC_FLAG_TRAINER | NPC_FLAG_ANY_VENDOR, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Trainer.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_VENDOR | NPC_FLAG_REPAIR, QuestGiverStatus::NONE)) == "Interface\\Cursor\\RepairNPC.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::AVAILABLE)) == "Interface\\Cursor\\Quest.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, 0, QuestGiverStatus::REWARD)) == "Interface\\Cursor\\QuestTurnIn.blp");

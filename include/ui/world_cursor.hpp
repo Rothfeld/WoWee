@@ -29,9 +29,14 @@ inline const char* unitCursorPath(bool alive, uint32_t dynamicFlags, int reactio
     if (iconName == "Buy") return "Interface\\Cursor\\Buy.blp";
     if (iconName == "Taxi") return "Interface\\Cursor\\Taxi.blp";
     if (iconName == "Trainer") return "Interface\\Cursor\\Trainer.blp";
+    // Original 2.4.3 (pair 0, Honor Hold): repair beats vendor (Markus Scylan,
+    // 0x1080 RepairNPC), trainer beats vendor (Brumman, 0x91 Trainer), and a
+    // vendor shows Pickup.blp, not Buy.blp (Logistics Officer Ulrike 0x81,
+    // Warrant Officer Tracy Proudwell 0x83: pixel-exact Pickup).
     if (npcFlags & game::NPC_FLAG_REPAIR) return "Interface\\Cursor\\RepairNPC.blp";
-    if (npcFlags & (game::NPC_FLAG_ANY_VENDOR | game::NPC_FLAG_BANKER | game::NPC_FLAG_AUCTIONEER)) return "Interface\\Cursor\\Buy.blp";
     if (npcFlags & game::NPC_FLAG_TRAINER) return "Interface\\Cursor\\Trainer.blp";
+    if (npcFlags & game::NPC_FLAG_ANY_VENDOR) return "Interface\\Cursor\\Pickup.blp";
+    if (npcFlags & (game::NPC_FLAG_BANKER | game::NPC_FLAG_AUCTIONEER)) return "Interface\\Cursor\\Buy.blp";
     if (npcFlags & game::NPC_FLAG_FLIGHT_MASTER) return "Interface\\Cursor\\Taxi.blp";
     if (npcFlags & (game::NPC_FLAG_GOSSIP | game::NPC_FLAG_BATTLEMASTER)) return "Interface\\Cursor\\Speak.blp";
     return "Interface\\Cursor\\Point.blp";
