@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include "rendering/vk_shader.hpp"
 #include "rendering/animation/footstep_driver.hpp"
 #include "rendering/shadow_params.hpp"
@@ -213,8 +215,10 @@ public:
     /** Unit sheath state (0 unarmed, 1 melee, 2 ranged) placing its attached weapons. */
     void setSheathState(uint32_t instanceId, uint8_t sheathState);
 
-    /** Detach a weapon from the given attachment point (drops its enchant effects too). */
+    /** Detach every item held at the given attachment point (drops their enchant effects too). */
     void detachWeapon(uint32_t charInstanceId, uint32_t attachmentId);
+    void detachWeapons(uint32_t charInstanceId,
+                       const std::function<bool(const WeaponAttachment&)>& match);
 
     // Free a model's GPU buffers and map entry once no instance references it.
     // For per-instance model ids (weapons/effects/player composites, which get

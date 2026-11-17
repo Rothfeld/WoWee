@@ -4588,8 +4588,12 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
         return false;
     }
 
-    // Remove existing weapon at this attachment point
-    detachWeapon(charInstanceId, attachmentId);
+    // Replace the item already held at this point for the same sheath state.
+    // Two items can share a held point: an off-hand weapon (held in state 1)
+    // and a bow (held in state 2) both go to the left hand, 2.
+    detachWeapons(charInstanceId, [&](const WeaponAttachment& wa) {
+        return wa.attachmentId == attachmentId && wa.heldSheathState == heldSheathState;
+    });
 
     // Load weapon model into renderer
     if (models.find(weaponModelId) == models.end()) {
@@ -4861,27 +4865,33 @@ bool CharacterRenderer::getInstancePosition(uint32_t instanceId, glm::vec3& outP
 }
 
 void CharacterRenderer::detachWeapon(uint32_t charInstanceId, uint32_t attachmentId) {
+    detachWeapons(charInstanceId, [attachmentId](const WeaponAttachment& wa) {
+        return wa.attachmentId == attachmentId;
+    });
+}
+
+void CharacterRenderer::detachWeapons(uint32_t charInstanceId,
+                                      const std::function<bool(const WeaponAttachment&)>& match) {
     auto charIt = instances.find(charInstanceId);
     if (charIt == instances.end()) return;
     auto& attachments = charIt->second.weaponAttachments;
 
-    for (auto it = attachments.begin(); it != attachments.end(); ++it) {
-        if (it->attachmentId == attachmentId) {
-            // Collect model ids before erasing the attachment, then unload the
-            // ones no instance still uses (each attach allocates a fresh id).
-            std::vector<uint32_t> modelIds;
-            modelIds.push_back(it->weaponModelId);
-            for (const auto& fx : it->effects) {
-                removeInstance(fx.effectInstanceId);
-                modelIds.push_back(fx.effectModelId);
-            }
-            removeInstance(it->weaponInstanceId);
-            attachments.erase(it);
-            for (uint32_t mid : modelIds) unloadModelIfUnused(mid);
-            core::Logger::getInstance().info("Detached weapon from instance ", charInstanceId,
-                " attachment ", attachmentId);
-            return;
+    for (auto it = attachments.begin(); it != attachments.end();) {
+        if (!match(*it)) { ++it; continue; }
+        // Collect model ids before erasing the attachment, then unload the
+        // ones no instance still uses (each attach allocates a fresh id).
+        std::vector<uint32_t> modelIds;
+        modelIds.push_back(it->weaponModelId);
+        for (const auto& fx : it->effects) {
+            removeInstance(fx.effectInstanceId);
+            modelIds.push_back(fx.effectModelId);
         }
+        removeInstance(it->weaponInstanceId);
+        const uint32_t attachmentId = it->attachmentId;
+        it = attachments.erase(it);
+        for (uint32_t mid : modelIds) unloadModelIfUnused(mid);
+        core::Logger::getInstance().info("Detached weapon from instance ", charInstanceId,
+            " attachment ", attachmentId);
     }
 }
 
