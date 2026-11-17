@@ -5,6 +5,7 @@
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/camera.hpp"
 #include "rendering/placement_transform.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cassert>
+#include <cstdlib>
 #include <limits>
 #include <glm/gtc/constants.hpp>
 
@@ -104,7 +106,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             if (!kitId) continue;
             kitAnimations_[kitId] = kitDbc->getUInt32(i, 2);
             // Attachment semantics come from the kit slot, not the filename.
-            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 5, 11, 19, 0, 0};
+            // HeadEffect uses the model's overhead anchor, not its animated
+            // anatomical head. Mounted detection eyes and Dazed stars share
+            // this slot and remain above the rider in the original client.
+            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 5, 18, 19, 0, 0};
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
@@ -853,6 +858,32 @@ void SpellVisualSystem::update(float deltaTime) {
                 if (charRenderer->getAttachmentTransform(it->attachInstanceId, it->attachmentId, attachMat)) {
                     glm::vec3 bonePos = glm::vec3(attachMat[3]);
                     m2Renderer_->setInstancePosition(it->instanceId, bonePos);
+                    static const bool traceAttachments = std::getenv("WOWEE_TRACE_AURA_ATTACHMENT") != nullptr;
+                    if (traceAttachments && it->auraVisualId &&
+                        std::floor(it->elapsed) != std::floor(it->elapsed - deltaTime)) {
+                        glm::vec3 ownerPosition;
+                        glm::mat4 above;
+                        glm::mat4 head;
+                        const auto* camera = renderer_->getCamera();
+                        if (camera && charRenderer->getInstancePosition(it->attachInstanceId, ownerPosition) &&
+                            charRenderer->getAttachmentTransform(it->attachInstanceId, 18, above) &&
+                            charRenderer->getAttachmentTransform(it->attachInstanceId, 11, head)) {
+                            const auto viewProjection = camera->getProjectionMatrix() * camera->getViewMatrix();
+                            const auto headClip = viewProjection * head[3];
+                            const auto aboveClip = viewProjection * above[3];
+                            LOG_INFO("Aura attachment trace: owner=", it->attachInstanceId,
+                                " visual=", it->auraVisualId, " attachment=", it->attachmentId,
+                                " elapsed=", it->elapsed,
+                                " ownerXYZ=", ownerPosition.x, ",", ownerPosition.y, ",", ownerPosition.z,
+                                " anchorXYZ=", bonePos.x, ",", bonePos.y, ",", bonePos.z,
+                                " headXYZ=", head[3].x, ",", head[3].y, ",", head[3].z,
+                                " aboveXYZ=", above[3].x, ",", above[3].y, ",", above[3].z,
+                                " headClip=", headClip.x, ",", headClip.y, ",", headClip.z, ",", headClip.w,
+                                " aboveClip=", aboveClip.x, ",", aboveClip.y, ",", aboveClip.z, ",", aboveClip.w,
+                                " anchorScale=", glm::length(glm::vec3(attachMat[0])), ",",
+                                    glm::length(glm::vec3(attachMat[1])), ",", glm::length(glm::vec3(attachMat[2])));
+                        }
+                    }
                 }
             }
             ++it;
