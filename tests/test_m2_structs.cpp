@@ -379,3 +379,40 @@ TEST_CASE("state effects play Stand intro once before authored Hold", "[m2][stat
     CHECK(instance.currentSequenceIndex == 0);
     CHECK_FALSE(instance.playingVariation);
 }
+
+TEST_CASE("inherited billboard rotation preserves orbit and faces camera", "[m2][billboard-parent]") {
+    using namespace wowee::rendering;
+    M2ModelGPU model;
+    model.bones.resize(2);
+    auto& parent = model.bones[0];
+    parent.parentBone = -1;
+    parent.translation.sequences.push_back({0, {0}, {{1,2,3}}});
+    parent.scale.sequences.push_back({0, {0}, {{2,3,4}}});
+    parent.rotation.sequences.push_back({});
+    parent.rotation.sequences[0].timestamps = {0};
+    parent.rotation.sequences[0].quatValues = {glm::angleAxis(1.2f, glm::normalize(glm::vec3(1,2,3)))};
+    auto& child = model.bones[1];
+    child.parentBone = 0;
+    child.flags = 8;
+    child.pivot = {.2f,.3f,.4f};
+    M2Instance instance;
+    instance.invModelMatrix = glm::mat4(1);
+    instance.currentSequenceIndex = 0;
+    for (const auto& scale : {glm::vec3(2,3,4), glm::vec3(-2,3,4), glm::vec3(2,-3,4), glm::vec3(0)}) {
+        parent.scale.sequences[0].vec3Values[0] = scale;
+        for (const auto& camera : {glm::vec3(5,1,7), glm::vec3(-4,8,2)}) {
+            m2_internal::computeBoneMatrices(model, instance, &camera);
+            const auto& inherited = instance.boneMatrices[0];
+            const auto& result = instance.boneMatrices[1];
+            const glm::vec3 pivot(inherited * glm::vec4(child.pivot,1));
+            CHECK(glm::length(glm::vec3(result * glm::vec4(child.pivot,1)) - pivot) < .0001f);
+            for (int column=0; column<3; ++column)
+                CHECK(glm::length(glm::vec3(result[column])) == Catch::Approx(glm::length(glm::vec3(inherited[column]))).margin(.0001f));
+            const auto normal = glm::cross(glm::vec3(result[1]), glm::vec3(result[2]));
+            if (glm::length(normal) > 0)
+                CHECK(glm::dot(glm::normalize(normal), glm::normalize(camera-pivot)) == Catch::Approx(1).margin(.0001f));
+            for (int column=0; column<4; ++column)
+                for (int row=0; row<4; ++row) CHECK(std::isfinite(result[column][row]));
+        }
+    }
+}

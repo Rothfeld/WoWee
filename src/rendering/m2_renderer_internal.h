@@ -370,20 +370,23 @@ inline void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance,
         glm::mat4 local = glm::translate(glm::mat4(1.0f), bone.pivot);
         local = glm::translate(local, trans);
         if (cameraPosWorld && (bone.flags & (kM2BoneSphericalBillboard | kM2BoneCylindricalBillboardZ)) != 0) {
-            // Turn the bone to face the camera instead of using its authored
-            // rotation. Everything is done in model space, so the instance's
-            // own rotation and scale still apply on top.
-            //
-            // M2 model space is X forward, Y left, Z up, and a card is
-            // authored in the plane facing +X, so that axis is the one aimed
-            // at the viewer.
+            // Aim the inherited card plane, not a local frame that the parent
+            // rotates again. Sap_State_Head billboards orbit under two animated
+            // parents. Keep that orbit and inherited stretch, then rotate the
+            // resulting plane toward the camera around its animated pivot.
+            const glm::mat4 parent = bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < numBones
+                ? instance.boneMatrices[bone.parentBone] : glm::mat4(1.0f);
+            const glm::vec3 pivot(parent * glm::vec4(bone.pivot + trans, 1));
+            const glm::mat3 inherited(parent);
+            const glm::vec3 inheritedNormal = glm::cross(inherited[1], inherited[2]);
             const glm::vec3 camModel =
                 glm::vec3(instance.invModelMatrix * glm::vec4(*cameraPosWorld, 1.0f));
-            glm::vec3 toCamera = camModel - bone.pivot;
+            glm::vec3 toCamera = camModel - pivot;
             // Quest question marks rotate around Z while remaining upright.
             if (bone.flags & kM2BoneCylindricalBillboardZ) toCamera.z = 0.0f;
             const float len2 = glm::dot(toCamera, toCamera);
-            if (len2 > 1e-8f) {
+            glm::mat3 orient(1.0f);
+            if (len2 > 1e-8f && glm::dot(inheritedNormal, inheritedNormal) > 0.0f) {
                 toCamera *= glm::inversesqrt(len2);
                 // Up is model +Z unless the view is nearly along it, where the
                 // cross product collapses and the card would spin.
@@ -391,14 +394,19 @@ inline void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance,
                 if (std::abs(toCamera.z) > 0.999f) up = glm::vec3(0.0f, 1.0f, 0.0f);
                 const glm::vec3 right = glm::normalize(glm::cross(up, toCamera));
                 const glm::vec3 trueUp = glm::cross(toCamera, right);
-                glm::mat4 face(1.0f);
-                face[0] = glm::vec4(toCamera, 0.0f);
-                face[1] = glm::vec4(right, 0.0f);
-                face[2] = glm::vec4(trueUp, 0.0f);
-                local *= face;
-            } else {
-                local *= glm::toMat4(rot);
+                const glm::vec3 oldForward = glm::normalize(inheritedNormal);
+                const glm::vec3 oldRight = glm::normalize(inherited[1]);
+                const glm::vec3 oldUp = glm::cross(oldForward, oldRight);
+                orient = glm::mat3(toCamera, right, trueUp) *
+                    glm::transpose(glm::mat3(oldForward, oldRight, oldUp));
             }
+            // A collapsed inherited card stays collapsed; no inverse of its
+            // singular matrix is needed. Rotation preserves authored stretches
+            // and mirrored axes, including nonuniform parent scaling.
+            instance.boneMatrices[i] = glm::translate(glm::mat4(1), pivot) *
+                glm::mat4(orient * inherited) * glm::scale(glm::mat4(1), scl) *
+                glm::translate(glm::mat4(1), -bone.pivot);
+            continue;
         } else {
             local *= glm::toMat4(rot);
         }
