@@ -2,6 +2,7 @@
 #include "addons/lua_api_registrations.hpp"
 #include "game/spell_classification.hpp"
 #include "game/item_text.hpp"
+#include "game/loot_chat.hpp"
 #include "game/inventory_slots.hpp"
 #include "core/app_clock.hpp"
 #include "game/game_handler.hpp"
@@ -229,6 +230,7 @@ void InventoryHandler::announceLootMoney(uint64_t lootGuid, uint32_t amount) {
 }
 
 void InventoryHandler::tickLootMoneyFallback(float deltaTime) {
+    flushPendingLootLines();
     if (pendingLootMoneyNotifyTimer_ <= 0.0f) return;
     pendingLootMoneyNotifyTimer_ -= deltaTime;
     if (pendingLootMoneyNotifyTimer_ > 0.0f) return;
@@ -363,15 +365,17 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         if (!packet.hasRemaining(24)) return;
         const uint64_t passedGuid = packet.readUInt64();
         const uint32_t passedSlot = packet.readUInt32();
-        uint32_t itemId     = packet.readUInt32();
+        const uint32_t itemId     = packet.readUInt32();
         /*uint32_t randSuffix =*/ packet.readUInt32();
-        (void)packet.readUInt32(); // random property
-        owner_.ensureItemInfo(itemId);
-        auto* allPassInfo = owner_.getItemInfo(itemId);
-        std::string allPassName = (allPassInfo && !allPassInfo->name.empty())
-            ? allPassInfo->name : ("Item #" + std::to_string(itemId));
-        uint32_t allPassQuality = allPassInfo ? allPassInfo->quality : 1u;
-        owner_.addSystemChatMessage("Everyone passed on " + buildItemLink(itemId, allPassQuality, allPassName) + ".");
+        const auto randomProp = static_cast<int32_t>(packet.readUInt32());
+        // LOOT_ROLL_ALL_PASSED, a CHAT_MSG_LOOT line like the rest of the roll.
+        PendingLootLine line;
+        line.itemId = itemId;
+        line.randomPropertyId = randomProp;
+        line.compose = [](const std::string& link) {
+            return loot_chat::format(loot_chat::LOOT_ROLL_ALL_PASSED, {link});
+        };
+        queueLootLine(std::move(line));
         endLootRoll(passedGuid, passedSlot);
     };
 
@@ -434,17 +438,45 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         //   +slot(4)+itemId(4)+suffixFactor(4)+randomPropertyId(4)+count(4)
         // TBC and WotLK then add countInInventory(4); classic does not.
         if (!packet.hasRemaining(41)) return;
-        uint64_t guid = packet.readUInt64();
-        if (guid != owner_.getPlayerGuid()) { packet.skipAll(); return; }
-        /*uint32_t received      =*/ packet.readUInt32();
-        /*uint32_t created       =*/ packet.readUInt32();
-        /*uint32_t displayInChat =*/ packet.readUInt32();
+        const uint64_t guid = packet.readUInt64();
+        const uint32_t received      = packet.readUInt32();
+        const uint32_t created       = packet.readUInt32();
+        const uint32_t displayInChat = packet.readUInt32();
         const uint8_t bagSlot = packet.readUInt8();
         /*uint32_t slot          =*/ packet.readUInt32();
         uint32_t itemId = packet.readUInt32();
         /*uint32_t suffixFactor  =*/ packet.readUInt32();
         int32_t randomProp = static_cast<int32_t>(packet.readUInt32());
         uint32_t count = packet.readUInt32();
+        const bool self = guid == owner_.getPlayerGuid();
+
+        // The chat line, CHAT_MSG_LOOT from GlobalStrings: "You receive loot:
+        // %s." for the player, "%s receives loot: %s." for a group member -
+        // the server broadcasts a rolled or looted item to the whole group
+        // (Group::BroadcastPacket in Loot::SendItem). The packet's own
+        // showInChat word decides whether there is a line at all; CMaNGOS
+        // clears it for quest rewards.
+        if (displayInChat != 0) {
+            const auto kind = loot_chat::itemPushKind(received, created);
+            if (!self && kind != loot_chat::ItemPushKind::Looted) {
+                LOG_WARNING("SMSG_ITEM_PUSH_RESULT for group member 0x", std::hex, guid, std::dec,
+                            " item ", itemId, " received=", received, " created=", created,
+                            ": GlobalStrings has no line for it");
+            } else {
+                PendingLootLine line;
+                line.itemId = itemId;
+                line.randomPropertyId = randomProp;
+                if (!self) line.namedGuids.push_back(guid);
+                line.compose = [this, kind, self, count, guid](const std::string& link) {
+                    const auto text = loot_chat::itemPushLine(
+                        kind, self, count, self ? std::string{} : lootLineName(guid), link);
+                    assert(text);
+                    return *text;
+                };
+                queueLootLine(std::move(line));
+            }
+        }
+        if (!self) return;
 
         auto* info = owner_.getItemInfo(itemId);
         // Which bag button the item landed in, in the numbering the interface
@@ -457,21 +489,11 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         const int bagButtonId = (bagSlot == 255) ? 0 : (static_cast<int>(bagSlot) + 1);
 
         if (!info || info->name.empty()) {
-            // Item info not yet cached - defer notification
+            // Item info not yet cached - defer the bag event and the sound.
             owner_.pendingItemPushNotifsRef().push_back({.itemId = itemId, .count = count, .bagButtonId = bagButtonId});
             owner_.ensureItemInfo(itemId);
             return;
         }
-        std::string itemName = info->name;
-        if (randomProp != 0) {
-            std::string suffix = owner_.getRandomPropertyName(randomProp);
-            if (!suffix.empty()) itemName += " " + suffix;
-        }
-        uint32_t quality = info->quality;
-        std::string link = buildItemLink(itemId, quality, itemName);
-        std::string msg = "Received item: " + link;
-        if (count > 1) msg += " x" + std::to_string(count);
-        owner_.addSystemChatMessage(msg);
         if (auto* ac = owner_.services().audioCoordinator) {
             if (auto* sfx = ac->getUiSoundManager())
                 sfx->playLootItem();
@@ -1384,80 +1406,162 @@ void InventoryHandler::sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t 
     endLootRoll(objectGuid, slot);
 }
 
+std::string InventoryHandler::lootLineName(uint64_t guid) const {
+    if (guid == owner_.getPlayerGuid()) {
+        const Character* ac = owner_.getActiveCharacter();
+        assert(ac && "loot line for the player outside the world");
+        return ac->name;
+    }
+    return owner_.lookupName(guid);
+}
+
+void InventoryHandler::queueLootLine(PendingLootLine line) {
+    assert(line.itemId != 0 && line.compose);
+    line.queuedAt = std::chrono::steady_clock::now();
+    owner_.ensureItemInfo(line.itemId);
+    for (const uint64_t guid : line.namedGuids) {
+        if (lootLineName(guid).empty()) owner_.queryPlayerName(guid);
+    }
+    if (line.genderGuid != 0 && owner_.lookupPlayerGender(line.genderGuid) == 0xFF) {
+        owner_.queryPlayerName(line.genderGuid);
+    }
+    pendingLootLines_.push_back(std::move(line));
+    flushPendingLootLines();
+}
+
+void InventoryHandler::flushPendingLootLines() {
+    // Long enough for an item and a name query over a slow link; a line still
+    // waiting after this is not going to be answered.
+    constexpr auto kGiveUp = std::chrono::seconds(30);
+    while (!pendingLootLines_.empty()) {
+        PendingLootLine& line = pendingLootLines_.front();
+        const auto* info = owner_.getItemInfo(line.itemId);
+        bool ready = info && info->valid && !info->name.empty();
+        for (const uint64_t guid : line.namedGuids) {
+            ready = ready && !lootLineName(guid).empty();
+        }
+        if (line.genderGuid != 0) {
+            ready = ready && owner_.lookupPlayerGender(line.genderGuid) != 0xFF;
+        }
+        if (!ready) {
+            if (std::chrono::steady_clock::now() - line.queuedAt < kGiveUp) return;
+            LOG_ERROR("Loot chat line for item ", line.itemId,
+                      " dropped: item or player name never arrived");
+            pendingLootLines_.pop_front();
+            continue;
+        }
+        std::string itemName = info->name;
+        if (line.randomPropertyId != 0) {
+            const std::string suffix = owner_.getRandomPropertyName(line.randomPropertyId);
+            if (!suffix.empty()) itemName += " " + suffix;
+        }
+        const std::string link =
+            itemChatLink(line.itemId, info->quality, itemName, 0, line.randomPropertyId);
+        const std::string text = line.compose(link);
+        pendingLootLines_.pop_front();
+        if (!text.empty()) owner_.addLocalChatLine(ChatType::LOOT, text);
+    }
+}
+
+/// "Detailed Loot Information" in the interface options. Unchecked, the
+/// original client hides the individual roll lines and puts the winning roll
+/// on the winner line (OPTION_TOOLTIP_SHOW_LOOT_SPAM).
+static bool detailedLootInformation() {
+    return addons::storedCVarValue("showLootSpam", "1") != "0";
+}
+
 void InventoryHandler::handleLootRoll(network::Packet& packet) {
     // objectGuid(8) + lootSlot(4) + playerGuid(8) + itemId(4) + itemRandSuffix(4) +
     // itemRandProp(4) + rollNumber(1) + rollType(1) + autoPass(1)
-    if (!packet.hasRemaining(35)) return;
-    uint64_t objectGuid = packet.readUInt64();
-    uint32_t lootSlot   = packet.readUInt32();
-    uint64_t playerGuid = packet.readUInt64();
-    /*uint32_t itemId     =*/ packet.readUInt32();
+    if (!packet.hasRemaining(35)) {
+        LOG_WARNING("SMSG_LOOT_ROLL too short: ", packet.getRemainingSize());
+        return;
+    }
+    const uint64_t objectGuid = packet.readUInt64();
+    const uint32_t lootSlot   = packet.readUInt32();
+    const uint64_t playerGuid = packet.readUInt64();
+    const uint32_t itemId     = packet.readUInt32();
     /*uint32_t randSuffix =*/ packet.readUInt32();
-    (void)packet.readUInt32(); // random property
-    uint8_t rollNumber  = packet.readUInt8();
-    uint8_t rollType    = packet.readUInt8();
-    /*uint8_t autoPass   =*/ packet.readUInt8();
+    const auto randomProp     = static_cast<int32_t>(packet.readUInt32());
+    const uint8_t rollNumber  = packet.readUInt8();
+    const uint8_t rollType    = packet.readUInt8();
+    const bool autoPass       = packet.readUInt8() != 0;
 
-    // Resolve player name
-    std::string playerName;
-    auto nit = owner_.getPlayerNameCache().find(playerGuid);
-    if (nit != owner_.getPlayerNameCache().end()) playerName = nit->second;
-    if (playerName.empty()) playerName = "Player";
+    // One packet per player per step, and the step is in the pair of bytes
+    // rather than in rollType alone: Need is announced as (0, 0), which read
+    // as a pass here, and a chosen Greed as (128, 2), whose 128 was printed as
+    // the roll. See loot_chat::decodeRollEcho.
+    const auto echo = loot_chat::decodeRollEcho(rollNumber, rollType);
+    if (!echo) {
+        LOG_ERROR("SMSG_LOOT_ROLL: unknown roll step number=", static_cast<int>(rollNumber),
+                  " type=", static_cast<int>(rollType), " item ", itemId);
+        return;
+    }
+    if (autoPass && *echo != loot_chat::RollEcho::Passed) {
+        LOG_ERROR("SMSG_LOOT_ROLL: automatic pass flag on a non-pass step, item ", itemId);
+        return;
+    }
+    LOG_DEBUG("SMSG_LOOT_ROLL item ", itemId, " player 0x", std::hex, playerGuid, std::dec,
+              " number ", static_cast<int>(rollNumber), " type ", static_cast<int>(rollType),
+              " autoPass ", autoPass);
 
     if (LootRollEntry* roll = findLootRoll(objectGuid, lootSlot)) {
         LootRollEntry::PlayerRollResult result;
-        result.playerName = playerName;
+        result.playerName = owner_.lookupName(playerGuid);
         result.rollNum = rollNumber;
         result.rollType = rollType;
         roll->playerRolls.push_back(result);
     }
 
-    // RollVote enum: 0=Pass, 1=Need, 2=Greed, 3=Disenchant.
-    const char* typeStr = "passed on";
-    if (rollType == 1) typeStr = "rolled Need";
-    else if (rollType == 2) typeStr = "rolled Greed";
-    else if (rollType == 3) typeStr = "rolled Disenchant";
-    if (rollType >= 1 && rollType <= 3) {
-        owner_.addSystemChatMessage(playerName + " " + typeStr + " - " + std::to_string(rollNumber));
-    } else {
-        owner_.addSystemChatMessage(playerName + " passed.");
-    }
+    if (!detailedLootInformation()) return;
+    const bool self = playerGuid == owner_.getPlayerGuid();
+    PendingLootLine line;
+    line.itemId = itemId;
+    line.randomPropertyId = randomProp;
+    line.namedGuids.push_back(playerGuid);
+    if (autoPass && !self) line.genderGuid = playerGuid;
+    const loot_chat::RollEcho step = *echo;
+    line.compose = [this, step, rollNumber, autoPass, self, playerGuid](const std::string& link) {
+        const bool female = !self && autoPass && owner_.lookupPlayerGender(playerGuid) == 1;
+        return loot_chat::rollEchoLine(step, rollNumber, autoPass, self, female,
+                                       lootLineName(playerGuid), link);
+    };
+    queueLootLine(std::move(line));
 }
 
 void InventoryHandler::handleLootRollWon(network::Packet& packet) {
     // objectGuid(8) + lootSlot(4) + itemId(4) + itemSuffix(4) + itemProp(4) + playerGuid(8) + rollNumber(1) + rollType(1)
-    if (!packet.hasRemaining(34)) return;
+    if (!packet.hasRemaining(34)) {
+        LOG_WARNING("SMSG_LOOT_ROLL_WON too short: ", packet.getRemainingSize());
+        return;
+    }
     const uint64_t wonGuid = packet.readUInt64();
     const uint32_t wonSlot = packet.readUInt32();
-    uint32_t itemId     = packet.readUInt32();
+    const uint32_t itemId  = packet.readUInt32();
     /*uint32_t randSuffix =*/ packet.readUInt32();
-    int32_t wonRandProp = static_cast<int32_t>(packet.readUInt32());
-    uint64_t winnerGuid = packet.readUInt64();
-    uint8_t rollNumber  = packet.readUInt8();
-    uint8_t rollType    = packet.readUInt8();
-
-    std::string winnerName;
-    auto nit = owner_.getPlayerNameCache().find(winnerGuid);
-    if (nit != owner_.getPlayerNameCache().end()) winnerName = nit->second;
-    if (winnerName.empty()) winnerName = "Player";
-
-    owner_.ensureItemInfo(itemId);
-    auto* info = owner_.getItemInfo(itemId);
-    std::string itemName = (info && !info->name.empty()) ? info->name : ("Item #" + std::to_string(itemId));
-    if (wonRandProp != 0) {
-        std::string suffix = owner_.getRandomPropertyName(wonRandProp);
-        if (!suffix.empty()) itemName += " " + suffix;
-    }
-    uint32_t wonQuality = info ? info->quality : 1u;
-    std::string link = buildItemLink(itemId, wonQuality, itemName);
-
-    // RollVote enum: 1=Need, 2=Greed, 3=Disenchant (0=Pass cannot win).
-    const char* typeStr = "Need";
-    if (rollType == 2) typeStr = "Greed";
-    else if (rollType == 3) typeStr = "Disenchant";
-
-    owner_.addSystemChatMessage(winnerName + " won " + link + " (" + typeStr + " - " + std::to_string(rollNumber) + ")");
+    const auto wonRandProp = static_cast<int32_t>(packet.readUInt32());
+    const uint64_t winnerGuid = packet.readUInt64();
+    const uint8_t rollNumber  = packet.readUInt8();
+    const uint8_t rollType    = packet.readUInt8();
     endLootRoll(wonGuid, wonSlot);
+
+    // The winning vote: 1 Need, 2 Greed (RollVote in CMaNGOS LootMgr.h).
+    if (rollType != 1 && rollType != 2) {
+        LOG_ERROR("SMSG_LOOT_ROLL_WON: winning vote ", static_cast<int>(rollType),
+                  " is neither Need nor Greed, item ", itemId);
+        return;
+    }
+    const bool self = winnerGuid == owner_.getPlayerGuid();
+    const bool detailed = detailedLootInformation();
+    PendingLootLine line;
+    line.itemId = itemId;
+    line.randomPropertyId = wonRandProp;
+    line.namedGuids.push_back(winnerGuid);
+    line.compose = [this, rollNumber, rollType, self, detailed, winnerGuid](const std::string& link) {
+        return loot_chat::rollWonLine(rollNumber, rollType, self, detailed,
+                                      lootLineName(winnerGuid), link);
+    };
+    queueLootLine(std::move(line));
 }
 
 // ============================================================
@@ -4599,11 +4703,8 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
         // Flush any deferred loot notifications waiting on this item's name/quality.
         for (auto it = owner_.pendingItemPushNotifsRef().begin(); it != owner_.pendingItemPushNotifsRef().end(); ) {
             if (it->itemId == data.entry) {
-                std::string itemName = data.name.empty() ? ("item #" + std::to_string(data.entry)) : data.name;
-                std::string link = buildItemLink(data.entry, data.quality, itemName);
-                std::string msg = "Received item: " + link;
-                if (it->count > 1) msg += " x" + std::to_string(it->count);
-                owner_.addSystemChatMessage(msg);
+                // The chat line waits in pendingLootLines_ and goes out from
+                // there; this is the sound and the bag event.
                 if (auto* ac = owner_.services().audioCoordinator) {
                     if (auto* sfx = ac->getUiSoundManager()) sfx->playLootItem();
                 }

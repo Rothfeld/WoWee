@@ -47,6 +47,10 @@ public:
     /// notify, looting money said nothing and played no coin.
     void tickLootMoneyFallback(float deltaTime);
 
+    /// Prints loot chat lines that were waiting for an item query or a name
+    /// query. Called every frame; does nothing while the queue is empty.
+    void flushPendingLootLines();
+
     // ---- Item text (books / readable items) ----
     bool isItemTextOpen() const { return itemTextOpen_; }
     const std::string& getItemText() const { return itemText_; }
@@ -587,6 +591,26 @@ private:
     LootRollEntry& beginLootRoll(uint64_t objectGuid, uint32_t slot);
     LootRollEntry* findLootRoll(uint64_t objectGuid, uint32_t slot);
     void endLootRoll(uint64_t objectGuid, uint32_t slot);
+
+    /// A CHAT_MSG_LOOT line that names an item and possibly players.
+    ///
+    /// The line is built only when the item and every named player are known,
+    /// so it reads exactly as the original client's. Lines go out in arrival
+    /// order: a line still waiting holds back the ones after it, because the
+    /// roll lines of one item are a sequence ("selected", "roll", "won").
+    struct PendingLootLine {
+        uint32_t itemId = 0;
+        int32_t randomPropertyId = 0;
+        std::vector<uint64_t> namedGuids;   ///< players whose names the line prints
+        uint64_t genderGuid = 0;            ///< player whose gender picks the line, 0 none
+        /// Builds the line from the item link; empty result prints nothing.
+        std::function<std::string(const std::string& itemLink)> compose;
+        std::chrono::steady_clock::time_point queuedAt;
+    };
+    std::deque<PendingLootLine> pendingLootLines_;
+    void queueLootLine(PendingLootLine line);
+    /// The name a loot line prints for a player; empty while unknown.
+    std::string lootLineName(uint64_t guid) const;
     void handleShowBank(network::Packet& packet);
     void handleBuyBankSlotResult(network::Packet& packet);
     void handleGuildBankList(network::Packet& packet);

@@ -167,6 +167,12 @@ endfunction()
 wowee_add_test(test_sell_count
     SOURCES test_sell_count.cpp)
 
+# Group loot roll and item chat lines from GlobalStrings. Header-only.
+# WOWEE_TBC_GLOBALSTRINGS=<extracted tbc>/interface/framexml/globalstrings.lua
+# also checks every pattern against the client's file.
+wowee_add_test(test_loot_chat
+    SOURCES test_loot_chat.cpp)
+
 # Which action bar spell IsCurrentAction reports. Header-only, no game state.
 wowee_add_test(test_current_action
     SOURCES test_current_action.cpp)
