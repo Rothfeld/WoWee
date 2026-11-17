@@ -1019,6 +1019,13 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
             }
         }
         else if (key == ufi.npcFlags) { unit->setNpcFlags(val); }
+        // UNIT_FIELD_BYTES_1 byte 2 (vis flags): a unit created already
+        // stealthed carries CREEP here; only reading it on later updates left
+        // permanently stealthed creatures (Wildspawn Shadowstalker, Sneak 22766)
+        // drawn opaque.
+        else if (ufi.bytes1 != 0xFFFF && key == ufi.bytes1) {
+            unit->setVisibilityFlags(static_cast<uint8_t>((val >> 16) & 0xFF));
+        }
         else if (key == ufi.npcEmoteState) { unit->setNpcEmoteState(val); }
         else if (ufi.bytes2 != 0xFFFF && key == ufi.bytes2) {
             if (block.guid == owner_.getPlayerGuid()) {
