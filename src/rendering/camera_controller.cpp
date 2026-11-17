@@ -1573,58 +1573,10 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             }
         }
 
-        // Seam stability: while overlapping WMO shells, cap how fast floor height can
-        // step downward in a single frame to avoid following bad ramp samples into void.
-        if (groundH && nearWmoSpace && !cachedInsideInteriorWMO && lastGroundZ > 1.0f) {
-            float maxDropPerFrame = (verticalVelocity < -8.0f) ? 2.0f : 0.60f;
-            float minAllowed = lastGroundZ - maxDropPerFrame;
-            // Extra seam guard: outside interior groups, avoid accepting floors that
-            // are far below nearby terrain. Keeps shark-mouth transitions from
-            // following erroneous WMO ramps into void.
-            // Not while standing inside a building. Terrain is the ground
-            // *outside*, and a staircase descending below it - Gadgetzan's
-            // auction house, any cellar - is a legitimate floor far under
-            // nearby terrain, which is exactly what this refuses. The
-            // player hovered over the steps and sank at the clamp's rate
-            // instead of walking down them.
-            //
-            // The interior test above is not enough on its own: it wants
-            // the point a metre over the player's head inside a group
-            // flagged 0x2000, and at the top of a stairwell that group's
-            // box has not started yet. Being inside the WMO at all is the
-            // question this guard should have asked.
-            if (centerTerrainH && !cachedInsideWMO) {
-                // Never let terrain-based seam guard push floor above current feet;
-                // it should only prevent excessive downward drops.
-                float terrainGuard = std::min(*centerTerrainH - 1.0f, targetPos.z - 0.15f);
-                minAllowed = std::max(minAllowed, terrainGuard);
-            }
-            if (*groundH < minAllowed) {
-                *groundH = minAllowed;
-            }
-        }
-
-        // Structure continuity guard: if a floor query suddenly jumps far below
-        // recent support while near dock/bridge geometry, keep a conservative
-        // support height to avoid dropping through sparse collision seams.
-        if (groundH && hasRealGround_ && nearStructureSpace && !f.nowJump) {
-            float dropFromLast = lastGroundZ - *groundH;
-            // Only reject the lower sample while the feet are still up near
-            // lastGroundZ - that is the transient bad-ramp case this guard is
-            // for. Once the feet have actually descended below the clamp
-            // target the player is standing on the lower floor, and pinning
-            // groundH back up to lastGroundZ leaves the ground reference
-            // hanging above the feet so gravity and the snap fight over the
-            // gap forever. That is the Undercity overhang yo-yo: walk under
-            // the level above, lastGroundZ stays stuck on it (-43) while the
-            // real floor (-47) is refused, and the feet bob in between. If
-            // the feet are already past the target, let the real floor
-            // through so lastGroundZ can follow the player down onto it.
-            if (dropFromLast > 1.0f && verticalVelocity > -6.0f &&
-                targetPos.z > lastGroundZ - 0.20f) {
-                *groundH = std::max(*groundH, lastGroundZ - 0.20f);
-            }
-        }
+        // Floor heights must come from collision geometry. A per-frame limit
+        // relative to lastGroundZ creates an unsupported descending platform,
+        // continually resetting gravity and suppressing the falling state.
+        // The footprint and segment probes below recover real seam support.
 
         // Void recovery: far beneath the terrain heightfield with no structure
         // floor anywhere below usually means a seam heuristic already failed.
