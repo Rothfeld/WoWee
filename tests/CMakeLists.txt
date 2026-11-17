@@ -190,6 +190,13 @@ wowee_add_test(test_spell_description_eval
     SOURCES test_spell_description_eval.cpp
             ${CMAKE_SOURCE_DIR}/src/game/spell_description_eval.cpp)
 
+# ── test_spell_description_format ───────────────────────────
+# Spell.dbc description tokens as the 2.4.3 client substitutes them, checked
+# against native tooltip text ("by 0.5 sec", not "by 0 seconds").
+wowee_add_test(test_spell_description_format
+    SOURCES test_spell_description_format.cpp
+            ${CMAKE_SOURCE_DIR}/src/game/spell_description_format.cpp)
+
 # ── test_asset_inventory ────────────────────────────────────
 # What is installed and whether it can be used. The client used to start with
 # nothing extracted and fail far from the cause, never saying there were no

@@ -36,7 +36,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "game/spell_description_eval.hpp"
+#include "game/spell_description_format.hpp"
 #include "game/weather_state.hpp"
 #include <map>
 #include <optional>
@@ -3441,14 +3441,14 @@ public:
     const std::string& getSpellRank(uint32_t spellId) const;
     /// Returns the tooltip/description text from Spell.dbc (empty if unknown or has no text).
     const std::string& getSpellDescription(uint32_t spellId) const;
-    /// Substitute WoW description tokens in `raw` using live spell data: $s/$o/$m/$M base
-    /// points and $d durations (incl. cross-spell $<spellId> references), plus $l/$g
-    /// plural/gender forms. Unresolvable tokens ($h proc chance, $t period) are stripped
-    /// cleanly. `selfSpellId` supplies the default source for index-only tokens like $s1.
-    /// The evaluator's window onto this client, for $<name> and ${}.
-    SpellDescriptionContext descriptionContext(uint32_t spellId,
-                                               const std::string* declarations) const;
+    /// Substitute Spell.dbc description tokens in `raw` (see
+    /// spell_description_format.hpp). `selfSpellId` supplies the spell for
+    /// tokens without an id, like $s1. Unresolved tokens stay as written and
+    /// are logged.
     std::string formatSpellDescription(uint32_t selfSpellId, const std::string& raw) const;
+    /// The Spell.dbc columns description tokens read, cached per spell; null
+    /// when the spell or the layout columns are missing.
+    const SpellDescriptionRecord* spellDescriptionRecord(uint32_t spellId) const;
     // SpellFocusObject.dbc name ("Anvil", "Cooking Fire", ...) for
     // requires-spell-focus cast failures; empty if unknown.
     const std::string& getSpellFocusName(uint32_t focusId) const;
@@ -5294,6 +5294,7 @@ private:
     // Keyed by (SpellModOp, groupIndex); cleared on logout/character change.
     std::unordered_map<SpellModKey, int32_t, SpellModKeyHash> spellFlatMods_;
     std::unordered_map<SpellModKey, int32_t, SpellModKeyHash> spellPctMods_;
+    mutable std::unordered_map<uint32_t, SpellDescriptionRecord> spellDescriptionRecords_;
 };
 
 } // namespace game

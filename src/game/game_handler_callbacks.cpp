@@ -4,7 +4,7 @@
 #include "game/stationery.hpp"
 #include "game/reputation_standing.hpp"
 #include "addons/lua_api_registrations.hpp"
-#include "game/spell_description_eval.hpp"
+#include "game/spell_description_format.hpp"
 #include "game/gather_spells.hpp"
 #include "game/packed_time.hpp"
 #include "game/death_release.hpp"
@@ -3976,318 +3976,134 @@ const std::string& GameHandler::getSpellDescription(uint32_t spellId) const {
     return EMPTY_STRING;
 }
 
-namespace {
-// Format a duration in seconds the way WoW tooltips do: "12 sec", "5 min", "1 hour".
-std::string formatSpellDurationSec(float sec) {
-    if (sec <= 0.0f) return {};
-    auto trim = [](float v) {
-        char buf[32];
-        if (v == static_cast<float>(static_cast<long>(v)))
-            snprintf(buf, sizeof(buf), "%ld", static_cast<long>(v));
-        else
-            snprintf(buf, sizeof(buf), "%.1f", v);
-        return std::string(buf);
+const SpellDescriptionRecord* GameHandler::spellDescriptionRecord(uint32_t spellId) const {
+    if (auto it = spellDescriptionRecords_.find(spellId); it != spellDescriptionRecords_.end())
+        return &it->second;
+    auto* assets = services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* layout = layouts ? layouts->getLayout("Spell") : nullptr;
+    if (!assets || !layout) return nullptr;
+    const auto dbc = assets->loadDBC("Spell.dbc");
+    if (!dbc || !dbc->isLoaded()) return nullptr;
+    const auto row = dbc->findRecordById(spellId);
+    if (row < 0) return nullptr;
+    const uint32_t fieldCount = dbc->getFieldCount();
+    bool complete = true;
+    const auto column = [&](const std::string& name) {
+        const uint32_t f = layout->field(name);
+        if (f >= fieldCount) complete = false;
+        return f;
     };
-    if (sec >= 3600.0f && std::fmod(sec, 3600.0f) == 0.0f) {
-        float h = sec / 3600.0f;
-        return trim(h) + (h == 1.0f ? " hour" : " hours");
-    }
-    if (sec >= 60.0f) return trim(sec / 60.0f) + " min";
-    return trim(sec) + " sec";
-}
-} // namespace
-
-/// The evaluator's window onto this client: what a magnitude is, and which
-/// spells the player knows.
-SpellDescriptionContext GameHandler::descriptionContext(
-        uint32_t spellId, const std::string* declarations) const {
-    SpellDescriptionContext ctx;
-    ctx.declarations = declarations;
-    ctx.magnitude = [this, spellId](int index, double& out) {
-        const int32_t* bp = getSpellEffectBasePoints(spellId);
-        if (!bp || index < 0 || index > 2) return false;
-        out = std::abs(static_cast<double>(bp[index]) + 1.0);
-        return true;
+    const auto u32 = [&](const std::string& name) {
+        const uint32_t f = column(name);
+        return f < fieldCount ? dbc->getUInt32(row, f) : 0u;
     };
-    if (services().expansionRegistry && services().expansionRegistry->getActive() &&
-        services().expansionRegistry->getActive()->id == "tbc") {
-        ctx.value = [this, spellId](const std::string& token, int index, double& out) {
-            if (token == "AP") { out = getMeleeAttackPower(); return true; }
-            auto* assets = services().assetManager;
-            const auto* layouts = pipeline::getActiveDBCLayout();
-            const auto* layout = layouts ? layouts->getLayout("Spell") : nullptr;
-            if (!assets || !layout || index < 0 || index > 2) return false;
-            const auto dbc = assets->loadDBC("Spell.dbc");
-            if (!dbc) return false;
-            const auto row = dbc->findRecordById(spellId);
-            if (row < 0) return false;
-            const auto field = [&](const char* name) {
-                return layout->field(std::string(name) + std::to_string(index));
-            };
-            if (token == "b") {
-                const auto column = field("EffectPointsPerComboPoint");
-                if (column >= dbc->getFieldCount()) return false;
-                out = dbc->getFloat(row, column);
-                return true;
-            }
-            if (token != "s" && token != "S" && token != "m" && token != "M" &&
-                token != "o" && token != "O") return false;
-            const auto base = field("EffectBasePoints");
-            const auto die = field("EffectDieSides");
-            if (base >= dbc->getFieldCount() || die >= dbc->getFieldCount()) return false;
-            const int32_t points = static_cast<int32_t>(dbc->getUInt32(row, base));
-            const int32_t sides = static_cast<int32_t>(dbc->getUInt32(row, die));
-            out = std::abs(static_cast<double>(points) + (token == "M" ? sides : 1));
-            if (token == "o" || token == "O") {
-                const auto periodField = field("EffectAmplitude");
-                const auto auraField = field("EffectApplyAuraName");
-                if (periodField >= dbc->getFieldCount() || auraField >= dbc->getFieldCount()) return false;
-                uint32_t period = dbc->getUInt32(row, periodField);
-                const uint32_t aura = dbc->getUInt32(row, auraField);
-                // Health and power regeneration auras express their amount per five seconds.
-                if (aura == 84 || aura == 85) period = 5000;
-                if (period == 0) return false;
-                out = std::floor(out * getSpellDuration(spellId) * 1000.0 / period);
-            }
-            return true;
-        };
+    const auto f32 = [&](const std::string& name) {
+        const uint32_t f = column(name);
+        return f < fieldCount ? dbc->getFloat(row, f) : 0.0f;
+    };
+    SpellDescriptionRecord r;
+    const auto radiusDbc = assets->loadDBC("SpellRadius.dbc");
+    for (int e = 0; e < 3; ++e) {
+        const std::string k = std::to_string(e);
+        r.basePoints[e] = static_cast<int32_t>(u32("EffectBasePoints" + k));
+        r.dieSides[e] = static_cast<int32_t>(u32("EffectDieSides" + k));
+        r.baseDice[e] = static_cast<int32_t>(u32("EffectBaseDice" + k));
+        r.dicePerLevel[e] = f32("EffectDicePerLevel" + k);
+        r.realPointsPerLevel[e] = f32("EffectRealPointsPerLevel" + k);
+        r.pointsPerComboPoint[e] = f32("EffectPointsPerComboPoint" + k);
+        r.amplitudeMs[e] = u32("EffectAmplitude" + k);
+        r.auraType[e] = u32("EffectApplyAuraName" + k);
+        r.multipleValue[e] = f32("EffectMultipleValue" + k);
+        r.chainTargets[e] = u32("EffectChainTarget" + k);
+        r.miscValue[e] = static_cast<int32_t>(u32("EffectMiscValue" + k));
+        r.damageMultiplier[e] = f32("DmgMultiplier" + k);
+        // SpellRadius.dbc: ID, radius, per level, max - the same columns in
+        // every expansion that ships it.
+        const uint32_t radiusId = u32("EffectRadiusIndex" + k);
+        if (radiusId != 0 && radiusDbc && radiusDbc->isLoaded()) {
+            const auto rr = radiusDbc->findRecordById(radiusId);
+            if (rr >= 0) r.radius[e] = radiusDbc->getFloat(rr, 1);
+        }
     }
-    ctx.knowsSpell = [this](uint32_t id) { return isSpellKnownToClient(id); };
-    return ctx;
+    // SpellDuration.dbc: ID, base, per level, max (milliseconds; -1 unlimited).
+    if (const uint32_t durationId = u32("DurationIndex"); durationId != 0) {
+        const auto durations = assets->loadDBC("SpellDuration.dbc");
+        const auto dr = durations && durations->isLoaded() ? durations->findRecordById(durationId) : -1;
+        if (dr >= 0) r.durationMs = static_cast<int32_t>(durations->getUInt32(dr, 1));
+    }
+    // SpellRange.dbc max yards, through the layout the range code already uses.
+    if (const uint32_t rangeId = u32("RangeIndex"); rangeId != 0) {
+        const auto ranges = assets->loadDBC("SpellRange.dbc");
+        const auto* rangeLayout = layouts->getLayout("SpellRange");
+        const auto rr = ranges && ranges->isLoaded() ? ranges->findRecordById(rangeId) : -1;
+        if (rr >= 0 && rangeLayout) {
+            const uint32_t f = rangeLayout->field("MaxRange");
+            if (f < ranges->getFieldCount()) r.rangeMax = ranges->getFloat(rr, f);
+        }
+    }
+    r.procChance = u32("ProcChance");
+    r.procCharges = u32("ProcCharges");
+    r.stackAmount = u32("StackAmount");
+    r.maxTargets = u32("MaxAffectedTargets");
+    r.maxTargetLevel = u32("MaxTargetLevel");
+    r.baseLevel = u32("BaseLevel");
+    r.spellLevel = u32("SpellLevel");
+    r.maxLevel = u32("MaxLevel");
+    if (!complete) {
+        LOG_ERROR("Spell.dbc layout lacks description columns; deploy current dbc_layouts.json");
+        return nullptr;
+    }
+    const auto& cache = const_cast<GameHandler*>(this)->spellNameCacheRef();
+    if (const auto entry = cache.find(spellId);
+        entry != cache.end() && entry->second.descriptionVariableId != 0) {
+        auto& table = const_cast<GameHandler*>(this)->spellDescriptionVariablesRef();
+        if (const auto decl = table.find(entry->second.descriptionVariableId); decl != table.end())
+            r.declarations = &decl->second;
+    }
+    return &spellDescriptionRecords_.emplace(spellId, r).first->second;
 }
 
 std::string GameHandler::formatSpellDescription(uint32_t selfSpellId,
                                                 const std::string& raw) const {
     if (raw.empty()) return raw;
-
-    std::string out;
-    out.reserve(raw.size());
-    const size_t n = raw.size();
-    long lastValue = -1;  // drives $l plural selection
-
-    // Resolve a base-point magnitude ($s/$o/$m/$M) for a spell + effect index.
-    auto basePoints = [&](uint32_t sid, int idx) -> long {
-        const int32_t* bp = getSpellEffectBasePoints(sid);
-        if (!bp || idx < 0 || idx > 2) return LONG_MIN;
-        return std::labs(static_cast<long>(bp[idx]) + 1);  // stored as value-1
+    SpellDescriptionEnvironment env;
+    env.spell = [this](uint32_t id) { return spellDescriptionRecord(id); };
+    env.casterLevel = getPlayerLevel();
+    env.knowsSpell = [this](uint32_t id) { return isSpellKnownToClient(id); };
+    if (const auto player = getEntityManager().getEntity(getPlayerGuid())) {
+        const uint32_t bytes0 = player->getField(fieldIndex(UF::UNIT_FIELD_BYTES_0));
+        env.female = ((bytes0 >> 16) & 0xFF) == 1;
+    }
+    // Where the hearthstone sends you: the bind zone from SMSG_BINDPOINTUPDATE.
+    env.homeName = getAreaName(getHomeBindZoneId());
+    env.player = [this](const std::string& name, double& out) {
+        if (name == "AP") { out = getMeleeAttackPower(); return true; }
+        if (name == "RAP") { out = getRangedAttackPower(); return true; }
+        if (name == "PL") { out = getPlayerLevel(); return true; }
+        // Equipped weapon base damage and speed from the item template.
+        const auto weapon = [this](EquipSlot slot) -> const ItemQueryResponseData* {
+            const auto& equipped = inventory.getEquipSlot(slot);
+            return equipped.empty() ? nullptr : getItemInfo(equipped.item.itemId);
+        };
+        if (name == "mwb" || name == "MWB" || name == "MWS") {
+            const auto* info = weapon(EquipSlot::MAIN_HAND);
+            if (!info) return false;
+            out = name == "mwb" ? info->damageMin : name == "MWB" ? info->damageMax : info->delayMs / 1000.0;
+            return true;
+        }
+        if (name == "rwb" || name == "RWB") {
+            const auto* info = weapon(EquipSlot::RANGED);
+            if (!info) return false;
+            out = name == "rwb" ? info->damageMin : info->damageMax;
+            return true;
+        }
+        return false;
     };
-
-    for (size_t i = 0; i < n; ) {
-        char c = raw[i];
-        if (c != '$') { out += c; ++i; continue; }
-        if (i + 1 >= n) { out += c; ++i; continue; }
-
-        char next = raw[i + 1];
-
-        // Plural "$lsingular:plural;" / gender "$gmale:female;" - emit one branch.
-        if (next == 'l' || next == 'L' || next == 'g' || next == 'G') {
-            size_t semi = raw.find(';', i + 2);
-            if (semi != std::string::npos) {
-                std::string body = raw.substr(i + 2, semi - (i + 2));
-                size_t colon = body.find(':');
-                std::string a = (colon == std::string::npos) ? body : body.substr(0, colon);
-                std::string b = (colon == std::string::npos) ? body : body.substr(colon + 1);
-                bool plural = (next == 'l' || next == 'L') ? (lastValue != 1) : false;
-                out += plural ? b : a;
-                i = semi + 1;
-                continue;
-            }
-        }
-
-        // A named variable "$<percent>", declared in this spell's row of
-        // SpellDescriptionVariables.dbc. Nothing read that table, and the
-        // parser had no branch for '<' - so it dropped the "$<" as an unknown
-        // token and left "percent>" sitting in the sentence.
-        if (next == '<') {
-            const size_t close = raw.find('>', i + 2);
-            if (close != std::string::npos) {
-                const std::string name = raw.substr(i + 2, close - (i + 2));
-                i = close + 1;
-
-                const auto& cache = const_cast<GameHandler*>(this)->spellNameCacheRef();
-                const auto entry = cache.find(selfSpellId);
-                const std::string* decls = nullptr;
-                if (entry != cache.end() && entry->second.descriptionVariableId != 0) {
-                    auto& table = const_cast<GameHandler*>(this)->spellDescriptionVariablesRef();
-                    const auto row = table.find(entry->second.descriptionVariableId);
-                    if (row != table.end()) decls = &row->second;
-                }
-
-                const SpellDescriptionContext ctx = descriptionContext(selfSpellId, decls);
-                std::string decl;
-                double v = 0.0;
-                if (decls && spellDeclarationOf(ctx, name, decl) &&
-                    evaluateSpellExpression(decl, ctx, v)) {
-                    const long rounded = std::lround(v);
-                    out += std::to_string(rounded);
-                    lastValue = rounded;
-                } else if (i < n && raw[i] == '%') {
-                    // Unresolvable: drop the token and the percent sign it
-                    // qualified, rather than leave a bare "%" behind.
-                    ++i;
-                }
-                continue;
-            }
-        }
-
-        // Bracketed math expression "${...}" - evaluate where it can be, strip
-        // it (and a trailing %) where it cannot.
-        if (next == '{') {
-            size_t close = raw.find('}', i + 2);
-            if (close != std::string::npos) {
-                const auto& cache = const_cast<GameHandler*>(this)->spellNameCacheRef();
-                const auto entry = cache.find(selfSpellId);
-                const std::string* decls = nullptr;
-                if (entry != cache.end() && entry->second.descriptionVariableId != 0) {
-                    auto& table = const_cast<GameHandler*>(this)->spellDescriptionVariablesRef();
-                    const auto row = table.find(entry->second.descriptionVariableId);
-                    if (row != table.end()) decls = &row->second;
-                }
-                const SpellDescriptionContext ctx = descriptionContext(selfSpellId, decls);
-                double v = 0.0;
-                if (evaluateSpellExpression(raw.substr(i + 2, close - (i + 2)), ctx, v)) {
-                    const long rounded = std::lround(v);
-                    out += std::to_string(rounded);
-                    lastValue = rounded;
-                    i = close + 1;
-                    continue;
-                }
-                i = close + 1;
-                if (i < n && raw[i] == '%') ++i;
-                continue;
-            }
-        }
-
-        // Division token "$/N;<valueToken>" - e.g. "$/5;s1" is "s1 divided by 5"
-        // (food eat spells: "Restores $/5;s1 health per second").
-        if (next == '/') {
-            size_t k = i + 2;
-            long divisor = 0;
-            while (k < n && raw[k] >= '0' && raw[k] <= '9') { divisor = divisor * 10 + (raw[k] - '0'); ++k; }
-            if (k < n && raw[k] == ';' && divisor != 0) {
-                ++k;  // past ';'
-                uint32_t rid = 0; bool hr = false;
-                while (k < n && raw[k] >= '0' && raw[k] <= '9') { rid = rid * 10 + (raw[k] - '0'); hr = true; ++k; }
-                if (k < n) {
-                    char cd = raw[k++];
-                    int ix = 0;
-                    if (k < n && raw[k] >= '1' && raw[k] <= '3') { ix = raw[k] - '1'; ++k; }
-                    if (cd == 's' || cd == 'S' || cd == 'o' || cd == 'O' || cd == 'm' || cd == 'M') {
-                        long v = basePoints(hr ? rid : selfSpellId, ix);
-                        if (v != LONG_MIN) {
-                            long dv = v / divisor;
-                            out += std::to_string(dv);
-                            lastValue = dv;
-                            i = k;
-                            continue;
-                        }
-                    }
-                }
-            }
-            // Unparseable division token - strip through the terminating ';' if present.
-            size_t semi = raw.find(';', i + 2);
-            i = (semi != std::string::npos) ? semi + 1 : i + 2;
-            if (i < n && raw[i] == '%') ++i;
-            continue;
-        }
-
-        // General token: $ [spellId] letter [effectIndex]
-        size_t j = i + 1;
-        uint32_t refId = 0;
-        bool hasRef = false;
-        while (j < n && raw[j] >= '0' && raw[j] <= '9') {
-            refId = refId * 10 + static_cast<uint32_t>(raw[j] - '0');
-            hasRef = true;
-            ++j;
-        }
-        if (j >= n) { out += c; ++i; continue; }
-        char code = raw[j++];
-        int idx = 0;
-        if (j < n && raw[j] >= '1' && raw[j] <= '3') { idx = raw[j] - '1'; ++j; }
-        uint32_t target = hasRef ? refId : selfSpellId;
-
-        bool resolved = false;
-        switch (code) {
-            case 's': case 'S': case 'o': case 'O':
-            case 'm': case 'M': {
-                long v = basePoints(target, idx);
-                const auto context = descriptionContext(target, nullptr);
-                if (context.value) {
-                    double typedValue = 0;
-                    if (context.value(std::string(1, code), idx, typedValue))
-                        v = std::lround(typedValue);
-                    else v = LONG_MIN;
-                }
-                if (v != LONG_MIN && code == 's') {
-                    // A rolled effect reads as its range: Minor Healing
-                    // Potion's "Restores $s1 health." is "Restores 70 to 90
-                    // health." on the original (439: base 69, dice 1..21).
-                    const auto* entry = getSpellNameEntry(target);
-                    if (entry && entry->effectDieSides[idx] > entry->effectBaseDice[idx] &&
-                        entry->effectBasePoints[idx] + entry->effectBaseDice[idx] >= 0) {
-                        const long lo = entry->effectBasePoints[idx] + entry->effectBaseDice[idx];
-                        const long hi = entry->effectBasePoints[idx] + entry->effectDieSides[idx];
-                        out += std::to_string(lo) + " to " + std::to_string(hi);
-                        lastValue = hi;
-                        resolved = true;
-                        break;
-                    }
-                }
-                if (v != LONG_MIN) { out += std::to_string(v); lastValue = v; resolved = true; }
-                break;
-            }
-            case 'd': {
-                std::string dur = formatSpellDurationSec(getSpellDuration(target));
-                if (!dur.empty()) { out += dur; resolved = true; }
-                break;
-            }
-            case 'z': {
-                // Where the hearthstone sends you. Spell.dbc says "Returns you
-                // to $z.", and with the token dropped the tooltip read
-                // "Returns you to ." - which is the one fact the line exists
-                // to carry. The bind zone comes from SMSG_BINDPOINTUPDATE; the
-                // continent is a poor second but beats a blank.
-                std::string home = getAreaName(getHomeBindZoneId());
-                if (home.empty()) {
-                    uint32_t bindMap = 0;
-                    glm::vec3 bindPos(0.0f);
-                    if (getHomeBind(bindMap, bindPos)) home = getMapName(bindMap);
-                }
-                if (!home.empty()) { out += home; resolved = true; }
-                break;
-            }
-            default: break;  // $h proc chance, $t period, $a radius, ... - not resolvable here
-        }
-
-        if (resolved) {
-            i = j;
-        } else {
-            // Drop the whole token; a value slot immediately followed by '%' drops that too,
-            // so we don't leave a dangling "%".
-            i = j;
-            if (i < n && raw[i] == '%') ++i;
-        }
-    }
-
-    // Collapse whitespace left behind by stripped tokens ("a  chance" -> "a chance").
-    std::string cleaned;
-    cleaned.reserve(out.size());
-    bool prevSpace = false;
-    for (char c : out) {
-        bool isSpace = (c == ' ');
-        if (isSpace && prevSpace) continue;
-        // A token that could not be resolved leaves the space in front of it
-        // sitting against the punctuation that followed it - "Returns you to ."
-        // Drop that space too, so an unresolved token reads as a gap in the
-        // sentence rather than as a typo.
-        if (!cleaned.empty() && prevSpace &&
-            (c == '.' || c == ',' || c == ';' || c == '!' || c == '?' || c == ')')) {
-            cleaned.pop_back();
-        }
-        cleaned += c;
-        prevSpace = isSpace;
-    }
-    return cleaned;
+    env.unresolved = [selfSpellId](const std::string& token) {
+        LOG_WARNING("Spell ", selfSpellId, " description token ", token, " unresolved");
+    };
+    return formatSpellDescriptionText(selfSpellId, raw, env);
 }
 
 const std::string& GameHandler::getSpellFocusName(uint32_t focusId) const {
