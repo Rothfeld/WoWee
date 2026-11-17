@@ -24,7 +24,9 @@ public:
     [[nodiscard]] bool isInitialized() const { return initialized; }
 
     void playJump();
-    void playLanding(FootstepSurface surface, bool hardLanding);
+    /// The character's own landing exertion on a hard landing. The contact
+    /// sound of the feet is a footstep (FootstepDriver::playLandingStep).
+    void playLanding(bool hardLanding);
     void setSwimmingState(bool swimming, bool moving);
     void setCharacterVoiceProfile(const std::string& modelName);
     void setCharacterVoiceProfile(const std::string& raceFolder, const std::string& raceBase, bool male);
@@ -42,10 +44,6 @@ private:
         std::vector<uint8_t> data;
     };
 
-    struct SurfaceLandingSet {
-        std::vector<Sample> clips;
-    };
-
     bool initialized = false;
     pipeline::AssetManager* assetManager = nullptr;
 
@@ -59,7 +57,6 @@ private:
     std::vector<Sample> woundClips;
     std::vector<Sample> woundCritClips;
     std::vector<Sample> deathClips;
-    std::array<SurfaceLandingSet, 7> landingSets;
 
     bool swimmingActive = false;
     bool swimMoving = false;
@@ -79,7 +76,6 @@ private:
     float volumeScale = 1.0f;
 
     void preloadCandidates(std::vector<Sample>& out, const std::vector<std::string>& candidates);
-    void preloadLandingSet(FootstepSurface surface, const std::string& material);
     void rebuildJumpClipsForProfile(const std::string& raceFolder, const std::string& raceBase, bool male);
     void rebuildSwimLoopClipsForProfile(const std::string& raceFolder, const std::string& raceBase, bool male);
     void rebuildHardLandClipsForProfile(const std::string& raceFolder, const std::string& raceBase, bool male);

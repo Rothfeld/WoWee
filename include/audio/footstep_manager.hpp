@@ -12,16 +12,6 @@ namespace pipeline { class AssetManager; }
 
 namespace audio {
 
-enum class FootstepSurface : uint8_t {
-    STONE = 0,
-    DIRT,
-    GRASS,
-    WOOD,
-    METAL,
-    WATER,
-    SNOW
-};
-
 class CreatureSoundIndex;
 
 /// Footsteps as the game data authors them: the unit's CreatureSoundData

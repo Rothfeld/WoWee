@@ -1,5 +1,4 @@
 #include "audio/activity_sound_manager.hpp"
-#include "audio/footstep_paths.hpp"
 #include "audio/audio_engine.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "core/logger.hpp"
@@ -32,13 +31,6 @@ bool ActivitySoundManager::initialize(pipeline::AssetManager* assets) {
     });
     splashExitClips = splashEnterClips;
 
-    preloadLandingSet(FootstepSurface::STONE, "Stone");
-    preloadLandingSet(FootstepSurface::DIRT, "Dirt");
-    preloadLandingSet(FootstepSurface::GRASS, "Grass");
-    preloadLandingSet(FootstepSurface::WOOD, "Wood");
-    preloadLandingSet(FootstepSurface::METAL, "Metal");
-    preloadLandingSet(FootstepSurface::WATER, "Water");
-    preloadLandingSet(FootstepSurface::SNOW, "Snow");
 
     preloadCandidates(meleeSwingClips, {
         "Sound\\Item\\Weapons\\WeaponSwings\\mWooshMedium1.wav",
@@ -62,7 +54,6 @@ void ActivitySoundManager::shutdown() {
     stopSwimLoop();
     stopOneShot();
     std::remove(loopTempPath.c_str());
-    for (auto& set : landingSets) set.clips.clear();
     jumpClips.clear();
     splashEnterClips.clear();
     splashExitClips.clear();
@@ -134,11 +125,6 @@ void ActivitySoundManager::preloadCandidates(std::vector<Sample>& out, const std
         if (data.empty()) continue;
         out.push_back({path, std::move(data)});
     }
-}
-
-void ActivitySoundManager::preloadLandingSet(FootstepSurface surface, const std::string& material) {
-    auto& clips = landingSets[static_cast<size_t>(surface)].clips;
-    preloadCandidates(clips, classicFootstepPaths(material));
 }
 
 void ActivitySoundManager::rebuildJumpClipsForProfile(const std::string& raceFolder, const std::string& raceBase, bool male) {
@@ -246,7 +232,7 @@ void ActivitySoundManager::playJump() {
     }
 }
 
-void ActivitySoundManager::playLanding(FootstepSurface surface, bool hardLanding) {
+void ActivitySoundManager::playLanding(bool hardLanding) {
     if (!AudioEngine::instance().isInitialized()) {
         return;
     }
@@ -255,19 +241,7 @@ void ActivitySoundManager::playLanding(FootstepSurface surface, bool hardLanding
     if (lastLandAt.time_since_epoch().count() != 0) {
         if (std::chrono::duration<float>(now - lastLandAt).count() < 0.10f) return;
     }
-
-    const auto& clips = landingSets[static_cast<size_t>(surface)].clips;
-    if (!clips.empty()) {
-        std::uniform_int_distribution<size_t> dist(0, clips.size() - 1);
-        const Sample& sample = clips[dist(rng)];
-
-        float baseVolume = hardLanding ? 1.00f : 0.82f;
-        std::uniform_real_distribution<float> volumeDist(baseVolume * 0.95f, baseVolume * 1.05f);
-        std::uniform_real_distribution<float> pitchDist(0.95f, 1.03f);
-
-        AudioEngine::instance().playSound2D(sample.data, volumeDist(rng) * volumeScale, pitchDist(rng));
-        lastLandAt = now;
-    }
+    lastLandAt = now;
 
     if (hardLanding && !hardLandClips.empty()) {
         std::uniform_int_distribution<size_t> dist(0, hardLandClips.size() - 1);

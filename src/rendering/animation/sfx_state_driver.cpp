@@ -57,8 +57,8 @@ void SfxStateDriver::update(float deltaTime, Renderer* renderer,
         // than a landing thud, so a swim-to-ground transition is not a landing.
         if (grounded && !prevGrounded_ && !justLeftWater) {
             bool hardLanding = prevFalling_;
-            activitySoundManager->playLanding(
-                footstepDriver.resolveFootstepSurface(renderer), hardLanding);
+            footstepDriver.playLandingStep(renderer);
+            activitySoundManager->playLanding(hardLanding);
         }
 
         // Water transitions

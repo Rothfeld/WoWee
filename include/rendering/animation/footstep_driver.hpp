@@ -6,7 +6,6 @@
 
 namespace wowee {
 
-namespace audio { enum class FootstepSurface : uint8_t; }
 
 namespace rendering {
 
@@ -35,8 +34,8 @@ public:
                                     float animationDurationMs,
                                     const std::vector<uint32_t>* eventTimesMs = nullptr);
 
-    /// Resolve the surface type under the character for footstep sound selection.
-    audio::FootstepSurface resolveFootstepSurface(Renderer* renderer) const;
+    /// A landing's footfall: the character's footstep on the terrain under it.
+    void playLandingStep(Renderer* renderer);
 
 private:
     /// One footstep of the character or its mount: FootstepTerrainLookup
@@ -48,10 +47,6 @@ private:
     void playWaterStepExtras(Renderer* renderer) const;
 
 
-    // Footstep surface cache (avoid expensive queries every step)
-    mutable audio::FootstepSurface cachedFootstepSurface_{};
-    mutable glm::vec3 cachedFootstepPosition_{0.0f, 0.0f, 0.0f};
-    mutable float cachedFootstepUpdateTimer_{999.0f};
 
     // The mount's footfall event tracking, the same scan as the player's.
     struct EventTracker {

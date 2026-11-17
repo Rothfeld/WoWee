@@ -14,9 +14,7 @@
 #include "audio/movement_sound_manager.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
-#include <initializer_list>
 
 namespace wowee {
 namespace rendering {
@@ -24,15 +22,6 @@ namespace rendering {
 // ── Footstep event detection (moved from AnimationController) ────────────────
 
 namespace {
-
-bool containsAnyToken(const std::string& text, std::initializer_list<const char*> tokens) {
-    for (const char* token : tokens) {
-        if (text.find(token) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
-}
 
 } // namespace
 
@@ -92,69 +81,6 @@ bool FootstepDriver::shouldTriggerFootstepEvent(uint32_t animationId, float anim
                                                        eventTimesMs);
 }
 
-audio::FootstepSurface FootstepDriver::resolveFootstepSurface(Renderer* renderer) const {
-    auto* cameraController = renderer->getCameraController();
-    if (!cameraController || !cameraController->isThirdPerson()) {
-        return audio::FootstepSurface::STONE;
-    }
-
-    const glm::vec3& p = renderer->getCharacterPosition();
-
-    float distSq = glm::dot(p - cachedFootstepPosition_, p - cachedFootstepPosition_);
-    if (distSq < 2.25f && cachedFootstepUpdateTimer_ < 0.5f) {
-        return cachedFootstepSurface_;
-    }
-
-    cachedFootstepPosition_ = p;
-    cachedFootstepUpdateTimer_ = 0.0f;
-
-    if (cameraController->isSwimming()) {
-        cachedFootstepSurface_ = audio::FootstepSurface::WATER;
-        return audio::FootstepSurface::WATER;
-    }
-
-    auto* waterRenderer = renderer->getWaterRenderer();
-    if (waterRenderer) {
-        auto waterH = waterRenderer->getWaterHeightAt(p.x, p.y);
-        if (waterH && p.z < (*waterH + 0.25f)) {
-            cachedFootstepSurface_ = audio::FootstepSurface::WATER;
-            return audio::FootstepSurface::WATER;
-        }
-    }
-
-    auto* wmoRenderer = renderer->getWMORenderer();
-    auto* terrainManager = renderer->getTerrainManager();
-    if (wmoRenderer) {
-        auto wmoFloor = wmoRenderer->getFloorHeight(p.x, p.y, p.z + 1.5f);
-        auto terrainFloor = terrainManager ? terrainManager->getHeightAt(p.x, p.y) : std::nullopt;
-        const bool standingOnWmo = wmoFloor && std::abs(*wmoFloor - p.z) <= 2.5f;
-        if (standingOnWmo && (cameraController->isInsideWMO() ||
-                             !terrainFloor || *wmoFloor >= *terrainFloor - 0.1f)) {
-            cachedFootstepSurface_ = audio::FootstepSurface::STONE;
-            return audio::FootstepSurface::STONE;
-        }
-    }
-
-    audio::FootstepSurface surface = audio::FootstepSurface::STONE;
-
-    if (terrainManager) {
-        auto texture = terrainManager->getDominantTextureAt(p.x, p.y);
-        if (texture) {
-            std::string t = *texture;
-            for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (containsAnyToken(t, {"snow", "ice"})) surface = audio::FootstepSurface::SNOW;
-            else if (containsAnyToken(t, {"farm", "field", "soil", "plow", "crop", "wheat", "dirt", "mud", "sand"})) surface = audio::FootstepSurface::DIRT;
-            else if (containsAnyToken(t, {"grass", "moss", "leaf"})) surface = audio::FootstepSurface::GRASS;
-            else if (containsAnyToken(t, {"wood", "timber"})) surface = audio::FootstepSurface::WOOD;
-            else if (containsAnyToken(t, {"metal", "iron"})) surface = audio::FootstepSurface::METAL;
-            else if (containsAnyToken(t, {"stone", "rock", "cobble", "brick"})) surface = audio::FootstepSurface::STONE;
-        }
-    }
-
-    cachedFootstepSurface_ = surface;
-    return surface;
-}
-
 void FootstepDriver::playWaterStepExtras(Renderer* renderer) const {
     if (renderer->getAudioCoordinator()->getMovementSoundManager()) {
         renderer->getAudioCoordinator()->getMovementSoundManager()->playWaterFootstep(audio::MovementSoundManager::CharacterSize::MEDIUM);
@@ -183,7 +109,6 @@ void FootstepDriver::update(float deltaTime, Renderer* renderer,
     uint32_t characterInstanceId = renderer->getCharacterInstanceId();
 
     footstepManager->update(deltaTime);
-    cachedFootstepUpdateTimer_ += deltaTime;
 
     bool canPlayFootsteps = characterRenderer && characterInstanceId > 0 &&
         cameraController && cameraController->isThirdPerson() &&
@@ -214,6 +139,13 @@ void FootstepDriver::update(float deltaTime, Renderer* renderer,
         playerFootsteps_.reset();
         mountFootsteps_.reset();
     }
+}
+
+void FootstepDriver::playLandingStep(Renderer* renderer) {
+    // The feet meeting the ground: the character's footstep on that terrain.
+    // Which sound the original plays on landing is not in the data read here;
+    // the authored per-terrain footstep is the closest it names.
+    if (const uint32_t instanceId = renderer->getCharacterInstanceId()) playStep(renderer, instanceId);
 }
 
 void FootstepDriver::playStep(Renderer* renderer, uint32_t instanceId) {
