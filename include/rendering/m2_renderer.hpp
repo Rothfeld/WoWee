@@ -939,9 +939,9 @@ private:
     void* m2ParticleVBMapped_[kParticleFrames] = {};
     // Dedicated glow sprite vertex buffer (separate from particle VB to avoid data race)
     static constexpr size_t MAX_GLOW_SPRITES = 8000;
-    ::VkBuffer glowVB_ = VK_NULL_HANDLE;
-    VmaAllocation glowVBAlloc_ = VK_NULL_HANDLE;
-    void* glowVBMapped_ = nullptr;
+    ::VkBuffer glowVB_[kParticleFrames] = {};
+    VmaAllocation glowVBAlloc_[kParticleFrames] = {};
+    void* glowVBMapped_[kParticleFrames] = {};
 
     std::unordered_map<uint32_t, M2ModelGPU> models;
     // Grace period for model cleanup: track when a model first became instanceless.

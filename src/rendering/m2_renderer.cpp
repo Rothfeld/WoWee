@@ -962,9 +962,12 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         }
 
         // Dedicated glow sprite buffer (separate from particle VB to avoid data race)
-        bci.size = MAX_GLOW_SPRITES * 9 * sizeof(float);
-        vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &glowVB_, &glowVBAlloc_, &allocInfo);
-        glowVBMapped_ = allocInfo.pMappedData;
+        // Same 12-float layout as the particle pipeline that draws it.
+        bci.size = MAX_GLOW_SPRITES * 12 * sizeof(float);
+        for (uint32_t f = 0; f < kParticleFrames; ++f) {
+            vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &glowVB_[f], &glowVBAlloc_[f], &allocInfo);
+            glowVBMapped_[f] = allocInfo.pMappedData;
+        }
 
         // Ribbon vertex buffer - triangle strip: pos(3)+color(3)+alpha(1)+uv(2)=9 floats/vert
         bci.size = MAX_RIBBON_VERTS * 9 * sizeof(float);
@@ -1100,8 +1103,8 @@ void M2Renderer::shutdown() {
     for (uint32_t f = 0; f < kParticleFrames; ++f) {
         destroy(alloc, m2ParticleVB_[f], m2ParticleVBAlloc_[f]);
         destroy(alloc, ribbonVB_[f], ribbonVBAlloc_[f]);
+        destroy(alloc, glowVB_[f], glowVBAlloc_[f]);
     }
-    destroy(alloc, glowVB_, glowVBAlloc_);
 
     // Destroy pipelines
     auto destroyPipeline = [&](VkPipeline& p) { if (p) { vkDestroyPipeline(device, p, nullptr); p = VK_NULL_HANDLE; } };

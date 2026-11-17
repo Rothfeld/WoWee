@@ -2150,7 +2150,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     if (beforeTransparentDepth) beforeTransparentDepth(std::numeric_limits<float>::infinity());
 
     // Render glow sprites as billboarded additive point lights
-    if (!glowSprites_.empty() && particleAdditivePipeline_ && glowVB_ && glowTexDescSet_) {
+    const uint32_t glowFrame = vkCtx_->getCurrentFrame();
+    if (!glowSprites_.empty() && particleAdditivePipeline_ && glowVB_[glowFrame] && glowTexDescSet_) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particleAdditivePipeline_);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 particlePipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
@@ -2166,7 +2167,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
         // Write glow vertex data directly to mapped buffer (no temp vector)
         size_t uploadCount = std::min(glowSprites_.size(), MAX_GLOW_SPRITES);
-        float* dst = static_cast<float*>(glowVBMapped_);
+        float* dst = static_cast<float*>(glowVBMapped_[glowFrame]);
         for (size_t gi = 0; gi < uploadCount; gi++) {
             const auto& gs = glowSprites_[gi];
             *dst++ = gs.worldPos.x;
@@ -2177,12 +2178,16 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             *dst++ = gs.color.b;
             *dst++ = gs.color.a;
             *dst++ = gs.size;
+            *dst++ = 0.0f;  // tile
+            *dst++ = 0.0f;  // tail displacement (none)
+            *dst++ = 0.0f;
             *dst++ = 0.0f;
         }
 
         VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &glowVB_, &offset);
-        vkCmdDraw(cmd, static_cast<uint32_t>(uploadCount), 1, 0, 0);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &glowVB_[glowFrame], &offset);
+        // The particle pipeline reads one sprite per instance, six corners each.
+        vkCmdDraw(cmd, 6, static_cast<uint32_t>(uploadCount), 0, 0);
     }
 
     // How many of the sky's layers were actually drawn this frame.
