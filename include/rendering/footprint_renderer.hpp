@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -42,6 +43,10 @@ public:
     void spawn(uint32_t creatureModelDataId, const glm::vec3& footPosition,
                float yawRadians, bool leftFoot, float scale);
     [[nodiscard]] bool hasProfile(uint32_t creatureModelDataId) const;
+    /// TerrainType id of the surface at a foot: the terrain texture's
+    /// GroundEffectTexture row, or the WMO floor material. None on model
+    /// (M2) surfaces and off any floor.
+    [[nodiscard]] std::optional<uint32_t> terrainTypeAt(const glm::vec3& position) const;
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera);
 
 private:

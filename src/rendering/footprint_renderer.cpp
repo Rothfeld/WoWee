@@ -275,7 +275,7 @@ float FootprintRenderer::resolveFloorHeight(const glm::vec3& position) const {
     return floor.value_or(position.z);
 }
 
-bool FootprintRenderer::surfaceAllowsFootprints(const glm::vec3& position) const {
+std::optional<uint32_t> FootprintRenderer::terrainTypeAt(const glm::vec3& position) const {
     std::optional<float> support;
     std::optional<uint32_t> terrainType;
     const auto reachable = [&](std::optional<float> z) {
@@ -303,10 +303,16 @@ bool FootprintRenderer::surfaceAllowsFootprints(const glm::vec3& position) const
     }
     if (auto* m2 = owner_->getM2Renderer()) {
         const auto height = m2->getFloorHeight(position.x, position.y, position.z + 0.85f);
-        // Model surfaces carry no TerrainType footprint permission.
-        if (reachable(height) && (!support || *height > *support + 0.01f)) return false;
+        // Model surfaces carry no TerrainType.
+        if (reachable(height) && (!support || *height > *support + 0.01f)) return std::nullopt;
     }
-    if (!support || !terrainType) return false;
+    if (!support) return std::nullopt;
+    return terrainType;
+}
+
+bool FootprintRenderer::surfaceAllowsFootprints(const glm::vec3& position) const {
+    const auto terrainType = terrainTypeAt(position);
+    if (!terrainType) return false;
     const auto flags = terrainFlags_.find(*terrainType);
     return flags != terrainFlags_.end() && (flags->second & 1u) != 0;
 }

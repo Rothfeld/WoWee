@@ -127,8 +127,10 @@ public:
     /// Print a footprint for every authored footfall event ($FL0, $RR1, ...)
     /// each unit's current sequence passed since the last call, at that foot.
     void emitFootprints(FootprintRenderer& footprints, const glm::vec3& viewerPosition);
-    /// CreatureModelData id the unit's display resolves to (CreatureDisplayInfo.ModelID).
-    void setInstanceCreatureModel(uint32_t instanceId, uint32_t creatureModelDataId);
+    /// The unit's CreatureDisplayInfo row and the CreatureModelData id it names.
+    void setInstanceCreatureModel(uint32_t instanceId, uint32_t displayId, uint32_t creatureModelDataId);
+    /// CreatureDisplayInfo id last given to setInstanceCreatureModel; 0 = none.
+    [[nodiscard]] uint32_t getInstanceDisplayId(uint32_t instanceId) const;
     [[nodiscard]] float getInstanceScale(uint32_t instanceId) const;
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
@@ -314,6 +316,7 @@ private:
         // CreatureModelData row this instance is drawn from; it names the
         // footprint mask and size. 0 = not a unit model, no prints.
         uint32_t creatureModelDataId = 0;
+        uint32_t displayId = 0;
         // Where the footfall event scan stopped: sequence index and time.
         int footfallSequence = -1;
         float footfallTime = 0.0f;

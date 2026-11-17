@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <memory>
 
 namespace wowee {
 namespace pipeline { class AssetManager; }
@@ -21,15 +22,11 @@ enum class FootstepSurface : uint8_t {
     SNOW
 };
 
-// Which sample bank a step draws from.
-// Note: the heavy bank is named HEAVY (not HUGE) because Windows math headers
-// define HUGE as a macro.
-enum class FootstepBank : uint8_t {
-    CHARACTER = 0,  // medium/large biped footsteps (also padded mounts: wolf/tiger/raptor)
-    HORSE,          // hoofed mounts (horse/skeletal horse/ram)
-    HEAVY           // heavy mounts (kodo) - mFootHuge* sample set
-};
+class CreatureSoundIndex;
 
+/// Footsteps as the game data authors them: the unit's CreatureSoundData
+/// footstep id and the TerrainType under it pick a FootstepTerrainLookup row,
+/// whose SoundEntries row (or its splash row when wading) is played.
 class FootstepManager {
 public:
     FootstepManager();
@@ -39,38 +36,18 @@ public:
     void shutdown();
 
     void update(float deltaTime);
-    void playFootstep(FootstepSurface surface, bool sprinting);
-    void playMountFootstep(FootstepSurface surface, FootstepBank bank);
+    /// One step of a unit drawn with CreatureDisplayInfo `displayId` onto
+    /// TerrainType `terrainTypeId`.
+    void playFootstep(uint32_t displayId, uint32_t terrainTypeId, bool wading);
     void setVolumeScale(float scale) { volumeScale = scale; }
     [[nodiscard]] float getVolumeScale() const { return volumeScale; }
 
     [[nodiscard]] bool isInitialized() const { return assetManager != nullptr; }
-    [[nodiscard]] bool hasAnySamples() const { return sampleCount > 0; }
+    [[nodiscard]] const CreatureSoundIndex* sounds() const { return sounds_.get(); }
 
 private:
-    struct Sample {
-        std::string path;
-        std::vector<uint8_t> data;
-    };
-
-    struct SurfaceSamples {
-        std::vector<Sample> clips;
-    };
-
-    void preloadSurface(SurfaceSamples* bank, FootstepSurface surface,
-                        const std::vector<std::string>& candidates, const char* bankName);
-    bool playRandomStep(FootstepSurface surface, FootstepBank bank,
-                        float minInterval, float volumeMul);
-    static const char* surfaceName(FootstepSurface surface);
-
     pipeline::AssetManager* assetManager = nullptr;
-    SurfaceSamples surfaces[7];
-    SurfaceSamples horseSurfaces[7];
-    SurfaceSamples hugeSurfaces[7];
-    size_t sampleCount = 0;
-
-    std::chrono::steady_clock::time_point lastPlayTime = std::chrono::steady_clock::time_point{};
-
+    std::unique_ptr<CreatureSoundIndex> sounds_;
     std::mt19937 rng;
     float volumeScale = 1.0f;
 };

@@ -715,6 +715,8 @@ set(WOWEE_SOURCES
     src/audio/audio_coordinator.cpp
     src/audio/music_manager.cpp
     src/audio/footstep_manager.cpp
+    src/audio/creature_sound_index.cpp
+    src/audio/creature_sound_index_assets.cpp
     src/audio/activity_sound_manager.cpp
     src/audio/mount_sound_manager.cpp
     src/audio/npc_voice_manager.cpp
@@ -1115,6 +1117,7 @@ set(WOWEE_HEADERS
     include/audio/audio_engine.hpp
     include/audio/music_manager.hpp
     include/audio/footstep_manager.hpp
+    include/audio/creature_sound_index.hpp
     include/audio/activity_sound_manager.hpp
     include/audio/mount_sound_manager.hpp
     include/audio/npc_voice_manager.hpp

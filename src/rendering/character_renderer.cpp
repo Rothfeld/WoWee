@@ -4240,10 +4240,17 @@ bool CharacterRenderer::getAnimationState(uint32_t instanceId, uint32_t& animati
     return true;
 }
 
-void CharacterRenderer::setInstanceCreatureModel(uint32_t instanceId, uint32_t creatureModelDataId) {
+void CharacterRenderer::setInstanceCreatureModel(uint32_t instanceId, uint32_t displayId,
+                                                 uint32_t creatureModelDataId) {
     auto it = instances.find(instanceId);
     if (it == instances.end()) return;
+    it->second.displayId = displayId;
     it->second.creatureModelDataId = creatureModelDataId;
+}
+
+uint32_t CharacterRenderer::getInstanceDisplayId(uint32_t instanceId) const {
+    auto it = instances.find(instanceId);
+    return it != instances.end() ? it->second.displayId : 0;
 }
 
 void CharacterRenderer::emitFootprints(FootprintRenderer& footprints, const glm::vec3& viewerPosition) {

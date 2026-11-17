@@ -929,10 +929,10 @@ void EntitySpawner::syncLocalFootprintModels() {
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     if (!cr || !unit) return;
     if (const uint32_t instance = renderer_->getCharacterInstanceId())
-        cr->setInstanceCreatureModel(instance, creatureModelDataIdForDisplay(unit->getDisplayId()));
+        cr->setInstanceCreatureModel(instance, unit->getDisplayId(), creatureModelDataIdForDisplay(unit->getDisplayId()));
     if (mountInstanceId_ != 0) {
         const uint32_t mountDisplay = unit->getField(game::fieldIndex(game::UF::UNIT_FIELD_MOUNTDISPLAYID));
-        cr->setInstanceCreatureModel(mountInstanceId_, creatureModelDataIdForDisplay(mountDisplay));
+        cr->setInstanceCreatureModel(mountInstanceId_, mountDisplay, creatureModelDataIdForDisplay(mountDisplay));
     }
 }
 
@@ -941,9 +941,9 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
     if (!entity) return;
     if (auto unit = std::dynamic_pointer_cast<game::Unit>(entity)) {
         auto* cr = renderer_->getCharacterRenderer();
-        cr->setInstanceCreatureModel(instanceId, creatureModelDataIdForDisplay(unit->getDisplayId()));
+        cr->setInstanceCreatureModel(instanceId, unit->getDisplayId(), creatureModelDataIdForDisplay(unit->getDisplayId()));
         if (const auto* mount = getRemotePlayerMount(guid))
-            cr->setInstanceCreatureModel(mount->instanceId, creatureModelDataIdForDisplay(mount->displayId));
+            cr->setInstanceCreatureModel(mount->instanceId, mount->displayId, creatureModelDataIdForDisplay(mount->displayId));
     }
     if (entity->getType() == game::ObjectType::PLAYER) {
         constexpr uint32_t playerFlagsGhost = 0x10;

@@ -39,24 +39,31 @@ public:
     audio::FootstepSurface resolveFootstepSurface(Renderer* renderer) const;
 
 private:
+    /// One footstep of the character or its mount: FootstepTerrainLookup
+    /// sound for that unit on the TerrainType under it.
+    void playStep(Renderer* renderer, uint32_t instanceId);
+    [[nodiscard]] bool isWading(Renderer* renderer) const;
     /// Water-step side effects shared by on-foot and mounted steps
     /// (splash sound layer + visual foot splash).
     void playWaterStepExtras(Renderer* renderer) const;
 
-    // Player footstep event tracking (animation-driven)
-    uint32_t footstepLastAnimationId_ = 0;
-    float footstepLastNormTime_ = 0.0f;
-    bool footstepNormInitialized_ = false;
 
     // Footstep surface cache (avoid expensive queries every step)
     mutable audio::FootstepSurface cachedFootstepSurface_{};
     mutable glm::vec3 cachedFootstepPosition_{0.0f, 0.0f, 0.0f};
     mutable float cachedFootstepUpdateTimer_{999.0f};
 
-    // Mount footstep tracking (separate from player's)
-    uint32_t mountFootstepLastAnimId_ = 0;
-    float mountFootstepLastNormTime_ = 0.0f;
-    bool mountFootstepNormInitialized_ = false;
+    // The mount's footfall event tracking, the same scan as the player's.
+    struct EventTracker {
+        uint32_t lastAnimationId = 0;
+        float lastNormTime = 0.0f;
+        bool initialized = false;
+        void reset() { initialized = false; }
+        bool shouldTriggerFootstepEvent(uint32_t animationId, float animationTimeMs,
+                                        float animationDurationMs, const std::vector<uint32_t>* eventTimesMs);
+    };
+    EventTracker playerFootsteps_;
+    EventTracker mountFootsteps_;
 };
 
 } // namespace rendering

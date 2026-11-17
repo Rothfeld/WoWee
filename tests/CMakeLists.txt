@@ -1122,6 +1122,15 @@ wowee_add_test(test_footfall_events
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(footfall_events PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_creature_sound_index ────────────────────────────────
+# CreatureSoundData / FootstepTerrainLookup resolution against TBC tables.
+wowee_add_test(test_creature_sound_index
+    SOURCES test_creature_sound_index.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp)
+set_tests_properties(creature_sound_index PROPERTIES SKIP_RETURN_CODE 4)
+
 # ── test_m2_color_alpha ──────────────────────────────────────
 # Loads the peasant lumberjack carry models (WotLK v264 + vanilla v256) and
 # pins the M2 color-alpha track parsing that hides the duplicate wood bundle.
