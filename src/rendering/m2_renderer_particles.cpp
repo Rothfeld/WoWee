@@ -253,8 +253,11 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
             inst.particles.pop_back();
             continue;
         }
-        p.position += p.velocity * dt;
-        if (p.emitterIndex >= 0 && static_cast<size_t>(p.emitterIndex) < numEm) {
+        const bool known = p.emitterIndex >= 0 && static_cast<size_t>(p.emitterIndex) < numEm;
+        const float drag = known ? gpu.particleEmitters[p.emitterIndex].drag : 0.0f;
+        p.position += p.velocity * particleDragTravel(drag, dt);
+        p.velocity *= std::exp(-drag * dt);
+        if (known) {
             const float gravity = emitterGrav[p.emitterIndex];
             p.position += p.gravityDirection * (0.5f * gravity * dt * dt);
             p.velocity += p.gravityDirection * (gravity * dt);

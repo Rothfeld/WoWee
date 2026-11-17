@@ -36,6 +36,17 @@ inline glm::mat4 particleBirthTransform(uint32_t flags,
     return flags & kParticleInModelSpace ? bone : model * bone;
 }
 
+// Drag (emitter +0x194, pre-264 layout) scales speed by exp(-drag * t).
+// Travel over dt at unit starting speed is the integral of that. Zero drag
+// is straight-line motion. BFD_WallLight03 #0 authors 5.5: its sparks stop
+// within 0.2 yd of the basin instead of rising for their 4 s life.
+// 249 TBC emitters author negative drag (Blink_Impact_Chest #8 -8.95): they
+// speed up by the same law.
+inline float particleDragTravel(float drag, float dt) {
+    if (drag == 0.0f) return dt;
+    return (1.0f - std::exp(-drag * dt)) / drag;
+}
+
 inline glm::vec3 particleGravityDirection(const glm::mat4& birthTransform) {
     // Preserve authored acceleration scale and orientation with position and
     // velocity when a particle is detached into model/world space.
