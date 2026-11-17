@@ -10,6 +10,7 @@
 #include "game/opcode_table.hpp"
 #include "game/update_field_table.hpp"
 #include "game/inventory.hpp"
+#include "game/item_set.hpp"
 #include "game/spell_defines.hpp"
 #include "game/group_defines.hpp"
 #include "game/handler_types.hpp"
@@ -2166,6 +2167,8 @@ public:
     /// Within the range the server allows for loot / npc interaction.
     bool isWithinInteractRange(uint64_t guid) const;
     const LootResponseData& getCurrentLoot() const;
+    /// ItemSet.dbc row for an item's set id; null when unknown.
+    const ItemSetInfo* getItemSetInfo(uint32_t setId) const;
     void setAutoLoot(bool enabled);
     bool isAutoLoot() const;
     /// Turn the player to face the target when an attack or a targeted spell

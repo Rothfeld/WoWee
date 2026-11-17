@@ -1367,6 +1367,10 @@ void GameHandler::clearBook() {
 bool GameHandler::isLootWindowOpen() const {
     return inventoryHandler_ ? inventoryHandler_->isLootWindowOpen() : lootWindowOpen;
 }
+const ItemSetInfo* GameHandler::getItemSetInfo(uint32_t setId) const {
+    return inventoryHandler_ ? inventoryHandler_->getItemSetInfo(setId) : nullptr;
+}
+
 const LootResponseData& GameHandler::getCurrentLoot() const {
     if (inventoryHandler_) return inventoryHandler_->getCurrentLoot();
     return currentLoot;

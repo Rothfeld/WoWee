@@ -22,6 +22,7 @@
 #include <sstream>
 #include <set>
 #include <string_view>
+#include <unordered_set>
 
 namespace wowee::addons {
 
@@ -2303,10 +2304,64 @@ static int lua_GetItemTooltipData(lua_State* L) {
         }
         lua_setfield(L, -2, "sockets");
     }
-    // Item set
+    // Item set: ItemSet.dbc's name, pieces and bonuses, with what the player
+    // has equipped. The tooltip prints "Name (n/m)", every piece (equipped
+    // ones highlighted) and the bonuses, reached ones as "Set: ..." and the
+    // rest as "(k) Set: ...".
     if (info->itemSetId != 0) {
         lua_pushnumber(L, info->itemSetId);
         lua_setfield(L, -2, "itemSetId");
+        const game::ItemSetInfo* set = gh->getItemSetInfo(info->itemSetId);
+        if (!set) {
+            LOG_ERROR("Item ", itemId, " names item set ", info->itemSetId, " not in ItemSet.dbc");
+        } else {
+            std::unordered_set<uint32_t> equipped;
+            for (int slot = 0; slot < static_cast<int>(game::EquipSlot::BAG1); ++slot) {
+                const auto& es = gh->getInventory().getEquipSlot(static_cast<game::EquipSlot>(slot));
+                if (!es.empty()) equipped.insert(es.item.itemId);
+            }
+            int equippedCount = 0;
+            lua_newtable(L);
+            lua_pushstring(L, set->name.c_str());
+            lua_setfield(L, -2, "name");
+            lua_newtable(L);
+            for (size_t i = 0; i < set->items.size(); ++i) {
+                const uint32_t piece = set->items[i];
+                const bool worn = equipped.count(piece) != 0;
+                if (worn) ++equippedCount;
+                lua_newtable(L);
+                const auto* pieceInfo = gh->getItemInfo(piece);
+                if (pieceInfo && pieceInfo->valid) {
+                    lua_pushstring(L, pieceInfo->name.c_str());
+                    lua_setfield(L, -2, "name");
+                } else {
+                    gh->ensureItemInfo(piece);
+                }
+                lua_pushboolean(L, worn);
+                lua_setfield(L, -2, "equipped");
+                lua_rawseti(L, -2, static_cast<int>(i) + 1);
+            }
+            lua_setfield(L, -2, "pieces");
+            lua_pushnumber(L, equippedCount);
+            lua_setfield(L, -2, "equipped");
+            lua_pushnumber(L, static_cast<double>(set->items.size()));
+            lua_setfield(L, -2, "total");
+            lua_newtable(L);
+            for (size_t i = 0; i < set->bonuses.size(); ++i) {
+                const auto& bonus = set->bonuses[i];
+                lua_newtable(L);
+                lua_pushstring(L, gh->formatSpellDescription(
+                    bonus.spellId, gh->getSpellDescription(bonus.spellId)).c_str());
+                lua_setfield(L, -2, "text");
+                lua_pushnumber(L, bonus.threshold);
+                lua_setfield(L, -2, "threshold");
+                lua_pushboolean(L, equippedCount >= static_cast<int>(bonus.threshold));
+                lua_setfield(L, -2, "active");
+                lua_rawseti(L, -2, static_cast<int>(i) + 1);
+            }
+            lua_setfield(L, -2, "bonuses");
+            lua_setfield(L, -2, "set");
+        }
     }
     // Quest-starting item
     if (info->startQuestId != 0) {

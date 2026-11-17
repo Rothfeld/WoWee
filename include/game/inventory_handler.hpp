@@ -3,6 +3,7 @@
 #include "game/world_packets.hpp"
 #include "game/opcode_table.hpp"
 #include "game/inventory.hpp"
+#include "game/item_set.hpp"
 #include "game/handler_types.hpp"
 #include "network/packet.hpp"
 #include <array>
@@ -50,6 +51,9 @@ public:
     /// Prints loot chat lines that were waiting for an item query or a name
     /// query. Called every frame; does nothing while the queue is empty.
     void flushPendingLootLines();
+
+    /// Null when the set id is not in ItemSet.dbc or the assets are not up.
+    const ItemSetInfo* getItemSetInfo(uint32_t setId) const;
 
     // ---- Item text (books / readable items) ----
     bool isItemTextOpen() const { return itemTextOpen_; }
@@ -847,6 +851,9 @@ private:
     // DurabilityQuality.dbc: [id] -> quality_mod float
     mutable std::unordered_map<uint32_t, float> durabilityQuality_;
     void loadRepairDbc() const;
+
+    mutable bool itemSetsLoaded_ = false;
+    mutable std::unordered_map<uint32_t, ItemSetInfo> itemSets_;
     uint32_t estimateItemRepairCost(uint64_t itemGuid) const;
 };
 

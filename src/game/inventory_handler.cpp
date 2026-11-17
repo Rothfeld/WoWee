@@ -6072,6 +6072,52 @@ void InventoryHandler::addMoneyCopper(uint32_t amount) {
 // Repair cost estimation from DBC data
 // ============================================================
 
+const ItemSetInfo* InventoryHandler::getItemSetInfo(uint32_t setId) const {
+    if (setId == 0) return nullptr;
+    if (!itemSetsLoaded_) {
+        auto* am = owner_.services().assetManager;
+        if (!am || !am->isInitialized()) return nullptr;
+        itemSetsLoaded_ = true;
+        auto dbc = am->loadDBC("ItemSet.dbc");
+        const auto* layout = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("ItemSet") : nullptr;
+        if (!dbc || !dbc->isLoaded() || !layout) {
+            LOG_ERROR("ItemSet.dbc or its layout missing; item tooltips have no set section");
+            return nullptr;
+        }
+        // Seventeen pieces and eight bonuses in TBC (ItemSetEntry in CMaNGOS
+        // DBCStructure.h); the layout names each column. A layout without
+        // them is an older dbc_layouts.json whose columns are wrong.
+        if (layout->field("Item16") == 0xFFFFFFFFu || layout->field("Threshold7") == 0xFFFFFFFFu ||
+            layout->field("RequiredSkillRank") == 0xFFFFFFFFu) {
+            LOG_ERROR("dbc_layouts.json ItemSet lacks Item16/Threshold7/RequiredSkillRank;"
+                      " deploy Data/expansions/<exp>/dbc_layouts.json");
+            return nullptr;
+        }
+        for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+            ItemSetInfo info;
+            info.name = dbc->getString(r, layout->field("Name"));
+            for (int i = 0; i < 17; ++i) {
+                const uint32_t item = dbc->getUInt32(r, layout->field("Item" + std::to_string(i)));
+                if (item != 0) info.items.push_back(item);
+            }
+            for (int i = 0; i < 8; ++i) {
+                const uint32_t spell = dbc->getUInt32(r, layout->field("Spell" + std::to_string(i)));
+                if (spell == 0) continue;
+                info.bonuses.push_back(
+                    {.spellId = spell,
+                     .threshold = dbc->getUInt32(r, layout->field("Threshold" + std::to_string(i)))});
+            }
+            info.requiredSkill = dbc->getUInt32(r, layout->field("RequiredSkill"));
+            info.requiredSkillRank = dbc->getUInt32(r, layout->field("RequiredSkillRank"));
+            itemSets_.emplace(dbc->getUInt32(r, layout->field("ID")), std::move(info));
+        }
+        LOG_INFO("ItemSet.dbc: ", itemSets_.size(), " sets");
+    }
+    const auto it = itemSets_.find(setId);
+    return it == itemSets_.end() ? nullptr : &it->second;
+}
+
 void InventoryHandler::loadRepairDbc() const {
     if (repairDbcLoaded_) return;
 

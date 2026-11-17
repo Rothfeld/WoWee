@@ -9056,6 +9056,26 @@ void LuaEngine::registerCoreAPI() {
         "        -- Flavor text\n"
         "        if data.description then self:AddLine('\"'..data.description..'\"', 1, 0.82, 0, 1) end\n"
         "        if data.startsQuest then self:AddLine('This Item Begins a Quest', 1, 0.82, 0) end\n"
+        // The set block, as the original prints it: a blank line, "Name (n/m)"
+        // in gold, every piece indented - worn ones light yellow, the rest
+        // grey - another blank line, then each bonus: reached ones green as
+        // ITEM_SET_BONUS, the rest grey as ITEM_SET_BONUS_GRAY with the count.
+        "        if data.set then\n"
+        "            local set = data.set\n"
+        "            self:AddLine(' ')\n"
+        "            self:AddLine(format(ITEM_SET_NAME, set.name, set.equipped, set.total), 1, 0.82, 0)\n"
+        "            for _, piece in ipairs(set.pieces) do\n"
+        "                if piece.name then\n"
+        "                    if piece.equipped then self:AddLine('  '..piece.name, 1, 1, 0.6)\n"
+        "                    else self:AddLine('  '..piece.name, 0.5, 0.5, 0.5) end\n"
+        "                end\n"
+        "            end\n"
+        "            if #set.bonuses > 0 then self:AddLine(' ') end\n"
+        "            for _, bonus in ipairs(set.bonuses) do\n"
+        "                if bonus.active then self:AddLine(format(ITEM_SET_BONUS, bonus.text), 0, 1, 0, 1)\n"
+        "                else self:AddLine(format(ITEM_SET_BONUS_GRAY, bonus.threshold, bonus.text), 0.5, 0.5, 0.5, 1) end\n"
+        "            end\n"
+        "        end\n"
         "    end\n"
         "    -- Sell price from GetItemInfo\n"
         // Through the one money formatter, which writes the coin's picture
