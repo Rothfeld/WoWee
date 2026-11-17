@@ -612,3 +612,75 @@ TEST_CASE("the hull's speed is solved from the period the server publishes",
     CHECK(game::TransportPathRepository::taxiRouteSpeedFor(route, 0u) == 0.0f);
     CHECK(game::TransportPathRepository::taxiRouteSpeedFor(route, 119000u) == 0.0f);
 }
+
+namespace {
+
+// TransportAnimation.dbc rows for entry 80023 "Vator" (Gnomeregan lift, GO
+// type 11) as authored in the TBC 2.4.3 client data: TimeSeg, X, Y, Z.
+std::vector<std::pair<uint32_t, glm::vec3>> vatorRows() {
+    return {
+        {0, {0.0f, 0.0f, 0.0f}},
+        {6667, {0.0f, 0.0f, 0.0f}},
+        {11000, {-3e-06f, 0.0f, -98.747856f}},
+        {11233, {0.00651f, 0.0f, -99.671608f}},
+        {11400, {0.004442f, 0.0f, -99.971954f}},
+        {11600, {0.002892f, 0.0f, -100.079941f}},
+        {11667, {-3e-06f, 0.0f, -100.061089f}},
+        {11700, {-3e-06f, 0.0f, -100.082062f}},
+        {21667, {-3e-06f, 0.0f, -100.082062f}},
+        {21767, {-3e-06f, 0.0f, -100.089684f}},
+        {21900, {-3e-06f, 0.0f, -99.667702f}},
+        {26333, {0.0f, 0.0f, -1.180162f}},
+        {26467, {1.7e-05f, 3e-06f, -0.328159f}},
+        {26600, {0.0f, 0.0f, -0.043593f}},
+        {26667, {0.0f, 0.0f, 0.0f}},
+    };
+}
+
+}  // namespace
+
+TEST_CASE("TransportAnimation cycle is the last key's TimeSeg", "[transport_path_repo][transport-animation]") {
+    const auto path = game::TransportPathRepository::buildTransportAnimationPath(80023, vatorRows());
+    REQUIRE(path.fromDBC);
+    REQUIRE(path.zOnly);
+    REQUIRE(path.spline.interpolation() == math::SplineInterpolation::Linear);
+    REQUIRE(path.spline.keyCount() == 15);  // no synthetic wrap key
+    REQUIRE(path.spline.durationMs() == 26667);
+}
+
+TEST_CASE("Vator never travels below its authored bottom key", "[transport_path_repo][transport-animation]") {
+    // Catmull-Rom through the 21767/21900 keys dipped six yards under the shaft
+    // floor as the car left the bottom; the rider dropped through the deck and
+    // void recovery put them on the mountain above Gnomeregan.
+    const auto path = game::TransportPathRepository::buildTransportAnimationPath(80023, vatorRows());
+    float minZ = 0.0f, maxZ = -1000.0f;
+    for (uint32_t t = 0; t < path.spline.durationMs(); ++t) {
+        const float z = path.spline.evaluatePosition(t).z;
+        minZ = std::min(minZ, z);
+        maxZ = std::max(maxZ, z);
+    }
+    REQUIRE(minZ >= -100.0897f - 1e-4f);
+    REQUIRE(maxZ <= 1e-4f);
+}
+
+TEST_CASE("Vator replays the original client's passenger packets", "[transport_path_repo][transport-animation]") {
+    // MSG_MOVE_HEARTBEAT relayed from the original 2.4.3 client riding entry
+    // 80023 (guid 0xf1200138970024ea, spawn z 349.52), logged by WoWee
+    // 2026-11-17 13:56:25 (_experiments/20261117T132646.440302Z.client_restart,
+    // "Passenger transport clock"): movement time, transport time, world z,
+    // transport-local z. Transport time = movement time % 26667 within 10 ms,
+    // and car z = spawn + linear offset at that time within 0.05 yd.
+    struct Sample { uint32_t movementMs, transportMs; float worldZ, localZ; };
+    const Sample samples[] = {
+        {12131495u, 24685u, 310.488f, -1.23807f},
+        {12131866u, 25057u, 318.753f, -1.23807f},
+    };
+    constexpr float kSpawnZ = 349.52f;
+    const auto path = game::TransportPathRepository::buildTransportAnimationPath(80023, vatorRows());
+    for (const auto& s : samples) {
+        const uint32_t phase = s.movementMs % path.spline.durationMs();
+        REQUIRE(std::abs(static_cast<int>(phase) - static_cast<int>(s.transportMs)) <= 10);
+        const float carZ = kSpawnZ + path.spline.evaluatePosition(s.transportMs).z;
+        REQUIRE(carZ == Catch::Approx(s.worldZ - s.localZ).margin(0.05f));
+    }
+}

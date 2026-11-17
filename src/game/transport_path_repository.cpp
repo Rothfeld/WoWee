@@ -7,6 +7,7 @@
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/asset_manager.hpp"
 #include <algorithm>
+#include <cassert>
 #include <map>
 #include <set>
 #include <cmath>
@@ -436,6 +437,130 @@ void TransportPathRepository::loadPathFromNodes(uint32_t pathId, const std::vect
 
 // ── DBC: TransportAnimation ────────────────────────────────────
 
+PathEntry TransportPathRepository::buildTransportAnimationPath(
+    uint32_t transportEntry, std::vector<std::pair<uint32_t, glm::vec3>> sortedWaypoints) {
+    assert(!sortedWaypoints.empty());
+    std::sort(sortedWaypoints.begin(), sortedWaypoints.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    // CRITICAL: Normalize timeIndex to start at 0 (DBC records don't start at 0!)
+    // This makes evaluatePosition(0) valid and stabilizes basePosition seeding
+    uint32_t t0 = sortedWaypoints.front().first;
+
+    // Build SplineKey array with normalized time indices
+    std::vector<math::SplineKey> keys;
+    keys.reserve(sortedWaypoints.size());
+
+    // Log DBC waypoints for tram entries
+    if (transportEntry >= 176080 && transportEntry <= 176085) {
+        size_t mid = sortedWaypoints.size() / 4;  // ~quarter through
+        size_t mid2 = sortedWaypoints.size() / 2; // ~halfway
+        LOG_DEBUG("DBC path entry=", transportEntry, " nPts=", sortedWaypoints.size(),
+                   " [0] t=", sortedWaypoints[0].first, " raw=(", sortedWaypoints[0].second.x, ",", sortedWaypoints[0].second.y, ",", sortedWaypoints[0].second.z, ")",
+                   " [", mid, "] t=", sortedWaypoints[mid].first, " raw=(", sortedWaypoints[mid].second.x, ",", sortedWaypoints[mid].second.y, ",", sortedWaypoints[mid].second.z, ")",
+                   " [", mid2, "] t=", sortedWaypoints[mid2].first, " raw=(", sortedWaypoints[mid2].second.x, ",", sortedWaypoints[mid2].second.y, ",", sortedWaypoints[mid2].second.z, ")");
+    }
+
+    // Deeprun tram frame normalization (data-driven, not expansion-gated):
+    // vanilla/TBC author the tram's local path along +X ([0, +2482]), which
+    // the identity mapping below was tuned against. WotLK re-exported the
+    // same paths along -Y ([-2482, 0], X≈0), which made the cars drive
+    // perpendicular to the tunnel. Detect the travel axis from the data
+    // extents and rotate the Y-major variant into the X-major frame.
+    bool tramYMajor = false;
+    if (isDeeprunTramPath(transportEntry)) {
+        glm::vec3 mn = sortedWaypoints.front().second;
+        glm::vec3 mx = mn;
+        for (const auto& wp : sortedWaypoints) {
+            mn = glm::min(mn, wp.second);
+            mx = glm::max(mx, wp.second);
+        }
+        tramYMajor = (mx.y - mn.y) > (mx.x - mn.x);
+        if (tramYMajor) {
+            LOG_INFO("Tram entry ", transportEntry,
+                     " uses Y-major local frame (WotLK export) - rotating to X-major");
+        }
+    }
+    auto tramNormalize = [tramYMajor](const glm::vec3& p) {
+        return tramYMajor ? glm::vec3(-p.y, p.x, p.z) : p;
+    };
+
+    for (size_t idx = 0; idx < sortedWaypoints.size(); idx++) {
+        const auto& [tMs, rawPos] = sortedWaypoints[idx];
+        const glm::vec3 pos = tramNormalize(rawPos);
+
+        glm::vec3 canonical = transportAnimationOffsetToCanonical(transportEntry, pos);
+
+        // Skip waypoints where serverToCanonical zeroes nonzero inputs
+        if ((pos.x != 0.0f || pos.y != 0.0f || pos.z != 0.0f) &&
+            (canonical.x == 0.0f && canonical.y == 0.0f && canonical.z == 0.0f)) {
+            LOG_ERROR("serverToCanonical ZEROED - skipping waypoint! entry=", transportEntry,
+                      " server=(", pos.x, ",", pos.y, ",", pos.z, ")",
+                      " → canon=(", canonical.x, ",", canonical.y, ",", canonical.z, ")");
+            continue;
+        }
+
+        // Debug waypoint conversion for first transport (entry 2074)
+        if (transportEntry == 2074 && idx < 5) {
+            LOG_INFO("COORD CONVERT: entry=", transportEntry, " t=", tMs,
+                     " serverPos=(", pos.x, ", ", pos.y, ", ", pos.z, ")",
+                     " → canonical=(", canonical.x, ", ", canonical.y, ", ", canonical.z, ")");
+        }
+
+        // DIAGNOSTIC: Log ALL conversions for problematic ferries
+        if (transportEntry == 20655 || transportEntry == 20657 || transportEntry == 149046) {
+            LOG_INFO("CONVERT ", transportEntry, " t=", tMs,
+                     " server=(", pos.x, ",", pos.y, ",", pos.z, ")",
+                     " → canon=(", canonical.x, ",", canonical.y, ",", canonical.z, ")");
+        }
+
+        keys.push_back({.timeMs = tMs - t0, .position = canonical});  // Normalize: subtract first timeIndex
+    }
+
+    // The cycle is the last key's time. Every TransportAnimation route ends
+    // where it began (last key == first key, both at offset 0), so the path
+    // closes on itself with no extra segment. CMaNGOS ElevatorTransport runs
+    // (serverMs % TotalTime) with TotalTime = the largest TimeSeg, and the
+    // original client's passenger packets wrap at the same point.
+    math::CatmullRomSpline spline(std::move(keys), false,
+                                  math::SplineInterpolation::Linear);
+
+    // Detect Z-only paths (elevator/bobbing animation, not real XY travel)
+    const auto& sk = spline.keys();
+    float minX = sk[0].position.x, maxX = minX;
+    float minY = sk[0].position.y, maxY = minY;
+    float minZ = sk[0].position.z, maxZ = minZ;
+    for (const auto& k : sk) {
+        minX = std::min(minX, k.position.x); maxX = std::max(maxX, k.position.x);
+        minY = std::min(minY, k.position.y); maxY = std::max(maxY, k.position.y);
+        minZ = std::min(minZ, k.position.z); maxZ = std::max(maxZ, k.position.z);
+    }
+    float rangeX = maxX - minX;
+    float rangeY = maxY - minY;
+    float rangeZ = maxZ - minZ;
+    float rangeXY = std::max(rangeX, rangeY);
+    // Some elevator paths have tiny XY jitter. Treat them as z-only when horizontal travel
+    // is negligible compared to vertical motion.
+    bool isZOnly = (rangeXY < 0.01f) || (rangeXY < 1.0f && rangeZ > 2.0f);
+
+    // Log first, middle, and last points to verify path data
+    glm::vec3 firstOffset = sk[0].position;
+    size_t midIdx = sk.size() / 2;
+    glm::vec3 midOffset = sk[midIdx].position;
+    glm::vec3 lastOffset = sk.back().position;
+    uint32_t durationMs = spline.durationMs();
+    LOG_INFO("  Transport ", transportEntry, ": ", sk.size(), " keys, ",
+             durationMs, "ms cycle, linear (t0_normalized=", sk[0].timeMs, "ms)",
+             " rangeXY=(", rangeX, ",", rangeY, ") rangeZ=", rangeZ, " ",
+             (isZOnly ? "[Z-ONLY]" : "[XY-PATH]"),
+             " firstOffset=(", firstOffset.x, ", ", firstOffset.y, ", ", firstOffset.z, ")",
+             " midOffset=(", midOffset.x, ", ", midOffset.y, ", ", midOffset.z, ")",
+             " lastOffset=(", lastOffset.x, ", ", lastOffset.y, ", ", lastOffset.z, ")");
+
+    return PathEntry(std::move(spline), transportEntry, isZOnly, true, false);
+}
+
+
 bool TransportPathRepository::loadTransportAnimationDBC(pipeline::AssetManager* assetMgr) {
     LOG_INFO("Loading TransportAnimation.dbc...");
 
@@ -511,145 +636,7 @@ bool TransportPathRepository::loadTransportAnimationDBC(pipeline::AssetManager* 
     int pathsLoaded = 0;
     for (const auto& [transportEntry, waypoints] : waypointsByTransport) {
         if (waypoints.empty()) continue;
-
-        // Sort by timeIndex
-        auto sortedWaypoints = waypoints;
-        std::sort(sortedWaypoints.begin(), sortedWaypoints.end(),
-                  [](const auto& a, const auto& b) { return a.first < b.first; });
-
-        // CRITICAL: Normalize timeIndex to start at 0 (DBC records don't start at 0!)
-        // This makes evaluatePosition(0) valid and stabilizes basePosition seeding
-        uint32_t t0 = sortedWaypoints.front().first;
-
-        // Build SplineKey array with normalized time indices
-        std::vector<math::SplineKey> keys;
-        keys.reserve(sortedWaypoints.size() + 1);  // +1 for wrap point
-
-        // Log DBC waypoints for tram entries
-        if (transportEntry >= 176080 && transportEntry <= 176085) {
-            size_t mid = sortedWaypoints.size() / 4;  // ~quarter through
-            size_t mid2 = sortedWaypoints.size() / 2; // ~halfway
-            LOG_DEBUG("DBC path entry=", transportEntry, " nPts=", sortedWaypoints.size(),
-                       " [0] t=", sortedWaypoints[0].first, " raw=(", sortedWaypoints[0].second.x, ",", sortedWaypoints[0].second.y, ",", sortedWaypoints[0].second.z, ")",
-                       " [", mid, "] t=", sortedWaypoints[mid].first, " raw=(", sortedWaypoints[mid].second.x, ",", sortedWaypoints[mid].second.y, ",", sortedWaypoints[mid].second.z, ")",
-                       " [", mid2, "] t=", sortedWaypoints[mid2].first, " raw=(", sortedWaypoints[mid2].second.x, ",", sortedWaypoints[mid2].second.y, ",", sortedWaypoints[mid2].second.z, ")");
-        }
-
-        // Deeprun tram frame normalization (data-driven, not expansion-gated):
-        // vanilla/TBC author the tram's local path along +X ([0, +2482]), which
-        // the identity mapping below was tuned against. WotLK re-exported the
-        // same paths along -Y ([-2482, 0], X≈0), which made the cars drive
-        // perpendicular to the tunnel. Detect the travel axis from the data
-        // extents and rotate the Y-major variant into the X-major frame.
-        bool tramYMajor = false;
-        if (isDeeprunTramPath(transportEntry)) {
-            glm::vec3 mn = sortedWaypoints.front().second;
-            glm::vec3 mx = mn;
-            for (const auto& wp : sortedWaypoints) {
-                mn = glm::min(mn, wp.second);
-                mx = glm::max(mx, wp.second);
-            }
-            tramYMajor = (mx.y - mn.y) > (mx.x - mn.x);
-            if (tramYMajor) {
-                LOG_INFO("Tram entry ", transportEntry,
-                         " uses Y-major local frame (WotLK export) - rotating to X-major");
-            }
-        }
-        auto tramNormalize = [tramYMajor](const glm::vec3& p) {
-            return tramYMajor ? glm::vec3(-p.y, p.x, p.z) : p;
-        };
-
-        for (size_t idx = 0; idx < sortedWaypoints.size(); idx++) {
-            const auto& [tMs, rawPos] = sortedWaypoints[idx];
-            const glm::vec3 pos = tramNormalize(rawPos);
-
-            glm::vec3 canonical = transportAnimationOffsetToCanonical(transportEntry, pos);
-
-            // Skip waypoints where serverToCanonical zeroes nonzero inputs
-            if ((pos.x != 0.0f || pos.y != 0.0f || pos.z != 0.0f) &&
-                (canonical.x == 0.0f && canonical.y == 0.0f && canonical.z == 0.0f)) {
-                LOG_ERROR("serverToCanonical ZEROED - skipping waypoint! entry=", transportEntry,
-                          " server=(", pos.x, ",", pos.y, ",", pos.z, ")",
-                          " → canon=(", canonical.x, ",", canonical.y, ",", canonical.z, ")");
-                continue;
-            }
-
-            // Debug waypoint conversion for first transport (entry 2074)
-            if (transportEntry == 2074 && idx < 5) {
-                LOG_INFO("COORD CONVERT: entry=", transportEntry, " t=", tMs,
-                         " serverPos=(", pos.x, ", ", pos.y, ", ", pos.z, ")",
-                         " → canonical=(", canonical.x, ", ", canonical.y, ", ", canonical.z, ")");
-            }
-
-            // DIAGNOSTIC: Log ALL conversions for problematic ferries
-            if (transportEntry == 20655 || transportEntry == 20657 || transportEntry == 149046) {
-                LOG_INFO("CONVERT ", transportEntry, " t=", tMs,
-                         " server=(", pos.x, ",", pos.y, ",", pos.z, ")",
-                         " → canon=(", canonical.x, ",", canonical.y, ",", canonical.z, ")");
-            }
-
-            keys.push_back({.timeMs = tMs - t0, .position = canonical});  // Normalize: subtract first timeIndex
-        }
-
-        // Get base duration from last normalized timeIndex
-        uint32_t lastTimeMs = sortedWaypoints.back().first - t0;
-
-        // Calculate wrap duration (last → first segment)
-        // Use average segment duration as wrap duration
-        uint32_t totalDelta = 0;
-        int segmentCount = 0;
-        for (size_t i = 1; i < sortedWaypoints.size(); i++) {
-            uint32_t delta = sortedWaypoints[i].first - sortedWaypoints[i-1].first;
-            if (delta > 0) {
-                totalDelta += delta;
-                segmentCount++;
-            }
-        }
-        uint32_t wrapMs = (segmentCount > 0) ? (totalDelta / segmentCount) : 1000;
-
-        // Add duplicate first point at end with wrap duration
-        // This makes the wrap segment (last → first) have proper duration
-        const glm::vec3 fp = tramNormalize(sortedWaypoints.front().second);
-        glm::vec3 firstCanonical = transportAnimationOffsetToCanonical(transportEntry, fp);
-        keys.push_back({.timeMs = lastTimeMs + wrapMs, .position = firstCanonical});
-
-        // Build the spline (time-closed=false because we added explicit wrap point)
-        math::CatmullRomSpline spline(std::move(keys), false);
-
-        // Detect Z-only paths (elevator/bobbing animation, not real XY travel)
-        const auto& sk = spline.keys();
-        float minX = sk[0].position.x, maxX = minX;
-        float minY = sk[0].position.y, maxY = minY;
-        float minZ = sk[0].position.z, maxZ = minZ;
-        for (const auto& k : sk) {
-            minX = std::min(minX, k.position.x); maxX = std::max(maxX, k.position.x);
-            minY = std::min(minY, k.position.y); maxY = std::max(maxY, k.position.y);
-            minZ = std::min(minZ, k.position.z); maxZ = std::max(maxZ, k.position.z);
-        }
-        float rangeX = maxX - minX;
-        float rangeY = maxY - minY;
-        float rangeZ = maxZ - minZ;
-        float rangeXY = std::max(rangeX, rangeY);
-        // Some elevator paths have tiny XY jitter. Treat them as z-only when horizontal travel
-        // is negligible compared to vertical motion.
-        bool isZOnly = (rangeXY < 0.01f) || (rangeXY < 1.0f && rangeZ > 2.0f);
-
-        // Log first, middle, and last points to verify path data
-        glm::vec3 firstOffset = sk[0].position;
-        size_t midIdx = sk.size() / 2;
-        glm::vec3 midOffset = sk[midIdx].position;
-        glm::vec3 lastOffset = sk[sk.size() - 2].position;  // -2 to skip wrap duplicate
-        uint32_t durationMs = spline.durationMs();
-        LOG_INFO("  Transport ", transportEntry, ": ", sk.size() - 1, " waypoints + wrap, ",
-                 durationMs, "ms duration (wrap=", wrapMs, "ms, t0_normalized=", sk[0].timeMs, "ms)",
-                 " rangeXY=(", rangeX, ",", rangeY, ") rangeZ=", rangeZ, " ",
-                 (isZOnly ? "[Z-ONLY]" : "[XY-PATH]"),
-                 " firstOffset=(", firstOffset.x, ", ", firstOffset.y, ", ", firstOffset.z, ")",
-                 " midOffset=(", midOffset.x, ", ", midOffset.y, ", ", midOffset.z, ")",
-                 " lastOffset=(", lastOffset.x, ", ", lastOffset.y, ", ", lastOffset.z, ")");
-
-        // Store path
-        paths_.emplace(transportEntry, PathEntry(std::move(spline), transportEntry, isZOnly, true, false));
+        paths_.emplace(transportEntry, buildTransportAnimationPath(transportEntry, waypoints));
         pathsLoaded++;
     }
 

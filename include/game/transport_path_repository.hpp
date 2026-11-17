@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <glm/glm.hpp>
 
 namespace wowee::pipeline {
@@ -170,6 +171,13 @@ public:
     bool loadTaxiPathNodeDBC(pipeline::AssetManager* assetMgr);
 
     // ── Path construction ───────────────────────────────────
+    /// One TransportAnimation.dbc route (GO type 11: lifts, Deeprun Tram) from
+    /// its (TimeSeg, offset) rows. Linear between keys; the cycle is the last
+    /// key's TimeSeg. Example: entry 80023 "Vator" (Gnomeregan), 15 rows,
+    /// 26667 ms cycle. Static so it can be tested without a DBC.
+    [[nodiscard]] static PathEntry buildTransportAnimationPath(
+        uint32_t transportEntry, std::vector<std::pair<uint32_t, glm::vec3>> waypoints);
+
     void loadPathFromNodes(uint32_t pathId, const std::vector<glm::vec3>& waypoints,
                            bool looping = true, float speed = 18.0f);
 

@@ -9,9 +9,11 @@
 
 namespace wowee::math {
 
-CatmullRomSpline::CatmullRomSpline(std::vector<SplineKey> keys, bool timeClosed)
+CatmullRomSpline::CatmullRomSpline(std::vector<SplineKey> keys, bool timeClosed,
+                                   SplineInterpolation interpolation)
     : keys_(std::move(keys))
     , timeClosed_(timeClosed)
+    , interpolation_(interpolation)
 {
     if (keys_.size() >= 2) {
         durationMs_ = keys_.back().timeMs - keys_.front().timeMs;
@@ -45,6 +47,9 @@ glm::vec3 CatmullRomSpline::evaluatePosition(uint32_t pathTimeMs) const {
     }
     float t = glm::clamp(static_cast<float>(pathTimeMs - t1Ms)
                        / static_cast<float>(segDuration), 0.0f, 1.0f);
+    if (interpolation_ == SplineInterpolation::Linear) {
+        return glm::mix(keys_[segIdx].position, keys_[segIdx + 1].position, t);
+    }
     float t2 = t * t;
     float t3 = t2 * t;
     ControlPoints cp = getControlPoints(segIdx);
@@ -80,6 +85,12 @@ SplineEvalResult CatmullRomSpline::evaluate(uint32_t pathTimeMs) const {
     float t = static_cast<float>(pathTimeMs - t1Ms)
             / static_cast<float>(segDuration);
     t = glm::clamp(t, 0.0f, 1.0f);
+
+    if (interpolation_ == SplineInterpolation::Linear) {
+        const glm::vec3 p1 = keys_[segIdx].position;
+        const glm::vec3 p2 = keys_[segIdx + 1].position;
+        return {glm::mix(p1, p2, t), p2 - p1};
+    }
 
     // Get 4 control points and evaluate
     ControlPoints cp = getControlPoints(segIdx);

@@ -99,12 +99,16 @@ void TransportAnimator::evaluateAndApply(
         pathOffset.x = -pathOffset.x;
     }
 
-    pathOffset.z = clampZOffset(
-        pathOffset.z,
-        pathEntry.worldCoords,
-        transport.useClientAnimation,
-        transport.serverUpdateCount,
-        transport.hasServerClock);
+    // TransportAnimation offsets are authored, not inferred from spawn data,
+    // so they are never clamped: a lift travels its full 100 yards.
+    if (!pathEntry.fromDBC) {
+        pathOffset.z = clampZOffset(
+            pathOffset.z,
+            pathEntry.worldCoords,
+            transport.useClientAnimation,
+            transport.serverUpdateCount,
+            transport.hasServerClock);
+    }
 
     transport.position = transport.basePosition + pathOffset;
 

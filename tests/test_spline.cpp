@@ -341,3 +341,23 @@ TEST_CASE("CatmullRomSpline with two points", "[spline]") {
     auto mid = spline.evaluatePosition(500);
     REQUIRE(mid.x == Catch::Approx(5.0f).margin(1.0f));
 }
+
+TEST_CASE("Linear interpolation stays on the chord between two keys", "[spline][linear]") {
+    // Sparse keys with a long segment next to a short one: Catmull-Rom bows
+    // far outside [p1, p2] here, linear never leaves it.
+    std::vector<SplineKey> keys = {
+        {0, {0.0f, 0.0f, 0.0f}},
+        {100, {0.0f, 0.0f, 0.4f}},
+        {4500, {0.0f, 0.0f, 99.0f}},
+    };
+    CatmullRomSpline linear(keys, false, SplineInterpolation::Linear);
+    CatmullRomSpline cubic(keys, false);
+    REQUIRE(linear.interpolation() == SplineInterpolation::Linear);
+    REQUIRE(linear.evaluatePosition(50).z == Catch::Approx(0.2f));
+    REQUIRE(linear.evaluatePosition(2300).z == Catch::Approx(49.7f));
+    REQUIRE(cubic.evaluatePosition(50).z < -0.5f);  // the dip linear removes
+    const auto r = linear.evaluate(2300);
+    REQUIRE(r.position.z == Catch::Approx(49.7f));
+    REQUIRE(r.tangent.z == Catch::Approx(98.6f));
+    REQUIRE(r.tangent.x == Catch::Approx(0.0f));
+}

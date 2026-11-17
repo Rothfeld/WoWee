@@ -648,6 +648,15 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
         // delta must not be added to a clock sampled partway through that frame.
         const uint32_t serverNow = currentTransportTime(transport.guid);
         pathTimeMs = serverNow % pathEntry->taxiSchedule->durationMs();
+    } else if (pathEntry->fromDBC) {
+        // A TransportAnimation route (GO type 11) runs on the server's
+        // transport clock: the create block's UPDATEFLAG_TRANSPORT time,
+        // advanced since receipt, modulo the route's cycle. CMaNGOS
+        // ElevatorTransport::Update evaluates (mapMs % TotalTime), and the
+        // original client's passenger packets on the Gnomeregan lift report
+        // the same phase within 10 ms. Every type 11 create block carries the
+        // clock, so a missing one throws instead of inventing a phase.
+        pathTimeMs = currentTransportTime(transport.guid) % spline.durationMs();
     } else if (!clockSync_.computePathTime(transport, spline, elapsedTime_, deltaTime, pathTimeMs)) {
         // Strict server-authoritative mode: do not guess movement between server snapshots.
         updateTransformMatrices(transport);

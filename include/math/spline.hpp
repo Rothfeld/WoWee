@@ -21,6 +21,15 @@ struct SplineEvalResult {
     glm::vec3 tangent;       // Unnormalized derivative
 };
 
+/// How positions between two keys are produced.
+///   CatmullRom: cubic through the neighbouring keys (TaxiPathNode routes,
+///               runtime node paths).
+///   Linear:     straight line between the two keys of the segment
+///               (TransportAnimation.dbc, the GO type 11 lifts and trams:
+///               CMaNGOS ElevatorTransport::Update lerps between the
+///               previous and next TransportAnimation node).
+enum class SplineInterpolation { CatmullRom, Linear };
+
 /// Immutable spline path. Constructed once, evaluated many times.
 /// Thread-safe for concurrent reads after construction.
 class CatmullRomSpline {
@@ -28,7 +37,8 @@ public:
     /// Construct from time-sorted keys.
     /// If `timeClosed` is true, the path wraps: first and last keys share endpoints.
     /// If false, uses clamped endpoints (no wrapping).
-    explicit CatmullRomSpline(std::vector<SplineKey> keys, bool timeClosed = false);
+    explicit CatmullRomSpline(std::vector<SplineKey> keys, bool timeClosed = false,
+                              SplineInterpolation interpolation = SplineInterpolation::CatmullRom);
 
     /// Evaluate position at given path time (clamped to [0, duration]).
     [[nodiscard]] glm::vec3 evaluatePosition(uint32_t pathTimeMs) const;
@@ -57,6 +67,8 @@ public:
     /// Whether the spline is time-closed (wrapping).
     [[nodiscard]] bool isTimeClosed() const { return timeClosed_; }
 
+    [[nodiscard]] SplineInterpolation interpolation() const { return interpolation_; }
+
 private:
     /// Binary search for segment containing pathTimeMs. O(log n).
     [[nodiscard]] size_t findSegment(uint32_t pathTimeMs) const;
@@ -71,6 +83,7 @@ private:
 
     std::vector<SplineKey> keys_;
     bool timeClosed_;
+    SplineInterpolation interpolation_;
     uint32_t durationMs_ = 0;
 };
 
