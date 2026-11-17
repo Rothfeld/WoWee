@@ -1041,6 +1041,63 @@ bool Extractor::run(const Options& opts) {
                   << "  Re-run with --verbose for detailed diagnostics.\n";
     }
 
+    // The original client draws interface text with the loose Fonts\*.ttf
+    // beside Data\ when the install has them, not with the archive copies:
+    // on 2.4.3 every measured GetStringWidth matches the glyph advances of
+    // the loose FRIZQT__.TTF and none match common.MPQ's, whose letters are
+    // several percent wider. Those files replace the extracted ones so this
+    // client lays text out with the same faces.
+    {
+        const fs::path installDir = fs::path(opts.mpqDir).parent_path();
+        std::error_code lookEc;
+        fs::path fontsDir;
+        if (fs::is_directory(installDir, lookEc)) {
+            for (const auto& entry : fs::directory_iterator(installDir, lookEc)) {
+                if (entry.is_directory(lookEc) && toLowerStr(entry.path().filename().string()) == "fonts") {
+                    fontsDir = entry.path();
+                    break;
+                }
+            }
+        }
+        if (!fontsDir.empty()) {
+            for (const auto& entry : fs::directory_iterator(fontsDir, lookEc)) {
+                if (!entry.is_regular_file(lookEc)) continue;
+                const std::string name = toLowerStr(entry.path().filename().string());
+                if (fs::path(name).extension() != ".ttf") continue;
+                std::ifstream in(entry.path(), std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                           std::istreambuf_iterator<char>());
+                if (bytes.empty()) {
+                    std::cerr << "Could not read loose font " << entry.path().string() << "\n";
+                    continue;
+                }
+                const fs::path dst = fs::path(effectiveOutputDir) / "fonts" / name;
+                std::error_code writeEc;
+                fs::create_directories(dst.parent_path(), writeEc);
+                std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+                out.write(reinterpret_cast<const char*>(bytes.data()),
+                          static_cast<std::streamsize>(bytes.size()));
+                out.close();
+                if (!out) {
+                    std::cerr << "Could not write " << dst.string() << "\n";
+                    continue;
+                }
+                ManifestWriter::FileEntry font;
+                font.wowPath = "fonts\\" + name;
+                font.filesystemPath = "fonts/" + name;
+                font.size = bytes.size();
+                font.crc32 = ManifestWriter::computeCRC32(bytes.data(), bytes.size());
+                auto it = std::find_if(manifestEntries.begin(), manifestEntries.end(),
+                                       [&](const ManifestWriter::FileEntry& e) {
+                                           return e.wowPath == font.wowPath;
+                                       });
+                if (it != manifestEntries.end()) *it = font;
+                else manifestEntries.push_back(font);
+                std::cout << "Loose font " << entry.path().string() << " -> " << dst.string() << "\n";
+            }
+        }
+    }
+
     // Merge with existing manifest so partial extractions don't nuke prior entries
     fs::path manifestPath = fs::path(effectiveOutputDir) / "manifest.json";
     if (fs::exists(manifestPath)) {
