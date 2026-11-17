@@ -501,10 +501,17 @@ public:
     void renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMatrix, float globalTime = 0.0f,
                       const glm::vec3& shadowCenter = glm::vec3(0), float shadowRadius = 1e9f);
 
+    /// Which part of a frame's particles one renderM2Particles call draws.
+    /// Emitters with a negative priority plane sort before the transparent
+    /// mesh batches (priority 0 and up); the rest after them.
+    enum class ParticlePhase { BeforeTransparent, AfterTransparent };
+
     /**
-     * Render M2 particle emitters (point sprites)
+     * Render M2 particle emitters (point sprites). Call BeforeTransparent
+     * once, between the opaque and transparent mesh passes, then
+     * AfterTransparent once after them, in the same frame.
      */
-    void renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
+    void renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, ParticlePhase phase);
 
     /**
      * Render smoke particles from chimneys etc.
@@ -1138,6 +1145,8 @@ private:
         uint32_t count = 0;
     };
     std::vector<ParticleRun> particleRuns_;
+    // Vertices the BeforeTransparent call wrote this frame; AfterTransparent appends after them.
+    uint32_t particleBeforeTransparentEnd_ = 0;
     /// Vertices the particle buffer holds. Not MAX_M2_PARTICLES, which is the
     /// cap on one instance's particles: this has to hold a whole frame's.
     static constexpr size_t MAX_M2_PARTICLE_VERTS = 32768;

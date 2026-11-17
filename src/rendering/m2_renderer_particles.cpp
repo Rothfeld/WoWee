@@ -555,7 +555,13 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     }
 }
 
-void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
+void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                                   ParticlePhase phase) {
+    const bool before = phase == ParticlePhase::BeforeTransparent;
+    // An emitter belongs to the phase its priority plane sorts it into.
+    const auto inPhase = [before](const pipeline::M2ParticleEmitter& emitter) {
+        return (emitter.priorityPlane < 0) == before;
+    };
     const uint32_t frame = vkCtx_->getCurrentFrame();
     if (!particlePipeline_ || !m2ParticleVB_[frame]) return;
     // Diagnostic: WOWEE_M2_NO_PARTICLES=1 drops every M2 particle draw, which
@@ -620,7 +626,10 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     // vector per group and copied in afterwards; see ParticleRun.
     if (!m2ParticleVBMapped_[frame]) return;
     float* const vbBase = static_cast<float*>(m2ParticleVBMapped_[frame]);
-    uint32_t vbWritten = 0;
+    // The second call appends after the first: both phases' draws read this
+    // frame's buffer, so neither may overwrite the other's vertices.
+    if (before) particleBeforeTransparentEnd_ = 0;
+    uint32_t vbWritten = before ? 0 : particleBeforeTransparentEnd_;
     particleRuns_.clear();
     ParticleGroup* runGroup = nullptr;
 
@@ -667,6 +676,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
 
         for (const auto& p : inst.particles) {
             if (p.emitterIndex < 0 || p.emitterIndex >= static_cast<int>(gpu.particleEmitters.size())) continue;
+            if (!inPhase(gpu.particleEmitters[p.emitterIndex])) continue;
 
             if (p.emitterIndex != lastEmitterIdx) {
                 lastEmitterIdx = p.emitterIndex;
@@ -751,7 +761,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
 
         // Opt-in effect diagnostics for captured visual comparisons.
         static const char* traceModel = std::getenv("WOWEE_PARTICLE_TRACE");
-        if (traceModel && gpu.name == traceModel) {
+        if (!before && traceModel && gpu.name == traceModel) {
             static uint32_t traceFrame = 0;
             if (++traceFrame % 60 == 1) {
                 LOG_INFO("Particle trace: model=", gpu.name, " origin=", inst.position.x,
@@ -776,7 +786,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         // test can never trip on the one model anybody is complaining about.
         // Nothing that stands on the ground should be throwing particles eight
         // yards into the air.
-        if (highestParticleZ > -std::numeric_limits<float>::max()) {
+        if (!before && highestParticleZ > -std::numeric_limits<float>::max()) {
             const float reach = highestParticleZ - inst.position.z;
             if (reach > 8.0f) {
                 static std::set<std::string> saidTall;
@@ -806,6 +816,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         }
     }
 
+    if (before) particleBeforeTransparentEnd_ = vbWritten;
     if (totalParticles == 0) return;
 
     // Bind per-frame set (set 0) for particle pipeline

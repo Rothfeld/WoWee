@@ -165,7 +165,11 @@ struct M2ParticleEmitter {
     uint8_t emitterType;    // 1=plane,2=sphere,3=spline
     uint8_t headOrTail = 0; // 0=head, 1=tail, 2=both
     float tailLength = 0.0f;
-    int16_t textureTileRotation = 0;
+    // Draw order against the model's other transparent parts; lower first.
+    // int16 at +0x2E. TBC values run -100..17; -100 marks the black alpha
+    // underlay emitters of wisp models (BFD_WispSmall #1, Wisp #5,
+    // HeartOfHakkar #5), which native draws under the glow.
+    int16_t priorityPlane = 0;
     uint16_t textureRows = 1;
     uint16_t textureCols = 1;
     M2AnimationTrack emissionSpeed;

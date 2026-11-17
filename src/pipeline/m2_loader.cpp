@@ -1561,7 +1561,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             em.emitterType  = readValue<uint8_t>(m2Data, base + (header.version < 262 ? 0x2A : 0x29));
             em.headOrTail = readValue<uint8_t>(m2Data, base + 0x2D);
             em.tailLength = readValue<float>(m2Data, base + (isVanilla ? 0x17C : 0x15C));
-            em.textureTileRotation = readValue<int16_t>(m2Data, base + 0x2E);
+            em.priorityPlane = readValue<int16_t>(m2Data, base + 0x2E);
             em.textureRows = readValue<uint16_t>(m2Data, base + 0x30);
             em.textureCols = readValue<uint16_t>(m2Data, base + 0x32);
             if (em.textureRows == 0) em.textureRows = 1;

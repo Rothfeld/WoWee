@@ -3059,6 +3059,10 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         const auto drawSolidCharacters = [&]() {
             if (haveCharacters) characterRenderer->render(solid, perFrameSet, *camera,
                 CharacterRenderer::RenderPhase::Solid);
+            // Negative priority-plane emitters sort under the transparent
+            // batches: BFD_WispSmall's black underlay (-100) beneath its glow.
+            m2Renderer->renderM2Particles(blended, perFrameSet,
+                M2Renderer::ParticlePhase::BeforeTransparent);
         };
         const auto drawCharactersBefore = [&](float depth) {
             const size_t first = next;
@@ -3170,7 +3174,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 recordWorldModels(opaqueCmd, cmd);
                 vkEndCommandBuffer(opaqueCmd);
                 const auto tModels = std::chrono::steady_clock::now();
-                m2Renderer->renderM2Particles(cmd, perFrameSet);
+                m2Renderer->renderM2Particles(cmd, perFrameSet,
+                    M2Renderer::ParticlePhase::AfterTransparent);
                 const auto tParts = std::chrono::steady_clock::now();
                 m2Renderer->renderM2Ribbons(cmd, perFrameSet);
                 const auto tParticles = std::chrono::steady_clock::now();
@@ -3442,7 +3447,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (characterRenderer && !skipChars) characterRenderer->prepareRender(frameIdx);
             auto m2Start = std::chrono::steady_clock::now();
             recordWorldModels(currentCmd, currentCmd);
-            m2Renderer->renderM2Particles(currentCmd, perFrameSet);
+            m2Renderer->renderM2Particles(currentCmd, perFrameSet,
+                    M2Renderer::ParticlePhase::AfterTransparent);
             m2Renderer->renderM2Ribbons(currentCmd, perFrameSet);
             if (vkCtx) vkCtx->gpuMark(currentCmd, "m2");
             lastM2RenderMs = std::chrono::duration<double, std::milli>(
