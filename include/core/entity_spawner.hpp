@@ -264,6 +264,9 @@ public:
     void setRemoteCastHold(uint64_t guid, uint32_t animationId);
     /// Ready stance a meleeing unit idles in, from its main-hand item.
     uint32_t meleeReadyAnimation(const game::Unit& unit) const;
+    /// Ready stance and swing of a unit's main-hand weapon class.
+    struct MeleeWeaponAnimations { uint32_t ready; uint32_t attack; };
+    MeleeWeaponAnimations meleeWeaponAnimations(const game::Unit& unit) const;
     std::unordered_map<uint64_t, bool>& getCreatureWasMoving() { return creatureWasMoving_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasSwimming() { return creatureWasSwimming_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasFlying() { return creatureWasFlying_; }

@@ -1,4 +1,3 @@
-#include "rendering/animation/melee_anim_chains.hpp"
 #include "core/animation_callback_handler.hpp"
 #include "rendering/spell_visual_system.hpp"
 #include "core/appearance_composer.hpp"
@@ -226,30 +225,19 @@ void AnimationCallbackHandler::setupCallbacks() {
         }
     });
 
-    // NPC/player swing callback (online mode) - play attack animation
-    // Probes the model for the best available attack animation:
-    //   ATTACK_1H(17) → ATTACK_2H(18) → ATTACK_2H_LOOSE(19) → ATTACK_UNARMED(16)
+    // NPC/player swing: the attack of the unit's main-hand weapon class
+    // (EntitySpawner::meleeWeaponAnimations), resuming the unit's idle - its
+    // ready stance while it is meleeing.
     gameHandler_.setNpcSwingCallback([this](uint64_t guid) {
-        if (!renderer_.getCharacterRenderer()) return;
+        auto* cr = renderer_.getCharacterRenderer();
+        if (!cr) return;
         uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
-        if (instanceId != 0) {
-            auto* cr = renderer_.getCharacterRenderer();
-            const auto attackAnims =
-                rendering::anim::meleeAnimChain(rendering::anim::MeleeChain::Generic);
-            // The swing returns to the unit's idle, its ready stance while it
-            // is meleeing, not to Stand.
-            const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
-            bool played = false;
-            for (uint32_t anim : attackAnims) {
-                if (cr->hasAnimation(instanceId, anim)) {
-                    cr->playAnimation(instanceId, anim, false, idle);
-                    played = true;
-                    break;
-                }
-            }
-            if (!played) cr->playAnimation(instanceId, rendering::anim::ATTACK_UNARMED, false, idle);
-        }
+        if (instanceId == 0) return;
+        const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
+        if (!unit) return;
+        const uint32_t attack = entitySpawner_.meleeWeaponAnimations(*unit).attack;
+        cr->playAnimation(instanceId, attack, false, entitySpawner_.remoteIdleAnimation(guid));
     });
 
     // Victim reaction from SMSG_ATTACKERSTATEUPDATE, one rule for the local

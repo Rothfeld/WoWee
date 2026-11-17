@@ -31,6 +31,7 @@
 #include "pipeline/item_textures.hpp"
 #include "pipeline/m2_asset_loader.hpp"
 #include "game/game_handler.hpp"
+#include "game/inventory.hpp"
 #include "game/game_services.hpp"
 #include "game/transport_manager.hpp"
 
@@ -926,16 +927,15 @@ void EntitySpawner::setRemoteCastHold(uint64_t guid, uint32_t animationId) {
     else remoteCastHolds_[guid] = animationId;
 }
 
-uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
-    // Main-hand item class and inventory type. Item class 2 is Weapon
-    // (ItemClass.dbc); INVTYPE_2HWEAPON is 17.
-    constexpr uint32_t kItemClassWeapon = 2;
-    uint32_t itemClass = 0, inventoryType = 0;
+EntitySpawner::MeleeWeaponAnimations EntitySpawner::meleeWeaponAnimations(const game::Unit& unit) const {
+    // Main-hand item class, subclass and inventory type (INVTYPE_2HWEAPON 17).
+    uint32_t itemClass = 0, subClass = 0, inventoryType = 0;
     if (unit.getType() == game::ObjectType::PLAYER) {
         const auto* equipment = gameHandler_->getOtherPlayerVisibleEquipment(unit.getGuid());
         if (equipment && (*equipment)[15] != 0) {
             if (const auto* item = gameHandler_->getItemInfo((*equipment)[15])) {
                 itemClass = item->itemClass;
+                subClass = item->subClass;
                 inventoryType = item->inventoryType;
             }
         }
@@ -945,22 +945,36 @@ uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
         assert(slots != 0xFFFF);
         if (unit.getField(slots) != 0) {
             if (info != 0xFFFF) {
-                // Pre-Wrath: first word byte 0 class, second word byte 0 inventory type.
+                // Pre-Wrath (CMaNGOS Creature::SetVirtualItem): first word byte 0
+                // class, byte 1 subclass; second word byte 0 inventory type.
                 itemClass = unit.getField(info) & 0xFF;
+                subClass = (unit.getField(info) >> 8) & 0xFF;
                 inventoryType = unit.getField(info + 1) & 0xFF;
             } else if (auto itemDbc = assetManager_->loadDBC("Item.dbc")) {
                 const int32_t record = itemDbc->findRecordById(unit.getField(slots));
                 if (record >= 0) {
                     itemClass = itemDbc->getUInt32(record, 1);
+                    subClass = itemDbc->getUInt32(record, 2);
                     inventoryType = itemDbc->getUInt32(record, 6);
                 }
             }
         }
     }
-    // Which ready pose a staff or polearm takes (Ready2H or Ready2HL) is not
-    // in the data and not yet observed; two-handers take Ready2H.
-    if (itemClass != kItemClassWeapon) return rendering::anim::READY_UNARMED;
-    return inventoryType == 17 ? rendering::anim::READY_2H : rendering::anim::READY_1H;
+    namespace A = rendering::anim;
+    // Build 8606: a Scarlet Centurion (two-handed sword) holds Ready2H and
+    // swings Attack2H; a Scarlet Wizard (staff) holds the staff across her
+    // body and thrusts it - Ready2HL/Attack2HL, the local player's staff and
+    // polearm pair (_experiments/20261117T184500Z.melee_stance_blood).
+    // A model lacking one plays its AnimationData fallback chain.
+    if (itemClass != game::ITEM_CLASS_WEAPON) return {A::READY_UNARMED, A::ATTACK_UNARMED};
+    if (inventoryType != 17) return {A::READY_1H, A::ATTACK_1H};
+    if (subClass == game::WEAPON_SUBCLASS_STAFF || subClass == game::WEAPON_SUBCLASS_POLEARM)
+        return {A::READY_2H_LOOSE, A::ATTACK_2H_LOOSE};
+    return {A::READY_2H, A::ATTACK_2H};
+}
+
+uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
+    return meleeWeaponAnimations(unit).ready;
 }
 
 uint32_t EntitySpawner::creatureModelDataIdForDisplay(uint32_t displayId) const {
