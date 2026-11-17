@@ -22,8 +22,19 @@ static int lua_UnitName(lua_State* L) {
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
+        const auto object = (gh && guid != 0 && (uidStr == "npc" || uidStr == "questnpc"))
+            ? gh->getEntityManager().getEntity(guid) : nullptr;
         if (pm && !pm->name.empty()) {
             lua_pushstring(L, pm->name.c_str());
+        } else if (object && object->getType() == game::ObjectType::GAMEOBJECT) {
+            // The object whose gossip or quest window is open. GossipFrame
+            // titles itself UnitName("npc"); on Rizzle's Unguarded Plans the
+            // original shows the object's name there, WoWee said "Unknown"
+            // (_experiments/20261117T171500Z.pair0_go_ghost_pet). Only these
+            // two tokens: no other unit token names an object.
+            const auto name = std::static_pointer_cast<game::GameObject>(object)->getName();
+            assert(!name.empty());
+            lua_pushstring(L, name.c_str());
         } else if (gh && guid != 0) {
             // Try player name cache
             const std::string& cached = gh->lookupName(guid);

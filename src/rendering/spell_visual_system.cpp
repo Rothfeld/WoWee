@@ -512,6 +512,8 @@ void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId,
         if (!colored && procedures->second.color) { color = *procedures->second.color; colored = true; }
         if (!faded && procedures->second.opacity) { opacity = *procedures->second.opacity; faded = true; }
     }
+    LOG_DEBUG("Kit appearance: owner=", attachInstanceId, " visuals=", applied.size(),
+              " color=(", color.r, ",", color.g, ",", color.b, ") opacity=", opacity);
     renderer_->getCharacterRenderer()->setInstanceKitAppearance(attachInstanceId, color, opacity);
 }
 
