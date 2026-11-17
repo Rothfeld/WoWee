@@ -43,7 +43,7 @@ TEST_CASE("the type table covers every type 0..34 in order", "[gameobject][type-
 
 TEST_CASE("types the server never uses offer neither cursor nor name", "[gameobject][type-rule]") {
     // GameObject::Use has no case and no other handler accepts them.
-    for (uint32_t t : {4u, 11u, 12u, 14u, 15u, 20u, 21u, 27u, 28u, 29u, 30u, 31u, 32u, 33u}) {
+    for (uint32_t t : {4u, 11u, 12u, 14u, 15u, 20u, 21u, 28u, 29u, 30u, 31u, 32u, 33u}) {
         INFO("type " << t);
         const auto a = gameObjectAffordance(t, 0, 0, true);
         CHECK_FALSE(a.use);
@@ -56,7 +56,7 @@ TEST_CASE("types the server never uses offer neither cursor nor name", "[gameobj
 
 TEST_CASE("types the server uses offer a cursor and a click", "[gameobject][type-rule]") {
     struct Row { uint32_t type; const char* cursor; };
-    for (const Row r : {Row{0, "Interact"}, Row{1, "Interact"}, Row{2, "Quest"}, Row{3, "LootAll"},
+    for (const Row r : {Row{0, "Interact"}, Row{1, "Interact"}, Row{2, "Interact"}, Row{3, "Interact"},
                         Row{7, "Interact"}, Row{9, "Inspect"}, Row{10, "Interact"}, Row{13, "Interact"},
                         Row{17, "Fishing"}, Row{18, "Interact"}, Row{19, "Mail"}, Row{22, "Interact"},
                         Row{23, "Interact"}, Row{24, "Interact"}, Row{26, "Interact"}}) {
@@ -85,14 +85,56 @@ TEST_CASE("an unavailable object offers nothing whatever its type", "[gameobject
     }
 }
 
-TEST_CASE("rows the server does not settle are marked for capture", "[gameobject][type-rule]") {
-    for (uint32_t t : {6u, 8u, 16u, 25u, 34u}) {
+TEST_CASE("rows the server does not settle come from native hovers", "[gameobject][type-rule]") {
+    for (uint32_t t : {8u, 16u, 25u, 27u, 34u}) {
         INFO("type " << t);
-        CHECK(gameObjectTypeRule(t).source == GameObjectRuleSource::NeedsCapture);
+        CHECK(gameObjectTypeRule(t).source == GameObjectRuleSource::Native);
     }
+    CHECK(gameObjectTypeRule(6).source == GameObjectRuleSource::NeedsCapture);
+    // Teleport-Stone to Hyjal 211050 (MINI_GAME) shows the gear; the Guild
+    // Vault 187299 shows Buy.
+    CHECK(std::string(gameObjectAffordance(27, 0, 0, true).cursor) == "Interact");
+    CHECK(std::string(gameObjectAffordance(34, 0, 0, true).cursor) == "Buy");
     // Fishing hole: named, fished rather than clicked.
     CHECK_FALSE(gameObjectAffordance(25, 0, 0, true).use);
     CHECK(gameObjectAffordance(25, 0, 0, true).hoverable());
     // Spell focus (anvils, forges): kept off the mouse until captured.
     CHECK_FALSE(gameObjectAffordance(8, 0, 0, true).hoverable());
+}
+
+#include "game/game_object_cursor.hpp"
+
+using wowee::game::GameObjectCursorFacts;
+using wowee::game::gameObjectCursorPath;
+
+// Original 2.4.3 hovers, pair 0: _experiments/20261117T195204Z.pair0_go_cursors.
+TEST_CASE("a game object's cursor follows lock, quest marker and reach", "[gameobject][cursor]") {
+    GameObjectCursorFacts pod;  // Warpwood Pod 179526: chest, no lock, no loot
+    pod.typeCursor = "Interact";
+    CHECK(gameObjectCursorPath(pod) == "Interface\\Cursor\\Interact.blp");
+
+    GameObjectCursorFacts herb = pod;  // Peacebloom 1618 without Herbalism
+    herb.lockCursor = "GatherHerbs";
+    CHECK(gameObjectCursorPath(herb) == "Interface\\Cursor\\GatherHerbs.blp");
+    herb.inRange = false;
+    CHECK(gameObjectCursorPath(herb) == "Interface\\Cursor\\UnableGatherHerbs.blp");
+
+    // Battered Footlocker 179486: GO_FLAG_LOCKED - the greyed gear, not
+    // PickLock, also with Pick Lock known.
+    GameObjectCursorFacts footlocker = pod;
+    footlocker.lockCursor = "PickLock";
+    footlocker.flaggedLocked = true;
+    CHECK(gameObjectCursorPath(footlocker) == "Interface\\Cursor\\UnableInteract.blp");
+
+    // Wanted Poster 186426 offers a quest; Skull Pile 185913 has none.
+    GameObjectCursorFacts poster = pod;
+    poster.questCursor = "Quest";
+    CHECK(gameObjectCursorPath(poster) == "Interface\\Cursor\\Quest.blp");
+    poster.inRange = false;
+    CHECK(gameObjectCursorPath(poster) == "Interface\\Cursor\\UnableQuest.blp");
+
+    // Shattrath city portal out of reach.
+    GameObjectCursorFacts portal = pod;
+    portal.inRange = false;
+    CHECK(gameObjectCursorPath(portal) == "Interface\\Cursor\\UnableInteract.blp");
 }

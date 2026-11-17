@@ -1123,6 +1123,17 @@ sends the selected option to the server; destination labels such as "Auction
 House" do not identify service activation requests. Guard destinations enter
 both the FrameXML map landmark API and the minimap POI atlas renderer.
 
+A usable game object's cursor, as build 8606 shows it
+(`include/game/game_object_cursor.hpp`): a `GO_FLAG_LOCKED` object is
+`UnableInteract` whatever the player knows or carries (Battered Footlocker
+179486 with Pick Lock, Coilskar Chest 184716 with its key); a quest giver
+object with a quest marker shows `Quest`/`QuestTurnIn`; lock slot 0 naming a
+LockType cursor shows it without any skill check (Peacebloom `GatherHerbs`
+without Herbalism); otherwise the type's cursor - the gear for chests, `Mail`
+for mailboxes, `Buy` for guild vaults. Out of reach adds `Unable`. Gotcha:
+only lock slot 0 counts - Alliance Strongbox 4095 (Lock 23, Lockpicking in
+slot 1) is the gear. Native table: `_experiments/20261117T195204Z.pair0_go_cursors`.
+
 Readable game objects (type 9), including the Valley of Heroes monument
 plaques, use `Interface\\Cursor\\Inspect.blp`. Out-of-range readable objects
 use `UnableInspect.blp` through the shared interaction-range check.

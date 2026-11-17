@@ -2,6 +2,7 @@
 #include "game/game_utils.hpp"
 #include "game/game_object_lock.hpp"
 #include "game/game_object_interaction.hpp"
+#include "game/game_object_cursor.hpp"
 #include "ui/game_screen.hpp"
 #include "ui/gamepad_controls.hpp"
 #include "core/gamepad.hpp"
@@ -1111,7 +1112,15 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
         assert(info);  // resolve() only answers an object whose template is known
         const auto& rule = game::gameObjectTypeRule(info->type);
         assert(rule.use && rule.cursor);
-        std::string path = std::string("Interface\\Cursor\\") + rule.cursor + ".blp";
+        game::GameObjectCursorFacts facts;
+        facts.typeCursor = rule.cursor;
+        constexpr uint32_t kGameObjectTypeQuestGiver = 2;
+        if (info->type == kGameObjectTypeQuestGiver) {
+            const auto status = gameHandler.getQuestGiverStatus(guid);
+            const char* symbol = status == game::QuestGiverStatus::UNAVAILABLE
+                ? nullptr : game::questGiverMarker(status).symbol;
+            if (symbol) facts.questCursor = symbol[0] == '!' ? "Quest" : "QuestTurnIn";
+        }
         const uint32_t lockId = game::gameObjectLockId(info);
         if (lockId != 0) {
             assert(services_.assetManager);
@@ -1121,33 +1130,28 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
             assert(types && types->isLoaded() && types->getFieldCount() > 1);
             const int32_t row = locks->findRecordById(lockId);
             assert(row >= 0);
-            for (uint32_t slot = 0; slot < 8; ++slot) {
-                const uint32_t kind = locks->getUInt32(row, 1 + slot);
-                if (kind == 0) continue;
-                // The first method decides. A key item (kind 1) opens with
-                // the gear: Dire Maul's Door 177198, Lock 1562 = Crescent Key
-                // 18249 first, Lockpicking second, shows the gear natively
-                // (pair 0 hover); it must not borrow PickLock from slot 2.
-                if (kind != 2) {
-                    path = "Interface\\Cursor\\Interact.blp";
-                    break;
-                }
-                const uint32_t typeId = locks->getUInt32(row, 9 + slot);
-                if (typeId == 0) continue;  // Lock 36, 740, 1081, 1099, 1715
+            // Lock slot 0 alone names the cursor, and only a LockType does
+            // (kind 2); a key item there (Hidden Strongbox 2039, Lock 46) or
+            // an empty slot 0 (Alliance Strongbox 4095, Lock 23) is the gear.
+            constexpr uint32_t kLockKeySkill = 2;
+            const uint32_t typeId = locks->getUInt32(row, 9);
+            if (locks->getUInt32(row, 1) == kLockKeySkill && typeId != 0) {
                 const int32_t typeRow = types->findRecordById(typeId);
                 assert(typeRow >= 0);
-                // CursorName is the final, non-localized LockType column.
-                const auto cursor = types->getString(typeRow, types->getFieldCount() - 1);
-                // Lock slots are alternative opening methods. A blank cursor
-                // on the first method uses the normal opening/gear cursor;
-                // it must not borrow an icon from a later profession method.
-                path = "Interface\\Cursor\\" + (cursor.empty() ? std::string("Interact") : cursor) + ".blp";
-                break;
+                // CursorName is the final, non-localized LockType column;
+                // blank for Open, Treasure, Quick Open and the rest.
+                facts.lockCursor = types->getString(typeRow, types->getFieldCount() - 1);
             }
         }
+        // GO_FLAG_LOCKED greys the gear whatever the player carries or knows:
+        // Battered Footlocker 179486 with Pick Lock at Lockpicking 200, and
+        // Coilskar Chest 184716 with its key in the backpack, stay
+        // UnableInteract natively (pair 0).
+        constexpr uint32_t kGoFlagLocked = 0x2;
+        facts.flaggedLocked = (go->getField(game::fieldIndex(game::UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
         // Fishing has a single cursor asset; bobbers use their own reach.
-        if (info && info->type != 17 && gameHandler.isGameObjectInRange(guid) == false)
-            path.insert(path.rfind('\\') + 1, "Unable");
+        facts.inRange = info->type == 17 || gameHandler.isGameObjectInRange(guid) != false;
+        const std::string path = game::gameObjectCursorPath(facts);
         VkDescriptorSet tex = cursorTexture(services_.assetManager, services_.window, path.c_str());
         if (!tex) return false;
         selectCursorTexture(tex);

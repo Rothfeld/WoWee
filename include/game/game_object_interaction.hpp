@@ -32,10 +32,12 @@ enum class ObjectNameTooltip { None, Floating, Default };
 ///   Server:       CMaNGOS decides it (GameObject::Use handles the type, a
 ///                 type-specific handler accepts it, or the use opcode is
 ///                 refused / never handled for it).
+///   Native:       an original 2.4.3 hover decides it (pair 0,
+///                 _experiments/20261117T195204Z.pair0_go_cursors).
 ///   NeedsCapture: the server does not settle what the client shows; the
 ///                 row keeps WoWee's earlier behaviour until an original
 ///                 2.4.3 hover is captured.
-enum class GameObjectRuleSource { Server, NeedsCapture };
+enum class GameObjectRuleSource { Server, Native, NeedsCapture };
 
 /// What one GAMEOBJECT_TYPE offers the mouse. One table, used by the scene
 /// pick (hover), the name tooltip, the cursor and the click.
@@ -60,13 +62,13 @@ struct GameObjectTypeRule {
 inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
     {0,  "DOOR",               true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {1,  "BUTTON",             true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {2,  "QUESTGIVER",         true,  ObjectNameTooltip::Default, "Quest",     GameObjectRuleSource::Server, "Use (gossip)"},
-    {3,  "CHEST",              true,  ObjectNameTooltip::Default, "LootAll",   GameObjectRuleSource::Server, "Use"},
+    {2,  "QUESTGIVER",         true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use (gossip); quest marker cursor from its status"},
+    {3,  "CHEST",              true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use; gear natively (Warpwood Pod 179526)"},
     {4,  "BINDER",             false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {5,  "GENERIC",            false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Refused; label from data0/data1"},
     {6,  "TRAP",               true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::NeedsCapture, "Use casts the trap spell"},
     {7,  "CHAIR",              true,  ObjectNameTooltip::None,    "Interact",  GameObjectRuleSource::Server, "Use (sit); no name is WoWee's earlier rule"},
-    {8,  "SPELL_FOCUS",        false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::NeedsCapture, "Use only triggers a linked trap"},
+    {8,  "SPELL_FOCUS",        false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Forge 1685: no cursor natively"},
     {9,  "TEXT",               true,  ObjectNameTooltip::Default, "Inspect",   GameObjectRuleSource::Server, "Page"},
     {10, "GOOBER",             true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {11, "TRANSPORT",          false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent; Vator 80023 shows nothing natively"},
@@ -74,7 +76,7 @@ inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
     {13, "CAMERA",             true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use (cinematic/event)"},
     {14, "MAP_OBJECT",         false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {15, "MO_TRANSPORT",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {16, "DUEL_ARBITER",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::NeedsCapture, "Absent; name unknown"},
+    {16, "DUEL_ARBITER",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Duel Flag 21680: no cursor natively"},
     {17, "FISHINGNODE",        true,  ObjectNameTooltip::Default, "Fishing",   GameObjectRuleSource::Server, "Use"},
     {18, "SUMMONING_RITUAL",   true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {19, "MAILBOX",            true,  ObjectNameTooltip::Default, "Mail",      GameObjectRuleSource::Server, "Mail"},
@@ -83,16 +85,16 @@ inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
     {22, "SPELLCASTER",        true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {23, "MEETINGSTONE",       true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
     {24, "FLAGSTAND",          true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {25, "FISHINGHOLE",        false, ObjectNameTooltip::Default, nullptr,     GameObjectRuleSource::NeedsCapture, "Use only via the fishing spell"},
+    {25, "FISHINGHOLE",        false, ObjectNameTooltip::Default, nullptr,     GameObjectRuleSource::Native, "Oily Blackmouth School 180582: no cursor natively; fished via the spell"},
     {26, "FLAGDROP",           true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use"},
-    {27, "MINI_GAME",          false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
+    {27, "MINI_GAME",          true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Native, "Teleport-Stone to Hyjal 211050: gear natively; server ignores the use"},
     {28, "LOTTERY_KIOSK",      false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {29, "CAPTURE_POINT",      false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent (proximity)"},
     {30, "AURA_GENERATOR",     false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {31, "DUNGEON_DIFFICULTY", false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {32, "BARBER_CHAIR",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {33, "DESTRUCTIBLE",       false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
-    {34, "GUILD_BANK",         true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::NeedsCapture, "GuildBank; cursor unknown"},
+    {34, "GUILD_BANK",         true,  ObjectNameTooltip::Default, "Buy",       GameObjectRuleSource::Native, "Guild Vault 187299: Buy natively"},
 };
 
 /// The row for a type. Types past the table are not usable and unnamed.
