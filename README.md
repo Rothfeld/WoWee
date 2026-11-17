@@ -644,6 +644,13 @@ them: `BFD_WispSmall.m2` #1 is a black alpha underlay (-100) that shows as a
 dark cloud when drawn over the wisp glow. Pre-264 emitter `+0x194` is drag,
 speed times `exp(-drag * t)`; `BFD_WallLight03.m2` #0 (drag 5.5, 4 s life)
 otherwise rises as a column to the ceiling.
+Particles of a doodad in an interior WMO group take its MODD placement colour,
+as its mesh does: `BFD_WaterFalls01.m2` splash (authored 190,218,220) is blue
+under placement (84,125,223) and `BFD_WaterFalls10.m2` teal under (43,91,100).
+Flag 0x1000 (XYQuad) sprites lie flat in the model XY plane:
+`WaterElemental.m2` #16/#21 are the ground rings under an Aqua Guardian.
+Flag 0x400 is not rendered; drawing those particles pinned at their birth
+point or stretched from it did not match the original client.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
 
 ### TBC combat feedback
