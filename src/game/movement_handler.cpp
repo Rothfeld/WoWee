@@ -2332,6 +2332,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     owner_.unitAurasCacheRef().clear();
     owner_.clearCombatText();
     owner_.getEntityManager().clear();
+    owner_.clearTaxiNodeStatuses();
     owner_.clearHostileAttackers();
     owner_.worldStatesRef().clear();
     owner_.clearGossipPois();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/quest_giver_status.hpp"
+#include "game/taxi_node_status.hpp"
 #include "game/calendar_data.hpp"
 #include "game/game_interfaces.hpp"
 #include "game/world_packets.hpp"
@@ -3073,10 +3074,14 @@ public:
     uint32_t getTaxiCostTo(uint32_t destNodeId) const;
     bool hasTaxiRouteTo(uint32_t destNodeId) const;
     std::vector<uint32_t> getTaxiRouteTo(uint32_t destNodeId) const;
-    bool taxiNpcHasRoutes(uint64_t guid) const {
-        auto it = taxiNpcHasRoutes_.find(guid);
-        return it != taxiNpcHasRoutes_.end() && it->second;
+    TaxiNodeStatus getTaxiNodeStatus(uint64_t guid) const {
+        auto it = taxiNodeStatuses_.find(guid);
+        return it == taxiNodeStatuses_.end() ? TaxiNodeStatus::Unqueried : it->second;
     }
+    const auto& getTaxiNodeStatuses() const { return taxiNodeStatuses_; }
+    void queryTaxiNodeStatus(uint64_t guid);
+    void updateTaxiNodeStatuses();
+    void clearTaxiNodeStatuses() { taxiNodeStatuses_.clear(); }
 
     // Vehicle (WotLK)
     bool isInVehicle() const { return vehicleId_ != 0; }
@@ -4707,7 +4712,7 @@ private:
     bool arenaSortAscending_ = true;
 
     // Taxi / Flight Paths
-    std::unordered_map<uint64_t, bool> taxiNpcHasRoutes_;  // guid -> has new/available routes
+    std::unordered_map<uint64_t, TaxiNodeStatus> taxiNodeStatuses_;
     std::unordered_map<uint32_t, TaxiNode> taxiNodes_;
     std::vector<TaxiPathEdge> taxiPathEdges_;
     std::unordered_map<uint32_t, std::vector<TaxiPathNode>> taxiPathNodes_;  // pathId -> ordered waypoints

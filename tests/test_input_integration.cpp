@@ -2203,3 +2203,64 @@ TEST_CASE_METHOD(Integration, "Party roster identity and map coordinates survive
     handler.setAddonEventCallback({});
     lua.setLuaServices({});
 }
+
+TEST_CASE_METHOD(Integration, "TBC flight discovery queries once and follows server knowledge", "[taxi-discovery]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t guid = 0xf13000000100f001ull;
+    auto master = std::make_shared<Unit>(guid);
+    master->setHealth(100);
+    master->setNpcFlags(NPC_FLAG_FLIGHT_MASTER);
+    master->setFactionTemplate(35);
+    handler.getEntityManager().addEntity(guid, master);
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Unqueried);
+    CHECK_FALSE(taxiDiscoveryMarkerVisible(handler.getTaxiNodeStatus(guid), false));
+    handler.updateTaxiNodeStatuses();
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Pending);
+    handler.updateTaxiNodeStatuses();
+    auto queries = session.sent().of(Opcode::CMSG_TAXINODE_STATUS_QUERY);
+    REQUIRE(queries.size() == 1);
+    REQUIRE(queries[0].getRemainingSize() == 8);
+    CHECK(queries[0].readUInt64() == guid);
+    const auto status = [&](uint8_t known) {
+        wowee::network::Packet packet(wireOpcode(Opcode::SMSG_TAXINODE_STATUS));
+        packet.writeUInt64(guid);
+        packet.writeUInt8(known);
+        session.receive(packet);
+    };
+    status(0);
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Undiscovered);
+    CHECK(taxiDiscoveryMarkerVisible(handler.getTaxiNodeStatus(guid), false));
+    CHECK_FALSE(taxiDiscoveryMarkerVisible(handler.getTaxiNodeStatus(guid), true));
+    status(1); // CMaNGOS SendLearnNewTaxiNode refresh after first interaction.
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Discovered);
+    CHECK_FALSE(taxiDiscoveryMarkerVisible(handler.getTaxiNodeStatus(guid), false));
+    master->setNpcFlags(0);
+    handler.updateTaxiNodeStatuses();
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Unqueried);
+    master->setNpcFlags(NPC_FLAG_FLIGHT_MASTER);
+    handler.updateTaxiNodeStatuses();
+    CHECK(session.sent().of(Opcode::CMSG_TAXINODE_STATUS_QUERY).size() == 2);
+    master->setHealth(0);
+    handler.updateTaxiNodeStatuses();
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Unqueried);
+    CHECK(session.sent().of(Opcode::CMSG_TAXINODE_STATUS_QUERY).size() == 2);
+    master->setHealth(100);
+    master->setHostile(true);
+    handler.updateTaxiNodeStatuses();
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Unqueried);
+    CHECK(session.sent().of(Opcode::CMSG_TAXINODE_STATUS_QUERY).size() == 2);
+    master->setHostile(false);
+    handler.updateTaxiNodeStatuses();
+    CHECK(session.sent().of(Opcode::CMSG_TAXINODE_STATUS_QUERY).size() == 3);
+    handler.getEntityManager().removeEntity(guid);
+    handler.updateTaxiNodeStatuses();
+    status(0); // Delayed reply cannot recreate a despawned marker.
+    CHECK(handler.getTaxiNodeStatus(guid) == TaxiNodeStatus::Unqueried);
+    handler.getEntityManager().addEntity(guid, master);
+    handler.updateTaxiNodeStatuses();
+    status(0);
+    handler.clearTaxiNodeStatuses(); // World transfer / character login path.
+    CHECK_FALSE(taxiDiscoveryMarkerVisible(handler.getTaxiNodeStatus(guid), false));
+}

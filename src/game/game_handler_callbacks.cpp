@@ -751,6 +751,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     lastTargetGuid = 0;
     tabCycleStale = true;
     entityController_->clearAll();
+    clearTaxiNodeStatuses();
 
     // Build CMSG_PLAYER_LOGIN packet
     auto packet = PlayerLoginPacket::build(characterGuid);

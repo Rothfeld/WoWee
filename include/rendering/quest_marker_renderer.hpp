@@ -15,7 +15,7 @@ public:
     void setMarker(uint64_t guid, const glm::vec3& position, int markerType,
                    float boundingHeight = 2.0f, float grayscale = 0.0f);
     void clear();
-    void syncModels(M2Renderer& renderer, pipeline::AssetManager& assets);
+    void syncModels(M2Renderer& renderer, pipeline::AssetManager& assets, const glm::vec3& cameraPosition);
 
 private:
     struct Marker {

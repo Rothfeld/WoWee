@@ -215,6 +215,7 @@ void GameHandler::disconnect() {
     if (spellHandler_) spellHandler_->clearUnitAurasCache();
     if (combatHandler_) combatHandler_->clearCombatText();
     entityController_->clearAll();
+    clearTaxiNodeStatuses();
     setState(WorldState::DISCONNECTED);
     LOG_INFO("Disconnected from world server");
 }
@@ -523,6 +524,7 @@ for (const auto& [guid, entity] : entityController_->getEntityManager().getEntit
 
 void GameHandler::updateTimers(float deltaTime) {
     if (spellHandler_) spellHandler_->updateTimers(deltaTime);
+    updateTaxiNodeStatuses();
 
     // Periodically clear stale pending item queries so they can be retried.
     // Without this, a lost/malformed response leaves the entry stuck forever.
@@ -4596,6 +4598,33 @@ const std::string& GameHandler::getTaxiDestName() const {
     static const std::string empty;
     return empty;
 }
+void GameHandler::queryTaxiNodeStatus(uint64_t guid) {
+    if (!isActiveExpansion("tbc") || state != WorldState::IN_WORLD || !socket ||
+        getTaxiNodeStatus(guid) != TaxiNodeStatus::Unqueried) return;
+    network::Packet packet(wireOpcode(Opcode::CMSG_TAXINODE_STATUS_QUERY));
+    packet.writeUInt64(guid);
+    taxiNodeStatuses_[guid] = TaxiNodeStatus::Pending;
+    socket->send(packet);
+    LOG_DEBUG("Query taxi discovery: guid=", guid);
+}
+
+void GameHandler::updateTaxiNodeStatuses() {
+    if (!isActiveExpansion("tbc") || state != WorldState::IN_WORLD) return;
+    const auto eligible = [&](const std::shared_ptr<Entity>& entity) {
+        if (!entity || entity->getType() != ObjectType::UNIT) return false;
+        const auto unit = std::static_pointer_cast<Unit>(entity);
+        return (unit->getNpcFlags() & NPC_FLAG_FLIGHT_MASTER) && unit->getHealth() > 0 &&
+            !(unit->getUnitFlags() & UNIT_FLAG_NOT_SELECTABLE) && unitReactionToPlayer(*unit) >= 4;
+    };
+    auto& entities = getEntityManager();
+    std::erase_if(taxiNodeStatuses_, [&](const auto& entry) {
+        return !eligible(entities.getEntity(entry.first));
+    });
+    for (const auto& [guid, entity] : entities.getEntities()) {
+        if (eligible(entity)) queryTaxiNodeStatus(guid);
+    }
+}
+
 const ShowTaxiNodesData& GameHandler::getTaxiData() const {
     if (movementHandler_) return movementHandler_->getTaxiData();
     static const ShowTaxiNodesData empty;

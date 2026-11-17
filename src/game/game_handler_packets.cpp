@@ -1713,13 +1713,17 @@ void GameHandler::registerRemainingOpcodes() {
             fireAddonEvent("UPDATE_BONUS_ACTIONBAR", {});
         }
     };
-    // guid(8) + status(1): status 1 = NPC has available/new routes for this player
+    // TBC: raw GUID + byte, 0 undiscovered and 1 discovered. Learning pushes 1.
     dispatchTable_[Opcode::SMSG_TAXINODE_STATUS] = [this](network::Packet& packet) {
-        // guid(8) + status(1): status 1 = NPC has available/new routes for this player
         if (packet.hasRemaining(9)) {
             uint64_t npcGuid = packet.readUInt64();
             uint8_t  status  = packet.readUInt8();
-            taxiNpcHasRoutes_[npcGuid] = (status != 0);
+            if (!isActiveExpansion("tbc")) return;
+            if (status > 1) throw std::runtime_error("Invalid TBC taxi-node status");
+            // A response queued before map teardown must not revive its marker.
+            if (!getEntityManager().getEntity(npcGuid)) return;
+            taxiNodeStatuses_[npcGuid] = status ? TaxiNodeStatus::Discovered : TaxiNodeStatus::Undiscovered;
+            LOG_INFO("Taxi discovery: guid=", npcGuid, " discovered=", unsigned(status));
         }
     };
     // SMSG_GUILD_DECLINE - moved to SocialHandler::registerOpcodes

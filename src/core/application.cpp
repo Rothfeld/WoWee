@@ -5889,7 +5889,13 @@ void Application::updateQuestMarkers() {
         return;
     }
 
-    const auto& questStatuses = gameHandler->getNpcQuestStatuses();
+    // Service markers share one placement per NPC with quest markers.
+    // A visible quest cue takes priority over flight-point discovery.
+    auto questStatuses = gameHandler->getNpcQuestStatuses();
+    for (const auto& [guid, status] : gameHandler->getTaxiNodeStatuses()) {
+        if (status == game::TaxiNodeStatus::Undiscovered)
+            questStatuses.try_emplace(guid, game::QuestGiverStatus::NONE);
+    }
 
     // Clear all markers (we'll re-add active ones)
     questMarkerRenderer->clear();
@@ -5914,6 +5920,8 @@ void Application::updateQuestMarkers() {
             // grey one; the shader desaturates from markerGrayscale.
             markerType = bang ? 0 : (marker.dim ? 2 : 1);
         }
+        if (game::taxiDiscoveryMarkerVisible(gameHandler->getTaxiNodeStatus(guid), markerType >= 0))
+            markerType = 3;
 
         if (markerType < 0) continue;
 
@@ -5963,22 +5971,28 @@ void Application::updateQuestMarkers() {
         float boundingHeight = 0.0f;
         if (!instanceId || !characters->getInstanceHeight(instanceId, boundingHeight)) continue;
         if (!characters->getInstancePosition(instanceId, renderPos)) continue;
+        if (markerType == 3 && !characters->getInstanceNamePosition(instanceId,
+                std::static_pointer_cast<game::Unit>(entity)->getMountDisplayId() != 0, renderPos))
+            continue;
 
         // M2 assets carry the marker geometry and animation.
         questMarkerRenderer->setMarker(guid, renderPos, markerType, boundingHeight, markerGrayscale);
         {
             static std::unordered_set<uint64_t> said;
             if (said.insert(guid).second) {
+                glm::vec3 nameAnchor;
+                const bool hasNameAnchor = characters->getInstanceNamePosition(instanceId, false, nameAnchor);
                 LOG_INFO("Quest marker: 0x", std::hex, guid, std::dec, " type ", markerType,
                          " at ", renderPos.x, ",", renderPos.y, ",", renderPos.z,
-                         " height ", boundingHeight);
+                         " height ", boundingHeight, " nameAnchorZ ",
+                         hasNameAnchor ? nameAnchor.z : 0.0f);
             }
         }
         markersAdded++;
     }
 
     if (auto* m2 = renderer->getM2Renderer(); m2 && assetManager) {
-        questMarkerRenderer->syncModels(*m2, *assetManager);
+        questMarkerRenderer->syncModels(*m2, *assetManager, renderer->getCamera()->getPosition());
     }
 
     if (firstRun && markersAdded > 0) {
