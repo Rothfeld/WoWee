@@ -740,7 +740,34 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
         place(casterGuid, kAttachLaunchHand, start);
         place(targetGuid, kAttachChestFront, end);
     }
-    return svs->playSpellMissile(visualId, start, end, speed, impactAtEnd);
+    // The missile leaves at the spell release event ($CS*) of the caster's
+    // cast animation (SpellVisualKit AnimID of the CastKit): $CSL at 200 ms of
+    // HumanMale SpellCastDirected for Fireball, Frostbolt and Shadow Bolt.
+    float launchDelay = 0.0f;
+    const uint32_t animation = svs->castAnimation(visualId);
+    const auto* characters = renderer->getCharacterRenderer();
+    const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
+    const auto* model = characters && casterInstance ? characters->getInstanceModelData(casterInstance) : nullptr;
+    bool released = false;
+    if (model && animation != rendering::SpellVisualSystem::kNoAnimation) {
+        for (size_t i = 0; i < model->sequences.size(); ++i) {
+            if (model->sequences[i].id != animation || model->sequences[i].variationIndex != 0) continue;
+            if (i < model->spellReleaseEventTimes.size() && !model->spellReleaseEventTimes[i].empty()) {
+                launchDelay = model->spellReleaseEventTimes[i].front() / 1000.0f;
+                released = true;
+            }
+            break;
+        }
+    }
+    if (!released) {
+        static std::unordered_set<uint64_t> said;
+        const uint64_t key = (static_cast<uint64_t>(visualId) << 32) | (model ? model->sequences.size() : 0u);
+        if (said.size() < 128 && said.insert(key).second)
+            LOG_WARNING("SpellVisual: no spell release event for missile visual ", visualId, " cast animation ",
+                        animation, " on caster 0x", std::hex, casterGuid, std::dec,
+                        model ? "" : " (no caster model)", "; missile leaves at SPELL_GO");
+    }
+    return svs->playSpellMissile(visualId, start, end, speed, launchDelay, impactAtEnd);
 }
 
 bool SpellHandler::resolveUnitPosition(uint64_t guid, glm::vec3& outPos) {

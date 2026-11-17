@@ -280,6 +280,12 @@ struct M2Model {
     };
     std::vector<FootfallEvent> footfallEvents;
 
+    // Spell release ($CS* events: $CSL, $CSR, $CST, ...) times per sequence
+    // index, ms from the sequence start, sorted. HumanMale.m2 has $CSL at 200 ms
+    // of SpellCastDirected and $CST at 300 ms of SpellCastOmni; a spell missile
+    // leaves the caster there.
+    std::vector<std::vector<uint32_t>> spellReleaseEventTimes;
+
     // Bone lookup table (vertex bone indices reference this to get global bone index)
     std::vector<uint16_t> boneLookupTable;
 

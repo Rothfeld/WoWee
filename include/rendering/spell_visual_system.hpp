@@ -112,11 +112,14 @@ public:
     struct MissileAttachments { int32_t launch = -1; uint32_t destination = 0; };
     std::optional<MissileAttachments> missileAttachments(uint32_t visualId);
 
-    // Fly the visual's missile model from start to end at speed yards a second
-    // (Spell.dbc Speed). With impactAtEnd the impact kit plays where it lands,
-    // instead of when the server reports the hit. False when nothing launched.
+    // Missile of the visual from start to end. It lands distance / speed
+    // seconds from now (Spell.dbc Speed, yards a second) and leaves the caster
+    // launchDelay seconds from now, flying whatever speed that leaves. A delay
+    // at or past the landing time draws no flight. With impactAtEnd the impact
+    // kit plays at the landing instead of when the server reports the hit.
+    // False when nothing was scheduled.
     bool playSpellMissile(uint32_t visualId, const glm::vec3& start, const glm::vec3& end,
-                          float speed, bool impactAtEnd);
+                          float speed, float launchDelay, bool impactAtEnd);
 
     // Launch a physical weapon projectile (arrow, bullet, or thrown item)
     // without invoking the spell visual pipeline.
@@ -165,12 +168,14 @@ private:
     };
 
     struct SpellMissile {
-        uint32_t instanceId = 0;
+        uint32_t instanceId = 0;     // 0 until launched
+        uint32_t modelId = 0;
         uint32_t visualId = 0;
         glm::vec3 start{0.0f};
         glm::vec3 end{0.0f};
         float elapsed = 0.0f;
-        float duration = 0.0f;
+        float launchAt = 0.0f;       // seconds after scheduling
+        float duration = 0.0f;       // landing, seconds after scheduling
         bool impactAtEnd = false;
     };
 

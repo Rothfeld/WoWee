@@ -802,33 +802,31 @@ std::optional<SpellVisualSystem::MissileAttachments> SpellVisualSystem::missileA
 }
 
 bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& start,
-                                         const glm::vec3& end, float speed, bool impactAtEnd) {
+                                         const glm::vec3& end, float speed, float launchDelay,
+                                         bool impactAtEnd) {
     if (!m2Renderer_ || !hasSpellMissile(visualId)) return false;
     if (!cachedAssetManager_) return false;
     if (!std::isfinite(speed) || speed <= 0.0f) return false;
+    assert(std::isfinite(launchDelay) && launchDelay >= 0.0f);
 
     const std::string& modelPath = spellVisualMissilePath_.at(visualId);
     const uint32_t modelId = loadSpellModel(modelPath);
     if (modelId == 0) return false;
 
-    const uint32_t instanceId = m2Renderer_->createInstance(modelId, start, glm::vec3(0.0f), 1.0f);
-    if (instanceId == 0) {
-        LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", visualId);
-        return false;
-    }
-    m2Renderer_->restartInstanceAnimation(instanceId);
-
-    // Speed is yards a second. A missile still in the air after a few seconds
-    // has lost its target to a teleport or a corpse run; the damage landed long
-    // ago, so it is put down rather than left crossing the map.
+    // Speed is yards a second and fixes the landing, as the server's hit delay
+    // does. The original keeps that landing however late the missile leaves the
+    // hand: Fireball 133 at 16.5 and 32 yards, Frostbolt 116 at 16.4, Shadow Bolt
+    // 686 at 31.8 all reached the target within 0.03 s of SPELL_GO + distance /
+    // speed, after leaving 0.17-0.31 s late. A missile still in the air after a
+    // few seconds has lost its target to a teleport or a corpse run; the damage
+    // landed long ago, so it is put down rather than left crossing the map.
     const float distance = glm::length(end - start);
     const float duration = std::clamp(distance / speed, 0.05f, SPELL_MISSILE_MAX_DURATION);
-    spellMissiles_.push_back({.instanceId = instanceId, .visualId = visualId, .start = start,
-                              .end = end, .elapsed = 0.0f, .duration = duration,
+    spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
+                              .end = end, .elapsed = 0.0f, .launchAt = launchDelay, .duration = duration,
                               .impactAtEnd = impactAtEnd});
-    placeSpellMissile(spellMissiles_.back(), 0.0f);
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
-             " distance=", distance, " speed=", speed, " duration=", duration, "s");
+             " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay, "s");
     return true;
 }
 
@@ -933,15 +931,28 @@ void SpellVisualSystem::update(float deltaTime) {
     std::vector<std::pair<uint32_t, glm::vec3>> arrivals;
     for (auto it = spellMissiles_.begin(); it != spellMissiles_.end(); ) {
         it->elapsed += deltaTime;
-        const float t = std::min(it->elapsed / it->duration, 1.0f);
-        if (t >= 1.0f) {
-            m2Renderer_->removeInstance(it->instanceId);
+        if (it->elapsed >= it->duration) {
+            if (it->instanceId) m2Renderer_->removeInstance(it->instanceId);
             if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
             it = spellMissiles_.erase(it);
-        } else {
-            placeSpellMissile(*it, t);
-            ++it;
+            continue;
         }
+        if (it->elapsed < it->launchAt) {
+            ++it;
+            continue;
+        }
+        if (!it->instanceId) {
+            it->instanceId = m2Renderer_->createInstance(it->modelId, it->start, glm::vec3(0.0f), 1.0f);
+            if (!it->instanceId) {
+                LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);
+                if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
+                it = spellMissiles_.erase(it);
+                continue;
+            }
+            m2Renderer_->restartInstanceAnimation(it->instanceId);
+        }
+        placeSpellMissile(*it, (it->elapsed - it->launchAt) / (it->duration - it->launchAt));
+        ++it;
     }
     for (const auto& [visualId, pos] : arrivals)
         playSpellVisual(visualId, pos, /*useImpactKit=*/true);
@@ -1052,7 +1063,7 @@ void SpellVisualSystem::reset() {
     }
     activeSpellVisuals_.clear();
     for (const auto& missile : spellMissiles_) {
-        if (m2Renderer_) m2Renderer_->removeInstance(missile.instanceId);
+        if (m2Renderer_ && missile.instanceId) m2Renderer_->removeInstance(missile.instanceId);
     }
     spellMissiles_.clear();
     if (renderer_ && renderer_->getCharacterRenderer()) {
