@@ -204,3 +204,22 @@ TEST_CASE("Particle sprites keep authored lifecycle scale above one yard", "[m2]
     CHECK(particleSpriteHalfWidth(2.77778f, 1.0f) == Catch::Approx(2.77778f));
     CHECK(particleSpriteHalfWidth(0.0000278f, 1.0f) == Catch::Approx(0.0000278f));
 }
+
+TEST_CASE("Legacy emitters keep authored all-zero lifecycle alpha", "[m2][particle]") {
+    // G_ExplosiveTrap emitter 3: additive, colour alpha bytes 0/0/0.
+    constexpr uint32_t emitterOffset = 512;
+    std::vector<uint8_t> bytes(emitterOffset + 504, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t offset, uint32_t value) {
+        std::memcpy(bytes.data() + offset, &value, sizeof(value));
+    };
+    put32(4, 260);
+    put32(0x13c, 1);
+    put32(0x140, emitterOffset);
+    bytes[emitterOffset + 0x28] = 4;
+    for (int c = 0; c < 3; ++c) put32(emitterOffset + 0x150 + 4 * c, 0x00ffffffu);
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 1);
+    CHECK(model.particleEmitters[0].particleAlpha.floatValues == std::vector<float>{0, 0, 0});
+    CHECK(model.particleEmitters[0].particleColor.vec3Values[1] == glm::vec3(1));
+}

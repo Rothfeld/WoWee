@@ -1563,14 +1563,8 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                         em.particleColor.vec3Values[c] = glm::vec3(r, g, b);
                         em.particleAlpha.floatValues[c] = a;
                     }
-                    // If all alpha zero, use sensible default (fade out)
-                    bool allZero = true;
-                    for (auto v : em.particleAlpha.floatValues) {
-                        if (v > 0.01f) { allZero = false; break; }
-                    }
-                    if (allZero) {
-                        em.particleAlpha.floatValues = {1.0f, 1.0f, 0.0f};
-                    }
+                    // All-zero alpha is authored: 14 TBC emitters (blend Add or
+                    // Alpha) such as G_ExplosiveTrap #3/#4 draw nothing.
                 }
 
                 // Synthesize scale FBlock from static float values
