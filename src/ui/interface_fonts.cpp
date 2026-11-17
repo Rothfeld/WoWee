@@ -7,6 +7,7 @@
 
 #include "ui/text_markup.hpp"
 #include "ui/text_wrap.hpp"
+#include "core/logger.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -39,6 +40,49 @@ std::unordered_map<std::string, ImFont*>& faces() {
     return map;
 }
 
+struct NativeEntry {
+    std::shared_ptr<NativeFace> face;
+    ImFont* font = nullptr;
+};
+
+std::unordered_map<std::string, NativeEntry>& nativeFaces() {
+    static std::unordered_map<std::string, NativeEntry> map;
+    return map;
+}
+
+const NativeEntry* nativeEntry(const std::string& fontFace) {
+    for (const std::string& name : {fontFace, std::string("frizqt__")}) {
+        if (name.empty()) continue;
+        const auto it = nativeFaces().find(faceKey(name));
+        if (it != nativeFaces().end() && it->second.face) return &it->second;
+    }
+    return nullptr;
+}
+
+/// How wide the merged fallback face draws a codepoint the interface face
+/// lacks, in pixels at `pixelHeight`.
+float fallbackAdvance(uint32_t codepoint, int pixelHeight, const void* ctx) {
+    auto* font = static_cast<ImFont*>(const_cast<void*>(ctx));
+    if (!font || ImGui::GetCurrentContext() == nullptr) return 0.0f;
+    char utf8[5] = {};
+    if (codepoint < 0x80) {
+        utf8[0] = static_cast<char>(codepoint);
+    } else if (codepoint < 0x800) {
+        utf8[0] = static_cast<char>(0xC0 | (codepoint >> 6));
+        utf8[1] = static_cast<char>(0x80 | (codepoint & 0x3F));
+    } else if (codepoint < 0x10000) {
+        utf8[0] = static_cast<char>(0xE0 | (codepoint >> 12));
+        utf8[1] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        utf8[2] = static_cast<char>(0x80 | (codepoint & 0x3F));
+    } else {
+        utf8[0] = static_cast<char>(0xF0 | (codepoint >> 18));
+        utf8[1] = static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+        utf8[2] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        utf8[3] = static_cast<char>(0x80 | (codepoint & 0x3F));
+    }
+    return font->CalcTextSizeA(static_cast<float>(pixelHeight), FLT_MAX, 0.0f, utf8).x;
+}
+
 /// A big-endian field out of a font file, or zero past the end.
 ///
 /// Bounds-checked on every read rather than once at the top: a truncated font
@@ -56,6 +100,32 @@ uint32_t beAt(const uint8_t* d, size_t n, size_t at, int bytes) {
 void registerInterfaceFace(const std::string& pathOrName, ImFont* font) {
     if (!font) return;
     faces()[faceKey(pathOrName)] = font;
+    // The metric tables come from the same bytes ImGui rasterizes: the first
+    // source is the face itself, later ones are merged fallbacks.
+    NativeEntry entry;
+    entry.font = font;
+    if (font->Sources.Size > 0 && font->Sources[0]->FontData && font->Sources[0]->FontDataSize > 0) {
+        entry.face = NativeFace::fromTrueType(font->Sources[0]->FontData,
+                                              static_cast<size_t>(font->Sources[0]->FontDataSize));
+    }
+    if (!entry.face) LOG_WARNING("Interface face ", pathOrName, " has no readable metric tables");
+    nativeFaces()[faceKey(pathOrName)] = std::move(entry);
+}
+
+const NativeFace* interfaceNativeFace(const std::string& fontFace) {
+    const NativeEntry* e = nativeEntry(fontFace);
+    return e ? e->face.get() : nullptr;
+}
+
+NativeTextMeasure interfaceTextMeasure(const std::string& fontFace, int pixelHeight) {
+    NativeTextMeasure m;
+    m.pixelHeight = pixelHeight;
+    if (const NativeEntry* e = nativeEntry(fontFace)) {
+        m.face = e->face.get();
+        m.missingAdvance = &fallbackAdvance;
+        m.missingCtx = e->font;
+    }
+    return m;
 }
 
 ImFont* interfaceFace(const std::string& pathOrName) {

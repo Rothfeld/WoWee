@@ -20,6 +20,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include "ui/tooltip_layout.hpp"
+
 struct ImDrawList;   // global, as ImGui declares it
 struct ImFont;
 struct ImVec2;
@@ -110,6 +112,12 @@ private:
     void sizeTextureWidget(Widget* w);
     void sizeFontStringWidget(Widget* w, ImFont* font, float pixelScale);
     void sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree);
+    static TooltipLayout layoutTooltipLines(const Widget& w, float ppu);
+    /// One row of text at the original's whole-pixel pen positions, top-left
+    /// at (x, y) in pixels. Answers the pen x after it.
+    float drawNativeRow(ImDrawList* dl, ImFont* font, const NativeTextMeasure& m, float x,
+                        float y, const std::vector<WrapRun>& runs, uint32_t fallback,
+                        float alpha, float pixelsPerUnit);
     /// How big the picture is, without uploading it. No Vulkan context needed:
     /// asking a file its dimensions does not require a GPU, and requiring one
     /// would put this beyond the reach of the headless harness.

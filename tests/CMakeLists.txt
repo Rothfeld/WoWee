@@ -1604,6 +1604,7 @@ register_test_target(test_chat_markup_parser)
 # offsets into a file this client did not write, so they are pinned.
 add_executable(test_font_em_scale
     test_font_em_scale.cpp
+    ${TEST_COMMON_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/ui/interface_fonts.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/native_text_metrics.cpp
 )
@@ -1627,6 +1628,7 @@ wowee_add_test(test_quest_text SOURCES test_quest_text.cpp)
 # zero drew each wrapped objective over the row beneath it.
 add_executable(test_interface_text_lines
     test_interface_text_lines.cpp
+    ${TEST_COMMON_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/ui/interface_fonts.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/native_text_metrics.cpp
 )

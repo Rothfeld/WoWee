@@ -180,3 +180,99 @@ TEST_CASE("|n breaks at any width and colour runs survive a break", "[native-tex
     CHECK(lines[1].runs[0].hasColor);
     CHECK(lines[1].runs[0].text == "Flash Powder");
 }
+
+// ── GameTooltip layout ──────────────────────────────────────────────────────
+
+#include "ui/tooltip_layout.hpp"
+
+namespace {
+
+TooltipLayout tooltip(const std::vector<TooltipLineInput>& lines, float ppu = 0.9375f) {
+    return layoutTooltip(lines, ppu, [](const std::string&, int h) { return at(h); });
+}
+
+TooltipLineInput title(const std::string& s) { return {s, "", false, 14.0f, ""}; }
+TooltipLineInput plain(const std::string& s) { return {s, "", false, 12.0f, ""}; }
+TooltipLineInput wrapped(const std::string& s) { return {s, "", true, 12.0f, ""}; }
+
+}  // namespace
+
+TEST_CASE("Greater Inscription of the Orb lays out as the original's", "[native-text][tooltip]") {
+    const auto t = tooltip({title("Greater Inscription of the Orb"), plain("Binds when picked up"),
+                            plain("Requires Level 70"), plain("Requires The Scryers - Exalted"),
+                            wrapped(kOrb)});
+    REQUIRE(t.lines[4].rows.size() == 5);
+    CHECK(t.contentWidth == 213.0f);
+    CHECK(t.widthUnits() == Catch::Approx(247.68f).margin(0.01f));
+    CHECK(t.heightUnits() == Catch::Approx(136.213f).margin(0.01f));
+}
+
+TEST_CASE("A wrapped line grows the tooltip by its trailing space and rewraps",
+          "[native-text][tooltip]") {
+    // At 216 the second row ends "item. " at 218: the line is wrapped again at
+    // 218, where "enchantments" (pen 217) joins the third row.
+    const auto t = tooltip({title("Inscription of Faith"), plain("Binds when picked up"),
+                            plain("Requires Level 64"), plain("Requires The Aldor - Honored"),
+                            wrapped(kFaith)});
+    REQUIRE(t.lines[4].rows.size() == 4);
+    CHECK(t.contentWidth == 218.0f);
+    CHECK(t.widthUnits() == Catch::Approx(253.01f).margin(0.01f));
+    CHECK(t.heightUnits() == Catch::Approx(124.48f).margin(0.01f));
+}
+
+TEST_CASE("An unwrapped line at the default width wraps the rest at it", "[native-text][tooltip]") {
+    // "Requires Cenarion Expedition - Revered" is exactly 216: wrapping happens
+    // there and the trailing space of "power " does not widen anything.
+    const auto t = tooltip({title("Glyph of Ferocity"), plain("Binds when picked up"),
+                            plain("Requires Level 70"),
+                            plain("Requires Cenarion Expedition - Revered"), wrapped(kFerocity)});
+    REQUIRE(t.lines[4].rows.size() == 5);
+    CHECK(t.contentWidth == 216.0f);
+    // Without that line the same text grows to 217 and takes four rows.
+    const auto u = tooltip({title("Glyph of Ferocity"), wrapped(kFerocity)});
+    CHECK(u.lines[1].rows.size() == 4);
+    CHECK(u.contentWidth == 217.0f);
+}
+
+TEST_CASE("Wrapped lines widen the tooltip one after another", "[native-text][tooltip]") {
+    const auto t = tooltip({title("Neltharion's Tear"), plain("Binds when picked up"),
+                            plain("Unique-Equipped"), plain("Trinket"), plain("Requires Level 60"),
+                            wrapped("Equip: Increases damage and healing done by magical spells "
+                                    "and effects by up to 44."),
+                            wrapped("Equip: Increases your spell hit rating by 16."),
+                            wrapped("\"A silver liquid flows within the impenetrable ebony shell. "
+                                    "The item feels pure. It radiates an essence of extreme power.\"")});
+    CHECK(t.lines[5].rows.size() == 3);
+    CHECK(t.lines[6].rows.size() == 2);
+    CHECK(t.lines[7].rows.size() == 4);
+    CHECK(t.contentWidth == 212.0f);
+    CHECK(t.heightUnits() == Catch::Approx(200.88f).margin(0.01f));
+}
+
+TEST_CASE("A wider unwrapped line added later still sets the wrap", "[native-text][tooltip]") {
+    // AddLine(Faith text, wrap) then AddLine of 36 'x' (217 wide).
+    const auto t = tooltip({title("T"), wrapped(kFaith), plain(std::string(36, 'x'))});
+    CHECK(t.lines[1].rows.size() == 4);
+    CHECK(t.contentWidth == 217.0f);
+    const auto u = tooltip({title("T"), wrapped(kFaith), plain(std::string(48, 'x'))});
+    CHECK(u.lines[1].rows.size() == 3);
+}
+
+TEST_CASE("Right text sits 38.4 units past the left", "[native-text][tooltip]") {
+    TooltipLineInput dbl = plain(std::string(20, 'x'));
+    dbl.right = std::string(10, 'x');
+    const auto t = tooltip({title("T"), dbl});
+    // 121 + 36 + 61 pixels.
+    CHECK(t.contentWidth == 218.0f);
+}
+
+TEST_CASE("Tooltip scale changes pixel heights and the wrap", "[native-text][tooltip]") {
+    // GameTooltip:SetScale(0.8): 9-pixel text, default wrap ceil(172.8) = 173.
+    const auto t = tooltip({title("Inscription of Faith"), plain("Binds when picked up"),
+                            plain("Requires Level 64"), plain("Requires The Aldor - Honored"),
+                            wrapped(kFaith)}, 0.75f);
+    CHECK(t.lines[0].pixelHeight == 11);
+    CHECK(t.lines[4].pixelHeight == 9);
+    CHECK(t.lines[4].rows.size() == 5);
+    CHECK(t.contentWidth == 160.0f);
+}

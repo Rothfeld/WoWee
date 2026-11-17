@@ -11,6 +11,8 @@
 #include <cstddef>
 #include <string>
 
+#include "ui/native_text_metrics.hpp"
+
 struct ImFont;
 
 namespace wowee::ui {
@@ -18,6 +20,15 @@ namespace wowee::ui {
 /// Records a face under a path or filename. Later registrations of the same
 /// face replace the earlier one.
 void registerInterfaceFace(const std::string& pathOrName, ImFont* font);
+
+/// The metric tables of a registered face: the widget's own, then the
+/// interface default. Null when neither was registered.
+const NativeFace* interfaceNativeFace(const std::string& fontFace);
+
+/// The original client's measure for a widget's face at a pixel height.
+/// Codepoints the face lacks are measured by what the merged fallback face
+/// draws them at. `face` is null when no interface face is registered.
+NativeTextMeasure interfaceTextMeasure(const std::string& fontFace, int pixelHeight);
 
 /// The face for a path a font object named, or null if it was never loaded -
 /// in which case the caller should draw with whatever it was already using.
