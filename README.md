@@ -27,6 +27,12 @@ macOS, Windows and Android.
 [Hear the soundtrack](https://kelsidavis.bandcamp.com/album/wowee-soundtrack)
 
 TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-effects.md).
+Interface textures honor `SetDesaturated` using a separate grayscale texture
+variant; atlas UVs and alpha stay unchanged. `GameTooltip:SetText("")` hides
+the tooltip, while `AddLine("")` remains a valid spacer.
+MCLQ water height checks use vertices belonging to visible cells. Dry vertices
+can contain `FLT_MAX`; they must not flatten a wet chunk or overwrite a wet
+neighbor's shared edge during merging.
 Spline particle trails retain their animated emitter's birth pose in model
 space. Reapplying the current bone to every live particle collapses Draenei
 holographic rune trails into bright bulbs.
