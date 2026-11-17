@@ -1281,17 +1281,13 @@ void GameHandler::registerCoreOpcodes() {
             LOG_WARNING("SMSG_INIT_WORLD_STATES too short: ", packet.getSize(), " bytes");
             return;
         }
+        // No zone event from here. CMaNGOS resends this packet on
+        // resurrection (Player::ResurrectPlayer -> UpdateZone -> SendInitWorldStates),
+        // and FrameXML's ZoneTextFrame shows the zone title on every
+        // ZONE_CHANGED_NEW_AREA; the original client shows no title there.
+        // Zone and subzone events come from the player's position (Renderer).
         worldStateMapId_ = packet.readUInt32();
-        {
-            uint32_t newZoneId = packet.readUInt32();
-            if (newZoneId != worldStateZoneId_ && newZoneId != 0) {
-                worldStateZoneId_ = newZoneId;
-                    fireAddonEvent("ZONE_CHANGED_NEW_AREA", {});
-                    fireAddonEvent("ZONE_CHANGED", {});
-            } else {
-                worldStateZoneId_ = newZoneId;
-            }
-        }
+        worldStateZoneId_ = packet.readUInt32();
         // TBC added areaId in 2.1.0; WotLK kept it. Classic/Turtle use the shorter format.
         size_t remaining = packet.getRemainingSize();
         bool hasAreaId = isActiveExpansion("tbc") || isActiveExpansion("wotlk");

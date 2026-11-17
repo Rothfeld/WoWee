@@ -40,6 +40,18 @@ void kill(Session& s, uint32_t playerFieldBytes) {
                                            {UF::PLAYER_FIELD_BYTES, playerFieldBytes}}));
 }
 
+// Player::SendInitWorldStates, TBC: map, zone, area, count, pairs.
+wowee::network::Packet initWorldStates(uint32_t map, uint32_t zone, uint32_t area) {
+    wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_INIT_WORLD_STATES));
+    p.writeUInt32(map);
+    p.writeUInt32(zone);
+    p.writeUInt32(area);
+    p.writeUInt16(1);
+    p.writeUInt32(2264);
+    p.writeUInt32(0);
+    return p;
+}
+
 }  // namespace
 
 TEST_CASE("an open-world death counts down six minutes to release", "[replay][death]") {
@@ -59,4 +71,17 @@ TEST_CASE("an instance death has no release timer", "[replay][death]") {
     spawnAlivePlayer(s);
     kill(s, 0x00);
     CHECK(s.handler().getReleaseTimeRemainingSec() == -1);
+}
+
+TEST_CASE("world states resent on resurrection raise no zone event", "[replay][death][zone]") {
+    Session s("tbc");
+    spawnAlivePlayer(s);
+    Events events(s);
+    // Ashenvale / Astranaar area 415: the 13:47 pair's .revive, where
+    // ResurrectPlayer -> UpdateZone(force) resent this packet.
+    s.receive(initWorldStates(1, 331, 415));
+    s.receive(initWorldStates(1, 148, 148));
+    CHECK_FALSE(events.has("ZONE_CHANGED_NEW_AREA"));
+    CHECK_FALSE(events.has("ZONE_CHANGED"));
+    CHECK(s.handler().getWorldStates().at(2264) == 0);
 }
