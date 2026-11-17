@@ -932,7 +932,14 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
     }
     if (renderer_->getCameraController()) {
         renderer_->getCameraController()->setOnlineMode(true);
-        renderer_->getCameraController()->setDefaultSpawn(spawnRender, spawnYawDeg, -15.0f);
+        // Build 8606 enters the world at -5 degrees once per process; later
+        // world loads (cross-map teleports, relogging) keep the pitch the
+        // camera had: -47.5 and -10 degrees both survived them unchanged.
+        auto* cameraController = renderer_->getCameraController();
+        const float spawnPitchDeg = cameraController->hasEnteredWorld()
+            ? cameraController->getPitch() : rendering::CameraController::kStartPitch;
+        cameraController->setDefaultSpawn(spawnRender, spawnYawDeg, spawnPitchDeg);
+        cameraController->markEnteredWorld();
         renderer_->getCameraController()->reset();
     }
     renderer_->setCharacterYaw(spawnYawDeg);

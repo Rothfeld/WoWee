@@ -94,6 +94,10 @@ public:
 
     void processMouseWheel(float delta);
     void setFollowTarget(glm::vec3* target);
+    /// Camera pitch on the first entry into the world (build 8606: -5).
+    static constexpr float kStartPitch = -5.0f;
+    [[nodiscard]] bool hasEnteredWorld() const { return enteredWorld_; }
+    void markEnteredWorld() { enteredWorld_ = true; }
     void setDefaultSpawn(const glm::vec3& position, float yawDeg, float pitchDeg) {
         defaultPosition = position;
         defaultYaw = yawDeg;
@@ -494,9 +498,14 @@ private:
 
     // Third-person orbit camera (WoW-style)
     bool thirdPerson = false;
-    float userTargetDistance = 10.0f;   // What the player wants (scroll wheel)
-    float currentDistance = 10.0f;      // Smoothed actual distance
-    float collisionDistance = 10.0f;    // Max allowed by collision
+    /// Where a new process starts: build 8606 entered the world 5.55 yards
+    /// back at -5 degrees (defaultPitch), the distance its SetView(2) and
+    /// SetView(3) also use. Logging out and back in, and teleports, keep
+    /// whatever the camera had, as they do here.
+    static constexpr float kStartDistance = 5.55f;
+    float userTargetDistance = kStartDistance;  // What the player wants (scroll wheel)
+    float currentDistance = kStartDistance;     // Distance the zoom has reached
+    float collisionDistance = kStartDistance;   // Max allowed by collision
     bool externalFollow_ = false;
     static constexpr float MIN_DISTANCE = 0.5f;     // Minimum zoom (first-person threshold)
     float distanceMax_ = 15.0f;          // cameraDistanceMax default
@@ -842,7 +851,8 @@ private:
     // Default spawn position (Goldshire Inn)
     glm::vec3 defaultPosition = glm::vec3(-9464.0f, 62.0f, 200.0f);
     float defaultYaw = 0.0f;
-    float defaultPitch = -5.0f;
+    float defaultPitch = kStartPitch;
+    bool enteredWorld_ = false;
 
     // Spawn intro camera pan
     bool introActive = false;
