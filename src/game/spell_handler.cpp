@@ -453,6 +453,41 @@ std::string castFailureText(GameHandler& owner, uint32_t spellId, uint8_t result
 
 namespace {
 
+// "Sinister Strike (Rank 9)", or "Pick Lock" for a spell without a rank: how
+// 2.4.3 names a spell in its learned and unlearned lines.
+std::string spellNameWithRank(GameHandler& owner, uint32_t spellId) {
+    const std::string& name = owner.getSpellName(spellId);
+    const std::string& rank = owner.getSpellRank(spellId);
+    return rank.empty() ? name : name + " (" + rank + ")";
+}
+
+// Fills a one-%s GlobalStrings line with the spell's name; empty and logged
+// when the line or the name is missing.
+std::string spellGlobalStringLine(GameHandler& owner, const char* global, uint32_t spellId) {
+    const std::string pattern = owner.globalString(global);
+    const std::string name = spellNameWithRank(owner, spellId);
+    if (pattern.empty() || owner.getSpellName(spellId).empty()) {
+        LOG_ERROR("No ", global, " line for spell ", spellId, ": pattern \"", pattern, "\", name \"", name, "\"");
+        return {};
+    }
+    return formatGlobalString(pattern, {name});
+}
+
+} // namespace
+
+// ERR_LEARN_ABILITY_S for a spell with attribute 0x10, ERR_LEARN_SPELL_S
+// otherwise, as 2.4.3 chose for Sinister Strike, Counterattack, Pick Lock
+// (ability) and Fireball, Raptor Strike, Life Tap (spell): neither the school
+// nor the power type decides it.
+std::string learnedSpellText(GameHandler& owner, uint32_t spellId) {
+    const auto& cache = owner.spellNameCacheRef();
+    const auto it = cache.find(spellId);
+    const bool ability = it != cache.end() && (it->second.attr & 0x10u);
+    return spellGlobalStringLine(owner, ability ? "ERR_LEARN_ABILITY_S" : "ERR_LEARN_SPELL_S", spellId);
+}
+
+namespace {
+
 // A refusal the client decides itself, in the interface's GlobalStrings words.
 void raiseGlobalStringError(GameHandler& owner, const char* name) {
     const std::string text = owner.globalString(name);
@@ -3279,40 +3314,55 @@ void SpellHandler::handleSupercededSpell(network::Packet& packet) {
 
     knownSpells_.erase(oldSpellId);
 
-    const bool newSpellAlreadyAnnounced = knownSpells_.count(newSpellId) > 0;
+    const bool newSpellAlreadyKnown = knownSpells_.count(newSpellId) > 0;
 
     knownSpells_.insert(newSpellId);
     syncPreWotlkTalentsFromKnownSpells();
 
     LOG_INFO("Spell superceded: ", oldSpellId, " -> ", newSpellId);
 
+    const auto& fire = owner_.addonEventCallbackRef();
     bool barChanged = false;
-    for (auto& slot : owner_.actionBarRef()) {
+    auto& bar = owner_.actionBarRef();
+    for (size_t i = 0; i < bar.size(); ++i) {
+        auto& slot = bar[i];
         if (slot.type == ActionBarSlot::SPELL && slot.id == oldSpellId) {
             slot.id = newSpellId;
             slot.cooldownRemaining = 0.0f;
             slot.cooldownTotal = 0.0f;
             barChanged = true;
             LOG_DEBUG("Action bar slot upgraded: spell ", oldSpellId, " -> ", newSpellId);
+            if (fire) fire("ACTIONBAR_SLOT_CHANGED", {std::to_string(i + 1)});
         }
     }
-    if (barChanged) {
-        owner_.saveCharacterConfig();
-        // Zero, not nothing. The slot is the argument, and zero is how the
-        // event says "all of them" - ActionButton_OnEvent reads
-        // `arg1 == 0 or arg1 == tonumber(self.action)`, so an absent one
-        // matches neither and not a single button redraws. Which slots a
-        // rank upgrade touched is not tracked here, and every slot is the
-        // honest answer as well as the working one.
-        if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("ACTIONBAR_SLOT_CHANGED", {"0"});
-    }
+    if (barChanged) owner_.saveCharacterConfig();
 
-    if (!newSpellAlreadyAnnounced) {
-        const std::string& newName = owner_.getSpellName(newSpellId);
-        if (!newName.empty()) {
-            owner_.addSystemChatMessage("Upgraded to " + newName);
-        }
+    // 2.4.3 announces the rank that took the old one's place, in the words of
+    // SMSG_LEARNED_SPELL, and the SMSG_LEARNED_SPELL that follows a trained
+    // rank adds no second line. Unlearning Sinister Strike Rank 10 (the server
+    // sends 26862 -> 26861 alone) prints "You have learned a new ability:
+    // Sinister Strike (Rank 9)."; relearning it prints Rank 10 once. Events:
+    // ACTIONBAR_SLOT_CHANGED <slot>, SPELLS_CHANGED, the chat line,
+    // SPELLS_CHANGED, LEARNED_SPELL_IN_TAB <tab>.
+    if (newSpellAlreadyKnown || !isListedInSpellbook(newSpellId)) return;
+    if (fire) fire("SPELLS_CHANGED", {});
+    if (const std::string text = learnedSpellText(owner_, newSpellId); !text.empty())
+        owner_.addSystemChatMessage(text);
+    if (fire) {
+        fire("SPELLS_CHANGED", {});
+        if (const int tab = spellBookTabIndexOf(newSpellId); tab > 0)
+            fire("LEARNED_SPELL_IN_TAB", {std::to_string(tab)});
     }
+}
+
+int SpellHandler::spellBookTabIndexOf(uint32_t spellId) {
+    const auto& tabs = getSpellBookTabs();
+    for (size_t i = 0; i < tabs.size(); ++i) {
+        if (std::find(tabs[i].spellIds.begin(), tabs[i].spellIds.end(), spellId) != tabs[i].spellIds.end())
+            return static_cast<int>(i + 1);
+    }
+    LOG_ERROR("Spell ", spellId, " is listed in the spellbook but in no tab");
+    return 0;
 }
 
 void SpellHandler::handleUnlearnSpells(network::Packet& packet) {

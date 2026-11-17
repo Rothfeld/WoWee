@@ -30,6 +30,11 @@ class GameHandler;
 std::string castFailureText(GameHandler& owner, uint32_t spellId, uint8_t result,
                             uint32_t arg1, uint32_t arg2);
 
+/// The chat line 2.4.3 shows when a spell enters the spellbook:
+/// ERR_LEARN_ABILITY_S or ERR_LEARN_SPELL_S with "Name (Rank N)"; empty and
+/// logged when the interface or the spell name is missing.
+std::string learnedSpellText(GameHandler& owner, uint32_t spellId);
+
 /// The first tool the spell's Spell.dbc Totem / TotemCategory entries name
 /// that the player does not carry, as the cast result that reports it and the
 /// item or category id; nullopt when every tool is carried or not yet known.
@@ -584,6 +589,8 @@ private:
 public:
     /// Whether a known spell has an entry in the spellbook at all.
     bool isListedInSpellbook(uint32_t spellId);
+    /// 1-based spellbook tab holding a listed spell, 0 when none does.
+    int spellBookTabIndexOf(uint32_t spellId);
 private:
 
     // SkillRaceClassInfo.dbc: skill line -> rows of (race mask, class mask, flags).
