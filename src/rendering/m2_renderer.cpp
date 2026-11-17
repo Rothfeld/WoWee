@@ -1362,6 +1362,14 @@ void M2Renderer::markModelAsSpellEffect(uint32_t modelId) {
     }
 }
 
+void M2Renderer::markModelAsGameObject(uint32_t modelId) {
+    auto& model = models.at(modelId);
+    if (model.disableAnimation && model.hasAnimation) {
+        model.disableAnimation = false;
+        LOG_DEBUG("GO model animates: '", model.name, "'");
+    }
+}
+
 void M2Renderer::censusInstance(const M2Instance& instance) {
     static const bool kCensus = std::getenv("WOWEE_M2_CENSUS") != nullptr;
     if (!kCensus) return;

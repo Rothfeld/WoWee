@@ -1535,6 +1535,7 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             // evicted the model - the log showed PostBoxHuman.m2 (the mailbox)
             // going through exactly that reap/reload churn on every return trip.
             m2Renderer->setModelPinned(modelId, true);
+            m2Renderer->markModelAsGameObject(modelId);
             gameObjectDisplayIdModelCache_[displayId] = modelId;
         }
 

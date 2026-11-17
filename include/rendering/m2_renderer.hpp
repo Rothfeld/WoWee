@@ -420,6 +420,11 @@ public:
     void unloadModel(uint32_t modelId);
     /** Mark a loaded model as a spell effect (full-brightness particles, no collision). */
     void markModelAsSpellEffect(uint32_t modelId);
+    /// A game object's pose is its server state (Closed 147, Opened 149...),
+    /// so its bones always run, whatever the name classifier guessed:
+    /// G_PulsatingPlant.m2 (Warpwood Pod) reads as foliage, chest01.m2 as a
+    /// chest, and both were frozen in bind pose.
+    void markModelAsGameObject(uint32_t modelId);
 
     /// Instances of the same model at the same spot are treated as one placement,
     /// which is right for the static world and wrong for anything whose position
@@ -544,6 +549,11 @@ public:
     /// the moment it opens, not to the moment it is first seen.
     void setInstanceAnimationHeld(uint32_t instanceId, uint32_t animationId,
                                   bool skipToEnd);
+    /// Loop stateId, after one play of transitionId when the model has it.
+    /// A game object's Closed (147) after Close (146), Opened (149) after
+    /// Open (148).
+    void setInstanceStateAnimation(uint32_t instanceId, uint32_t transitionId,
+                                   uint32_t stateId, bool playTransition);
 
     /// Light an instance while it is being pressed on. 0 clears it.
     void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color);

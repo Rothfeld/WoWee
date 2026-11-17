@@ -1886,6 +1886,22 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
         }
     }
 
+    // A model with a state loop shows the state with it: Closed (147) for
+    // READY, Opened (149) for ACTIVE, entered through Close (146) / Open (148)
+    // when the state changes in view. Warpwood Pod (179526, display 391,
+    // G_PulsatingPlant.m2: 147/148/149, no 146) natively stands as a closed
+    // pulsing bulb (_experiments/20261117T181105Z.pair0_ghost_names_gossip,
+    // crop-pod4.png); without Close, the bind pose drew its leaves spread.
+    LOG_DEBUG("GO state: guid=0x", std::hex, guid, std::dec, " state=", static_cast<int>(goState),
+              " closed=", m2->hasAnimation(instanceId, 147u), " opened=", m2->hasAnimation(instanceId, 149u),
+              " skipToEnd=", skipToEnd);
+    if (goState <= 1) {
+        const uint32_t stateLoop = goState == 0 ? 149u : 147u;
+        if (m2->hasAnimation(instanceId, stateLoop)) {
+            m2->setInstanceStateAnimation(instanceId, anim, stateLoop, !skipToEnd);
+            return;
+        }
+    }
     if (m2->hasAnimation(instanceId, anim)) {
         m2->setInstanceAnimationHeld(instanceId, anim, skipToEnd);
         return;

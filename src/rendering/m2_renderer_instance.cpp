@@ -134,6 +134,30 @@ std::optional<uint32_t> M2Renderer::soleSequenceId(uint32_t instanceId) const {
     return inst.cachedModel->sequences[0].id;
 }
 
+void M2Renderer::setInstanceStateAnimation(uint32_t instanceId, uint32_t transitionId,
+                                           uint32_t stateId, bool playTransition) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    auto& inst = instances[idxIt->second];
+    if (!inst.cachedModel) return;
+    const auto& seqs = inst.cachedModel->sequences;
+    int state = -1, transition = -1;
+    for (int i = 0; i < static_cast<int>(seqs.size()); ++i) {
+        if (state < 0 && seqs[i].id == stateId) state = i;
+        if (transition < 0 && seqs[i].id == transitionId) transition = i;
+    }
+    assert(state >= 0);
+    // The loop is the instance's idle: playingVariation returns to it.
+    inst.idleSequenceIndex = state;
+    inst.holdAtEnd = false;
+    inst.animSpeed = 1.0f;
+    inst.animTime = 0.0f;
+    const int first = playTransition && transition >= 0 ? transition : state;
+    inst.currentSequenceIndex = first;
+    inst.animDuration = static_cast<float>(seqs[first].duration);
+    inst.playingVariation = first != state;
+}
+
 void M2Renderer::setInstanceAnimationHeld(uint32_t instanceId, uint32_t animationId,
                                           bool skipToEnd) {
     auto idxIt = instanceIndexById.find(instanceId);
