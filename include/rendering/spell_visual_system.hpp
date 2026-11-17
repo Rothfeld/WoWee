@@ -156,8 +156,6 @@ private:
     uint32_t nextProjectileModelId_ = 998000;  // Reserved range 998000-998999
     std::unordered_map<std::string, uint32_t> projectileModelIds_;
     bool spellVisualDbcLoaded_ = false;
-    static constexpr float SPELL_VISUAL_MAX_DURATION = 5.0f;
-    static constexpr float SPELL_VISUAL_DEFAULT_DURATION = 2.0f;
     static constexpr float SPELL_MISSILE_MAX_DURATION = 4.0f;
 };
 

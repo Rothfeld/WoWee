@@ -213,12 +213,20 @@ void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPo
             continue;
         }
         m2Renderer_->restartInstanceAnimation(instanceId);
+        // Without a stage length (cast time, aura, channel) the effect lives
+        // one play of the sequence it shows. Authored lengths run from 0.33 s
+        // to 31 s across TBC kit models (Moonfire_Impact_Base and
+        // Flamestrike_Impact_Base 12 s); no cap or floor is in the data.
         float lifetime = duration;
         if (lifetime <= 0.0f) {
             const float animDurMs = m2Renderer_->getInstanceAnimDuration(instanceId);
-            lifetime = animDurMs > 100.0f
-                ? std::clamp(animDurMs / 1000.0f, 0.5f, SPELL_VISUAL_MAX_DURATION)
-                : SPELL_VISUAL_DEFAULT_DURATION;
+            if (animDurMs <= 0.0f) {
+                // Static props (BookSmall01, BreadSlice) have a zero-length
+                // Stand; nothing says how long they stay.
+                LOG_WARNING("SpellVisual: kit=", kitId, " model ", effect.path,
+                            " has no animation length; not shown");
+            }
+            lifetime = animDurMs / 1000.0f;
         }
         activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
             .isPrecast = isPrecast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
