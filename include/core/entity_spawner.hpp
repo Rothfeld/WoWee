@@ -276,6 +276,11 @@ public:
     /// What a remote unit's one-shot (swing, hit reaction) resumes: its
     /// locomotion while it is on a move, else remoteIdleAnimation.
     uint32_t remoteResumeAnimation(uint64_t guid) const;
+    /// Walk (true) or Run for a moving remote unit. Creatures move by server
+    /// splines and take the gait from the spline speed against the Walk stride
+    /// of `locomotionInstanceId` (the mount when riding), as build 8606 does
+    /// (rendering::splineGroundGaitWalks). Players keep their WALK_MODE flag.
+    [[nodiscard]] bool remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId) const;
     /// Ready stance a meleeing unit idles in, from its main-hand item.
     uint32_t meleeReadyAnimation(const game::Unit& unit) const;
     /// Ready stance and swing of a unit's main-hand weapon class.

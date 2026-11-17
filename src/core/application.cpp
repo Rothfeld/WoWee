@@ -3507,7 +3507,6 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         auto& _creatureInstances = entitySpawner_->getCreatureInstances();
         auto& _creatureRenderPosCache = entitySpawner_->getCreatureRenderPosCache();
         auto& _creatureSwimmingState = entitySpawner_->getCreatureSwimmingState();
-        auto& _creatureWalkingState = entitySpawner_->getCreatureWalkingState();
         auto& _creatureFlyingState = entitySpawner_->getCreatureFlyingState();
         auto& _creatureActiveEmotes = entitySpawner_->getCreatureActiveEmotes();
         auto& _creatureWasMoving = entitySpawner_->getCreatureWasMoving();
@@ -3663,12 +3662,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 posIt->second = renderPos;
 
                 // Drive movement animation: Walk/Run/Swim (4/5/42) when moving,
-                // Stand/SwimIdle (0/41) when idle. Walk(4) selected when WALKING flag is set.
+                // Stand/SwimIdle (0/41) when idle. Walk or Run follows the spline
+                // speed against the model's Walk stride, not the WALKING flag:
+                // CMaNGOS flips its walk mode without telling the client.
                 // WoW M2 animation IDs: 4=Walk, 5=Run, 41=SwimIdle, 42=Swim.
                 // Only switch on transitions to avoid resetting animation time.
                 // Don't override Death (1) animation.
                 const bool isSwimmingNow = _creatureSwimmingState.count(guid) > 0;
-                const bool isWalkingNow  = _creatureWalkingState.count(guid) > 0;
+                const bool isWalkingNow  = entitySpawner_->remoteGaitWalks(
+                    guid, creatureMount ? creatureMount->instanceId : instanceId);
                 const bool isFlyingNow   = _creatureFlyingState.count(guid) > 0;
                 bool prevMoving   = _creatureWasMoving[guid];
                 bool prevSwimming = _creatureWasSwimming[guid];

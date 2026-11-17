@@ -1749,8 +1749,8 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
     }
 
     // MonsterMove spline flags do not choose gait. CMaNGOS deliberately sets
-    // Runmode on walking splines too. Preserve movement-block walk state and
-    // explicit SMSG_SPLINE_MOVE_SET_WALK_MODE / SET_RUN_MODE updates.
+    // Runmode on walking splines too. The renderer takes Walk or Run from the
+    // spline speed (rendering::splineGroundGaitWalks), as build 8606 does.
 
     if (data.hasDest) {
         glm::vec3 destCanonical = core::coords::serverToCanonical(

@@ -143,8 +143,8 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
             // render sync copies that result; a renderer interpolation here would
             // compete with it and restart on every movement packet.
             // Play the server-selected ground locomotion animation for the
-            // duration of the spline move. Monster patrols report Walk through
-            // SMSG_MONSTER_MOVE's spline flags before this callback runs.
+            // duration of the spline move: Walk or Run from the spline speed
+            // the entity took from this SMSG_MONSTER_MOVE before the callback.
             // WoW M2 animation IDs: 4=Walk, 5=Run.
             // Don't override Death animation (1). The per-frame sync loop will return to
             // Stand when movement stops.
@@ -160,7 +160,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     auto* cr = renderer_.getCharacterRenderer();
                     bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
-                    const bool walking = entitySpawner_.getCreatureWalkingState().count(guid) > 0;
+                    const bool walking = entitySpawner_.remoteGaitWalks(guid, instanceId);
                     const bool swimming = entitySpawner_.getCreatureSwimmingState().count(guid) > 0;
                     const bool flying = entitySpawner_.getCreatureFlyingState().count(guid) > 0;
                     const uint32_t targetAnim = rendering::creatureMovingAnimation(flying, swimming, walking);
@@ -171,6 +171,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     uint32_t actualAnim = 0; float actualTime = 0.0f, actualDuration = 0.0f;
                     cr->getAnimationState(instanceId, actualAnim, actualTime, actualDuration);
                     LOG_DEBUG("Creature locomotion: guid=0x", std::hex, guid, std::dec,
+                              " speed=", gameHandler_.getEntityManager().getEntity(guid)->getLocomotionSpeed(),
                               " walking=", walking, " requested=", targetAnim,
                               " actual=", actualAnim, " duration=", actualDuration);
                     entitySpawner_.getCreatureWasMoving()[guid] = true;

@@ -1709,7 +1709,7 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
                 return entity && entity->isActivelyMoving();
             }();
             const bool flying = creatureFlyingState_.count(guid) > 0;
-            const bool walking = creatureWalkingState_.count(guid) > 0;
+            const bool walking = remoteGaitWalks(guid, mountInstance);
             uint32_t mountAnim = moving
                 ? (flying ? rendering::anim::FLY_FORWARD
                           : (walking ? rendering::anim::WALK : rendering::anim::RUN))

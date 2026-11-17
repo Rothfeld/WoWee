@@ -86,6 +86,27 @@ TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creatur
     CHECK(creatureMovingAnimation(true, true, true) == anim::FLY_FORWARD);
 }
 
+TEST_CASE("Spline gait follows speed against the model's Walk stride", "[creature-locomotion]") {
+    // Native 8606 observations (_experiments/20261117T215856Z.berserker_gait):
+    // strides are Walk moveSpeed x model scale; speeds are server spline speeds.
+    using wowee::rendering::splineGroundGaitWalks;
+    const float trollDire = 1.6666666f * 1.2f;   // Smolderthorn Berserker
+    const float berserkerRun = 1.14286f * 7.0f;  // SpeedRun x 7 yd/s
+    CHECK(splineGroundGaitWalks(berserkerRun * 0.3f, trollDire));
+    CHECK(splineGroundGaitWalks(berserkerRun * 0.4f, trollDire));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.5f, trollDire));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun * 0.7f, trollDire));
+    CHECK_FALSE(splineGroundGaitWalks(berserkerRun, trollDire));
+    const float elementalEarth = 3.8888888f;      // Rock Elemental
+    CHECK(splineGroundGaitWalks(5.6f, elementalEarth));
+    CHECK(splineGroundGaitWalks(6.4f, elementalEarth));
+    CHECK(splineGroundGaitWalks(7.2f, elementalEarth));
+    CHECK_FALSE(splineGroundGaitWalks(8.0f, elementalEarth));
+    const float chicken = 2.5f * 10.0f;       // El Pollo Grande
+    CHECK(splineGroundGaitWalks(2.4f, chicken));
+    CHECK(splineGroundGaitWalks(8.0f, chicken));
+}
+
 TEST_CASE("Aquatic creature surface limit preserves submerged server coordinates", "[creature-locomotion]") {
     using wowee::rendering::creatureSwimmingZ;
     const float depth = 0.75f * 2.083f * 1.15f;

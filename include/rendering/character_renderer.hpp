@@ -173,6 +173,10 @@ public:
     /// currently playing; nullptr if the model has none for that sequence.
     [[nodiscard]] const std::vector<uint32_t>* getFootstepEventTimes(uint32_t instanceId) const;
     [[nodiscard]] bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
+    /// Ground covered per second at authored rate: |moveSpeed| of the
+    /// animation's primary sequence times the instance scale. nullopt when the
+    /// model has no such sequence or it authors no movement.
+    [[nodiscard]] std::optional<float> locomotionStride(uint32_t instanceId, uint32_t animationId) const;
     /// Whether the instance's model authors M2 attachment `attachmentId`.
     [[nodiscard]] bool hasAttachmentPoint(uint32_t instanceId, uint32_t attachmentId) const;
     bool getAnimationSequences(uint32_t instanceId, std::vector<pipeline::M2Sequence>& out) const;

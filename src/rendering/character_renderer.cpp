@@ -4461,6 +4461,20 @@ const std::vector<uint32_t>* CharacterRenderer::getFootstepEventTimes(uint32_t i
     return &eventTimes[instance.currentSequenceIndex];
 }
 
+std::optional<float> CharacterRenderer::locomotionStride(uint32_t instanceId, uint32_t animationId) const {
+    const auto& inst = instances.at(instanceId);
+    const auto modelIt = models.find(inst.modelId);
+    if (modelIt == models.end()) return std::nullopt;
+    const pipeline::M2Sequence* primary = nullptr;
+    for (const auto& seq : modelIt->second.data.sequences) {
+        if (seq.id != animationId) continue;
+        if (!primary || seq.variationIndex == 0) primary = &seq;
+        if (seq.variationIndex == 0) break;
+    }
+    if (!primary || primary->movingSpeed == 0.0f) return std::nullopt;
+    return std::abs(primary->movingSpeed) * inst.scale;
+}
+
 bool CharacterRenderer::hasAnimation(uint32_t instanceId, uint32_t animationId) const {
     auto it = instances.find(instanceId);
     if (it == instances.end()) {

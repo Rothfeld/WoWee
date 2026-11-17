@@ -941,13 +941,29 @@ void EntitySpawner::setRemoteCastHold(uint64_t guid, uint32_t animationId) {
     else remoteCastHolds_[guid] = animationId;
 }
 
+bool EntitySpawner::remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId) const {
+    assert(gameHandler_ && renderer_ && renderer_->getCharacterRenderer());
+    const auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    // Player clients send their own gait in every MSG_MOVE's WALK_MODE bit.
+    if (!entity || entity->getType() != game::ObjectType::UNIT)
+        return creatureWalkingState_.count(guid) > 0;
+    // A model without an authored Walk stride has nothing to walk with.
+    const auto stride = renderer_->getCharacterRenderer()->locomotionStride(
+        locomotionInstanceId, rendering::anim::WALK);
+    if (!stride) return false;
+    return rendering::splineGroundGaitWalks(entity->getLocomotionSpeed(), *stride);
+}
+
 uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {
     // The per-frame sync replays locomotion only when the moving state
     // changes, so a one-shot that ends mid-move must resume it itself.
-    if (const auto moving = creatureWasMoving_.find(guid); moving != creatureWasMoving_.end() && moving->second)
+    if (const auto moving = creatureWasMoving_.find(guid); moving != creatureWasMoving_.end() && moving->second) {
+        const uint32_t instanceId = creatureInstances_.count(guid) ? creatureInstances_.at(guid)
+                                                                    : playerInstances_.at(guid);
         return rendering::creatureMovingAnimation(creatureFlyingState_.count(guid) > 0,
                                                   creatureSwimmingState_.count(guid) > 0,
-                                                  creatureWalkingState_.count(guid) > 0);
+                                                  remoteGaitWalks(guid, instanceId));
+    }
     return remoteIdleAnimation(guid);
 }
 
