@@ -185,9 +185,18 @@ inline std::optional<CellRange> cellRangeCovering(
     const float invCellW = static_cast<float>(cellsX) / std::max(0.01f, extentX);
     const float invCellH = static_cast<float>(cellsY) / std::max(0.01f, extentY);
 
+    // A coordinate exactly on the far edge belongs to the last cell. Without
+    // this, (extent * cells / extent) is index `cells`, past the end, and a
+    // wall lying on the group's bounding-box face was filed in no cell at all:
+    // never found by any query, and walked and zoomed straight through
+    // (Lower Blackrock Spire, Tazz'Alaor, group 39 of 900229).
+    const auto lowCell = [](float offset, float extent, float inv, int cells) {
+        const int index = static_cast<int>(offset * inv);
+        return offset <= extent ? std::min(cells - 1, index) : index;
+    };
     CellRange range;
-    range.minX = std::max(0, static_cast<int>((minX - gridOrigin.x) * invCellW));
-    range.minY = std::max(0, static_cast<int>((minY - gridOrigin.y) * invCellH));
+    range.minX = std::max(0, lowCell(minX - gridOrigin.x, extentX, invCellW, cellsX));
+    range.minY = std::max(0, lowCell(minY - gridOrigin.y, extentY, invCellH, cellsY));
     range.maxX = std::min(cellsX - 1, static_cast<int>((maxX - gridOrigin.x) * invCellW));
     range.maxY = std::min(cellsY - 1, static_cast<int>((maxY - gridOrigin.y) * invCellH));
 

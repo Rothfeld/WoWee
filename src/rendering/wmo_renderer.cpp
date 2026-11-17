@@ -27,6 +27,7 @@
 #include "game/game_utils.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <cassert>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -2810,9 +2811,6 @@ void WMORenderer::GroupResources::buildCollisionGrid() {
     triNormals.resize(numTriangles);
     triVisited.resize(numTriangles, 0);
 
-    float invCellW = gridCellsX / std::max(0.01f, extentX);
-    float invCellH = gridCellsY / std::max(0.01f, extentY);
-
     for (size_t i = 0; i + 2 < collisionIndices.size(); i += 3) {
         const glm::vec3& v0 = collisionVertices[collisionIndices[i]];
         const glm::vec3& v1 = collisionVertices[collisionIndices[i + 1]];
@@ -2846,14 +2844,15 @@ void WMORenderer::GroupResources::buildCollisionGrid() {
         bool isFloor = (absNz >= kWallMaxAbsNormalZ);
         bool isWall = (absNz < kWallMaxAbsNormalZ);
 
-        int cellMinX = std::max(0, static_cast<int>((triMinX - gridOrigin.x) * invCellW));
-        int cellMinY = std::max(0, static_cast<int>((triMinY - gridOrigin.y) * invCellH));
-        int cellMaxX = std::min(gridCellsX - 1, static_cast<int>((triMaxX - gridOrigin.x) * invCellW));
-        int cellMaxY = std::min(gridCellsY - 1, static_cast<int>((triMaxY - gridOrigin.y) * invCellH));
+        // Filed by the same arithmetic the queries use, so a triangle is
+        // always in a cell a query covering it reaches.
+        const auto cells = cellRangeCovering(gridCellsX, gridCellsY, extentX, extentY, gridOrigin,
+                                             triMinX, triMinY, triMaxX, triMaxY);
+        assert(cells && "a group triangle lies outside its own bounding box");
 
         uint32_t triIdx = static_cast<uint32_t>(i);
-        for (int cy = cellMinY; cy <= cellMaxY; ++cy) {
-            for (int cx = cellMinX; cx <= cellMaxX; ++cx) {
+        for (int cy = cells->minY; cy <= cells->maxY; ++cy) {
+            for (int cx = cells->minX; cx <= cells->maxX; ++cx) {
                 int cellIdx = cy * gridCellsX + cx;
                 cellTriangles[cellIdx].push_back(triIdx);
                 if (isFloor) cellFloorTriangles[cellIdx].push_back(triIdx);

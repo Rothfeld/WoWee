@@ -249,6 +249,16 @@ TEST_CASE("a box past the far edge is clamped, not extended", "[spatialgrid]") {
     CHECK(range->maxY == 9);
 }
 
+TEST_CASE("a box on the far edge covers the last cell", "[spatialgrid]") {
+    // A wall lying on the group's bounding-box face: its whole XY box sits on
+    // the maximum, which divides out to index `cells`.
+    const auto range = cellRangeCovering(6, 6, 23.17f, 23.17f, {0.0f, 0.0f},
+                                         15.3f, 23.17f, 19.2f, 23.17f);
+    REQUIRE(range.has_value());
+    CHECK(range->minY == 5);
+    CHECK(range->maxY == 5);
+}
+
 TEST_CASE("a box entirely past the grid covers nothing", "[spatialgrid]") {
     // Clamping min to 0 and max to cells-1 can leave min above max, which is
     // the only signal that the box missed: iterating anyway walks backwards
