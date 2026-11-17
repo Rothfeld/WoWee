@@ -1192,11 +1192,18 @@ alpha with mip level or replace edge RGB with a blurred mip: these change the
 authored silhouette and expose dark backing around DXT1 leaves. Reference:
 https://github.com/wowdev/noggit3/blob/master/src/noggit/Model.cpp
 
-Trainer service indices include collapsible Recipes headings. All service APIs
-resolve the same filtered rows so selecting or buying a row uses its actual
-spell. Profession ranks precede recipes; recipe rows sort by requirements and
-name. Addon saved globals restore after source files and before ADDON_LOADED;
-loading them before source lets Blizzard_TrainerUI defaults erase saved filters.
+Trainer services sit under 2.4.3's headers: a class trainer's are the
+SkillLine names of each service's SkillLineAbility row (Assassination,
+Poisons, Defense), a tradeskill trainer's are GlobalStrings
+TRADESKILL_SERVICE_STEP/LEARN. All service APIs resolve the same filtered
+rows so selecting or buying a row uses its actual spell. Service states are
+recomputed from known and superseded spells, so a learned rank turns the next
+one green without a new list. Addon saved globals restore after source files
+and before ADDON_LOADED; loading them before source lets Blizzard_TrainerUI
+defaults erase saved filters. Gotcha: native return counts matter (a
+collapsed header answers three values, GetTrainerSelectionIndex nothing when
+none); measured shapes are in
+`_experiments/20261117T203052Z.trainer_skill_headers/README.md`.
 Recipe item previews follow the spellTrigger=6 taught spell to its crafted item
 and reagents rather than displaying the generic Learning spell.
 
