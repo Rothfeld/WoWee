@@ -271,10 +271,11 @@ void SpellVisualSystem::playEffectAtAttachment(uint32_t effectNameId, uint32_t a
         return;
     }
     m2Renderer_->restartInstanceAnimation(instanceId);
+    // One play of the model's sequence, as for kit effects.
     const float animDurMs = m2Renderer_->getInstanceAnimDuration(instanceId);
-    const float lifetime = animDurMs > 100.0f
-        ? std::clamp(animDurMs / 1000.0f, 0.5f, SPELL_VISUAL_MAX_DURATION)
-        : SPELL_VISUAL_DEFAULT_DURATION;
+    if (animDurMs <= 0.0f)
+        LOG_WARNING("SpellVisual: effect ", effectNameId, " model ", path->second, " has no animation length");
+    const float lifetime = animDurMs / 1000.0f;
     activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
         .isPrecast = false, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
         .orientWithAttachment = true});
