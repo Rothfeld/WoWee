@@ -1229,4 +1229,9 @@ are in General. Tabs and spells are in name order, spells of one name by
 id; all known ranks are listed. Gotcha: `SkillRaceClassInfo` is a
 `dbc_layouts.json` entry, so an installed data tree needs the new copy.
 
+An M2 batch whose animated colour alpha or texture weight is zero is not
+drawn in any blend mode (opaque would otherwise stay solid, additive would
+still add). Rookery Egg (175124, G_DragonEggFreeze.m2) shows its ice shell
+only in Open/Opened; READY is the bare spiky egg.
+
 Repeated rebuilds of unchanged objects: see [incremental build cache repair](docs/incremental-builds.md).

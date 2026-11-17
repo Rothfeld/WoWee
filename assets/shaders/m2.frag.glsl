@@ -361,6 +361,14 @@ void main() {
         result = applyFog(result, FragPos, dist);
     }
 
+    // A batch whose animated colour alpha or texture weight is zero is not
+    // drawn, whatever its blend mode. Without blending an opaque batch would
+    // otherwise come out solid at alpha 0, and an additive one still adds its
+    // colour. G_DragonEggFreeze.m2 (Rookery Egg 175124, display 3891) keys
+    // its ice shell (colour 3, opaque material) to 0 in Closed (147) and to 1
+    // in Opened (149): in the READY state 2.4.3 shows the bare spiky egg,
+    // and this drew it encased in ice.
+    if (vFadeAlpha < 1.0 / 255.0) discard;
     float outAlpha = texColor.a * vFadeAlpha;
     // Surviving alpha-key fragments are opaque.
     // Color-key-only materials have no meaningful texture alpha; keep them
