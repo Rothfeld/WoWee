@@ -4714,6 +4714,13 @@ bool CharacterRenderer::getInstanceFootZ(uint32_t instanceId, float& outFootZ) c
     return true;
 }
 
+bool CharacterRenderer::getInstanceYaw(uint32_t instanceId, float& outYaw) const {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    outYaw = it->second.rotation.z;
+    return true;
+}
+
 bool CharacterRenderer::getInstancePosition(uint32_t instanceId, glm::vec3& outPos) const {
     auto it = instances.find(instanceId);
     if (it == instances.end()) return false;

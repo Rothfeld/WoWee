@@ -223,6 +223,7 @@ void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPo
         activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
             .isPrecast = isPrecast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
             .orientWithAttachment = breath});
+        if (!breath && attachInstanceId) placeOnUnit(activeSpellVisuals_.back(), characters, spawn);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
                  " instanceId=", instanceId, " duration=", lifetime, "s model=", effect.path);
     }
@@ -406,6 +407,8 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             m2Renderer_->startInstanceStateEffect(instance);
             activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
                 false, effect.attachment, attachInstanceId, false, visual, marker});
+            placeOnUnit(activeSpellVisuals_.back(), renderer_ ? renderer_->getCharacterRenderer() : nullptr,
+                        position);
             LOG_INFO("Aura visual: owner=", attachInstanceId, " visual=", visual,
                      " kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
         }
@@ -561,6 +564,23 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
                                     .duration = std::max(duration, 0.05f), .spin = spin});
 }
 
+// An effect on a unit faces the way the unit faces: its model's +X turns with
+// the unit's yaw. Placed by position alone, every effect faced world +X, so an
+// asymmetric one (Scarlet Myrmidon's enrage, a breath cone) pointed sideways
+// for most headings.
+void SpellVisualSystem::placeOnUnit(const SpellVisualInstance& visual, CharacterRenderer* characters,
+                                    const glm::vec3& position) {
+    float yaw = 0.0f;
+    if (!characters || !visual.attachInstanceId ||
+        !characters->getInstanceYaw(visual.attachInstanceId, yaw)) {
+        m2Renderer_->setInstancePosition(visual.instanceId, position);
+        return;
+    }
+    const glm::mat4 transform = glm::rotate(glm::translate(glm::mat4(1.0f), position), yaw,
+                                            glm::vec3(0.0f, 0.0f, 1.0f));
+    m2Renderer_->setInstanceTransform(visual.instanceId, transform);
+}
+
 void SpellVisualSystem::update(float deltaTime) {
     if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
         std::erase_if(unitAuraVisuals_, [&](const auto& entry) {
@@ -601,7 +621,7 @@ void SpellVisualSystem::update(float deltaTime) {
                 it = activeSpellVisuals_.erase(it);
                 continue;
             }
-            if (!it->attachmentId) m2Renderer_->setInstancePosition(it->instanceId, position);
+            if (!it->attachmentId) placeOnUnit(*it, charRenderer, position);
         }
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
@@ -615,7 +635,7 @@ void SpellVisualSystem::update(float deltaTime) {
                 if (charRenderer->getAttachmentTransform(it->attachInstanceId, it->attachmentId, attachMat)) {
                     glm::vec3 bonePos = glm::vec3(attachMat[3]);
                     if (it->orientWithAttachment) m2Renderer_->setInstanceTransform(it->instanceId, attachMat);
-                    else m2Renderer_->setInstancePosition(it->instanceId, bonePos);
+                    else placeOnUnit(*it, charRenderer, bonePos);
                     static const bool traceAttachments = std::getenv("WOWEE_TRACE_AURA_ATTACHMENT") != nullptr;
                     if (traceAttachments && it->auraVisualId &&
                         std::floor(it->elapsed) != std::floor(it->elapsed - deltaTime)) {

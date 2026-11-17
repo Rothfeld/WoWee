@@ -145,6 +145,8 @@ private:
     pipeline::AssetManager* cachedAssetManager_ = nullptr;
 
     std::vector<SpellVisualInstance> activeSpellVisuals_;
+    void placeOnUnit(const SpellVisualInstance& visual, CharacterRenderer* characters,
+                     const glm::vec3& position);
     std::vector<PhysicalProjectile> physicalProjectiles_;
     std::vector<SpellMissile> spellMissiles_;
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path

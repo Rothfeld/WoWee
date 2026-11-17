@@ -188,6 +188,8 @@ public:
     bool getInstanceKeyBonePivotZ(uint32_t instanceId, int32_t keyBoneId, float& outZ) const;
     bool getInstanceFootZ(uint32_t instanceId, float& outFootZ) const;
     bool getInstancePosition(uint32_t instanceId, glm::vec3& outPos) const;
+    /// The instance's model yaw (rotation about world Z), radians.
+    bool getInstanceYaw(uint32_t instanceId, float& outYaw) const;
 
     /** Debug: Log all available animations for an instance */
     void dumpAnimations(uint32_t instanceId) const;
