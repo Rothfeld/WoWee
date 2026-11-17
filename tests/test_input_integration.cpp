@@ -871,6 +871,32 @@ TEST_CASE_METHOD(Integration, "Virtual pointer edges retain held state across fr
     CHECK_FALSE(input.isMouseButtonJustReleased(SDL_BUTTON_RIGHT));
 }
 
+TEST_CASE_METHOD(Integration, "TBC target frame checks run through for a player target", "[target-frame]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 70}});
+    // Another player, PvP flagged (UNIT_FLAG_PVP) and in a sanctuary
+    // (PLAYER_FLAGS_SANCTUARY, CMaNGOS TBC Unit::SetPvPSanctuary).
+    constexpr uint64_t kOther = 3;
+    session.receive(replay::UpdateObject().create(kOther, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 70},
+         {UF::UNIT_FIELD_FLAGS, 0x00001000}, {UF::PLAYER_FLAGS, 0x00010000}}));
+    handler.setTarget(kOther);
+    truth("UnitIsPVPSanctuary('target') == true");
+    truth("UnitIsPVPSanctuary('player') == false");
+    // TargetFrame_CheckFaction's ally branch, verbatim from the 2.4.3
+    // targetframe.lua: it raised while UnitIsPVPSanctuary was missing and
+    // stopped TargetFrame_Update before TargetFrame_CheckClassification, so a
+    // player target kept the previous target's elite border.
+    truth("(UnitIsPVP('target') and not UnitIsPVPSanctuary('target') and not UnitIsPVPSanctuary('player')) == false");
+    truth("UnitClassification('target') == 'normal'");
+    session.receive(replay::UpdateObject().values(kOther, {{UF::PLAYER_FLAGS, 0}}));
+    truth("UnitIsPVPSanctuary('target') == false");
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Merchant usability follows equipment requirements", "[merchant]") {
     replay::Session session("tbc");
     auto& handler = session.handler();

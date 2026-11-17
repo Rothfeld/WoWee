@@ -1,6 +1,7 @@
 // lua_unit_api.cpp - Unit query, stats, party/raid, and player state Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
+#include "game/game_utils.hpp"
 #include "game/bg_score_defs.hpp"
 #include "addons/lua_api_helpers.hpp"
 
@@ -1101,6 +1102,45 @@ static int lua_UnitIsCharmed(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     const uint64_t guid = gh ? resolveUnitGuid(gh, uid) : 0;
     lua_pushboolean(L, guidField(gh, guid, game::UF::UNIT_FIELD_CHARMEDBY) != 0);
+    return 1;
+}
+/// Whether the unit stands in a sanctuary, where PvP is off.
+///
+/// TargetFrame_CheckFaction asks it about the target and the player before it
+/// colours a PvP-flagged ally green. Missing, that call raised and took the
+/// rest of TargetFrame_Update with it, so TargetFrame_CheckClassification
+/// never ran for a targeted friendly player: the frame kept whatever border the
+/// previous target had - the elite dragon after an elite.
+///
+/// Before WotLK the flag is the controlling player's PLAYER_FLAGS_SANCTUARY
+/// (0x10000), which is how CMaNGOS TBC Unit::IsPvPSanctuary reads it; WotLK
+/// moved it to UNIT_FIELD_BYTES_2 byte 1, UNIT_BYTE2_FLAG_SANCTUARY (0x08).
+static int lua_UnitIsPVPSanctuary(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const char* uid = luaL_optstring(L, 1, "player");
+    const uint64_t guid = gh ? resolveUnitGuid(gh, uid) : 0;
+    if (guid == 0) return luaReturnFalse(L);
+    auto entity = gh->getEntityManager().getEntity(guid);
+    if (!entity) return luaReturnFalse(L);
+    if (!game::isPreWotlk()) {
+        const uint32_t bytes2 = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2));
+        lua_pushboolean(L, ((bytes2 >> 8) & 0x08u) != 0);
+        return 1;
+    }
+    // Unit::GetControllingPlayer: a player charmed by a player is that
+    // player's; a creature is its charming or summoning player's, if any.
+    auto playerAt = [&](uint64_t g) -> std::shared_ptr<game::Entity> {
+        if (g == 0) return nullptr;
+        auto e = gh->getEntityManager().getEntity(g);
+        return e && e->getType() == game::ObjectType::PLAYER ? e : nullptr;
+    };
+    std::shared_ptr<game::Entity> controller =
+        playerAt(guidField(gh, guid, game::UF::UNIT_FIELD_CHARMEDBY));
+    if (!controller && entity->getType() == game::ObjectType::PLAYER) controller = entity;
+    if (!controller) controller = playerAt(guidField(gh, guid, game::UF::UNIT_FIELD_SUMMONEDBY_LO));
+    if (!controller) return luaReturnFalse(L);
+    const uint32_t playerFlags = controller->getField(game::fieldIndex(game::UF::PLAYER_FLAGS));
+    lua_pushboolean(L, (playerFlags & 0x00010000u) != 0);
     return 1;
 }
 static int lua_UnitIsTalking(lua_State* L) { return luaReturnFalse(L); }
@@ -3017,6 +3057,7 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"UnitControllingVehicle", lua_UnitControllingVehicle},
                 {"UnitIsPossessed",     lua_UnitIsPossessed},
                 {"UnitIsCharmed",       lua_UnitIsCharmed},
+                {"UnitIsPVPSanctuary",  lua_UnitIsPVPSanctuary},
                 {"UnitIsTalking",       lua_UnitIsTalking},
                 {"UnitInBattleground",  lua_UnitInBattleground},
                 {"UnitPlayerOrPetInParty", lua_UnitPlayerOrPetInParty},
