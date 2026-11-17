@@ -3215,9 +3215,16 @@ void SpellHandler::handleLearnedSpell(network::Packet& packet) {
         if (isTalentSpell) break;
     }
 
-    if (!alreadyKnown && owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("LEARNED_SPELL_IN_TAB", {std::to_string(spellId)});
+    // LEARNED_SPELL_IN_TAB carries the 1-based tab the spell went to (2.4.3:
+    // Pick Lock 1, Sinister Strike 3 on a rogue), and neither it nor
+    // SPELLS_CHANGED fires for a spell without a spellbook entry (a talent rank).
+    const bool listed = isListedInSpellbook(spellId);
+    if (!alreadyKnown && listed && owner_.addonEventCallbackRef()) {
+        if (const int tab = spellBookTabIndexOf(spellId); tab > 0)
+            owner_.addonEventCallbackRef()("LEARNED_SPELL_IN_TAB", {std::to_string(tab)});
         owner_.addonEventCallbackRef()("SPELLS_CHANGED", {});
+    }
+    if (!alreadyKnown && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("UPDATE_SHAPESHIFT_FORMS", {});
         // The mounts and critters list is built from the spellbook, so a new
         // spell can add to it. petpaperdollframe refreshes on this and on
