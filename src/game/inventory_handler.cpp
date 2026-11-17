@@ -422,12 +422,16 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             // The loot frame redraws the one row from this. It carries the
             // slot, and the slot is what the event carries - the interface
             // reads arg1 to know which button to refresh, so a bare fire would
-            // make it redraw the wrong one.
-            //
-            // Slots are zero-based on the wire and one-based in the interface.
-            if (owner_.addonEventCallbackRef()) {
-                owner_.addonEventCallbackRef()("LOOT_SLOT_CHANGED",
-                                               {std::to_string(slotIdx + 1)});
+            // make it redraw the wrong one. The window position, as for
+            // LOOT_SLOT_CLEARED in handleLootRemoved.
+            for (size_t i = 0; i < currentLoot_.items.size(); ++i) {
+                if (currentLoot_.items[i].slotIndex != slotIdx) continue;
+                const size_t displaySlot = (currentLoot_.hasCoinSlot() ? 2 : 1) + i;
+                if (owner_.addonEventCallbackRef()) {
+                    owner_.addonEventCallbackRef()("LOOT_SLOT_CHANGED",
+                                                   {std::to_string(displaySlot)});
+                }
+                break;
             }
         }
     };
@@ -1289,18 +1293,33 @@ void InventoryHandler::handleLootReleaseResponse(network::Packet& packet) {
 }
 
 void InventoryHandler::handleLootRemoved(network::Packet& packet) {
-    uint8_t slotIndex = packet.readUInt8();
-    for (auto it = currentLoot_.items.begin(); it != currentLoot_.items.end(); ++it) {
-        if (it->slotIndex == slotIndex) {
-            // SMSG_ITEM_PUSH_RESULT is the authoritative inventory receipt and
-            // emits the single "Received item" notification. Slot removal only
-            // updates the open loot window; announcing here duplicated chat and
-            // the loot sound for the same item.
-            it->looted = true;
-            if (owner_.addonEventCallbackRef())
-                owner_.addonEventCallbackRef()("LOOT_SLOT_CLEARED", {std::to_string(slotIndex + 1)});
-            break;
-        }
+    if (!packet.hasRemaining(1)) {
+        LOG_WARNING("SMSG_LOOT_REMOVED without a slot");
+        return;
+    }
+    const uint8_t slotIndex = packet.readUInt8();
+    bool found = false;
+    for (size_t i = 0; i < currentLoot_.items.size(); ++i) {
+        auto& item = currentLoot_.items[i];
+        if (item.slotIndex != slotIndex) continue;
+        found = true;
+        // SMSG_ITEM_PUSH_RESULT is the authoritative inventory receipt and
+        // prints the chat line. Slot removal only updates the open window.
+        item.looted = true;
+        // LOOT_SLOT_CLEARED names the interface's slot, which is the position
+        // in the window: the coin first when there is one, then the items in
+        // the order the response listed them. The server's slot number is the
+        // loot's own and skips items this player cannot see, so it named
+        // another button - with coin on the corpse, a won single item hid the
+        // coin and stayed in the window (Aegis of the Scarlet Commander).
+        const size_t displaySlot = (currentLoot_.hasCoinSlot() ? 2 : 1) + i;
+        if (owner_.addonEventCallbackRef())
+            owner_.addonEventCallbackRef()("LOOT_SLOT_CLEARED", {std::to_string(displaySlot)});
+        break;
+    }
+    if (!found && lootWindowOpen_) {
+        LOG_WARNING("SMSG_LOOT_REMOVED for slot ", static_cast<int>(slotIndex),
+                    " not in the open loot 0x", std::hex, currentLoot_.lootGuid, std::dec);
     }
     // An emptied corpse closes itself.
     //
