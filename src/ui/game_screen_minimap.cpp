@@ -84,7 +84,6 @@ namespace {
     /// larger than what is drawn - otherwise a marker is nearly impossible to
     /// hover on a map this small.
     constexpr float kBlipHoverRadius = 8.0f;
-    constexpr float kSmallBlipHoverRadius = 7.0f;
     /// The off-map direction arrows are bigger than a blip, so their target is too.
     constexpr float kArrowHoverRadius = 10.0f;
 
@@ -725,22 +724,8 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
         drawObjectIconCell(frame.drawList, minimapObjectIconAtlas(services_.assetManager, services_.window),
                            column, sx, sy);
 
-        // Show NPC name and quest status on hover
-        {
-            if (cursorNearBlip(sx, sy)) {
-                std::string npcName;
-                if (entity->getType() == game::ObjectType::UNIT) {
-                    auto npcUnit = std::static_pointer_cast<game::Unit>(entity);
-                    npcName = npcUnit->getName();
-                }
-                if (!npcName.empty()) {
-                    const auto mark2 = game::questGiverMarker(status);
-                    const bool hasQuest = mark2.symbol && mark2.symbol[0] == '!';
-                    ImGui::SetTooltip("%s\n%s", npcName.c_str(),
-                                      hasQuest ? "Has a quest for you" : "Quest ready to turn in");
-                }
-            }
-        }
+        if (entity->getType() == game::ObjectType::UNIT)
+            noteMinimapBlip(sx, sy, std::static_pointer_cast<game::Unit>(entity)->getName());
     }
 
     // Undiscovered flight masters: the green ! (kObjectIconGreenExclamation).
@@ -758,12 +743,8 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
         if (!frame.projectEntity(*entity, sx, sy)) continue;
         drawObjectIconCell(frame.drawList, minimapObjectIconAtlas(services_.assetManager, services_.window),
                            kObjectIconGreenExclamation, sx, sy);
-        if (cursorNearBlip(sx, sy)) {
-            std::string name;
-            if (entity->getType() == game::ObjectType::UNIT)
-                name = std::static_pointer_cast<game::Unit>(entity)->getName();
-            ImGui::SetTooltip("%s\nFlight Master", name.empty() ? "Flight Master" : name.c_str());
-        }
+        if (entity->getType() == game::ObjectType::UNIT)
+            noteMinimapBlip(sx, sy, std::static_pointer_cast<game::Unit>(entity)->getName());
     }
 }
 
@@ -865,12 +846,7 @@ void GameScreen::renderMinimapGossipPois(const MinimapFrame& frame, game::GameHa
             ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
             ImVec2(u, v), ImVec2(u + 1.0f / 8, v + 1.0f / 8));
 
-        // Show name label if cursor is within ~8px
-        ImVec2 cursorPos = ImGui::GetMousePos();
-        float dx = cursorPos.x - sx, dy = cursorPos.y - sy;
-        if (!poi.name.empty() && (dx * dx + dy * dy) < 64.0f) {
-            ImGui::SetTooltip("%s", poi.name.c_str());
-        }
+        if (!poi.name.empty()) noteMinimapBlip(sx, sy, poi.name);
     }
 
 }
@@ -902,8 +878,6 @@ void GameScreen::renderMinimapPings(const MinimapFrame& frame, game::GameHandler
 // There were two of these drawing at the same point until recently - a square
 // from one pass and this circle over it.
 void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHandler& gameHandler) {
-    auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
-    std::string hoveredName;
     // Party member dots on minimap
     {
         const auto& partyData = gameHandler.getPartyData();
@@ -945,7 +919,7 @@ void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHan
                 frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
                     points[0], points[1], points[2], points[3],
                     ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
-                if (cursorNearBlip(ax, ay, kArrowHoverRadius)) hoveredName = member.name;
+                noteMinimapBlip(ax, ay, member.name, true, 0);
                 continue;
             }
 
@@ -973,55 +947,23 @@ void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHan
                 }
             }
 
-            if (!member.name.empty() && cursorNearBlip(sx, sy)) {
-                hoveredName = member.name;
-            }
+            if (!member.name.empty()) noteMinimapBlip(sx, sy, member.name, false, 0);
         }
-    }
-    if (!engine) return;
-    lua_pushlstring(engine->getState(), hoveredName.data(), hoveredName.size());
-    lua_setglobal(engine->getState(), "WoweePartyMinimapName");
-    if (!engine->executeString(R"lua(
-        if WoweePartyMinimapName ~= '' then
-            if not WoweePartyMinimapTooltip then
-                CreateFrame('GameTooltip', 'WoweePartyMinimapTooltip', UIParent, 'GameTooltipTemplate')
-            end
-            local tip = WoweePartyMinimapTooltip
-            tip:SetOwner(UIParent, 'ANCHOR_NONE')
-            tip:ClearAllPoints()
-            local x, y = GetCursorPosition()
-            local scale = UIParent:GetEffectiveScale()
-            tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', x / scale, y / scale)
-            tip:SetText(WoweePartyMinimapName, 1, 0.82, 0)
-            tip:Show()
-        elseif WoweePartyMinimapTooltip then
-            WoweePartyMinimapTooltip:Hide()
-        end
-    )lua")) {
-        LOG_ERROR("Party minimap tooltip: ", engine->lastError());
-        throw std::runtime_error("Party minimap tooltip failed");
     }
 }
 
-// Tracking is server-owned; learning a profession alone does not enable markers.
-void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityList& objects,
-                                      game::GameHandler& gameHandler) {
+// Tracked resources and town services. Resource tracking is server-owned;
+// learning a profession alone does not enable markers. Town services are the
+// client-side choice in the tracking menu (wowee_trackingservice).
+//
+// The original client marks both with the same small gold ObjectIcons circle
+// and names it in GameTooltip on hover - a tracked mailbox is the gold circle
+// with "Mailbox", not the menu's envelope icon
+// (_experiments/20261117T181649Z.minimap_marker_audit/o30.png, o32.png).
+void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityList& units,
+                                      const EntityList& objects, game::GameHandler& gameHandler) {
     if (!game::isActiveExpansion("tbc")) return;
     auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
-    bool hoverAllowed = ImGui::GetCurrentContext()->HoveredWindow == nullptr;
-    if (engine && frameXmlOwns(UiElement::Minimap)) {
-        auto& tree = engine->widgets();
-        const auto cursor = ImGui::GetMousePos();
-        const float uiScale = tree.uiScale();
-        bool overMap = false;
-        for (auto* widget = tree.get(tree.hitTest(cursor.x / uiScale,
-                (ImGui::GetIO().DisplaySize.y - cursor.y) / uiScale)); widget;
-             widget = tree.get(widget->parent)) {
-            if (widget->name == "Minimap") { overMap = true; break; }
-        }
-        hoverAllowed &= overMap;
-    }
-    std::string hoveredName;
     const auto player = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
     const auto field = game::fieldIndex(game::UF::PLAYER_TRACK_RESOURCES);
     const auto flagsField = game::fieldIndex(game::UF::GAMEOBJECT_FLAGS);
@@ -1029,16 +971,41 @@ void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityL
     if (field == 0xFFFF || flagsField == 0xFFFF || dynamicField == 0xFFFF)
         throw std::runtime_error("TBC update_fields.json lacks resource tracking fields; deploy current expansion metadata");
     const uint32_t mask = player ? player->getField(field) : 0;
+    const VkDescriptorSet atlas = minimapObjectIconAtlas(services_.assetManager, services_.window);
+    const float half = 8.0f * (engine ? engine->widgets().uiScale() : 1.0f);
+    // ObjectIcons second row, first cell: the gold circle.
+    const auto drawGold = [&](const game::Entity& entity, const std::string& name) {
+        float x = 0, y = 0;
+        if (!frame.projectEntity(entity, x, y)) return;
+        frame.drawList->AddImage((ImTextureID)(uintptr_t)atlas,
+            ImVec2(x - half, y - half), ImVec2(x + half, y + half),
+            ImVec2(0, 0.5f), ImVec2(1.0f / 8, 1));
+        noteMinimapBlip(x, y, name);
+    };
+    const auto service = std::stoul(addons::storedCVarValue("wowee_trackingservice", "0"));
+    if (service > game::tbcTrackingServices.size())
+        throw std::runtime_error("Invalid TBC tracking service");
+    if (service != 0) {
+        const auto& entry = game::tbcTrackingServices[service - 1];
+        if (entry.npcMask != 0) {
+            for (const auto& entity : units) {
+                const auto unit = std::static_pointer_cast<game::Unit>(entity);
+                if (unit->getHealth() > 0 && (unit->getNpcFlags() & entry.npcMask) != 0 &&
+                    gameHandler.unitReactionToPlayer(*unit) >= 4)
+                    drawGold(*unit, unit->getName());
+            }
+        } else {
+            for (const auto& entity : objects) {
+                const auto go = std::static_pointer_cast<game::GameObject>(entity);
+                const auto* info = gameHandler.getCachedGameObjectInfo(go->getEntry());
+                if (info && info->type == 19) drawGold(*go, info->name);
+            }
+        }
+    }
     if (mask != 0) {
         assert(services_.assetManager);
         const auto locks = services_.assetManager->loadDBC("Lock.dbc");
         assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
-        static VkDescriptorSet atlas = VK_NULL_HANDLE;
-        if (!atlas) {
-            atlas = uploadUiTextureFromBlp(services_.assetManager,
-                "Interface\\Minimap\\ObjectIcons.blp", services_.window);
-            if (!atlas) throw std::runtime_error("Resource minimap atlas failed to load");
-        }
         for (const auto& entity : objects) {
             const auto object = std::static_pointer_cast<game::GameObject>(entity);
             const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
@@ -1054,39 +1021,8 @@ void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityL
                                                     locks->getUInt32(row, 9 + slot));
             }
             if (!tracked) continue;
-            float x = 0, y = 0;
-            if (!frame.projectEntity(*object, x, y)) continue;
-            const float scale = engine ? engine->widgets().uiScale() : 1.0f;
-            const float half = 8.0f * scale;
-            // Original ObjectIcons: eight columns, two rows; gold resource circle.
-            frame.drawList->AddImage((ImTextureID)(uintptr_t)atlas,
-                ImVec2(x - half, y - half), ImVec2(x + half, y + half),
-                ImVec2(0, 0.5f), ImVec2(1.0f / 8, 1));
-            if (hoverAllowed && cursorNearBlip(x, y)) hoveredName = info->name;
+            drawGold(*object, info->name);
         }
-    }
-    if (!engine) return;
-    lua_pushlstring(engine->getState(), hoveredName.data(), hoveredName.size());
-    lua_setglobal(engine->getState(), "WoweeTrackedResourceName");
-    if (!engine->executeString(R"lua(
-        if WoweeTrackedResourceName ~= '' then
-            if not WoweeResourceMinimapTooltip then
-                CreateFrame('GameTooltip', 'WoweeResourceMinimapTooltip', UIParent, 'GameTooltipTemplate')
-            end
-            local tip = WoweeResourceMinimapTooltip
-            tip:SetOwner(UIParent, 'ANCHOR_NONE')
-            tip:ClearAllPoints()
-            local x, y = GetCursorPosition()
-            local scale = UIParent:GetEffectiveScale()
-            tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', x / scale, y / scale)
-            tip:SetText(WoweeTrackedResourceName, 1, 0.82, 0)
-            tip:Show()
-        elseif WoweeResourceMinimapTooltip then
-            WoweeResourceMinimapTooltip:Hide()
-        end
-    )lua")) {
-        LOG_ERROR("Resource minimap tooltip: ", engine->lastError());
-        throw std::runtime_error("Resource minimap tooltip failed");
     }
 }
 
@@ -1094,27 +1030,13 @@ void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityL
 // an arrow at the rim rather than being skipped like ordinary markers.
 void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::GameHandler& gameHandler) {
     auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
-    const auto tooltip = [&](bool shown) {
-        if (!engine) return;
-        const char* script = shown ? R"lua(
-            if not WoweeCorpseMinimapTooltip then
-                CreateFrame("GameTooltip", "WoweeCorpseMinimapTooltip", UIParent, "GameTooltipTemplate")
-            end
-            local tip = WoweeCorpseMinimapTooltip
-            tip:SetOwner(UIParent, "ANCHOR_NONE")
-            tip:ClearAllPoints()
-            local x, y = GetCursorPosition()
-            local scale = UIParent:GetEffectiveScale()
-            tip:SetPoint("BOTTOM", UIParent, "BOTTOMLEFT", x / scale, y / scale)
-            tip:SetText(CORPSE_RED)
-            tip:Show()
-        )lua" : "if WoweeCorpseMinimapTooltip then WoweeCorpseMinimapTooltip:Hide() end";
-        if (!engine->executeString(script)) {
-            LOG_ERROR("Corpse minimap tooltip: ", engine->lastError());
-            throw std::runtime_error("Corpse minimap tooltip failed");
-        }
-    };
-    tooltip(false);
+    // GlobalStrings CORPSE_RED, the red "Corpse" the original shows.
+    std::string corpseName = "Corpse";
+    if (engine) {
+        lua_getglobal(engine->getState(), "CORPSE_RED");
+        if (const char* text = lua_tostring(engine->getState(), -1)) corpseName = text;
+        lua_pop(engine->getState(), 1);
+    }
     // Corpse direction indicator - shown when player is a ghost
     if (gameHandler.isPlayerGhost()) {
         float corpseCanX = 0.0f, corpseCanY = 0.0f;
@@ -1140,7 +1062,7 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
                 frame.drawList->AddImage((ImTextureID)(uintptr_t)atlas,
                     ImVec2(csx - half, csy - half), ImVec2(csx + half, csy + half),
                     ImVec2(7.0f / 8, 0), ImVec2(1, 1.0f / 8));
-                if (cursorNearBlip(csx, csy)) tooltip(true);
+                noteMinimapBlip(csx, csy, corpseName);
             } else {
                 // Corpse is outside minimap - draw an edge arrow pointing toward it
                 float dx = corpseRender.x - frame.playerRender.x;
@@ -1178,7 +1100,7 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
                     frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
                         points[0], points[1], points[2], points[3],
                         ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
-                    if (cursorNearBlip(ax, ay, kArrowHoverRadius)) tooltip(true);
+                    noteMinimapBlip(ax, ay, corpseName, true);
                 }
             }
         }
@@ -1493,7 +1415,64 @@ void GameScreen::renderMinimapReadouts(const MinimapFrame& frame, game::GameHand
 
 }
 
+// The original client lists every blip under the cursor in one GameTooltip,
+// a line each: a party member standing on a tracked mailbox reads "Edricd"
+// then "Mailbox" (_experiments/20261117T181649Z.minimap_marker_audit/hover/
+// o_both.png). A blip answers within 6-7 px of its centre at 1280x720
+// (tooltip at 6 px, none at 7: hover/o_dx*.png), i.e. 7 interface units.
+void GameScreen::noteMinimapBlip(float sx, float sy, const std::string& name, bool arrow, int rank) {
+    if (!minimapBlipHoverAllowed_ || name.empty()) return;
+    float scale = 1.0f;
+    if (auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr)
+        scale = engine->widgets().uiScale();
+    // The rim arrows' reach was not measured against the original.
+    const float radius = arrow ? kArrowHoverRadius : 7.0f * scale;
+    if (cursorNearBlip(sx, sy, radius)) minimapBlipHover_.emplace_back(rank, name);
+}
+
+void GameScreen::showMinimapBlipTooltip() {
+    auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+    if (!engine) return;
+    // Party members first; only that one pairing was compared against the
+    // original, the order among other kinds is the draw order.
+    std::stable_sort(minimapBlipHover_.begin(), minimapBlipHover_.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::string text;
+    for (const auto& [rank, name] : minimapBlipHover_) {
+        if (!text.empty()) text += '\n';
+        text += name;
+    }
+    lua_pushlstring(engine->getState(), text.data(), text.size());
+    lua_setglobal(engine->getState(), "WoweeMinimapBlipText");
+    if (!engine->executeString(R"lua(
+        if WoweeMinimapBlipText ~= '' then
+            if not WoweeMinimapBlipTooltip then
+                CreateFrame('GameTooltip', 'WoweeMinimapBlipTooltip', UIParent, 'GameTooltipTemplate')
+            end
+            local tip = WoweeMinimapBlipTooltip
+            tip:SetOwner(UIParent, 'ANCHOR_NONE')
+            tip:ClearAllPoints()
+            local x, y = GetCursorPosition()
+            local scale = UIParent:GetEffectiveScale()
+            tip:SetPoint('BOTTOM', UIParent, 'BOTTOMLEFT', x / scale, y / scale)
+            tip:SetText(WoweeMinimapBlipText, 1, 0.82, 0)
+            tip:Show()
+        elseif WoweeMinimapBlipTooltip then
+            WoweeMinimapBlipTooltip:Hide()
+        end
+    )lua")) {
+        LOG_ERROR("Minimap blip tooltip: ", engine->lastError());
+        throw std::runtime_error("Minimap blip tooltip failed");
+    }
+}
+
 void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
+    minimapBlipHover_.clear();
+    minimapBlipHoverAllowed_ = false;
+    struct ShowTooltip {
+        GameScreen& screen;
+        ~ShowTooltip() { screen.showMinimapBlipTooltip(); }
+    } showTooltip{*this};
     const auto& statuses = gameHandler.getNpcQuestStatuses();
     auto* renderer = services_.renderer;
     auto* camera = renderer ? renderer->getCamera() : nullptr;
@@ -1563,6 +1542,23 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     // which is beneath all of ImGui either way.
     auto* drawList = ImGui::GetBackgroundDrawList();
 
+    // Blip tooltips only while the pointer is on the map itself: not over a
+    // window, and, when FrameXML owns the ring, not over a button on it.
+    minimapBlipHoverAllowed_ = ImGui::GetCurrentContext()->HoveredWindow == nullptr;
+    if (auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+        engine && frameXmlOwns(UiElement::Minimap)) {
+        auto& tree = engine->widgets();
+        const auto cursor = ImGui::GetMousePos();
+        const float uiScale = tree.uiScale();
+        bool overMap = false;
+        for (auto* widget = tree.get(tree.hitTest(cursor.x / uiScale,
+                (ImGui::GetIO().DisplaySize.y - cursor.y) / uiScale)); widget;
+             widget = tree.get(widget->parent)) {
+            if (widget->name == "Minimap") { overMap = true; break; }
+        }
+        minimapBlipHoverAllowed_ &= overMap;
+    }
+
     // Partition the entity map once. Marker categories below can traverse their
     // compact type-specific lists instead of rescanning every entity 4-5 times.
     // Reused across frames to avoid three vector allocations per frame; the
@@ -1589,44 +1585,10 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     const MinimapFrame frame{.drawList = drawList, .centerX = centerX, .centerY = centerY, .mapRadius = mapRadius, .bearing = bearing,
                              .playerRender = playerRender, .view = minimapView};
 
-    if (game::isActiveExpansion("tbc")) {
-        const auto service = std::stoul(addons::storedCVarValue("wowee_trackingservice", "0"));
-        if (service > game::tbcTrackingServices.size())
-            throw std::runtime_error("Invalid TBC tracking service");
-        if (service != 0) {
-            const auto& entry = game::tbcTrackingServices[service - 1];
-            static std::array<VkDescriptorSet, game::tbcTrackingServices.size()> icons{};
-            auto& icon = icons[service - 1];
-            if (!icon) {
-                icon = uploadUiTextureFromBlp(services_.assetManager, std::string(entry.texture) + ".blp", services_.window);
-                if (!icon) throw std::runtime_error("Tracking service icon failed to load");
-            }
-            const auto drawService = [&](const game::Entity& entity, const std::string& name) {
-                float sx = 0, sy = 0;
-                if (!frame.projectEntity(entity, sx, sy)) return;
-                frame.drawList->AddImage((ImTextureID)(uintptr_t)icon,
-                    ImVec2(sx - 7, sy - 7), ImVec2(sx + 7, sy + 7));
-                if (cursorNearBlip(sx, sy)) ImGui::SetTooltip("%s", name.c_str());
-            };
-            if (entry.npcMask != 0) {
-                for (const auto& entity : minimapUnits) {
-                    const auto unit = std::static_pointer_cast<game::Unit>(entity);
-                    if (unit->getHealth() > 0 && (unit->getNpcFlags() & entry.npcMask) != 0 &&
-                        gameHandler.unitReactionToPlayer(*unit) >= 4)
-                        drawService(*unit, unit->getName());
-                }
-            } else {
-                for (const auto& entity : minimapGameObjects) {
-                    const auto go = std::static_pointer_cast<game::GameObject>(entity);
-                    const auto* info = gameHandler.getCachedGameObjectInfo(go->getEntry());
-                    if (info && info->type == 19) drawService(*go, info->name);
-                }
-            }
-        }
-    } else {
+    if (!game::isActiveExpansion("tbc")) {
         renderMinimapFlightMasters(frame, minimapUnits, gameHandler);
     }
-    renderMinimapResources(frame, minimapGameObjects, gameHandler);
+    renderMinimapResources(frame, minimapUnits, minimapGameObjects, gameHandler);
 
     renderMinimapQuestGivers(frame, statuses, gameHandler);
     // TBC does not have automatic quest-kill tracking on the minimap.

@@ -260,10 +260,14 @@ private:
     void renderMinimapPings(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapPartyDots(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapCorpseMarker(const MinimapFrame& frame, game::GameHandler& gameHandler);
-    void renderMinimapResources(const MinimapFrame& frame,
-                               const std::vector<std::shared_ptr<game::Entity>>& objects,
-                               game::GameHandler& gameHandler);
+    void renderMinimapResources(const MinimapFrame& frame, const EntityList& units,
+                               const EntityList& objects, game::GameHandler& gameHandler);
     void renderMinimapPlayerArrow(const MinimapFrame& frame, const game::GameHandler& gameHandler);
+    /// Adds `name` to this frame's minimap tooltip when the cursor is on the blip.
+    /// Lower `rank` lists first; party members are 0.
+    void noteMinimapBlip(float sx, float sy, const std::string& name, bool arrow = false, int rank = 1);
+    /// One GameTooltip listing every blip under the cursor, a line each.
+    void showMinimapBlipTooltip();
 
     /// The wheel and the ctrl+click, when this client owns the ring.
     void handleMinimapInput(const MinimapFrame& frame, game::GameHandler& gameHandler,
@@ -329,6 +333,9 @@ private:
 
     // Minimap quest-objective cache, rebuilt only when tracked quest progress changes.
     uint64_t minimapQuestCacheSignature_ = 0;
+    /// Names of the minimap blips under the cursor this frame, in draw order.
+    std::vector<std::pair<int, std::string>> minimapBlipHover_;
+    bool minimapBlipHoverAllowed_ = false;
     std::unordered_set<uint32_t> minimapQuestCreatureEntries_;
     std::unordered_set<uint32_t> minimapQuestGameObjectEntries_;
 
