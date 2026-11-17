@@ -82,6 +82,9 @@ public:
     struct FrameInput {
         // Authoritative corpse state; ghosts and resurrected players are alive.
         bool dead = false;
+        // Dead after being seen alive on this character instance: Death,
+        // held. Otherwise the corpse was already one on arrival: Dead.
+        bool diedInView = false;
         // From camera controller
         bool moving = false;
         bool sprinting = false;

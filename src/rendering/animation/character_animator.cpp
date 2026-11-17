@@ -127,7 +127,9 @@ AnimOutput CharacterAnimator::resolveAnimation() {
             activity_.reset();
         }
         wasDead_ = true;
-        return AnimOutput::ok(anim::DEATH, false);
+        // AnimationData: Dead falls back to Death held on its last frame.
+        return fi.diedInView ? AnimOutput::ok(anim::DEATH, false)
+                             : AnimOutput::ok(anim::DEAD, true);
     }
     wasDead_ = false;
 

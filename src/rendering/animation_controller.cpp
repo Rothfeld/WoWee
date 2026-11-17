@@ -1160,6 +1160,19 @@ void AnimationController::updateCharacterAnimation() {
     // Build FrameInput for CharacterAnimator from camera/renderer state
     CharacterAnimator::FrameInput fi;
     fi.dead = dead;
+    if (characterInstanceId != deathTrackedInstance_) {
+        deathTrackedInstance_ = characterInstanceId;
+        seenAliveOnInstance_ = false;
+    }
+    // Alive only once the server's own unit says so: the instance is drawn
+    // before the player's fields arrive, and a player who logs in dead must
+    // not count as seen alive in those first frames.
+    if (!dead && handler) {
+        const auto self = std::dynamic_pointer_cast<game::Unit>(
+            handler->getEntityManager().getEntity(handler->getPlayerGuid()));
+        if (self && self->getHealth() > 0) seenAliveOnInstance_ = true;
+    }
+    fi.diedInView = dead && seenAliveOnInstance_;
     fi.moving = cameraController->isMoving();
     fi.sprinting = cameraController->isSprinting();
     fi.movingForward = cameraController->isMovingForward();

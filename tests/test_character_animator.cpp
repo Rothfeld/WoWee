@@ -15,6 +15,7 @@ TEST_CASE("Death overrides combat and locomotion until the corpse state clears",
     animator.playEmote(anim::EMOTE_DANCE, true);
     CharacterAnimator::FrameInput frame;
     frame.dead = true;
+    frame.diedInView = true;
     frame.moving = true;
     frame.swimming = true;
     frame.meleeSwingTimer = 1.0f;
@@ -32,6 +33,19 @@ TEST_CASE("Death overrides combat and locomotion until the corpse state clears",
     animator.setFrameInput(frame);
     animator.update(0.016f);
     REQUIRE(animator.getLastOutput().animId == anim::STAND);
+}
+
+TEST_CASE("A player already dead on arrival lies as Dead", "[animation][death]") {
+    CharacterAnimator animator;
+    AnimCapabilitySet caps;
+    caps.resolvedStand = anim::STAND;
+    animator.setCapabilities(caps);
+    CharacterAnimator::FrameInput frame;
+    frame.dead = true;  // never seen alive on this character instance
+    animator.setFrameInput(frame);
+    animator.update(0.016f);
+    REQUIRE(animator.getLastOutput().animId == anim::DEAD);
+    REQUIRE(animator.getLastOutput().loop);
 }
 
 TEST_CASE("Attack mode transitions do not draw already-held weapons", "[animation][combat]") {

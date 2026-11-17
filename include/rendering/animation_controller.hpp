@@ -208,6 +208,11 @@ private:
 
     // ── Animation change detection ───────────────────────────────────────
     uint32_t lastPlayerAnimRequest_ = UINT32_MAX;
+    // Whether the current character instance has been seen alive. A player
+    // who dies after that plays Death; one who enters the world (or is
+    // re-created) already a corpse lies as Dead.
+    uint32_t deathTrackedInstance_ = 0;
+    bool seenAliveOnInstance_ = false;
     bool lastPlayerAnimLoopRequest_ = true;
     float lastDeltaTime_ = 0.0f;
 
