@@ -29,7 +29,13 @@ struct ZoneAudioContext {
     glm::vec3 cameraPosition{0.0f};
     bool isSwimming = false;
     bool insideWmo = false;
-    uint32_t insideWmoId = 0;
+    // WMOAreaTable sounds of the WMO room the player stands in (0 = none):
+    // its ZoneMusic set and SoundAmbience id.
+    uint32_t wmoZoneMusicId = 0;
+    uint32_t wmoAmbienceId = 0;
+    // The precise area at the player (WMOAreaTable's or the MCNK's), whose
+    // ZoneMusic, or its nearest ancestor's, plays outside such rooms.
+    uint32_t areaId = 0;
     // Visual weather state for ambient audio sync
     int weatherType = 0;      // 0=none, 1=rain, 2=snow, 3=storm
     float weatherIntensity = 0.0f;
@@ -111,8 +117,10 @@ private:
     // Zone/music state - moved from Renderer
     uint32_t currentZoneId_ = 0;
     std::string currentZoneName_;
-    bool inTavern_ = false;
-    bool inBlacksmith_ = false;
+    /// The ZoneMusic set now playing (0 = none chosen yet).
+    uint32_t currentMusicSetId_ = 0;
+    uint32_t currentAmbienceId_ = 0;
+    bool ambienceNight_ = false;
     float musicSwitchCooldown_ = 0.0f;
 };
 

@@ -2043,9 +2043,8 @@ void Renderer::update(float deltaTime) {
     // camera through a roof into Ironforge or other enclosed WMOs.
     const bool canQueryWmo = (camera && wmoRenderer);
     const glm::vec3 camPos = camera ? camera->getPosition() : glm::vec3(0.0f);
-    uint32_t insideWmoId = 0;
     const bool insideWmo = canQueryWmo &&
-        wmoRenderer->isInsideWMO(camPos.x, camPos.y, camPos.z, &insideWmoId);
+        wmoRenderer->isInsideWMO(camPos.x, camPos.y, camPos.z);
     const auto playerInterior = wmoRenderer
         ? wmoRenderer->getInteriorLocation(characterPosition + glm::vec3(0, 0, 0.1f))
         : std::optional<WMORenderer::InteriorLocation>{};
@@ -2406,7 +2405,17 @@ void Renderer::update(float deltaTime) {
         zctx.cameraPosition = camPos;
         zctx.isSwimming = cameraController ? cameraController->isSwimming() : false;
         zctx.insideWmo = insideWmo;
-        zctx.insideWmoId = insideWmoId;
+        if (playerArea && zoneManager) {
+            const auto sounds = zoneManager->getWmoAreaSounds(
+                playerArea->rootId, playerArea->nameSet, playerArea->groupId);
+            zctx.wmoZoneMusicId = sounds.zoneMusicId;
+            zctx.wmoAmbienceId = sounds.ambienceId;
+        }
+        zctx.areaId = interiorAreaId_;
+        if (zctx.areaId == 0 && terrainManager) {
+            if (const auto area = terrainManager->getAreaIdAt(characterPosition.x, characterPosition.y))
+                zctx.areaId = *area;
+        }
         if (weather) {
             auto wt = weather->getWeatherType();
             if (wt == Weather::Type::RAIN)       zctx.weatherType = 1;

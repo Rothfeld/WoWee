@@ -35,293 +35,51 @@ std::string ZoneManager::resolveOriginalMusicFile(const char* filename) {
     return filePrefix(resolveOriginalMusic(filename));
 }
 
+namespace {
+
+/// WoWee's own soundtrack ("assets/Original Music"), offered alongside a
+/// zone's authored music while the "Enable WoWee Music" setting is on. Not
+/// game data: these are this client's additions, by zone id. Everything else
+/// a zone plays comes from AreaTable -> ZoneMusic -> SoundEntries.
+struct WoweeTrack { uint32_t zoneId; const char* file; };
+constexpr WoweeTrack kWoweeSoundtrack[] = {
+    {12, "Wanderwewill.mp3"},
+    {12, "You No Take Candle!.mp3"},
+    {1519, "stormwindinst.mp3"},
+    {1519, "stormwindguitar.mp3"},
+    {1, "RunBackPolka.mp3"},
+    {40, "You No Take Candle!.mp3"},
+    {85, "Lanterns Over Lordaeron.mp3"},
+    {1497, "Lanterns Over Lordaeron.mp3"},
+    {17, "The Barrens Has No End.mp3"},
+    {33, "Gold on the Tide in Booty Bay.mp3"},
+    {46, "One More Pull.mp3"},
+    {46, "WHO PULLED_.mp3"},
+    {46, "Loot the Dogs.mp3"},
+    {51, "WHO PULLED_.mp3"},
+    {51, "One More Pull.mp3"},
+    {51, "Loot the Dogs.mp3"},
+    {1537, "RunBackPolka.mp3"},
+    {1537, "Roll Need Greed.mp3"},
+    {1537, "Ironforge Intro.mp3"},
+    {38, "Roll Need Greed.mp3"},
+    {1637, "WHO PULLED_.mp3"},
+    {1637, "One More Pull.mp3"},
+    {14, "The Barrens Has No End.mp3"},
+    {215, "Wanderwewill.mp3"},
+    {215, "The Barrens Has No End.mp3"},
+    {1638, "Wanderwewill.mp3"},
+    {148, "The Bone Collector.mp3"},
+    {148, "Lanterns Over Lordaeron.mp3"},
+    {141, "Wanderwewill.mp3"},
+};
+
+}  // namespace
+
 void ZoneManager::initialize() {
-    // Resolve original music paths at startup
-    auto om = [](const char* name) -> std::string {
-        std::string path = resolveOriginalMusic(name);
-        return path.empty() ? "" : filePrefix(path);
-    };
-
-    std::string omWanderwewill   = om("Wanderwewill.mp3");
-    std::string omYouNoTake      = om("You No Take Candle!.mp3");
-    std::string omGoldBooty      = om("Gold on the Tide in Booty Bay.mp3");
-    std::string omLanterns       = om("Lanterns Over Lordaeron.mp3");
-    std::string omBarrens        = om("The Barrens Has No End.mp3");
-    std::string omBoneCollector  = om("The Bone Collector.mp3");
-    std::string omLootTheDogs    = om("Loot the Dogs.mp3");
-    std::string omOneMorePull    = om("One More Pull.mp3");
-    std::string omRollNeedGreed  = om("Roll Need Greed.mp3");
-    std::string omRunBackPolka   = om("RunBackPolka.mp3");
-    std::string omWhoPulled      = om("WHO PULLED_.mp3");
-    std::string omStormwindInst  = om("stormwindinst.mp3");
-    std::string omStormwindGtr   = om("stormwindguitar.mp3");
-    std::string omIronforgeIntro = om("Ironforge Intro.mp3");
-
-    // Elwynn Forest (zone 12)
-    ZoneInfo elwynn;
-    elwynn.id = 12;
-    elwynn.name = "Elwynn Forest";
-    elwynn.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Forest\\DayForest01.mp3",
-        "Sound\\Music\\ZoneMusic\\Forest\\DayForest02.mp3",
-        "Sound\\Music\\ZoneMusic\\Forest\\DayForest03.mp3",
-    };
-    if (!omWanderwewill.empty()) elwynn.musicPaths.push_back(omWanderwewill);
-    if (!omYouNoTake.empty()) elwynn.musicPaths.push_back(omYouNoTake);
-    zones[12] = elwynn;
-
-    // Stormwind City (zone 1519)
-    ZoneInfo stormwind;
-    stormwind.id = 1519;
-    stormwind.name = "Stormwind City";
-    stormwind.musicPaths = {
-        "Sound\\Music\\CityMusic\\Stormwind\\stormwind04-zone.mp3",
-        "Sound\\Music\\CityMusic\\Stormwind\\stormwind05-zone.mp3",
-        "Sound\\Music\\CityMusic\\Stormwind\\stormwind06-zone.mp3",
-        "Sound\\Music\\CityMusic\\Stormwind\\stormwind07-zone.mp3",
-        "Sound\\Music\\CityMusic\\Stormwind\\stormwind08-zone.mp3",
-    };
-    if (!omStormwindInst.empty()) stormwind.musicPaths.push_back(omStormwindInst);
-    if (!omStormwindGtr.empty()) stormwind.musicPaths.push_back(omStormwindGtr);
-    zones[1519] = stormwind;
-
-    // Dun Morogh (zone 1) - neighboring zone
-    ZoneInfo dunmorogh;
-    dunmorogh.id = 1;
-    dunmorogh.name = "Dun Morogh";
-    dunmorogh.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Mountain\\DayMountain01.mp3",
-        "Sound\\Music\\ZoneMusic\\Mountain\\DayMountain02.mp3",
-        "Sound\\Music\\ZoneMusic\\Mountain\\DayMountain03.mp3",
-    };
-    if (!omRunBackPolka.empty()) dunmorogh.musicPaths.push_back(omRunBackPolka);
-    zones[1] = dunmorogh;
-
-    // Westfall (zone 40)
-    ZoneInfo westfall;
-    westfall.id = 40;
-    westfall.name = "Westfall";
-    westfall.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Plains\\DayPlains01.mp3",
-        "Sound\\Music\\ZoneMusic\\Plains\\DayPlains02.mp3",
-    };
-    if (!omYouNoTake.empty()) westfall.musicPaths.push_back(omYouNoTake);
-    zones[40] = westfall;
-
-    // Tirisfal Glades (zone 85)
-    ZoneInfo tirisfal;
-    tirisfal.id = 85;
-    tirisfal.name = "Tirisfal Glades";
-    tirisfal.musicPaths = {
-        // EvilForest, as AreaTable -> ZoneMusic -> SoundEntries names it. There
-        // was never an UndeadForest folder, so all three of these failed to
-        // read and Tirisfal was silent but for the client's own tracks.
-        "Sound\\Music\\ZoneMusic\\EvilForest\\DayEvilForest01.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\DayEvilForest02.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\DayEvilForest03.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\NightEvilForest01.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\NightEvilForest02.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\NightEvilForest03.mp3",
-    };
-    if (!omLanterns.empty()) tirisfal.musicPaths.push_back(omLanterns);
-    zones[85] = tirisfal;
-
-    // Undercity (zone 1497)
-    ZoneInfo undercity;
-    undercity.id = 1497;
-    undercity.name = "Undercity";
-    undercity.musicPaths = {
-        "Sound\\Music\\CityMusic\\Undercity\\Undercity01-zone.mp3",
-        "Sound\\Music\\CityMusic\\Undercity\\Undercity02-zone.mp3",
-        "Sound\\Music\\CityMusic\\Undercity\\Undercity03-zone.mp3",
-    };
-    if (!omLanterns.empty()) undercity.musicPaths.push_back(omLanterns);
-    zones[1497] = undercity;
-
-    // The Barrens (zone 17)
-    ZoneInfo barrens;
-    barrens.id = 17;
-    barrens.name = "The Barrens";
-    barrens.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Desert\\DayDesert01.mp3",
-        "Sound\\Music\\ZoneMusic\\Desert\\DayDesert02.mp3",
-        "Sound\\Music\\ZoneMusic\\Desert\\DayDesert03.mp3",
-    };
-    if (!omBarrens.empty()) barrens.musicPaths.push_back(omBarrens);
-    zones[17] = barrens;
-
-    // Stranglethorn Vale (zone 33)
-    ZoneInfo stranglethorn;
-    stranglethorn.id = 33;
-    stranglethorn.name = "Stranglethorn Vale";
-    stranglethorn.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Jungle\\DayJungle01.mp3",
-        "Sound\\Music\\ZoneMusic\\Jungle\\DayJungle02.mp3",
-        "Sound\\Music\\ZoneMusic\\Jungle\\DayJungle03.mp3",
-    };
-    if (!omGoldBooty.empty()) stranglethorn.musicPaths.push_back(omGoldBooty);
-    zones[33] = stranglethorn;
-
-    // Duskwood (zone 10)
-    ZoneInfo duskwood;
-    duskwood.id = 10;
-    duskwood.name = "Duskwood";
-    duskwood.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\EvilForest\\DayEvilForest01.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\DayEvilForest02.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\DayEvilForest03.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\NightEvilForest01.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\NightEvilForest02.mp3",
-        "Sound\\Music\\ZoneMusic\\EvilForest\\NightEvilForest03.mp3",
-    };
-    // Keep Duskwood on its original haunted-forest score; custom tracks are
-    // too upbeat for the zone's persistent dark ambience.
-    zones[10] = duskwood;
-
-    // Burning Steppes (zone 46)
-    ZoneInfo burningSteppes;
-    burningSteppes.id = 46;
-    burningSteppes.name = "Burning Steppes";
-    burningSteppes.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\BarrenDry\\DayBarrenDry01.mp3",
-        "Sound\\Music\\ZoneMusic\\BarrenDry\\DayBarrenDry02.mp3",
-    };
-    if (!omOneMorePull.empty()) burningSteppes.musicPaths.push_back(omOneMorePull);
-    if (!omWhoPulled.empty()) burningSteppes.musicPaths.push_back(omWhoPulled);
-    if (!omLootTheDogs.empty()) burningSteppes.musicPaths.push_back(omLootTheDogs);
-    zones[46] = burningSteppes;
-
-    // Searing Gorge (zone 51)
-    ZoneInfo searingGorge;
-    searingGorge.id = 51;
-    searingGorge.name = "Searing Gorge";
-    searingGorge.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\BarrenDry\\DayBarrenDry01.mp3",
-        "Sound\\Music\\ZoneMusic\\BarrenDry\\DayBarrenDry02.mp3",
-    };
-    if (!omWhoPulled.empty()) searingGorge.musicPaths.push_back(omWhoPulled);
-    if (!omOneMorePull.empty()) searingGorge.musicPaths.push_back(omOneMorePull);
-    if (!omLootTheDogs.empty()) searingGorge.musicPaths.push_back(omLootTheDogs);
-    zones[51] = searingGorge;
-
-    // Ironforge (zone 1537)
-    ZoneInfo ironforge;
-    ironforge.id = 1537;
-    ironforge.name = "Ironforge";
-    ironforge.musicPaths = {
-        "Sound\\Music\\CityMusic\\Ironforge\\IronForge Walking 01.mp3",
-        "Sound\\Music\\CityMusic\\Ironforge\\Ironforge Walking 03 (Glenn).mp3",
-        "Sound\\Music\\CityMusic\\Ironforge\\Ironforge Walking 04.mp3",
-    };
-    if (!omRunBackPolka.empty()) ironforge.musicPaths.push_back(omRunBackPolka);
-    if (!omRollNeedGreed.empty()) ironforge.musicPaths.push_back(omRollNeedGreed);
-    if (!omIronforgeIntro.empty()) ironforge.musicPaths.push_back(omIronforgeIntro);
-    zones[1537] = ironforge;
-
-    // Loch Modan (zone 38)
-    ZoneInfo lochModan;
-    lochModan.id = 38;
-    lochModan.name = "Loch Modan";
-    lochModan.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Mountain\\DayMountain01.mp3",
-        "Sound\\Music\\ZoneMusic\\Mountain\\DayMountain02.mp3",
-        "Sound\\Music\\ZoneMusic\\Mountain\\DayMountain03.mp3",
-    };
-    if (!omRollNeedGreed.empty()) lochModan.musicPaths.push_back(omRollNeedGreed);
-    zones[38] = lochModan;
-
-    // --- Kalimdor zones ---
-
-    // Orgrimmar (zone 1637)
-    ZoneInfo orgrimmar;
-    orgrimmar.id = 1637;
-    orgrimmar.name = "Orgrimmar";
-    orgrimmar.musicPaths = {
-        "Sound\\Music\\CityMusic\\Orgrimmar\\orgrimmar01-zone.mp3",
-        "Sound\\Music\\CityMusic\\Orgrimmar\\orgrimmar02-zone.mp3",
-    };
-    if (!omWhoPulled.empty()) orgrimmar.musicPaths.push_back(omWhoPulled);
-    if (!omOneMorePull.empty()) orgrimmar.musicPaths.push_back(omOneMorePull);
-    zones[1637] = orgrimmar;
-
-    // Durotar (zone 14)
-    ZoneInfo durotar;
-    durotar.id = 14;
-    durotar.name = "Durotar";
-    durotar.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Desert\\DayDesert01.mp3",
-        "Sound\\Music\\ZoneMusic\\Desert\\DayDesert02.mp3",
-        "Sound\\Music\\ZoneMusic\\Desert\\DayDesert03.mp3",
-    };
-    if (!omBarrens.empty()) durotar.musicPaths.push_back(omBarrens);
-    zones[14] = durotar;
-
-    // Mulgore (zone 215)
-    ZoneInfo mulgore;
-    mulgore.id = 215;
-    mulgore.name = "Mulgore";
-    mulgore.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Plains\\DayPlains01.mp3",
-        "Sound\\Music\\ZoneMusic\\Plains\\DayPlains02.mp3",
-    };
-    if (!omWanderwewill.empty()) mulgore.musicPaths.push_back(omWanderwewill);
-    if (!omBarrens.empty()) mulgore.musicPaths.push_back(omBarrens);
-    zones[215] = mulgore;
-
-    // Thunder Bluff (zone 1638)
-    ZoneInfo thunderBluff;
-    thunderBluff.id = 1638;
-    thunderBluff.name = "Thunder Bluff";
-    thunderBluff.musicPaths = {
-        "Sound\\Music\\CityMusic\\Thunderbluff\\Thunderbluff Walking 01.mp3",
-        "Sound\\Music\\CityMusic\\Thunderbluff\\Thunderbluff Walking 02.mp3",
-        "Sound\\Music\\CityMusic\\Thunderbluff\\Thunderbluff Walking 03.mp3",
-    };
-    if (!omWanderwewill.empty()) thunderBluff.musicPaths.push_back(omWanderwewill);
-    zones[1638] = thunderBluff;
-
-    // Darkshore (zone 148)
-    ZoneInfo darkshore;
-    darkshore.id = 148;
-    darkshore.name = "Darkshore";
-    darkshore.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\Forest\\NightForest01.mp3",
-        "Sound\\Music\\ZoneMusic\\Forest\\NightForest02.mp3",
-        "Sound\\Music\\ZoneMusic\\Forest\\NightForest03.mp3",
-        "Sound\\Music\\ZoneMusic\\Forest\\NightForest04.mp3",
-    };
-    if (!omBoneCollector.empty()) darkshore.musicPaths.push_back(omBoneCollector);
-    if (!omLanterns.empty()) darkshore.musicPaths.push_back(omLanterns);
-    zones[148] = darkshore;
-
-    // Teldrassil (zone 141)
-    ZoneInfo teldrassil;
-    teldrassil.id = 141;
-    teldrassil.name = "Teldrassil";
-    teldrassil.musicPaths = {
-        "Sound\\Music\\ZoneMusic\\EnchantedForest\\EnchantedForest01.mp3",
-        "Sound\\Music\\ZoneMusic\\EnchantedForest\\EnchantedForest02.mp3",
-        "Sound\\Music\\ZoneMusic\\EnchantedForest\\EnchantedForest03.mp3",
-        "Sound\\Music\\ZoneMusic\\EnchantedForest\\EnchantedForest04.mp3",
-        "Sound\\Music\\ZoneMusic\\EnchantedForest\\EnchantedForest05.mp3",
-    };
-    if (!omWanderwewill.empty()) teldrassil.musicPaths.push_back(omWanderwewill);
-    zones[141] = teldrassil;
-
-    // Darnassus (zone 1657)
-    ZoneInfo darnassus;
-    darnassus.id = 1657;
-    darnassus.name = "Darnassus";
-    darnassus.musicPaths = {
-        "Sound\\Music\\CityMusic\\Darnassus\\Darnassus Walking 1.mp3",
-        "Sound\\Music\\CityMusic\\Darnassus\\Darnassus Walking 2.mp3",
-        "Sound\\Music\\CityMusic\\Darnassus\\Darnassus Walking 3.mp3",
-    };
-    zones[1657] = darnassus;
-
-    // Seed removed - music shuffle now uses a local mt19937 (see pickMusicTrack).
-
-    LOG_INFO("Zone manager initialized: ", zones.size(), " zones");
+    zones.clear();
+    LOG_INFO("Zone manager initialized; zones, music and ambience come from AreaTable, "
+             "WMOAreaTable, ZoneMusic, SoundAmbience and SoundEntries");
 }
 
 uint32_t ZoneManager::dominantZoneId(const std::vector<uint32_t>& areaIds) const {
@@ -372,42 +130,11 @@ const ZoneInfo* ZoneManager::getZoneInfo(uint32_t zoneId) const {
 }
 
 std::string ZoneManager::getRandomMusic(uint32_t zoneId) {
+    // An empty pool after the setting's filter is silence, never the
+    // filtered tracks: the setting must stay off in zones that are all ours.
     auto it = zones.find(zoneId);
-    if (it == zones.end() || it->second.musicPaths.empty()) {
-        return "";
-    }
-
-    // Build filtered pool: exclude file: (original soundtrack) tracks if disabled
-    const auto& all = it->second.musicPaths;
-    std::vector<const std::string*> pool;
-    pool.reserve(all.size());
-    for (const auto& p : all) {
-        if (!useOriginalSoundtrack_ && p.rfind("file:", 0) == 0) continue;
-        pool.push_back(&p);
-    }
-    // No fallback to the full list. The only thing filtered out here is the
-    // client's own soundtrack, and only when the player has turned it off - so
-    // a pool that came back empty means every track this zone has is one they
-    // asked not to hear, and the answer is silence rather than all of them.
-    // Putting them back was the whole of "the setting does not stay off": it
-    // held in any zone with a mixed pool and did nothing in the zones that are
-    // entirely ours, which are the ones a player notices.
-    if (pool.empty()) return "";
-
-    if (pool.size() == 1) {
-        lastPlayedMusic_ = *pool[0];
-        return lastPlayedMusic_;
-    }
-
-    // Avoid playing the same track back-to-back
-    const std::string* pick = pool[0];
-    for (int attempts = 0; attempts < 5; ++attempts) {
-        static std::mt19937 musicRng(std::random_device{}());
-        pick = pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(musicRng)];
-        if (*pick != lastPlayedMusic_) break;
-    }
-    lastPlayedMusic_ = *pick;
-    return lastPlayedMusic_;
+    if (it == zones.end()) return "";
+    return pickTrack(it->second.musicPaths);
 }
 
 std::vector<std::string> ZoneManager::getAllMusicPaths() const {
@@ -448,9 +175,15 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
     const auto wmoAreas = assets->loadDBC("WMOAreaTable.dbc");
     if (!wmoAreas || !wmoAreas->isLoaded() || wmoAreas->getFieldCount() < 12)
         throw std::runtime_error("WMOAreaTable.dbc missing or invalid");
+    wmoAreaSounds_.clear();
     for (uint32_t row = 0; row < wmoAreas->getRecordCount(); ++row) {
         wmoAreaIds_[{wmoAreas->getUInt32(row, 1), wmoAreas->getUInt32(row, 2),
                      wmoAreas->getUInt32(row, 3)}] = wmoAreas->getUInt32(row, 10);
+        // AmbienceID (6) and ZoneMusic (7): a tavern's room names
+        // Zone-TavernAlliance and the Tavern ambience, a smithy BlackSmith.
+        wmoAreaSounds_[{wmoAreas->getUInt32(row, 1), wmoAreas->getUInt32(row, 2),
+                        wmoAreas->getUInt32(row, 3)}] =
+            WmoAreaSounds{wmoAreas->getUInt32(row, 7), wmoAreas->getUInt32(row, 6)};
         const auto name = wmoAreas->getString(row, 11);
         if (!name.empty()) wmoAreaNames_[{wmoAreas->getUInt32(row, 1),
             wmoAreas->getUInt32(row, 2), wmoAreas->getUInt32(row, 3)}] = name;
@@ -521,53 +254,92 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         return;
     }
 
-    uint32_t zonesEnriched = 0;
-    for (uint32_t i = 0; i < numAreas; ++i) {
-        uint32_t zoneId      = areaDbc->getUInt32(i, 0);
-        uint32_t zoneMusicId = areaDbc->getUInt32(i, 8);
-        if (zoneId == 0 || zoneMusicId == 0) continue;
-
-        int32_t zmIdx = zoneMusicDbc->findRecordById(zoneMusicId);
-        if (zmIdx < 0) continue;
-        uint32_t zmRow = static_cast<uint32_t>(zmIdx);
-        if (zoneMusicDbc->getFieldCount() < 8) continue;
-
-        uint32_t daySoundId   = zoneMusicDbc->getUInt32(zmRow, 6);
-        uint32_t nightSoundId = zoneMusicDbc->getUInt32(zmRow, 7);
-
-        std::vector<std::string> newPaths;
-        for (const auto& p : getSoundPaths(daySoundId))   newPaths.push_back(p);
-        for (const auto& p : getSoundPaths(nightSoundId)) newPaths.push_back(p);
-        if (newPaths.empty()) continue;
-
-        auto& zone = zones[zoneId];
-        if (zone.id == 0) zone.id = zoneId;
-
-        // Append paths not already present (preserve hardcoded entries).
-        for (const auto& path : newPaths) {
-            bool found = false;
-            for (const auto& existing : zone.musicPaths) {
-                if (existing == path) { found = true; break; }
-            }
-            if (!found) {
-                zone.musicPaths.push_back(path);
-                ++zonesEnriched;
-            }
-        }
+    // Every ZoneMusic set's tracks, day and night: an area, a WMO room or
+    // a set chosen any other way plays from here.
+    zoneMusicTracks_.clear();
+    if (zoneMusicDbc->getFieldCount() < 8)
+        throw std::runtime_error("ZoneMusic.dbc has fewer than 8 fields");
+    for (uint32_t row = 0; row < zoneMusicDbc->getRecordCount(); ++row) {
+        auto& tracks = zoneMusicTracks_[zoneMusicDbc->getUInt32(row, 0)];
+        for (const uint32_t sound : {zoneMusicDbc->getUInt32(row, 6), zoneMusicDbc->getUInt32(row, 7)})
+            for (auto& path : getSoundPaths(sound))
+                if (std::find(tracks.begin(), tracks.end(), path) == tracks.end())
+                    tracks.push_back(std::move(path));
     }
 
-    LOG_INFO("Zone music enriched from DBC: ", zones.size(), " zones, ", zonesEnriched, " paths added");
+    // SoundAmbience: day and night SoundEntries per ambience id. AreaTable
+    // and WMOAreaTable name these, so a client without it cannot place any.
+    ambiencePaths_.clear();
+    const auto ambience = assets->loadDBC("SoundAmbience.dbc");
+    if (!ambience || !ambience->isLoaded() || ambience->getFieldCount() < 3)
+        throw std::runtime_error("SoundAmbience.dbc missing or invalid");
+    for (uint32_t row = 0; row < ambience->getRecordCount(); ++row) {
+        auto day = getSoundPaths(ambience->getUInt32(row, 1));
+        auto night = getSoundPaths(ambience->getUInt32(row, 2));
+        ambiencePaths_[ambience->getUInt32(row, 0)] = {
+            day.empty() ? std::string() : day.front(),
+            night.empty() ? std::string() : night.front()};
+    }
+
+    // Each area: its name, and the music (ZoneMusic, 8) and ambience
+    // (AmbienceID, 7) of the nearest of itself and its ancestors that names
+    // one. Gates of Ironforge (809) names neither and takes Dun Morogh's;
+    // Goldshire (87) names Elwynn's ForestNormal ambience itself.
+    std::unordered_map<uint32_t, uint32_t> ownMusic;
+    std::unordered_map<uint32_t, uint32_t> ownAmbience;
+    std::unordered_map<uint32_t, std::string> names;
+    for (uint32_t i = 0; i < numAreas; ++i) {
+        const uint32_t areaId = areaDbc->getUInt32(i, 0);
+        if (areaId == 0) continue;
+        ownMusic[areaId] = areaDbc->getUInt32(i, 8);
+        ownAmbience[areaId] = areaDbc->getUInt32(i, 7);
+        if (areaFields > 11) names[areaId] = areaDbc->getString(i, 11);
+    }
+    const auto nearest = [&](const std::unordered_map<uint32_t, uint32_t>& own, uint32_t areaId) {
+        uint32_t current = areaId;
+        for (int depth = 0; current != 0 && depth < 16; ++depth) {
+            const auto it = own.find(current);
+            if (it != own.end() && it->second != 0) return it->second;
+            const auto parent = areaParents_.find(current);
+            if (parent == areaParents_.end() || parent->second == current) break;
+            current = parent->second;
+        }
+        return 0u;
+    };
+    areaZoneMusic_.clear();
+    areaAmbience_.clear();
+    for (const auto& [areaId, music] : ownMusic) {
+        const uint32_t found = nearest(ownMusic, areaId);
+        areaZoneMusic_[areaId] = found;
+        areaAmbience_[areaId] = nearest(ownAmbience, areaId);
+        ZoneInfo& zone = zones[areaId];
+        zone.id = areaId;
+        zone.name = names[areaId];
+        zone.musicPaths.clear();
+        if (const auto t = zoneMusicTracks_.find(found); t != zoneMusicTracks_.end())
+            zone.musicPaths = t->second;
+    }
+    for (const WoweeTrack& track : kWoweeSoundtrack) {
+        const std::string path = filePrefix(resolveOriginalMusic(track.file));
+        if (!path.empty()) zones[track.zoneId].musicPaths.push_back(path);
+    }
+
+    LOG_INFO("Zone music from DBC: ", zones.size(), " areas, ", zoneMusicTracks_.size(),
+             " ZoneMusic sets, ", ambiencePaths_.size(), " ambiences, ",
+             wmoAreaSounds_.size(), " WMO areas");
 
     // A track the data does not have is taken out of the pool rather than
     // picked and failed on: each one was a "Could not read" and a zone gone
-    // quiet until the next pick. The table above is written by hand and the
-    // data differs by expansion, so this is checked against what is actually
-    // there. The client's own tracks (file:) are not game data and are left.
+    // quiet until the next pick. SoundEntries names files an extraction may
+    // not hold, so this is checked against what is actually there. The
+    // client's own tracks (file:) are not game data and are left.
     std::size_t dropped = 0;
     std::string firstDropped;
-    for (auto& [zoneId, zone] : zones) {
-        (void)zoneId;
-        auto& paths = zone.musicPaths;
+    std::vector<std::vector<std::string>*> pools;
+    for (auto& [zoneId, zone] : zones) pools.push_back(&zone.musicPaths);
+    for (auto& [setId, tracks] : zoneMusicTracks_) pools.push_back(&tracks);
+    for (auto* poolPtr : pools) {
+        auto& paths = *poolPtr;
         const auto missing = [&](const std::string& path) {
             if (path.rfind("file:", 0) == 0 || assets->fileExists(path)) return false;
             if (firstDropped.empty()) firstDropped = path;
@@ -580,6 +352,61 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         LOG_WARNING("Zone music: ", dropped, " track(s) named for zones are not in the data and "
                     "were left out, first ", firstDropped);
     }
+}
+
+ZoneManager::WmoAreaSounds ZoneManager::getWmoAreaSounds(uint32_t root, uint32_t nameSet,
+                                                        uint32_t group) const {
+    // The room's own row, else the WMO's root row; each field independently,
+    // since a room may name only its ambience and take the building's music.
+    WmoAreaSounds out;
+    for (const uint32_t candidate : {group, UINT32_MAX}) {
+        const auto it = wmoAreaSounds_.find({root, nameSet, candidate});
+        if (it == wmoAreaSounds_.end()) continue;
+        if (out.zoneMusicId == 0) out.zoneMusicId = it->second.zoneMusicId;
+        if (out.ambienceId == 0) out.ambienceId = it->second.ambienceId;
+    }
+    return out;
+}
+
+const std::vector<std::string>* ZoneManager::getZoneMusicTracks(uint32_t zoneMusicId) const {
+    const auto it = zoneMusicTracks_.find(zoneMusicId);
+    return it == zoneMusicTracks_.end() ? nullptr : &it->second;
+}
+
+uint32_t ZoneManager::getAreaZoneMusicId(uint32_t areaId) const {
+    const auto it = areaZoneMusic_.find(areaId);
+    return it == areaZoneMusic_.end() ? 0 : it->second;
+}
+
+uint32_t ZoneManager::getAreaAmbienceId(uint32_t areaId) const {
+    const auto it = areaAmbience_.find(areaId);
+    return it == areaAmbience_.end() ? 0 : it->second;
+}
+
+std::string ZoneManager::getAmbienceSound(uint32_t ambienceId, bool night) const {
+    const auto it = ambiencePaths_.find(ambienceId);
+    if (it == ambiencePaths_.end()) {
+        LOG_ERROR("ZoneManager: SoundAmbience has no row ", ambienceId);
+        return {};
+    }
+    return night ? it->second.second : it->second.first;
+}
+
+std::string ZoneManager::pickTrack(const std::vector<std::string>& tracks) {
+    std::vector<const std::string*> pool;
+    for (const auto& p : tracks) {
+        if (!useOriginalSoundtrack_ && p.rfind("file:", 0) == 0) continue;
+        pool.push_back(&p);
+    }
+    if (pool.empty()) return "";
+    const std::string* pick = pool[0];
+    for (int attempts = 0; pool.size() > 1 && attempts < 5; ++attempts) {
+        static std::mt19937 rng(std::random_device{}());
+        pick = pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
+        if (*pick != lastPlayedMusic_) break;
+    }
+    lastPlayedMusic_ = *pick;
+    return lastPlayedMusic_;
 }
 
 uint32_t ZoneManager::getWmoAreaId(uint32_t root, uint32_t nameSet, uint32_t group) const {
