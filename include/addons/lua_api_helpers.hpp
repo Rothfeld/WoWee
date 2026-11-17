@@ -381,6 +381,10 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
         if (gh->getQuestDetails().npcGuid != 0)  return gh->getQuestDetails().npcGuid;
         if (gh->getVendorGuid() != 0)            return gh->getVendorGuid();
         if (gh->getBankerGuid() != 0)            return gh->getBankerGuid();
+        // ClassTrainerFrame titles itself UnitName("npc"); the original keeps
+        // the trainer's name there when the player targets someone else.
+        if (gh->isTrainerWindowOpen() && gh->getTrainerSpells().trainerGuid != 0)
+            return gh->getTrainerSpells().trainerGuid;
         return gh->getTargetGuid();
     }
     // Compound unit IDs: targettarget, focustarget, pettarget, mouseovertarget
