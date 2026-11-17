@@ -1086,7 +1086,7 @@ void GameHandler::registerCoreOpcodes() {
     };
 
     // Loot money / misc consume
-    for (auto op : { Opcode::SMSG_LOOT_CLEAR_MONEY, Opcode::SMSG_NPC_TEXT_UPDATE }) {
+    for (auto op : { Opcode::SMSG_NPC_TEXT_UPDATE }) {
         dispatchTable_[op] = [](network::Packet& /*packet*/) {};
     }
 

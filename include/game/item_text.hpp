@@ -293,6 +293,23 @@ inline std::string formatCopperAmount(uint32_t amount) {
     return out;
 }
 
+/// A looted amount as the original's money chat lines write it: GOLD_AMOUNT,
+/// SILVER_AMOUNT and COPPER_AMOUNT ("%d Gold" ...) joined by ", ", zero coins
+/// left out - "1 Silver, 45 Copper", "38 Copper".
+inline std::string lootMoneyText(uint32_t amount) {
+    const CoinAmount coins = splitCopper(amount);
+    std::string out;
+    const auto add = [&out](uint32_t n, const char* name) {
+        if (n == 0) return;
+        if (!out.empty()) out += ", ";
+        out += std::to_string(n) + " " + name;
+    };
+    add(coins.gold, "Gold");
+    add(coins.silver, "Silver");
+    add(coins.copper, "Copper");
+    return out;
+}
+
 /// The same amount the way a price is written, which is not the same rule.
 ///
 /// A price runs from its highest coin down and keeps the zeros under it: five

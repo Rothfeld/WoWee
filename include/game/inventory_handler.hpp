@@ -711,14 +711,12 @@ private:
         bool itemAutoLootSent = false;
     };
     std::unordered_map<uint64_t, LocalLootState> localLootState_;
-    void announceLootMoney(uint64_t lootGuid, uint32_t amount);
+    void announceLootMoney(uint64_t lootGuid, uint32_t amount, bool share);
     /// The coin is gone from the open loot window, because the server has said
     /// so. Idempotent: both packets that report it call this.
     void clearLootMoney();
     uint64_t pendingLootMoneyGuid_ = 0;
     uint32_t pendingLootMoneyAmount_ = 0;
-    float pendingLootMoneyNotifyTimer_ = 0.0f;
-    std::unordered_map<uint64_t, float> recentLootMoneyAnnounceCooldowns_;
 
     // ---- Vendor state ----
     bool vendorWindowOpen_ = false;

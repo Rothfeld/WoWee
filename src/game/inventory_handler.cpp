@@ -207,37 +207,31 @@ uint64_t targetGuidForUseItem(GameHandler& owner, const ItemQueryResponseData* i
 // Opcode Registration
 // ============================================================
 
-/// Says what was looted, once per loot.
-///
-/// Both paths that learn about looted money end here - the server's notify and
-/// the fallback timer for servers that do not send one - so the line and the
-/// coin cannot differ between them.
-void InventoryHandler::announceLootMoney(uint64_t lootGuid, uint32_t amount) {
+/// Says what was looted, once per loot, as the original's money line:
+/// YOU_LOOT_MONEY "You loot 1 Silver, 45 Copper" for the player's own take,
+/// LOOT_MONEY_SPLIT "Your share of the loot is 38 Copper." for a group
+/// share (SMSG_LOOT_MONEY_NOTIFY, which CMaNGOS sends only to a group).
+/// Both in CHAT_MSG_MONEY.
+void InventoryHandler::announceLootMoney(uint64_t lootGuid, uint32_t amount, bool share) {
     if (amount == 0) return;
     auto it = localLootState_.find(lootGuid);
     if (it != localLootState_.end()) {
         if (it->second.moneyTaken) return;
         it->second.moneyTaken = true;
     }
-    owner_.addSystemChatMessage("Looted: " + formatCopperAmount(amount));
+    const std::string coins = lootMoneyText(amount);
+    owner_.addLocalChatLine(ChatType::MONEY, share ? "Your share of the loot is " + coins + "."
+                                                   : "You loot " + coins);
     if (auto* ac = owner_.services().audioCoordinator) {
         if (auto* sfx = ac->getUiSoundManager()) {
             if (amount >= 10000) sfx->playLootCoinLarge();
             else sfx->playLootCoinSmall();
         }
     }
-    if (lootGuid != 0) recentLootMoneyAnnounceCooldowns_[lootGuid] = 1.5f;
 }
 
-void InventoryHandler::tickLootMoneyFallback(float deltaTime) {
+void InventoryHandler::tickLootMoneyFallback(float /*deltaTime*/) {
     flushPendingLootLines();
-    if (pendingLootMoneyNotifyTimer_ <= 0.0f) return;
-    pendingLootMoneyNotifyTimer_ -= deltaTime;
-    if (pendingLootMoneyNotifyTimer_ > 0.0f) return;
-    pendingLootMoneyNotifyTimer_ = 0.0f;
-    announceLootMoney(pendingLootMoneyGuid_, pendingLootMoneyAmount_);
-    pendingLootMoneyGuid_ = 0;
-    pendingLootMoneyAmount_ = 0;
 }
 
 void InventoryHandler::registerOpcodes(DispatchTable& table) {
@@ -283,8 +277,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         uint64_t notifyGuid = pendingLootMoneyGuid_ != 0 ? pendingLootMoneyGuid_ : currentLoot_.lootGuid;
         pendingLootMoneyGuid_ = 0;
         pendingLootMoneyAmount_ = 0;
-        pendingLootMoneyNotifyTimer_ = 0.0f;
-        announceLootMoney(notifyGuid, amount);
+        announceLootMoney(notifyGuid, amount, /*share=*/true);
         if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYER_MONEY", {});
         // Both packets report the same thing and a server may send either, so
         // the coin goes on whichever arrives first.
@@ -297,6 +290,15 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         if (amount == currentLoot_.gold) clearLootMoney();
     };
     table[Opcode::SMSG_LOOT_CLEAR_MONEY] = [this](network::Packet& /*packet*/) {
+        // The coin is gone. Outside a group this is the only word the server
+        // sends about it (Loot::SendGold), so the player's own take is
+        // announced here; in a group SMSG_LOOT_MONEY_NOTIFY follows with the
+        // share and announces it.
+        if (pendingLootMoneyAmount_ != 0 && !owner_.isInGroup()) {
+            announceLootMoney(pendingLootMoneyGuid_, pendingLootMoneyAmount_, /*share=*/false);
+            pendingLootMoneyGuid_ = 0;
+            pendingLootMoneyAmount_ = 0;
+        }
         clearLootMoney();
     };
 
@@ -1134,6 +1136,9 @@ void InventoryHandler::confirmPendingLoot() {
 
 void InventoryHandler::lootMoney() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    // What the coin held, for the line SMSG_LOOT_CLEAR_MONEY announces.
+    pendingLootMoneyGuid_ = currentLoot_.lootGuid;
+    pendingLootMoneyAmount_ = currentLoot_.gold;
     auto packet = LootMoneyPacket::build();
     owner_.getSocket()->send(packet);
 }
@@ -1233,14 +1238,8 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
 
     if (autoLoot && currentLoot_.gold > 0) {
         if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
-            bool suppressFallback = false;
-            auto cooldownIt = recentLootMoneyAnnounceCooldowns_.find(currentLoot_.lootGuid);
-            if (cooldownIt != recentLootMoneyAnnounceCooldowns_.end() && cooldownIt->second > 0.0f) {
-                suppressFallback = true;
-            }
-            pendingLootMoneyGuid_ = suppressFallback ? 0 : currentLoot_.lootGuid;
-            pendingLootMoneyAmount_ = suppressFallback ? 0 : currentLoot_.gold;
-            pendingLootMoneyNotifyTimer_ = suppressFallback ? 0.0f : 0.4f;
+            pendingLootMoneyGuid_ = currentLoot_.lootGuid;
+            pendingLootMoneyAmount_ = currentLoot_.gold;
             auto pkt = LootMoneyPacket::build();
             owner_.getSocket()->send(pkt);
             // The coin stays in the window until the server says it is taken.
