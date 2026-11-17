@@ -2529,7 +2529,7 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
         // Render coordinates, yards, degrees, seconds. SDL ticks are process-relative.
         // Contact counts report sweep hits, not distinct objects or defect verdicts.
         LOG_INFO("PLAYTESTER_MOVEMENT {\"tick_ns\":", SDL_GetTicksNS(),
-            ",\"dt\":", deltaTime, ",\"physics_dt\":", f.physicsDeltaTime,
+            ",\"dt\":", deltaTime, ",\"physics_dt\":", f.physicsDeltaTime * steps,
             ",\"position\":[", followTarget->x, ",", followTarget->y, ",", followTarget->z,
             "],\"previous\":[", prevTargetPos.x, ",", prevTargetPos.y, ",", prevTargetPos.z,
             "],\"facing_deg\":", facingYaw, ",\"camera_yaw_deg\":", yaw,
