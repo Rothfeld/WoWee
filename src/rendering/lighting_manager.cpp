@@ -6,6 +6,7 @@
 #include "rendering/light_band_block.hpp"
 #include "rendering/light_volume_order.hpp"
 #include <glm/gtc/constants.hpp>
+#include <cassert>
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -126,6 +127,15 @@ bool LightingManager::loadLightDbc(pipeline::AssetManager* assetManager) {
 
         if (dbc->getFieldCount() > 11) {
             volume.lightParamsIdDeath = dbc->getUInt32(i, 11);
+        }
+        // The map's default row has no position and no radius. It is not a
+        // volume anything is inside of; it fills what the volumes leave.
+        if (dbcX == 0.0f && dbcY == 0.0f && dbcZ == 0.0f &&
+            volume.innerRadius == 0.0f && volume.outerRadius == 0.0f) {
+            volume.isMapDefault = true;
+            [[maybe_unused]] const bool fresh = defaultVolumeByMap_.emplace(volume.mapId, volume).second;
+            assert(fresh && "Light.dbc has two default rows for one map");
+            continue;
         }
         // Add to map-specific list
         lightVolumesByMap_[volume.mapId].push_back(volume);
@@ -317,10 +327,10 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     }
     // else: manualTime_ is set, use timeOfDay_ as-is
 
-    // Duskwood's visible sky is permanently late-night even while the global
-    // world clock continues normally for gameplay and every other zone.
-    visualTimeOfDayHours_ = resolveZoneVisualTimeHours(
-        zoneId, isIndoors_, timeOfDay_ * 24.0f);
+    // The sky is sampled at the world clock everywhere. Duskwood's dark
+    // sky is its own Light row (Light 15, params 14: noon sky top 0,23,33),
+    // not a pinned hour.
+    visualTimeOfDayHours_ = timeOfDay_ * 24.0f;
 
     // Convert visual time to half-minutes (WoW DBC format: 0-2879).
     const float visualDayFraction = visualTimeOfDayHours_ / 24.0f;
@@ -330,7 +340,10 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     currentPlayerPos_ = playerPos;
 
     // Find light volumes for blending
-    activeVolumes_ = findLightVolumes(playerPos, mapId);
+    activeVolumes_ = findLightVolumes(playerPos, mapId, defaultVolumeWeight_);
+    const auto defaultIt = defaultVolumeByMap_.find(mapId);
+    const LightVolume* defaultVolume =
+        defaultIt != defaultVolumeByMap_.end() ? &defaultIt->second : nullptr;
 
     // Smoothing by real time. This assumed sixty frames a second, so on a
     // display running at a hundred and twenty every blend below ran twice as
@@ -361,9 +374,12 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     {
         std::vector<std::pair<std::string, float>> target;
         if (!isIndoors_) {
-            const size_t blendCount = std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES);
-            for (size_t i = 0; i < blendCount; ++i) {
-                const auto& wv = activeVolumes_[i];
+            std::vector<WeightedVolume> blend(
+                activeVolumes_.begin(),
+                activeVolumes_.begin() + std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES));
+            if (defaultVolume && defaultVolumeWeight_ > 0.0f)
+                blend.push_back({.volume = defaultVolume, .weight = defaultVolumeWeight_});
+            for (const auto& wv : blend) {
                 const uint32_t paramsId = selectLightParamsId(wv.volume, isRaining, isUnderwater, isGhost);
                 auto profileIt = lightParamsProfiles_.find(paramsId);
                 if (profileIt == lightParamsProfiles_.end() ||
@@ -407,7 +423,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.fogColor = glm::vec3(0.3f, 0.3f, 0.4f);
         newParams.fogStart = 50.0f;
         newParams.fogEnd = 300.0f;
-    } else if (!activeVolumes_.empty()) {
+    } else if (!activeVolumes_.empty() || defaultVolume) {
         // Outdoor with DBC lighting - blend multiple volumes
         // Default member initializers are fallback lighting, not a zero blend.
         newParams.ambientColor = glm::vec3(0.0f);
@@ -432,9 +448,12 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         // The first MAX_BLEND_VOLUMES only: the list is the whole
         // neighbourhood now, and those are the ones whose weights were
         // normalized to sum to one.
-        const size_t blendCount = std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES);
-        for (size_t i = 0; i < blendCount; ++i) {
-            const auto& wv = activeVolumes_[i];
+        std::vector<WeightedVolume> blend(
+            activeVolumes_.begin(),
+            activeVolumes_.begin() + std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES));
+        if (defaultVolume && defaultVolumeWeight_ > 0.0f)
+            blend.push_back({.volume = defaultVolume, .weight = defaultVolumeWeight_});
+        for (const auto& wv : blend) {
             uint32_t lightParamsId = selectLightParamsId(wv.volume, isRaining, isUnderwater, isGhost);
             auto it = lightParamsProfiles_.find(lightParamsId);
 
@@ -478,7 +497,14 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
             newParams.directionalDir = glm::vec3(0.3f, -0.7f, 0.6f);
         }
     } else {
-        // No light volume, use fallback with time-based animation
+        // No positioned light and no default row on this map (instances
+        // such as map 33 carry neither). Said once per map, because the
+        // colours below are WoWee's own and not authored.
+        if (mapId != loggedNoLightMapId_) {
+            loggedNoLightMapId_ = mapId;
+            LOG_WARNING("Light.dbc has no light for map ", mapId,
+                        " at the player and no default row; using built-in lighting");
+        }
         newParams = fallbackParams_;
 
         // Animate sun direction
@@ -498,10 +524,6 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
             newParams.diffuseColor *= (0.2f + 0.8f * (1.0f - nightness));
             newParams.ambientColor.b += nightness * 0.1f;
         }
-    }
-
-    if (!isIndoors_) {
-        applyZoneAmbienceOverride(zoneId, newParams);
     }
 
     // Fog toward the colour of the sky it is seen against.
@@ -619,7 +641,10 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     currentParams_.directionalDir = glm::normalize(glm::mix(currentParams_.directionalDir, newParams.directionalDir, blendFactor));
 }
 
-std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(const glm::vec3& playerPos, uint32_t mapId) const {
+std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(
+        const glm::vec3& playerPos, uint32_t mapId, float& defaultWeight) const {
+    const bool mapHasDefault = defaultVolumeByMap_.count(mapId) != 0;
+    defaultWeight = mapHasDefault ? 1.0f : 0.0f;
     auto it = lightVolumesByMap_.find(mapId);
     if (it == lightVolumesByMap_.end()) {
         return {};
@@ -673,19 +698,18 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(c
     // and back in as the player walked.
     std::sort(weighted.begin(), weighted.end(), moreSpecific);
 
-    // Normalize the ones that will be blended, so their weights sum to 1.0.
+    // Share the blend between the ones that will be blended and the map's
+    // default row (distributeLightWeights). They used to be normalized to
+    // sum to 1 on their own, so a light at 0.2 in its falloff lit the point
+    // as fully as at its centre and the default row was never used at all.
     // The rest keep the weight they were given; nothing reads it but the
     // skybox walk, which only asks whether they are in range at all.
     const size_t blended = std::min(weighted.size(), MAX_BLEND_VOLUMES);
-    float totalWeight = 0.0f;
-    for (size_t i = 0; i < blended; ++i) {
-        totalWeight += weighted[i].weight;
-    }
-    if (totalWeight > 0.0f) {
-        for (size_t i = 0; i < blended; ++i) {
-            weighted[i].weight /= totalWeight;
-        }
-    }
+    std::vector<float> shares;
+    shares.reserve(blended);
+    for (size_t i = 0; i < blended; ++i) shares.push_back(weighted[i].weight);
+    defaultWeight = distributeLightWeights(shares, mapHasDefault);
+    for (size_t i = 0; i < blended; ++i) weighted[i].weight = shares[i];
 
     // Which volumes this map turned out to have around the player, once.
     //

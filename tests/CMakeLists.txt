@@ -1409,8 +1409,7 @@ wowee_add_test(test_indoor_shadows
 
 # ── test_zone_ambience ─────────────────────────────────────────
 wowee_add_test(test_zone_ambience
-    SOURCES test_zone_ambience.cpp
-            ${CMAKE_SOURCE_DIR}/src/rendering/zone_ambience.cpp)
+    SOURCES test_zone_ambience.cpp)
 
 # ── test_transport_components ────────────────────────────────
 wowee_add_test(test_transport_components

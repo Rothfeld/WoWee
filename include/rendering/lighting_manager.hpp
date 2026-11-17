@@ -42,11 +42,6 @@ struct LightingParams {
     float horizonGlow = 0.3f;                       // Horizon glow intensity
 };
 
-/** Apply any authored ambience that must remain stable regardless of world time. */
-void applyZoneAmbienceOverride(uint32_t zoneId, LightingParams& params);
-
-/** Resolve the sky clock shown for a zone without changing the world clock. */
-float resolveZoneVisualTimeHours(uint32_t zoneId, bool isIndoors, float worldTimeHours);
 
 /**
  * Light set keyframe for time-of-day interpolation
@@ -87,6 +82,10 @@ struct LightVolume {
     uint32_t lightParamsIdUnderwaterRain = 0;
     uint32_t lightParamsIdDeath = 0;
     // More variants exist for phases, death, etc.
+
+    /// The map's default row: position 0,0,0 and radius 0 (Light 1 on map 0,
+    /// Light 191 on map 1). It lights everywhere no positioned light covers.
+    bool isMapDefault = false;
 };
 
 /**
@@ -200,7 +199,7 @@ public:
      * @param playerPos Player world position
      * @param mapId Current map ID
      * @param gameTime Optional game time in seconds (use -1 for real time)
-     * @param isRaining Whether it's raining
+     * @param isRaining Whether precipitation (rain, snow, sand) selects the storm params
      * @param isUnderwater Whether player is underwater
      *
      * Note: WoW uses server-sent game time, not local PC time.
@@ -290,7 +289,8 @@ private:
     /**
      * Find light volumes for blending (up to 4 with weight > 0)
      */
-    [[nodiscard]] std::vector<WeightedVolume> findLightVolumes(const glm::vec3& playerPos, uint32_t mapId) const;
+    [[nodiscard]] std::vector<WeightedVolume> findLightVolumes(const glm::vec3& playerPos, uint32_t mapId,
+                                                               float& defaultWeight) const;
 
     /**
      * Get LightParams ID based on conditions
@@ -328,6 +328,11 @@ private:
     // Current state
     LightingParams currentParams_;
     std::vector<WeightedVolume> activeVolumes_;
+    /// Weight of the map's default Light row at the player (see
+    /// distributeLightWeights); 0 where positioned lights cover the point.
+    float defaultVolumeWeight_ = 0.0f;
+    std::map<uint32_t, LightVolume> defaultVolumeByMap_;
+    uint32_t loggedNoLightMapId_ = 0xFFFFFFFFu;
     glm::vec3 currentPlayerPos_{0.0f};
     float timeOfDay_ = 0.5f;  // Start at noon
     float visualTimeOfDayHours_ = 12.0f;

@@ -22,6 +22,7 @@
 /// identical extent still cannot swap places between frames.
 
 #include <cstdint>
+#include <vector>
 
 namespace wowee::rendering {
 
@@ -35,6 +36,26 @@ inline bool lightVolumeOrderedBefore(float weightA, float outerRadiusA, uint32_t
     if (weightA != weightB) return weightA > weightB;
     if (outerRadiusA != outerRadiusB) return outerRadiusA < outerRadiusB;
     return idA < idB;
+}
+
+/// Share of the map's default Light row (Light.dbc position 0,0,0 and radius
+/// 0, e.g. Light 1 on map 0) at a point, given the falloff weights of the
+/// positioned lights blended there. The weights are rescaled in place.
+///
+/// The default row is the light of everywhere no positioned light covers,
+/// so it takes whatever the positioned lights leave: one light at 0.3 in its
+/// falloff gives the default 0.7. Overlapping lights that together exceed 1
+/// are normalized and leave the default nothing. Without a default row the
+/// positioned lights are normalized to 1 as before.
+inline float distributeLightWeights(std::vector<float>& weights, bool mapHasDefault) {
+    float total = 0.0f;
+    for (float w : weights) total += w;
+    if (total <= 0.0f) return mapHasDefault ? 1.0f : 0.0f;
+    if (total >= 1.0f || !mapHasDefault) {
+        for (float& w : weights) w /= total;
+        return 0.0f;
+    }
+    return 1.0f - total;
 }
 
 }  // namespace wowee::rendering

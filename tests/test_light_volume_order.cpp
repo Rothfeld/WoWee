@@ -105,3 +105,27 @@ TEST_CASE("the chosen pair does not depend on what else is in the list",
         CHECK(list[1].id == expected[1].id);
     }
 }
+
+TEST_CASE("The map's default Light row fills what positioned lights leave", "[light-blend]") {
+    using wowee::rendering::distributeLightWeights;
+    // One light at 0.3 in its falloff: the default row takes 0.7.
+    std::vector<float> one{0.3f};
+    CHECK(distributeLightWeights(one, true) == Catch::Approx(0.7f));
+    CHECK(one[0] == Catch::Approx(0.3f));
+    // Inside a light's inner radius: the default takes nothing (Dun Morogh,
+    // Light 22 at 348 yd of its 737 yd inner radius).
+    std::vector<float> full{1.0f};
+    CHECK(distributeLightWeights(full, true) == Catch::Approx(0.0f));
+    // Two overlapping falloffs over 1 are normalized (Rut'theran dock,
+    // Lights 269 and 200).
+    std::vector<float> two{0.9f, 0.9f};
+    CHECK(distributeLightWeights(two, true) == Catch::Approx(0.0f));
+    CHECK(two[0] + two[1] == Catch::Approx(1.0f));
+    // Nothing positioned: all default.
+    std::vector<float> none;
+    CHECK(distributeLightWeights(none, true) == Catch::Approx(1.0f));
+    // A map without a default row keeps its lights normalized to 1.
+    std::vector<float> noDefault{0.3f};
+    CHECK(distributeLightWeights(noDefault, false) == Catch::Approx(0.0f));
+    CHECK(noDefault[0] == Catch::Approx(1.0f));
+}
