@@ -1133,7 +1133,10 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
             ImVec2(x - half, y - half), ImVec2(x + half, y + half),
             ImVec2(7.0f / 8, 0), ImVec2(1, 1.0f / 8));
     };
+    // Only for a ghost: a GM is sent spirit healers alive too, and native
+    // (GM, alive, The Stair of Destiny) marks none.
     for (const auto& entity : gameHandler.getEntityManager().getEntities()) {
+        if (!gameHandler.isPlayerGhost()) break;
         if (!entity.second || entity.second->getType() != game::ObjectType::UNIT) continue;
         const auto unit = std::static_pointer_cast<game::Unit>(entity.second);
         if ((unit->getNpcFlags() & game::NPC_FLAG_SPIRIT_HEALER) == 0) continue;

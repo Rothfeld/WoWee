@@ -6228,7 +6228,9 @@ void registerSystemLuaAPI(lua_State* L) {
                 const uint32_t liveZoneId = svc->getLiveZoneId();
                 if (liveZoneId != 0) zoneId = liveZoneId;
             }
-            const auto [type, faction] = gh->getZonePvpInfo(zoneId);
+            uint32_t areaId = 0;
+            if (auto* svc = getLuaServices(L); svc && svc->getLiveAreaId) areaId = svc->getLiveAreaId();
+            const auto [type, faction] = gh->getZonePvpInfo(zoneId, areaId);
             if (type.empty()) { lua_pushnil(L); return 1; }
             lua_pushstring(L, type.c_str());
             lua_pushnil(L);

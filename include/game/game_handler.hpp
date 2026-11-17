@@ -4108,12 +4108,23 @@ public:
     ///
     /// Goes through getAreaName first because that is what fills the cache
     /// this reads, and it is lazy.
-    std::pair<std::string, std::string> getZonePvpInfo(uint32_t zoneId) const {
+    /// `areaId` is the subzone being stood in (0 for none): sanctuary and
+    /// arena are flags of the area itself - The Stair of Destiny (3539) is a
+    /// sanctuary inside contested Hellfire Peninsula, cyan in native - while
+    /// the faction team comes from the zone.
+    std::pair<std::string, std::string> getZonePvpInfo(uint32_t zoneId, uint32_t areaId = 0) const {
         (void)getAreaName(zoneId);
         auto it = areaPvpCache_.find(zoneId);
         if (it == areaPvpCache_.end()) return {};
         constexpr uint32_t kAreaFlagArena     = 0x00000080;
         constexpr uint32_t kAreaFlagSanctuary = 0x00000800;
+        if (areaId != 0 && areaId != zoneId) {
+            (void)getAreaName(areaId);
+            if (auto area = areaPvpCache_.find(areaId); area != areaPvpCache_.end()) {
+                if (area->second.flags & kAreaFlagSanctuary) return {"sanctuary", ""};
+                if (area->second.flags & kAreaFlagArena)     return {"arena", ""};
+            }
+        }
         // AreaTable team: 2 Alliance, 4 Horde, 0 contested. In the TBC data
         // all 137 team-0 zones are the contested ones (Duskwood, Wetlands,
         // Swamp of Sorrows, The Temple of Atal'Hakkar), whose title native
