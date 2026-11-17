@@ -974,6 +974,13 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
             glowVBMapped_[f] = allocInfo.pMappedData;
         }
 
+        // Projected-texture grids, in the M2 vertex layout.
+        bci.size = MAX_PROJECTED_VERTS * sizeof(projected_texture::Vertex);
+        for (uint32_t f = 0; f < kParticleFrames; ++f) {
+            vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &projectedVB_[f], &projectedVBAlloc_[f], &allocInfo);
+            projectedVBMapped_[f] = allocInfo.pMappedData;
+        }
+
         // Ribbon vertex buffer - triangle strip: pos(3)+color(3)+alpha(1)+uv(2)=9 floats/vert
         bci.size = MAX_RIBBON_VERTS * 9 * sizeof(float);
         for (uint32_t f = 0; f < kParticleFrames; ++f) {
@@ -1110,6 +1117,9 @@ void M2Renderer::shutdown() {
         destroy(alloc, ribbonVB_[f], ribbonVBAlloc_[f]);
         destroy(alloc, particleMeshVB_[f], particleMeshVBAlloc_[f]);
         destroy(alloc, glowVB_[f], glowVBAlloc_[f]);
+        destroy(alloc, projectedVB_[f], projectedVBAlloc_[f]);
+        projectedVBMapped_[f] = nullptr;
+        projectedDraws_[f].clear();
     }
 
     // Destroy pipelines
@@ -2361,6 +2371,17 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                           " glowSize=", bgpu.glowSize,
                           " tex=", bgpu.texture,
                           " idxCount=", bgpu.indexCount);
+            }
+            if (batch.flags & projected_texture::kBatchFlagProjected) {
+                // One quad in every TBC model that sets it; anything else is
+                // drawn as authored and said.
+                if (bgpu.indexCount == 6) {
+                    bgpu.projected = true;
+                    gpuModel.hasProjectedBatches = true;
+                } else {
+                    LOG_WARNING("M2 '", gpuModel.name, "': projected-texture batch with ",
+                                bgpu.indexCount, " indices is not one quad - drawn unprojected");
+                }
             }
             gpuModel.batches.push_back(bgpu);
         }

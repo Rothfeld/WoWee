@@ -1969,6 +1969,24 @@ float Renderer::sampleSunOcclusion() const {
     return 0.0f;
 }
 
+void Renderer::updateM2ProjectedTextures() {
+    if (!m2Renderer) return;
+    // The floor nearest the quad's own height within reach: terrain, or the
+    // WMO floor closest to the quad (a lower floor under an overhang stays
+    // lower). Doodad (M2) surfaces do not receive it.
+    m2Renderer->updateProjectedTextures(
+        [this](float x, float y, float planeZ, float reach) -> std::optional<float> {
+            std::optional<float> best;
+            auto consider = [&](std::optional<float> h) {
+                if (!h || std::abs(*h - planeZ) > reach) return;
+                if (!best || std::abs(*h - planeZ) < std::abs(*best - planeZ)) best = h;
+            };
+            if (terrainManager) consider(terrainManager->getHeightAt(x, y));
+            if (wmoRenderer) consider(wmoRenderer->getFloorHeight(x, y, planeZ + reach, nullptr, planeZ));
+            return best;
+        });
+}
+
 void Renderer::update(float deltaTime) {
     ZoneScopedN("Renderer::update");
     globalTime += deltaTime;
@@ -3113,6 +3131,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         auto prepStart = std::chrono::steady_clock::now();
         if (wmoRenderer) wmoRenderer->prepareRender();
         auto prepWmoEnd = std::chrono::steady_clock::now();
+        updateM2ProjectedTextures();
         if (m2Renderer && camera) m2Renderer->prepareRender(frameIdx, *camera);
         if (drawSkyModels && camera)
             skyboxModelRenderer_->prepareRender(frameIdx, *camera);
@@ -3443,6 +3462,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 // Use isInsideInteriorWMO (flag 0x2000) for correct indoor detection
                 m2Renderer->setInsideInterior(cameraController->isInsideInteriorWMO());
             }
+            updateM2ProjectedTextures();
             m2Renderer->prepareRender(frameIdx, *camera);
             if (characterRenderer && !skipChars) characterRenderer->prepareRender(frameIdx);
             auto m2Start = std::chrono::steady_clock::now();

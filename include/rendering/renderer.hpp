@@ -240,6 +240,8 @@ public:
     const std::vector<pipeline::CustomZoneInfo>& getCustomZones() const { return customZones_; }
 
 private:
+    // Lays the M2 projected-texture quads onto the ground for this frame.
+    void updateM2ProjectedTextures();
     std::function<void(VkCommandBuffer)> afterInterface_;
 
     // True when water is drawn in the scene continuation pass rather than in

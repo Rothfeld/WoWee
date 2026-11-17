@@ -1056,6 +1056,20 @@ says nothing about gait. Gait comes from spline speed, which is the walk speed
 (confuse) or run speed (fear). Charm uses the same path but was not checked
 live.
 
+### Projected ground textures
+
+`build/bin/test_projected_texture` checks the draping. An M2 skin batch with
+flag 0x4 is a projected texture: in the TBC data every such batch is a single
+quad (533 of them, mostly under `Spells/`), such as LavaGround in
+Flamestrike_Impact_Base and CrackedGround in ThunderClap_Cast_Base (War
+Stomp). The original client lays these onto the ground. WoWee rebuilds each
+one per frame as a grid with about 1 yard spacing, set on the terrain or the
+WMO floor nearest the quad's height. The grid keeps the quad's texture
+coordinates (a vertical projection) and draws through the normal M2
+material, blend and animation path. Doodad (M2) surfaces do not receive it,
+and vertical faces such as step risers stay bare. In UBRS the original also
+paints step sides.
+
 ### Tab targeting
 
 `build/bin/test_tab_target` checks the rule. Tab (TargetNearestEnemy) and

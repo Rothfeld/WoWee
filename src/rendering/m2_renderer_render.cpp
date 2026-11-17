@@ -26,6 +26,8 @@
 #include "core/profiler.hpp"
 #include <chrono>
 #include <cctype>
+#include <cstring>
+#include <span>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -703,6 +705,92 @@ static const bool kM2NoSkinning = envFlagEnabled("WOWEE_M2_NO_SKINNING");
 // unchanged unless explicitly requested for an in-game comparison.
 static const bool kM2NoFoliageWind = envFlagEnabled("WOWEE_M2_NO_FOLIAGE_WIND");
 
+void M2Renderer::updateProjectedTextures(const ProjectedSurfaceQuery& surface) {
+    if (!initialized_) return;
+    const uint32_t frame = vkCtx_->getCurrentFrame();
+    auto& draws = projectedDraws_[frame];
+    draws.clear();
+    ++projectedFrameSerial_;
+    auto* dst = static_cast<projected_texture::Vertex*>(projectedVBMapped_[frame]);
+    if (!dst) return;
+    uint32_t written = 0;
+    for (const auto& instance : instances) {
+        const M2ModelGPU* model = instance.cachedModel;
+        if (!model || !model->hasProjectedBatches) continue;
+        const bool animated = model->hasAnimation && !model->disableAnimation;
+        if (animated && instance.boneMatrices.empty()) continue;
+        for (size_t bi = 0; bi < model->batches.size(); ++bi) {
+            const auto& batch = model->batches[bi];
+            if (!batch.projected) continue;
+            assert(batch.indexStart + 6 <= model->pickIndices.size());
+            const auto order = projected_texture::orderQuadCorners(
+                std::span<const uint16_t, 6>(model->pickIndices.data() + batch.indexStart, 6));
+            std::array<projected_texture::Corner, 4> corners;
+            bool degenerate = false;
+            for (int k = 0; k < 4; ++k) {
+                assert(order[k] < model->pickVertices.size());
+                const auto& v = model->pickVertices[order[k]];
+                glm::mat4 skin(1.0f);
+                if (animated) {
+                    // As m2.vert: weights over clamped bone indices (indices
+                    // above 127 are clamped at upload).
+                    skin = glm::mat4(0.0f);
+                    const int boneCount = static_cast<int>(instance.boneMatrices.size());
+                    for (int w = 0; w < 4; ++w) {
+                        const int idx = std::clamp(static_cast<int>(std::min<uint8_t>(v.boneIndices[w], 127)),
+                                                   0, boneCount - 1);
+                        skin += instance.boneMatrices[static_cast<size_t>(idx)] * (v.boneWeights[w] / 255.0f);
+                    }
+                }
+                const glm::mat4 toWorld = instance.modelMatrix * skin;
+                corners[k].position = glm::vec3(toWorld * glm::vec4(v.position, 1.0f));
+                corners[k].normal = glm::vec3(toWorld * glm::vec4(v.normal, 0.0f));
+                corners[k].uv0 = v.texCoords[0];
+                corners[k].uv1 = v.texCoords[1];
+            }
+            // A quad scaled to nothing (authored hidden phase) draws nothing.
+            const glm::vec3 e1 = corners[1].position - corners[0].position;
+            const glm::vec3 e2 = corners[3].position - corners[0].position;
+            if (glm::length(glm::cross(e1, e2)) < 1e-6f) degenerate = true;
+            if (degenerate) continue;
+
+            const uint64_t key = (static_cast<uint64_t>(instance.id) << 16) | static_cast<uint64_t>(bi);
+            auto& cache = projectedCache_[key];
+            bool same = !cache.vertices.empty();
+            for (int k = 0; k < 4 && same; ++k) {
+                same = glm::all(glm::lessThan(glm::abs(cache.corners[k] - corners[k].position), glm::vec3(1e-4f)));
+            }
+            if (!same) {
+                const glm::vec3 origin = glm::vec3(instance.modelMatrix[3]);
+                projected_texture::buildGrid(corners, origin, surface, cache.vertices);
+                for (int k = 0; k < 4; ++k) cache.corners[k] = corners[k].position;
+                cache.origin = origin;
+            }
+            cache.lastFrameSerial = projectedFrameSerial_;
+            const auto count = static_cast<uint32_t>(cache.vertices.size());
+            if (written + count > MAX_PROJECTED_VERTS) {
+                if (!warnedProjectedOverflow_) {
+                    warnedProjectedOverflow_ = true;
+                    LOG_WARNING("M2 projected textures: more than ", MAX_PROJECTED_VERTS,
+                                " vertices in one frame; the rest are not drawn");
+                }
+                continue;
+            }
+            std::memcpy(dst + written, cache.vertices.data(), count * sizeof(projected_texture::Vertex));
+            draws[key] = ProjectedDraw{written, count, cache.origin};
+            written += count;
+        }
+    }
+    if (written > 0) {
+        vmaFlushAllocation(vkCtx_->getAllocator(), projectedVBAlloc_[frame], 0,
+                           written * sizeof(projected_texture::Vertex));
+    }
+    // Instances that are gone, or whose quad vanished, drop their grids.
+    std::erase_if(projectedCache_, [&](const auto& entry) {
+        return entry.second.lastFrameSerial != projectedFrameSerial_;
+    });
+}
+
 void M2Renderer::prepareRender(uint32_t frameIndex, const Camera& camera) {
     if (!initialized_ || instances.empty()) return;
     (void)camera;  // reserved for future frustum-based culling
@@ -1197,7 +1285,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             const bool faded = instance.fade < 0.999f;
             if (!faded) out.opaque.push_back(visible);
             if (faded || (instance.cachedModel &&
-                (instance.cachedModel->hasTransparentBatches || instance.cachedModel->isSpellEffect))) {
+                (instance.cachedModel->hasTransparentBatches || instance.cachedModel->isSpellEffect ||
+                 instance.cachedModel->hasProjectedBatches))) {
                 out.transparent.push_back(visible);
             }
         }
@@ -1754,7 +1843,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     // sprites are generated before the mesh moves to pass 2.
                     const bool rawTransparent = m2BatchIsTransparent(
                         batch.blendMode, model.isSpellEffect, batch.hasAuthoredMaterial);
-                    if (rawTransparent) continue;
+                    if (rawTransparent || batch.projected) continue;
 
 
                     // Handle texture animation: if this batch has per-instance uvOffset,
@@ -1976,7 +2065,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             currentModelValid = false;
             currentModel = instance.cachedModel;
             if (!currentModel) continue;
-            if (!currentModel->hasTransparentBatches && !currentModel->isSpellEffect) continue;
+            if (!currentModel->hasTransparentBatches && !currentModel->isSpellEffect && !currentModel->hasProjectedBatches) continue;
             if (!currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
             currentModelValid = true;
             VkDeviceSize vbOff = 0;
@@ -2021,10 +2110,20 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
             // Pass 2 gate: only transparent/additive batches - or, for a faded
             // instance, every batch, since the opaque pass left it out.
+            // Projected textures all draw here, over the opaque ground.
             {
                 const bool rawTransparent = m2BatchIsTransparent(
                     batch.blendMode, model.isSpellEffect, batch.hasAuthoredMaterial) || instanceFaded;
-                if (!rawTransparent) continue;
+                if (!rawTransparent && !batch.projected) continue;
+            }
+            const ProjectedDraw* projectedDraw = nullptr;
+            if (batch.projected) {
+                const uint64_t key = (static_cast<uint64_t>(instance.id) << 16) |
+                    static_cast<uint64_t>(&batch - model.batches.data());
+                const auto& draws = projectedDraws_[vkCtx_->getCurrentFrame()];
+                const auto it = draws.find(key);
+                if (it == draws.end()) continue;
+                projectedDraw = &it->second;
             }
 
             // WOWEE_SKY_M2_SKIP_BLEND=<n> drops the sky's layers of one blend
@@ -2102,6 +2201,13 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             e.boneCount = static_cast<int32_t>(instance.boneMatrices.size());
             e.highlight = instance.highlight;
             e.flags = static_cast<int32_t>(instance.indoorLighting);
+            if (projectedDraw) {
+                // The grid is already in place in the world, relative to
+                // the instance origin.
+                e.model = glm::translate(glm::mat4(1.0f), projectedDraw->origin);
+                e.useBones = 0;
+                e.boneBase = 0;
+            }
             instanceDataCount_++;
 
             // Pipeline selection
@@ -2142,7 +2248,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             fillSway(pc, model, skyMode_);
             pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
             vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
-            vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
+            if (projectedDraw) {
+                const VkDeviceSize projectedOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &projectedVB_[vkCtx_->getCurrentFrame()], &projectedOffset);
+                vkCmdDraw(cmd, projectedDraw->vertexCount, 1, projectedDraw->firstVertex, 0);
+                const VkDeviceSize modelOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &model.vertexBuffer, &modelOffset);
+            } else {
+                vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
+            }
             if (skyMode_) ++skyDiagDrawsTransparent_;
             lastDrawCallCount++;
         }
@@ -2451,6 +2565,7 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
 
             for (const auto& batch : model.batches) {
                 if (batch.submeshLevel > 0) continue;
+                if (batch.projected) continue;  // laid on the ground, casts nothing
                 // A leaf card with no texture is a shadow with no caster.
                 //
                 // The else below binds the white set, whose alpha test passes

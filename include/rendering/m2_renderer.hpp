@@ -9,9 +9,11 @@
 #include "pipeline/blp_loader.hpp"
 #include "pipeline/grass_clearing.hpp"
 #include "rendering/m2_model_classifier.hpp"
+#include "rendering/projected_texture.hpp"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <glm/glm.hpp>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <unordered_map>
@@ -70,6 +72,7 @@ struct M2ModelGPU {
         uint16_t blendMode = 0;   // 0=Opaque, 1=AlphaKey, 2=Alpha, 3=Add, etc.
         uint16_t materialFlags = 0; // M2 material flags (0x01=Unlit, 0x04=TwoSided, 0x10=NoDepthWrite)
         bool hasAuthoredMaterial = false; // missing flags must not be guessed as one-sided
+        bool projected = false;   // skin batch flag 0x4: texture laid onto the ground under the quad
         uint16_t submeshLevel = 0; // LOD level: 0=base, 1=LOD1, 2=LOD2, 3=LOD3
         int16_t textureUnit = 0; // UV set, or -1 for environment mapping
         uint8_t texFlags = 0;     // M2Texture.flags (bit0=WrapS, bit1=WrapT)
@@ -173,6 +176,7 @@ struct M2ModelGPU {
     bool hasAnimation = false;  // True if any bone has keyframes
     uint32_t rtMesh = ~0u;      // RtScene mesh, or ~0u when it does not cast
     bool isSpellEffect = false;  // True for spell effect models (skip particle dampeners)
+    bool hasProjectedBatches = false;
     /// Loaded by SpellVisualSystem for a spell visual, not placed in the world.
     bool isRuntimeSpellVisual = false;
     bool disableAnimation = false; // Keep foliage/tree doodads visually stable
@@ -475,6 +479,13 @@ public:
     void updateExternalPoseEffects(float deltaTime);
 
     void update(float deltaTime, const glm::vec3& cameraPos, const glm::mat4& viewProjection);
+
+    /// Height of the floor a projected texture lands on at (x, y), within
+    /// [planeZ - reach, planeZ + reach]. See projected_texture.hpp.
+    using ProjectedSurfaceQuery = std::function<std::optional<float>(float x, float y, float planeZ, float reach)>;
+    /// Drape this frame's projected-texture quads over the ground. Main thread,
+    /// after update() has posed the instances and before render().
+    void updateProjectedTextures(const ProjectedSurfaceQuery& surface);
 
     /**
      * Render all visible instances (Vulkan)
@@ -999,6 +1010,27 @@ private:
     ::VkBuffer glowVB_[kParticleFrames] = {};
     VmaAllocation glowVBAlloc_[kParticleFrames] = {};
     void* glowVBMapped_[kParticleFrames] = {};
+    // Projected-texture quads draped over the ground, rebuilt per frame.
+    static constexpr size_t MAX_PROJECTED_VERTS = 65536;
+    ::VkBuffer projectedVB_[kParticleFrames] = {};
+    VmaAllocation projectedVBAlloc_[kParticleFrames] = {};
+    void* projectedVBMapped_[kParticleFrames] = {};
+    struct ProjectedDraw {
+        uint32_t firstVertex = 0;
+        uint32_t vertexCount = 0;
+        glm::vec3 origin{0.0f};
+    };
+    // Key: instance id << 16 | batch index.
+    std::unordered_map<uint64_t, ProjectedDraw> projectedDraws_[kParticleFrames];
+    struct ProjectedCache {
+        std::array<glm::vec3, 4> corners{};
+        glm::vec3 origin{0.0f};
+        std::vector<projected_texture::Vertex> vertices;
+        uint32_t lastFrameSerial = 0;
+    };
+    std::unordered_map<uint64_t, ProjectedCache> projectedCache_;
+    uint32_t projectedFrameSerial_ = 0;
+    bool warnedProjectedOverflow_ = false;
 
     std::unordered_map<uint32_t, M2ModelGPU> models;
     // Grace period for model cleanup: track when a model first became instanceless.

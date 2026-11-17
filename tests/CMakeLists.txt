@@ -2917,3 +2917,7 @@ endif()
 
 # Expansion-specific spell failure normalization.
 wowee_add_test(test_tbc_cast_results SOURCES test_tbc_cast_results.cpp)
+
+# Projected-texture M2 quads draped over the ground. Header-only.
+wowee_add_test(test_projected_texture
+    SOURCES test_projected_texture.cpp)
