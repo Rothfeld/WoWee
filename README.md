@@ -27,6 +27,11 @@ macOS, Windows and Android.
 [Hear the soundtrack](https://kelsidavis.bandcamp.com/album/wowee-soundtrack)
 
 TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-effects.md).
+Spline particle trails retain their animated emitter's birth pose in model
+space. Reapplying the current bone to every live particle collapses Draenei
+holographic rune trails into bright bulbs.
+Matrix-created WMO doodad particles use authored placement scale for sprite
+width. See [authored particle motion](docs/authored-particles.md).
 Ground clutter uses expansion-specific DBC layouts. Vanilla/TBC
 `GroundEffectTexture.dbc` has seven columns: ID, four doodad IDs, density,
 terrain type. Its doodad slots have equal weights; `0xffffffff` means empty.

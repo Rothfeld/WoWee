@@ -177,8 +177,8 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             if (em.bone < inst.boneMatrices.size()) {
                 boneXform = inst.boneMatrices[em.bone];
             }
-            const glm::mat4 birthTransform = (em.flags & kParticleInModelSpace)
-                ? glm::mat4(1.0f) : inst.modelMatrix * boneXform;
+            const glm::mat4 birthTransform = particleBirthTransform(
+                em.flags, em.emitterType, inst.modelMatrix, boneXform);
             p.position = glm::vec3(birthTransform * glm::vec4(localPos, 1.0f));
 
             // Velocity: emission speed in upward direction + random spread
@@ -688,6 +688,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         // which model it is. This does.
         float highestParticleZ = -std::numeric_limits<float>::max();
         float widestParticle = 0.0f;
+        const float placementScale = particlePlacementScale(inst.modelMatrix);
 
         for (const auto& p : inst.particles) {
             if (p.emitterIndex < 0 || p.emitterIndex >= static_cast<int>(gpu.particleEmitters.size())) continue;
@@ -699,7 +700,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 if ((cachedEm->flags & kParticleInModelSpace) && !gpu.bones.empty()) {
                     bone = inst.boneMatrices.at(cachedEm->bone);
                 }
-                cachedParticleTransform = particleRenderTransform(cachedEm->flags, inst.modelMatrix, bone);
+                cachedParticleTransform = particleRenderTransform(
+                    cachedEm->flags, inst.modelMatrix, bone, cachedEm->emitterType);
 
                 cachedTex = whiteTexture_.get();
                 if (p.emitterIndex < static_cast<int>(gpu.particleTextures.size())) {
@@ -766,7 +768,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[4] = color.g;
                 vd[5] = color.b;
                 vd[6] = alpha;
-                vd[7] = scale * inst.scale;
+                vd[7] = scale * placementScale;
                 float tileIndex = p.tileIndex;
                 if (cachedIsTiled) {
                     tileIndex = p.tileIndex + static_cast<float>(cachedAnimFrame);

@@ -94,6 +94,33 @@ TEST_CASE("Living portal particles follow their rotating emitter bone", "[m2][pa
     CHECK(particleRenderTransform(0x19, model, bone) * position == position);
     CHECK(particleRenderTransform(0x19, model, bone) * velocity == velocity);
 }
+TEST_CASE("Spline trails retain separate birth poses while their model moves", "[m2][particle]") {
+    using namespace wowee::rendering;
+    const auto model = glm::translate(glm::mat4(1), glm::vec3(10, 0, 0));
+    const auto birthBone = glm::translate(glm::mat4(1), glm::vec3(0, 2, 0));
+    const auto currentBone = glm::translate(glm::mat4(1), glm::vec3(0, 4, 0));
+    const glm::vec4 origin(0,0,0,1);
+    const auto render = particleRenderTransform(0x229, model, currentBone, 3);
+    CHECK(render * particleBirthTransform(0x229,3,model,birthBone) * origin == glm::vec4(10,2,0,1));
+    CHECK(render * particleBirthTransform(0x229,3,model,currentBone) * origin == glm::vec4(10,4,0,1));
+}
+
+TEST_CASE("Particle widths follow authored matrix placement scale", "[m2][particle]") {
+    using wowee::rendering::particlePlacementScale;
+    // Exodar MODD: DR_DRAENEI_HOLORUNES02_BIG at -4108.62,-11523.8.
+    const float authoredScale = 0.4504f;
+    const auto placement = glm::translate(glm::mat4(1), glm::vec3(-4108.62f, -11523.8f, -135.668f))
+        * glm::rotate(glm::mat4(1), 1.37f, glm::normalize(glm::vec3(1, 2, 3)))
+        * glm::scale(glm::mat4(1), glm::vec3(authoredScale));
+    CHECK(particlePlacementScale(placement) == Catch::Approx(authoredScale));
+    CHECK(0.611111f * particlePlacementScale(placement) == Catch::Approx(0.2752444f));
+    CHECK(particlePlacementScale(glm::mat4(1)) == Catch::Approx(1));
+    CHECK(particlePlacementScale(glm::scale(glm::mat4(1), glm::vec3(6.18096f)))
+        == Catch::Approx(6.18096f));
+    CHECK(particlePlacementScale(glm::scale(glm::mat4(1), glm::vec3(-2))) == Catch::Approx(2));
+    CHECK(particlePlacementScale(glm::scale(glm::mat4(1), glm::vec3(0))) == 0);
+}
+
 TEST_CASE("Flat spherical emitters spread across their area and travel radially", "[m2][particle]") {
     using wowee::rendering::sphericalParticleEmission;
     const auto horizontal = sphericalParticleEmission(2, 4, 0, 0, 1, 0x429);
