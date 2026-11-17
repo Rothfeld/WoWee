@@ -2664,10 +2664,18 @@ void registerUnitLuaAPI(lua_State* L) {
                                 gh->getPartyData().leaderGuid == guid) ? 1 : 0);
             return 1;
         }},
+                // Whether the token names a CORPSE object. Build 8606 resolves
+                // the token and looks the guid up with TYPEMASK_CORPSE (0x80)
+                // only, so a dead creature or player is not a corpse here:
+                // TargetFrame_CheckLevel shows a dead creature's level and
+                // keeps the skull for real corpse objects.
                 {"UnitIsCorpse", [](lua_State* L) -> int {
-            const char* uid = luaL_optstring(L, 1, "player");
-            auto* unit = resolveUnit(L, uid);
-            lua_pushboolean(L, (unit && unit->getHealth() == 0) ? 1 : 0);
+            auto* gh = getGameHandler(L);
+            std::string uid = luaL_optstring(L, 1, "player");
+            toLowerInPlace(uid);
+            const uint64_t guid = gh ? resolveUnitGuid(gh, uid) : 0;
+            const auto entity = guid ? gh->getEntityManager().getEntity(guid) : nullptr;
+            lua_pushboolean(L, entity && entity->getType() == game::ObjectType::CORPSE);
             return 1;
         }},
                 // Whether the first unit may help the second - only a friendly

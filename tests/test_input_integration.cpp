@@ -1743,6 +1743,35 @@ TEST_CASE_METHOD(Integration, "Untrained corpse tooltip exposes red skinning req
     lua.setGameHandler(nullptr);
 }
 
+// Build 8606 UnitIsCorpse looks the token's guid up with TYPEMASK_CORPSE only,
+// so TargetFrame_CheckLevel shows a dead creature's level, not the skull.
+TEST_CASE_METHOD(Integration, "Dead creature target is not a corpse object and keeps its level", "[corpse][target]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    constexpr uint64_t guid = 0xf1300016df000075ull;  // Magma Elemental, entry 5855
+    auto elemental = std::make_shared<Unit>(guid);
+    elemental->setName("Magma Elemental");
+    elemental->setEntry(5855);
+    elemental->setLevel(46);
+    elemental->setHealth(0);
+    elemental->setMaxHealth(2000);
+    elemental->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), 46);
+    handler.getEntityManager().addEntity(guid, elemental);
+    handler.setTarget(guid);
+    truth("UnitIsDead('target')");
+    truth("not UnitIsCorpse('target')");
+    truth("UnitLevel('target') == 46");
+    constexpr uint64_t corpseGuid = 0xf101000000000075ull;
+    handler.getEntityManager().addEntity(corpseGuid, std::make_shared<Entity>(corpseGuid));
+    handler.getEntityManager().getEntity(corpseGuid)->setType(ObjectType::CORPSE);
+    handler.setMouseoverGuid(corpseGuid);
+    truth("UnitIsCorpse('mouseover')");
+    handler.setMouseoverGuid(0);
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of player faction metadata", "[companion][tooltip]") {
     using namespace wowee::game;
     replay::Session session("tbc");
