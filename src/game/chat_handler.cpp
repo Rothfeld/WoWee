@@ -340,6 +340,16 @@ void ChatHandler::sendChatMessage(ChatType type, const std::string& message, con
         return;
     }
 
+    // A corpse cannot speak in public. Build 8606 refuses say, yell and emote
+    // with ERR_CHAT_WHILE_DEAD and sends nothing; whisper, party, guild and
+    // channel still go out (observed on the original client, dead, not yet
+    // released). GM commands typed as say are refused the same way.
+    if (owner_.isPlayerDead() && !owner_.isPlayerGhost() &&
+        (type == ChatType::SAY || type == ChatType::YELL || type == ChatType::EMOTE)) {
+        owner_.addUIError("You can't chat when you're dead!");
+        return;
+    }
+
     LOG_INFO("OUTGOING CHAT: type=", static_cast<int>(type),
              " (", getChatTypeString(type), ") target='", target, "' msg='", message.substr(0, 60), "'");
 
