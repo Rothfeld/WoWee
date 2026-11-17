@@ -108,7 +108,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // HeadEffect uses the model's overhead anchor, not its animated
             // anatomical head. Mounted detection eyes and Dazed stars share
             // this slot and remain above the rider in the original client.
-            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 5, 18, kAttachBreath, 0, 0};
+            // ChestEffect attaches to M2 attachment 34 (Chest); 5 is
+            // ShoulderRight, which quillboar and most creatures lack, so
+            // Sinister Strike's chest impact fell back to the unit's feet.
+            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 34, 18, kAttachBreath, 0, 0};
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
@@ -179,7 +182,7 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
 }
 
 // Every effect a kit names, each at the attachment its SpellVisualKit slot
-// names: LeftHand 2, RightHand 1, Chest 5, Head 18 (overhead), Breath 17
+// names: LeftHand 2, RightHand 1, Chest 34, Head 18 (overhead), Breath 17
 // (oriented), Base and Special slots at the unit's position.
 void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition,
                                         uint32_t attachInstanceId, float duration, bool isPrecast) {
