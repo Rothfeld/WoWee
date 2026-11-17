@@ -464,9 +464,12 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // swim does. With one threshold, a character wading at the boundary
         // flipped between swim and walk every frame - each flip restarts the
         // locomotion animation and sends a START_SWIM/STOP_SWIM pair, which
-        // is what made walking out of water stutter. The two bounds sit
-        // either side of the single 1.0 this replaces.
-        constexpr float SWIM_ENTER_WATER_DEPTH = 1.15f;
+        // is what made walking out of water stutter.
+        // Entering takes the character's own swimming depth: native 2.4.3
+        // (human male) stands without MOVEFLAG_SWIMMING on floors 0.05-1.3 yd
+        // under Blackfathom MLIQ water and sends START_SWIM 1.58 yd under it
+        // (_experiments/20261117T174000Z.bfd_liquid_pair7). Exit is unmeasured.
+        const float SWIM_ENTER_WATER_DEPTH = swimSurfaceOffset_;
         constexpr float SWIM_EXIT_WATER_DEPTH  = 0.85f;
         const float MIN_SWIM_WATER_DEPTH =
             swimming ? SWIM_EXIT_WATER_DEPTH : SWIM_ENTER_WATER_DEPTH;
@@ -616,6 +619,9 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         float swimSpeed = (swimSpeedOverride_ > 0.0f && swimSpeedOverride_ < 100.0f && !std::isnan(swimSpeedOverride_))
                               ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR;
         float waterSurfaceZ = waterH ? (*waterH - swimSurfaceOffset_) : targetPos.z;
+        // Where the swimmer stood before this step; the surface clamp below can
+        // lower the feet under a shallow floor they were resting on.
+        const float swimStartZ = targetPos.z;
 
         const glm::vec3 swimForward = f.swimForward;
         // Use character's facing direction for strafe, not camera's right vector
@@ -697,7 +703,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             auto considerFloor = [&](const std::optional<float>& h) {
                 if (!h) return;
                 // Swim-floor guard: only accept surfaces at or very slightly above feet.
-                if (*h <= targetPos.z + MAX_SWIM_FLOOR_ABOVE_FEET) {
+                if (*h <= std::max(targetPos.z, swimStartZ) + MAX_SWIM_FLOOR_ABOVE_FEET) {
                     if (!floorH || *h > *floorH) floorH = h;
                 }
                 // Swim-ceiling guard: detect structures just above feet so upward swim
@@ -750,7 +756,10 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             floorH = cachedFloorHeight;
         }
         if (floorH) {
-            float swimFloor = *floorH + 0.5f;
+            // The floor itself bounds a swimmer. Native 2.4.3 swims 1.58-1.59
+            // yd under the Aku'mai pool surface over floors 1.5 and 2.0 yd deep;
+            // the former 0.5 yd lift held WoWee 0.6 yd higher there.
+            float swimFloor = *floorH;
             if (targetPos.z < swimFloor) {
                 targetPos.z = swimFloor;
                 if (verticalVelocity < 0.0f) verticalVelocity = 0.0f;
@@ -2609,9 +2618,12 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
         // swim does. With one threshold, a character wading at the boundary
         // flipped between swim and walk every frame - each flip restarts the
         // locomotion animation and sends a START_SWIM/STOP_SWIM pair, which
-        // is what made walking out of water stutter. The two bounds sit
-        // either side of the single 1.0 this replaces.
-        constexpr float SWIM_ENTER_WATER_DEPTH = 1.15f;
+        // is what made walking out of water stutter.
+        // Entering takes the character's own swimming depth: native 2.4.3
+        // (human male) stands without MOVEFLAG_SWIMMING on floors 0.05-1.3 yd
+        // under Blackfathom MLIQ water and sends START_SWIM 1.58 yd under it
+        // (_experiments/20261117T174000Z.bfd_liquid_pair7). Exit is unmeasured.
+        const float SWIM_ENTER_WATER_DEPTH = swimSurfaceOffset_;
         constexpr float SWIM_EXIT_WATER_DEPTH  = 0.85f;
         const float MIN_SWIM_WATER_DEPTH =
             swimming ? SWIM_EXIT_WATER_DEPTH : SWIM_ENTER_WATER_DEPTH;
