@@ -2334,14 +2334,23 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
             owner_.getSocket()->send(request);
         }
     }
-    if (wasInGroup && nowInGroup) {
-        const bool methodChanged = partyData.lootMethod != prevLootMethod;
-        const bool thresholdChanged = partyData.lootThreshold != prevLootThreshold;
+    if (nowInGroup) {
+        // The original prints the loot rules whenever they change, and on
+        // joining a group as well - both the inviter and the one who
+        // accepted see "Looting changed to Group Loot." and "Loot threshold
+        // set to Uncommon." (pair 6, _experiments/20261117T181500Z.
+        // loot_method_money). GlobalStrings ERR_SET_LOOT_*, ITEM_QUALITYn_DESC.
+        const bool joined = !wasInGroup;
+        const bool methodChanged = joined || partyData.lootMethod != prevLootMethod;
+        const bool thresholdChanged = joined || partyData.lootThreshold != prevLootThreshold;
         const bool masterChanged = partyData.lootMethod == 2 &&
             (methodChanged || partyData.looterGuid != prevLooter);
         if (methodChanged) {
+            // ERR_SET_LOOT_NBG alone says "set to".
             const char* prefix = partyData.lootMethod == 4 ? "Looting set to " : "Looting changed to ";
-            owner_.addSystemChatMessage(std::string(prefix) + lootMethodName(partyData.lootMethod) + ".");
+            if (partyData.lootMethod < 5)
+                owner_.addSystemChatMessage(std::string(prefix) + lootMethodName(partyData.lootMethod) + ".");
+            else LOG_WARNING("Invalid loot method: ", unsigned(partyData.lootMethod));
         }
         if (masterChanged) {
             std::string name;
