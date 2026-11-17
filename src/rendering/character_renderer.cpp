@@ -4414,6 +4414,14 @@ bool CharacterRenderer::getInstanceModelName(uint32_t instanceId, std::string& m
     return !modelName.empty();
 }
 
+bool CharacterRenderer::hasAttachmentPoint(uint32_t instanceId, uint32_t attachmentId) const {
+    const auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    uint16_t bone = 0;
+    glm::vec3 offset(0.0f);
+    return findAttachmentBone(it->second.modelId, attachmentId, bone, offset);
+}
+
 bool CharacterRenderer::findAttachmentBone(uint32_t modelId, uint32_t attachmentId,
                                           uint16_t& outBoneIndex, glm::vec3& outOffset) const {
     auto modelIt = models.find(modelId);

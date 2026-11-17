@@ -441,6 +441,18 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
         const uint32_t attachment = ranged ? (sheathed ? kAttachBack : kAttachRightHand)
             : weaponAttachment(sheathed, equipSlot, inventoryType);
         if (attachment == UINT32_MAX) continue;
+        // Some models do not author the point at all: QuillBoarWarrior.m2
+        // (Razorfen Quilguard/Defender) has no attachment 0 for its shield
+        // and QuillBoar.m2 no attachment 12 for a sheathed gun. That item has
+        // nowhere to hang; it is skipped, not retried as a failed attach.
+        if (!charRenderer->hasAttachmentPoint(instanceId, attachment)) {
+            static std::unordered_set<uint64_t> reported;
+            const uint64_t key = (uint64_t{charRenderer->getInstanceModelId(instanceId)} << 32) | attachment;
+            if (reported.insert(key).second)
+                LOG_INFO("NPC equipment: model of guid=", guid, " has no attachment ", attachment,
+                         "; item display ", displayId, " is not drawn");
+            continue;
+        }
         const int32_t record = itemDisplayDbc->findRecordById(displayId);
         if (record < 0) {
             LOG_ERROR("NPC equipment display missing: guid=", guid, " display=", displayId);
