@@ -1076,9 +1076,19 @@ network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counte
     return ack;
 }
 
+// Forced movement orders (speed, root, water walk/feather fall/hover/fly,
+// knockback, collision height) carry a full 8-byte guid only on classic-era
+// servers; CMaNGOS-TBC writes GetPackGUID() for every one of them
+// (Unit.cpp SendMoveRoot, SetCanFly/SetHover, MovementHandler.cpp knockback).
+// Reading 8 bytes on TBC dropped the 6-byte SMSG_FORCE_MOVE_ROOT, so a stunned
+// or slept player kept moving and the server never got the ack.
+static bool forcedMoveGuidIsFull() {
+    return isActiveExpansion("classic") || isActiveExpansion("turtle");
+}
+
 void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char* name,
                                               Opcode ackOpcode, float* speedStorage) {
-    const bool legacyGuid = isActiveExpansion("classic") || isActiveExpansion("turtle");
+    const bool legacyGuid = forcedMoveGuidIsFull();
     uint64_t guid = legacyGuid
         ? packet.readUInt64() : packet.readPackedGuid();
     uint32_t counter = packet.readUInt32();
@@ -1117,7 +1127,7 @@ void MovementHandler::handleForceRunSpeedChange(network::Packet& packet) {
 }
 
 void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool rooted) {
-    const bool rootTbc = isPreWotlk();
+    const bool rootTbc = forcedMoveGuidIsFull();
     if (packet.getRemainingSize() < (rootTbc ? 8u : 2u)) return;
     uint64_t guid = rootTbc
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -1143,7 +1153,7 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
 
 void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
                                                   Opcode ackOpcode, uint32_t flag, bool set) {
-    const bool fmfTbcLike = isPreWotlk();
+    const bool fmfTbcLike = forcedMoveGuidIsFull();
     if (packet.getRemainingSize() < (fmfTbcLike ? 8u : 2u)) return;
     uint64_t guid = fmfTbcLike
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -1168,7 +1178,7 @@ void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const c
 }
 
 void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
-    const bool legacyGuid = isPreWotlk();
+    const bool legacyGuid = forcedMoveGuidIsFull();
     if (packet.getRemainingSize() < (legacyGuid ? 8u : 2u)) return;
     uint64_t guid = legacyGuid ? packet.readUInt64() : packet.readPackedGuid();
     if (!packet.hasRemaining(8)) return;
@@ -1190,7 +1200,7 @@ void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
 }
 
 void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
-    const bool mkbTbc = isPreWotlk();
+    const bool mkbTbc = forcedMoveGuidIsFull();
     if (packet.getRemainingSize() < (mkbTbc ? 8u : 2u)) return;
     uint64_t guid = mkbTbc
         ? packet.readUInt64() : packet.readPackedGuid();
