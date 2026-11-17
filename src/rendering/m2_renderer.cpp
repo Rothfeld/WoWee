@@ -1641,7 +1641,6 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                     " spellFx=", cls.isSpellEffect ? 1 : 0);
     }
     gpuModel.isTransportDoodad           = cls.isTransportDoodad;
-    gpuModel.isBoat                      = cls.isBoat;
     gpuModel.ambientEmitterType          = cls.ambientEmitterType;
     gpuModel.boundMin = tightMin;
     gpuModel.boundMax = tightMax;

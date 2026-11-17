@@ -3836,10 +3836,6 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
         if (!m2Renderer->initialize(vkCtx, perFrameSetLayout, assetManager))
             LOG_ERROR("M2Renderer initialization failed");
         m2Renderer->setRtScene(rtScene_.get());
-        m2Renderer->setWaterHeightQuery([this](float x, float y, float z) -> std::optional<float> {
-            return waterRenderer ? waterRenderer->getNearestWaterHeightAt(x, y, z, 3.0f)
-                                 : std::nullopt;
-        });
         // Initialize SpellVisualSystem once M2Renderer is available (§4.4)
         if (!spellVisualSystem_) {
             spellVisualSystem_ = std::make_unique<SpellVisualSystem>();

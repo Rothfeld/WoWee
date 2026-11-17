@@ -171,7 +171,6 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     instance.cachedIsSkyBird = mdlRef.isSkyBird;
     instance.cachedIsLightBeam = mdlRef.isLightBeam;
     instance.cachedIsTransportDoodad = mdlRef.isTransportDoodad;
-    instance.cachedIsBoat = mdlRef.isBoat;
     instance.cachedIsValid = mdlRef.isValid();
     instance.cachedModel = &mdlRef;
     instance.recomputeCachedCullFactors();
@@ -267,7 +266,6 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     instance.cachedIsSkyBird = mdl2.isSkyBird;
     instance.cachedIsLightBeam = mdl2.isLightBeam;
     instance.cachedIsTransportDoodad = mdl2.isTransportDoodad;
-    instance.cachedIsBoat = mdl2.isBoat;
     instance.cachedIsValid = mdl2.isValid();
     instance.cachedModel = &mdl2;
     instance.recomputeCachedCullFactors();
@@ -441,22 +439,6 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         if (instance.externalPose) continue;  // its owner keeps its clock
         instance.animTime += dtMs * instance.animSpeed;
         instance.globalSequenceTime += dtMs;
-        // A boat asks once whether it is on water - the canal may stream in
-        // after it does, so it keeps asking for a while - and rides it if so.
-        // A rowboat pulled up on a beach is the same model and stays put.
-        if (instance.cachedIsBoat && instance.afloat < 0 && waterHeightAt_) {
-            instance.afloatRecheck -= deltaTime;
-            if (instance.afloatRecheck <= 0.0f) {
-                instance.afloatRecheck = 1.0f;
-                const auto water = waterHeightAt_(instance.position.x, instance.position.y,
-                                                  instance.position.z);
-                if (water && std::abs(*water - instance.position.z) < 1.5f) {
-                    instance.afloat = 1;
-                } else if (++instance.afloatTries >= 15) {
-                    instance.afloat = 0;
-                }
-            }
-        }
         const bool steppedBelow = instance.cachedHasAnimation && !instance.cachedDisableAnimation;
         if (!steppedBelow && instance.animDuration > 0.0f &&
             instance.animTime >= instance.animDuration) {
@@ -1522,7 +1504,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
                 e.boneCount = static_cast<int32_t>(inst.boneMatrices.size());
                 e.highlight = inst.highlight;
-                e.flags = static_cast<int32_t>(inst.indoorLighting | (inst.afloat > 0 ? 1u : 0u));
+                e.flags = static_cast<int32_t>(inst.indoorLighting);
                 instanceDataCount_++;
                 ++writtenInstances;
             }
@@ -1820,7 +1802,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
                             e.boneCount = static_cast<int32_t>(inst.boneMatrices.size());
                             e.highlight = inst.highlight;
-                            e.flags = static_cast<int32_t>(inst.indoorLighting | (inst.afloat > 0 ? 1u : 0u));
+                            e.flags = static_cast<int32_t>(inst.indoorLighting);
                             instanceDataCount_++;
                         }
                     }
@@ -2118,7 +2100,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
             e.boneCount = static_cast<int32_t>(instance.boneMatrices.size());
             e.highlight = instance.highlight;
-            e.flags = static_cast<int32_t>(instance.indoorLighting | (instance.afloat > 0 ? 1u : 0u));
+            e.flags = static_cast<int32_t>(instance.indoorLighting);
             instanceDataCount_++;
 
             // Pipeline selection

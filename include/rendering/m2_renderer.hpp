@@ -187,7 +187,6 @@ struct M2ModelGPU {
     /// Play the sequence forward, then backward, rather than looping it.
     ///
     bool isTransportDoodad = false; // Animated ship sail/paddle child
-    bool isBoat = false;            // Small boat; bobs if it turns out to be afloat
     bool hasTextureAnimation = false; // True if any batch has UV animation
     bool hasTransparentBatches = false; // True if any batch uses alpha-blend or additive (blendMode >= 2)
     uint8_t availableLODs = 0;  // Bitmask: bit N set if any batch has submeshLevel==N
@@ -300,11 +299,6 @@ struct M2Instance {
     bool cachedIsSkyBird = false;
     bool cachedIsLightBeam = false;
     bool cachedIsTransportDoodad = false;
-    bool cachedIsBoat = false;
-    // Whether the boat sits on water: -1 not known yet, 0 no, 1 afloat.
-    int8_t afloat = -1;
-    uint8_t afloatTries = 0;
-    float afloatRecheck = 0.0f;
     bool cachedIsValid = false;
     bool skipCollision = false;    // Fully non-collidable visual/effect instance
     float cachedBoundRadius = 0.0f;
@@ -481,8 +475,6 @@ public:
     /// lighting. Static doodads only - animated models would cast their
     /// bind pose. Not given to the sky's renderer.
     void setRtScene(RtScene* scene) { rtScene_ = scene; }
-    /// Water surface height near a point, for telling a moored boat from a beached one.
-    void setWaterHeightQuery(std::function<std::optional<float>(float, float, float)> q) { waterHeightAt_ = std::move(q); }
     /// Bring the scene's instances in line with this renderer's, once a frame
     /// while the lighting is on.
     void syncRtScene();
@@ -840,7 +832,7 @@ private:
         int32_t boneBase;          //  4 bytes @ offset 80
         int32_t boneCount;         //  4 bytes @ offset 84 - clamps skinning reads
         float highlight = 0.0f;    //  4 bytes @ offset 88 - pressed-on lift
-        int32_t flags = {};        //  4 bytes @ offset 92 - bit 0: afloat (bobs on the water)
+        int32_t flags = {};        //  4 bytes @ offset 92 - bit 0 unused (was boat bob)
         glm::vec4 uvOffset2{};     // xy: second texture translation; zw reserved
     };
     // How many instances one frame may hand the GPU, not how many exist. Ground
@@ -1145,7 +1137,6 @@ private:
     static constexpr size_t MAX_M2_PARTICLES = 4000;
     std::mt19937 particleRng_{123};
     bool skyMode_ = false;
-    std::function<std::optional<float>(float, float, float)> waterHeightAt_;
     // What the sky-model clock diagnostic last reported, so it prints on a
     // restart or once a second rather than every frame. See M2Renderer::update.
     uint32_t skyDiagInstanceId_ = 0;
