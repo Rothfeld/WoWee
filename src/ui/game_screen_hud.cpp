@@ -1065,6 +1065,11 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             const glm::vec3 separation = unitPosition - playerRender;
             // Plate visibility is a unit-to-player range, independent of camera zoom.
             if (glm::dot(separation, separation) > 20.0f * 20.0f) showPlate = false;
+            const glm::vec4 plateAnchor = viewProj *
+                glm::vec4(renderPos + glm::vec3(0.0f, 0.0f, 2.0f / 3.0f), 1.0f);
+            if (!ui::legacyPlateAnchorVisible(plateAnchor.x, plateAnchor.y,
+                                              plateAnchor.z, plateAnchor.w))
+                showPlate = false;
         }
 
         // Build 8606 draws the raid atlas on a one-yard camera-facing quad,
@@ -1131,7 +1136,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Map directly: sy = (ndc.y + 1) / 2 * screenH  (no extra inversion).
         float sx = (ndc.x * 0.5f + 0.5f) * screenW;
         float sy = (ndc.y * 0.5f + 0.5f) * screenH;
-        if (showPlate && legacyPlates) sy += 19.0f * plateArtScale;
+        if (showPlate && legacyPlates) {
+            sx = ui::legacyPlateCenterX(sx, screenW, plateArtScale);
+            sy = ui::legacyPlateBarTop(sy + 19.0f * plateArtScale, plateArtScale);
+        }
 
         // Fade out in the last 5 units of cull range
         float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
@@ -1207,6 +1215,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (showPlate && !allowPlateOverlap) {
             const float topExtent = barH + 24.0f;
             sy = ui::plateTopClearOf(placedPlates, barX, barX + barW, sy, barH, topExtent);
+            if (legacyPlates) sy = ui::legacyPlateBarTop(sy, plateArtScale);
             placedPlates.push_back({.x0 = barX, .y0 = sy - topExtent, .x1 = barX + barW, .y1 = sy + barH});
         }
 

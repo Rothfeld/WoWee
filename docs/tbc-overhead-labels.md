@@ -17,6 +17,13 @@ with STORE for this to work. Character hover also illuminates attached weapons.
 
 Plate range is measured from the player, independently of camera zoom. Units
 outside plate range can still show a plain world name according to name settings.
+Legacy plate eligibility also requires its original projected anchor inside the
+viewport. Visible artwork clamps horizontally inside the viewport; its top stays
+at least 1.5 frame heights below the top edge. Once the anchor leaves, the unit
+uses the ordinary world-name path. Native WorldFrame queries measured a
+156.651184 by 39.162796 frame and a clamped top of 709.255859 in a 768-unit UI.
+These are frame-relative dimensions, so viewport and UI scaling apply together.
+Use `test_nameplate_stacking` for viewport, artwork, and overlap regressions.
 Legacy world names follow visible units without an additional 40-yard camera
 cutoff or five-yard label fade. Scene depth still occludes their pixels.
 Dead units retain gray plain names under the normal category-name settings and

@@ -9,6 +9,31 @@
 
 using namespace wowee::ui;
 
+TEST_CASE("Legacy nameplate visibility follows unclamped viewport anchor", "[nameplates][viewport]") {
+    CHECK(legacyPlateAnchorVisible(0, 0, 1, 2));
+    CHECK(legacyPlateAnchorVisible(-2, 2, 1, 2));
+    CHECK_FALSE(legacyPlateAnchorVisible(-2.01f, 0, 1, 2));
+    CHECK_FALSE(legacyPlateAnchorVisible(2.01f, 0, 1, 2));
+    CHECK_FALSE(legacyPlateAnchorVisible(0, -2.01f, 1, 2));
+    CHECK_FALSE(legacyPlateAnchorVisible(0, 2.01f, 1, 2));
+    CHECK_FALSE(legacyPlateAnchorVisible(0, 0, -1, 2));
+    CHECK_FALSE(legacyPlateAnchorVisible(0, 0, 3, 2));
+    CHECK_FALSE(legacyPlateAnchorVisible(0, 0, 0, -2));
+}
+
+TEST_CASE("Legacy plate artwork clamps with native frame dimensions", "[nameplates][viewport]") {
+    for (float scale : {0.75f, 1.0f, 1.5f}) {
+        CHECK(legacyPlateCenterX(640, 1280, scale) == 640);
+        CHECK(legacyPlateCenterX(0, 1280, scale) == 64 * scale);
+        CHECK(legacyPlateCenterX(1280, 1280, scale) == 1280 - 64 * scale);
+        CHECK(legacyPlateBarTop(300, scale) == 300);
+        CHECK(legacyPlateBarTop(-20, scale) == 67 * scale);
+    }
+    const float nativeScale = 156.65118408203f / 128.0f;
+    const float top = legacyPlateBarTop(0, nativeScale) - 19 * nativeScale;
+    CHECK(top == Catch::Approx(768.0f - 709.255859375f).margin(0.0001f));
+}
+
 TEST_CASE("Creature level colors include the no-XP gray boundary", "[nameplates][difficulty]") {
     using namespace wowee::game;
     CHECK(creatureLevelDifficulty(40, 24) == LevelDifficulty::Gray);
