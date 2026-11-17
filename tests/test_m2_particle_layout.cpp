@@ -223,3 +223,23 @@ TEST_CASE("Legacy emitters keep authored all-zero lifecycle alpha", "[m2][partic
     CHECK(model.particleEmitters[0].particleAlpha.floatValues == std::vector<float>{0, 0, 0});
     CHECK(model.particleEmitters[0].particleColor.vec3Values[1] == glm::vec3(1));
 }
+
+TEST_CASE("Legacy texture transforms follow the flipbook array", "[m2][material]") {
+    // TBC header: weights +0x64, flipbooks +0x6C, transforms +0x74,
+    // replaceable lookup +0x7C. BlackrockLavaFalls01: 0 flipbooks, 6 transforms.
+    for (const uint32_t version : {256u, 260u, 263u}) {
+        constexpr uint32_t transformOffset = 512;
+        std::vector<uint8_t> bytes(transformOffset + 2 * 84, 0);
+        std::memcpy(bytes.data(), "MD20", 4);
+        const auto put32 = [&](size_t offset, uint32_t value) {
+            std::memcpy(bytes.data() + offset, &value, sizeof(value));
+        };
+        put32(4, version);
+        put32(0x74, 2);
+        put32(0x78, transformOffset);
+        put32(0x7C, 1);
+        put32(0x80, transformOffset);
+        const auto model = wowee::pipeline::M2Loader::load(bytes);
+        CHECK(model.textureTransforms.size() == 2);
+    }
+}

@@ -861,13 +861,15 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         header.ofsTextures = r32();
         header.nTransparency = r32();
         header.ofsTransparency = r32();
+        // Pre-Wrath texture flipbooks (M2Array) sit between the texture
+        // weights and the texture transforms. Zero in all 14695 TBC models;
+        // the transforms follow at +0x74 (396 models, e.g. BlackrockLavaFalls01
+        // with six scrolling layers).
+        c += 8;
         header.nUVAnimation = r32();
         header.ofsUVAnimation = r32();
         header.nTexReplace = r32();
         header.ofsTexReplace = r32();
-
-        // Skip unknown extra M2Array (8 bytes)
-        c += 8;
 
         // nRenderFlags through ofsUVAnimLookup
         header.nRenderFlags = r32();
