@@ -4318,6 +4318,7 @@ void Application::update(float deltaTime) {
             addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
             addonManager_->fireEvent("PLAYER_LOGIN");
             addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+            addonManager_->fireEvent("UPDATE_PENDING_MAIL");
             if (gameHandler && gameHandler->isPlayerDead() && !gameHandler->isPlayerGhost()) {
                 addonManager_->fireEvent("PLAYER_DEAD");
             }

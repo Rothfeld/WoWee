@@ -1038,6 +1038,19 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
             LOG_INFO("Auto-queried guild info (guildId=", activeChar->guildId, ")");
         }
 
+        // Ask whether unread mail is waiting. The answer (MSG_QUERY_NEXT_MAIL_TIME)
+        // is what HasNewMail reports, and the minimap envelope shows from it; the
+        // server never volunteers it. The original client has the envelope up
+        // right after entering the world with unread mail
+        // (_experiments/20261117T181649Z.minimap_marker_audit/o10.png).
+        if (socket) {
+            const uint16_t nextMailWire = wireOpcode(Opcode::MSG_QUERY_NEXT_MAIL_TIME);
+            if (nextMailWire == 0xFFFF) throw std::runtime_error("Opcode table lacks MSG_QUERY_NEXT_MAIL_TIME");
+            network::Packet nextMail(nextMailWire);
+            socket->send(nextMail);
+            LOG_INFO("Sent MSG_QUERY_NEXT_MAIL_TIME");
+        }
+
         if (questHandler_) {
             questHandler_->pendingQuestAcceptTimeoutsRef().clear();
             questHandler_->pendingQuestAcceptNpcGuidsRef().clear();
