@@ -78,6 +78,14 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
     if (inst.emitterAccumulators.size() != gpu.particleEmitters.size()) {
         inst.emitterAccumulators.resize(gpu.particleEmitters.size(), 0.0f);
     }
+    if (inst.emitterPreviousBirth.size() != gpu.particleEmitters.size()) {
+        inst.emitterPreviousBirth.assign(gpu.particleEmitters.size(), glm::mat4(1.0f));
+        for (size_t ei = 0; ei < gpu.particleEmitters.size(); ++ei) {
+            const auto& em = gpu.particleEmitters[ei];
+            inst.emitterPreviousBirth[ei] = particleBirthTransform(em.flags, inst.modelMatrix,
+                em.bone < inst.boneMatrices.size() ? inst.boneMatrices[em.bone] : glm::mat4(1.0f));
+        }
+    }
 
     // A held last frame is a stopped clock: nothing is born (see
     // characterEmitterClockHeld). Particles already alive finish their lives.
@@ -87,6 +95,14 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
         const auto& em = gpu.particleEmitters[ei];
+        // Emitter pose now and at the previous step, recorded every frame so
+        // an emitter that resumes does not reach back to a stale pose.
+        const glm::mat4 boneXform = em.bone < inst.boneMatrices.size()
+            ? inst.boneMatrices[em.bone] : glm::mat4(1.0f);
+        const glm::mat4 birthTransform = particleBirthTransform(
+            em.flags, inst.modelMatrix, boneXform);
+        const glm::mat4 previousBirth = inst.emitterPreviousBirth[ei];
+        inst.emitterPreviousBirth[ei] = birthTransform;
         if (!em.enabled) continue;
         if (m2_track::sampleFloat(em.enabledIn, inst.currentSequenceIndex, inst.animTime,
                                   inst.globalSequenceTime, gpu.globalSequenceDurations, 1.0f) <= 0.0f)
@@ -161,13 +177,12 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 localPos += emission.offset;
                 sphereDirection = emission.direction;
             }
-            glm::mat4 boneXform = glm::mat4(1.0f);
-            if (em.bone < inst.boneMatrices.size()) {
-                boneXform = inst.boneMatrices[em.bone];
-            }
-            const glm::mat4 birthTransform = particleBirthTransform(
-                em.flags, inst.modelMatrix, boneXform);
-            p.position = glm::vec3(birthTransform * glm::vec4(localPos, 1.0f));
+            // Born p.life ago: where the emitter was then, between its pose at
+            // the previous step and now. Placing every birth of a frame at the
+            // current pose bunches a moving emitter's trail into one bead per
+            // frame (DR_Draenei_HoloRunes02 sparks at 8 fps).
+            p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
+                                                         localPos, p.life, dt));
             p.gravityDirection = particleGravityDirection(birthTransform);
 
             // Velocity: emission speed in upward direction + random spread

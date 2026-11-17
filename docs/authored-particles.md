@@ -20,6 +20,12 @@ InstancePortal (`0x39`) follows its rotating emitter. AshenvaleWisps (`0x29`)
 and the spline rune (`0x229`) retain separate birth poses.
 DR_DRAENEI_HOLORUNES02_BIG.M2 uses zero emission speed and animated parent
 bones to draw its traveling floor pattern.
+A birth inside a frame starts where the emitter was at that instant, moving
+linearly from its previous frame pose: at 8 fps, placing a frame's births at
+the current pose drew these floor lines as beads. Shattrath's game-object
+runes (DR_Draenei_HoloRunes02/03.m2, GENERIC) are in state READY without
+Close/Closed sequences; they keep looping Stand, since only stateful object
+types (doors, chests, buttons) show READY through the bind pose.
 Gravity uses the same birth-space basis as position and velocity. Its sampled
 magnitude remains an authored emitter track; transforming the direction once
 preserves placement scale and orientation for detached particles. A rotated,

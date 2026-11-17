@@ -130,6 +130,23 @@ TEST_CASE("Trailing emitters preserve birth pose independent of emitter shape", 
     CHECK(particleRenderTransform(0x89,movedModel,currentBone) * particleBirthTransform(0x89,model,birthBone) * origin == glm::vec4(13,2,0,1));
 }
 
+TEST_CASE("Births inside a step sit where the moving emitter was at that instant", "[m2][particle]") {
+    using namespace wowee::rendering;
+    // DR_Draenei_HoloRunes02: 33 sparks/s from a bone sliding along the floor
+    // line. At 8 fps all four births of a step shared one point: beads.
+    const auto previous = glm::translate(glm::mat4(1), glm::vec3(0, 0, 0));
+    const auto current = glm::translate(glm::mat4(1), glm::vec3(0.25f, 0, 0));
+    const glm::vec3 local(0, 1, 0);
+    const float dt = 0.125f;
+    CHECK(particleBirthPosition(previous, current, local, 0.0f, dt) == glm::vec3(0.25f, 1, 0));
+    CHECK(particleBirthPosition(previous, current, local, dt, dt) == glm::vec3(0, 1, 0));
+    const auto middle = particleBirthPosition(previous, current, local, dt * 0.5f, dt);
+    CHECK(middle.x == Catch::Approx(0.125f));
+    // A still emitter, or a zero step, places every birth at its pose.
+    CHECK(particleBirthPosition(current, current, local, 0.06f, dt) == glm::vec3(0.25f, 1, 0));
+    CHECK(particleBirthPosition(previous, current, local, 0.0f, 0.0f) == glm::vec3(0.25f, 1, 0));
+}
+
 TEST_CASE("Particle gravity retains the authored scaled and rotated basis", "[m2][particle]") {
     using namespace wowee::rendering;
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(90.0f),glm::vec3(0,1,0)),glm::vec3(2));

@@ -275,6 +275,9 @@ struct M2Instance {
 
     // Particle emitter state
     std::vector<float> emitterAccumulators;  // fractional particle counter per emitter
+    // Birth transform of each emitter at the previous emission step. A birth
+    // inside the frame is placed where the emitter was at that instant.
+    std::vector<glm::mat4> emitterPreviousBirth;
     std::vector<M2Particle> particles;
 
     // Ribbon emitter state

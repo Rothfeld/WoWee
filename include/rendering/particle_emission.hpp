@@ -50,6 +50,16 @@ inline float particleDragTravel(float drag, float dt) {
     return (1.0f - std::exp(-drag * dt)) / drag;
 }
 
+// Emitter position of a particle born `age` seconds before the end of a step
+// of length dt, with the emitter moving linearly from `previous` to `current`
+// over that step.
+inline glm::vec3 particleBirthPosition(const glm::mat4& previous, const glm::mat4& current,
+                                       const glm::vec3& local, float age, float dt) {
+    const float back = dt > 0.0f ? std::fmin(std::fmax(age / dt, 0.0f), 1.0f) : 0.0f;
+    return glm::mix(glm::vec3(current * glm::vec4(local, 1.0f)),
+                    glm::vec3(previous * glm::vec4(local, 1.0f)), back);
+}
+
 inline glm::vec3 particleGravityDirection(const glm::mat4& birthTransform) {
     // Preserve authored acceleration scale and orientation with position and
     // velocity when a particle is detached into model/world space.
