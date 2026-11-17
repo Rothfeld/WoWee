@@ -288,11 +288,6 @@ void GameScreen::renderMinimapButtons(game::GameHandler& gameHandler, float cent
             draw->AddCircleFilled(ImVec2(p.x + 12.5f, p.y + 8.0f), 1.2f, fg);
             draw->PathArcTo(ImVec2(p.x + 10.0f, p.y + 11.5f), 3.0f, 0.2f, 2.9f, 8);
             draw->PathStroke(fg, 0, 1.2f);
-            // Small green dot if friends online
-            if (onlineCount > 0) {
-                draw->AddCircleFilled(ImVec2(p.x + sz.x - 3.5f, p.y + 3.5f),
-                                      3.5f, IM_COL32(50, 220, 50, 255));
-            }
             if (hovered) {
                 if (onlineCount > 0)
                     ImGui::SetTooltip("Friends (%d online)", onlineCount);
