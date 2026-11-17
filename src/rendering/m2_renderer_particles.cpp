@@ -80,7 +80,6 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
     }
 
     std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
-    std::uniform_int_distribution<int> distTile;
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
         const auto& em = gpu.particleEmitters[ei];
@@ -128,7 +127,6 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.life = inst.emitterAccumulators[ei] / rate;
             p.maxLife = life;
             if (p.life >= p.maxLife) continue;
-            p.tileIndex = 0.0f;
 
             // Position: emitter position transformed by bone matrix
             glm::vec3 localPos = em.position;
@@ -185,18 +183,6 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             speed *= 1.0f + distN(particleRng_) * variation;
             const glm::mat3 rotMat(birthTransform);
             p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
-
-            const uint32_t tilesX = std::max<uint16_t>(em.textureCols, 1);
-            const uint32_t tilesY = std::max<uint16_t>(em.textureRows, 1);
-            const uint32_t totalTiles = tilesX * tilesY;
-            if ((em.flags & kParticleFlagTiled) && totalTiles > 1) {
-                if (em.flags & kParticleFlagRandomized) {
-                    distTile = std::uniform_int_distribution<int>(0, static_cast<int>(totalTiles - 1));
-                    p.tileIndex = static_cast<float>(distTile(particleRng_));
-                } else {
-                    p.tileIndex = 0.0f;
-                }
-            }
 
             const float gravity = interpFloat(em.gravity, inst.animTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
@@ -659,11 +645,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         ParticleGroup* cachedGroup = nullptr;
         // animFrame depends only on inst.animTime + totalTiles, so it's also
         // emitter-stable within one frame.
-        uint32_t cachedAnimFrame = 0;
-        float cachedTilesFloat = 1.0f;
-        bool cachedIsTiled = false;
         glm::mat4 cachedParticleTransform(1.0f);
-        float invAnimMs = 1.0f / 1000.0f;
 
         // How far this instance's particles actually reach, against how far
         // the model says it extends. A fire twice the height of the hut behind
@@ -707,13 +689,6 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                     cachedGroup->preAllocSet = gpu.particleTexSets[p.emitterIndex];
                 }
 
-                cachedIsTiled = (cachedEm->flags & kParticleFlagTiled) && cachedTotalTiles > 1;
-                if (cachedIsTiled) {
-                    float animSeconds = inst.animTime * invAnimMs;
-                    cachedAnimFrame = static_cast<uint32_t>(std::floor(animSeconds * cachedTotalTiles))
-                                      % cachedTotalTiles;
-                    cachedTilesFloat = static_cast<float>(cachedTotalTiles);
-                }
             }
 
             const auto& em = *cachedEm;
@@ -753,15 +728,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[5] = color.b;
                 vd[6] = alpha;
                 vd[7] = particleSpriteHalfWidth(scale, placementScale);
-                float tileIndex = p.tileIndex;
-                if (cachedIsTiled) {
-                    tileIndex = p.tileIndex + static_cast<float>(cachedAnimFrame);
-                    while (tileIndex >= cachedTilesFloat) {
-                        tileIndex -= cachedTilesFloat;
-                    }
-                }
-                vd[8] = tileIndex;
                 const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
+                vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
                 const glm::vec3 displacement = tail ? -worldVelocity * em.tailLength : glm::vec3(0);
                 vd[9] = displacement.x;
                 vd[10] = displacement.y;

@@ -181,6 +181,21 @@ struct M2ParticleEmitter {
     M2FBlock particleColor;   // vec3 RGB at 3 timestamps
     M2FBlock particleAlpha;   // float (from uint16/32767) at 3 timestamps
     M2FBlock particleScale;   // float (x component of vec2) at 3 timestamps
+    /// Texture cell animation. Pre-Wrath: authored ranges, head over life
+    /// [0, midPoint], decay over [midPoint, 1]; the tail sprite uses its own
+    /// pair. Wrath: per-life uint16 FBlocks.
+    struct CellRange { int16_t start = 0; int16_t end = 0; int16_t repeat = 1; };
+    bool legacyCells = false;
+    float midPoint = 0.5f;
+    CellRange headCells, decayCells, tailCells, tailDecayCells;
+    M2FBlock headCellTrack, tailCellTrack;
+    /// Pre-Wrath fields after tailLength (+0x180..+0x1D3), parsed for
+    /// diagnostics; their rendering semantics are not yet established.
+    float twinkleSpeed = 0.0f, twinklePercent = 1.0f;
+    float twinkleScaleMin = 1.0f, twinkleScaleMax = 1.0f;
+    float burstMultiplier = 1.0f, drag = 0.0f, spin = 0.0f;
+    glm::vec3 windVector{0.0f};
+    float windTime = 0.0f;
     bool enabled = true;
 };
 

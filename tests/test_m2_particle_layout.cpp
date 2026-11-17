@@ -243,3 +243,66 @@ TEST_CASE("Legacy texture transforms follow the flipbook array", "[m2][material]
         CHECK(model.textureTransforms.size() == 2);
     }
 }
+
+TEST_CASE("Legacy emitters carry authored cell ranges and post-tail fields", "[m2][particle]") {
+    // ShadowSnare_High_Base #2: 16 tiles, head (0,7,1), decay (8,16,1), midpoint 0.5.
+    constexpr uint32_t e = 512;
+    std::vector<uint8_t> bytes(e + 504, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t offset, uint32_t value) { std::memcpy(bytes.data() + offset, &value, 4); };
+    const auto putf = [&](size_t offset, float value) { std::memcpy(bytes.data() + offset, &value, 4); };
+    put32(4, 260);
+    put32(0x13c, 1);
+    put32(0x140, e);
+    putf(e + 0x14C, 0.5f);
+    const int16_t cells[10] = {0, 7, 1, 8, 16, 1, 2, 3, 4, 5};
+    std::memcpy(bytes.data() + e + 0x168, cells, sizeof(cells));
+    putf(e + 0x17C, 0.1f);   // tailLength
+    putf(e + 0x180, 10.0f);  // twinkleSpeed
+    putf(e + 0x184, 1.0f);   // twinklePercent
+    putf(e + 0x194, 0.2f);   // drag
+    putf(e + 0x198, 3.0f);   // spin (GnomereganVent)
+    putf(e + 0x1C0, 6.3886f);  // windTime (Blacksmith_Smoke #0)
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 1);
+    const auto& em = model.particleEmitters[0];
+    CHECK(em.legacyCells);
+    CHECK(em.headCells.end == 7);
+    CHECK(em.decayCells.start == 8);
+    CHECK(em.decayCells.end == 16);
+    CHECK(em.tailCells.start == 2);
+    CHECK(em.tailDecayCells.end == 5);
+    CHECK(em.tailLength == Catch::Approx(0.1f));
+    CHECK(em.twinkleSpeed == Catch::Approx(10.0f));
+    CHECK(em.drag == Catch::Approx(0.2f));
+    CHECK(em.spin == Catch::Approx(3.0f));
+    CHECK(em.windTime == Catch::Approx(6.3886f));
+}
+
+TEST_CASE("Particle cells follow authored head and decay ranges", "[m2][particle]") {
+    using wowee::rendering::particleCell;
+    wowee::pipeline::M2ParticleEmitter em{};
+    em.legacyCells = true;
+    em.midPoint = 0.5f;
+    em.headCells = {0, 7, 1};
+    em.decayCells = {8, 16, 1};
+    CHECK(particleCell(em, 0.0f, false, 16) == 0);
+    CHECK(particleCell(em, 0.49f, false, 16) == 7);
+    CHECK(particleCell(em, 0.5f, false, 16) == 8);
+    CHECK(particleCell(em, 0.75f, false, 16) == 12);
+    CHECK(particleCell(em, 0.999f, false, 16) == 0);  // cell 16 wraps on 16 tiles
+    // Repeat: GiantInsectSwarm (0,1,5) on 2 tiles alternates five times.
+    em.headCells = {0, 1, 5};
+    CHECK(particleCell(em, 0.0f, false, 2) == 0);
+    CHECK(particleCell(em, 0.06f, false, 2) == 1);
+    CHECK(particleCell(em, 0.11f, false, 2) == 0);
+    // Descending: ShadowWordSilence_Breath (31,16).
+    em.headCells = {31, 16, 1};
+    CHECK(particleCell(em, 0.0f, false, 64) == 31);
+    CHECK(particleCell(em, 0.499f, false, 64) == 16);
+    // Untiled textures always show cell 0.
+    CHECK(particleCell(em, 0.3f, false, 1) == 0);
+    // Tail sprite uses the tail ranges.
+    em.tailCells = {4, 5, 1};
+    CHECK(particleCell(em, 0.0f, true, 16) == 4);
+}

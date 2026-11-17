@@ -745,7 +745,7 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
 // FBlocks are like M2Track but WITHOUT the interpolationType/globalSequence prefix.
 void parseFBlock(const std::vector<uint8_t>& data, uint32_t offset,
                  M2FBlock& fb, int valueType) {
-    // valueType: 0 = color (C3Vector, 3 floats in 0-255 range), 1 = alpha (uint16), 2 = scale (float pair)
+    // valueType: 0 = color (C3Vector, 3 floats in 0-255 range), 1 = alpha (uint16), 2 = scale (float pair), 3 = texture cell (uint16)
     if (offset + sizeof(FBlockDisk) > data.size()) return;
 
     FBlockDisk disk = readValue<FBlockDisk>(data, offset);
@@ -784,6 +784,12 @@ void parseFBlock(const std::vector<uint8_t>& data, uint32_t offset,
         fb.floatValues.reserve(nKeys);
         for (auto a : rawAlpha) {
             fb.floatValues.push_back(static_cast<float>(a) / 32767.0f);
+        }
+    } else if (valueType == 3) {
+        // Texture cell: uint16 per key
+        if (ofsKeys + nKeys * sizeof(uint16_t) > data.size()) return;
+        for (auto c : readArray<uint16_t>(data, ofsKeys, nKeys)) {
+            fb.floatValues.push_back(static_cast<float>(c));
         }
     } else if (valueType == 2) {
         // Scale: float pair {x, y} per key, store x
@@ -1607,6 +1613,28 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 {
                     em.particleScale.timestamps = {0.0f, midpoint, 1.0f};
                     em.particleScale.floatValues.resize(3);
+                    em.legacyCells = true;
+                    em.midPoint = midpoint;
+                    // Ten int16 at +0x168: lifespan cells (start, end, repeat),
+                    // decay cells (start, end, repeat), tail (start, end),
+                    // tail decay (start, end). 2063 TBC emitters tile, e.g.
+                    // (0,7,1)/(8,16,1) over 16 tiles.
+                    const auto cell = [&](uint32_t at) { return readValue<int16_t>(m2Data, base + at); };
+                    em.headCells = {cell(0x168), cell(0x16A), cell(0x16C)};
+                    em.decayCells = {cell(0x16E), cell(0x170), cell(0x172)};
+                    em.tailCells = {cell(0x174), cell(0x176), 1};
+                    em.tailDecayCells = {cell(0x178), cell(0x17A), 1};
+                    em.twinkleSpeed = readValue<float>(m2Data, base + 0x180);
+                    em.twinklePercent = readValue<float>(m2Data, base + 0x184);
+                    em.twinkleScaleMin = readValue<float>(m2Data, base + 0x188);
+                    em.twinkleScaleMax = readValue<float>(m2Data, base + 0x18C);
+                    em.burstMultiplier = readValue<float>(m2Data, base + 0x190);
+                    em.drag = readValue<float>(m2Data, base + 0x194);
+                    em.spin = readValue<float>(m2Data, base + 0x198);
+                    em.windVector = {readValue<float>(m2Data, base + 0x1B4),
+                                     readValue<float>(m2Data, base + 0x1B8),
+                                     readValue<float>(m2Data, base + 0x1BC)};
+                    em.windTime = readValue<float>(m2Data, base + 0x1C0);
                     for (int s = 0; s < 3; s++) {
                         float scale = readValue<float>(m2Data, base + 0x15C + s * 4);
                         // Zero and tiny endpoints make particles shrink away.
@@ -1641,6 +1669,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 parseFBlock(m2Data, base + 0x104, em.particleColor, 0);
                 parseFBlock(m2Data, base + 0x114, em.particleAlpha, 1);
                 parseFBlock(m2Data, base + 0x124, em.particleScale, 2);
+                // scaleVary (C2Vector) at +0x134, then the cell FBlocks.
+                parseFBlock(m2Data, base + 0x13C, em.headCellTrack, 3);
+                parseFBlock(m2Data, base + 0x14C, em.tailCellTrack, 3);
             }
 
             model.particleEmitters.push_back(std::move(em));

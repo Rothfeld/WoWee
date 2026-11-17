@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include "pipeline/m2_loader.hpp"
 
 namespace wowee::rendering {
 inline constexpr uint32_t kParticleNoTrail = 0x10;
@@ -55,5 +56,51 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
     const float magnitude = glm::length(offset);
     return {offset, (flags & 0x100u) != 0 ? glm::vec3(0, 0, 1)
                     : magnitude > 0 ? offset / magnitude : glm::vec3(0)};
+}
+
+/// One authored cell range played over `phase` in [0, 1): `repeat` passes
+/// from start to end inclusive, either direction (ShadowWordSilence_Breath
+/// runs 31 -> 16). Wrapped into the texture's tile count, so an end equal to
+/// the tile count (0..7 / 8..16 on 16 tiles, 680 TBC emitters) shows cell 0
+/// for the final step.
+inline uint32_t particleCellInRange(const pipeline::M2ParticleEmitter::CellRange& range,
+                                    float phase, uint32_t tiles) {
+    const int repeat = range.repeat > 0 ? range.repeat : 1;
+    float f = phase * static_cast<float>(repeat);
+    f -= std::floor(f);
+    const int span = range.end - range.start;
+    const int count = (span >= 0 ? span : -span) + 1;
+    int step = static_cast<int>(f * static_cast<float>(count));
+    if (step >= count) step = count - 1;
+    const int cell = range.start + (span >= 0 ? step : -step);
+    const int t = static_cast<int>(tiles);
+    return static_cast<uint32_t>(((cell % t) + t) % t);
+}
+
+/// The texture cell a particle shows at `lifeRatio`, head or tail sprite.
+inline uint32_t particleCell(const pipeline::M2ParticleEmitter& em, float lifeRatio,
+                             bool tail, uint32_t tiles) {
+    if (tiles <= 1) return 0;
+    lifeRatio = std::fmin(std::fmax(lifeRatio, 0.0f), 0.99999f);
+    if (!em.legacyCells) {
+        const auto& fb = tail ? em.tailCellTrack : em.headCellTrack;
+        if (fb.floatValues.empty()) return 0;
+        float value = fb.floatValues.back();
+        for (size_t i = 0; i + 1 < fb.timestamps.size() && i + 1 < fb.floatValues.size(); ++i) {
+            if (lifeRatio <= fb.timestamps[i + 1]) {
+                const float dt = fb.timestamps[i + 1] - fb.timestamps[i];
+                const float k = dt > 0.0f ? (lifeRatio - fb.timestamps[i]) / dt : 0.0f;
+                value = fb.floatValues[i] + (fb.floatValues[i + 1] - fb.floatValues[i]) * k;
+                break;
+            }
+        }
+        return static_cast<uint32_t>(std::floor(value)) % tiles;
+    }
+    const float mid = em.midPoint;
+    const bool head = lifeRatio < mid;
+    const float phase = head ? (mid > 0.0f ? lifeRatio / mid : 0.0f)
+                             : (mid < 1.0f ? (lifeRatio - mid) / (1.0f - mid) : 0.0f);
+    if (tail) return particleCellInRange(head ? em.tailCells : em.tailDecayCells, phase, tiles);
+    return particleCellInRange(head ? em.headCells : em.decayCells, phase, tiles);
 }
 } // namespace wowee::rendering

@@ -111,8 +111,6 @@ inline glm::vec3 animatedBatchLightWorldCenter(const M2Instance& instance,
 }
 
 // ---- Constants ----
-inline constexpr uint32_t kParticleFlagRandomized = 0x40;
-inline constexpr uint32_t kParticleFlagTiled = 0x80;
 
 // ---- Geometry / collision helpers ----
 
