@@ -1379,6 +1379,17 @@ void WidgetTree::collectDrawOrder() {
                   const int la = sortLayer(a), lb = sortLayer(b);
                   if (la != lb) return la < lb;
                   if (a->subLevel != b->subLevel) return a->subLevel < b->subLevel;
+                  // Opaque textures before translucent ones within a layer,
+                  // whichever was created first. Build 8606 draws a
+                  // SetTexture(0,0,0,0.7) region over a later opaque sibling at
+                  // the same level and layer, and under a later one in a higher
+                  // layer or level (_experiments/20261117T114606Z.
+                  // mangadmin_panel_compare, order4-order7). MangAdmin's lists
+                  // depend on it: a black 0.7 scroll frame dims its white rows.
+                  // Measured for colour alpha only; image alpha is not covered.
+                  const bool clearA = a->kind == WidgetKind::Texture && a->color[3] < 1.0f;
+                  const bool clearB = b->kind == WidgetKind::Texture && b->color[3] < 1.0f;
+                  if (clearA != clearB) return !clearA;
                   // Text is painted after textures within the same layer.
                   // MirrorTimer declares its label before its border, but the
                   // border must not cover the label's ascenders.

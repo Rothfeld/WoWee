@@ -4005,10 +4005,14 @@ int lua_Texture_SetTexture(lua_State* L) {
     if (lua_isnumber(L, 2)) {
         w->solidColor = true;
         w->texturePath.clear();
-        w->color[0] = static_cast<float>(lua_tonumber(L, 2));
-        w->color[1] = static_cast<float>(luaL_optnumber(L, 3, 0.0));
-        w->color[2] = static_cast<float>(luaL_optnumber(L, 4, 0.0));
-        w->color[3] = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+        w->hasGradient = false;
+        // Clamped to 0..1 as build 8606 stores them: SetTexture(33,164,210)
+        // reads back as 1,1,1 and draws white.
+        auto unit = [](double v) { return static_cast<float>(std::clamp(v, 0.0, 1.0)); };
+        w->color[0] = unit(lua_tonumber(L, 2));
+        w->color[1] = unit(luaL_optnumber(L, 3, 0.0));
+        w->color[2] = unit(luaL_optnumber(L, 4, 0.0));
+        w->color[3] = unit(luaL_optnumber(L, 5, 1.0));
     } else {
         w->solidColor = false;
         w->texturePath = luaL_optstring(L, 2, "");
@@ -4017,6 +4021,8 @@ int lua_Texture_SetTexture(lua_State* L) {
 }
 int lua_Texture_GetTexture(lua_State* L) {
     const auto* w = widgetOf(L, 1);
+    // A colour texture reads back as "Solid Texture" in build 8606.
+    if (w && w->solidColor) { lua_pushstring(L, "Solid Texture"); return 1; }
     lua_pushstring(L, w ? w->texturePath.c_str() : "");
     return 1;
 }
@@ -4075,10 +4081,8 @@ int lua_Region_SetVertexColor(lua_State* L) {
         // colour swatch it draws. luaL_optnumber falls back to its default for
         // nil and none only; anything else that will not convert raises, which
         // took the panel down as it opened.
-        w->color[0] = static_cast<float>(luaOptNumberText(L, 2, 1.0));
-        w->color[1] = static_cast<float>(luaOptNumberText(L, 3, 1.0));
-        w->color[2] = static_cast<float>(luaOptNumberText(L, 4, 1.0));
-        w->color[3] = static_cast<float>(luaOptNumberText(L, 5, 1.0));
+        for (int i = 0; i < 4; ++i)
+            w->color[i] = static_cast<float>(std::clamp(luaOptNumberText(L, 2 + i, 1.0), 0.0, 1.0));
         w->hasGradient = false;
     }
     return 0;
