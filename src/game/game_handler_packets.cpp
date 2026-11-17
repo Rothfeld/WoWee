@@ -552,18 +552,22 @@ void GameHandler::registerCoreOpcodes() {
         Opcode::SMSG_DYNAMIC_DROP_ROLL_RESULT, Opcode::SMSG_DESTRUCTIBLE_BUILDING_DAMAGE,
     }) { registerSkipHandler(op); }
 
-    // Game object despawn animation - reset state to closed before actual despawn
-    dispatchTable_[Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM] = [this](network::Packet& packet) {
+    // Not a state. CMaNGOS sends it when a used door, button or goober goes
+    // back to ready (GameObject::Update, GO_JUST_DEACTIVATED, animprogress
+    // > 0) and when an object is deleted; the state itself follows in
+    // GAMEOBJECT_STATE. Treating it as state 0 - which is ACTIVE, open -
+    // reopened Dire Maul's Door 177198 0.17 s after the server closed it,
+    // while the original client showed it shut (shared log 18:52:49).
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM] = [](network::Packet& packet) {
         if (!packet.hasRemaining(8)) return;
-        uint64_t guid = packet.readUInt64();
-        // Trigger a CLOSE animation / freeze before the object is removed
-        if (gameObjectStateCallback_) gameObjectStateCallback_(guid, 0);
+        const uint64_t guid = packet.readUInt64();
+        LOG_DEBUG("SMSG_GAMEOBJECT_DESPAWN_ANIM guid=0x", std::hex, guid, std::dec);
     };
-    // Game object reset state - return to READY(closed) state
+    // Back to READY (1), closed. 0 is ACTIVE, open.
     dispatchTable_[Opcode::SMSG_GAMEOBJECT_RESET_STATE] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(8)) return;
         uint64_t guid = packet.readUInt64();
-        if (gameObjectStateCallback_) gameObjectStateCallback_(guid, 0);
+        if (gameObjectStateCallback_) gameObjectStateCallback_(guid, 1);
     };
     dispatchTable_[Opcode::SMSG_FORCED_DEATH_UPDATE] = [this](network::Packet& packet) {
         playerDead_ = true;
