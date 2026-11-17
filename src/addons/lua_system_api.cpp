@@ -4858,6 +4858,30 @@ static int lua_ReloadUI(lua_State* L) {
     return 0;
 }
 
+static std::vector<std::string> splitBar(const char* text);
+
+// A row's default in the units its control shows. A row on a CVar has the
+// CVar's own default, which can differ by expansion (showTargetCastbar is off
+// in build 8606 and on in WotLK); the schema's number would restore the same
+// value under every expansion.
+static double schemaRowDefault(lua_State* L, const ui::SettingDesc& row) {
+    const std::string store = row.store;
+    if (store.rfind("cvar:", 0) != 0) return row.defaultValue;
+    std::string name = store.substr(5);
+    toLowerInPlace(name);
+    pushCvarDefault(L, name);
+    const std::string raw = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    if (row.values[0] == '\0') return std::atof(raw.c_str());
+    const auto values = splitBar(row.values);
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (values[i] == raw) return static_cast<double>(i);
+    }
+    LOG_ERROR("Setting ", row.key, ": CVar default '", raw, "' is not one of its values '",
+              row.values, "'; using the schema default");
+    return row.defaultValue;
+}
+
 // WoweeSettingList() - every client setting FrameXML has no control for.
 //
 // Answers an array of { key, label, kind, min, max, step, category }, from the
@@ -4885,7 +4909,7 @@ static int lua_WoweeSettingList(lua_State* L) {
         lua_pushstring(L, d.section);  lua_setfield(L, -2, "section");
         lua_pushstring(L, d.tooltip);  lua_setfield(L, -2, "tooltip");
         lua_pushstring(L, d.choices);  lua_setfield(L, -2, "choices");
-        lua_pushnumber(L, d.defaultValue); lua_setfield(L, -2, "default");
+        lua_pushnumber(L, schemaRowDefault(L, d)); lua_setfield(L, -2, "default");
         lua_pushstring(L, d.enabledWhen);  lua_setfield(L, -2, "enabledwhen");
         lua_pushstring(L, d.store);        lua_setfield(L, -2, "store");
         lua_rawseti(L, -2, static_cast<int>(i) + 1);
