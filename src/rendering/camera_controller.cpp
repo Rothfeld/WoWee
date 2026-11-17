@@ -342,8 +342,18 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
             // jump itself; only the vertical sweep may cancel ascent.
             glm::vec3 horizontal(candidate.x, candidate.y, stepPos.z);
             glm::vec3 horizontalAdjusted;
-            m2Renderer->checkCollision(stepPos, horizontal, horizontalAdjusted,
+            const bool horizontalContact = m2Renderer->checkCollision(stepPos, horizontal, horizontalAdjusted,
                 collisionRadius_, collisionHeight_);
+            if (horizontalContact) {
+                ++movementTraceM2Contacts_;
+                static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
+                if (traceContact) {
+                    LOG_INFO("M2 horizontal contact: from=", stepPos.x, ",", stepPos.y, ",", stepPos.z,
+                        " requested=", horizontal.x, ",", horizontal.y, ",", horizontal.z,
+                        " resolved=", horizontalAdjusted.x, ",", horizontalAdjusted.y, ",", horizontalAdjusted.z,
+                        " grounded=", grounded);
+                }
+            }
             candidate = horizontalAdjusted + glm::vec3(0.0f, 0.0f, candidate.z - stepPos.z);
             glm::vec3 adjusted;
             if (m2Renderer->checkCollision(horizontalAdjusted, candidate, adjusted,
@@ -1963,6 +1973,11 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
                 // HOVER: float at fixed height above ground instead of standing on it
                 static constexpr float HOVER_HEIGHT = 4.0f;  // ~4 yards above ground
                 const float snapH = hoverActive_ ? (*groundH + HOVER_HEIGHT) : *groundH;
+                static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
+                if (traceContact && movementTraceM2Contacts_ > 0) {
+                    LOG_INFO("Ground snap after M2 contact: feet=", feetZ, " floor=", snapH,
+                        " grounded=", grounded, " slopeGrace=", slopeGrace);
+                }
                 targetPos.z = snapH;
                 bool steepTerrain = false;
                 if (terrainManager && !ignoreSlopeLimit_ && !hoverActive_ && !externalFollow_) {

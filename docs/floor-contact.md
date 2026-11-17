@@ -31,6 +31,10 @@ parent workspace under `_experiments/20261117T000028Z.balcony_contact`.
 Cross-map test setup waits for a fresh `World terrain ready: map=N` log entry
 before sending movement. The application may already be IN_GAME during a map
 transfer, so an application-state transition alone cannot prove terrain loaded.
+`WOWEE_BODY_CONTACT_TRACE=1` logs horizontal M2 sweep requests/results and the
+subsequent ground snap. Movement contact counters include horizontal and
+vertical sweeps. Use these together to distinguish collision rejection from
+a later floor snap erasing the resolved height.
 The movement helper regressions run with:
 
 ```sh
