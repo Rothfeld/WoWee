@@ -64,3 +64,11 @@ plumes into a point.
 Particle sizes are the authored lifecycle scale times placement scale, with no
 caps: GnomereganVent smoke grows 2.78 -> 4.44 -> 8.33. An all-zero lifecycle
 alpha is authored (14 TBC emitters) and draws nothing.
+
+Head/tail selector: pre-264 byte `+0x2C` (0 head, 1 tail, 2 both; 12548 / 3124 /
+398 TBC emitters). `+0x2D` is zero in all 16070 TBC emitters; reading it drew
+every tail as a dot. A tail quad runs from the particle back along
+`-velocity * tailLength` (`+0x17C`), half width = particle scale.
+Corrosive Acid Breath (16359, `AcidLiquidBreath.m2` #1/#2) shows green
+tadpole streaks, and the trainer learn light (kit 362, `Learn_Impact_Base.m2`
+#0, tail 2.4 s at 2.78 yd/s) vertical beams.

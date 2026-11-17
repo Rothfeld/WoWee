@@ -60,7 +60,8 @@ One worker records both streams; inline recording uses the same merge.
 Particles follow the mesh passes. Particle headers use model version, not
 expansion: `BubblingBowl01.m2`
 (260) has 16-bit blend/emitter fields, while `DR_Cookpot_01.m2` (263) packs
-them into bytes. Both ship in TBC. Head/tail is byte `0x2d` in both layouts.
+them into bytes. Both ship in TBC. Pre-264 head/tail (0 head, 1 tail, 2 both)
+is byte `0x2c`; `0x2d` is zero in every TBC emitter. Wrath uses `0x2d`.
 Billboard bones require per-frame updates
 even without animation tracks, and cannot reuse another instance's camera-facing
 pose. Silvermyst crystal glow cards are an example. Visible

@@ -53,9 +53,9 @@ TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particl
         // Original LootFX legacy header: 04 00 01 00 at +0x28.
         bytes[emitterOffset + 0x28] = 4;
         bytes[emitterOffset + (version < 262 ? 0x2a : 0x29)] = 1;
-        // Particle type and head/tail are separate bytes in every version.
-        bytes[emitterOffset + 0x2c] = 0;
-        bytes[emitterOffset + 0x2d] = 1;
+        // Pre-264 head/tail is +0x2C (+0x2D is zero in all TBC data);
+        // Wrath keeps it at +0x2D.
+        bytes[emitterOffset + (legacy ? 0x2c : 0x2d)] = 1;
         const float tailLength = 3.0f;
         std::memcpy(bytes.data() + emitterOffset + (legacy ? 0x17c : 0x15c),
                     &tailLength, sizeof(tailLength));

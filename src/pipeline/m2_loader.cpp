@@ -1579,7 +1579,11 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             em.texture    = readValue<uint16_t>(m2Data, base + 0x16);
             em.blendingType = readValue<uint8_t>(m2Data, base + 0x28);
             em.emitterType  = readValue<uint8_t>(m2Data, base + (header.version < 262 ? 0x2A : 0x29));
-            em.headOrTail = readValue<uint8_t>(m2Data, base + 0x2D);
+            // Head, tail or both (0/1/2). Pre-264 emitters keep it at +0x2C:
+            // across 16070 TBC emitters +0x2D is always zero, while +0x2C reads
+            // 0 (12548), 1 (3124) and 2 (398). AcidLiquidBreath #1/#2 (1)
+            // are the long green streaks of Corrosive Acid Breath (16359).
+            em.headOrTail = readValue<uint8_t>(m2Data, base + (isVanilla ? 0x2C : 0x2D));
             em.tailLength = readValue<float>(m2Data, base + (isVanilla ? 0x17C : 0x15C));
             em.priorityPlane = readValue<int16_t>(m2Data, base + 0x2E);
             em.textureRows = readValue<uint16_t>(m2Data, base + 0x30);
