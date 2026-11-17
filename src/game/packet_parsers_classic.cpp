@@ -1594,8 +1594,9 @@ bool parseItemQueryPreWotlk(network::Packet& packet, ItemQueryResponseData& data
         data.pageMaterial = packet.readUInt32(); // PageMaterial
         data.startQuestId = packet.readUInt32(); // StartQuest
     }
-    // LockID, Material, Sheath: the sheath type places a sheathed weapon.
-    if (packet.hasRemaining(12)) {
+    // Classic: LockID, Material, Sheath; the sheath type places a sheathed
+    // weapon. TBC reads them with the rest of its tail below.
+    if (!hasSoundOverrideSubclass && packet.hasRemaining(12)) {
         packet.readUInt32(); // LockID
         packet.readUInt32(); // Material
         data.sheath = packet.readUInt32();

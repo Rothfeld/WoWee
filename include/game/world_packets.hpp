@@ -2043,7 +2043,6 @@ struct ItemQueryResponseData {
     // through Duration.
     uint32_t lockId = 0;
     int32_t material = 0;
-    uint32_t sheath = 0;
     int32_t randomProperty = 0;
     uint32_t randomSuffix = 0;
     uint32_t block = 0;
