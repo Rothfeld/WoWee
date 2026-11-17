@@ -87,73 +87,33 @@ struct ScenePickParams {
 };
 
 /// Everything the traversal found, before either caller applies its own rules.
+/// What the cursor is on, ranked as build 8606 ranks it (CGWorldFrame
+/// 0x4ae760 -> CM2Scene 0x70b2b0; docs/unit-size-rules.md): the nearest
+/// surface the ray reaches, whatever kind of object it belongs to. A dead
+/// unit with nothing left to do - no loot for this player, not skinnable -
+/// is only considered when nothing else was hit (0x60e870 defers it).
 struct ScenePick {
-    uint64_t closestGuid = 0;          ///< Nearest hit of any pickable type.
+    uint64_t closestGuid = 0;          ///< Nearest hit, deferred corpses excluded.
     float    closestT = 1e30f;
+    bool     closestInteractive = false; ///< False for scenery a click does not use.
 
-    uint64_t hostileUnitGuid = 0;      ///< Nearest *living* hostile unit.
-    float    hostileUnitT = 1e30f;
+    uint64_t deferredGuid = 0;         ///< Nearest dead unit with nothing to do.
+    float    deferredT = 1e30f;
 
-    uint64_t livingUnitGuid = 0;       ///< Nearest living unit or player, by centre.
-    float    livingUnitCenterT = 1e30f;
-    uint64_t deadUnitGuid = 0;         ///< Nearest corpse, by centre.
-    float    deadUnitCenterT = 1e30f;
-
-    uint64_t objectGuid = 0;           ///< The interactable object best aimed at.
-    float    objectCenterT = 1e30f;    ///< Its centre's distance along the ray.
-    /// How far the ray passed from that object's centre, as a fraction of its
-    /// radius: nought is dead centre, one is a graze. What objects are ranked
-    /// by - see the picker, and the scenery-at-the-elbow it exists to stop.
-    float    objectAim = 1e30f;
-
-    /// The object best aimed at whether or not it can be used.
-    ///
-    /// A signpost, a banner, a shop's hanging board are GameObjectType 5 -
-    /// generic scenery - and nothing uses them in WoW either. What they do have
-    /// is a name, and reading it off the sign is the whole point of a sign:
-    /// "Mage Quarter", "Trias' Cheese", "Everyday Merchandise". Kept apart from
-    /// objectGuid so a click still cannot land on scenery.
+    /// The nearest game object hit, interactive or not - what a name tooltip
+    /// describes even when a click would not use it.
     uint64_t namedObjectGuid = 0;
-    float    namedObjectAim = 1e30f;
+    float    namedObjectT = 1e30f;
 
-    /// The living win; a corpse is still selectable, but only when nothing alive
-    /// was under the cursor - which is what makes a player standing on a body
-    /// clickable, and what looting and skinning still need.
-    [[nodiscard]] uint64_t unitGuid() const { return livingUnitGuid != 0 ? livingUnitGuid : deadUnitGuid; }
-    [[nodiscard]] float unitCenterT() const {
-        return livingUnitGuid != 0 ? livingUnitCenterT : deadUnitCenterT;
-    }
-
-    /// Resolve to the one thing under the cursor: a unit unless an object's
-    /// centre is clearly in front of it, so a creature is never lost to a
-    /// decorative or backing object behind it. A hostile keeps its priority.
-    ///
-    /// This and not closestGuid is what a caller wants. closestGuid is the
-    /// nearest *entry point* of anything pickable, and a game object's sphere
-    /// is 2.5 yards against a unit's 1.8 - so a wide object beside an NPC is
-    /// entered first even when the NPC is nearer, and answers closestGuid while
-    /// a click still lands on the NPC. kMaxGameObjectPickRadius exists for that
-    /// same reason. Every affordance drawn for what a click would do has to ask
-    /// this one.
-    ///
-    /// Inline so the rule can be tested without linking the picker's traversal,
-    /// which needs the whole client behind it.
+    /// What a click acts on: the nearest hit when it is something a click
+    /// uses, nothing when scenery is in front of it, the deferred corpse when
+    /// nothing else was hit at all.
     [[nodiscard]] uint64_t resolve() const {
-        // A unit wins over a game object unless the object's centre is clearly
-        // in front of the unit's.
-        constexpr float kUnitOverGoBias = 2.0f;
-        const uint64_t unit = unitGuid();
-        if (unit != 0 && (objectGuid == 0 || unitCenterT() <= objectCenterT + kUnitOverGoBias)) {
-            return hostileUnitGuid != 0 ? hostileUnitGuid : unit;
-        }
-        if (objectGuid != 0) return objectGuid;
-        return 0;
+        if (closestGuid != 0) return closestInteractive ? closestGuid : 0;
+        return deferredGuid;
     }
 };
 
-/// Called for every entity the ray hits, so a caller can gather what only it
-/// cares about (a hooked fishing bobber, quest objective objects) without
-/// repeating the traversal.
 using ScenePickHit = std::function<void(uint64_t guid,
                                         const std::shared_ptr<game::Entity>& entity,
                                         float hitT, float centerT)>;

@@ -215,6 +215,12 @@ struct M2Model {
     glm::vec3 boundMin;             // Model bounding box
     glm::vec3 boundMax;
     float boundRadius;              // Bounding sphere
+    /// Header vertex box and radius (M2 header 0xb4..0xcc in v260): the
+    /// bounds of the rendered vertices, which build 8606's scene picking
+    /// falls back to when the current animation has no bounds (0x70a305).
+    glm::vec3 vertexBoxMin{0.0f};
+    glm::vec3 vertexBoxMax{0.0f};
+    float vertexRadius = 0.0f;
 
     // Geometry data
     std::vector<M2Vertex> vertices;

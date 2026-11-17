@@ -659,6 +659,27 @@ void EntitySpawner::buildCreatureDisplayLookups() {
                 if (heightField != 0xFFFFFFFF && heightField < cmd->getFieldCount())
                     modelIdToCollisionHeight_[modelId] = cmd->getFloat(i, heightField);
             }
+            // GeoBox and MountHeight, the size build 8606 measures a unit by
+            // for its selection circle (0x60ce50, 0x60e560). Only layouts that
+            // name them carry them; see docs/unit-size-rules.md.
+            if (cmdL) {
+                const uint32_t box[6] = {(*cmdL)["GeoBoxMinX"], (*cmdL)["GeoBoxMinY"],
+                                         (*cmdL)["GeoBoxMinZ"], (*cmdL)["GeoBoxMaxX"],
+                                         (*cmdL)["GeoBoxMaxY"], (*cmdL)["GeoBoxMaxZ"]};
+                const uint32_t mountField = (*cmdL)["MountHeight"];
+                const bool named = std::all_of(std::begin(box), std::end(box),
+                    [&](uint32_t f) { return f < cmd->getFieldCount(); }) &&
+                    mountField < cmd->getFieldCount();
+                if (named) {
+                    ModelSize size;
+                    size.geoBox.min = {cmd->getFloat(i, box[0]), cmd->getFloat(i, box[1]),
+                                       cmd->getFloat(i, box[2])};
+                    size.geoBox.max = {cmd->getFloat(i, box[3]), cmd->getFloat(i, box[4]),
+                                       cmd->getFloat(i, box[5])};
+                    size.mountHeight = cmd->getFloat(i, mountField);
+                    modelIdToSize_[modelId] = size;
+                }
+            }
             // The other half of a creature's size. Zero appears in the file
             // and means unset rather than invisible, so it keeps 1.0.
             const uint32_t scaleField = cmdL ? (*cmdL)["ModelScale"] : 4;
@@ -667,7 +688,8 @@ void EntitySpawner::buildCreatureDisplayLookups() {
                 if (modelScale > 0.0f) modelIdToScale_[modelId] = modelScale;
             }
         }
-        LOG_INFO("Loaded ", modelIdToPath_.size(), " model→path mappings");
+        LOG_INFO("Loaded ", modelIdToPath_.size(), " model→path mappings, ",
+                 modelIdToSize_.size(), " CreatureModelData GeoBoxes");
     }
 
     // Resolve gryphon/wyvern display IDs by exact model path so taxi mounts have textures.
@@ -1027,6 +1049,44 @@ bool EntitySpawner::getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, 
     if (instanceId == 0) return false;
 
     return renderer_->getCharacterRenderer()->getInstanceBounds(instanceId, outCenter, outRadius);
+}
+
+bool EntitySpawner::getSelectionRadiusForGuid(uint64_t guid, float& outRadius) const {
+    if (!gameHandler_) return false;
+    const auto unit = std::dynamic_pointer_cast<game::Unit>(
+        gameHandler_->getEntityManager().getEntity(guid));
+    if (!unit) return false;
+    const auto sizeOf = [&](uint32_t displayId) -> const ModelSize* {
+        const auto display = displayDataMap_.find(displayId);
+        if (display == displayDataMap_.end()) return nullptr;
+        const auto size = modelIdToSize_.find(display->second.modelId);
+        return size != modelIdToSize_.end() ? &size->second : nullptr;
+    };
+    const uint32_t displayId = unit->getDisplayId();
+    const ModelSize* rider = sizeOf(displayId);
+    if (!rider) return false;
+
+    // CGUnit_C vtable +0x58 (0x5ec9b0): OBJECT_FIELD_SCALE_X times the display
+    // scale of 0x60bc70 (creatureRenderScale with a unit server scale), times
+    // the mount display's CreatureModelScale while mounted (CGUnit_C+0xa4,
+    // written by 0x6216b0 from the mount's CreatureDisplayInfo).
+    float objectScale = 1.0f;
+    const auto scaleField = unit->getFields().find(game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X));
+    if (scaleField != unit->getFields().end()) {
+        const float server = std::bit_cast<float>(scaleField->second);
+        if (server > 0.0f) objectScale = server;
+    }
+    float scale = objectScale * creatureRenderScale(*unit, displayId, 1.0f);
+    ModelGeoBox box = rider->geoBox;
+    const uint32_t mountDisplay = unit->getMountDisplayId();
+    if (mountDisplay != 0) {
+        const ModelSize* mount = sizeOf(mountDisplay);
+        if (!mount) return false;
+        box = mountedGeoBox(box, mount->geoBox, mount->mountHeight);
+        scale *= creatureDisplayScale(mountDisplay);
+    }
+    outRadius = selectionCircleRadius(box, scale);
+    return true;
 }
 
 bool EntitySpawner::getRenderFootZForGuid(uint64_t guid, float& outFootZ) const {

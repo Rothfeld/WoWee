@@ -135,6 +135,7 @@ public:
 
     // Render bounds lookup (for click targeting / selection) - delegates to EntitySpawner
     bool getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const;
+    bool getSelectionRadiusForGuid(uint64_t guid, float& outRadius) const;
     bool getRenderFootZForGuid(uint64_t guid, float& outFootZ) const;
     /// Light a game object's model while the player is pressing on it.
     ///

@@ -876,13 +876,21 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                 // Selection circle color by reaction (NPCs) and PvP flag (players), as the original client.
                 bool showSelectionCircle = false;
                 glm::vec3 circleColor(1.0f, 1.0f, 0.3f); // default yellow
-                float circleRadius = 1.5f;
-                {
-                    glm::vec3 boundsCenter;
-                    float boundsRadius = 0.0f;
-                    if (core::Application::getInstance().getRenderBoundsForGuid(target->getGuid(), boundsCenter, boundsRadius)) {
-                        float r = boundsRadius * 1.1f;
-                        circleRadius = std::min(std::max(r, 0.8f), 8.0f);
+                // Build 8606 sizes the ring from CreatureModelData's GeoBox
+                // (CGUnit_C 0x60e560, docs/unit-size-rules.md). A unit whose
+                // model size is not known yet - display not loaded, or an
+                // expansion whose layout carries no GeoBox - draws no ring
+                // rather than one of a guessed size, and says so once.
+                float circleRadius = 0.0f;
+                const bool knownSize = core::Application::getInstance().getSelectionRadiusForGuid(
+                    target->getGuid(), circleRadius);
+                if (!knownSize && (target->getType() == game::ObjectType::UNIT ||
+                                   target->getType() == game::ObjectType::PLAYER)) {
+                    static std::unordered_set<uint64_t> saidUnknownSize;
+                    if (saidUnknownSize.size() < 64 && saidUnknownSize.insert(target->getGuid()).second) {
+                        LOG_WARNING("Selection circle: no CreatureModelData size for target 0x",
+                                    std::hex, target->getGuid(), std::dec, " display=",
+                                    std::static_pointer_cast<game::Unit>(target)->getDisplayId());
                     }
                 }
                 if (target->getType() == game::ObjectType::UNIT ||
@@ -919,7 +927,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                 // unit and a player and under nothing else - a door, a mailbox,
                 // a bank vault is used rather than selected, and a ring on the
                 // floor around one reads as a creature being fought.
-                if (showSelectionCircle) {
+                if (showSelectionCircle && knownSize) {
                     if (gameHandler.hasAutoAttackIntent() &&
                         gameHandler.getAutoAttackTargetGuid() == target->getGuid()) {
                         // Build 8606 attack selection alternates pink/red and
@@ -1886,7 +1894,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     closestType = game::ObjectType::GAMEOBJECT;
                 } else {
                     closestGuid = pick.resolve();
-                    closestType = (closestGuid != 0 && closestGuid == pick.objectGuid)
+                    const auto picked = gameHandler.getEntityManager().getEntity(closestGuid);
+                    closestType = (picked && picked->getType() == game::ObjectType::GAMEOBJECT)
                                       ? game::ObjectType::GAMEOBJECT
                                       : game::ObjectType::UNIT;
                 }

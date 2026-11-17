@@ -70,7 +70,14 @@
     "ID": 0,
     "ModelPath": 2,
     "ModelScale": 4,
-    "CollisionHeight": 15
+    "CollisionHeight": 15,
+    "MountHeight": 16,
+    "GeoBoxMinX": 17,
+    "GeoBoxMinY": 18,
+    "GeoBoxMinZ": 19,
+    "GeoBoxMaxX": 20,
+    "GeoBoxMaxY": 21,
+    "GeoBoxMaxZ": 22
   },
   "Emotes": {
     "AnimID": 2,

@@ -18,6 +18,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/visual_mesh_pick.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/footprint_renderer.hpp"
@@ -4455,41 +4456,72 @@ void CharacterRenderer::setGestureWeaponPose(uint32_t instanceId, uint32_t anima
 
 bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& origin,
                                            const glm::vec3& direction, float& distance) const {
+    // Build 8606 picks a unit by its drawn triangles at the current pose,
+    // behind a sphere test on the current animation's bounds (CM2Scene
+    // 0x70b2b0 -> 0x70a1a0 broad, 0x70ae50 narrow; docs/unit-size-rules.md).
+    // Attached models (weapons) belong to the unit: 0x4abf30 hands every
+    // child model the parent's guid.
     const auto found = instances.find(instanceId);
     if (found == instances.end()) return false;
     const auto& instance = found->second;
-    const auto& model = models.at(instance.modelId).data;
-    const glm::mat4 inverse = glm::inverse(instance.hasOverrideModelMatrix
-        ? instance.overrideModelMatrix : getModelMatrix(instance));
+    const auto& gpuModel = models.at(instance.modelId);
+    const auto& model = gpuModel.data;
+    const glm::mat4 world = instance.hasOverrideModelMatrix
+        ? instance.overrideModelMatrix : getModelMatrix(instance);
+    const glm::mat4 inverse = glm::inverse(world);
     const glm::vec3 localOrigin(inverse * glm::vec4(origin, 1));
     // Do not normalize: ray parameter must remain a world-space distance.
     const glm::vec3 localDirection(inverse * glm::vec4(direction, 0));
-    // Animation bounds describe the visible unit. The collision sphere can
-    // retain human dimensions on large creatures such as ForceofNature.
-    // Models without animation use their bind-pose geometry bounds.
-    const auto& gpuModel = models.at(instance.modelId);
-    glm::vec3 boundsMin = gpuModel.visualBoundMin;
-    glm::vec3 boundsMax = gpuModel.visualBoundMax;
-    if (instance.currentSequenceIndex >= 0) {
-        const auto& sequence = model.sequences.at(instance.currentSequenceIndex);
-        boundsMin = glm::min(sequence.boundMin, sequence.boundMax);
-        boundsMax = glm::max(sequence.boundMin, sequence.boundMax);
-    }
-    assert(glm::all(glm::greaterThan(boundsMax, boundsMin)));
-    float nearT = 0.0f;
-    float farT = std::numeric_limits<float>::infinity();
-    for (int axis = 0; axis < 3; ++axis) {
-        if (std::abs(localDirection[axis]) < 1e-8f) {
-            if (localOrigin[axis] < boundsMin[axis] || localOrigin[axis] > boundsMax[axis]) return false;
-            continue;
+
+    float nearest = std::numeric_limits<float>::infinity();
+    const ModelPickSphere sphere = modelPickSphere(model, instance.currentSequenceIndex);
+    {
+        // Sphere test in model space against the unnormalized ray.
+        const glm::vec3 oc = localOrigin - sphere.center;
+        const float a = glm::dot(localDirection, localDirection);
+        const float b = glm::dot(oc, localDirection);
+        const float c = glm::dot(oc, oc) - sphere.radius * sphere.radius;
+        const float disc = b * b - a * c;
+        if (a > 0.0f && disc >= 0.0f && (-b + std::sqrt(disc)) / a >= 0.0f) {
+            bool filter = !instance.activeGeosets.empty();
+            if (filter) {
+                filter = std::any_of(model.batches.begin(), model.batches.end(),
+                    [&](const pipeline::M2Batch& b) { return instance.activeGeosets.count(b.submeshId) != 0; });
+            }
+            const float sampleTime = instance.currentSequenceIndex >= 0
+                ? animationSampleTime(instance.currentAnimationId,
+                      model.sequences[instance.currentSequenceIndex], instance.animationTime)
+                : 0.0f;
+            // The batches the render pass draws (geosets, alpha tracks) and,
+            // as 0x70ae8f does, not those with texture-unit flag 0x08.
+            auto drawn = [&](const pipeline::M2Batch& batch) {
+                if (batch.flags & 0x08) return false;
+                if (filter) {
+                    if (!instance.activeGeosets.count(batch.submeshId)) return false;
+                } else {
+                    const uint16_t group = batch.submeshId / 100;
+                    if (group == 15 || group == 17 || group == 18) return false;
+                }
+                const float alpha = instance.opacity *
+                    evalBatchColorAlpha(model, batch, instance.currentSequenceIndex, sampleTime,
+                                        instance.globalSequenceTime) *
+                    evalBatchTextureWeight(model, batch, instance.currentSequenceIndex, sampleTime,
+                                           instance.globalSequenceTime);
+                return alpha > 0.0f;
+            };
+            const size_t boneCount = std::min(instance.boneMatrices.size(), model.bones.size());
+            nearest = pickSkinnedModel(model,
+                std::span<const glm::mat4>(instance.boneMatrices.data(), boneCount),
+                drawn, localOrigin, localDirection, nearest);
         }
-        const float t0 = (boundsMin[axis] - localOrigin[axis]) / localDirection[axis];
-        const float t1 = (boundsMax[axis] - localOrigin[axis]) / localDirection[axis];
-        nearT = std::max(nearT, std::min(t0, t1));
-        farT = std::min(farT, std::max(t0, t1));
-        if (nearT > farT) return false;
     }
-    distance = nearT;
+    for (const auto& weapon : instance.weaponAttachments) {
+        float weaponHit = 0.0f;
+        if (intersectInstance(weapon.weaponInstanceId, origin, direction, weaponHit))
+            nearest = std::min(nearest, weaponHit);
+    }
+    if (!std::isfinite(nearest)) return false;
+    distance = nearest;
     return true;
 }
 

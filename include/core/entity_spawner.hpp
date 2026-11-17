@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/unit_size.hpp"
+
 #include "game/character.hpp"
 #include "core/creature_scale.hpp"
 #include "game/game_services.hpp"
@@ -117,6 +119,11 @@ public:
 
     // Render bounds/position queries (used by click targeting, etc.)
     bool getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const;
+    /// Ground selection circle radius, build 8606 rule (core/unit_size.hpp):
+    /// the CreatureModelData GeoBox of the unit's display, joined with its
+    /// mount's when mounted, at the unit's object scale. False when the unit
+    /// or its model size is not known.
+    bool getSelectionRadiusForGuid(uint64_t guid, float& outRadius) const;
     float getPlayerSwimmingDepth() const;
     float getUnitSwimmingDepth(uint64_t guid, uint32_t instanceId) const;
     uint32_t characterInstanceIdForGuid(uint64_t guid) const;
@@ -390,6 +397,13 @@ private:
     std::unordered_map<uint32_t, std::string> modelIdToPath_;   // modelId → M2 path (from CreatureModelData.dbc)
     std::unordered_map<uint32_t, float> modelIdToScale_;        // modelId → CreatureModelData.ModelScale
     std::unordered_map<uint32_t, float> modelIdToCollisionHeight_;
+    /// CreatureModelData GeoBox and MountHeight per model id, where the
+    /// expansion's layout names them (TBC).
+    struct ModelSize {
+        ModelGeoBox geoBox;
+        float mountHeight = 0.0f;
+    };
+    std::unordered_map<uint32_t, ModelSize> modelIdToSize_;
     // CharHairGeosets.dbc: key = (raceId<<16)|(sexId<<8)|variationId → geosetId (skinSectionId)
     std::unordered_map<uint32_t, uint16_t> hairGeosetMap_;
     // CharFacialHairStyles.dbc: key = (raceId<<16)|(sexId<<8)|variationId → {geoset100, geoset300, geoset200}

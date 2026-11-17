@@ -1201,6 +1201,11 @@ target_link_libraries(test_blp_alpha_silhouette PRIVATE catch2_main)
 add_test(NAME blp_alpha_silhouette COMMAND test_blp_alpha_silhouette)
 register_test_target(test_blp_alpha_silhouette)
 
+# ── test_unit_size ───────────────────────────────────────────
+# Build 8606 selection circle radius and model picking rules.
+wowee_add_test(test_unit_size
+    SOURCES test_unit_size.cpp)
+
 # ── test_frustum ─────────────────────────────────────────────
 wowee_add_test(test_frustum
     SOURCES test_frustum.cpp

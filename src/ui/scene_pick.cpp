@@ -27,9 +27,15 @@ namespace {
 constexpr uint32_t kGoTypeGeneric = 5;
 constexpr uint32_t kGoTypeFishingHole = 25;
 
-bool isDeadUnit(const std::shared_ptr<game::Entity>& entity) {
+/// CGUnit_C 0x60e870: a dead unit the player can neither loot
+/// (UNIT_DYNFLAG_LOOTABLE, which the server sets for the looter) nor skin
+/// (UNIT_FLAG_SKINNABLE) is picked only when nothing else is under the cursor.
+bool deferredCorpse(const std::shared_ptr<game::Entity>& entity) {
     auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
-    return unit && unit->getHealth() == 0 && unit->getMaxHealth() > 0;
+    if (!unit || unit->getHealth() != 0 || unit->getMaxHealth() == 0) return false;
+    const bool lootable = (unit->getDynamicFlags() & game::UNIT_DYNFLAG_LOOTABLE) != 0;
+    const bool skinnable = (unit->getUnitFlags() & game::UNIT_FLAG_SKINNABLE) != 0;
+    return !lootable && !skinnable;
 }
 
 } // namespace
@@ -178,59 +184,28 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         const float centerT = glm::dot(hitCenter - ray.origin, ray.direction);
 
         if (type == game::ObjectType::UNIT || type == game::ObjectType::PLAYER) {
-            // Rank the living ahead of the dead rather than by distance alone. A
-            // corpse lies at ground level while a unit's sphere sits a metre up,
-            // so looking down at someone standing on a body put the body nearer.
-            if (isDeadUnit(entity)) {
-                if (centerT < pick.deadUnitCenterT) {
-                    pick.deadUnitCenterT = centerT;
-                    pick.deadUnitGuid = guid;
+            if (deferredCorpse(entity)) {
+                if (hitT < pick.deferredT) {
+                    pick.deferredT = hitT;
+                    pick.deferredGuid = guid;
                 }
-            } else {
-                if (centerT < pick.livingUnitCenterT) {
-                    pick.livingUnitCenterT = centerT;
-                    pick.livingUnitGuid = guid;
-                }
-                if (type == game::ObjectType::UNIT) {
-                    auto unit = std::static_pointer_cast<game::Unit>(entity);
-                    // A corpse still answers isHostile(), and a hostile is picked
-                    // ahead of everything - hence the liveness check above it.
-                    const bool hostile = unit->isHostile() ||
-                                         gameHandler.isAggressiveTowardPlayer(guid);
-                    if (hostile && hitT < pick.hostileUnitT) {
-                        pick.hostileUnitT = hitT;
-                        pick.hostileUnitGuid = guid;
-                    }
-                }
+            } else if (hitT < pick.closestT) {
+                pick.closestT = hitT;
+                pick.closestGuid = guid;
+                pick.closestInteractive = true;
             }
         } else if (type == game::ObjectType::GAMEOBJECT) {
             const bool interactive = !goInfo || (goInfo->type != kGoTypeGeneric &&
                                                  goInfo->type != kGoTypeFishingHole);
-            // How well the ray is aimed at this one, as a fraction of its own
-            // size: nought is dead centre and one is a graze. Ranked by that
-            // rather than by which centre is nearest along the ray, because
-            // "nearest" is the question that made scenery at the player's elbow
-            // beat the thing they were pointing at - a ray that grazes the edge
-            // of a near sphere is still a nearer hit than one straight through
-            // the middle of a far one.
-            const float centreOffset = glm::length(hitCenter - (ray.origin + ray.direction * centerT));
-            const float aim = hitRadius > 0.0f ? centreOffset / hitRadius : 1.0f;
-            if (interactive && aim < pick.objectAim) {
-                pick.objectAim = aim;
-                pick.objectCenterT = centerT;
-                pick.objectGuid = guid;
+            if (hitT < pick.closestT) {
+                pick.closestT = hitT;
+                pick.closestGuid = guid;
+                pick.closestInteractive = interactive;
             }
-            // Named whatever it is. Scenery takes no click and still says what
-            // it is when the pointer is on it, which is how a sign is read.
-            if (aim < pick.namedObjectAim) {
-                pick.namedObjectAim = aim;
+            if (hitT < pick.namedObjectT) {
+                pick.namedObjectT = hitT;
                 pick.namedObjectGuid = guid;
             }
-        }
-
-        if (hitT < pick.closestT) {
-            pick.closestT = hitT;
-            pick.closestGuid = guid;
         }
 
         if (onHit) onHit(guid, entity, hitT, centerT);

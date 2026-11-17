@@ -1,16 +1,8 @@
 #include "rendering/visual_mesh_pick.hpp"
-// Which of ScenePick's answers a caller wants.
-//
-// The struct carries several, and two of them are easy to confuse: closestGuid
-// is the nearest *entry point* of anything the ray touched, and resolve() is
-// what a click acts on. They disagree exactly where it matters. A game object's
-// fallback sphere is 2.5 yards against a unit's 1.8, so a wide object beside an
-// NPC is entered first even when the NPC's centre is nearer - which is why
-// kMaxGameObjectPickRadius exists at all, and why the vendor cursor, asking
-// closestGuid, lost every argument to the stall a merchant stands behind.
-//
-// Nothing raises when a caller picks the wrong one. It just quietly describes a
-// different thing from the one the click will hit.
+// What a click acts on, ranked as build 8606 ranks it: the nearest surface
+// the ray reaches (CM2Scene 0x70b2b0), with dead units that have nothing left
+// to do considered only when nothing else is there (CGUnit_C 0x60e870).
+// See docs/unit-size-rules.md.
 #include <catch_amalgamated.hpp>
 
 #include <cstdint>
@@ -26,65 +18,45 @@ using wowee::ui::ScenePick;
 namespace {
 constexpr uint64_t kVendor = 0xF130000001u;
 constexpr uint64_t kStall  = 0xF110000002u;
-constexpr uint64_t kWolf   = 0xF130000003u;
 constexpr uint64_t kCorpse = 0xF130000004u;
 }  // namespace
 
-TEST_CASE("a unit behind a wider object still wins the click") {
-    // The vendor's centre is nearer, but the stall's bigger sphere is entered
-    // first - so closestGuid names the stall and resolve() names the vendor.
+TEST_CASE("the nearest surface takes the click, whatever it belongs to") {
     ScenePick pick;
-    pick.closestGuid = kStall;      // entered at 8.0
+    pick.closestGuid = kVendor;
     pick.closestT = 8.0f;
-    pick.livingUnitGuid = kVendor;
-    pick.livingUnitCenterT = 10.0f;
-    pick.objectGuid = kStall;
-    pick.objectCenterT = 10.5f;
-
-    CHECK(pick.resolve() == kVendor);
-    CHECK(pick.closestGuid != pick.resolve());
-}
-
-TEST_CASE("an object clearly in front of the unit takes it") {
-    // Clearly is two yards. A mailbox between the player and an NPC behind it
-    // is what the player means to click.
-    ScenePick pick;
-    pick.livingUnitGuid = kVendor;
-    pick.livingUnitCenterT = 14.0f;
-    pick.objectGuid = kStall;
-    pick.objectCenterT = 11.0f;
-    CHECK(pick.resolve() == kStall);
-
-    // Just inside the bias, and the unit keeps it.
-    pick.objectCenterT = 12.5f;
+    pick.closestInteractive = true;
     CHECK(pick.resolve() == kVendor);
 }
 
-TEST_CASE("a hostile outranks whatever else is under the cursor") {
+TEST_CASE("scenery in front of a unit takes the click and uses nothing") {
+    // A GENERIC object nearer than the vendor: the cursor is on the object,
+    // which a click does not use, so nothing is selected.
     ScenePick pick;
-    pick.livingUnitGuid = kVendor;
-    pick.livingUnitCenterT = 6.0f;
-    pick.hostileUnitGuid = kWolf;
-    pick.hostileUnitT = 9.0f;
-    CHECK(pick.resolve() == kWolf);
+    pick.closestGuid = kStall;
+    pick.closestT = 6.0f;
+    pick.closestInteractive = false;
+    pick.namedObjectGuid = kStall;
+    CHECK(pick.resolve() == 0u);
+    CHECK(pick.namedObjectGuid == kStall);
 }
 
-TEST_CASE("a corpse is picked only when nothing living is there") {
+TEST_CASE("a corpse with nothing to do is picked only when nothing else is there") {
     ScenePick pick;
-    pick.deadUnitGuid = kCorpse;
-    pick.deadUnitCenterT = 5.0f;
+    pick.deferredGuid = kCorpse;
+    pick.deferredT = 5.0f;
     CHECK(pick.resolve() == kCorpse);
 
-    // Someone standing on the body takes it back, however the distances fall.
-    pick.livingUnitGuid = kVendor;
-    pick.livingUnitCenterT = 7.0f;
+    // Anything else under the cursor takes it, nearer or not.
+    pick.closestGuid = kVendor;
+    pick.closestT = 9.0f;
+    pick.closestInteractive = true;
     CHECK(pick.resolve() == kVendor);
 }
 
 TEST_CASE("an empty pick resolves to nothing") {
     ScenePick pick;
     CHECK(pick.resolve() == 0u);
-    CHECK(pick.unitGuid() == 0u);
 }
 
 #include "ui/world_cursor.hpp"

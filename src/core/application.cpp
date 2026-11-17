@@ -5901,6 +5901,10 @@ bool Application::getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, fl
     return false;
 }
 
+bool Application::getSelectionRadiusForGuid(uint64_t guid, float& outRadius) const {
+    return entitySpawner_ && entitySpawner_->getSelectionRadiusForGuid(guid, outRadius);
+}
+
 bool Application::getRenderFootZForGuid(uint64_t guid, float& outFootZ) const {
     if (entitySpawner_) return entitySpawner_->getRenderFootZForGuid(guid, outFootZ);
     return false;

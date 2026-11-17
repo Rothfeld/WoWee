@@ -956,6 +956,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     model.boundMin = glm::min(corner0, corner1);
     model.boundMax = glm::max(corner0, corner1);
     model.boundRadius = header.boundingRadius;
+    model.vertexBoxMin = glm::vec3(header.vertexBox[0], header.vertexBox[1], header.vertexBox[2]);
+    model.vertexBoxMax = glm::vec3(header.vertexBox[3], header.vertexBox[4], header.vertexBox[5]);
+    model.vertexRadius = header.vertexRadius;
 
     // Read vertices
     if (header.nVertices > 0 && header.ofsVertices > 0) {
