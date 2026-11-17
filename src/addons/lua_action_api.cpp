@@ -230,6 +230,9 @@ static int lua_IsCurrentAction(lua_State* L) {
 }
 
 // IsUsableAction(slot) → usable, notEnoughMana
+//
+// Not the cooldown: a spell waiting on one is still usable, and the sweep over
+// the icon shows the wait. See game::spellUsability for what is.
 static int lua_IsUsableAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); lua_pushboolean(L, 0); return 2; }
@@ -240,30 +243,9 @@ static int lua_IsUsableAction(lua_State* L) {
         lua_pushboolean(L, 0);
         return 2;
     }
-    const auto& action = bar[slot];
-    // Not the cooldown. WoW's answer here is about whether the action *could*
-    // be used - known, affordable, the right stance - and a spell waiting on a
-    // cooldown is all of those. The wait is shown by the sweep over the icon,
-    // which is drawn from GetActionCooldown and nothing to do with this.
-    //
-    // Folding it in here painted the icon dark grey for the whole of every
-    // cooldown, because ActionButton_UpdateUsable has three branches and
-    // "not usable, mana is fine" is the one that means unusable.
-    bool usable = true;
-    bool noMana = false;
-    if (action.type == game::ActionBarSlot::SPELL) {
-        usable = gh->getKnownSpells().count(action.id) > 0;
-        if (usable) {
-            const auto prerequisite = game::spellPrerequisite(*gh, action.id, gh->getTargetGuid());
-            usable = prerequisite == game::SpellPrerequisite::Ready;
-            noMana = prerequisite == game::SpellPrerequisite::NoPower;
-        }
-    }
-    if (action.type == game::ActionBarSlot::ITEM) {
-        usable = gh->getInventory().countItem(action.id) > 0;
-    }
-    lua_pushboolean(L, usable ? 1 : 0);
-    lua_pushboolean(L, noMana ? 1 : 0);
+    const auto usability = game::actionUsability(*gh, bar[slot]);
+    lua_pushboolean(L, usability.usable ? 1 : 0);
+    lua_pushboolean(L, usability.noPower ? 1 : 0);
     return 2;
 }
 
@@ -338,7 +320,7 @@ static int lua_GetActionCount(lua_State* L) {
     }
     const auto& action = bar[slot];
     if (action.type == game::ActionBarSlot::ITEM && action.id != 0) {
-        lua_pushnumber(L, gh->getInventory().countItem(action.id));
+        lua_pushnumber(L, game::actionItemCount(*gh, action.id));
     } else {
         lua_pushnumber(L, 0);
     }

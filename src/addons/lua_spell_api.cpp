@@ -1244,9 +1244,9 @@ static int lua_IsUsableSpell(lua_State* L) {
         return 2;
     }
 
-    const auto prerequisite = game::spellPrerequisite(*gh, spellId, gh->getTargetGuid());
-    lua_pushboolean(L, prerequisite == game::SpellPrerequisite::Ready);
-    lua_pushboolean(L, prerequisite == game::SpellPrerequisite::NoPower);
+    const auto usability = game::spellUsability(*gh, spellId);
+    lua_pushboolean(L, usability.usable);
+    lua_pushboolean(L, usability.noPower);
     return 2;
 }
 

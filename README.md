@@ -1278,3 +1278,17 @@ still add). Rookery Egg (175124, G_DragonEggFreeze.m2) shows its ice shell
 only in Open/Opened; READY is the bare spiky egg.
 
 Repeated rebuilds of unchanged objects: see [incremental build cache repair](docs/incremental-builds.md).
+
+### Action button usability
+
+`IsUsableAction`/`IsUsableSpell` follow Spell.dbc data, measured against
+native 2.4.3 (rogue): Stances/StancesNot with SpellShapeshiftForm.dbc flag 1
+(Stealth acts as no form, so Vanish stays usable in it), CasterAuraState and
+CasterAuraStateNot against `UNIT_FIELD_AURASTATE` (Riposte needs state 1),
+EquippedItemClass with the main/off-hand attributes (Shiv, Fishing), Totem
+tools (Pick Lock, Disarm Trap), not-in-combat, finishing-move combo points,
+then power. Only power answers `notEnoughMana`; everything else is
+(nil, nil): Ambush out of stealth at 30/60 energy is (nil, nil). Cooldowns
+are not part of it. Item actions count equipped items and use their on-use
+spell (food is unusable in combat). Gotcha: these columns live in the
+installed `dbc_layouts.json`, which does not refresh with the build.

@@ -276,20 +276,8 @@ std::optional<uint8_t> missingEquipment(GameHandler& owner, uint32_t spellId) {
     const int32_t itemClass = found->second.equippedItemClass;
     const uint32_t subClassMask = found->second.equippedItemSubClassMask;
     if (itemClass < 0) return std::nullopt;
-
-    const auto* layout = pipeline::getActiveDBCLayout()
-        ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
-    assert(layout);
-    const uint32_t attrEx3Field = layout->field("AttributesEx3");
-    if (attrEx3Field == 0xFFFFFFFF) {
-        LOG_ERROR("Equipment check: dbc_layouts.json lacks Spell.AttributesEx3; deploy current expansion metadata");
-        return std::nullopt;
-    }
-    auto spells = am->loadDBC("Spell.dbc");
-    assert(spells && spells->isLoaded());
-    const int32_t row = spells->findRecordById(spellId);
-    if (row < 0) return std::nullopt;
-    const uint32_t attrEx3 = spells->getUInt32(static_cast<uint32_t>(row), attrEx3Field);
+    // From the cache: IsUsableAction asks this for every bar slot every frame.
+    const uint32_t attrEx3 = found->second.attrEx3;
 
     const auto& inventory = owner.getInventory();
     bool unknown = false;
@@ -1144,6 +1132,133 @@ SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64
         static_cast<const Unit*>(player.get())->getPowerByType(data.powerType) < data.manaCost)
         return SpellPrerequisite::NoPower;
     return SpellPrerequisite::Ready;
+}
+
+namespace {
+// SpellShapeshiftForm.dbc Flags of a form, read once per form. Bit 0: the form
+// counts as no form for spell requirements - Stealth (30) has it, which is why
+// Vanish (not while shapeshifted) stays usable in stealth; Cat Form (1) not.
+uint32_t shapeshiftFormFlags(GameHandler& owner, uint8_t form) {
+    auto& cache = owner.shapeshiftFormFlagsRef();
+    if (const auto it = cache.find(form); it != cache.end()) return it->second;
+    auto* am = owner.services().assetManager;
+    assert(am && am->isInitialized());
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("SpellShapeshiftForm") : nullptr;
+    assert(layout && "dbc_layouts.json lacks SpellShapeshiftForm; deploy current expansion metadata");
+    const uint32_t flagsField = layout->field("Flags");
+    assert(flagsField != 0xFFFFFFFF && "dbc_layouts.json lacks SpellShapeshiftForm.Flags; deploy current expansion metadata");
+    auto dbc = am->loadDBC("SpellShapeshiftForm.dbc");
+    assert(dbc && dbc->isLoaded());
+    const int32_t row = dbc->findRecordById(form);
+    if (row < 0) LOG_ERROR("SpellShapeshiftForm.dbc has no form ", static_cast<int>(form));
+    const uint32_t flags = row < 0 ? 0u : dbc->getUInt32(static_cast<uint32_t>(row), flagsField);
+    cache[form] = flags;
+    return flags;
+}
+
+// CMaNGOS GetErrorAtShapeshiftedCast, the client's rule as well: native
+// 2.4.3 greys Premeditation (Stances = Stealth, no stealth attribute) outside
+// stealth, and leaves Vanish (not while shapeshifted) usable inside it.
+bool formAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    const uint8_t form = owner.getShapeshiftFormId();
+    const uint32_t formBit = form ? (1u << (form - 1)) : 0u;
+    if (formBit & entry.stancesNot) return false;
+    if (formBit & entry.stances) return true;
+    constexpr uint32_t kAttrNotShapeshift = 0x00010000;
+    constexpr uint32_t kAttrEx2AllowWhileNotShapeshifted = 0x00080000;
+    constexpr uint32_t kFormFlagActsAsNoForm = 0x1;
+    const bool shifted = form != 0 && !(shapeshiftFormFlags(owner, form) & kFormFlagActsAsNoForm);
+    if (shifted) return !(entry.attr & kAttrNotShapeshift) && entry.stances == 0;
+    return entry.stances == 0 || (entry.attrEx2 & kAttrEx2AllowWhileNotShapeshifted);
+}
+
+// UNIT_FIELD_AURASTATE keeps state n in bit n-1. Riposte needs state 1 (the
+// parry window); Stealth and Vanish refuse state 12 (Faerie Fire).
+bool auraStateAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    if (entry.casterAuraState == 0 && entry.casterAuraStateNot == 0) return true;
+    const auto player = owner.getEntityManager().getEntity(owner.getPlayerGuid());
+    const uint32_t states = player && player->isUnit()
+        ? static_cast<const Unit*>(player.get())->getAuraState() : 0u;
+    const auto has = [states](uint32_t state) { return state != 0 && (states & (1u << (state - 1))); };
+    if (entry.casterAuraState != 0 && !has(entry.casterAuraState)) return false;
+    return !has(entry.casterAuraStateNot);
+}
+
+// Totem0/1 items and TotemCategory0/1 kinds, from the cache. Undecided while
+// a carried item's query response is still out counts as carried; the
+// answer changes, and the bar with it, when the response arrives.
+bool toolsCarried(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    for (const uint32_t item : entry.totems)
+        if (item != 0 && !carriesTool(owner, kCastResultTotems, item).value_or(true)) return false;
+    for (const uint32_t category : entry.totemCategories)
+        if (category != 0 && !carriesTool(owner, kCastResultTotemCategory, category).value_or(true)) return false;
+    return true;
+}
+
+// Requirements other than being known; an item's use spell is not.
+SpellUsability castableNow(GameHandler& owner, uint32_t spellId) {
+    owner.loadSpellNameCache();
+    const auto found = owner.spellNameCacheRef().find(spellId);
+    if (found == owner.spellNameCacheRef().end()) return {};
+    const auto& entry = found->second;
+    if (entry.attr & 0x40u) return {};                                    // passive
+    if (owner.isPlayerDead() && !(entry.attr & 0x800000u)) return {};
+    if ((entry.attr & 0x10000000u) && owner.isInCombat()) return {};
+    if (!formAllows(owner, entry)) return {};
+    if (!auraStateAllows(owner, entry)) return {};
+    if (missingEquipment(owner, spellId)) return {};
+    if (!toolsCarried(owner, entry)) return {};
+    // Finishing moves: Eviscerate (0x100000) and Slice and Dice (0x400000).
+    if ((entry.attrEx & 0x500000u) &&
+        (owner.getComboPoints() == 0 || owner.getComboTarget() != owner.getTargetGuid()))
+        return {};
+    const auto data = owner.getSpellData(spellId);
+    const auto player = owner.getEntityManager().getEntity(owner.getPlayerGuid());
+    if (player && player->isUnit() && data.manaCost > 0 &&
+        static_cast<const Unit*>(player.get())->getPowerByType(data.powerType) < data.manaCost)
+        return {.usable = false, .noPower = true};
+    return {.usable = true, .noPower = false};
+}
+} // namespace
+
+uint32_t actionItemCount(GameHandler& owner, uint32_t itemId) {
+    const auto& inventory = owner.getInventory();
+    uint32_t count = inventory.countItem(itemId);
+    for (int slot = 0; slot < Inventory::NUM_EQUIP_SLOTS; ++slot) {
+        const auto& s = inventory.getEquipSlot(static_cast<EquipSlot>(slot));
+        if (!s.empty() && s.item.itemId == itemId) count += s.item.stackCount > 0 ? s.item.stackCount : 1;
+    }
+    return count;
+}
+
+SpellUsability spellUsability(GameHandler& owner, uint32_t spellId) {
+    if (!owner.getKnownSpells().count(spellId)) return {};
+    return castableNow(owner, spellId);
+}
+
+SpellUsability actionUsability(GameHandler& owner, const ActionBarSlot& slot) {
+    switch (slot.type) {
+        case ActionBarSlot::SPELL:
+            return spellUsability(owner, slot.id);
+        case ActionBarSlot::ITEM: {
+            // Native 2.4.3 counts the equipped Worn Dagger and Light Throwing
+            // Knife on the bar as one each, usable.
+            if (actionItemCount(owner, slot.id) == 0) return {};
+            const auto* info = owner.getItemInfo(slot.id);
+            if (!info || !info->valid) return {.usable = true, .noPower = false};
+            // Darnassian Bleu is unusable in combat: its use spell is.
+            constexpr uint32_t kTriggerOnUse = 0;
+            for (const auto& spell : info->spells)
+                if (spell.spellId != 0 && spell.spellTrigger == kTriggerOnUse)
+                    return castableNow(owner, spell.spellId);
+            return {.usable = true, .noPower = false};
+        }
+        case ActionBarSlot::MACRO:
+            return {.usable = true, .noPower = false};
+        default:
+            return {};
+    }
 }
 
 void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
@@ -4082,6 +4197,27 @@ void SpellHandler::loadSpellNameCache() const {
     const uint32_t targetAuraStateField = spellL ? spellL->field("TargetAuraState") : 0xFFFFFFFF;
     const uint32_t spellVisualIdField = spellL ? spellL->field("SpellVisualID") : 0xFFFFFFFF;
     const uint32_t speedField = spellL ? spellL->field("Speed") : 0xFFFFFFFF;
+    // Usability and range columns; tryField leaves a column a layout lacks at
+    // 0xFFFFFFFF, read below as "no requirement".
+    const auto column = [&](const char* name) { return spellL ? spellL->tryField(name) : 0xFFFFFFFFu; };
+    const uint32_t attrEx2Field = column("AttributesEx2");
+    const uint32_t attrEx3Field = column("AttributesEx3");
+    const uint32_t stancesField = column("Stances");
+    const uint32_t stancesNotField = column("StancesNot");
+    const uint32_t casterAuraStateField = column("CasterAuraState");
+    const uint32_t casterAuraStateNotField = column("CasterAuraStateNot");
+    const uint32_t targetCreatureTypeField = column("TargetCreatureType");
+    const uint32_t startRecoveryCategoryField = column("StartRecoveryCategory");
+    const uint32_t startRecoveryTimeField = column("StartRecoveryTime");
+    const uint32_t totemFields[2] = {column("Totem0"), column("Totem1")};
+    const uint32_t totemCategoryFields[2] = {column("TotemCategory0"), column("TotemCategory1")};
+    const uint32_t targetAFields[3] = {implicitTargetAField, column("EffectImplicitTargetA1"),
+                                       column("EffectImplicitTargetA2")};
+    const uint32_t targetBFields[3] = {column("EffectImplicitTargetB0"), column("EffectImplicitTargetB1"),
+                                       column("EffectImplicitTargetB2")};
+    const auto read = [&](uint32_t row, uint32_t field) {
+        return field < fieldCount ? dbc->getUInt32(row, field) : 0u;
+    };
     // Read off the file's own shape. Only TBC's layout named these two, so on
     // WotLK, Classic and Turtle every cooldown this client worked out for itself
     // came back zero - which is most of them, since the server sends a cooldown
@@ -4179,6 +4315,23 @@ void SpellHandler::loadSpellNameCache() const {
                 entry.categoryRecoveryMs = dbc->getUInt32(i, categoryRecoveryField);
             if (hasEffectFields) {
                 entry.createdItemId = pipeline::spellCreatedItem(*dbc, i, effectFields, itemTypeFields);
+            }
+            entry.attrEx2 = read(i, attrEx2Field);
+            entry.attrEx3 = read(i, attrEx3Field);
+            entry.stances = read(i, stancesField);
+            entry.stancesNot = read(i, stancesNotField);
+            entry.casterAuraState = read(i, casterAuraStateField);
+            entry.casterAuraStateNot = read(i, casterAuraStateNotField);
+            entry.targetCreatureType = read(i, targetCreatureTypeField);
+            entry.startRecoveryCategory = read(i, startRecoveryCategoryField);
+            entry.startRecoveryMs = read(i, startRecoveryTimeField);
+            for (int t = 0; t < 2; ++t) {
+                entry.totems[t] = read(i, totemFields[t]);
+                entry.totemCategories[t] = read(i, totemCategoryFields[t]);
+            }
+            for (int e = 0; e < 3; ++e) {
+                entry.implicitTargetsA[e] = read(i, targetAFields[e]);
+                entry.implicitTargetsB[e] = read(i, targetBFields[e]);
             }
             if (hasReagentFields) {
                 for (int r = 0; r < 8; ++r) {

@@ -3668,6 +3668,8 @@ public:
     /// Pressing this one again is a dismount, not a second mount.
     uint32_t getMountAuraSpellId() const { return mountAuraSpellId_; }
     auto& shapeshiftFormIdRef() { return shapeshiftFormId_; }
+    /// SpellShapeshiftForm.dbc Flags by form, read once per form asked about.
+    auto& shapeshiftFormFlagsRef() { return shapeshiftFormFlags_; }
     auto& playerRaceRef() { return playerRace_; }
     auto& serverPlayerLevelRef() { return serverPlayerLevel_; }
 
@@ -4092,6 +4094,29 @@ public:
         /// Spell.dbc SpellFamilyFlags, the 64-bit class mask. Bit n is the
         /// group n of SMSG_SET_FLAT/PCT_SPELL_MODIFIER.
         uint64_t familyFlags = 0;
+        /// What the action bar's IsUsableAction and IsActionInRange read.
+        /// Zero where the installed layout lacks the column.
+        uint32_t attrEx2 = 0;
+        uint32_t attrEx3 = 0;
+        /// Forms the spell needs (bit n-1 for form n) and forms it refuses.
+        uint32_t stances = 0;
+        uint32_t stancesNot = 0;
+        /// 1-based UNIT_FIELD_AURASTATE bit the caster must have / must not have.
+        uint32_t casterAuraState = 0;
+        uint32_t casterAuraStateNot = 0;
+        /// CreatureType mask the target must match (bit n-1 for type n); 0 any.
+        uint32_t targetCreatureType = 0;
+        /// EffectImplicitTargetA/B of each effect.
+        uint32_t implicitTargetsA[3] = {0, 0, 0};
+        uint32_t implicitTargetsB[3] = {0, 0, 0};
+        /// Totem0/1: tool items that must be carried; TotemCategory0/1: tool
+        /// kinds (TotemCategory.dbc) one carried item must serve as.
+        uint32_t totems[2] = {0, 0};
+        uint32_t totemCategories[2] = {0, 0};
+        /// StartRecoveryCategory 133 puts the spell on the global cooldown,
+        /// StartRecoveryTime long.
+        uint32_t startRecoveryCategory = 0;
+        uint32_t startRecoveryMs = 0;
     };
     /// The cached Spell.dbc row, or null.
     const SpellNameEntry* getSpellNameEntry(uint32_t spellId) const {
@@ -4661,6 +4686,7 @@ private:
 
     // Shapeshift form (UNIT_FIELD_BYTES_2 byte 3 on WotLK, BYTES_1 byte 3 before)
     uint8_t  shapeshiftFormId_ = 0;
+    std::unordered_map<uint8_t, uint32_t> shapeshiftFormFlags_;
     // Combo points (rogues/druids)
     uint8_t  comboPoints_ = 0;
     uint64_t comboTarget_ = 0;
