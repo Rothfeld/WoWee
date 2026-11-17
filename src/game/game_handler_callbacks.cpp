@@ -121,7 +121,8 @@ struct LockOpenPlan {
 LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
                                 const GameObjectQueryResponseData* info,
                                 const std::unordered_set<uint32_t>& knownSpells,
-                                uint32_t playerLevel, uint32_t goLevel) {
+                                uint32_t playerLevel, uint32_t goLevel,
+                                bool flaggedLocked) {
     LockOpenPlan plan;
     const uint32_t lockId = gameObjectLockId(info);
     if (!assets || lockId == 0) return plan;
@@ -187,6 +188,16 @@ LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
             const uint32_t keyType = lockDbc->getUInt32(row, 1 + slot);
             const uint32_t keyIndex = lockDbc->getUInt32(row, 9 + slot);
             if (keyIndex == 0) continue;
+            // Action[8] at cols 25-32. A GO_FLAG_LOCKED object opens only by
+            // its Action 1 methods (key, Lockpicking, Blasting). Original
+            // 2.4.3 (pair 0): Dire Maul's Door 177198 (flags 0x22, Lock 1562
+            // = key 18249, Lockpicking 300, Quick Open, Quick Close, Blasting
+            // 300) answers "The door is locked." without the key, and the
+            // Deadmines Iron Clad Door 16397 (0x22, Lock 202) says Locked;
+            // the unflagged Heavy Door 17153 (0x20, Lock 86 = Quick Open)
+            // opens with Opening 6247. Casting 6247 at the flagged door is
+            // accepted by CMaNGOS, so the client is what keeps it shut.
+            if (flaggedLocked && lockDbc->getUInt32(row, 25 + slot) != 1) continue;
             // Skill[8] at cols 17-24.
             const uint32_t lockSkill = lockDbc->getUInt32(row, 17 + slot);
             const int32_t requiredPoints = static_cast<int32_t>(lockSkill ? lockSkill : 5 * goLevel);
@@ -3425,9 +3436,12 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         const uint16_t goLevelField = fieldIndex(UF::GAMEOBJECT_LEVEL);
         const uint32_t goLevel = (entity && goLevelField != 0xFFFF)
             ? entity->getField(goLevelField) : 0;
+        constexpr uint32_t kGoFlagLocked = 0x2;
+        const bool flaggedLocked = entity &&
+            (entity->getField(fieldIndex(UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
         const LockOpenPlan plan = planGameObjectOpen(
             services_.assetManager, goInfo, spellHandler_->getKnownSpells(),
-            getPlayerLevel(), goLevel);
+            getPlayerLevel(), goLevel, flaggedLocked);
         if (plan.method == LockOpenMethod::CastSpell) {
             auto castPacket = getPacketParsers()->buildCastGameObjectSpell(
                 plan.spellId, guid, 0);
@@ -3488,6 +3502,15 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                          " entry=", goEntry, " name='", goName, "'");
                 return;
             }
+        }
+        // A locked door the player has no key or opening for: the original
+        // sends nothing and shows GlobalStrings ERR_DOOR_LOCKED.
+        if (flaggedLocked && goType == 0) {
+            addUIError("The door is locked.");
+            LOG_INFO("GO locked door refused: lockId=", gameObjectLockId(goInfo),
+                     " keyItem=", plan.keyItemId, " guid=0x", std::hex, guid, std::dec,
+                     " entry=", goEntry);
+            return;
         }
         // LockOpenMethod::UseDirect - fall through to CMSG_GAMEOBJ_USE.
         LOG_INFO("GO opens via direct USE: lockId=", gameObjectLockId(goInfo),

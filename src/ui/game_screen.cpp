@@ -1122,9 +1122,18 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
             const int32_t row = locks->findRecordById(lockId);
             assert(row >= 0);
             for (uint32_t slot = 0; slot < 8; ++slot) {
-                if (locks->getUInt32(row, 1 + slot) != 2) continue; // Skill lock.
+                const uint32_t kind = locks->getUInt32(row, 1 + slot);
+                if (kind == 0) continue;
+                // The first method decides. A key item (kind 1) opens with
+                // the gear: Dire Maul's Door 177198, Lock 1562 = Crescent Key
+                // 18249 first, Lockpicking second, shows the gear natively
+                // (pair 0 hover); it must not borrow PickLock from slot 2.
+                if (kind != 2) {
+                    path = "Interface\\Cursor\\Interact.blp";
+                    break;
+                }
                 const uint32_t typeId = locks->getUInt32(row, 9 + slot);
-                if (typeId == 0) continue;
+                if (typeId == 0) continue;  // Lock 36, 740, 1081, 1099, 1715
                 const int32_t typeRow = types->findRecordById(typeId);
                 assert(typeRow >= 0);
                 // CursorName is the final, non-localized LockType column.

@@ -10,6 +10,7 @@
 #include "ui/ui_helpers.hpp"
 #include "ui/nameplate_stacking.hpp"
 #include "game/summon_title.hpp"
+#include "game/game_object_lock.hpp"
 #include "game/level_difficulty.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
@@ -1740,6 +1741,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     if (services_.addonManager && worldTooltipGuid_ != tooltipGuid) {
         auto* lua = services_.addonManager->getLuaEngine();
         std::string script;
+        // A key's name still on its way: redraw once it is cached.
+        bool keyNamePending = false;
         if (objectTooltipGuid) {
             const auto entity = gameHandler.getEntityManager().getEntity(objectTooltipGuid);
             assert(entity);
@@ -1762,7 +1765,34 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             script = worldObjectTooltipFloating_
                 ? "GameTooltip:SetOwner(WorldFrame, 'ANCHOR_CURSOR'); "
                 : "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); ";
-            script += "GameTooltip:SetText(" + literal + "); GameTooltip:Show()";
+            script += "GameTooltip:SetText(" + literal + "); ";
+            // A GO_FLAG_LOCKED object's tooltip: LOCKED in red, then
+            // LOCKED_WITH_ITEM for each key its Action 1 methods name.
+            // Original 2.4.3 (pair 0): Dire Maul's Door 177198 "Door /
+            // Locked / Requires Crescent Key"; Iron Clad Door 16397 (Lock 202,
+            // no key) "Iron Clad Door / Locked"; the unflagged Heavy Door
+            // 17153 its name only.
+            constexpr uint32_t kGoFlagLocked = 0x2;
+            const uint32_t lockId = game::gameObjectLockId(info);
+            if (lockId != 0 &&
+                (object->getField(game::fieldIndex(game::UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked)) {
+                script += "GameTooltip:AddLine(LOCKED, RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b); ";
+                const auto locks = services_.assetManager->loadDBC("Lock.dbc");
+                assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
+                const int32_t row = locks->findRecordById(lockId);
+                assert(row >= 0);
+                for (uint32_t slot = 0; slot < 8; ++slot) {
+                    if (locks->getUInt32(row, 1 + slot) != 1 || locks->getUInt32(row, 25 + slot) != 1) continue;
+                    const uint32_t item = locks->getUInt32(row, 9 + slot);
+                    if (!gameHandler.getItemInfo(item)) {
+                        gameHandler.ensureItemInfo(item);
+                        keyNamePending = true;
+                    }
+                    script += "do local n = GetItemInfo(" + std::to_string(item) +
+                              ") if n then GameTooltip:AddLine(format(LOCKED_WITH_ITEM, n), 1, 1, 1) end end; ";
+                }
+            }
+            script += "GameTooltip:Show()";
         } else {
             script = mouseoverGuid
                 ? "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); GameTooltip:SetUnit('mouseover')"
@@ -1770,7 +1800,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         }
         if (!lua->executeString(script)) {
             LOG_ERROR("World tooltip update failed: ", lua->lastError());
-        } else {
+        } else if (!keyNamePending) {
             worldTooltipGuid_ = tooltipGuid;
         }
     }
