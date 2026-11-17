@@ -12,6 +12,7 @@
 #include "rendering/camera_controller.hpp"
 #include "rendering/renderer.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 
 namespace wowee { namespace ui {
@@ -65,30 +66,10 @@ public:
 class ReloadCommand : public IChatCommand {
 public:
     ChatCommandResult execute(ChatCommandContext& ctx) override {
-        auto* am = ctx.services.addonManager;
-        if (am) {
-            am->reload();
-            am->fireEvent("VARIABLES_LOADED");
-            // The chat windows are rebuilt by the reload and come up with the
-            // defaults their XML carries, so they have to be told to read the
-            // settings back - same as at login, and the reason a /reload used
-            // to lose the chat layout.
-            am->fireEvent("UPDATE_CHAT_WINDOWS");
-            am->fireEvent("PLAYER_LOGIN");
-            am->fireEvent("PLAYER_ENTERING_WORLD");
-            if (ctx.services.renderer) ctx.services.renderer->invalidateAreaAnnouncement();
-            game::MessageChatData rlMsg;
-            rlMsg.type = game::ChatType::SYSTEM;
-            rlMsg.language = game::ChatLanguage::UNIVERSAL;
-            rlMsg.message = "Interface reloaded.";
-            ctx.gameHandler.addLocalChatMessage(rlMsg);
-        } else {
-            game::MessageChatData rlMsg;
-            rlMsg.type = game::ChatType::SYSTEM;
-            rlMsg.language = game::ChatLanguage::UNIVERSAL;
-            rlMsg.message = "Addon system not available.";
-            ctx.gameHandler.addLocalChatMessage(rlMsg);
-        }
+        // Same path as ReloadUI(): performed between frames, because this runs
+        // inside a Lua call whenever FrameXML owns the chat input.
+        assert(ctx.services.requestReloadUI && "UIServices.requestReloadUI not wired");
+        ctx.services.requestReloadUI();
         return {};
     }
     [[nodiscard]] std::vector<std::string> aliases() const override { return {"reload", "reloadui", "rl"}; }

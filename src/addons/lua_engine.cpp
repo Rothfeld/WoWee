@@ -9325,8 +9325,6 @@ void LuaEngine::registerCoreAPI() {
         "function InterfaceOptions_AddCategory(panel) end\n"
         "function InterfaceOptionsFrame_OpenToCategory(panel) end\n"
         // Commonly expected global tables
-        "SLASH_RELOAD1 = '/reload'\n"
-        "SLASH_RELOADUI1 = '/reloadui'\n"
         "GRAY_FONT_COLOR = {r=0.5,g=0.5,b=0.5}\n"
         "NORMAL_FONT_COLOR = {r=1.0,g=0.82,b=0.0}\n"
         "HIGHLIGHT_FONT_COLOR = {r=1.0,g=1.0,b=1.0}\n"

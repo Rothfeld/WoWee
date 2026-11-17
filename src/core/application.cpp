@@ -515,6 +515,7 @@ bool Application::initialize() {
             uiServices.entitySpawner = entitySpawner_.get();
             uiServices.appearanceComposer = appearanceComposer_.get();
             uiServices.worldLoader = worldLoader_.get();
+            uiServices.requestReloadUI = [this]() { reloadUiPending_ = true; };
             uiManager->setServices(uiServices);
         }
 
@@ -1331,6 +1332,7 @@ bool Application::initialize() {
             uiServices.entitySpawner = entitySpawner_.get();
             uiServices.appearanceComposer = appearanceComposer_.get();
             uiServices.worldLoader = worldLoader_.get();
+            uiServices.requestReloadUI = [this]() { reloadUiPending_ = true; };
             uiManager->setServices(uiServices);
         }
 

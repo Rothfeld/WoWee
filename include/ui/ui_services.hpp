@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 namespace wowee {
 
 // Forward declarations
@@ -44,6 +46,10 @@ struct UIServices {
     core::EntitySpawner* entitySpawner = nullptr;
     core::AppearanceComposer* appearanceComposer = nullptr;
     core::WorldLoader* worldLoader = nullptr;
+
+    // Reloads the interface between frames. A reload started from inside a
+    // Lua call (a slash command, ReloadUI) would free the state mid-call.
+    std::function<void()> requestReloadUI;
     
     // Helper to check if core services are wired
     [[nodiscard]] bool isValid() const {
