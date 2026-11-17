@@ -1417,9 +1417,9 @@ register_test_target(test_anim_capability)
 wowee_add_test(test_indoor_shadows
     SOURCES test_indoor_shadows.cpp)
 
-# ── test_zone_ambience ─────────────────────────────────────────
-wowee_add_test(test_zone_ambience
-    SOURCES test_zone_ambience.cpp)
+# ── test_tile_zone ──────────────────────────────────────────────
+wowee_add_test(test_tile_zone
+    SOURCES test_tile_zone.cpp)
 
 # ── test_transport_components ────────────────────────────────
 wowee_add_test(test_transport_components

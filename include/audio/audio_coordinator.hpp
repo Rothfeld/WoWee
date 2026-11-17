@@ -35,8 +35,9 @@ struct ZoneAudioContext {
     float weatherIntensity = 0.0f;
     // Visible sky clock after zone ambience overrides (hours in [0, 24)).
     float gameTimeHours = 12.0f;
-    // Terrain tile for offline zone lookup
-    int tileX = 0, tileY = 0;
+    // Zone of the terrain tile under the camera (its MCNK area ids through
+    // AreaTable), for when the server has not said; 0 when unknown.
+    uint32_t tileZoneId = 0;
     bool hasTile = false;
     // Server-authoritative zone (from SMSG_INIT_WORLD_STATES); 0 = offline
     uint32_t serverZoneId = 0;

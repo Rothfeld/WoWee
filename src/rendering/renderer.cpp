@@ -1895,8 +1895,8 @@ uint32_t Renderer::getCurrentZoneId() const {
             lastResolvedZoneId_ = zoneManager->resolveAreaZoneId(*areaId);
             return lastResolvedZoneId_;
         }
-        const auto tile = terrainManager->getCurrentTile();
-        tileZoneId = zoneManager->getZoneId(tile.x, tile.y);
+        tileZoneId = zoneManager->dominantZoneId(
+            terrainManager->getTileAreaIds(terrainManager->getCurrentTile()));
     }
 
     // The chunk under the player did not say which area it is - either its
@@ -1906,11 +1906,8 @@ uint32_t Renderer::getCurrentZoneId() const {
     // id flip back and forth as the player walked from a chunk that knew to
     // one that did not.
     //
-    // Nothing about that is quiet. The zone id picks the dark-zone ambience
-    // override, which replaces the four sky colours outright, and in Duskwood
-    // it also pins the visual hour to the small hours - so the sky changed
-    // brightness every time a chunk boundary was crossed and held still the
-    // moment the player did. Keep the last chunk that did know.
+    // The zone id drives the zone name, music and ambience, which must not
+    // flip at every chunk boundary. Keep the last chunk that did know.
     if (lastResolvedZoneId_ != 0) return lastResolvedZoneId_;
 
     const auto* gh = core::Application::getInstance().getGameHandler();
@@ -2420,10 +2417,9 @@ void Renderer::update(float deltaTime) {
         if (lightingManager) {
             zctx.gameTimeHours = lightingManager->getVisualTimeOfDayHours();
         }
-        if (terrainManager) {
-            auto tile = terrainManager->getCurrentTile();
-            zctx.tileX = tile.x;
-            zctx.tileY = tile.y;
+        if (terrainManager && zoneManager) {
+            zctx.tileZoneId = zoneManager->dominantZoneId(
+                terrainManager->getTileAreaIds(terrainManager->getCurrentTile()));
             zctx.hasTile = true;
         }
         // Use the precise MCNK area classification when available; this avoids

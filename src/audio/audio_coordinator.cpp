@@ -112,9 +112,7 @@ void AudioCoordinator::updateZoneAudio(const ZoneAudioContext& ctx) {
     // Resolve the spatial zone before updating ambience. Zone ambience used to
     // run first, leaving it one zone behind and permanently on its noon default.
     auto* zm = ctx.zoneManager;
-    const uint32_t tileZoneId = (zm && ctx.hasTile)
-        ? zm->getZoneId(ctx.tileX, ctx.tileY)
-        : 0;
+    const uint32_t tileZoneId = ctx.hasTile ? ctx.tileZoneId : 0;
     const uint32_t serverZoneId = (zm && ctx.serverZoneId != 0)
         ? zm->resolveAreaZoneId(ctx.serverZoneId)
         : ctx.serverZoneId;

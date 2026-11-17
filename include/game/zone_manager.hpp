@@ -11,13 +11,18 @@ namespace wowee {
 namespace pipeline { class AssetManager; }
 namespace game {
 
-// Conservative tile fallback for Duskwood's interior. Northern Duskwood and
-// southern Elwynn share ADTs, so their bank areas must be distinguished through
-// AreaTable parentage rather than broad tile rectangles.
-constexpr bool isDuskwoodAdtTile(int tileX, int tileY) {
-    const bool runtime = tileX >= 33 && tileX <= 35 && tileY >= 52 && tileY <= 53;
-    const bool transposed = tileX >= 52 && tileX <= 53 && tileY >= 33 && tileY <= 35;
-    return runtime || transposed;
+/// The zone most of these zone ids name; 0 when none is non-zero. Ties go
+/// to the smaller id so the answer does not depend on input order.
+[[nodiscard]] inline uint32_t mostCommonZoneId(const std::vector<uint32_t>& zoneIds) {
+    std::map<uint32_t, int> counts;
+    for (uint32_t z : zoneIds) if (z != 0) ++counts[z];
+    uint32_t best = 0;
+    int bestCount = 0;
+    // std::map walks ids in order, so a tie goes to the smaller id.
+    for (const auto& [z, n] : counts) {
+        if (n > bestCount) { best = z; bestCount = n; }
+    }
+    return best;
 }
 
 struct ZoneInfo {
@@ -34,7 +39,10 @@ public:
     // Safe to call after initialize(); idempotent and additive (does not remove existing paths).
     void enrichFromDBC(pipeline::AssetManager* assets);
 
-    [[nodiscard]] uint32_t getZoneId(int tileX, int tileY) const;
+    /// The zone of an ADT tile, from its own MCNK area ids through
+    /// AreaTable parentage: the zone most of its chunks belong to. For the
+    /// moments the chunk under the player carries area 0.
+    [[nodiscard]] uint32_t dominantZoneId(const std::vector<uint32_t>& areaIds) const;
     [[nodiscard]] uint32_t resolveAreaZoneId(uint32_t areaId) const;
     [[nodiscard]] uint32_t getMapZoneId(uint32_t mapId) const;
     uint32_t getWmoAreaId(uint32_t root, uint32_t nameSet, uint32_t group) const;
@@ -66,8 +74,6 @@ private:
     std::unordered_map<uint32_t, uint32_t> mapZones_;
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, uint32_t> wmoAreaIds_;
     std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::string> wmoAreaNames_;
-    // tile key = tileX * 100 + tileY
-    std::unordered_map<int, uint32_t> tileToZone;
     std::unordered_map<uint32_t, ZoneInfo> zones;
     std::unordered_map<uint32_t, uint32_t> areaParents_;
     /// AreaTable's Flags column, by area id. Read in the same pass as the

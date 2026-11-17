@@ -354,6 +354,8 @@ public:
 
     /** Get the precise MCNK AreaTable ID at a world position. */
     [[nodiscard]] std::optional<uint32_t> getAreaIdAt(float glX, float glY) const;
+    /// Every non-zero MCNK area id of a loaded tile; empty when not loaded.
+    [[nodiscard]] std::vector<uint32_t> getTileAreaIds(const TileCoord& coord) const;
 
 
     /**

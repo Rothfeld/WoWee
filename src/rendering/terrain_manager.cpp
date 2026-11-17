@@ -2263,6 +2263,18 @@ std::optional<uint32_t> TerrainManager::getAreaIdAt(float glX, float glY) const 
     return chunk->areaId;
 }
 
+std::vector<uint32_t> TerrainManager::getTileAreaIds(const TileCoord& coord) const {
+    std::vector<uint32_t> ids;
+    const auto it = loadedTiles.find(coord);
+    if (it == loadedTiles.end() || !it->second) return ids;
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x) {
+            const uint32_t area = it->second->terrain.getChunk(x, y).areaId;
+            if (area != 0) ids.push_back(area);
+        }
+    return ids;
+}
+
 std::optional<std::string> TerrainManager::getDominantTextureAt(float glX, float glY, uint32_t* outEffectId) const {
     // Through the one finder, which was the last copy of "which chunk is under
     // this point" in this file: a bounds test against the chunk's own
