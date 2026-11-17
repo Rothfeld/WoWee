@@ -588,6 +588,7 @@ static int lua_WoweeSetModelCreature(lua_State* L) {
     lua_pop(L, 1);
     if (auto* w = tree->get(id)) {
         w->modelDisplayId = static_cast<uint32_t>(luaL_optnumber(L, 2, 0));
+        w->modelUnitGuid = 0;
     }
     return 0;
 }

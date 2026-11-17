@@ -53,7 +53,10 @@ static int lua_UnitName(lua_State* L) {
                 lua_pushstring(L, own.empty() ? "Unknown" : own.c_str());
             }
         } else {
-            lua_pushstring(L, "Unknown");
+            // No such unit: nil, as build 8606 answers UnitName("target")
+            // with nothing targeted. Addons test the name for presence
+            // (MangAdmin's Selection("none") does `not UnitName("target")`).
+            lua_pushnil(L);
         }
     }
     return 1;

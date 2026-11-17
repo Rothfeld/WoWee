@@ -4900,6 +4900,65 @@ void Application::render() {
                     }
                 }
 
+                // Every other model frame bound with Model:SetUnit - addon
+                // frames such as MangAdmin's target model. The named frames
+                // above keep their own views and are skipped here.
+                {
+                    const uint32_t named[] = {paperdollWidgetId_, dressUpWidgetId_,
+                        auctionDressUpWidgetId_, petModelWidgetId_, stableModelWidgetId_,
+                        companionModelWidgetId_, inspectModelWidgetId_};
+                    std::unordered_set<uint32_t> live;
+                    for (uint32_t id = 1; id < widgets.size(); ++id) {
+                        ui::Widget* frame = widgets.get(id);
+                        if (!frame || frame->modelUnitGuid == 0) continue;
+                        if (std::find(std::begin(named), std::end(named), id) != std::end(named)) continue;
+                        if (!frame->visible || frame->rectW <= 0.0f || frame->rectH <= 0.0f) {
+                            frame->externalTexture = 0;
+                            continue;
+                        }
+                        live.insert(id);
+                        auto& slot = unitModels_[id];
+                        if (!slot) {
+                            slot = std::make_unique<ui::UnitPortrait>();
+                            slot->setFraming(ui::UnitPortrait::Framing::FullBody);
+                        }
+                        sizeFor(*slot, frame);
+                        const uint64_t guid = frame->modelUnitGuid;
+                        bool shown = false;
+                        uint8_t race = 0, gender = 0, facial = 0;
+                        uint32_t appearance = 0;
+                        if (guid == gameHandler->getPlayerGuid()) {
+                            slot->update(*gameHandler, assetManager.get(), renderer.get(), io.DeltaTime);
+                            shown = slot->textureId() != 0;
+                        } else if (gameHandler->getPlayerAppearance(guid, race, gender, appearance, facial)) {
+                            std::vector<game::EquipmentItem> worn;
+                            std::array<uint32_t, 19> displayIds{};
+                            std::array<uint8_t, 19> invTypes{};
+                            if (gameHandler->getOtherPlayerEquipment(guid, displayIds, invTypes)) {
+                                for (size_t s = 0; s < displayIds.size(); ++s) {
+                                    if (displayIds[s] == 0) continue;
+                                    worn.push_back({.displayModel = displayIds[s],
+                                                    .inventoryType = invTypes[s],
+                                                    .enchantment = 0u});
+                                }
+                            }
+                            shown = slot->updatePlayer(race, gender, appearance, facial, worn,
+                                                       assetManager.get(), renderer.get(), io.DeltaTime);
+                        } else if (game::Unit* unit = gameHandler->getUnitByGuid(guid);
+                                   unit && entitySpawner_ && unit->getDisplayId() != 0) {
+                            const uint32_t display = unit->getDisplayId();
+                            const std::string modelPath = entitySpawner_->getModelPathForDisplayId(display);
+                            if (!modelPath.empty()) {
+                                shown = slot->updateCreature(modelPath,
+                                    entitySpawner_->getCreatureSkinPaths(display, modelPath),
+                                    assetManager.get(), renderer.get(), io.DeltaTime);
+                            }
+                        }
+                        frame->externalTexture = shown ? slot->textureId() : 0;
+                    }
+                    std::erase_if(unitModels_, [&](const auto& entry) { return !live.contains(entry.first); });
+                }
+
             });
             runRenderStage("addonWidgets/portrait", [&] {
                 if (portrait) {

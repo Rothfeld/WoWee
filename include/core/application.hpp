@@ -314,6 +314,9 @@ private:
     /// else's paperdoll.
     ui::UnitPortrait inspectModel_;
     uint32_t inspectModelWidgetId_ = 0;
+    /// Offscreen views for model frames bound with Model:SetUnit that none of
+    /// the named passes own (addon frames), by widget id.
+    std::unordered_map<uint32_t, std::unique_ptr<ui::UnitPortrait>> unitModels_;
     /// And whoever this client is dealing with - the face in the gossip,
     /// quest, merchant, flight master and trade panels. One view for all of
     /// them because only one such window is open at a time.

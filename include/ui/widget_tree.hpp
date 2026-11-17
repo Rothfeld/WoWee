@@ -564,6 +564,9 @@ struct Widget {
     /// and resolves it - and read by the render loop, which is where the
     /// model is actually built. Zero is "nothing chosen".
     uint32_t modelDisplayId = 0;
+    /// The unit a model frame was told to show with Model:SetUnit, resolved
+    /// to its GUID when set (as the original client binds it). Zero is none.
+    uint64_t modelUnitGuid = 0;
 
     /// The colour a ColorSelect frame is showing, as r, g, b. Its own state
     /// rather than the frame's tint: a colour picker draws its wheel in every
