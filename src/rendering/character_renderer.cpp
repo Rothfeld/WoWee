@@ -241,6 +241,7 @@ struct CharMaterialUBO {
     float normalMapStrength;
     int32_t hairMaterial;
     float hoverHighlight;
+    float kitColorR, kitColorG, kitColorB;
 };
 
 // GPU vertex struct with tangent (expanded from M2Vertex for normal mapping)
@@ -2976,7 +2977,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // Whole-model fades need the same nearest-surface depth prepass as
         // camera fading. Blending triangles while writing depth exposes mesh
         // submission order as dark patches on ghosts and stealth models.
-        const bool surfaceFade = instance.opacity * instance.cameraOpacity < 0.999f &&
+        const bool surfaceFade = instance.opacity * instance.cameraOpacity * instance.kitOpacity < 0.999f &&
                                  !instance.isEffectModel;
         if (pass == -1 && !surfaceFade) continue;
 
@@ -3011,7 +3012,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         if (!gpuModel.vertexBuffer) continue;
 
         // Skip fully transparent instances
-        const float renderOpacity = instance.opacity * instance.cameraOpacity;
+        const float renderOpacity = instance.opacity * instance.cameraOpacity * instance.kitOpacity;
         if (renderOpacity <= 0.0f) continue;
 
         // Set model matrix (use override for weapon instances)
@@ -3359,6 +3360,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 CharMaterialUBO matData{};
                 matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
                 matData.opacity = renderOpacity * batchColorAlpha;
+                matData.kitColorR = instance.kitColor.r;
+                matData.kitColorG = instance.kitColor.g;
+                matData.kitColorB = instance.kitColor.b;
                 matData.alphaTest = blendNeedsCutout ? 1 : 0;
                 matData.colorKeyBlack = 0;
                 matData.unlit = unlit ? 1 : 0;
@@ -3476,6 +3480,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             CharMaterialUBO matData{};
             matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
             matData.opacity = renderOpacity;
+            matData.kitColorR = instance.kitColor.r;
+            matData.kitColorG = instance.kitColor.g;
+            matData.kitColorB = instance.kitColor.b;
             matData.alphaTest = 0;
             matData.colorKeyBlack = 0;
             matData.unlit = 0;
@@ -4103,6 +4110,23 @@ void CharacterRenderer::setInstanceCameraOpacity(uint32_t instanceId, float opac
     }
 }
 
+void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity) {
+    assert(opacity >= 0.0f && opacity <= 1.0f);
+    auto& instance = instances.at(instanceId);
+    instance.kitColor = color;
+    instance.kitOpacity = opacity;
+    for (const auto& attachment : instance.weaponAttachments) {
+        auto& weapon = instances.at(attachment.weaponInstanceId);
+        weapon.kitColor = color;
+        weapon.kitOpacity = opacity;
+        for (const auto& effect : attachment.effects) {
+            auto& glow = instances.at(effect.effectInstanceId);
+            glow.kitColor = color;
+            glow.kitOpacity = opacity;
+        }
+    }
+}
+
 void CharacterRenderer::setInstanceOpacity(uint32_t instanceId, float opacity) {
     auto it = instances.find(instanceId);
     if (it != instances.end()) {
@@ -4500,6 +4524,8 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
         weapIt->second.hasOverrideModelMatrix = true;
         weapIt->second.opacity = charInstance.opacity;
         weapIt->second.cameraOpacity = charInstance.cameraOpacity;
+        weapIt->second.kitColor = charInstance.kitColor;
+        weapIt->second.kitOpacity = charInstance.kitOpacity;
     }
 
     // Store attachment on parent character instance
@@ -4796,6 +4822,8 @@ bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t att
     fxIt->second.animationLoop = true;
     fxIt->second.opacity = charIt->second.opacity;
     fxIt->second.cameraOpacity = charIt->second.cameraOpacity;
+    fxIt->second.kitColor = charIt->second.kitColor;
+    fxIt->second.kitOpacity = charIt->second.kitOpacity;
 
     WeaponEffectAttachment fx;
     fx.effectModelId = effectModelId;

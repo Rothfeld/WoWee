@@ -641,15 +641,6 @@ void AnimationCallbackHandler::setupCallbacks() {
         }
     });
 
-    // Ghost state callback - make player semi-transparent when in spirit form
-    gameHandler_.setGhostStateCallback([this](bool isGhost) {
-        auto* cr = renderer_.getCharacterRenderer();
-        if (!cr) return;
-        uint32_t charInstId = renderer_.getCharacterInstanceId();
-        if (charInstId == 0) return;
-        cr->setInstanceOpacity(charInstId, isGhost ? 0.5f : 1.0f);
-    });
-
     // Stand state animation callback - route through AnimationController state machine
     // for proper sit/sleep/kneel transition animations (down → loop → up)
     gameHandler_.setStandStateCallback([this](uint8_t standState) {

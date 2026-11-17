@@ -101,6 +101,12 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     // Load SpellVisualKit.dbc - every effect slot, with the attachment the
     // slot names.
     auto kitDbc = cachedAssetManager_->loadDBC("SpellVisualKit.dbc");
+    // CharProc0-3 and the first parameter of each (CharParamZero0-3).
+    uint32_t procFields[4], procParamFields[4];
+    for (int k = 0; k < 4; ++k) {
+        procFields[k] = kitLayout ? kitLayout->field("CharProc" + std::to_string(k)) : 0xFFFFFFFFu;
+        procParamFields[k] = kitLayout ? kitLayout->field("CharParamZero" + std::to_string(k)) : 0xFFFFFFFFu;
+    }
     if (kitDbc && kitDbc->isLoaded()) {
         uint32_t fc = kitDbc->getFieldCount();
         for (uint32_t i = 0; i < kitDbc->getRecordCount(); ++i) {
@@ -122,6 +128,21 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
                 if (const auto path = effectPaths.find(effectId); path != effectPaths.end())
                     kitEffects_[kitId].push_back({path->second, attachments[k]});
+            }
+            for (int k = 0; k < 4; ++k) {
+                if (procFields[k] >= fc || procParamFields[k] >= fc) continue;
+                const uint32_t procedure = kitDbc->getUInt32(i, procFields[k]);
+                const float param = kitDbc->getFloat(i, procParamFields[k]);
+                if (procedure == kCharProcColor) {
+                    // 0xRRGGBB as a float: Ghost 0x8CB9FD, Frostbolt 0x3C3CFF.
+                    assert(std::isfinite(param) && param >= 0.0f && param < 16777216.0f);
+                    const auto rgb = static_cast<uint32_t>(param);
+                    kitCharacterProcedures_[kitId].color = glm::vec3(
+                        ((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f);
+                } else if (procedure == kCharProcOpacity) {
+                    assert(std::isfinite(param) && param >= 0.0f && param <= 1.0f);
+                    kitCharacterProcedures_[kitId].opacity = param;
+                }
             }
         }
     }
@@ -464,8 +485,34 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
                      " kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
         }
     }
+    std::vector<uint32_t> applied;
+    if (found != unitAuraVisuals_.end()) {
+        for (uint32_t visual : found->second.applied)
+            if (std::find(visualIds.begin(), visualIds.end(), visual) != visualIds.end())
+                applied.push_back(visual);
+    }
+    for (uint32_t visual : visualIds)
+        if (std::find(applied.begin(), applied.end(), visual) == applied.end())
+            applied.push_back(visual);
+    applyCharacterProcedures(attachInstanceId, applied);
     if (visualIds.empty()) unitAuraVisuals_.erase(attachInstanceId);
-    else unitAuraVisuals_[attachInstanceId] = {visualIds, observerConcealed};
+    else unitAuraVisuals_[attachInstanceId] = {visualIds, observerConcealed, std::move(applied)};
+}
+
+void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId,
+                                                 const std::vector<uint32_t>& applied) {
+    glm::vec3 color(1.0f);
+    float opacity = 1.0f;
+    bool colored = false, faded = false;
+    for (auto visual = applied.rbegin(); visual != applied.rend() && !(colored && faded); ++visual) {
+        const auto kit = stateKits_.find(*visual);
+        if (kit == stateKits_.end() || !kit->second) continue;
+        const auto procedures = kitCharacterProcedures_.find(kit->second);
+        if (procedures == kitCharacterProcedures_.end()) continue;
+        if (!colored && procedures->second.color) { color = *procedures->second.color; colored = true; }
+        if (!faded && procedures->second.opacity) { opacity = *procedures->second.opacity; faded = true; }
+    }
+    renderer_->getCharacterRenderer()->setInstanceKitAppearance(attachInstanceId, color, opacity);
 }
 
 void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {

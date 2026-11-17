@@ -71,6 +71,12 @@ aura visuals use `SpellVisual.StateKit` and its authored attachment slots;
 their lifetime follows aura fields and owner existence, not cast duration.
 For example, Draenei Survivor (16483) sleeps (state 3) under spell 35046,
 visual 8270, kit 6608, `Spells/RedGhost_state.m2`.
+State kits also change the unit's own model through `CharProc`: type 1
+multiplies the shaded model by `CharParamZero` (an `0xRRGGBB` integer stored
+as a float), type 14 sets its opacity to `CharParamZero`. The latest applied
+aura's kit wins for each; removing it restores the previous one. A ghost is
+Ghost (8326), visual 886, kit 989: colour `0x8CB9FD`, opacity 0.5. Vertex Color
+Black (39662) draws a black silhouette, Transparency (75%) (37802) opacity 0.25.
 M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
 asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U

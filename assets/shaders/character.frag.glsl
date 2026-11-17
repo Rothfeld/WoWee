@@ -46,6 +46,12 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float normalMapStrength;
     int hairMaterial;
     float hoverHighlight;
+    // SpellVisualKit CharProc 1 colour of the unit's latest aura kit; white
+    // when none. Multiplies the shaded model (Vertex Color Black renders a
+    // black silhouette, Immolate a red-tinted one).
+    float kitColorR;
+    float kitColorG;
+    float kitColorB;
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
@@ -404,6 +410,7 @@ void main() {
     }
 
     if (unlit == 0) result += localLightContribution(FragPos, norm, texColor.rgb);
+    result *= vec3(kitColorR, kitColorG, kitColorB);
 
     // Unit hover adds neutral illumination while preserving texture detail.
     // Apply before fog so highlighted units retain their distance attenuation.

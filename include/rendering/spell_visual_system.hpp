@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -57,7 +58,15 @@ public:
     uint32_t precastAnimation(uint32_t visualId);
     uint32_t castAnimation(uint32_t visualId);
     uint32_t channelAnimation(uint32_t visualId);
-    // Persistent StateKit effects follow the unit's current aura set.
+    // Persistent StateKit effects follow the unit's current aura set, and so
+    // do the kits' character procedures that change the unit's own model:
+    // SpellVisualKit CharProc 1 multiplies the model's colour by CharParamZero
+    // (an 0xRRGGBB integer stored as a float: Ghost kit 989 0x8CB9FD,
+    // Immolate kit 235 0xE75641, Vertex Color Black kit 7641 0x000000) and
+    // CharProc 14 sets its opacity to CharParamZero (Transparency (75%) 37802
+    // kit 6858 0.25, Ghost 0.5). The most recently applied aura's kit wins for
+    // each, and removing it returns the previous one (original 2.4.3, pair 0,
+    // _experiments/20261117T181105Z.pair0_ghost_names_gossip).
     void syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds,
                          bool observerConcealed);
 
@@ -151,10 +160,21 @@ private:
     /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
     /// carries it on bone 82 in front of the face, bone +X forward.
     static constexpr uint32_t kAttachBreath = 17;
+    static constexpr uint32_t kCharProcColor = 1;
+    static constexpr uint32_t kCharProcOpacity = 14;
     struct UnitAuraVisuals {
         std::vector<uint32_t> ids;
         bool observerConcealed = false;
+        // The same visuals, oldest application first.
+        std::vector<uint32_t> applied;
     };
+    // CharProc 1 colour and CharProc 14 opacity of a kit, where it has them.
+    struct KitCharacterProcedures {
+        std::optional<glm::vec3> color;
+        std::optional<float> opacity;
+    };
+    std::unordered_map<uint32_t, KitCharacterProcedures> kitCharacterProcedures_;
+    void applyCharacterProcedures(uint32_t attachInstanceId, const std::vector<uint32_t>& applied);
     std::unordered_map<uint32_t, UnitAuraVisuals> unitAuraVisuals_;
     // Model ID for a cast, impact or missile model, loading it on first use.
     // 0 when it cannot be loaded.

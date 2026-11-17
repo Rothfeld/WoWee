@@ -1104,11 +1104,6 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         if (const auto* mount = getRemotePlayerMount(guid))
             cr->setInstanceCreatureModel(mount->instanceId, mount->displayId, creatureModelDataIdForDisplay(mount->displayId));
     }
-    if (entity->getType() == game::ObjectType::PLAYER) {
-        constexpr uint32_t playerFlagsGhost = 0x10;
-        const bool ghost = (entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS)) & playerFlagsGhost) != 0;
-        renderer_->getCharacterRenderer()->setInstanceOpacity(instanceId, ghost ? 0.5f : 1.0f);
-    }
     syncUnitAuraVisuals(*entity, instanceId);
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);

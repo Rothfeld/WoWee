@@ -1622,7 +1622,6 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
             if (!wasGhost && nowGhost) {
                 owner_.releasedSpiritRef() = true;
                 LOG_INFO("Player entered ghost form (PLAYER_FLAGS)");
-                if (owner_.ghostStateCallbackRef()) owner_.ghostStateCallbackRef()(true);
             } else if (wasGhost && !nowGhost) {
                 owner_.releasedSpiritRef() = false;
                 owner_.playerDeadRef() = false;
@@ -1635,7 +1634,6 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
                 owner_.corpseReclaimAvailableMsRef() = 0;
                 LOG_INFO("Player resurrected (PLAYER_FLAGS ghost cleared)");
                 pendingEvents_.emit("PLAYER_ALIVE", {});
-                if (owner_.ghostStateCallbackRef()) owner_.ghostStateCallbackRef()(false);
             }
             // Which unit's flags, because that is the only thing the
             // handlers do with it: TargetFrame compares arg1 against its
@@ -2222,7 +2220,6 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
             owner_.releasedSpiritRef() = true;
             owner_.playerDeadRef() = true;
             LOG_INFO("Player logged in as ghost (PLAYER_FLAGS)");
-            if (owner_.ghostStateCallbackRef()) owner_.ghostStateCallbackRef()(true);
             // Query corpse position so minimap marker is accurate on reconnect
             if (owner_.getSocket()) {
                 network::Packet cq(wireOpcode(Opcode::MSG_CORPSE_QUERY));

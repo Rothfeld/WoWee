@@ -573,7 +573,6 @@ void GameHandler::registerCoreOpcodes() {
         corpseMapId_ = currentMapId_;
         corpsePositionValid_ = true;
         latchReleaseTimer("SMSG_FORCED_DEATH_UPDATE");
-        if (ghostStateCallback_) ghostStateCallback_(false);
         fireAddonEvent("PLAYER_DEAD", {});
         addSystemChatMessage("You have been killed.");
         LOG_INFO("SMSG_FORCED_DEATH_UPDATE: player force-killed");

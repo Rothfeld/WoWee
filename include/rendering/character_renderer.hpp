@@ -145,6 +145,11 @@ public:
     void setInstanceScale(uint32_t instanceId, float scale);
     void setInstanceOpacity(uint32_t instanceId, float opacity);
     void setInstanceCameraOpacity(uint32_t instanceId, float opacity);
+    /// SpellVisualKit character procedures of the unit's auras: CharProc 1
+    /// multiplies the shaded model by a colour, CharProc 14 sets its opacity.
+    /// Kept apart from display alpha, stealth and spawn fades, which write
+    /// setInstanceOpacity. Carried to the unit's weapons and their effects.
+    void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity);
     void setHoveredInstance(uint32_t instanceId);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
     [[nodiscard]] const pipeline::M2Model* getInstanceModelData(uint32_t instanceId) const;
@@ -366,6 +371,8 @@ private:
         // Opacity (for fade-in)
         float opacity = 1.0f;
         float cameraOpacity = 1.0f;
+        glm::vec3 kitColor{1.0f};
+        float kitOpacity = 1.0f;
         float fadeInTime = 0.0f;     // elapsed fade time (seconds)
         float fadeInDuration = 0.0f; // total fade duration (0 = no fade)
         // Fade-out ahead of removal (fadeOutAndRemove); 0 = not fading out.
