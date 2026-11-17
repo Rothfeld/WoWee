@@ -269,7 +269,7 @@ public:
     /// CreatureDisplayInfo.ModelID for a display, 0 when the display is unknown.
     [[nodiscard]] uint32_t creatureModelDataIdForDisplay(uint32_t displayId) const;
     /// Model-space position of an attachment on a helper model that is not
-    /// drawn (isHelperCreatureModel: InvisibleStalker and the like), at its
+    /// render instance (InvisibleStalker and the like), at its
     /// bind pose. The original still places spell effects on those models:
     /// Netherstorm Trigger (display 11686, InvisibleStalker.mdx) channels
     /// Green Beam from above its feet. nullopt for other models or when the

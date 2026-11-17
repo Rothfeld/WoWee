@@ -1079,10 +1079,7 @@ std::optional<glm::vec3> EntitySpawner::helperModelAttachment(uint32_t displayId
     auto [entry, created] = helperAttachments_.try_emplace(displayId);
     if (created) {
         std::string path = getModelPathForDisplayId(displayId);
-        std::string lower = path;
-        std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (!path.empty() && rendering::isHelperCreatureModel(lower) && assetManager_) {
+        if (!path.empty() && assetManager_) {
             const auto data = assetManager_->readFile(path);
             if (data.empty()) {
                 LOG_ERROR("Helper model unreadable: ", path);
