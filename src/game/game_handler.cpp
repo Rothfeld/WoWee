@@ -3013,11 +3013,18 @@ int GameHandler::gameObjectReactionToPlayer(const GameObject& object) const {
         if (standing.flags & FACTION_FLAG_AT_WAR) rank = std::min(rank, 4);
         return rank;
     }
+    if (factionObjectReactionMap_.empty())
+        throw std::runtime_error("Game object reaction asked before FactionTemplate.dbc reactions were built");
     const auto found = factionObjectReactionMap_.find(ft);
     if (found == factionObjectReactionMap_.end()) {
-        LOG_ERROR("Game object ", object.getGuid(), " entry ", object.getEntry(),
-                  " has faction template ", ft, " absent from FactionTemplate.dbc reactions");
-        throw std::runtime_error("Game object faction template has no reaction; FactionTemplate.dbc not loaded");
+        // A template the client's FactionTemplate.dbc does not have is
+        // neutral. CMaNGOS-TBC data carries later templates: Blackened Urn
+        // 194092 has 1924, absent from the 2.4.3 table, and build 8606 shows
+        // it the gear and lets it be used (pair 0 hover).
+        if (reportedAbsentObjectFactions_.insert(ft).second)
+            LOG_WARNING("Game object entry ", object.getEntry(), " faction template ", ft,
+                        " absent from FactionTemplate.dbc; neutral");
+        return 4;
     }
     return found->second;
 }

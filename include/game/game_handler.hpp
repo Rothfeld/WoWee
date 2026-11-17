@@ -4865,6 +4865,8 @@ private:
     std::unordered_map<uint32_t, bool> factionHostileMap_;
     std::unordered_map<uint32_t, bool> factionFriendlyMap_;
     std::unordered_map<uint32_t, int> factionObjectReactionMap_;
+    /// Object faction templates absent from FactionTemplate.dbc, reported once.
+    mutable std::unordered_set<uint32_t> reportedAbsentObjectFactions_;
     std::unordered_map<uint32_t, uint32_t> factionTemplateRepList_;
 
     // Vehicle (WotLK): non-zero when player is seated in a vehicle
