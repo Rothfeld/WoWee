@@ -36,6 +36,10 @@ public:
     void resetChargeState();
 
 private:
+    /// UnitBlood combat spurt on a wounded unit, at ChestBloodFront (15) when
+    /// the attacker stands in front of it, ChestBloodBack (16) behind it.
+    void playCombatBlood(uint64_t attackerGuid, uint64_t victimGuid, bool critical);
+
     EntitySpawner& entitySpawner_;
     rendering::Renderer& renderer_;
     game::GameHandler& gameHandler_;

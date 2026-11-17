@@ -35,6 +35,7 @@
 #include "game/game_services.hpp"
 #include "game/transport_manager.hpp"
 
+#include <cassert>
 #include <cmath>
 #include <algorithm>
 #include <cctype>
@@ -975,6 +976,63 @@ EntitySpawner::MeleeWeaponAnimations EntitySpawner::meleeWeaponAnimations(const 
 
 uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
     return meleeWeaponAnimations(unit).ready;
+}
+
+uint32_t EntitySpawner::combatBloodSpurt(uint32_t displayId, bool large, bool back) {
+    if (!bloodTables_) {
+        // violenceLevel is a 0..2 CVar selecting a UnitBloodLevels column.
+        // Build 8606 with no violenceLevel in Config.wtf shows red blood on a
+        // BloodID 1 bear, whose levels are {0, 2 (green), 1 (red)}: level 2.
+        constexpr uint32_t kViolenceLevel = 2;
+        auto* layouts = pipeline::getActiveDBCLayout();
+        assert(layouts);
+        const auto* modelL = layouts->getLayout("CreatureModelData");
+        const auto* levelsL = layouts->getLayout("UnitBloodLevels");
+        const auto* bloodL = layouts->getLayout("UnitBlood");
+        if (!modelL || !levelsL || !bloodL || !modelL->fields.count("BloodID")) {
+            // Only the TBC layout describes these tables (build 8606 columns).
+            LOG_ERROR("Combat blood disabled: dbc_layouts.json lacks CreatureModelData.BloodID/"
+                      "UnitBloodLevels/UnitBlood for this expansion");
+            bloodTables_.emplace();
+            return 0;
+        }
+        auto models = assetManager_->loadDBC("CreatureModelData.dbc");
+        auto levels = assetManager_->loadDBC("UnitBloodLevels.dbc");
+        auto blood = assetManager_->loadDBC("UnitBlood.dbc");
+        assert(models && models->isLoaded() && levels && levels->isLoaded() && blood && blood->isLoaded());
+        BloodTables tables;
+        const uint32_t bloodField = (*modelL)["BloodID"];
+        assert(bloodField < models->getFieldCount());
+        for (uint32_t i = 0; i < models->getRecordCount(); ++i)
+            tables.modelBlood[models->getUInt32(i, (*modelL)["ID"])] = models->getUInt32(i, bloodField);
+        const uint32_t levelField = (*levelsL)["Violencelevel"] + kViolenceLevel;
+        assert(levelField < levels->getFieldCount());
+        for (uint32_t i = 0; i < levels->getRecordCount(); ++i)
+            tables.levelBlood[levels->getUInt32(i, (*levelsL)["ID"])] = levels->getUInt32(i, levelField);
+        const uint32_t front = (*bloodL)["CombatBloodSpurtFront"], rear = (*bloodL)["CombatBloodSpurtBack"];
+        assert(front + 1 < blood->getFieldCount() && rear + 1 < blood->getFieldCount());
+        for (uint32_t i = 0; i < blood->getRecordCount(); ++i)
+            tables.spurts[blood->getUInt32(i, (*bloodL)["ID"])] = {
+                blood->getUInt32(i, front), blood->getUInt32(i, front + 1),
+                blood->getUInt32(i, rear), blood->getUInt32(i, rear + 1)};
+        LOG_INFO("Combat blood: ", tables.modelBlood.size(), " models, ", tables.levelBlood.size(),
+                 " blood levels, ", tables.spurts.size(), " UnitBlood rows, violence level ", kViolenceLevel);
+        bloodTables_ = std::move(tables);
+    }
+    if (bloodTables_->modelBlood.empty()) return 0;
+    const uint32_t modelId = creatureModelDataIdForDisplay(displayId);
+    if (modelId == 0) {
+        LOG_WARNING("Combat blood: display ", displayId, " has no CreatureDisplayInfo model");
+        return 0;
+    }
+    const auto model = bloodTables_->modelBlood.find(modelId);
+    assert(model != bloodTables_->modelBlood.end());
+    // BloodID -1 (and 0) name no UnitBloodLevels row: the model does not bleed.
+    const auto level = bloodTables_->levelBlood.find(model->second);
+    if (level == bloodTables_->levelBlood.end() || level->second == 0) return 0;
+    const auto spurt = bloodTables_->spurts.find(level->second);
+    assert(spurt != bloodTables_->spurts.end());
+    return spurt->second[(back ? 2 : 0) + (large ? 1 : 0)];
 }
 
 uint32_t EntitySpawner::creatureModelDataIdForDisplay(uint32_t displayId) const {

@@ -716,7 +716,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         else if (!data.isMiss() && data.victimState != VICTIMSTATE_EVADES &&
                  data.victimState != VICTIMSTATE_IS_IMMUNE && data.victimState != VICTIMSTATE_DEFLECTS)
             reaction = data.isCrit() ? HR::CRIT_WOUND : HR::WOUND;
-        if (reaction) owner_.hitReactionCallbackRef()(data.targetGuid, *reaction);
+        if (reaction) owner_.hitReactionCallbackRef()(data.attackerGuid, data.targetGuid, *reaction);
     }
     if (!isPlayerAttacker) {
         auto entity = owner_.getEntityManager().getEntity(data.attackerGuid);

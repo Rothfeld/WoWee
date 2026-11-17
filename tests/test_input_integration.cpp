@@ -1647,7 +1647,7 @@ TEST_CASE("Observed TBC melee dispatches visuals without local combat UI", "[rem
     std::vector<uint64_t> swings;
     std::vector<std::pair<uint64_t, HR>> reactions;
     handler.setNpcSwingCallback([&](uint64_t guid) { swings.push_back(guid); });
-    handler.setHitReactionCallback([&](uint64_t guid, HR reaction) { reactions.emplace_back(guid, reaction); });
+    handler.setHitReactionCallback([&](uint64_t, uint64_t guid, HR reaction) { reactions.emplace_back(guid, reaction); });
     // CMaNGOS TBC SendAttackStateUpdate: packed participants, one damage
     // component, victim state, unknown, spell ID, blocked amount.
     for (uint32_t state : {1u, 2u, 3u, 5u, 6u, 7u, 8u}) {

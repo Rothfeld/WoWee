@@ -42,6 +42,9 @@ public:
     // Frost_Nova_state under the casting Ward Keeper, not its target.
     void playInstantAreaKit(uint32_t visualId, const glm::vec3& casterPosition,
                             uint32_t casterInstanceId);
+    /// One SpellVisualEffectName.dbc model at a unit's M2 attachment, e.g. a
+    /// UnitBlood.dbc combat blood spurt at ChestBloodFront (15).
+    void playEffectAtAttachment(uint32_t effectNameId, uint32_t attachInstanceId, uint32_t attachment);
     void startChannelVisual(uint32_t visualId, const glm::vec3& position,
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
@@ -137,6 +140,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     struct KitEffect { std::string path; uint32_t attachment; };
     std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;
+    std::unordered_map<uint32_t, std::string> effectPaths_;  // SpellVisualEffectName ID -> .m2 path
     std::unordered_map<uint32_t, uint32_t> channelKits_;
     std::unordered_map<uint32_t, uint32_t> precastKits_;
     std::unordered_map<uint32_t, uint32_t> stateKits_;

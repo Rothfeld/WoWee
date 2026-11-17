@@ -1444,7 +1444,7 @@ public:
 
     // Hit reaction callback - triggers victim animation (dodge, block, wound, crit wound)
     enum class HitReaction : uint8_t { WOUND, CRIT_WOUND, DODGE, PARRY, BLOCK, SHIELD_BLOCK };
-    using HitReactionCallback = std::function<void(uint64_t victimGuid, HitReaction reaction)>;
+    using HitReactionCallback = std::function<void(uint64_t attackerGuid, uint64_t victimGuid, HitReaction reaction)>;
     void setHitReactionCallback(HitReactionCallback cb) { hitReactionCallback_ = std::move(cb); }
 
     // Stun state callback - fires when UNIT_FLAG_STUNNED changes on the local player

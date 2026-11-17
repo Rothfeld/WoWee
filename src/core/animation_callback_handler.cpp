@@ -116,6 +116,47 @@ bool AnimationCallbackHandler::updateCharge(float deltaTime) {
     return true; // charge is active
 }
 
+void AnimationCallbackHandler::playCombatBlood(uint64_t attackerGuid, uint64_t victimGuid, bool critical) {
+    // M2 attachments ChestBloodFront and ChestBloodBack.
+    constexpr uint32_t kAttachChestBloodFront = 15, kAttachChestBloodBack = 16;
+    auto* visuals = renderer_.getSpellVisualSystem();
+    auto* cr = renderer_.getCharacterRenderer();
+    if (!visuals || !cr) return;
+    const auto instanceOf = [this](uint64_t guid) -> uint32_t {
+        if (guid == gameHandler_.getPlayerGuid()) return renderer_.getCharacterInstanceId();
+        const uint32_t creature = entitySpawner_.getCreatureInstanceId(guid);
+        return creature ? creature : entitySpawner_.getPlayerInstanceId(guid);
+    };
+    const auto victim = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(victimGuid));
+    const uint32_t victimInstance = instanceOf(victimGuid), attackerInstance = instanceOf(attackerGuid);
+    glm::vec3 attackerPos;
+    if (!victim || !victimInstance || !attackerInstance || !cr->getInstancePosition(attackerInstance, attackerPos)) {
+        LOG_DEBUG("Combat blood: attacker 0x", std::hex, attackerGuid, " or victim 0x", victimGuid,
+                  std::dec, " not rendered; side unknown, no spurt");
+        return;
+    }
+    // The side the attacker is on is the nearer of the two rendered blood
+    // attachments, as the model is posed and turned right now.
+    glm::mat4 front(1.0f), back(1.0f);
+    const bool hasFront = cr->getAttachmentTransform(victimInstance, kAttachChestBloodFront, front);
+    const bool hasBack = cr->getAttachmentTransform(victimInstance, kAttachChestBloodBack, back);
+    if (!hasFront || !hasBack) {
+        LOG_DEBUG("Combat blood: victim 0x", std::hex, victimGuid, std::dec,
+                  " model lacks ChestBloodFront/Back attachments; no spurt");
+        return;
+    }
+    const auto planar = [&](const glm::mat4& m) {
+        const glm::vec2 d = glm::vec2(m[3]) - glm::vec2(attackerPos);
+        return glm::dot(d, d);
+    };
+    const bool behind = planar(back) < planar(front);
+    const uint32_t effect = entitySpawner_.combatBloodSpurt(victim->getDisplayId(), critical, behind);
+    LOG_DEBUG("Combat blood: victim 0x", std::hex, victimGuid, std::dec, " display ", victim->getDisplayId(),
+              critical ? " critical" : "", behind ? " from behind" : " from front", " effect ", effect);
+    if (effect == 0) return;
+    visuals->playEffectAtAttachment(effect, victimInstance, behind ? kAttachChestBloodBack : kAttachChestBloodFront);
+}
+
 void AnimationCallbackHandler::setupCallbacks() {
     // Sprint aura callback - use SPRINT(143) animation when sprint-type buff is active
     gameHandler_.setSprintAuraCallback([this](bool active) {
@@ -245,9 +286,13 @@ void AnimationCallbackHandler::setupCallbacks() {
     // CombatCritical (10), Dodge (30), ShieldBlock (24), and the parry of the
     // victim's ready grip (20-23). Character models author ShieldBlock, not
     // Block (36): humanmale/dwarfmale/orcfemale.m2 have 24 and lack 36.
-    gameHandler_.setHitReactionCallback([this](uint64_t victimGuid, game::GameHandler::HitReaction reaction) {
+    gameHandler_.setHitReactionCallback([this](uint64_t attackerGuid, uint64_t victimGuid,
+                                               game::GameHandler::HitReaction reaction) {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
+        if (reaction == game::GameHandler::HitReaction::WOUND ||
+            reaction == game::GameHandler::HitReaction::CRIT_WOUND)
+            playCombatBlood(attackerGuid, victimGuid, reaction == game::GameHandler::HitReaction::CRIT_WOUND);
 
         const bool isLocalPlayer = (victimGuid == gameHandler_.getPlayerGuid());
         uint32_t instanceId = 0;

@@ -267,6 +267,11 @@ public:
     /// Ready stance and swing of a unit's main-hand weapon class.
     struct MeleeWeaponAnimations { uint32_t ready; uint32_t attack; };
     MeleeWeaponAnimations meleeWeaponAnimations(const game::Unit& unit) const;
+    /// SpellVisualEffectName ID of the combat blood spurt a melee hit raises on
+    /// a unit of this display: CreatureModelData.BloodID -> UnitBloodLevels
+    /// (by violence level) -> UnitBlood CombatBloodSpurtFront/Back[small, large].
+    /// 0 when the data gives the model no blood.
+    uint32_t combatBloodSpurt(uint32_t displayId, bool large, bool back);
     std::unordered_map<uint64_t, bool>& getCreatureWasMoving() { return creatureWasMoving_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasSwimming() { return creatureWasSwimming_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasFlying() { return creatureWasFlying_; }
@@ -416,6 +421,12 @@ private:
         uint32_t equipDisplayId[11] = {0};
     };
     std::unordered_map<uint32_t, CreatureDisplayData> displayDataMap_;  // displayId → display data
+    struct BloodTables {
+        std::unordered_map<uint32_t, uint32_t> modelBlood;  // CreatureModelData ID -> BloodID
+        std::unordered_map<uint32_t, uint32_t> levelBlood;  // UnitBloodLevels ID -> UnitBlood ID at the violence level
+        std::unordered_map<uint32_t, std::array<uint32_t, 4>> spurts;  // UnitBlood ID -> front small/large, back small/large
+    };
+    std::optional<BloodTables> bloodTables_;
     std::unordered_map<uint32_t, HumanoidDisplayExtra> humanoidExtraMap_;  // extraDisplayId → humanoid data
     std::unordered_map<uint32_t, std::string> modelIdToPath_;   // modelId → M2 path (from CreatureModelData.dbc)
     std::unordered_map<uint32_t, float> modelIdToScale_;        // modelId → CreatureModelData.ModelScale

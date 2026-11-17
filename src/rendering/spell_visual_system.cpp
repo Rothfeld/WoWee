@@ -86,7 +86,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                   fxDbc ? fxDbc->getFieldCount() : 0, ")");
         return;
     }
-    std::unordered_map<uint32_t, std::string> effectPaths; // effectNameId → path
+    auto& effectPaths = effectPaths_;  // effectNameId → path
     for (uint32_t i = 0; i < fxDbc->getRecordCount(); ++i) {
         uint32_t id   = fxDbc->getUInt32(i, 0);
         std::string p = fxDbc->getString(i, fxFilePathField);
@@ -239,6 +239,47 @@ void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPo
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
                  " instanceId=", instanceId, " duration=", lifetime, "s model=", effect.path);
     }
+}
+
+// One SpellVisualEffectName model at one attachment of a unit, oriented by
+// the attachment and following it for the model's own animation length.
+void SpellVisualSystem::playEffectAtAttachment(uint32_t effectNameId, uint32_t attachInstanceId,
+                                               uint32_t attachment) {
+    assert(effectNameId != 0 && attachInstanceId != 0 && attachment != 0);
+    if (!m2Renderer_) return;
+    if (!cachedAssetManager_)
+        cachedAssetManager_ = core::Application::getInstance().getAssetManager();
+    if (!cachedAssetManager_) return;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto path = effectPaths_.find(effectNameId);
+    if (path == effectPaths_.end()) {
+        LOG_ERROR("SpellVisualEffectName ", effectNameId, " not in SpellVisualEffectName.dbc");
+        return;
+    }
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    glm::mat4 attachMat(1.0f);
+    if (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, attachMat)) {
+        LOG_WARNING("SpellVisual: attachment ", attachment, " missing on instance ", attachInstanceId,
+                    "; effect ", effectNameId, " not shown: ", path->second);
+        return;
+    }
+    const uint32_t modelId = loadSpellModel(path->second);
+    if (modelId == 0) return;
+    const uint32_t instanceId = m2Renderer_->createInstanceWithMatrix(modelId, attachMat, glm::vec3(attachMat[3]));
+    if (instanceId == 0) {
+        LOG_WARNING("SpellVisual: instance failed for effect ", effectNameId, " model=", path->second);
+        return;
+    }
+    m2Renderer_->restartInstanceAnimation(instanceId);
+    const float animDurMs = m2Renderer_->getInstanceAnimDuration(instanceId);
+    const float lifetime = animDurMs > 100.0f
+        ? std::clamp(animDurMs / 1000.0f, 0.5f, SPELL_VISUAL_MAX_DURATION)
+        : SPELL_VISUAL_DEFAULT_DURATION;
+    activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
+        .isPrecast = false, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
+        .orientWithAttachment = true});
+    LOG_DEBUG("SpellVisual: effect=", effectNameId, " attachment=", attachment, " instance=",
+              attachInstanceId, " duration=", lifetime, "s model=", path->second);
 }
 
 // The cast, impact and missile models load the same way: a model ID per path,

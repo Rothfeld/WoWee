@@ -75,6 +75,7 @@
   },
   "CreatureModelData": {
     "ID": 0,
+    "BloodID": 5,
     "ModelPath": 2,
     "ModelScale": 4,
     "CollisionHeight": 15,
@@ -395,6 +396,16 @@
     "X": 4,
     "Y": 5,
     "Z": 6
+  },
+  "UnitBlood": {
+    "ID": 0,
+    "CombatBloodSpurtFront": 1,
+    "CombatBloodSpurtBack": 3,
+    "GroundBlood": 5
+  },
+  "UnitBloodLevels": {
+    "ID": 0,
+    "Violencelevel": 1
   },
   "WorldMapArea": {
     "AreaID": 2,
