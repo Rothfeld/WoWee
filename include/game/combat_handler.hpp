@@ -192,12 +192,18 @@ private:
     void handleResurrectFailed(network::Packet& packet);
 
     void autoTargetAttacker(uint64_t attackerGuid);
+    void announceLeaveCombat();
 
     GameHandler& owner_;
 
     // --- Combat state ---
     bool autoAttacking_ = false;
     bool autoAttackRequested_ = false;
+    // PLAYER_ENTER_COMBAT has been fired and PLAYER_LEAVE_COMBAT not yet.
+    // The original fires both from the server's SMSG_ATTACKSTART/STOP, not
+    // from the local request; a stop for an attack that never started fires
+    // nothing.
+    bool enterCombatAnnounced_ = false;
     uint64_t autoAttackTarget_ = 0;
     bool autoAttackOutOfRange_ = false;
     float autoAttackRangeWarnCooldown_ = 0.0f;

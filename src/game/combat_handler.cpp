@@ -102,6 +102,7 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
         autoAttackTarget_ = 0;
         autoAttackRequested_ = false;
         hostileAttackers_.clear();
+        announceLeaveCombat();
     };
 
     // ---- Attack/combat delegates ----
@@ -349,7 +350,6 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
     }
 
     if (autoAttackRequested_ && autoAttackTarget_ == targetGuid) return;
-    const bool enteringAttack = !autoAttackRequested_;
     autoAttackRequested_ = true;
     // Server confirmation is distinct from local attack intent. Range errors
     // leave intent armed while the server waits for a valid melee swing.
@@ -384,7 +384,11 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
         auto packet = AttackSwingPacket::build(targetGuid);
         owner_.getSocket()->send(packet);
     }
-    if (enteringAttack) owner_.fireAddonEvent("PLAYER_ENTER_COMBAT", {});
+    // The attack state is local from here (IsCurrentAction on the Attack
+    // button reads true in the same frame), but PLAYER_ENTER_COMBAT waits for
+    // the server's SMSG_ATTACKSTART. Original 2.4.3: /startattack flips
+    // IsCurrentAction at once and the event follows one round trip later;
+    // Sinister Strike gives SENT, SUCCEEDED, then PLAYER_ENTER_COMBAT.
     LOG_INFO("Starting auto-attack on 0x", std::hex, targetGuid, std::dec);
 }
 
@@ -394,13 +398,23 @@ void CombatHandler::stopAutoAttack() {
     autoAttacking_ = false;
     autoAttackTarget_ = 0;
     autoAttackOutOfRange_ = false;
+    // PLAYER_LEAVE_COMBAT comes with the server's SMSG_ATTACKSTOP, once.
+    // Original 2.4.3: /stopattack fires it one round trip later, and firing it
+    // here as well gave every stop two of them. With no server to answer,
+    // nothing else would end the announced attack.
     if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
         auto packet = AttackStopPacket::build();
         owner_.getSocket()->send(packet);
+    } else {
+        announceLeaveCombat();
     }
     LOG_INFO("Stopping auto-attack");
-    if (owner_.addonEventCallbackRef())
-        owner_.addonEventCallbackRef()("PLAYER_LEAVE_COMBAT", {});
+}
+
+void CombatHandler::announceLeaveCombat() {
+    if (!enterCombatAnnounced_) return;
+    enterCombatAnnounced_ = false;
+    owner_.fireAddonEvent("PLAYER_LEAVE_COMBAT", {});
 }
 
 // ============================================================
@@ -636,11 +650,13 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
     }
 
     if (data.attackerGuid == owner_.getPlayerGuid()) {
-        const bool enteringAttack = !autoAttackRequested_;
         autoAttackRequested_ = true;
         autoAttacking_ = true;
         autoAttackTarget_ = data.victimGuid;
-        if (enteringAttack) owner_.fireAddonEvent("PLAYER_ENTER_COMBAT", {});
+        if (!enterCombatAnnounced_) {
+            enterCombatAnnounced_ = true;
+            owner_.fireAddonEvent("PLAYER_ENTER_COMBAT", {});
+        }
     } else if (data.victimGuid == owner_.getPlayerGuid() && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
@@ -674,7 +690,8 @@ void CombatHandler::handleAttackStop(network::Packet& packet) {
         autoAttackRequested_ = false;
         autoAttackTarget_ = 0;
         autoAttackOutOfRange_ = false;
-        owner_.fireAddonEvent("PLAYER_LEAVE_COMBAT", {});
+        // Original 2.4.3: a stop answered while not attacking fires nothing.
+        announceLeaveCombat();
         LOG_DEBUG("SMSG_ATTACKSTOP cleared auto-attack intent");
     } else if (data.victimGuid == owner_.getPlayerGuid()) {
         hostileAttackers_.erase(data.attackerGuid);
@@ -910,6 +927,7 @@ void CombatHandler::resetAllCombatState() {
     combatText_.clear();
     autoAttacking_ = false;
     autoAttackRequested_ = false;
+    enterCombatAnnounced_ = false;
     autoAttackTarget_ = 0;
     autoAttackOutOfRange_ = false;
     autoAttackRangeWarnCooldown_ = 0.0f;
