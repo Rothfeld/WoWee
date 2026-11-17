@@ -3275,14 +3275,16 @@ static int lua_PutItemInBackpack(lua_State* L) {
 /// undo; it exists because the interface calls it on every mouse-leave.
 static int lua_ResetCursor(lua_State* L) { (void)L; return 0; }
 
-/// Coin as words, for the name of the money slot: "1 Gold, 20 Silver".
+/// Coin as words, for the name of the money slot, one denomination a line:
+/// the original's loot window reads "1 Silver" over "45 Copper" for 145
+/// copper (pair 6, _experiments/20261117T181500Z.loot_method_money/o-m8.png).
 /// Empty denominations are left out rather than shown as zero.
 static std::string lootCoinText(uint32_t copper) {
     const uint32_t g = copper / 10000, s = (copper / 100) % 100, c = copper % 100;
     std::string out;
     auto add = [&out](uint32_t v, const char* unit) {
         if (v == 0) return;
-        if (!out.empty()) out += ", ";
+        if (!out.empty()) out += "\n";
         out += std::to_string(v);
         out += ' ';
         out += unit;
