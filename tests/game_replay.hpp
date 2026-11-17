@@ -42,6 +42,11 @@ struct GameHandlerTestAccess {
     static void setAreaMap(GameHandler& gh, uint32_t area, uint32_t map) {
         gh.areaMapCache_[area] = map;
     }
+    // AreaTable without the DBC: the name an area id resolves to.
+    static void setAreaName(GameHandler& gh, uint32_t area, const std::string& name) {
+        gh.areaNameCache_[area] = name;
+        gh.areaNameCacheLoaded_ = true;
+    }
     // Queued and drained the way update() drains the socket's packets, frame
     // after frame, since update object blocks are applied after their packet
     // rather than inside it. Bounded, so work that never drains fails here

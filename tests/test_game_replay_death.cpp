@@ -104,3 +104,33 @@ TEST_CASE("a map change raises no zone event before the new map is loaded", "[re
     // new one while the load resolves it.
     CHECK_FALSE(events.has("ZONE_CHANGED_NEW_AREA"));
 }
+
+TEST_CASE("an exploration discovery prints its experience in chat and on screen", "[replay][explore]") {
+    // CMaNGOS Player::CheckAreaExploreAndOutdoor: SMSG_EXPLORATION_EXPERIENCE
+    // area id, experience. Razorfen Kraul is area 491.
+    Session s("tbc");
+    wowee::game::GameHandlerTestAccess::setAreaName(s.handler(), 491, "Razorfen Kraul");
+    std::vector<std::string> info;
+    s.handler().setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& a) {
+        if (e == "UI_INFO_MESSAGE" && !a.empty()) info.push_back(a.front());
+    });
+    const auto discover = [&](uint32_t xp) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_EXPLORATION_EXPERIENCE));
+        p.writeUInt32(491);
+        p.writeUInt32(xp);
+        s.receive(p);
+    };
+    discover(87);
+    // ERR_ZONE_EXPLORED_XP, as the native chat line reads.
+    REQUIRE(info.size() == 1);
+    CHECK(info.back() == "Discovered Razorfen Kraul: 87 experience gained");
+    const auto& chat = s.handler().getChatHistory();
+    REQUIRE_FALSE(chat.empty());
+    CHECK(chat.back().type == wowee::game::ChatType::COMBAT_XP_GAIN);
+    CHECK(chat.back().message == "Discovered Razorfen Kraul: 87 experience gained");
+
+    const auto lines = chat.size();
+    discover(0);
+    CHECK(info.back() == "Discovered: Razorfen Kraul");
+    CHECK(s.handler().getChatHistory().size() == lines);
+}

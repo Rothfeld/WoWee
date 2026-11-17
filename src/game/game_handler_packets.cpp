@@ -231,7 +231,15 @@ void GameHandler::registerCoreOpcodes() {
         else
             std::snprintf(buf, sizeof(buf), "Discovered: %s", areaName.c_str());
         addUIInfoMessage(buf);
-        if (xpGained > 0) addCombatText(CombatTextEntry::XP_GAIN, static_cast<int32_t>(xpGained), 0, true);
+        if (xpGained > 0) {
+            // The original also prints the experience line in chat ("Discovered
+            // Razorfen Kraul: 87 experience gained", native 15:2x), in the
+            // experience group the kill lines use, so the XP filter in the chat
+            // settings governs it with them. A discovery without experience is
+            // not known to print one.
+            addLocalChatLine(game::ChatType::COMBAT_XP_GAIN, buf);
+            addCombatText(CombatTextEntry::XP_GAIN, static_cast<int32_t>(xpGained), 0, true);
+        }
     };
 
     // SMSG_PET_NAME_QUERY_RESPONSE is handled in SpellHandler now, which is
