@@ -170,6 +170,7 @@
     "GeosetGroup3": 9,
     "ID": 0,
     "InventoryIcon": 5,
+    "ItemVisual": 23,
     "LeftModel": 1,
     "LeftModelTexture": 3,
     "RightModel": 2,
@@ -397,6 +398,7 @@
   },
   "SpellItemEnchantment": {
     "ID": 0,
+    "ItemVisual": 30,
     "Name": 13
   },
   "SpellRange": {

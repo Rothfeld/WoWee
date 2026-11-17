@@ -625,6 +625,13 @@ public:
         auto it = otherPlayerVisibleItemEntries_.find(guid);
         return (it != otherPlayerVisibleItemEntries_.end()) ? &it->second : nullptr;
     }
+    /// Permanent and temporary enchantment of each visible item of another
+    /// player (PLAYER_VISIBLE_ITEM_n_0 + 1 and + 2), by equipment slot.
+    using VisibleEnchants = std::array<std::pair<uint32_t, uint32_t>, 19>;
+    const VisibleEnchants* getOtherPlayerVisibleEnchants(uint64_t guid) const {
+        auto it = otherPlayerVisibleEnchants_.find(guid);
+        return (it != otherPlayerVisibleEnchants_.end()) ? &it->second : nullptr;
+    }
 
     // Server info commands
     void queryServerTime(bool announce = false);
@@ -3701,6 +3708,7 @@ public:
     auto& inspectedPlayerItemEntriesRef() { return inspectedPlayerItemEntries_; }
     auto& otherPlayerVisibleDirtyRef() { return otherPlayerVisibleDirty_; }
     auto& otherPlayerVisibleItemEntriesRef() { return otherPlayerVisibleItemEntries_; }
+    auto& otherPlayerVisibleEnchantsRef() { return otherPlayerVisibleEnchants_; }
     auto& otherPlayerMoveTimeMsRef() { return otherPlayerMoveTimeMs_; }
     auto& pendingItemPushNotifsRef() { return pendingItemPushNotifs_; }
     auto& pendingItemQueriesRef() { return pendingItemQueries_; }
@@ -4518,6 +4526,7 @@ private:
     int visibleItemStride_ = 2;
     bool visibleItemLayoutVerified_ = false;  // true once heuristic confirms/overrides default
     std::unordered_map<uint64_t, std::array<uint32_t, 19>> otherPlayerVisibleItemEntries_;
+    std::unordered_map<uint64_t, VisibleEnchants> otherPlayerVisibleEnchants_;
     std::unordered_set<uint64_t> otherPlayerVisibleDirty_;
     std::unordered_map<uint64_t, uint32_t> otherPlayerMoveTimeMs_;
 

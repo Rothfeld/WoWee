@@ -42,6 +42,7 @@ class M2Renderer;
 struct WeaponEffectAttachment {
     uint32_t effectModelId;
     uint32_t effectInstanceId;
+    uint16_t boneIndex;        // weapon bone carrying the attachment
     glm::vec3 offset;          // attachment position on the weapon model
 };
 
@@ -235,15 +236,19 @@ public:
     }
 
     /**
-     * Attach an enchant visual to the weapon at the given attachment point.
-     * visualSlot is the ItemVisuals.dbc slot (0-4), which selects the attachment
-     * point on the weapon model the effect hangs from.
+     * Attach an item visual effect to the weapon held at the given attachment
+     * point in the given sheath state (an off-hand weapon and a bow share the
+     * left hand). visualSlot is the ItemVisuals.dbc slot (0-4): the attachment
+     * point on the weapon model the effect hangs from. Returns false, drawing
+     * nothing, when the weapon model has no such attachment (the original
+     * draws no Frost Oil flame on Phosphorescent Blade, which has none).
      */
-    bool attachWeaponEffect(uint32_t charInstanceId, uint32_t attachmentId, uint32_t visualSlot,
-                            const pipeline::M2Model& effectModel, uint32_t effectModelId);
+    bool attachWeaponEffect(uint32_t charInstanceId, uint32_t attachmentId, int8_t heldSheathState,
+                            uint32_t visualSlot, const pipeline::M2Model& effectModel,
+                            uint32_t effectModelId);
 
-    /** Remove all enchant visuals from the weapon at the given attachment point. */
-    void detachWeaponEffects(uint32_t charInstanceId, uint32_t attachmentId);
+    /** Remove all item visual effects from that weapon. */
+    void detachWeaponEffects(uint32_t charInstanceId, uint32_t attachmentId, int8_t heldSheathState);
 
     /** Mark an instance as a scene backdrop: no culling, no character material heuristics. */
     void setInstanceSceneModel(uint32_t instanceId, bool isScene);

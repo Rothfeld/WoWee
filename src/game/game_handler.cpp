@@ -210,6 +210,7 @@ void GameHandler::disconnect() {
             gameObjectDespawnCallback_(guid);
     }
     otherPlayerVisibleItemEntries_.clear();
+    otherPlayerVisibleEnchants_.clear();
     otherPlayerVisibleDirty_.clear();
     otherPlayerMoveTimeMs_.clear();
     if (spellHandler_) spellHandler_->clearUnitCastStates();

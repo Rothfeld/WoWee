@@ -899,9 +899,15 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
         }
 
         uint32_t weaponModelId = nextWeaponModelId_++;
-        charRenderer->attachWeapon(st.instanceId, heldAttachment(equipSlot, inventoryTypes[slotIndex]),
-                                   weaponModel, weaponModelId, texturePath, glm::mat4(1.0f),
-                                   heldState, sheath);
+        const uint32_t held = heldAttachment(equipSlot, inventoryTypes[slotIndex]);
+        if (charRenderer->attachWeapon(st.instanceId, held, weaponModel, weaponModelId, texturePath,
+                                       glm::mat4(1.0f), heldState, sheath)) {
+            const auto* enchants = gameHandler_->getOtherPlayerVisibleEnchants(guid);
+            const auto [permanent, temporary] = enchants ? (*enchants)[slotIndex]
+                                                         : std::pair<uint32_t, uint32_t>{0, 0};
+            attachItemVisual(st.instanceId, held, heldState,
+                             equippedItemVisual(weapDisplayId, permanent, temporary));
+        }
     }
     if (const auto entity = gameHandler_ ? gameHandler_->getEntityManager().getEntity(guid) : nullptr)
         charRenderer->setSheathState(st.instanceId,

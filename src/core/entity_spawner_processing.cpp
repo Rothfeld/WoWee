@@ -12,6 +12,7 @@
 #include "rendering/animation_controller.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/character_emitters.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "audio/npc_voice_manager.hpp"
@@ -1992,6 +1993,73 @@ void EntitySpawner::despawnGameObject(uint64_t guid) {
     gameObjectInstances_.erase(it);
 
     LOG_DEBUG("Despawned gameobject: guid=0x", std::hex, guid, std::dec);
+}
+
+uint32_t EntitySpawner::equippedItemVisual(uint32_t displayId, uint32_t permanentEnchant,
+                                           uint32_t temporaryEnchant) {
+    // The original's precedence, pair 1 (_experiments/20261117T194000Z.weapon_glow,
+    // frames/kopesh_oil2, perm2, perm4): Crystalline Kopesh keeps its display's
+    // YellowFlame (visual 129) under Mongoose and under Frost Oil; a Warglaive
+    // with Mongoose shows Mongoose under a Frost Oil applied after it; one with
+    // Frost Oil alone shows the oil's BlueFlame.
+    auto displayDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
+    assert(displayDbc && displayDbc->isLoaded());
+    const auto* displayLayout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
+    assert(displayLayout);
+    const uint32_t visualField = displayLayout->field("ItemVisual");
+    if (displayId != 0 && visualField != 0xFFFFFFFF) {
+        const int32_t row = displayDbc->findRecordById(displayId);
+        if (row >= 0) {
+            const uint32_t visual = displayDbc->getUInt32(static_cast<uint32_t>(row), visualField);
+            if (visual != 0) return visual;
+        }
+    }
+    if (permanentEnchant == 0 && temporaryEnchant == 0) return 0;
+    auto sieDbc = assetManager_->loadDBC("SpellItemEnchantment.dbc");
+    assert(sieDbc && sieDbc->isLoaded());
+    const auto* sieLayout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("SpellItemEnchantment") : nullptr;
+    if (const uint32_t visual = pipeline::enchantItemVisualId(permanentEnchant, sieDbc.get(), sieLayout))
+        return visual;
+    return pipeline::enchantItemVisualId(temporaryEnchant, sieDbc.get(), sieLayout);
+}
+
+void EntitySpawner::attachItemVisual(uint32_t instanceId, uint32_t attachmentId,
+                                     int8_t heldSheathState, uint32_t itemVisualId) {
+    auto* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    assert(charRenderer);
+    charRenderer->detachWeaponEffects(instanceId, attachmentId, heldSheathState);
+    if (itemVisualId == 0) return;
+
+    auto visualsDbc = assetManager_->loadDBC("ItemVisuals.dbc");
+    auto effectsDbc = assetManager_->loadDBC("ItemVisualEffects.dbc");
+    assert(visualsDbc && visualsDbc->isLoaded() && effectsDbc && effectsDbc->isLoaded());
+    const auto effectModels = pipeline::resolveItemVisualModels(itemVisualId, visualsDbc.get(),
+                                                                effectsDbc.get());
+    for (uint32_t visualSlot = 0; visualSlot < effectModels.size(); ++visualSlot) {
+        const std::string& modelName = effectModels[visualSlot];
+        if (modelName.empty()) continue;
+        // The table names .mdx; the shipped files are .m2.
+        const size_t dot = modelName.rfind('.');
+        const std::string m2Path = (dot != std::string::npos ? modelName.substr(0, dot) : modelName) + ".m2";
+        // Effect models are mostly emitters with no mesh, which
+        // loadWeaponM2 reports as invalid.
+        pipeline::M2Model effectModel;
+        if (!assetManager_->fileExists(m2Path) ||
+            (!loadWeaponM2(m2Path, effectModel) && !rendering::hasEffectEmitters(effectModel))) {
+            LOG_ERROR("Item visual ", itemVisualId, ": cannot load ", m2Path);
+            continue;
+        }
+        if (charRenderer->attachWeaponEffect(instanceId, attachmentId, heldSheathState, visualSlot,
+                                             effectModel, nextWeaponModelId_++)) {
+            LOG_INFO("Item visual ", itemVisualId, ": ", m2Path, " on instance ", instanceId,
+                     " weapon at ", attachmentId, ", its attachment ", visualSlot);
+        } else {
+            LOG_INFO("Item visual ", itemVisualId, ": weapon at ", attachmentId, " on instance ",
+                     instanceId, " has no attachment ", visualSlot, "; ", m2Path, " not drawn");
+        }
+    }
 }
 
 bool EntitySpawner::loadWeaponM2(const std::string& m2Path, pipeline::M2Model& outModel) {

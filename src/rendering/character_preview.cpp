@@ -1341,7 +1341,7 @@ void CharacterPreview::attachWeaponEnchantVisual(uint32_t attachmentId, uint32_t
             LOG_WARNING("CharacterPreview: failed to load enchant visual ", m2Path);
             continue;
         }
-        charRenderer_->attachWeaponEffect(instanceId_, attachmentId, visualSlot,
+        charRenderer_->attachWeaponEffect(instanceId_, attachmentId, -1, visualSlot,
                                           effectModel, previewModelIdFor(m2Path));
     }
 }

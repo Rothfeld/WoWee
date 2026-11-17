@@ -333,17 +333,18 @@ std::array<std::string, 5> resolveEnchantItemVisuals(uint32_t enchantId,
                                                      const DBCFile* itemVisuals,
                                                      const DBCFile* itemVisualEffects,
                                                      const DBCFieldMap* sieL) {
-    std::array<std::string, 5> models;
-    if (enchantId == 0 || !spellItemEnchantment) return models;
-
-    int32_t enchantRow = spellItemEnchantment->findRecordById(enchantId);
-    if (enchantRow < 0) return models;
-
-    const uint32_t visualField = detectEnchantmentItemVisualField(spellItemEnchantment, sieL);
-    const uint32_t visualId = spellItemEnchantment->getUInt32(static_cast<uint32_t>(enchantRow), visualField);
-    if (visualId == 0) return models;  // most enchants have no visual
-
+    const uint32_t visualId = enchantItemVisualId(enchantId, spellItemEnchantment, sieL);
+    if (visualId == 0) return {};  // most enchants have no visual
     return resolveItemVisualModels(visualId, itemVisuals, itemVisualEffects);
+}
+
+uint32_t enchantItemVisualId(uint32_t enchantId, const DBCFile* spellItemEnchantment,
+                             const DBCFieldMap* sieL) {
+    if (enchantId == 0 || !spellItemEnchantment) return 0;
+    const int32_t enchantRow = spellItemEnchantment->findRecordById(enchantId);
+    if (enchantRow < 0) return 0;
+    const uint32_t visualField = detectEnchantmentItemVisualField(spellItemEnchantment, sieL);
+    return spellItemEnchantment->getUInt32(static_cast<uint32_t>(enchantRow), visualField);
 }
 
 } // namespace pipeline

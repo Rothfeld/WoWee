@@ -5614,6 +5614,23 @@ void InventoryHandler::updateOtherPlayerVisibleItems(uint64_t guid, const FlatFi
         old = newEntries;
         changed = true;
     }
+    // Enchantments follow each entry: PLAYER_VISIBLE_ITEM_n_0 + 1 is the
+    // permanent one, + 2 the temporary one (TBC 16 fields per item, vanilla
+    // 12). An enchant change alone re-emits the equipment, for its visual.
+    if (stride >= 3) {
+        GameHandler::VisibleEnchants enchants{};
+        for (int s = 0; s < 19; s++) {
+            const auto perm = fields.find(static_cast<uint16_t>(base + s * stride + 1));
+            const auto temp = fields.find(static_cast<uint16_t>(base + s * stride + 2));
+            enchants[s] = {perm != fields.end() ? perm->second : 0u,
+                           temp != fields.end() ? temp->second : 0u};
+        }
+        auto& oldEnchants = owner_.otherPlayerVisibleEnchantsRef()[guid];
+        if (oldEnchants != enchants) {
+            oldEnchants = enchants;
+            changed = true;
+        }
+    }
 
     if (valuesAreDisplayIds) {
         if (sparseTbcVisible && hasInspectedEntries) {

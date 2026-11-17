@@ -216,6 +216,10 @@ std::array<std::string, 5> resolveEnchantItemVisuals(uint32_t enchantId,
                                                      const DBCFile* itemVisualEffects,
                                                      const DBCFieldMap* sieL);
 
+/// SpellItemEnchantment.ItemVisual of an enchantment; 0 for none.
+uint32_t enchantItemVisualId(uint32_t enchantId, const DBCFile* spellItemEnchantment,
+                             const DBCFieldMap* sieL);
+
 /**
  * The tail of that chain, entered directly with an ItemVisuals.dbc id.
  *

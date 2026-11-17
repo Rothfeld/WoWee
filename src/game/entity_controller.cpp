@@ -283,6 +283,7 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
         } else if (entity->getType() == ObjectType::PLAYER && owner_.playerDespawnCallbackRef()) {
             owner_.playerDespawnCallbackRef()(guid);
             owner_.otherPlayerVisibleItemEntriesRef().erase(guid);
+            owner_.otherPlayerVisibleEnchantsRef().erase(guid);
             owner_.otherPlayerVisibleDirtyRef().erase(guid);
             owner_.otherPlayerMoveTimeMsRef().erase(guid);
             owner_.inspectedPlayerItemEntriesRef().erase(guid);
@@ -2936,6 +2937,7 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
                 // Player entities also need renderer cleanup on DESTROY_OBJECT, not just out-of-range.
                 owner_.playerDespawnCallbackRef()(data.guid);
                 owner_.otherPlayerVisibleItemEntriesRef().erase(data.guid);
+                owner_.otherPlayerVisibleEnchantsRef().erase(data.guid);
                 owner_.otherPlayerVisibleDirtyRef().erase(data.guid);
                 owner_.otherPlayerMoveTimeMsRef().erase(data.guid);
                 owner_.inspectedPlayerItemEntriesRef().erase(data.guid);

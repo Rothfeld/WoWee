@@ -252,56 +252,17 @@ std::unordered_set<uint16_t> AppearanceComposer::buildDefaultPlayerGeosets(uint8
     return activeGeosets;
 }
 
-void AppearanceComposer::applyEnchantVisuals(uint32_t charInstanceId, int equipSlotIndex,
+void AppearanceComposer::applyEnchantVisuals(uint32_t charInstanceId, game::EquipSlot slot,
                                              uint32_t attachmentId) {
-    auto* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
-    if (!charRenderer || !gameHandler_ || !assetManager_ || !entitySpawner_) return;
-
-    charRenderer->detachWeaponEffects(charInstanceId, attachmentId);
-
-    uint64_t itemGuid = gameHandler_->getEquipSlotGuid(equipSlotIndex);
-    if (itemGuid == 0) return;
-
-    // A temporary enchant (sharpening stone, oil) masks the permanent one's visual.
-    auto [permEnchantId, tempEnchantId] = gameHandler_->getItemEnchantIds(itemGuid);
-    uint32_t enchantId = (tempEnchantId != 0) ? tempEnchantId : permEnchantId;
-    if (enchantId == 0) return;
-
-    auto sieDbc     = assetManager_->loadDBC("SpellItemEnchantment.dbc");
-    auto visualsDbc = assetManager_->loadDBC("ItemVisuals.dbc");
-    auto effectsDbc = assetManager_->loadDBC("ItemVisualEffects.dbc");
-    if (!sieDbc || !sieDbc->isLoaded() || !visualsDbc || !visualsDbc->isLoaded() ||
-        !effectsDbc || !effectsDbc->isLoaded()) {
-        return;
-    }
-
-    const auto* sieL = pipeline::getActiveDBCLayout()
-        ? pipeline::getActiveDBCLayout()->getLayout("SpellItemEnchantment") : nullptr;
-    auto effectModels = pipeline::resolveEnchantItemVisuals(enchantId, sieDbc.get(),
-                                                            visualsDbc.get(), effectsDbc.get(), sieL);
-
-    for (uint32_t visualSlot = 0; visualSlot < effectModels.size(); ++visualSlot) {
-        const std::string& modelName = effectModels[visualSlot];
-        if (modelName.empty()) continue;
-
-        // DBC stores .mdx paths; the shipped assets are .m2.
-        std::string m2Path = modelName;
-        size_t dotPos = m2Path.rfind('.');
-        m2Path = (dotPos != std::string::npos ? m2Path.substr(0, dotPos) : m2Path) + ".m2";
-
-        pipeline::M2Model effectModel;
-        if (!loadWeaponM2(m2Path, effectModel)) {
-            LOG_WARNING("Enchant visual: failed to load ", m2Path);
-            continue;
-        }
-
-        uint32_t effectModelId = entitySpawner_->allocateWeaponModelId();
-        if (charRenderer->attachWeaponEffect(charInstanceId, attachmentId, visualSlot,
-                                             effectModel, effectModelId)) {
-            LOG_INFO("Enchant visual: ", m2Path, " on attachment ", attachmentId,
-                     " (enchant ", enchantId, ", visual slot ", visualSlot, ")");
-        }
-    }
+    assert(gameHandler_ && entitySpawner_);
+    const auto& equipSlot = gameHandler_->getInventory().getEquipSlot(slot);
+    const uint64_t itemGuid = gameHandler_->getEquipSlotGuid(static_cast<int>(slot));
+    const auto [permanent, temporary] = itemGuid != 0 ? gameHandler_->getItemEnchantIds(itemGuid)
+                                                      : std::pair<uint32_t, uint32_t>{0, 0};
+    entitySpawner_->attachItemVisual(charInstanceId, attachmentId,
+                                     static_cast<int8_t>(heldSheathState(slot)),
+                                     entitySpawner_->equippedItemVisual(equipSlot.item.displayInfoId,
+                                                                        permanent, temporary));
 }
 
 bool AppearanceComposer::loadWeaponM2(const std::string& m2Path, pipeline::M2Model& outModel) {
@@ -481,7 +442,7 @@ void AppearanceComposer::loadEquippedWeapons() {
             LOG_INFO("Equipped weapon: ", m2Path, " held at ", attachmentId,
                      ", sheathed at ", sheath, " (sheath type ", info->sheath, ")",
                      ", sheath state ", int(sheathState_));
-            applyEnchantVisuals(charInstanceId, static_cast<int>(slot), attachmentId);
+            applyEnchantVisuals(charInstanceId, slot, attachmentId);
         }
     }
 

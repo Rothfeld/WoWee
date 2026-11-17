@@ -1741,7 +1741,10 @@ void CharacterRenderer::setModelTexture(uint32_t modelId, uint32_t textureSlot, 
     core::Logger::getInstance().debug("Replaced model ", modelId, " texture slot ", textureSlot, " with composited texture");
 }
 bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
-    if (!model.isValid()) {
+    // A model may be emitters only: item visual effects such as
+    // Spells/Enchantments/BlueFlame_Low.m2 carry one particle emitter and no
+    // mesh. It has no buffers and draws through syncEmitters alone.
+    if (!model.isValid() && !hasEffectEmitters(model)) {
         core::Logger::getInstance().error("Cannot load invalid M2 model");
         return false;
     }
@@ -2492,12 +2495,16 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             weapIt->second.overrideModelMatrix = weaponMat;
             weapIt->second.hasOverrideModelMatrix = true;
 
-            // Enchant visuals ride the weapon, offset to their attachment point on it.
+            // Item visuals ride the weapon at their attachment on it: the
+            // weapon bone carries it (Glave_1H_DualBlade_D_02 scales its
+            // attachment bones 1-5 by 1.32 on a global sequence).
             for (const auto& fx : wa.effects) {
                 auto fxIt = instances.find(fx.effectInstanceId);
                 if (fxIt == instances.end()) continue;
-                fxIt->second.overrideModelMatrix =
-                    weaponMat * glm::translate(glm::mat4(1.0f), fx.offset);
+                const auto& weaponBones = weapIt->second.boneMatrices;
+                assert(fx.boneIndex < weaponBones.size());
+                fxIt->second.overrideModelMatrix = weaponMat * weaponBones[fx.boneIndex] *
+                    glm::translate(glm::mat4(1.0f), fx.offset);
                 fxIt->second.hasOverrideModelMatrix = true;
                 // Keep the effect near the character so animation distance culling
                 // (which works off instance position) treats it like its wielder.
@@ -4906,7 +4913,7 @@ void CharacterRenderer::unloadModelIfUnused(uint32_t modelId) {
 }
 
 bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t attachmentId,
-                                           uint32_t visualSlot,
+                                           int8_t heldSheathState, uint32_t visualSlot,
                                            const pipeline::M2Model& effectModel,
                                            uint32_t effectModelId) {
     auto charIt = instances.find(charInstanceId);
@@ -4914,10 +4921,16 @@ bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t att
 
     auto& attachments = charIt->second.weaponAttachments;
     auto waIt = std::find_if(attachments.begin(), attachments.end(),
-                             [attachmentId](const WeaponAttachment& wa) {
-                                 return wa.attachmentId == attachmentId;
+                             [&](const WeaponAttachment& wa) {
+                                 return wa.attachmentId == attachmentId &&
+                                        wa.heldSheathState == heldSheathState;
                              });
     if (waIt == attachments.end()) return false;  // no weapon to hang the effect on
+
+    // The ItemVisuals slot names the attachment point on the weapon model itself.
+    uint16_t boneIndex = 0;
+    glm::vec3 offset(0.0f);
+    if (!findAttachmentBone(waIt->weaponModelId, visualSlot, boneIndex, offset)) return false;
 
     if (models.find(effectModelId) == models.end()) {
         if (!loadModel(effectModel, effectModelId)) {
@@ -4925,14 +4938,6 @@ bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t att
                                                 effectModelId);
             return false;
         }
-    }
-
-    // The ItemVisuals slot names the attachment point on the weapon model itself.
-    // Weapons carry few attachments, so fall back to the weapon's origin.
-    uint16_t boneIndex = 0;
-    glm::vec3 offset(0.0f);
-    if (!findAttachmentBone(waIt->weaponModelId, visualSlot, boneIndex, offset)) {
-        offset = glm::vec3(0.0f);
     }
 
     uint32_t effectInstanceId = createInstance(effectModelId, glm::vec3(0.0f));
@@ -4951,10 +4956,11 @@ bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t att
     WeaponEffectAttachment fx;
     fx.effectModelId = effectModelId;
     fx.effectInstanceId = effectInstanceId;
+    fx.boneIndex = boneIndex;
     fx.offset = offset;
     waIt->effects.push_back(fx);
 
-    core::Logger::getInstance().debug("Attached enchant visual model ", effectModelId,
+    core::Logger::getInstance().debug("Attached item visual model ", effectModelId,
         " to weapon at attachment ", attachmentId, " (visual slot ", visualSlot, ")");
     return true;
 }
@@ -4969,14 +4975,20 @@ void CharacterRenderer::setInstanceCreatureMaterialRules(uint32_t instanceId, bo
     if (it != instances.end()) it->second.creatureMaterialRules = enabled;
 }
 
-void CharacterRenderer::detachWeaponEffects(uint32_t charInstanceId, uint32_t attachmentId) {
+void CharacterRenderer::detachWeaponEffects(uint32_t charInstanceId, uint32_t attachmentId,
+                                            int8_t heldSheathState) {
     auto charIt = instances.find(charInstanceId);
     if (charIt == instances.end()) return;
 
     for (auto& wa : charIt->second.weaponAttachments) {
-        if (wa.attachmentId != attachmentId) continue;
-        for (const auto& fx : wa.effects) removeInstance(fx.effectInstanceId);
+        if (wa.attachmentId != attachmentId || wa.heldSheathState != heldSheathState) continue;
+        std::vector<uint32_t> modelIds;
+        for (const auto& fx : wa.effects) {
+            removeInstance(fx.effectInstanceId);
+            modelIds.push_back(fx.effectModelId);
+        }
         wa.effects.clear();
+        for (uint32_t mid : modelIds) unloadModelIfUnused(mid);
         return;
     }
 }

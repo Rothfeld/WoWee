@@ -221,6 +221,17 @@ public:
     // Weapon model IDs (shared counter for creature weapons + equipment helm/weapon models)
     uint32_t allocateWeaponModelId() { return nextWeaponModelId_++; }
 
+    /// The ItemVisuals.dbc id drawn on an equipped item: the display's own
+    /// (ItemDisplayInfo.ItemVisual), else the permanent enchant's, else the
+    /// temporary enchant's; 0 for none.
+    uint32_t equippedItemVisual(uint32_t displayId, uint32_t permanentEnchant,
+                                uint32_t temporaryEnchant);
+    /// Hang an item visual's effect models on the weapon held at attachmentId
+    /// in heldSheathState, replacing the ones already there. Each ItemVisuals
+    /// slot goes to the attachment of the same id on the weapon model.
+    void attachItemVisual(uint32_t instanceId, uint32_t attachmentId, int8_t heldSheathState,
+                          uint32_t itemVisualId);
+
     // Maximum weapon attachment operations per tick (used by Application update loop)
     static constexpr int MAX_WEAPON_ATTACHES_PER_TICK = 2;
 

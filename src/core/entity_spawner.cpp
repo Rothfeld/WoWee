@@ -489,6 +489,9 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
             return false;
         }
         creatureWeaponAttachments_[guid].push_back(held);
+        // Creatures carry no enchantments: the display's own visual only.
+        attachItemVisual(instanceId, held, static_cast<int8_t>(heldSheathState(equipSlot)),
+                         equippedItemVisual(displayId, 0, 0));
         LOG_INFO("NPC equipment: guid=", guid, " slot=", slot, " display=", displayId,
                  " held=", held, " sheath type=", int(sheathType), " sheath attachment=", sheath,
                  " sheath state=", int(sheathState));
