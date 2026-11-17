@@ -197,6 +197,9 @@ struct M2ParticleEmitter {
     glm::vec3 windVector{0.0f};
     float windTime = 0.0f;
     bool enabled = true;
+    /// Animated on/off (pre-Wrath +0x1DC, byte, discrete). Off: no births;
+    /// live particles finish. Empty track: always on.
+    M2AnimationTrack enabledIn;
 };
 
 // Ribbon emitter definition parsed from M2 (WotLK format)

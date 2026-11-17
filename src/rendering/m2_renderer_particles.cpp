@@ -88,6 +88,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
         const auto& em = gpu.particleEmitters[ei];
         if (!em.enabled) continue;
+        if (m2_track::sampleFloat(em.enabledIn, inst.currentSequenceIndex, inst.animTime,
+                                  inst.globalSequenceTime, gpu.globalSequenceDurations, 1.0f) <= 0.0f)
+            continue;
 
         float rate = interpFloat(em.emissionRate, inst.animTime, inst.globalSequenceTime,
                                  inst.currentSequenceIndex, gpu.globalSequenceDurations);

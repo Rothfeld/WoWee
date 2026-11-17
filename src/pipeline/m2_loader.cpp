@@ -636,6 +636,7 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
     size_t keySize;
     if (type == TrackType::FLOAT) keySize = sizeof(float);
     else if (type == TrackType::FIXED16) keySize = sizeof(int16_t);
+    else if (type == TrackType::BYTE_BOOL) keySize = sizeof(uint8_t);
     else if (type == TrackType::VEC3) keySize = sizeof(float) * 3;
     else keySize = compressedQuat ? sizeof(int16_t) * 4 : sizeof(float) * 4;
     if (disk.ofsKeys + disk.nKeys * keySize > data.size()) return;
@@ -671,6 +672,10 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
         for (int16_t v : raw) {
             allFloatKeys.push_back(std::clamp(static_cast<float>(v) / 32767.0f, 0.0f, 1.0f));
         }
+    } else if (type == TrackType::BYTE_BOOL) {
+        auto raw = readArray<uint8_t>(data, disk.ofsKeys, disk.nKeys);
+        allFloatKeys.reserve(raw.size());
+        for (uint8_t v : raw) allFloatKeys.push_back(v != 0 ? 1.0f : 0.0f);
     } else if (type == TrackType::VEC3) {
         allVec3Keys = readArray<Vec3Disk>(data, disk.ofsKeys, disk.nKeys);
     } else if (compressedQuat) {
@@ -700,7 +705,7 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
         uint32_t keyEnd = std::min(end, disk.nKeys);
         uint32_t keyCount = keyEnd - start;
 
-        if (type == TrackType::FLOAT || type == TrackType::FIXED16) {
+        if (type == TrackType::FLOAT || type == TrackType::FIXED16 || type == TrackType::BYTE_BOOL) {
             track.sequences[i].floatValues.assign(
                 allFloatKeys.begin() + start, allFloatKeys.begin() + start + keyCount);
         } else if (type == TrackType::VEC3) {
@@ -1635,6 +1640,16 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                                      readValue<float>(m2Data, base + 0x1B8),
                                      readValue<float>(m2Data, base + 0x1BC)};
                     em.windTime = readValue<float>(m2Data, base + 0x1C0);
+                    // EnabledIn: a byte track (0/1, discrete) ending the
+                    // emitter at +0x1DC. All 16070 pre-264 emitters in the TBC
+                    // data read a well-formed 0/1 track here; 3487 switch off.
+                    // ThunderClap_Cast_Base emits only 667-833 of its 667-5600
+                    // Stand.
+                    if (base + 0x1DC + sizeof(M2TrackDiskVanilla) <= m2Data.size()) {
+                        M2TrackDiskVanilla disk = readValue<M2TrackDiskVanilla>(m2Data, base + 0x1DC);
+                        parseAnimTrackVanilla(m2Data, disk, em.enabledIn, TrackType::BYTE_BOOL,
+                                              vanillaSeqWindows);
+                    }
                     for (int s = 0; s < 3; s++) {
                         float scale = readValue<float>(m2Data, base + 0x15C + s * 4);
                         // Zero and tiny endpoints make particles shrink away.

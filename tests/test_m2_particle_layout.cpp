@@ -319,3 +319,39 @@ TEST_CASE("Particle blend modes follow the M2Blend table", "[m2][particle]") {
     CHECK(particleBlendPipeline(5) == ParticleBlendPipeline::Mod);
     CHECK(particleBlendPipeline(6) == ParticleBlendPipeline::Mod2x);
 }
+
+TEST_CASE("Legacy emitters stop births where their EnabledIn track turns off", "[m2][particle]") {
+    // ThunderClap_Cast_Base (Sonic Burst cast kit): Stand 667-5600, EnabledIn
+    // keys 667 -> 1, 833 -> 0, discrete, at emitter +0x1DC.
+    constexpr uint32_t e = 512;
+    constexpr uint32_t seq = e + 504;
+    constexpr uint32_t ranges = seq + 68, times = ranges + 8, keys = times + 8;
+    std::vector<uint8_t> bytes(keys + 2, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t offset, uint32_t value) { std::memcpy(bytes.data() + offset, &value, 4); };
+    put32(4, 260);
+    put32(0x1C, 1);
+    put32(0x20, seq);
+    put32(seq + 4, 667);
+    put32(seq + 8, 5600);
+    put32(0x13c, 1);
+    put32(0x140, e);
+    const uint32_t track = e + 0x1DC;
+    const int16_t globalSequence = -1;
+    std::memcpy(bytes.data() + track + 2, &globalSequence, 2);
+    put32(track + 4, 1); put32(track + 8, ranges);
+    put32(track + 12, 2); put32(track + 16, times);
+    put32(track + 20, 2); put32(track + 24, keys);
+    put32(ranges, 0); put32(ranges + 4, 1);
+    put32(times, 667); put32(times + 4, 833);
+    bytes[keys] = 1; bytes[keys + 1] = 0;
+
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 1);
+    const auto& enabled = model.particleEmitters[0].enabledIn;
+    using wowee::rendering::m2_track::sampleFloat;
+    CHECK(sampleFloat(enabled, 0, 0.0f, 0.0f, {}, 1.0f) == 1.0f);
+    CHECK(sampleFloat(enabled, 0, 150.0f, 0.0f, {}, 1.0f) == 1.0f);
+    CHECK(sampleFloat(enabled, 0, 170.0f, 0.0f, {}, 1.0f) == 0.0f);
+    CHECK(sampleFloat(enabled, 0, 4000.0f, 0.0f, {}, 1.0f) == 0.0f);
+}
