@@ -233,15 +233,18 @@ void AnimationCallbackHandler::setupCallbacks() {
             auto* cr = renderer_.getCharacterRenderer();
             const auto attackAnims =
                 rendering::anim::meleeAnimChain(rendering::anim::MeleeChain::Generic);
+            // The swing returns to the unit's idle, its ready stance while it
+            // is meleeing, not to Stand.
+            const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
             bool played = false;
             for (uint32_t anim : attackAnims) {
                 if (cr->hasAnimation(instanceId, anim)) {
-                    cr->playAnimation(instanceId, anim, false);
+                    cr->playAnimation(instanceId, anim, false, idle);
                     played = true;
                     break;
                 }
             }
-            if (!played) cr->playAnimation(instanceId, rendering::anim::ATTACK_UNARMED, false);
+            if (!played) cr->playAnimation(instanceId, rendering::anim::ATTACK_UNARMED, false, idle);
         }
     });
 
@@ -278,7 +281,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         uint32_t instanceId = entitySpawner_.getCreatureInstanceId(victimGuid);
         if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(victimGuid);
         if (instanceId != 0 && cr->hasAnimation(instanceId, animId))
-            cr->playAnimation(instanceId, animId, false);
+            cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteIdleAnimation(victimGuid));
     });
 
     // Stun state callback - enters/exits STUNNED animation on local player

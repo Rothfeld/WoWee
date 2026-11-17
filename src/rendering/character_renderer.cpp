@@ -24,6 +24,8 @@
 #include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/footprint_renderer.hpp"
+#include "pipeline/dbc_layout.hpp"
+#include "pipeline/dbc_loader.hpp"
 #include "rendering/footfall_window.hpp"
 #include "rendering/pom_quality.hpp"
 #include "rendering/shadow_params.hpp"
@@ -2047,6 +2049,26 @@ void CharacterRenderer::setLocomotionSpeed(uint32_t instanceId, float speed) {
     instances.at(instanceId).locomotionSpeed = speed;
 }
 
+std::optional<uint32_t> CharacterRenderer::animationFallback(uint32_t animationId) {
+    if (!animationFallbackLoaded_) {
+        animationFallbackLoaded_ = true;
+        const auto dbc = assetManager ? assetManager->loadDBC("AnimationData.dbc") : nullptr;
+        const auto* layout = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("AnimationData") : nullptr;
+        const uint32_t field = layout ? layout->field("Fallback") : 0xFFFFFFFFu;
+        if (!dbc || field == 0xFFFFFFFFu || field >= dbc->getFieldCount()) {
+            LOG_ERROR("AnimationData.dbc or its Fallback column is unavailable; "
+                      "missing animations play the model's first sequence");
+        } else {
+            for (uint32_t r = 0; r < dbc->getRecordCount(); ++r)
+                animationFallback_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, field);
+        }
+    }
+    const auto it = animationFallback_.find(animationId);
+    if (it == animationFallback_.end()) return std::nullopt;
+    return it->second;
+}
+
 void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId, bool loop,
                                       uint32_t oneShotReturnAnim, bool holdFinalPose) {
     auto it = instances.find(instanceId);
@@ -2110,6 +2132,28 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             }
             LOG_DEBUG("AnimationData loot alias ", animationId, " uses sequence 50");
         }
+    }
+
+    // A model without the animation plays its AnimationData.dbc fallback:
+    // Ready1H -> ReadyUnarmed -> Stand, WalkBackwards -> Walk. The requested
+    // id stays current, so a Stand reached this way is the primary Stand and
+    // never rolls Stand fidget variations (Bear.m2 has no ReadyUnarmed; the
+    // original holds its plain Stand between swings, never the rearing
+    // fidget, _experiments/20261117T145702Z.combat_observations).
+    if (instance.currentSequenceIndex < 0) {
+        uint32_t wanted = animationId;
+        for (int hop = 0; hop < 16 && instance.currentSequenceIndex < 0; ++hop) {
+            const auto next = animationFallback(wanted);
+            if (!next || *next == wanted) break;
+            wanted = *next;
+            for (size_t i = 0; i < model.sequences.size(); i++) {
+                if (model.sequences[i].id != wanted) continue;
+                instance.currentSequenceIndex = static_cast<int>(i);
+                if (model.sequences[i].variationIndex == 0) break;
+            }
+        }
+        if (instance.currentSequenceIndex >= 0)
+            LOG_DEBUG("Animation ", animationId, " falls back to ", wanted, " in model ", instance.modelId);
     }
 
     if (instance.currentSequenceIndex < 0) {
@@ -2181,6 +2225,13 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                  " blendMs=", instance.blendSequenceIndex >= 0 ? instance.blendDuration : 0.0f);
     }
 
+}
+
+void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to) {
+    auto& instance = instances.at(instanceId);
+    if (instance.animationLoop || instance.holdFinalPose) return;
+    const uint32_t resumes = instance.oneShotReturnAnim != 0 ? instance.oneShotReturnAnim : anim::STAND;
+    if (resumes == from) instance.oneShotReturnAnim = to;
 }
 
 void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {

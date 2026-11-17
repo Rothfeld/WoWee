@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 #include <memory>
 #include <vector>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
@@ -93,6 +94,8 @@ public:
     // own completion and select the next animation without an intermediate pose.
     void playAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true,
                        uint32_t oneShotReturnAnim = 0, bool holdFinalPose = false);
+    /// A running one-shot that would resume `from` resumes `to` instead.
+    void retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to);
     /// Play other animations on each arm alone, until the next playAnimation.
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
     // Loop an animation on SpineLow and its descendants; zero removes the layer.
@@ -441,6 +444,10 @@ private:
     VkRenderPass renderPassOverride_ = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaaSamplesOverride_ = VK_SAMPLE_COUNT_1_BIT;
     pipeline::AssetManager* assetManager = nullptr;
+    /// AnimationData.dbc ID -> Fallback, loaded on first use.
+    std::unordered_map<uint32_t, uint32_t> animationFallback_;
+    bool animationFallbackLoaded_ = false;
+    std::optional<uint32_t> animationFallback(uint32_t animationId);
 
     // Vulkan pipelines (one per blend mode)
     VkPipeline opaquePipeline_ = VK_NULL_HANDLE;

@@ -913,9 +913,49 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     if (!entity) return rendering::anim::STAND;
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     if (state != 0) return rendering::standPose(state).idle;
-    if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+    // A unit meleeing holds its ready stance between swings; the original
+    // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
+    if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) return meleeReadyAnimation(*unit);
+    if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
     return unit ? rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState()) : 0;
+}
+
+uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
+    // Main-hand item class and inventory type. Item class 2 is Weapon
+    // (ItemClass.dbc); INVTYPE_2HWEAPON is 17.
+    constexpr uint32_t kItemClassWeapon = 2;
+    uint32_t itemClass = 0, inventoryType = 0;
+    if (unit.getType() == game::ObjectType::PLAYER) {
+        const auto* equipment = gameHandler_->getOtherPlayerVisibleEquipment(unit.getGuid());
+        if (equipment && (*equipment)[15] != 0) {
+            if (const auto* item = gameHandler_->getItemInfo((*equipment)[15])) {
+                itemClass = item->itemClass;
+                inventoryType = item->inventoryType;
+            }
+        }
+    } else {
+        const uint16_t slots = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+        const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
+        assert(slots != 0xFFFF);
+        if (unit.getField(slots) != 0) {
+            if (info != 0xFFFF) {
+                // Pre-Wrath: first word byte 0 class, second word byte 0 inventory type.
+                itemClass = unit.getField(info) & 0xFF;
+                inventoryType = unit.getField(info + 1) & 0xFF;
+            } else if (auto itemDbc = assetManager_->loadDBC("Item.dbc")) {
+                const int32_t record = itemDbc->findRecordById(unit.getField(slots));
+                if (record >= 0) {
+                    itemClass = itemDbc->getUInt32(record, 1);
+                    inventoryType = itemDbc->getUInt32(record, 6);
+                }
+            }
+        }
+    }
+    // Which ready pose a staff or polearm takes (Ready2H or Ready2HL) is not
+    // in the data and not yet observed; two-handers take Ready2H.
+    if (itemClass != kItemClassWeapon) return rendering::anim::READY_UNARMED;
+    return inventoryType == 17 ? rendering::anim::READY_2H : rendering::anim::READY_1H;
 }
 
 uint32_t EntitySpawner::creatureModelDataIdForDisplay(uint32_t displayId) const {
@@ -982,6 +1022,25 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
     const uint8_t previous = it->second;
     it->second = state;
+    {
+        // ATTACKSTART/STOP change the idle; a standing unit switches now, a
+        // swing in flight resumes the new idle when it ends.
+        const uint32_t idle = remoteIdleAnimation(guid);
+        const auto [idleIt, firstIdle] = remoteIdleAnims_.try_emplace(guid, idle);
+        const uint32_t previousIdle = idleIt->second;
+        idleIt->second = idle;
+        const auto unit = std::static_pointer_cast<game::Unit>(entity);
+        if (!firstIdle && previousIdle != idle && previous == state && !moving && !mounted &&
+            unit->getHealth() > 0) {
+            auto* cr = renderer_->getCharacterRenderer();
+            uint32_t current = 0; float time = 0.0f, duration = 0.0f;
+            if (cr->getAnimationState(instanceId, current, time, duration) && current == previousIdle)
+                cr->playAnimation(instanceId, idle, true);
+            else
+                cr->retargetOneShotReturn(instanceId, previousIdle, idle);
+            LOG_DEBUG("Remote idle: guid=", guid, " ", previousIdle, " -> ", idle, " current=", current);
+        }
+    }
     // A newly visible standing unit keeps its spawn/emote animation. Nonzero
     // stand states must override that spawn pose immediately.
     if ((initial && state == 0) || (!initial && previous == state) || moving || mounted) return;
@@ -998,6 +1057,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
 void EntitySpawner::despawnPlayer(uint64_t guid) {
     if (!renderer_ || !renderer_->getCharacterRenderer()) return;
     remoteStandStates_.erase(guid);
+    remoteIdleAnims_.erase(guid);
     creatureActiveEmotes_.erase(guid);
     pendingRemotePlayerMounts_.erase(guid);
     removeRemotePlayerMount(guid);

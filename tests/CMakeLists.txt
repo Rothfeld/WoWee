@@ -1131,6 +1131,15 @@ wowee_add_test(test_creature_sound_index
             ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp)
 set_tests_properties(creature_sound_index PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_ready_stance_data ───────────────────────────────────
+# AnimationData fallback and Bear.m2 sequences behind the melee idle.
+wowee_add_test(test_ready_stance_data
+    SOURCES test_ready_stance_data.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
+set_tests_properties(ready_stance_data PROPERTIES SKIP_RETURN_CODE 4)
+
 # ── test_m2_color_alpha ──────────────────────────────────────
 # Loads the peasant lumberjack carry models (WotLK v264 + vanilla v256) and
 # pins the M2 color-alpha track parsing that hides the duplicate wood bundle.

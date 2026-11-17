@@ -626,6 +626,11 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
     revealCombatant(data.attackerGuid);
     revealCombatant(data.victimGuid);
 
+    if (auto attacker = owner_.getEntityManager().getEntity(data.attackerGuid);
+        attacker && attacker->isUnit()) {
+        std::static_pointer_cast<Unit>(attacker)->setMeleeVictimGuid(data.victimGuid);
+    }
+
     if (data.attackerGuid == owner_.getPlayerGuid()) {
         const bool enteringAttack = !autoAttackRequested_;
         autoAttackRequested_ = true;
@@ -653,6 +658,11 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
 void CombatHandler::handleAttackStop(network::Packet& packet) {
     AttackStopData data;
     if (!AttackStopParser::parse(packet, data)) return;
+
+    if (auto attacker = owner_.getEntityManager().getEntity(data.attackerGuid);
+        attacker && attacker->isUnit()) {
+        std::static_pointer_cast<Unit>(attacker)->setMeleeVictimGuid(0);
+    }
 
     // A server stop cancels attack mode; range errors do not send this packet.
     if (data.attackerGuid == owner_.getPlayerGuid()) {

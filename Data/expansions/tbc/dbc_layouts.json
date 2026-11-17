@@ -1,4 +1,9 @@
 {
+  "AnimationData": {
+    "Fallback": 6,
+    "ID": 0,
+    "Name": 1
+  },
   "AreaTable": {
     "ExploreFlag": 3,
     "ID": 0,

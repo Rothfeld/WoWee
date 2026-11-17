@@ -525,6 +525,11 @@ public:
         visibilityFlags &= static_cast<uint8_t>(~UNIT_VIS_FLAG_CREEP);
     }
 
+    // Victim of this unit's melee attack: set by SMSG_ATTACKSTART, cleared by
+    // SMSG_ATTACKSTOP (CMaNGOS Unit::SendMeleeAttackStart/Stop).
+    [[nodiscard]] uint64_t getMeleeVictimGuid() const { return meleeVictimGuid; }
+    void setMeleeVictimGuid(uint64_t guid) { meleeVictimGuid = guid; }
+
     // Dynamic flags (UNIT_DYNAMIC_FLAGS, index 147)
     [[nodiscard]] uint32_t getDynamicFlags() const { return dynamicFlags; }
     void setDynamicFlags(uint32_t f) { dynamicFlags = f; }
@@ -565,6 +570,7 @@ protected:
     uint32_t mountDisplayId = 0;
     uint32_t unitFlags = 0;
     uint8_t visibilityFlags = 0;
+    uint64_t meleeVictimGuid = 0;
     uint32_t dynamicFlags = 0;
     uint32_t npcFlags = 0;
     uint32_t npcEmoteState = 0;
