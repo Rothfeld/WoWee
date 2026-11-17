@@ -348,6 +348,8 @@ private:
         /// 1.5 for a giant, over ten displays. Nothing read it, so every
         /// creature sharing a model drew at that model's own size.
         float displayScale = 1.0f;
+        /// CreatureDisplayInfo.CreatureModelAlpha / 255.
+        float modelAlpha = 1.0f;
     };
 
     /// CreatureModelData.ModelScale for a model id, the second half of the
@@ -365,6 +367,8 @@ private:
     /// the display is unknown - an unknown display is already drawn at the
     /// model's own size, and guessing smaller would hide it.
     float creatureDisplayScale(uint32_t displayId) const;
+    /// CreatureDisplayInfo.CreatureModelAlpha as 0-1, or 1.0 for an unknown display.
+    float creatureDisplayAlpha(uint32_t displayId) const;
     float creatureRenderScale(const game::Unit& unit, uint32_t displayId, float serverScale) const;
     std::unordered_map<uint32_t, CreatureFamilyScale> creatureFamilyScales_;
 
@@ -465,7 +469,7 @@ private:
     // Server waypoint scripts hold work/chop emotes for many seconds. Locomotion
     // temporarily overrides them, then the idle transition restores this loop.
     std::unordered_map<uint64_t, uint32_t> creatureActiveEmotes_;
-    std::unordered_map<uint64_t, bool> creatureWasStealthed_;
+    std::unordered_map<uint64_t, float> creatureAppliedOpacity_;
     uint32_t stealthSyncFrameCounter_ = 0;  // throttles syncCreatureVisualState()
     std::unordered_map<uint64_t, std::array<uint32_t, 10>> creatureWeaponStates_;
     std::unordered_map<uint64_t, std::vector<uint32_t>> creatureWeaponAttachments_;

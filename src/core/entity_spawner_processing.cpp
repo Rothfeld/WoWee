@@ -1797,7 +1797,7 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     creatureSwimmingState_.erase(guid);
     creatureWalkingState_.erase(guid);
     creatureFlyingState_.erase(guid);
-    creatureWasStealthed_.erase(guid);
+    creatureAppliedOpacity_.erase(guid);
 
     LOG_DEBUG("Despawned creature: guid=0x", std::hex, guid, std::dec);
 }

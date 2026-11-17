@@ -123,13 +123,15 @@ void EntitySpawner::syncCreatureVisualState() {
                 creatureRenderScale(*unit, unit->getDisplayId(), std::bit_cast<float>(field->second)));
         }
 
-        const bool stealthed = unit->hasCreepVisibility();
-        auto [it, inserted] = creatureWasStealthed_.try_emplace(guid, stealthed);
-        if (!inserted && it->second == stealthed) continue;
+        // CreatureDisplayInfo's model alpha (the Boar Spirit's display 4716
+        // is 128) times the detected-stealth presentation.
+        const float opacity = creatureDisplayAlpha(unit->getDisplayId()) *
+                              (unit->hasCreepVisibility() ? kDetectedStealthOpacity : 1.0f);
+        auto [it, inserted] = creatureAppliedOpacity_.try_emplace(guid, opacity);
+        if (!inserted && it->second == opacity) continue;
 
-        it->second = stealthed;
-        characterRenderer->setInstanceOpacity(
-            instanceId, stealthed ? kDetectedStealthOpacity : 1.0f);
+        it->second = opacity;
+        characterRenderer->setInstanceOpacity(instanceId, opacity);
     }
 }
 
@@ -152,7 +154,7 @@ void EntitySpawner::shutdown() {
     creatureWalkingState_.clear();
     creatureFlyingState_.clear();
     creatureActiveEmotes_.clear();
-    creatureWasStealthed_.clear();
+    creatureAppliedOpacity_.clear();
     creatureWeaponStates_.clear();
     creatureWeaponAttachments_.clear();
     creatureWeaponsAttached_.clear();
@@ -208,7 +210,7 @@ void EntitySpawner::resetAllState() {
     // Carried over, a stale entry matching the creature's current stealth state
     // suppresses the opacity call that would apply it, so a stealthed NPC came
     // back fully opaque after a relog. shutdown() already cleared this.
-    creatureWasStealthed_.clear();
+    creatureAppliedOpacity_.clear();
     creatureWeaponStates_.clear();
     creatureWeaponAttachments_.clear();
     creatureWeaponsAttached_.clear();
@@ -601,6 +603,13 @@ void EntitySpawner::buildCreatureDisplayLookups() {
                 const float displayScale = cdi->getFloat(i, scaleField);
                 if (displayScale > 0.0f) data.displayScale = displayScale;
             }
+            // CreatureModelAlpha, 0-255. 16106 of 16880 TBC displays are 255;
+            // spirits and ghosts are lower (Boar Spirit 128).
+            const uint32_t alphaField = cdiL ? (*cdiL)["CreatureModelAlpha"] : 5;
+            assert(alphaField < cdi->getFieldCount());
+            const uint32_t alpha = cdi->getUInt32(i, alphaField);
+            assert(alpha <= 255);
+            data.modelAlpha = static_cast<float>(alpha) / 255.0f;
             displayDataMap_[cdi->getUInt32(i, cdiL ? (*cdiL)["ID"] : 0)] = data;
         }
         LOG_INFO("Loaded ", displayDataMap_.size(), " display→model mappings");
@@ -2210,6 +2219,11 @@ float EntitySpawner::creatureModelScale(uint32_t displayId) const {
     if (disp == displayDataMap_.end()) return 1.0f;
     auto it = modelIdToScale_.find(disp->second.modelId);
     return it != modelIdToScale_.end() ? it->second : 1.0f;
+}
+
+float EntitySpawner::creatureDisplayAlpha(uint32_t displayId) const {
+    auto it = displayDataMap_.find(displayId);
+    return it != displayDataMap_.end() ? it->second.modelAlpha : 1.0f;
 }
 
 float EntitySpawner::creatureDisplayScale(uint32_t displayId) const {
