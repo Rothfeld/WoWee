@@ -3421,6 +3421,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
     if (renderer && gameHandler && renderer->getCharacterRenderer()) {
         auto* charRenderer = renderer->getCharacterRenderer();
         if (entitySpawner_) entitySpawner_->syncLocalFootprintModels();
+        if (entitySpawner_ && renderer->getCharacterInstanceId() != 0) {
+            if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid()))
+                entitySpawner_->syncUnitAuraVisuals(*self, renderer->getCharacterInstanceId());
+        }
         static float npcWeaponRetryTimer = 0.0f;
         npcWeaponRetryTimer += deltaTime;
         const bool npcWeaponRetryTick = (npcWeaponRetryTimer >= 1.0f);

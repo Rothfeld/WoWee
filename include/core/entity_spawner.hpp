@@ -27,7 +27,7 @@ namespace wowee {
 namespace rendering { class Renderer; }
 namespace pipeline { class AssetManager; struct M2Model; struct WMOModel; }
 namespace audio { enum class VoiceType; }
-namespace game { class GameHandler; class Unit; }
+namespace game { class GameHandler; class Unit; class Entity; }
 
 namespace core {
 
@@ -251,6 +251,7 @@ public:
     const std::unordered_map<uint64_t, uint32_t>& getCreatureDisplayIds() const { return creatureDisplayIds_; }
     std::unordered_map<uint64_t, glm::vec3>& getCreatureRenderPosCache() { return creatureRenderPosCache_; }
     void updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bool moving, bool mounted);
+    void syncUnitAuraVisuals(const game::Entity& entity, uint32_t instanceId);
     /// Give the local character and its mount the CreatureModelData rows of
     /// their displays, which choose their footprints.
     void syncLocalFootprintModels();

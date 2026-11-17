@@ -975,6 +975,39 @@ void EntitySpawner::syncLocalFootprintModels() {
     }
 }
 
+// Spell state kits of every aura in the unit's aura fields, on the unit's
+// model. Same rule for the local player, other players and creatures.
+void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t instanceId) {
+    auto* visuals = renderer_->getSpellVisualSystem();
+    if (!visuals) return;
+    std::vector<uint32_t> auraVisuals;
+    gameHandler_->loadSpellNameCache();
+    const auto& spells = gameHandler_->spellNameCacheRef();
+    bool observerConcealed = false;
+    for (const auto& aura : gameHandler_->getPlayerAuras()) {
+        const auto spell = spells.find(aura.spellId);
+        if (spell != spells.end() && rendering::auraConcealsObserver(spell->second.effectAuraIds)) {
+            observerConcealed = true;
+            break;
+        }
+    }
+    auto addAura = [&](uint32_t spellId) {
+        const auto spell = spells.find(spellId);
+        if (spell != spells.end() && spell->second.spellVisualId)
+            auraVisuals.push_back(spell->second.spellVisualId);
+    };
+    if (game::isPreWotlk()) {
+        const auto first = game::fieldIndex(game::UF::UNIT_FIELD_AURAS);
+        const int slots = game::isActiveExpansion("tbc") ? 56 : 48;
+        for (int slot = 0; slot < slots; ++slot) addAura(entity.getField(first + slot));
+    } else if (const auto* auras = gameHandler_->getUnitAuras(entity.getGuid())) {
+        for (const auto& aura : *auras) addAura(aura.spellId);
+    }
+    std::sort(auraVisuals.begin(), auraVisuals.end());
+    auraVisuals.erase(std::unique(auraVisuals.begin(), auraVisuals.end()), auraVisuals.end());
+    visuals->syncAuraVisuals(instanceId, auraVisuals, observerConcealed);
+}
+
 void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bool moving, bool mounted) {
     auto entity = gameHandler_->getEntityManager().getEntity(guid);
     if (!entity) return;
@@ -989,34 +1022,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         const bool ghost = (entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS)) & playerFlagsGhost) != 0;
         renderer_->getCharacterRenderer()->setInstanceOpacity(instanceId, ghost ? 0.5f : 1.0f);
     }
-    if (auto* visuals = renderer_->getSpellVisualSystem()) {
-        std::vector<uint32_t> auraVisuals;
-        gameHandler_->loadSpellNameCache();
-        const auto& spells = gameHandler_->spellNameCacheRef();
-        bool observerConcealed = false;
-        for (const auto& aura : gameHandler_->getPlayerAuras()) {
-            const auto spell = spells.find(aura.spellId);
-            if (spell != spells.end() && rendering::auraConcealsObserver(spell->second.effectAuraIds)) {
-                observerConcealed = true;
-                break;
-            }
-        }
-        auto addAura = [&](uint32_t spellId) {
-            const auto spell = spells.find(spellId);
-            if (spell != spells.end() && spell->second.spellVisualId)
-                auraVisuals.push_back(spell->second.spellVisualId);
-        };
-        if (game::isPreWotlk()) {
-            const auto first = game::fieldIndex(game::UF::UNIT_FIELD_AURAS);
-            const int slots = game::isActiveExpansion("tbc") ? 56 : 48;
-            for (int slot = 0; slot < slots; ++slot) addAura(entity->getField(first + slot));
-        } else if (const auto* auras = gameHandler_->getUnitAuras(guid)) {
-            for (const auto& aura : *auras) addAura(aura.spellId);
-        }
-        std::sort(auraVisuals.begin(), auraVisuals.end());
-        auraVisuals.erase(std::unique(auraVisuals.begin(), auraVisuals.end()), auraVisuals.end());
-        visuals->syncAuraVisuals(instanceId, auraVisuals, observerConcealed);
-    }
+    syncUnitAuraVisuals(*entity, instanceId);
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
     const uint8_t previous = it->second;
