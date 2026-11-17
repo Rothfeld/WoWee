@@ -7,6 +7,7 @@
 #include "game/spell_description_eval.hpp"
 #include "game/gather_spells.hpp"
 #include "game/packed_time.hpp"
+#include "game/death_release.hpp"
 #include "game/inventory_slots.hpp"
 #include "game/game_utils.hpp"
 #include "game/chat_handler.hpp"
@@ -2053,6 +2054,37 @@ bool GameHandler::canReclaimCorpse() const {
 
 float GameHandler::getCorpseReclaimDelaySec() const {
     return combatHandler_ ? combatHandler_->getCorpseReclaimDelaySec() : 0.0f;
+}
+
+namespace {
+uint64_t steadyNowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+} // namespace
+
+void GameHandler::latchReleaseTimer(const char* source) {
+    const uint16_t bytesField = fieldIndex(UF::PLAYER_FIELD_BYTES);
+    auto player = entityController_->getEntityManager().getEntity(playerGuid);
+    if (bytesField == 0xFFFF || !player) {
+        // Only TBC maps PLAYER_FIELD_BYTES in update_fields.json; without it
+        // the server's release-timer flag cannot be read.
+        LOG_ERROR("Release timer (", source, "): PLAYER_FIELD_BYTES unmapped or no player entity; "
+                  "GetReleaseTimeRemaining answers no timer");
+        releaseNoTimer_ = true;
+        releaseDeadlineMs_ = 0;
+        return;
+    }
+    const uint32_t bytes = player->getField(bytesField);
+    const int32_t ms = releaseTimerAtDeathMs(bytes);
+    releaseNoTimer_ = ms == DEATH_RELEASE_NO_TIMER;
+    releaseDeadlineMs_ = releaseNoTimer_ ? 0 : steadyNowMs() + static_cast<uint64_t>(ms);
+    LOG_INFO("Release timer (", source, "): PLAYER_FIELD_BYTES=0x", std::hex, bytes, std::dec,
+             " -> ", ms, " ms");
+}
+
+double GameHandler::getReleaseTimeRemainingSec() const {
+    return releaseTimeRemainingSec(releaseNoTimer_, releaseDeadlineMs_, steadyNowMs());
 }
 
 void GameHandler::reclaimCorpse() {

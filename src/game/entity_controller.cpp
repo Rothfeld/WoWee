@@ -1098,6 +1098,7 @@ void EntityController::markPlayerDead(const char* source) {
     owner_.corpseZRef()     = owner_.movementInfoRef().z;
     owner_.corpseMapIdRef() = owner_.currentMapIdRef();
     owner_.corpsePositionValidRef() = true;
+    owner_.latchReleaseTimer(source);
     LOG_INFO("Player died (", source, "). Corpse cached at server=(",
              owner_.corpseXRef(), ",", owner_.corpseYRef(), ",", owner_.corpseZRef(),
              ") map=", owner_.corpseMapIdRef());
@@ -2176,6 +2177,7 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
         if (unitInitiallyDead && !playerFeigningDeath_) {
             owner_.playerDeadRef() = true;
             LOG_INFO("Player logged in dead (initial corpse state)");
+            owner_.latchReleaseTimer("initial corpse state");
         }
     }
     // Detect ghost state on login via PLAYER_FLAGS

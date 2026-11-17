@@ -165,3 +165,9 @@ TEST_CASE("Game object interaction fields match expansion wire layouts", "[updat
 TEST_CASE("TBC resource tracking uses the server's private player field", "[update-fields][resource-tracking]") {
     CHECK(declaredFields("tbc").at("PLAYER_TRACK_RESOURCES") == 0x523);
 }
+
+TEST_CASE("TBC release-timer byte flags use PLAYER_FIELD_BYTES", "[update-fields][death]") {
+    // CMaNGOS UpdateFields.h: PLAYER_FIELD_BYTES = UNIT_END + 0x04E4.
+    const auto tbc = declaredFields("tbc");
+    CHECK(tbc.at("PLAYER_FIELD_BYTES") == tbc.at("UNIT_END") + 0x4E4);
+}

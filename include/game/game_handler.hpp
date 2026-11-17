@@ -1873,6 +1873,10 @@ public:
     bool canReclaimCorpse() const;
     /** Seconds remaining on the PvP corpse-reclaim delay, or 0 if the reclaim is available now. */
     float getCorpseReclaimDelaySec() const;
+    /** Latch the automatic-release timer when the player dies (see game/death_release.hpp). */
+    void latchReleaseTimer(const char* source);
+    /** GetReleaseTimeRemaining: seconds, -1 for no timer, 0 when none runs. */
+    double getReleaseTimeRemainingSec() const;
     /** Distance (yards) from ghost to corpse, or -1 if no corpse data. */
     float getCorpseDistance() const {
         if (!corpsePositionValid_ || currentMapId_ != corpseMapId_) return -1.0f;
@@ -5083,6 +5087,9 @@ private:
     // Absolute time (ms since epoch) when PvP corpse-reclaim delay expires.
     // 0 means no active delay (reclaim allowed immediately upon proximity).
     uint64_t corpseReclaimAvailableMs_ = 0;
+    // Death release timer latched by latchReleaseTimer at each death.
+    uint64_t releaseDeadlineMs_ = 0;  // steady-clock ms, 0 = none
+    bool releaseNoTimer_ = false;
     // Last announced corpse proximity. canReclaimCorpse() is a predicate this
     // client's own button polled every frame, so the crossing was never an
     // event; CORPSE_IN_RANGE and CORPSE_OUT_OF_RANGE are edges, and FrameXML

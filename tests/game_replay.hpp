@@ -79,6 +79,15 @@ class UpdateObject {
 public:
     using Fields = std::map<UF, uint32_t>;
 
+    // 2.4.3's layout instead (CMaNGOS TBC UpdateData::BuildPacket and
+    // BuildMovementUpdate): a has-transport byte after the block count and
+    // one byte of update flags.
+    UpdateObject& tbc() {
+        REQUIRE(blocks_ == 0);
+        tbc_ = true;
+        return *this;
+    }
+
     // An object appearing, laid out as Object::BuildCreateUpdateBlockForPlayer
     // writes it, but with the movement part cut down to a stationary position
     // (UPDATEFLAG_STATIONARY_POSITION): where it stands does not matter to
@@ -90,7 +99,9 @@ public:
         body_.writeUInt8(static_cast<uint8_t>(wowee::game::UpdateType::CREATE_OBJECT2));
         body_.writePackedGuid(guid);
         body_.writeUInt8(static_cast<uint8_t>(type));
-        body_.writeUInt16(static_cast<uint16_t>(kStationaryPosition | (self ? kSelf : 0)));
+        const auto flags = static_cast<uint16_t>(kStationaryPosition | (self ? kSelf : 0));
+        if (tbc_) body_.writeUInt8(static_cast<uint8_t>(flags));
+        else body_.writeUInt16(flags);
         for (int i = 0; i < 4; ++i) body_.writeFloat(0.0f);
         writeFields(fields);
         return *this;
@@ -108,6 +119,7 @@ public:
     [[nodiscard]] wowee::network::Packet packet() const {
         wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
         p.writeUInt32(blocks_);
+        if (tbc_) p.writeUInt8(0);
         const auto& body = body_.getData();
         p.writeBytes(body.data(), body.size());
         return p;
@@ -137,6 +149,7 @@ private:
     }
 
     uint32_t blocks_ = 0;
+    bool tbc_ = false;
     wowee::network::Packet body_;
 };
 

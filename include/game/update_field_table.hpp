@@ -86,6 +86,10 @@ enum class UF : uint16_t {
     PLAYER_SKILL_INFO_START,
     PLAYER_EXPLORED_ZONES_START,
     PLAYER_CHOSEN_TITLE,         // Active title index (-1 = no title)
+    // Private player byte flags. Byte 0 holds the release-spirit state the
+    // server sets on death (RELEASE_TIMER 0x08, NO_RELEASE_WINDOW 0x10).
+    // TBC only: CMaNGOS UpdateFields.h, UNIT_END + 0x04E4.
+    PLAYER_FIELD_BYTES,
 
     // Player spell power / healing bonus (WotLK: PRIVATE - int32 per school)
     PLAYER_FIELD_MOD_DAMAGE_DONE_POS,  // Spell damage bonus (first of 7 schools)

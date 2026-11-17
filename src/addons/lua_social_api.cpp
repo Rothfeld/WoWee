@@ -3290,12 +3290,15 @@ void registerSocialLuaAPI(lua_State* L) {
                 // this file, so it was already the one in use. This copy was a
                 // flat false in a single value, dead and one value short of
                 // the contract if it had ever won.
-                // Seconds before the corpse is released automatically. -1 is
-                // WoW's "no timer", which is the branch that prints the release
-                // prompt without a countdown - right for a client that does not
-                // run one.
+                // Seconds until the corpse is released automatically, -1 for
+                // no timer, 0 when none runs. Latched at death from the
+                // server's PLAYER_FIELD_BYTES flags (game/death_release.hpp):
+                // a timer gives DEATH_RELEASE_TIMER ("6 Minutes until
+                // release"), -1 gives DEATH_RELEASE_NOTIMER.
                 {"GetReleaseTimeRemaining", [](lua_State* L) -> int {
-            lua_pushnumber(L, -1); return 1;
+            auto* gh = getGameHandler(L);
+            lua_pushnumber(L, gh ? gh->getReleaseTimeRemainingSec() : 0.0);
+            return 1;
         }},
                 // Asked from an OnUpdate, so this runs on every frame the
                 // popup is up rather than once.

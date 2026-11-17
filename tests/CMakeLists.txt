@@ -1548,6 +1548,11 @@ register_test_target(test_interface_text_lines)
 # ever read as one.
 wowee_add_test(test_npc_flags SOURCES test_npc_flags.cpp)
 
+# ── test_death_release ───────────────────────────────────────
+# The automatic-release timer latched at death from PLAYER_FIELD_BYTES and
+# reported by GetReleaseTimeRemaining; -1 picks the no-countdown popup text.
+wowee_add_test(test_death_release SOURCES test_death_release.cpp)
+
 # ── test_scene_pick ──────────────────────────────────────────
 # Which of ScenePick's answers a caller wants. closestGuid and resolve()
 # disagree exactly where a wide object stands beside an NPC, which is where the
@@ -2726,6 +2731,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_energize.cpp)
     register_test_target(test_game_replay)
     target_sources(test_game_replay PRIVATE test_game_replay_spell_logs.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_death.cpp)
 
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.

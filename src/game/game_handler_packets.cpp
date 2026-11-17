@@ -564,6 +564,7 @@ void GameHandler::registerCoreOpcodes() {
         corpseZ_ = movementInfo.z;
         corpseMapId_ = currentMapId_;
         corpsePositionValid_ = true;
+        latchReleaseTimer("SMSG_FORCED_DEATH_UPDATE");
         if (ghostStateCallback_) ghostStateCallback_(false);
         fireAddonEvent("PLAYER_DEAD", {});
         addSystemChatMessage("You have been killed.");
