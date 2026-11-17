@@ -952,11 +952,14 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
 
         VmaAllocationInfo allocInfo{};
 
-        // M2 particle buffer
-        particleVertexCapacity_ = MAX_M2_PARTICLE_VERTS;
-        bci.size = MAX_M2_PARTICLE_VERTS * 12 * sizeof(float);
-        vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &m2ParticleVB_, &m2ParticleVBAlloc_, &allocInfo);
-        m2ParticleVBMapped_ = allocInfo.pMappedData;
+        // M2 particle buffers, one per frame in flight
+        static_assert(kParticleFrames == MAX_FRAMES_IN_FLIGHT);
+        for (uint32_t f = 0; f < kParticleFrames; ++f) {
+            particleVertexCapacity_[f] = MAX_M2_PARTICLE_VERTS;
+            bci.size = MAX_M2_PARTICLE_VERTS * 12 * sizeof(float);
+            vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &m2ParticleVB_[f], &m2ParticleVBAlloc_[f], &allocInfo);
+            m2ParticleVBMapped_[f] = allocInfo.pMappedData;
+        }
 
         // Dedicated glow sprite buffer (separate from particle VB to avoid data race)
         bci.size = MAX_GLOW_SPRITES * 9 * sizeof(float);
@@ -965,8 +968,10 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
 
         // Ribbon vertex buffer - triangle strip: pos(3)+color(3)+alpha(1)+uv(2)=9 floats/vert
         bci.size = MAX_RIBBON_VERTS * 9 * sizeof(float);
-        vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &ribbonVB_, &ribbonVBAlloc_, &allocInfo);
-        ribbonVBMapped_ = allocInfo.pMappedData;
+        for (uint32_t f = 0; f < kParticleFrames; ++f) {
+            vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &ribbonVB_[f], &ribbonVBAlloc_[f], &allocInfo);
+            ribbonVBMapped_[f] = allocInfo.pMappedData;
+        }
     }
 
     // --- Create white fallback texture ---
@@ -1092,9 +1097,11 @@ void M2Renderer::shutdown() {
     glowTexture_.reset();
 
     // Clean up particle/ribbon buffers
-    destroy(alloc, m2ParticleVB_, m2ParticleVBAlloc_);
+    for (uint32_t f = 0; f < kParticleFrames; ++f) {
+        destroy(alloc, m2ParticleVB_[f], m2ParticleVBAlloc_[f]);
+        destroy(alloc, ribbonVB_[f], ribbonVBAlloc_[f]);
+    }
     destroy(alloc, glowVB_, glowVBAlloc_);
-    destroy(alloc, ribbonVB_, ribbonVBAlloc_);
 
     // Destroy pipelines
     auto destroyPipeline = [&](VkPipeline& p) { if (p) { vkDestroyPipeline(device, p, nullptr); p = VK_NULL_HANDLE; } };
@@ -1893,7 +1900,12 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             ai.descriptorPool = materialDescPool_;
             ai.descriptorSetCount = 1;
             ai.pSetLayouts = &particleTexLayout_;
-            if (vkAllocateDescriptorSets(device, &ai, &gpuModel.particleTexSets[ei]) == VK_SUCCESS) {
+            const VkResult allocated = vkAllocateDescriptorSets(device, &ai, &gpuModel.particleTexSets[ei]);
+            if (allocated != VK_SUCCESS) {
+                LOG_ERROR("M2 '", model.name, "' particle emitter ", ei,
+                          ": descriptor set allocation failed (", allocated, "); its particles are not drawn");
+            }
+            if (allocated == VK_SUCCESS) {
                 // Valid, not merely non-null: descriptorInfo() returns the
                 // texture's handles as they are, so one whose upload failed
                 // writes a null view and sampler into a live descriptor and

@@ -923,14 +923,20 @@ private:
 
     // Dynamic ribbon vertex buffer (CPU-written triangle strip)
     static constexpr size_t MAX_RIBBON_VERTS = 2048;  // 9 floats each
-    ::VkBuffer ribbonVB_ = VK_NULL_HANDLE;
-    VmaAllocation ribbonVBAlloc_ = VK_NULL_HANDLE;
-    void* ribbonVBMapped_ = nullptr;
+    /// Frames in flight; equal to VkContext's MAX_FRAMES_IN_FLIGHT (asserted in m2_renderer.cpp).
+    static constexpr uint32_t kParticleFrames = 2;
+    // One per frame in flight: the GPU may still read frame N's vertices
+    // while the CPU writes frame N+1's. A single shared buffer let a run of
+    // one emitter draw another emitter's sizes and colours (#108: Stone
+    // Rumbler mist drawn as giant rocks and glows).
+    ::VkBuffer ribbonVB_[kParticleFrames] = {};
+    VmaAllocation ribbonVBAlloc_[kParticleFrames] = {};
+    void* ribbonVBMapped_[kParticleFrames] = {};
 
-    // Dynamic particle buffers
-    ::VkBuffer m2ParticleVB_ = VK_NULL_HANDLE;
-    VmaAllocation m2ParticleVBAlloc_ = VK_NULL_HANDLE;
-    void* m2ParticleVBMapped_ = nullptr;
+    // Dynamic particle buffers, one per frame in flight
+    ::VkBuffer m2ParticleVB_[kParticleFrames] = {};
+    VmaAllocation m2ParticleVBAlloc_[kParticleFrames] = {};
+    void* m2ParticleVBMapped_[kParticleFrames] = {};
     // Dedicated glow sprite vertex buffer (separate from particle VB to avoid data race)
     static constexpr size_t MAX_GLOW_SPRITES = 8000;
     ::VkBuffer glowVB_ = VK_NULL_HANDLE;
@@ -1121,7 +1127,7 @@ private:
     /// Vertices the particle buffer holds. Not MAX_M2_PARTICLES, which is the
     /// cap on one instance's particles: this has to hold a whole frame's.
     static constexpr size_t MAX_M2_PARTICLE_VERTS = 32768;
-    size_t particleVertexCapacity_ = MAX_M2_PARTICLE_VERTS;
+    size_t particleVertexCapacity_[kParticleFrames] = {MAX_M2_PARTICLE_VERTS, MAX_M2_PARTICLE_VERTS};
 
     // Animation update buffers (avoid per-frame allocation)
     std::vector<size_t> boneWorkIndices_;        // Reused each frame
