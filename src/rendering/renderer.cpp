@@ -632,12 +632,7 @@ void Renderer::updatePerFrameUBO() {
     // not authored light records. TBC already bakes those pools into WMO
     // textures/vertex colors; adding them again produces orange patches.
     const bool synthesizeLocalLights = !game::isActiveExpansion("tbc");
-    uint32_t localLightCount = wmoRenderer && synthesizeLocalLights
-        ? wmoRenderer->gatherLavaLights(camera->getPosition(),
-              currentFrameData.localLightPosRadius,
-              currentFrameData.localLightColorIntensity,
-              MAX_LOCAL_LIGHTS)
-        : 0;
+    uint32_t localLightCount = 0;
     if (m2Renderer && synthesizeLocalLights && localLightCount < MAX_LOCAL_LIGHTS) {
         localLightCount += m2Renderer->gatherLocalLights(camera->getPosition(),
             currentFrameData.localLightPosRadius + localLightCount,

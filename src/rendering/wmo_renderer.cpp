@@ -747,7 +747,6 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             // treatment changes both shading and opacity, including opaque
             // painted windows such as MM_STRMWND_WINDOWS_01.
             bool isWindow = false;
-            bool isLava = false;
             bool isCloth = false;
             uint8_t emissiveLevel = 0;
             if (batch.materialId < modelData.materialTextureIndices.size()) {
@@ -768,9 +767,6 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                     }
                     isWindow = !game::isActiveExpansion("tbc") && emissiveLevel == 0 &&
                                wmoMaterialIsGlass(matFlags, texName);
-                    isLava = (texNameLower.find("lava") != std::string::npos ||
-                              texNameLower.find("molten") != std::string::npos ||
-                              texNameLower.find("magma") != std::string::npos);
                     // Cloth painted into the building: the gate banners of
                     // Stormwind are geometry in the city's own WMO, textured
                     // STORMWINDBANNER01, not doodads with models of their own.
@@ -827,7 +823,6 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 mb.unlit = unlit;
                 mb.isTransparent = (blendMode >= 2);
                 mb.isWindow = isWindow;
-                mb.isLava = isLava;
                 mb.emissiveLevel = emissiveLevel;
                 mb.clothTop = clothTop;
                 mb.clothDrop = clothDrop;
@@ -881,7 +876,9 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             matData.pomMaxSamples = pomSamplesFor(pomQuality_);
             matData.heightMapVariance = mb.heightMapVariance;
             matData.normalMapStrength = normalMapStrength_;
-            matData.isLava = mb.isLava ? 1 : 0;
+            // No UV scroll or self-lighting for lava: MOMT carries no texture
+            // animation, and its flags (0x1 unlit) already decide lighting.
+            matData.isLava = 0;
             matData.wmoAmbientR = modelData.wmoAmbientColor.r;
             matData.wmoAmbientG = modelData.wmoAmbientColor.g;
             matData.wmoAmbientB = modelData.wmoAmbientColor.b;
@@ -945,31 +942,6 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 writes[2].pImageInfo = &nhImgInfo;
 
                 vkUpdateDescriptorSets(vkCtx_->getDevice(), 3, writes, 0, nullptr);
-            }
-
-            if (mb.isLava) {
-                for (const auto& draw : mb.draws) {
-                    glm::vec3 lavaMin(std::numeric_limits<float>::max());
-                    glm::vec3 lavaMax(std::numeric_limits<float>::lowest());
-                    bool foundVertex = false;
-                    const uint32_t indexEnd = std::min<uint32_t>(
-                        draw.firstIndex + draw.indexCount,
-                        static_cast<uint32_t>(groupRes.collisionIndices.size()));
-                    for (uint32_t ii = draw.firstIndex; ii < indexEnd; ++ii) {
-                        const uint16_t vertexIndex = groupRes.collisionIndices[ii];
-                        if (vertexIndex >= groupRes.collisionVertices.size()) continue;
-                        const glm::vec3& vertex = groupRes.collisionVertices[vertexIndex];
-                        lavaMin = glm::min(lavaMin, vertex);
-                        lavaMax = glm::max(lavaMax, vertex);
-                        foundVertex = true;
-                    }
-                    if (foundVertex) {
-                        const glm::vec3 center = (lavaMin + lavaMax) * 0.5f;
-                        const float radius = std::clamp(
-                            glm::length(lavaMax - lavaMin) * 0.35f, 8.0f, 28.0f);
-                        groupRes.lavaLights.emplace_back(center, radius);
-                    }
-                }
             }
 
             groupRes.mergedBatches.push_back(std::move(mb));
@@ -3955,46 +3927,6 @@ bool WMORenderer::withinWorldBounds(const WMOInstance& instance,
            glY >= instance.worldBoundsMin.y && glY <= instance.worldBoundsMax.y &&
            glZ >= instance.worldBoundsMin.z - zMarginDown &&
            glZ <= instance.worldBoundsMax.z + zMarginUp;
-}
-
-uint32_t WMORenderer::gatherLavaLights(const glm::vec3& cameraPos,
-                                       glm::vec4* outPosRadius,
-                                       glm::vec4* outColorIntensity,
-                                       uint32_t maxLights) const {
-    if (!outPosRadius || !outColorIntensity || maxLights == 0) return 0;
-
-    struct Candidate {
-        float distSq;
-        glm::vec4 posRadius;
-    };
-    std::vector<Candidate> candidates;
-    for (const auto& instance : instances) {
-        auto modelIt = loadedModels.find(instance.modelId);
-        if (modelIt == loadedModels.end()) continue;
-        for (const auto& group : modelIt->second.groups) {
-            for (const glm::vec4& localLight : group.lavaLights) {
-                const glm::vec3 worldPos = glm::vec3(
-                    instance.modelMatrix * glm::vec4(glm::vec3(localLight), 1.0f));
-                const glm::vec3 delta = worldPos - cameraPos;
-                const float distSq = glm::dot(delta, delta);
-                if (distSq > 300.0f * 300.0f) continue;
-                const float worldRadius = std::clamp(localLight.w * instance.scale,
-                                                     8.0f, 35.0f);
-                candidates.push_back({.distSq = distSq, .posRadius = glm::vec4(worldPos, worldRadius)});
-            }
-        }
-    }
-
-    const uint32_t count = std::min<uint32_t>(maxLights,
-        static_cast<uint32_t>(candidates.size()));
-    if (count == 0) return 0;
-    std::partial_sort(candidates.begin(), candidates.begin() + count, candidates.end(),
-        [](const Candidate& a, const Candidate& b) { return a.distSq < b.distSq; });
-    for (uint32_t i = 0; i < count; ++i) {
-        outPosRadius[i] = candidates[i].posRadius;
-        outColorIntensity[i] = glm::vec4(1.0f, 0.28f, 0.035f, 1.75f);
-    }
-    return count;
 }
 
 /// Whether a point is inside any of a WMO's groups.

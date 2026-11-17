@@ -111,7 +111,6 @@ inline glm::vec3 animatedBatchLightWorldCenter(const M2Instance& instance,
 }
 
 // ---- Constants ----
-inline const auto kLavaAnimStart = std::chrono::steady_clock::now();
 inline constexpr uint32_t kParticleFlagRandomized = 0x40;
 inline constexpr uint32_t kParticleFlagTiled = 0x80;
 

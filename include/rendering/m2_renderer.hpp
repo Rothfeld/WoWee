@@ -190,7 +190,6 @@ struct M2ModelGPU {
     bool isElvenLike = false;       // Model name matches elf/elven/quel (precomputed)
     bool isLanternLike = false;     // Model name matches lantern/lamp/light (precomputed)
     bool isKoboldFlame = false;     // Model name matches kobold+(candle/torch/mine) (precomputed)
-    bool isLavaModel = false;       // Model name contains lava/molten/magma (UV scroll fallback)
     bool isSkyBird = false;         // Flying bird/bat doodad - hide until animation range
     bool isLightBeam = false;       // Lighthouse/light-ray beam - distant bones must keep updating
     bool isVolumetricBeam = false;  // Light drawn as geometry; softened at its silhouette

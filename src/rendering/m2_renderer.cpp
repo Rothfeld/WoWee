@@ -125,21 +125,7 @@ uint32_t M2Renderer::gatherLocalLights(const glm::vec3& cameraPos,
     for (const auto& instance : instances) {
         const M2ModelGPU* model = instance.cachedModel;
         if (!model || (!model->isLanternLike && !model->isTorch &&
-                       !model->isBrazierOrFire && !model->isForge &&
-                       !model->isLavaModel)) continue;
-
-        if (model->isLavaModel) {
-            const glm::vec3 worldPos = instance.cachedCullCenter;
-            const glm::vec3 delta = worldPos - cameraPos;
-            const float distSq = glm::dot(delta, delta);
-            if (distSq <= 300.0f * 300.0f) {
-                const float radius = std::clamp(instance.cachedVisualRadius * 0.8f,
-                                                10.0f, 35.0f);
-                candidates.push_back({.distSq = distSq, .posRadius = glm::vec4(worldPos, radius),
-                                      .colorIntensity = glm::vec4(1.0f, 0.28f, 0.035f, 1.75f),
-                                      .flame = false, .phaseSeed = instance.position});
-            }
-        }
+                       !model->isBrazierOrFire && !model->isForge)) continue;
 
         bool hasBatchLight = false;
         for (const auto& batch : model->batches) {
@@ -1595,7 +1581,6 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     }
     gpuModel.isSmallFoliage              = cls.isSmallFoliage;
     gpuModel.isSpellEffect               = cls.isSpellEffect;
-    gpuModel.isLavaModel                 = cls.isLavaModel;
     gpuModel.isInstancePortal            = cls.isInstancePortal;
     gpuModel.isWaterVegetation           = cls.isWaterVegetation;
     gpuModel.isElvenLike                 = cls.isElvenLike;

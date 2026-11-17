@@ -75,7 +75,6 @@ struct M2ClassificationResult {
     bool isFoliageLike      = false; ///< Foliage or tree (wind sway, disabled animation)
     bool isSmallFoliage     = false; ///< Small bush/grass/plant (skip during taxi/flight)
     bool isSpellEffect      = false; ///< Spell effect / particle-dominated visual
-    bool isLavaModel        = false; ///< Lava surface (UV scroll animation)
     bool isInstancePortal   = false; ///< Instance portal (additive, spin, no collision)
     bool isWaterVegetation  = false; ///< Aquatic vegetation (cattails, kelp, reeds, etc.)
     bool isElvenLike        = false; ///< Night elf / Blood elf themed model

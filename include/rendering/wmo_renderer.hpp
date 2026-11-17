@@ -416,12 +416,6 @@ public:
     struct InteriorMapGroup { uint32_t index; glm::vec3 min, max; };
     std::vector<InteriorMapGroup> getInteriorMapGroups(const InteriorLocation& location) const;
 
-    /** Gather local orange point lights derived from visible lava materials. */
-    uint32_t gatherLavaLights(const glm::vec3& cameraPos,
-                              glm::vec4* outPosRadius,
-                              glm::vec4* outColorIntensity,
-                              uint32_t maxLights) const;
-
     /**
      * Raycast against WMO bounding boxes for camera collision
      * @param origin Ray origin (e.g., character head position)
@@ -541,7 +535,6 @@ private:
             bool unlit = false;
             bool isTransparent = false;     // blendMode >= 2
             bool isWindow = false;          // F_SIDN or F_WINDOW material
-            bool isLava = false;            // lava/magma texture (UV scroll)
             /// Cloth hung in the building's own mesh: where the bar is, how
             /// far the cloth drops below it, and where it hangs.
             ///
@@ -562,8 +555,6 @@ private:
             std::vector<DrawRange> draws;
         };
         std::vector<MergedBatch> mergedBatches;
-        // Local-space center/radius for each authored lava draw range.
-        std::vector<glm::vec4> lavaLights;
 
         // Collision geometry (positions only, for floor raycasting)
         std::vector<glm::vec3> collisionVertices;
