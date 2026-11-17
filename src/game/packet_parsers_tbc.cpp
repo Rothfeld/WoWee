@@ -937,9 +937,7 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
 // past ALL target payload fields so subsequent fields (e.g. those parsed by the
 // caller after spell targets) are not corrupted.
 // ---------------------------------------------------------------------------
-struct TbcCastDestination { bool present = false; float x = 0, y = 0, z = 0; };
-static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTargetGuid = nullptr,
-                                    TbcCastDestination* destination = nullptr) {
+static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTargetGuid = nullptr) {
     if (!packet.hasRemaining(4)) return false;
 
     constexpr uint32_t TARGET_FLAG_UNIT            = 0x00000002;
@@ -979,13 +977,7 @@ static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTa
     }
 
     if (!skipFloats3(TARGET_FLAG_SOURCE_LOCATION)) return false;
-    if (targetFlags & TARGET_FLAG_DEST_LOCATION) {
-        if (!packet.hasRemaining(12)) return false;
-        const float x = packet.readFloat();
-        const float y = packet.readFloat();
-        const float z = packet.readFloat();
-        if (destination) *destination = {true, x, y, z};
-    }
+    if (!skipFloats3(TARGET_FLAG_DEST_LOCATION))   return false;
 
     if (targetFlags & TARGET_FLAG_STRING) {
         const auto& raw = packet.getData();
@@ -1154,18 +1146,10 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
 
     // SpellCastTargets follows the miss list - consume all target bytes so that
     // any subsequent fields are not misaligned for ground-targeted AoE spells.
-    TbcCastDestination destination;
-    skipTbcSpellCastTargets(packet, &data.targetGuid, &destination);
-    data.hasDestination = destination.present;
-    data.destX = destination.x;
-    data.destY = destination.y;
-    data.destZ = destination.z;
+    skipTbcSpellCastTargets(packet, &data.targetGuid);
 
     LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
-              " misses=", static_cast<int>(data.missCount),
-              data.hasDestination ? " dest=" : "",
-              data.hasDestination ? std::to_string(data.destX) + "," + std::to_string(data.destY) + "," +
-                                    std::to_string(data.destZ) : std::string());
+              " misses=", static_cast<int>(data.missCount));
     return true;
 }
 

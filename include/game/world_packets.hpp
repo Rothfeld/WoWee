@@ -2305,10 +2305,6 @@ struct SpellGoData {
     uint8_t missCount = 0;
     std::vector<SpellGoMissEntry> missTargets;
     uint64_t targetGuid = 0;  ///< Primary target GUID from SpellCastTargets (0 = none/AoE)
-    /// SpellCastTargets TARGET_FLAG_DEST_LOCATION, server (canonical)
-    /// coordinates: where a summon lands or a ground spell is aimed.
-    bool hasDestination = false;
-    float destX = 0.0f, destY = 0.0f, destZ = 0.0f;
 
     [[nodiscard]] bool isValid() const { return spellId != 0; }
 };
