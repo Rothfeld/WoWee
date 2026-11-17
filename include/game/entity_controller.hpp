@@ -316,6 +316,7 @@ private:
     void initTypeHandlers();
     [[nodiscard]] IObjectTypeHandler* getTypeHandler(ObjectType type) const;
 
+    void queryPetNameIfNamed(const UpdateBlock& block, Unit& unit);
     void onCreateUnit(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onCreatePlayer(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onCreateGameObject(const UpdateBlock& block, std::shared_ptr<Entity>& entity);

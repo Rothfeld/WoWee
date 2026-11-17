@@ -626,15 +626,19 @@ std::vector<std::string> SpellHandler::spellcastArgs(const std::string& unitId,
     return {unitId, name, rank, std::to_string(spellId), std::to_string(spellId)};
 }
 
-void SpellHandler::requestPetName(uint64_t petGuid) {
-    if (petGuid == 0 || !owner_.getSocket()) return;
-    if (owner_.getState() != WorldState::IN_WORLD) return;
-    const uint32_t key = nextPetNameQueryKey_++;
-    pendingPetNameQueries_[key] = petGuid;
+// The number is the pet's UNIT_FIELD_PETNUMBER, not a request counter:
+// CMaNGOS SendPetNameQuery answers an empty name when it differs from the
+// field. A counter here left the imp "Imp" where the original shows the name
+// its owner's pet carries, "Gragup".
+void SpellHandler::requestPetName(uint64_t petGuid, uint32_t petNumber) {
+    assert(petGuid != 0 && petNumber != 0);
+    if (!owner_.getSocket() || owner_.getState() != WorldState::IN_WORLD) return;
+    pendingPetNameQueries_[petNumber] = petGuid;
     network::Packet pkt(wireOpcode(Opcode::CMSG_PET_NAME_QUERY));
-    pkt.writeUInt32(key);
+    pkt.writeUInt32(petNumber);
     pkt.writeUInt64(petGuid);
     owner_.getSocket()->send(pkt);
+    LOG_DEBUG("CMSG_PET_NAME_QUERY: number=", petNumber, " guid=0x", std::hex, petGuid, std::dec);
 }
 
 void SpellHandler::registerOpcodes(DispatchTable& table) {
@@ -655,13 +659,17 @@ void SpellHandler::registerOpcodes(DispatchTable& table) {
         if (it == pendingPetNameQueries_.end()) return;
         const uint64_t guid = it->second;
         pendingPetNameQueries_.erase(it);
-        if (name.empty()) return;
+        if (name.empty()) {
+            LOG_WARNING("Pet name: server has no name for number ", key,
+                        " guid=0x", std::hex, guid, std::dec);
+            return;
+        }
 
         auto entity = owner_.getEntityManager().getEntity(guid);
         if (!entity) return;
         auto unit = std::dynamic_pointer_cast<Unit>(entity);
         if (!unit) return;
-        unit->setName(name);
+        unit->setPetName(name);
         LOG_INFO("Pet name: 0x", std::hex, guid, std::dec, " is '", name, "'");
         // Both, because the two frames listen for different ones: the pet
         // frame redraws its name from UNIT_NAME_UPDATE, and the pet bar and
@@ -3078,9 +3086,8 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
     }
 
     owner_.petGuidRef() = packet.readUInt64();
-    // Ask what it is called. Nothing else does, and the name a player gave a
-    // pet comes back in answer to this and nothing else.
-    if (owner_.petGuidRef() != 0) requestPetName(owner_.petGuidRef());
+    // The pet's name is asked for when its UNIT_FIELD_PET_NAME_TIMESTAMP
+    // arrives (EntityController), for this pet and every other one in view.
     if (owner_.petGuidRef() == 0) {
         owner_.petSpellListRef().clear();
         owner_.petAutocastSpellsRef().clear();

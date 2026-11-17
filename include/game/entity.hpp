@@ -490,6 +490,12 @@ public:
     // Name
     [[nodiscard]] const std::string& getName() const { return name; }
     void setName(const std::string& n) { name = n; }
+    // A pet's own name (SMSG_PET_NAME_QUERY_RESPONSE), e.g. a warlock's imp
+    // "Gragup": the creature template's "Imp" must not replace it.
+    [[nodiscard]] bool hasPetName() const { return petNamed_; }
+    void setPetName(const std::string& n) { name = n; petNamed_ = true; }
+    // UNIT_FIELD_PET_NAME_TIMESTAMP last queried; a new value means a new name.
+    uint32_t queriedPetNameTimestamp = 0;
 
     // Health
     [[nodiscard]] uint32_t getHealth() const { return health; }
@@ -579,6 +585,7 @@ public:
 
 protected:
     std::string name;
+    bool petNamed_ = false;
     uint32_t health = 0;
     uint32_t maxHealth = 0;
     uint32_t powers[7] = {};     // Indexed by power type (0=mana,1=rage,2=focus,3=energy,4=happiness,5=runes,6=runic)

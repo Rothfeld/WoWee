@@ -353,7 +353,9 @@ public:
     /// not look anything up with: SendPetNameQuery finds the pet by guid. So
     /// this sends a number of its own making and uses it to match the reply to
     /// the pet it asked about, which is what the field would have been for.
-    void requestPetName(uint64_t petGuid);
+    // CMSG_PET_NAME_QUERY for a unit whose UNIT_FIELD_PET_NAME_TIMESTAMP is set.
+    // The server answers only when petNumber is the unit's UNIT_FIELD_PETNUMBER.
+    void requestPetName(uint64_t petGuid, uint32_t petNumber);
 
     /// Give a hunter's pet up for good. The interface asks first - this is the
     /// other side of the ABANDON_PET dialog, whose accept called an unbound
@@ -373,7 +375,6 @@ public:
 
 private:
     std::unordered_map<uint32_t, uint64_t> pendingPetNameQueries_;
-    uint32_t nextPetNameQueryKey_ = 1;
 
     // --- Packet handlers ---
     void handleInitialSpells(network::Packet& packet);

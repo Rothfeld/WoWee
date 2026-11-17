@@ -2105,6 +2105,28 @@ void EntityController::flushPendingEvents() {
 // Type-specific CREATE handlers
 // ============================================================
 
+// A unit with UNIT_FIELD_PET_NAME_TIMESTAMP set carries a name of its own -
+// a warlock's demon, a renamed hunter pet - which only CMSG_PET_NAME_QUERY
+// returns; the creature template names only the kind ("Imp"). The server
+// stamps the field when the name is set (CMaNGOS Pet.cpp), so a new stamp is
+// a new name and asks again.
+void EntityController::queryPetNameIfNamed(const UpdateBlock& block, Unit& unit) {
+    const uint16_t stampField = fieldIndex(UF::UNIT_FIELD_PET_NAME_TIMESTAMP);
+    const uint16_t numberField = fieldIndex(UF::UNIT_FIELD_PETNUMBER);
+    if (stampField == 0xFFFF || numberField == 0xFFFF) return;
+    const auto stamp = block.fields.find(stampField);
+    if (stamp == block.fields.end() || stamp->second == 0 ||
+        stamp->second == unit.queriedPetNameTimestamp) return;
+    const uint32_t number = unit.getField(numberField);
+    if (number == 0) {
+        LOG_WARNING("Unit 0x", std::hex, block.guid, std::dec,
+                    " has a pet name timestamp but no pet number; name not queried");
+        return;
+    }
+    unit.queriedPetNameTimestamp = stamp->second;
+    owner_.getSpellHandler()->requestPetName(block.guid, number);
+}
+
 void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
     // Name query for creatures
     auto it = block.fields.find(fieldIndex(UF::OBJECT_FIELD_ENTRY));
@@ -2122,6 +2144,7 @@ void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<En
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     bool unitInitiallyDead = applyUnitFieldsOnCreate(block, unit, ufi);
+    queryPetNameIfNamed(block, *unit);
 
     // Hostility
     unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(unit->getFactionTemplate()));
@@ -2419,6 +2442,7 @@ void EntityController::onValuesUpdateUnit(const UpdateBlock& block, std::shared_
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
     handleDisplayIdChange(block, entity, unit, result);
+    queryPetNameIfNamed(block, *unit);
 
     // Lootability changes only interaction state. The server owns corpse
     // decay and removes the entity through its destroy/out-of-range packets.
@@ -3126,7 +3150,7 @@ void EntityController::handleCreatureQueryResponse(network::Packet& packet) {
             if (entity->getType() == ObjectType::UNIT) {
                 auto unit = std::static_pointer_cast<Unit>(entity);
                 if (unit->getEntry() == data.entry) {
-                    unit->setName(data.name);
+                    if (!unit->hasPetName()) unit->setName(data.name);
                     // The rank came with this response, and UnitClassification
                     // reads it from the cache just filled. A unit targeted
                     // before its query came back answered "normal" until now -
