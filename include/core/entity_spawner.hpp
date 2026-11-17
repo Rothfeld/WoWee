@@ -258,6 +258,10 @@ public:
     /// CreatureDisplayInfo.ModelID for a display, 0 when the display is unknown.
     [[nodiscard]] uint32_t creatureModelDataIdForDisplay(uint32_t displayId) const;
     uint32_t remoteIdleAnimation(uint64_t guid) const;
+    /// Precast/channel kit animation a remote unit holds while casting; it is
+    /// the unit's idle until cleared (0), so a movement update that stops the
+    /// unit resumes the cast pose instead of Stand.
+    void setRemoteCastHold(uint64_t guid, uint32_t animationId);
     /// Ready stance a meleeing unit idles in, from its main-hand item.
     uint32_t meleeReadyAnimation(const game::Unit& unit) const;
     std::unordered_map<uint64_t, bool>& getCreatureWasMoving() { return creatureWasMoving_; }
@@ -469,6 +473,7 @@ private:
     // Server waypoint scripts hold work/chop emotes for many seconds. Locomotion
     // temporarily overrides them, then the idle transition restores this loop.
     std::unordered_map<uint64_t, uint32_t> creatureActiveEmotes_;
+    std::unordered_map<uint64_t, uint32_t> remoteCastHolds_;
     std::unordered_map<uint64_t, float> creatureAppliedOpacity_;
     uint32_t stealthSyncFrameCounter_ = 0;  // throttles syncCreatureVisualState()
     std::unordered_map<uint64_t, std::array<uint32_t, 10>> creatureWeaponStates_;

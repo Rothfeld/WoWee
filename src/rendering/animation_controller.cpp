@@ -200,6 +200,10 @@ void AnimationController::stopSpellCast() {
     characterAnimator_.stopSpellCast();
 }
 
+void AnimationController::cancelSpellCast() {
+    characterAnimator_.cancelSpellCast();
+}
+
 void AnimationController::setSeatedLoopAnimation(uint32_t animationId) {
     characterAnimator_.getActivity().setSeatedLoopAnimation(animationId);
 }

@@ -126,6 +126,8 @@ public:
                         uint32_t finalizeAnimId = 0);
     /// Leave spell cast animation state → plays finalization anim then idle.
     void stopSpellCast();
+    /// Leave spell cast animation state at once, with no release animation.
+    void cancelSpellCast();
     void setSeatedLoopAnimation(uint32_t animationId);
     void playOneShotAnimation(uint32_t animationId);
 

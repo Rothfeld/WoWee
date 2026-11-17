@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_map>
+
 #include <cstdint>
 #include <glm/glm.hpp>
 
@@ -46,6 +48,19 @@ private:
     glm::vec3 chargeStartPos_{0.0f};  // Render coordinates
     glm::vec3 chargeEndPos_{0.0f};    // Render coordinates
     uint64_t chargeTargetGuid_ = 0;
+
+    // Cast-kit animation started by SMSG_SPELL_GO, per caster: a channel of
+    // the same spell starting right after holds its channel animation once
+    // this one has played (Fishing: FishingCast, then FishingLoop).
+    struct CastOneShot { uint32_t spellId; uint32_t animation; };
+    std::unordered_map<uint64_t, CastOneShot> castOneShots_;
+    // Precast or channel animation a caster holds. Only a held cast returns
+    // to idle when it ends; anything else the unit is doing (walking,
+    // fighting) is left alone. A channel's per-tick SMSG_SPELL_GO of another
+    // spell (Arcane Missile 7268 under Arcane Missiles 5143) plays its cast
+    // kit once and returns to the channel's hold.
+    struct CastHold { uint32_t spellId; uint32_t animation; bool channel; };
+    std::unordered_map<uint64_t, CastHold> castHolds_;
 };
 
 } // namespace core

@@ -45,8 +45,15 @@ public:
     void startChannelVisual(uint32_t visualId, const glm::vec3& position,
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
-    uint32_t channelAnimation(uint32_t visualId);
+    // SpellVisual.dbc Precast/Cast/ChannelKit -> SpellVisualKit.dbc AnimID
+    // (column 2, an AnimationData.dbc id). kNoAnimation when the stage has no
+    // kit or its kit names no animation (-1). Column 1 is not an animation:
+    // it holds 0-7 and groups kits by stage (0 precast/cast, 1 impact,
+    // 2 state/channel in TBC 2.4.3 data).
+    static constexpr uint32_t kNoAnimation = 0xffffffffu;
     uint32_t precastAnimation(uint32_t visualId);
+    uint32_t castAnimation(uint32_t visualId);
+    uint32_t channelAnimation(uint32_t visualId);
     // Persistent StateKit effects follow the unit's current aura set.
     void syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds,
                          bool observerConcealed);
@@ -123,6 +130,7 @@ private:
     };
 
     void loadSpellVisualDbc();
+    uint32_t kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits, uint32_t visualId);
     // duration <= 0: the model's own animation length.
     void spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                          float duration, bool isPrecast);

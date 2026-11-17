@@ -319,21 +319,18 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, /*isPrecast=*/false);
 }
 
-uint32_t SpellVisualSystem::channelAnimation(uint32_t visualId) {
+uint32_t SpellVisualSystem::kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits,
+                                         uint32_t visualId) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
-    const auto kit = channelKits_.find(visualId);
-    if (kit == channelKits_.end() || !kit->second) return 0xffffffffu;
+    const auto kit = kits.find(visualId);
+    if (kit == kits.end() || !kit->second) return kNoAnimation;
     const auto animation = kitAnimations_.find(kit->second);
-    return animation == kitAnimations_.end() ? 0xffffffffu : animation->second;
+    return animation == kitAnimations_.end() ? kNoAnimation : animation->second;
 }
 
-uint32_t SpellVisualSystem::precastAnimation(uint32_t visualId) {
-    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
-    const auto kit = precastKits_.find(visualId);
-    if (kit == precastKits_.end() || !kit->second) return 0xffffffffu;
-    const auto animation = kitAnimations_.find(kit->second);
-    return animation == kitAnimations_.end() ? 0xffffffffu : animation->second;
-}
+uint32_t SpellVisualSystem::precastAnimation(uint32_t visualId) { return kitAnimation(precastKits_, visualId); }
+uint32_t SpellVisualSystem::castAnimation(uint32_t visualId) { return kitAnimation(castKits_, visualId); }
+uint32_t SpellVisualSystem::channelAnimation(uint32_t visualId) { return kitAnimation(channelKits_, visualId); }
 
 void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& position,
                                           uint32_t durationMs, uint32_t attachInstanceId) {

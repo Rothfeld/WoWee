@@ -1855,10 +1855,8 @@ void SpellHandler::updateTimers(float dt) {
 
 void SpellHandler::stopRestorationPresentation() {
     if (!restorationActive_) return;
-    if (owner_.spellCastAnimCallbackRef()) {
-        owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), false, true,
-                                          SpellCastType::OMNI);
-    }
+    if (owner_.restorationPresentationCallbackRef())
+        owner_.restorationPresentationCallbackRef()(false);
     restorationActive_ = false;
     restorationSpellId_ = 0;
     restorationTimeRemaining_ = 0.0f;
@@ -1920,10 +1918,8 @@ void SpellHandler::refreshRestorationFromPlayerAuras() {
         restorationSoundTimer_ = 0.0f;
         LOG_INFO("Restoration aura started: spellId=", spellId,
                  " durationMs=", totalMs);
-        if (owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), true, true,
-                                              SpellCastType::OMNI);
-        }
+        if (owner_.restorationPresentationCallbackRef())
+            owner_.restorationPresentationCallbackRef()(true);
     }
 }
 
@@ -2137,16 +2133,6 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
               " spell=", data.spellId, " castTime=", data.castTime,
               " target=0x", std::hex, data.targetGuid, std::dec);
 
-    // Classify spell targeting for animation selection:
-    //   DIRECTED - targets a specific other unit (Frostbolt, Heal)
-    //   OMNI     - self-cast or no explicit target (Arcane Explosion, buffs)
-    //   AREA     - ground-targeted AoE with no unit target (Blizzard, Rain of Fire)
-    auto classifyCast = [](uint64_t targetGuid, uint64_t casterGuid) -> SpellCastType {
-        if (targetGuid == 0)            return SpellCastType::AREA;
-        if (targetGuid == casterGuid)   return SpellCastType::OMNI;
-        return SpellCastType::DIRECTED;
-    };
-    const SpellCastType castType = classifyCast(data.targetGuid, data.casterUnit);
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
 
     // Track cast bar for any non-player caster
@@ -2158,10 +2144,8 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         s.timeTotal      = data.castTime / 1000.0f;
         s.timeRemaining  = s.timeTotal;
         s.interruptible  = owner_.isSpellInterruptible(data.spellId);
-        s.castType       = castType;
-        if (owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(data.casterUnit, true, false, castType);
-        }
+        if (owner_.spellCastAnimCallbackRef())
+            owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::PRECAST, data.spellId);
     }
 
     // Player's on-next-swing ability (Raptor Strike, Heroic Strike): a zero cast
@@ -2204,9 +2188,8 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
             }
         }
 
-        if (owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), true, false, castType);
-        }
+        if (owner_.spellCastAnimCallbackRef())
+            owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::PRECAST, data.spellId);
 
         // Hearthstone: pre-load terrain at bind point
         const bool isHearthstone = (data.spellId == ITEM_ID_HEARTHSTONE ||
@@ -2328,22 +2311,20 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
         const bool wasInTimedCast = casting_ && (data.spellId == currentCastSpellId_);
 
-        // Instant spell cast animation - if this wasn't a timed cast and isn't a
-        // melee ability, play a brief spell cast animation (one-shot)
-        if (!wasInTimedCast && !isMeleeAbility && !rangedWeaponAttack && !restorationLoop &&
-            !owner_.isProfessionSpell(data.spellId)) {
-            // Classify instant spell from SPELL_GO packet target info
-            SpellCastType goType = SpellCastType::OMNI;
-            if (data.targetGuid != 0 && data.targetGuid != data.casterUnit)
-                goType = SpellCastType::DIRECTED;
-            else if (data.targetGuid == 0 && data.hitCount > 1)
-                goType = SpellCastType::AREA;
-            if (owner_.spellCastAnimCallbackRef()) {
-                // Instant item spells have no SMSG_SPELL_START, so publish the
-                // SPELL_GO id just long enough for the animation callback to
-                // distinguish potions from generic instant magic.
-                currentCastSpellId_ = data.spellId;
-                owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), true, false, goType);
+        // The cast kit's animation plays once, timed and instant casts alike.
+        // Melee abilities and ranged auto attacks animate through their own
+        // swing/shot paths; food/water sits down instead (the server's kit
+        // packets schedule the eating gestures).
+        if (owner_.spellCastAnimCallbackRef()) {
+            if (!isMeleeAbility && !rangedWeaponAttack && !restorationLoop)
+                owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::CAST, data.spellId);
+            else if (wasInTimedCast)
+                owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::STOP, data.spellId);
+        }
+        if (restKind == spellclass::RestChannelKind::POTION ||
+            restKind == spellclass::RestChannelKind::ALCOHOL) {
+            if (auto* audio = owner_.services().audioCoordinator) {
+                if (auto* ui = audio->getUiSoundManager()) ui->playDrinking();
             }
         }
 
@@ -2365,10 +2346,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         // normally. Without this, pendingGameObjectInteractGuid_ stays stale
         // and suppresses CMSG_CANCEL_CAST for ALL subsequent spell casts.
         owner_.pendingGameObjectInteractGuidRef() = 0;
-
-        if (owner_.spellCastAnimCallbackRef() && !rangedWeaponAttack && !restorationLoop) {
-            owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), false, false, SpellCastType::OMNI);
-        }
 
         if (owner_.addonEventCallbackRef() && !rangedWeaponAttack)
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
@@ -2399,22 +2376,9 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             castSpell(nextSpell, nextTarget);
         }
     } else {
-        // For non-player casters: if no tracked cast state exists, this was an
-        // instant cast - play a brief one-shot spell animation before stopping
-        auto castIt = unitCastStates_.find(data.casterUnit);
-        bool wasTrackedCast = (castIt != unitCastStates_.end());
-        // Classify NPC instant spell from SPELL_GO target info
-        SpellCastType npcGoType = SpellCastType::OMNI;
-        if (data.targetGuid != 0 && data.targetGuid != data.casterUnit)
-            npcGoType = SpellCastType::DIRECTED;
-        else if (data.targetGuid == 0 && data.hitCount > 1)
-            npcGoType = SpellCastType::AREA;
-        if (!wasTrackedCast && !rangedWeaponAttack && owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(data.casterUnit, true, false, npcGoType);
-        }
-        if (!rangedWeaponAttack && owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(data.casterUnit, false, false, SpellCastType::OMNI);
-        }
+        // Other casters, timed or instant: the cast kit's animation, once.
+        if (!rangedWeaponAttack && owner_.spellCastAnimCallbackRef())
+            owner_.spellCastAnimCallbackRef()(data.casterUnit, SpellAnimPhase::CAST, data.spellId);
         bool targetsPlayer = false;
         for (const auto& tgt : data.hitTargets) {
             if (tgt == owner_.getPlayerGuid()) { targetsPlayer = true; break; }
@@ -4515,15 +4479,13 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
                 ssm->stopPrecast();
             }
         }
-        if (owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), false, false, SpellCastType::OMNI);
-        }
+        if (owner_.spellCastAnimCallbackRef())
+            owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::STOP, failSpellId);
     } else {
         // Another unit's cast failed - clear their tracked cast bar
         unitCastStates_.erase(failGuid);
-        if (owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(failGuid, false, false, SpellCastType::OMNI);
-        }
+        if (owner_.spellCastAnimCallbackRef())
+            owner_.spellCastAnimCallbackRef()(failGuid, SpellAnimPhase::STOP, failSpellId);
     }
 }
 
@@ -5373,14 +5335,8 @@ void SpellHandler::handleChannelStart(network::Packet& packet) {
         LOG_DEBUG("MSG_CHANNEL_START: caster=0x", std::hex, chanCaster, std::dec,
                   " spell=", chanSpellId, " total=", chanTotalMs, "ms");
 
-        // Play channeling animation (looping)
-        // Channel packets don't carry targetGuid - use player's current target as hint
-        SpellCastType chanType = SpellCastType::OMNI;
-        if (chanCaster == owner_.getPlayerGuid() && owner_.getTargetGuid() != 0)
-            chanType = SpellCastType::DIRECTED;
-        if (owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(chanCaster, true, true, chanType);
-        }
+        if (owner_.spellCastAnimCallbackRef())
+            owner_.spellCastAnimCallbackRef()(chanCaster, SpellAnimPhase::CHANNEL, chanSpellId);
         if (auto* renderer = owner_.services().renderer) {
             if (auto* visuals = renderer->getSpellVisualSystem()) {
                 glm::vec3 position;
@@ -5432,9 +5388,8 @@ void SpellHandler::handleChannelUpdate(network::Packet& packet) {
     // Fire UNIT_SPELLCAST_CHANNEL_STOP when channel ends
     if (chanRemainMs == 0) {
         // Stop channeling animation - return to idle
-        if (owner_.spellCastAnimCallbackRef()) {
-            owner_.spellCastAnimCallbackRef()(chanCaster2, false, true, SpellCastType::OMNI);
-        }
+        if (owner_.spellCastAnimCallbackRef())
+            owner_.spellCastAnimCallbackRef()(chanCaster2, SpellAnimPhase::STOP, 0);
         auto unitId = owner_.guidToUnitId(chanCaster2);
         if (!unitId.empty())
             owner_.fireAddonEvent("UNIT_SPELLCAST_CHANNEL_STOP", {unitId});

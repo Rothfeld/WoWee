@@ -84,6 +84,8 @@ public:
     // ── Spell cast management ───────────────────────────────────────────
     void startSpellCast(uint32_t precast, uint32_t cast, bool castLoop, uint32_t finalize);
     void stopSpellCast();
+    /// Leave the spell states at once, with no release animation.
+    void cancelSpellCast();
     void clearSpellState();
 
     // ── Hit/stun management ─────────────────────────────────────────────

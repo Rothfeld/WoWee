@@ -1009,6 +1009,20 @@ it schedules one eating gesture. A seated gesture preserves the lower-body
 pose and waits for sit-down to finish. Food auras do not loop the gesture.
 Learning spells emits `UPDATE_SHAPESHIFT_FORMS` so the stance bar refreshes.
 
+Caster animations come from the spell's kits, for the player, other players
+and creatures alike: `Spell.SpellVisualID` -> `SpellVisual` Precast/Cast/
+ChannelKit -> `SpellVisualKit` column 2 (`AnimationData` id, -1 none). The
+precast animation is held while a cast bar fills (`SMSG_SPELL_START` with a
+cast time), the cast animation plays once at `SMSG_SPELL_GO` (instant, timed
+and triggered casts), the channel animation is held for `MSG_CHANNEL_START`.
+Scarlet Wizard Arcane Explosion 8439: no hold, SpellCastOmni (54). Frostbolt
+9672: ReadySpellDirected (51), then SpellCastDirected (53). Scarlet Chaplain
+Renew 8362 and Power Word: Shield 6066 use ReadySpellOmni/SpellCastOmni (52/54)
+even on an ally; the target does not choose the animation. Evocation 12051 holds
+ChannelCastOmni (125). `SpellVisualKit` column 1 is not an animation: it holds
+0-7 and groups kits by stage. A remote caster's hold is its idle while casting,
+so a movement update that stops the unit resumes the cast pose.
+
 Small solid M2 props keep their geometry even when they contain multiple
 emitters. Spherical emitters use their authored area and radial velocity;
 flag 0x100 selects vertical velocity. Ordinary particle colors retain their

@@ -912,12 +912,18 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     if (!entity) return rendering::anim::STAND;
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     if (state != 0) return rendering::standPose(state).idle;
+    if (const auto hold = remoteCastHolds_.find(guid); hold != remoteCastHolds_.end()) return hold->second;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     // A unit meleeing holds its ready stance between swings; the original
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
     if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) return meleeReadyAnimation(*unit);
     if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
     return unit ? rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState()) : 0;
+}
+
+void EntitySpawner::setRemoteCastHold(uint64_t guid, uint32_t animationId) {
+    if (animationId == 0) remoteCastHolds_.erase(guid);
+    else remoteCastHolds_[guid] = animationId;
 }
 
 uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
@@ -1060,6 +1066,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
 }
 
 void EntitySpawner::despawnPlayer(uint64_t guid) {
+    remoteCastHolds_.erase(guid);
     if (!renderer_ || !renderer_->getCharacterRenderer()) return;
     remoteStandStates_.erase(guid);
     remoteIdleAnims_.erase(guid);

@@ -1407,12 +1407,15 @@ public:
     using RangedWeaponSwapCallback = std::function<void(bool show)>;
     void setRangedWeaponSwapCallback(RangedWeaponSwapCallback cb) { rangedWeaponSwapCallback_ = std::move(cb); }
 
-    // Spell cast animation callbacks - true=start cast/channel, false=finish/cancel
-    // guid: caster (may be player or another unit), isChannel: channel vs regular cast
-    // castType: DIRECTED (unit target), OMNI (self/no target), AREA (ground AoE)
-    using SpellCastAnimCallback = std::function<void(uint64_t guid, bool start, bool isChannel,
-                                                      SpellCastType castType)>;
+    // Caster animation for one spell stage; guid is the player or any other unit.
+    using SpellCastAnimCallback = std::function<void(uint64_t guid, SpellAnimPhase phase,
+                                                      uint32_t spellId)>;
     void setSpellCastAnimCallback(SpellCastAnimCallback cb) { spellCastAnimCallback_ = std::move(cb); }
+    // Food/drink restoration aura on the player began (true) or ended (false).
+    using RestorationPresentationCallback = std::function<void(bool active)>;
+    void setRestorationPresentationCallback(RestorationPresentationCallback cb) {
+        restorationPresentationCallback_ = std::move(cb);
+    }
 
     // Fired when the player's own spell cast fails (spellId of the failed spell).
     using SpellCastFailedCallback = std::function<void(uint32_t spellId)>;
@@ -3896,6 +3899,7 @@ public:
     auto& playerHealthCallbackRef() { return playerHealthCallback_; }
     auto& playerSpawnCallbackRef() { return playerSpawnCallback_; }
     auto& spellCastAnimCallbackRef() { return spellCastAnimCallback_; }
+    auto& restorationPresentationCallbackRef() { return restorationPresentationCallback_; }
     auto& spellCastFailedCallbackRef() { return spellCastFailedCallback_; }
     auto& sprintAuraCallbackRef() { return sprintAuraCallback_; }
     auto& stealthStateCallbackRef() { return stealthStateCallback_; }
@@ -5090,6 +5094,7 @@ private:
     bool suppressMeleeSwingAnim_ = false;
     // lastMeleeSwingMs_ moved to CombatHandler
     SpellCastAnimCallback spellCastAnimCallback_;
+    RestorationPresentationCallback restorationPresentationCallback_;
     SpellCastFailedCallback spellCastFailedCallback_;
     UnitAnimHintCallback unitAnimHintCallback_;
     UnitMoveFlagsCallback unitMoveFlagsCallback_;

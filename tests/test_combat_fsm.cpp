@@ -160,6 +160,29 @@ TEST_CASE("CombatFSM: stopSpellCast transitions to finalize", "[combat]") {
     CHECK(fsm.getState() == CombatFSM::State::SPELL_FINALIZE);
 }
 
+TEST_CASE("CombatFSM: a released cast plays its kit animation once", "[combat][cast-kit]") {
+    // Scarlet Wizard Arcane Explosion: cast kit 1004 -> SpellCastOmni, no hold.
+    CombatFSM fsm;
+    fsm.startSpellCast(0, anim::SPELL_CAST_OMNI, false, anim::SPELL_CAST_OMNI);
+    fsm.stopSpellCast();
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_FINALIZE);
+    auto in = combatInput();
+    in.inCombat = false;
+    auto out = fsm.resolve(in, makeCombatCaps(), unarmedLoadout());
+    REQUIRE(out.valid);
+    CHECK(out.animId == anim::SPELL_CAST_OMNI);
+    CHECK_FALSE(out.loop);
+}
+
+TEST_CASE("CombatFSM: cancelSpellCast leaves without a release", "[combat][cast-kit]") {
+    // An interrupted Frostbolt drops ReadySpellDirected; no SpellCastDirected.
+    CombatFSM fsm;
+    fsm.startSpellCast(0, anim::READY_SPELL_DIRECTED, true, 0);
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_CASTING);
+    fsm.cancelSpellCast();
+    CHECK(fsm.getState() == CombatFSM::State::INACTIVE);
+}
+
 TEST_CASE("CombatFSM: hit reaction", "[combat]") {
     CombatFSM fsm;
     auto caps = makeCombatCaps();

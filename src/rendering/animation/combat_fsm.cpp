@@ -102,6 +102,13 @@ void CombatFSM::stopSpellCast() {
     state_ = State::SPELL_FINALIZE;
 }
 
+void CombatFSM::cancelSpellCast() {
+    if (state_ != State::SPELL_PRECAST && state_ != State::SPELL_CASTING &&
+        state_ != State::SPELL_FINALIZE) return;
+    clearSpellState();
+    state_ = State::INACTIVE;
+}
+
 void CombatFSM::clearSpellState() {
     spellPrecastAnimId_ = 0;
     spellCastAnimId_ = 0;

@@ -41,16 +41,13 @@ struct TalentTabEntry {
 
 // ---- Spell / cast state ----
 
-// Spell targeting classification for animation selection.
-// Derived from the spell packet's targetGuid field - NOT the player's UI target.
-//   DIRECTED - spell targets a specific unit (Frostbolt, Heal, Shadow Bolt)
-//   OMNI     - self-cast / no explicit target (Arcane Explosion, buffs)
-//   AREA     - ground-targeted AoE (Blizzard, Rain of Fire, Flamestrike)
-enum class SpellCastType : uint8_t {
-    DIRECTED = 0,  // Has a specific unit target
-    OMNI     = 1,  // Self / no target
-    AREA     = 2,  // Ground-targeted AoE
-};
+// Caster animation stages. Each takes its animation from the spell's
+// SpellVisual kit for that stage (SpellVisualSystem precast/cast/channel).
+//   PRECAST - SMSG_SPELL_START with a cast time: precast kit, held
+//   CAST    - SMSG_SPELL_GO: cast kit, once
+//   CHANNEL - MSG_CHANNEL_START: channel kit, held for the channel
+//   STOP    - cast failed/interrupted or channel over: back to idle
+enum class SpellAnimPhase : uint8_t { PRECAST, CAST, CHANNEL, STOP };
 
 struct UnitCastState {
     bool          casting         = false;
@@ -59,7 +56,6 @@ struct UnitCastState {
     float         timeRemaining   = 0.0f;
     float         timeTotal       = 0.0f;
     bool          interruptible   = true;
-    SpellCastType castType        = SpellCastType::OMNI;
 };
 
 // ---- Equipment sets (WotLK) ----

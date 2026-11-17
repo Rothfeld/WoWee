@@ -442,302 +442,169 @@ void AnimationCallbackHandler::setupCallbacks() {
         }
     });
 
-    // Spell cast animation callback - play cast animation on caster (player or NPC/other player)
-    // WoW-accurate 3-phase spell animation sequence:
-    //   SPELL_PRECAST (31)              - one-shot wind-up
-    //   READY_SPELL_DIRECTED/OMNI (51/52) - looping hold while cast bar fills
-    //   SPELL_CAST_DIRECTED/OMNI/AREA (53/54/33) - one-shot release at completion
-    // Channels use CHANNEL_CAST_DIRECTED/OMNI (124/125).
-    // castType comes from the spell packet's targetGuid:
-    //   DIRECTED - spell targets a specific unit  (Frostbolt, Heal)
-    //   OMNI     - self-cast / no explicit target (Arcane Explosion, buffs)
-    //   AREA     - ground-targeted AoE           (Blizzard, Rain of Fire)
-    gameHandler_.setSpellCastAnimCallback([this](uint64_t guid, bool start, bool isChannel,
-                                                  game::SpellCastType castType) {
+    // Food/water restoration: the server sits the player and its kit packets
+    // schedule each eating gesture (SpellVisualSystem::playSpellVisualKit);
+    // weapons go to the back without a sheath animation.
+    gameHandler_.setRestorationPresentationCallback([this](bool active) {
+        if (active) {
+            if (!appearanceComposer_.isWeaponsSheathed()) {
+                appearanceComposer_.setWeaponsSheathed(true);
+                appearanceComposer_.loadEquippedWeapons();
+            }
+            return;
+        }
+        auto* cr = renderer_.getCharacterRenderer();
+        auto* ac = renderer_.getAnimationController();
+        const uint32_t instanceId = renderer_.getCharacterInstanceId();
+        if (!cr || !ac || instanceId == 0) return;
+        ac->setSeatedLoopAnimation(0);
+        cr->setUpperBodyAnimation(instanceId, 0);
+        ac->cancelSpellCast();
+    });
+
+    // Caster animation from the spell's SpellVisual kits (Spell.SpellVisualID
+    // -> SpellVisual Precast/Cast/ChannelKit -> SpellVisualKit AnimID), for the
+    // player, other players and creatures alike. A model lacking the animation
+    // plays its AnimationData.dbc fallback (CharacterRenderer::playAnimation).
+    //   PRECAST: held while the cast bar fills.
+    //   CAST:    once at SMSG_SPELL_GO, then idle (or the channel's animation).
+    //   CHANNEL: held for the channel.
+    // Scarlet Wizard Arcane Explosion (8439): no precast hold (instant), cast
+    // kit 1004 -> SpellCastOmni (54). Frostbolt (9672): kit 194 ReadySpellDirected
+    // (51) held, kit 202 SpellCastDirected (53) at release. Scarlet Chaplain
+    // Power Word: Shield/Renew on an ally: kits 99/270 -> 52/54, not 51/53.
+    // A kit without an animation leaves the caster's current animation alone.
+    gameHandler_.setSpellCastAnimCallback([this](uint64_t guid, game::SpellAnimPhase phase,
+                                                  uint32_t spellId) {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
-
-        // Determine if this is the local player
-        bool isLocalPlayer = false;
+        const bool isLocalPlayer = guid == gameHandler_.getPlayerGuid();
         uint32_t instanceId = 0;
-        {
-            uint32_t charInstId = renderer_.getCharacterInstanceId();
-            if (charInstId != 0 && guid == gameHandler_.getPlayerGuid()) {
-                instanceId = charInstId;
-                isLocalPlayer = true;
-            }
-        }
+        if (isLocalPlayer) instanceId = renderer_.getCharacterInstanceId();
         if (instanceId == 0) instanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
         if (instanceId == 0) return;
+        auto* ac = isLocalPlayer ? renderer_.getAnimationController() : nullptr;
+        if (isLocalPlayer && !ac) return;
 
-        const bool isDirected = (castType == game::SpellCastType::DIRECTED);
-        const bool isArea     = (castType == game::SpellCastType::AREA);
-
-        if (start) {
-            // Restoration is aura-driven, so it deliberately has no current cast.
-            // Its animation still needs the active food/drink spell identity.
-            const uint32_t currentSpell = isLocalPlayer
-                ? (gameHandler_.isRestoring() ? gameHandler_.getActiveActionSpellId()
-                                              : gameHandler_.getCurrentCastSpellId())
-                : (gameHandler_.getUnitCastState(guid) ? gameHandler_.getUnitCastState(guid)->spellId : 0);
-            bool isFishing = isChannel && game::spellclass::isFishingCast(currentSpell);
-
-            // Helper: pick first animation the model supports from a list
-            auto pickFirst = [&](std::initializer_list<uint32_t> ids) -> uint32_t {
-                for (uint32_t id : ids)
-                    if (cr->hasAnimation(instanceId, id)) return id;
-                return 0;
-            };
-
-            bool isBandage = false;
-            bool isMining = game::isMiningRank(currentSpell);
-            bool isGathering = false;
-            game::spellclass::RestChannelKind restChannel =
-                game::spellclass::RestChannelKind::NONE;
-            if (isLocalPlayer && currentSpell != 0) {
-                gameHandler_.loadSpellNameCache();
-                auto it = gameHandler_.spellNameCacheRef().find(currentSpell);
-                isBandage = (it != gameHandler_.spellNameCacheRef().end() &&
-                             it->second.name.find("Bandage") != std::string::npos);
-                if (it != gameHandler_.spellNameCacheRef().end()) {
-                    restChannel = game::spellclass::classifyRestChannel(it->second.name);
-                }
-                if (!isBandage && !isFishing && it != gameHandler_.spellNameCacheRef().end()) {
-                    const auto& nm = it->second.name;
-                    isMining = (nm == "Mining" || nm == "Smelting");
-                    if (!isMining) {
-                        isGathering = gameHandler_.isProfessionSpell(currentSpell);
-                        if (!isGathering)
-                            isGathering = (nm == "Opening" || nm == "Open Lock");
-                    }
-                }
+        const auto idle = [&] { return entitySpawner_.remoteIdleAnimation(guid); };
+        const auto hold = [&](uint32_t spell, uint32_t animation, bool channel) {
+            castHolds_[guid] = {spell, animation, channel};
+            if (!isLocalPlayer) entitySpawner_.setRemoteCastHold(guid, animation);
+        };
+        const auto release = [&] {
+            castHolds_.erase(guid);
+            if (!isLocalPlayer) entitySpawner_.setRemoteCastHold(guid, 0);
+        };
+        const auto toIdle = [&] {
+            castOneShots_.erase(guid);
+            if (!castHolds_.contains(guid)) return;
+            release();
+            if (isLocalPlayer) {
+                appearanceComposer_.showMiningPick(false);
+                appearanceComposer_.showFishingPole(false);
+                ac->cancelSpellCast();
+            } else {
+                cr->playAnimation(instanceId, idle(), true);
             }
+        };
+        if (phase == game::SpellAnimPhase::STOP) {
+            toIdle();
+            return;
+        }
 
-            if (restChannel != game::spellclass::RestChannelKind::NONE) {
-                if (auto* ac = renderer_.getAnimationController()) {
-                    if (restChannel == game::spellclass::RestChannelKind::CANNIBALIZE) {
-                        // Standing, and looping for the length of the channel.
-                        //
-                        // Not the food path: that seats the player and swaps
-                        // the seated idle, and cannibalize does not sit - the
-                        // character stays on their feet over the corpse. Not
-                        // the potion path either, which is one swig and done,
-                        // where this runs until the channel ends.
-                        uint32_t eatAnim = pickFirst({rendering::anim::EMOTE_EAT,
-                                                      rendering::anim::EATING_LOOP});
-                        if (eatAnim != 0) {
-                            ac->startSpellCast(0, eatAnim, /*castLoop=*/true, 0);
-                        }
-                    } else if (restChannel == game::spellclass::RestChannelKind::POTION ||
-                        restChannel == game::spellclass::RestChannelKind::ALCOHOL) {
-                        // Potions/alcohol are drunk standing: one EmoteEat swig.
-                        uint32_t swigAnim = pickFirst({rendering::anim::EMOTE_EAT});
-                        if (swigAnim != 0) {
-                            ac->startSpellCast(0, swigAnim, false, 0);
-                        }
-                    } else {
-                        // Weapons go straight to the back before the sit - the real
-                        // client auto-sheathes on consume with no sheath animation
-                        // (playing one here would fight the FSM's sit-down one-shot).
-                        if (!appearanceComposer_.isWeaponsSheathed()) {
-                            appearanceComposer_.setWeaponsSheathed(true);
-                            appearanceComposer_.loadEquippedWeapons();
-                        }
-                        // Server SpellVisualKit packets schedule individual eating gestures.
+        assert(spellId != 0);
+        gameHandler_.loadSpellNameCache();
+        const auto spell = gameHandler_.spellNameCacheRef().find(spellId);
+        if (spell == gameHandler_.spellNameCacheRef().end()) {
+            LOG_WARNING("Cast animation: spell ", spellId, " missing from Spell.dbc");
+            return;
+        }
+        auto* visuals = renderer_.getSpellVisualSystem();
+        assert(visuals);
+        const uint32_t visual = spell->second.spellVisualId;
+        constexpr uint32_t none = rendering::SpellVisualSystem::kNoAnimation;
 
-                    }
-                }
-                // Food/water consume sounds repeat from SpellHandler::updateTimers
-                // for the whole aura; potions get their single swig sound here.
-                if (restChannel == game::spellclass::RestChannelKind::POTION ||
-                    restChannel == game::spellclass::RestChannelKind::ALCOHOL) {
-                    if (auto* audio = gameHandler_.services().audioCoordinator) {
-                        if (auto* ui = audio->getUiSoundManager()) {
-                            ui->playDrinking();
-                        }
-                    }
-                }
-            } else if (isMining) {
-                gameHandler_.loadSpellNameCache();
-                const auto spell = gameHandler_.spellNameCacheRef().find(currentSpell);
-                assert(spell != gameHandler_.spellNameCacheRef().end());
-                auto* visuals = renderer_.getSpellVisualSystem();
-                assert(visuals);
-                const auto mineAnim = visuals->precastAnimation(spell->second.spellVisualId);
-                if (mineAnim == 0xffffffffu || !cr->hasAnimation(instanceId, mineAnim)) {
-                    LOG_ERROR("Mining precast animation unavailable: spell=", currentSpell,
-                              " visual=", spell->second.spellVisualId, " animation=", mineAnim);
-                    return;
-                }
-                if (isLocalPlayer) {
-                    appearanceComposer_.showMiningPick(true);
-                    if (auto* ac = renderer_.getAnimationController())
-                        ac->startSpellCast(0, mineAnim, true, 0);
-                } else {
-                    cr->playAnimation(instanceId, mineAnim, true);
-                }
-            } else if (isBandage || isGathering) {
-                uint32_t useStart = isChannel ? 0 : pickFirst({
-                    rendering::anim::USE_STANDING_START,
-                    rendering::anim::EMOTE_USE_STANDING_NO_SHEATHE,
-                    rendering::anim::EMOTE_USE_STANDING
-                });
-                uint32_t useLoop = pickFirst({
-                    rendering::anim::USE_STANDING_LOOP,
-                    rendering::anim::EMOTE_USE_STANDING_NO_SHEATHE,
-                    rendering::anim::EMOTE_USE_STANDING,
-                    rendering::anim::CHANNEL_CAST_OMNI,
-                    rendering::anim::READY_SPELL_OMNI,
-                    rendering::anim::STAND
-                });
-                uint32_t useEnd = isChannel ? 0 : pickFirst({
-                    rendering::anim::USE_STANDING_END,
-                    rendering::anim::STAND
-                });
-                if (auto* ac = renderer_.getAnimationController()) {
-                    ac->startSpellCast(useStart, useLoop ? useLoop : rendering::anim::STAND, true, useEnd);
-                }
-            } else if (isFishing && cr->hasAnimation(instanceId, rendering::anim::FISHING_LOOP)) {
-                // Fishing is a one-shot pole cast followed by the channel idle. If the
-                // player had weapons sheathed, move the equipped pole into their hand
-                // before starting so the cast animation actually swings it.
-                if (isLocalPlayer) {
+        switch (phase) {
+        case game::SpellAnimPhase::PRECAST: {
+            castOneShots_.erase(guid);
+            const uint32_t animation = visuals->precastAnimation(visual);
+            LOG_DEBUG("Cast animation: precast guid=0x", std::hex, guid, std::dec,
+                      " spell=", spellId, " visual=", visual, " animation=", animation);
+            if (animation == none) return;
+            hold(spellId, animation, false);
+            if (isLocalPlayer) {
+                // The pick is the Mining kit's prop: EmoteWork alone swings an empty hand.
+                if (game::isMiningRank(spellId)) appearanceComposer_.showMiningPick(true);
+                ac->startSpellCast(0, animation, true, 0);
+            } else {
+                cr->playAnimation(instanceId, animation, true);
+            }
+            return;
+        }
+        case game::SpellAnimPhase::CAST: {
+            const uint32_t animation = visuals->castAnimation(visual);
+            LOG_DEBUG("Cast animation: cast guid=0x", std::hex, guid, std::dec,
+                      " spell=", spellId, " visual=", visual, " animation=", animation);
+            const auto held = castHolds_.find(guid);
+            const bool underChannel = held != castHolds_.end() && held->second.channel &&
+                                      held->second.spellId != spellId;
+            if (animation == none) {
+                // Only this spell's own precast ends here.
+                if (held != castHolds_.end() && !held->second.channel && held->second.spellId == spellId)
+                    toIdle();
+                return;
+            }
+            castOneShots_[guid] = {spellId, animation};
+            if (isLocalPlayer) {
+                appearanceComposer_.showMiningPick(false);
+                if (game::spellclass::isFishingCast(spellId)) {
+                    // The cast swings the equipped pole: draw it first.
                     if (appearanceComposer_.isWeaponsSheathed()) {
                         appearanceComposer_.setWeaponsSheathed(false);
                         appearanceComposer_.loadEquippedWeapons();
                     }
                     appearanceComposer_.showFishingPole(true);
-                    auto* ac = renderer_.getAnimationController();
-                    if (ac) {
-                        uint32_t castAnim = cr->hasAnimation(instanceId, rendering::anim::FISHING_CAST)
-                            ? rendering::anim::FISHING_CAST : 0;
-                        ac->startSpellCast(castAnim, rendering::anim::FISHING_LOOP, true, 0);
-                    }
-                } else {
-                    cr->playAnimation(instanceId, rendering::anim::FISHING_LOOP, true);
-                }
-            } else {
-            if (isLocalPlayer && isChannel && !appearanceComposer_.isWeaponsSheathed()) {
-                appearanceComposer_.setWeaponsSheathed(true);
-                appearanceComposer_.loadEquippedWeapons();
-            }
-            // Precast wind-up (one-shot, non-channels only)
-            uint32_t precastAnim = 0;
-            if (!isChannel) {
-                precastAnim = pickFirst({rendering::anim::SPELL_PRECAST});
-            }
-
-            // Cast hold (looping while cast bar fills / channel active)
-            uint32_t castAnim = 0;
-            if (isChannel) {
-                // Channel hold: prefer DIRECTED/OMNI based on spell target classification
-                if (isDirected) {
-                    castAnim = pickFirst({
-                        rendering::anim::CHANNEL_CAST_DIRECTED,
-                        rendering::anim::CHANNEL_CAST_OMNI,
-                        rendering::anim::READY_SPELL_DIRECTED,
-                        rendering::anim::SPELL
-                    });
-                } else {
-                    // OMNI or AREA channels (Blizzard channel, Tranquility, etc.)
-                    castAnim = pickFirst({
-                        rendering::anim::CHANNEL_CAST_OMNI,
-                        rendering::anim::CHANNEL_CAST_DIRECTED,
-                        rendering::anim::READY_SPELL_OMNI,
-                        rendering::anim::SPELL
-                    });
-                }
-            } else {
-                // Regular cast hold: READY_SPELL_DIRECTED/OMNI while cast bar fills
-                if (isDirected) {
-                    castAnim = pickFirst({
-                        rendering::anim::READY_SPELL_DIRECTED,
-                        rendering::anim::READY_SPELL_OMNI,
-                        rendering::anim::SPELL_CAST_DIRECTED,
-                        rendering::anim::SPELL_CAST,
-                        rendering::anim::SPELL
-                    });
-                } else {
-                    // OMNI (self-buff) or AREA (AoE targeting)
-                    castAnim = pickFirst({
-                        rendering::anim::READY_SPELL_OMNI,
-                        rendering::anim::READY_SPELL_DIRECTED,
-                        rendering::anim::SPELL_CAST_OMNI,
-                        rendering::anim::SPELL_CAST,
-                        rendering::anim::SPELL
-                    });
                 }
             }
-            if (isChannel && currentSpell) {
-                gameHandler_.loadSpellNameCache();
-                const auto spell = gameHandler_.spellNameCacheRef().find(currentSpell);
-                if (spell != gameHandler_.spellNameCacheRef().end()) {
-                    if (auto* visuals = renderer_.getSpellVisualSystem()) {
-                        const auto animation = visuals->channelAnimation(spell->second.spellVisualId);
-                        if (animation != 0xffffffffu && cr->hasAnimation(instanceId, animation))
-                            castAnim = animation;
-                    }
-                }
+            if (underChannel) {
+                // Once, then the channel's hold again.
+                if (isLocalPlayer) ac->startSpellCast(animation, held->second.animation, true, 0);
+                else cr->playAnimation(instanceId, animation, false, idle());
+                return;
             }
-            // TBC models may omit the legacy SPELL (2) sequence; idle is a
-            // quieter fallback than asking the renderer to play a missing anim.
-            if (castAnim == 0) castAnim = rendering::anim::STAND;
-
-            // Finalization release (one-shot after cast completes)
-            // Animation chosen by spell target type: AREA → SPELL_CAST_AREA,
-            // DIRECTED → SPELL_CAST_DIRECTED, OMNI → SPELL_CAST_OMNI
-            uint32_t finalizeAnim = 0;
-            if (isLocalPlayer && !isChannel) {
-                if (isArea) {
-                    // Ground-targeted AoE: SPELL_CAST_AREA → SPELL_CAST_OMNI
-                    finalizeAnim = pickFirst({
-                        rendering::anim::SPELL_CAST_AREA,
-                        rendering::anim::SPELL_CAST_OMNI,
-                        rendering::anim::SPELL_CAST,
-                        rendering::anim::SPELL
-                    });
-                } else if (isDirected) {
-                    // Single-target: SPELL_CAST_DIRECTED → SPELL_CAST_OMNI
-                    finalizeAnim = pickFirst({
-                        rendering::anim::SPELL_CAST_DIRECTED,
-                        rendering::anim::SPELL_CAST_OMNI,
-                        rendering::anim::SPELL_CAST,
-                        rendering::anim::SPELL
-                    });
-                } else {
-                    // OMNI (self-buff, Arcane Explosion): SPELL_CAST_OMNI → SPELL_CAST_AREA
-                    finalizeAnim = pickFirst({
-                        rendering::anim::SPELL_CAST_OMNI,
-                        rendering::anim::SPELL_CAST_AREA,
-                        rendering::anim::SPELL_CAST,
-                        rendering::anim::SPELL
-                    });
-                }
-            }
-
+            release();
             if (isLocalPlayer) {
-                auto* ac = renderer_.getAnimationController();
-                if (ac) ac->startSpellCast(precastAnim, castAnim, true, finalizeAnim);
+                // Plays once from the cast state, then idle.
+                ac->startSpellCast(0, animation, false, animation);
+                ac->stopSpellCast();
             } else {
-                cr->playAnimation(instanceId, castAnim, true);
+                cr->playAnimation(instanceId, animation, false, idle());
             }
-            } // end !isFishing
-        } else {
-            // Local casts finalize through their controller; remote casts release the hold.
+            return;
+        }
+        case game::SpellAnimPhase::CHANNEL: {
+            const uint32_t animation = visuals->channelAnimation(visual);
+            LOG_DEBUG("Cast animation: channel guid=0x", std::hex, guid, std::dec,
+                      " spell=", spellId, " visual=", visual, " animation=", animation);
+            if (animation == none) return;
+            const auto oneShot = castOneShots_.find(guid);
+            const uint32_t first = oneShot != castOneShots_.end() && oneShot->second.spellId == spellId
+                ? oneShot->second.animation : 0;
+            castOneShots_.erase(guid);
+            const uint32_t previousIdle = idle();
+            hold(spellId, animation, true);
             if (isLocalPlayer) {
-                appearanceComposer_.showMiningPick(false);
-                appearanceComposer_.showFishingPole(false);
-                auto* ac = renderer_.getAnimationController();
-                if (ac) {
-                    ac->setSeatedLoopAnimation(0);
-                    cr->setUpperBodyAnimation(instanceId, 0);
-                    ac->stopSpellCast();
-                }
+                ac->startSpellCast(first, animation, true, 0);
+            } else if (first != 0) {
+                cr->retargetOneShotReturn(instanceId, previousIdle, animation);
             } else {
-                const uint32_t idle = entitySpawner_.remoteIdleAnimation(guid);
-                cr->playAnimation(instanceId, idle, true);
+                cr->playAnimation(instanceId, animation, true);
             }
+            return;
+        }
+        case game::SpellAnimPhase::STOP:
+            break;
         }
     });
 
