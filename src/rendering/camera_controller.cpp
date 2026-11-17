@@ -2235,11 +2235,9 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // Geometry pulls the camera inward immediately. Terrain has its own
         // slower response because sampled slope heights vary between frames.
         auto geometryLimitAlong = [&](const glm::vec3& dir) -> float {
-            float hit = currentDistance;
-            if (wmoRenderer)
-                hit = std::min(hit, wmoRenderer->raycastBoundingBoxes(pivot, dir, currentDistance));
-            if (m2Renderer)
-                hit = std::min(hit, m2Renderer->raycastBoundingBoxes(pivot, dir, currentDistance));
+            traceWmoHit_ = wmoRenderer ? wmoRenderer->raycastBoundingBoxes(pivot, dir, currentDistance) : currentDistance;
+            traceM2Hit_ = m2Renderer ? m2Renderer->raycastBoundingBoxes(pivot, dir, currentDistance) : currentDistance;
+            const float hit = std::min(traceWmoHit_, traceM2Hit_);
             // hit == currentDistance means no hit (returns maxDistance on miss)
             if (hit >= currentDistance) return currentDistance;
             return std::max(MIN_DISTANCE, hit - CAM_SPHERE_RADIUS - CAM_EPSILON);
@@ -2252,6 +2250,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         if (!cachedInsideInteriorWMO) {
             const float terrainLimit =
                 raymarchTerrainCameraLimit(pivot, camDir, currentDistance);
+            traceTerrainLimit_ = terrainLimit;
             if (smoothedTerrainDist_ < 0.0f) smoothedTerrainDist_ = terrainLimit;
             // Slower coming in than the built geometry above, which is what
             // makes a slope feel like a slope rather than a series of nudges.
@@ -2556,7 +2555,10 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
             ",\"wmo_contacts\":", movementTraceWmoContacts_,
             ",\"m2_contacts\":", movementTraceM2Contacts_,
             ",\"zoom_distance\":", currentDistance,
-            ",\"camera_distance\":", std::min(currentDistance, collisionDistance), "}");
+            ",\"camera_distance\":", std::min(currentDistance, collisionDistance),
+            ",\"camera_pitch_deg\":", pitch,
+            ",\"camera_wmo_hit\":", traceWmoHit_, ",\"camera_m2_hit\":", traceM2Hit_,
+            ",\"camera_terrain_limit\":", traceTerrainLimit_, "}");
     }
 }
 

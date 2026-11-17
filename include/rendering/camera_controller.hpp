@@ -627,6 +627,10 @@ private:
     glm::vec3* followTarget = nullptr;
     glm::vec3 smoothedCamPos = glm::vec3(0.0f);     // For smooth camera movement
     float smoothedCollisionDist_ = -1.0f;           // Applied geometry limit; < 0 = none
+    // Last camera ray results by source, for WOWEE_MOVEMENT_TRACE only.
+    float traceWmoHit_ = 0.0f;
+    float traceM2Hit_ = 0.0f;
+    float traceTerrainLimit_ = 0.0f;
     /// The ground's own limit, smoothed before it is combined with the built
     /// geometry's. A hillside's marched height moves a little with every step
     /// the player takes, and passing that straight through is a shudder.
