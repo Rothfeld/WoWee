@@ -368,35 +368,30 @@ static int lua_UnitPlayerControlled(lua_State* L) {
     return 1;
 }
 
-// UnitIsTapped(unit) - true if mob is tapped (tagged by any player)
+// UnitIsTapped(unit) - someone holds the tap. See unitIsTapped.
 static int lua_UnitIsTapped(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "target");
     auto* unit = resolveUnit(L, uid);
     if (!unit) { return luaReturnFalse(L); }
-    lua_pushboolean(L, (unit->getDynamicFlags() & 0x0004) != 0); // UNIT_DYNFLAG_TAPPED_BY_PLAYER
+    lua_pushboolean(L, game::unitIsTapped(unit->getDynamicFlags()));
     return 1;
 }
 
-// UnitIsTappedByPlayer(unit) - true if tapped by the local player (can loot)
+// UnitIsTappedByPlayer(unit) - the player holds the tap. See unitIsTappedByPlayer.
 static int lua_UnitIsTappedByPlayer(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "target");
     auto* unit = resolveUnit(L, uid);
     if (!unit) { return luaReturnFalse(L); }
-    uint32_t df = unit->getDynamicFlags();
-    // Tapped by player: has TAPPED flag but also LOOTABLE or TAPPED_BY_ALL
-    bool tapped = (df & 0x0004) != 0;
-    bool lootable = (df & 0x0001) != 0;
-    bool sharedTag = (df & 0x0008) != 0;
-    lua_pushboolean(L, tapped && (lootable || sharedTag));
+    lua_pushboolean(L, game::unitIsTappedByPlayer(unit->getDynamicFlags(), game::isPreWotlk()));
     return 1;
 }
 
-// UnitIsTappedByAllThreatList(unit) - true if shared-tag mob
+// UnitIsTappedByAllThreatList(unit) - shared tag (WotLK only).
 static int lua_UnitIsTappedByAllThreatList(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "target");
     auto* unit = resolveUnit(L, uid);
     if (!unit) { return luaReturnFalse(L); }
-    lua_pushboolean(L, (unit->getDynamicFlags() & 0x0008) != 0);
+    lua_pushboolean(L, game::unitIsTappedByAllThreatList(unit->getDynamicFlags(), game::isPreWotlk()));
     return 1;
 }
 

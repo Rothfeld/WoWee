@@ -208,6 +208,20 @@ TEST_CASE("Corpse state uses the real dynamic dead bit", "[entity][corpse]") {
     REQUIRE(UNIT_DYNFLAG_DEAD == 0x00000020);
 }
 
+TEST_CASE("Tap flags follow each expansion's dynamic flag layout", "[entity][tap]") {
+    // CMaNGOS-TBC: 0x04 TAPPED only for viewers without the tap, 0x08 ROOTED.
+    REQUIRE(unitTappedByOther(UNIT_DYNFLAG_TAPPED, true));
+    REQUIRE(unitTappedByOther(UNIT_DYNFLAG_TAPPED | UNIT_DYNFLAG_ROOTED_LEGACY, true));
+    REQUIRE_FALSE(unitTappedByOther(UNIT_DYNFLAG_ROOTED_LEGACY, true));
+    REQUIRE_FALSE(unitIsTappedByPlayer(UNIT_DYNFLAG_TAPPED | 0x08, true));
+    REQUIRE_FALSE(unitIsTappedByAllThreatList(0x88, true));
+    // WotLK: 0x08 TAPPED_BY_PLAYER, 0x80 TAPPED_BY_ALL_THREAT_LIST.
+    REQUIRE(unitTappedByOther(UNIT_DYNFLAG_TAPPED, false));
+    REQUIRE_FALSE(unitTappedByOther(UNIT_DYNFLAG_TAPPED | UNIT_DYNFLAG_TAPPED_BY_PLAYER, false));
+    REQUIRE_FALSE(unitTappedByOther(UNIT_DYNFLAG_TAPPED | UNIT_DYNFLAG_TAPPED_BY_ALL_THREAT_LIST, false));
+    REQUIRE(unitIsTappedByPlayer(UNIT_DYNFLAG_TAPPED | UNIT_DYNFLAG_TAPPED_BY_PLAYER, false));
+}
+
 TEST_CASE("Unit faction and hostility", "[entity]") {
     Unit u;
     u.setFactionTemplate(14); // Undercity

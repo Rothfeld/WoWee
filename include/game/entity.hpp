@@ -49,13 +49,39 @@ enum class TypeMask : uint16_t {
     CORPSE = 0x0080
 };
 
-// UNIT_DYNAMIC_FLAGS values shared by the supported legacy expansions.
-// Keep these named: 0x08 is TAPPED_BY_PLAYER, while the actual DEAD bit is
-// 0x20. Confusing the two leaves pre-existing corpses standing after login.
+// UNIT_DYNAMIC_FLAGS. LOOTABLE, TAPPED and DEAD are the same in every
+// supported expansion; 0x08 is not. CMaNGOS classic/TBC (SharedDefines.h
+// UnitDynFlags) send 0x08 as ROOTED and send TAPPED only to a viewer who does
+// not hold the tap (Object::BuildValuesUpdate clears it for the tapper), so
+// there is no tapped-by-player or tapped-by-all bit. WotLK sends TAPPED with
+// 0x08 TAPPED_BY_PLAYER for the tapper and 0x80 TAPPED_BY_ALL_THREAT_LIST.
+// The DEAD bit is 0x20 everywhere; confusing it with 0x08 leaves pre-existing
+// corpses standing after login.
 inline constexpr uint32_t UNIT_DYNFLAG_LOOTABLE         = 0x00000001;
 inline constexpr uint32_t UNIT_DYNFLAG_TAPPED           = 0x00000004;
-inline constexpr uint32_t UNIT_DYNFLAG_TAPPED_BY_PLAYER = 0x00000008;
+inline constexpr uint32_t UNIT_DYNFLAG_ROOTED_LEGACY    = 0x00000008;  ///< classic/TBC
+inline constexpr uint32_t UNIT_DYNFLAG_TAPPED_BY_PLAYER = 0x00000008;  ///< WotLK
 inline constexpr uint32_t UNIT_DYNFLAG_DEAD             = 0x00000020;
+inline constexpr uint32_t UNIT_DYNFLAG_TAPPED_BY_ALL_THREAT_LIST = 0x00000080;  ///< WotLK
+
+/// UnitIsTapped: someone holds the tap. Pre-WotLK servers only send TAPPED
+/// to viewers who do not hold it.
+inline constexpr bool unitIsTapped(uint32_t dynamicFlags) {
+    return (dynamicFlags & UNIT_DYNFLAG_TAPPED) != 0;
+}
+/// UnitIsTappedByPlayer. Pre-WotLK carries no bit for it: a tap the player
+/// holds arrives as no TAPPED bit at all.
+inline constexpr bool unitIsTappedByPlayer(uint32_t dynamicFlags, bool preWotlk) {
+    return !preWotlk && (dynamicFlags & UNIT_DYNFLAG_TAPPED_BY_PLAYER) != 0;
+}
+inline constexpr bool unitIsTappedByAllThreatList(uint32_t dynamicFlags, bool preWotlk) {
+    return !preWotlk && (dynamicFlags & UNIT_DYNFLAG_TAPPED_BY_ALL_THREAT_LIST) != 0;
+}
+/// Grey health: tapped, and not by the player or for the whole threat list.
+inline constexpr bool unitTappedByOther(uint32_t dynamicFlags, bool preWotlk) {
+    return unitIsTapped(dynamicFlags) && !unitIsTappedByPlayer(dynamicFlags, preWotlk) &&
+           !unitIsTappedByAllThreatList(dynamicFlags, preWotlk);
+}
 
 /// CREATE updates may omit zero-valued health. In that case the dynamic corpse
 /// flags are the authoritative indication that the unit must spawn dead.

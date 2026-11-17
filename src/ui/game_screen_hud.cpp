@@ -1171,8 +1171,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             bgColor  = IM_COL32(70,  70,  70,  A(160));
         } else if (isHostile) {
             // Check if mob is tapped by another player (grey nameplate)
-            uint32_t dynFlags = unit->getDynamicFlags();
-            bool tappedByOther = (dynFlags & 0x0004) != 0 && (dynFlags & 0x0008) == 0; // TAPPED but not TAPPED_BY_ALL_THREAT_LIST
+            const bool tappedByOther = game::unitTappedByOther(unit->getDynamicFlags(), game::isPreWotlk());
             if (tappedByOther) {
                 barColor = IM_COL32(160, 160, 160, A(200));
                 bgColor  = IM_COL32(80,  80,  80,  A(160));
@@ -1248,8 +1247,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             ImU32 fill = isPlayer && !isHostile ? IM_COL32(0, 0, 255, 255)
                 : reaction <= 2 ? IM_COL32(255, 0, 0, 255)
                 : reaction <= 4 ? IM_COL32(255, 255, 0, 255) : IM_COL32(0, 255, 0, 255);
-            const uint32_t flags = unit->getDynamicFlags();
-            if ((flags & 0x0004) && !(flags & 0x0008)) fill = IM_COL32(128, 128, 128, 255);
+            if (game::unitTappedByOther(unit->getDynamicFlags(), true)) fill = IM_COL32(128, 128, 128, 255);
             // Original Nameplate-Border leaves its interior transparent. Empty
             // health shows the world through that opening, including ghosts.
             drawList->AddImage((ImTextureID)(uintptr_t)plateFill,
