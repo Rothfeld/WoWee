@@ -262,6 +262,9 @@ public:
     /// the unit's idle until cleared (0), so a movement update that stops the
     /// unit resumes the cast pose instead of Stand.
     void setRemoteCastHold(uint64_t guid, uint32_t animationId);
+    /// What a remote unit's one-shot (swing, hit reaction) resumes: its
+    /// locomotion while it is on a move, else remoteIdleAnimation.
+    uint32_t remoteResumeAnimation(uint64_t guid) const;
     /// Ready stance a meleeing unit idles in, from its main-hand item.
     uint32_t meleeReadyAnimation(const game::Unit& unit) const;
     /// Ready stance and swing of a unit's main-hand weapon class.

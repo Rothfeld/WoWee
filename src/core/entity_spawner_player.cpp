@@ -1,4 +1,5 @@
 #include "rendering/animation/stand_pose.hpp"
+#include "rendering/animation/creature_locomotion.hpp"
 #include "rendering/aura_marker_visibility.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/weapon_attachment.hpp"
@@ -926,6 +927,16 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
 void EntitySpawner::setRemoteCastHold(uint64_t guid, uint32_t animationId) {
     if (animationId == 0) remoteCastHolds_.erase(guid);
     else remoteCastHolds_[guid] = animationId;
+}
+
+uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {
+    // The per-frame sync replays locomotion only when the moving state
+    // changes, so a one-shot that ends mid-move must resume it itself.
+    if (const auto moving = creatureWasMoving_.find(guid); moving != creatureWasMoving_.end() && moving->second)
+        return rendering::creatureMovingAnimation(creatureFlyingState_.count(guid) > 0,
+                                                  creatureSwimmingState_.count(guid) > 0,
+                                                  creatureWalkingState_.count(guid) > 0);
+    return remoteIdleAnimation(guid);
 }
 
 EntitySpawner::MeleeWeaponAnimations EntitySpawner::meleeWeaponAnimations(const game::Unit& unit) const {

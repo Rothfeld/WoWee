@@ -278,7 +278,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
         if (!unit) return;
         const uint32_t attack = entitySpawner_.meleeWeaponAnimations(*unit).attack;
-        cr->playAnimation(instanceId, attack, false, entitySpawner_.remoteIdleAnimation(guid));
+        cr->playAnimation(instanceId, attack, false, entitySpawner_.remoteResumeAnimation(guid));
     });
 
     // Victim reaction from SMSG_ATTACKERSTATEUPDATE, one rule for the local
@@ -339,7 +339,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             if (ac) ac->triggerHitReaction(animId);
             return;
         }
-        cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteIdleAnimation(victimGuid));
+        cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteResumeAnimation(victimGuid));
     });
 
     // Stun state callback - enters/exits STUNNED animation on local player
