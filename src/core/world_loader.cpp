@@ -12,6 +12,7 @@
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/water_renderer.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/camera.hpp"
@@ -412,6 +413,22 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                     if (instanceId > 0) {
                         LOG_DEBUG("Instance WMO loaded: modelId=", wmoModelId,
                                 " instanceId=", instanceId);
+                        // Group liquids (MLIQ), with the same placement as the
+                        // groups themselves, exactly as outdoor WMO tiles load them.
+                        if (auto* water = renderer_->getWaterRenderer()) {
+                            glm::mat4 liquidMatrix(1.0f);
+                            liquidMatrix = glm::translate(liquidMatrix, wmoPos);
+                            liquidMatrix = glm::rotate(liquidMatrix, wmoRot.z, glm::vec3(0, 0, 1));
+                            liquidMatrix = glm::rotate(liquidMatrix, wmoRot.y, glm::vec3(0, 1, 0));
+                            liquidMatrix = glm::rotate(liquidMatrix, wmoRot.x, glm::vec3(1, 0, 0));
+                            uint32_t liquidGroups = 0;
+                            for (const auto& group : wmoModel.groups) {
+                                if (!group.liquid.hasLiquid()) continue;
+                                water->loadFromWMO(group.liquid, liquidMatrix, instanceId);
+                                ++liquidGroups;
+                            }
+                            LOG_INFO("Instance WMO liquid groups: ", liquidGroups);
+                        }
                         LOG_DEBUG("  MOHD bbox local: (",
                                    wmoModel.boundingBoxMin.x, ", ", wmoModel.boundingBoxMin.y, ", ", wmoModel.boundingBoxMin.z,
                                    ") to (", wmoModel.boundingBoxMax.x, ", ", wmoModel.boundingBoxMax.y, ", ", wmoModel.boundingBoxMax.z, ")");
