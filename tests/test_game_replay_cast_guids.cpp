@@ -58,21 +58,41 @@ TEST_CASE("an interrupted cast names its caster as the server writes it", "[repl
     }
 }
 
-TEST_CASE("the player's own interrupt reads as one in each expansion's numbering", "[replay][castguid]") {
-    // SPELL_FAILED_INTERRUPTED: 40 on WotLK, 0x25 in cmangos-tbc's enum.
+TEST_CASE("the player's own interrupt is reported by the cast result, not the spell failure", "[replay][castguid]") {
+    // CMaNGOS Spell::cancel sends SMSG_SPELL_FAILURE and then, for a cast
+    // that is not a channel, SMSG_CAST_FAILED with the same reason. Original
+    // 2.4.3 shows one "Interrupted" on the error line and nothing in chat; a
+    // broken channel shows nothing. SPELL_FAILED_INTERRUPTED: 40 on WotLK,
+    // 0x25 in cmangos-tbc's enum.
     for (const auto& [expansion, result] : {std::pair<const char*, uint8_t>{"wotlk", 40},
                                             std::pair<const char*, uint8_t>{"tbc", 0x25}}) {
         CAPTURE(expansion);
+        const bool wotlk = std::string(expansion) == "wotlk";
         Session s(expansion);
-        Packet p(wireOpcode(Opcode::SMSG_SPELL_FAILURE));
-        p.writePackedGuid(Session::kPlayerGuid);
-        if (std::string(expansion) == "wotlk") p.writeUInt8(0);
-        p.writeUInt32(133);
-        p.writeUInt8(result);
-        s.receive(p);
-        const auto& chat = s.handler().getChatHistory();
-        REQUIRE_FALSE(chat.empty());
-        CHECK(chat.back().message.find("Interrupted") != std::string::npos);
+        std::vector<std::string> errors;
+        s.handler().setUIErrorCallback([&](const std::string& msg) { errors.push_back(msg); });
+        s.handler().setGlobalStringLookup([](const char* name) {
+            return std::string(name) == "SPELL_FAILED_INTERRUPTED" ? std::string("Interrupted") : std::string();
+        });
+        const size_t chatBefore = s.handler().getChatHistory().size();
+
+        Packet failure(wireOpcode(Opcode::SMSG_SPELL_FAILURE));
+        failure.writePackedGuid(Session::kPlayerGuid);
+        if (wotlk) failure.writeUInt8(0);
+        failure.writeUInt32(133);
+        failure.writeUInt8(result);
+        s.receive(failure);
+        CHECK(errors.empty());
+        CHECK(s.handler().getChatHistory().size() == chatBefore);
+
+        Packet castFailed(wireOpcode(Opcode::SMSG_CAST_FAILED));
+        if (wotlk) castFailed.writeUInt8(0);
+        castFailed.writeUInt32(133);
+        castFailed.writeUInt8(result);
+        if (!wotlk) castFailed.writeUInt8(0);  // TBC: cast count after the result
+        s.receive(castFailed);
+        CHECK(errors == std::vector<std::string>{"Interrupted"});
+        CHECK(s.handler().getChatHistory().size() == chatBefore);
     }
 }
 

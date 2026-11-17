@@ -2274,26 +2274,50 @@ public:
 
 /** SMSG_CAST_FAILED data */
 // Normalized (WotLK-numbered) SpellCastResults whose SMSG_CAST_RESULT /
-// SMSG_CAST_FAILED payload carries trailing uint32 ids the client can surface:
-//  - requires-spell-focus: one SpellFocusObject id (forge, anvil, cooking fire)
-//  - totems / totem-category: up to two ids naming the missing crafting tool -
-//    item ids for totems, TotemCategory.dbc ids (Blacksmith Hammer, Mining
-//    Pick, ...) for totem-category.
+// SMSG_CAST_FAILED payload carries trailing uint32 values naming what is
+// missing (CMaNGOS TBC Spell::SendCastResult; AzerothCore writes the same):
+//  - REQUIRES_SPELL_FOCUS: SpellFocusObject id (forge, anvil, cooking fire)
+//  - REQUIRES_AREA: AreaTable id
+//  - TOTEMS: the spell's nonzero Totem item ids, up to two
+//  - TOTEM_CATEGORY: the spell's nonzero TotemCategory ids, up to two
+//  - EQUIPPED_ITEM_CLASS(_MAINHAND/_OFFHAND): item class, subclass mask
+//  - NEED_EXOTIC_AMMO: subclass mask
+//  - NEED_MORE_ITEMS: item id, count
+//  - PREVENTED_BY_MECHANIC: SpellMechanic id
+//  - REAGENTS: the first missing reagent's item id
+inline constexpr uint8_t kCastResultEquippedItemClass = 29;
+inline constexpr uint8_t kCastResultEquippedItemClassMainhand = 30;
+inline constexpr uint8_t kCastResultEquippedItemClassOffhand = 31;
+inline constexpr uint8_t kCastResultNeedExoticAmmo = 54;
+inline constexpr uint8_t kCastResultNeedMoreItems = 55;
+inline constexpr uint8_t kCastResultNoPower = 85;
+inline constexpr uint8_t kCastResultOnlyShapeshift = 94;
+inline constexpr uint8_t kCastResultReagents = 100;
+inline constexpr uint8_t kCastResultRequiresArea = 101;
 inline constexpr uint8_t kCastResultRequiresSpellFocus = 102;
 inline constexpr uint8_t kCastResultTotemCategory = 130;
 inline constexpr uint8_t kCastResultTotems = 131;
+inline constexpr uint8_t kCastResultPreventedByMechanic = 147;
 
-/// Read the optional trailing ids of a cast failure payload (see above).
+/// Read the optional trailing values of a cast failure payload (see above).
 inline void readCastResultArgs(network::Packet& packet, uint8_t result,
                                uint32_t& arg1, uint32_t& arg2) {
     arg1 = 0;
     arg2 = 0;
     switch (result) {
         case kCastResultRequiresSpellFocus:
+        case kCastResultRequiresArea:
+        case kCastResultNeedExoticAmmo:
+        case kCastResultPreventedByMechanic:
+        case kCastResultReagents:
             if (packet.hasRemaining(4)) arg1 = packet.readUInt32();
             break;
         case kCastResultTotems:
         case kCastResultTotemCategory:
+        case kCastResultEquippedItemClass:
+        case kCastResultEquippedItemClassMainhand:
+        case kCastResultEquippedItemClassOffhand:
+        case kCastResultNeedMoreItems:
             if (packet.hasRemaining(4)) arg1 = packet.readUInt32();
             if (packet.hasRemaining(4)) arg2 = packet.readUInt32();
             break;
@@ -2306,8 +2330,8 @@ struct CastFailedData {
     uint8_t castCount = 0;
     uint32_t spellId = 0;
     uint8_t result = 0;
-    uint32_t miscArg = 0;   // first trailing id (see readCastResultArgs)
-    uint32_t miscArg2 = 0;  // second trailing id (totem failures only)
+    uint32_t miscArg = 0;   // first trailing value (see readCastResultArgs)
+    uint32_t miscArg2 = 0;  // second trailing value (see readCastResultArgs)
 
     [[nodiscard]] bool isValid() const { return spellId != 0; }
 };

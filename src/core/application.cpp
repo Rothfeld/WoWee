@@ -976,6 +976,12 @@ bool Application::initialize() {
                     addonManager_->runInterfaceCommand(lua);
                 }
             });
+            // The interface's GlobalStrings, which hold the client's own texts
+            // (cast failures among them) in the expansion's words.
+            gameHandler->setGlobalStringLookup([this](const char* name) {
+                if (!addonManager_ || !addonsLoaded_) return std::string{};
+                return addonManager_->getLuaEngine()->globalString(name);
+            });
             // The same route, for a question rather than an instruction.
             gameHandler->setInterfaceQueryCallback([this](const std::string& expr) {
                 if (!addonManager_ || !addonsLoaded_) return false;

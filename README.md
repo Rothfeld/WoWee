@@ -660,6 +660,39 @@ Flag 0x400 is not rendered; drawing those particles pinned at their birth
 point or stretched from it did not match the original client.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
 
+### Cast failure text
+
+`build/bin/test_tbc_cast_results` checks the result-to-GlobalStrings names.
+
+Every cast failure shows the interface's own GlobalStrings line, named after
+the result: TBC 0x14 is `SPELL_FAILED_CASTER_AURASTATE`, "You can't do that
+yet" (Riposte without a parry). `include/game/cast_result_text.hpp` holds the
+names; the loaded expansion's `GlobalStrings.lua` supplies the words. The
+original shows them only on the red error line (UI_ERROR_MESSAGE, colour
+1.0/0.1/0.1), never in chat. `SPELL_FAILED_DONT_REPORT` shows nothing.
+
+Parameterised lines, as the 2.4.3 client fills them:
+
+| Result | Example | Argument |
+|---|---|---|
+| NO_POWER | Not enough energy | `ERR_OUT_OF_<power>` by the spell's Spell.dbc PowerType |
+| REQUIRES_SPELL_FOCUS | Requires Forge | SpellFocusObject.dbc name from the packet |
+| TOTEMS / TOTEM_CATEGORY | Requires Blacksmith Hammer | first tool of the spell's two not carried |
+| REAGENTS | Missing reagent: Copper Ore | item named by the packet |
+| EQUIPPED_ITEM_CLASS(_MAINHAND) | Must have a Dagger equipped in the main hand | ItemSubClassMask.dbc name, else ItemSubClass.dbc DisplayName |
+| ONLY_SHAPESHIFT | Must be in Stealth | SpellShapeshiftForm.dbc name of the spell's one Stances bit |
+
+The original refuses a missing tool and missing equipment before sending:
+Copper Modulator with nothing reads "Requires Blacksmith Hammer" although the
+server checks reagents first, and Backstab unarmed reads the dagger line
+instead of "You must be behind your target". WoWee checks both locally
+(`missingEquipment`, `firstMissingTool`). An interrupted cast shows one
+"Interrupted" from the cast result that follows SMSG_SPELL_FAILURE; a broken
+channel shows nothing. Gotcha: the parameterised lines need the `Spell`
+`Stances`/`Totem*`/`AttributesEx3`, `ItemSubClassMask` and
+`SpellShapeshiftForm` layouts in the installed `dbc_layouts.json`.
+Evidence: `_experiments/20261117T182446Z.pair7_cast_errors/` in the workspace.
+
 ### TBC combat feedback
 
 Outgoing melee damage uses white numbers; ability damage uses yellow numbers.

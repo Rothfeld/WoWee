@@ -3010,6 +3010,14 @@ public:
     using PlayPositionalSoundCallback = std::function<void(uint32_t soundId, uint64_t sourceGuid)>;
     void setPlayPositionalSoundCallback(PlayPositionalSoundCallback cb) { playPositionalSoundCallback_ = std::move(cb); }
 
+    /// A string global of the loaded interface (FrameXML GlobalStrings.lua),
+    /// empty when the interface has none by that name or is not loaded.
+    using GlobalStringLookup = std::function<std::string(const char* name)>;
+    void setGlobalStringLookup(GlobalStringLookup lookup) { globalStringLookup_ = std::move(lookup); }
+    [[nodiscard]] std::string globalString(const char* name) const {
+        return globalStringLookup_ ? globalStringLookup_(name) : std::string{};
+    }
+
     // UI error frame: prominent on-screen error messages (spell can't be cast, etc.)
     using UIErrorCallback = std::function<void(const std::string& msg)>;
     void setUIErrorCallback(UIErrorCallback cb) { uiErrorCallback_ = std::move(cb); }
@@ -3523,8 +3531,6 @@ public:
     /// target. This one carries it.
     uint32_t getSpellImplicitTargetA(uint32_t spellId) const;
     bool isSpellKnownToClient(uint32_t spellId) const;
-    // Spell.dbc TargetAuraState (aura state the target must be in; 0 = no requirement).
-    uint32_t getSpellTargetAuraState(uint32_t spellId) const;
 
     struct TrainerTab {
         std::string name;
@@ -5228,6 +5234,7 @@ private:
 
     // ---- UI error frame callback ----
     UIErrorCallback uiErrorCallback_;
+    GlobalStringLookup globalStringLookup_;
 
     uint32_t watchedFactionId_ = 0; // auto-set to most recently changed faction
 

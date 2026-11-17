@@ -36,11 +36,6 @@ private:
 
 } // namespace
 
-TEST_CASE("DONT_REPORT cast failures remain player-facing", "[spell][failure]") {
-    REQUIRE(std::string(wowee::game::getSpellCastResultString(27)) ==
-            "You can't do that right now");
-}
-
 // ---------------------------------------------------------------------------
 // Range classification
 // ---------------------------------------------------------------------------

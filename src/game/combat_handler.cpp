@@ -1,4 +1,5 @@
 #include "game/combat_handler.hpp"
+#include "game/spell_handler.hpp"
 #include "game/combat_log_event.hpp"
 #include "game/classic_combat_chat.hpp"
 #include "audio/ui_sound_manager.hpp"
@@ -1166,19 +1167,18 @@ void CombatHandler::handlePetCastFailed(network::Packet& packet) {
     if (packet.hasRemaining(minSize)) {
         if (hasCount) /*uint8_t castCount =*/ packet.readUInt8();
         uint32_t spellId   = packet.readUInt32();
-        uint8_t  reason    = (packet.hasRemaining(1))
+        uint8_t  rawReason = (packet.hasRemaining(1))
                                  ? packet.readUInt8() : 0;
+        const uint8_t reason = owner_.getPacketParsers()->castResult(rawReason);
+        uint32_t arg1 = 0, arg2 = 0;
+        readCastResultArgs(packet, reason, arg1, arg2);
         LOG_DEBUG("SMSG_PET_CAST_FAILED: spell=", spellId,
-                  " reason=", static_cast<int>(reason));
+                  " reason=", static_cast<int>(rawReason), " mapped=", static_cast<int>(reason));
+        // The same GlobalStrings line as the player's own failure, on the
+        // same error line. Not yet compared with the original for a pet.
         if (reason != 0) {
-            const char* reasonStr = getSpellCastResultString(reason);
-            const std::string& sName = owner_.getSpellName(spellId);
-            std::string errMsg;
-            if (reasonStr && *reasonStr)
-                errMsg = sName.empty() ? reasonStr : (sName + ": " + reasonStr);
-            else
-                errMsg = sName.empty() ? "Pet spell failed." : (sName + ": Pet spell failed.");
-            owner_.addSystemChatMessage(errMsg);
+            if (const std::string text = castFailureText(owner_, spellId, reason, arg1, arg2); !text.empty())
+                owner_.addUIError(text);
         }
     }
     packet.skipAll();

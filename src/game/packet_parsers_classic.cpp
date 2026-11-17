@@ -960,7 +960,7 @@ bool ClassicPacketParsers::parseCastFailed(network::Packet& packet, CastFailedDa
 // Classic SMSG_CAST_RESULT: same layout as parseCastFailed (spellId + result),
 // but the result enum starts at 0=AFFECTING_COMBAT (no SUCCESS entry).
 // Apply the same +1 shift used in parseCastFailed so the result codes
-// align with WotLK's getSpellCastResultString table.
+// align with the WotLK-numbered results (cast_result_text.hpp).
 // ============================================================================
 bool ClassicPacketParsers::parseCastResult(network::Packet& packet, uint32_t& spellId, uint8_t& result,
                                            uint32_t& miscArg, uint32_t& miscArg2) {

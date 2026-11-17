@@ -1,4 +1,5 @@
 #include "game/spell_handler.hpp"
+#include "game/cast_result_text.hpp"
 #include "game/spell_prerequisites.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "game/protocol_constants.hpp"
@@ -90,90 +91,376 @@ bool isRoutineCastRejection(uint8_t result) {
     }
 }
 
-bool isBandageSpell(const GameHandler& owner, uint32_t spellId) {
-    if (spellId == 0) return false;
-    for (const auto& [itemId, info] : owner.getItemInfoCache()) {
-        (void)itemId;
-        if (!isBandageItem(&info)) continue;
-        for (const auto& itemSpell : info.spells) {
-            if (itemSpell.spellId == spellId) return true;
+// A string column of the DBC row whose id (column 0) is `id`; empty, with an
+// error logged, when the file or the row is missing.
+std::string dbcStringById(GameHandler& owner, const char* file, uint32_t id, uint32_t column) {
+    auto* am = owner.services().assetManager;
+    assert(am && am->isInitialized());
+    auto dbc = am->loadDBC(file);
+    if (!dbc || !dbc->isLoaded()) {
+        LOG_ERROR("Cast failure text: ", file, " is not loaded");
+        return {};
+    }
+    const int32_t row = dbc->findRecordById(id);
+    if (row < 0) {
+        LOG_ERROR("Cast failure text: ", file, " has no row ", id);
+        return {};
+    }
+    return dbc->getString(static_cast<uint32_t>(row), column);
+}
+
+// The item's name from the item cache. An item the cache has not seen yet is
+// requested; the failure in hand then has no name to show.
+std::string castFailureItemName(GameHandler& owner, uint32_t itemId) {
+    if (const auto* info = owner.getItemInfo(itemId); info && info->valid) return info->name;
+    owner.ensureItemInfo(itemId);
+    LOG_ERROR("Cast failure text: item ", itemId, " is not in the item cache yet");
+    return {};
+}
+
+// Every item the player carries: equipped, backpack, bags and keyring - the
+// places CMaNGOS Player::HasItemCount / HasItemTotemCategory search.
+template <class Match>
+bool carriesItem(const Inventory& inventory, Match&& match) {
+    for (int slot = 0; slot < static_cast<int>(EquipSlot::NUM_SLOTS); ++slot) {
+        const auto& s = inventory.getEquipSlot(static_cast<EquipSlot>(slot));
+        if (!s.empty() && match(s.item.itemId)) return true;
+    }
+    for (int i = 0; i < inventory.getBackpackSize(); ++i) {
+        const auto& s = inventory.getBackpackSlot(i);
+        if (!s.empty() && match(s.item.itemId)) return true;
+    }
+    for (int bag = 0; bag < Inventory::NUM_BAG_SLOTS; ++bag) {
+        for (int i = 0; i < inventory.getBagSize(bag); ++i) {
+            const auto& s = inventory.getBagSlot(bag, i);
+            if (!s.empty() && match(s.item.itemId)) return true;
         }
+    }
+    for (int i = 0; i < inventory.getKeyringSize(); ++i) {
+        const auto& s = inventory.getKeyringSlot(i);
+        if (!s.empty() && match(s.item.itemId)) return true;
     }
     return false;
 }
 
-std::string castFailureMessage(const GameHandler& owner, uint32_t spellId,
-                               uint8_t result, int powerType, uint32_t miscArg = 0,
-                               uint32_t miscArg2 = 0) {
-    if (spellclass::isFishingCast(spellId)) {
-        if (result == 11 || result == 60 || result == 178)
-            return "Face open water and try casting again.";
-        if (result == 58)
-            return "You can't fish in this area.";
-        if (result == 156)
-            return "The water there is too shallow.";
-    }
+// Whether a carried item serves as the tool category `required`: the same
+// TotemCategory.dbc type and every bit of the required mask (CMaNGOS
+// IsTotemCategoryCompatiableWith; runed rods of a higher grade serve lower).
+// nullopt: no match among the items known, and a carried item whose query
+// response has not arrived yet could still be one.
+std::optional<bool> carriesTotemCategory(GameHandler& owner, uint32_t required) {
+    auto* am = owner.services().assetManager;
+    assert(am && am->isInitialized());
+    auto dbc = am->loadDBC("TotemCategory.dbc");
+    assert(dbc && dbc->isLoaded());
+    // ID, name locstring (16 + flags), type at 18, mask at 19 (TBC and WotLK).
+    assert(dbc->getFieldCount() == 20);
+    const int32_t requiredRow = dbc->findRecordById(required);
+    assert(requiredRow >= 0);
+    const uint32_t type = dbc->getUInt32(static_cast<uint32_t>(requiredRow), 18);
+    const uint32_t mask = dbc->getUInt32(static_cast<uint32_t>(requiredRow), 19);
+    bool unknown = false;
+    const bool found = carriesItem(owner.getInventory(), [&](uint32_t itemId) {
+        const auto* info = owner.getItemInfo(itemId);
+        if (!info || !info->valid) { unknown = true; return false; }
+        if (info->totemCategory == 0) return false;
+        const int32_t row = dbc->findRecordById(info->totemCategory);
+        if (row < 0) return false;
+        return dbc->getUInt32(static_cast<uint32_t>(row), 18) == type &&
+               (dbc->getUInt32(static_cast<uint32_t>(row), 19) & mask) == mask;
+    });
+    if (found) return true;
+    if (unknown) return std::nullopt;
+    return false;
+}
 
-    // Bandages use a hidden target aura to enforce the Recently Bandaged
-    // lockout. Exposing the protocol label ("Target aurastate") gives the
-    // player no actionable information.
-    if (isBandageSpell(owner, spellId)) {
-        if (result == 111)
-            return "Cannot use another bandage while Recently Bandaged is active.";
-        if (result == 40 || result == 41)
-            return "Bandaging was interrupted. Remain still until it finishes.";
-    }
+std::optional<bool> carriesTool(GameHandler& owner, uint8_t result, uint32_t id) {
+    if (result == kCastResultTotems)
+        return carriesItem(owner.getInventory(), [id](uint32_t itemId) { return itemId == id; });
+    return carriesTotemCategory(owner, id);
+}
 
-    // "Requires spell focus" means a crafting station object must be nearby.
-    // The packet names which one via its SpellFocusObject id - surface it.
-    if (result == kCastResultRequiresSpellFocus) {
-        if (miscArg != 0) {
-            const std::string& focusName = owner.getSpellFocusName(miscArg);
-            if (!focusName.empty())
-                return "Requires " + focusName + " nearby.";
-        }
-        return "You must be near the right crafting station (forge, anvil, cooking fire, ...).";
+// The %s of SPELL_FAILED_EQUIPPED_ITEM_CLASS*: ItemSubClassMask.dbc's name for
+// exactly that class and mask ("Melee Weapon" for 0x2a5f3), else, for a single
+// subclass, ItemSubClass.dbc's display name ("Dagger", "Thrown"). Original
+// 2.4.3: Sinister Strike unarmed "Must have a Melee Weapon equipped in the main
+// hand", Backstab "Must have a Dagger equipped in the main hand", Throw "Must
+// have a Thrown equipped".
+std::string equippedItemClassName(GameHandler& owner, uint32_t itemClass, uint32_t subClassMask) {
+    auto* am = owner.services().assetManager;
+    assert(am && am->isInitialized());
+    const auto* maskLayout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("ItemSubClassMask") : nullptr;
+    assert(maskLayout && "dbc_layouts.json lacks ItemSubClassMask; deploy current expansion metadata");
+    const uint32_t maskClassField = maskLayout->field("ClassID");
+    const uint32_t maskField = maskLayout->field("Mask");
+    const uint32_t maskNameField = maskLayout->field("Name");
+    assert(maskClassField != 0xFFFFFFFF && maskField != 0xFFFFFFFF && maskNameField != 0xFFFFFFFF);
+    auto masks = am->loadDBC("ItemSubClassMask.dbc");
+    assert(masks && masks->isLoaded());
+    for (uint32_t row = 0; row < masks->getRecordCount(); ++row) {
+        if (masks->getUInt32(row, maskClassField) == itemClass && masks->getUInt32(row, maskField) == subClassMask)
+            return masks->getString(row, maskNameField);
     }
+    if (subClassMask == 0 || (subClassMask & (subClassMask - 1)) != 0) {
+        LOG_ERROR("Cast failure text: no ItemSubClassMask name for class ", itemClass,
+                  " mask 0x", std::hex, subClassMask, std::dec);
+        return {};
+    }
+    uint32_t subClass = 0;
+    while (!(subClassMask & (1u << subClass))) ++subClass;
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("ItemSubClass") : nullptr;
+    assert(layout);
+    const uint32_t classField = layout->field("ClassID");
+    const uint32_t subClassField = layout->field("SubClassID");
+    const uint32_t nameField = layout->field("DisplayName");
+    assert(classField != 0xFFFFFFFF && subClassField != 0xFFFFFFFF && nameField != 0xFFFFFFFF);
+    auto subClasses = am->loadDBC("ItemSubClass.dbc");
+    assert(subClasses && subClasses->isLoaded());
+    for (uint32_t row = 0; row < subClasses->getRecordCount(); ++row) {
+        if (subClasses->getUInt32(row, classField) == itemClass &&
+            subClasses->getUInt32(row, subClassField) == subClass)
+            return subClasses->getString(row, nameField);
+    }
+    LOG_ERROR("Cast failure text: ItemSubClass.dbc has no class ", itemClass, " subclass ", subClass);
+    return {};
+}
 
-    // "Totems" / "Totem category" mean a required crafting tool is missing
-    // (blacksmith hammer, mining pick, ...). Name it from the packet's ids:
-    // TotemCategory.dbc entries for totem-category, item ids for totems.
-    if (result == kCastResultTotemCategory || result == kCastResultTotems) {
-        std::string tools;
-        for (uint32_t id : {miscArg, miscArg2}) {
-            if (id == 0) continue;
-            std::string name;
-            if (result == kCastResultTotemCategory) {
-                name = owner.getTotemCategoryName(id);
-            } else if (const auto* info = owner.getItemInfo(id); info && info->valid) {
-                name = info->name;
+// The %s of SPELL_FAILED_ONLY_SHAPESHIFT: the one form of the spell's Spell.dbc
+// Stances mask (bit n-1 for form n), named by SpellShapeshiftForm.dbc. Original
+// 2.4.3, Cheap Shot out of stealth: "Must be in Stealth".
+std::string requiredFormName(GameHandler& owner, uint32_t spellId) {
+    auto* am = owner.services().assetManager;
+    assert(am && am->isInitialized());
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+    assert(layout);
+    const uint32_t stancesField = layout->field("Stances");
+    if (stancesField == 0xFFFFFFFF) {
+        LOG_ERROR("Cast failure text: the installed Spell layout has no Stances field");
+        return {};
+    }
+    auto spells = am->loadDBC("Spell.dbc");
+    assert(spells && spells->isLoaded());
+    const int32_t row = spells->findRecordById(spellId);
+    if (row < 0) {
+        LOG_ERROR("Cast failure text: Spell.dbc has no spell ", spellId);
+        return {};
+    }
+    const uint32_t stances = spells->getUInt32(static_cast<uint32_t>(row), stancesField);
+    if (stances == 0 || (stances & (stances - 1)) != 0) {
+        LOG_ERROR("Cast failure text: spell ", spellId, " stance mask 0x", std::hex, stances, std::dec,
+                  " does not name one form; how the original lists several is not established");
+        return {};
+    }
+    uint32_t form = 1;
+    while (!(stances & (1u << (form - 1)))) ++form;
+    const auto* formLayout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("SpellShapeshiftForm") : nullptr;
+    assert(formLayout && "dbc_layouts.json lacks SpellShapeshiftForm; deploy current expansion metadata");
+    const uint32_t formNameField = formLayout->field("Name");
+    assert(formNameField != 0xFFFFFFFF);
+    return dbcStringById(owner, "SpellShapeshiftForm.dbc", form, formNameField);
+}
+
+} // namespace
+
+std::optional<uint8_t> missingEquipment(GameHandler& owner, uint32_t spellId) {
+    auto* am = owner.services().assetManager;
+    // No game data loaded (packet replay tests): nothing to check against.
+    if (!am || !am->isInitialized()) return std::nullopt;
+    owner.loadSpellNameCache();
+    const auto found = owner.spellNameCacheRef().find(spellId);
+    if (found == owner.spellNameCacheRef().end()) return std::nullopt;
+    const int32_t itemClass = found->second.equippedItemClass;
+    const uint32_t subClassMask = found->second.equippedItemSubClassMask;
+    if (itemClass < 0) return std::nullopt;
+
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+    assert(layout);
+    const uint32_t attrEx3Field = layout->field("AttributesEx3");
+    if (attrEx3Field == 0xFFFFFFFF) {
+        LOG_ERROR("Equipment check: dbc_layouts.json lacks Spell.AttributesEx3; deploy current expansion metadata");
+        return std::nullopt;
+    }
+    auto spells = am->loadDBC("Spell.dbc");
+    assert(spells && spells->isLoaded());
+    const int32_t row = spells->findRecordById(spellId);
+    if (row < 0) return std::nullopt;
+    const uint32_t attrEx3 = spells->getUInt32(static_cast<uint32_t>(row), attrEx3Field);
+
+    const auto& inventory = owner.getInventory();
+    bool unknown = false;
+    // The item in a slot, if its query response is in; marks unknown otherwise.
+    const auto equipped = [&](EquipSlot slot) -> const ItemQueryResponseData* {
+        const auto& s = inventory.getEquipSlot(slot);
+        if (s.empty()) return nullptr;
+        const auto* info = owner.getItemInfo(s.item.itemId);
+        if (!info || !info->valid) { unknown = true; return nullptr; }
+        return info;
+    };
+    constexpr uint32_t kItemClassWeapon = 2;
+    constexpr uint32_t kItemClassArmor = 4;
+    // CMaNGOS Player::HasItemFitToSpellReqirements, in its order.
+    constexpr uint32_t kAttrEx3RequiresMainHand = 0x00000400;
+    constexpr uint32_t kAttrEx3RequiresOffHand = 0x01000000;
+    const auto weaponIn = [&](EquipSlot slot) {
+        const auto* info = equipped(slot);
+        return info && info->itemClass == kItemClassWeapon;
+    };
+    if ((attrEx3 & kAttrEx3RequiresMainHand) && !weaponIn(EquipSlot::MAIN_HAND))
+        return unknown ? std::nullopt : std::optional<uint8_t>(kCastResultEquippedItemClassMainhand);
+    if ((attrEx3 & kAttrEx3RequiresOffHand) && !weaponIn(EquipSlot::OFF_HAND))
+        return unknown ? std::nullopt : std::optional<uint8_t>(kCastResultEquippedItemClassOffhand);
+    const auto fits = [&](EquipSlot slot) {
+        const auto* info = equipped(slot);
+        return info && static_cast<int32_t>(info->itemClass) == itemClass &&
+               (subClassMask == 0 || (subClassMask & (1u << info->subClass)) != 0);
+    };
+    if (static_cast<uint32_t>(itemClass) == kItemClassWeapon) {
+        for (EquipSlot slot : {EquipSlot::MAIN_HAND, EquipSlot::OFF_HAND, EquipSlot::RANGED})
+            if (fits(slot)) return std::nullopt;
+    } else if (static_cast<uint32_t>(itemClass) == kItemClassArmor) {
+        for (int slot = 0; slot <= static_cast<int>(EquipSlot::RANGED); ++slot)
+            if (fits(static_cast<EquipSlot>(slot))) return std::nullopt;
+    } else {
+        return std::nullopt;  // the server logs these as unhandled, and so not here
+    }
+    if (unknown) return std::nullopt;
+    return kCastResultEquippedItemClass;
+}
+
+std::optional<std::pair<uint8_t, uint32_t>> firstMissingTool(GameHandler& owner, uint32_t spellId) {
+    auto* am = owner.services().assetManager;
+    // No game data loaded (packet replay tests): nothing to check against.
+    if (!am || !am->isInitialized()) return std::nullopt;
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+    assert(layout);
+    auto spells = am->loadDBC("Spell.dbc");
+    assert(spells && spells->isLoaded());
+    const int32_t row = spells->findRecordById(spellId);
+    if (row < 0) return std::nullopt;
+    // Items first, then categories, two of each; classic has no categories.
+    for (const auto& [result, prefix] : {std::pair<uint8_t, const char*>{kCastResultTotems, "Totem"},
+                                         std::pair<uint8_t, const char*>{kCastResultTotemCategory, "TotemCategory"}}) {
+        for (int i = 0; i < 2; ++i) {
+            const uint32_t field = layout->field(std::string(prefix) + std::to_string(i));
+            if (field == 0xFFFFFFFF) {
+                if (result == kCastResultTotems)
+                    LOG_ERROR("Tool check: dbc_layouts.json lacks Spell.", prefix, i,
+                              "; deploy current expansion metadata");
+                continue;
             }
-            if (name.empty()) continue;
-            if (!tools.empty()) tools += " and ";
-            tools += name;
-        }
-        if (!tools.empty()) return "Requires " + tools + " in your inventory.";
-        return "Requires a crafting tool you don't have (blacksmith hammer, mining pick, ...).";
-    }
-
-    // "Target aurastate" (111) means the target isn't in the state the ability needs.
-    // Translate the spell's required Spell.dbc TargetAuraState into actionable text -
-    // Execute and Hammer of Wrath want a low-health target, etc.
-    if (result == 111) {
-        switch (owner.getSpellTargetAuraState(spellId)) {
-            case 2:  return "Target must be below 20% health.";
-            case 13: return "Target must be below 35% health.";
-            case 14: return "Target must be affected by Immolate or Shadowflame.";
-            case 16: return "Target must be afflicted by your Deadly Poison.";
-            case 17: return "Target must be enraged.";
-            case 18: return "Target must be bleeding.";
-            default: return "The target isn't in the required state for this ability.";
+            const uint32_t id = spells->getUInt32(static_cast<uint32_t>(row), field);
+            if (id == 0) continue;
+            const auto carried = carriesTool(owner, result, id);
+            if (!carried) {
+                LOG_WARNING("Tool check: spell ", spellId, " tool ", id,
+                            " undecided while carried items are still being queried; the server decides");
+                return std::nullopt;
+            }
+            if (!*carried) return std::pair<uint8_t, uint32_t>{result, id};
         }
     }
+    return std::nullopt;
+}
 
-    const char* reason = getSpellCastResultString(result, powerType);
-    return reason ? reason
-                  : ("Spell cast failed (error " + std::to_string(result) + ")");
+std::string castFailureText(GameHandler& owner, uint32_t spellId, uint8_t result,
+                            uint32_t arg1, uint32_t arg2) {
+    const bool tbc = isPreWotlk() && !isClassicLikeExpansion();
+    const char* name = result == kCastResultNoPower
+        ? noPowerGlobalName(owner.getSpellData(spellId).powerType)
+        : castResultGlobalName(result, tbc);
+    if (!name) {
+        if (result != 27 && result != 0)  // DONT_REPORT, SUCCESS: nothing to say
+            LOG_ERROR("Cast failure text: no GlobalStrings name for result ", static_cast<int>(result),
+                      " of spell ", spellId);
+        return {};
+    }
+    const std::string pattern = owner.globalString(name);
+    if (pattern.empty()) {
+        LOG_ERROR("Cast failure text: GlobalStrings has no ", name, " (spell ", spellId, ")");
+        return {};
+    }
+    if (!globalStringHasConversions(pattern)) return pattern;
+
+    std::vector<std::string> args;
+    switch (result) {
+        case kCastResultRequiresSpellFocus:
+            // SpellFocusObject.dbc: ID, Name locstring. "Requires Forge".
+            args = {dbcStringById(owner, "SpellFocusObject.dbc", arg1, 1)};
+            break;
+        case kCastResultRequiresArea:
+            args = {owner.getAreaName(arg1)};
+            break;
+        case kCastResultReagents:
+            // "Missing reagent: Copper Ore" - the server names the first missing one.
+            args = {castFailureItemName(owner, arg1)};
+            break;
+        case kCastResultTotems:
+        case kCastResultTotemCategory: {
+            // The server lists every tool the spell takes; the original names the
+            // first the player does not carry. Copper Modulator (Blacksmith
+            // Hammer, Arclight Spanner) with neither: "Requires Blacksmith
+            // Hammer"; with the hammer: "Requires Arclight Spanner".
+            uint32_t missing = 0;
+            for (uint32_t id : {arg1, arg2}) {
+                if (id == 0) continue;
+                if (carriesTool(owner, result, id) != true) { missing = id; break; }
+            }
+            if (missing == 0) {
+                LOG_ERROR("Cast failure text: ", name, " for spell ", spellId, " but tools ", arg1, ", ", arg2,
+                          " are all carried");
+                return {};
+            }
+            args = {result == kCastResultTotems ? castFailureItemName(owner, missing)
+                                                : owner.getTotemCategoryName(missing)};
+            break;
+        }
+        case kCastResultEquippedItemClass:
+        case kCastResultEquippedItemClassMainhand:
+        case kCastResultEquippedItemClassOffhand:
+            args = {equippedItemClassName(owner, arg1, arg2)};
+            break;
+        case kCastResultOnlyShapeshift:
+            args = {requiredFormName(owner, spellId)};
+            break;
+        case kCastResultPreventedByMechanic:
+            // SpellMechanic.dbc: ID, state name locstring ("stunned", "frozen").
+            args = {dbcStringById(owner, "SpellMechanic.dbc", arg1, 1)};
+            break;
+        case kCastResultNeedMoreItems:
+            // "Requires %d %s.": the shortfall, then the item.
+            args = {std::to_string(arg2), castFailureItemName(owner, arg1)};
+            break;
+        default:
+            break;
+    }
+    // A half-filled pattern is not what the original shows either.
+    const bool resolved = !args.empty() &&
+        std::none_of(args.begin(), args.end(), [](const std::string& a) { return a.empty(); });
+    const std::string text = resolved ? formatGlobalString(pattern, args) : std::string{};
+    if (text.empty()) {
+        LOG_ERROR("Cast failure text: could not fill ", name, " \"", pattern, "\" for spell ", spellId,
+                  " (args ", arg1, ", ", arg2, ")");
+        return {};
+    }
+    return text;
+}
+
+namespace {
+
+// A refusal the client decides itself, in the interface's GlobalStrings words.
+void raiseGlobalStringError(GameHandler& owner, const char* name) {
+    const std::string text = owner.globalString(name);
+    if (text.empty()) {
+        LOG_ERROR("GlobalStrings has no ", name);
+        return;
+    }
+    owner.raiseUiError(text);
 }
 
 bool isGatherSpellId(uint32_t spellId) {
@@ -182,57 +469,6 @@ bool isGatherSpellId(uint32_t spellId) {
 
 bool shouldDespawnGatherTarget(uint8_t result) {
     return result == kSpellFailedAlreadyOpen || result == kSpellFailedChestInUse;
-}
-
-bool isMiningGatherSpell(uint32_t spellId) {
-    return isMiningRank(spellId);
-}
-
-uint32_t gatherRequiredSkillRank(GameHandler& owner, uint64_t goGuid) {
-    auto entity = owner.getEntityManager().getEntity(goGuid);
-    if (!entity || entity->getType() != ObjectType::GAMEOBJECT) return 0;
-    auto go = std::static_pointer_cast<GameObject>(entity);
-    const auto* info = owner.getCachedGameObjectInfo(go->getEntry());
-    if (!info || !info->hasData || info->data[0] == 0) return 0;
-
-    auto* assets = owner.services().assetManager;
-    auto lockDbc = assets ? assets->loadDBC("Lock.dbc") : nullptr;
-    if (!lockDbc || !lockDbc->isLoaded() || lockDbc->getFieldCount() < 33) return 0;
-
-    const uint32_t lockId = info->data[0];
-    for (uint32_t row = 0; row < lockDbc->getRecordCount(); ++row) {
-        if (lockDbc->getUInt32(row, 0) != lockId) continue;
-        // Lock.dbc: Type[8], Index[8], Skill[8], Action[8]. Resource
-        // nodes have a LOCK_KEY_SKILL entry whose Skill value is the exact
-        // Mining/Herbalism rank enforced by the server.
-        for (uint32_t slot = 0; slot < 8; ++slot) {
-            constexpr uint32_t kLockKeySkill = 2;
-            if (lockDbc->getUInt32(row, 1 + slot) != kLockKeySkill) continue;
-            const uint32_t required = lockDbc->getUInt32(row, 17 + slot);
-            if (required != 0) return required;
-        }
-        break;
-    }
-    return 0;
-}
-
-std::string gatherCastFailureMessage(GameHandler& owner, uint64_t goGuid,
-                                     uint32_t spellId, uint8_t result,
-                                     const std::string& fallback) {
-    if (result == kSpellFailedTryAgain) return "Failed.";
-    if (result == kSpellFailedChestInUse) return "Already in use.";
-    // LOW_CASTLEVEL is the server's generic wording for an insufficient
-    // gathering profession rank. MIN_SKILL_REQUIRED is used by some cores.
-    if (result == 49 || result == 150) {
-        const char* skill = isMiningGatherSpell(spellId) ? "Mining" : "Herbalism";
-        const uint32_t required = gatherRequiredSkillRank(owner, goGuid);
-        if (required != 0) {
-            return std::string("Requires ") + skill + " skill " +
-                   std::to_string(required) + ".";
-        }
-        return std::string("Your ") + skill + " skill is too low for this node.";
-    }
-    return fallback;
 }
 
 // What the cast bar says when the player casts an OPEN_LOCK spell at a game
@@ -835,22 +1071,50 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     switch (prerequisite) {
         case SpellPrerequisite::Ready: break;
         case SpellPrerequisite::Unknown:
+            // No text: nothing the original would refuse with is known here.
             LOG_ERROR("Cast rejected: missing Spell.dbc entry ", spellId);
-            owner_.raiseUiError("Spell data unavailable");
             return;
         case SpellPrerequisite::Passive:
             LOG_DEBUG("Ignoring cast request for passive spell ", spellId);
             return;
-        case SpellPrerequisite::NoPower: {
-            const auto data = owner_.getSpellData(spellId);
-            owner_.raiseUiError(data.powerType == 3 ? "Not enough energy" :
-                data.powerType == 1 ? "Not enough rage" : "Not enough mana");
+        case SpellPrerequisite::Stealth:
+            // Sent, and the server answers. Original 2.4.3, Cheap Shot out of
+            // stealth: "Must be in Stealth" (SPELL_FAILED_ONLY_SHAPESHIFT with
+            // the Stealth form), not ONLY_STEALTHED's "You must be in stealth
+            // mode." that a local refusal would have shown.
+            break;
+        default: {
+            // The client's own refusals, in the same GlobalStrings words the
+            // server's would carry.
+            const char* name = nullptr;
+            switch (prerequisite) {
+                case SpellPrerequisite::NoPower:
+                    name = noPowerGlobalName(owner_.getSpellData(spellId).powerType); break;
+                case SpellPrerequisite::NoComboPoints: name = "SPELL_FAILED_NO_COMBO_POINTS"; break;
+                case SpellPrerequisite::Combat: name = "SPELL_FAILED_AFFECTING_COMBAT"; break;
+                case SpellPrerequisite::Dead: name = "SPELL_FAILED_CASTER_DEAD"; break;
+                default: assert(false && "unhandled spell prerequisite"); break;
+            }
+            if (name)
+                raiseGlobalStringError(owner_, name);
+            else
+                LOG_ERROR("Cast rejected for spell ", spellId, ": GlobalStrings has no line for its resource");
             return;
         }
-        case SpellPrerequisite::NoComboPoints: owner_.raiseUiError("That ability requires combo points"); return;
-        case SpellPrerequisite::Stealth: owner_.raiseUiError("You must be in stealth mode."); return;
-        case SpellPrerequisite::Combat: owner_.raiseUiError("You are in combat"); return;
-        case SpellPrerequisite::Dead: owner_.raiseUiError("You are dead"); return;
+    }
+    // Equipment and then tools are refused here, before anything the server
+    // would check first. See missingEquipment and firstMissingTool.
+    if (const auto result = missingEquipment(owner_, spellId)) {
+        const auto& entry = owner_.spellNameCacheRef().at(spellId);
+        const std::string text = castFailureText(owner_, spellId, *result,
+            static_cast<uint32_t>(entry.equippedItemClass), entry.equippedItemSubClassMask);
+        if (!text.empty()) owner_.raiseUiError(text);
+        return;
+    }
+    if (const auto missing = firstMissingTool(owner_, spellId)) {
+        const std::string text = castFailureText(owner_, spellId, missing->first, missing->second, 0);
+        if (!text.empty()) owner_.raiseUiError(text);
+        return;
     }
 
     // Food and water are server auras, but using any action interrupts them.
@@ -1033,7 +1297,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                     (moveFlags & static_cast<uint32_t>(MovementFlags::BACKWARD)     ? " BACKWARD" : ""),
                     (moveFlags & static_cast<uint32_t>(MovementFlags::STRAFE_LEFT)  ? " STRAFE_LEFT" : ""),
                     (moveFlags & static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) ? " STRAFE_RIGHT" : ""));
-        owner_.raiseUiError("Can't do that while moving");
+        raiseGlobalStringError(owner_, "SPELL_FAILED_MOVING");
         return;
     }
 
@@ -1126,16 +1390,16 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     if (spellId == 100 || spellId == 6178 || spellId == 11578) {
         // Charge is an opener: it cannot be used once the fight has started.
         if (owner_.isInCombat()) {
-            owner_.raiseUiError("You can't do that while in combat.");
+            raiseGlobalStringError(owner_, "SPELL_FAILED_AFFECTING_COMBAT");
             return;
         }
         if (target == 0) {
-            owner_.raiseUiError("You have no target.");
+            raiseGlobalStringError(owner_, "ERR_GENERIC_NO_TARGET");
             return;
         }
         auto entity = owner_.getEntityManager().getEntity(target);
         if (!entity) {
-            owner_.raiseUiError("You have no target.");
+            raiseGlobalStringError(owner_, "ERR_GENERIC_NO_TARGET");
             return;
         }
         // Charge needs an attackable unit. Game objects (mining nodes, herb nodes,
@@ -1145,12 +1409,12 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         auto unit = std::dynamic_pointer_cast<Unit>(entity);
         const ObjectType targetType = entity->getType();
         if (!unit || (targetType != ObjectType::UNIT && targetType != ObjectType::PLAYER)) {
-            owner_.raiseUiError("You cannot attack that target.");
+            raiseGlobalStringError(owner_, "ERR_INVALID_ATTACK_TARGET");
             return;
         }
         // Corpses cannot be charged.
         if (unit->getHealth() == 0) {
-            owner_.raiseUiError("You cannot attack that target.");
+            raiseGlobalStringError(owner_, "ERR_INVALID_ATTACK_TARGET");
             return;
         }
         if (targetType == ObjectType::UNIT) {
@@ -1167,7 +1431,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                 unit->isHostile() || owner_.isAggressiveTowardPlayer(target);
             const bool clearlyFriendly = unit->isInteractable() && !hostileOrAggressive;
             if (clearlyFriendly || (unit->getUnitFlags() & kBlockedChargeFlags) != 0) {
-                owner_.raiseUiError("You cannot attack that target.");
+                raiseGlobalStringError(owner_, "ERR_INVALID_ATTACK_TARGET");
                 return;
             }
         }
@@ -1177,11 +1441,11 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         float dz = tz - owner_.movementInfoRef().z;
         float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (dist < 8.0f) {
-            owner_.raiseUiError("Target is too close.");
+            raiseGlobalStringError(owner_, "SPELL_FAILED_TOO_CLOSE");
             return;
         }
         if (dist > 25.0f) {
-            owner_.raiseUiError("Out of range.");
+            raiseGlobalStringError(owner_, "ERR_SPELL_OUT_OF_RANGE");
             return;
         }
         float yaw = std::atan2(-dy, dx);
@@ -1210,7 +1474,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                 float dz = entity->getZ() - owner_.movementInfoRef().z;
                 float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (dist > 8.0f) {
-                    owner_.raiseUiError("Out of range.");
+                    raiseGlobalStringError(owner_, "ERR_SPELL_OUT_OF_RANGE");
                     return;
                 }
                 if (owner_.isAutoFaceTarget()) owner_.faceCanonicalYaw(std::atan2(-dy, dx));
@@ -1257,7 +1521,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // player has auto self-cast on, and is left to the server when they do not.
     if (target == 0 && !selfCast && !fishingCast &&
         spellclass::requiresHostileTarget(getSpellImplicitTargetA(spellId))) {
-        owner_.raiseUiError("You have no target.");
+        raiseGlobalStringError(owner_, "ERR_GENERIC_NO_TARGET");
         LOG_WARNING("Cast refused: spell ", spellId,
                     " needs a hostile target and nothing is selected - sending it"
                     " with an empty target would have aimed it at the caster");
@@ -2176,22 +2440,14 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     if (data.result == kSpellFailedNotReady) {
         seedCooldownFromSpellInfo(data.spellId);
     }
-    // Totem failures name tool item ids; request their info so a retry of the
-    // craft can show the tool's name even if it wasn't cached yet.
-    if (data.result == kCastResultTotems) {
-        if (data.miscArg != 0) owner_.ensureItemInfo(data.miscArg);
-        if (data.miscArg2 != 0) owner_.ensureItemInfo(data.miscArg2);
+    if (gatherCast && shouldDespawnGatherTarget(data.result)) {
+        owner_.despawnGameObjectLocally(gatherGoGuid);
     }
-    std::string errMsg = castFailureMessage(owner_, data.spellId, data.result, powerType,
-                                            data.miscArg, data.miscArg2);
-    if (gatherCast) {
-        errMsg = gatherCastFailureMessage(owner_, gatherGoGuid, data.spellId,
-                                          data.result, errMsg);
-        if (shouldDespawnGatherTarget(data.result)) {
-            owner_.despawnGameObjectLocally(gatherGoGuid);
-        }
+    if (const std::string errMsg = castFailureText(owner_, data.spellId, data.result,
+                                                      data.miscArg, data.miscArg2);
+        !errMsg.empty()) {
+        owner_.addUIError(errMsg);
     }
-    owner_.addUIError(errMsg);
 
     // On screen and nowhere else. A cast failure went to the chat log as well
     // from here and from handleCastResult both, so the fix that took it out of
@@ -4049,13 +4305,6 @@ uint32_t SpellHandler::getSpellTargetFlags(uint32_t spellId) const {
     return (it != owner_.spellNameCacheRef().end()) ? it->second.targetFlags : 0;
 }
 
-uint32_t SpellHandler::getSpellTargetAuraState(uint32_t spellId) const {
-    if (spellId == 0) return 0;
-    loadSpellNameCache();
-    auto it = owner_.spellNameCacheRef().find(spellId);
-    return (it != owner_.spellNameCacheRef().end()) ? it->second.targetAuraState : 0;
-}
-
 uint32_t SpellHandler::resolveHighestKnownRank(uint32_t spellId) const {
     if (spellId == 0 || knownSpells_.count(spellId) > 0) return spellId;
 
@@ -4336,31 +4585,17 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
             owner_.pendingGameObjectInteractGuidRef() = 0;
             craftQueueSpellId_ = 0; craftQueueRemaining_ = 0;
             queuedSpellId_ = 0; queuedSpellTarget_ = 0;
-            int playerPowerType = -1;
-            if (auto pe = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
-                if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
-                    playerPowerType = static_cast<int>(pu->getPowerType());
-            }
             if (castResult == kSpellFailedNotReady) {
                 seedCooldownFromSpellInfo(castResultSpellId);
             }
-            // Totem failures name tool item ids; request their info so a retry
-            // of the craft can show the tool's name even if it wasn't cached.
-            if (castResult == kCastResultTotems) {
-                if (castResultMiscArg != 0) owner_.ensureItemInfo(castResultMiscArg);
-                if (castResultMiscArg2 != 0) owner_.ensureItemInfo(castResultMiscArg2);
+            if (gatherCast && shouldDespawnGatherTarget(castResult)) {
+                owner_.despawnGameObjectLocally(gatherGoGuid);
             }
-            std::string errMsg = castFailureMessage(owner_, castResultSpellId,
-                                                     castResult, playerPowerType,
-                                                     castResultMiscArg, castResultMiscArg2);
-            if (gatherCast) {
-                errMsg = gatherCastFailureMessage(owner_, gatherGoGuid,
-                                                  castResultSpellId, castResult, errMsg);
-                if (shouldDespawnGatherTarget(castResult)) {
-                    owner_.despawnGameObjectLocally(gatherGoGuid);
-                }
+            if (const std::string errMsg = castFailureText(owner_, castResultSpellId, castResult,
+                                                              castResultMiscArg, castResultMiscArg2);
+                !errMsg.empty()) {
+                owner_.addUIError(errMsg);
             }
-            owner_.addUIError(errMsg);
             if (owner_.spellCastFailedCallbackRef()) owner_.spellCastFailedCallbackRef()(castResultSpellId);
                 owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", castResultSpellId));
                 owner_.fireAddonEvent("UNIT_SPELLCAST_STOP",   spellcastArgs("player", castResultSpellId));
@@ -4561,28 +4796,14 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
     if (packet.hasRemaining(remainingFields)) {
         if (hasCastCount) /*uint8_t castCount =*/ packet.readUInt8();
         failSpellId = packet.readUInt32();
-        uint8_t rawFailReason = packet.readUInt8();
-        uint8_t failReason = owner_.getPacketParsers()->castResult(rawFailReason);
-        if (failGuid == owner_.getPlayerGuid() && failReason != 0) {
-            // Show interruption/failure reason in chat and error overlay for player
-            int pt = -1;
-            if (auto pe = owner_.getEntityManager().getEntity(owner_.getPlayerGuid()))
-                if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
-                    pt = static_cast<int>(pu->getPowerType());
-            std::string reason = castFailureMessage(owner_, failSpellId, failReason, pt);
-            if (!reason.empty()) {
-                // Prefix with spell name for context, e.g. "Fireball: Not in range"
-                const std::string& sName = owner_.getSpellName(failSpellId);
-                std::string fullMsg = sName.empty() ? reason
-                                                    : sName + ": " + reason;
-                owner_.addUIError(fullMsg);
-                MessageChatData emsg;
-                emsg.type = ChatType::SYSTEM;
-                emsg.language = ChatLanguage::UNIVERSAL;
-                emsg.message = std::move(fullMsg);
-                owner_.addLocalChatMessage(emsg);
-            }
-        }
+        // The reason is not shown from here. The server follows an
+        // interrupted cast's SPELL_FAILURE with a CAST_FAILED, which puts the
+        // reason on the error line, and sends none for a channel (CMaNGOS
+        // Spell::cancel: "channeled spells don't display interrupted
+        // message"). Original 2.4.3: Hearthstone broken by a jump shows one
+        // "Interrupted", no chat line; a bandage channel broken the same way
+        // shows nothing.
+        (void)packet.readUInt8();  // failReason
     }
     // Fire UNIT_SPELLCAST_INTERRUPTED for Lua addons
     if (owner_.addonEventCallbackRef()) {

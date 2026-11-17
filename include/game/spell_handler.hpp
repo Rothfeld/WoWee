@@ -15,12 +15,38 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace wowee {
 namespace game {
 
 class GameHandler;
+
+/// The text a cast failure shows on the error line, from the interface's
+/// GlobalStrings by result name (see cast_result_text.hpp); empty for none.
+/// `result` is the normalised (WotLK-numbered) SpellCastResult, arg1/arg2 the
+/// packet's trailing values (readCastResultArgs).
+std::string castFailureText(GameHandler& owner, uint32_t spellId, uint8_t result,
+                            uint32_t arg1, uint32_t arg2);
+
+/// The first tool the spell's Spell.dbc Totem / TotemCategory entries name
+/// that the player does not carry, as the cast result that reports it and the
+/// item or category id; nullopt when every tool is carried or not yet known.
+/// The original checks this before sending: Copper Modulator with no tools and
+/// no reagents reads "Requires Blacksmith Hammer", where the server (CMaNGOS
+/// Spell::CheckItems) would have answered with the missing reagent first.
+std::optional<std::pair<uint8_t, uint32_t>> firstMissingTool(GameHandler& owner, uint32_t spellId);
+
+/// The EQUIPPED_ITEM_CLASS* result the spell's Spell.dbc equipment
+/// requirement fails with, in CMaNGOS Player::HasItemFitToSpellReqirements'
+/// order (main hand, off hand, then any fitting slot); nullopt when met or
+/// when an equipped item's data is not in yet. The original checks this
+/// before sending: Backstab unarmed and facing the target reads "Must have a
+/// Dagger equipped in the main hand", where the server would answer "You must
+/// be behind your target" first; Cheap Shot unarmed out of stealth reads
+/// "Must have a Melee Weapon equipped".
+std::optional<uint8_t> missingEquipment(GameHandler& owner, uint32_t spellId);
 
 class SpellHandler {
 public:
@@ -296,7 +322,6 @@ public:
     [[nodiscard]] uint32_t getSpellSchoolMask(uint32_t spellId) const;
     /// Spell.dbc Targets mask (SpellCastTargetFlags): 0x10 = TARGET_FLAG_ITEM.
     [[nodiscard]] uint32_t getSpellTargetFlags(uint32_t spellId) const;
-    [[nodiscard]] uint32_t getSpellTargetAuraState(uint32_t spellId) const;
     /// Spell.dbc RangeIndex resolved via SpellRange.dbc, in yards. Melee ("Combat
     /// Range") is 5; self-only is 0; negative means SpellRange.dbc was unavailable.
     [[nodiscard]] float getSpellMaxRange(uint32_t spellId) const;

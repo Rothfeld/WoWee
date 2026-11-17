@@ -3996,10 +3996,6 @@ bool GameHandler::isSpellKnownToClient(uint32_t spellId) const {
     return spellHandler_ && spellHandler_->isSpellKnownToClient(spellId);
 }
 
-uint32_t GameHandler::getSpellTargetAuraState(uint32_t spellId) const {
-    return spellHandler_ ? spellHandler_->getSpellTargetAuraState(spellId) : 0;
-}
-
 const std::string& GameHandler::getSpellRank(uint32_t spellId) const {
     if (spellHandler_) return spellHandler_->getSpellRank(spellId);
     return EMPTY_STRING;
