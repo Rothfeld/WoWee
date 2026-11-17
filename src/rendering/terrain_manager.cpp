@@ -500,21 +500,6 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
     terrainPtr->coord.x = x;
     terrainPtr->coord.y = y;
 
-    // The stock Azeroth ADT leaves two terrain-hole cells exposed along the
-    // exterior edge of the Westfall lumbermill. The original client hides the
-    // mask beneath the building footprint, but our WMO floor ends just short
-    // of it, producing a small textureless strip between the inn/prison camp
-    // and lumber yard. Repair only this confirmed exterior seam; other ADT
-    // holes remain intact for caves and below-ground WMO entrances.
-    if (toLowerCopy(mapName) == "azeroth" && x == 29 && y == 51) {
-        auto& lumbermillChunk = terrainPtr->chunks[15 * 16 + 14];
-        if (lumbermillChunk.indexX == 14 && lumbermillChunk.indexY == 15 &&
-            lumbermillChunk.holes == 0x0044) {
-            lumbermillChunk.holes = 0;
-            LOG_INFO("Repaired Westfall lumbermill terrain seam in tile [29,51]");
-        }
-    }
-
     // Generate mesh
     pipeline::TerrainMesh mesh = pipeline::TerrainMeshGenerator::generate(*terrainPtr);
     if (mesh.validChunkCount == 0) {
