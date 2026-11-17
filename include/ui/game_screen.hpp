@@ -248,7 +248,8 @@ private:
 
     void renderMinimapNpcDots(const MinimapFrame& frame, const EntityList& units,
                               const EntrySet& questEntries);
-    void renderMinimapFlightMasters(const MinimapFrame& frame, const EntityList& units);
+    void renderMinimapFlightMasters(const MinimapFrame& frame, const EntityList& units,
+                                    const game::GameHandler& gameHandler);
     void renderMinimapRares(const MinimapFrame& frame, const EntityList& units,
                             game::GameHandler& gameHandler);
     void renderMinimapPlayerDots(const MinimapFrame& frame, const EntityList& players,

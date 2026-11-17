@@ -659,7 +659,8 @@ void GameScreen::renderMinimapNpcDots(const MinimapFrame& frame, const EntityLis
 // A standard service marker, independent of the optional NPC dots - and read
 // from the live NPC flags, so an undiscovered flight master shows before the
 // taxi window has ever been opened.
-void GameScreen::renderMinimapFlightMasters(const MinimapFrame& frame, const EntityList& minimapUnits) {
+void GameScreen::renderMinimapFlightMasters(const MinimapFrame& frame, const EntityList& minimapUnits,
+                                           const game::GameHandler& gameHandler) {
     // Flight masters are a standard minimap service marker, independent of
     // the optional generic NPC-dot overlay. Use the live UNIT_NPC_FLAGS value
     // so an undiscovered flight master is visible before the taxi window has
@@ -671,6 +672,9 @@ void GameScreen::renderMinimapFlightMasters(const MinimapFrame& frame, const Ent
                 (unit->getNpcFlags() & game::NPC_FLAG_FLIGHT_MASTER) == 0) {
                 continue;
             }
+            // An undiscovered node is the green ! drawn with the quest marks.
+            if (gameHandler.getTaxiNodeStatus(unit->getGuid()) == game::TaxiNodeStatus::Undiscovered)
+                continue;
 
             float sx = 0.0f, sy = 0.0f;
             if (!frame.projectEntity(*entity, sx, sy)) continue;
@@ -898,6 +902,33 @@ void GameScreen::renderMinimapChests(const MinimapFrame& frame, const EntityList
 
 }
 
+namespace {
+// Interface\Minimap\ObjectIcons.blp: eight 32px columns, two rows. Second
+// row: gold circle, yellow ! and ?, blue repeatable ! and ?, green !.
+VkDescriptorSet minimapObjectIconAtlas(pipeline::AssetManager* assets, core::Window* window) {
+    static VkDescriptorSet atlas = VK_NULL_HANDLE;
+    if (!atlas) {
+        atlas = uploadUiTextureFromBlp(assets, "Interface\\Minimap\\ObjectIcons.blp", window);
+        if (!atlas) {
+            LOG_ERROR("Minimap object icon atlas failed to load");
+            throw std::runtime_error("Minimap object icon atlas failed to load");
+        }
+    }
+    return atlas;
+}
+
+void drawObjectIconCell(ImDrawList* drawList, VkDescriptorSet atlas, int column, float sx, float sy) {
+    drawList->AddImage((ImTextureID)(uintptr_t)atlas,
+        ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
+        ImVec2(column / 8.0f, 0.5f), ImVec2((column + 1) / 8.0f, 1.0f));
+}
+
+// Green ! in the atlas's second row: the original client's minimap mark for a
+// flight master whose node this character has not discovered (Astranaar,
+// Daelyshia, Edrik: _experiments/20261117T101000Z.flight_marker_placement/original.png).
+constexpr int kObjectIconGreenExclamation = 5;
+} // namespace
+
 // The ! and ? over a quest giver, from the status the server sends per NPC.
 void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const QuestStatusMap& statuses,
                                          game::GameHandler& gameHandler) {
@@ -927,21 +958,10 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
         float sx = 0.0f, sy = 0.0f;
         if (!frame.projectEntity(*entity, sx, sy)) continue;
 
-        static VkDescriptorSet questAtlas = VK_NULL_HANDLE;
-        if (!questAtlas) {
-            questAtlas = uploadUiTextureFromBlp(services_.assetManager,
-                "Interface\\Minimap\\ObjectIcons.blp", services_.window);
-            if (!questAtlas) {
-                LOG_ERROR("Minimap object icon atlas failed to load");
-                throw std::runtime_error("Minimap object icon atlas failed to load");
-            }
-        }
-        // Original ObjectIcons atlas: eight 32px columns, two rows.
         // Second row: yellow !/?, then blue repeatable !/? (not grey).
         const int column = (mark.symbol[0] == '!' ? 1 : 2) + (mark.dim ? 2 : 0);
-        frame.drawList->AddImage((ImTextureID)(uintptr_t)questAtlas,
-            ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
-            ImVec2(column / 8.0f, 0.5f), ImVec2((column + 1) / 8.0f, 1.0f));
+        drawObjectIconCell(frame.drawList, minimapObjectIconAtlas(services_.assetManager, services_.window),
+                           column, sx, sy);
 
         // Show NPC name and quest status on hover
         {
@@ -961,6 +981,28 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
         }
     }
 
+    // Undiscovered flight masters: the green ! (kObjectIconGreenExclamation).
+    // The same rule as the mark over the NPC (taxiDiscoveryMarkerVisible):
+    // a quest ! or ? on the NPC takes the place instead. Mixed quest and
+    // flight-master priority has not been compared against the original.
+    for (const auto& [guid, taxiStatus] : gameHandler.getTaxiNodeStatuses()) {
+        const auto questIt = statuses.find(guid);
+        const bool questMark = questIt != statuses.end() &&
+                               game::questGiverMarker(questIt->second).symbol != nullptr;
+        if (!game::taxiDiscoveryMarkerVisible(taxiStatus, questMark)) continue;
+        auto entity = gameHandler.getEntityManager().getEntity(guid);
+        if (!entity) continue;
+        float sx = 0.0f, sy = 0.0f;
+        if (!frame.projectEntity(*entity, sx, sy)) continue;
+        drawObjectIconCell(frame.drawList, minimapObjectIconAtlas(services_.assetManager, services_.window),
+                           kObjectIconGreenExclamation, sx, sy);
+        if (cursorNearBlip(sx, sy)) {
+            std::string name;
+            if (entity->getType() == game::ObjectType::UNIT)
+                name = std::static_pointer_cast<game::Unit>(entity)->getName();
+            ImGui::SetTooltip("%s\nFlight Master", name.empty() ? "Flight Master" : name.c_str());
+        }
+    }
 }
 
 // A gold X over an NPC a tracked quest still needs killed.
@@ -1883,7 +1925,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
             }
         }
     } else {
-        renderMinimapFlightMasters(frame, minimapUnits);
+        renderMinimapFlightMasters(frame, minimapUnits, gameHandler);
     }
     renderMinimapRares(frame, minimapUnits, gameHandler);
     renderMinimapPlayerDots(frame, minimapPlayers, gameHandler);
