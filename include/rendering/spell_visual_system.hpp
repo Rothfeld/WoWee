@@ -79,6 +79,11 @@ public:
     // Whether this visual has a missile model (SpellVisual.dbc MissileModel).
     bool hasSpellMissile(uint32_t visualId);
 
+    // SpellVisual MissileAttachment (-1 default) and MissileDestinationAttachment
+    // of a missile visual. Only TBC declares the columns.
+    struct MissileAttachments { int32_t launch = -1; uint32_t destination = 0; };
+    std::optional<MissileAttachments> missileAttachments(uint32_t visualId);
+
     // Fly the visual's missile model from start to end at speed yards a second
     // (Spell.dbc Speed). With impactAtEnd the impact kit plays where it lands,
     // instead of when the server reports the hit. False when nothing launched.
@@ -191,6 +196,7 @@ private:
     std::vector<PhysicalProjectile> physicalProjectiles_;
     std::vector<SpellMissile> spellMissiles_;
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path
+    std::unordered_map<uint32_t, MissileAttachments> missileAttachments_;
     std::unordered_map<std::string, uint32_t> spellVisualModelIds_;   // M2 path → M2Renderer modelId
     std::unordered_set<uint32_t> spellVisualFailedModels_;           // modelIds that failed to load (negative cache)
     uint32_t nextSpellVisualModelId_ = 999000; // Reserved range 999000-999799

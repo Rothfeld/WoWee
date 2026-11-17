@@ -420,6 +420,8 @@
     "ImpactKit": 3,
     "InstantAreaKit": 22,
     "MissileModel": 7,
+    "MissileDestinationAttachment": 9,
+    "MissileAttachment": 15,
     "PrecastKit": 1
   },
   "SpellVisualEffectName": {

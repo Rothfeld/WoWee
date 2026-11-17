@@ -62,6 +62,9 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     // Declared for TBC only: columns after ChannelKit were mapped from the
     // 2.4.3 data (MissileModel 7, InstantAreaKit 22 holds summon/portal kits).
     const uint32_t svInstantAreaKitField = svLayout ? svLayout->field("InstantAreaKit") : 0xFFFFFFFFu;
+    const uint32_t svMissileAttachmentField = svLayout ? svLayout->field("MissileAttachment") : 0xFFFFFFFFu;
+    const uint32_t svMissileDestinationField =
+        svLayout ? svLayout->field("MissileDestinationAttachment") : 0xFFFFFFFFu;
     uint32_t fxFilePathField  = fxLayout  ? (*fxLayout)["FilePath"]       : 2;
 
     // Kit effect fields to probe, in priority order.
@@ -187,6 +190,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         if (svMissileField < svFc) {
             std::string path = missilePath(svDbc->getUInt32(i, svMissileField));
             if (!path.empty()) { spellVisualMissilePath_[vid] = path; ++loadedMissile; }
+            if (!path.empty() && svMissileAttachmentField < svFc && svMissileDestinationField < svFc) {
+                missileAttachments_[vid] = {
+                    .launch = static_cast<int32_t>(svDbc->getUInt32(i, svMissileAttachmentField)),
+                    .destination = svDbc->getUInt32(i, svMissileDestinationField)};
+            }
         }
     }
     LOG_INFO("SpellVisual: loaded ", kitEffects_.size(), " kits with effects, missile=", loadedMissile,
@@ -580,6 +588,13 @@ bool SpellVisualSystem::hasSpellMissile(uint32_t visualId) {
         cachedAssetManager_ = core::Application::getInstance().getAssetManager();
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     return spellVisualMissilePath_.count(visualId) != 0;
+}
+
+std::optional<SpellVisualSystem::MissileAttachments> SpellVisualSystem::missileAttachments(uint32_t visualId) {
+    if (!hasSpellMissile(visualId)) return std::nullopt;
+    const auto it = missileAttachments_.find(visualId);
+    if (it == missileAttachments_.end()) return std::nullopt;
+    return it->second;
 }
 
 bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& start,

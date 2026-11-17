@@ -723,16 +723,35 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     glm::vec3 start, end;
     if (!resolveUnitPosition(casterGuid, start) || !resolveUnitPosition(targetGuid, end))
         return false;
-    // From the casting hand when the caster is drawn, else about chest high;
-    // into the target's chest.
-    start.z += 1.5f;
-    if (auto* characters = renderer->getCharacterRenderer()) {
-        glm::mat4 hand(1.0f);
-        const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
-        if (casterInstance != 0 && characters->getAttachmentTransform(casterInstance, 1, hand))
-            start = glm::vec3(hand[3]);
+    // SpellVisual MissileAttachment -1 and MissileDestinationAttachment 1
+    // (1757 of the 2222 TBC spells with a missile model, Arcane Missile 7268 and
+    // Frostbolt 116 among them): the original launches from the hand the
+    // cast pose raises toward the target, M2 attachment 2, and lands in the
+    // upper chest, attachment 15. Creature "Mage 1" (1574) carries 15 but no 34 and
+    // was hit there, 1.41 above its feet; the old fixed feet + 1.0 hit its
+    // waist. Other values are not compared with the original yet.
+    static constexpr uint32_t kAttachLaunchHand = 2;
+    static constexpr uint32_t kAttachChestFront = 15;
+    const auto attachments = svs->missileAttachments(visualId);
+    if (attachments && (attachments->launch != -1 || attachments->destination != 1)) {
+        LOG_WARNING("SpellVisual: missile visual ", visualId, " launch attachment ", attachments->launch,
+                    " destination ", attachments->destination,
+                    " not verified against the original; using hand 2 and chest 15");
     }
-    end.z += 1.0f;
+    if (auto* characters = renderer->getCharacterRenderer()) {
+        auto place = [&](uint64_t guid, uint32_t attachment, glm::vec3& point) {
+            glm::mat4 transform(1.0f);
+            const uint32_t instance = owner_.resolveUnitRenderInstance(guid);
+            if (instance != 0 && characters->getAttachmentTransform(instance, attachment, transform)) {
+                point = glm::vec3(transform[3]);
+                return;
+            }
+            LOG_WARNING("SpellVisual: missile attachment ", attachment, " missing on 0x", std::hex, guid,
+                        std::dec, "; using the unit position");
+        };
+        place(casterGuid, kAttachLaunchHand, start);
+        place(targetGuid, kAttachChestFront, end);
+    }
     return svs->playSpellMissile(visualId, start, end, speed, impactAtEnd);
 }
 
