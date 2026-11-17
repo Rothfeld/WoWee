@@ -90,6 +90,8 @@ private:
         uint32_t auraVisualId = 0;
         bool concealmentDetectionMarker = false;
         bool decaying = false;
+        // Follows the attachment's full transform, not only its position.
+        bool orientWithAttachment = false;
     };
 
     struct PhysicalProjectile {
@@ -114,7 +116,7 @@ private:
 
     void loadSpellVisualDbc();
     void playModelEffect(uint32_t visualId, const std::string& modelPath, const glm::vec3& worldPosition,
-                         bool useImpactKit, uint32_t attachInstanceId);
+                         bool useImpactKit, uint32_t attachInstanceId, uint32_t kitId);
     std::unordered_map<uint32_t, std::string> kitPaths_;
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     struct KitEffect { std::string path; uint32_t attachment; };
@@ -122,6 +124,12 @@ private:
     std::unordered_map<uint32_t, uint32_t> channelKits_;
     std::unordered_map<uint32_t, uint32_t> precastKits_;
     std::unordered_map<uint32_t, uint32_t> stateKits_;
+    std::unordered_map<uint32_t, uint32_t> castKits_;
+    std::unordered_map<uint32_t, uint32_t> impactKits_;
+    /// M2 attachment 17, named Breath. SpellVisualKit's BreathEffect slot is
+    /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
+    /// carries it on bone 82 in front of the face, bone +X forward.
+    static constexpr uint32_t kAttachBreath = 17;
     struct UnitAuraVisuals {
         std::vector<uint32_t> ids;
         bool observerConcealed = false;

@@ -1106,6 +1106,14 @@ wowee_add_test(test_weapon_material_assets
             ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp)
 set_tests_properties(weapon_material_assets PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_breath_attachment ───────────────────────────────────
+# Authored data behind placing SpellVisualKit BreathEffect on attachment 17.
+wowee_add_test(test_breath_attachment
+    SOURCES test_breath_attachment.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
+set_tests_properties(breath_attachment PROPERTIES SKIP_RETURN_CODE 4)
+
 # ── test_m2_color_alpha ──────────────────────────────────────
 # Loads the peasant lumberjack carry models (WotLK v264 + vanilla v256) and
 # pins the M2 color-alpha track parsing that hides the duplicate wood bundle.

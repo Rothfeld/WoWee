@@ -109,7 +109,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // HeadEffect uses the model's overhead anchor, not its animated
             // anatomical head. Mounted detection eyes and Dazed stars share
             // this slot and remain above the rider in the original client.
-            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 5, 18, 19, 0, 0};
+            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 5, 18, kAttachBreath, 0, 0};
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
@@ -160,6 +160,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         if (channelField < svFc) channelKits_[vid] = svDbc->getUInt32(i, channelField);
         assert(svPrecastKitField < svFc);
         precastKits_[vid] = svDbc->getUInt32(i, svPrecastKitField);
+        if (svCastKitField < svFc) castKits_[vid] = svDbc->getUInt32(i, svCastKitField);
+        if (svImpactKitField < svFc) impactKits_[vid] = svDbc->getUInt32(i, svImpactKitField);
         const uint32_t stateField = (*svLayout)["StateKit"];
         assert(stateField < svFc);
         stateKits_[vid] = svDbc->getUInt32(i, stateField);
@@ -475,7 +477,10 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
         return;
     }
 
-    playModelEffect(visualId, pathIt->second, worldPosition, useImpactKit, attachInstanceId);
+    const auto& kits = useImpactKit ? impactKits_ : castKits_;
+    const auto kit = kits.find(visualId);
+    playModelEffect(visualId, pathIt->second, worldPosition, useImpactKit, attachInstanceId,
+                    kit != kits.end() ? kit->second : 0);
 }
 
 uint32_t SpellVisualSystem::channelAnimation(uint32_t visualId) {
@@ -508,19 +513,23 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         const uint32_t model = loadSpellModel(effect.path);
         if (!model) continue;
         glm::vec3 spawn = position;
+        glm::mat4 transform(1.0f);
         if (effect.attachment) {
-            glm::mat4 transform;
             if (!characters || !characters->getAttachmentTransform(attachInstanceId, effect.attachment, transform)) {
                 LOG_ERROR("Channel attachment unavailable: ", effect.attachment, " model=", effect.path);
                 continue;
             }
             spawn = glm::vec3(transform[3]);
         }
-        const uint32_t instance = m2Renderer_->createInstance(model, spawn, glm::vec3(0), 1.0f);
+        const bool breath = effect.attachment == kAttachBreath;
+        const uint32_t instance = breath
+            ? m2Renderer_->createInstanceWithMatrix(model, transform, spawn)
+            : m2Renderer_->createInstance(model, spawn, glm::vec3(0), 1.0f);
         if (!instance) { LOG_ERROR("Channel effect instance failed: ", effect.path); continue; }
         m2Renderer_->restartInstanceAnimation(instance);
-        activeSpellVisuals_.push_back({instance, 0.0f, durationMs / 1000.0f,
-            false, effect.attachment, attachInstanceId, true});
+        activeSpellVisuals_.push_back({.instanceId = instance, .elapsed = 0.0f,
+            .duration = durationMs / 1000.0f, .isPrecast = false, .attachmentId = effect.attachment,
+            .attachInstanceId = attachInstanceId, .isChannel = true, .orientWithAttachment = breath});
         LOG_INFO("Channel visual: kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
     }
 }
@@ -620,12 +629,12 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     }
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
     if (auto path = kitPaths_.find(kitId); path != kitPaths_.end())
-        playModelEffect(kitId, path->second, worldPosition, false, attachInstanceId);
+        playModelEffect(kitId, path->second, worldPosition, false, attachInstanceId, kitId);
 }
 
 void SpellVisualSystem::playModelEffect(uint32_t visualId, const std::string& modelPath,
                                        const glm::vec3& worldPosition, bool useImpactKit,
-                                       uint32_t attachInstanceId) {
+                                       uint32_t attachInstanceId, uint32_t kitId) {
     if (!m2Renderer_) return;
     LOG_INFO("SpellVisual: ", (useImpactKit ? "impact" : "cast"), " path resolved to: ", modelPath);
 
@@ -639,6 +648,42 @@ void SpellVisualSystem::playModelEffect(uint32_t visualId, const std::string& mo
     uint32_t attachId = 0;
     if (!useImpactKit && attachInstanceId != 0) {
         attachId = classifyAttachmentId(modelPath);
+    }
+    // A kit's BreathEffect comes out of the caster's mouth and points where
+    // the caster faces. Spawned unrotated at the feet, Flame Spray (kit 1444,
+    // Spells\DragonFlameBreath.m2, which sprays along model +X) always shot
+    // along world +X, sideways for most facings.
+    bool breath = false;
+    if (attachId == 0 && attachInstanceId != 0 && kitId != 0) {
+        if (const auto effects = kitEffects_.find(kitId); effects != kitEffects_.end()) {
+            breath = std::any_of(effects->second.begin(), effects->second.end(), [&](const KitEffect& e) {
+                return e.attachment == kAttachBreath && e.path == modelPath;
+            });
+        }
+    }
+    if (breath) {
+        auto* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+        glm::mat4 attachMat;
+        if (!charRenderer || !charRenderer->getAttachmentTransform(attachInstanceId, kAttachBreath, attachMat)) {
+            LOG_ERROR("SpellVisual: caster has no Breath attachment; kit=", kitId, " model=", modelPath);
+            return;
+        }
+        const uint32_t instanceId = m2Renderer_->createInstanceWithMatrix(modelId, attachMat, glm::vec3(attachMat[3]));
+        if (instanceId == 0) {
+            LOG_ERROR("SpellVisual: breath instance failed; kit=", kitId, " model=", modelPath);
+            return;
+        }
+        m2Renderer_->restartInstanceAnimation(instanceId);
+        const float animDurMs = m2Renderer_->getInstanceAnimDuration(instanceId);
+        const float duration = (animDurMs > 100.0f)
+            ? std::clamp(animDurMs / 1000.0f, 0.5f, SPELL_VISUAL_MAX_DURATION)
+            : SPELL_VISUAL_DEFAULT_DURATION;
+        activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = duration,
+            .isPrecast = false, .attachmentId = kAttachBreath, .attachInstanceId = attachInstanceId,
+            .orientWithAttachment = true});
+        LOG_INFO("SpellVisual: breath kit=", kitId, " instanceId=", instanceId, " duration=", duration,
+                 "s model=", modelPath);
+        return;
     }
     glm::vec3 spawnPos = worldPosition;
     if (attachId != 0 && renderer_) {
@@ -857,7 +902,8 @@ void SpellVisualSystem::update(float deltaTime) {
                 glm::mat4 attachMat;
                 if (charRenderer->getAttachmentTransform(it->attachInstanceId, it->attachmentId, attachMat)) {
                     glm::vec3 bonePos = glm::vec3(attachMat[3]);
-                    m2Renderer_->setInstancePosition(it->instanceId, bonePos);
+                    if (it->orientWithAttachment) m2Renderer_->setInstanceTransform(it->instanceId, attachMat);
+                    else m2Renderer_->setInstancePosition(it->instanceId, bonePos);
                     static const bool traceAttachments = std::getenv("WOWEE_TRACE_AURA_ATTACHMENT") != nullptr;
                     if (traceAttachments && it->auraVisualId &&
                         std::floor(it->elapsed) != std::floor(it->elapsed - deltaTime)) {
