@@ -64,7 +64,6 @@ struct M2ModelGPU {
         bool hasAlpha = false;
         /// The alpha is a real silhouette, not an atlas leftover.
         bool alphaIsSilhouette = false;
-        bool colorKeyBlack = false;
         glm::vec3 tint{1.0f};  ///< the batch's authored colour
         uint16_t textureAnimIndex = 0xFFFF; // 0xFFFF = no texture animation
         uint16_t blendMode = 0;   // 0=Opaque, 1=AlphaKey, 2=Alpha, 3=Add, etc.
@@ -999,7 +998,6 @@ private:
     struct TextureProperties {
         bool hasAlpha = false;
         bool alphaIsSilhouette = false;
-        bool colorKeyBlack = false;
     };
     std::unordered_map<VkTexture*, TextureProperties> texturePropsByPtr_;
     size_t textureCacheBytes_ = 0;

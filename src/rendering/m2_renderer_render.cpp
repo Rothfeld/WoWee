@@ -1590,7 +1590,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     glowCard.blendMode = batch.blendMode;
                     glowCard.lanternGlowHint = batch.lanternGlowHint;
                     glowCard.glowCardLike = batch.glowCardLike;
-                    glowCard.colorKeyBlack = batch.colorKeyBlack;
                     glowCard.unlit = batchUnlit;
                     glowCard.preserveGlowMesh = batch.preserveGlowMesh;
                     glowCard.modelIsElvenLike = model.isElvenLike;
@@ -1818,8 +1817,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                         !model.isSpellEffect &&
                         !m2BlendIsAdditive(batch.blendMode) &&
                         (model.isGroundDetail || foliageCutout ||
-                         m2BatchNeedsAlphaTest(batch.blendMode, batch.hasAlpha) ||
-                         batch.colorKeyBlack);
+                         m2BatchNeedsAlphaTest(batch.blendMode, batch.hasAlpha));
 
                     uint8_t effectiveBlendMode = batch.blendMode;
                     if (model.isSpellEffect && !batch.hasAuthoredMaterial) {
@@ -1860,8 +1858,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                         // outdoor trees) when the camera is inside a WMO.  Disable it; indoor
                         // M2s already look correct from the darker ambient/lighting.
                         mat->interiorDarken = 0.0f;
-                        if (batch.colorKeyBlack)
-                            mat->colorKeyThreshold = (effectiveBlendMode == 4 || effectiveBlendMode == 5) ? 0.7f : 0.08f;
                         if (forceCutout) {
                             mat->alphaTest = model.isGroundDetail ? 3 : (foliageCutout ? 2 : 1);
                             if (model.isGroundDetail) mat->unlit = 0;
@@ -2022,7 +2018,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             glowCard.blendMode = batch.blendMode;
             glowCard.lanternGlowHint = batch.lanternGlowHint;
             glowCard.glowCardLike = batch.glowCardLike;
-            glowCard.colorKeyBlack = batch.colorKeyBlack;
             glowCard.unlit = batchUnlit;
             glowCard.preserveGlowMesh = batch.preserveGlowMesh;
             glowCard.modelIsElvenLike = model.isElvenLike;
@@ -2110,8 +2105,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 mat->volumetricBeam =
                     (model.isVolumetricBeam || batch.volumetricBeam) ? 1 : 0;
                 mat->interiorDarken = 0.0f;
-                if (batch.colorKeyBlack)
-                    mat->colorKeyThreshold = (effectiveBlendMode == 4 || effectiveBlendMode == 5) ? 0.7f : 0.08f;
             }
 
             if (!batch.materialSet) continue;

@@ -841,10 +841,6 @@ VkTexture* CharacterRenderer::loadTexture(const std::string& path) {
 
     std::string key = normalizeTexturePathKey(path);
     const uint64_t lookupSerial = ++textureLookupSerial_;
-    // The same question the M2 renderer asks, through the same answer. This
-    // carried four of its eleven tokens and searched the whole path, so which
-    // textures were colour-keyed depended on which renderer had loaded them.
-    const bool colorKeyBlackHint = assetNameLooksLikeFlame(key);
 
     // Check cache
     auto it = textureCache.find(key);
@@ -925,7 +921,6 @@ VkTexture* CharacterRenderer::loadTexture(const std::string& path) {
     e.approxBytes = approxBytes;
     e.lastUse = ++textureCacheCounter_;
     e.hasAlpha = hasAlpha;
-    e.colorKeyBlack = colorKeyBlackHint;
 
     // Launch normal map generation on background thread - CPU work is pure compute,
     // only the GPU upload (in processPendingNormalMaps) needs the main thread (~1-2ms).
@@ -934,7 +929,7 @@ VkTexture* CharacterRenderer::loadTexture(const std::string& path) {
         blpImage.width, blpImage.height);
 
     textureCacheBytes_ += e.approxBytes;
-    texturePropsByPtr_[texPtr] = {.hasAlpha = hasAlpha, .colorKeyBlack = colorKeyBlackHint};
+    texturePropsByPtr_[texPtr] = {.hasAlpha = hasAlpha};
     textureCache[key] = std::move(e);
     failedTextureCache_.erase(key);
     failedTextureRetryAt_.erase(key);
@@ -1425,8 +1420,7 @@ VkTexture* CharacterRenderer::compositeTextures(const std::vector<std::string>& 
     e.approxBytes = approxTextureBytesWithMips(width, height);
     e.lastUse = ++textureCacheCounter_;
     e.hasAlpha = hasAlpha;
-    e.colorKeyBlack = false;
-    texturePropsByPtr_[texPtr] = {.hasAlpha = hasAlpha, .colorKeyBlack = false};
+    texturePropsByPtr_[texPtr] = {.hasAlpha = hasAlpha};
     // No derived normal map for a composited body, and this is why: the
     // derivation reads luminance as height, which holds for stone and bark and
     // does not hold for skin. Every freckle, every painted shadow under a
@@ -1736,8 +1730,7 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
     entry.approxBytes = approxTextureBytesWithMips(width, height);
     entry.lastUse = ++textureCacheCounter_;
     entry.hasAlpha = hasAlpha;
-    entry.colorKeyBlack = false;
-    texturePropsByPtr_[texPtr] = {.hasAlpha = hasAlpha, .colorKeyBlack = false};
+    texturePropsByPtr_[texPtr] = {.hasAlpha = hasAlpha};
     // Skin again, with armour composited onto it. Same reason as above.
     // Checked before emplacing: see the note in compositeTexture. Testing
     // ins.second afterwards is too late -- by then the texture has been moved
@@ -1880,16 +1873,6 @@ bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
             return ba.materialLayer < bb.materialLayer;
         });
 
-    {
-        std::string lowerName = gpuModel.data.name;
-        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        gpuModel.isKoboldFlame =
-            (lowerName.find("kobold") != std::string::npos) &&
-            ((lowerName.find("candle") != std::string::npos) ||
-             (lowerName.find("torch") != std::string::npos) ||
-             (lowerName.find("mine") != std::string::npos));
-    }
 
     models[id] = std::move(gpuModel);
 
@@ -2842,8 +2825,6 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     // 4.0 covers Tauren, mounted characters, and most creature models.
     constexpr float kDefaultCharacterCullRadius = 4.0f;
     const glm::vec3 camPos = camera.getPosition();
-    const float frameTimeSeconds = std::chrono::duration<float>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
 
     // Extract frustum planes for per-instance visibility testing
     Frustum frustum;
@@ -3212,12 +3193,10 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 // Determine material properties
                 bool alphaCutout = false;
-                bool colorKeyBlack = false;
                 if (texPtr != nullptr && texPtr != whiteTexture_.get()) {
                     auto pit = texturePropsByPtr_.find(texPtr);
                     if (pit != texturePropsByPtr_.end()) {
                         alphaCutout = pit->second.hasAlpha;
-                        colorKeyBlack = pit->second.colorKeyBlack;
                     }
                 }
                 // Scenes, creatures and attached items follow their M2 material
@@ -3299,19 +3278,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     currentPipeline = desiredPipeline;
                 }
 
-                float emissiveBoost = 1.0f;
-                glm::vec3 emissiveTint(1.0f, 1.0f, 1.0f);
-                const bool koboldCandleFlame = colorKeyBlack && gpuModel.isKoboldFlame;
-                if (unlit && koboldCandleFlame) {
-                    float phase = static_cast<float>(batch.submeshId) * 0.31f;
-                    float f1 = std::sin(frameTimeSeconds * 7.9f + phase);
-                    float f2 = std::sin(frameTimeSeconds * 12.7f + phase * 1.73f);
-                    float f3 = std::sin(frameTimeSeconds * 4.3f + phase * 2.11f);
-                    float flicker = 0.90f + 0.10f * f1 + 0.06f * f2 + 0.04f * f3;
-                    flicker = std::clamp(flicker, 0.72f, 1.12f);
-                    emissiveBoost = (blendMode >= 3) ? (2.4f * flicker) : (1.5f * flicker);
-                    emissiveTint = glm::vec3(1.28f, 1.04f, 0.82f);
-                }
+                const float emissiveBoost = 1.0f;
+                const glm::vec3 emissiveTint(1.0f, 1.0f, 1.0f);
 
                 // Resolve normal/height map for this texture
                 VkTexture* normalMap = flatNormalTexture_.get();
@@ -3334,7 +3302,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
                 matData.opacity = renderOpacity * batchColorAlpha;
                 matData.alphaTest = blendNeedsCutout ? 1 : 0;
-                matData.colorKeyBlack = colorKeyBlack ? 1 : 0;
+                matData.colorKeyBlack = 0;
                 matData.unlit = unlit ? 1 : 0;
                 matData.emissiveBoost = emissiveBoost;
                 matData.emissiveTintR = emissiveTint.r;
