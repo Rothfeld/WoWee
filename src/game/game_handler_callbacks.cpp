@@ -2774,6 +2774,10 @@ float GameHandler::getSpellCooldown(uint32_t spellId) const {
     return 0;
 }
 
+bool GameHandler::isCooldownEventPending(uint32_t spellId) const {
+    return spellHandler_ && spellHandler_->isCooldownEventPending(spellId);
+}
+
 float GameHandler::getSpellCooldownTotal(uint32_t spellId) const {
     if (spellHandler_) return spellHandler_->getSpellCooldownTotal(spellId);
     return 0;

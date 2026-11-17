@@ -109,6 +109,11 @@ public:
     [[nodiscard]] const std::unordered_set<uint32_t>& getKnownSpells() const { return knownSpells_; }
     [[nodiscard]] const std::unordered_map<uint32_t, float>& getSpellCooldowns() const { return spellCooldowns_; }
     [[nodiscard]] float getSpellCooldown(uint32_t spellId) const;
+    /// A spell whose cooldown starts on an event (Spell.dbc attribute
+    /// 0x02000000: Stealth, Cold Blood) between its cast and the server's
+    /// SMSG_COOLDOWN_EVENT. Native 2.4.3 answers IsUsableAction false and
+    /// GetActionCooldown enable 0 for it meanwhile.
+    [[nodiscard]] bool isCooldownEventPending(uint32_t spellId) const { return cooldownEventPending_.count(spellId) > 0; }
     [[nodiscard]] float getSpellCooldownTotal(uint32_t spellId) const;
 
     // Cast state
@@ -535,6 +540,7 @@ private:
     bool announcedAutoAttack_ = false;
     // IsUsableAction of every bar slot as last announced; see updateTimers.
     std::vector<SpellUsability> announcedUsability_;
+    std::unordered_set<uint32_t> cooldownEventPending_;
     float castTimeRemaining_ = 0.0f;
     float castTimeTotal_ = 0.0f;
     bool restorationActive_ = false;

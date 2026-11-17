@@ -340,6 +340,13 @@ static int lua_GetActionCooldown(lua_State* L) {
         return 3;
     }
     const auto& action = bar[slot];
+    if (action.type == game::ActionBarSlot::SPELL && gh->isCooldownEventPending(action.id)) {
+        // Cast, and its cooldown waits for the event: enable 0, no sweep.
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 0);
+        return 3;
+    }
     if (action.cooldownRemaining > 0.0f) {
         // WoW returns GetTime()-based start time; approximate
         double now = 0;

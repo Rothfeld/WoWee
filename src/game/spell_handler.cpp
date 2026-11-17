@@ -1204,6 +1204,13 @@ SpellUsability castableNow(GameHandler& owner, uint32_t spellId) {
     const auto& entry = found->second;
     if (entry.attr & 0x40u) return {};                                    // passive
     if (owner.isPlayerDead() && !(entry.attr & 0x800000u)) return {};
+    // A spell whose cooldown waits for its aura to end (attribute 0x02000000)
+    // is unusable while that aura is on the player. Native 2.4.3: Stealth
+    // greys when stealth lands and returns as it ends; Cold Blood likewise.
+    if (entry.attr & 0x02000000u) {
+        for (const auto& aura : owner.getPlayerAuras())
+            if (!aura.isEmpty() && aura.spellId == spellId) return {};
+    }
     if ((entry.attr & 0x10000000u) && owner.isInCombat()) return {};
     if (!formAllows(owner, entry)) return {};
     if (!auraStateAllows(owner, entry)) return {};
@@ -2973,7 +2980,16 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         //
         // Anything at or under the global cooldown is ignored inside, and an
         // existing cooldown is left alone, so this cannot shorten one.
-        seedCooldownFromSpellInfo(data.spellId);
+        //
+        // Not for a spell whose cooldown waits for an event: Stealth's ten
+        // seconds begin when stealth ends, at SMSG_COOLDOWN_EVENT.
+        constexpr uint32_t kAttrCooldownOnEvent = 0x02000000;
+        const auto cast = owner_.spellNameCacheRef().find(data.spellId);
+        if (cast != owner_.spellNameCacheRef().end() && (cast->second.attr & kAttrCooldownOnEvent)) {
+            cooldownEventPending_.insert(data.spellId);
+        } else {
+            seedCooldownFromSpellInfo(data.spellId);
+        }
 
         // Play cast-complete sound
         if (!owner_.isProfessionSpell(data.spellId) && !rangedWeaponAttack)
@@ -3227,6 +3243,10 @@ void SpellHandler::handleCooldownEvent(network::Packet& packet) {
     uint32_t spellId = packet.readUInt32();
     if (packet.hasRemaining(8))
         packet.readUInt64();
+    // The event starts the cooldown the cast left waiting (CMaNGOS
+    // Player::AddCooldown: "send cooldown event to start cd client side").
+    // Native 2.4.3: Stealth shows its 10 s sweep from the moment stealth ends.
+    cooldownEventPending_.erase(spellId);
     spellCooldowns_.erase(spellId);
     spellCooldownTotals_.erase(spellId);
     for (auto& slot : owner_.actionBarRef()) {
@@ -3234,6 +3254,7 @@ void SpellHandler::handleCooldownEvent(network::Packet& packet) {
             slot.cooldownRemaining = 0.0f;
         }
     }
+    seedCooldownFromSpellInfo(spellId);
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
         owner_.addonEventCallbackRef()("BAG_UPDATE_COOLDOWN", {});
