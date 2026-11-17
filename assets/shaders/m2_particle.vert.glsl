@@ -70,6 +70,11 @@ void main() {
             ? vec2(-tailView.y, tailView.x) / projectedLength : vec2(1,0);
         viewPos4.xyz += tailView * vUV.y;
         viewPos4.xy += side * ((vUV.x * 2.0 - 1.0) * aSize);
+        // The texture's U axis runs along the tail, U = 0 at the particle:
+        // tail emitters use wide textures (333 of 3118 in TBC, against 3 of
+        // 12548 head emitters), e.g. SlimeBlob.blp (64x16), a drop whose
+        // head is at its left edge.
+        vUV = vUV.yx;
     } else {
         viewPos4.xy += (vUV * 2.0 - 1.0) * aSize;
     }

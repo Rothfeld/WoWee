@@ -72,3 +72,7 @@ every tail as a dot. A tail quad runs from the particle back along
 Corrosive Acid Breath (16359, `AcidLiquidBreath.m2` #1/#2) shows green
 tadpole streaks, and the trainer learn light (kit 362, `Learn_Impact_Base.m2`
 #0, tail 2.4 s at 2.78 yd/s) vertical beams.
+The tail texture's U axis runs along the tail, U = 0 at the particle: 333 of
+3118 tail emitters use wide textures against 3 of 12548 head emitters, e.g.
+`SlimeBlob.blp` (64x16), a drop whose head is its left edge. With V along the
+tail the acid breath drew thin hard-edged lines instead of drops.
