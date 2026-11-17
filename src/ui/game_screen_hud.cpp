@@ -9,6 +9,7 @@
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
 #include "ui/nameplate_stacking.hpp"
+#include "game/summon_title.hpp"
 #include "game/level_difficulty.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
@@ -1611,9 +1612,18 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 const std::string& gn = gameHandler.lookupGuildName(guildId);
                 if (!gn.empty()) subLabel = "<" + gn + ">";
             }
-        } else if (isCompanion) {
-            const std::string& owner = gameHandler.lookupName(game::unitCreatedByGuid(*unit));
-            if (!owner.empty()) subLabel = "<" + owner + "'s Companion>";
+        } else if (const auto title = game::summonTitle(creatureType, game::unitCreatedByGuid(*unit));
+                   title != game::SummonTitle::None) {
+            // "<Owner's Companion>" / "<Owner's Minion>" from GlobalStrings.
+            const uint64_t creator = game::unitCreatedByGuid(*unit);
+            std::string owner = gameHandler.lookupName(creator);
+            if (owner.empty())
+                if (const auto c = gameHandler.getEntityManager().getEntity(creator))
+                    owner = game::entityDisplayName(c);
+            auto* lua = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+            const std::string pattern = lua ? lua->globalString(game::summonTitleGlobal(title)) : std::string{};
+            if (!owner.empty() && !pattern.empty())
+                subLabel = "<" + game::formatSummonTitle(pattern, owner) + ">";
         } else {
             // NPC subtitle (e.g. "<Reagent Vendor>", "<Innkeeper>")
             std::string sub = gameHandler.getCachedCreatureSubName(unit->getEntry());

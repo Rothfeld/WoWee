@@ -1625,6 +1625,10 @@ wowee_add_test(test_character_emitters SOURCES test_character_emitters.cpp)
 # Corpse fade-out opacity ahead of removal.
 wowee_add_test(test_unit_fade SOURCES test_unit_fade.cpp)
 
+# ── test_summon_title ────────────────────────────────────────
+# Companion / minion subtitle choice under summoned units.
+wowee_add_test(test_summon_title SOURCES test_summon_title.cpp)
+
 # ── test_scene_pick ──────────────────────────────────────────
 # Which of ScenePick's answers a caller wants. closestGuid and resolve()
 # disagree exactly where a wide object stands beside an NPC, which is where the

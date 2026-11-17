@@ -1,4 +1,5 @@
 #include "addons/lua_engine.hpp"
+#include "game/summon_title.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -2793,17 +2794,24 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             const std::string& guildName = gh->lookupGuildName(guildId);
             if (!guildName.empty()) addLine("<" + guildName + ">", 0.25f, 1.0f, 0.25f);
         }
-    } else if (isCompanion) {
-        const std::string owner = gh->lookupName(game::unitCreatedByGuid(*entity));
+    } else if (const auto title = unit ? game::summonTitle(gh->getCreatureType(unit->getEntry()),
+                                                         game::unitCreatedByGuid(*entity))
+                                       : game::SummonTitle::None;
+               title != game::SummonTitle::None) {
+        // Companion or a creature's minion (game/summon_title.hpp).
+        const uint64_t creator = game::unitCreatedByGuid(*entity);
+        std::string owner = gh->lookupName(creator);
+        if (owner.empty())
+            if (const auto c = gh->getEntityManager().getEntity(creator))
+                owner = game::entityDisplayName(c);
         if (!owner.empty()) {
-            lua_getglobal(L, "UNITNAME_TITLE_COMPANION");
+            lua_getglobal(L, game::summonTitleGlobal(title));
             assert(lua_isstring(L, -1));
-            std::string title = lua_tostring(L, -1);
+            const std::string pattern = lua_tostring(L, -1);
             lua_pop(L, 1);
-            const auto placeholder = title.find("%s");
-            assert(placeholder != std::string::npos);
-            title.replace(placeholder, 2, owner);
-            addLine(title, 1.0f, 1.0f, 1.0f);
+            const std::string line = game::formatSummonTitle(pattern, owner);
+            assert(!line.empty());
+            addLine(line, 1.0f, 1.0f, 1.0f);
         }
     } else if (entity) {
         // NPC tooltip subtitles have no angle brackets (unlike overhead titles).
@@ -12999,6 +13007,15 @@ bool LuaEngine::evaluateBoolean(const std::string& expression) {
     const bool truth = lua_toboolean(L_, -1) != 0;
     lua_settop(L_, base);
     return truth;
+}
+
+std::string LuaEngine::globalString(const char* name) const {
+    if (!L_ || !name) return {};
+    lua_pushstring(L_, name);
+    lua_rawget(L_, LUA_GLOBALSINDEX);
+    std::string value = lua_type(L_, -1) == LUA_TSTRING ? lua_tostring(L_, -1) : "";
+    lua_pop(L_, 1);
+    return value;
 }
 
 bool LuaEngine::executeString(const std::string& code) {

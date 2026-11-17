@@ -40,6 +40,9 @@ public:
 
     bool executeFile(const std::string& path);
     bool executeString(const std::string& code);
+    /// A string global such as a GlobalStrings pattern (UNITNAME_TITLE_MINION),
+    /// read raw from _G; empty when it is not a string.
+    [[nodiscard]] std::string globalString(const char* name) const;
 
     /// Run a Lua expression and answer whether it came out true.
     ///
