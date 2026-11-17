@@ -928,3 +928,20 @@ TEST_CASE("removed target notifies FrameXML after clearing selection", "[replay]
         CHECK_FALSE(s.handler().getEntityManager().hasEntity(kMob));
     }
 }
+
+TEST_CASE("a player whisper is shown whatever it starts with", "[chat][tbc]") {
+    // An addon whisper is LANG_ADDON (or a prefix<TAB>payload envelope); a
+    // spoken whisper beginning with an addon's old prefix is still a whisper.
+    using wowee::game::ChatType;
+    Session s("tbc");
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 2}});
+    constexpr uint64_t kOther = 0x43;
+    s.receive(nameResponse(kOther, "Graulberto"));
+    for (const std::string text : {"oRAnge juice?", "AVR is fine", "GS_x", "\xC3\x84rger"}) {
+        s.receive(chatPacket(ChatType::WHISPER, kOther, Session::kPlayerGuid, text));
+    }
+    std::vector<std::string> shown;
+    for (const auto& m : s.handler().getChatHistory())
+        if (m.type == ChatType::WHISPER) shown.push_back(m.message);
+    CHECK(shown == std::vector<std::string>{"oRAnge juice?", "AVR is fine", "GS_x", "\xC3\x84rger"});
+}

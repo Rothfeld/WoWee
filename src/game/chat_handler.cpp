@@ -639,21 +639,10 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
         }
     }
 
-    // Filter addon-to-addon whispers (GearScore, DBM, oRA, etc.) from player chat.
-    // These are invisible in the real WoW client.
-    if (data.type == ChatType::WHISPER || data.type == ChatType::WHISPER_INFORM) {
-        const auto& msg = data.message;
-        if (msg.size() >= 3 && (
-            msg.rfind("GS_", 0) == 0 ||          // GearScore
-            msg.rfind("DVNE", 0) == 0 ||          // DBM (DeadlyBossMods)
-            msg.rfind("oRA", 0) == 0 ||            // oRA raid addon
-            msg.rfind("BWVQ", 0) == 0 ||           // BigWigs
-            msg.rfind("AVR", 0) == 0 ||            // AVR (Augmented Virtual Reality)
-            msg.rfind('\t', 0) == 0 ||             // Tab-prefixed addon messages
-            (msg.size() > 4 && static_cast<unsigned char>(msg[0]) > 127))) {  // Binary data
-            return; // Silently discard addon whisper
-        }
-    }
+    // Addon whispers are told apart by their envelope below (LANG_ADDON or the
+    // prefix<TAB>payload form, decodeAddonChatPayload), not by what the text
+    // starts with: a prefix list here dropped any player whisper that began
+    // "oRA", "AVR", "GS_", "DVNE" or "BWVQ", or with a non-ASCII letter.
 
     // Fill in the $-tokens before anything sees the line.
     //
