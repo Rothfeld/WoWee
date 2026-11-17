@@ -2969,8 +2969,23 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
     const float transportFloorMinZ =
         (byReference ? referenceZ : glZ - kTransportProbeLift) - kTransportFloorReach;
 
-    // World-space ray: from high above, pointing straight down
-    glm::vec3 worldOrigin(glX, glY, glZ + 500.0f);
+    // World-space ray pointing straight down from just above the instance.
+    //
+    // The start must not depend on glZ. It used to be glZ + 500, and a float
+    // near 530 has a step of 6e-5, so the hit height carried that much noise
+    // from the probe height. A player standing still re-probes from the floor
+    // it just found; the answer came back one step different, the next probe
+    // one step back, and the feet alternated between two heights every frame
+    // (Scarlet Monastery chapel: 31.5495 / 31.5496). Each heartbeat then told
+    // the server the player had moved, and CMaNGOS Spell::update cancels a
+    // cast with SPELL_INTERRUPT_FLAG_MOVEMENT on any change of position:
+    // "Opening" on a torch was interrupted while nobody touched a key.
+    // Starting from the instance's top makes the same column give the same
+    // floor whatever the probe height, and every floor of the instance is
+    // still below the start.
+    const auto worldOriginFor = [&](const WMOInstance& instance) {
+        return glm::vec3(glX, glY, instance.worldBoundsMax.z + 1.0f);
+    };
     glm::vec3 worldDir(0.0f, 0.0f, -1.0f);
 
     // Lambda to test a single group for floor hits
@@ -3057,7 +3072,7 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
         auto it = loadedModels.find(instance.modelId);
         if (it != loadedModels.end() && instance.modelId == activeGroup_.modelId) {
             const ModelData& model = it->second;
-            glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(worldOrigin, 1.0f));
+            glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(worldOriginFor(instance), 1.0f));
             glm::vec3 localDir = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(worldDir, 0.0f)));
 
             auto testGroupIdx = [&](uint32_t gi) {
@@ -3141,7 +3156,7 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
         if (!anyGroupOverlaps) continue;
 
         // Use cached inverse matrix
-        glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(worldOrigin, 1.0f));
+        glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(worldOriginFor(instance), 1.0f));
         glm::vec3 localDir = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(worldDir, 0.0f)));
 
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
@@ -3235,7 +3250,8 @@ std::optional<float> WMORenderer::getInstanceFloorHeight(uint32_t instanceId,
         return std::nullopt;
     }
 
-    const glm::vec3 worldOrigin(glX, glY, glZ + 500.0f);
+    // From the instance's top, not from glZ: see getFloorHeight.
+    const glm::vec3 worldOrigin(glX, glY, instance.worldBoundsMax.z + 1.0f);
     const glm::vec3 worldDir(0.0f, 0.0f, -1.0f);
     const glm::vec3 localOrigin(instance.invModelMatrix * glm::vec4(worldOrigin, 1.0f));
     const glm::vec3 localDir = glm::normalize(
