@@ -1,3 +1,6 @@
+#include <sstream>
+#include <fstream>
+#include <cstdlib>
 #include "core/npc_interaction_facing.hpp"
 #include "core/coordinates.hpp"
 #include "input_test_support.hpp"
@@ -1991,10 +1994,16 @@ TEST_CASE_METHOD(Integration, "Recipe item data resolves learned craft and reage
     auto& reagent = handler.itemInfoCacheRef()[23446];
     reagent.valid = true;
     reagent.name = "Adamantite Bar";
-    // FrameXML's GlobalStrings.lua defines these in the client; this test
-    // loads no FrameXML.
-    run("ITEM_BIND_ON_PICKUP = 'Binds when picked up'; ITEM_BIND_ON_EQUIP = 'Binds when equipped'; "
-        "ITEM_BIND_ON_USE = 'Binds when used'; ITEM_SOULBOUND = 'Soulbound'");
+    // The tooltip is built from GlobalStrings.lua, which is extracted client
+    // data outside this repository, e.g.
+    //   WOWEE_TBC_GLOBALSTRINGS=/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml/globalstrings.lua
+    const char* globalStrings = std::getenv("WOWEE_TBC_GLOBALSTRINGS");
+    if (!globalStrings) SKIP("WOWEE_TBC_GLOBALSTRINGS not set");
+    std::ifstream globalStringsFile(globalStrings);
+    REQUIRE(globalStringsFile.good());
+    std::stringstream globalStringsText;
+    globalStringsText << globalStringsFile.rdbuf();
+    run(globalStringsText.str());
     run("recipeTip = CreateFrame('GameTooltip', 'RecipeTip', UIParent); assert(_WoweePopulateItemTooltip(recipeTip, 23590))");
     const auto* tip = lua.widgets().findByName("RecipeTip");
     REQUIRE(tip);
