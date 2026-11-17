@@ -116,6 +116,7 @@ public:
     [[nodiscard]] bool shouldHidePlayer() const { return playerCameraOpacity_ <= 0.0f; }
     [[nodiscard]] bool isGrounded() const { return grounded; }
     [[nodiscard]] float getAirborneSeconds() const { return airborneSeconds_; }
+    [[nodiscard]] const glm::vec3& getAirborneHorizontalVelocity() const { return airborneHorizontalVelocity_; }
     [[nodiscard]] bool isJumping() const { return !grounded && verticalVelocity > 0.0f; }
     // A swimming character is not grounded and is not rising, but it is not
     // falling either - treating it as falling made leaving the water register as

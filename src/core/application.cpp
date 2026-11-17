@@ -4018,6 +4018,29 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
 #endif
     runInGameStage("gameHandler->update", [&] {
         if (gameHandler) {
+            // Walking off an edge starts a zero-launch-speed fall without a
+            // JUMP opcode. Retain the physics takeoff direction even after
+            // input release; observers extrapolate this arc from heartbeats.
+            if (renderer && renderer->getCameraController() && !gameHandler->isOnTransport()) {
+                const auto* camera = renderer->getCameraController();
+                auto* movement = gameHandler->getMovementHandler();
+                auto& info = movement->getMovementInfoMut();
+                if (camera->isFalling() && !camera->isFlightAirborne() &&
+                    camera->getAirborneSeconds() >= 0.15f &&
+                    !info.hasFlag(game::MovementFlags::FALLING)) {
+                    const auto velocity = core::coords::canonicalToServer(
+                        core::coords::renderToCanonical(camera->getAirborneHorizontalVelocity()));
+                    const float speed = std::hypot(velocity.x, velocity.y);
+                    info.flags |= static_cast<uint32_t>(game::MovementFlags::FALLING);
+                    info.jumpVelocity = 0.0f;
+                    info.jumpXYSpeed = speed;
+                    info.jumpCosAngle = speed > 0.0f ? velocity.x / speed : 0.0f;
+                    info.jumpSinAngle = speed > 0.0f ? velocity.y / speed : 0.0f;
+                    movement->setFalling(true);
+                    LOG_DEBUG("Walk-off fall: elapsed=", camera->getAirborneSeconds(),
+                              " horizontalSpeed=", speed);
+                }
+            }
             // Heartbeats run before the regular render/game position sync.
             // During local flight, use the last completed physics sample;
             // otherwise fallTime advances with a position one frame older.

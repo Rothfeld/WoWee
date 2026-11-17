@@ -12,6 +12,13 @@ rate. The Exodar balcony at server coordinates (-4199.94,-11608.7,-98.6475)
 is a recorded regression route: walk toward heading1.21757, then release
 forward while airborne. Horizontal momentum must continue until landing.
 
+Walking off an edge also publishes FALLING movement state once airborne for
+0.15 seconds, with zero vertical launch speed and the retained horizontal
+takeoff velocity. Heartbeats carry the physics elapsed fall time and position.
+Releasing movement input must not erase the airborne trajectory; FALL_LAND
+clears it. Native TBC captures on this route use zero launch speed and
+7 yards/second horizontal travel without a JUMP opcode.
+
 Paired native/client recordings and supported-ramp checks are retained in the
 parent workspace under `_experiments/20261117T000028Z.balcony_contact`.
 The movement helper regressions run with:
