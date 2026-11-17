@@ -638,6 +638,12 @@ Particle textures supply their silhouette, and SRC_ALPHA blending consumes
 unpremultiplied shader color. The upload buffer grows to fit visible particles;
 a fixed global cap can hide newly created loot and spell effects behind scenery.
 Set `WOWEE_PARTICLE_TRACE=LootFX` to log emitter colors, sizes and submitted bounds.
+Emitter int16 `+0x2E` is a priority plane (TBC values -100..17). Negative
+emitters draw between the opaque and transparent mesh passes, the rest after
+them: `BFD_WispSmall.m2` #1 is a black alpha underlay (-100) that shows as a
+dark cloud when drawn over the wisp glow. Pre-264 emitter `+0x194` is drag,
+speed times `exp(-drag * t)`; `BFD_WallLight03.m2` #0 (drag 5.5, 4 s life)
+otherwise rises as a column to the ceiling.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
 
 ### TBC combat feedback
