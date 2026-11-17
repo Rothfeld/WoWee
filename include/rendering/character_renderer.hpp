@@ -215,6 +215,10 @@ public:
     void setGestureWeaponPose(uint32_t instanceId, uint32_t animationId, bool sheathe);
     /** Unit sheath state (0 unarmed, 1 melee, 2 ranged) placing its attached weapons. */
     void setSheathState(uint32_t instanceId, uint8_t sheathState);
+    /** Unit stand state (UNIT_FIELD_BYTES_1 byte 0): a pose whose animation's
+     *  AnimationData.WeaponFlags has 0x04 or 0x10 shows the weapons sheathed
+     *  whatever the sheath state, as gestures do (gestureSheathesWeapons). */
+    void setStandState(uint32_t instanceId, uint8_t standState);
 
     /** Detach every item held at the given attachment point (drops their enchant effects too). */
     void detachWeapon(uint32_t charInstanceId, uint32_t attachmentId);
@@ -329,6 +333,9 @@ private:
         uint32_t currentAnimationId = 0;
         uint32_t gestureSheathAnimation = 0;
         uint8_t sheathState = 1;
+        // The unit's stand state puts its weapons away (sit, sleep, kneel,
+        // chairs): the AnimationData.WeaponFlags of its pose, see setStandState.
+        bool standStateSheathes = false;
         int currentSequenceIndex = -1;  // Index into M2Model::sequences
         int armSequenceIndex[2] = {-1, -1};  // Left, right arm on their own sequences; -1 follows the body
         bool armSequenceLoops[2] = {false, false};  // Idle arm loops; a reaching arm holds its last frame
@@ -484,6 +491,7 @@ private:
     /// AnimationData.dbc ID -> Fallback and ID -> Flags, loaded on first use.
     std::unordered_map<uint32_t, uint32_t> animationFallback_;
     std::unordered_map<uint32_t, uint32_t> animationFlags_;
+    std::unordered_map<uint32_t, uint32_t> animationWeaponFlags_;
     bool animationFallbackLoaded_ = false;
     void loadAnimationData();
     std::optional<uint32_t> animationFallback(uint32_t animationId);

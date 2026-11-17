@@ -3,7 +3,8 @@
     "Fallback": 6,
     "Flags": 5,
     "ID": 0,
-    "Name": 1
+    "Name": 1,
+    "WeaponFlags": 2
   },
   "AreaPOI": {
     "AreaID": 9,

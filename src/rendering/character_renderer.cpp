@@ -2039,9 +2039,13 @@ void CharacterRenderer::loadAnimationData() {
     const uint32_t flagsField = layout->tryField("Flags");
     if (flagsField == 0xFFFFFFFFu || flagsField >= dbc->getFieldCount())
         throw std::runtime_error("dbc_layouts.json lacks AnimationData Flags; deploy current expansion metadata");
+    const uint32_t weaponField = layout->tryField("WeaponFlags");
+    if (weaponField == 0xFFFFFFFFu || weaponField >= dbc->getFieldCount())
+        throw std::runtime_error("dbc_layouts.json lacks AnimationData WeaponFlags; deploy current expansion metadata");
     for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
         animationFallback_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, field);
         animationFlags_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, flagsField);
+        animationWeaponFlags_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, weaponField);
     }
 }
 
@@ -4690,9 +4694,31 @@ void CharacterRenderer::setSheathState(uint32_t instanceId, uint8_t sheathState)
     instance.sheathState = sheathState;
 }
 
+void CharacterRenderer::setStandState(uint32_t instanceId, uint8_t standState) {
+    // Original, pair 1, a player at sheath state 1 (melee) with its stand
+    // state set by field: Sit 1, Sleep 3, chairs 4-6 and Kneel 8 show the
+    // weapons sheathed; Stand 0, Dead 7 and 2 (drawn standing) keep them in
+    // hand. Those poses' animations carry WeaponFlags 16 (SitGround,
+    // KneelLoop) or 4 (Sleep, SitChairLow/Med/High), Stand and Dead 0.
+    // _experiments/20261117T194000Z.weapon_glow/frames/edrica_standstates.png
+    loadAnimationData();
+    // No AnimationData layout (expansions without one): loadAnimationData
+    // has logged it; the sheath state alone places the weapons.
+    if (animationWeaponFlags_.empty()) return;
+    const uint32_t pose = standPose(standState).idle;
+    const auto flags = animationWeaponFlags_.find(pose);
+    assert(flags != animationWeaponFlags_.end());
+    auto& instance = instances.at(instanceId);
+    const bool sheathes = (flags->second & 0x14u) != 0;
+    if (instance.standStateSheathes == sheathes) return;
+    LOG_INFO("Stand state ", int(standState), " (animation ", pose, ", weapon flags ", flags->second,
+             "): instance ", instanceId, " weapons ", sheathes ? "sheathed" : "by sheath state");
+    instance.standStateSheathes = sheathes;
+}
+
 bool CharacterRenderer::weaponSheathed(const CharacterInstance& instance, const WeaponAttachment& weapon) {
     if (weapon.heldSheathState < 0) return false;
-    return instance.gestureSheathAnimation != 0 ||
+    return instance.gestureSheathAnimation != 0 || instance.standStateSheathes ||
         instance.sheathState != static_cast<uint8_t>(weapon.heldSheathState);
 }
 

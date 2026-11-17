@@ -1112,6 +1112,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
     }
     syncUnitAuraVisuals(*entity, instanceId);
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
+    renderer_->getCharacterRenderer()->setStandState(instanceId, state);
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
     const uint8_t previous = it->second;
     it->second = state;

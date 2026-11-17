@@ -669,6 +669,8 @@ void AnimationCallbackHandler::setupCallbacks() {
             standState == AC::STAND_STATE_KNEEL) {
             appearanceComposer_.setWeaponsSheathed(true);
         }
+        if (auto* cr = renderer_.getCharacterRenderer(); cr && renderer_.getCharacterInstanceId())
+            cr->setStandState(renderer_.getCharacterInstanceId(), standState);
 
         auto* ac = renderer_.getAnimationController();
         if (!ac) return;
