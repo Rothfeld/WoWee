@@ -2102,7 +2102,7 @@ void Renderer::update(float deltaTime) {
         const auto* gh = core::Application::getInstance().getGameHandler();
         uint32_t mapId    = gh ? gh->getCurrentMapId() : 0;
         float gameTime    = gh ? gh->getGameTime() : -1.0f;
-        bool isRaining    = gh ? gh->isRaining() : false;
+        bool isRaining    = gh ? gh->isStormy() : false;
         // Lighting follows the eye, including an orbit below the surface while
         // the player remains above it. Swimming alone does not submerge a view.
         const auto eye = camera->getPosition();

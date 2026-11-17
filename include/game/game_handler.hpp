@@ -1510,6 +1510,17 @@ public:
                weatherIntensity_ > 0.05f;
     }
     bool isSnowing() const { return getWeatherKind() == WeatherKind::SNOW && weatherIntensity_ > 0.05f; }
+    /// Weather that selects a Light row's storm LightParams (Light.dbc field
+    /// LightParamsIDRain): any precipitation, snow and sand included. Dun
+    /// Morogh's Light 22 authors storm params 406 (fog end 417 yd, start
+    /// scalar -0.3) while its game_weather row only ever snows, so the storm
+    /// set is not rain-only.
+    bool isStormy() const {
+        const WeatherKind kind = getWeatherKind();
+        return (kind == WeatherKind::RAIN || kind == WeatherKind::THUNDERSTORM ||
+                kind == WeatherKind::SNOW || kind == WeatherKind::SANDSTORM) &&
+               weatherIntensity_ > 0.05f;
+    }
     uint32_t getOverrideLightId() const { return overrideLightId_; }
     uint32_t getOverrideLightTransMs() const { return overrideLightTransMs_; }
 
