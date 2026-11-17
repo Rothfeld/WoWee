@@ -1334,6 +1334,7 @@ void M2Renderer::markModelAsSpellEffect(uint32_t modelId) {
     auto it = models.find(modelId);
     if (it != models.end()) {
         it->second.isSpellEffect = true;
+        it->second.isRuntimeSpellVisual = true;
         // Spell effects MUST have bone animation for ribbons/particles to work.
         // The classifier may have set disableAnimation=true based on name tokens
         // (e.g. "chest" in HolySmite_Low_Chest.m2) - override that for spell effects.

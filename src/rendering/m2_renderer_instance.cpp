@@ -918,7 +918,7 @@ void M2Renderer::debugDumpFloorCandidatesAt(float glX, float glY, float glZ) con
         if (!rejected && model) {
             if (!authored) {
                 rejected = "no authored collision triangles";
-            } else if (model->isInvisibleTrap || model->isSpellEffect) {
+            } else if (model->isInvisibleTrap || model->isRuntimeSpellVisual) {
                 rejected = "classified as non-blocking";
             }
         }

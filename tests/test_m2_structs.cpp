@@ -282,7 +282,12 @@ TEST_CASE("models without authored collision triangles never block", "[m2][colli
     CHECK(m2BlocksMovement(chest));
     chest.collisionNoBlock = true;  // a guess does not discard authored geometry
     CHECK(m2BlocksMovement(chest));
+    // A name-derived effect class does not discard authored triangles:
+    // GnomeStructuralSpotLight02 ("spotlight") authors 56 of them.
     chest.isSpellEffect = true;
+    CHECK(m2BlocksMovement(chest));
+    // A model spawned as a spell visual does not block.
+    chest.isRuntimeSpellVisual = true;
     CHECK_FALSE(m2BlocksMovement(chest));
 }
 

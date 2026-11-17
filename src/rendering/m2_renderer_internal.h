@@ -128,8 +128,11 @@ inline float computeGroundDetailDownOffset(const M2ModelGPU& model, float scale)
 // A model that ships none - bushes, rugs, the
 // Blackrock Depths rune glyphs - is walked through, and its bounds are never
 // a floor or a wall: a box invented from them lifted players onto the runes.
+// Placed doodads collide by their authored triangles whatever their name:
+// GnomeStructuralSpotLight02 authors 56. Spell visuals spawned at runtime
+// do not block.
 inline bool m2BlocksMovement(const M2ModelGPU& model) {
-    return model.collision.valid() && !model.isInvisibleTrap && !model.isSpellEffect;
+    return model.collision.valid() && !model.isInvisibleTrap && !model.isRuntimeSpellVisual;
 }
 
 inline void getTightCollisionBounds(const M2ModelGPU& model, glm::vec3& outMin, glm::vec3& outMax) {

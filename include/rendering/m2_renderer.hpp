@@ -172,6 +172,8 @@ struct M2ModelGPU {
     bool hasAnimation = false;  // True if any bone has keyframes
     uint32_t rtMesh = ~0u;      // RtScene mesh, or ~0u when it does not cast
     bool isSpellEffect = false;  // True for spell effect models (skip particle dampeners)
+    /// Loaded by SpellVisualSystem for a spell visual, not placed in the world.
+    bool isRuntimeSpellVisual = false;
     bool disableAnimation = false; // Keep foliage/tree doodads visually stable
     bool shadowWindFoliage = false; // Apply wind sway in shadow pass for foliage/tree cards
     bool isHangingCloth = false;    // Banner/flag/tapestry: sways from the end it is held by
