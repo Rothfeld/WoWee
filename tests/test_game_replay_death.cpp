@@ -85,3 +85,22 @@ TEST_CASE("world states resent on resurrection raise no zone event", "[replay][d
     CHECK_FALSE(events.has("ZONE_CHANGED"));
     CHECK(s.handler().getWorldStates().at(2264) == 0);
 }
+
+TEST_CASE("a map change raises no zone event before the new map is loaded", "[replay][zone]") {
+    // Ledger #100. SMSG_NEW_WORLD (CMaNGOS Player::TeleportTo far branch):
+    // map, position, orientation. Razorfen Kraul, map 47.
+    Session s("tbc");
+    spawnAlivePlayer(s);
+    Events events(s);
+    wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_NEW_WORLD));
+    p.writeUInt32(47);
+    p.writeFloat(1943.0f);
+    p.writeFloat(1544.0f);
+    p.writeFloat(82.0f);
+    p.writeFloat(0.0f);
+    s.receive(p);
+    CHECK(events.has("PLAYER_ENTERING_WORLD"));
+    // GetZoneText still names the old zone here; the renderer announces the
+    // new one while the load resolves it.
+    CHECK_FALSE(events.has("ZONE_CHANGED_NEW_AREA"));
+}

@@ -2368,7 +2368,9 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
 
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("PLAYER_ENTERING_WORLD", {"0"});
-        owner_.addonEventCallbackRef()("ZONE_CHANGED_NEW_AREA", {});
+        // ZONE_CHANGED_NEW_AREA is not fired here: the new map is not loaded
+        // yet, so GetZoneText would still name the old zone. The renderer
+        // announces the new zone once the load resolves it (world_loader).
     }
 }
 

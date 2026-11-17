@@ -1280,13 +1280,20 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         if (gameHandler_ && gameHandler_->isPlayerDead() && !gameHandler_->isPlayerGhost()) {
             addonManager_->fireEvent("PLAYER_DEAD");
         }
+        // FrameXML loads after the initial packet events. Announce the resolved
+        // destination on the next renderer update, when WMO containment is current.
+        if (renderer_) renderer_->invalidateAreaAnnouncement();
     } else if (addonManager_ && app_.addonsLoaded_) {
         // Subsequent world entries (e.g. teleport, instance entry)
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+        // No re-announcement here. The renderer is updated throughout the
+        // warmup above and announces the new map's zone there, behind the
+        // loading screen, as the original client fires ZONE_CHANGED_NEW_AREA
+        // on the map change itself. ZoneText times its fade from GetTime(),
+        // so a title started during the load has run out by the time the
+        // world appears (ledger #100: no title on entering Razorfen Kraul).
+        // Announcing again after the load put the title card on screen.
     }
-    // FrameXML loads after the initial packet events. Announce the resolved
-    // destination on the next renderer update, when WMO containment is current.
-    if (renderer_) renderer_->invalidateAreaAnnouncement();
 }
 
 void WorldLoader::startWorldPreload(uint32_t mapId, const std::string& mapName,
