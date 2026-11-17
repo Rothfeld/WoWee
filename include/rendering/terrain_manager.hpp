@@ -128,6 +128,8 @@ struct PendingTile {
         glm::vec3 worldPosition;   // For frustum culling
         glm::mat4 modelMatrix;     // Pre-computed world transform
         std::optional<glm::vec3> indoorLighting;
+        uint32_t wmoUniqueId = 0;            // MODF placement the doodad belongs to
+        std::vector<uint16_t> rooms;         // pipeline::wmoDoodadRooms
     };
     std::vector<WMODoodadReady> wmoDoodads;
 
@@ -556,7 +558,7 @@ private:
     std::unordered_set<uint32_t> placedDoodadIds;
 
     // MAIN-THREAD-ONLY: same contract as placedDoodadIds.
-    std::unordered_set<uint32_t> placedWmoIds;
+    std::unordered_map<uint32_t, uint32_t> placedWmoIds;  // MODF uniqueId -> WMO instance id
 
     // Tiles currently being incrementally finalized across frames
     std::deque<FinalizingTile> finalizingTiles_;

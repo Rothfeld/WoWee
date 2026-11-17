@@ -1279,6 +1279,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 effectiveMaxDistSq = std::min(effectiveMaxDistSq, kBirdMaxDistSq);
                 if (distSq > effectiveMaxDistSq) continue;
             }
+            // A doodad inside a room is drawn with that room.
+            if (instance.wmoRoomInstance != 0 && wmoRoomDrawn_ &&
+                !wmoRoomDrawn_(instance.wmoRoomInstance, instance.wmoRooms)) continue;
 
             VisibleEntry visible{.index = i, .modelId = instance.modelId, .distSq = distSq, .effectiveMaxDistSq = effectiveMaxDistSq};
             // A faded instance is drawn blended, all of it - see M2Instance::fade.

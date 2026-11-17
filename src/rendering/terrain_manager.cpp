@@ -856,6 +856,8 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                                 break;
                             }
                         }
+                        doodadReady.wmoUniqueId = placement.uniqueId;
+                        doodadReady.rooms = pipeline::wmoDoodadRooms(wmoModel, doodadIdx);
                         pending->wmoDoodads.push_back(std::move(doodadReady));
                     }
                     }
@@ -1186,7 +1188,7 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                     }
                     ft.wmoInstanceIds.push_back(wmoInstId);
                     if (wmoReady.uniqueId != 0) {
-                        placedWmoIds.insert(wmoReady.uniqueId);
+                        placedWmoIds.emplace(wmoReady.uniqueId, wmoInstId);
                         ft.tileWmoUniqueIds.push_back(wmoReady.uniqueId);
                     }
                 }
@@ -1247,6 +1249,17 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                 if (wmoDoodadInstId) {
                     if (doodad.indoorLighting)
                         m2Renderer->setInstanceIndoorLighting(wmoDoodadInstId, *doodad.indoorLighting);
+                    if (!doodad.rooms.empty()) {
+                        // Doodads are prepared once per uniqueId, by the tile that
+                        // placed the building first, so it is placed by now.
+                        const auto building = placedWmoIds.find(doodad.wmoUniqueId);
+                        if (building == placedWmoIds.end()) {
+                            LOG_ERROR("WMO doodad ", doodad.modelId, " of uniqueId ", doodad.wmoUniqueId,
+                                      " has no placed building; drawn without its rooms");
+                        } else {
+                            m2Renderer->setInstanceWmoRooms(wmoDoodadInstId, building->second, doodad.rooms);
+                        }
+                    }
                     ft.m2InstanceIds.push_back(wmoDoodadInstId);
                 }
                 ft.wmoDoodadIndex++;

@@ -25,6 +25,8 @@
 #include "pipeline/asset_manager.hpp"
 #include "core/logger.hpp"
 #include "game/game_utils.hpp"
+#include <cassert>
+#include <mutex>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cassert>
@@ -159,6 +161,46 @@ bool WMORenderer::buildMainPassPipelines(VkDevice device,
 
     if (!wireframePipeline_) {
         core::Logger::getInstance().warning("WMORenderer: wireframe pipeline not available");
+    }
+
+    // One-sided materials. MOMT flag 0x04 (F_UNCULLED) marks the two-sided
+    // ones; every other WMO surface is drawn from its front only. GM Island's
+    // guildhousea.wmo shows why: its exterior group has walls facing into the
+    // courtyard behind the lodge, and the original sees through their backs
+    // from that courtyard to the trees and terrain beyond.
+    opaqueCulledPipeline_ = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({ vertexBinding }, vertexAttribs)
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+        .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setColorBlendAttachment(PipelineBuilder::blendDisabled())
+        .setMultisample(vkCtx_->getMsaaSamples())
+        .setLayout(pipelineLayout_)
+        .setRenderPass(mainPass)
+        .setDynamicStates(viewportAndScissorDynamic())
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
+        .build(device, vkCtx_->getPipelineCache());
+    transparentCulledPipeline_ = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({ vertexBinding }, vertexAttribs)
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setColorBlendAttachment(PipelineBuilder::blendAlpha())
+        .setMultisample(vkCtx_->getMsaaSamples())
+        .setLayout(pipelineLayout_)
+        .setRenderPass(mainPass)
+        .setDynamicStates(viewportAndScissorDynamic())
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
+        .build(device, vkCtx_->getPipelineCache());
+    if (!opaqueCulledPipeline_ || !transparentCulledPipeline_) {
+        core::Logger::getInstance().error("WMORenderer: one-sided material pipelines not available");
+        return false;
     }
 
     return opaquePipeline_ != VK_NULL_HANDLE;
@@ -359,6 +401,8 @@ void WMORenderer::shutdown() {
     destroy(device, opaquePipeline_);
     destroy(device, transparentPipeline_);
     destroy(device, wireframePipeline_);
+    destroy(device, opaqueCulledPipeline_);
+    destroy(device, transparentCulledPipeline_);
     destroy(device, pipelineLayout_);
     destroy(device, materialDescPool_);
     destroy(device, materialSetLayout_);
@@ -661,8 +705,9 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
             bool specularAlphaMask;
             uint8_t emissiveLevel;
             uint32_t sidnColor;
+            bool twoSided;
             bool operator==(const BatchKey& o) const {
-                return texPtr == o.texPtr && alphaTest == o.alphaTest &&
+                return texPtr == o.texPtr && alphaTest == o.alphaTest && twoSided == o.twoSided &&
                        unlit == o.unlit && sidnColor == o.sidnColor &&
                        specular == o.specular &&
                        specularAlphaMask == o.specularAlphaMask &&
@@ -677,7 +722,8 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                        (std::hash<uint32_t>()(k.sidnColor) << 3) ^
                        (std::hash<uint8_t>()(k.emissiveLevel) << 4) ^
                        (std::hash<bool>()(k.specular) << 5) ^
-                       (std::hash<bool>()(k.specularAlphaMask) << 6);
+                       (std::hash<bool>()(k.specularAlphaMask) << 6) ^
+                       (std::hash<bool>()(k.twoSided) << 7);
             }
         };
         std::unordered_map<BatchKey, GroupResources::MergedBatch, BatchKeyHash> batchMap;
@@ -729,7 +775,8 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                               wmoShaderUsesSpecular(modelData.materialShaders.at(batch.materialId)),
                           .specularAlphaMask = game::isActiveExpansion("tbc") &&
                               modelData.materialShaders.at(batch.materialId) == 1,
-                          .emissiveLevel = emissiveLevel, .sidnColor = sidnColor };
+                          .emissiveLevel = emissiveLevel, .sidnColor = sidnColor,
+                          .twoSided = (matFlags & 0x04) != 0 };
             auto& mb = batchMap[key];
             if (mb.draws.empty()) {
                 mb.texture = tex;
@@ -737,6 +784,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
                 mb.alphaTest = alphaTest;
                 mb.unlit = unlit;
                 mb.isTransparent = (blendMode >= 2);
+                mb.twoSided = key.twoSided;
                 mb.emissiveLevel = emissiveLevel;
                 mb.sidnColor = sidnColor;
                 // Look up normal/height map from texture cache
@@ -865,27 +913,8 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         PortalData pd;
         pd.startVertex = portal.startVertex;
         pd.vertexCount = portal.vertexCount;
-        // Compute portal plane from vertices if we have them
-        if (portal.vertexCount >= 3 && portal.startVertex + portal.vertexCount <= model.portalVertices.size()) {
-            glm::vec3 v0 = model.portalVertices[portal.startVertex];
-            glm::vec3 v1 = model.portalVertices[portal.startVertex + 1];
-            glm::vec3 v2 = model.portalVertices[portal.startVertex + 2];
-            // Degenerate portal (collinear or coincident verts) → cross is
-            // zero → normalize returns NaN. Fall back to up-axis instead of
-            // poisoning the portal-frustum cull.
-            glm::vec3 cross = glm::cross(v1 - v0, v2 - v0);
-            float crossLen = glm::length(cross);
-            if (crossLen > 1e-6f) {
-                pd.normal = cross / crossLen;
-                pd.distance = glm::dot(pd.normal, v0);
-            } else {
-                pd.normal = glm::vec3(0.0f, 0.0f, 1.0f);
-                pd.distance = 0.0f;
-            }
-        } else {
-            pd.normal = glm::vec3(0.0f, 0.0f, 1.0f);
-            pd.distance = 0.0f;
-        }
+        pd.normal = portal.normal;
+        pd.distance = portal.distance;
         modelData.portals.push_back(pd);
     }
     for (const auto& ref : model.portalRefs) {
@@ -1533,7 +1562,7 @@ void WMORenderer::prepareRender() {
 }
 
 void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
-                         const glm::vec3* viewerPos) {
+                         const glm::vec3* viewerPos, bool mirroredView) {
     if (!opaquePipeline_ || instances.empty()) {
         lastDrawCalls = 0;
         return;
@@ -1568,6 +1597,9 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
     // little too much, it means the building vanishes. Seeding from both is a
     // superset of either, so it can only ever add groups.
     const glm::vec3 portalViewerPos = viewerPos ? *viewerPos : camPos;
+    // Indoors the portal walk is an optimisation and stays behind WOWEE_WMO_CULL.
+    // From outside it decides what exists: rooms are drawn only through their
+    // doorways, so it runs whether or not culling was asked for.
     bool doPortalCull = portalCulling && cullingEnabled_;
     bool doDistanceCull = distanceCulling && cullingEnabled_;
 
@@ -1594,70 +1626,9 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
         result.model = &model;   // cache so the draw-list loop doesn't redo the hash lookup
 
         // Portal-based visibility - reuse member scratch buffer (avoid per-frame alloc)
-        bool usePortalCulling = doPortalCull && !model.portals.empty() && !model.portalRefs.empty();
-        const glm::vec3 localRealCam =
-            glm::vec3(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
-        if (usePortalCulling) {
-            // If the camera is outside all groups, skip portal culling entirely.
-            // This is what makes it safe for the traversal below to start from
-            // the camera: an orbiting third-person camera that has left the
-            // building never reaches the walk at all.
-            int camGroup = findContainingGroup(model, localRealCam);
-            if (camGroup < 0) {
-                usePortalCulling = false;
-            } else {
-                // Entranceways and awnings: the best-fit AABB often claims an
-                // interior group while the camera is visually outside (interior
-                // boxes spill past the doorway). Only trust portal traversal
-                // when the camera group is interior-only - the same rule
-                // getVisibleGroupsViaPortals applies to the viewer position.
-                constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
-                constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
-                const uint32_t gFlags = model.groups[camGroup].groupFlags;
-                const bool isIndoor = (gFlags & WMO_GROUP_FLAG_INDOOR) != 0;
-                const bool isOutdoor = (gFlags & WMO_GROUP_FLAG_OUTDOOR) != 0;
-                if (!isIndoor || isOutdoor) {
-                    usePortalCulling = false;
-                } else {
-                    // Doorway thresholds sit inside both the interior box and
-                    // an outdoor street group's box - treat those as outdoors
-                    // too (second half of the viewer-side rule).
-                    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
-                        if (static_cast<int>(gi) == camGroup) continue;
-                        const auto& g = model.groups[gi];
-                        if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR)) continue;
-                        if (localRealCam.x >= g.boundingBoxMin.x && localRealCam.x <= g.boundingBoxMax.x &&
-                            localRealCam.y >= g.boundingBoxMin.y && localRealCam.y <= g.boundingBoxMax.y &&
-                            localRealCam.z >= g.boundingBoxMin.z && localRealCam.z <= g.boundingBoxMax.z) {
-                            usePortalCulling = false;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        if (usePortalCulling) {
-            portalVisibleGroupSet_.clear();
-            // Both viewpoints seed the walk. The frustum belongs to the camera,
-            // so its group is the principled start - but at a doorway or in a
-            // hallway the camera and the character stand in different groups,
-            // and seeding from one while testing doors against the other's view
-            // is how the interior emptied out. Neither is reliably right on its
-            // own, so take both.
-            //
-            // Ironforge shows this worst because of what rescues everywhere
-            // else: exterior groups are seeded unconditionally below, which in a
-            // city WMO means the streets and facades stay drawn however the walk
-            // goes. Ironforge is interior throughout, that seed contributes
-            // almost nothing, and the entire result rests on the traversal.
-            const glm::vec3 localViewer =
-                glm::vec3(instance.invModelMatrix * glm::vec4(portalViewerPos, 1.0f));
-            getVisibleGroupsViaPortals(model, localRealCam, localViewer, frustum,
-                                       instance.modelMatrix, portalVisibleGroupSet_);
-            // Use the unordered_set directly - was copying into portalVisibleGroups_,
-            // sorting it, and binary-searching per group. The set lookup is O(1)
-            // per group and skips the per-instance copy + sort.
-        }
+        portalVisibleGroupSet_.clear();
+        const bool usePortalCulling = portalVisibleGroups(instance, model, camPos, portalViewerPos, frustum,
+                                                          doPortalCull, portalVisibleGroupSet_);
 
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
             if (usePortalCulling &&
@@ -1705,7 +1676,7 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                              0, 1, &perFrameSet, 0, nullptr);
 
-    // Track which pipeline is currently bound: 0=opaque, 1=transparent, 2=glass
+    // Track which pipeline is currently bound: bit 0 transparent, bit 1 one-sided.
     int currentPipelineKind = 0;
 
     for (const auto& dl : drawLists_) {
@@ -1752,16 +1723,16 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
                 if (!mb.materialSet) continue;
 
                 // Determine which pipeline this batch needs
-                int neededPipeline = 0; // opaque
-                if (mb.isTransparent && transparentPipeline_) {
-                    neededPipeline = 1; // transparent (alpha blend, no depth write)
-                }
+                const int neededPipeline = (mb.isTransparent && transparentPipeline_ ? 1 : 0) |
+                                           (mb.twoSided || wireframeMode || mirroredView ? 0 : 2);
 
                 // Switch pipeline if needed (descriptor sets and push constants
                 // are preserved across compatible pipeline layout switches)
                 if (neededPipeline != currentPipelineKind) {
                     VkPipeline targetPipeline = activePipeline;
                     if (neededPipeline == 1) targetPipeline = transparentPipeline_;
+                    if (neededPipeline == 2) targetPipeline = opaqueCulledPipeline_;
+                    if (neededPipeline == 3) targetPipeline = transparentCulledPipeline_;
                     if (targetPipeline == VK_NULL_HANDLE) continue;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, targetPipeline);
@@ -2268,6 +2239,148 @@ bool WMORenderer::isPortalVisible(const ModelData& model, uint16_t portalIndex,
 
     // Check if portal AABB intersects frustum (more robust than point test)
     return frustum.intersectsAABB(worldMin, worldMax);
+}
+
+bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
+                                      const glm::vec3& camPos, const glm::vec3& viewerPos,
+                                      const Frustum& frustum, bool cullIndoors,
+                                      std::unordered_set<uint32_t>& out) const {
+    if (!portalCulling || model.portals.empty() || model.portalRefs.empty()) return false;
+    const glm::vec3 localRealCam = glm::vec3(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
+    const glm::vec3 localViewer = glm::vec3(instance.invModelMatrix * glm::vec4(viewerPos, 1.0f));
+    // Indoors only when the camera's best-fit group is interior-only and
+    // no exterior group's box holds it too: interior boxes spill past
+    // their doorways, so a camera in both is standing outside.
+    bool cameraIndoors = false;
+    const int camGroup = findContainingGroup(model, localRealCam);
+    if (camGroup >= 0) {
+        constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
+        constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
+        const uint32_t gFlags = model.groups[camGroup].groupFlags;
+        cameraIndoors = (gFlags & WMO_GROUP_FLAG_INDOOR) != 0 &&
+                        (gFlags & WMO_GROUP_FLAG_OUTDOOR) == 0;
+        for (size_t gi = 0; cameraIndoors && gi < model.groups.size(); ++gi) {
+            if (static_cast<int>(gi) == camGroup) continue;
+            const auto& g = model.groups[gi];
+            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR)) continue;
+            if (glm::all(glm::greaterThanEqual(localRealCam, g.boundingBoxMin)) &&
+                glm::all(glm::lessThanEqual(localRealCam, g.boundingBoxMax))) {
+                cameraIndoors = false;
+            }
+        }
+    }
+    if (cameraIndoors) {
+        if (!cullIndoors) return false;
+        // Both viewpoints seed the walk. The frustum belongs to the camera,
+        // so its group is the principled start - but at a doorway or in a
+        // hallway the camera and the character stand in different groups,
+        // and seeding from one while testing doors against the other's view
+        // is how the interior emptied out. Neither is reliably right on its
+        // own, so take both.
+        //
+        // Ironforge shows this worst because of what rescues everywhere
+        // else: exterior groups are seeded unconditionally below, which in a
+        // city WMO means the streets and facades stay drawn however the walk
+        // goes. Ironforge is interior throughout, that seed contributes
+        // almost nothing, and the entire result rests on the traversal.
+        getVisibleGroupsViaPortals(model, localRealCam, localViewer, frustum, instance.modelMatrix, out);
+    } else {
+        getVisibleGroupsFromOutside(model, localRealCam, localViewer, frustum, instance.modelMatrix, out);
+    }
+    return true;
+}
+
+void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* viewerPos) {
+    Frustum frustum;
+    frustum.extractFromMatrix(camera.getProjectionMatrix() * camera.getViewMatrix());
+    const glm::vec3 camPos = camera.getPosition();
+    const glm::vec3 viewer = viewerPos ? *viewerPos : camPos;
+    const bool cullIndoors = portalCulling && cullingEnabled_;
+    std::unordered_set<uint32_t> drawn;
+    for (auto& instance : instances) {
+        instance.drawnGroups.clear();
+        const auto mdlIt = loadedModels.find(instance.modelId);
+        if (mdlIt == loadedModels.end()) continue;
+        drawn.clear();
+        if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, cullIndoors, drawn)) continue;
+        instance.drawnGroups.assign(mdlIt->second.groups.size(), 0);
+        for (uint32_t g : drawn) instance.drawnGroups[g] = 1;
+    }
+}
+
+bool WMORenderer::anyGroupDrawn(uint32_t instanceId, const std::vector<uint16_t>& groups) const {
+    const auto it = instanceIndexById.find(instanceId);
+    if (it == instanceIndexById.end()) {
+        // A building and its doodads can belong to different tiles (doodads go
+        // with the tile that prepared them first), so one can unload first.
+        // There are no rooms left to ask; the doodad shows as before.
+        static std::mutex saidMutex;
+        static std::unordered_set<uint32_t> said;
+        std::lock_guard<std::mutex> lock(saidMutex);
+        if (said.insert(instanceId).second)
+            LOG_WARNING("WMO doodad rooms: building instance ", instanceId, " is gone; doodads drawn unconditionally");
+        return true;
+    }
+    const auto& drawnGroups = instances[it->second].drawnGroups;
+    if (drawnGroups.empty()) return true;
+    for (uint16_t g : groups) {
+        assert(g < drawnGroups.size());
+        if (drawnGroups[g]) return true;
+    }
+    return false;
+}
+
+void WMORenderer::getVisibleGroupsFromOutside(const ModelData& model,
+                                               const glm::vec3& cameraLocalPos,
+                                               const glm::vec3& viewerLocalPos,
+                                               const Frustum& frustum,
+                                               const glm::mat4& modelMatrix,
+                                               std::unordered_set<uint32_t>& outVisibleGroups) const {
+    constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
+    constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
+    std::vector<bool> visited(model.groups.size(), false);
+    std::vector<uint32_t> queue;
+    queue.reserve(model.groups.size());
+    auto seed = [&](size_t gi) {
+        if (visited[gi]) return;
+        visited[gi] = true;
+        queue.push_back(static_cast<uint32_t>(gi));
+        outVisibleGroups.insert(static_cast<uint32_t>(gi));
+    };
+    auto contains = [](const auto& g, const glm::vec3& p) {
+        return glm::all(glm::greaterThanEqual(p, g.boundingBoxMin)) &&
+               glm::all(glm::lessThanEqual(p, g.boundingBoxMax));
+    };
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        const auto& g = model.groups[gi];
+        const bool interiorOnly = (g.groupFlags & WMO_GROUP_FLAG_INDOOR) && !(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR);
+        // Every exterior group, and any room whose box holds the camera or the
+        // character: group membership here is by box, not by the BSP, so a
+        // room that might be occupied stays drawn.
+        if (!interiorOnly || contains(g, cameraLocalPos) || contains(g, viewerLocalPos)) seed(gi);
+    }
+    // Rooms are entered only through a portal that is in view and whose
+    // front - the owning group's MOPR side - faces the camera. Without this an
+    // outside camera drew every room of a building, including GM Island's
+    // guildhousea.wmo ground-floor rooms behind the lodge, which the original
+    // shows as open courtyard.
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        const uint32_t current = queue[qi];
+        if (current >= model.groupPortalRefs.size()) continue;
+        const auto [portalStart, portalCount] = model.groupPortalRefs[current];
+        for (uint16_t pi = 0; pi < portalCount; ++pi) {
+            const uint32_t refIdx = portalStart + pi;
+            assert(refIdx < model.portalRefs.size());
+            const auto& ref = model.portalRefs[refIdx];
+            if (ref.groupIndex >= model.groups.size() || visited[ref.groupIndex]) continue;
+            assert(ref.portalIndex < model.portals.size());
+            const auto& portal = model.portals[ref.portalIndex];
+            const float side = glm::dot(portal.normal, cameraLocalPos) + portal.distance;
+            if (side * static_cast<float>(ref.side) <= 0.0f) continue;
+            if (!isPortalVisible(model, ref.portalIndex, cameraLocalPos, frustum, modelMatrix)) continue;
+            seed(ref.groupIndex);
+        }
+    }
 }
 
 void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
@@ -4122,6 +4235,8 @@ void WMORenderer::recreatePipelines() {
     destroy(device, opaquePipeline_);
     destroy(device, transparentPipeline_);
     destroy(device, wireframePipeline_);
+    destroy(device, opaqueCulledPipeline_);
+    destroy(device, transparentCulledPipeline_);
 
     // --- Load shaders ---
     VkShaderModule vertShader, fragShader;

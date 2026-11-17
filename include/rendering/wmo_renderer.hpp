@@ -221,8 +221,10 @@ public:
     /// viewerPos is the character; portal culling seeds from it as well as from
     /// the camera, because at a doorway the two stand in different groups and
     /// neither alone is reliably the right place to start.
+    /// mirroredView: the per-frame set holds a reflected view (water), whose
+    /// flipped winding would cull front faces, so every surface is two-sided.
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
-                const glm::vec3* viewerPos = nullptr);
+                const glm::vec3* viewerPos = nullptr, bool mirroredView = false);
 
     /**
      * Initialize shadow pipeline (Phase 7)
@@ -295,6 +297,11 @@ public:
     /**
      * Enable/disable portal-based visibility culling
      */
+    /// Which groups the main camera draws this frame, for the doodads that
+    /// stand in them. Main thread, before WMO and M2 recording start.
+    void updateRoomVisibility(const Camera& camera, const glm::vec3* viewerPos);
+    /// Whether any of these groups of an instance was drawn (updateRoomVisibility).
+    bool anyGroupDrawn(uint32_t instanceId, const std::vector<uint16_t>& groups) const;
     void setPortalCulling(bool enabled) { portalCulling = enabled; }
     bool isPortalCullingEnabled() const { return portalCulling; }
 
@@ -534,6 +541,7 @@ private:
             bool alphaTest = false;
             bool unlit = false;
             bool isTransparent = false;     // blendMode >= 2
+            bool twoSided = false;          // MOMT flag 0x04 (F_UNCULLED)
             // 0 = not luminous, 1 = MOMT F_SIDN sidnColor emission (non-TBC profiles).
             uint8_t emissiveLevel = 0;
             uint32_t sidnColor = 0;     // MOMT sidnColor (BGRA)
@@ -695,6 +703,8 @@ private:
         glm::vec3 worldBoundsMin;
         glm::vec3 worldBoundsMax;
         std::vector<std::pair<glm::vec3, glm::vec3>> worldGroupBounds;
+        // updateRoomVisibility's answer for this frame; empty means every group.
+        std::vector<uint8_t> drawnGroups;
 
         // Doodad tracking: M2 instances that are children of this WMO
         struct DoodadInfo {
@@ -760,6 +770,23 @@ private:
     /// two are in different rooms, and walking from only one while judging every
     /// door against the camera's frustum empties the interior.
     void getVisibleGroupsViaPortals(const ModelData& model,
+                                     const glm::vec3& cameraLocalPos,
+                                     const glm::vec3& viewerLocalPos,
+                                     const Frustum& frustum,
+                                     const glm::mat4& modelMatrix,
+                                     std::unordered_set<uint32_t>& outVisibleGroups) const;
+
+    /// Groups to draw for one instance. False when every group is drawn:
+    /// no portals, or the camera indoors without cullIndoors.
+    bool portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
+                             const glm::vec3& camPos, const glm::vec3& viewerPos,
+                             const Frustum& frustum, bool cullIndoors,
+                             std::unordered_set<uint32_t>& out) const;
+
+    /// Camera outside every room: exterior groups, rooms whose box holds the
+    /// camera or character, and rooms reached through in-view portals whose
+    /// MOPR side faces the camera.
+    void getVisibleGroupsFromOutside(const ModelData& model,
                                      const glm::vec3& cameraLocalPos,
                                      const glm::vec3& viewerLocalPos,
                                      const Frustum& frustum,
@@ -837,6 +864,8 @@ private:
     VkPipeline opaquePipeline_ = VK_NULL_HANDLE;
     VkPipeline transparentPipeline_ = VK_NULL_HANDLE;
     VkPipeline wireframePipeline_ = VK_NULL_HANDLE;
+    VkPipeline opaqueCulledPipeline_ = VK_NULL_HANDLE;       // one-sided materials
+    VkPipeline transparentCulledPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
 
     // Shadow rendering (Phase 7)

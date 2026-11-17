@@ -247,6 +247,10 @@ struct M2Particle {
 struct M2Instance {
     uint32_t id = 0;     // Unique instance ID
     uint32_t modelId;
+    // A WMO doodad that stands in rooms: drawn only while one of these groups
+    // of WMO instance wmoRoomInstance is drawn. Empty for everything else.
+    uint32_t wmoRoomInstance = 0;
+    std::vector<uint16_t> wmoRooms;
     uint32_t indoorLighting = 0; // packed MODD RGB in bits 8..31, bit 1 enables
     glm::vec3 position;
     glm::vec3 rotation;  // Euler angles in degrees
@@ -601,6 +605,11 @@ public:
 
     /// Light an instance while it is being pressed on. 0 clears it.
     void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color);
+    /// Tie a WMO doodad to the rooms that list it (pipeline::wmoDoodadRooms).
+    void setInstanceWmoRooms(uint32_t instanceId, uint32_t wmoInstanceId, std::vector<uint16_t> rooms);
+    /// Answers whether any of the given groups of a WMO instance is drawn this frame.
+    using WmoRoomQuery = std::function<bool(uint32_t wmoInstanceId, const std::vector<uint16_t>& groups)>;
+    void setWmoRoomQuery(WmoRoomQuery query) { wmoRoomDrawn_ = std::move(query); }
     void setInstanceHighlight(uint32_t instanceId, float amount);
     /// See M2Instance::fade.
     void setInstanceFade(uint32_t instanceId, float alpha);
@@ -1149,6 +1158,7 @@ private:
         float distSq;
         float effectiveMaxDistSq;
     };
+    WmoRoomQuery wmoRoomDrawn_;
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2
     struct GlowSprite {

@@ -98,8 +98,11 @@ struct WMOFog {
 struct WMOPortal {
     uint16_t startVertex;
     uint16_t vertexCount;
-    uint16_t planeIndex;
-    uint16_t padding;
+    // MOPT plane: dot(normal, p) + distance == 0 on the portal. The MOPR side
+    // of a group's reference is the sign of that expression on the group's
+    // side of the doorway.
+    glm::vec3 normal{0.0f};
+    float distance = 0.0f;
 };
 
 // WMO Portal Plane
@@ -267,6 +270,22 @@ public:
                          WMOModel& model,
                          uint32_t groupIndex);
 };
+
+/// The rooms a WMO doodad belongs to: the interior-only groups (MOGP 0x2000
+/// without 0x8) whose MODR lists it. Empty when an exterior group lists it or
+/// no group does; such a doodad is drawn with the building, not with a room.
+inline std::vector<uint16_t> wmoDoodadRooms(const WMOModel& model, uint32_t doodadIdx) {
+    std::vector<uint16_t> rooms;
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        const auto& group = model.groups[gi];
+        bool listed = false;
+        for (uint16_t ref : group.doodadRefs) listed = listed || ref == doodadIdx;
+        if (!listed) continue;
+        if (!(group.flags & 0x2000u) || (group.flags & 0x8u)) return {};
+        rooms.push_back(static_cast<uint16_t>(gi));
+    }
+    return rooms;
+}
 
 } // namespace pipeline
 } // namespace wowee

@@ -3117,6 +3117,17 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     }
     const bool useOriginalSkybox = drawSkyModels && skyModelCoverage >= 0.5f;
 
+    // Rooms a WMO shows this frame decide which of its doodads are drawn; both
+    // recorders read the answer, so it is settled before either starts.
+    if (wmoRenderer && camera) wmoRenderer->updateRoomVisibility(*camera, &characterPosition);
+    if (m2Renderer) {
+        WMORenderer* wmo = wmoRenderer.get();
+        m2Renderer->setWmoRoomQuery(wmo ? M2Renderer::WmoRoomQuery(
+            [wmo](uint32_t instanceId, const std::vector<uint16_t>& groups) {
+                return wmo->anyGroupDrawn(instanceId, groups);
+            }) : M2Renderer::WmoRoomQuery{});
+    }
+
     // ── Multithreaded secondary command buffer recording ──
     // Terrain, WMO, and M2 record on worker threads while main thread handles
     // sky, characters, water, and effects.  prepareRender() on main thread first
@@ -4554,7 +4565,7 @@ void Renderer::renderReflectionPass() {
             terrainRenderer->render(currentCmd, reflDescSet, *camera);
         }
         if (wmoRenderer) {
-            wmoRenderer->render(currentCmd, reflDescSet, *camera);
+            wmoRenderer->render(currentCmd, reflDescSet, *camera, nullptr, /*mirroredView=*/true);
         }
     }
 

@@ -22,6 +22,24 @@ The main WMO, M2 and character pipelines declare counter-clockwise front faces
 under the camera's Vulkan projection. This matters even when culling is off:
 fragment shaders use `gl_FrontFacing` to orient two-sided lighting normals.
 
+WMO materials without MOMT flag `0x04` (F_UNCULLED) draw front faces only.
+The water reflection pass, whose mirrored view flips winding, draws every WMO
+surface two-sided.
+
+From outside a building (camera in no interior-only group box, or also in an
+exterior group box) WoWee draws every exterior group, interior groups whose box
+holds the camera or the character, and interior groups reached through portals
+that are in the view frustum and face the camera. A portal faces the camera when
+`dot(MOPT normal, camera) + MOPT distance` has the sign of the MOPR `side` of the
+group it is entered from. This walk runs without `WOWEE_WMO_CULL`; inside a
+building the portal walk stays behind that switch. WMO doodads listed only by
+interior groups (MODR) are drawn while one of those groups is drawn.
+
+GM Island (map 1, around 16240 16290) shows all three: `guildhousea.wmo`'s
+ground-floor rooms and their furniture behind the lodge are not drawn from the
+courtyard, and the exterior group's courtyard-facing wall backs are see-through.
+Evidence: `../_experiments/20261117T2215Z.gmisland_selection_lua/` (pair-gm_d*.png).
+
 TBC uses authored textures, vertex colors and environment lighting without
 the extra point lights synthesized from fixture names, glow meshes or lava.
 Those synthetic lights are not authored light records.

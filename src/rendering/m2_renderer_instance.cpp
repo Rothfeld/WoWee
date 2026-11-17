@@ -81,6 +81,15 @@ void M2Renderer::setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3&
     instances[index->second].indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
 }
 
+void M2Renderer::setInstanceWmoRooms(uint32_t instanceId, uint32_t wmoInstanceId,
+                                     std::vector<uint16_t> rooms) {
+    const auto index = instanceIndexById.find(instanceId);
+    assert(index != instanceIndexById.end());
+    assert(wmoInstanceId != 0 && !rooms.empty());
+    instances[index->second].wmoRoomInstance = wmoInstanceId;
+    instances[index->second].wmoRooms = std::move(rooms);
+}
+
 void M2Renderer::setInstanceHighlight(uint32_t instanceId, float amount) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;
