@@ -993,6 +993,7 @@ set(WOWEE_SOURCES
     src/rendering/animation/anim_capability_probe.cpp
     src/rendering/animation/locomotion_fsm.cpp
     src/rendering/animation/combat_fsm.cpp
+    src/rendering/unit_pick.cpp
     src/rendering/animation/activity_fsm.cpp
     src/rendering/animation/mount_fsm.cpp
     src/rendering/animation/character_animator.cpp  # Renamed from player_animator.cpp; npc_animator.cpp removed

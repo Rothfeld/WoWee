@@ -1150,6 +1150,27 @@ wowee_add_test(test_char_section_regions
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(char_section_regions PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── pick_mask (tool) ─────────────────────────────────────────
+# Headless screen mask of WoWee's unit pick rule for a display and camera,
+# built with the tests because it needs the same few pipeline sources.
+add_executable(pick_mask
+    ${CMAKE_SOURCE_DIR}/tools/pick_mask/pick_mask.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/unit_pick.cpp)
+target_include_directories(pick_mask PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(pick_mask SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+wowee_test_link_glm(pick_mask)
+
+# ── test_unit_pick ───────────────────────────────────────────
+wowee_add_test(test_unit_pick
+    SOURCES test_unit_pick.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/rendering/unit_pick.cpp)
+set_tests_properties(unit_pick PROPERTIES SKIP_RETURN_CODE 4)
+
 # ── test_m2_color_alpha ──────────────────────────────────────
 # Loads the peasant lumberjack carry models (WotLK v264 + vanilla v256) and
 # pins the M2 color-alpha track parsing that hides the duplicate wood bundle.

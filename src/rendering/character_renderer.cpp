@@ -25,6 +25,7 @@
 #include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/footprint_renderer.hpp"
+#include "rendering/unit_pick.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "rendering/footfall_window.hpp"
@@ -221,44 +222,6 @@ static bool sceneDiagEnabled() {
         return v && v[0] != '\0' && v[0] != '0';
     }();
     return enabled;
-}
-
-// Evaluate a batch's M2 color-alpha track at the given animation sequence/time.
-// Returns 1.0 when the batch has no color slot or the track has no usable data.
-// Global-sequence-timed tracks are not culled (they run on a different clock and
-// typically drive pulsing glows, not visibility gating).
-static float evalBatchColorAlpha(const pipeline::M2Model& model,
-                                 const pipeline::M2Batch& batch,
-                                 int sequenceIndex, float animationTimeMs,
-                                 float globalTimeMs) {
-    if (batch.colorIndex == 0xFFFF ||
-        batch.colorIndex >= model.colorAlphaTracks.size()) {
-        return 1.0f;
-    }
-    return m2_track::sampleFloat(model.colorAlphaTracks[batch.colorIndex],
-                                 sequenceIndex, animationTimeMs, globalTimeMs,
-                                 model.globalSequenceDurations, 1.0f);
-}
-
-// Evaluate the material transparency track selected through the skin batch's
-// lookup table. Enchant cards depend on this track for their authored duty
-// cycle and strength; treating the first key as a constant makes every pulse
-// both brighter and several times more frequent than intended.
-static float evalBatchTextureWeight(const pipeline::M2Model& model,
-                                    const pipeline::M2Batch& batch,
-                                    int sequenceIndex, float animationTimeMs,
-                                    float globalTimeMs) {
-    if (batch.transparencyIndex == 0xFFFF ||
-        batch.transparencyIndex >= model.textureWeightLookup.size()) {
-        return 1.0f;
-    }
-    const uint16_t trackIndex = model.textureWeightLookup[batch.transparencyIndex];
-    if (trackIndex == 0xFFFF || trackIndex >= model.textureWeightTracks.size()) {
-        return 1.0f;
-    }
-    return m2_track::sampleFloat(model.textureWeightTracks[trackIndex],
-                                 sequenceIndex, animationTimeMs, globalTimeMs,
-                                 model.globalSequenceDurations, 1.0f);
 }
 
 // CharMaterial UBO layout (matches character.frag.glsl set=1 binding=1)
@@ -4607,48 +4570,20 @@ bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& 
     // Do not normalize: ray parameter must remain a world-space distance.
     const glm::vec3 localDirection(inverse * glm::vec4(direction, 0));
 
-    float nearest = std::numeric_limits<float>::infinity();
-    const ModelPickSphere sphere = modelPickSphere(model, instance.currentSequenceIndex);
-    {
-        // Sphere test in model space against the unnormalized ray.
-        const glm::vec3 oc = localOrigin - sphere.center;
-        const float a = glm::dot(localDirection, localDirection);
-        const float b = glm::dot(oc, localDirection);
-        const float c = glm::dot(oc, oc) - sphere.radius * sphere.radius;
-        const float disc = b * b - a * c;
-        if (a > 0.0f && disc >= 0.0f && (-b + std::sqrt(disc)) / a >= 0.0f) {
-            bool filter = !instance.activeGeosets.empty();
-            if (filter) {
-                filter = std::any_of(model.batches.begin(), model.batches.end(),
-                    [&](const pipeline::M2Batch& b) { return instance.activeGeosets.count(b.submeshId) != 0; });
-            }
-            const float sampleTime = instance.currentSequenceIndex >= 0
-                ? animationSampleTime(instance.currentAnimationId,
-                      model.sequences[instance.currentSequenceIndex], instance.animationTime)
-                : 0.0f;
-            // The batches the render pass draws (geosets, alpha tracks) and,
-            // as 0x70ae8f does, not those with texture-unit flag 0x08.
-            auto drawn = [&](const pipeline::M2Batch& batch) {
-                if (batch.flags & 0x08) return false;
-                if (filter) {
-                    if (!instance.activeGeosets.count(batch.submeshId)) return false;
-                } else {
-                    const uint16_t group = batch.submeshId / 100;
-                    if (group == 15 || group == 17 || group == 18) return false;
-                }
-                const float alpha = instance.opacity *
-                    evalBatchColorAlpha(model, batch, instance.currentSequenceIndex, sampleTime,
-                                        instance.globalSequenceTime) *
-                    evalBatchTextureWeight(model, batch, instance.currentSequenceIndex, sampleTime,
-                                           instance.globalSequenceTime);
-                return alpha > 0.0f;
-            };
-            const size_t boneCount = std::min(instance.boneMatrices.size(), model.bones.size());
-            nearest = pickSkinnedModel(model,
-                std::span<const glm::mat4>(instance.boneMatrices.data(), boneCount),
-                drawn, localOrigin, localDirection, nearest);
-        }
-    }
+    const float sampleTime = instance.currentSequenceIndex >= 0
+        ? animationSampleTime(instance.currentAnimationId,
+              model.sequences[instance.currentSequenceIndex], instance.animationTime)
+        : 0.0f;
+    const size_t boneCount = std::min(instance.boneMatrices.size(), model.bones.size());
+    const UnitPickState state{
+        .bones = std::span<const glm::mat4>(instance.boneMatrices.data(), boneCount),
+        .activeGeosets = &instance.activeGeosets,
+        .opacity = instance.opacity,
+        .sequenceIndex = instance.currentSequenceIndex,
+        .sampleTimeMs = sampleTime,
+        .globalTimeMs = instance.globalSequenceTime};
+    float nearest = pickUnitModel(model, state, localOrigin, localDirection,
+                                  std::numeric_limits<float>::infinity());
     for (const auto& weapon : instance.weaponAttachments) {
         float weaponHit = 0.0f;
         if (intersectInstance(weapon.weaponInstanceId, origin, direction, weaponHit))
