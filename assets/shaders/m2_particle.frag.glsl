@@ -16,7 +16,8 @@ layout(location = 3) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec2 p = vUV;
+    // Quad geometry grows upward in view space; BLP rows start at the top.
+    vec2 p = vec2(vUV.x, 1.0 - vUV.y);
     float tile = floor(vTile);
     float tx = mod(tile, push.tileCount.x);
     float ty = floor(tile / push.tileCount.x);
