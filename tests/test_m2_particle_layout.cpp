@@ -372,3 +372,26 @@ TEST_CASE("Legacy emitters stop births where their EnabledIn track turns off", "
     CHECK(sampleFloat(enabled, 0, 170.0f, 0.0f, {}, 1.0f) == 0.0f);
     CHECK(sampleFloat(enabled, 0, 4000.0f, 0.0f, {}, 1.0f) == 0.0f);
 }
+
+TEST_CASE("Legacy emitters read geometry model and tumble range", "[m2][particle]") {
+    // Whirlwind_State_Base.m2 (260) #0: "Spells\\WhirlwindGeoWhite.mdx", tumble 0..8 about Z.
+    constexpr uint32_t emitterOffset = 512;
+    std::vector<uint8_t> bytes(emitterOffset + 504 + 64, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t offset, uint32_t value) { std::memcpy(bytes.data() + offset, &value, 4); };
+    const auto putf = [&](size_t offset, float value) { std::memcpy(bytes.data() + offset, &value, 4); };
+    put32(4, 260);
+    put32(0x13c, 1);
+    put32(0x140, emitterOffset);
+    const std::string name = "Spells\\WhirlwindGeoWhite.mdx";
+    const uint32_t nameOffset = emitterOffset + 504;
+    std::memcpy(bytes.data() + nameOffset, name.c_str(), name.size() + 1);
+    put32(emitterOffset + 0x18, static_cast<uint32_t>(name.size() + 1));
+    put32(emitterOffset + 0x1c, nameOffset);
+    putf(emitterOffset + 0x1b0, 8.0f);
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 1);
+    CHECK(model.particleEmitters[0].geometryModel == name);
+    CHECK(model.particleEmitters[0].tumbleMin == glm::vec3(0.0f));
+    CHECK(model.particleEmitters[0].tumbleMax == glm::vec3(0.0f, 0.0f, 8.0f));
+}

@@ -1664,6 +1664,14 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                                      readValue<float>(m2Data, base + 0x1B8),
                                      readValue<float>(m2Data, base + 0x1BC)};
                     em.windTime = readValue<float>(m2Data, base + 0x1C0);
+                    em.tumbleMin = {readValue<float>(m2Data, base + 0x19C),
+                                    readValue<float>(m2Data, base + 0x1A0),
+                                    readValue<float>(m2Data, base + 0x1A4)};
+                    em.tumbleMax = {readValue<float>(m2Data, base + 0x1A8),
+                                    readValue<float>(m2Data, base + 0x1AC),
+                                    readValue<float>(m2Data, base + 0x1B0)};
+                    em.geometryModel = readString(m2Data, readValue<uint32_t>(m2Data, base + 0x1C),
+                                                  readValue<uint32_t>(m2Data, base + 0x18));
                     // EnabledIn: a byte track (0/1, discrete) ending the
                     // emitter at +0x1DC. All 16070 pre-264 emitters in the TBC
                     // data read a well-formed 0/1 track here; 3487 switch off.

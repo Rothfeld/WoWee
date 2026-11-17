@@ -76,3 +76,13 @@ The tail texture's U axis runs along the tail, U = 0 at the particle: 333 of
 3118 tail emitters use wide textures against 3 of 12548 head emitters, e.g.
 `SlimeBlob.blp` (64x16), a drop whose head is its left edge. With V along the
 tail the acid breath drew thin hard-edged lines instead of drops.
+
+Geometry particles: a pre-264 emitter naming a model at `+0x18` (28 TBC
+emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull) draws that
+model's bind-pose triangles at each particle instead of a sprite: birth-pose
+orientation, lifecycle scale, colour and opacity, emitter texture and blend,
+turning at an angular velocity drawn from the tumble range (`+0x19C` min xyz,
+`+0x1A8` max xyz; Whirlwind 0..8 rad/s about Z). Whirlwind (13736) shows flat
+red swirls rising round the unit in the original; as sprites they were a wall
+of red squares. Unverified: texture source (emitter vs. geometry model's own),
+multi-axis tumble order, and overall brightness (WoWee swirls look denser).

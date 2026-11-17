@@ -435,12 +435,13 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                 {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT,    .offset = 7 * sizeof(float)},    // uv
             };
 
-            auto buildRibbonPipeline = [&](VkPipelineColorBlendAttachmentState blend) -> VkPipeline {
+            auto buildRibbonPipeline = [&](VkPipelineColorBlendAttachmentState blend,
+                                           VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP) -> VkPipeline {
                 return PipelineBuilder()
                     .setShaders(ribVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                                 ribFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
                     .setVertexInput({rBind}, rAttrs)
-                    .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP)
+                    .setTopology(topology)
                     .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
                     .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
                     .setColorBlendAttachment(blend)
@@ -453,6 +454,10 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
 
             ribbonPipeline_         = buildRibbonPipeline(PipelineBuilder::blendAlpha());
             ribbonAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive());
+            particleMeshPipeline_ = buildRibbonPipeline(PipelineBuilder::blendAlpha(),
+                                                        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            particleMeshAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive(),
+                                                                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
         }
         ribVert.destroy(); ribFrag.destroy();
     }
@@ -1103,6 +1108,7 @@ void M2Renderer::shutdown() {
     for (uint32_t f = 0; f < kParticleFrames; ++f) {
         destroy(alloc, m2ParticleVB_[f], m2ParticleVBAlloc_[f]);
         destroy(alloc, ribbonVB_[f], ribbonVBAlloc_[f]);
+        destroy(alloc, particleMeshVB_[f], particleMeshVBAlloc_[f]);
         destroy(alloc, glowVB_[f], glowVBAlloc_[f]);
     }
 
@@ -1121,6 +1127,8 @@ void M2Renderer::shutdown() {
     destroyPipeline(particleMod2xPipeline_);
     destroyPipeline(ribbonPipeline_);
     destroyPipeline(ribbonAdditivePipeline_);
+    destroyPipeline(particleMeshPipeline_);
+    destroyPipeline(particleMeshAdditivePipeline_);
 
     destroy(device, pipelineLayout_);
     destroy(device, particlePipelineLayout_);
@@ -1899,6 +1907,38 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                         "] texture index ", texIdx, " out of range (", allTextures.size(),
                         " textures) - using white fallback");
         }
+    }
+
+    // Geometry-model emitters draw that model per particle. Its bind-pose
+    // triangles are all that is kept; the model has no animation of its own
+    // that a particle would play (WhirlwindGeoWhite: one 3333 ms Stand).
+    gpuModel.particleGeometry.assign(model.particleEmitters.size(), {});
+    for (size_t ei = 0; ei < model.particleEmitters.size(); ei++) {
+        const std::string& name = model.particleEmitters[ei].geometryModel;
+        if (name.empty()) continue;
+        if (!assetManager) {
+            LOG_ERROR("M2 '", model.name, "' emitter ", ei, ": no asset manager for geometry model ", name);
+            continue;
+        }
+        const std::string path = pipeline::modelPathToM2(name);
+        const auto data = assetManager->readFile(path);
+        if (data.empty()) {
+            LOG_ERROR("M2 '", model.name, "' emitter ", ei, ": geometry model unreadable: ", path);
+            continue;
+        }
+        const pipeline::M2Model geometry = pipeline::M2Loader::load(data);
+        if (geometry.vertices.empty() || geometry.indices.empty()) {
+            LOG_ERROR("M2 '", model.name, "' emitter ", ei, ": geometry model has no triangles: ", path);
+            continue;
+        }
+        auto& mesh = gpuModel.particleGeometry[ei];
+        for (const auto& vertex : geometry.vertices) {
+            mesh.positions.push_back(vertex.position);
+            mesh.uvs.push_back(vertex.texCoords[0]);
+        }
+        mesh.indices = geometry.indices;
+        LOG_INFO("M2 '", model.name, "' emitter ", ei, " draws geometry model ", path, " (",
+                 mesh.positions.size(), " vertices, ", mesh.indices.size() / 3, " triangles)");
     }
 
     // Pre-allocate one stable descriptor set per particle emitter to avoid per-frame allocation.

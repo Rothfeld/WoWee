@@ -184,6 +184,12 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
                                                          localPos, p.life, dt));
             p.gravityDirection = particleGravityDirection(birthTransform);
+            p.birthBasis = glm::mat3(birthTransform);
+            if (!em.geometryModel.empty()) {
+                for (int axis = 0; axis < 3; ++axis)
+                    p.tumbleRate[axis] = glm::mix(em.tumbleMin[axis], em.tumbleMax[axis],
+                                                  (distN(particleRng_) + 1.0f) * 0.5f);
+            }
 
             // Velocity: emission speed in upward direction + random spread
             float speed = interpFloat(em.emissionSpeed, inst.animTime, inst.globalSequenceTime,
@@ -394,7 +400,136 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
 // ---------------------------------------------------------------------------
 // Ribbon rendering
 // ---------------------------------------------------------------------------
+void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
+    // A geometry-model emitter (Whirlwind_State_Base #0/#1: WhirlwindGeoWhite)
+    // draws that model at each particle, in the emitter's orientation at its
+    // birth, scaled by the particle's lifecycle size and tinted by its colour
+    // and opacity, with the emitter's texture and blend, turning at its tumble
+    // rate. Original 2.4.3 shows
+    // flat red swirls rising and widening around a whirlwinding unit;
+    // billboarding CLOUDS.BLP instead drew a wall of red squares.
+    const uint32_t frame = vkCtx_->getCurrentFrame();
+    if (!particleMeshPipeline_ || !particleMeshAdditivePipeline_) return;
+    size_t required = 0;
+    for (size_t idx : particleInstanceIndices_) {
+        if (idx >= instances.size()) continue;
+        const auto& inst = instances[idx];
+        if (!inst.cachedModel || inst.particles.empty()) continue;
+        const auto& geometry = inst.cachedModel->particleGeometry;
+        for (const auto& p : inst.particles)
+            if (p.emitterIndex >= 0 && static_cast<size_t>(p.emitterIndex) < geometry.size())
+                required += geometry[p.emitterIndex].indices.size();
+    }
+    if (required == 0) return;
+    if (required > particleMeshVertexCapacity_[frame]) {
+        const size_t capacity = std::max(required, particleMeshVertexCapacity_[frame] * 2);
+        VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = capacity * 9 * sizeof(float);
+        info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        VmaAllocationCreateInfo allocationInfo{};
+        allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        ::VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VmaAllocationInfo mapped{};
+        const auto allocator = vkCtx_->getAllocator();
+        const VkResult result = vmaCreateBuffer(allocator, &info, &allocationInfo, &buffer, &allocation, &mapped);
+        if (result != VK_SUCCESS) {
+            LOG_ERROR("Particle mesh vertex buffer allocation failed: ", result, " vertices=", capacity);
+            throw std::runtime_error("Particle mesh vertex buffer allocation failed");
+        }
+        const ::VkBuffer previousBuffer = particleMeshVB_[frame];
+        const VmaAllocation previousAllocation = particleMeshVBAlloc_[frame];
+        if (previousBuffer) {
+            vkCtx_->deferAfterAllFrameFences([allocator, previousBuffer, previousAllocation] {
+                vmaDestroyBuffer(allocator, previousBuffer, previousAllocation);
+            });
+        }
+        particleMeshVB_[frame] = buffer;
+        particleMeshVBAlloc_[frame] = allocation;
+        particleMeshVBMapped_[frame] = mapped.pMappedData;
+        particleMeshVertexCapacity_[frame] = capacity;
+    }
+
+    float* const dst = static_cast<float*>(particleMeshVBMapped_[frame]);
+    size_t written = 0;
+    ribbonDraws_.clear();
+    for (size_t idx : particleInstanceIndices_) {
+        if (idx >= instances.size()) continue;
+        const auto& inst = instances[idx];
+        if (!inst.cachedModel || inst.particles.empty()) continue;
+        const auto& gpu = *inst.cachedModel;
+        const glm::vec3 distance = inst.position - cachedCamPos_;
+        if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
+        for (const auto& p : inst.particles) {
+            if (p.emitterIndex < 0 || static_cast<size_t>(p.emitterIndex) >= gpu.particleGeometry.size()) continue;
+            const auto& mesh = gpu.particleGeometry[p.emitterIndex];
+            if (mesh.indices.empty()) continue;
+            const auto& em = gpu.particleEmitters[p.emitterIndex];
+            const VkDescriptorSet texSet = static_cast<size_t>(p.emitterIndex) < gpu.particleTexSets.size()
+                ? gpu.particleTexSets[p.emitterIndex] : VK_NULL_HANDLE;
+            if (!texSet) continue;
+            glm::mat4 bone(1.0f);
+            if ((em.flags & kParticleNoTrail) && !gpu.bones.empty()) bone = inst.boneMatrices.at(em.bone);
+            const glm::mat4 render = particleRenderTransform(em.flags, inst.modelMatrix, bone);
+            const float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
+            const glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
+            const float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
+            const float scale = interpFBlockFloat(em.particleScale, lifeRatio);
+            const VkPipeline pipeline = em.blendingType >= 3 ? particleMeshAdditivePipeline_ : particleMeshPipeline_;
+            // Tumbling: a constant angular velocity in the birth frame.
+            glm::mat3 basis = p.birthBasis;
+            const float rate = glm::length(p.tumbleRate);
+            if (rate > 0.0f)
+                basis = basis * glm::mat3(glm::rotate(glm::mat4(1.0f), rate * p.life, p.tumbleRate / rate));
+            const uint32_t first = static_cast<uint32_t>(written);
+            for (const uint16_t index : mesh.indices) {
+                assert(index < mesh.positions.size());
+                const glm::vec3 world = glm::vec3(render * glm::vec4(
+                    p.position + basis * (mesh.positions[index] * scale), 1.0f));
+                float* v = dst + written * 9;
+                v[0] = world.x; v[1] = world.y; v[2] = world.z;
+                v[3] = color.r; v[4] = color.g; v[5] = color.b;
+                v[6] = alpha;
+                v[7] = mesh.uvs[index].x; v[8] = mesh.uvs[index].y;
+                ++written;
+            }
+            if (!ribbonDraws_.empty() && ribbonDraws_.back().texSet == texSet &&
+                ribbonDraws_.back().pipeline == pipeline &&
+                ribbonDraws_.back().firstVertex + ribbonDraws_.back().vertexCount == first) {
+                ribbonDraws_.back().vertexCount += static_cast<uint32_t>(written) - first;
+            } else {
+                ribbonDraws_.push_back({.texSet = texSet, .pipeline = pipeline, .firstVertex = first,
+                                        .vertexCount = static_cast<uint32_t>(written) - first});
+            }
+        }
+    }
+    assert(written <= particleMeshVertexCapacity_[frame]);
+    if (ribbonDraws_.empty()) return;
+    VkExtent2D ext = vkCtx_->getSwapchainExtent();
+    VkViewport vp{.x = 0, .y = 0, .width = static_cast<float>(ext.width),
+                  .height = static_cast<float>(ext.height), .minDepth = 0.0f, .maxDepth = 1.0f};
+    VkRect2D sc{.offset = {.x = 0, .y = 0}, .extent = ext};
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    VkPipeline lastPipe = VK_NULL_HANDLE;
+    for (const auto& dc : ribbonDraws_) {
+        if (dc.pipeline != lastPipe) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, dc.pipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    ribbonPipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
+            lastPipe = dc.pipeline;
+        }
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                ribbonPipelineLayout_, 1, 1, &dc.texSet, 0, nullptr);
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &particleMeshVB_[frame], &offset);
+        vkCmdDraw(cmd, dc.vertexCount, 1, dc.firstVertex, 0);
+    }
+}
+
 void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
+    renderParticleMeshes(cmd, perFrameSet);
     const uint32_t frame = vkCtx_->getCurrentFrame();
     if (!ribbonPipeline_ || !ribbonAdditivePipeline_ || !ribbonVB_[frame] || !ribbonVBMapped_[frame]) return;
     // Diagnostic: WOWEE_M2_NO_RIBBONS=1 drops every M2 ribbon trail draw.
@@ -700,6 +835,9 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         for (const auto& p : inst.particles) {
             if (p.emitterIndex < 0 || p.emitterIndex >= static_cast<int>(gpu.particleEmitters.size())) continue;
             if (!inPhase(gpu.particleEmitters[p.emitterIndex])) continue;
+            // Drawn as its geometry model in renderParticleMeshes.
+            if (p.emitterIndex < static_cast<int>(gpu.particleGeometry.size()) &&
+                !gpu.particleGeometry[p.emitterIndex].indices.empty()) continue;
 
             if (p.emitterIndex != lastEmitterIdx) {
                 lastEmitterIdx = p.emitterIndex;

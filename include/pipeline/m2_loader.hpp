@@ -200,6 +200,15 @@ struct M2ParticleEmitter {
     float burstMultiplier = 1.0f, drag = 0.0f, spin = 0.0f;
     glm::vec3 windVector{0.0f};
     float windTime = 0.0f;
+    /// Pre-264 +0x18: a model drawn per particle in place of a sprite
+    /// ("Spells\\WhirlwindGeoWhite.mdx"); empty for sprite emitters. 28 TBC
+    /// emitters name one (Whirlwind, Cone of Cold, Cyclone, Skull).
+    std::string geometryModel;
+    /// Pre-264 +0x19C min xyz, +0x1A8 max xyz: a geometry particle's angular
+    /// velocity (rad/s) about each axis, drawn per particle from this range.
+    /// Whirlwind_State_Base #0/#1 (0..8 about Z) turn their swirls; Cone of
+    /// Cold pieces 0..-20.
+    glm::vec3 tumbleMin{0.0f}, tumbleMax{0.0f};
     bool enabled = true;
     /// Animated on/off (pre-Wrath +0x1DC, byte, discrete). Off: no births;
     /// live particles finish. Empty track: always on.

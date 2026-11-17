@@ -196,6 +196,14 @@ struct M2ModelGPU {
     std::vector<pipeline::M2ParticleEmitter> particleEmitters;
     std::vector<VkTexture*> particleTextures;    // Resolved Vulkan textures per emitter
     std::vector<VkDescriptorSet> particleTexSets; // Pre-allocated descriptor sets per emitter (stable, avoids per-frame alloc)
+    /// Per emitter: the bind-pose triangles of its geometry model, empty for
+    /// sprite emitters. Drawn once per particle (renderM2Ribbons).
+    struct ParticleGeometry {
+        std::vector<glm::vec3> positions;
+        std::vector<glm::vec2> uvs;
+        std::vector<uint16_t> indices;
+    };
+    std::vector<ParticleGeometry> particleGeometry;
 
     // Ribbon emitter data (kept from M2Model)
     std::vector<pipeline::M2RibbonEmitter> ribbonEmitters;
@@ -222,6 +230,11 @@ struct M2Particle {
     float life;        // current age in seconds
     float maxLife;     // total lifespan
     int emitterIndex;  // which emitter spawned this
+    /// Emitter orientation at birth, in the particle's simulation space;
+    /// a geometry-model particle draws its mesh in it.
+    glm::mat3 birthBasis{1.0f};
+    /// Geometry particles: angular velocity (rad/s) from the emitter's tumble range.
+    glm::vec3 tumbleRate{0.0f};
 };
 
 /**
@@ -821,6 +834,9 @@ private:
     // Ribbon pipelines (additive + alpha-blend)
     VkPipeline ribbonPipeline_ = VK_NULL_HANDLE;          // Alpha-blend ribbons
     VkPipeline ribbonAdditivePipeline_ = VK_NULL_HANDLE;  // Additive ribbons
+    // Geometry-model particles: ribbon vertex layout and shaders, triangle lists.
+    VkPipeline particleMeshPipeline_ = VK_NULL_HANDLE;
+    VkPipeline particleMeshAdditivePipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout ribbonPipelineLayout_ = VK_NULL_HANDLE;
     /// The per-frame set layout initialize() was given. recreatePipelines()
     /// runs long after that call and needs the same one.
@@ -968,6 +984,11 @@ private:
     ::VkBuffer ribbonVB_[kParticleFrames] = {};
     VmaAllocation ribbonVBAlloc_[kParticleFrames] = {};
     void* ribbonVBMapped_[kParticleFrames] = {};
+    // Geometry-model particle triangles (ribbon layout), grown on demand.
+    ::VkBuffer particleMeshVB_[kParticleFrames] = {};
+    VmaAllocation particleMeshVBAlloc_[kParticleFrames] = {};
+    void* particleMeshVBMapped_[kParticleFrames] = {};
+    size_t particleMeshVertexCapacity_[kParticleFrames] = {};
 
     // Dynamic particle buffers, one per frame in flight
     ::VkBuffer m2ParticleVB_[kParticleFrames] = {};
@@ -1112,6 +1133,7 @@ private:
         uint32_t        vertexCount;
     };
     std::vector<RibbonDrawCall> ribbonDraws_;
+    void renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
 
     // Particle group structures (reused each frame)
     struct ParticleGroupKey {
