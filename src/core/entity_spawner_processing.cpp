@@ -889,11 +889,10 @@ void EntitySpawner::finishWmoSpawn(const PreparedGameObjectWMO& result, uint32_t
             result.x, result.y, result.z, result.orientation);
     }
 
-    // Queue transport doodad loading if applicable
-    std::string lowerPath = result.modelPath;
-    std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (lowerPath.find("transport") != std::string::npos) {
+    // A transport's doodads ride with it and are attached in batches. Which
+    // objects are transports the server says (GAMEOBJECT_TYPE_TRANSPORT /
+    // MO_TRANSPORT guids), not the model's file name.
+    if (gameHandler_ && gameHandler_->isTransportGuid(result.guid)) {
         const auto* doodadTemplates = wmoRenderer->getDoodadTemplates(modelId);
         if (doodadTemplates && !doodadTemplates->empty()) {
             PendingTransportDoodadBatch batch;
@@ -1389,24 +1388,14 @@ void EntitySpawner::processPendingTransportDoodads() {
             // first sequence freezes the icebreaker paddle (its sequence 0 is
             // static) and can leave the Bravery's sail rig in its furled pose.
             m2Renderer->setInstanceAnimation(m2InstanceId, rendering::anim::SHIP_MOVING, true);
-            std::string doodadPathLower = doodadTemplate.m2Path;
-            std::transform(doodadPathLower.begin(), doodadPathLower.end(), doodadPathLower.begin(),
-                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            bool logMachinery = false;
-            if (doodadPathLower.find("transportship_sails") != std::string::npos ||
-                doodadPathLower.find("icebreaker_paddlewheel") != std::string::npos) {
-                logMachinery = true;
-            }
-
             wmoRenderer->addDoodadToInstance(it->instanceId, m2InstanceId, doodadTemplate.localTransform);
-            if (logMachinery) {
-                // Report where it actually ended up. "Spawned" only ever meant the
-                // model parsed; it said nothing about whether the thing landed on
-                // the ship or at the world origin.
+            if (m2Renderer->hasAnimation(m2InstanceId, rendering::anim::SHIP_MOVING)) {
+                // Moving machinery (sails, paddle wheels): report where it
+                // actually ended up, on the ship or at the world origin.
                 glm::vec3 where(0.0f);
                 float radius = 0.0f;
                 const bool haveBounds = m2Renderer->getInstanceBounds(m2InstanceId, where, radius);
-                LOG_WARNING("Transport machinery spawned: ", doodadTemplate.m2Path,
+                LOG_DEBUG("Transport machinery spawned: ", doodadTemplate.m2Path,
                             " instance=", m2InstanceId,
                             " wmoInstance=", it->instanceId,
                             " hasShipMoving=", m2Renderer->hasAnimation(m2InstanceId, rendering::anim::SHIP_MOVING),
@@ -1498,197 +1487,13 @@ void EntitySpawner::processPendingMount() {
         displayIdModelCache_[mountDisplayId] = modelId;
     }
 
-    // Apply creature skin textures from CreatureDisplayInfo.dbc.
-    // Re-apply even for cached models so transient failures can self-heal.
-    std::string modelDir;
-    size_t lastSlash = m2Path.find_last_of("\\/");
-    if (lastSlash != std::string::npos) {
-        modelDir = m2Path.substr(0, lastSlash + 1);
-    }
-
-    auto itDisplayData = displayDataMap_.find(mountDisplayId);
-    bool haveDisplayData = false;
-    CreatureDisplayData dispData{};
-    if (itDisplayData != displayDataMap_.end()) {
-        dispData = itDisplayData->second;
-        haveDisplayData = true;
+    // Creature skins from the mount's own CreatureDisplayInfo row, onto the
+    // model's type 11/12/13 texture slots - the rule every creature follows.
+    if (const auto display = displayDataMap_.find(mountDisplayId); display != displayDataMap_.end()) {
+        applyCreatureDisplayTextures(mountDisplayId, modelId, display->second);
     } else {
-        // Some taxi mount display IDs are sparse; recover skins by matching model path.
-        std::string lowerMountPath = m2Path;
-        std::transform(lowerMountPath.begin(), lowerMountPath.end(), lowerMountPath.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        int bestScore = -1;
-        for (const auto& [dispId, data] : displayDataMap_) {
-            auto pit = modelIdToPath_.find(data.modelId);
-            if (pit == modelIdToPath_.end()) continue;
-            std::string p = pit->second;
-            std::transform(p.begin(), p.end(), p.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (p != lowerMountPath) continue;
-            int score = 0;
-            if (!data.skin1.empty()) {
-                std::string p1 = modelDir + data.skin1 + ".blp";
-                score += assetManager_->fileExists(p1) ? 30 : 3;
-            }
-            if (!data.skin2.empty()) {
-                std::string p2 = modelDir + data.skin2 + ".blp";
-                score += assetManager_->fileExists(p2) ? 20 : 2;
-            }
-            if (!data.skin3.empty()) {
-                std::string p3 = modelDir + data.skin3 + ".blp";
-                score += assetManager_->fileExists(p3) ? 10 : 1;
-            }
-            if (score > bestScore) {
-                bestScore = score;
-                dispData = data;
-                haveDisplayData = true;
-            }
-        }
-        if (haveDisplayData) {
-            LOG_INFO("Recovered mount display data by model path for displayId=", mountDisplayId,
-                     " skin1='", dispData.skin1, "' skin2='", dispData.skin2,
-                     "' skin3='", dispData.skin3, "'");
-        }
-    }
-    if (haveDisplayData) {
-        // If this displayId has no skins, try to find another displayId for the same model with skins.
-        if (dispData.skin1.empty() && dispData.skin2.empty() && dispData.skin3.empty()) {
-            uint32_t sourceModelId = dispData.modelId;
-            int bestScore = -1;
-            for (const auto& [dispId, data] : displayDataMap_) {
-                if (data.modelId != sourceModelId) continue;
-                int score = 0;
-                if (!data.skin1.empty()) {
-                    std::string p = modelDir + data.skin1 + ".blp";
-                    score += assetManager_->fileExists(p) ? 30 : 3;
-                }
-                if (!data.skin2.empty()) {
-                    std::string p = modelDir + data.skin2 + ".blp";
-                    score += assetManager_->fileExists(p) ? 20 : 2;
-                }
-                if (!data.skin3.empty()) {
-                    std::string p = modelDir + data.skin3 + ".blp";
-                    score += assetManager_->fileExists(p) ? 10 : 1;
-                }
-                if (score > bestScore) {
-                    bestScore = score;
-                    dispData = data;
-                }
-            }
-            LOG_INFO("Mount skin fallback for displayId=", mountDisplayId,
-                     " modelId=", sourceModelId, " skin1='", dispData.skin1,
-                     "' skin2='", dispData.skin2, "' skin3='", dispData.skin3, "'");
-        }
-        const auto* md = charRenderer->getModelData(modelId);
-        if (md) {
-            LOG_INFO("Mount model textures: ", md->textures.size(), " slots, skin1='", dispData.skin1,
-                     "' skin2='", dispData.skin2, "' skin3='", dispData.skin3, "'");
-            for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                LOG_INFO("  tex[", ti, "] type=", md->textures[ti].type,
-                         " filename='", md->textures[ti].filename, "'");
-            }
-
-            int replaced = 0;
-            for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                const auto& tex = md->textures[ti];
-                std::string texPath;
-                if (tex.type == 11 && !dispData.skin1.empty()) {
-                    texPath = modelDir + dispData.skin1 + ".blp";
-                } else if (tex.type == 12 && !dispData.skin2.empty()) {
-                    texPath = modelDir + dispData.skin2 + ".blp";
-                } else if (tex.type == 13 && !dispData.skin3.empty()) {
-                    texPath = modelDir + dispData.skin3 + ".blp";
-                }
-                if (!texPath.empty()) {
-                    rendering::VkTexture* skinTex = charRenderer->loadTexture(texPath);
-                    if (skinTex) {
-                        charRenderer->setModelTexture(modelId, static_cast<uint32_t>(ti), skinTex);
-                        LOG_INFO("  Applied skin texture slot ", ti, ": ", texPath);
-                        replaced++;
-                    } else {
-                        LOG_WARNING("  Failed to load skin texture slot ", ti, ": ", texPath);
-                    }
-                }
-            }
-
-            // Force skin textures onto type-0 (hardcoded) slots that have no filename
-            if (replaced == 0) {
-                for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                    const auto& tex = md->textures[ti];
-                    if (tex.type == 0 && tex.filename.empty()) {
-                        // Empty hardcoded slot - try skin1 then skin2
-                        std::string texPath;
-                        if (!dispData.skin1.empty() && replaced == 0) {
-                            texPath = modelDir + dispData.skin1 + ".blp";
-                        } else if (!dispData.skin2.empty()) {
-                            texPath = modelDir + dispData.skin2 + ".blp";
-                        }
-                        if (!texPath.empty()) {
-                            rendering::VkTexture* skinTex = charRenderer->loadTexture(texPath);
-                            if (skinTex) {
-                                charRenderer->setModelTexture(modelId, static_cast<uint32_t>(ti), skinTex);
-                                LOG_INFO("  Forced skin on empty hardcoded slot ", ti, ": ", texPath);
-                                replaced++;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // If still no textures, try hardcoded model texture filenames
-            if (replaced == 0) {
-                for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                    if (!md->textures[ti].filename.empty()) {
-                        rendering::VkTexture* texId = charRenderer->loadTexture(md->textures[ti].filename);
-                        if (texId) {
-                            charRenderer->setModelTexture(modelId, static_cast<uint32_t>(ti), texId);
-                            LOG_INFO("  Used model embedded texture slot ", ti, ": ", md->textures[ti].filename);
-                            replaced++;
-                        }
-                    }
-                }
-            }
-
-            // Final fallback for gryphon/wyvern: try well-known skin texture names
-            if (replaced == 0 && !md->textures.empty()) {
-                std::string lowerMountPath = m2Path;
-                std::transform(lowerMountPath.begin(), lowerMountPath.end(), lowerMountPath.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                if (lowerMountPath.find("gryphon") != std::string::npos) {
-                    const char* gryphonSkins[] = {
-                        "Creature\\Gryphon\\Gryphon_Skin.blp",
-                        "Creature\\Gryphon\\Gryphon_Skin01.blp",
-                        "Creature\\Gryphon\\GRYPHON_SKIN01.BLP",
-                        nullptr
-                    };
-                    for (const char** p = gryphonSkins; *p; ++p) {
-                        rendering::VkTexture* texId = charRenderer->loadTexture(*p);
-                        if (texId) {
-                            charRenderer->setModelTexture(modelId, 0, texId);
-                            LOG_INFO("  Forced gryphon skin fallback: ", *p);
-                            replaced++;
-                            break;
-                        }
-                    }
-                } else if (lowerMountPath.find("wyvern") != std::string::npos) {
-                    const char* wyvernSkins[] = {
-                        "Creature\\Wyvern\\Wyvern_Skin.blp",
-                        "Creature\\Wyvern\\Wyvern_Skin01.blp",
-                        nullptr
-                    };
-                    for (const char** p = wyvernSkins; *p; ++p) {
-                        rendering::VkTexture* texId = charRenderer->loadTexture(*p);
-                        if (texId) {
-                            charRenderer->setModelTexture(modelId, 0, texId);
-                            LOG_INFO("  Forced wyvern skin fallback: ", *p);
-                            replaced++;
-                            break;
-                        }
-                    }
-                }
-            }
-            LOG_INFO("Mount texture setup: ", replaced, " textures applied");
-        }
+        LOG_ERROR("Mount display ", mountDisplayId, " is not in CreatureDisplayInfo.dbc; model ",
+                  m2Path, " keeps its embedded textures");
     }
 
     mountModelId_ = modelId;
@@ -1820,33 +1625,10 @@ bool EntitySpawner::loadRemoteMountModel(uint32_t displayId, uint32_t& modelId,
 
         // CreatureDisplayInfo supplies the replaceable mount skins. Mount model
         // IDs are cached per display ID, so applying them to the model is safe.
-        auto displayIt = displayDataMap_.find(displayId);
-        if (displayIt != displayDataMap_.end()) {
-            CreatureDisplayData skin = displayIt->second;
-            if (skin.skin1.empty() && skin.skin2.empty() && skin.skin3.empty()) {
-                for (const auto& [candidateId, candidate] : displayDataMap_) {
-                    (void)candidateId;
-                    if (candidate.modelId == skin.modelId &&
-                        (!candidate.skin1.empty() || !candidate.skin2.empty() || !candidate.skin3.empty())) {
-                        skin = candidate;
-                        break;
-                    }
-                }
-            }
-            const size_t slash = modelPath.find_last_of("\\/");
-            const std::string dir = slash == std::string::npos ? "" : modelPath.substr(0, slash + 1);
-            if (const auto* md = cr->getModelData(modelId)) {
-                for (size_t ti = 0; ti < md->textures.size(); ++ti) {
-                    std::string name;
-                    if (md->textures[ti].type == 11) name = skin.skin1;
-                    else if (md->textures[ti].type == 12) name = skin.skin2;
-                    else if (md->textures[ti].type == 13) name = skin.skin3;
-                    if (name.empty()) continue;
-                    if (auto* texture = cr->loadTexture(dir + name + ".blp")) {
-                        cr->setModelTexture(modelId, static_cast<uint32_t>(ti), texture);
-                    }
-                }
-            }
+        if (const auto display = displayDataMap_.find(displayId); display != displayDataMap_.end()) {
+            applyCreatureDisplayTextures(displayId, modelId, display->second);
+        } else {
+            LOG_ERROR("Remote mount display ", displayId, " is not in CreatureDisplayInfo.dbc");
         }
     }
 
