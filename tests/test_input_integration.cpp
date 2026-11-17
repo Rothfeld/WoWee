@@ -2,6 +2,7 @@
 #include "core/coordinates.hpp"
 #include "input_test_support.hpp"
 #include "game_replay.hpp"
+#include "game/packet_parsers.hpp"
 #include "ui/game_screen.hpp"
 #include "addons/lua_engine.hpp"
 #include "addons/addon_lua_snippets.hpp"
@@ -18,6 +19,52 @@
 #include <set>
 
 using namespace input_test;
+
+TEST_CASE("TBC boarding and passenger creation use raw transport GUIDs", "[transport]") {
+    using namespace wowee::game;
+    TbcPacketParsers parser;
+    MovementInfo movement{};
+    movement.flags = 0x200;
+    movement.time = 123456;
+    movement.transportGuid = 0x01fc00000002b074ULL;
+    movement.transportX = 1.25f;
+    movement.transportY = -2.5f;
+    movement.transportZ = 7.0f;
+    movement.transportO = 0.75f;
+    movement.transportTime = 987654;
+    movement.fallTime = 4321;
+    wowee::network::Packet payload(0);
+    parser.writeMovementPayload(payload, movement);
+    REQUIRE(payload.getSize() == 57);
+    CHECK(payload.readUInt32() == 0x200);
+    CHECK(payload.readUInt8() == 0);
+    CHECK(payload.readUInt32() == movement.time);
+    for (int i=0; i<4; ++i) CHECK(payload.readFloat() == 0);
+    CHECK(payload.readUInt64() == movement.transportGuid);
+    CHECK(payload.readFloat() == movement.transportX);
+    CHECK(payload.readFloat() == movement.transportY);
+    CHECK(payload.readFloat() == movement.transportZ);
+    CHECK(payload.readFloat() == movement.transportO);
+    CHECK(payload.readUInt32() == movement.transportTime);
+    CHECK(payload.readUInt32() == movement.fallTime);
+    CHECK(payload.getRemainingSize() == 0);
+
+    wowee::network::Packet create(0);
+    create.writeUInt8(0x20);
+    parser.writeMovementPayload(create, movement);
+    for (float speed : {2.5f,7.f,4.5f,4.7f,2.5f,7.f,4.5f,3.14f}) create.writeFloat(speed);
+    UpdateBlock block{};
+    REQUIRE(parser.parseMovementBlock(create, block));
+    CHECK(block.onTransport);
+    CHECK(block.transportGuid == movement.transportGuid);
+    CHECK(block.transportX == movement.transportX);
+    CHECK(block.transportY == movement.transportY);
+    CHECK(block.transportZ == movement.transportZ);
+    CHECK(block.transportO == movement.transportO);
+    CHECK(block.runSpeed == 7.f);
+    CHECK(create.getRemainingSize() == 0);
+}
+
 namespace ui = wowee::ui;
 namespace addons = wowee::addons;
 namespace core = wowee::core;

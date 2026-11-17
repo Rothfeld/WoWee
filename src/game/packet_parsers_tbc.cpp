@@ -84,10 +84,9 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
 
         // Transport data
         if (moveFlags & TbcMoveFlags::ON_TRANSPORT) {
-            if (rem() < 1) return false;
+            if (rem() < 28) return false;
             block.onTransport = true;
-            block.transportGuid = packet.readPackedGuid();
-            if (rem() < 20) return false; // 4 floats + 1 uint32
+            block.transportGuid = packet.readUInt64();
             block.transportX = packet.readFloat();
             block.transportY = packet.readFloat();
             block.transportZ = packet.readFloat();
@@ -246,8 +245,9 @@ void TbcPacketParsers::writeMovementPayload(network::Packet& packet, const Movem
 
     // Transport data (TBC ON_TRANSPORT = 0x200, same bit as WotLK)
     if (info.flags & TbcMoveFlags::ON_TRANSPORT) {
-        // Packed transport GUID
-        packet.writePackedGuid(info.transportGuid);
+        // TBC MovementInfo uses a raw transport GUID in both movement messages
+        // and UPDATE_OBJECT. Packing this field was introduced in Wrath.
+        packet.writeUInt64(info.transportGuid);
 
         // Transport local position
         packet.writeFloat(info.transportX);
