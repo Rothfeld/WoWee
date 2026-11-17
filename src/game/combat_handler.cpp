@@ -371,6 +371,11 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
             }
         }
     }
+    // Starting an attack closes the loot window in the original client
+    // (observed, ledger #85). The server does not: CMaNGOS
+    // HandleAttackSwingOpcode leaves the loot open, so the client releases it
+    // the way the window's own close does (CMSG_LOOT_RELEASE, LOOT_CLOSED).
+    if (owner_.isLootWindowOpen()) owner_.closeLoot();
     if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
         auto packet = AttackSwingPacket::build(targetGuid);
         owner_.getSocket()->send(packet);
