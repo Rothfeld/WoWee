@@ -209,23 +209,29 @@ void GameHandler::registerCoreOpcodes() {
     // -----------------------------------------------------------------------
     registerHandler(Opcode::SMSG_LOG_XPGAIN, &GameHandler::handleXpGain);
     dispatchTable_[Opcode::SMSG_EXPLORATION_EXPERIENCE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(8)) {
-            uint32_t areaId   = packet.readUInt32();
-            uint32_t xpGained = packet.readUInt32();
-            if (xpGained > 0) {
-                std::string areaName = getAreaName(areaId);
-                std::string msg;
-                if (!areaName.empty()) {
-                    msg = "Discovered " + areaName + "! Gained " + std::to_string(xpGained) + " experience.";
-                } else {
-                    char buf[128];
-                    std::snprintf(buf, sizeof(buf), "Discovered new area! Gained %u experience.", xpGained);
-                    msg = buf;
-                }
-                addLocalChatLine(game::ChatType::COMBAT_XP_GAIN, msg);
-                addCombatText(CombatTextEntry::XP_GAIN, static_cast<int32_t>(xpGained), 0, true);
-            }
+        // Discovering an area shows the stock yellow UIErrorsFrame line on
+        // every discovery, with or without experience: ERR_ZONE_EXPLORED
+        // ("Discovered: %s") or ERR_ZONE_EXPLORED_XP ("Discovered %s: %d
+        // experience gained"). Only experience-giving discoveries were shown,
+        // and as a chat line, so a capped character saw nothing.
+        if (!packet.hasRemaining(8)) {
+            LOG_WARNING("SMSG_EXPLORATION_EXPERIENCE too short: ", packet.getRemainingSize());
+            return;
         }
+        const uint32_t areaId   = packet.readUInt32();
+        const uint32_t xpGained = packet.readUInt32();
+        const std::string areaName = getAreaName(areaId);
+        if (areaName.empty()) {
+            LOG_ERROR("SMSG_EXPLORATION_EXPERIENCE: no AreaTable name for area ", areaId);
+            return;
+        }
+        char buf[256];
+        if (xpGained > 0)
+            std::snprintf(buf, sizeof(buf), "Discovered %s: %u experience gained", areaName.c_str(), xpGained);
+        else
+            std::snprintf(buf, sizeof(buf), "Discovered: %s", areaName.c_str());
+        addUIInfoMessage(buf);
+        if (xpGained > 0) addCombatText(CombatTextEntry::XP_GAIN, static_cast<int32_t>(xpGained), 0, true);
     };
 
     // SMSG_PET_NAME_QUERY_RESPONSE is handled in SpellHandler now, which is
