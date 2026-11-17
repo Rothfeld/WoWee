@@ -778,6 +778,8 @@ private:
     // Particle pipelines
     VkPipeline particlePipeline_ = VK_NULL_HANDLE;       // M2 emitter particles
     VkPipeline particleAdditivePipeline_ = VK_NULL_HANDLE; // Additive particle blend
+    VkPipeline particleModPipeline_ = VK_NULL_HANDLE;      // M2Blend 5
+    VkPipeline particleMod2xPipeline_ = VK_NULL_HANDLE;    // M2Blend 6
     VkPipelineLayout particlePipelineLayout_ = VK_NULL_HANDLE;
 
     // Ribbon pipelines (additive + alpha-blend)

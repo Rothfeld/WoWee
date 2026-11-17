@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -56,6 +57,19 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
     const float magnitude = glm::length(offset);
     return {offset, (flags & 0x100u) != 0 ? glm::vec3(0, 0, 1)
                     : magnitude > 0 ? offset / magnitude : glm::vec3(0)};
+}
+
+/// Which blend state an M2Blend particle mode draws with. The fragment shader
+/// takes the mode itself for the per-mode alpha handling.
+enum class ParticleBlendPipeline { Alpha, Additive, Mod, Mod2x };
+inline ParticleBlendPipeline particleBlendPipeline(uint8_t m2Blend) {
+    assert(m2Blend <= 6 && "M2Blend particle mode out of range");
+    switch (m2Blend) {
+        case 3: case 4: return ParticleBlendPipeline::Additive;
+        case 5: return ParticleBlendPipeline::Mod;
+        case 6: return ParticleBlendPipeline::Mod2x;
+        default: return ParticleBlendPipeline::Alpha;  // 0 opaque, 1 alpha key, 2 alpha
+    }
 }
 
 /// One authored cell range played over `phase` in [0, 1): `repeat` passes

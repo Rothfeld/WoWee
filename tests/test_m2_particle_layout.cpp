@@ -306,3 +306,16 @@ TEST_CASE("Particle cells follow authored head and decay ranges", "[m2][particle
     em.tailCells = {4, 5, 1};
     CHECK(particleCell(em, 0.0f, true, 16) == 4);
 }
+
+TEST_CASE("Particle blend modes follow the M2Blend table", "[m2][particle]") {
+    using wowee::rendering::particleBlendPipeline;
+    using wowee::rendering::ParticleBlendPipeline;
+    // EntanglingRoots_State #1 (1, PARTROCK, 8-bit alpha): alpha-key cutout.
+    CHECK(particleBlendPipeline(1) == ParticleBlendPipeline::Alpha);
+    CHECK(particleBlendPipeline(2) == ParticleBlendPipeline::Alpha);
+    CHECK(particleBlendPipeline(4) == ParticleBlendPipeline::Additive);
+    CHECK(particleBlendPipeline(3) == ParticleBlendPipeline::Additive);
+    // UnstableAffliction_Impact_Chest #1 (5, Clouds8x8ModFire): multiply.
+    CHECK(particleBlendPipeline(5) == ParticleBlendPipeline::Mod);
+    CHECK(particleBlendPipeline(6) == ParticleBlendPipeline::Mod2x);
+}

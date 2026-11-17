@@ -23,7 +23,7 @@ layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
 
 layout(push_constant) uniform Push {
     vec2 tileCount;
-    int alphaKey;
+    int blendMode;
     float viewportHeight;
 } push;
 

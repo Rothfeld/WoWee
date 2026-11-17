@@ -390,6 +390,16 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
 
         particlePipeline_ = buildParticlePipeline(PipelineBuilder::blendAlpha());
         particleAdditivePipeline_ = buildParticlePipeline(PipelineBuilder::blendAdditive());
+        // M2Blend Mod (dst * src) and Mod2x (dst * src * 2).
+        VkPipelineColorBlendAttachmentState mod = PipelineBuilder::blendAlpha();
+        mod.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+        mod.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        mod.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        mod.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        particleModPipeline_ = buildParticlePipeline(mod);
+        VkPipelineColorBlendAttachmentState mod2x = mod;
+        mod2x.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+        particleMod2xPipeline_ = buildParticlePipeline(mod2x);
     }
 
     // --- Build ribbon pipelines ---
@@ -911,7 +921,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
     }
 
     // Particle pipeline layout: set 0 = perFrame, set 1 = particleTex
-    // Push constant: vec2 tileCount + int alphaKey + float viewportHeight (16 bytes)
+    // Push constant: vec2 tileCount + int blendMode + float viewportHeight (16 bytes)
     {
         VkDescriptorSetLayout setLayouts[] = {perFrameLayout, particleTexLayout_};
         VkPushConstantRange pushRange{};
@@ -1097,6 +1107,8 @@ void M2Renderer::shutdown() {
     destroyPipeline(additivePipeline_);
     destroyPipeline(particlePipeline_);
     destroyPipeline(particleAdditivePipeline_);
+    destroyPipeline(particleModPipeline_);
+    destroyPipeline(particleMod2xPipeline_);
     destroyPipeline(ribbonPipeline_);
     destroyPipeline(ribbonAdditivePipeline_);
 

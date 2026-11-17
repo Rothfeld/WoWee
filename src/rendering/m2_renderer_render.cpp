@@ -2157,9 +2157,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 particlePipelineLayout_, 1, 1, &glowTexDescSet_, 0, nullptr);
 
-        // Push constants for particle: tileCount(vec2) + alphaKey(int)
-        struct { float tileX, tileY; int alphaKey; float viewportHeight; } particlePush = {
-            .tileX = 1.0f, .tileY = 1.0f, .alphaKey = 0,
+        // Push constants for particle: tileCount(vec2) + blendMode(int); 4 = additive
+        struct { float tileX, tileY; int blendMode; float viewportHeight; } particlePush = {
+            .tileX = 1.0f, .tileY = 1.0f, .blendMode = 4,
             .viewportHeight = static_cast<float>(vkCtx_->getSwapchainExtent().height)};
         vkCmdPushConstants(cmd, particlePipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(particlePush), &particlePush);

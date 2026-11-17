@@ -813,8 +813,13 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         ParticleGroup& group = *run.group;
 
         uint8_t blendType = group.blendType;
-        VkPipeline desiredPipeline = (blendType == 3 || blendType == 4)
-            ? particleAdditivePipeline_ : particlePipeline_;
+        VkPipeline desiredPipeline = VK_NULL_HANDLE;
+        switch (particleBlendPipeline(blendType)) {
+            case ParticleBlendPipeline::Alpha: desiredPipeline = particlePipeline_; break;
+            case ParticleBlendPipeline::Additive: desiredPipeline = particleAdditivePipeline_; break;
+            case ParticleBlendPipeline::Mod: desiredPipeline = particleModPipeline_; break;
+            case ParticleBlendPipeline::Mod2x: desiredPipeline = particleMod2xPipeline_; break;
+        }
         if (desiredPipeline != currentPipeline) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
             currentPipeline = desiredPipeline;
@@ -847,10 +852,10 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                                     particlePipelineLayout_, 1, 1, &texSet, 0, nullptr);
         }
 
-        // Push constants: tileCount + alphaKey
-        struct { float tileX, tileY; int alphaKey; float viewportHeight; } pc = {
+        // Push constants: tileCount + M2 blend mode
+        struct { float tileX, tileY; int blendMode; float viewportHeight; } pc = {
             .tileX = static_cast<float>(group.tilesX), .tileY = static_cast<float>(group.tilesY),
-            .alphaKey = (blendType == 1) ? 1 : 0,
+            .blendMode = blendType,
             .viewportHeight = static_cast<float>(vkCtx_->getSwapchainExtent().height)
         };
         vkCmdPushConstants(cmd, particlePipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
