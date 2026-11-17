@@ -2156,7 +2156,7 @@ void Renderer::update(float deltaTime) {
         bool activeStrafe = (cameraController->isStrafingLeft() || cameraController->isStrafingRight())
                              && !cameraController->isMovingBackward();
         float torsoYawDeltaDeg = 0.0f;
-        if (taxiFlight) {
+        if (taxiFlight || cameraController->isServerControlled()) {
             characterYaw = cameraController->getFacingYaw();
         } else if (cameraController->isMoving() || cameraController->isRightMouseHeld() ||
                    cameraController->isTurningLeft() || cameraController->isTurningRight()) {

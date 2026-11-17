@@ -308,6 +308,16 @@ public:
     void setMountHeightOffset(float offset) { mountHeightOffset_ = offset; }
     void setExternalFollow(bool enabled) { externalFollow_ = enabled; }
     void setExternalMoving(bool moving) { externalMoving_ = moving; }
+    /// The server holds the character (SMSG_CLIENT_CONTROL_UPDATE allowMove=0:
+    /// confuse, fear, charm). Keys and mouse steering no longer move or turn it;
+    /// its position and facing are placed from the server's spline each frame.
+    /// moving/run describe that spline, for the locomotion animation.
+    void setServerControlled(bool controlled, bool moving, bool run) {
+        serverControlled_ = controlled;
+        serverDrivenMoving_ = controlled && moving;
+        serverDrivenRun_ = controlled && moving && run;
+    }
+    [[nodiscard]] bool isServerControlled() const { return serverControlled_; }
     void setFacingYaw(float yaw) { facingYaw = yaw; }  // For taxi/scripted movement
     void clearMovementInputs();
     void suppressMovementFor(float seconds) { movementSuppressTimer_ = seconds; }
@@ -844,6 +854,9 @@ private:
     bool mounted_ = false;
     float mountHeightOffset_ = 0.0f;
     bool externalMoving_ = false;
+    bool serverControlled_ = false;
+    bool serverDrivenMoving_ = false;
+    bool serverDrivenRun_ = false;
 
     // Online mode: trust server position, don't prefer outdoors over WMO floors
     bool onlineMode = false;

@@ -851,7 +851,11 @@ void GameHandler::update(float deltaTime) {
                                       : (classicLikeStationaryCombatSync ? game::HEARTBEAT_INTERVAL_STATIONARY_COMBAT
                                                                          : (classicLikeCombatSync ? game::HEARTBEAT_INTERVAL_MOVING_COMBAT
                                                                                                   : moveHeartbeatInterval_));
-        if (movementHandler_ && movementHandler_->timeSinceLastMoveHeartbeatRef() >= heartbeatInterval) {
+        // No heartbeat while the server holds the character: its own spline
+        // is the position, and CMaNGOS relocates the player from any
+        // movement packet that arrives between two splines.
+        if (movementHandler_ && movementHandler_->isServerMovementAllowed() &&
+            movementHandler_->timeSinceLastMoveHeartbeatRef() >= heartbeatInterval) {
             sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
             movementHandler_->timeSinceLastMoveHeartbeatRef() = 0.0f;
         }

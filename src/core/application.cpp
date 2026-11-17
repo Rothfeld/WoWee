@@ -2819,6 +2819,23 @@ void Application::applyServerMovementState(float deltaTime) {
         renderer->getCameraController()->setRunBackSpeedOverride(gameHandler->getServerRunBackSpeed());
         renderer->getCameraController()->setTurnRateOverride(gameHandler->getServerTurnRate());
         renderer->getCameraController()->setMovementRooted(gameHandler->isPlayerRooted());
+        // Confuse, fear and charm take the character from the player
+        // (SMSG_CLIENT_CONTROL_UPDATE allowMove=0) and the server walks it
+        // with SMSG_MONSTER_MOVE splines for the player's own guid, which
+        // the player's entity follows. The packet's Runmode bit is no gait:
+        // CMaNGOS PacketBuilder sets it on every spline. Its speed is:
+        // MoveSplineInit::Launch moves at the walk or the run speed
+        // (confuse walks, fear runs), so the nearer of the two names it.
+        {
+            const bool held = !gameHandler->isServerMovementAllowed();
+            auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid());
+            const bool splineMoving = held && self && self->isActivelyMoving();
+            const float splineSpeed = splineMoving ? self->getLocomotionSpeed() : 0.0f;
+            const float walkSpeed = gameHandler->getServerWalkSpeed();
+            const float runSpeed = gameHandler->getServerRunSpeed();
+            const bool running = std::abs(splineSpeed - runSpeed) < std::abs(splineSpeed - walkSpeed);
+            renderer->getCameraController()->setServerControlled(held, splineMoving, running);
+        }
         renderer->getCameraController()->setGravityDisabled(gameHandler->isGravityDisabled());
         renderer->getCameraController()->setFeatherFallActive(gameHandler->isFeatherFalling());
         renderer->getCameraController()->setWaterWalkActive(gameHandler->isWaterWalking());
@@ -3238,6 +3255,27 @@ void Application::applyServerMovementState(float deltaTime) {
         lastWMORideMapId_ = 0xFFFFFFFFu;
         deckFloorPending_ = false;
         glm::vec3 renderPos = renderer->getCharacterPosition();
+
+        // Held by the server: the spline places the character across the
+        // ground; height stays with the camera controller's floor physics,
+        // which settles it on the surface under the new spot.
+        if (renderer->getCameraController() &&
+            renderer->getCameraController()->isServerControlled()) {
+            if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid())) {
+                // Past the spline's end the entity dead-reckons on; the
+                // server's character stops at the end point.
+                const glm::vec3 canonicalNow = self->isActivelyMoving()
+                    ? glm::vec3(self->getX(), self->getY(), self->getZ())
+                    : glm::vec3(self->getLatestX(), self->getLatestY(), self->getLatestZ());
+                const glm::vec3 splineRender = core::coords::canonicalToRender(canonicalNow);
+                renderPos.x = splineRender.x;
+                renderPos.y = splineRender.y;
+                renderer->getCharacterPosition() = renderPos;
+                const float facingDeg = core::coords::canonicalToCharacterYawDeg(self->getOrientation());
+                renderer->getCameraController()->setFacingYaw(facingDeg);
+                renderer->setCharacterYaw(facingDeg);
+            }
+        }
 
         // M2 transport riding: resolve in canonical space and lock once per frame.
         // This avoids visible jitter from mixed render/canonical delta application.

@@ -2850,7 +2850,9 @@ void CameraController::update(float deltaTime) {
     if (movementSuppressTimer_ > 0.0f) {
         movementSuppressTimer_ -= deltaTime;
     }
-    bool movementSuppressed = movementSuppressTimer_ > 0.0f;
+    // While the server holds the character no key moves, turns or jumps it.
+    bool movementSuppressed = movementSuppressTimer_ > 0.0f || serverControlled_;
+    if (serverControlled_) clearMovementInputs();
 
     auto& bindings = ui::KeybindingManager::getInstance();
     if (bindings.isCommandPressed("TOGGLERUN")) walking_ = !walking_;
@@ -2905,7 +2907,7 @@ void CameraController::update(float deltaTime) {
                 float degreesPerSec = introOrbitDegrees / introDuration;
                 yaw -= degreesPerSec * deltaTime;
                 camera->setRotation(yaw, pitch);
-                if (!seatedInChair_) facingYaw = yaw;
+                if (!seatedInChair_ && !serverControlled_) facingYaw = yaw;
             } else {
                 float t = (introDuration > 0.0f) ? std::min(introTimer / introDuration, 1.0f) : 1.0f;
                 yaw = introStartYaw + (introEndYaw - introStartYaw) * t;
@@ -2913,7 +2915,7 @@ void CameraController::update(float deltaTime) {
                 currentDistance = introStartDistance + (introEndDistance - introStartDistance) * t;
                 userTargetDistance = introEndDistance;
                 camera->setRotation(yaw, pitch);
-                if (!seatedInChair_) facingYaw = yaw;
+                if (!seatedInChair_ && !serverControlled_) facingYaw = yaw;
                 if (t >= 1.0f) {
                     introActive = false;
                 }
@@ -2924,7 +2926,7 @@ void CameraController::update(float deltaTime) {
     }
 
     // The same action the keybinding panel rebinds; forward/backward cancels it.
-    if (!uiWantsKeyboard && ui::KeybindingManager::getInstance().isActionPressed(
+    if (!uiWantsKeyboard && !serverControlled_ && ui::KeybindingManager::getInstance().isActionPressed(
             ui::KeybindingManager::Action::TOGGLE_AUTORUN)) {
         autoRunning = !autoRunning;
     }
@@ -2941,7 +2943,8 @@ void CameraController::update(float deltaTime) {
         doCancelAutoFollow();
     }
 
-    bool mouseAutorun = !uiWantsKeyboard && !sitting && leftMouseDown && rightMouseDown;
+    bool mouseAutorun = !uiWantsKeyboard && !sitting && !serverControlled_ &&
+                        leftMouseDown && rightMouseDown;
     if (mouseAutorun) {
         autoRunning = false;
         doCancelAutoFollow();
@@ -2949,7 +2952,7 @@ void CameraController::update(float deltaTime) {
 
     // Auto-follow: face target and run toward them when within range
     bool autoFollowMove = false;
-    if (autoFollowTarget_ && followTarget && !movementRooted_) {
+    if (autoFollowTarget_ && followTarget && !movementRooted_ && !serverControlled_) {
         glm::vec3 myPos = *followTarget;
         glm::vec3 tgtPos = *autoFollowTarget_;
         float dx = tgtPos.x - myPos.x;
@@ -3068,6 +3071,7 @@ void CameraController::update(float deltaTime) {
     } else {
         runPace = hasMoveInput && shiftDown;
     }
+    if (serverControlled_) runPace = serverDrivenRun_;
 
     // Get camera axes - project forward onto XY plane for walking
     glm::vec3 forward3D = camera->getForward();
@@ -3081,7 +3085,9 @@ void CameraController::update(float deltaTime) {
     // but must not replace the server's seat heading or send a new facing.
     // Only once the mouse has actually turned the view during this hold; see
     // CameraController::cameraDrivesFacing.
-    bool cameraDrivesFacing = CameraController::cameraDrivesFacing(
+    // The server's spline owns the facing while it holds the character; the
+    // mouse still orbits the camera.
+    bool cameraDrivesFacing = !serverControlled_ && CameraController::cameraDrivesFacing(
         rightMouseDown, rotateArmed_, mouseAutorun, steering_, seatedInChair_);
     // During taxi flights, orientation is controlled by the flight path, not player input
     if (cameraDrivesFacing && !externalFollow_) {
@@ -3126,8 +3132,8 @@ void CameraController::update(float deltaTime) {
 
     // Retain short taps/wheel pulses for sitting; diving still needs held input.
     bool prevSitting = sitting;
-    bool xDown = bindings.isCommandDown("SITORSTAND");
-    if (bindings.isCommandPressed("SITORSTAND") && !mounted_ && !swimming) {
+    bool xDown = !serverControlled_ && bindings.isCommandDown("SITORSTAND");
+    if (!serverControlled_ && bindings.isCommandPressed("SITORSTAND") && !mounted_ && !swimming) {
         sitting = !sitting;
     }
     if (mounted_) sitting = false;
@@ -3859,7 +3865,7 @@ bool CameraController::isMoving() const {
     if (!enabled || !camera) {
         return false;
     }
-    if (externalMoving_) return true;
+    if (externalMoving_ || serverDrivenMoving_) return true;
     return moveForwardActive || moveBackwardActive || strafeLeftActive || strafeRightActive || autoRunning;
 }
 

@@ -1043,6 +1043,19 @@ uses render-space facing, stops within three yards and resumes when the target
 moves away. Forward/backward, strafe and turn input cancel follow. Follow does
 not latch the independent autorun toggle.
 
+### Confused, feared or charmed
+
+`SMSG_CLIENT_CONTROL_UPDATE` with allowMove 0 hands the character to the
+server. Movement keys, jump, autorun and mouse steering stop moving or turning
+it; the mouse still orbits the camera. CMaNGOS then walks it with
+`SMSG_MONSTER_MOVE` splines for the player's own guid. The character's ground
+position and facing follow that spline; height comes from the normal floor
+physics. No movement packet or heartbeat is sent until control returns. Gotcha:
+the spline's Runmode bit is set on every packet (CMaNGOS PacketBuilder), so it
+says nothing about gait. Gait comes from spline speed, which is the walk speed
+(confuse) or run speed (fear). Charm uses the same path but was not checked
+live.
+
 ### Tab targeting
 
 `build/bin/test_tab_target` checks the rule. Tab (TargetNearestEnemy) and

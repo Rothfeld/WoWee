@@ -402,10 +402,11 @@ void MovementHandler::handleClientControlUpdate(network::Packet& packet) {
             owner_.sendMovement(Opcode::MSG_MOVE_STOP_STRAFE);
             owner_.sendMovement(Opcode::MSG_MOVE_STOP_TURN);
             owner_.sendMovement(Opcode::MSG_MOVE_STOP_SWIM);
-            owner_.addSystemChatMessage("Movement disabled by server.");
+            // No chat line: the original client prints nothing when control
+            // is taken or given back (paired confuse capture,
+            // _experiments/20261117T2245Z.player_control_loss).
             owner_.fireAddonEvent("PLAYER_CONTROL_LOST", {});
         } else if (changed && allowMovement) {
-            owner_.addSystemChatMessage("Movement re-enabled.");
             owner_.fireAddonEvent("PLAYER_CONTROL_GAINED", {});
         }
     }
@@ -978,6 +979,9 @@ void MovementHandler::setPosition(float x, float y, float z) {
     // Not during a client taxi flight, where the flight simulation moves the
     // entity and the character is placed from it.
     if (taxiClientActive_ || onTaxiFlight_) return;
+    // Nor while the server holds the character: its splines move the entity
+    // and the character is placed from it.
+    if (!serverMovementAllowed_) return;
     if (auto player = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
         player->setPosition(x, y, z, movementInfo.orientation);
     }
@@ -1735,6 +1739,13 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
     auto entity = owner_.getEntityManager().getEntity(data.guid);
     if (!entity) {
         return;
+    }
+
+    if (data.guid == owner_.getPlayerGuid()) {
+        LOG_INFO("SMSG_MONSTER_MOVE for the player: control=", serverMovementAllowed_ ? 1 : 0,
+                 " type=", static_cast<int>(data.moveType), " flags=0x", std::hex, data.splineFlags,
+                 std::dec, " durationMs=", data.duration, " points=", data.waypoints.size() + (data.hasDest ? 1 : 0),
+                 " from=(", data.x, ",", data.y, ",", data.z, ") to=(", data.destX, ",", data.destY, ",", data.destZ, ")");
     }
 
     // MonsterMove spline flags do not choose gait. CMaNGOS deliberately sets
