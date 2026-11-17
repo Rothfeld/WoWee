@@ -1,67 +1,55 @@
 #pragma once
 
 #include "game/inventory.hpp"
-#include <glm/gtc/matrix_transform.hpp>
+#include <cstdint>
 
 namespace wowee::core {
 
-
+// M2 attachment ids (wowdev.wiki/M2#Attachment_IDs).
 constexpr uint32_t kAttachShield = 0;
-// M2 attachment 11 is the helm; 0 is the shield mount, which is where head
-// gear was going - attached successfully, on the forearm, invisible on the head.
 constexpr uint32_t kAttachRightHand = 1;
 constexpr uint32_t kAttachLeftHand = 2;
-constexpr uint32_t kAttachBack = 12;
-// The model's own sheath points, which carry the sheathed orientation. Its
-// plain hip points do not, and some models name a second hip point at the
-// feet.
+constexpr uint32_t kAttachSheathMainHand = 26;
+constexpr uint32_t kAttachSheathOffHand = 27;
 constexpr uint32_t kAttachSheathShield = 28;
+constexpr uint32_t kAttachLargeWeaponLeft = 30;
+constexpr uint32_t kAttachLargeWeaponRight = 31;
 constexpr uint32_t kAttachHipWeaponLeft = 32;
 constexpr uint32_t kAttachHipWeaponRight = 33;
 
-inline uint32_t weaponAttachment(bool sheathed, game::EquipSlot slot, uint8_t inventoryType) {
-    if (!sheathed) {
-        if (inventoryType == game::InvType::SHIELD) return kAttachShield;
-        return slot == game::EquipSlot::OFF_HAND ? kAttachLeftHand : kAttachRightHand;
-    }
+// Unit sheath state, UNIT_FIELD_BYTES_2 byte 0.
+constexpr uint8_t kSheathStateUnarmed = 0;
+constexpr uint8_t kSheathStateMelee = 1;
+constexpr uint8_t kSheathStateRanged = 2;
 
-    if (inventoryType == game::InvType::TWO_HAND) return kAttachBack;
-    if (inventoryType == game::InvType::SHIELD) return kAttachSheathShield;
-    if (inventoryType == game::InvType::ONE_HAND ||
-        inventoryType == game::InvType::MAIN_HAND) {
-        // Main hand on the left hip, drawn across the body.
-        return slot == game::EquipSlot::OFF_HAND ? kAttachHipWeaponRight : kAttachHipWeaponLeft;
-    }
-
-    // Holdables and other items with no sheath position are hidden, matching
-    // the original client rather than pinning books/orbs to an arbitrary bone.
-    return UINT32_MAX;
+// Where a weapon is held while its slot is drawn. A bow (INVTYPE_RANGED) is
+// held in the left hand, a gun (INVTYPE_RANGEDRIGHT) in the right (build 8606,
+// same experiment).
+inline uint32_t heldAttachment(game::EquipSlot slot, uint8_t inventoryType) {
+    if (inventoryType == game::InvType::SHIELD) return kAttachShield;
+    if (inventoryType == game::InvType::RANGED_BOW) return kAttachLeftHand;
+    return slot == game::EquipSlot::OFF_HAND ? kAttachLeftHand : kAttachRightHand;
 }
 
-inline glm::mat4 weaponLocalTransform(bool sheathed, game::EquipSlot /*slot*/,
-                               uint8_t inventoryType) {
-    glm::mat4 transform(1.0f);
-    if (!sheathed || inventoryType == game::InvType::SHIELD) return transform;
-
-    if (inventoryType == game::InvType::TWO_HAND) {
-        // Weapon models are authored for a hand with their long axis pointing
-        // forward. Stand that axis up, cant it across the back, and move it off
-        // the spine so the grip sits below the opposite shoulder.
-        // Weapon models are authored along local X, which is also the character's
-        // front/back axis. First rotate weapon X completely onto character Z, then
-        // cant that vertical axis within the Y/Z back plane. This ordering is
-        // important: rotating around X cannot change an X-aligned blade.
-        // The final innermost roll spins the blade about its own long axis so
-        // the flat rests against the back instead of the sharp edge.
-        // Values tuned against the live attachment frame. Its Z axis moves the
-        // weapon laterally rather than vertically.
-        transform = glm::translate(transform, glm::vec3(-0.03f, -0.10f, 0.0f));
-        transform = glm::rotate(transform, glm::radians(33.0f), glm::vec3(1, 0, 0));
-        transform = glm::rotate(transform, glm::radians(90.0f), glm::vec3(0, 1, 0));
-        transform = glm::rotate(transform, glm::radians(90.0f), glm::vec3(1, 0, 0));
-    }
-    return transform;
+// The unit sheath state in which a slot's item is in hand.
+inline uint8_t heldSheathState(game::EquipSlot slot) {
+    return slot == game::EquipSlot::RANGED ? kSheathStateRanged : kSheathStateMelee;
 }
 
+// Where a weapon hangs while its slot is sheathed, by the item's SheatheType
+// (Item.dbc / item query / UNIT_VIRTUAL_ITEM_INFO byte 5). Build 8606, gnome
+// and human models, every type on main and off hand:
+// _experiments/20261117T190000Z.sheath_attachments. Types 0, 5, 6 and 7
+// (rods, held-in-hand and fist items, monster props) are not drawn at all.
+inline uint32_t sheathAttachment(uint8_t sheathType, game::EquipSlot slot) {
+    const bool offHand = slot == game::EquipSlot::OFF_HAND;
+    switch (sheathType) {
+        case 1: return offHand ? kAttachSheathOffHand : kAttachSheathMainHand;
+        case 2: return offHand ? kAttachLargeWeaponRight : kAttachLargeWeaponLeft;
+        case 3: return offHand ? kAttachHipWeaponRight : kAttachHipWeaponLeft;
+        case 4: return kAttachSheathShield;
+        default: return UINT32_MAX;
+    }
+}
 
 } // namespace wowee::core

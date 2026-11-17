@@ -427,34 +427,45 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
         uint32_t displayId = unit->getField(slots + slot);
         if (!displayId) continue;
         uint8_t inventoryType;
+        uint8_t sheathType;
         if (displayIds) {
-            inventoryType = unit->getField(info + slot * 2 + 1) & 0xFF;
+            const uint32_t info1 = unit->getField(info + slot * 2 + 1);
+            inventoryType = info1 & 0xFF;
+            sheathType = (info1 >> 8) & 0xFF;
         } else {
             const int32_t record = itemDbc->findRecordById(displayId);
             if (record < 0) {
                 LOG_ERROR("NPC equipment item missing: guid=", guid, " item=", displayId);
                 return false;
             }
-            inventoryType = itemDbc->getUInt32(record, 6);
-            displayId = itemDbc->getUInt32(record, 5);
+            const auto* itemLayout = pipeline::getActiveDBCLayout()
+                ? pipeline::getActiveDBCLayout()->getLayout("Item") : nullptr;
+            assert(itemLayout);
+            inventoryType = itemDbc->getUInt32(record, (*itemLayout)["InventoryType"]);
+            sheathType = itemDbc->getUInt32(record, (*itemLayout)["SheatheType"]);
+            displayId = itemDbc->getUInt32(record, (*itemLayout)["DisplayInfoID"]);
         }
-        const bool ranged = slot == 2;
-        const bool sheathed = sheathState != (ranged ? 2 : 1);
-        const auto equipSlot = slot == 1 ? game::EquipSlot::OFF_HAND : game::EquipSlot::MAIN_HAND;
-        const uint32_t attachment = ranged ? (sheathed ? kAttachBack : kAttachRightHand)
-            : weaponAttachment(sheathed, equipSlot, inventoryType);
-        if (attachment == UINT32_MAX) continue;
+        const auto equipSlot = slot == 0 ? game::EquipSlot::MAIN_HAND
+            : slot == 1 ? game::EquipSlot::OFF_HAND : game::EquipSlot::RANGED;
+        const uint32_t held = heldAttachment(equipSlot, inventoryType);
+        uint32_t sheath = sheathAttachment(sheathType, equipSlot);
         // Some models do not author the point at all: QuillBoarWarrior.m2
-        // (Razorfen Quilguard/Defender) has no attachment 0 for its shield
-        // and QuillBoar.m2 no attachment 12 for a sheathed gun. That item has
-        // nowhere to hang; it is skipped, not retried as a failed attach.
-        if (!charRenderer->hasAttachmentPoint(instanceId, attachment)) {
-            static std::unordered_set<uint64_t> reported;
-            const uint64_t key = (uint64_t{charRenderer->getInstanceModelId(instanceId)} << 32) | attachment;
-            if (reported.insert(key).second)
-                LOG_INFO("NPC equipment: model of guid=", guid, " has no attachment ", attachment,
+        // (Razorfen Quilguard/Defender) has no attachment 0 for its shield.
+        // That item has nowhere to hang; it is skipped, not retried as a
+        // failed attach.
+        static std::unordered_set<uint64_t> reported;
+        const uint64_t modelKey = uint64_t{charRenderer->getInstanceModelId(instanceId)} << 32;
+        if (!charRenderer->hasAttachmentPoint(instanceId, held)) {
+            if (reported.insert(modelKey | held).second)
+                LOG_INFO("NPC equipment: model of guid=", guid, " has no attachment ", held,
                          "; item display ", displayId, " is not drawn");
             continue;
+        }
+        if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(instanceId, sheath)) {
+            if (reported.insert(modelKey | sheath).second)
+                LOG_INFO("NPC equipment: model of guid=", guid, " has no sheath attachment ", sheath,
+                         "; item display ", displayId, " is not drawn while sheathed");
+            sheath = UINT32_MAX;
         }
         const int32_t record = itemDisplayDbc->findRecordById(displayId);
         if (record < 0) {
@@ -471,20 +482,18 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
             return false;
         }
         const std::string texture = art.textureName.empty() ? "" : directory + art.textureName + ".blp";
-        if (!charRenderer->attachWeapon(instanceId, attachment, model, nextWeaponModelId_++,
-                texture, weaponLocalTransform(sheathed, equipSlot,
-                    ranged ? game::InvType::TWO_HAND : inventoryType),
-                ranged ? kAttachBack : weaponAttachment(true, equipSlot, inventoryType),
-                weaponLocalTransform(true, equipSlot,
-                    ranged ? game::InvType::TWO_HAND : inventoryType))) {
+        if (!charRenderer->attachWeapon(instanceId, held, model, nextWeaponModelId_++, texture,
+                glm::mat4(1.0f), static_cast<int8_t>(heldSheathState(equipSlot)), sheath)) {
             LOG_ERROR("NPC equipment attachment failed: guid=", guid, " display=", displayId,
-                      " attachment=", attachment);
+                      " attachment=", held);
             return false;
         }
-        creatureWeaponAttachments_[guid].push_back(attachment);
+        creatureWeaponAttachments_[guid].push_back(held);
         LOG_INFO("NPC equipment: guid=", guid, " slot=", slot, " display=", displayId,
-                 " attachment=", attachment, " sheathed=", sheathed);
+                 " held=", held, " sheath type=", int(sheathType), " sheath attachment=", sheath,
+                 " sheath state=", int(sheathState));
     }
+    charRenderer->setSheathState(instanceId, sheathState);
     return true;
 }
 

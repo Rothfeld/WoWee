@@ -2432,9 +2432,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             auto weapIt = instances.find(wa.weaponInstanceId);
             if (weapIt == instances.end()) continue;
 
-            const bool temporarySheath = instance.gestureSheathAnimation != 0 &&
-                wa.attachmentId <= 2;
-            const bool hiddenHoldable = temporarySheath && wa.sheathAttachmentId == UINT32_MAX;
+            const bool sheathed = weaponSheathed(instance, wa);
+            const bool hiddenHoldable = sheathed && wa.sheathAttachmentId == UINT32_MAX;
             weapIt->second.visible = instance.visible && !hiddenHoldable;
             for (const auto& effect : wa.effects)
                 instances.at(effect.effectInstanceId).visible = weapIt->second.visible;
@@ -2451,68 +2450,13 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             glm::mat4 weaponMat =
                 charModelMat * boneMat * glm::translate(glm::mat4(1.0f), wa.offset) *
                 wa.localTransform;
-            if (temporarySheath) {
-                glm::mat4 sheathAttachment;
-                if (!getAttachmentTransform(pair.first, wa.sheathAttachmentId, sheathAttachment))
-                    throw std::runtime_error("Gesture sheath attachment missing from character model");
-                weaponMat = sheathAttachment * wa.sheathTransform;
+            if (sheathed) {
+                // The item model sits at the sheath point as authored, like
+                // in the hand: the attachment's bone carries its orientation.
+                if (!getAttachmentTransform(pair.first, wa.sheathAttachmentId, weaponMat))
+                    throw std::runtime_error("Sheath attachment missing from character model");
             }
 
-            // Back-sheathed weapons: the swinging left arm passes through the
-            // canted blade while running. Sample the whole arm - shoulder,
-            // elbow, hand attachment points plus segment midpoints - against
-            // the weapon model's AABB and ease the blade outward, away from
-            // the spine, so the arm pushes it instead of clipping. A single
-            // sphere at the elbow joint missed forearm/upper-arm contact.
-            constexpr uint32_t kAttachmentBack = 12;
-            if (wa.attachmentId == kAttachmentBack && weapIt->second.cachedModel) {
-                constexpr uint32_t kAttachmentHandLeft = 2;
-                constexpr uint32_t kAttachmentElbowLeft = 4;
-                constexpr uint32_t kAttachmentShoulderLeft = 6;
-                constexpr float kArmRadius = 0.16f;      // arm mesh thickness around the joint chain
-                constexpr float kPushClearance = 0.03f;  // keep the blade slightly off the sleeve
-                constexpr float kMaxPush = 0.35f;
-
-                const glm::mat4 weaponInv = glm::inverse(weaponMat);
-                const auto& wm = weapIt->second.cachedModel->data;
-
-                glm::vec3 joints[3];
-                int jointCount = 0;
-                for (uint32_t attId : {kAttachmentShoulderLeft, kAttachmentElbowLeft, kAttachmentHandLeft}) {
-                    glm::mat4 m;
-                    if (getAttachmentTransform(pair.first, attId, m)) {
-                        joints[jointCount++] = glm::vec3(m[3]);
-                    }
-                }
-
-                float targetPush = 0.0f;
-                auto testPoint = [&](const glm::vec3& worldPt) {
-                    const glm::vec3 local = glm::vec3(weaponInv * glm::vec4(worldPt, 1.0f));
-                    const glm::vec3 closest = glm::clamp(local, wm.boundMin, wm.boundMax);
-                    const float pen = kArmRadius - glm::distance(local, closest);
-                    if (pen > 0.0f) targetPush = std::max(targetPush, pen + kPushClearance);
-                };
-                for (int j = 0; j < jointCount; ++j) {
-                    testPoint(joints[j]);
-                    if (j + 1 < jointCount) testPoint((joints[j] + joints[j + 1]) * 0.5f);
-                }
-                targetPush = std::min(targetPush, kMaxPush);
-                if (targetPush > 0.0f && wa.sheathPush < 0.01f) {
-                    core::Logger::getInstance().debug("Sheath push engaged: pen=", targetPush,
-                                                      " joints=", jointCount);
-                }
-
-                wa.sheathPush += (targetPush - wa.sheathPush) * std::min(1.0f, deltaTime * 14.0f);
-                if (wa.sheathPush > 0.001f) {
-                    // Horizontal direction from the spine out through the weapon.
-                    glm::vec3 outward = glm::vec3(weaponMat[3]) - glm::vec3(charModelMat[3]);
-                    outward.z = 0.0f;
-                    const float len = glm::length(outward);
-                    if (len > 0.001f) {
-                        weaponMat = glm::translate(glm::mat4(1.0f), (outward / len) * wa.sheathPush) * weaponMat;
-                    }
-                }
-            }
             weapIt->second.overrideModelMatrix = weaponMat;
             weapIt->second.hasOverrideModelMatrix = true;
 
@@ -2709,7 +2653,8 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     const auto& grip = instance.cachedModel->handGrip;
     bool heldHand[3] = {false, false, false};
     for (const auto& attachment : instance.weaponAttachments) {
-        if (attachment.attachmentId == 1 || attachment.attachmentId == 2)
+        if ((attachment.attachmentId == 1 || attachment.attachmentId == 2) &&
+            !weaponSheathed(instance, attachment))
             heldHand[attachment.attachmentId] = true;
     }
     const bool hasGrip = grip.sequence >= 0 && (heldHand[1] || heldHand[2]);
@@ -4487,8 +4432,8 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
                                       const pipeline::M2Model& weaponModel, uint32_t weaponModelId,
                                       const std::string& texturePath,
                                       const glm::mat4& localTransform,
-                                      uint32_t sheathAttachmentId,
-                                      const glm::mat4& sheathTransform) {
+                                      int8_t heldSheathState,
+                                      uint32_t sheathAttachmentId) {
     auto charIt = instances.find(charInstanceId);
     if (charIt == instances.end()) {
         core::Logger::getInstance().warning("attachWeapon: character instance ", charInstanceId, " not found");
@@ -4565,8 +4510,16 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
     wa.boneIndex = boneIndex;
     wa.offset = offset;
     wa.localTransform = localTransform;
+    wa.heldSheathState = heldSheathState;
     wa.sheathAttachmentId = sheathAttachmentId;
-    wa.sheathTransform = sheathTransform;
+    if (sheathAttachmentId != UINT32_MAX) {
+        uint16_t sheathBone = 0;
+        glm::vec3 sheathOffset(0.0f);
+        assert(heldSheathState >= 0);
+        if (!findAttachmentBone(charInstance.modelId, sheathAttachmentId, sheathBone, sheathOffset))
+            throw std::runtime_error("attachWeapon: model has no sheath attachment " +
+                                     std::to_string(sheathAttachmentId));
+    }
     charInstance.weaponAttachments.push_back(wa);
 
     core::Logger::getInstance().debug("Attached weapon model ", weaponModelId,
@@ -4577,6 +4530,20 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
 
 void CharacterRenderer::setGestureWeaponPose(uint32_t instanceId, uint32_t animationId, bool sheathe) {
     instances.at(instanceId).gestureSheathAnimation = sheathe ? animationId : 0;
+}
+
+void CharacterRenderer::setSheathState(uint32_t instanceId, uint8_t sheathState) {
+    assert(sheathState <= 2);
+    auto& instance = instances.at(instanceId);
+    if (instance.sheathState == sheathState) return;
+    LOG_INFO("Sheath state: instance ", instanceId, " ", int(instance.sheathState), " -> ", int(sheathState));
+    instance.sheathState = sheathState;
+}
+
+bool CharacterRenderer::weaponSheathed(const CharacterInstance& instance, const WeaponAttachment& weapon) {
+    if (weapon.heldSheathState < 0) return false;
+    return instance.gestureSheathAnimation != 0 ||
+        instance.sheathState != static_cast<uint8_t>(weapon.heldSheathState);
 }
 
 bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& origin,

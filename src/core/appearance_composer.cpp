@@ -367,11 +367,16 @@ rendering::SheathSpot AppearanceComposer::sheathSpot(game::EquipSlot slot) const
     if (!gameHandler_) return rendering::SheathSpot::NONE;
     const auto& equipped = gameHandler_->getInventory().getEquipSlot(slot);
     if (equipped.empty()) return rendering::SheathSpot::NONE;
-    switch (weaponAttachment(true, slot, equipped.item.inventoryType)) {
+    const auto* info = gameHandler_->getItemInfo(equipped.item.itemId);
+    if (!info) return rendering::SheathSpot::NONE;
+    switch (sheathAttachment(static_cast<uint8_t>(info->sheath), slot)) {
         case kAttachHipWeaponLeft:
         case kAttachHipWeaponRight: return rendering::SheathSpot::HIP;
-        case kAttachBack:
-        case kAttachSheathShield:   return rendering::SheathSpot::BACK;
+        case kAttachSheathMainHand:
+        case kAttachSheathOffHand:
+        case kAttachSheathShield:
+        case kAttachLargeWeaponLeft:
+        case kAttachLargeWeaponRight: return rendering::SheathSpot::BACK;
         default:                    return rendering::SheathSpot::NONE;
     }
 }
@@ -406,50 +411,31 @@ void AppearanceComposer::loadEquippedWeapons() {
         LOG_WARNING("loadEquippedWeapons: failed to load ItemDisplayInfo.dbc");
         return;
     }
-    // Mapping: EquipSlot → held attachment. Sheathed attachment is resolved
-    // from the item's InventoryType below.
-    struct WeaponSlot {
-        game::EquipSlot slot;
-        uint32_t attachmentId;
-    };
-    // NOLINTBEGIN(modernize-use-designated-initializers) - a table whose
-    // columns are its field names, with the struct in view directly above.
-    WeaponSlot weaponSlots[] = {
-        { game::EquipSlot::MAIN_HAND, kAttachRightHand },
-        { game::EquipSlot::OFF_HAND,  kAttachLeftHand },
-    };
-    // NOLINTEND(modernize-use-designated-initializers)
+    // Main and off hand: held point by slot, sheath point by Item SheatheType.
+    for (const uint32_t point : {kAttachShield, kAttachRightHand, kAttachLeftHand})
+        charRenderer->detachWeapon(charInstanceId, point);
+    charRenderer->setSheathState(charInstanceId,
+        weaponsSheathed_ ? kSheathStateUnarmed : kSheathStateMelee);
 
-    // Equipment reloads and Z toggles can move models between these points.
-    // Clear both held and sheathed locations so old copies never remain behind.
-    const uint32_t weaponAttachmentPoints[] = {
-        kAttachShield, kAttachRightHand, kAttachLeftHand, kAttachBack,
-        kAttachSheathShield, kAttachHipWeaponLeft, kAttachHipWeaponRight
-    };
-    for (uint32_t attachmentId : weaponAttachmentPoints) {
-        charRenderer->detachWeapon(charInstanceId, attachmentId);
-    }
-
-    bool rightHandFilled = false;
-
-    for (const auto& ws : weaponSlots) {
-        const auto& equipSlot = inventory.getEquipSlot(ws.slot);
-
-        // If slot is empty or has no displayInfoId, detach any existing weapon
-        if (equipSlot.empty() || equipSlot.item.displayInfoId == 0) {
-            charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
+    for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND}) {
+        const auto& equipSlot = inventory.getEquipSlot(slot);
+        if (equipSlot.empty() || equipSlot.item.displayInfoId == 0) continue;
+        const auto* info = gameHandler_->getItemInfo(equipSlot.item.itemId);
+        if (!info) {
+            LOG_WARNING("loadEquippedWeapons: item ", equipSlot.item.itemId, " not queried yet");
             continue;
         }
-
-        const uint32_t attachmentId = weaponAttachment(
-            weaponsSheathed_, ws.slot, equipSlot.item.inventoryType);
-        if (attachmentId == UINT32_MAX) continue;
+        const uint32_t attachmentId = heldAttachment(slot, equipSlot.item.inventoryType);
+        uint32_t sheath = sheathAttachment(static_cast<uint8_t>(info->sheath), slot);
+        if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(charInstanceId, sheath)) {
+            LOG_WARNING("loadEquippedWeapons: character model has no sheath attachment ", sheath);
+            sheath = UINT32_MAX;
+        }
 
         uint32_t displayInfoId = equipSlot.item.displayInfoId;
         int32_t recIdx = displayInfoDbc->findRecordById(displayInfoId);
         if (recIdx < 0) {
             LOG_WARNING("loadEquippedWeapons: displayInfoId ", displayInfoId, " not found in DBC");
-            charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
             continue;
         }
 
@@ -462,7 +448,6 @@ void AppearanceComposer::loadEquippedWeapons() {
 
         if (art.modelFile.empty()) {
             LOG_WARNING("loadEquippedWeapons: empty model name for displayInfoId ", displayInfoId);
-            charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
             continue;
         }
 
@@ -475,7 +460,6 @@ void AppearanceComposer::loadEquippedWeapons() {
             m2Path = "Item\\ObjectComponents\\Shield\\" + modelFile;
             if (!loadWeaponM2(m2Path, weaponModel)) {
                 LOG_WARNING("loadEquippedWeapons: failed to load ", modelFile);
-                charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
                 continue;
             }
         }
@@ -490,25 +474,23 @@ void AppearanceComposer::loadEquippedWeapons() {
         }
 
         uint32_t weaponModelId = entitySpawner_->allocateWeaponModelId();
-        const glm::mat4 localTransform = weaponLocalTransform(
-            weaponsSheathed_, ws.slot, equipSlot.item.inventoryType);
         bool ok = charRenderer->attachWeapon(charInstanceId, attachmentId,
                                               weaponModel, weaponModelId, texturePath,
-                                              localTransform,
-                                              weaponAttachment(true, ws.slot, equipSlot.item.inventoryType),
-                                              weaponLocalTransform(true, ws.slot, equipSlot.item.inventoryType));
+                                              glm::mat4(1.0f),
+                                              static_cast<int8_t>(heldSheathState(slot)), sheath);
         if (ok) {
-            LOG_INFO("Equipped weapon: ", m2Path, " at attachment ", attachmentId,
-                     weaponsSheathed_ ? " (sheathed)" : " (held)");
-            if (ws.slot == game::EquipSlot::MAIN_HAND) rightHandFilled = true;
-            applyEnchantVisuals(charInstanceId, static_cast<int>(ws.slot), attachmentId);
+            LOG_INFO("Equipped weapon: ", m2Path, " held at ", attachmentId,
+                     ", sheathed at ", sheath, " (sheath type ", info->sheath, ")",
+                     weaponsSheathed_ ? " - sheathed" : " - held");
+            applyEnchantVisuals(charInstanceId, static_cast<int>(slot), attachmentId);
         }
     }
 
     // --- RANGED slot (bow, gun, crossbow, thrown) ---
-    // Show ranged weapon in right hand when main hand is empty.
+    // In hand only in the ranged sheath state; otherwise at its sheath point.
     const auto& rangedSlot = inventory.getEquipSlot(game::EquipSlot::RANGED);
-    if (!rightHandFilled && !rangedSlot.empty() && rangedSlot.item.displayInfoId != 0) {
+    const auto* rangedInfo = rangedSlot.empty() ? nullptr : gameHandler_->getItemInfo(rangedSlot.item.itemId);
+    if (rangedInfo && rangedSlot.item.displayInfoId != 0) {
         uint32_t displayInfoId = rangedSlot.item.displayInfoId;
         int32_t recIdx = displayInfoDbc->findRecordById(displayInfoId);
         if (recIdx >= 0) {
@@ -535,21 +517,19 @@ void AppearanceComposer::loadEquippedWeapons() {
                         }
                     }
 
+                    uint32_t sheath = sheathAttachment(static_cast<uint8_t>(rangedInfo->sheath),
+                                                       game::EquipSlot::RANGED);
+                    if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(charInstanceId, sheath))
+                        sheath = UINT32_MAX;
+                    const uint32_t held = heldAttachment(game::EquipSlot::RANGED,
+                                                         rangedSlot.item.inventoryType);
                     uint32_t weaponModelId = entitySpawner_->allocateWeaponModelId();
-                    const uint32_t rangedAttachment = weaponsSheathed_
-                        ? kAttachBack : kAttachRightHand;
-                    const glm::mat4 localTransform = weaponsSheathed_
-                        ? weaponLocalTransform(true, game::EquipSlot::MAIN_HAND,
-                                               game::InvType::TWO_HAND)
-                        : glm::mat4(1.0f);
-                    bool ok = charRenderer->attachWeapon(charInstanceId, rangedAttachment,
+                    bool ok = charRenderer->attachWeapon(charInstanceId, held,
                                                           weaponModel, weaponModelId, texturePath,
-                                                          localTransform, kAttachBack,
-                                                          weaponLocalTransform(true, game::EquipSlot::MAIN_HAND,
-                                                                               game::InvType::TWO_HAND));
+                                                          glm::mat4(1.0f), kSheathStateRanged, sheath);
                     if (ok) {
-                        LOG_INFO("Equipped ranged weapon: ", m2Path, " at attachment ",
-                                 rangedAttachment, weaponsSheathed_ ? " (sheathed)" : " (held)");
+                        LOG_INFO("Equipped ranged weapon: ", m2Path, " held at ", held,
+                                 ", sheathed at ", sheath);
                     }
                 }
             }

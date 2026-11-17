@@ -846,6 +846,28 @@ orientation. Other clients can see a different facing for the same vendor.
 `build/bin/test_input_integration '[npc-facing],[merchant]'` checks turning and merchant
 interaction lifetime.
 
+### Sheathed weapons
+
+The unit sheath state (`UNIT_FIELD_BYTES_2` byte 0: 0 unarmed, 1 melee,
+2 ranged) puts main and off hand in hand in state 1 and the ranged slot in
+state 2; otherwise each item hangs at the attachment named by its Item
+SheatheType (Item.dbc, item query, `UNIT_VIRTUAL_ITEM_INFO` word 1 byte 1),
+oriented by that attachment's bone alone:
+
+| SheatheType | Main hand / ranged | Off hand | Examples |
+|---|---|---|---|
+| 1 two-hander | 26 SheathMainHand | 27 SheathOffHand | Battleworn Hammer 2361 |
+| 2 staff | 30 LargeWeaponLeft | 31 LargeWeaponRight | Monster - Staff, Ornate Priest Staff 2176 |
+| 3 one-hander | 32 HipWeaponLeft | 33 HipWeaponRight | Worn Shortsword 25, Worn Dagger 2092 |
+| 4 shield | 28 SheathShield | 28 SheathShield | Worn Wooden Shield 2362 |
+| 0, 5, 6, 7 | not drawn | not drawn | bows, guns, rods, fist/held props |
+
+A bow is held in the left hand, a gun in the right. A model without the
+SheatheType's attachment draws nothing while sheathed (HumanMaleCaster.m2,
+Kobold.m2): there is no fallback point. Native observation, build 8606, on
+GnomeFemale, HumanMale, HumanMaleCaster and Kobold models:
+`_experiments/20261117T190000Z.sheath_attachments` in the workspace.
+
 ### Held weapon grips
 
 Palm attachments 1 and 2 apply the model's `HandsClosed` animation (15) at 1 ms

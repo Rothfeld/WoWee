@@ -1594,6 +1594,12 @@ bool parseItemQueryPreWotlk(network::Packet& packet, ItemQueryResponseData& data
         data.pageMaterial = packet.readUInt32(); // PageMaterial
         data.startQuestId = packet.readUInt32(); // StartQuest
     }
+    // LockID, Material, Sheath: the sheath type places a sheathed weapon.
+    if (packet.hasRemaining(12)) {
+        packet.readUInt32(); // LockID
+        packet.readUInt32(); // Material
+        data.sheath = packet.readUInt32();
+    }
 
     // The tail after StartQuest, in CMaNGOS's order: LockID, Material,
     // Sheath, RandomProperty, [RandomSuffix], Block, ItemSet, MaxDurability,

@@ -1908,6 +1908,7 @@ struct ItemQueryResponseData {
     uint32_t quality = 0;
     uint32_t itemFlags = 0;     // Item flag bitmask (Heroic=0x8, Unique-Equipped=0x1000000)
     uint32_t inventoryType = 0;
+    uint32_t sheath = 0;        // Item SheatheType: where the sheathed weapon hangs
     int32_t maxCount = 0;       // Max that can be carried (1 = Unique, 0 = unlimited)
     int32_t maxStack = 1;
     uint32_t containerSlots = 0;

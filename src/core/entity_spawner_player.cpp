@@ -842,52 +842,50 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     }
 
     // --- Weapon model attachment ---
-    // Slot indices in the 19-element EquipSlot array:
-    //   15 = MAIN_HAND → attachment 1 (right hand)
-    //   16 = OFF_HAND  → attachment 2 (left hand)
-    struct OnlineWeaponSlot {
-        int slotIndex;
-        uint32_t attachmentId;
-    };
-    // NOLINTBEGIN(modernize-use-designated-initializers) - a table whose
-    // columns are its field names, with the struct in view directly above.
-    static constexpr OnlineWeaponSlot weaponSlots[] = {
-        { 15, 1 },  // MAIN_HAND → right hand
-        { 16, 2 },  // OFF_HAND  → left hand
-    };
-    // NOLINTEND(modernize-use-designated-initializers)
-
-    for (const auto& ws : weaponSlots) {
-        uint32_t weapDisplayId = displayInfoIds[ws.slotIndex];
-        if (weapDisplayId == 0) {
-            charRenderer->detachWeapon(st.instanceId, ws.attachmentId);
-            continue;
-        }
+    // Item SheatheType comes with the item query of each visible entry;
+    // corpses carry display ids only and keep their weapons in hand.
+    const auto* visibleEntries = gameHandler_ ? gameHandler_->getOtherPlayerVisibleEquipment(guid) : nullptr;
+    for (const uint32_t point : {kAttachShield, kAttachRightHand, kAttachLeftHand})
+        charRenderer->detachWeapon(st.instanceId, point);
+    for (const auto equipSlot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND,
+                                 game::EquipSlot::RANGED}) {
+        const int slotIndex = static_cast<int>(equipSlot);
+        const uint32_t weapDisplayId = displayInfoIds[slotIndex];
+        if (weapDisplayId == 0) continue;
+        if (!visibleEntries && equipSlot == game::EquipSlot::RANGED) continue;
 
         int32_t recIdx = displayInfoDbc->findRecordById(weapDisplayId);
-        if (recIdx < 0) {
-            charRenderer->detachWeapon(st.instanceId, ws.attachmentId);
-            continue;
-        }
+        if (recIdx < 0) continue;
 
         const auto art = pipeline::readItemDisplayArt(*displayInfoDbc,
                                                       static_cast<uint32_t>(recIdx));
-        if (art.modelFile.empty()) {
-            charRenderer->detachWeapon(st.instanceId, ws.attachmentId);
-            continue;
-        }
+        if (art.modelFile.empty()) continue;
         const std::string& modelFile = art.modelFile;
         const std::string& textureName = art.textureName;
+
+        int8_t heldState = -1;
+        uint32_t sheath = UINT32_MAX;
+        if (visibleEntries) {
+            const auto* info = gameHandler_->getItemInfo((*visibleEntries)[slotIndex]);
+            if (!info) {
+                LOG_DEBUG("setOnlinePlayerEquipment: item ", (*visibleEntries)[slotIndex],
+                          " not yet queried; weapon waits for the re-emit");
+                continue;
+            }
+            heldState = static_cast<int8_t>(heldSheathState(equipSlot));
+            sheath = sheathAttachment(static_cast<uint8_t>(info->sheath), equipSlot);
+            if (sheath != UINT32_MAX && !charRenderer->hasAttachmentPoint(st.instanceId, sheath)) {
+                LOG_WARNING("setOnlinePlayerEquipment: player model has no sheath attachment ", sheath);
+                sheath = UINT32_MAX;
+            }
+        }
 
         // Try Weapon directory first, then Shield
         std::string m2Path = "Item\\ObjectComponents\\Weapon\\" + modelFile;
         pipeline::M2Model weaponModel;
         if (!loadWeaponM2(m2Path, weaponModel)) {
             m2Path = "Item\\ObjectComponents\\Shield\\" + modelFile;
-            if (!loadWeaponM2(m2Path, weaponModel)) {
-                charRenderer->detachWeapon(st.instanceId, ws.attachmentId);
-                continue;
-            }
+            if (!loadWeaponM2(m2Path, weaponModel)) continue;
         }
 
         // Build texture path
@@ -901,13 +899,13 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
         }
 
         uint32_t weaponModelId = nextWeaponModelId_++;
-        charRenderer->attachWeapon(st.instanceId, ws.attachmentId,
+        charRenderer->attachWeapon(st.instanceId, heldAttachment(equipSlot, inventoryTypes[slotIndex]),
                                    weaponModel, weaponModelId, texturePath, glm::mat4(1.0f),
-                                   weaponAttachment(true, static_cast<game::EquipSlot>(ws.slotIndex),
-                                                    inventoryTypes[ws.slotIndex]),
-                                   weaponLocalTransform(true, static_cast<game::EquipSlot>(ws.slotIndex),
-                                                        inventoryTypes[ws.slotIndex]));
+                                   heldState, sheath);
     }
+    if (const auto entity = gameHandler_ ? gameHandler_->getEntityManager().getEntity(guid) : nullptr)
+        charRenderer->setSheathState(st.instanceId,
+            entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
 }
 
 uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
