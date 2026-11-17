@@ -540,20 +540,6 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         if (!instance.cachedModel) continue;
         const M2ModelGPU& model = *instance.cachedModel;
 
-        // The reversing clock, kept beside the ordinary one rather than in
-        // place of it: animTime keeps looping for the rest of the skeleton.
-        if (model.pingPongAnim) {
-            const float dur = std::max(1.0f, instance.animDuration);
-            instance.animTimeAlt += dtMs * instance.animDir;
-            if (instance.animTimeAlt >= dur) {
-                instance.animTimeAlt = dur;
-                instance.animDir = -1.0f;
-            } else if (instance.animTimeAlt <= 0.0f) {
-                instance.animTimeAlt = 0.0f;
-                instance.animDir = 1.0f;
-            }
-        }
-
         // Validate sequence index
         if (instance.currentSequenceIndex < 0 ||
             instance.currentSequenceIndex >= static_cast<int>(model.sequences.size())) {
@@ -1926,8 +1912,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             mat->alphaTest = model.isGroundDetail ? 3 : (foliageCutout ? 2 : 1);
                             if (model.isGroundDetail) mat->unlit = 0;
                         }
-                        mat->volumetricBeam =
-                            (model.isVolumetricBeam || batch.volumetricBeam) ? 1 : 0;
                     }
 
                     // Bind material descriptor set (set 1)
@@ -2158,12 +2142,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
             if (batch.materialUBOMapped) {
                 auto* mat = static_cast<M2MaterialUBO*>(batch.materialUBOMapped);
-                // Here as well as in the opaque pass. A searchlight beam is
-                // additive, so this is the pass that actually draws it - and
-                // setting the flag only in the other one meant the softening
-                // never ran on the one model it was written for.
-                mat->volumetricBeam =
-                    (model.isVolumetricBeam || batch.volumetricBeam) ? 1 : 0;
                 mat->interiorDarken = 0.0f;
             }
 

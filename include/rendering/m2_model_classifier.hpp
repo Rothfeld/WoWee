@@ -92,7 +92,6 @@ struct M2ClassificationResult {
     /// a shaft through a window. Its silhouette is a polygon edge and reads
     /// as one unless it is faded out where the surface turns away from the
     /// eye, which is where a real beam thins to nothing.
-    bool isVolumetricBeam   = false;
     bool isTransportDoodad  = false; ///< Ship sail/paddle child whose motion must remain visible
     bool isBoat             = false; ///< A small boat, which rides the water if it is left on some
 

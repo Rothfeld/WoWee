@@ -110,8 +110,6 @@ void M2Renderer::restartInstanceAnimation(uint32_t instanceId) {
     if (idxIt == instanceIndexById.end()) return;
     auto& inst = instances[idxIt->second];
     inst.animTime = 0.0f;
-    inst.animTimeAlt = 0.0f;
-    inst.animDir = 1.0f;
     if (inst.cachedModel) computeBoneMatrices(*inst.cachedModel, inst, &cachedCamPos_);
 }
 
@@ -1373,7 +1371,7 @@ float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec
             // Additive flame/glow cards and invisible/alternate batches do not
             // turn empty space between the solid candles into an occluder.
             if (batch.submeshLevel != 0 || batch.blendMode >= 2 ||
-                batch.batchOpacity < 0.01f || batch.volumetricBeam || batch.starLayer) continue;
+                batch.batchOpacity < 0.01f || batch.starLayer) continue;
             assert(batch.indexStart + batch.indexCount <= model.pickIndices.size());
             closest = pickVisualTriangles(positions,
                 std::span<const uint16_t>(model.pickIndices).subspan(batch.indexStart, batch.indexCount),
