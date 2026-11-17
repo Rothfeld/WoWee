@@ -1906,6 +1906,15 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
         m2->setInstanceAnimationHeld(instanceId, anim, skipToEnd);
         return;
     }
+    // Without state sequences, only a stateful type shows its state through
+    // the bind pose. Any other type keeps looping Stand as its animation
+    // policy set it: Shattrath's Draenei HoloRunes (GENERIC, entries
+    // 183318-183320, DR_Draenei_HoloRunes02/03.m2) move their spark emitter
+    // bones along the floor lines in Stand; READY froze them at the line
+    // starts, where the sparks piled up into static white orbs.
+    // Unknown type: applyGameObjectAnimationPolicy has frozen the instance
+    // and onGameObjectInfoReceived resolves it.
+    if (goType != 0xFFFFFFFFu && !gameObjectPoseIsStateDriven(goType)) return;
     // No OPEN or CLOSE sequence of its own, but one animation that is the
     // opening: Undercity's lift doors are one bone and one sequence, id 0,
     // 3333ms. Held at its end the door stands open. Simply letting it run -
