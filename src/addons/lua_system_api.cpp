@@ -4,6 +4,8 @@
 #include "game/tracking_services.hpp"
 #include "game/game_utils.hpp"
 #include <array>
+#include <chrono>
+#include "network/world_socket.hpp"
 #include <cassert>
 #include <algorithm>
 #include <cctype>
@@ -7443,11 +7445,30 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetNetStats", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             uint32_t ms = gh ? gh->getLatencyMs() : 0;
-            lua_pushnumber(L, 0);   // bandwidthIn
-            lua_pushnumber(L, 0);   // bandwidthOut
-            lua_pushnumber(L, ms);  // latencyHome
-            lua_pushnumber(L, ms);  // latencyWorld
-            return 4;
+            // Bandwidth in KB/s, averaged since the previous call that was at
+            // least a second ago (2.4.3 reports small rolling figures such as
+            // 0.108 in / 0.005 out on an idle local realm; its window length
+            // is not measured, the one-second floor only avoids dividing by a
+            // frame). Kept per client, not per caller.
+            struct Sample { std::chrono::steady_clock::time_point at; uint64_t in = 0, out = 0; double kbIn = 0, kbOut = 0; };
+            static Sample last{std::chrono::steady_clock::now()};
+            const auto* sock = gh ? static_cast<const game::GameHandler*>(gh)->getSocket() : nullptr;
+            if (sock) {
+                const auto now = std::chrono::steady_clock::now();
+                const double secs = std::chrono::duration<double>(now - last.at).count();
+                const uint64_t in = sock->totalBytesIn(), out = sock->totalBytesOut();
+                if (in < last.in || out < last.out) {   // a new connection
+                    last = {now, in, out, 0.0, 0.0};
+                } else if (secs >= 1.0) {
+                    last.kbIn = static_cast<double>(in - last.in) / 1024.0 / secs;
+                    last.kbOut = static_cast<double>(out - last.out) / 1024.0 / secs;
+                    last.at = now; last.in = in; last.out = out;
+                }
+            }
+            lua_pushnumber(L, sock ? last.kbIn : 0.0);   // bandwidthIn
+            lua_pushnumber(L, sock ? last.kbOut : 0.0);  // bandwidthOut
+            lua_pushnumber(L, ms);  // latency
+            return 3;
         }},
                 {"GetCurrentTitle", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);

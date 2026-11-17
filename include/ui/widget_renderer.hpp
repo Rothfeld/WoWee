@@ -147,7 +147,7 @@ private:
     float linkScale_ = 1.0f;
     void drawBackdrop(ImDrawList* dl, const Widget& w, float scale,
                       float x0, float y0, float x1, float y1);
-    void drawStatusBar(ImDrawList* dl, const Widget& w,
+    void drawStatusBar(ImDrawList* dl, const WidgetTree& tree, const Widget& w,
                        float x0, float y0, float x1, float y1);
     void drawSlider(ImDrawList* dl, const Widget& w,
                     float x0, float y0, float x1, float y1);

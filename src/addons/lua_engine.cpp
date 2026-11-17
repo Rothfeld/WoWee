@@ -4022,6 +4022,11 @@ int lua_Texture_SetTexture(lua_State* L) {
     } else {
         w->solidColor = false;
         w->texturePath = luaL_optstring(L, 2, "");
+        // The fill region of a status bar: its texture is the bar's fill.
+        if (w->barFillOwner) {
+            if (auto* tree = wowee::addons::getWidgetTree(L))
+                if (auto* bar = tree->get(w->barFillOwner)) bar->barTexture = w->texturePath;
+        }
     }
     return 0;
 }
@@ -4116,6 +4121,15 @@ static int setGradient(lua_State* L, bool withAlpha) {
 }
 int lua_Texture_SetGradient(lua_State* L) { return setGradient(L, false); }
 int lua_Texture_SetGradientAlpha(lua_State* L) { return setGradient(L, true); }
+/// Region:GetDrawLayer() -> "BACKGROUND" | "BORDER" | "ARTWORK" | "OVERLAY" |
+/// "HIGHLIGHT", as the 2.4.3 API (one value; the sublevel arrived in 3.x).
+int lua_Region_GetDrawLayer(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w) return luaL_error(L, "GetDrawLayer: not a region");
+    static constexpr const char* kNames[] = {"BACKGROUND", "BORDER", "ARTWORK", "OVERLAY", "HIGHLIGHT"};
+    lua_pushstring(L, kNames[static_cast<size_t>(w->isStatusBar ? w->barLayer : w->layer)]);
+    return 1;
+}
 int lua_Region_SetDrawLayer(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         const auto layer = wowee::ui::parseDrawLayer(luaL_optstring(L, 2, "ARTWORK"));
@@ -4716,6 +4730,7 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
     set("GetVertexColor", lua_Region_GetVertexColor);
     set("GetFontObject", lua_FontString_GetFontObject);
     set("SetDrawLayer", lua_Region_SetDrawLayer);
+    set("GetDrawLayer", lua_Region_GetDrawLayer);
     if (isTexture) {
         set("SetTexture", lua_Texture_SetTexture);
         set("GetTexture", lua_Texture_GetTexture);
@@ -5730,6 +5745,8 @@ int lua_StatusBar_SetStatusBarTexture(lua_State* L) {
         else if (lua_istable(L, 2)) {
             if (auto* tex = widgetOf(L, 2)) w->barTexture = tex->texturePath;
         }
+        if (auto* tree = wowee::addons::getWidgetTree(L); tree && w->barFillRegion)
+            if (auto* fill = tree->get(w->barFillRegion)) fill->texturePath = w->barTexture;
     }
     return 0;
 }
@@ -5739,7 +5756,27 @@ int lua_StatusBar_SetStatusBarColor(lua_State* L) {
         w->barColor[1] = static_cast<float>(luaL_optnumber(L, 3, 1.0));
         w->barColor[2] = static_cast<float>(luaL_optnumber(L, 4, 1.0));
         w->barColor[3] = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+        // The same colour as the fill region's vertex colour, as in 2.4.3.
+        if (auto* tree = wowee::addons::getWidgetTree(L); tree && w->barFillRegion) {
+            if (auto* fill = tree->get(w->barFillRegion)) {
+                std::copy_n(w->barColor, 4, fill->color);
+                fill->hasGradient = false;
+            }
+        }
     }
+    return 0;
+}
+/// __WoweeLinkBarFill(bar, region): make region the bar's fill. It takes the
+/// bar's current colour; from then on its colour, gradient and SetTexture
+/// drive the fill.
+int lua_WoweeLinkBarFill(lua_State* L) {
+    auto* bar = widgetOf(L, 1);
+    auto* fill = widgetOf(L, 2);
+    if (!bar || !fill) return luaL_error(L, "__WoweeLinkBarFill needs a status bar and a texture");
+    bar->barFillRegion = fill->id;
+    fill->barFillOwner = bar->id;
+    std::copy_n(bar->barColor, 4, fill->color);
+    fill->texturePath = bar->barTexture;
     return 0;
 }
 int lua_StatusBar_SetOrientation(lua_State* L) {
@@ -7384,6 +7421,7 @@ void LuaEngine::registerCoreAPI() {
         "function mt:GetStatusBarTexture()\n"
         "    if not self.__barTexture then\n"
         "        self.__barTexture = self:CreateTexture(nil, 'ARTWORK')\n"
+        "        __WoweeLinkBarFill(self, self.__barTexture)\n"
         "    end\n"
         "    return self.__barTexture\n"
         "end\n"
@@ -7724,6 +7762,8 @@ void LuaEngine::registerCoreAPI() {
 
     lua_pushcfunction(L_, lua_CreateFrame);
     lua_setglobal(L_, "CreateFrame");
+    lua_pushcfunction(L_, lua_WoweeLinkBarFill);
+    lua_setglobal(L_, "__WoweeLinkBarFill");
     lua_pushcfunction(L_, lua_seterrorhandler);
     lua_setglobal(L_, "seterrorhandler");
     lua_pushcfunction(L_, lua_geterrorhandler);

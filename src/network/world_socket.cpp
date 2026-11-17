@@ -1,4 +1,8 @@
 #include "network/world_socket.hpp"
+#ifndef _WIN32
+#include <poll.h>
+#include <cerrno>
+#endif
 #include "core/env_flag.hpp"
 #include "network/packet.hpp"
 #include "network/net_platform.hpp"
@@ -414,6 +418,7 @@ void WorldSocket::send(const Packet& packet) {
     while (totalSent < sendData.size()) {
         ssize_t sent = net::portableSend(sockfd, sendData.data() + totalSent,
                                           sendData.size() - totalSent);
+        if (sent > 0) bytesOut_.fetch_add(static_cast<uint64_t>(sent), std::memory_order_relaxed);
         if (sent < 0) {
             int err = net::lastError();
             if (net::isWouldBlock(err)) {
@@ -466,7 +471,29 @@ void WorldSocket::asyncPumpLoop() {
                 break;
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(kAsyncPumpSleepMs));
+        // Wait for data rather than sleeping a fixed interval: a packet that
+        // arrives mid-sleep would otherwise be read up to the interval late,
+        // which the ping round trip then reports as latency (1-2 ms on a
+        // local realm where build 8606 reports 0). Still bounded by the same
+        // interval so the pump keeps its cadence for everything else.
+        socket_t fd;
+        {
+            std::lock_guard<std::mutex> lock(ioMutex_);
+            fd = sockfd;
+        }
+        if (fd == INVALID_SOCK) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kAsyncPumpSleepMs));
+            continue;
+        }
+#ifdef _WIN32
+        WSAPOLLFD pfd{fd, POLLRDNORM, 0};
+        if (WSAPoll(&pfd, 1, kAsyncPumpSleepMs) == SOCKET_ERROR)
+            LOG_WARNING("WSAPoll failed: ", net::errorString(net::lastError()));
+#else
+        pollfd pfd{fd, POLLIN, 0};
+        if (::poll(&pfd, 1, kAsyncPumpSleepMs) < 0 && errno != EINTR)
+            LOG_WARNING("poll failed: ", net::errorString(net::lastError()));
+#endif
     }
     asyncPumpRunning_.store(false, std::memory_order_release);
 }
@@ -505,6 +532,7 @@ void WorldSocket::pumpNetworkIO() {
         ssize_t received = net::portableRecv(sockfd, buffer, sizeof(buffer));
 
         if (received > 0) {
+            bytesIn_.fetch_add(static_cast<uint64_t>(received), std::memory_order_relaxed);
             receivedAny = true;
             ++readOps;
             size_t receivedSize = static_cast<size_t>(received);

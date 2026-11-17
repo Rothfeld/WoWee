@@ -50,6 +50,11 @@ public:
      */
     void send(const Packet& packet) override;
 
+    /// Bytes moved over this connection since it was opened, both ways. Read
+    /// by GetNetStats for its bandwidth figures.
+    [[nodiscard]] uint64_t totalBytesIn() const { return bytesIn_.load(std::memory_order_relaxed); }
+    [[nodiscard]] uint64_t totalBytesOut() const { return bytesOut_.load(std::memory_order_relaxed); }
+
     /**
      * Update socket - receive data and parse packets
      * Should be called regularly (e.g., each frame)
@@ -82,6 +87,8 @@ public:
     [[nodiscard]] bool isEncryptionEnabled() const { return encryptionEnabled; }
 
 private:
+    std::atomic<uint64_t> bytesIn_{0};
+    std::atomic<uint64_t> bytesOut_{0};
     /**
      * Try to parse complete packets from receive buffer
      */

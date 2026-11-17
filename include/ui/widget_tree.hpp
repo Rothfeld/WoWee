@@ -416,6 +416,12 @@ struct Widget {
     float barMin = 0.0f, barMax = 1.0f, barValue = 0.0f;
     std::string barTexture;
     float barColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    /// The fill as a region (GetStatusBarTexture). Its vertex colour and
+    /// gradient tint the fill; zero until the region is asked for.
+    uint32_t barFillRegion = 0;
+    /// On that region: the bar it is the fill of. Such a region is drawn by
+    /// its bar, never on its own.
+    uint32_t barFillOwner = 0;
     /// Which layer the bar's fill draws in. In the real client the fill is a
     /// region like any other and <StatusBar drawLayer="..."> is its layer;
     /// here it is drawn by the bar itself, so the bar carries the layer and

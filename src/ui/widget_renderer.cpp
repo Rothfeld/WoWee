@@ -1036,7 +1036,7 @@ void WidgetRenderer::drawBackdrop(ImDrawList* dl, const Widget& w, float scale,
     piece(7, x1 - e, y1 - e, x1,     y1);       // bottom-right
 }
 
-void WidgetRenderer::drawStatusBar(ImDrawList* dl, const Widget& w,
+void WidgetRenderer::drawStatusBar(ImDrawList* dl, const WidgetTree& tree, const Widget& w,
                                    float x0, float y0, float x1, float y1) {
     const float f = w.barFraction();
     if (f <= 0.0f) return;
@@ -1044,7 +1044,17 @@ void WidgetRenderer::drawStatusBar(ImDrawList* dl, const Widget& w,
     // in screen terms means growing upward from y1.
     const float fx1 = w.barVertical ? x1 : x0 + (x1 - x0) * f;
     const float fy0 = w.barVertical ? y1 - (y1 - y0) * f : y0;
-    const uint32_t col = packColor(w.barColor, w.effAlpha);
+    // The fill region's colour and gradient when the bar has one (2.4.3
+    // keeps the fill as a texture region); the bar's own colour otherwise.
+    const Widget* fill = w.barFillRegion ? tree.get(w.barFillRegion) : nullptr;
+    std::array<ImU32, 4> col;
+    if (fill) {
+        col = cornerColors(*fill, w.effAlpha);
+    } else {
+        const ImU32 flat = packColor(w.barColor, w.effAlpha);
+        col = {flat, flat, flat, flat};
+    }
+    const ImVec2 corners[4] = {ImVec2(x0, fy0), ImVec2(fx1, fy0), ImVec2(fx1, y1), ImVec2(x0, y1)};
 
     VkDescriptorSet tex = resident(w.barTexture);
     if (tex != kMissing) {
@@ -1052,10 +1062,10 @@ void WidgetRenderer::drawStatusBar(ImDrawList* dl, const Widget& w,
         // it, so a bar at half value shows half its art at its own scale.
         const float u1 = w.barVertical ? 1.0f : f;
         const float v0 = w.barVertical ? (1.0f - f) : 0.0f;
-        dl->AddImage(reinterpret_cast<ImTextureID>(tex), ImVec2(x0, fy0), ImVec2(fx1, y1),
-                     ImVec2(0.0f, v0), ImVec2(u1, 1.0f), col);
+        const ImVec2 uvs[4] = {ImVec2(0.0f, v0), ImVec2(u1, v0), ImVec2(u1, 1.0f), ImVec2(0.0f, 1.0f)};
+        addImageQuadColors(dl, reinterpret_cast<ImTextureID>(tex), corners, uvs, col);
     } else if (w.barTexture.empty()) {
-        dl->AddRectFilled(ImVec2(x0, fy0), ImVec2(fx1, y1), col);
+        dl->AddRectFilledMultiColor(corners[0], corners[2], col[0], col[1], col[2], col[3]);
     }
 }
 
@@ -2630,7 +2640,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // size are in the frame's units, the same as a font height, and a
             // scaled frame's border is drawn to the same ruler as its rect.
             if (w->hasBackdrop) drawBackdrop(dl, *w, ws, x0, boxY0, x1, boxY1);
-            if (w->isStatusBar) drawStatusBar(dl, *w, x0, y0, x1, y1);
+            if (w->isStatusBar) drawStatusBar(dl, tree, *w, x0, y0, x1, y1);
             if (w->isSlider) drawSlider(dl, *w, x0, y0, x1, y1);
             if (w->isCooldown) drawCooldown(dl, *w, x0, y0, x1, y1);
             // A tooltip reads downward from the top, which is the other way

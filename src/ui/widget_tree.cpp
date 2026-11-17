@@ -1287,6 +1287,8 @@ void WidgetTree::collectDrawOrder() {
     for (const Widget& w : widgets_) {
         if (w.id == 0) continue;
         if (!w.visible) continue;
+        // A status bar's fill region is drawn by its bar.
+        if (w.barFillOwner != 0) continue;
         if (w.effAlpha <= 0.001f) continue;
         // Frames are containers, except when they carry a backdrop or are a
         // status bar - then the frame itself has something to paint, and it

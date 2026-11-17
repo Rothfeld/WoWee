@@ -1611,8 +1611,10 @@ void GameHandler::handlePong(network::Packet& packet) {
         return;
     }
 
-    // Measure round-trip time
-    auto rtt = std::chrono::steady_clock::now() - pingTimestamp_;
+    // Round trip to the socket receipt of the pong, not to when the main loop
+    // got to it: a frame stalled by loading added seconds that are not
+    // network latency (2239 ms measured right after login on a local realm).
+    auto rtt = packet.getReceivedAt() - pingTimestamp_;
     lastLatency = static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(rtt).count());
 
