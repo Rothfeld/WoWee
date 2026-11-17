@@ -1581,9 +1581,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (isCorpse && legacyPlates) {
             nameColor = IM_COL32(128, 128, 128, A(255));
         } else if (isPlayer || (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0) {
+            // A friendly one flagged for PvP (UNIT_FLAG_PVP; CMaNGOS SetPvP
+            // copies it to the player's pets and guardians) is the friendly
+            // green, grouped or not: original 2.4.3 pair 0 draws flagged
+            // <GM>Edric and his imp Quztog (0,255,0), the colour of a friendly
+            // NPC (_experiments/20261117T181105Z.pair0_ghost_names_gossip).
             nameColor = isHostile
                 ? IM_COL32(220, 80, 80, A(255))
-                : IM_COL32(128, 128, 255, A(255));
+                : (unit->getUnitFlags() & game::UNIT_FLAG_PVP) != 0
+                    ? IM_COL32(0, 255, 0, A(255))
+                    : IM_COL32(128, 128, 255, A(255));
         } else {
             const int reaction = gameHandler.unitReactionToPlayer(*unit);
             if (isHostile || reaction <= 2) nameColor = IM_COL32(255, 0, 0, A(255));

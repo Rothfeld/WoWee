@@ -28,6 +28,8 @@ constexpr uint32_t UNIT_FLAG_IN_COMBAT   = 0x00080000;
 /// separates a pet from a guardian: both are summons and both carry a
 /// summoner, and only the one the player steers answers to this.
 constexpr uint32_t UNIT_FLAG_PLAYER_CONTROLLED = 0x00000008;
+/// Flagged for player-versus-player combat (Unit::SetPvP).
+constexpr uint32_t UNIT_FLAG_PVP = 0x00001000;
 constexpr uint32_t UNIT_FLAG_NOT_SELECTABLE = 0x02000000;
 constexpr uint32_t UNIT_FLAG_SKINNABLE = 0x04000000;
 constexpr uint32_t UNIT_FLAG_NON_ATTACKABLE = 0x00000002;
