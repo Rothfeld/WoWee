@@ -79,19 +79,6 @@ namespace game {
 
 namespace {
 
-std::string lowerCopy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
-bool containsAnyTerm(const std::string& haystack, const char* const* terms, size_t count) {
-    for (size_t i = 0; i < count; ++i) {
-        if (haystack.find(terms[i]) != std::string::npos) return true;
-    }
-    return false;
-}
-
 // GAMEOBJECT_TYPE_FISHINGHOLE. A fishing school is not a container: retail
 // gives it no interact cursor at all, and the only way to take from it is to
 // fish in it. Clicking one here sent CMSG_GAMEOBJ_USE and, while its metadata
@@ -290,43 +277,6 @@ std::optional<bool> withinGameObjectReach(pipeline::AssetManager* assets,
         if (!(local[axis] > lo && local[axis] < hi)) return false;
     }
     return true;
-}
-
-uint32_t gatherSpellForGameObject(const GameObjectQueryResponseData* info, const std::string& name) {
-    if (info && info->type != 3) return 0; // GAMEOBJECT_TYPE_CHEST
-
-    const std::string lower = lowerCopy(name);
-    static constexpr const char* kMiningTerms[] = {
-        "vein", "deposit", "mineral"
-    };
-    static constexpr const char* kHerbTerms[] = {
-        "peacebloom", "silverleaf", "earthroot", "mageroyal", "briarthorn",
-        "stranglekelp", "bruiseweed", "steelbloom", "grave moss", "kingsblood",
-        "liferoot", "fadeleaf", "goldthorn", "khadgar", "wintersbite",
-        "firebloom", "purple lotus", "arthas", "sungrass", "blindweed",
-        "ghost mushroom", "gromsblood", "dreamfoil", "silversage",
-        "plaguebloom", "icecap", "black lotus", "felweed", "dreaming glory",
-        "terocone", "ragveil", "ancient lichen", "netherbloom",
-        "nightmare vine", "mana thistle"
-    };
-
-    if (containsAnyTerm(lower, kMiningTerms, sizeof(kMiningTerms) / sizeof(kMiningTerms[0]))) return kMiningBaseSpellId;
-    if (containsAnyTerm(lower, kHerbTerms, sizeof(kHerbTerms) / sizeof(kHerbTerms[0]))) return kHerbBaseSpellId;
-    return 0;
-}
-
-uint32_t knownGatherRank(const SpellHandler* spellHandler, uint32_t baseSpellId) {
-    if (!spellHandler) return 0;
-
-    size_t count = 0;
-    const uint32_t* ranks = gatherRanksForBase(baseSpellId, count);
-    if (!ranks) return 0;
-
-    for (size_t i = count; i > 0; --i) {
-        const uint32_t spellId = ranks[i - 1];
-        if (spellHandler->hasKnownSpell(spellId)) return spellId;
-    }
-    return 0;
 }
 
 } // end anonymous namespace
@@ -3173,6 +3123,68 @@ std::optional<bool> GameHandler::isGameObjectInRange(uint64_t guid) {
                                  *entity, glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z));
 }
 
+std::optional<GameObjectProfessionLock> GameHandler::gameObjectProfessionLock(
+        const GameObjectQueryResponseData* info) const {
+    const uint32_t lockId = gameObjectLockId(info);
+    if (lockId == 0) return std::nullopt;
+    auto* assets = services_.assetManager;
+    assert(assets);
+    const auto locks = assets->loadDBC("Lock.dbc");
+    const auto types = assets->loadDBC("LockType.dbc");
+    const auto spells = assets->loadDBC("Spell.dbc");
+    const auto* spellL = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+    assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
+    assert(types && types->isLoaded() && spells && spells->isLoaded() && spellL);
+    const uint32_t effect0 = spellL->field("Effect0");
+    const uint32_t misc0 = spellL->field("EffectMiscValue0");
+    assert(effect0 != 0xFFFFFFFF && misc0 != 0xFFFFFFFF);
+    const int32_t row = locks->findRecordById(lockId);
+    assert(row >= 0);
+    constexpr uint32_t kLockKeySkill = 2;
+    const uint32_t lockType = locks->getUInt32(row, 9);
+    if (locks->getUInt32(row, 1) != kLockKeySkill || lockType == 0) return std::nullopt;
+    constexpr uint32_t kEffectOpenLock = 33, kEffectSkill = 118;
+    // The spells that open this LockType as a profession: OPEN_LOCK for it
+    // plus SKILL naming the profession's skill line. Lockpicking, Opening
+    // and the rest carry no SKILL effect and are not professions here.
+    const auto professionSkill = [&](uint32_t spellRow) -> uint32_t {
+        bool opens = false;
+        uint32_t skill = 0;
+        for (uint32_t e = 0; e < 3; ++e) {
+            const uint32_t effect = spells->getUInt32(spellRow, effect0 + e);
+            const uint32_t misc = spells->getUInt32(spellRow, misc0 + e);
+            if (effect == kEffectOpenLock && misc == lockType) opens = true;
+            if (effect == kEffectSkill) skill = misc;
+        }
+        return opens ? skill : 0;
+    };
+    GameObjectProfessionLock result;
+    for (const uint32_t spellId : spellHandler_->getKnownSpells()) {
+        const int32_t spellRow = spells->findRecordById(spellId);
+        if (spellRow < 0) continue;
+        if (const uint32_t skill = professionSkill(static_cast<uint32_t>(spellRow))) {
+            result.spellId = spellId;
+            result.skillLine = skill;
+            break;
+        }
+    }
+    if (result.spellId == 0) {
+        bool profession = false;
+        for (uint32_t r = 0; r < spells->getRecordCount() && !profession; ++r)
+            profession = professionSkill(r) != 0;
+        if (!profession) return std::nullopt;
+    } else {
+        const auto skill = playerSkills_.find(result.skillLine);
+        result.playerRank = skill != playerSkills_.end() ? skill->second.effectiveValue() : 0;
+    }
+    const int32_t typeRow = types->findRecordById(lockType);
+    assert(typeRow >= 0);
+    result.name = types->getString(static_cast<uint32_t>(typeRow), 1);
+    result.requiredRank = locks->getUInt32(row, 17);
+    return result;
+}
+
 void GameHandler::interactWithGameObject(uint64_t guid) {
     LOG_DEBUG("[GO-DIAG] interactWithGameObject called: guid=0x", std::hex, guid, std::dec);
     if (guid == 0) { LOG_DEBUG("[GO-DIAG] BLOCKED: guid==0"); return; }
@@ -3411,25 +3423,32 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         }
     };
 
-    const uint32_t gatherBaseSpellId = gatherSpellForGameObject(goInfo, goName);
-    if (gatherBaseSpellId != 0) {
-        const uint32_t gatherSpellId = knownGatherRank(spellHandler_.get(), gatherBaseSpellId);
-        if (gatherSpellId == 0) {
-            addSystemChatMessage(gatherBaseSpellId == kMiningBaseSpellId ? "Requires Mining."
-                                                    : "Requires Herbalism.");
-            LOG_INFO("GO gather skipped: no known rank for base spell=", gatherBaseSpellId,
-                     " guid=0x", std::hex, guid, std::dec, " name='", goName, "'");
+    // A node opened by a profession: lock slot 0 names a LockType that a
+    // gathering spell opens (Herb Gathering: OPEN_LOCK Herbalism + SKILL
+    // 182). Original 2.4.3 (pair 0, real Peacebloom in Elwynn): without
+    // Herbalism the click sends nothing and UIErrorsFrame shows
+    // ERR_USE_LOCKED_WITH_SPELL_S "Requires Herbalism"; a known skill below
+    // the lock's rank is ERR_USE_LOCKED_WITH_SPELL_KNOWN_SI "Requires %s %d".
+    if (const auto lock = gameObjectProfessionLock(goInfo)) {
+        if (lock->spellId == 0) {
+            addUIError("Requires " + lock->name);
+            LOG_INFO("GO profession lock: ", lock->name, " not known; guid=0x", std::hex, guid, std::dec);
+            return;
+        }
+        if (lock->playerRank < lock->requiredRank) {
+            addUIError("Requires " + lock->name + " " + std::to_string(lock->requiredRank));
+            LOG_INFO("GO profession lock: ", lock->name, " ", lock->playerRank, " < ", lock->requiredRank);
             return;
         }
         auto castPacket = getPacketParsers()
-            ? getPacketParsers()->buildCastGameObjectSpell(gatherSpellId, guid, 0)
-            : CastSpellPacket::buildGameObjectTarget(gatherSpellId, guid, 0);
+            ? getPacketParsers()->buildCastGameObjectSpell(lock->spellId, guid, 0)
+            : CastSpellPacket::buildGameObjectTarget(lock->spellId, guid, 0);
         socket->send(castPacket);
         lastInteractedGoGuid_ = guid;
         // OPEN_LOCK spell effects send SMSG_LOOT_RESPONSE themselves. A timed
         // retry would also loot after a failed skill roll and invalidate loot.
         sendReportUse();
-        LOG_INFO("GO gather cast: spell=", gatherSpellId, " guid=0x",
+        LOG_INFO("GO gather cast: spell=", lock->spellId, " guid=0x",
                  std::hex, guid, std::dec, " name='", goName, "'");
         return;
     }

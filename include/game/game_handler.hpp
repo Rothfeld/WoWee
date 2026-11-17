@@ -63,6 +63,16 @@ namespace audio { enum class PlayerErrorSpeech : uint8_t; }
 
 namespace game {
 
+/// A lock opened by a profession (lock slot 0's LockType opened by a spell
+/// with a SKILL effect): Herbalism, Mining.
+struct GameObjectProfessionLock {
+    std::string name;            ///< LockType name, "Herbalism"
+    uint32_t requiredRank = 0;   ///< Lock.dbc Skill[0]
+    uint32_t skillLine = 0;      ///< from the known spell's SKILL effect
+    uint32_t spellId = 0;        ///< a known spell that opens it; 0 when none
+    uint32_t playerRank = 0;     ///< the player's rank in skillLine
+};
+
 struct PlayerSkill {
     uint32_t skillId = 0;
     uint16_t value = 0;        // base + permanent item bonuses
@@ -2230,6 +2240,9 @@ public:
     // NPC Gossip
     void interactWithNpc(uint64_t guid);
     std::optional<bool> isGameObjectInRange(uint64_t guid);
+    /// The profession lock on a game object, nullopt when it has none.
+    [[nodiscard]] std::optional<GameObjectProfessionLock> gameObjectProfessionLock(
+        const GameObjectQueryResponseData* info) const;
     void interactWithGameObject(uint64_t guid);
     uint64_t getHookedFishingBobberGuid() const { return hookedFishingBobberGuid_; }
     void selectGossipOption(uint32_t optionId, const std::string& code = "");

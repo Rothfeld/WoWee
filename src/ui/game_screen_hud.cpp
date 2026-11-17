@@ -1792,6 +1792,34 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                               ") if n then GameTooltip:AddLine(format(LOCKED_WITH_ITEM, n), 1, 1, 1) end end; ";
                 }
             }
+            // A profession lock names its profession: LOCKED_WITH_SPELL
+            // "Requires %s" when the player lacks it, LOCKED_WITH_SPELL_KNOWN
+            // when known; the lock's rank follows the name when it has one.
+            // Pure red when it cannot be opened, else the gathering
+            // difficulty colour. Original 2.4.3 (pair 0, real Peacebloom,
+            // Lock 29 rank 0): without Herbalism (255,0,0) "Requires
+            // Herbalism"; with Herbalism 1 the same line orange (255,128,64).
+            if (const auto lock = gameHandler.gameObjectProfessionLock(info)) {
+                std::string need = lock->name;
+                if (lock->requiredRank) need += " " + std::to_string(lock->requiredRank);
+                std::string text = "'";
+                for (const unsigned char c : need) {
+                    text += '\\';
+                    text += static_cast<char>('0' + c / 100);
+                    text += static_cast<char>('0' + c / 10 % 10);
+                    text += static_cast<char>('0' + c % 10);
+                }
+                text += "'";
+                const char* color = "1, 0, 0";
+                if (lock->spellId != 0 && lock->playerRank >= lock->requiredRank) {
+                    const uint32_t over = lock->playerRank - lock->requiredRank;
+                    color = over >= 100 ? "0.5, 0.5, 0.5" : over >= 50 ? "0.25, 0.75, 0.25"
+                          : over >= 25 ? "1, 1, 0" : "1, 0.5, 0.25";
+                }
+                script += std::string("GameTooltip:AddLine(format(") +
+                          (lock->spellId == 0 ? "LOCKED_WITH_SPELL" : "LOCKED_WITH_SPELL_KNOWN") +
+                          ", " + text + "), " + color + "); ";
+            }
             script += "GameTooltip:Show()";
         } else {
             script = mouseoverGuid
