@@ -13,6 +13,7 @@
 #include "ui/gamepad_controls.hpp"
 
 #include "core/config_paths.hpp"
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include "game/current_action.hpp"
@@ -321,6 +322,10 @@ static int lua_GetActionCount(lua_State* L) {
     const auto& action = bar[slot];
     if (action.type == game::ActionBarSlot::ITEM && action.id != 0) {
         lua_pushnumber(L, game::actionItemCount(*gh, action.id));
+    } else if (action.type == game::ActionBarSlot::SPELL) {
+        // A spell counts its reagent: native 2.4.3 shows Vanish with the
+        // Flash Powder carried.
+        lua_pushnumber(L, game::spellReagentCount(*gh, action.id));
     } else {
         lua_pushnumber(L, 0);
     }
@@ -346,6 +351,19 @@ static int lua_GetActionCooldown(lua_State* L) {
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 0);
         return 3;
+    }
+    if (action.type == game::ActionBarSlot::ITEM) {
+        // An item with no use spell has no cooldown to show: native 2.4.3
+        // answers enable 0 for Mining Pick, Worn Dagger and Rough Arrow.
+        const auto* info = gh->getItemInfo(action.id);
+        if (info && info->valid &&
+            std::none_of(info->spells.begin(), info->spells.end(),
+                         [](const auto& spell) { return spell.spellId != 0 && spell.spellTrigger == 0; })) {
+            lua_pushnumber(L, 0);
+            lua_pushnumber(L, 0);
+            lua_pushnumber(L, 0);
+            return 3;
+        }
     }
     if (action.cooldownRemaining > 0.0f) {
         // WoW returns GetTime()-based start time; approximate

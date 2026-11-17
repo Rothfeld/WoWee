@@ -1239,6 +1239,29 @@ uint32_t actionItemCount(GameHandler& owner, uint32_t itemId) {
     return count;
 }
 
+uint32_t spellReagentCount(GameHandler& owner, uint32_t spellId) {
+    const auto* entry = owner.getSpellNameEntry(spellId);
+    if (!entry) return 0;
+    for (const auto& reagent : entry->reagents)
+        if (reagent.itemId != 0) return owner.getInventory().countItem(reagent.itemId);
+    return 0;
+}
+
+bool isConsumableAction(GameHandler& owner, const ActionBarSlot& slot) {
+    if (slot.type == ActionBarSlot::SPELL) {
+        const auto* entry = owner.getSpellNameEntry(slot.id);
+        return entry && std::any_of(std::begin(entry->reagents), std::end(entry->reagents),
+                                    [](const auto& reagent) { return reagent.itemId != 0; });
+    }
+    if (slot.type != ActionBarSlot::ITEM) return false;
+    const auto* info = owner.getItemInfo(slot.id);
+    if (!info || !info->valid) return false;
+    constexpr uint32_t kInvTypeAmmo = 24, kInvTypeThrown = 25;
+    if (info->inventoryType == kInvTypeAmmo || info->inventoryType == kInvTypeThrown) return true;
+    return std::any_of(info->spells.begin(), info->spells.end(),
+                       [](const auto& spell) { return spell.spellId != 0 && spell.charges < 0; });
+}
+
 SpellUsability spellUsability(GameHandler& owner, uint32_t spellId) {
     if (!owner.getKnownSpells().count(spellId)) return {};
     return castableNow(owner, spellId);

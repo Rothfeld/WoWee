@@ -6316,11 +6316,8 @@ void registerSystemLuaAPI(lua_State* L) {
             if (!gh || slot < 0) { lua_pushboolean(L, 0); return 1; }
             const auto& bar = gh->getActionBar();
             bool consumable = false;
-            if (slot < static_cast<int>(bar.size()) &&
-                bar[slot].type == game::ActionBarSlot::ITEM) {
-                const auto* info = gh->getItemInfo(bar[slot].id);
-                consumable = info && info->valid && info->itemClass == 0;  // Consumable
-            }
+            if (slot < static_cast<int>(bar.size()))
+                consumable = game::isConsumableAction(*gh, bar[slot]);
             lua_pushboolean(L, consumable);
             return 1;
         }},
