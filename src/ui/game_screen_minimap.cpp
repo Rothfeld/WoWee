@@ -919,7 +919,7 @@ void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHan
                 frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
                     points[0], points[1], points[2], points[3],
                     ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
-                noteMinimapBlip(ax, ay, member.name, true, 0);
+                noteMinimapBlip(ax, ay, member.name, true, 1);
                 continue;
             }
 
@@ -947,7 +947,7 @@ void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHan
                 }
             }
 
-            if (!member.name.empty()) noteMinimapBlip(sx, sy, member.name, false, 0);
+            if (!member.name.empty()) noteMinimapBlip(sx, sy, member.name, false, 1);
         }
     }
 }
@@ -1037,6 +1037,38 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
         if (const char* text = lua_tostring(engine->getState(), -1)) corpseName = text;
         lua_pop(engine->getState(), 1);
     }
+    // Spirit healers: the same tombstone, named SPIRIT_HEALER_RELEASE_RED and
+    // listed first (Elwynn graveyard as a ghost: "Spirit Healer" above the
+    // party member, _experiments/20261117T181649Z.minimap_marker_audit/
+    // hover/o_sh.png). The server sends them only to ghosts.
+    std::string healerName = "Spirit Healer";
+    if (engine) {
+        lua_getglobal(engine->getState(), "SPIRIT_HEALER_RELEASE_RED");
+        if (const char* text = lua_tostring(engine->getState(), -1)) healerName = text;
+        lua_pop(engine->getState(), 1);
+    }
+    const auto tombstone = [&](float x, float y) {
+        static VkDescriptorSet atlas = VK_NULL_HANDLE;
+        if (!atlas) {
+            atlas = uploadUiTextureFromBlp(services_.assetManager,
+                "Interface\\Minimap\\POIIcons.blp", services_.window);
+            if (!atlas) throw std::runtime_error("Corpse minimap atlas failed to load");
+        }
+        // Original POI atlas cell 7 is the brown tombstone.
+        const float half = 8.0f * (engine ? engine->widgets().uiScale() : 1.0f);
+        frame.drawList->AddImage((ImTextureID)(uintptr_t)atlas,
+            ImVec2(x - half, y - half), ImVec2(x + half, y + half),
+            ImVec2(7.0f / 8, 0), ImVec2(1, 1.0f / 8));
+    };
+    for (const auto& entity : gameHandler.getEntityManager().getEntities()) {
+        if (!entity.second || entity.second->getType() != game::ObjectType::UNIT) continue;
+        const auto unit = std::static_pointer_cast<game::Unit>(entity.second);
+        if ((unit->getNpcFlags() & game::NPC_FLAG_SPIRIT_HEALER) == 0) continue;
+        float sx = 0, sy = 0;
+        if (!frame.projectEntity(*unit, sx, sy)) continue;
+        tombstone(sx, sy);
+        noteMinimapBlip(sx, sy, healerName, false, 0);
+    }
     // Corpse direction indicator - shown when player is a ghost
     if (gameHandler.isPlayerGhost()) {
         float corpseCanX = 0.0f, corpseCanY = 0.0f;
@@ -1050,19 +1082,8 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
             const bool onMap = frame.project(corpseRender, csx, csy);
 
             if (onMap) {
-                // Original POI atlas cell 7 is the brown corpse tombstone.
-                static VkDescriptorSet atlas = VK_NULL_HANDLE;
-                if (!atlas) {
-                    atlas = uploadUiTextureFromBlp(services_.assetManager,
-                        "Interface\\Minimap\\POIIcons.blp", services_.window);
-                    if (!atlas) throw std::runtime_error("Corpse minimap atlas failed to load");
-                }
-                const float scale = engine ? engine->widgets().uiScale() : 1.0f;
-                const float half = 8.0f * scale;
-                frame.drawList->AddImage((ImTextureID)(uintptr_t)atlas,
-                    ImVec2(csx - half, csy - half), ImVec2(csx + half, csy + half),
-                    ImVec2(7.0f / 8, 0), ImVec2(1, 1.0f / 8));
-                noteMinimapBlip(csx, csy, corpseName);
+                tombstone(csx, csy);
+                noteMinimapBlip(csx, csy, corpseName, false, 0);
             } else {
                 // Corpse is outside minimap - draw an edge arrow pointing toward it
                 float dx = corpseRender.x - frame.playerRender.x;
@@ -1100,7 +1121,7 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
                     frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
                         points[0], points[1], points[2], points[3],
                         ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
-                    noteMinimapBlip(ax, ay, corpseName, true);
+                    noteMinimapBlip(ax, ay, corpseName, true, 0);
                 }
             }
         }
@@ -1433,8 +1454,9 @@ void GameScreen::noteMinimapBlip(float sx, float sy, const std::string& name, bo
 void GameScreen::showMinimapBlipTooltip() {
     auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
     if (!engine) return;
-    // Party members first; only that one pairing was compared against the
-    // original, the order among other kinds is the draw order.
+    // Spirit healer and corpse (rank 0), then party members (1), then the
+    // rest (2) in draw order. Compared: healer above party member, party
+    // member above mailbox; other pairings were not.
     std::stable_sort(minimapBlipHover_.begin(), minimapBlipHover_.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
     std::string text;

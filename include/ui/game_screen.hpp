@@ -264,8 +264,8 @@ private:
                                const EntityList& objects, game::GameHandler& gameHandler);
     void renderMinimapPlayerArrow(const MinimapFrame& frame, const game::GameHandler& gameHandler);
     /// Adds `name` to this frame's minimap tooltip when the cursor is on the blip.
-    /// Lower `rank` lists first; party members are 0.
-    void noteMinimapBlip(float sx, float sy, const std::string& name, bool arrow = false, int rank = 1);
+    /// Lower `rank` lists first: 0 spirit healer/corpse, 1 party, 2 the rest.
+    void noteMinimapBlip(float sx, float sy, const std::string& name, bool arrow = false, int rank = 2);
     /// One GameTooltip listing every blip under the cursor, a line each.
     void showMinimapBlipTooltip();
 
