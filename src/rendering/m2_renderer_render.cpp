@@ -319,6 +319,77 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     return instance.id;
 }
 
+uint32_t M2Renderer::createExternalPoseInstance(uint32_t modelId, const glm::mat4& modelMatrix) {
+    for (int c = 0; c < 4; c++)
+        for (int r = 0; r < 4; r++)
+            if (!std::isfinite(modelMatrix[c][r])) return 0;
+    auto modelIt = models.find(modelId);
+    if (modelIt == models.end()) {
+        LOG_WARNING("Cannot create external-pose instance: model ", modelId, " not loaded");
+        return 0;
+    }
+    const auto& mdl = modelIt->second;
+    modelUnusedSince_.erase(modelId);
+
+    // No dedup: two creatures of one model standing on one spot each keep
+    // their own emitters.
+    M2Instance instance;
+    instance.id = nextInstanceId++;
+    instance.modelId = modelId;
+    instance.externalPose = true;
+    instance.skipCollision = true;
+    instance.position = glm::vec3(modelMatrix[3]);
+    instance.rotation = glm::vec3(0.0f);
+    instance.scale = 1.0f;
+    instance.modelMatrix = modelMatrix;
+    instance.invModelMatrix = glm::inverse(modelMatrix);
+    instance.worldBoundsMin = instance.worldBoundsMax = instance.position;
+    instance.cachedHasParticleEmitters = !mdl.particleEmitters.empty();
+    instance.cachedBoundRadius = mdl.boundRadius;
+    instance.cachedIsValid = mdl.isValid();
+    instance.cachedModel = &mdl;
+    instance.recomputeCachedCullFactors();
+
+    instances.push_back(std::move(instance));
+    const size_t idx = instances.size() - 1;
+    // Only the emitter list: never the animated list (its bones are the
+    // owner's) nor the particle-only list (its clock is the owner's).
+    if (!mdl.particleEmitters.empty() || !mdl.ribbonEmitters.empty())
+        particleInstanceIndices_.push_back(idx);
+    instanceIndexById[instances[idx].id] = idx;
+    insertBounds(spatialGrid, instances[idx].worldBoundsMin, instances[idx].worldBoundsMax,
+                 instances[idx].id);
+    return instances[idx].id;
+}
+
+void M2Renderer::setExternalPose(uint32_t instanceId, const ExternalPose& pose) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    assert(idxIt != instanceIndexById.end());
+    auto& inst = instances[idxIt->second];
+    assert(inst.externalPose);
+    setInstanceTransform(instanceId, pose.modelMatrix);
+    if (pose.boneMatrices) inst.boneMatrices = *pose.boneMatrices;
+    else inst.boneMatrices.clear();
+    inst.currentSequenceIndex = pose.sequenceIndex;
+    inst.animTime = pose.animTimeMs;
+    inst.globalSequenceTime = pose.globalSequenceTimeMs;
+    inst.fade = pose.fade;
+}
+
+void M2Renderer::updateExternalPoseEffects(float deltaTime) {
+    for (size_t idx : particleInstanceIndices_) {
+        if (idx >= instances.size()) continue;
+        auto& instance = instances[idx];
+        if (!instance.externalPose || !instance.cachedModel) continue;
+        const glm::vec3 toCam = instance.position - cachedCamPos_;
+        if (glm::dot(toCam, toCam) > cachedMaxRenderDistSq_) continue;
+        updateParticles(instance, deltaTime);
+        emitParticles(instance, *instance.cachedModel, deltaTime);
+        if (!instance.cachedModel->ribbonEmitters.empty())
+            updateRibbons(instance, *instance.cachedModel, deltaTime);
+    }
+}
+
 // WOWEE_SKY_M2_MAX_BATCH=<n> draws only the sky model's first n layers.
 //
 // Thirty-four of them, and every measurement says the set drawn is the same
@@ -371,6 +442,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     // then stood still, and one with emitters - wrapped at a fixed 3.3 s
     // below, whatever its sequence - stopped for the rest of each lap.
     for (auto& instance : instances) {
+        if (instance.externalPose) continue;  // its owner keeps its clock
         instance.animTime += dtMs * instance.animSpeed;
         instance.globalSequenceTime += dtMs;
         // A boat asks once whether it is on water - the canal may stream in
@@ -635,6 +707,8 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
         auto& instance = instances[idx];
+        // Posed later this frame by its owner; see updateExternalPoseEffects.
+        if (instance.externalPose) continue;
         // Distance cull: only update particles within visible range
         glm::vec3 toCam = instance.position - cachedCamPos_;
         float distSq = glm::dot(toCam, toCam);

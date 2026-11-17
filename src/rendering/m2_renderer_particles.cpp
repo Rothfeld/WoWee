@@ -467,7 +467,8 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 const auto& e = edges[ei];
                 float t = (em.edgeLifetime > 0.0f)
                           ? 1.0f - (e.age / em.edgeLifetime) : 1.0f;
-                float a = e.alpha * t;
+                // The instance fade too: a fading owner fades its trails.
+                float a = e.alpha * t * inst.fade;
                 float u = static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
 
                 // The trail's own direction here, from the edges either side.
@@ -735,7 +736,10 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             const auto& em = *cachedEm;
             float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
             glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
-            float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f);
+            // Scaled by the instance fade, as its mesh is: an owner fading
+            // out (a creature's death, a hidden player) takes its particles
+            // with it.
+            float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f) * inst.fade;
             // Authored lifecycle size for every model. GnomereganVent smoke
             // grows 2.78 -> 4.44 -> 8.33; a former 1.5 cap on models not named
             // like spell effects shrank it to thin puffs.

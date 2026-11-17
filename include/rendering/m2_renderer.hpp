@@ -364,6 +364,13 @@ struct M2Instance {
     // interactable objects long before the server stopped sending them.
     // Set by the spawner; see M2_GAME_OBJECT_MIN_RENDER_DISTANCE.
     bool isGameObject = false;
+    /// Posed by its owner rather than by this renderer: model matrix, bone
+    /// matrices, sequence and clocks are written each frame through
+    /// setExternalPose, and update() neither advances nor animates it. Its
+    /// emitters run in updateExternalPoseEffects. Used for the particles and
+    /// ribbons of models CharacterRenderer draws (creatures, players and
+    /// their attached weapons), which share the character's skeleton.
+    bool externalPose = false;
 
     void recomputeCachedCullFactors();
 
@@ -457,6 +464,23 @@ public:
                             bool allowPositionDedup = true);
     uint32_t createInstanceWithMatrix(uint32_t modelId, const glm::mat4& modelMatrix,
                                        const glm::vec3& position);
+
+    /// One frame's pose for an externally posed instance (M2Instance::externalPose).
+    struct ExternalPose {
+        glm::mat4 modelMatrix{1.0f};
+        const std::vector<glm::mat4>* boneMatrices = nullptr;  // model space, same skeleton
+        int sequenceIndex = 0;
+        float animTimeMs = 0.0f;
+        float globalSequenceTimeMs = 0.0f;
+        float fade = 1.0f;
+    };
+    /// An instance of an emitter model whose pose its owner supplies.
+    uint32_t createExternalPoseInstance(uint32_t modelId, const glm::mat4& modelMatrix);
+    void setExternalPose(uint32_t instanceId, const ExternalPose& pose);
+    /// Simulate the particles and ribbons of externally posed instances. Call
+    /// after update() has returned and after the owners have set this frame's
+    /// pose, on the thread that owns this renderer's instance table.
+    void updateExternalPoseEffects(float deltaTime);
 
     void update(float deltaTime, const glm::vec3& cameraPos, const glm::mat4& viewProjection);
 

@@ -325,6 +325,12 @@ void M2Renderer::removeInstance(uint32_t instanceId) {
     for (size_t i = 0; i < instances.size(); i++) {
         auto& ri = instances[i];
         if (ri.cachedIsInstancePortal) portalInstanceIndices_.push_back(i);
+        if (ri.externalPose) {
+            if (ri.cachedModel && (!ri.cachedModel->particleEmitters.empty() ||
+                                   !ri.cachedModel->ribbonEmitters.empty()))
+                particleInstanceIndices_.push_back(i);
+            continue;
+        }
         if (ri.cachedHasParticleEmitters) particleInstanceIndices_.push_back(i);
         if (ri.cachedHasAnimation && !ri.cachedDisableAnimation)
             animatedInstanceIndices_.push_back(i);
@@ -534,13 +540,19 @@ void M2Renderer::rebuildSpatialIndex() {
         if (inst.cachedIsInstancePortal) {
             portalInstanceIndices_.push_back(i);
         }
-        if (inst.cachedHasParticleEmitters) {
-            particleInstanceIndices_.push_back(i);
-        }
-        if (inst.cachedHasAnimation && !inst.cachedDisableAnimation) {
-            animatedInstanceIndices_.push_back(i);
-        } else if (inst.cachedHasParticleEmitters) {
-            particleOnlyInstanceIndices_.push_back(i);
+        if (inst.externalPose) {
+            if (inst.cachedModel && (!inst.cachedModel->particleEmitters.empty() ||
+                                     !inst.cachedModel->ribbonEmitters.empty()))
+                particleInstanceIndices_.push_back(i);
+        } else {
+            if (inst.cachedHasParticleEmitters) {
+                particleInstanceIndices_.push_back(i);
+            }
+            if (inst.cachedHasAnimation && !inst.cachedDisableAnimation) {
+                animatedInstanceIndices_.push_back(i);
+            } else if (inst.cachedHasParticleEmitters) {
+                particleOnlyInstanceIndices_.push_back(i);
+            }
         }
 
         insertBounds(spatialGrid, inst.worldBoundsMin, inst.worldBoundsMax, inst.id);
