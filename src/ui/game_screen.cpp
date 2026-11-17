@@ -788,14 +788,15 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                 if (auto* ac = r->getAnimationController()) ac->setEquippedWeaponType(0, false);
             } else {
                 // Polearms and staves use ATTACK_2H_LOOSE instead of ATTACK_2H
-                bool is2HLoose = (mh.item.subclassName == "Polearm" || mh.item.subclassName == "Staff");
-                bool isFist = (mh.item.subclassName == "Fist Weapon");
-                bool isDagger = (mh.item.subclassName == "Dagger");
+                bool is2HLoose = (game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_POLEARM) ||
+                                  game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_STAFF));
+                bool isFist = game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_FIST);
+                bool isDagger = game::isWeaponSubclass(mh.item.itemClass, mh.item.subClass, game::WEAPON_SUBCLASS_DAGGER);
                 bool hasOffHand = !oh.empty() &&
                     game::isOffHandWeaponInventoryType(oh.item.inventoryType);
                 bool hasShield = !oh.empty() && oh.item.inventoryType == game::InvType::SHIELD;
-                bool offHandIsFist = hasOffHand && oh.item.subclassName == "Fist Weapon";
-                bool offHandIsDagger = hasOffHand && oh.item.subclassName == "Dagger";
+                bool offHandIsFist = hasOffHand && game::isWeaponSubclass(oh.item.itemClass, oh.item.subClass, game::WEAPON_SUBCLASS_FIST);
+                bool offHandIsDagger = hasOffHand && game::isWeaponSubclass(oh.item.itemClass, oh.item.subClass, game::WEAPON_SUBCLASS_DAGGER);
                 if (auto* ac = r->getAnimationController()) ac->setEquippedWeaponType(mh.item.inventoryType, is2HLoose, isFist, isDagger, hasOffHand, hasShield, offHandIsFist, offHandIsDagger);
             }
             // Detect ranged weapon type from RANGED slot
@@ -803,8 +804,8 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             if (rangedSlot.empty()) {
                 if (auto* ac = r->getAnimationController()) ac->setEquippedRangedType(rendering::RangedWeaponType::NONE);
             } else if (rangedSlot.item.inventoryType == game::InvType::RANGED_BOW) {
-                // subclassName distinguishes Bow vs Crossbow
-                if (rangedSlot.item.subclassName == "Crossbow") {
+                // The subclass distinguishes Bow vs Crossbow
+                if (game::isWeaponSubclass(rangedSlot.item.itemClass, rangedSlot.item.subClass, game::WEAPON_SUBCLASS_CROSSBOW)) {
                     if (auto* ac = r->getAnimationController()) ac->setEquippedRangedType(rendering::RangedWeaponType::CROSSBOW);
                 } else {
                     if (auto* ac = r->getAnimationController()) ac->setEquippedRangedType(rendering::RangedWeaponType::BOW);
@@ -814,7 +815,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                 // the subclass is what tells them apart - as it already does for
                 // a crossbow above. Without this a wand was shouldered and fired
                 // like a rifle.
-                if (rangedSlot.item.subclassName == "Wand") {
+                if (game::isWeaponSubclass(rangedSlot.item.itemClass, rangedSlot.item.subClass, game::WEAPON_SUBCLASS_WAND)) {
                     if (auto* ac = r->getAnimationController()) ac->setEquippedRangedType(rendering::RangedWeaponType::WAND);
                 } else if (auto* ac = r->getAnimationController()) {
                     ac->setEquippedRangedType(rendering::RangedWeaponType::GUN);
@@ -1930,17 +1931,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         gameHandler.lootTarget(target->getGuid());
                     } else {
                         // Service flags describe interaction, not permission to attack.
+                        // The service flags alone (CMaNGOS UNIT_NPC_FLAG_SPIRITHEALER
+                        // 0x4000, SPIRITGUIDE 0x8000). Every spirit healer and
+                        // battleground spirit guide carries one; the name match
+                        // this also did only added Ancient Grimtotem Spirit
+                        // Guide, a quest creature with no service at all.
                         auto isSpiritNpc = [&]() -> bool {
-                            constexpr uint32_t NPC_FLAG_SPIRIT_GUIDE = 0x00004000;
-                            constexpr uint32_t NPC_FLAG_SPIRIT_HEALER = 0x00008000;
-                            if (unit->getNpcFlags() & (NPC_FLAG_SPIRIT_GUIDE | NPC_FLAG_SPIRIT_HEALER)) {
-                                return true;
-                            }
-                            std::string name = unit->getName();
-                            std::transform(name.begin(), name.end(), name.begin(),
-                                           [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-                            return (name.find("spirit healer") != std::string::npos) ||
-                                   (name.find("spirit guide") != std::string::npos);
+                            constexpr uint32_t NPC_FLAG_SPIRIT_HEALER = 0x00004000;
+                            constexpr uint32_t NPC_FLAG_SPIRIT_GUIDE = 0x00008000;
+                            return (unit->getNpcFlags() & (NPC_FLAG_SPIRIT_HEALER | NPC_FLAG_SPIRIT_GUIDE)) != 0;
                         };
                         bool allowSpiritInteract = (gameHandler.isPlayerDead() || gameHandler.isPlayerGhost()) && isSpiritNpc();
                         bool canInteractNpc = unit->isInteractable() || allowSpiritInteract;
