@@ -430,8 +430,6 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             const auto& edges = inst.ribbonEdges[ri];
             if (edges.size() < 2) continue;
 
-            const auto& em = gpu.ribbonEmitters[ri];
-
             // Select blend pipeline based on material blend mode
             const bool additive = gpu.ribbonBlendModes.at(ri) >= 3;
             VkPipeline pipe = additive ? ribbonAdditivePipeline_ : ribbonPipeline_;
@@ -457,10 +455,12 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             for (size_t ei = 0; ei < edges.size(); ei++) {
                 if (written + 2 > MAX_RIBBON_VERTS) break;
                 const auto& e = edges[ei];
-                float t = (em.edgeLifetime > 0.0f)
-                          ? 1.0f - (e.age / em.edgeLifetime) : 1.0f;
-                // The instance fade too: a fading owner fades its trails.
-                float a = e.alpha * t * inst.fade;
+                // No fade with edge age: the texture runs head to tail along
+                // u and carries the falloff. Fading by age as well halved the
+                // visible trail; the original draws Frostbolt's and Arcane
+                // Missile's trails at full strength back to the casting hand.
+                // The instance fade still applies: a fading owner fades its trails.
+                float a = e.alpha * inst.fade;
                 float u = static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
 
                 // The trail's own direction here, from the edges either side.
