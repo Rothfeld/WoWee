@@ -20,12 +20,14 @@ void QuestMarkerRenderer::clear() { markers_.clear(); }
 void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManager& assets,
                                      const glm::vec3& cameraPosition) {
     constexpr uint32_t firstModelId = 999910;
-    constexpr std::array<const char*, 5> paths{
+    constexpr std::array<const char*, 7> paths{
         "Interface\\Buttons\\TalkToMe.m2",
         "Interface\\Buttons\\TalkToMeQuestionMark.m2",
         "Interface\\Buttons\\TalkToMeQuestion_Grey.m2",
         "Interface\\Buttons\\TalkToMeGrey.m2",
-        "Interface\\Buttons\\TalkToMeGreen.m2"
+        "Interface\\Buttons\\TalkToMeGreen.m2",
+        "Interface\\Buttons\\TalkToMeBlue.m2",
+        "Interface\\Buttons\\TalkToMeQuestion_ltblue.m2"
     };
     for (auto it = placements_.begin(); it != placements_.end();) {
         if (!markers_.contains(it->first)) {
@@ -34,8 +36,9 @@ void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManage
         } else ++it;
     }
     for (const auto& [guid, marker] : markers_) {
-        if (marker.type < 0 || marker.type > 3) throw std::logic_error("Invalid quest marker type");
-        const uint32_t variant = marker.type == 3 ? 4 :
+        if (marker.type < 0 || marker.type > 5) throw std::logic_error("Invalid quest marker type");
+        // Types: 0 !, 1 ?, 2 grey ?, 3 flight discovery, 4 blue !, 5 light-blue ?.
+        const uint32_t variant = marker.type == 3 ? 4 : marker.type == 4 ? 5 : marker.type == 5 ? 6 :
             (marker.type == 0 && marker.grayscale > 0.5f ? 3 : marker.type);
         const uint32_t modelId = firstModelId + variant;
         const bool modelWasMissing = !renderer.hasModel(modelId);

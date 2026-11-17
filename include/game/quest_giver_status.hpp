@@ -45,6 +45,10 @@ struct QuestGiverMarker {
     /// Whether this also earns a dot on the minimap. Status 9 is the one that
     /// does not, which is the only thing separating it from 10.
     bool onMinimap = false;
+    /// Repeatable/daily (the *_REP statuses): drawn blue - TalkToMeBlue.m2 /
+    /// TalkToMeQuestion_ltblue.m2 over the NPC, the blue ObjectIcons cells on
+    /// the minimap.
+    bool repeatable = false;
 };
 
 /// One mapping, so the nameplate and the minimap cannot disagree about what an
@@ -52,14 +56,18 @@ struct QuestGiverMarker {
 inline QuestGiverMarker questGiverMarker(QuestGiverStatus status) {
     switch (status) {
         case QuestGiverStatus::AVAILABLE:
-        case QuestGiverStatus::AVAILABLE_REP:
             return {.symbol = "!", .dim = false, .tooltip = "Has a quest available", .onMinimap = true};
+        case QuestGiverStatus::AVAILABLE_REP:
+            return {.symbol = "!", .dim = false, .tooltip = "Has a quest available", .onMinimap = true,
+                    .repeatable = true};
         case QuestGiverStatus::LOW_LEVEL_AVAILABLE:
         case QuestGiverStatus::LOW_LEVEL_AVAILABLE_REP:
             return {.symbol = "!", .dim = true, .tooltip = "Has a low-level quest available", .onMinimap = true};
         case QuestGiverStatus::REWARD:
-        case QuestGiverStatus::REWARD_REP:
             return {.symbol = "?", .dim = false, .tooltip = "Quest ready to turn in", .onMinimap = true};
+        case QuestGiverStatus::REWARD_REP:
+            return {.symbol = "?", .dim = false, .tooltip = "Quest ready to turn in", .onMinimap = true,
+                    .repeatable = true};
         // The same mark, and deliberately not on the minimap.
         case QuestGiverStatus::REWARD2:
             return {.symbol = "?", .dim = false, .tooltip = "Quest ready to turn in", .onMinimap = false};

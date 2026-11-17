@@ -6044,7 +6044,9 @@ void Application::updateQuestMarkers() {
             const bool bang = marker.symbol[0] == '!';
             // 0 is the exclamation texture, 1 the gold question mark and 2 the
             // grey one; the shader desaturates from markerGrayscale.
-            markerType = bang ? 0 : (marker.dim ? 2 : 1);
+            // 4 the blue repeatable !, 5 the light-blue repeatable ?.
+            markerType = bang ? (marker.repeatable ? 4 : 0)
+                              : (marker.dim ? 2 : (marker.repeatable ? 5 : 1));
         }
         if (game::taxiDiscoveryMarkerVisible(gameHandler->getTaxiNodeStatus(guid), markerType >= 0))
             markerType = 3;

@@ -747,7 +747,7 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
         if (!frame.projectEntity(*entity, sx, sy)) continue;
 
         // Second row: yellow !/?, then blue repeatable !/? (not grey).
-        const int column = (mark.symbol[0] == '!' ? 1 : 2) + (mark.dim ? 2 : 0);
+        const int column = (mark.symbol[0] == '!' ? 1 : 2) + (mark.repeatable ? 2 : 0);
         drawObjectIconCell(frame.drawList, minimapObjectIconAtlas(services_.assetManager, services_.window),
                            column, sx, sy);
 
