@@ -993,6 +993,33 @@ M2 floor rays query both local floor and wall triangle grids. A barrel placed
 on its side can support a player on triangles classified as walls before
 placement. Walkability is evaluated using transformed world-space normals.
 
+### Tooltip text layout
+
+```sh
+build/bin/test_native_text_metrics
+```
+
+GameTooltip text is measured, wrapped and drawn by the original 2.4.3 rules
+(`ui/native_text_metrics.hpp`, `ui/tooltip_layout.hpp`): fonts at whole pixel
+heights (`floor(height * pixelsPerUnit + 0.5)`), glyphs on whole-pixel pens,
+default wrap 230.4 units, box = content + 20.48 units, right text 38.4 units
+past the left. Item 28909 "Greater Inscription of the Orb" on a 720-pixel
+window wraps its Use: text into five rows at 216 pixels.
+
+Gotchas:
+
+- The original draws with the install's loose `Fonts\*.ttf`, not the archive
+  copies. On this install common.MPQ's `frizqt__.ttf` is a different, wider
+  face; measuring with it puts every break in the wrong place. `asset_extract`
+  copies the loose fonts over the extracted ones; an older extraction needs
+  `fonts/frizqt__.ttf`, `morpheus.ttf`, `skurri.ttf` replaced by hand.
+- The tooltip's size is computed during layout, so `GameTooltip:GetWidth()`
+  and `GetHeight()` read in the same Lua call as `SetHyperlink` return the
+  previous tooltip's size; the original answers immediately.
+- Other FontStrings (labels, quest text, chat) still measure and draw with
+  ImGui's metrics. The bare FontString wrap thresholds in
+  `tests/test_native_text_metrics.cpp` are the measured target for them.
+
 ### Quest text reveal
 
 FontString `SetAlphaGradient(start, length)` applies a character-edge alpha fade
