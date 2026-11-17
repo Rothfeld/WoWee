@@ -1517,6 +1517,22 @@ target_link_libraries(test_text_wrap PRIVATE catch2_main)
 add_test(NAME text_wrap COMMAND test_text_wrap)
 register_test_target(test_text_wrap)
 
+# ── test_native_text_metrics ─────────────────────────────────
+# GetStringWidth and line breaks as the original 2.4.3 client measures them,
+# checked against numbers read off that client.
+add_executable(test_native_text_metrics
+    test_native_text_metrics.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/native_text_metrics.cpp
+)
+target_include_directories(test_native_text_metrics PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_native_text_metrics SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/extern/imgui
+)
+target_link_libraries(test_native_text_metrics PRIVATE catch2_main)
+add_test(NAME native_text_metrics COMMAND test_native_text_metrics)
+register_test_target(test_native_text_metrics)
+
 # ── test_text_markup ─────────────────────────────────────────
 add_executable(test_text_markup
     test_text_markup.cpp
@@ -1589,6 +1605,7 @@ register_test_target(test_chat_markup_parser)
 add_executable(test_font_em_scale
     test_font_em_scale.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/interface_fonts.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/native_text_metrics.cpp
 )
 target_include_directories(test_font_em_scale PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_font_em_scale SYSTEM PRIVATE
@@ -1611,6 +1628,7 @@ wowee_add_test(test_quest_text SOURCES test_quest_text.cpp)
 add_executable(test_interface_text_lines
     test_interface_text_lines.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/interface_fonts.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/native_text_metrics.cpp
 )
 target_include_directories(test_interface_text_lines PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_interface_text_lines SYSTEM PRIVATE

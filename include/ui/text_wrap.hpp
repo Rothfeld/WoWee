@@ -10,6 +10,8 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -172,6 +174,146 @@ std::vector<std::vector<WrapRun>> wrapText(const std::vector<WrapRun>& runs,
             place(run, word);
             x += w;
         }
+    }
+    return lines;
+}
+
+/// One line of a native wrap: its runs and its width in pixels.
+struct NativeWrappedLine {
+    std::vector<WrapRun> runs;
+    /// Pixels from the line's start to where the next line's first glyph
+    /// would have gone (trailing spaces included); for the text's last line,
+    /// the width GetStringWidth reports.
+    float width = 0.0f;
+};
+
+/// Characters after which the original may break a line, besides a space.
+/// Measured: of the printable ASCII punctuation only these three break; a run
+/// of any other non-space characters is one unbreakable word.
+inline bool breaksAfter(uint32_t cp) { return cp == '-' || cp == '/' || cp == ':'; }
+
+/// Break runs into lines the way the original 2.4.3 client does, in pixels.
+///
+/// `m` answers `int pen(cp, next)` (advance to the next glyph, kerning
+/// included) and `int extent(cp)` (what the last glyph of a text adds);
+/// `textureWidth(run)` answers an inline picture's width in pixels.
+///
+/// A word goes on the current line when the pen position after it - trailing
+/// spaces excluded - is at most `wrapPx`; the paragraph's last word is held to
+/// its full width instead. Spaces always stay on the line they follow, however
+/// far past the edge. `|n` breaks at any width; `wrapPx <= 0` means no soft
+/// wrapping. A single word wider than the line takes a line of its own, broken
+/// by character only when `nonSpaceWrap` asks for it.
+template <typename Measure, typename TextureWidth>
+std::vector<NativeWrappedLine> wrapTextNative(const std::vector<WrapRun>& runs, float wrapPx,
+                                              bool nonSpaceWrap, const Measure& m,
+                                              TextureWidth textureWidth) {
+    struct Cell {
+        uint32_t cp = 0;     // 0 for a picture
+        size_t run = 0;
+        size_t b0 = 0, b1 = 0;
+    };
+    std::vector<Cell> cells;
+    for (size_t r = 0; r < runs.size(); ++r) {
+        if (!runs[r].texture.empty()) { cells.push_back({0, r, 0, 0}); continue; }
+        const std::string& t = runs[r].text;
+        size_t at = 0;
+        while (at < t.size()) {
+            const size_t b0 = at;
+            // UTF-8 decode, invalid bytes as themselves.
+            const unsigned char c = static_cast<unsigned char>(t[at]);
+            int len = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+            if (at + static_cast<size_t>(len) > t.size()) len = 1;
+            uint32_t cp = c;
+            if (len > 1) {
+                cp = c & (0x7Fu >> len);
+                for (int i = 1; i < len; ++i) {
+                    const unsigned char cc = static_cast<unsigned char>(t[at + static_cast<size_t>(i)]);
+                    if ((cc & 0xC0) != 0x80) { len = 1; cp = c; break; }
+                    cp = (cp << 6) | (cc & 0x3Fu);
+                }
+            }
+            at += static_cast<size_t>(len);
+            cells.push_back({cp, r, b0, at});
+        }
+    }
+
+    std::vector<NativeWrappedLine> lines;
+    const auto emit = [&](size_t a, size_t b, float width) {
+        NativeWrappedLine line;
+        line.width = width;
+        for (size_t i = a; i < b;) {
+            const Cell& c = cells[i];
+            if (c.cp == 0) { line.runs.push_back(runs[c.run]); ++i; continue; }
+            size_t j = i;
+            while (j + 1 < b && cells[j + 1].cp != 0 && cells[j + 1].run == c.run) ++j;
+            WrapRun piece = runs[c.run];
+            piece.text = runs[c.run].text.substr(c.b0, cells[j].b1 - c.b0);
+            if (!line.runs.empty() && sameStyle(line.runs.back(), piece)) line.runs.back().text += piece.text;
+            else line.runs.push_back(std::move(piece));
+            i = j + 1;
+        }
+        lines.push_back(std::move(line));
+    };
+
+    size_t p0 = 0;
+    while (true) {
+        size_t p1 = p0;
+        while (p1 < cells.size() && cells[p1].cp != '\n') ++p1;
+        // Pen positions within the paragraph: P[j] is where glyph j starts.
+        std::vector<float> P(p1 - p0 + 1, 0.0f);
+        const auto cpAt = [&](size_t i) { return i < p1 ? cells[i].cp : 0u; };
+        const auto advanceOf = [&](size_t i) -> float {
+            if (cells[i].cp == 0) return textureWidth(runs[cells[i].run]);
+            return static_cast<float>(m.pen(cells[i].cp, cpAt(i + 1)));
+        };
+        const auto extentOf = [&](size_t i) -> float {
+            if (cells[i].cp == 0) return textureWidth(runs[cells[i].run]);
+            return static_cast<float>(m.extent(cells[i].cp));
+        };
+        for (size_t i = p0; i < p1; ++i) P[i - p0 + 1] = P[i - p0] + advanceOf(i);
+        const auto pos = [&](size_t i) { return P[i - p0]; };
+        // Width of [a, b) ending the paragraph.
+        const auto finalWidth = [&](size_t a, size_t b) {
+            return b > a ? pos(b - 1) - pos(a) + extentOf(b - 1) : 0.0f;
+        };
+
+        size_t ls = p0;
+        size_t s = p0;
+        while (s < p1) {
+            // A word: up to a space or just past a break character, then the
+            // spaces that follow it.
+            size_t e = s;
+            while (e < p1 && cells[e].cp != ' ') {
+                ++e;
+                if (breaksAfter(cells[e - 1].cp)) break;
+            }
+            size_t ce = e;
+            while (e < p1 && cells[e].cp == ' ') ++e;
+            const bool last = e >= p1;
+            const auto fits = [&](size_t a) {
+                if (ce == a) return true;
+                const float w = last ? finalWidth(a, ce) : pos(ce) - pos(a);
+                return wrapPx <= 0.0f || w <= wrapPx;
+            };
+            if (s > ls && !fits(ls)) {
+                emit(ls, s, pos(s) - pos(ls));
+                ls = s;
+            }
+            if (s == ls && !fits(ls) && nonSpaceWrap) {
+                // One word wider than the line: by character, as asked.
+                for (size_t k = ls + 1; k < ce; ++k) {
+                    if (pos(k + 1) - pos(ls) > wrapPx) {
+                        emit(ls, k, pos(k) - pos(ls));
+                        ls = k;
+                    }
+                }
+            }
+            s = e;
+        }
+        emit(ls, p1, finalWidth(ls, p1));
+        if (p1 >= cells.size()) break;
+        p0 = p1 + 1;
     }
     return lines;
 }
