@@ -1292,3 +1292,18 @@ then power. Only power answers `notEnoughMana`; everything else is
 are not part of it. Item actions count equipped items and use their on-use
 spell (food is unusable in combat). Gotcha: these columns live in the
 installed `dbc_layouts.json`, which does not refresh with the build.
+
+`ACTIONBAR_UPDATE_USABLE` fires only when some slot's answer changes
+(compared every frame): native fires it as energy crosses a cost, on
+combat, stealth and cooldown-event changes, and not for 100 -> 90 -> 80
+energy. A spell with attribute 0x02000000 (Stealth, Cold Blood) is
+unusable while its own aura is up; its cooldown starts at
+SMSG_COOLDOWN_EVENT and `GetActionCooldown` answers enable 0 until then.
+`IsActionInRange` is nil for spells not aimed at a unit (Distract, Pick
+Lock), harmful spells at an unattackable unit and excluded creature types
+(Sap at a deer); a ranged-weapon range (SpellRange flag 2) is 0 inside
+melee reach. The global cooldown comes from StartRecoveryCategory 133 and
+StartRecoveryTime (1 s for rogue abilities; Stealth, Vanish and Attack
+none). Spell buttons count their reagent (Vanish shows Flash Powder).
+Evidence and probe addon: `_experiments/20261117T214218Z.usable_action_pair2`
+in the workspace.
