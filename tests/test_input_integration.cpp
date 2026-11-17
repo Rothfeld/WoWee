@@ -433,6 +433,23 @@ TEST_CASE_METHOD(Integration, "Real camera sitting preserves queued taps and whe
     }
 }
 
+TEST_CASE("Right button turns the character only once the mouse turns the view", "[input][camera][facing]") {
+    using rendering::CameraController;
+    // A right-click with no drag - targeting a unit beside or behind the
+    // player - leaves the facing alone (build 8606 syncs it in the mouse-move
+    // handler), so the server keeps judging melee by the old heading.
+    CHECK_FALSE(CameraController::cameraDrivesFacing(true, false, false, false, false));
+    // Dragging with the right button held turns the character with the view.
+    CHECK(CameraController::cameraDrivesFacing(true, true, false, false, false));
+    // Both buttons held (mouse-run) turn it on the press itself.
+    CHECK(CameraController::cameraDrivesFacing(true, false, true, false, false));
+    // A left-button orbit never turns it; a steering finger always does.
+    CHECK_FALSE(CameraController::cameraDrivesFacing(false, true, false, false, false));
+    CHECK(CameraController::cameraDrivesFacing(false, false, false, true, false));
+    // A chair owns the heading.
+    CHECK_FALSE(CameraController::cameraDrivesFacing(true, true, true, true, true));
+}
+
 TEST_CASE_METHOD(Integration, "R resets only real camera angles and respects capture and rebindings", "[input][camera][O6]") {
     rendering::Camera camera;
     rendering::CameraController controller(&camera);

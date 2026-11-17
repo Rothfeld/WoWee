@@ -3051,8 +3051,10 @@ void CameraController::update(float deltaTime) {
     // forward goes where the screen points.
     // A chair owns body orientation. Mouse/touch orbit may move the camera,
     // but must not replace the server's seat heading or send a new facing.
-    bool cameraDrivesFacing = !seatedInChair_ &&
-                              (rightMouseDown || mouseAutorun || steering_);
+    // Only once the mouse has actually turned the view during this hold; see
+    // CameraController::cameraDrivesFacing.
+    bool cameraDrivesFacing = CameraController::cameraDrivesFacing(
+        rightMouseDown, rotateArmed_, mouseAutorun, steering_, seatedInChair_);
     // During taxi flights, orientation is controlled by the flight path, not player input
     if (cameraDrivesFacing && !externalFollow_) {
         facingYaw = yaw;

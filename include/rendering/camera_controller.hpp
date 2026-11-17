@@ -142,6 +142,24 @@ public:
     [[nodiscard]] bool isTurningRight() const { return turningRightActive; }
     [[nodiscard]] bool isAutoRunning() const { return autoRunning; }
     [[nodiscard]] bool isRightMouseHeld() const { return rightMouseDown; }
+
+    /// Whether the character takes the camera's yaw as its facing this frame.
+    ///
+    /// Build 8606 turns the character to the camera from its mouse-move
+    /// handler, right after the move has turned the view (Wow.exe 0x534010
+    /// rotates the camera, then 0x53ac60 sets the facing while the right
+    /// button is held), and from the press that leaves both buttons held
+    /// (0x533370, mouse-run). Pressing the right button alone does not turn
+    /// the character: a right-click on a unit beside or behind the player
+    /// leaves the facing the server judges melee and spells by where it was.
+    /// `viewDragged` is the mouse having turned the view during this hold;
+    /// `touchSteering` is a finger steering, the touch equivalent of a drag.
+    [[nodiscard]] static bool cameraDrivesFacing(bool rightHeld, bool viewDragged,
+                                                 bool mouseRun, bool touchSteering,
+                                                 bool seatedInChair) {
+        if (seatedInChair) return false;
+        return (rightHeld && viewDragged) || mouseRun || touchSteering;
+    }
     [[nodiscard]] bool isSitting() const { return sitting; }
     [[nodiscard]] bool isSwimming() const { return swimming; }
     // The network state can reset at login/teleport without a physics transition.
