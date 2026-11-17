@@ -936,7 +936,10 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "alwaysshowactionbars") lua_pushstring(L, "0");
     else if (n == "autoquestwatch") lua_pushstring(L, "1");
     else if (n == "combattextfloatmode") lua_pushstring(L, "1");
-    else if (n == "displayworldpvpobjectives") lua_pushstring(L, "2");
+    // Not uvarInfo's "2": build 8606 with no displayWorldPVPObjectives line in
+    // Config.wtf answers GetCVar "1" (pair 5, _experiments/20261117T223500Z.worldstate_ui),
+    // so world PvP lines show anywhere in the zone, not only on an objective.
+    else if (n == "displayworldpvpobjectives") lua_pushstring(L, "1");
     else if (n == "fctauras") lua_pushstring(L, "0");
     else if (n == "fctcombatstate") lua_pushstring(L, "0");
     else if (n == "fctcombopoints") lua_pushstring(L, "0");
