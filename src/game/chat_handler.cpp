@@ -180,7 +180,17 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
     };
     table[Opcode::SMSG_GM_MESSAGECHAT] = [this](network::Packet& packet) {
         if (owner_.getState() != WorldState::IN_WORLD) return;
-        // SMSG_GM_MESSAGECHAT has the same header as SMSG_MESSAGECHAT
+        // TBC (CMaNGOS ChatHandler::BuildChatPacket, build 8606) writes the
+        // ordinary SMSG_MESSAGECHAT body and appends the GM's name after the
+        // chat tag, so the message parser reads it unchanged and leaves the
+        // trailing name unread; the sender's name comes from its guid as for
+        // any player line. A GM's own say comes back this way while the GM
+        // chat tag is on.
+        if (isPreWotlk()) {
+            handleMessageChat(packet);
+            return;
+        }
+        // WotLK SMSG_GM_MESSAGECHAT has the same header as SMSG_MESSAGECHAT
         // (type[1]+lang[4]+senderGuid[8]+unk[4] = 17 bytes) followed by an
         // extra gmNameLen[4]+gmName[N] before the type-specific body.
         // Strip the GM name field to produce standard SMSG_MESSAGECHAT format.
@@ -349,31 +359,13 @@ void ChatHandler::sendChatMessage(ChatType type, const std::string& message, con
     }
     owner_.getSocket()->send(packet);
 
-    // Add local echo so the player sees their own message immediately
-    MessageChatData echo;
-    echo.senderGuid = owner_.getPlayerGuid();
-    echo.language = language;
-    echo.message = message;
-
-    auto nameIt = owner_.getPlayerNameCache().find(owner_.getPlayerGuid());
-    if (nameIt != owner_.getPlayerNameCache().end()) {
-        echo.senderName = nameIt->second;
-    } else if (const Character* active = owner_.getActiveCharacter()) {
-        echo.senderName = active->name;
-    }
-
-    if (type == ChatType::WHISPER) {
-        echo.type = ChatType::WHISPER_INFORM;
-        echo.receiverName = target;
-    } else {
-        echo.type = type;
-    }
-
-    if (type == ChatType::CHANNEL) {
-        echo.channelName = target;
-    }
-
-    addLocalChatMessage(echo);
+    // No local echo. Build 8606 prints nothing when a line is sent: the row
+    // comes from the server's SMSG_MESSAGECHAT, sent back to the speaker as
+    // to everyone else (say, yell, party, guild, channel), or as
+    // CHAT_MSG_WHISPER_INFORM for a whisper. Anything the server consumes
+    // instead - a GM command such as ".gps" or ".go xyz", which
+    // ChatHandler::ParseCommands answers with system messages only - or
+    // refuses (muted, unknown whisper target) therefore never shows as said.
 }
 
 void ChatHandler::sendAddonMessage(ChatType type, const std::string& message, const std::string& target) {
@@ -413,20 +405,6 @@ void ChatHandler::handleMessageChat(network::Packet& packet) {
     LOG_DEBUG("INCOMING CHAT: type=", static_cast<int>(data.type),
              " (", getChatTypeString(data.type), ") sender=0x", std::hex, data.senderGuid, std::dec,
              " '", data.senderName, "' msg='", data.message.substr(0, 60), "'");
-
-    // WoW servers echo successful outgoing whispers as WHISPER_INFORM, but the
-    // client already creates a local WHISPER_INFORM row immediately on send.
-    if (data.type == ChatType::WHISPER_INFORM) {
-        return;
-    }
-
-    // Skip server echo of our own messages (we already added a local echo)
-    if (data.senderGuid == owner_.getPlayerGuid() && data.senderGuid != 0) {
-        if (data.type == ChatType::WHISPER && !data.senderName.empty()) {
-            owner_.lastWhisperSenderRef() = data.senderName;
-        }
-        return;
-    }
 
     deliverChatMessage(std::move(data), /*alreadyWaited=*/false);
 }
@@ -739,7 +717,11 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
         data.type == ChatType::WHISPER || data.type == ChatType::EMOTE ||
         data.type == ChatType::CHANNEL;
 
-    if (fromAPlayer) {
+    // The player's own lines are what was typed, echoed by the server: the
+    // filter is for somebody else repeating themselves.
+    const bool ownLine = data.senderGuid == owner_.getPlayerGuid();
+
+    if (fromAPlayer && !ownLine) {
         // Disable Spam Filter, so the CVar being on means filtering happens.
         if (addons::storedCVarValue("spamFilter", "1") != "0") {
             const double now = std::chrono::duration<double>(
@@ -1240,8 +1222,8 @@ void ChatHandler::addLocalChatMessage(const MessageChatData& msg) {
     }
     logChatMessage(msg, "local");
 
-    // Own server echoes are suppressed. The local message must still produce
-    // the same bubble as another player's SAY/YELL, exactly once.
+    // A local line is a client notice; the player's own speech is not made
+    // here but arrives from the server and is bubbled on that path.
     emitChatBubble(msg);
     fireChatEvent(msg);
 }
@@ -1275,10 +1257,7 @@ void ChatHandler::fireChatEvent(const MessageChatData& msg) {
     // arg2 is the name the interface prints, and for a whisper the player
     // sent that is who it went to, not who wrote it: CHAT_WHISPER_INFORM_GET
     // is "To %s: " and reads the same argument CHAT_WHISPER_GET does. The
-    // other announce path already does this; this one did not, and this is
-    // the path an outgoing whisper actually takes - the server's echo is
-    // dropped in favour of the local row made on send - so every whisper the
-    // player sent came back addressed to the player.
+    // other announce path does the same for the server's WHISPER_INFORM.
     const std::string& shownName =
         (msg.type == ChatType::WHISPER_INFORM && !msg.receiverName.empty())
             ? msg.receiverName

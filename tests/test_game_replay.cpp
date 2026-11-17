@@ -655,9 +655,48 @@ TEST_CASE("a spell go miss shows what the server says happened", "[replay]") {
     }
 }
 
-TEST_CASE("TBC local speech produces one bubble despite suppressed server echo", "[chat][tbc]") {
+namespace {
+
+// CMaNGOS ChatHandler::BuildChatPacket, the default body: header, target guid,
+// message, chat tag - and, as SMSG_GM_MESSAGECHAT, the GM's name after it.
+wowee::network::Packet chatPacket(wowee::game::ChatType type, uint64_t sender, uint64_t target,
+                                  const std::string& message, bool gm = false) {
+    using wowee::game::Opcode;
+    wowee::network::Packet p(
+        wowee::game::wireOpcode(gm ? Opcode::SMSG_GM_MESSAGECHAT : Opcode::SMSG_MESSAGECHAT));
+    p.writeUInt8(static_cast<uint8_t>(type));
+    p.writeUInt32(7);  // LANG_COMMON
+    p.writeUInt64(sender);
+    p.writeUInt32(0);
+    p.writeUInt64(target);
+    p.writeUInt32(static_cast<uint32_t>(message.size() + 1));
+    p.writeString(message);
+    p.writeUInt8(gm ? 0x04 : 0x00);  // CHAT_TAG_GM
+    if (gm) {
+        const std::string name = "Graulbert";
+        p.writeUInt32(static_cast<uint32_t>(name.size() + 1));
+        p.writeString(name);
+    }
+    return p;
+}
+
+// TBC SMSG_NAME_QUERY_RESPONSE: full guid, name, realm, race, gender, class, no
+// declined names.
+wowee::network::Packet nameResponse(uint64_t guid, const std::string& name) {
+    wowee::network::Packet p(
+        wowee::game::wireOpcode(wowee::game::Opcode::SMSG_NAME_QUERY_RESPONSE));
+    p.writeUInt64(guid); p.writeString(name); p.writeString("");
+    p.writeUInt32(3); p.writeUInt32(0); p.writeUInt32(1); p.writeUInt8(0);
+    return p;
+}
+
+}  // namespace
+
+TEST_CASE("TBC sent chat shows only what the server echoes", "[chat][tbc]") {
+    using wowee::game::ChatType;
     Session s("tbc");
     s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 2}});
+    s.receive(nameResponse(Session::kPlayerGuid, "Graulbert"));
     int bubbles = 0;
     s.handler().setChatBubbleCallback([&](uint64_t guid, const std::string& text, bool yell) {
         CHECK(guid == Session::kPlayerGuid);
@@ -665,29 +704,60 @@ TEST_CASE("TBC local speech produces one bubble despite suppressed server echo",
         CHECK_FALSE(yell);
         ++bubbles;
     });
-    wowee::game::MessageChatData local;
-    local.senderGuid = Session::kPlayerGuid;
-    local.type = wowee::game::ChatType::SAY;
-    local.message = "bubblecheck";
-    s.handler().addLocalChatMessage(local);
+    auto rows = [&](ChatType type) {
+        std::vector<wowee::game::MessageChatData> found;
+        for (const auto& m : s.handler().getChatHistory())
+            if (m.type == type) found.push_back(m);
+        return found;
+    };
+
+    // A GM command goes out as SAY; ParseCommands consumes it and answers with
+    // system messages only, so the speaker sees no "says" line.
+    s.handler().sendChatMessage(ChatType::SAY, ".gps", "");
+    CHECK(s.sent().of(wowee::game::Opcode::CMSG_MESSAGECHAT).size() == 1);
+    CHECK(rows(ChatType::SAY).empty());
+    CHECK(bubbles == 0);
+
+    // Ordinary speech: nothing on send, one line and one bubble from the echo.
+    s.handler().sendChatMessage(ChatType::SAY, "bubblecheck", "");
+    CHECK(rows(ChatType::SAY).empty());
+    s.receive(chatPacket(ChatType::SAY, Session::kPlayerGuid, 0, "bubblecheck"));
+    auto said = rows(ChatType::SAY);
+    REQUIRE(said.size() == 1);
+    CHECK(said[0].senderName == "Graulbert");
+    CHECK(said[0].message == "bubblecheck");
     CHECK(bubbles == 1);
 
-    // CMaNGOS ChatHandler::BuildChatPacket, ordinary SAY body.
-    wowee::network::Packet echo(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_MESSAGECHAT));
-    echo.writeUInt8(static_cast<uint8_t>(local.type));
-    echo.writeUInt32(0);
-    echo.writeUInt64(local.senderGuid);
-    echo.writeUInt32(0);
-    echo.writeUInt64(0);
-    echo.writeUInt32(static_cast<uint32_t>(local.message.size() + 1));
-    echo.writeString(local.message);
-    echo.writeUInt8(0);
-    s.receive(echo);
-    CHECK(bubbles == 1);
+    // The same line again is the player talking, not spam to be filtered.
+    s.receive(chatPacket(ChatType::SAY, Session::kPlayerGuid, 0, "bubblecheck"));
+    CHECK(rows(ChatType::SAY).size() == 2);
+    CHECK(bubbles == 2);
 
-    local.type = wowee::game::ChatType::WHISPER_INFORM;
-    s.handler().addLocalChatMessage(local);
-    CHECK(bubbles == 1);
+    // Player::Whisper: the inform carries the receiver's guid as its sender.
+    constexpr uint64_t kOther = 0x43;
+    s.receive(nameResponse(kOther, "Graulberto"));
+    s.handler().sendChatMessage(ChatType::WHISPER, "hi", "Graulberto");
+    CHECK(rows(ChatType::WHISPER_INFORM).empty());
+    s.receive(chatPacket(ChatType::WHISPER_INFORM, kOther, 0, "hi"));
+    auto inform = rows(ChatType::WHISPER_INFORM);
+    REQUIRE(inform.size() == 1);
+    CHECK(inform[0].senderName == "Graulberto");
+    CHECK(inform[0].message == "hi");
+}
+
+TEST_CASE("TBC GM chat appends the GM name after the ordinary body", "[chat][tbc]") {
+    using wowee::game::ChatType;
+    Session s("tbc");
+    s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_LEVEL, 2}});
+    s.receive(nameResponse(Session::kPlayerGuid, "Graulbert"));
+    s.receive(chatPacket(ChatType::SAY, Session::kPlayerGuid, 0, "gm line", /*gm=*/true));
+    std::vector<wowee::game::MessageChatData> said;
+    for (const auto& m : s.handler().getChatHistory())
+        if (m.type == ChatType::SAY) said.push_back(m);
+    REQUIRE(said.size() == 1);
+    CHECK(said[0].message == "gm line");
+    CHECK(said[0].senderName == "Graulbert");
+    CHECK(said[0].chatTag == 0x04);
 }
 
 TEST_CASE("TBC leadership promotion resolves menu tokens and names", "[party][tbc][promote]") {
