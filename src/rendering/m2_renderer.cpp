@@ -1344,29 +1344,6 @@ bool M2Renderer::hasModel(uint32_t modelId) const {
     return models.find(modelId) != models.end();
 }
 
-namespace {
-
-// Which batches of a forge are the fire, as opposed to the stone and iron it is
-// built from. classifyBatchTexture already recognises flame and glow cards; the
-// forge adds coals, lava and the reflect textures Blizzard uses for hot metal,
-// none of which carry a flame token in their name.
-bool isForgeFireTexture(const std::string& texKeyLower,
-                        const M2BatchTexClassification& tcls) {
-    if (tcls.hasFlameToken || tcls.likelyFlame || tcls.hasGlowToken
-        || tcls.hasGlowCardToken) {
-        return true;
-    }
-    static constexpr std::string_view kEmberTokens[] = {
-        "cinder", "coal", "ember", "lava", "magma", "reflect", "smoke",
-    };
-    for (auto tok : kEmberTokens) {
-        if (texKeyLower.find(tok) != std::string::npos) return true;
-    }
-    return false;
-}
-
-} // namespace
-
 void M2Renderer::markModelAsSpellEffect(uint32_t modelId) {
     auto it = models.find(modelId);
     if (it != models.end()) {
@@ -2186,25 +2163,6 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                     bgpu.hasAlpha = pit->second.hasAlpha;
                     bgpu.alphaIsSilhouette = pit->second.alphaIsSilhouette;
                     bgpu.colorKeyBlack = pit->second.colorKeyBlack;
-                    // Forge fire is drawn on cards with a black backing that has
-                    // to be keyed out, and some of them use effect textures
-                    // carrying none of the flame/glow tokens the hint looks for
-                    // - coals, lava lumps, ARMORREFLECT/ORBREFLECT. Keying the
-                    // whole model instead made the masonry and ironwork
-                    // translucent, since a forge is mostly those.
-                    // And a bonfire's, which is the same thing at a different
-                    // scale: OrcBonFire draws its flame on cards textured with
-                    // LavaLump2 and FlameLickSmall over a black backing, with
-                    // the material marked opaque. Drawn as the material asks,
-                    // the black backing is a solid rectangle around the flame -
-                    // which is the hard-edged slab standing over Grom'gol. The
-                    // wood and ash batches carry neither an ember nor a flame
-                    // token, so they stay solid.
-                    if ((gpuModel.isForge || gpuModel.isBrazierOrFire) &&
-                        isForgeFireTexture(batchTexKeyLower, tcls)) {
-                        bgpu.colorKeyBlack = true;
-                        bgpu.forgeFireCard = true;
-                    }
                 }
             }
             if (!model.textureCoordLookup.empty()) {

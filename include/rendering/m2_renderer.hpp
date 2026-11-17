@@ -76,9 +76,6 @@ struct M2ModelGPU {
         bool lanternGlowHint = false; // Texture/model hints this batch is a glow-card billboard
         bool glowCardLike = false; // Batch likely is a flat emissive card that should be sprite-replaced
         bool preserveGlowMesh = false; // Keep emissive glass/fixture mesh below its glow sprite
-        // Forge fire card: the flame/coals/glow batches of a forge, as opposed
-        // to the masonry and ironwork the rest of the model is made of.
-        bool forgeFireCard = false;
         // A sky model's star-point layer. Suppressed when the client draws its
         // own stars instead: the authored layer is a 256x256 compressed texture
         // magnified across the whole dome, which is soft at any resolution and

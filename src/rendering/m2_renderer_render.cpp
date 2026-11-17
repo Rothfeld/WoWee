@@ -1808,13 +1808,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     const bool foliageCutout = foliageLikeModel && !model.isSpellEffect &&
                                                batch.blendMode <= 3 &&
                                                (!opaqueByMaterial || batch.alphaIsSilhouette);
-                    // The fire burning in the hearth is an effect overlay on a
-                    // black background, the same shape as a spell visual; drawn
-                    // opaque it fills the forge opening with a black rectangle
-                    // instead of flame. That is true of the flame cards only -
-                    // treating the whole model this way turned the masonry and
-                    // ironwork additive, which is to say translucent.
-                    const bool fireEffectModel = batch.forgeFireCard;
                     // A batch the artist marked additive is already doing
                     // what the cutout and the colour key are approximations
                     // of: black adds nothing, so it disappears on its own.
@@ -1822,14 +1815,14 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     // the bright middle of a glow card as a solid disc, which
                     // is what Orgrimmar's bonfires were.
                     const bool forceCutout =
-                        !model.isSpellEffect && !fireEffectModel &&
+                        !model.isSpellEffect &&
                         !m2BlendIsAdditive(batch.blendMode) &&
                         (model.isGroundDetail || foliageCutout ||
                          m2BatchNeedsAlphaTest(batch.blendMode, batch.hasAlpha) ||
                          batch.colorKeyBlack);
 
                     uint8_t effectiveBlendMode = batch.blendMode;
-                    if ((model.isSpellEffect && !batch.hasAuthoredMaterial) || fireEffectModel) {
+                    if (model.isSpellEffect && !batch.hasAuthoredMaterial) {
                         if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
                         else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) effectiveBlendMode = 3;
                     }
@@ -1875,7 +1868,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                         }
                         mat->volumetricBeam =
                             (model.isVolumetricBeam || batch.volumetricBeam) ? 1 : 0;
-                        mat->fireCard = batch.forgeFireCard ? 1 : 0;
                     }
 
                     // Bind material descriptor set (set 1)
@@ -2092,9 +2084,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
             // Pipeline selection
             uint8_t effectiveBlendMode = batch.blendMode;
-            if ((model.isSpellEffect && !batch.hasAuthoredMaterial) || batch.forgeFireCard) {
-                // Matches the opaque pass: a forge's flame cards are additive,
-                // the forge itself is not.
+            if (model.isSpellEffect && !batch.hasAuthoredMaterial) {
                 if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
                 else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) effectiveBlendMode = 3;
             }
@@ -2119,32 +2109,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 // never ran on the one model it was written for.
                 mat->volumetricBeam =
                     (model.isVolumetricBeam || batch.volumetricBeam) ? 1 : 0;
-                mat->fireCard = batch.forgeFireCard ? 1 : 0;
                 mat->interiorDarken = 0.0f;
                 if (batch.colorKeyBlack)
                     mat->colorKeyThreshold = (effectiveBlendMode == 4 || effectiveBlendMode == 5) ? 0.7f : 0.08f;
-
-                // A fire's own glow breathes. The same clock and parameters as
-                // the lamp sprites and the local light they cast, so a brazier
-                // and the pool of light under it rise and fall together
-                // instead of beating against each other.
-                //
-                // Never for a sky. lampFlicker is keyed on the instance
-                // position and says a seed that drifts re-rolls its phase every
-                // frame and strobes; a sky dome's position IS the camera's,
-                // rewritten every frame, so it is the one instance that can
-                // never be a valid seed. The classifier no longer calls
-                // HellfireSkyBox a brazier, and this makes sure the next model
-                // that gets miscalled one cannot strobe the sky either.
-                if (!skyMode_ && m2BlendIsAdditive(batch.blendMode) &&
-                    (model.isBrazierOrFire || model.isTorch || model.isLanternLike)) {
-                    const float flicker = lampFlicker(
-                        instance.position, lampFlickerClockSeconds(),
-                        0.82f, 0.12f, 0.06f);
-                    mat->tintR = batch.tint.r * flicker;
-                    mat->tintG = batch.tint.g * flicker;
-                    mat->tintB = batch.tint.b * flicker;
-                }
             }
 
             if (!batch.materialSet) continue;
