@@ -3953,15 +3953,21 @@ static int lua_ReturnNoCooldown(lua_State* L) {
 
 // Faction membership comes from the unit's faction template. NPC race fields
 // are often zero, and a humanoid race does not imply Alliance/Horde membership.
+//
+// Always two results. Build 8606 answers nil, nil for no unit and for a unit
+// outside both groups (a GM-mode player on faction template 35), so
+// tostring(UnitFactionGroup(u)) never sees an empty argument list.
 static int lua_UnitFactionGroup(lua_State* L) {
     std::string uid(luaL_optstring(L, 1, "player"));
     toLowerInPlace(uid);
     auto* gh = getGameHandler(L);
-    if (!gh) return 0;
-    const auto* unit = gh->getUnitByGuid(resolveUnitGuid(gh, uid));
-    if (!unit) return 0;
-    const uint32_t team = gh->getFactionGroupMask(unit->getFactionTemplate()) & 6u;
-    if (team != 2u && team != 4u) return 0;
+    const auto* unit = gh ? gh->getUnitByGuid(resolveUnitGuid(gh, uid)) : nullptr;
+    const uint32_t team = unit ? gh->getFactionGroupMask(unit->getFactionTemplate()) & 6u : 0u;
+    if (team != 2u && team != 4u) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
     const char* name = team == 2u ? "Alliance" : "Horde";
     lua_pushstring(L, name);
     lua_pushstring(L, name);
