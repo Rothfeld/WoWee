@@ -1715,14 +1715,22 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         } // end size check
     }
 
-    // Parse ribbon emitters (WotLK only; vanilla format TBD).
-    // WotLK M2RibbonEmitter = 0xAC (172) bytes per entry.
-    static constexpr uint32_t RIBBON_SIZE_WOTLK = 0xAC;
+    // Ribbon emitters. Before version 264 the tracks are 28 bytes (they carry
+    // a ranges array), so the record is 0xDC bytes instead of WotLK's 0xAC:
+    // colour 0x24, alpha 0x40, heightAbove 0x5C, heightBelow 0x78,
+    // edgesPerSecond 0x94, edgeLifetime 0x98, gravity 0x9C, rows/cols 0xA0,
+    // texSlot 0xA4, visibility 0xC0. All 1087 ribbons in the 259 pre-264 TBC
+    // models read a valid bone, positive rates and 0/1 visibility keys at that
+    // stride. Spells\Arcane_Missile_Lvl1.m2 carries its pink trail this way:
+    // 22 edges/s for 0.5 s, 0.167 above and below bone 5. Without it the
+    // missile flew as a bare particle head.
+    const bool legacyRibbons = header.version < 264;
+    const uint32_t ribbonSize = legacyRibbons ? 0xDC : 0xAC;
     if (header.nRibbonEmitters > 0 && header.ofsRibbonEmitters > 0 &&
-        header.nRibbonEmitters < 64 && header.version >= 264) {
+        header.nRibbonEmitters < 64) {
 
         if (static_cast<size_t>(header.ofsRibbonEmitters) +
-                static_cast<size_t>(header.nRibbonEmitters) * RIBBON_SIZE_WOTLK <= m2Data.size()) {
+                static_cast<size_t>(header.nRibbonEmitters) * ribbonSize <= m2Data.size()) {
 
             // Build sequence flags for parseAnimTrack
             std::vector<uint32_t> ribSeqFlags;
@@ -1730,9 +1738,24 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             for (const auto& seq : model.sequences) {
                 ribSeqFlags.push_back(seq.flags);
             }
+            auto parseRibbonTrack = [&](uint32_t offset, M2AnimationTrack& track, TrackType type) {
+                if (legacyRibbons) {
+                    parseAnimTrackVanilla(m2Data, readValue<M2TrackDiskVanilla>(m2Data, offset), track, type,
+                                          vanillaSeqWindows);
+                } else {
+                    parseAnimTrack(m2Data, readValue<M2TrackDisk>(m2Data, offset), track, type, ribSeqFlags);
+                }
+            };
+            // Field offsets after the two M2Arrays, legacy then WotLK.
+            const uint32_t ofsColor = 0x24;
+            const uint32_t ofsAlpha = legacyRibbons ? 0x40 : 0x38;
+            const uint32_t ofsAbove = legacyRibbons ? 0x5C : 0x4C;
+            const uint32_t ofsBelow = legacyRibbons ? 0x78 : 0x60;
+            const uint32_t ofsRates = legacyRibbons ? 0x94 : 0x74;
+            const uint32_t ofsVisibility = legacyRibbons ? 0xC0 : 0x98;
 
             for (uint32_t ri = 0; ri < header.nRibbonEmitters; ri++) {
-                uint32_t base = header.ofsRibbonEmitters + ri * RIBBON_SIZE_WOTLK;
+                uint32_t base = header.ofsRibbonEmitters + ri * ribbonSize;
 
                 M2RibbonEmitter rib;
                 rib.ribbonId     = readValue<int32_t>(m2Data, base + 0x00);
@@ -1759,50 +1782,29 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                     }
                 }
 
-                // colorTrack M2TrackDisk at 0x24 (vec3 RGB 0..1)
-                if (base + 0x24 + sizeof(M2TrackDisk) <= m2Data.size()) {
-                    M2TrackDisk disk = readValue<M2TrackDisk>(m2Data, base + 0x24);
-                    parseAnimTrack(m2Data, disk, rib.colorTrack, TrackType::VEC3, ribSeqFlags);
-                }
+                // Colour is RGB 0..1, alpha fixed16 (int16/32767), heights
+                // float, visibility uint8 0/1 (read as a float it would be
+                // ~1.4e-45 and fail the visibility > 0.5 check).
+                parseRibbonTrack(base + ofsColor, rib.colorTrack, TrackType::VEC3);
+                parseRibbonTrack(base + ofsAlpha, rib.alphaTrack, TrackType::FIXED16);
+                parseRibbonTrack(base + ofsAbove, rib.heightAboveTrack, TrackType::FLOAT);
+                parseRibbonTrack(base + ofsBelow, rib.heightBelowTrack, TrackType::FLOAT);
 
-                // alphaTrack M2TrackDisk at 0x38 (fixed16: int16/32767)
-                // Same nested-array layout as parseAnimTrack but keys are int16.
-                if (base + 0x38 + sizeof(M2TrackDisk) <= m2Data.size()) {
-                    parseAnimTrack(m2Data, readValue<M2TrackDisk>(m2Data, base + 0x38),
-                                   rib.alphaTrack, TrackType::FIXED16, ribSeqFlags);
-                }
-
-                // heightAboveTrack M2TrackDisk at 0x4C (float)
-                if (base + 0x4C + sizeof(M2TrackDisk) <= m2Data.size()) {
-                    M2TrackDisk disk = readValue<M2TrackDisk>(m2Data, base + 0x4C);
-                    parseAnimTrack(m2Data, disk, rib.heightAboveTrack, TrackType::FLOAT, ribSeqFlags);
-                }
-
-                // heightBelowTrack M2TrackDisk at 0x60 (float)
-                if (base + 0x60 + sizeof(M2TrackDisk) <= m2Data.size()) {
-                    M2TrackDisk disk = readValue<M2TrackDisk>(m2Data, base + 0x60);
-                    parseAnimTrack(m2Data, disk, rib.heightBelowTrack, TrackType::FLOAT, ribSeqFlags);
-                }
-
-                rib.edgesPerSecond = readValue<float>(m2Data, base + 0x74);
-                rib.edgeLifetime   = readValue<float>(m2Data, base + 0x78);
-                rib.gravity        = readValue<float>(m2Data, base + 0x7C);
-                rib.textureRows    = readValue<uint16_t>(m2Data, base + 0x80);
-                rib.textureCols    = readValue<uint16_t>(m2Data, base + 0x82);
+                rib.edgesPerSecond = readValue<float>(m2Data, base + ofsRates);
+                rib.edgeLifetime   = readValue<float>(m2Data, base + ofsRates + 0x04);
+                rib.gravity        = readValue<float>(m2Data, base + ofsRates + 0x08);
+                rib.textureRows    = readValue<uint16_t>(m2Data, base + ofsRates + 0x0C);
+                rib.textureCols    = readValue<uint16_t>(m2Data, base + ofsRates + 0x0E);
                 if (rib.textureRows == 0) rib.textureRows = 1;
                 if (rib.textureCols == 0) rib.textureCols = 1;
 
-                // Clamp to sane values
-                if (rib.edgesPerSecond < 1.0f  || rib.edgesPerSecond > 200.0f) rib.edgesPerSecond = 15.0f;
-                if (rib.edgeLifetime   < 0.05f || rib.edgeLifetime   > 10.0f)  rib.edgeLifetime   = 0.5f;
-
-                // visibilityTrack M2TrackDisk at 0x98 - keys are uint8 (0/1), NOT float.
-                // Must read as uint8 and convert to float, else 0x01 reads as
-                // float ~1.4e-45 which fails the visibility > 0.5 check.
-                if (base + 0x98 + sizeof(M2TrackDisk) <= m2Data.size()) {
-                    parseAnimTrack(m2Data, readValue<M2TrackDisk>(m2Data, base + 0x98),
-                                   rib.visibilityTrack, TrackType::BYTE_BOOL, ribSeqFlags);
+                if (!legacyRibbons) {
+                    // Clamp to sane values
+                    if (rib.edgesPerSecond < 1.0f  || rib.edgesPerSecond > 200.0f) rib.edgesPerSecond = 15.0f;
+                    if (rib.edgeLifetime   < 0.05f || rib.edgeLifetime   > 10.0f)  rib.edgeLifetime   = 0.5f;
                 }
+
+                parseRibbonTrack(base + ofsVisibility, rib.visibilityTrack, TrackType::BYTE_BOOL);
 
                 // Skip garbage emitters (common M2 artifact: alternating emitters
                 // have bone=UINT_MAX or other invalid state)

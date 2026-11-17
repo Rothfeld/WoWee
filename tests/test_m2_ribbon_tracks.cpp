@@ -15,6 +15,7 @@
 // skips when there is none.
 #include <catch_amalgamated.hpp>
 
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -116,4 +117,31 @@ TEST_CASE("ribbon track sequences line up with their timestamps",
             }
         }
     }
+}
+
+// Before version 264 a ribbon record is 0xDC bytes: its tracks carry a ranges
+// array (28 bytes each). The loader once read only WotLK ribbons, so every TBC
+// spell trail was missing; Arcane Missiles flew as a bare particle head.
+TEST_CASE("a TBC missile ribbon parses from the legacy record", "[m2][ribbon][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    std::ifstream in(std::string(root) + "/spells/arcane_missile_lvl1.m2", std::ios::binary);
+    const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+    REQUIRE_FALSE(data.empty());
+
+    const M2Model model = M2Loader::load(data);
+    REQUIRE(model.version == 261);
+    REQUIRE(model.ribbonEmitters.size() == 1);
+    const auto& ribbon = model.ribbonEmitters[0];
+    CHECK(ribbon.bone == 5);
+    CHECK(ribbon.edgesPerSecond == Catch::Approx(22.0f));
+    CHECK(ribbon.edgeLifetime == Catch::Approx(0.5f));
+    CHECK(ribbon.gravity == 0.0f);
+    REQUIRE_FALSE(ribbon.heightAboveTrack.sequences.empty());
+    REQUIRE_FALSE(ribbon.heightAboveTrack.sequences[0].floatValues.empty());
+    CHECK(ribbon.heightAboveTrack.sequences[0].floatValues[0] == Catch::Approx(1.0f / 6.0f));
+    REQUIRE_FALSE(ribbon.alphaTrack.sequences.empty());
+    CHECK(ribbon.alphaTrack.sequences[0].floatValues[0] == Catch::Approx(16384.0f / 32767.0f));
+    REQUIRE_FALSE(ribbon.visibilityTrack.sequences.empty());
+    CHECK(ribbon.visibilityTrack.sequences[0].floatValues[0] == 1.0f);
 }
