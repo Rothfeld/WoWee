@@ -678,6 +678,33 @@ VkDescriptorSet minimapObjectIconAtlas(pipeline::AssetManager* assets, core::Win
     return atlas;
 }
 
+// One of the Rotating-Minimap*Arrow images at the rim, pointing along
+// `direction` (unit, minimap pixels). Their 32px images have alpha bounds
+// (8,7)-(25,22); the quad turns about that glyph's centre. Returns the
+// arrow's centre for hover tests.
+//
+// Size and inset are fitted to the original's town arrows at 1280x720
+// (_experiments/20261117T181649Z.minimap_marker_audit/o44.png): the image
+// spans about 36 interface units and the hub sits about 51 px from the
+// map centre, so the glyph centre is 13.5 units inside the rim. Fitted,
+// not exact: the arrows are models in the original.
+ImVec2 drawRimArrow(ImDrawList* drawList, VkDescriptorSet texture, float centerX, float centerY,
+                    float mapRadius, const glm::vec2& direction, float scale) {
+    const float ax = centerX + direction.x * (mapRadius - 13.5f * scale);
+    const float ay = centerY + direction.y * (mapRadius - 13.5f * scale);
+    scale *= 36.0f / 32.0f;
+    const ImVec2 corners[] = {{-16.5f,-14.5f},{15.5f,-14.5f},{15.5f,17.5f},{-16.5f,17.5f}};
+    ImVec2 points[4];
+    for (size_t i = 0; i < 4; ++i) {
+        points[i] = ImVec2(ax + (-direction.y * corners[i].x - direction.x * corners[i].y) * scale,
+                           ay + (direction.x * corners[i].x - direction.y * corners[i].y) * scale);
+    }
+    drawList->AddImageQuad((ImTextureID)(uintptr_t)texture,
+        points[0], points[1], points[2], points[3],
+        ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
+    return ImVec2(ax, ay);
+}
+
 void drawObjectIconCell(ImDrawList* drawList, VkDescriptorSet atlas, int column, float sx, float sy) {
     drawList->AddImage((ImTextureID)(uintptr_t)atlas,
         ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
@@ -873,6 +900,62 @@ void GameScreen::renderMinimapPings(const MinimapFrame& frame, game::GameHandler
 
 }
 
+// Silver rim arrows toward nearby towns: AreaPOI.dbc rows with flag 0x1
+// (Goldshire, Northshire Abbey, Stormwind City, Cenarion Hold; not the 0x4
+// mines and farms), named in the blip tooltip. Only while the town is off
+// the map, and only within 700 yards: Stormwind City's arrow showed at 690
+// and not at 710 (_experiments/20261117T181649Z.minimap_marker_audit/poi/).
+// The arrow image is FrameXML's minimapArrowModel, Rotating-MinimapArrow.
+void GameScreen::renderMinimapAreaPoiArrows(const MinimapFrame& frame, game::GameHandler& gameHandler) {
+    struct Poi { uint32_t map; float x, y; std::string name; };
+    static std::vector<Poi> pois;
+    static bool loaded = false;
+    if (!loaded) {
+        loaded = true;
+        const auto dbc = services_.assetManager->loadDBC("AreaPOI.dbc");
+        if (!dbc || !dbc->isLoaded()) throw std::runtime_error("AreaPOI.dbc failed to load");
+        const auto* layout = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("AreaPOI") : nullptr;
+        if (!layout) throw std::runtime_error("dbc_layouts.json lacks AreaPOI; deploy current expansion metadata");
+        const uint32_t flagsField = layout->field("Flags"), mapField = layout->field("MapID"),
+                       xField = layout->field("X"), yField = layout->field("Y"), nameField = layout->field("Name");
+        if (flagsField == 0xFFFFFFFF || mapField == 0xFFFFFFFF || xField == 0xFFFFFFFF ||
+            yField == 0xFFFFFFFF || nameField == 0xFFFFFFFF)
+            throw std::runtime_error("dbc_layouts.json AreaPOI is incomplete; deploy current expansion metadata");
+        for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+            if ((dbc->getUInt32(i, flagsField) & 0x1) == 0) continue;
+            // DBC positions are server coordinates.
+            const glm::vec3 at = core::coords::serverToCanonical(
+                {dbc->getFloat(i, xField), dbc->getFloat(i, yField), 0.0f});
+            pois.push_back({dbc->getUInt32(i, mapField), at.x, at.y, dbc->getString(i, nameField)});
+        }
+        LOG_INFO("Minimap: ", pois.size(), " AreaPOI town arrows (flag 0x1)");
+    }
+    static VkDescriptorSet arrow = VK_NULL_HANDLE;
+    if (!arrow) {
+        arrow = uploadUiTextureFromBlp(services_.assetManager,
+            "Interface\\Minimap\\Rotating-MinimapArrow.blp", services_.window);
+        if (!arrow) throw std::runtime_error("Minimap POI arrow failed to load");
+    }
+    auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+    const float scale = engine ? engine->widgets().uiScale() : 1.0f;
+    const auto player = core::coords::renderToCanonical(frame.playerRender);
+    constexpr float kRange = 700.0f;
+    for (const auto& poi : pois) {
+        if (poi.map != gameHandler.getCurrentMapId()) continue;
+        if (std::hypot(poi.x - player.x, poi.y - player.y) > kRange) continue;
+        float sx = 0, sy = 0;
+        if (frame.projectCanonical(poi.x, poi.y, sx, sy)) continue;
+        const auto render = core::coords::canonicalToRender(glm::vec3(poi.x, poi.y, 0.0f));
+        const glm::vec2 offset = renderDeltaToMinimapOffset(
+            render.x - frame.playerRender.x, render.y - frame.playerRender.y, frame.view);
+        const float length = glm::length(offset);
+        if (length <= 0) continue;
+        const ImVec2 at = drawRimArrow(frame.drawList, arrow, frame.centerX, frame.centerY,
+                                       frame.mapRadius, offset / length, scale);
+        noteMinimapBlip(at.x, at.y, poi.name, true);
+    }
+}
+
 // One dot per party member, with the raid mark above it.
 //
 // There were two of these drawing at the same point until recently - a square
@@ -899,26 +982,16 @@ void GameScreen::renderMinimapPartyDots(const MinimapFrame& frame, game::GameHan
                     render.x - frame.playerRender.x, render.y - frame.playerRender.y, frame.view);
                 const float length = glm::length(offset);
                 if (length <= 0) continue;
-                const glm::vec2 direction = offset / length;
-                const float ax = frame.centerX + direction.x * (frame.mapRadius - 7);
-                const float ay = frame.centerY + direction.y * (frame.mapRadius - 7);
                 static VkDescriptorSet arrow = VK_NULL_HANDLE;
                 if (!arrow) {
                     arrow = uploadUiTextureFromBlp(services_.assetManager,
                         "Interface\\Minimap\\Rotating-MinimapGroupArrow.blp", services_.window);
                     if (!arrow) throw std::runtime_error("Party minimap arrow failed to load");
                 }
-                // Authored 32px image has alpha bounds (8,7)-(25,22).
-                const ImVec2 corners[] = {{-16.5f,-14.5f},{15.5f,-14.5f},
-                                         {15.5f,17.5f},{-16.5f,17.5f}};
-                ImVec2 points[4];
-                for (size_t i = 0; i < 4; ++i) {
-                    points[i] = ImVec2(ax - direction.y * corners[i].x - direction.x * corners[i].y,
-                                      ay + direction.x * corners[i].x - direction.y * corners[i].y);
-                }
-                frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
-                    points[0], points[1], points[2], points[3],
-                    ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
+                auto* engine = services_.addonManager ? services_.addonManager->getLuaEngine() : nullptr;
+                const ImVec2 at = drawRimArrow(frame.drawList, arrow, frame.centerX, frame.centerY, frame.mapRadius,
+                                               offset / length, engine ? engine->widgets().uiScale() : 1.0f);
+                const float ax = at.x, ay = at.y;
                 noteMinimapBlip(ax, ay, member.name, true, 1);
                 continue;
             }
@@ -1065,9 +1138,27 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
         const auto unit = std::static_pointer_cast<game::Unit>(entity.second);
         if ((unit->getNpcFlags() & game::NPC_FLAG_SPIRIT_HEALER) == 0) continue;
         float sx = 0, sy = 0;
-        if (!frame.projectEntity(*unit, sx, sy)) continue;
-        tombstone(sx, sy);
-        noteMinimapBlip(sx, sy, healerName, false, 0);
+        if (frame.projectEntity(*unit, sx, sy)) {
+            tombstone(sx, sy);
+            noteMinimapBlip(sx, sy, healerName, false, 0);
+            continue;
+        }
+        // Off the map: the yellow guide arrow at the rim, also named
+        // "Spirit Healer" (Crystal Lake as a ghost: hover/o_arrow_1146_76.png).
+        static VkDescriptorSet guide = VK_NULL_HANDLE;
+        if (!guide) {
+            guide = uploadUiTextureFromBlp(services_.assetManager,
+                "Interface\\Minimap\\Rotating-MinimapGuideArrow.blp", services_.window);
+            if (!guide) throw std::runtime_error("Minimap guide arrow failed to load");
+        }
+        const auto render = core::coords::canonicalToRender(glm::vec3(unit->getX(), unit->getY(), 0.0f));
+        const glm::vec2 offset = renderDeltaToMinimapOffset(
+            render.x - frame.playerRender.x, render.y - frame.playerRender.y, frame.view);
+        const float length = glm::length(offset);
+        if (length <= 0) continue;
+        const ImVec2 at = drawRimArrow(frame.drawList, guide, frame.centerX, frame.centerY, frame.mapRadius,
+                                       offset / length, engine ? engine->widgets().uiScale() : 1.0f);
+        noteMinimapBlip(at.x, at.y, healerName, true, 0);
     }
     // Corpse direction indicator - shown when player is a ghost
     if (gameHandler.isPlayerGhost()) {
@@ -1098,29 +1189,15 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
                 if (len > 0.001f) {
                     float nx = rx / len;
                     float ny = ry / len;
-                    // Place arrow at the minimap edge
-                    float edgeR = frame.mapRadius - 7.0f;
-                    float ax = frame.centerX + nx * edgeR;
-                    float ay = frame.centerY + ny * edgeR;
                     static VkDescriptorSet arrow = VK_NULL_HANDLE;
                     if (!arrow) {
                         arrow = uploadUiTextureFromBlp(services_.assetManager,
                             "Interface\\Minimap\\Rotating-MinimapCorpseArrow.blp", services_.window);
                         if (!arrow) throw std::runtime_error("Corpse minimap arrow failed to load");
                     }
-                    // Alpha bounds are x=8..25,y=7..22 in the 32px image.
-                    // Rotate around the glyph center, not the padded image center.
-                    const float scale = engine ? engine->widgets().uiScale() : 1.0f;
-                    const ImVec2 corners[] = {{-16.5f,-14.5f},{15.5f,-14.5f},
-                                             {15.5f,17.5f},{-16.5f,17.5f}};
-                    ImVec2 points[4];
-                    for (int i = 0; i < 4; ++i) {
-                        points[i] = ImVec2(ax + (-ny * corners[i].x - nx * corners[i].y) * scale,
-                                          ay + (nx * corners[i].x - ny * corners[i].y) * scale);
-                    }
-                    frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrow,
-                        points[0], points[1], points[2], points[3],
-                        ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1));
+                    const ImVec2 at = drawRimArrow(frame.drawList, arrow, frame.centerX, frame.centerY, frame.mapRadius,
+                                                   glm::vec2(nx, ny), engine ? engine->widgets().uiScale() : 1.0f);
+                    const float ax = at.x, ay = at.y;
                     noteMinimapBlip(ax, ay, corpseName, true, 0);
                 }
             }
@@ -1619,6 +1696,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     }
     renderMinimapGossipPois(frame, gameHandler);
     renderMinimapPings(frame, gameHandler);
+    if (game::isActiveExpansion("tbc")) renderMinimapAreaPoiArrows(frame, gameHandler);
     renderMinimapPartyDots(frame, gameHandler);
     renderMinimapCorpseMarker(frame, gameHandler);
     renderMinimapPlayerArrow(frame, gameHandler);

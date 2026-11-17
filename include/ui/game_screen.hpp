@@ -258,6 +258,7 @@ private:
                                  game::GameHandler& gameHandler);
     void renderMinimapGossipPois(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapPings(const MinimapFrame& frame, game::GameHandler& gameHandler);
+    void renderMinimapAreaPoiArrows(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapPartyDots(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapCorpseMarker(const MinimapFrame& frame, game::GameHandler& gameHandler);
     void renderMinimapResources(const MinimapFrame& frame, const EntityList& units,

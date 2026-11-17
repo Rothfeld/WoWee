@@ -5,6 +5,18 @@
     "ID": 0,
     "Name": 1
   },
+  "AreaPOI": {
+    "AreaID": 9,
+    "Flags": 8,
+    "ID": 0,
+    "Icon": 2,
+    "Importance": 1,
+    "MapID": 7,
+    "Name": 10,
+    "X": 4,
+    "Y": 5,
+    "Z": 6
+  },
   "AreaTable": {
     "ExploreFlag": 3,
     "ID": 0,
