@@ -1486,6 +1486,12 @@ public:
         return gameClockHour(gameTime_, since.count(), timeSpeed_);
     }
     float getTimeSpeed() const { return timeSpeed_; }
+    /// SMSG_LOGIN_SETTIMESPEED's packed time stops at the minute, so a clock
+    /// started on its arrival turned its minute however many seconds into
+    /// the minute the login happened (the minimap clock up to 59 s late).
+    /// SMSG_QUERY_TIME_RESPONSE carries the server's unix time in seconds;
+    /// its seconds into the minute place the minute boundary.
+    void alignGameClockSeconds(uint32_t serverUnixTime);
     /// GetGameTime's clock: minute of the day (0-1439), or -1 before the
     /// server has sent the time.
     int getGameClockMinute() const {

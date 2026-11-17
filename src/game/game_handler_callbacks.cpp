@@ -828,6 +828,27 @@ void GameHandler::handleLoginSetTimeSpeed(network::Packet& packet) {
              "h), timeSpeed=", timeSpeed_);
 }
 
+void GameHandler::alignGameClockSeconds(uint32_t serverUnixTime) {
+    if (gameClockBaseMinute_ < 0) {
+        LOG_WARNING("Query time reply before SMSG_LOGIN_SETTIMESPEED; clock not aligned");
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed = std::chrono::duration<double>(now - gameTimeSetAt_).count();
+    const int secondsIntoMinute = static_cast<int>(serverUnixTime % 60);
+    // Realm time runs at one game minute per real minute; at another speed
+    // the server's second has no fixed relation to the game minute.
+    assert(std::abs(timeSpeed_ * 60.0f - 1.0f) < 1e-3f);
+    // Minutes the server has turned since it sent the base minute: the base
+    // was current then, and its minute ended secondsIntoMinute ago.
+    const int turned = static_cast<int>(std::floor((elapsed - secondsIntoMinute) / 60.0)) + 1;
+    gameClockBaseMinute_ = ((gameClockBaseMinute_ + turned) % 1440 + 1440) % 1440;
+    gameTimeSetAt_ = now - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                               std::chrono::duration<double>(secondsIntoMinute));
+    gameTime_ = static_cast<float>(gameClockBaseMinute_) / 60.0f;
+    LOG_INFO("Game clock aligned: minute ", gameClockBaseMinute_, " +", secondsIntoMinute, "s");
+}
+
 void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     LOG_INFO("Handling SMSG_LOGIN_VERIFY_WORLD");
     const bool initialWorldEntry = (state == WorldState::ENTERING_WORLD);

@@ -3155,6 +3155,7 @@ void SocialHandler::handleQueryTimeResponse(network::Packet& packet) {
     // knew how to ask for.
     dailyResetOffset_ = data.timeOffset;
     dailyResetReceivedAt_ = time(nullptr);
+    owner_.alignGameClockSeconds(data.serverTime);
 
     // Only /time says it out loud. The login-time ask is for the reset figure
     // and would otherwise greet every player with the clock.
