@@ -150,7 +150,6 @@ public:
     }
     bool pendingMinimapRotate = false;
     bool pendingMinimapSquare = false;
-    bool pendingMinimapNpcDots = false;
     bool pendingShowMinimapClock = false;
     bool pendingShowMinimapCoordinates = false;
     bool pendingShowLatencyMeter = true;
@@ -248,7 +247,6 @@ public:
     float uiOpacity_ = 0.65f;  // UI element transparency (0.0 = fully transparent, 1.0 = fully opaque)
     bool minimapRotate_ = false;
     bool minimapSquare_ = false;
-    bool minimapNpcDots_ = false;
     bool showMinimapClock_ = false;
     bool showMinimapCoordinates_ = false;
     bool showLatencyMeter_ = true;           // Show server latency indicator

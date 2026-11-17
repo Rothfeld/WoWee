@@ -114,7 +114,7 @@ constexpr const char* kGraphicsApplyKeys[] = {
     "groundclutter", "grassenabled", "grassdensity", "grassheight",
     "grassdistance", "waterrefraction", "upscaling", "fsrquality",
     "fsrsharpness", "framegen", "brightness", "uiopacity", "minimapsquare",
-    "minimapnpcdots", "minimapclock", "minimapcoords", "minimaprotate", "latencymeter",
+    "minimapclock", "minimapcoords", "minimaprotate", "latencymeter",
     "fogskyblend", "fogstrength", "sharpstars", "lightshafts", "mistdensity", "sunshafts",
     "raytracedlighting",
     // Moved off the game's own Effects panel, so this list is now what
@@ -349,7 +349,6 @@ constexpr FieldBinding kFieldBindings[] = {
 
     // --- Minimap ---
     {.key = "minimapsquare",  .asBool = &SettingsPanel::pendingMinimapSquare},
-    {.key = "minimapnpcdots", .asBool = &SettingsPanel::pendingMinimapNpcDots},
     {.key = "minimapcoords",  .asBool = &SettingsPanel::pendingShowMinimapCoordinates},
     {.key = "minimaprotate",  .asBool  = &SettingsPanel::pendingMinimapRotate},
 
@@ -685,8 +684,6 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
         if (services_.window) services_.window->setVsync(pendingVsync);
     } else if (key == "windowuiscale") {
         applyWindowUiScale();
-    } else if (key == "minimapnpcdots") {
-        minimapNpcDots_ = pendingMinimapNpcDots;
     } else if (key == "minimapclock") {
         showMinimapClock_ = pendingShowMinimapClock;
     } else if (key == "minimapcoords") {

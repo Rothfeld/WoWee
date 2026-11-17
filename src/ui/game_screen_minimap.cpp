@@ -624,38 +624,6 @@ void GameScreen::renderMinimapChrome(game::GameHandler& gameHandler, float cente
     renderMinimapIndicators(gameHandler, centerX, centerY, mapRadius);
 }
 
-// Every nearby unit as a dot, and a quest objective as a larger gold one.
-void GameScreen::renderMinimapNpcDots(const MinimapFrame& frame, const EntityList& minimapUnits,
-                                      const EntrySet& minimapQuestEntries) {
-    // Optional base nearby NPC dots (independent of quest status packets).
-    if (settingsPanel_.minimapNpcDots_) {
-        for (const auto& entity : minimapUnits) {
-
-            auto unit = std::static_pointer_cast<game::Unit>(entity);
-            if (!unit || unit->getHealth() == 0) continue;
-
-            float sx = 0.0f, sy = 0.0f;
-            if (!frame.projectEntity(*entity, sx, sy)) continue;
-
-            bool isQuestTarget = minimapQuestEntries.count(unit->getEntry()) != 0;
-            if (isQuestTarget) {
-                // Quest kill objective: larger gold dot with dark outline
-                frame.drawList->AddCircleFilled(ImVec2(sx, sy), 3.5f, IM_COL32(255, 210, 30, 240));
-                frame.drawList->AddCircle(ImVec2(sx, sy), 3.5f, IM_COL32(80, 50, 0, 180), 0, 1.0f);
-                // Tooltip on hover showing unit name
-                if (cursorNearBlip(sx, sy)) {
-                    const std::string& nm = unit->getName();
-                    if (!nm.empty()) ImGui::SetTooltip("%s (quest)", nm.c_str());
-                }
-            } else {
-                ImU32 baseDot = unit->isHostile() ? IM_COL32(220, 70, 70, 220) : IM_COL32(245, 245, 245, 210);
-                frame.drawList->AddCircleFilled(ImVec2(sx, sy), 1.0f, baseDot);
-            }
-        }
-    }
-
-}
-
 // A standard service marker, independent of the optional NPC dots - and read
 // from the live NPC flags, so an undiscovered flight master shows before the
 // taxi window has ever been opened.
@@ -736,87 +704,6 @@ void GameScreen::renderMinimapRares(const MinimapFrame& frame, const EntityList&
                 ImGui::SetTooltip("%s\n%s",
                                   name.empty() ? "Unknown creature" : name.c_str(),
                                   isElite ? "Rare Elite" : "Rare");
-            }
-        }
-    }
-
-}
-
-// Other players nearby. Party members are squares, drawn elsewhere; these are
-// the small circles for everyone else.
-void GameScreen::renderMinimapPlayerDots(const MinimapFrame& frame, const EntityList& minimapPlayers,
-                                          game::GameHandler& gameHandler) {
-    // Nearby other-player dots - shown when NPC dots are enabled.
-    // Party members are already drawn as squares above; other players get a small circle.
-    if (settingsPanel_.minimapNpcDots_) {
-        const uint64_t selfGuid = gameHandler.getPlayerGuid();
-        const auto& partyData = gameHandler.getPartyData();
-        for (const auto& entity : minimapPlayers) {
-            const uint64_t guid = entity->getGuid();
-            if (entity->getGuid() == selfGuid) continue;  // skip self (already drawn as arrow)
-
-            // Skip party members (already drawn as squares above)
-            bool isPartyMember = false;
-            for (const auto& m : partyData.members) {
-                if (m.guid == guid) { isPartyMember = true; break; }
-            }
-            if (isPartyMember) continue;
-
-            float sx = 0.0f, sy = 0.0f;
-            if (!frame.projectEntity(*entity, sx, sy)) continue;
-
-            // Blue dot for other nearby players
-            frame.drawList->AddCircleFilled(ImVec2(sx, sy), 2.0f, IM_COL32(80, 160, 255, 220));
-        }
-    }
-
-}
-
-// Chests and resource nodes, as orange triangles - a different shape from the
-// unit dots on purpose, because they are a different thing to walk to.
-void GameScreen::renderMinimapObjectDots(const MinimapFrame& frame, const EntityList& minimapGameObjects,
-                                          const EntrySet& minimapQuestGoEntries,
-                                          game::GameHandler& gameHandler) {
-    // Interactable game object dots (chests, resource nodes) when NPC dots are enabled.
-    // Shown as small orange triangles to distinguish from unit dots and loot corpses.
-    if (settingsPanel_.minimapNpcDots_) {
-        for (const auto& entity : minimapGameObjects) {
-
-            // Only show objects that are likely interactive (chests/nodes: type 3;
-            // also show type 0=Door when open, but filter by dynamic-flag ACTIVATED).
-            // For simplicity, show all game objects that have a non-empty cached name.
-            auto go = std::static_pointer_cast<game::GameObject>(entity);
-            if (!go) continue;
-
-            // Only show if we have name data (avoids cluttering with unknown objects)
-            const auto* goInfo = gameHandler.getCachedGameObjectInfo(go->getEntry());
-            if (!goInfo || !goInfo->isValid()) continue;
-            // Skip transport objects (boats/zeppelins): type 15 = MO_TRANSPORT, 11 = TRANSPORT
-            if (goInfo->type == 11 || goInfo->type == 15) continue;
-
-            float sx = 0.0f, sy = 0.0f;
-            if (!frame.projectEntity(*entity, sx, sy)) continue;
-
-            // Triangle size and color: bright cyan for quest objectives, amber for others
-            bool isQuestGO = minimapQuestGoEntries.count(go->getEntry()) != 0;
-            const float ts = isQuestGO ? 4.5f : 3.5f;
-            ImVec2 goTip  (sx,        sy - ts);
-            ImVec2 goLeft (sx - ts,   sy + ts * 0.6f);
-            ImVec2 goRight(sx + ts,   sy + ts * 0.6f);
-            if (isQuestGO) {
-                frame.drawList->AddTriangleFilled(goTip, goLeft, goRight, IM_COL32(50, 230, 255, 240));
-                frame.drawList->AddTriangle(goTip, goLeft, goRight, IM_COL32(0, 60, 80, 200), 1.5f);
-            } else {
-                frame.drawList->AddTriangleFilled(goTip, goLeft, goRight, IM_COL32(255, 185, 30, 220));
-                frame.drawList->AddTriangle(goTip, goLeft, goRight, IM_COL32(100, 60, 0, 180), 1.0f);
-            }
-
-            // Tooltip on hover
-            if (cursorNearBlip(sx, sy)) {
-                if (isQuestGO)
-                    ImGui::SetTooltip("%s (quest)", goInfo->name.c_str());
-                else
-                    ImGui::SetTooltip("%s", goInfo->name.c_str());
             }
         }
     }
@@ -1732,11 +1619,6 @@ void GameScreen::renderMinimapReadouts(const MinimapFrame& frame, game::GameHand
                 toggle("minimapsquare", !squareShape);
             }
 
-            const bool npcDots = settingsPanel_.minimapNpcDots_;
-            if (ImGui::MenuItem("Show NPC Dots", nullptr, npcDots)) {
-                toggle("minimapnpcdots", !npcDots);
-            }
-
             ImGui::EndPopup();
         }
     }
@@ -1819,21 +1701,17 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     // Reused across frames to avoid three vector allocations per frame; the
     // clear below releases the previous frame's shared_ptrs on re-entry.
     static thread_local std::vector<std::shared_ptr<game::Entity>> minimapUnits;
-    static thread_local std::vector<std::shared_ptr<game::Entity>> minimapPlayers;
     static thread_local std::vector<std::shared_ptr<game::Entity>> minimapGameObjects;
     minimapUnits.clear();
-    minimapPlayers.clear();
     minimapGameObjects.clear();
     const auto& allEntities = gameHandler.getEntityManager().getEntities();
     minimapUnits.reserve(allEntities.size() / 2);
-    minimapPlayers.reserve(allEntities.size() / 8);
     minimapGameObjects.reserve(allEntities.size() / 4);
     for (const auto& [guid, entity] : allEntities) {
         (void)guid;
         if (!entity) continue;
         switch (entity->getType()) {
             case game::ObjectType::UNIT:       minimapUnits.push_back(entity); break;
-            case game::ObjectType::PLAYER:     minimapPlayers.push_back(entity); break;
             case game::ObjectType::GAMEOBJECT: minimapGameObjects.push_back(entity); break;
             default: break;
         }
@@ -1844,14 +1722,6 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     const MinimapFrame frame{.drawList = drawList, .centerX = centerX, .centerY = centerY, .mapRadius = mapRadius, .bearing = bearing,
                              .playerRender = playerRender, .view = minimapView};
 
-    // Build sets of entries that are incomplete objectives for tracked quests.
-    // minimapQuestEntries: NPC creature entries (npcOrGoId > 0)
-    // minimapQuestGoEntries: game object entries (npcOrGoId < 0, stored as abs value)
-    refreshQuestObjectiveCache(gameHandler);
-    const auto& minimapQuestEntries = minimapQuestCreatureEntries_;
-    const auto& minimapQuestGoEntries = minimapQuestGameObjectEntries_;
-
-    renderMinimapNpcDots(frame, minimapUnits, minimapQuestEntries);
     if (game::isActiveExpansion("tbc")) {
         const auto service = std::stoul(addons::storedCVarValue("wowee_trackingservice", "0"));
         if (service > game::tbcTrackingServices.size())
@@ -1890,8 +1760,6 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         renderMinimapFlightMasters(frame, minimapUnits, gameHandler);
     }
     renderMinimapRares(frame, minimapUnits, gameHandler);
-    renderMinimapPlayerDots(frame, minimapPlayers, gameHandler);
-    renderMinimapObjectDots(frame, minimapGameObjects, minimapQuestGoEntries, gameHandler);
     renderMinimapChests(frame, minimapGameObjects, gameHandler);
     renderMinimapResources(frame, minimapGameObjects, gameHandler);
 
@@ -1942,7 +1810,6 @@ void GameScreen::saveSettings() {
     out << "scroll_speed=" << settingsPanel_.pendingScrollSpeed << "\n";
     out << "minimap_rotate=" << (settingsPanel_.pendingMinimapRotate ? 1 : 0) << "\n";
     out << "minimap_square=" << (settingsPanel_.pendingMinimapSquare ? 1 : 0) << "\n";
-    out << "minimap_npc_dots=" << (settingsPanel_.pendingMinimapNpcDots ? 1 : 0) << "\n";
     out << "show_minimap_clock=" << (settingsPanel_.pendingShowMinimapClock ? 1 : 0) << "\n";
     out << "show_minimap_coordinates=" << (settingsPanel_.pendingShowMinimapCoordinates ? 1 : 0) << "\n";
     out << "show_latency_meter=" << (settingsPanel_.pendingShowLatencyMeter ? 1 : 0) << "\n";
@@ -2158,10 +2025,6 @@ void GameScreen::loadSettings() {
                 int v = std::stoi(val);
                 settingsPanel_.minimapSquare_ = (v != 0);
                 settingsPanel_.pendingMinimapSquare = settingsPanel_.minimapSquare_;
-            } else if (key == "minimap_npc_dots") {
-                int v = std::stoi(val);
-                settingsPanel_.minimapNpcDots_ = (v != 0);
-                settingsPanel_.pendingMinimapNpcDots = settingsPanel_.minimapNpcDots_;
             } else if (key == "show_minimap_clock") {
                 settingsPanel_.showMinimapClock_ = (std::stoi(val) != 0);
                 settingsPanel_.pendingShowMinimapClock = settingsPanel_.showMinimapClock_;

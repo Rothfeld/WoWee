@@ -423,8 +423,6 @@ constexpr SettingDesc kSchema[] = {
      "Show the time of day under the minimap.", "", 0},
     {"minimapsquare", "Square minimap", SettingKind::Bool, 0, 0, 0, "Minimap", "",
      "Draw the minimap as a square rather than a circle.", "", 0},
-    {"minimapnpcdots", "Nearby creature dots", SettingKind::Bool, 0, 0, 0, "Minimap", "",
-     "Mark creatures near you as dots on the minimap.", "", 0},
     {"minimapcoords", "Coordinates", SettingKind::Bool, 0, 0, 0, "Minimap", "",
      "Show your map coordinates under the minimap.", "", 0},
     {"minimaprotate", "Rotate with the camera", SettingKind::Bool, 0, 0, 0, "Minimap", "",
