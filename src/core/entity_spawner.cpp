@@ -2277,17 +2277,6 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
         creaturePermanentFailureGuids_.insert(guid);
         return;
     }
-    {
-        // Intentionally invisible helper creatures should not consume retry budget.
-        std::string lowerPath = m2Path;
-        std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (rendering::isHelperCreatureModel(lowerPath)) {
-            nonRenderableCreatureDisplayIds_.insert(displayId);
-            creaturePermanentFailureGuids_.insert(guid);
-            return;
-        }
-    }
 
     auto* charRenderer = renderer_->getCharacterRenderer();
 

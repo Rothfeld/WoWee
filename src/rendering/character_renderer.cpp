@@ -1741,10 +1741,11 @@ void CharacterRenderer::setModelTexture(uint32_t modelId, uint32_t textureSlot, 
     core::Logger::getInstance().debug("Replaced model ", modelId, " texture slot ", textureSlot, " with composited texture");
 }
 bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
-    // A model may be emitters only: item visual effects such as
-    // Spells/Enchantments/BlueFlame_Low.m2 carry one particle emitter and no
-    // mesh. It has no buffers and draws through syncEmitters alone.
-    if (!model.isValid() && !hasEffectEmitters(model)) {
+    // A model may be emitters only (item visuals such as
+    // Spells/Enchantments/BlueFlame_Low.m2: one particle emitter, no mesh,
+    // drawn through syncEmitters) or bones only (InvisibleStalker.m2, loaded
+    // for its bones, attachments and bounds; drawing skips it).
+    if (!model.isValid() && !hasEffectEmitters(model) && model.bones.empty()) {
         core::Logger::getInstance().error("Cannot load invalid M2 model");
         return false;
     }

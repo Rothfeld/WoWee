@@ -378,21 +378,6 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
                 continue;
             }
 
-            // Check for invisible stalkers
-            {
-                std::string lowerPath = m2Path;
-                std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                if (rendering::isHelperCreatureModel(lowerPath)) {
-                    nonRenderableCreatureDisplayIds_.insert(s.displayId);
-                    creaturePermanentFailureGuids_.insert(s.guid);
-                    pendingCreatureSpawnGuids_.erase(s.guid);
-                    processed++;
-                    rotationsLeft = pendingCreatureSpawns_.size();
-                    continue;
-                }
-            }
-
             // Launch async M2 load - file I/O and parsing happen off the main thread.
             uint32_t modelId = nextCreatureModelId_++;
             auto* am = assetManager_;
@@ -537,7 +522,10 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
 
                     auto model = std::make_shared<pipeline::M2Model>(pipeline::M2Loader::load(m2Data));
                     if (model->name.empty()) model->name = m2Path;
-                    if (model->vertices.empty()) {
+                    // InvisibleStalker.m2 has bones, attachments and bounds but
+                    // no vertices; build 8606 still selects it and draws its
+                    // plate. Only a model with neither failed to parse.
+                    if (model->vertices.empty() && model->bones.empty()) {
                         LOG_WARNING("Creature model parsed to nothing: displayId=",
                                     s.displayId, " ", m2Path, " (", m2Data.size(), " bytes)");
                         result.permanent_failure = true;
