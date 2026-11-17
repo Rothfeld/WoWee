@@ -35,6 +35,18 @@ void TransportAnimator::evaluateAndApply(
 {
     const auto& spline = pathEntry.spline;
 
+    if (pathEntry.taxiSchedule) {
+        const auto sample = pathEntry.taxiSchedule->evaluate(pathTimeMs);
+        // The server owns cross-map passenger teleportation. Preserve the last
+        // local hull transform until its transfer arrives.
+        if (sample.mapId != pathEntry.taxiMapId) return;
+        transport.position = sample.position;
+        const float yaw = std::atan2(sample.tangent.x, sample.tangent.y) +
+                          TransportManager::transportModelBowOffset(transport.displayId);
+        transport.rotation = glm::angleAxis(yaw, glm::vec3(0, 0, 1));
+        return;
+    }
+
     // Evaluate position from time via CatmullRomSpline (path is local offsets, add base position)
     glm::vec3 pathOffset = spline.evaluatePosition(pathTimeMs);
 

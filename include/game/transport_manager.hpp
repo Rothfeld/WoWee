@@ -268,10 +268,13 @@ public:
     glm::vec3 getPlayerWorldPosition(uint64_t transportGuid, const glm::vec3& localOffset);
     [[nodiscard]] glm::vec3 serverToTransportLocal(uint64_t transportGuid,
                                      const glm::vec3& serverOffset) const;
+    [[nodiscard]] glm::vec3 transportLocalToServer(uint64_t transportGuid,
+                                     const glm::vec3& localOffset) const;
     // Adopt the server's published route phase for a transport. phase is a
     // fraction in [0,1) of periodMs. Cheap and idempotent - safe to call on every
     // object update that carries the fields.
     void applyServerRouteClock(uint64_t transportGuid, float phase, uint32_t periodMs);
+    void applyTransportTimestamp(uint64_t transportGuid, uint32_t timeMs);
 
     // Ship machinery follows the hull: ShipMoving while under way, ShipStop when
     // holding at a dock. Cheap to call every frame - it only reaches the
@@ -307,7 +310,8 @@ public:
     // Assign a TaxiPathNode path to an existing transport (called when GO query response arrives).
     // mapId selects the per-map segment (cross-map boat paths only have valid world
     // geometry on the transport's current map). Returns true if the transport was updated.
-    bool assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPathId, uint32_t mapId);
+    bool assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPathId, uint32_t mapId,
+                                   float speed, float acceleration);
 
     // Check if a path exists for a given GameObject entry
     [[nodiscard]] bool hasPathForEntry(uint32_t entry) const;
@@ -377,6 +381,11 @@ private:
     /// server puts the route phase. See applyServerRouteClock.
     struct PendingRouteClock { float phase; uint32_t periodMs; };
     std::unordered_map<uint64_t, PendingRouteClock> pendingRouteClocks_;
+    struct TransportTimestamp {
+        uint32_t timeMs;
+        std::chrono::steady_clock::time_point receivedAt;
+    };
+    std::unordered_map<uint64_t, TransportTimestamp> transportTimestamps_;
     uint64_t riderTransportGuid_ = 0;
     rendering::WMORenderer* wmoRenderer_ = nullptr;
     rendering::M2Renderer* m2Renderer_ = nullptr;

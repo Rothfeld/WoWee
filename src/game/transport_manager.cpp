@@ -15,6 +15,11 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <cassert>
+#include <fstream>
+#include <cstdlib>
+#include <iterator>
+#include <stdexcept>
 
 namespace wowee::game {
 
@@ -310,6 +315,7 @@ void TransportManager::clearTransports() {
     // Held phases belong to the map that published them; a reused GUID on the
     // next map must not inherit one.
     pendingRouteClocks_.clear();
+    transportTimestamps_.clear();
     if (count != 0) {
         LOG_INFO("TransportManager: Cleared ", count, " transports for map transition");
     }
@@ -451,6 +457,20 @@ bool TransportManager::isPointOnTransportDeck(uint64_t transportGuid,
 
     const float floorDelta = canonicalPosition.z - *floor;
     return floorDelta >= -0.35f && floorDelta <= maxFloorDelta;
+}
+
+glm::vec3 TransportManager::transportLocalToServer(
+    uint64_t transportGuid, const glm::vec3& localOffset) const {
+    const auto it = transports_.find(transportGuid);
+    if (it == transports_.end())
+        throw std::invalid_argument("Cannot serialize offsets for an unregistered transport");
+    return it->second.isM2 ? core::coords::canonicalToServer(localOffset) : localOffset;
+}
+
+void TransportManager::applyTransportTimestamp(uint64_t transportGuid, uint32_t timeMs) {
+    transportTimestamps_[transportGuid] = {timeMs, std::chrono::steady_clock::now()};
+    LOG_DEBUG("Transport timestamp guid=0x", std::hex, transportGuid, std::dec,
+              " serverMs=", timeMs, " simulationElapsed=", elapsedTime_);
 }
 
 void TransportManager::applyServerRouteClock(uint64_t transportGuid, float phase,
@@ -615,7 +635,16 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
 
     // Compute path time via ClockSync
     uint32_t pathTimeMs = 0;
-    if (!clockSync_.computePathTime(transport, spline, elapsedTime_, deltaTime, pathTimeMs)) {
+    if (pathEntry->taxiSchedule) {
+        const auto clock = transportTimestamps_.find(transport.guid);
+        assert(clock != transportTimestamps_.end());
+        // A loading frame can begin before this packet arrives. Its full frame
+        // delta must not be added to a clock sampled partway through that frame.
+        const uint32_t serverNow = clock->second.timeMs + static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now()-clock->second.receivedAt).count());
+        pathTimeMs = serverNow % pathEntry->taxiSchedule->durationMs();
+    } else if (!clockSync_.computePathTime(transport, spline, elapsedTime_, deltaTime, pathTimeMs)) {
         // Strict server-authoritative mode: do not guess movement between server snapshots.
         updateTransformMatrices(transport);
         pushTransform(transport);
@@ -634,7 +663,9 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     // slice holds the hull at its last dock through the off-map stretch, so
     // this parks the rider at the pier rather than dropping them mid-ocean.
     const bool carryingRider = riderTransportGuid_ != 0 && transport.guid == riderTransportGuid_;
-    const bool presentNow = pathEntry->presentAt(pathTimeMs) || carryingRider;
+    const bool presentNow = (pathEntry->taxiSchedule
+        ? pathEntry->taxiSchedule->evaluate(pathTimeMs).mapId == pathEntry->taxiMapId
+        : pathEntry->presentAt(pathTimeMs)) || carryingRider;
     if (presentNow != transport.onThisMap) {
         transport.onThisMap = presentNow;
         LOG_INFO("Transport 0x", std::hex, transport.guid, std::dec,
@@ -660,7 +691,8 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     static int debugFrameCount = 0;
     if (debugFrameCount++ % 600 == 0) {
         LOG_DEBUG("Transport 0x", std::hex, transport.guid, std::dec,
-                 " pathTime=", pathTimeMs, "ms / ", spline.durationMs(), "ms",
+                 " pathTime=", pathTimeMs, "ms / ",
+                 pathEntry->taxiSchedule ? pathEntry->taxiSchedule->durationMs() : spline.durationMs(), "ms",
                  " pos=(", transport.position.x, ", ", transport.position.y, ", ", transport.position.z, ")",
                  " mode=", (transport.useClientAnimation ? "client" : "server"),
                  " isM2=", transport.isM2);
@@ -823,6 +855,17 @@ bool TransportManager::loadTransportAnimationDBC(pipeline::AssetManager* assetMg
 }
 
 bool TransportManager::loadTaxiPathNodeDBC(pipeline::AssetManager* assetMgr) {
+    if (isActiveExpansion("tbc")) {
+        if (const char* path = std::getenv("WOWEE_TRANSPORT_TIMETABLE")) {
+            std::ifstream input(path);
+            if (!input) throw std::runtime_error(std::string("Cannot read realm transport timetable: ")+path);
+            pathRepo_.loadRealmTimetable(std::string(std::istreambuf_iterator<char>(input), {}));
+            LOG_INFO("Loaded realm transport timetable: ", path);
+        } else {
+            LOG_WARNING("No WOWEE_TRANSPORT_TIMETABLE configured; TBC wire omits route periods. "
+                        "Generated periods cannot reproduce realm timetable overrides.");
+        }
+    }
     return pathRepo_.loadTaxiPathNodeDBC(assetMgr);
 }
 
@@ -834,7 +877,8 @@ bool TransportManager::hasTaxiPathForMap(uint32_t taxiPathId, uint32_t mapId) co
     return pathRepo_.hasTaxiPathForMap(taxiPathId, mapId);
 }
 
-bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPathId, uint32_t mapId) {
+bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPathId, uint32_t mapId,
+                                                 float speed, float acceleration) {
     auto* taxiEntry = pathRepo_.findTaxiPath(taxiPathId, mapId);
     if (!taxiEntry) {
         LOG_WARNING("No TaxiPathNode segment for taxiPathId=", taxiPathId, " on mapId=", mapId,
@@ -871,7 +915,15 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
         PathEntry copied(taxiEntry->spline, entry, taxiEntry->zOnly,
                          /*dbc=*/false, taxiEntry->worldCoords);
         copied.presentMs = taxiEntry->presentMs;
-        if (route && transport.hasServerRouteClock) {
+        if (isActiveExpansion("tbc")) {
+            assert(route);
+            copied.taxiSchedule = std::make_shared<TaxiRouteSchedule>(
+                *route, speed, acceleration, pathRepo_.realmTransportPeriod(entry));
+            copied.taxiMapId = mapId;
+            LOG_INFO("Authored TBC taxi schedule entry=", entry, " path=", taxiPathId,
+                     " periodMs=", copied.taxiSchedule->durationMs(),
+                     " speed=", speed, " acceleration=", acceleration);
+        } else if (route && transport.hasServerRouteClock) {
             const float speed =
                 TransportPathRepository::taxiRouteSpeedFor(*route, transport.routePeriodMs);
             if (speed > 0.0f) {
@@ -901,7 +953,18 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
         // crosses map boundaries, so anchor each freshly loaded segment to the
         // server-authored spawn location; otherwise it can still be approaching
         // Borean Tundra when the server correctly transfers the rider back to map 0.
-        if (storedEntry && storedEntry->spline.durationMs() > 0) {
+        if (storedEntry && storedEntry->taxiSchedule) {
+            const auto clock = transportTimestamps_.find(guid);
+            assert(clock != transportTimestamps_.end());
+            const uint32_t now = clock->second.timeMs + static_cast<uint32_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now()-clock->second.receivedAt).count());
+            transport.localClockMs = now % storedEntry->taxiSchedule->durationMs();
+            const auto sample = storedEntry->taxiSchedule->evaluate(transport.localClockMs);
+            transport.position = sample.position;
+            transport.onThisMap = sample.mapId == mapId;
+            animator_.evaluateAndApply(transport, *storedEntry, transport.localClockMs);
+        } else if (storedEntry && storedEntry->spline.durationMs() > 0) {
             // Where the server says this hull is, not what time it happens to
             // be. A wall-clock modulo put the phase somewhere unrelated to the
             // route, so the zeppelin was departing its tower while the server

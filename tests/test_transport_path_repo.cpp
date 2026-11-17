@@ -20,6 +20,53 @@ std::vector<uint8_t> AssetManager::readFileOptional(const std::string&) const { 
 
 using namespace wowee;
 
+TEST_CASE("Authored taxi transport accelerates, stops and wraps its server clock", "[taxi-schedule]") {
+    game::TaxiRoute route;
+    route.nodes = {{{-10,0,0},1,0,0}, {{0,0,0},1,1000,2},
+                   {{10,0,0},1,0,0}, {{20,0,0},1,1000,2}, {{30,0,0},1,0,0}};
+    const game::TaxiRouteSchedule schedule(route, 10, 1);
+    CHECK(schedule.durationMs() == 10944);
+    CHECK(schedule.evaluate(500).position.x == Catch::Approx(0));
+    CHECK(schedule.evaluate(2000).position.x == Catch::Approx(0.5f).margin(0.001f));
+    CHECK(schedule.evaluate(10000).position.x == Catch::Approx(20));
+    CHECK(schedule.evaluate(schedule.durationMs()+2000).position.x == Catch::Approx(0.5f).margin(0.001f));
+    CHECK(schedule.evaluate(2000).mapId == 1);
+    CHECK_THROWS_AS(game::TaxiRouteSchedule(route, 0, 1), std::invalid_argument);
+    CHECK_THROWS_AS(game::TaxiRouteSchedule(route, 10, 0), std::invalid_argument);
+    const game::TaxiRouteSchedule extended(route, 10, 1, 12000);
+    CHECK(extended.durationMs() == 12000);
+    CHECK(extended.evaluate(11500).position.x == Catch::Approx(20));
+    CHECK(extended.evaluate(14000).position.x == schedule.evaluate(2000).position.x);
+    CHECK_THROWS_AS(game::TaxiRouteSchedule(route, 10, 1, 100), std::invalid_argument);
+}
+
+TEST_CASE("Configured realm transport timetables reject incomplete or invalid data", "[taxi-schedule]") {
+    game::TransportPathRepository repository;
+    const std::string prefix = R"({"schema":"wowee.realm-transports.v1","expansion":"tbc","realm":"127.0.0.1:3724","source":"CMaNGOS tbcmangos.transports","transports":)";
+    repository.loadRealmTimetable(prefix + R"([{"entry":176244,"period_ms":312734}]})");
+    CHECK(repository.realmTransportPeriod(176244) == 312734);
+    CHECK_THROWS_AS(repository.realmTransportPeriod(176310), std::invalid_argument);
+    for (const std::string rows : {
+            "[]", R"([{"entry":176244,"period_ms":0}])",
+            R"([{"entry":176244,"period_ms":-1}])",
+            R"([{"entry":176244,"period_ms":1.5}])",
+            R"([{"entry":176244,"period_ms":4294967296}])",
+            R"([{"entry":176244,"period_ms":12},{"entry":176244,"period_ms":13}])"}) {
+        CHECK_THROWS_AS(repository.loadRealmTimetable(prefix+rows+"}"), std::invalid_argument);
+        CHECK(repository.realmTransportPeriod(176244) == 312734);
+    }
+}
+
+TEST_CASE("Taxi routes without stops accelerate from the implicit origin stop", "[taxi-schedule]") {
+    game::TaxiRoute route;
+    route.nodes = {{{-10,0,0},1,0,0}, {{0,0,0},1,0,0},
+                   {{10,0,0},1,0,0}, {{20,0,0},1,0,0}, {{30,0,0},1,0,0}};
+    const game::TaxiRouteSchedule schedule(route, 10, 1);
+    CHECK(schedule.durationMs() == 8944);
+    CHECK(schedule.evaluate(500).position.x == Catch::Approx(0.125f));
+    CHECK(schedule.evaluate(1000).position.x == Catch::Approx(0.5f));
+}
+
 // ── Helpers ────────────────────────────────────────────────────
 
 static constexpr float kEps = 0.001f;

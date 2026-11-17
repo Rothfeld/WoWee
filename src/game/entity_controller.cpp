@@ -461,6 +461,8 @@ void EntityController::maybeDetectCoinageIndex(const FlatFieldMap& oldFields,
 // ============================================================
 
 void EntityController::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItemCreated) {
+    if (block.hasTransportClock && owner_.getTransportManager())
+        owner_.getTransportManager()->applyTransportTimestamp(block.guid, block.transportClockMs);
     switch (block.updateType) {
         case UpdateType::CREATE_OBJECT:
         case UpdateType::CREATE_OBJECT2:
@@ -3229,7 +3231,7 @@ void EntityController::handleGameObjectQueryResponse(network::Packet& packet) {
                                 owner_.getTransportManager()->hasTaxiPath(taxiPathId) ? 1 : 0, ")");
                 }
             } else if (owner_.getTransportManager()->assignTaxiPathToTransport(
-                           data.entry, taxiPathId, mapId)) {
+                           data.entry, taxiPathId, mapId, data.data[1], data.data[2])) {
                 if (sayThis) {
                     LOG_WARNING("MO_TRANSPORT entry=", data.entry, " assigned TaxiPathNode path ",
                                 taxiPathId, " on map ", mapId);

@@ -1744,6 +1744,12 @@ public:
     bool hasPendingPlayerTransportWorldTransfer() const {
         return pendingPlayerTransportTransfer_;
     }
+    void clearPendingPlayerTransportWorldTransfer() {
+        pendingPlayerTransportTransfer_ = false;
+        pendingPlayerTransportGuid_ = 0;
+        pendingPlayerTransportEntry_ = 0;
+        pendingPlayerTransportMapId_ = 0xffffffffu;
+    }
     bool completePlayerTransportWorldTransfer(uint64_t transportGuid,
                                               glm::vec3& worldPosition);
 

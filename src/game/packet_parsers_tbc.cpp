@@ -213,7 +213,8 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
     // Transport time/path progress (0x02)
     if (updateFlags & UPDATEFLAG_TRANSPORT) {
         if (rem() < 4) return false;
-        /*uint32_t transportTime =*/ packet.readUInt32();
+        block.hasTransportClock = true;
+        block.transportClockMs = packet.readUInt32();
     }
 
     return true;

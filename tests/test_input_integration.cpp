@@ -3,6 +3,7 @@
 #include "input_test_support.hpp"
 #include "game_replay.hpp"
 #include "game/packet_parsers.hpp"
+#include "game/transport_manager.hpp"
 #include "ui/game_screen.hpp"
 #include "addons/lua_engine.hpp"
 #include "addons/addon_lua_snippets.hpp"
@@ -20,6 +21,19 @@
 
 using namespace input_test;
 
+TEST_CASE("TBC transport creation retains server clock including wrap values", "[transport]") {
+    wowee::game::TbcPacketParsers parser;
+    for (uint32_t clock : {0u, 0xfedcba98u, 0xffffffffu}) {
+        wowee::network::Packet packet(0);
+        packet.writeUInt8(0x02);
+        packet.writeUInt32(clock);
+        wowee::game::UpdateBlock block{};
+        REQUIRE(parser.parseMovementBlock(packet, block));
+        CHECK(block.hasTransportClock);
+        CHECK(block.transportClockMs == clock);
+        CHECK(packet.getRemainingSize() == 0);
+    }
+}
 TEST_CASE("TBC boarding and passenger creation use raw transport GUIDs", "[transport]") {
     using namespace wowee::game;
     TbcPacketParsers parser;
@@ -877,6 +891,95 @@ TEST_CASE_METHOD(Integration, "Merchant usability follows equipment requirements
     info.subClass = 0; // Axes still require their proficiency.
     truth("select(6, GetMerchantItemInfo(1)) == false");
     lua.setGameHandler(nullptr);
+}
+
+static void announceTbcBoat(replay::Session& session, uint64_t guid) {
+    using namespace wowee::game;
+    wowee::network::Packet create(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+    create.writeUInt32(1);
+    create.writeUInt8(0);
+    create.writeUInt8(static_cast<uint8_t>(UpdateType::CREATE_OBJECT2));
+    create.writePackedGuid(guid);
+    create.writeUInt8(static_cast<uint8_t>(ObjectType::GAMEOBJECT));
+    create.writeUInt8(0x02); // UPDATEFLAG_TRANSPORT
+    create.writeUInt32(1000);
+    create.writeUInt8(1);
+    create.writeUInt32(1u << fieldIndex(UF::OBJECT_FIELD_ENTRY));
+    create.writeUInt32(176244);
+    session.receive(create);
+    REQUIRE(session.handler().isTransportGuid(guid));
+}
+
+TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local axes", "[transport]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto* manager = handler.getTransportManager();
+    REQUIRE(manager);
+    constexpr uint64_t boat = 0x01fc00000002b074ULL;
+    announceTbcBoat(session, boat);
+    manager->loadPathFromNodes(176244, {{0,0,0}});
+    manager->registerTransport(boat, 0, 176244, {1000,8500,0}, 176244, 7087, false, 1.4f);
+    handler.setPlayerOnTransport(boat, {4,-6,8});
+    handler.movementInfoRef().orientation = wowee::core::coords::serverToCanonicalYaw(2.1f);
+    handler.sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+    auto packets = session.sent().of(Opcode::MSG_MOVE_START_FORWARD);
+    REQUIRE(packets.size() == 1);
+    auto packet = packets.front();
+    CHECK((packet.readUInt32() & 0x200) != 0);
+    packet.readUInt8();
+    packet.readUInt32();
+    const float serverX = packet.readFloat();
+    const float serverY = packet.readFloat();
+    CHECK(packet.readFloat() == 8);
+    CHECK(packet.readFloat() == Catch::Approx(2.1f));
+    CHECK(packet.readUInt64() == boat);
+    const float localX = packet.readFloat();
+    const float localY = packet.readFloat();
+    CHECK(localX == 4);
+    CHECK(localY == -6);
+    CHECK(packet.readFloat() == 8);
+    CHECK(packet.readFloat() == Catch::Approx(0.7f));
+    // CMaNGOS CalculatePassengerPosition must reconstruct the same world point.
+    CHECK(serverX == Catch::Approx(8500+localX*std::cos(1.4f)-localY*std::sin(1.4f)).margin(.002));
+    CHECK(serverY == Catch::Approx(1000+localY*std::cos(1.4f)+localX*std::sin(1.4f)).margin(.002));
+    CHECK(manager->transportLocalToServer(boat, manager->serverToTransportLocal(boat, {4,-6,8})) == glm::vec3(4,-6,8));
+}
+
+TEST_CASE_METHOD(Integration, "Only announced boat transfers preserve passenger state across maps", "[transport]") {
+    using namespace wowee::game;
+    for (bool aboardTransfer : {false, true}) {
+        replay::Session session("tbc");
+        auto& handler = session.handler();
+        auto* manager = handler.getTransportManager();
+        constexpr uint64_t boat = 0x01fc00000002b074ULL;
+        announceTbcBoat(session, boat);
+        manager->loadPathFromNodes(176244, {{0,0,0}});
+        manager->registerTransport(boat, 0, 176244, {1000,8500,0}, 176244, 7087, false, 1.4f);
+        handler.setPlayerOnTransport(boat, {4,-6,8});
+        wowee::network::Packet pending(wireOpcode(Opcode::SMSG_TRANSFER_PENDING));
+        pending.writeUInt32(530);
+        if (aboardTransfer) {
+            pending.writeUInt32(176244);
+            pending.writeUInt32(handler.getCurrentMapId());
+        }
+        session.receive(pending);
+        wowee::network::Packet destination(wireOpcode(Opcode::SMSG_NEW_WORLD));
+        destination.writeUInt32(530);
+        for (float value : {4.f,-6.f,8.f,1.f}) destination.writeFloat(value);
+        session.receive(destination);
+        CHECK(handler.hasPendingPlayerTransportWorldTransfer() == aboardTransfer);
+        if (!aboardTransfer) {
+            CHECK_FALSE(handler.isOnTransport());
+            handler.sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+            REQUIRE(session.sent().of(Opcode::MSG_MOVE_START_FORWARD).size() == 1);
+        } else {
+            glm::vec3 restored;
+            REQUIRE(handler.completePlayerTransportWorldTransfer(boat, restored));
+            CHECK(handler.playerTransportOffsetRef() == glm::vec3(4,-6,8));
+            CHECK_FALSE(handler.hasPendingPlayerTransportWorldTransfer());
+        }
+    }
 }
 
 TEST_CASE_METHOD(Integration, "TBC remote boat passengers use a raw transport GUID", "[transport]") {

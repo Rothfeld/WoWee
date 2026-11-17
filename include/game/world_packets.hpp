@@ -547,6 +547,8 @@ struct UpdateBlock {
 
     // Update flags from movement block (for detecting transports, etc.)
     uint16_t updateFlags = 0;
+    bool hasTransportClock = false;
+    uint32_t transportClockMs = 0;
 
     // Raw movement flags from LIVING block (SWIMMING=0x200000, WALKING=0x100, CAN_FLY=0x800000, FLYING=0x1000000)
     // Used to initialise swim/walk/fly state on entity spawn (cold-join).

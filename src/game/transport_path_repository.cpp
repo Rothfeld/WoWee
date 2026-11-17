@@ -11,8 +11,172 @@
 #include <set>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
+#include <nlohmann/json.hpp>
 
 namespace wowee::game {
+
+namespace {
+glm::vec3 taxiCurve(const glm::vec3& a, const glm::vec3& b,
+                   const glm::vec3& c, const glm::vec3& d, float u) {
+    return 0.5f * ((2.0f*b) + (-a+c)*u + (2.0f*a-5.0f*b+4.0f*c-d)*u*u +
+                   (-a+3.0f*b-3.0f*c+d)*u*u*u);
+}
+glm::vec3 taxiTangent(const glm::vec3& a, const glm::vec3& b,
+                     const glm::vec3& c, const glm::vec3& d, float u) {
+    return 0.5f * ((-a+c) + 2.0f*(2.0f*a-5.0f*b+4.0f*c-d)*u +
+                   3.0f*(-a+3.0f*b-3.0f*c+d)*u*u);
+}
+}
+
+TaxiRouteSchedule::TaxiRouteSchedule(const TaxiRoute& route, float speed, float acceleration,
+                                     uint32_t serverPeriodMs)
+    : speed_(speed), acceleration_(acceleration) {
+    if (route.nodes.size() < 3 || !(speed > 0) || !(acceleration > 0))
+        throw std::invalid_argument("Invalid authored taxi transport motion");
+    bool skipArrivalControl = false;
+    for (size_t i = 1; i + 1 < route.nodes.size(); ++i) {
+        if (skipArrivalControl) { skipArrivalControl = false; continue; }
+        const auto& node = route.nodes[i];
+        if ((node.flags & 1u) || node.mapId != route.nodes[i+1].mapId) {
+            if (frames_.empty()) throw std::invalid_argument("Taxi teleport has no departure frame");
+            frames_.back().teleport = true;
+            skipArrivalControl = true;
+            continue;
+        }
+        Frame frame;
+        frame.node = node;
+        frame.stopTangent = 0.5f * (route.nodes[i+1].position-route.nodes[i-1].position);
+        frames_.push_back(frame);
+    }
+    if (frames_.size() < 2) throw std::invalid_argument("Taxi route has fewer than two motion frames");
+    frames_.back().teleport = true;
+    for (size_t i = 0; i + 1 < frames_.size(); ++i) {
+        auto& frame = frames_[i];
+        if (frame.teleport) continue;
+        frame.p1 = frame.node.position;
+        frame.p2 = frames_[i+1].node.position;
+        frame.p0 = (i == 0 || frames_[i-1].teleport)
+            ? 2.0f*frame.p1-frame.p2 : frames_[i-1].node.position;
+        frame.p3 = frames_[i+1].teleport
+            ? frame.p2 : frames_[i+2].node.position;
+        auto previous = frame.p1;
+        double length = 0;
+        // The transport protocol's route schedule uses three chord samples
+        // per Catmull-Rom segment, matching CMaNGOS SplineBase segment lengths.
+        for (int sample = 1; sample <= 3; ++sample) {
+            const auto next = taxiCurve(frame.p0, frame.p1, frame.p2, frame.p3, sample/3.0f);
+            length += glm::distance(previous, next);
+            previous = next;
+        }
+        frame.nextDistance = static_cast<float>(length);
+    }
+    const auto count = frames_.size();
+    const bool hasStops = std::any_of(frames_.begin(), frames_.end(),
+        [](const Frame& f) { return f.node.flags == 2; });
+    const float accelerationDistance = 0.5f*speed*speed/acceleration;
+    for (size_t i = 0; i < count; ++i) {
+        auto& frame = frames_[i];
+        if (frame.node.flags != 2 && (hasStops || i != 0)) {
+            for (size_t step = 1; step <= count; ++step) {
+                const size_t previous = (i+count-step)%count;
+                frame.sinceStop += frames_[previous].nextDistance;
+                if (frames_[previous].node.flags == 2 || (!hasStops && previous == 0)) break;
+            }
+        }
+        for (size_t step = 0; step < count; ++step) {
+            const size_t current = (i+step)%count;
+            frame.untilStop += frames_[current].nextDistance;
+            const size_t next = (current+1)%count;
+            if (frames_[next].node.flags == 2 || (!hasStops && next == 0)) break;
+        }
+        const float distance = frame.sinceStop+frame.untilStop;
+        const float peakDistance = std::min(accelerationDistance, 0.5f*distance);
+        const float peakTime = std::sqrt(2.0f*peakDistance/acceleration);
+        const float totalTime = 2.0f*peakTime + std::max(0.0f, distance-2.0f*peakDistance)/speed;
+        if (frame.sinceStop < peakDistance)
+            frame.timeFromStop = std::sqrt(2.0f*frame.sinceStop/acceleration);
+        else if (frame.untilStop < peakDistance)
+            frame.timeFromStop = totalTime-std::sqrt(2.0f*frame.untilStop/acceleration);
+        else
+            frame.timeFromStop = peakTime+(frame.sinceStop-peakDistance)/speed;
+        frame.timeToStop = totalTime-frame.timeFromStop;
+    }
+    float seconds = frames_.front().node.flags == 2 ? frames_.front().node.dwellMs/1000.0f : 0;
+    frames_.front().departMs = static_cast<uint32_t>(seconds*1000.0f);
+    for (size_t i = 1; i < count; ++i) {
+        auto& frame = frames_[i];
+        seconds += frames_[i-1].timeToStop;
+        if (frame.node.flags != 2) seconds -= frame.timeToStop;
+        frame.arriveMs = static_cast<uint32_t>(seconds*1000.0f);
+        if (frame.node.flags == 2) seconds += frame.node.dwellMs/1000.0f;
+        frame.departMs = static_cast<uint32_t>(seconds*1000.0f);
+    }
+    durationMs_ = frames_.back().departMs;
+    if (!durationMs_) throw std::invalid_argument("Taxi transport has zero period");
+    if (serverPeriodMs) {
+        if (serverPeriodMs <= frames_[count-2].departMs)
+            throw std::invalid_argument("Realm transport period ends before final motion segment");
+        // CMaNGOS overrides these two fields from transports.period. Interior
+        // waypoint times and geometry retain their authored schedule.
+        durationMs_ = serverPeriodMs;
+        frames_.back().departMs = serverPeriodMs;
+    }
+}
+
+void TransportPathRepository::loadRealmTimetable(const std::string& text) {
+    const auto document = nlohmann::json::parse(text);
+    if (document.at("schema") != "wowee.realm-transports.v1" ||
+        document.at("expansion") != "tbc" ||
+        document.at("realm").get<std::string>().empty() ||
+        document.at("source").get<std::string>().empty())
+        throw std::invalid_argument("Invalid realm transport timetable metadata");
+    const auto& rows = document.at("transports");
+    if (!rows.is_array() || rows.empty())
+        throw std::invalid_argument("Realm transport timetable has no transports");
+    std::unordered_map<uint32_t, uint32_t> periods;
+    for (const auto& row : rows) {
+        if (!row.at("entry").is_number_integer() || !row.at("period_ms").is_number_integer())
+            throw std::invalid_argument("Realm transport timetable requires integer fields");
+        const auto entry = row.at("entry").get<int64_t>();
+        const auto period = row.at("period_ms").get<int64_t>();
+        if (entry <= 0 || entry > UINT32_MAX || period <= 0 || period > UINT32_MAX ||
+            !periods.emplace(static_cast<uint32_t>(entry), static_cast<uint32_t>(period)).second)
+            throw std::invalid_argument("Invalid or duplicate realm transport timetable row");
+    }
+    realmTransportPeriods_ = std::move(periods);
+    hasRealmTimetable_ = true;
+}
+
+uint32_t TransportPathRepository::realmTransportPeriod(uint32_t entry) const {
+    if (!hasRealmTimetable_) return 0;
+    const auto found = realmTransportPeriods_.find(entry);
+    if (found == realmTransportPeriods_.end())
+        throw std::invalid_argument("Configured realm timetable omits transport " + std::to_string(entry));
+    return found->second;
+}
+
+TaxiRouteSchedule::Sample TaxiRouteSchedule::evaluate(uint32_t timeMs) const {
+    timeMs %= durationMs_;
+    auto it = std::upper_bound(frames_.begin(), frames_.end(), timeMs,
+        [](uint32_t time, const Frame& frame) { return time < frame.arriveMs; });
+    const auto& frame = it == frames_.begin() ? frames_.front() : *std::prev(it);
+    if (timeMs < frame.departMs || frame.teleport || frame.nextDistance == 0)
+        return {frame.node.position, frame.stopTangent, frame.node.mapId};
+    const float elapsed = (timeMs-frame.departMs)/1000.0f;
+    const float fromStop = frame.timeFromStop+elapsed;
+    const float toStop = frame.timeToStop-elapsed;
+    const float accelerationTime = speed_/acceleration_;
+    const auto distanceAt = [&](float time) {
+        return time < accelerationTime ? 0.5f*acceleration_*time*time
+            : 0.5f*speed_*accelerationTime+(time-accelerationTime)*speed_;
+    };
+    const float travelled = fromStop < toStop
+        ? distanceAt(fromStop)-frame.sinceStop : frame.untilStop-distanceAt(toStop);
+    const float u = std::clamp(travelled/frame.nextDistance, 0.0f, 1.0f);
+    return {taxiCurve(frame.p0, frame.p1, frame.p2, frame.p3, u),
+            taxiTangent(frame.p0, frame.p1, frame.p2, frame.p3, u), frame.node.mapId};
+}
 
 namespace {
 
@@ -680,6 +844,7 @@ bool TransportPathRepository::loadTaxiPathNodeDBC(pipeline::AssetManager* assetM
         uint32_t mapId;
         float x, y, z;
         uint32_t delaySeconds;
+        uint32_t flags;
     };
     std::map<uint32_t, std::vector<TaxiNode>> nodesByPath;
 
@@ -694,7 +859,8 @@ bool TransportPathRepository::loadTaxiPathNodeDBC(pipeline::AssetManager* assetM
 
         nodesByPath[pathId].push_back({.nodeIndex = nodeIdx, .mapId = mapId,
                                        .x = posX, .y = posY, .z = posZ,
-                                       .delaySeconds = delaySeconds});
+                                       .delaySeconds = delaySeconds,
+                                       .flags = dbc.getUInt32(i, 7)});
     }
 
     int pathsLoaded = 0;
@@ -709,7 +875,8 @@ bool TransportPathRepository::loadTaxiPathNodeDBC(pipeline::AssetManager* assetM
             route.nodes.push_back({
                 .position = core::coords::serverToCanonical(glm::vec3(node.x, node.y, node.z)),
                 .mapId = node.mapId,
-                .dwellMs = node.delaySeconds * 1000u});
+                .dwellMs = node.delaySeconds * 1000u,
+                .flags = node.flags});
         }
         route.circuit = taxiRouteIsCircuit(route);
 

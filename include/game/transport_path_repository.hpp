@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
+#include <memory>
+#include <string>
 #include <glm/glm.hpp>
 
 namespace wowee::pipeline {
@@ -15,6 +17,8 @@ namespace wowee::pipeline {
 }
 
 namespace wowee::game {
+
+class TaxiRouteSchedule;
 
 /// Whether a displayId belongs to a vehicle that travels a route - a ship, a
 /// zeppelin, an icebreaker, a gunship - as opposed to an elevator or a lift.
@@ -70,6 +74,8 @@ struct PathEntry {
     bool zOnly = false;       // Elevator/bobbing - no meaningful XY travel
     bool fromDBC = false;     // Loaded from TransportAnimation.dbc
     bool worldCoords = false; // TaxiPathNode absolute world positions (not local offsets)
+    std::shared_ptr<const TaxiRouteSchedule> taxiSchedule;
+    uint32_t taxiMapId = 0;
 
     /// Spans of the route's cycle during which the hull is on this slice's map.
     ///
@@ -100,6 +106,7 @@ struct TaxiRouteNode {
     glm::vec3 position;      ///< canonical world coordinates
     uint32_t mapId = 0;
     uint32_t dwellMs = 0;    ///< authored stop at this node
+    uint32_t flags = 0;      ///< TaxiPathNode action flags: teleport 1, stop 2
 };
 
 /// A transport's whole route, across every map it touches.
@@ -121,9 +128,41 @@ struct TaxiRoute {
     uint32_t cycleDwellMs = 0;
 };
 
+/// Authored MO_TRANSPORT motion, including acceleration and inter-map jumps.
+/// Its clock is the uint32 millisecond clock carried by UPDATEFLAG_TRANSPORT.
+class TaxiRouteSchedule {
+public:
+    struct Sample {
+        glm::vec3 position;
+        glm::vec3 tangent;
+        uint32_t mapId;
+    };
+    TaxiRouteSchedule(const TaxiRoute& route, float speed, float acceleration,
+                      uint32_t serverPeriodMs = 0);
+    [[nodiscard]] uint32_t durationMs() const { return durationMs_; }
+    [[nodiscard]] Sample evaluate(uint32_t timeMs) const;
+
+private:
+    struct Frame {
+        TaxiRouteNode node;
+        bool teleport = false;
+        glm::vec3 p0{}, p1{}, p2{}, p3{};
+        glm::vec3 stopTangent{};
+        float nextDistance = 0;
+        float sinceStop = 0, untilStop = 0;
+        float timeFromStop = 0, timeToStop = 0;
+        uint32_t arriveMs = 0, departMs = 0;
+    };
+    std::vector<Frame> frames_;
+    float speed_, acceleration_;
+    uint32_t durationMs_ = 0;
+};
+
 /// Owns and manages transport path data.
 class TransportPathRepository {
 public:
+    void loadRealmTimetable(const std::string& json);
+    [[nodiscard]] uint32_t realmTransportPeriod(uint32_t entry) const;
     TransportPathRepository() = default;
 
     // ── DBC loading ─────────────────────────────────────────
@@ -218,6 +257,8 @@ public:
 
 
 private:
+    bool hasRealmTimetable_ = false;
+    std::unordered_map<uint32_t, uint32_t> realmTransportPeriods_;
     std::unordered_map<uint32_t, PathEntry> paths_;
     // taxiPathId -> mapId -> world-coordinate path segment for that map.
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, PathEntry>> taxiPaths_;

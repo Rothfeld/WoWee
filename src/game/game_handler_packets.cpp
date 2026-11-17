@@ -1097,14 +1097,6 @@ void GameHandler::registerCoreOpcodes() {
     // ---- Batch 5: Teleport, taxi, BG, LFG, arena, movement relay, mail, bank, auction, quests ----
 
     // Teleport
-    dispatchTable_[Opcode::SMSG_TRANSFER_PENDING] = [](network::Packet& packet) {
-        uint32_t pendingMapId = packet.readUInt32();
-        if (packet.hasRemaining(8)) {
-            packet.readUInt32(); // transportEntry
-            packet.readUInt32(); // transportMapId
-        }
-        (void)pendingMapId;
-    };
     dispatchTable_[Opcode::SMSG_TRANSFER_ABORTED] = [this](network::Packet& packet) {
         // uint32 mapId + uint8 reason, and a further uint8 for exactly three of
         // them - the expansion level, the difficulty and the unique message.

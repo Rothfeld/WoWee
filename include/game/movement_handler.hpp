@@ -246,6 +246,7 @@ private:
     void handleMoveKnockBack(network::Packet& packet);
     void handleTeleportAck(network::Packet& packet);
     void handleNewWorld(network::Packet& packet);
+    void handleTransferPending(network::Packet& packet);
     void handleShowTaxiNodes(network::Packet& packet);
     void handleClientControlUpdate(network::Packet& packet);
     void handleActivateTaxiReply(network::Packet& packet);
@@ -283,6 +284,9 @@ private:
     // Heartbeat timing
     int heartbeatLogCount_ = 0;  // periodic position audit counter
     uint32_t lastAreaTriggerId_ = 0;
+    uint32_t pendingTransportDestinationMap_ = 0xffffffffu;
+    uint32_t pendingTransportOriginMap_ = 0xffffffffu;
+    uint32_t pendingTransferTransportEntry_ = 0;
     uint32_t postTransferReturnAreaTriggerId_ = 0;
     // Previous checkAreaTriggers() sample for swept-path testing (canonical
     // coords). Mounted speed covers ~3 yd per 0.25s check, enough to straddle

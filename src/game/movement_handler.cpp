@@ -236,6 +236,7 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::MSG_MOVE_TELEPORT] = [this](network::Packet& packet) { handleOtherPlayerMovement(packet); };
     table[Opcode::MSG_MOVE_TELEPORT_ACK] = [this](network::Packet& packet) { handleTeleportAck(packet); };
     table[Opcode::SMSG_NEW_WORLD] = [this](network::Packet& packet) { handleNewWorld(packet); };
+    table[Opcode::SMSG_TRANSFER_PENDING] = [this](network::Packet& packet) { handleTransferPending(packet); };
 
     // Taxi
     table[Opcode::SMSG_SHOWTAXINODES] = [this](network::Packet& packet) { handleShowTaxiNodes(packet); };
@@ -756,7 +757,9 @@ void MovementHandler::sendMovement(Opcode opcode) {
         float transportYawCanonical = 0.0f;
         if (owner_.getTransportManager()) {
             if (auto* tr = owner_.getTransportManager()->getTransport(owner_.playerTransportGuidRef()); tr) {
-                if (tr->hasServerYaw) {
+                if (!tr->isM2) {
+                    transportYawCanonical = core::coords::serverToCanonicalYaw(glm::eulerAngles(tr->rotation).z);
+                } else if (tr->hasServerYaw) {
                     transportYawCanonical = tr->serverYaw;
                 } else {
                     transportYawCanonical = glm::eulerAngles(tr->rotation).z;
@@ -838,12 +841,15 @@ void MovementHandler::sendMovement(Opcode opcode) {
     wireInfo.orientation = core::coords::canonicalToServerYaw(wireInfo.orientation);
 
     if (includeTransportInWire) {
-        glm::vec3 serverTransportPos = core::coords::canonicalToServer(
+        glm::vec3 serverTransportPos = owner_.getTransportManager()->transportLocalToServer(wireInfo.transportGuid,
             glm::vec3(wireInfo.transportX, wireInfo.transportY, wireInfo.transportZ));
         wireInfo.transportX = serverTransportPos.x;
         wireInfo.transportY = serverTransportPos.y;
         wireInfo.transportZ = serverTransportPos.z;
-        wireInfo.transportO = core::coords::normalizeAngleRad(-wireInfo.transportO);
+        const auto* transport = owner_.getTransportManager()->getTransport(wireInfo.transportGuid);
+        assert(transport);
+        if (transport->isM2)
+            wireInfo.transportO = core::coords::normalizeAngleRad(-wireInfo.transportO);
     }
 
     LOG_DEBUG("Sending movement packet: opcode=0x", std::hex,
@@ -1056,7 +1062,8 @@ network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counte
     wire.z = serverPos.z;
     if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
         glm::vec3 serverTransport =
-            core::coords::canonicalToServer(glm::vec3(wire.transportX, wire.transportY, wire.transportZ));
+            owner_.getTransportManager()->transportLocalToServer(wire.transportGuid,
+                glm::vec3(wire.transportX, wire.transportY, wire.transportZ));
         wire.transportX = serverTransport.x;
         wire.transportY = serverTransport.y;
         wire.transportZ = serverTransport.z;
@@ -1279,7 +1286,11 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         tLocalZ = packet.readFloat();
         tLocalO = packet.readFloat();
         if (flags2Size >= 1) {
-            /*uint32_t transportTime =*/ packet.readUInt32();
+            info.transportTime = packet.readUInt32();
+            LOG_DEBUG("Passenger transport clock guid=0x", std::hex, transportGuid,
+                      std::dec, " transportMs=", info.transportTime,
+                      " movementMs=", info.time, " world=(", info.x, ",", info.y,
+                      ",", info.z, ") local=(", tLocalX, ",", tLocalY, ",", tLocalZ, ")");
         }
         if (flags2Size >= 2) {
             /*int8_t transportSeat =*/ packet.readUInt8();
@@ -2103,6 +2114,18 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
     }
 }
 
+void MovementHandler::handleTransferPending(network::Packet& packet) {
+    if (packet.getRemainingSize() != 4 && packet.getRemainingSize() != 12)
+        throw std::invalid_argument("Invalid SMSG_TRANSFER_PENDING payload size");
+    pendingTransportDestinationMap_ = packet.readUInt32();
+    pendingTransferTransportEntry_ = 0;
+    pendingTransportOriginMap_ = 0xffffffffu;
+    if (packet.hasRemaining(8)) {
+        pendingTransferTransportEntry_ = packet.readUInt32();
+        pendingTransportOriginMap_ = packet.readUInt32();
+    }
+}
+
 void MovementHandler::handleNewWorld(network::Packet& packet) {
     if (!packet.hasRemaining(20)) {
         LOG_WARNING("SMSG_NEW_WORLD too short");
@@ -2114,16 +2137,28 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     float serverY = packet.readFloat();
     float serverZ = packet.readFloat();
     float orientation = packet.readFloat();
-    const bool crossMapTransportTransfer = owner_.isOnTransport() &&
-        mapId != owner_.getCurrentMapId();
+    const auto* currentTransport = owner_.getTransportManager()->getTransport(owner_.getPlayerTransportGuid());
+    const bool crossMapTransportTransfer = currentTransport &&
+        pendingTransferTransportEntry_ == currentTransport->entry &&
+        pendingTransferTransportEntry_ != 0 &&
+        pendingTransportDestinationMap_ == mapId &&
+        pendingTransportOriginMap_ == owner_.getCurrentMapId() && owner_.isOnTransport();
     if (crossMapTransportTransfer) {
         // While riding a cross-continent transport, SMSG_NEW_WORLD carries the
         // player's transport-local coordinates. They are not a world position
         // near map origin. Hold them until the same ship is registered on the
         // destination map, then compose them through its new transform.
         owner_.beginPlayerTransportWorldTransfer(
-            mapId, core::coords::serverToCanonical(glm::vec3(serverX, serverY, serverZ)));
+            mapId, owner_.getTransportManager()->serverToTransportLocal(
+                owner_.getPlayerTransportGuid(), glm::vec3(serverX, serverY, serverZ)));
+    } else {
+        // A portal, summon or GM teleport off a ship carries world coordinates.
+        // Waiting for that ship on the destination map freezes local controls.
+        owner_.clearPendingPlayerTransportWorldTransfer();
+        owner_.clearPlayerTransport();
     }
+    pendingTransferTransportEntry_ = 0;
+    pendingTransportDestinationMap_ = pendingTransportOriginMap_ = 0xffffffffu;
     const uint32_t transferAreaTriggerId = lastAreaTriggerId_;
     lastAreaTriggerId_ = 0;
     postTransferReturnAreaTriggerId_ = findKnownReturnAreaTrigger(transferAreaTriggerId);
