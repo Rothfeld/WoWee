@@ -1,4 +1,5 @@
 #include "rendering/spell_visual_system.hpp"
+#include "rendering/aura_marker_visibility.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/animation_controller.hpp"
@@ -520,10 +521,12 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
 }
 
 void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
-                                       const std::vector<uint32_t>& visualIds) {
+                                       const std::vector<uint32_t>& visualIds,
+                                       bool observerConcealed) {
     if (!m2Renderer_ || !attachInstanceId) return;
     auto found = unitAuraVisuals_.find(attachInstanceId);
-    if (found != unitAuraVisuals_.end() && found->second == visualIds) return;
+    if (found != unitAuraVisuals_.end() && found->second.ids == visualIds &&
+        found->second.observerConcealed == observerConcealed) return;
     if (found == unitAuraVisuals_.end() && visualIds.empty()) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     auto* characters = renderer_->getCharacterRenderer();
@@ -532,31 +535,37 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->attachInstanceId == attachInstanceId && it->auraVisualId &&
-            std::find(visualIds.begin(), visualIds.end(), it->auraVisualId) == visualIds.end()) {
+            (std::find(visualIds.begin(), visualIds.end(), it->auraVisualId) == visualIds.end() ||
+             (it->concealmentDetectionMarker && !observerConcealed))) {
             m2Renderer_->removeInstance(it->instanceId);
             it = activeSpellVisuals_.erase(it);
         } else ++it;
     }
-    const auto previous = found == unitAuraVisuals_.end() ? std::vector<uint32_t>{} : found->second;
+    const auto previous = found == unitAuraVisuals_.end() ? std::vector<uint32_t>{} : found->second.ids;
+    const bool revealMarkers = observerConcealed &&
+        (found == unitAuraVisuals_.end() || !found->second.observerConcealed);
     for (uint32_t visual : visualIds) {
-        if (std::find(previous.begin(), previous.end(), visual) != previous.end()) continue;
+        const bool existing = std::find(previous.begin(), previous.end(), visual) != previous.end();
+        if (existing && !revealMarkers) continue;
         const auto kit = stateKits_.find(visual);
         if (kit == stateKits_.end() || !kit->second) continue;
         const auto effects = kitEffects_.find(kit->second);
         if (effects == kitEffects_.end()) continue;
         for (const auto& effect : effects->second) {
+            const bool marker = isConcealmentDetectionMarker(effect.path);
+            if ((marker && !observerConcealed) || (existing && !marker)) continue;
             const uint32_t model = loadSpellModel(effect.path);
             if (!model) { LOG_ERROR("Aura model unavailable: ", effect.path); continue; }
             const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f);
             if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
             activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
-                false, effect.attachment, attachInstanceId, false, visual});
+                false, effect.attachment, attachInstanceId, false, visual, marker});
             LOG_INFO("Aura visual: owner=", attachInstanceId, " visual=", visual,
                      " kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
         }
     }
     if (visualIds.empty()) unitAuraVisuals_.erase(attachInstanceId);
-    else unitAuraVisuals_[attachInstanceId] = visualIds;
+    else unitAuraVisuals_[attachInstanceId] = {visualIds, observerConcealed};
 }
 
 void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs) {

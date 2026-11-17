@@ -1849,7 +1849,16 @@ bool EntitySpawner::loadRemoteMountModel(uint32_t displayId, uint32_t& modelId,
         }
     }
 
+    const float mountScale = creatureDisplayScale(displayId) * creatureModelScale(displayId);
     if (const auto* md = cr->getModelData(modelId); md && !md->vertices.empty()) {
+        for (const auto& attachment : md->attachments) {
+            if (attachment.id == 0) { // MountMain, authored rider seat.
+                riderHeight = attachment.position.z * mountScale;
+                return modelId != 0;
+            }
+        }
+        LOG_WARNING("Remote mount lacks MountMain attachment; estimating seat from bounds: displayId=",
+                    displayId, " model=", modelPath);
         float minZ = std::numeric_limits<float>::max();
         float maxZ = -std::numeric_limits<float>::max();
         for (const auto& vertex : md->vertices) {
@@ -1863,6 +1872,7 @@ bool EntitySpawner::loadRemoteMountModel(uint32_t displayId, uint32_t& modelId,
             if (riderHeight < 1.0f) riderHeight = 1.8f;
         }
     }
+    riderHeight *= mountScale;
     return modelId != 0;
 }
 
@@ -1906,7 +1916,8 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
 
         glm::vec3 pos(0.0f);
         cr->getInstancePosition(riderInstance, pos);
-        uint32_t mountInstance = cr->createInstance(modelId, pos, glm::vec3(0.0f), 1.0f);
+        const float mountScale = creatureDisplayScale(displayId) * creatureModelScale(displayId);
+        uint32_t mountInstance = cr->createInstance(modelId, pos, glm::vec3(0.0f), mountScale);
         if (mountInstance != 0) {
             cr->setInstanceCreatureMaterialRules(mountInstance, true);
             const bool moving = gameHandler_ && [&] {

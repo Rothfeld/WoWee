@@ -3,6 +3,7 @@
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/creature_locomotion.hpp"
 #include "core/game_object_animation_policy.hpp"
+#include "rendering/aura_marker_visibility.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "rendering/animation/stand_pose.hpp"
 #include <cstring>
@@ -33,6 +34,19 @@ TEST_CASE("Emote procedures retain stand states and seated gesture eligibility",
     CHECK(emoteAllowsStandState(1, 0));
 }
 
+TEST_CASE("Detection eyes use observer concealment without hiding unrelated aura art", "[detection-marker]") {
+    using namespace wowee::rendering;
+    CHECK(isConcealmentDetectionMarker("spells\\detectstealth_state_head.m2"));
+    CHECK(isConcealmentDetectionMarker("Spells/DetectStealth_State_Head.mdx"));
+    CHECK_FALSE(isConcealmentDetectionMarker("Spells/Sleep_State_Head.m2"));
+    CHECK_FALSE(isConcealmentDetectionMarker("spells/arcanepower_state_chest.m2"));
+    const uint32_t stealth[] = {16, 0, 0};
+    const uint32_t invisibility[] = {0, 18, 19};
+    const uint32_t detector[] = {19, 17, 0};
+    CHECK(auraConcealsObserver(stealth));
+    CHECK(auraConcealsObserver(invisibility));
+    CHECK_FALSE(auraConcealsObserver(detector));
+}
 
 TEST_CASE("Readable books retain authored poses when template metadata arrives", "[game-object-pose]") {
     using wowee::core::gameObjectPoseIsStateDriven;

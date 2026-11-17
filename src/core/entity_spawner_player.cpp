@@ -1,4 +1,5 @@
 #include "rendering/animation/stand_pose.hpp"
+#include "rendering/aura_marker_visibility.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/helm_visual.hpp"
 #include "core/geoset_rules.hpp"
@@ -924,6 +925,14 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         std::vector<uint32_t> auraVisuals;
         gameHandler_->loadSpellNameCache();
         const auto& spells = gameHandler_->spellNameCacheRef();
+        bool observerConcealed = false;
+        for (const auto& aura : gameHandler_->getPlayerAuras()) {
+            const auto spell = spells.find(aura.spellId);
+            if (spell != spells.end() && rendering::auraConcealsObserver(spell->second.effectAuraIds)) {
+                observerConcealed = true;
+                break;
+            }
+        }
         auto addAura = [&](uint32_t spellId) {
             const auto spell = spells.find(spellId);
             if (spell != spells.end() && spell->second.spellVisualId)
@@ -938,7 +947,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         }
         std::sort(auraVisuals.begin(), auraVisuals.end());
         auraVisuals.erase(std::unique(auraVisuals.begin(), auraVisuals.end()), auraVisuals.end());
-        visuals->syncAuraVisuals(instanceId, auraVisuals);
+        visuals->syncAuraVisuals(instanceId, auraVisuals, observerConcealed);
     }
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);

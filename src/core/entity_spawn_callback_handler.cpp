@@ -153,6 +153,10 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                 // don't reset it here or every server movement packet restarts the
                 // run cycle from frame 0, causing visible stutter.
                 if (!isPlayer) {
+                    // Mounted NPCs share the per-frame mount/rider state machine.
+                    // Mutating wasMoving here would consume its transition and
+                    // leave the rider walking instead of seated on the mount.
+                    if (entitySpawner_.getRemotePlayerMount(guid)) return;
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     auto* cr = renderer_.getCharacterRenderer();
                     bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
