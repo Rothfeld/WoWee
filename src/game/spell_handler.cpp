@@ -479,9 +479,23 @@ std::string spellGlobalStringLine(GameHandler& owner, const char* global, uint32
 // otherwise, as 2.4.3 chose for Sinister Strike, Counterattack, Pick Lock
 // (ability) and Fireball, Raptor Strike, Life Tap (spell): neither the school
 // nor the power type decides it.
+//
+// A tradeskill recipe (attribute 0x20, also with 0x10) is ERR_LEARN_RECIPE_S
+// with the bare name: "You have learned how to create a new item: Crippling
+// Poison." for Crippling Poison (Rank 1), Charred Wolf Meat, Smelt Silver
+// (_experiments/20261117T203052Z.trainer_skill_headers).
 std::string learnedSpellText(GameHandler& owner, uint32_t spellId) {
     const auto& cache = owner.spellNameCacheRef();
     const auto it = cache.find(spellId);
+    if (it != cache.end() && (it->second.attr & 0x20u)) {
+        const std::string pattern = owner.globalString("ERR_LEARN_RECIPE_S");
+        const std::string& name = it->second.name;
+        if (pattern.empty() || name.empty()) {
+            LOG_ERROR("No ERR_LEARN_RECIPE_S line for spell ", spellId, ": pattern \"", pattern, "\", name \"", name, "\"");
+            return {};
+        }
+        return formatGlobalString(pattern, {name});
+    }
     const bool ability = it != cache.end() && (it->second.attr & 0x10u);
     return spellGlobalStringLine(owner, ability ? "ERR_LEARN_ABILITY_S" : "ERR_LEARN_SPELL_S", spellId);
 }
@@ -2452,6 +2466,7 @@ void SpellHandler::handleInitialSpells(network::Packet& packet) {
     if (!owner_.getPacketParsers()->parseInitialSpells(packet, data)) return;
 
     knownSpells_ = {data.spellIds.begin(), data.spellIds.end()};
+    supercededSpells_.clear();
 
     LOG_DEBUG("Initial spells include: 527=", knownSpells_.count(527u),
               " 988=", knownSpells_.count(988u), " 1180=", knownSpells_.count(1180u));
@@ -3218,33 +3233,37 @@ void SpellHandler::handleLearnedSpell(network::Packet& packet) {
     // LEARNED_SPELL_IN_TAB carries the 1-based tab the spell went to (2.4.3:
     // Pick Lock 1, Sinister Strike 3 on a rogue), and neither it nor
     // SPELLS_CHANGED fires for a spell without a spellbook entry (a talent rank).
-    const bool listed = isListedInSpellbook(spellId);
-    if (!alreadyKnown && listed && owner_.addonEventCallbackRef()) {
-        if (const int tab = spellBookTabIndexOf(spellId); tab > 0)
-            owner_.addonEventCallbackRef()("LEARNED_SPELL_IN_TAB", {std::to_string(tab)});
-        owner_.addonEventCallbackRef()("SPELLS_CHANGED", {});
+    // 2.4.3 order (_experiments/20261117T203052Z.trainer_skill_headers):
+    // the learn line, SPELLS_CHANGED, LEARNED_SPELL_IN_TAB <tab>, then
+    // TRAINER_UPDATE while a trainer is open - also for a rank whose line
+    // SMSG_SUPERCEDED_SPELL already printed, so its next rank turns green.
+    // Talents print nothing; a recipe has no spellbook entry and raises no
+    // spellbook events.
+    const auto& fire = owner_.addonEventCallbackRef();
+    if (!alreadyKnown && !isTalentSpell) {
+        if (const std::string text = learnedSpellText(owner_, spellId); !text.empty())
+            owner_.addSystemChatMessage(text);
     }
-    if (!alreadyKnown && owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("UPDATE_SHAPESHIFT_FORMS", {});
-        // The mounts and critters list is built from the spellbook, so a new
-        // spell can add to it. petpaperdollframe refreshes on this and on
-        // nothing else, which is why the tab stayed as it was first drawn.
-        owner_.addonEventCallbackRef()("COMPANION_LEARNED", {});
-        // A crafting window's recipes are the spells that just changed, and
-        // it refreshes on its own event rather than on that one.
-        if (craftingWindowOpen_) owner_.addonEventCallbackRef()("TRADE_SKILL_UPDATE", {});
-    }
-
-    if (isTalentSpell) return;
-
-    if (!alreadyKnown) {
-        const std::string& name = owner_.getSpellName(spellId);
-        if (!name.empty()) {
-            owner_.addSystemChatMessage("You have learned a new spell: " + name + ".");
-        } else {
-            owner_.addSystemChatMessage("You have learned a new spell.");
+    if (!alreadyKnown && fire) {
+        if (isListedInSpellbook(spellId)) {
+            fire("SPELLS_CHANGED", {});
+            if (const int tab = spellBookTabIndexOf(spellId); tab > 0)
+                fire("LEARNED_SPELL_IN_TAB", {std::to_string(tab)});
         }
+        // Only a form (an APPLY_AURA 36 effect: Stealth, Bear Form, Battle
+        // Stance) changes the stance bar; 2.4.3 raises this for Stealth and
+        // not for Garrote, Parry or Fireball.
+        const auto& cache = owner_.spellNameCacheRef();
+        const auto entry = cache.find(spellId);
+        if (entry != cache.end() &&
+            std::find(std::begin(entry->second.effectAuraIds), std::end(entry->second.effectAuraIds), 36u) !=
+                std::end(entry->second.effectAuraIds)) {
+            fire("UPDATE_SHAPESHIFT_FORMS", {});
+        }
+        fire("COMPANION_LEARNED", {});
+        if (craftingWindowOpen_) fire("TRADE_SKILL_UPDATE", {});
     }
+    if (fire && owner_.isTrainerWindowOpen()) fire("TRAINER_UPDATE", {});
 }
 
 void SpellHandler::handleRemovedSpell(network::Packet& packet) {
@@ -3257,6 +3276,7 @@ void SpellHandler::handleRemovedSpell(network::Packet& packet) {
     if (packet.getRemainingSize() < minSz) return;
     uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
     knownSpells_.erase(spellId);
+    supercededSpells_.erase(spellId);
     syncPreWotlkTalentsFromKnownSpells();
     LOG_INFO("Removed spell: ", spellId);
     // A spell with a spellbook entry is announced as 2.4.3 does - "You have
@@ -3298,7 +3318,8 @@ void SpellHandler::handleSupercededSpell(network::Packet& packet) {
     uint32_t oldSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
     uint32_t newSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
 
-    knownSpells_.erase(oldSpellId);
+    if (knownSpells_.erase(oldSpellId)) supercededSpells_.insert(oldSpellId);
+    supercededSpells_.erase(newSpellId);
 
     const bool newSpellAlreadyKnown = knownSpells_.count(newSpellId) > 0;
 
@@ -3757,6 +3778,7 @@ void SpellHandler::resetCastState() {
 void SpellHandler::resetAllState() {
     autoRepeatSpellId_ = 0;
     knownSpells_.clear();
+    supercededSpells_.clear();
     spellCooldowns_.clear();
     spellCooldownTotals_.clear();
     playerAuras_.clear();

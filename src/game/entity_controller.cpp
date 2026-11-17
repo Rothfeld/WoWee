@@ -1508,8 +1508,12 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
             uint64_t oldMoney = owner_.playerMoneyCopperRef();
             owner_.playerMoneyCopperRef() = val;
             LOG_DEBUG("Money ", isCreate ? "set from update fields: " : "updated via VALUES: ", val, " copper");
-            if (val != oldMoney)
+            if (val != oldMoney) {
+                // The original refreshes an open trainer (affordability) just
+                // before PLAYER_MONEY.
+                if (owner_.isTrainerWindowOpen()) pendingEvents_.emit("TRAINER_UPDATE", {});
                 pendingEvents_.emit("PLAYER_MONEY", {});
+            }
         }
         else if (pfi.honor != 0xFFFF && key == pfi.honor) {
             owner_.playerHonorPointsRef() = val;

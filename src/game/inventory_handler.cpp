@@ -5855,15 +5855,10 @@ void InventoryHandler::handleTrainerBuySucceeded(network::Packet& packet) {
     if (owner_.getSpellHandler() && !owner_.getSpellHandler()->hasKnownSpell(spellId)) {
         owner_.getSpellHandler()->addKnownSpell(spellId);
     }
-    const std::string& name = owner_.getSpellName(spellId);
-    if (!name.empty())
-        owner_.addSystemChatMessage("You have learned " + name + ".");
-    else
-        owner_.addSystemChatMessage("Spell learned.");
+    // The learn line and the trainer refresh come with SMSG_LEARNED_SPELL,
+    // which the server sends first; the original prints nothing more here.
     if (auto* ac = owner_.services().audioCoordinator)
         if (auto* sfx = ac->getUiSoundManager()) sfx->playQuestActivate();
-    owner_.fireAddonEvent("TRAINER_UPDATE", {});
-    owner_.fireAddonEvent("SPELLS_CHANGED", {});
 }
 
 void InventoryHandler::handleTrainerBuyFailed(network::Packet& packet) {

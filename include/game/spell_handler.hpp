@@ -194,6 +194,10 @@ public:
 
     // Known spells mutation (formerly accessed via friend)
     void addKnownSpell(uint32_t spellId) { knownSpells_.insert(spellId); }
+    /// Known, or replaced in the spellbook by a higher rank.
+    [[nodiscard]] bool hasOrSupercededSpell(uint32_t spellId) const {
+        return knownSpells_.count(spellId) != 0 || supercededSpells_.count(spellId) != 0;
+    }
     [[nodiscard]] bool hasKnownSpell(uint32_t spellId) const { return knownSpells_.count(spellId) > 0; }
 
     // Target aura mutation (formerly accessed via friend)
@@ -497,6 +501,10 @@ private:
 
     // --- Spell state ---
     std::unordered_set<uint32_t> knownSpells_;
+    // Ranks SMSG_SUPERCEDED_SPELL replaced in the spellbook. The player still
+    // has them (CMaNGOS keeps them inactive); the 2.4.3 trainer lists them as
+    // used, Garrote (Rank 1) after Rank 2 is learned.
+    std::unordered_set<uint32_t> supercededSpells_;
     std::unordered_map<uint32_t, float> spellCooldowns_;    // spellId -> remaining seconds
     // spellId -> the length the cooldown had when it began. Kept beside the
     // remaining time rather than derived from it because GetSpellCooldown is

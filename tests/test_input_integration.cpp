@@ -1705,6 +1705,16 @@ TEST_CASE_METHOD(Integration, "Learning a spell refreshes stance bar", "[learned
     session.handler().setAddonEventCallback([&](const std::string& name, const std::vector<std::string>&) {
         events.push_back(name);
     });
+    // Stealth: Spell.dbc EffectApplyAuraName 36 (shapeshift), 16, 33.
+    session.handler().spellNameCacheLoadedRef() = true;
+    auto& stealth = session.handler().spellNameCacheRef()[1784];
+    stealth.name = "Stealth";
+    stealth.effectAuraIds[0] = 36;
+    session.handler().spellNameCacheRef()[703].name = "Garrote";
+    wowee::network::Packet garrote(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_LEARNED_SPELL));
+    garrote.writeUInt32(703);
+    session.receive(garrote);
+    CHECK(std::count(events.begin(), events.end(), "UPDATE_SHAPESHIFT_FORMS") == 0);
     wowee::network::Packet packet(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_LEARNED_SPELL));
     packet.writeUInt32(1784);
     session.receive(packet);
