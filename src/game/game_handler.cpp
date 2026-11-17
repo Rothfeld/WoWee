@@ -3001,6 +3001,21 @@ bool GameHandler::canInteractWithGameObject(const GameObject& object) const {
     return gameObjectReactionToPlayer(object) >= 4;
 }
 
+void GameHandler::notePlayerFactionTemplate(uint32_t factionTemplateId) {
+    if (factionTemplateId == 0 || factionTemplateId == appliedPlayerFactionTemplate_) return;
+    if (!playerFactionTemplateCallback_) {
+        LOG_ERROR("Player faction template ", factionTemplateId,
+                  " arrived with no faction map builder registered");
+        return;
+    }
+    LOG_INFO("Player faction template ", appliedPlayerFactionTemplate_, " -> ", factionTemplateId,
+             "; rebuilding unit reactions");
+    playerFactionTemplateCallback_(factionTemplateId);
+    if (appliedPlayerFactionTemplate_ != factionTemplateId)
+        throw std::runtime_error("Faction map rebuild did not apply the player's faction template");
+    refreshUnitHostility();
+}
+
 void GameHandler::refreshUnitHostility() {
     for (const auto& [guid, entity] : getEntityManager().getEntities()) {
         if (!entity || !entity->isUnit()) continue;

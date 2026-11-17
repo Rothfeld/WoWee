@@ -310,7 +310,7 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
     if (addons::storedCVarValue("assistAttack", "0") != "0") {
         auto entity = owner_.getEntityManager().getEntity(targetGuid);
         if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
-            if (!unit->isHostile() && !isAggressiveTowardPlayer(targetGuid)) {
+            if (!owner_.canPlayerAttackUnit(*unit) && !isAggressiveTowardPlayer(targetGuid)) {
                 const uint64_t theirTarget = unitTargetGuid(entity);
                 auto their = owner_.getEntityManager().getEntity(theirTarget);
                 auto* theirUnit = dynamic_cast<Unit*>(their.get());

@@ -5897,7 +5897,18 @@ void Application::refreshPlayerCharacterModel() {
 
 void Application::buildFactionHostilityMap(uint8_t playerRace) {
     if (!assetManager || !gameHandler) return;
+    // Until the player's own UNIT_FIELD_FACTIONTEMPLATE arrives, the race's
+    // starting template; after it, and whenever it changes (35 while a game
+    // master), the live one.
+    gameHandler->setAppliedPlayerFactionTemplate(0);
     game::buildFactionHostilityMap(*assetManager, *gameHandler, playerRace);
+    gameHandler->setPlayerFactionTemplateCallback([this, playerRace](uint32_t factionTemplateId) {
+        game::buildFactionHostilityMap(*assetManager, *gameHandler, playerRace, factionTemplateId);
+    });
+    if (const auto player = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid())) {
+        gameHandler->notePlayerFactionTemplate(
+            player->getField(game::fieldIndex(game::UF::UNIT_FIELD_FACTIONTEMPLATE)));
+    }
 }
 
 // Render bounds/position queries - delegates to EntitySpawner

@@ -1652,6 +1652,21 @@ public:
     using VehicleStateCallback = std::function<void(bool entered, uint32_t vehicleId)>;
     void setVehicleStateCallback(VehicleStateCallback cb) { vehicleStateCallback_ = std::move(cb); }
 
+    /// Rebuilds the faction maps for a player faction template. A player's
+    /// template is not fixed by race: the server sets 35 for a game master
+    /// (Player::SetGameMaster), and every reaction is relative to it.
+    using PlayerFactionTemplateCallback = std::function<void(uint32_t factionTemplateId)>;
+    void setPlayerFactionTemplateCallback(PlayerFactionTemplateCallback cb) {
+        playerFactionTemplateCallback_ = std::move(cb);
+    }
+    /// The template the faction maps were built for.
+    void setAppliedPlayerFactionTemplate(uint32_t factionTemplateId) {
+        appliedPlayerFactionTemplate_ = factionTemplateId;
+    }
+    /// The player's UNIT_FIELD_FACTIONTEMPLATE arrived or changed: rebuild the
+    /// maps for it and re-judge every unit.
+    void notePlayerFactionTemplate(uint32_t factionTemplateId);
+
     // Faction hostility map (populated from FactionTemplate.dbc by Application)
     void setFactionHostileMap(std::unordered_map<uint32_t, bool> map) { factionHostileMap_ = std::move(map); }
     void setFactionGroupMasks(std::unordered_map<uint32_t, uint32_t> masks) {
@@ -4754,6 +4769,8 @@ private:
 
     std::unordered_map<uint32_t, uint32_t> factionGroupMasks_;
     // Faction hostility lookup (populated from FactionTemplate.dbc)
+    PlayerFactionTemplateCallback playerFactionTemplateCallback_;
+    uint32_t appliedPlayerFactionTemplate_ = 0;
     std::unordered_map<uint32_t, bool> factionHostileMap_;
     std::unordered_map<uint32_t, bool> factionFriendlyMap_;
     std::unordered_map<uint32_t, int> factionObjectReactionMap_;

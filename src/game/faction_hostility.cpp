@@ -9,7 +9,25 @@
 namespace wowee {
 namespace game {
 
-void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler& gameHandler, uint8_t playerRace) {
+uint32_t playerRaceFactionTemplate(uint8_t playerRace) {
+    // Human=1, Orc=2, Dwarf=3, NightElf=4, Undead=5, Tauren=6, Gnome=115, Troll=116, BloodElf=1610, Draenei=1629
+    switch (playerRace) {
+        case 1: return 1;
+        case 2: return 2;
+        case 3: return 3;
+        case 4: return 4;
+        case 5: return 5;
+        case 6: return 6;
+        case 7: return 115;
+        case 8: return 116;
+        case 10: return 1610;
+        case 11: return 1629;
+        default: return 0;
+    }
+}
+
+void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler& gameHandler,
+                              uint8_t playerRace, uint32_t playerFtId) {
     if (!assetManager.isInitialized()) return;
 
     auto ftDbc = assetManager.loadDBC("FactionTemplate.dbc");
@@ -26,21 +44,10 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
         playerRaceMask = 0x400;  // Draenei
     }
 
-    // Race -> player faction template ID
-    // Human=1, Orc=2, Dwarf=3, NightElf=4, Undead=5, Tauren=6, Gnome=115, Troll=116, BloodElf=1610, Draenei=1629
-    uint32_t playerFtId = 0;
-    switch (playerRace) {
-        case 1: playerFtId = 1; break;     // Human
-        case 2: playerFtId = 2; break;     // Orc
-        case 3: playerFtId = 3; break;     // Dwarf
-        case 4: playerFtId = 4; break;     // Night Elf
-        case 5: playerFtId = 5; break;     // Undead
-        case 6: playerFtId = 6; break;     // Tauren
-        case 7: playerFtId = 115; break;   // Gnome
-        case 8: playerFtId = 116; break;   // Troll
-        case 10: playerFtId = 1610; break; // Blood Elf
-        case 11: playerFtId = 1629; break; // Draenei
-        default: playerFtId = 1; break;
+    if (playerFtId == 0) playerFtId = playerRaceFactionTemplate(playerRace);
+    if (playerFtId == 0) {
+        LOG_ERROR("No faction template for player race ", static_cast<int>(playerRace));
+        return;
     }
 
     // The factions a player has a standing with, and whether they start at war.
@@ -98,13 +105,6 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     const uint32_t ftFriend = ftL ? (*ftL)["FriendGroup"] : 4;
     const uint32_t ftEnemy = ftL ? (*ftL)["EnemyGroup"] : 5;
     const uint32_t ftEnemy0 = ftL ? (*ftL)["Enemy0"] : 6;
-    uint32_t playerFriendGroup = 0;
-    uint32_t playerEnemyGroup = 0;
-    uint32_t playerFactionId = 0;
-    // Kept apart from playerFriendGroup, which folds the two together: the
-    // friendly test below needs to ask each direction on its own.
-    uint32_t playerFactionGroup = 0;
-    // The player's template as the "other" side of a game object's reaction.
     const uint32_t ftFriend0 = ftL ? (*ftL)["Friend0"] : 0xFFFFFFFF;
     if (ftFriend0 == 0xFFFFFFFF)
         throw std::runtime_error("dbc_layouts.json lacks FactionTemplate Friend0; deploy current expansion metadata");
@@ -122,15 +122,17 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
         return row;
     };
     FactionTemplateRow playerTemplate;
+    bool playerTemplateFound = false;
     for (uint32_t i = 0; i < ftDbc->getRecordCount(); i++) {
         if (ftDbc->getUInt32(i, ftID) == playerFtId) {
             playerTemplate = templateRow(i);
-            playerFriendGroup = ftDbc->getUInt32(i, ftFriend) | ftDbc->getUInt32(i, ftFG);
-            playerFactionGroup = ftDbc->getUInt32(i, ftFG);
-            playerEnemyGroup = ftDbc->getUInt32(i, ftEnemy);
-            playerFactionId = ftDbc->getUInt32(i, ftFaction);
+            playerTemplateFound = true;
             break;
         }
+    }
+    if (!playerTemplateFound) {
+        LOG_ERROR("Player faction template ", playerFtId, " absent from FactionTemplate.dbc");
+        return;
     }
 
     // Build hostility map for each faction template
@@ -145,49 +147,25 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     // Each template whose faction carries a standing, by the server's index for
     // that standing, so the live at-war flag can be asked for later.
     std::unordered_map<uint32_t, uint32_t> templateRepList;
-    // What a game object of each template thinks of the player. One
-    // direction only, unlike the symmetric map above.
+    // What a game object of each template thinks of the player: the same
+    // template rule, without the standing override below.
     std::unordered_map<uint32_t, int> objectReaction;
     for (uint32_t i = 0; i < ftDbc->getRecordCount(); i++) {
         uint32_t id = ftDbc->getUInt32(i, ftID);
-        objectReaction[id] = factionTemplateReaction(templateRow(i), playerTemplate);
         uint32_t parentFaction = ftDbc->getUInt32(i, ftFaction);
-        uint32_t factionGroup = ftDbc->getUInt32(i, ftFG);
-        groupMasks[ftDbc->getUInt32(i, ftID)] = factionGroup;
-        uint32_t friendGroup = ftDbc->getUInt32(i, ftFriend);
-        uint32_t enemyGroup = ftDbc->getUInt32(i, ftEnemy);
+        groupMasks[id] = ftDbc->getUInt32(i, ftFG);
 
-        // 1. Symmetric group check
-        bool hostile = (enemyGroup & playerFriendGroup) != 0
-                    || (factionGroup & playerEnemyGroup) != 0;
+        // How a unit of this template regards the player: the template rule
+        // of CGUnit_C::UnitReaction (CMaNGOS GetFactionReaction), unit first.
+        // Kobold Vermin (25, monster group, no enemy mask) is neutral to a
+        // human, as build 8606 colours it; a Defias Thug (17, enemy mask
+        // player) is hostile to a human and neutral to a game master (35).
+        const int reaction = factionTemplateReaction(templateRow(i), playerTemplate);
+        objectReaction[id] = reaction;
+        bool hostile = reaction == 2;
+        bool friendly = reaction == 5;
 
-        // 2. Monster factionGroup bit (8)
-        if (!hostile && (factionGroup & 8) != 0) {
-            hostile = true;
-        }
-
-        // 3. Individual enemy faction IDs
-        if (!hostile && playerFactionId > 0) {
-            for (uint32_t e = ftEnemy0; e <= ftEnemy0 + 3; e++) {
-                if (ftDbc->getUInt32(i, e) == playerFactionId) {
-                    hostile = true;
-                    break;
-                }
-            }
-        }
-
-        // 4. If explicitly friendly (friendGroup includes player), override to non-hostile
-        if (hostile && (friendGroup & playerFriendGroup) != 0) {
-            hostile = false;
-        }
-
-        // Friendly is mutual regard between the two groups, asked in both
-        // directions, and never true for something already hostile.
-        bool friendly = !hostile &&
-            (((friendGroup & playerFactionGroup) != 0) ||
-             ((factionGroup & playerFriendGroup) != 0));
-
-        // 5. A faction with a standing overrides all of it: at war is hostile,
+        // A faction with a standing overrides all of it: at war is hostile,
         // anything else friendly. See repFactions above.
         if (auto rep = repFactions.find(parentFaction); rep != repFactions.end()) {
             hostile = rep->second.atWar;
@@ -210,9 +188,9 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     gameHandler.setFactionFriendlyMap(std::move(friendlyMap));
     gameHandler.setFactionHostileMap(std::move(factionMap));
     gameHandler.setFactionObjectReactionMap(std::move(objectReaction));
+    gameHandler.setAppliedPlayerFactionTemplate(playerFtId);
     LOG_INFO("Faction hostility for race ", static_cast<int>(playerRace), " (FT ", playerFtId, "): ",
-        hostileCount, "/", ftDbc->getRecordCount(),
-        " hostile (friendGroup=0x", std::hex, playerFriendGroup, ", enemyGroup=0x", playerEnemyGroup, std::dec, ")");
+        hostileCount, "/", ftDbc->getRecordCount(), " hostile");
 }
 
 } // namespace game

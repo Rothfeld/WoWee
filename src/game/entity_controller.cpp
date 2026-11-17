@@ -2435,6 +2435,10 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
+    if (block.guid == owner_.getPlayerGuid()) {
+        if (const auto ft = block.fields.find(ufi.faction); ft != block.fields.end())
+            owner_.notePlayerFactionTemplate(ft->second);
+    }
 
     const auto duelTeam = fieldIndex(UF::PLAYER_DUEL_TEAM);
     const auto duelArbiter = fieldIndex(UF::PLAYER_DUEL_ARBITER);
@@ -2689,6 +2693,10 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
 
     // Either duellist can arrive first on reconnect. Creating the local player
     // completes the pair and must refresh opponents that already exist.
+    if (block.guid == owner_.getPlayerGuid()) {
+        const auto ft = block.fields.find(fieldIndex(UF::UNIT_FIELD_FACTIONTEMPLATE));
+        if (ft != block.fields.end()) owner_.notePlayerFactionTemplate(ft->second);
+    }
     if (block.objectType == ObjectType::PLAYER) owner_.refreshUnitHostility();
 
     flushPendingEvents();

@@ -186,7 +186,7 @@ uint64_t targetGuidForUseItem(GameHandler& owner, const ItemQueryResponseData* i
             auto entity = owner.getEntityManager().getEntity(target);
             if (auto unit = std::dynamic_pointer_cast<Unit>(entity)) {
                 if (spellclass::requiresFriendlyTarget(aim))      allowed = !unit->isHostile();
-                else if (aim == spellclass::kImplicitTargetEnemy) allowed = unit->isHostile();
+                else if (aim == spellclass::kImplicitTargetEnemy) allowed = owner.canPlayerAttackUnit(*unit);
             }
             if (allowed) return target;
         }

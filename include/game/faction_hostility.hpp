@@ -11,9 +11,9 @@ namespace game {
 class GameHandler;
 
 // Builds the per-FactionTemplate hostility map from FactionTemplate.dbc/
-// Faction.dbc (reaction-group bitmasks, explicit enemy faction IDs, and
-// Faction.dbc base reputation - the same signals CMaNGOS uses server-side)
-// and installs it via GameHandler::setFactionHostileMap().
+// Faction.dbc - each template's reaction to the player's template
+// (factionTemplateReaction) and Faction.dbc starting standings - and
+// installs it via GameHandler::setFactionHostileMap().
 //
 // GameHandler::isHostileFaction() defaults an unrecognized faction template
 // ID to hostile=true (a reasonable default once the map is actually
@@ -53,7 +53,14 @@ inline int factionTemplateReaction(const FactionTemplateRow& self, const Faction
     return kNeutral;
 }
 
-void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler& gameHandler, uint8_t playerRace);
+/// The faction template a character of this race starts with; 0 for an
+/// unknown race.
+uint32_t playerRaceFactionTemplate(uint8_t playerRace);
+
+/// Builds the maps for the player's faction template `playerFtId`, or the
+/// race's starting template when it is 0. Reputation starts follow the race.
+void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler& gameHandler,
+                              uint8_t playerRace, uint32_t playerFtId = 0);
 
 } // namespace game
 } // namespace wowee

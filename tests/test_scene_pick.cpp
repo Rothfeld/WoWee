@@ -252,3 +252,26 @@ TEST_CASE("Game object faction reaction follows the client's template rule", "[q
     CHECK(factionTemplateReaction(hordeBanner, dwarf) == 2);
     CHECK(factionTemplateReaction(hordeBanner, orc) == 5);
 }
+
+// Units use the same rule, unit first, against the player's live template.
+// Build 8606 colours Kobold Vermin and Young Wolf yellow for a human; a game
+// master (template 35, Player::SetGameMaster) sees a Defias Thug yellow too
+// (20261117T163000Z.unit_reaction).
+TEST_CASE("Unit reaction follows the template rule against the player's live template", "[faction]") {
+    using wowee::game::FactionTemplateRow;
+    using wowee::game::factionTemplateReaction;
+    const FactionTemplateRow human{.id = 1, .faction = 1, .factionGroup = 3, .friendGroup = 2, .enemyGroup = 12};
+    const FactionTemplateRow dwarf{.id = 3, .faction = 3, .factionGroup = 3, .friendGroup = 2, .enemyGroup = 12};
+    const FactionTemplateRow gameMaster{.id = 35, .faction = 31, .friendGroup = 1, .friends = {31, 0, 0, 0}};
+    const FactionTemplateRow koboldVermin{.id = 25, .faction = 25, .factionGroup = 8, .friends = {25, 0, 0, 0}};
+    const FactionTemplateRow youngWolf{.id = 32, .faction = 29, .enemies = {28, 0, 0, 0}};
+    const FactionTemplateRow defiasThug{.id = 17, .faction = 15, .factionGroup = 8, .enemyGroup = 1,
+                                        .friends = {15, 0, 0, 0}};
+    const FactionTemplateRow tamedBattleboar{.id = 152, .faction = 109, .factionGroup = 8, .enemyGroup = 1,
+                                             .friends = {109, 111, 0, 0}};
+    CHECK(factionTemplateReaction(koboldVermin, human) == 4);
+    CHECK(factionTemplateReaction(youngWolf, human) == 4);
+    CHECK(factionTemplateReaction(defiasThug, human) == 2);
+    CHECK(factionTemplateReaction(defiasThug, gameMaster) == 4);
+    CHECK(factionTemplateReaction(tamedBattleboar, dwarf) == 2);
+}
