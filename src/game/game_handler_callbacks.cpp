@@ -3259,19 +3259,15 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             goName = go->getName();
             goInfo = getCachedGameObjectInfo(goEntry);
             if (goInfo) goType = goInfo->type;
-            if (goType == kGoTypeFishingHole) {
-                // Nothing sent, and nothing scheduled: the school is fished, not
-                // opened. Silent, because retail does not respond to the click
-                // either.
-                LOG_INFO("GO fishing hole click ignored: guid=0x", std::hex, guid,
-                         std::dec, " entry=", goEntry, " name='", goName, "'");
+            // The per-type table (game_object_interaction.hpp) decides what a
+            // click may use. GENERIC is refused by the server's use handler,
+            // TRANSPORT and the other unhandled types do nothing there, and a
+            // fishing hole is fished rather than opened.
+            if (goInfo && !gameObjectTypeRule(goType).use) {
+                LOG_INFO("GO click ignored, type not usable: guid=0x", std::hex, guid,
+                         std::dec, " entry=", goEntry, " type=", goType, " (",
+                         gameObjectTypeRule(goType).name, ") name='", goName, "'");
                 return;
-            }
-            if (goType == 5 && !goName.empty()) {
-                std::string lower = lowerCopy(goName);
-                if (lower.rfind("doodad_", 0) != 0) {
-                    addSystemChatMessage(goName);
-                }
             }
         }
         // Face object and send heartbeat before use so strict servers don't require

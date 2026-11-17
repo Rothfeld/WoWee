@@ -8,6 +8,7 @@
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
 #include "game/game_object_interaction.hpp"
+#include <cassert>
 #include "rendering/camera.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/m2_renderer.hpp"
@@ -21,11 +22,6 @@ namespace wowee {
 namespace ui {
 
 namespace {
-
-/// GENERIC - decorative, no interaction - and FISHINGHOLE, which is fished
-/// rather than clicked. Neither may take a click from a unit.
-constexpr uint32_t kGoTypeGeneric = 5;
-constexpr uint32_t kGoTypeFishingHole = 25;
 
 /// CGUnit_C 0x60e870: a dead unit the player can neither loot
 /// (UNIT_DYNFLAG_LOOTABLE, which the server sets for the looter) nor skin
@@ -83,12 +79,15 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                         " enabled=", enabled, " boundsDistance=", distance);
                 }
             }
-            if (!enabled) continue;
             goInfo = gameHandler.getCachedGameObjectInfo(go->getEntry());
-            // Spell-focus objects mark crafting facilities (anvils, forges).
-            // They satisfy nearby spell requirements; they are not clickable
-            // and must not steal hover or clicks from the visible scene.
-            if (goInfo && goInfo->type == 8) continue;
+            // Until the template answers, the type is unknown and the object
+            // offers nothing; it passes the pick through like scenery.
+            if (!goInfo) continue;
+            // The per-type table (game_object_interaction.hpp): an object
+            // with neither a use nor a name does not take the mouse at all,
+            // so it cannot hide what stands behind it.
+            if (!game::gameObjectAffordance(goInfo->type, goInfo->data[0], goInfo->data[1],
+                                            enabled).hoverable()) continue;
         }
 
         glm::vec3 hitCenter;
@@ -195,8 +194,8 @@ ScenePick pickScene(game::GameHandler& gameHandler,
                 pick.closestInteractive = true;
             }
         } else if (type == game::ObjectType::GAMEOBJECT) {
-            const bool interactive = !goInfo || (goInfo->type != kGoTypeGeneric &&
-                                                 goInfo->type != kGoTypeFishingHole);
+            assert(goInfo);
+            const bool interactive = game::gameObjectTypeRule(goInfo->type).use;
             if (hitT < pick.closestT) {
                 pick.closestT = hitT;
                 pick.closestGuid = guid;

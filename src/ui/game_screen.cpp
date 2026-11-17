@@ -1081,22 +1081,6 @@ void GameScreen::renderCursor() {
         (ImTextureID)(uintptr_t)tex, at, ImVec2(at.x + kSize, at.y + kSize));
 }
 
-/// Which cursor a game object wears, by its GameObjectType.
-///
-/// The numbers are 3.3.5's own: 0 door, 1 button, 2 questgiver, 3 chest,
-/// 7 chair, 9 readable text, 17 fishing node, 19 mailbox, 20 auction house. Anything else is
-/// something to interact with, which is what the hand with the gear says.
-const char* objectCursorPath(uint32_t goType) {
-    switch (goType) {
-        case 2:  return "Interface\\Cursor\\Quest.blp";
-        case 3:  return "Interface\\Cursor\\LootAll.blp";
-        case 9:  return "Interface\\Cursor\\Inspect.blp";
-        case 17: return "Interface\\Cursor\\Fishing.blp";
-        case 19: return "Interface\\Cursor\\Mail.blp";
-        default: return "Interface\\Cursor\\Interact.blp";
-    }
-}
-
 bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
                                   const ui::ScenePick& pick) {
     const uint64_t guid = pick.resolve();
@@ -1137,7 +1121,10 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
     auto go = std::static_pointer_cast<game::GameObject>(entity);
     const auto* info = gameHandler.getCachedGameObjectInfo(go->getEntry());
     if (usable) {
-        std::string path = objectCursorPath(info ? info->type : 0u);
+        assert(info);  // resolve() only answers an object whose template is known
+        const auto& rule = game::gameObjectTypeRule(info->type);
+        assert(rule.use && rule.cursor);
+        std::string path = std::string("Interface\\Cursor\\") + rule.cursor + ".blp";
         const uint32_t lockId = game::gameObjectLockId(info);
         if (lockId != 0) {
             assert(services_.assetManager);
