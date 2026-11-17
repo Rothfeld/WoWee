@@ -1026,6 +1026,10 @@ std::optional<float> M2Renderer::getInstanceFloorHeight(uint32_t instanceId,
 
 std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ, float* outNormalZ) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
+    static const bool traceFloor = [] {
+        const char* value = std::getenv("WOWEE_TRACE_M2_FLOOR");
+        return value && value[0] == '1';
+    }();
     std::optional<float> bestFloor;
     float bestNormalZ = 1.0f;  // Default to flat
 
@@ -1128,6 +1132,9 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
                 if (!bestFloor || bestWorldHitZ > *bestFloor) {
                     bestFloor = bestWorldHitZ;
                     bestNormalZ = bestHitNormalZ;
+                    if (traceFloor) LOG_INFO("M2 floor candidate: model=", model.name,
+                        " source=mesh height=", bestWorldHitZ, " normal=", bestHitNormalZ,
+                        " query=", glX, ",", glY, ",", glZ);
                 }
             }
             // A ray miss is empty space. Using the bounds as a floor here
@@ -1183,6 +1190,10 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
 
         if (!bestFloor || worldTop.z > *bestFloor) {
             bestFloor = worldTop.z;
+            if (traceFloor) LOG_INFO("M2 floor candidate: model=", model.name,
+                " source=bounds height=", worldTop.z,
+                " requireAuthored=", instance.requireAuthoredWallCollision,
+                " query=", glX, ",", glY, ",", glZ);
         }
     }
 
