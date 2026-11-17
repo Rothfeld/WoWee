@@ -301,6 +301,26 @@ inline glm::vec3 closestPointOnTriangle(const glm::vec3& p,
 
 /// M2 bone flags this renderer acts on.
 ///
+// Persistent spell effects may author Stand intro, Hold loop, Decay outro.
+// Doodad random phase and idle variations do not apply to these instances.
+inline void startStateEffect(const M2ModelGPU& model, M2Instance& instance) {
+    if (model.sequences.empty()) return;
+    int stand = -1, hold = -1;
+    for (int i=0; i<static_cast<int>(model.sequences.size()); ++i) {
+        if (model.sequences[i].id == 0 && stand < 0) stand = i;
+        if (model.sequences[i].id == 158 && hold < 0) hold = i;
+    }
+    const int first = stand >= 0 ? stand : (hold >= 0 ? hold : 0);
+    instance.stateEffectAnimation = true;
+    instance.currentSequenceIndex = first;
+    instance.idleSequenceIndex = hold >= 0 ? hold : first;
+    instance.playingVariation = first != instance.idleSequenceIndex;
+    instance.holdAtEnd = false;
+    instance.animDuration = static_cast<float>(model.sequences[first].duration);
+    instance.animTime = instance.animTimeAlt = 0;
+    instance.animSpeed = 1;
+}
+
 /// A bone marked spherical billboard carries geometry that must always face
 /// the camera: glow cards, flame sprites, the halo on a lamp. The flag was
 /// loaded and never read, so those cards rendered at whatever angle the artist

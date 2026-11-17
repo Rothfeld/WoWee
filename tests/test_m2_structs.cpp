@@ -350,3 +350,32 @@ TEST_CASE("authored bone scale preserves hidden phases and mirrored axes", "[m2]
     CHECK(instance.boneMatrices[0][1][1] == 0);
     CHECK(instance.boneMatrices[0][2][2] == Catch::Approx(.0001f));
 }
+
+TEST_CASE("state effects play Stand intro once before authored Hold", "[m2][state-effect]") {
+    wowee::rendering::M2ModelGPU model;
+    model.sequences.resize(3);
+    model.sequences[0].id = 0;
+    model.sequences[0].duration = 700;
+    model.sequences[1].id = 158;
+    model.sequences[1].duration = 2933;
+    model.sequences[2].id = 159;
+    model.sequences[2].duration = 1100;
+    wowee::rendering::M2Instance instance;
+    instance.animTime = 430;
+    wowee::rendering::m2_internal::startStateEffect(model, instance);
+    CHECK(instance.animTime == 0);
+    CHECK(instance.currentSequenceIndex == 0);
+    CHECK(instance.animDuration == 700);
+    CHECK(instance.idleSequenceIndex == 1);
+    CHECK(instance.playingVariation);
+    CHECK(instance.stateEffectAnimation);
+    // Effects without a Hold sequence retain their authored Stand loop.
+    model.sequences.resize(1);
+    wowee::rendering::m2_internal::startStateEffect(model, instance);
+    CHECK(instance.idleSequenceIndex == 0);
+    CHECK_FALSE(instance.playingVariation);
+    model.sequences[0].id = 158;
+    wowee::rendering::m2_internal::startStateEffect(model, instance);
+    CHECK(instance.currentSequenceIndex == 0);
+    CHECK_FALSE(instance.playingVariation);
+}

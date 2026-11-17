@@ -590,7 +590,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         }
 
         // Idle variation timer
-        if (!instance.playingVariation && !instance.holdAtEnd &&
+        if (!instance.playingVariation && !instance.holdAtEnd && !instance.stateEffectAnimation &&
             model.idleVariationIndices.size() > 1) {
             instance.variationTimer -= dtMs;
             if (instance.variationTimer <= 0.0f) {

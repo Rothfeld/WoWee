@@ -111,6 +111,19 @@ void M2Renderer::restartInstanceAnimation(uint32_t instanceId) {
     if (inst.cachedModel) computeBoneMatrices(*inst.cachedModel, inst, &cachedCamPos_);
 }
 
+void M2Renderer::startInstanceStateEffect(uint32_t instanceId) {
+    auto& instance = instances.at(instanceIndexById.at(instanceId));
+    assert(instance.cachedModel);
+    startStateEffect(*instance.cachedModel, instance);
+    computeBoneMatrices(*instance.cachedModel, instance, &cachedCamPos_);
+}
+
+float M2Renderer::finishInstanceStateEffect(uint32_t instanceId) {
+    if (!hasAnimation(instanceId, 159)) return 0;
+    setInstanceAnimationHeld(instanceId, 159, false);
+    return getInstanceAnimDuration(instanceId) * 0.001f;
+}
+
 std::optional<uint32_t> M2Renderer::soleSequenceId(uint32_t instanceId) const {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return std::nullopt;

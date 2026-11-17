@@ -89,6 +89,7 @@ private:
         bool isChannel = false;
         uint32_t auraVisualId = 0;
         bool concealmentDetectionMarker = false;
+        bool decaying = false;
     };
 
     struct PhysicalProjectile {

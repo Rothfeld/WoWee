@@ -287,6 +287,7 @@ struct M2Instance {
     /// back to the idle sequence, which for a door is the closed pose - so an
     /// open door swung open and shut itself, over and over.
     bool holdAtEnd = false;
+    bool stateEffectAnimation = false;
 
     /// Lit while the player is pressing on this instance: 0 none, 1 full.
     ///
@@ -554,6 +555,9 @@ public:
     /// in lockstep, and take their first bones from a sibling that is already
     /// mid-animation. A spell cast has to start at its beginning instead.
     void restartInstanceAnimation(uint32_t instanceId);
+    void startInstanceStateEffect(uint32_t instanceId);
+    /// Returns authored Decay duration in seconds, or zero when absent.
+    float finishInstanceStateEffect(uint32_t instanceId);
     /// Play an animation once and stay on its last frame.
     ///
     /// skipToEnd puts the model there immediately, which is what a door that

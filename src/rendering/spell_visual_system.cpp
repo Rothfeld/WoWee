@@ -534,11 +534,19 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
     if (!characters || !characters->getInstancePosition(attachInstanceId, position)) return;
 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
-        if (it->attachInstanceId == attachInstanceId && it->auraVisualId &&
+        if (it->attachInstanceId == attachInstanceId && it->auraVisualId && !it->decaying &&
             (std::find(visualIds.begin(), visualIds.end(), it->auraVisualId) == visualIds.end() ||
              (it->concealmentDetectionMarker && !observerConcealed))) {
-            m2Renderer_->removeInstance(it->instanceId);
-            it = activeSpellVisuals_.erase(it);
+            const float decay = m2Renderer_->finishInstanceStateEffect(it->instanceId);
+            if (decay > 0) {
+                it->decaying = true;
+                it->elapsed = 0;
+                it->duration = decay;
+                ++it;
+            } else {
+                m2Renderer_->removeInstance(it->instanceId);
+                it = activeSpellVisuals_.erase(it);
+            }
         } else ++it;
     }
     const auto previous = found == unitAuraVisuals_.end() ? std::vector<uint32_t>{} : found->second.ids;
@@ -558,6 +566,7 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             if (!model) { LOG_ERROR("Aura model unavailable: ", effect.path); continue; }
             const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f);
             if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
+            m2Renderer_->startInstanceStateEffect(instance);
             activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
                 false, effect.attachment, attachInstanceId, false, visual, marker});
             LOG_INFO("Aura visual: owner=", attachInstanceId, " visual=", visual,
