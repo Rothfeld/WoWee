@@ -1060,6 +1060,9 @@ struct Emitter {
         if (const std::string* fd = node.attr("fadeDuration"); fd && !fd->empty()) {
             line(var + ":SetFadeDuration(" + *fd + ")");
         }
+        if (const std::string* fa = node.attr("fade"); fa && !fa->empty()) {
+            line(var + ":SetFading(" + (*fa == "false" ? "false" : "true") + ")");
+        }
         if (const std::string* im = node.attr("insertMode"); im && !im->empty()) {
             line(var + ":SetInsertMode(" + quote(*im) + ")");
         }

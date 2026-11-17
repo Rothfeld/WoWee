@@ -339,6 +339,25 @@ static int lua_Frame_GetScript(lua_State* L) {
     return 1;
 }
 
+/// frame:HasScript("OnX") -> whether the frame takes that handler. This client
+/// stores any On* handler on any frame (see SetScript), so every On* name is
+/// taken. Ace2, Dewdrop and Tablet ask before hooking a frame's scripts.
+static int lua_Frame_HasScript(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    const char* scriptType = luaL_checkstring(L, 2);
+    lua_pushboolean(L, std::strncmp(scriptType, "On", 2) == 0 ? 1 : 0);
+    return 1;
+}
+
+/// frame:IsProtected() -> protected, explicit. This client has no secure frame
+/// restrictions, so no frame is protected. AceHook-2.1 asks before hooking.
+static int lua_Frame_IsProtected(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lua_pushboolean(L, 0);
+    lua_pushboolean(L, 0);
+    return 2;
+}
+
 // Frame method: frame:GetName()
 static int lua_Frame_GetName(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -471,6 +490,45 @@ void recordScriptError(lua_State* L, const char* script) {
     if (auto* e = engineFrom(L)) e->noteLuaError(msg);
     lua_pop(L, 1);
 }
+
+/// seterrorhandler(fn): stores the handler geterrorhandler() forwards to.
+/// FrameXML installs _ERRORMESSAGE, which only shows a dialog when the
+/// scriptErrors CVar is on.
+static int lua_seterrorhandler(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    lua_pushvalue(L, 1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "wowee_error_handler");
+    return 0;
+}
+
+/// What geterrorhandler() returns. Libraries such as AceEvent-2.0 catch a
+/// handler's error with pcall and pass it here; recording it keeps those
+/// errors in the client log and error report before the interface's handler
+/// decides what to show.
+static int lua_reportingErrorHandler(lua_State* L) {
+    const char* err = lua_tostring(L, 1);
+    const std::string msg = std::string("error handler: ") + (err ? err : "?");
+    LOG_ERROR("LuaEngine: ", msg);
+    if (auto* e = engineFrom(L)) e->noteLuaError(msg);
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_error_handler");
+    if (lua_isfunction(L, -1)) {
+        lua_insert(L, 1);
+        lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+        return lua_gettop(L);
+    }
+    lua_pop(L, 1);
+    lua_settop(L, 1);
+    return 1;
+}
+
+static int lua_geterrorhandler(lua_State* L) {
+    lua_pushcfunction(L, lua_reportingErrorHandler);
+    return 1;
+}
+
+/// debuginfo(): FrameXML's _ERRORMESSAGE calls it first. The shipped 2.4.3
+/// client does nothing here; the error itself is recorded by the handler.
+static int lua_debuginfo(lua_State*) { return 0; }
 
 /// Whether the frame is shown, from the widget rather than a field beside it.
 ///
@@ -1652,6 +1710,17 @@ int lua_MessageFrame_SetTimeVisible(lua_State* L) {
     auto* w = widgetOf(L, 1);
     if (w) w->messageDuration = static_cast<float>(luaL_optnumber(L, 2, 0.0));
     return 0;
+}
+/// ScrollingMessageFrame:SetFading(bool) / GetFading(): whether lines fade
+/// after the time-visible interval. On by default, as the XML fade attribute.
+int lua_MessageFrame_SetFading(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) w->messageFading = lua_toboolean(L, 2) != 0;
+    return 0;
+}
+int lua_MessageFrame_GetFading(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushboolean(L, w && w->messageFading ? 1 : 0);
+    return 1;
 }
 int lua_MessageFrame_GetTimeVisible(lua_State* L) {
     const auto* w = widgetOf(L, 1);
@@ -4010,9 +4079,33 @@ int lua_Region_SetVertexColor(lua_State* L) {
         w->color[1] = static_cast<float>(luaOptNumberText(L, 3, 1.0));
         w->color[2] = static_cast<float>(luaOptNumberText(L, 4, 1.0));
         w->color[3] = static_cast<float>(luaOptNumberText(L, 5, 1.0));
+        w->hasGradient = false;
     }
     return 0;
 }
+/// Texture:SetGradient(orientation, minR, minG, minB, maxR, maxG, maxB) and
+/// Texture:SetGradientAlpha(orientation, minR, minG, minB, minA, maxR, maxG,
+/// maxB, maxA), as the 2.4.3 API. Orientation is "HORIZONTAL" or "VERTICAL".
+static int setGradient(lua_State* L, bool withAlpha) {
+    auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    // Case-insensitive, as the 2.4.3 client: FrameLib-1.0 passes "vertical".
+    std::string orientation = luaL_checkstring(L, 2);
+    for (char& c : orientation) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (orientation != "HORIZONTAL" && orientation != "VERTICAL")
+        return luaL_error(L, "Invalid gradient orientation '%s'", orientation.c_str());
+    const int n = withAlpha ? 4 : 3;
+    for (int i = 0; i < n; ++i) {
+        w->gradientMin[i] = static_cast<float>(luaL_checknumber(L, 3 + i));
+        w->gradientMax[i] = static_cast<float>(luaL_checknumber(L, 3 + n + i));
+    }
+    if (!withAlpha) w->gradientMin[3] = w->gradientMax[3] = 1.0f;
+    w->gradientVertical = orientation == "VERTICAL";
+    w->hasGradient = true;
+    return 0;
+}
+int lua_Texture_SetGradient(lua_State* L) { return setGradient(L, false); }
+int lua_Texture_SetGradientAlpha(lua_State* L) { return setGradient(L, true); }
 int lua_Region_SetDrawLayer(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         const auto layer = wowee::ui::parseDrawLayer(luaL_optstring(L, 2, "ARTWORK"));
@@ -4228,10 +4321,12 @@ int lua_FontString_SetTextColor(lua_State* L) {
         lua_pop(L, 1);
     }
     if (w) {
-        w->color[0] = static_cast<float>(luaL_optnumber(L, 2, 1.0));
-        w->color[1] = static_cast<float>(luaL_optnumber(L, 3, 1.0));
-        w->color[2] = static_cast<float>(luaL_optnumber(L, 4, 1.0));
-        w->color[3] = static_cast<float>(luaL_optnumber(L, 5, 1.0));
+        // Lenient like SetVertexColor: the 2.4.3 client accepts what it cannot
+        // convert. FrameLib-1.0 passes a colour table as the first argument.
+        w->color[0] = static_cast<float>(luaOptNumberText(L, 2, 1.0));
+        w->color[1] = static_cast<float>(luaOptNumberText(L, 3, 1.0));
+        w->color[2] = static_cast<float>(luaOptNumberText(L, 4, 1.0));
+        w->color[3] = static_cast<float>(luaOptNumberText(L, 5, 1.0));
         if (auto [line, right] = tooltipLineForFontString(L, w); line) {
             float* color = right ? line->rc : line->lc;
             std::copy_n(w->color, 4, color);
@@ -4606,6 +4701,8 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
     set("SetAlpha", lua_Region_SetAlpha);
     set("GetAlpha", lua_Region_GetAlpha);
     set("SetVertexColor", lua_Region_SetVertexColor);
+    set("SetGradient", lua_Texture_SetGradient);
+    set("SetGradientAlpha", lua_Texture_SetGradientAlpha);
     set("GetVertexColor", lua_Region_GetVertexColor);
     set("GetFontObject", lua_FontString_GetFontObject);
     set("SetDrawLayer", lua_Region_SetDrawLayer);
@@ -6460,6 +6557,8 @@ void LuaEngine::registerCoreAPI() {
         {"UnregisterAllEvents", lua_Frame_UnregisterAllEvents},
         {"SetScript",       lua_Frame_SetScript},
         {"GetScript",       lua_Frame_GetScript},
+        {"HasScript",       lua_Frame_HasScript},
+        {"IsProtected",     lua_Frame_IsProtected},
         {"GetName",         lua_Frame_GetName},
         {"Show",            lua_Region_Show},
         {"Hide",            lua_Region_Hide},
@@ -6583,6 +6682,8 @@ void LuaEngine::registerCoreAPI() {
         {"SetTimeVisible",  lua_MessageFrame_SetTimeVisible},
         {"GetTimeVisible",  lua_MessageFrame_GetTimeVisible},
         {"SetFadeDuration", lua_MessageFrame_SetFadeDuration},
+        {"SetFading",       lua_MessageFrame_SetFading},
+        {"GetFading",       lua_MessageFrame_GetFading},
         {"SetInsertMode",   lua_MessageFrame_SetInsertMode},
         {"ScrollUp",        lua_MessageFrame_ScrollUp},
         {"ScrollDown",      lua_MessageFrame_ScrollDown},
@@ -7605,6 +7706,12 @@ void LuaEngine::registerCoreAPI() {
 
     lua_pushcfunction(L_, lua_CreateFrame);
     lua_setglobal(L_, "CreateFrame");
+    lua_pushcfunction(L_, lua_seterrorhandler);
+    lua_setglobal(L_, "seterrorhandler");
+    lua_pushcfunction(L_, lua_geterrorhandler);
+    lua_setglobal(L_, "geterrorhandler");
+    lua_pushcfunction(L_, lua_debuginfo);
+    lua_setglobal(L_, "debuginfo");
 
     // Cursor/screen/FPS functions
     lua_pushcfunction(L_, lua_GetCursorPosition);
@@ -9007,10 +9114,6 @@ void LuaEngine::registerCoreAPI() {
         "ShoppingTooltip1 = CreateFrame('Frame', 'ShoppingTooltip1')\n"
         "ShoppingTooltip2 = CreateFrame('Frame', 'ShoppingTooltip2')\n"
         // Error handling stubs (used by many addons)
-        "local _errorHandler = function(err) return err end\n"
-        "function geterrorhandler() return _errorHandler end\n"
-        "function seterrorhandler(fn) if type(fn)=='function' then _errorHandler=fn end end\n"
-        "function debugstack(start, count1, count2) return '' end\n"
         // A name is as valid as a function here, and FrameXML mostly passes a
         // name: UIDropDownMenu_Initialize does
         // securecall("UIDropDownMenu_InitializeHelper", frame), and the helper
@@ -9453,6 +9556,7 @@ void LuaEngine::registerCoreAPI() {
         "strjoin = function(delim, ...)\n"
         "    return table.concat({...}, delim)\n"
         "end\n"
+        "string.join = strjoin\n"
         // Math utilities
         "function Clamp(val, lo, hi) return math.min(math.max(val, lo), hi) end\n"
         "function Round(val) return math.floor(val + 0.5) end\n"
@@ -12189,6 +12293,10 @@ void LuaEngine::expireMessages(float elapsed) {
     for (size_t id = 1; id < widgets_.size(); ++id) {
         auto* w = widgets_.get(static_cast<uint32_t>(id));
         if (!w || !w->isMessageFrame || w->messageDuration <= 0.0f) continue;
+        if (!w->messageFading) {
+            for (auto& m : w->messages) m.color[3] = 1.0f;
+            continue;
+        }
         const bool readingBack = w->messageScroll > 0;
         const float life = w->messageDuration;
         const float fade = w->messageFadeDuration > 0.0f ? w->messageFadeDuration : 0.0f;

@@ -1513,6 +1513,13 @@ bool AddonManager::loadAddon(const TocFile& addon) {
         const std::string fullPath =
             resolved.empty() ? (addon.basePath + "/" + filename) : resolved.string();
 
+        // A file the .toc names but the addon does not ship is logged and
+        // skipped, as the 2.4.3 client does (FrameXML.log "Couldn't open").
+        // MangAdmin lists Locales\plPL.lua and ships no such file.
+        if (std::error_code ec; !fs::is_regular_file(fullPath, ec)) {
+            LOG_WARNING("AddonManager: '", addon.addonName, "' lists missing file ", filename);
+            continue;
+        }
         if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".lua") {
             if (!luaEngine_.executeFile(fullPath)) {
                 LOG_ERROR("AddonManager: '", addon.addonName, "' failed on ", filename);

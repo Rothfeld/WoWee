@@ -4,6 +4,7 @@
 #include "game/tracking_services.hpp"
 #include "game/game_utils.hpp"
 #include <array>
+#include <cassert>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -2673,12 +2674,78 @@ static int lua_strsplit(lua_State* L) {
 }
 
 // strtrim(str) - remove leading/trailing whitespace
+/// strtrim(str [, chars]) / string.trim / ("s"):trim(): strips leading and
+/// trailing characters from `chars`, by default whitespace.
 static int lua_strtrim(lua_State* L) {
     const char* str = luaL_checkstring(L, 1);
+    const char* chars = luaL_optstring(L, 2, " \t\r\n");
     std::string s(str);
-    size_t start = s.find_first_not_of(" \t\r\n");
-    size_t end = s.find_last_not_of(" \t\r\n");
+    size_t start = s.find_first_not_of(chars);
+    size_t end = s.find_last_not_of(chars);
     lua_pushstring(L, (start == std::string::npos) ? "" : s.substr(start, end - start + 1).c_str());
+    return 1;
+}
+
+/// Client-relative script path, as the 2.4.3 client prints it in stacks:
+/// "Interface\AddOns\MangAdmin\MangAdmin.lua". Files live under an extracted
+/// interface/ tree or an addons/ directory beside the executable; both are
+/// shown under Interface\. Other chunks keep their own name.
+static std::string clientScriptPath(const char* source) {
+    std::string path = source ? source : "?";
+    if (path.empty() || path[0] != '@') return path;
+    path.erase(0, 1);
+    std::string lower = path;
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string relative;
+    if (const auto at = lower.rfind("/interface/"); at != std::string::npos) {
+        relative = path.substr(at + 11);
+        if (lower.compare(at + 11, 7, "addons/") == 0) relative = "AddOns" + relative.substr(6);
+        else if (lower.compare(at + 11, 9, "framexml/") == 0) relative = "FrameXML" + relative.substr(8);
+    } else if (const auto addons = lower.rfind("/addons/"); addons != std::string::npos) {
+        relative = "AddOns/" + path.substr(addons + 8);
+    } else {
+        return path;
+    }
+    std::string out = "Interface\\" + relative;
+    std::replace(out.begin(), out.end(), '/', '\\');
+    return out;
+}
+
+/// debugstack([start [, count1 [, count2]]]) -> string, as the 2.4.3 API.
+/// Level 1 is the function that called debugstack. Up to count1 frames from
+/// the top and count2 from the bottom are listed, with "..." between them
+/// when frames are skipped. Libraries read their own install path from it:
+/// Graph-1.0 matches "AddOns\\(.+)Graph%-1%.0\\" against debugstack(1,1,0).
+static int lua_debugstack(lua_State* L) {
+    const int start = static_cast<int>(luaL_optnumber(L, 1, 1));
+    const int top = static_cast<int>(luaL_optnumber(L, 2, 12));
+    const int bottom = static_cast<int>(luaL_optnumber(L, 3, 10));
+    std::vector<std::string> lines;
+    lua_Debug ar;
+    for (int level = std::max(start, 0); lua_getstack(L, level, &ar); ++level) {
+        lua_getinfo(L, "Sln", &ar);
+        std::string line;
+        if (ar.what && std::strcmp(ar.what, "C") == 0) {
+            line = "[C]: ";
+            line += ar.name ? std::string("in function `") + ar.name + "'" : "?";
+        } else {
+            line = clientScriptPath(ar.source) + ":" + std::to_string(ar.currentline) + ": ";
+            if (ar.what && std::strcmp(ar.what, "main") == 0) line += "in main chunk";
+            else if (ar.name) line += std::string("in function `") + ar.name + "'";
+            else line += "in function <" + clientScriptPath(ar.source) + ":" +
+                         std::to_string(ar.linedefined) + ">";
+        }
+        lines.push_back(std::move(line));
+    }
+    std::string out;
+    const int count = static_cast<int>(lines.size());
+    for (int i = 0; i < count; ++i) {
+        const bool inTop = i < top;
+        const bool inBottom = i >= count - bottom;
+        if (inTop || inBottom) out += lines[i] + "\n";
+        else if (i == top) out += "...\n";
+    }
+    lua_pushstring(L, out.c_str());
     return 1;
 }
 
@@ -3718,35 +3785,34 @@ static int lua_IsModifierKeyDown(lua_State* L) {
 /// deciding whether a feature exists - answering no where the answer is yes
 /// hides an addon from the interface that is meant to work with it.
 static int lua_IsAddOnLoaded(lua_State* L) {
-    const char* wanted = lua_isstring(L, 1) ? lua_tostring(L, 1) : nullptr;
-    if (!wanted) { lua_pushboolean(L, 0); return 1; }
-
-    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_addon_info");
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_pushboolean(L, 0); return 1; }
-    const int count = static_cast<int>(lua_objlen(L, -1));
-    bool found = false;
-    for (int i = 1; i <= count && !found; ++i) {
-        lua_rawgeti(L, -1, i);
-        if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "loadOnDemand");
-            const bool lod = lua_toboolean(L, -1) != 0;
-            lua_pop(L, 1);
-            lua_getfield(L, -1, "name");
-            const char* name = lua_tostring(L, -1);
-            // Being listed means loaded only for addons that load at startup.
-            // A load-on-demand one is listed from the start and loaded later,
-            // so its state is the manager's to answer, below.
-            found = !lod && name && std::strcmp(name, wanted) == 0;
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
-    // A load-on-demand addon is not in the list handed to the VM at startup -
-    // it is not loaded then - so its loaded state is asked of the manager.
-    if (!found) {
+    // A name or a 1-based index, as GetAddOnInfo takes. Ace2's AceAddon
+    // collects the names of loaded addons with IsAddOnLoaded(i) while an
+    // addon's files run; answering false to every index left each Ace2 addon
+    // waiting for an ADDON_LOADED it could never recognise.
+    const int idx = pushAddonRegistryAndIndex(L, 1);
+    if (idx < 1) {
+        // Not listed: only the manager knows, e.g. a load-on-demand addon
+        // that was loaded by name.
         auto* svc = getLuaServices(L);
-        if (svc && svc->isAddOnLoaded) found = svc->isAddOnLoaded(wanted);
+        const bool loaded = lua_type(L, 1) == LUA_TSTRING && svc && svc->isAddOnLoaded &&
+                            svc->isAddOnLoaded(lua_tostring(L, 1));
+        lua_pushboolean(L, loaded ? 1 : 0);
+        return 1;
+    }
+    lua_rawgeti(L, -1, idx);
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); lua_pushboolean(L, 0); return 1; }
+    lua_getfield(L, -1, "loadOnDemand");
+    const bool lod = lua_toboolean(L, -1) != 0;
+    lua_getfield(L, -2, "name");
+    const std::string name = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 4);
+    // Being listed means loaded only for addons that load at startup. A
+    // load-on-demand one is listed from the start and loaded later, so its
+    // state is the manager's to answer.
+    bool found = !lod;
+    if (lod) {
+        auto* svc = getLuaServices(L);
+        found = svc && svc->isAddOnLoaded && svc->isAddOnLoaded(name);
     }
     lua_pushboolean(L, found ? 1 : 0);
     return 1;
@@ -7113,6 +7179,7 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetInstanceDifficulty", lua_GetInstanceDifficulty},
                 {"strsplit",          lua_strsplit},
                 {"strtrim",           lua_strtrim},
+                {"debugstack",        lua_debugstack},
                 {"strlenutf8",        lua_strlenutf8},
                 {"wipe",              lua_wipe},
                 {"date",              lua_wow_date},
@@ -8395,6 +8462,16 @@ void registerSystemLuaAPI(lua_State* L) {
         lua_pushcfunction(L, func);
         lua_setglobal(L, name);
     }
+    // The 2.4.3 string library carries these too, so method syntax works:
+    // AceDB-2.0 calls GetRealmName():trim().
+    lua_getglobal(L, "string");
+    assert(lua_istable(L, -1));
+    for (const auto& [field, global] : {std::pair{"trim", "strtrim"}, std::pair{"split", "strsplit"}}) {
+        lua_getglobal(L, global);
+        assert(lua_isfunction(L, -1) && "string library alias target missing");
+        lua_setfield(L, -2, field);
+    }
+    lua_pop(L, 1);
 }
 
 } // namespace wowee::addons

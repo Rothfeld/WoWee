@@ -250,6 +250,13 @@ struct Widget {
     bool  texCoordRotated = false;
     float texCoordQuad[8] = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f};
     float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    /// SetGradient / SetGradientAlpha: corner colours replacing `color` until
+    /// the next SetVertexColor. HORIZONTAL runs min at the left to max at the
+    /// right; VERTICAL runs min at the bottom to max at the top.
+    bool  hasGradient = false;
+    bool  gradientVertical = false;
+    float gradientMin[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float gradientMax[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool solidColor = false;    ///< SetTexture(r,g,b[,a]) rather than a file.
     /// A unit's face, claimed by SetPortraitTexture.
     ///
@@ -469,6 +476,8 @@ struct Widget {
     /// displayDuration="5" and every error was staying on screen for good.
     float messageDuration = 0.0f;
     float messageFadeDuration = 3.0f;
+    /// SetFading / XML fade="false": lines stay lit past messageDuration.
+    bool  messageFading = true;
     /// Whether a new message goes above the ones already there. UIErrorsFrame
     /// asks for insertMode="TOP"; a chat frame does not.
     bool  messagesInsertTop = false;

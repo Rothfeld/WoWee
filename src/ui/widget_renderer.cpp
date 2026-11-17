@@ -27,6 +27,7 @@
 #include <cfloat>
 #include <cstdlib>
 #include <cmath>
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -45,6 +46,30 @@ uint32_t packColor(const float rgba[4], float alpha) {
         return static_cast<uint32_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
     };
     return IM_COL32(ch(rgba[0]), ch(rgba[1]), ch(rgba[2]), ch(rgba[3] * alpha));
+}
+
+/// Corner colours upper-left, upper-right, lower-right, lower-left: the
+/// widget's gradient when it has one, its vertex colour otherwise.
+std::array<ImU32, 4> cornerColors(const ui::Widget& w, float alpha) {
+    const ImU32 flat = packColor(w.color, alpha);
+    if (!w.hasGradient) return {flat, flat, flat, flat};
+    const ImU32 lo = packColor(w.gradientMin, alpha);
+    const ImU32 hi = packColor(w.gradientMax, alpha);
+    // VERTICAL: min at the bottom. HORIZONTAL: min at the left.
+    return w.gradientVertical ? std::array<ImU32, 4>{hi, hi, lo, lo}
+                              : std::array<ImU32, 4>{lo, hi, hi, lo};
+}
+
+/// A textured quad with a colour per corner. Corners and UVs go round the
+/// rect: upper-left, upper-right, lower-right, lower-left.
+void addImageQuadColors(ImDrawList* dl, ImTextureID tex, const ImVec2 (&p)[4],
+                        const ImVec2 (&uv)[4], const std::array<ImU32, 4>& col) {
+    dl->PushTextureID(tex);
+    dl->PrimReserve(6, 4);
+    const auto base = static_cast<ImDrawIdx>(dl->_VtxCurrentIdx);
+    for (int i = 0; i < 4; ++i) dl->PrimWriteVtx(p[i], uv[i], col[i]);
+    for (const int i : {0, 1, 2, 0, 2, 3}) dl->PrimWriteIdx(static_cast<ImDrawIdx>(base + i));
+    dl->PopTextureID();
 }
 
 
@@ -2840,8 +2865,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // painted every undecided region in the default white, which for a
             // full-width backdrop is a white slab across the screen.
             if (w->solidColor) {
-                dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1),
-                                  packColor(w->color, w->effAlpha));
+                const auto c = cornerColors(*w, w->effAlpha);
+                dl->AddRectFilledMultiColor(ImVec2(x0, y0), ImVec2(x1, y1), c[0], c[1], c[2], c[3]);
                 continue;
             }
             // A texture the client renders into has no file and does not need
@@ -2937,14 +2962,14 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 // angle. WoW's order is upper-left, lower-left, upper-right,
                 // lower-right; the quad wants them going round the rect.
                 const float* q = w->texCoordQuad;
-                dl->AddImageQuad(reinterpret_cast<ImTextureID>(tex),
-                                 ImVec2(x0, y0), ImVec2(x1, y0),
-                                 ImVec2(x1, y1), ImVec2(x0, y1),
-                                 ImVec2(q[0], q[1]),   // upper-left
-                                 ImVec2(q[4], q[5]),   // upper-right
-                                 ImVec2(q[6], q[7]),   // lower-right
-                                 ImVec2(q[2], q[3]),   // lower-left
-                                 packColor(w->color, w->effAlpha));
+                const ImVec2 corners[4] = {ImVec2(x0, y0), ImVec2(x1, y0),
+                                           ImVec2(x1, y1), ImVec2(x0, y1)};
+                const ImVec2 uvs[4] = {ImVec2(q[0], q[1]),   // upper-left
+                                       ImVec2(q[4], q[5]),   // upper-right
+                                       ImVec2(q[6], q[7]),   // lower-right
+                                       ImVec2(q[2], q[3])};  // lower-left
+                addImageQuadColors(dl, reinterpret_cast<ImTextureID>(tex), corners, uvs,
+                                   cornerColors(*w, w->effAlpha));
             } else if (live && w->isUnitPortrait &&
                        std::fabs((x1 - x0) - (y1 - y0)) <= 0.02f * (x1 - x0)) {
                 // A face, drawn as the disc the interface expects.
@@ -2987,9 +3012,11 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 }
                 dl->PopTextureID();
             } else {
-                dl->AddImage(reinterpret_cast<ImTextureID>(tex),
-                             ImVec2(x0, y0), ImVec2(x1, y1), uv0, uv1,
-                             packColor(w->color, w->effAlpha));
+                const ImVec2 corners[4] = {ImVec2(x0, y0), ImVec2(x1, y0),
+                                           ImVec2(x1, y1), ImVec2(x0, y1)};
+                const ImVec2 uvs[4] = {uv0, ImVec2(uv1.x, uv0.y), uv1, ImVec2(uv0.x, uv1.y)};
+                addImageQuadColors(dl, reinterpret_cast<ImTextureID>(tex), corners, uvs,
+                                   cornerColors(*w, w->effAlpha));
             }
             if (w->blendAdd || liveDesaturated) dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
         } else if (w->kind == WidgetKind::FontString) {
