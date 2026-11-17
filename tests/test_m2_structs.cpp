@@ -314,3 +314,39 @@ TEST_CASE("Z billboard faces the viewer while staying upright", "[m2][billboard]
         CHECK(glm::vec3(pose[2]).z == Catch::Approx(1));
     }
 }
+
+TEST_CASE("authored bone scale preserves hidden phases and mirrored axes", "[m2][bone-scale]") {
+    wowee::rendering::M2ModelGPU model;
+    model.bones.resize(1);
+    auto& bone = model.bones[0];
+    bone.parentBone = -1;
+    bone.pivot = glm::vec3(0.207966f, 0, 0.720042f);
+    bone.scale.interpolationType = 1;
+    // detectstealth_state_head.m2 birth sequence: hidden for first 200ms,
+    // then expands into its first visible key over 100ms.
+    bone.scale.sequences.push_back({3333, {3333,3533,3633},
+        {{0,0,0},{0,0,0},{1.109565f,0.522139f,1}}});
+    wowee::rendering::M2Instance instance;
+    instance.currentSequenceIndex = 0;
+    instance.invModelMatrix = glm::mat4(1);
+    const glm::vec3 camera(5,0,3);
+    for (uint32_t flags : {0u, 0x208u, 0x240u}) {
+        bone.flags = flags;
+        instance.animTime = 100;
+        wowee::rendering::m2_internal::computeBoneMatrices(model, instance, &camera);
+        CHECK(glm::vec3(instance.boneMatrices[0] * glm::vec4(2,3,4,1)) == bone.pivot);
+        for (int column=0; column<4; ++column)
+            for (int row=0; row<4; ++row)
+                CHECK(std::isfinite(instance.boneMatrices[0][column][row]));
+        instance.animTime = 250;
+        wowee::rendering::m2_internal::computeBoneMatrices(model, instance, &camera);
+        CHECK(glm::length(glm::vec3(instance.boneMatrices[0][0])) == Catch::Approx(1.109565f * .5f));
+        CHECK(glm::length(glm::vec3(instance.boneMatrices[0][1])) == Catch::Approx(.522139f * .5f));
+    }
+    bone.flags = 0;
+    bone.scale.sequences[0].vec3Values.assign(3, glm::vec3(-1,0,0.0001f));
+    wowee::rendering::m2_internal::computeBoneMatrices(model, instance, &camera);
+    CHECK(instance.boneMatrices[0][0][0] == Catch::Approx(-1));
+    CHECK(instance.boneMatrices[0][1][1] == 0);
+    CHECK(instance.boneMatrices[0][2][2] == Catch::Approx(.0001f));
+}

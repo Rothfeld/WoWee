@@ -68,6 +68,11 @@ layout(location = 8) flat out vec4 vIndoorLighting;
 layout(location = 9) out vec3 VertexLighting;
 layout(location = 10) out vec2 TexCoord2;
 
+vec3 normalizedNormal(vec3 value) {
+    // Authored zero-scale bones have zero normals during hidden phases.
+    return value * inversesqrt(max(dot(value, value), 1e-20));
+}
+
 void main() {
     // Fetch per-instance data from SSBO
     int instIdx = push.instanceDataOffset + gl_InstanceIndex;
@@ -183,7 +188,7 @@ void main() {
         // Outward is each face's own normal, so a two-sided banner puffs
         // slightly rather than parting - which is what a cloth in a draught
         // does anyway.
-        vec3 clothN = normalize(norm.xyz);
+        vec3 clothN = normalizedNormal(norm.xyz);
         float perp = dot(sway, clothN);
         sway -= clothN * perp;
         sway += clothN * max(perp, 0.0) * 0.35;
@@ -282,11 +287,11 @@ void main() {
 
     FragPos = worldPos.xyz;
     Normal = mat3(model) * norm.xyz;
-    float diffuse = max(dot(normalize(Normal), normalize(-lightDir.xyz)), 0.0);
+    float diffuse = max(dot(normalizedNormal(Normal), normalize(-lightDir.xyz)), 0.0);
     VertexLighting = clamp(ambientColor.rgb + diffuse * lightColor.rgb, 0.0, 1.0);
 
     TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;
-    vec3 eyeNormal = normalize(mat3(view) * Normal);
+    vec3 eyeNormal = normalizedNormal(mat3(view) * Normal);
     vec2 environmentUV = eyeNormal.xy * 0.5 + 0.5;
     if (push.texCoordSet == -1) TexCoord = environmentUV + uvOff;
     TexCoord2 = (push.texCoordSet2 == -1 ? environmentUV :

@@ -168,6 +168,10 @@ vec4 fogVolumeSky(vec2 uv) {
     return textureLod(uFogVolume, vec3(uv, 1.0), 0.0);
 }
 
+vec3 normalizedNormal(vec3 value) {
+    return value * inversesqrt(max(dot(value, value), 1e-20));
+}
+
 void main() {
     vec4 texColor = hasTexture != 0 ? texture(uTexture, TexCoord) : vec4(1.0);
     if (textureCount == 2) texColor *= texture(uTexture2, TexCoord2);
@@ -241,7 +245,7 @@ void main() {
         texColor.rgb *= vec3(hueShiftR, 1.0, hueShiftB) * brightness;
     }
 
-    vec3 norm = normalize(Normal);
+    vec3 norm = normalizedNormal(Normal);
     bool foliageTwoSided = (alphaTest == 2);
     if (!foliageTwoSided && !gl_FrontFacing) norm = -norm;
 
@@ -249,7 +253,7 @@ void main() {
     if (isFoliage) {
         float nx = sin(TexCoord.x * 12.0 + TexCoord.y * 5.3) * 0.10;
         float ny = sin(TexCoord.y * 14.0 + TexCoord.x * 4.7) * 0.10;
-        norm = normalize(norm + vec3(nx, ny, 0.0));
+        norm = normalizedNormal(norm + vec3(nx, ny, 0.0));
     }
 
     vec3 ldir = normalize(-lightDir.xyz);
@@ -424,7 +428,7 @@ void main() {
         float cardFade = smoothstep(0.0, 0.38, border + wobble * 0.55);
 
         vec3 toEye = normalize(viewPos.xyz - FragPos);
-        float facing = abs(dot(normalize(Normal), toEye));
+        float facing = abs(dot(normalizedNormal(Normal), toEye));
         float coneFade = mix(1.0, smoothstep(0.0, 0.62, facing + wobble), 0.8);
 
         // Three octaves of value noise on the world position: mist the beam

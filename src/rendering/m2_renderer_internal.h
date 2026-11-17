@@ -344,9 +344,8 @@ inline void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance,
             bone.scale, instance.currentSequenceIndex, boneTime,
             instance.globalSequenceTime, gsd, glm::vec3(1.0f));
 
-        if (scl.x < 0.001f) scl.x = 1.0f;
-        if (scl.y < 0.001f) scl.y = 1.0f;
-        if (scl.z < 0.001f) scl.z = 1.0f;
+        // Zero keys collapse geometry during authored hidden phases; negative
+        // axes mirror it. Only an absent track uses the identity default above.
 
         glm::mat4 local = glm::translate(glm::mat4(1.0f), bone.pivot);
         local = glm::translate(local, trans);
