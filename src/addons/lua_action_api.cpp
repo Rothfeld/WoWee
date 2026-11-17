@@ -100,6 +100,12 @@ bool cursorItemCameFromInventory() {
            game::slots::cursorSourceIsInventory(s_cursorBag);
 }
 
+bool cursorHoldsAction() {
+    if (s_cursorId == 0) return false;
+    return s_cursorType == CursorType::SPELL || s_cursorType == CursorType::MACRO ||
+           (s_cursorType == CursorType::ITEM && !game::slots::cursorSourceIsInventory(s_cursorBag));
+}
+
 /// PickupPetAction(slot) - pick a pet ability up off the pet bar.
 ///
 /// Defined and does nothing. The cursor here holds spells, items, actions and
@@ -396,9 +402,22 @@ static int lua_GetActionCooldown(lua_State* L) {
 // every action went at the current target, so self-cast did nothing, and a
 // unit-frame button carrying its own unit acted on whoever was targeted
 // instead.
+static int lua_PlaceAction(lua_State* L);
 static int lua_UseAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
+    // Clicking a button while carrying something puts it there, as dropping
+    // it would. SecureActionButton_OnClick answers every click with UseAction,
+    // so this is the only place a click with a full cursor reaches. Original
+    // 2.4.3: a spell dropped from the book onto an occupied button leaves the
+    // old one on the cursor, and a click on an empty button places it and
+    // empties the cursor; the button's own action is not used.
+    if (s_cursorId != 0 && (s_cursorType == CursorType::SPELL ||
+                            s_cursorType == CursorType::ITEM ||
+                            s_cursorType == CursorType::MACRO)) {
+        lua_settop(L, 1);
+        return lua_PlaceAction(L);
+    }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
     const auto& bar = gh->getActionBar();
     if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) return 0;

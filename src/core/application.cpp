@@ -5371,7 +5371,10 @@ void Application::render() {
                 // above.
                 if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
                     !engine->mouseOverFrameXml()) {
-                    const uint32_t carried = addons::cursorItemId();
+                    // An item reference off an action bar is not the item;
+                    // it stays on the cursor until a click on the world.
+                    const uint32_t carried = addons::cursorItemCameFromInventory()
+                        ? addons::cursorItemId() : 0;
                     if (carried != 0 && gameHandler) {
                         const auto* info = gameHandler->getItemInfo(carried);
                         const std::string name = info ? info->name : std::string();

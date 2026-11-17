@@ -12463,36 +12463,15 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                     // world removed it for good - the "I knocked it off and
                     // cannot put it back" report. A bag slot is the same: its
                     // OnReceiveDrag puts the item back where it was.
+                    // Let go anywhere else, the cursor keeps what it carries.
+                    // Original 2.4.3: an action dragged off its button and let
+                    // go over the world leaves the button empty and stays on
+                    // the cursor; the next click on the world puts it down
+                    // (below, where a release is not a drag). An item out of a
+                    // bag let go over the world raises the delete prompt,
+                    // which reads the cursor.
                     if (dropOn != 0) {
                         callFrameScript(dropOn, "OnReceiveDrag", b.name);
-                    } else if (dropOn == 0 && L_) {
-                        // Let go over the world, which is how an action is
-                        // taken off a bar: the slot emptied when it was picked
-                        // up, so clearing the cursor is what removes it. A drop
-                        // on a frame that does not accept drags keeps it, as
-                        // the real client does, so only the world counts.
-                        const auto* under = hit ? widgets_.get(hit) : nullptr;
-                        const bool onWorld = !under || under->name == "UIParent" ||
-                                             under->name == "WorldFrame";
-                        // An item out of a bag or off the paperdoll is not put
-                        // down here. Letting one of those go over the world is
-                        // how it is destroyed, and the delete confirmation is
-                        // raised for it once this dispatch returns - by reading
-                        // the cursor. Clearing it first is the whole of
-                        // "dragging a quest item onto the ground does nothing":
-                        // the prompt looked, found an empty cursor, and asked
-                        // about nothing, and the next bag update put the item
-                        // back. An item off an action bar has no such prompt -
-                        // the bar held a reference, not the item - so it still
-                        // clears here, which is what takes it off the bar.
-                        if (onWorld && !cursorItemCameFromInventory()) {
-                            lua_getglobal(L_, "ClearCursor");
-                            if (lua_isfunction(L_, -1)) {
-                                if (lua_pcall(L_, 0, 0, 0) != 0) lua_pop(L_, 1);
-                            } else {
-                                lua_pop(L_, 1);
-                            }
-                        }
                     }
                     const auto* target = dropOn ? widgets_.get(dropOn)
                                                 : (hit ? widgets_.get(hit) : nullptr);
@@ -12596,6 +12575,19 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                     } else {
                         LOG_DEBUG("WidgetInput: release on ", pressed->name, " - OnClick ran");
                     }
+                }
+            }
+            // A click on the world - pressed and let go over no frame - puts
+            // a carried action down. Original 2.4.3 clears a spell lifted
+            // off the bar this way; an item out of a bag is not put down
+            // here (application.cpp raises its delete prompt instead).
+            if (i == 0 && pressedWid_[i] == 0 && hit == 0 && !tookLink &&
+                cursorHoldsAction() && L_) {
+                lua_getglobal(L_, "ClearCursor");
+                assert(lua_isfunction(L_, -1));
+                if (lua_pcall(L_, 0, 0, 0) != 0) {
+                    LOG_ERROR("ClearCursor raised on a world click: ", lua_tostring(L_, -1));
+                    lua_pop(L_, 1);
                 }
             }
             pressedWid_[i] = 0;

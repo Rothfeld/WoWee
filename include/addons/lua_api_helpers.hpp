@@ -928,6 +928,12 @@ int cursorEquipSlot();
 /// on it.
 bool cursorItemCameFromInventory();
 
+/// Whether the cursor is carrying an action - a spell, a macro, or an item
+/// reference lifted off an action bar - rather than an item itself. A click on
+/// the world puts such a cursor down (ClearCursor); original 2.4.3 does that,
+/// while letting a drag of one go over the world keeps it on the cursor.
+bool cursorHoldsAction();
+
 /// Put a vendor's list entry on the cursor, which is what a left-click in
 /// FrameXML's merchant window does. Buying happens when it is dropped.
 void pickupMerchantItem(lua_State* L, int index);

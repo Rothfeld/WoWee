@@ -2496,3 +2496,42 @@ TEST_CASE_METHOD(Integration, "GetItemIcon answers an item's icon path", "[lua][
     truth("GetItemIcon(0) == nil");
     lua.setGameHandler(nullptr);
 }
+
+TEST_CASE_METHOD(Integration, "An action swapped onto the cursor can be placed or put down", "[action-cursor]") {
+    // Original 2.4.3: a spell dropped from the book onto an occupied button
+    // leaves the button's old spell on the cursor; a click on another button
+    // (SecureActionButton_OnClick -> UseAction) places it instead of using
+    // that button, and a click on the world puts a carried action down.
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}});
+    handler.spellNameCacheLoadedRef() = true;
+    handler.setActionBarSlot(1, ActionBarSlot::SPELL, 1000);
+    handler.setActionBarSlot(2, ActionBarSlot::SPELL, 2000);
+    const auto casts = [&] { return session.sent().of(Opcode::CMSG_CAST_SPELL).size(); };
+    const auto before = casts();
+
+    run("PickupAction(2)");
+    truth("CursorHasSpell() and select(4, GetCursorInfo()) == 1000");
+    CHECK(handler.getActionBar()[1].isEmpty());
+
+    run("UseAction(3)");  // occupied: swap
+    CHECK(handler.getActionBar()[2].id == 1000);
+    truth("select(4, GetCursorInfo()) == 2000");
+    run("UseAction(5)");  // empty: place, cursor empties
+    CHECK(handler.getActionBar()[4].id == 2000);
+    truth("not CursorHasSpell() and GetCursorInfo() == nil");
+    CHECK(casts() == before);
+
+    run("PickupAction(5)");
+    truth("CursorHasSpell()");
+    addons::LuaEngine::MouseButtons down;
+    down.left = true;
+    lua.dispatchMouse(400, 300, 600, down);
+    lua.dispatchMouse(400, 300, 600, {});
+    truth("not CursorHasSpell()");
+    CHECK(handler.getActionBar()[4].isEmpty());
+    lua.setGameHandler(nullptr);
+}
