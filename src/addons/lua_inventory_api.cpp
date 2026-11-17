@@ -748,14 +748,14 @@ static int lua_GetItemQualityColor(lua_State* L) {
     int q = static_cast<int>(luaL_checknumber(L, 1));
     struct QC { float r, g, b; const char* hex; };
     static const QC colors[] = {
-        {.r = 0.62f, .g = 0.62f, .b = 0.62f, .hex = "ff9d9d9d"}, // 0 Poor
-        {.r = 1.00f, .g = 1.00f, .b = 1.00f, .hex = "ffffffff"}, // 1 Common
-        {.r = 0.12f, .g = 1.00f, .b = 0.00f, .hex = "ff1eff00"}, // 2 Uncommon
-        {.r = 0.00f, .g = 0.44f, .b = 0.87f, .hex = "ff0070dd"}, // 3 Rare
-        {.r = 0.64f, .g = 0.21f, .b = 0.93f, .hex = "ffa335ee"}, // 4 Epic
-        {.r = 1.00f, .g = 0.50f, .b = 0.00f, .hex = "ffff8000"}, // 5 Legendary
-        {.r = 0.90f, .g = 0.80f, .b = 0.50f, .hex = "ffe6cc80"}, // 6 Artifact
-        {.r = 0.00f, .g = 0.80f, .b = 1.00f, .hex = "ff00ccff"}, // 7 Heirloom
+        {.r = 0.62f, .g = 0.62f, .b = 0.62f, .hex = "|cff9d9d9d"}, // 0 Poor
+        {.r = 1.00f, .g = 1.00f, .b = 1.00f, .hex = "|cffffffff"}, // 1 Common
+        {.r = 0.12f, .g = 1.00f, .b = 0.00f, .hex = "|cff1eff00"}, // 2 Uncommon
+        {.r = 0.00f, .g = 0.44f, .b = 0.87f, .hex = "|cff0070dd"}, // 3 Rare
+        {.r = 0.64f, .g = 0.21f, .b = 0.93f, .hex = "|cffa335ee"}, // 4 Epic
+        {.r = 1.00f, .g = 0.50f, .b = 0.00f, .hex = "|cffff8000"}, // 5 Legendary
+        {.r = 0.90f, .g = 0.80f, .b = 0.50f, .hex = "|cffe6cc80"}, // 6 Artifact
+        {.r = 0.00f, .g = 0.80f, .b = 1.00f, .hex = "|cff00ccff"}, // 7 Heirloom
     };
     if (q < 0 || q > 7) q = 1;
     lua_pushnumber(L, colors[q].r);
