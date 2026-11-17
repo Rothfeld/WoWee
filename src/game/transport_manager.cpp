@@ -16,8 +16,6 @@
 #include <cmath>
 #include <limits>
 #include <cassert>
-#include <fstream>
-#include <cstdlib>
 #include <iterator>
 #include <stdexcept>
 
@@ -467,10 +465,20 @@ glm::vec3 TransportManager::transportLocalToServer(
     return it->second.isM2 ? core::coords::canonicalToServer(localOffset) : localOffset;
 }
 
-void TransportManager::applyTransportTimestamp(uint64_t transportGuid, uint32_t timeMs) {
-    transportTimestamps_[transportGuid] = {timeMs, std::chrono::steady_clock::now()};
+void TransportManager::applyTransportTimestamp(uint64_t transportGuid, uint32_t timeMs,
+                                               std::chrono::steady_clock::time_point receivedAt) {
+    transportTimestamps_[transportGuid] = {timeMs, receivedAt};
     LOG_DEBUG("Transport timestamp guid=0x", std::hex, transportGuid, std::dec,
-              " serverMs=", timeMs, " simulationElapsed=", elapsedTime_);
+              " serverMs=", timeMs, " queueDelayMs=",
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now()-receivedAt).count(),
+              " simulationElapsed=", elapsedTime_);
+}
+
+uint32_t TransportManager::currentTransportTime(uint64_t transportGuid) const {
+    const auto& clock = transportTimestamps_.at(transportGuid);
+    return clock.timeMs + static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now()-clock.receivedAt).count());
 }
 
 void TransportManager::applyServerRouteClock(uint64_t transportGuid, float phase,
@@ -636,13 +644,9 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     // Compute path time via ClockSync
     uint32_t pathTimeMs = 0;
     if (pathEntry->taxiSchedule) {
-        const auto clock = transportTimestamps_.find(transport.guid);
-        assert(clock != transportTimestamps_.end());
         // A loading frame can begin before this packet arrives. Its full frame
         // delta must not be added to a clock sampled partway through that frame.
-        const uint32_t serverNow = clock->second.timeMs + static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now()-clock->second.receivedAt).count());
+        const uint32_t serverNow = currentTransportTime(transport.guid);
         pathTimeMs = serverNow % pathEntry->taxiSchedule->durationMs();
     } else if (!clockSync_.computePathTime(transport, spline, elapsedTime_, deltaTime, pathTimeMs)) {
         // Strict server-authoritative mode: do not guess movement between server snapshots.
@@ -855,17 +859,6 @@ bool TransportManager::loadTransportAnimationDBC(pipeline::AssetManager* assetMg
 }
 
 bool TransportManager::loadTaxiPathNodeDBC(pipeline::AssetManager* assetMgr) {
-    if (isActiveExpansion("tbc")) {
-        if (const char* path = std::getenv("WOWEE_TRANSPORT_TIMETABLE")) {
-            std::ifstream input(path);
-            if (!input) throw std::runtime_error(std::string("Cannot read realm transport timetable: ")+path);
-            pathRepo_.loadRealmTimetable(std::string(std::istreambuf_iterator<char>(input), {}));
-            LOG_INFO("Loaded realm transport timetable: ", path);
-        } else {
-            LOG_WARNING("No WOWEE_TRANSPORT_TIMETABLE configured; TBC wire omits route periods. "
-                        "Generated periods cannot reproduce realm timetable overrides.");
-        }
-    }
     return pathRepo_.loadTaxiPathNodeDBC(assetMgr);
 }
 
@@ -918,7 +911,7 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
         if (isActiveExpansion("tbc")) {
             assert(route);
             copied.taxiSchedule = std::make_shared<TaxiRouteSchedule>(
-                *route, speed, acceleration, pathRepo_.realmTransportPeriod(entry));
+                *route, speed, acceleration);
             copied.taxiMapId = mapId;
             LOG_INFO("Authored TBC taxi schedule entry=", entry, " path=", taxiPathId,
                      " periodMs=", copied.taxiSchedule->durationMs(),
@@ -954,11 +947,7 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
         // server-authored spawn location; otherwise it can still be approaching
         // Borean Tundra when the server correctly transfers the rider back to map 0.
         if (storedEntry && storedEntry->taxiSchedule) {
-            const auto clock = transportTimestamps_.find(guid);
-            assert(clock != transportTimestamps_.end());
-            const uint32_t now = clock->second.timeMs + static_cast<uint32_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now()-clock->second.receivedAt).count());
+            const uint32_t now = currentTransportTime(guid);
             transport.localClockMs = now % storedEntry->taxiSchedule->durationMs();
             const auto sample = storedEntry->taxiSchedule->evaluate(transport.localClockMs);
             transport.position = sample.position;

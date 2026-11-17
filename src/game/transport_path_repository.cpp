@@ -27,6 +27,32 @@ glm::vec3 taxiTangent(const glm::vec3& a, const glm::vec3& b,
     return 0.5f * ((-a+c) + 2.0f*(2.0f*a-5.0f*b+4.0f*c-d)*u +
                    3.0f*(-a+3.0f*b-3.0f*c+d)*u*u);
 }
+
+double taxiArcLength(const glm::vec3& p0, const glm::vec3& p1,
+                     const glm::vec3& p2, const glm::vec3& p3) {
+    const glm::dvec3 a(p0), b(p1), c(p2), d(p3);
+    const auto speed = [&](double u) {
+        return glm::length(0.5*((-a+c)+2.0*(2.0*a-5.0*b+4.0*c-d)*u+
+                          3.0*(-a+3.0*b-3.0*c+d)*u*u));
+    };
+    const auto integrate = [&](auto&& self, double lo, double hi, double f0,
+                               double fm, double f1, double whole,
+                               double tolerance, int depth) -> double {
+        const double mid = (lo+hi)*0.5;
+        const double fl = speed((lo+mid)*0.5), fr = speed((mid+hi)*0.5);
+        const double left = (mid-lo)*(f0+4*fl+fm)/6;
+        const double right = (hi-mid)*(fm+4*fr+f1)/6;
+        const double error = left+right-whole;
+        if (std::abs(error) <= 15*tolerance) return left+right+error/15;
+        if (depth == 0) throw std::runtime_error("Taxi curve arc length did not converge");
+        return self(self, lo, mid, f0, fl, fm, left, tolerance*.5, depth-1)+
+               self(self, mid, hi, fm, fr, f1, right, tolerance*.5, depth-1);
+    };
+    const double f0 = speed(0), fm = speed(.5), f1 = speed(1);
+    // Numerical error below one hundred-thousandth of a world yard avoids
+    // route-clock drift from coarse chord approximations over many cycles.
+    return integrate(integrate, 0, 1, f0, fm, f1, (f0+4*fm+f1)/6, 1e-5, 20);
+}
 }
 
 TaxiRouteSchedule::TaxiRouteSchedule(const TaxiRoute& route, float speed, float acceleration,
@@ -35,6 +61,7 @@ TaxiRouteSchedule::TaxiRouteSchedule(const TaxiRoute& route, float speed, float 
     if (route.nodes.size() < 3 || !(speed > 0) || !(acceleration > 0))
         throw std::invalid_argument("Invalid authored taxi transport motion");
     bool skipArrivalControl = false;
+    std::vector<size_t> sourceIndices;
     for (size_t i = 1; i + 1 < route.nodes.size(); ++i) {
         if (skipArrivalControl) { skipArrivalControl = false; continue; }
         const auto& node = route.nodes[i];
@@ -48,6 +75,7 @@ TaxiRouteSchedule::TaxiRouteSchedule(const TaxiRoute& route, float speed, float 
         frame.node = node;
         frame.stopTangent = 0.5f * (route.nodes[i+1].position-route.nodes[i-1].position);
         frames_.push_back(frame);
+        sourceIndices.push_back(i);
     }
     if (frames_.size() < 2) throw std::invalid_argument("Taxi route has fewer than two motion frames");
     frames_.back().teleport = true;
@@ -56,20 +84,9 @@ TaxiRouteSchedule::TaxiRouteSchedule(const TaxiRoute& route, float speed, float 
         if (frame.teleport) continue;
         frame.p1 = frame.node.position;
         frame.p2 = frames_[i+1].node.position;
-        frame.p0 = (i == 0 || frames_[i-1].teleport)
-            ? 2.0f*frame.p1-frame.p2 : frames_[i-1].node.position;
-        frame.p3 = frames_[i+1].teleport
-            ? frame.p2 : frames_[i+2].node.position;
-        auto previous = frame.p1;
-        double length = 0;
-        // The transport protocol's route schedule uses three chord samples
-        // per Catmull-Rom segment, matching CMaNGOS SplineBase segment lengths.
-        for (int sample = 1; sample <= 3; ++sample) {
-            const auto next = taxiCurve(frame.p0, frame.p1, frame.p2, frame.p3, sample/3.0f);
-            length += glm::distance(previous, next);
-            previous = next;
-        }
-        frame.nextDistance = static_cast<float>(length);
+        frame.p0 = route.nodes[sourceIndices[i]-1].position;
+        frame.p3 = route.nodes[sourceIndices[i+1]+1].position;
+        frame.nextDistance = static_cast<float>(taxiArcLength(frame.p0, frame.p1, frame.p2, frame.p3));
     }
     const auto count = frames_.size();
     const bool hasStops = std::any_of(frames_.begin(), frames_.end(),

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <vector>
 #include <cstdint>
@@ -106,6 +107,8 @@ public:
     [[nodiscard]] static uint64_t guidFromBytes(const GuidBytes& guid);
 
     [[nodiscard]] uint16_t getOpcode() const { return opcode; }
+    [[nodiscard]] std::chrono::steady_clock::time_point getReceivedAt() const { return receivedAt_; }
+    void setReceivedAt(std::chrono::steady_clock::time_point value) { receivedAt_ = value; }
     [[nodiscard]] const std::vector<uint8_t>& getData() const { return data; }
     [[nodiscard]] size_t getReadPos() const { return readPos; }
     [[nodiscard]] size_t getSize() const { return data.size(); }
@@ -126,6 +129,9 @@ public:
     void skipAll() { readPos = data.size(); }
 
 private:
+    // Incoming packets are constructed by the socket parser, before callback
+    // queues and map loading. Copies retain the original receive instant.
+    std::chrono::steady_clock::time_point receivedAt_ = std::chrono::steady_clock::now();
     uint16_t opcode = 0;
     std::vector<uint8_t> data;
     size_t readPos = 0;

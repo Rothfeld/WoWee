@@ -232,6 +232,11 @@ void EntityController::handleUpdateObject(network::Packet& packet) {
         // Fall through: process any blocks that were successfully parsed before the failure.
     }
 
+    for (const auto& block : data.blocks) {
+        if (block.hasTransportClock && owner_.getTransportManager())
+            owner_.getTransportManager()->applyTransportTimestamp(
+                block.guid, block.transportClockMs, packet.getReceivedAt());
+    }
     enqueueUpdateObjectWork(std::move(data));
 }
 
@@ -461,8 +466,6 @@ void EntityController::maybeDetectCoinageIndex(const FlatFieldMap& oldFields,
 // ============================================================
 
 void EntityController::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItemCreated) {
-    if (block.hasTransportClock && owner_.getTransportManager())
-        owner_.getTransportManager()->applyTransportTimestamp(block.guid, block.transportClockMs);
     switch (block.updateType) {
         case UpdateType::CREATE_OBJECT:
         case UpdateType::CREATE_OBJECT2:
@@ -2846,6 +2849,7 @@ void EntityController::handleCompressedUpdateObject(network::Packet& packet) {
 
     // Create packet from decompressed data and parse it
     network::Packet decompressedPacket(wireOpcode(Opcode::SMSG_UPDATE_OBJECT), decompressed);
+    decompressedPacket.setReceivedAt(packet.getReceivedAt());
     handleUpdateObject(decompressedPacket);
 }
 void EntityController::handleDestroyObject(network::Packet& packet) {

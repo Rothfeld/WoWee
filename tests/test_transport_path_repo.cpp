@@ -40,6 +40,22 @@ TEST_CASE("Authored taxi transport accelerates, stops and wraps its server clock
     CHECK_THROWS_AS(game::TaxiRouteSchedule(route, 10, 1, 100), std::invalid_argument);
 }
 
+TEST_CASE("Taxi timing integrates authored endpoint controls instead of synthetic straight chords", "[taxi-schedule]") {
+    game::TaxiRoute route;
+    route.nodes = {
+        {{-100,100,0},1,0,0}, {{0,0,0},1,0,2},
+        {{100,0,0},1,0,2}, {{200,100,0},1,0,0}
+    };
+    const game::TaxiRouteSchedule schedule(route, 100, 1);
+    // This Catmull-Rom segment is x=100u, y=50(u*u-u). Its exact arc
+    // length is 50*sqrt(1.25)+100*asinh(.5), unlike its 100-yard chord.
+    const double length = 50*std::sqrt(1.25)+100*std::asinh(.5);
+    CHECK(schedule.durationMs() == Catch::Approx(2000*std::sqrt(length)).margin(1));
+    const auto midpoint = schedule.evaluate(schedule.durationMs()/2);
+    CHECK(midpoint.position.x == Catch::Approx(50).margin(.02));
+    CHECK(midpoint.position.y == Catch::Approx(-12.5).margin(.02));
+}
+
 TEST_CASE("Configured realm transport timetables reject incomplete or invalid data", "[taxi-schedule]") {
     game::TransportPathRepository repository;
     const std::string prefix = R"({"schema":"wowee.realm-transports.v1","expansion":"tbc","realm":"127.0.0.1:3724","source":"CMaNGOS tbcmangos.transports","transports":)";

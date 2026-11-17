@@ -18,6 +18,7 @@
 #include <cmath>
 #include <memory>
 #include <set>
+#include <zlib.h>
 
 using namespace input_test;
 
@@ -908,6 +909,43 @@ static void announceTbcBoat(replay::Session& session, uint64_t guid) {
     create.writeUInt32(176244);
     session.receive(create);
     REQUIRE(session.handler().isTransportGuid(guid));
+}
+
+TEST_CASE_METHOD(Integration, "Transport clocks include socket and decompression queue delay", "[transport]") {
+    using namespace wowee::game;
+    for (bool compressed : {false, true}) {
+        replay::Session session("tbc");
+        constexpr uint64_t boat = 0x01fc00000002b074ULL;
+        wowee::network::Packet create(wireOpcode(Opcode::SMSG_UPDATE_OBJECT));
+        create.writeUInt32(1);
+        create.writeUInt8(0);
+        create.writeUInt8(static_cast<uint8_t>(UpdateType::CREATE_OBJECT2));
+        create.writePackedGuid(boat);
+        create.writeUInt8(static_cast<uint8_t>(ObjectType::GAMEOBJECT));
+        create.writeUInt8(0x02);
+        create.writeUInt32(1000);
+        create.writeUInt8(1);
+        create.writeUInt32(1u << fieldIndex(UF::OBJECT_FIELD_ENTRY));
+        create.writeUInt32(176244);
+        const auto received = std::chrono::steady_clock::now()-std::chrono::seconds(2);
+        if (compressed) {
+            std::vector<uint8_t> bytes(compressBound(create.getSize()));
+            uLongf length = bytes.size();
+            REQUIRE(compress(bytes.data(), &length, create.getData().data(), create.getSize()) == Z_OK);
+            wowee::network::Packet wrapper(wireOpcode(Opcode::SMSG_COMPRESSED_UPDATE_OBJECT));
+            wrapper.writeUInt32(create.getSize());
+            wrapper.writeBytes(bytes.data(), length);
+            wrapper.setReceivedAt(received);
+            session.receive(wrapper);
+        } else {
+            create.setReceivedAt(received);
+            session.receive(create);
+        }
+        REQUIRE(session.handler().isTransportGuid(boat));
+        const auto now = session.handler().getTransportManager()->currentTransportTime(boat);
+        CHECK(now >= 3000);
+        CHECK(now < 3500);
+    }
 }
 
 TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local axes", "[transport]") {

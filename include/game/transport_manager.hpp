@@ -274,7 +274,9 @@ public:
     // fraction in [0,1) of periodMs. Cheap and idempotent - safe to call on every
     // object update that carries the fields.
     void applyServerRouteClock(uint64_t transportGuid, float phase, uint32_t periodMs);
-    void applyTransportTimestamp(uint64_t transportGuid, uint32_t timeMs);
+    void applyTransportTimestamp(uint64_t transportGuid, uint32_t timeMs,
+                                 std::chrono::steady_clock::time_point receivedAt);
+    uint32_t currentTransportTime(uint64_t transportGuid) const;
 
     // Ship machinery follows the hull: ShipMoving while under way, ShipStop when
     // holding at a dock. Cheap to call every frame - it only reaches the
