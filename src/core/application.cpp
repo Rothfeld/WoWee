@@ -3629,7 +3629,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     _creatureWasWalking[guid]  = isWalkingNow;
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
-                    if (!gotState || curAnimId != rendering::anim::DEATH) {
+                    if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
                         uint32_t targetAnim;
                         if (isMovingNow) {
                             targetAnim = rendering::creatureMovingAnimation(
@@ -3894,7 +3894,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     _pCreatureWasWalking[guid]  = isWalkingNow;
                     entitySpawner_->getRemoteWasMovingBackward()[guid] = movingBackward;
                     entitySpawner_->getRemoteWasAirborne()[guid] = airborne;
-                    if (!gotState || curAnimId != rendering::anim::DEATH) {
+                    if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
                         uint32_t targetAnim;
                         if (airborne) {
                             // Preserve takeoff's one-shot -> airborne chain across
@@ -3953,7 +3953,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     const bool haveRiderState = charRenderer->getAnimationState(
                         instanceId, riderAnim, riderTime, riderDuration);
                     if ((!haveRiderState || riderAnim != mountedRiderAnim) &&
-                        riderAnim != rendering::anim::DEATH) {
+                        !rendering::anim::isCorpsePose(riderAnim)) {
                         charRenderer->playAnimation(instanceId, mountedRiderAnim,
                                                     /*loop=*/true);
                     }

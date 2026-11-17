@@ -458,10 +458,13 @@ private:
     VkRenderPass renderPassOverride_ = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaaSamplesOverride_ = VK_SAMPLE_COUNT_1_BIT;
     pipeline::AssetManager* assetManager = nullptr;
-    /// AnimationData.dbc ID -> Fallback, loaded on first use.
+    /// AnimationData.dbc ID -> Fallback and ID -> Flags, loaded on first use.
     std::unordered_map<uint32_t, uint32_t> animationFallback_;
+    std::unordered_map<uint32_t, uint32_t> animationFlags_;
     bool animationFallbackLoaded_ = false;
+    void loadAnimationData();
     std::optional<uint32_t> animationFallback(uint32_t animationId);
+    uint32_t animationFlags(uint32_t animationId);
 
     // Vulkan pipelines (one per blend mode)
     VkPipeline opaquePipeline_ = VK_NULL_HANDLE;

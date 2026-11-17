@@ -328,7 +328,7 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     charRenderer->setActiveGeosets(instanceId, activeGeosets);
 
     if (deadCreatureGuids_.count(guid)) {
-        charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
+        charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
     } else {
         charRenderer->playAnimation(instanceId, rendering::anim::STAND, true);
     }

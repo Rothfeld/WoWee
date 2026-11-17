@@ -1340,8 +1340,10 @@ public:
     bool isQuestCompleted(uint32_t questId) const { return completedQuests_.count(questId) > 0; }
     const std::unordered_set<uint32_t>& getCompletedQuests() const { return completedQuests_; }
 
-    // NPC death callback (for animations)
-    using NpcDeathCallback = std::function<void(uint64_t guid)>;
+    // NPC death callback (for animations). alreadyDead: the unit was a corpse
+    // when it came into view (created dead, or a corpse object); otherwise it
+    // died in view.
+    using NpcDeathCallback = std::function<void(uint64_t guid, bool alreadyDead)>;
     void setNpcDeathCallback(NpcDeathCallback cb) { npcDeathCallback_ = std::move(cb); }
 
     // Resolves a unit GUID to its CharacterRenderer instance id (0 = not

@@ -1987,24 +1987,40 @@ void CharacterRenderer::setLocomotionSpeed(uint32_t instanceId, float speed) {
     instances.at(instanceId).locomotionSpeed = speed;
 }
 
-std::optional<uint32_t> CharacterRenderer::animationFallback(uint32_t animationId) {
-    if (!animationFallbackLoaded_) {
-        animationFallbackLoaded_ = true;
-        const auto dbc = assetManager ? assetManager->loadDBC("AnimationData.dbc") : nullptr;
-        const auto* layout = pipeline::getActiveDBCLayout()
-            ? pipeline::getActiveDBCLayout()->getLayout("AnimationData") : nullptr;
-        const uint32_t field = layout ? layout->field("Fallback") : 0xFFFFFFFFu;
-        if (!dbc || field == 0xFFFFFFFFu || field >= dbc->getFieldCount()) {
-            LOG_ERROR("AnimationData.dbc or its Fallback column is unavailable; "
-                      "missing animations play the model's first sequence");
-        } else {
-            for (uint32_t r = 0; r < dbc->getRecordCount(); ++r)
-                animationFallback_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, field);
-        }
+void CharacterRenderer::loadAnimationData() {
+    if (animationFallbackLoaded_) return;
+    animationFallbackLoaded_ = true;
+    const auto dbc = assetManager ? assetManager->loadDBC("AnimationData.dbc") : nullptr;
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("AnimationData") : nullptr;
+    const uint32_t field = layout ? layout->field("Fallback") : 0xFFFFFFFFu;
+    if (!dbc || field == 0xFFFFFFFFu || field >= dbc->getFieldCount()) {
+        LOG_ERROR("AnimationData.dbc or its Fallback column is unavailable; "
+                  "missing animations play the model's first sequence");
+        return;
     }
+    // Flags: 0x20 holds the last frame (LootHold, Dead), 0x10 plays reversed
+    // (LootUp). Dead (6) falls back to Death (1) with 0x20.
+    const uint32_t flagsField = layout->tryField("Flags");
+    if (flagsField == 0xFFFFFFFFu || flagsField >= dbc->getFieldCount())
+        throw std::runtime_error("dbc_layouts.json lacks AnimationData Flags; deploy current expansion metadata");
+    for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+        animationFallback_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, field);
+        animationFlags_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, flagsField);
+    }
+}
+
+std::optional<uint32_t> CharacterRenderer::animationFallback(uint32_t animationId) {
+    loadAnimationData();
     const auto it = animationFallback_.find(animationId);
     if (it == animationFallback_.end()) return std::nullopt;
     return it->second;
+}
+
+uint32_t CharacterRenderer::animationFlags(uint32_t animationId) {
+    loadAnimationData();
+    const auto it = animationFlags_.find(animationId);
+    return it == animationFlags_.end() ? 0u : it->second;
 }
 
 void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId, bool loop,
@@ -2021,7 +2037,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     instance.holdFinalPose = holdFinalPose;
 
     // Track death state for preventing movement while dead
-    if (animationId == 1) {
+    if (animationId == anim::DEATH || animationId == anim::DEAD) {
         instance.isDead = true;
     } else if (instance.isDead && animationId == 0) {
         instance.isDead = false;  // Respawned
@@ -2090,8 +2106,18 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                 if (model.sequences[i].variationIndex == 0) break;
             }
         }
-        if (instance.currentSequenceIndex >= 0)
+        if (instance.currentSequenceIndex >= 0) {
             LOG_DEBUG("Animation ", animationId, " falls back to ", wanted, " in model ", instance.modelId);
+            // AnimationData flag 0x20: the stand-in is shown on its last frame
+            // and held. Dead without its own sequence is Death's final pose,
+            // so a corpse that comes into view lies still instead of dying again.
+            if (animationFlags(animationId) & 0x20u) {
+                instance.animationLoop = false;
+                instance.holdFinalPose = true;
+                instance.animationTime =
+                    static_cast<float>(model.sequences[instance.currentSequenceIndex].duration);
+            }
+        }
     }
 
     if (instance.currentSequenceIndex < 0) {

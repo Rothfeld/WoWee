@@ -1133,7 +1133,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     pendingEvents_.emit("PLAYER_DEAD", {});
                 }
                 if ((entity->getType() == ObjectType::UNIT || entity->getType() == ObjectType::PLAYER) && owner_.npcDeathCallbackRef()) {
-                    owner_.npcDeathCallbackRef()(block.guid);
+                    owner_.npcDeathCallbackRef()(block.guid, false);
                     result.npcDeathNotified = true;
                 }
             } else if (oldHealth == 0 && val > 0) {
@@ -1284,7 +1284,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 bool nowDead = (val & UNIT_DYNFLAG_DEAD) != 0;
                 if (!wasDead && nowDead) {
                     if (!result.npcDeathNotified && owner_.npcDeathCallbackRef()) {
-                        owner_.npcDeathCallbackRef()(block.guid);
+                        owner_.npcDeathCallbackRef()(block.guid, false);
                         result.npcDeathNotified = true;
                     }
                 } else if (wasDead && !nowDead) {
@@ -1789,7 +1789,7 @@ void EntityController::dispatchEntitySpawn(uint64_t guid, ObjectType objectType,
             unit->getX(), unit->getY(), unit->getZ(), unit->getOrientation(), unitScale);
     }
     if (isDead && owner_.npcDeathCallbackRef()) {
-        owner_.npcDeathCallbackRef()(guid);
+        owner_.npcDeathCallbackRef()(guid, true);
     }
     // Query quest giver status for NPCs with questgiver flag (0x02)
     if (objectType == ObjectType::UNIT && (unit->getNpcFlags() & NPC_FLAG_QUESTGIVER) &&
@@ -2380,7 +2380,7 @@ void EntityController::onCreateCorpse(const UpdateBlock& block) {
                 owner_.playerEquipmentCallbackRef()(block.guid, displayInfoIds, inventoryTypes);
             }
             if (!bones && owner_.npcDeathCallbackRef()) {
-                owner_.npcDeathCallbackRef()(block.guid);
+                owner_.npcDeathCallbackRef()(block.guid, true);
             }
             LOG_INFO("Corpse object detected: guid=0x", std::hex, block.guid, std::dec,
                      " bones=", bones, " race=", unsigned(race), " gender=", unsigned(gender));

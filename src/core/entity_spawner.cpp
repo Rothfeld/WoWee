@@ -1329,10 +1329,11 @@ EntitySpawner::getCreatureSkinPaths(uint32_t displayId,
 void EntitySpawner::playCreatureSpawnPose(uint64_t guid, uint32_t instanceId) {
     auto* charRenderer = renderer_->getCharacterRenderer();
     if (!charRenderer) return;
-// Spawn in the correct pose. If the server marked this creature dead before
-// the queued spawn was processed, start directly in death animation.
+// Spawn in the correct pose. A creature the server marked dead before the
+// queued spawn was processed is a corpse on arrival: Dead (6), not a replay
+// of Death.
 if (deadCreatureGuids_.count(guid)) {
-    charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
+    charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
 } else {
     // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
     uint32_t npcEmote = 0;

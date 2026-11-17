@@ -195,14 +195,17 @@ void AnimationCallbackHandler::setupCallbacks() {
     });
 
     // NPC/player death callback (online mode) - play death animation
-    gameHandler_.setNpcDeathCallback([this](uint64_t guid) {
+    gameHandler_.setNpcDeathCallback([this](uint64_t guid, bool alreadyDead) {
         entitySpawner_.markCreatureDead(guid);
         if (!renderer_.getCharacterRenderer()) return;
         uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
         if (guid == gameHandler_.getPlayerGuid()) instanceId = renderer_.getCharacterInstanceId();
+        // A corpse already dead when it came into view lies as Dead (6); one
+        // dying in view plays Death (1) and holds its last frame.
         if (instanceId != 0) {
-            renderer_.getCharacterRenderer()->playAnimation(instanceId, rendering::anim::DEATH, false);
+            renderer_.getCharacterRenderer()->playAnimation(instanceId,
+                alreadyDead ? rendering::anim::DEAD : rendering::anim::DEATH, alreadyDead);
         }
     });
 
@@ -336,7 +339,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (instanceId == 0) return;
         // Don't override Death animation
         uint32_t curAnim = 0; float curT = 0.0f, curDur = 0.0f;
-        if (cr->getAnimationState(instanceId, curAnim, curT, curDur) && curAnim == rendering::anim::DEATH) return;
+        if (cr->getAnimationState(instanceId, curAnim, curT, curDur) && rendering::anim::isCorpsePose(curAnim)) return;
         const bool takeoff = animId == rendering::anim::JUMP_START;
         cr->playAnimation(instanceId, animId, !takeoff,
                           takeoff ? rendering::anim::JUMP : 0);

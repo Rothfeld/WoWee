@@ -2065,7 +2065,7 @@ TEST_CASE_METHOD(Integration, "TBC corpse recreation keeps snapshot and distingu
     handler.setPlayerEquipmentCallback([&](uint64_t, const auto& display, const auto& types) {
         CHECK(display[0] == 1234); CHECK(types[0] == 1); ++equipment;
     });
-    handler.setNpcDeathCallback([&](uint64_t) { ++deaths; });
+    handler.setNpcDeathCallback([&](uint64_t, bool alreadyDead) { CHECK(alreadyDead); ++deaths; });
     for (const bool bones : {false, true}) {
         if (bones) {
             wowee::network::Packet destroy(wireOpcode(Opcode::SMSG_DESTROY_OBJECT));

@@ -165,7 +165,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
                     const bool flying = entitySpawner_.getCreatureFlyingState().count(guid) > 0;
                     const uint32_t targetAnim = rendering::creatureMovingAnimation(flying, swimming, walking);
                     // Only restart when the selected locomotion animation changed.
-                    if (!gotState || (curAnimId != rendering::anim::DEATH && curAnimId != targetAnim)) {
+                    if (!gotState || (!rendering::anim::isCorpsePose(curAnimId) && curAnimId != targetAnim)) {
                         cr->playAnimation(instanceId, targetAnim, /*loop=*/true);
                     }
                     uint32_t actualAnim = 0; float actualTime = 0.0f, actualDuration = 0.0f;

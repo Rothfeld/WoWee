@@ -559,6 +559,10 @@ const char* nameFromId(uint32_t id);
 /// Logs warnings for IDs present in DBC but missing from constants, and vice versa.
 void validateAgainstDBC(const std::shared_ptr<wowee::pipeline::DBCFile>& dbc);
 
+/// A corpse's pose: Death held on its last frame (died in view) or Dead
+/// (already a corpse when it came into view).
+constexpr bool isCorpsePose(uint32_t id) { return id == DEATH || id == DEAD; }
+
 } // namespace anim
 } // namespace rendering
 } // namespace wowee

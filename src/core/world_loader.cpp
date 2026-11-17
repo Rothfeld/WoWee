@@ -1022,13 +1022,16 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         auto* cr = renderer_->getCharacterRenderer();
         auto* spawner = entitySpawner_;
 
-        gameHandler_->setNpcDeathCallback([this, cr, spawner](uint64_t guid) {
+        gameHandler_->setNpcDeathCallback([this, cr, spawner](uint64_t guid, bool alreadyDead) {
             spawner->markCreatureDead(guid);
             uint32_t instanceId = spawner->getCreatureInstanceId(guid);
             if (instanceId == 0) instanceId = spawner->getPlayerInstanceId(guid);
             if (guid == gameHandler_->getPlayerGuid()) instanceId = renderer_->getCharacterInstanceId();
+            // A corpse already dead when it came into view lies as Dead (6);
+            // one dying in view plays Death (1) and holds its last frame.
             if (instanceId != 0 && cr) {
-                cr->playAnimation(instanceId, rendering::anim::DEATH, false);
+                cr->playAnimation(instanceId, alreadyDead ? rendering::anim::DEAD : rendering::anim::DEATH,
+                                  alreadyDead);
             }
         });
 
