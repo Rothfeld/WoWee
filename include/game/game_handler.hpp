@@ -4078,17 +4078,23 @@ public:
         if (it == areaPvpCache_.end()) return {};
         constexpr uint32_t kAreaFlagArena     = 0x00000080;
         constexpr uint32_t kAreaFlagSanctuary = 0x00000800;
-        constexpr uint32_t kTeamNone = 0, kTeamAlly = 2, kTeamHorde = 4, kTeamAny = 6;
+        // AreaTable team: 2 Alliance, 4 Horde, 0 contested. In the TBC data
+        // all 137 team-0 zones are the contested ones (Duskwood, Wetlands,
+        // Swamp of Sorrows, The Temple of Atal'Hakkar), whose title native
+        // draws in the contested orange. The one team-6 zone is Shattrath,
+        // already a sanctuary.
+        constexpr uint32_t kTeamContested = 0, kTeamAlly = 2, kTeamHorde = 4, kTeamAny = 6;
         if (it->second.flags & kAreaFlagSanctuary) return {"sanctuary", ""};
         if (it->second.flags & kAreaFlagArena)     return {"arena", ""};
         const bool alliance = isPlayerAlliance();
         switch (it->second.team) {
+            case kTeamContested:
             case kTeamAny:   return {"contested", ""};
             case kTeamAlly:  return {alliance ? "friendly" : "hostile", "Alliance"};
             case kTeamHorde: return {alliance ? "hostile" : "friendly", "Horde"};
-            case kTeamNone:
-            default:         return {};
         }
+        assert(false && "AreaTable team outside 0/2/4/6");
+        return {};
     }
     struct OnlineItemInfo {
         uint32_t entry = 0;
