@@ -1610,7 +1610,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 const std::string& gn = gameHandler.lookupGuildName(guildId);
                 if (!gn.empty()) subLabel = "<" + gn + ">";
             }
-        } else if (const auto title = game::summonTitle(creatureType, game::unitCreatedByGuid(*unit));
+        } else if (const auto title = game::summonTitle(creatureType, game::unitCreatedByGuid(*unit),
+                                                            game::unitSummonedByGuid(*unit));
                    title != game::SummonTitle::None) {
             // "<Owner's Companion>" / "<Owner's Minion>" from GlobalStrings.
             const uint64_t creator = game::unitCreatedByGuid(*unit);

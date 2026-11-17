@@ -2795,7 +2795,8 @@ int lua_Tooltip_SetUnit(lua_State* L) {
             if (!guildName.empty()) addLine("<" + guildName + ">", 0.25f, 1.0f, 0.25f);
         }
     } else if (const auto title = unit ? game::summonTitle(gh->getCreatureType(unit->getEntry()),
-                                                         game::unitCreatedByGuid(*entity))
+                                                         game::unitCreatedByGuid(*entity),
+                                                         game::unitSummonedByGuid(*entity))
                                        : game::SummonTitle::None;
                title != game::SummonTitle::None) {
         // Companion or a creature's minion (game/summon_title.hpp).
