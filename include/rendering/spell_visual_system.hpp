@@ -34,6 +34,10 @@ public:
                          bool useImpactKit = false, uint32_t attachInstanceId = 0);
 
     void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId);
+    // SpellVisual InstantAreaKit (TBC column 22) at the spell's destination,
+    // when the spell goes. Summon Boar Spirit (8286, visual 878) names kit 9209,
+    // WorldEffect Spells\DarkRitual_PreCast_Base, where the spirit appears.
+    void playInstantAreaKit(uint32_t visualId, const glm::vec3& worldPosition);
     void startChannelVisual(uint32_t visualId, const glm::vec3& position,
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
@@ -126,6 +130,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> stateKits_;
     std::unordered_map<uint32_t, uint32_t> castKits_;
     std::unordered_map<uint32_t, uint32_t> impactKits_;
+    std::unordered_map<uint32_t, uint32_t> instantAreaKits_;
     /// M2 attachment 17, named Breath. SpellVisualKit's BreathEffect slot is
     /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
     /// carries it on bone 82 in front of the face, bone +X forward.

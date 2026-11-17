@@ -1007,6 +1007,10 @@ wowee_add_packet_test(test_prewotlk_build_packets)
 # readers were merged. Same link set as test_char_enum_layout.
 wowee_add_packet_test(test_item_query_layout)
 
+# ── test_spell_go_destination ──────────────────────────────────────────
+# TBC SMSG_SPELL_GO's TARGET_FLAG_DEST_LOCATION, where InstantAreaKit plays.
+wowee_add_packet_test(test_spell_go_destination)
+
 # ── test_guild_bank_list ───────────────────────────────────────────────
 # SMSG_GUILD_BANK_LIST, whose tab-name block is optional and was gated on the
 # wrong condition - so a tab query that answered with the names attached had
