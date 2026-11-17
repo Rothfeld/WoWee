@@ -2809,6 +2809,7 @@ if(NOT ANDROID)
     target_sources(test_game_replay PRIVATE test_game_replay_spell_logs.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_death.cpp)
     target_sources(test_game_replay PRIVATE test_game_replay_loot_attack.cpp)
+    target_sources(test_game_replay PRIVATE test_game_replay_loot_roll.cpp)
 
     # Same complete client objects as game_replay: never replace client classes
     # with test implementations or copy an input-routing branch into a seam.

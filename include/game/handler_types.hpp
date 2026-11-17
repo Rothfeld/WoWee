@@ -490,8 +490,9 @@ struct LootRollEntry {
     uint64_t objectGuid    = 0;
     uint32_t slot          = 0;
     uint32_t itemId        = 0;
-    std::string itemName;
-    uint8_t  itemQuality   = 0;
+    /// START_LOOT_ROLL raised. Held back until the item is cached: the roll
+    /// window reads name, icon and quality once, in its OnShow.
+    bool     announced     = false;
     uint32_t rollCountdownMs = 60000;
     uint8_t  voteMask      = 0xFF;
     std::chrono::steady_clock::time_point rollStartedAt{};

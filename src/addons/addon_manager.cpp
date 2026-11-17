@@ -572,7 +572,7 @@ void AddonManager::giveCoinAmountsClearance() {
     if (!luaEngine_.executeString(kChatBackgroundSwatchLua)) {
         LOG_WARNING("Chat background swatch did not apply: ", luaEngine_.lastError());
     }
-    // A loot roll window, filled in again when its item is answered for.
+    // TBC loot window rows, filled in again when their item is answered for.
     if (!luaEngine_.executeString(kLootRollRefreshLua)) {
         LOG_WARNING("Loot roll refresh did not apply: ", luaEngine_.lastError());
     }

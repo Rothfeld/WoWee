@@ -583,6 +583,7 @@ private:
     /// The roll window hides itself on this and nothing else, so without it a
     /// resolved roll stays on screen over a bar that has run down, offering
     /// buttons the server has already stopped listening for.
+    void announceLootRoll(int rollId);
     LootRollEntry& beginLootRoll(uint64_t objectGuid, uint32_t slot);
     LootRollEntry* findLootRoll(uint64_t objectGuid, uint32_t slot);
     void endLootRoll(uint64_t objectGuid, uint32_t slot);

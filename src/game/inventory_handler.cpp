@@ -7,6 +7,7 @@
 #include "game/game_handler.hpp"
 #include "game/game_utils.hpp"
 #include "game/entity.hpp"
+#include <cassert>
 #include <set>
 #include "game/packet_parsers.hpp"
 #include "rendering/renderer.hpp"
@@ -335,35 +336,25 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         uint32_t countdown = packet.readUInt32();
         uint8_t  voteMask  = packet.readUInt8();
 
-        // Resolve item name from cache
-        owner_.ensureItemInfo(itemId);
-        auto* info = owner_.getItemInfo(itemId);
-        std::string itemName = (info && !info->name.empty()) ? info->name : ("Item #" + std::to_string(itemId));
-        uint8_t quality = info ? static_cast<uint8_t>(info->quality) : 1;
-
         // Its own entry, kept alongside whatever else is being rolled for.
         // A boss puts four of these up at once and there was one slot to hold
         // them, so the last to arrive answered for all of them.
         LootRollEntry& roll = beginLootRoll(objectGuid, lootSlot);
         roll.itemId = itemId;
-        roll.itemName = itemName;
-        roll.itemQuality = quality;
         roll.rollCountdownMs = countdown;
         roll.voteMask = voteMask;
         roll.rollStartedAt = std::chrono::steady_clock::now();
-        std::string link = buildItemLink(itemId, quality, itemName);
-        owner_.addSystemChatMessage("Loot roll started for " + link + ".");
-        // The roll id the interface will ask every later question by. Its own
-        // number: the slot plus one was unique only while one roll was open,
-        // and two corpses both rolling their first item shared it.
-        if (owner_.addonEventCallbackRef()) {
-            // ...and the time to roll in, which the packet carried all along
-            // and this read past. GroupLootFrame_OpenNewFrame takes it as the
-            // second argument and sizes the countdown bar from it; without one
-            // the bar had no length and the window could not time out.
-            owner_.addonEventCallbackRef()("START_LOOT_ROLL",
-                                           {std::to_string(roll.rollId),
-                                            std::to_string(countdown)});
+        // TBC GlobalStrings has no line for a roll starting; the window is the
+        // only announcement. It waits for the item: GroupLootFrame_OnShow reads
+        // name, icon and quality once, so a window opened before the item query
+        // answered stayed blank with an invented "Item #N" name.
+        const int rollId = roll.rollId;
+        owner_.ensureItemInfo(itemId);
+        const auto* info = owner_.getItemInfo(itemId);
+        if (info && info->valid) {
+            announceLootRoll(rollId);
+        } else {
+            LOG_DEBUG("Loot roll ", rollId, " for item ", itemId, " waits for its item query");
         }
     };
 
@@ -1340,6 +1331,28 @@ LootRollEntry* InventoryHandler::findLootRoll(uint64_t objectGuid, uint32_t slot
         if (roll.objectGuid == objectGuid && roll.slot == slot) return &roll;
     }
     return nullptr;
+}
+
+/// Raise START_LOOT_ROLL for a roll whose item is cached.
+void InventoryHandler::announceLootRoll(int rollId) {
+    LootRollEntry* roll = nullptr;
+    for (auto& r : lootRolls_) {
+        if (r.rollId == rollId) roll = &r;
+    }
+    assert(roll && !roll->announced);
+    const auto* info = owner_.getItemInfo(roll->itemId);
+    assert(info && info->valid);
+    roll->announced = true;
+    LOG_DEBUG("START_LOOT_ROLL ", rollId, " item ", roll->itemId, " '", info->name,
+              "' countdown ", roll->rollCountdownMs, "ms");
+    if (owner_.addonEventCallbackRef()) {
+        // The countdown the packet carried: GroupLootFrame_OpenNewFrame sizes
+        // the timer bar from it. GetLootRollTimeLeft counts from packet arrival,
+        // so a roll that waited for its item shows the time actually left.
+        owner_.addonEventCallbackRef()("START_LOOT_ROLL",
+                                       {std::to_string(rollId),
+                                        std::to_string(roll->rollCountdownMs)});
+    }
 }
 
 /// Close one roll and take its window down with it.
@@ -4457,6 +4470,12 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
             owner_.addonEventCallbackRef()("GET_ITEM_INFO_RECEIVED",
                                            {std::to_string(data.entry)});
         }
+        // Loot rolls held back for this item open now.
+        std::vector<int> waitingRolls;
+        for (const auto& roll : lootRolls_) {
+            if (!roll.announced && roll.itemId == data.entry) waitingRolls.push_back(roll.rollId);
+        }
+        for (const int rollId : waitingRolls) announceLootRoll(rollId);
 
         // An action can reference a depleted item absent from all inventory
         // objects. Its metadata query still needs to refresh the original icon.

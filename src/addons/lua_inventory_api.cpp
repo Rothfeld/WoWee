@@ -1,4 +1,5 @@
 // lua_inventory_api.cpp - Items, containers, merchant, loot, equipment, trading, auction, and mail Lua API bindings.
+#include <cassert>
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/item_text.hpp"
 #include "game/reputation_standing.hpp"
@@ -3325,16 +3326,19 @@ static int lua_GetLootRollItemInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const auto* roll = rollFor(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
     if (!roll) { return luaReturnNil(L); }
-
+    // A roll reaches the interface (START_LOOT_ROLL) only once its item is
+    // cached; see InventoryHandler::announceLootRoll.
+    if (!roll->announced) { return luaReturnNil(L); }
     const auto* info = gh->getItemInfo(roll->itemId);
-    lua_pushstring(L, gh->getItemIconPath(info ? info->displayInfoId : 0).c_str());
-    lua_pushstring(L, roll->itemName.c_str());
+    assert(info && info->valid);
+    lua_pushstring(L, gh->getItemIconPath(info->displayInfoId).c_str());
+    lua_pushstring(L, info->name.c_str());
     // The roll packet does not carry a stack size. One is right for nearly
     // everything rolled for, and the window only reads it to decide whether to
     // print a number in the corner at all.
     lua_pushnumber(L, 1);
-    lua_pushnumber(L, roll->itemQuality);
-    lua_pushboolean(L, info && info->bindType == 1 ? 1 : 0);  // bind on pickup
+    lua_pushnumber(L, info->quality);
+    lua_pushboolean(L, info->bindType == 1 ? 1 : 0);  // bind on pickup
     lua_pushboolean(L, (roll->voteMask & kRollNeed) ? 1 : 0);
     lua_pushboolean(L, (roll->voteMask & kRollGreed) ? 1 : 0);
     lua_pushboolean(L, (roll->voteMask & kRollDisenchant) ? 1 : 0);
@@ -3348,9 +3352,11 @@ static int lua_GetLootRollItemInfo(lua_State* L) {
 static int lua_GetLootRollItemLink(lua_State* L) {
     auto* gh = getGameHandler(L);
     const auto* roll = rollFor(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
-    if (!roll) { return luaReturnNil(L); }
-    lua_pushstring(L, game::buildItemLink(roll->itemId, roll->itemQuality,
-                                          roll->itemName).c_str());
+    if (!roll || !roll->announced) { return luaReturnNil(L); }
+    const auto* info = gh->getItemInfo(roll->itemId);
+    assert(info && info->valid);
+    lua_pushstring(L, game::buildItemLink(roll->itemId, info->quality,
+                                          info->name).c_str());
     return 1;
 }
 
