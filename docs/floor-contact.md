@@ -35,6 +35,13 @@ transfer, so an application-state transition alone cannot prove terrain loaded.
 subsequent ground snap. Movement contact counters include horizontal and
 vertical sweeps. Use these together to distinguish collision rejection from
 a later floor snap erasing the resolved height.
+
+The Exodar table route at server (-4191,-11477.700195,-131.451859), heading
+0.299362, exercises more than wall blocking. Original TBC emits repeated
+FALL_LAND packets while walking along its base; feet briefly rise and descend.
+Matching its silhouette path while keeping the actor grounded does not verify
+that contact response. Geometry reconstruction and wire samples are retained in
+`_experiments/20261117T005000Z.table_geometry_replay` in the parent workspace.
 The movement helper regressions run with:
 
 ```sh
