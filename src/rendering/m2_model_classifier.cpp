@@ -616,7 +616,6 @@ M2ClassificationResult classifyM2Model(
     r.isHangingCloth = !r.isFoliageLike &&
                        (has(n, "banner") || flagCloth || has(n, "tapestry") ||
                         has(n, "pennant"));
-    r.isFireflyEffect   = ambientCreature;
 
     // Small foliage: foliage-like models with a small bounding box.
     // Used to skip rendering during taxi/flight for performance.

@@ -87,7 +87,6 @@ struct M2ClassificationResult {
     bool isLavaModel        = false; ///< Lava surface (UV scroll animation)
     bool isInstancePortal   = false; ///< Instance portal (additive, spin, no collision)
     bool isWaterVegetation  = false; ///< Aquatic vegetation (cattails, kelp, reeds, etc.)
-    bool isFireflyEffect    = false; ///< Ambient creature (exempt from particle dampeners)
     bool isElvenLike        = false; ///< Night elf / Blood elf themed model
     bool isLanternLike      = false; ///< Lantern/lamp/light model
     bool isKoboldFlame      = false; ///< Kobold candle/torch model

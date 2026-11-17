@@ -737,13 +737,10 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
             glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
             float alpha = std::min(interpFBlockFloat(em.particleAlpha, lifeRatio), 1.0f);
-            float rawScale = interpFBlockFloat(em.particleScale, lifeRatio);
-
-            float scale = rawScale;
-            // Spell effects, including LootFX, use authored lifecycle sizes.
-            if (!gpu.isSpellEffect && !gpu.isFireflyEffect) {
-                scale = std::min(rawScale, 1.5f);
-            }
+            // Authored lifecycle size for every model. GnomereganVent smoke
+            // grows 2.78 -> 4.44 -> 8.33; a former 1.5 cap on models not named
+            // like spell effects shrank it to thin puffs.
+            const float scale = interpFBlockFloat(em.particleScale, lifeRatio);
 
             assert(vbWritten < particleVertexCapacity_);
             // A run per stretch of particles sharing a group. The group only
@@ -769,7 +766,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[4] = color.g;
                 vd[5] = color.b;
                 vd[6] = alpha;
-                vd[7] = scale * placementScale;
+                vd[7] = particleSpriteHalfWidth(scale, placementScale);
                 float tileIndex = p.tileIndex;
                 if (cachedIsTiled) {
                     tileIndex = p.tileIndex + static_cast<float>(cachedAnimFrame);

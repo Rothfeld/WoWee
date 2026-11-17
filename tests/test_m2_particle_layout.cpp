@@ -196,3 +196,11 @@ TEST_CASE("Summoning portal emits a ring rather than filling its center", "[m2][
     CHECK(glm::length(sphericalParticleEmission(2, 4, 0, 0, 0, 0).offset) == Catch::Approx(2));
     CHECK(glm::length(sphericalParticleEmission(2, 4, 0, 0, .5f, 0).offset) == Catch::Approx(3));
 }
+
+TEST_CASE("Particle sprites keep authored lifecycle scale above one yard", "[m2][particle]") {
+    using wowee::rendering::particleSpriteHalfWidth;
+    // GnomereganVent emitter 0 scales 2.77778 / 4.44444 / 8.33333, placed at 0.729.
+    CHECK(particleSpriteHalfWidth(8.33333f, 0.729f) == Catch::Approx(6.075f).margin(0.001f));
+    CHECK(particleSpriteHalfWidth(2.77778f, 1.0f) == Catch::Approx(2.77778f));
+    CHECK(particleSpriteHalfWidth(0.0000278f, 1.0f) == Catch::Approx(0.0000278f));
+}

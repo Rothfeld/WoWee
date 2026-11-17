@@ -137,7 +137,6 @@ struct M2ModelGPU {
     bool isInvisibleTrap = false;   // Invisible trap objects (don't render, no collision)
     bool isGroundDetail = false;    // Ground clutter/detail doodads (special fallback render path)
     bool isWaterVegetation = false; // Cattails, reeds, kelp etc. near water (insect spawning)
-    bool isFireflyEffect = false;   // Firefly/fireflies M2 (exempt from particle dampeners)
     bool isWaterfall = false;       // Waterfall model (ambient sound + splash particles)
     bool isBrazierOrFire = false;   // Brazier / campfire / bonfire model
     bool isGroundFire = false;      // Ground fire whose halo follows its lowest flame emitter

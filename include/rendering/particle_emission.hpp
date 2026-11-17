@@ -13,6 +13,12 @@ inline float particlePlacementScale(const glm::mat4& model) {
     return glm::length(glm::vec3(model[0]));
 }
 
+// Billboard half-width: the authored lifecycle scale at placement scale.
+// No caps or floors; smoke plumes author scales well above one yard.
+inline float particleSpriteHalfWidth(float authoredScale, float placementScale) {
+    return authoredScale * placementScale;
+}
+
 // NoTrail particles remain attached to the animated emitter. Other particles
 // retain its birth pose, either in model space or in world space. Bit 0x20 is
 // UnLit; it does not select a simulation coordinate system.
