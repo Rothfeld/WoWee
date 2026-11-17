@@ -34,6 +34,14 @@ public:
                          bool useImpactKit = false, uint32_t attachInstanceId = 0);
 
     void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId);
+    // SpellVisual InstantAreaKit (TBC column 22), at the caster when the spell
+    // goes. Original 2.4.3 (_experiments/20261117T165200Z.pair4_kits): Summon
+    // Boar Spirit 8286 kit 9209 DarkRitual_PreCast_Base under the caster while
+    // the spirit appears yards away; Summon Skeleton 261 kit 9161
+    // CallLightning_Impact at the caster; Quillboar Channeling 7083 kit 9191
+    // Frost_Nova_state under the casting Ward Keeper, not its target.
+    void playInstantAreaKit(uint32_t visualId, const glm::vec3& casterPosition,
+                            uint32_t casterInstanceId);
     void startChannelVisual(uint32_t visualId, const glm::vec3& position,
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
@@ -126,6 +134,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> stateKits_;
     std::unordered_map<uint32_t, uint32_t> castKits_;
     std::unordered_map<uint32_t, uint32_t> impactKits_;
+    std::unordered_map<uint32_t, uint32_t> instantAreaKits_;
     /// M2 attachment 17, named Breath. SpellVisualKit's BreathEffect slot is
     /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
     /// carries it on bone 82 in front of the face, bone +X forward.

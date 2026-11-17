@@ -2470,6 +2470,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                     if (auto* svs = renderer->getSpellVisualSystem()) {
                         svs->playSpellVisual(visualId, casterPos, /*useImpactKit=*/false,
                                              owner_.resolveUnitRenderInstance(data.casterUnit));
+                        svs->playInstantAreaKit(visualId, casterPos,
+                                                owner_.resolveUnitRenderInstance(data.casterUnit));
                     }
                 }
             }

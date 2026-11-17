@@ -59,6 +59,9 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     uint32_t svPrecastKitField = svLayout  ? (*svLayout)["PrecastKit"]    : 1;
     uint32_t svImpactKitField = svLayout  ? (*svLayout)["ImpactKit"]     : 3;
     uint32_t svMissileField   = svLayout  ? (*svLayout)["MissileModel"]  : 8;
+    // Declared for TBC only: columns after ChannelKit were mapped from the
+    // 2.4.3 data (MissileModel 7, InstantAreaKit 22 holds summon/portal kits).
+    const uint32_t svInstantAreaKitField = svLayout ? svLayout->field("InstantAreaKit") : 0xFFFFFFFFu;
     uint32_t fxFilePathField  = fxLayout  ? (*fxLayout)["FilePath"]       : 2;
 
     // Kit effect fields to probe, in priority order.
@@ -147,6 +150,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         precastKits_[vid] = svDbc->getUInt32(i, svPrecastKitField);
         if (svCastKitField < svFc) castKits_[vid] = svDbc->getUInt32(i, svCastKitField);
         if (svImpactKitField < svFc) impactKits_[vid] = svDbc->getUInt32(i, svImpactKitField);
+        if (svInstantAreaKitField < svFc) instantAreaKits_[vid] = svDbc->getUInt32(i, svInstantAreaKitField);
         const uint32_t stateField = (*svLayout)["StateKit"];
         assert(stateField < svFc);
         stateKits_[vid] = svDbc->getUInt32(i, stateField);
@@ -437,6 +441,18 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
         }
         ++it;
     }
+}
+
+void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& casterPosition,
+                                           uint32_t casterInstanceId) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto kit = instantAreaKits_.find(visualId);
+    if (kit == instantAreaKits_.end() || !kit->second) return;
+    LOG_DEBUG("SpellVisual: instant area kit ", kit->second, " of visual ", visualId,
+              " at caster instance ", casterInstanceId);
+    // Unit slots attach to the caster; Base/World slots stand where it stood.
+    spawnKitEffects(kit->second, casterPosition, casterInstanceId, /*duration=*/-1.0f,
+                    /*isPrecast=*/false);
 }
 
 void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition,
