@@ -1205,7 +1205,15 @@ so a movement update that stops the unit resumes the cast pose.
 A remote unit holds its aura's `StateKit` animation as its idle while the aura
 lasts (latest applied aura with one): Rend Blackhand's Whirlwind (13736, kit
 370) and Brood Power: Bronze (22291, kit 5769, applied with `.aura`, no cast)
-spin with Whirlwind (126) in the original. The local player does not yet.
+spin with Whirlwind (126) in the original. A held animation other than Stand
+also replaces walk/run/jump, for remote units and the local player alike
+(`CharacterAnimator::setAuraHoldAnimation`): native spins a running or jumping
+player and a following creature under Whirlwind 13736, holds SpellCastOmni (54)
+while moving under Consuming Shadows 17715 and ReadyRifle (48) under Hold
+Rifle 16723. About 110 spells (Shadowguard 18137) have a Stand state kit; those
+units keep walking and running. Casts, swings, hit reactions, stuns and sitting
+still play over the hold. Evidence:
+`_experiments/20261117T2335Z.aura_state_locomotion/` in the workspace root.
 An impact kit's animation plays on the unit it lands on, local player
 included: Knockdown (5164/16790) and Backhand (6253) impact kit 348 throw the
 target down with Knockdown (121). The local player's kit animation plays once

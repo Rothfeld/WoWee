@@ -56,6 +56,13 @@ public:
     void setInCombat(bool combat) override;
     void setLowHealth(bool low) override;
     void setSprintAuraActive(bool active) override;
+    /// Animation an aura holds, 0 for none: its StateKit animation unless that
+    /// is Stand. It replaces locomotion, jumps and the ready stance; casts,
+    /// swings, hit reactions, stuns and sitting still play over it. Native
+    /// 2.4.3 spins a running or jumping player under Whirlwind (13736, 126)
+    /// and keeps Run under Shadowguard (18137, Stand); see
+    /// _experiments/20261117T2335Z.aura_state_locomotion.
+    void setAuraHoldAnimation(uint32_t animId) { auraHold_ = animId; }
 
     // ── Configuration ───────────────────────────────────────────────────
     void setCapabilities(const AnimCapabilitySet& caps) { caps_ = caps; }
@@ -139,6 +146,7 @@ private:
     // Overlay flags
     bool stealthed_ = false;
     bool sprintAura_ = false;
+    uint32_t auraHold_ = 0;
     bool lowHealth_ = false;
     bool inCombat_ = false;
     bool rangedWeaponActive_ = false;
@@ -150,6 +158,7 @@ private:
 
     /// Priority resolver: highest-priority active FSM wins.
     AnimOutput resolveAnimation();
+    [[nodiscard]] LocomotionFSM::Input locomotionInput() const;
 
     /// Apply stealth/sprint overlays to the resolved animation.
     [[nodiscard]] AnimOutput applyOverlays(AnimOutput base) const;

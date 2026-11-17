@@ -283,6 +283,13 @@ public:
     /// What a remote unit's one-shot (swing, hit reaction) resumes: its
     /// locomotion while it is on a move, else remoteIdleAnimation.
     uint32_t remoteResumeAnimation(uint64_t guid) const;
+    /// The animation an aura holds on a moving remote unit in place of its
+    /// walk/run/swim/fly, 0 for none: the aura StateKit animation unless it is
+    /// Stand (0). Native 2.4.3 spins a running unit under Whirlwind (13736,
+    /// 126) and holds SpellCastOmni (54) under Consuming Shadows (17715), but
+    /// walks/runs one under Shadowguard (18137, Stand); see
+    /// _experiments/20261117T2335Z.aura_state_locomotion.
+    [[nodiscard]] uint32_t remoteAuraLocomotion(uint64_t guid) const;
     /// Walk (true) or Run for a moving remote unit. Creatures move by server
     /// splines and take the gait from the spline speed against the Walk stride
     /// of `locomotionInstanceId` (the mount when riding), as build 8606 does
@@ -305,6 +312,8 @@ public:
     std::unordered_map<uint64_t, bool>& getRemoteWasAirborne() { return remoteWasAirborne_; }
     std::unordered_map<uint64_t, bool>& getRemoteWasMovingBackward() { return remoteWasMovingBackward_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasWalking() { return creatureWasWalking_; }
+    /// remoteAuraLocomotion each unit's locomotion was last chosen with.
+    std::unordered_map<uint64_t, uint32_t>& getRemoteWasAuraLocomotion() { return remoteWasAuraLocomotion_; }
     std::unordered_map<uint64_t, bool>& getCreatureSwimmingState() { return creatureSwimmingState_; }
     std::unordered_map<uint64_t, bool>& getCreatureWalkingState() { return creatureWalkingState_; }
     std::unordered_map<uint64_t, bool>& getCreatureFlyingState() { return creatureFlyingState_; }
@@ -514,6 +523,9 @@ private:
     // temporarily overrides them, then the idle transition restores this loop.
     std::unordered_map<uint64_t, uint32_t> creatureActiveEmotes_;
     std::unordered_map<uint64_t, uint32_t> remoteCastHolds_;
+    std::unordered_map<uint64_t, uint32_t> remoteWasAuraLocomotion_;
+    /// Aura StateKit animation of a remote unit, SpellVisualSystem::kNoAnimation for none.
+    uint32_t remoteAuraStateAnimation(uint64_t guid) const;
     std::unordered_map<uint64_t, float> creatureAppliedOpacity_;
     uint32_t stealthSyncFrameCounter_ = 0;  // throttles syncCreatureVisualState()
     std::unordered_map<uint64_t, std::array<uint32_t, 10>> creatureWeaponStates_;

@@ -922,19 +922,27 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     if (state != 0) return rendering::standPose(state).idle;
     if (const auto hold = remoteCastHolds_.find(guid); hold != remoteCastHolds_.end()) return hold->second;
     // An aura's state animation, e.g. Whirlwind (126) under Rend's Whirlwind.
-    if (const auto* visuals = renderer_ ? renderer_->getSpellVisualSystem() : nullptr) {
-        uint32_t instance = getCreatureInstanceId(guid);
-        if (!instance) instance = getPlayerInstanceId(guid);
-        const uint32_t aura = instance ? visuals->auraStateAnimation(instance)
-                                       : rendering::SpellVisualSystem::kNoAnimation;
-        if (aura != rendering::SpellVisualSystem::kNoAnimation) return aura;
-    }
+    if (const uint32_t aura = remoteAuraStateAnimation(guid); aura != rendering::SpellVisualSystem::kNoAnimation)
+        return aura;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     // A unit meleeing holds its ready stance between swings; the original
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
     if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) return meleeReadyAnimation(*unit);
     if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
     return unit ? rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState()) : 0;
+}
+
+uint32_t EntitySpawner::remoteAuraStateAnimation(uint64_t guid) const {
+    const auto* visuals = renderer_ ? renderer_->getSpellVisualSystem() : nullptr;
+    if (!visuals) return rendering::SpellVisualSystem::kNoAnimation;
+    uint32_t instance = getCreatureInstanceId(guid);
+    if (!instance) instance = getPlayerInstanceId(guid);
+    return instance ? visuals->auraStateAnimation(instance) : rendering::SpellVisualSystem::kNoAnimation;
+}
+
+uint32_t EntitySpawner::remoteAuraLocomotion(uint64_t guid) const {
+    const uint32_t aura = remoteAuraStateAnimation(guid);
+    return aura == rendering::SpellVisualSystem::kNoAnimation || aura == rendering::anim::STAND ? 0 : aura;
 }
 
 void EntitySpawner::setRemoteCastHold(uint64_t guid, uint32_t animationId) {
@@ -959,6 +967,7 @@ uint32_t EntitySpawner::remoteResumeAnimation(uint64_t guid) const {
     // The per-frame sync replays locomotion only when the moving state
     // changes, so a one-shot that ends mid-move must resume it itself.
     if (const auto moving = creatureWasMoving_.find(guid); moving != creatureWasMoving_.end() && moving->second) {
+        if (const uint32_t aura = remoteAuraLocomotion(guid)) return aura;
         const uint32_t instanceId = creatureInstances_.count(guid) ? creatureInstances_.at(guid)
                                                                     : playerInstances_.at(guid);
         return rendering::creatureMovingAnimation(creatureFlyingState_.count(guid) > 0,
@@ -1196,6 +1205,7 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
 
 void EntitySpawner::despawnPlayer(uint64_t guid) {
     remoteCastHolds_.erase(guid);
+    remoteWasAuraLocomotion_.erase(guid);
     if (!renderer_ || !renderer_->getCharacterRenderer()) return;
     remoteStandStates_.erase(guid);
     remoteIdleAnims_.erase(guid);

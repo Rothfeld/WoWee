@@ -21,6 +21,7 @@
 #include "rendering/animation/creature_locomotion.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include "rendering/animation_controller.hpp"
+#include "rendering/spell_visual_system.hpp"
 #include <bit>
 #include <unordered_set>
 #include <cmath>
@@ -3483,8 +3484,16 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         auto* charRenderer = renderer->getCharacterRenderer();
         if (entitySpawner_) entitySpawner_->syncLocalFootprintModels();
         if (entitySpawner_ && renderer->getCharacterInstanceId() != 0) {
-            if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid()))
+            if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid())) {
                 entitySpawner_->syncUnitAuraVisuals(*self, renderer->getCharacterInstanceId());
+                // The aura's held animation, Stand excepted (it holds nothing).
+                const auto* visuals = renderer->getSpellVisualSystem();
+                const uint32_t aura = visuals ? visuals->auraStateAnimation(renderer->getCharacterInstanceId())
+                                              : rendering::SpellVisualSystem::kNoAnimation;
+                if (auto* ac = renderer->getAnimationController())
+                    ac->setAuraHoldAnimation(aura == rendering::SpellVisualSystem::kNoAnimation ||
+                                             aura == rendering::anim::STAND ? 0 : aura);
+            }
         }
         static float npcWeaponRetryTimer = 0.0f;
         npcWeaponRetryTimer += deltaTime;
@@ -3678,23 +3687,32 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 bool prevSwimming = _creatureWasSwimming[guid];
                 bool prevFlying   = _creatureWasFlying[guid];
                 bool prevWalking  = _creatureWasWalking[guid];
+                // An aura's held animation replaces walk/run (Maulgar spins
+                // while moving under Whirlwind); applying or losing it mid-move
+                // switches the animation.
+                const uint32_t auraLocomotion = creatureMount ? 0 : entitySpawner_->remoteAuraLocomotion(guid);
+                uint32_t& prevAuraLocomotion = entitySpawner_->getRemoteWasAuraLocomotion()[guid];
                 // Trigger animation update on any locomotion-state transition, not just
                 // moving/idle - e.g. creature lands while still moving → FlyForward→Run,
                 // or server changes WALKING flag while creature is already running → Walk.
                 const bool stateChanged = (isMovingNow  != prevMoving)   ||
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
-                                          (isWalkingNow  != prevWalking && isMovingNow);
+                                          (isWalkingNow  != prevWalking && isMovingNow) ||
+                                          (auraLocomotion != prevAuraLocomotion && isMovingNow);
                 if (stateChanged) {
                     _creatureWasMoving[guid]   = isMovingNow;
                     _creatureWasSwimming[guid] = isSwimmingNow;
                     _creatureWasFlying[guid]   = isFlyingNow;
                     _creatureWasWalking[guid]  = isWalkingNow;
+                    prevAuraLocomotion = auraLocomotion;
                     uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                     bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
                     if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
                         uint32_t targetAnim;
-                        if (isMovingNow) {
+                        if (isMovingNow && auraLocomotion) {
+                            targetAnim = auraLocomotion;
+                        } else if (isMovingNow) {
                             targetAnim = rendering::creatureMovingAnimation(
                                 isFlyingNow, isSwimmingNow, isWalkingNow);
                         } else {
@@ -3957,12 +3975,18 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 const bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
                 const bool jumpFinished = gotState && curDur > 0.0f && curT >= curDur &&
                     (curAnimId == rendering::anim::JUMP_START || curAnimId == rendering::anim::JUMP_END);
+                // An aura's held animation replaces locomotion and the jump
+                // (native Whirlwind spins a running and a jumping player).
+                const uint32_t auraLocomotion = remoteMount ? 0 : entitySpawner_->remoteAuraLocomotion(guid);
+                uint32_t& prevAuraLocomotion = entitySpawner_->getRemoteWasAuraLocomotion()[guid];
                 const bool stateChanged = (isMovingNow  != prevMoving)   ||
                                           (isSwimmingNow != prevSwimming) ||
                                           (isFlyingNow   != prevFlying)   ||
                                           (isWalkingNow  != prevWalking && isMovingNow) ||
-                                          (movingBackward != prevBackward) || (airborne != wasAirborne) || jumpFinished;
+                                          (movingBackward != prevBackward) || (airborne != wasAirborne) || jumpFinished ||
+                                          (auraLocomotion != prevAuraLocomotion && (isMovingNow || airborne));
                 if (stateChanged) {
+                    prevAuraLocomotion = auraLocomotion;
                     _pCreatureWasMoving[guid]   = isMovingNow;
                     _pCreatureWasSwimming[guid] = isSwimmingNow;
                     _pCreatureWasFlying[guid]   = isFlyingNow;
@@ -3971,7 +3995,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     entitySpawner_->getRemoteWasAirborne()[guid] = airborne;
                     if (!gotState || !rendering::anim::isCorpsePose(curAnimId)) {
                         uint32_t targetAnim;
-                        if (airborne) {
+                        if (auraLocomotion && (airborne || isMovingNow)) {
+                            charRenderer->playAnimation(instanceId, auraLocomotion, true);
+                        } else if (airborne) {
                             // Preserve takeoff's one-shot -> airborne chain across
                             // heartbeats and horizontal movement-state changes.
                             if (jumpFinished && curAnimId == rendering::anim::JUMP_START)
@@ -4008,7 +4034,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                 else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
                                 else                    targetAnim = entitySpawner_->remoteIdleAnimation(guid);
                             }
-                            if (wasAirborne && !remoteMount && !isSwimmingNow && !isFlyingNow) {
+                            if (wasAirborne && !remoteMount && !isSwimmingNow && !isFlyingNow && !auraLocomotion) {
                                 charRenderer->playAnimation(instanceId, rendering::anim::JUMP_END,
                                                             false, targetAnim);
                             } else {

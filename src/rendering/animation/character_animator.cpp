@@ -171,6 +171,13 @@ AnimOutput CharacterAnimator::resolveAnimation() {
 
     // ── Combat FSM (highest priority for non-mount) ─────────────────────
     auto combatOut = combat_.resolve(combatIn, caps_, loadout_);
+    if (auraHold_ && !fi.sitting &&
+        (combat_.getState() == CombatFSM::State::INACTIVE ||
+         combat_.getState() == CombatFSM::State::COMBAT_IDLE)) {
+        // Locomotion keeps tracking jumps and landings under the hold.
+        locomotion_.resolve(locomotionInput(), caps_);
+        return AnimOutput::ok(auraHold_, true);
+    }
     const bool drawingWeapons = activity_.isEmoteActive() &&
         (activity_.getEmoteAnimId() == anim::SHEATHE ||
          activity_.getEmoteAnimId() == anim::HIP_SHEATHE);
@@ -195,6 +202,15 @@ AnimOutput CharacterAnimator::resolveAnimation() {
     if (combatOut.valid) return applyOverlays(combatOut);
 
     // ── Locomotion FSM (lowest priority) ────────────────────────────────
+    auto locoOut = locomotion_.resolve(locomotionInput(), caps_);
+    if (locoOut.valid) return applyOverlays(locoOut);
+
+    // All FSMs returned invalid → STAY (keep last animation)
+    return AnimOutput::stay();
+}
+
+LocomotionFSM::Input CharacterAnimator::locomotionInput() const {
+    const auto& fi = frameInput_;
     LocomotionFSM::Input locoIn;
     locoIn.moving = fi.moving;
     locoIn.movingForward = fi.movingForward;
@@ -213,12 +229,7 @@ AnimOutput CharacterAnimator::resolveAnimation() {
     locoIn.currentAnimTime = fi.currentAnimTime;
     locoIn.currentAnimDuration = fi.currentAnimDuration;
     locoIn.haveAnimState = fi.haveAnimState;
-
-    auto locoOut = locomotion_.resolve(locoIn, caps_);
-    if (locoOut.valid) return applyOverlays(locoOut);
-
-    // All FSMs returned invalid → STAY (keep last animation)
-    return AnimOutput::stay();
+    return locoIn;
 }
 
 // ── Overlay application ──────────────────────────────────────────────────────

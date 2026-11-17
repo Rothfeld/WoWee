@@ -142,6 +142,8 @@ public:
     void triggerHitReaction(uint32_t animId);
     /// A spell kit animation on the local player; see CombatFSM::triggerKitAnimation.
     void playKitAnimation(uint32_t animId) { characterAnimator_.triggerKitAnimation(animId); }
+    /// An aura's held animation on the local player; see CharacterAnimator::setAuraHoldAnimation.
+    void setAuraHoldAnimation(uint32_t animId) { characterAnimator_.setAuraHoldAnimation(animId); }
 
     // ── Crowd control ──────────────────────────────────────────────────────
     /// Enter/exit stunned state (loops STUN animation until cleared).

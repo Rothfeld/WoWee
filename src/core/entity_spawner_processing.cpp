@@ -1753,6 +1753,7 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     requestedCreatureDisplayIds_.erase(guid);
     creatureActiveEmotes_.erase(guid);
     remoteCastHolds_.erase(guid);
+    remoteWasAuraLocomotion_.erase(guid);
     remoteStandStates_.erase(guid);
     remoteIdleAnims_.erase(guid);
     creatureSpawnRetryDeadlines_.erase(guid);
