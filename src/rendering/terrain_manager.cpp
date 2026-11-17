@@ -1,4 +1,5 @@
 #include "rendering/terrain_manager.hpp"
+#include <cassert>
 
 #include <vector>
 
@@ -2212,8 +2213,13 @@ std::optional<float> TerrainManager::getHeightAt(float glX, float glY, glm::vec3
     return surface.z;
 }
 
-bool TerrainManager::isTileLoadedAt(float glX, float glY) const {
-    return loadedTiles.find(worldToTile(glX, glY)) != loadedTiles.end();
+bool TerrainManager::isGroundPendingAt(float glX, float glY) const {
+    if (!streamingEnabled) return false;
+    const TileCoord coord = worldToTile(glX, glY);
+    if (loadedTiles.find(coord) != loadedTiles.end()) return false;
+    if (failedTiles.find(coord) != failedTiles.end()) return false;
+    assert(assetManager);
+    return assetManager->fileExists(getADTPath(coord));
 }
 
 bool TerrainManager::isHoleAt(float glX, float glY) const {

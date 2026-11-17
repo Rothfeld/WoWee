@@ -88,3 +88,11 @@ The movement helper regressions run with:
 cmake --build build --target test_hill_climbing
 build/bin/test_hill_climbing
 ```
+
+Gravity waits only for terrain that can still stream in: streaming enabled,
+tile neither loaded nor failed, and its ADT present. WMO-only maps (WDT names
+a root WMO; Blackrock Depths, map 230) never load a tile. Treating "not
+loaded" as "still arriving" there disabled gravity and jumps, and left a
+lifted body in the air (ledger #70). The pair probe in
+`_experiments/20261117T171500Z.table_collision_data_rule/brd_probe.py`
+teleports by console because view sync rejects instance maps.

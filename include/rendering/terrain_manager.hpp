@@ -313,7 +313,7 @@ public:
     [[nodiscard]] bool isHoleAt(float glX, float glY) const;
 
     /**
-     * Whether the tile covering a world position has finished streaming in.
+     * Whether the tile covering a world position has terrain still to stream in.
      *
      * getHeightAt answers nothing both for a hole, which the character should
      * fall through, and for a tile that has not arrived yet, which it should
@@ -321,8 +321,14 @@ public:
      * slow device the second one is what happens at every login: the character
      * enters the world before the ground does and falls until the server kills
      * it.
+     *
+     * Only a tile whose ADT exists can arrive. A WMO-only map (its WDT names a
+     * root WMO, streaming is off) and a tile without an ADT have no terrain to
+     * wait for: Blackrock Depths answered "not loaded" everywhere, gravity
+     * never ran, a standing jump never left the floor and a body lifted onto
+     * a prop stayed in the air (ledger #70).
      */
-    [[nodiscard]] bool isTileLoadedAt(float glX, float glY) const;
+    [[nodiscard]] bool isGroundPendingAt(float glX, float glY) const;
 
     /**
      * The chunk under a world position, plus the offsets within it that

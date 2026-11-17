@@ -3772,7 +3772,7 @@ void CameraController::teleportTo(const glm::vec3& pos) {
 }
 
 bool CameraController::groundNotStreamedYet(float x, float y) const {
-    return terrainManager != nullptr && !terrainManager->isTileLoadedAt(x, y);
+    return terrainManager != nullptr && terrainManager->isGroundPendingAt(x, y);
 }
 
 void CameraController::applyLookDelta(float dxPixels, float dyPixels) {
