@@ -1432,14 +1432,12 @@ void GameScreen::renderMinimapCorpseMarker(const MinimapFrame& frame, game::Game
 
 }
 
-// The player, at the centre, pointing where the camera looks.
+// The player, at the centre, pointing where the character faces.
 //
-// On a rotating minimap the map itself turns so forward is screen-up; on a
-// fixed one the arrow turns instead.
-void GameScreen::renderMinimapPlayerArrow(const MinimapFrame& frame) {
-    auto* renderer = services_.renderer;
-    auto* minimap = renderer ? renderer->getMinimap() : nullptr;
-    if (!minimap) return;
+// The original client turns this arrow with the character's facing only:
+// a left-drag free look turns the camera and leaves the arrow alone
+// (_experiments/20261117T181649Z.minimap_marker_audit/o13a.png, o13b.png).
+void GameScreen::renderMinimapPlayerArrow(const MinimapFrame& frame, const game::GameHandler& gameHandler) {
     static VkDescriptorSet arrowTexture = VK_NULL_HANDLE;
     if (!arrowTexture) {
         arrowTexture = uploadUiTextureFromBlp(services_.assetManager,
@@ -1450,14 +1448,16 @@ void GameScreen::renderMinimapPlayerArrow(const MinimapFrame& frame) {
         }
     }
 
-    // Project viewing direction through the same transform as world markers.
-    // Free-look and strafing must not substitute the character's movement yaw.
-    const glm::vec3 forward = renderer->getCamera()->getForward();
-    const glm::vec2 direction = renderDeltaToMinimapOffset(
-        forward.x, forward.y, frame.view);
+    const float facing = gameHandler.getMovementInfo().orientation;
+    // Canonical yaw c points along render (-sin c, cos c); see coordinates.hpp.
+    const glm::vec2 direction = renderDeltaToMinimapOffset(-std::sin(facing), std::cos(facing), frame.view);
     const float angle = std::atan2(direction.x, -direction.y);
     const float cs = std::cos(angle), sn = std::sin(angle);
-    float halfSize = 16.0f;
+    // The 32px texture drawn as a 20 interface-unit square. The original's
+    // arrow measured 0.62 of the old 32-unit one at 1280x720 (spin/ in the
+    // audit experiment above: 11.0 px against 17.7 px longest silhouette).
+    constexpr float kArrowSize = 20.0f;
+    float halfSize = kArrowSize * 0.5f;
     if (services_.addonManager) {
         if (auto* engine = services_.addonManager->getLuaEngine()) {
             halfSize *= engine->widgets().uiScale();
@@ -1473,7 +1473,6 @@ void GameScreen::renderMinimapPlayerArrow(const MinimapFrame& frame) {
     frame.drawList->AddImageQuad((ImTextureID)(uintptr_t)arrowTexture,
         points[0], points[1], points[2], points[3],
         ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1));
-
 }
 
 // The wheel and the ctrl+click, when this client owns the ring.
@@ -1906,7 +1905,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     renderMinimapPartyDots(frame, gameHandler);
     renderMinimapBattlegroundPositions(frame, gameHandler);
     renderMinimapCorpseMarker(frame, gameHandler);
-    renderMinimapPlayerArrow(frame);
+    renderMinimapPlayerArrow(frame, gameHandler);
     // Blocked by any window in front, and entirely when FrameXML draws the
     // minimap - then the ring is a widget with its own handlers, and running
     // both would ping twice and zoom two steps a notch. Both halves below need

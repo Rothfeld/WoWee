@@ -276,7 +276,7 @@ private:
     void renderMinimapResources(const MinimapFrame& frame,
                                const std::vector<std::shared_ptr<game::Entity>>& objects,
                                game::GameHandler& gameHandler);
-    void renderMinimapPlayerArrow(const MinimapFrame& frame);
+    void renderMinimapPlayerArrow(const MinimapFrame& frame, const game::GameHandler& gameHandler);
 
     /// The wheel and the ctrl+click, when this client owns the ring.
     void handleMinimapInput(const MinimapFrame& frame, game::GameHandler& gameHandler,
