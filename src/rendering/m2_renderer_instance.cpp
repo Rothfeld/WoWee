@@ -24,6 +24,10 @@
 #include <cmath>
 #include <limits>
 #include <unordered_set>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <stdexcept>
 
 namespace wowee {
 namespace rendering {
@@ -1067,6 +1071,37 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
         // --- Mesh-based floor: vertical ray vs collision triangles ---
         // Authored collision geometry is authoritative, including empty space.
         if (model.collision.valid()) {
+            // Opt-in placed geometry for reproducing contact outside the client.
+            // Preserve float precision; rounded world coordinates can move a
+            // small prop's collision edge by several centimeters.
+            static const char* dumpDirectory = std::getenv("WOWEE_DUMP_M2_COLLISION");
+            static std::unordered_set<uint32_t> dumpedInstances;
+            if (dumpDirectory && dumpedInstances.insert(instance.id).second) {
+                const auto path = std::filesystem::path(dumpDirectory) /
+                    (std::to_string(instance.id) + ".obj");
+                if (!std::filesystem::is_directory(dumpDirectory) || std::filesystem::exists(path)) {
+                    LOG_ERROR("Collision dump requires existing directory and unused file: ", path.string());
+                    throw std::runtime_error("Invalid collision dump destination");
+                }
+                std::ofstream output(path);
+                output << std::setprecision(std::numeric_limits<float>::max_digits10)
+                       << "# " << model.name << '\n';
+                for (const auto& vertex : model.collision.vertices) {
+                    const glm::vec3 world(instance.modelMatrix * glm::vec4(vertex, 1));
+                    output << "v " << world.x << ' ' << world.y << ' ' << world.z << '\n';
+                }
+                for (uint32_t ti = 0; ti < model.collision.triCount; ++ti) {
+                    output << "f " << model.collision.indices[ti*3]+1 << ' '
+                           << model.collision.indices[ti*3+1]+1 << ' '
+                           << model.collision.indices[ti*3+2]+1 << '\n';
+                }
+                output.close();
+                if (!output) {
+                    LOG_ERROR("Failed collision dump write: ", path.string());
+                    throw std::runtime_error("Collision dump write failed");
+                }
+                LOG_INFO("Placed collision mesh saved: ", path.string(), " model=", model.name);
+            }
             // Cast world-down through the instance transform. Using local -Z
             // only works for yaw-only placements; pitched flat models (notably
             // Exodarplatform01, placed as the Azuremyst flight-master ramp)
