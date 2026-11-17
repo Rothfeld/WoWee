@@ -1772,6 +1772,47 @@ TEST_CASE_METHOD(Integration, "Dead creature target is not a corpse object and k
     lua.setGameHandler(nullptr);
 }
 
+// CGUnit_C::CanInteract(GO): the BRD rune doodads carry FactionTemplate 114,
+// whose enemy group is players, so they take neither cursor nor click.
+TEST_CASE_METHOD(Integration, "Game objects hostile to the player cannot be used", "[faction][quest-object]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    handler.setFactionObjectReactionMap({{114, 2}, {94, 4}, {35, 5}});
+    handler.setFactionHostileMap({{0, false}});
+    handler.setFactionFriendlyMap({{0, true}});
+    const auto faction = fieldIndex(UF::GAMEOBJECT_FACTION);
+    const auto createdBy = fieldIndex(UF::GAMEOBJECT_CREATED_BY);
+    REQUIRE(faction == 20);
+    REQUIRE(createdBy == 6);
+    auto rune = std::make_shared<GameObject>(0xf110029810000280ull);
+    rune->setEntry(170584);  // Doodad_DarkIronDwarfRune_G01, type 1 BUTTON, flags 0
+    rune->setField(faction, 114);
+    handler.getEntityManager().addEntity(rune->getGuid(), rune);
+    CHECK(handler.gameObjectReactionToPlayer(*rune) == 2);
+    CHECK_FALSE(handler.canInteractWithGameObject(*rune));
+    rune->setField(faction, 94);   // treasure chests: neutral
+    CHECK(handler.canInteractWithGameObject(*rune));
+    rune->setField(faction, 0);    // no faction: neutral
+    CHECK(handler.canInteractWithGameObject(*rune));
+    // An object a unit created takes its creator's reaction over its own
+    // template's (CGGameObject_C::ObjectReaction).
+    constexpr uint64_t ownerGuid = 0xf13000087a000999ull;
+    auto owner = std::make_shared<Unit>(ownerGuid);
+    owner->setFactionTemplate(0);
+    handler.getEntityManager().addEntity(ownerGuid, owner);
+    rune->setField(faction, 114);
+    rune->setField(createdBy, static_cast<uint32_t>(ownerGuid));
+    rune->setField(createdBy + 1, static_cast<uint32_t>(ownerGuid >> 32));
+    CHECK(handler.gameObjectReactionToPlayer(*rune) == 5);
+    CHECK(handler.canInteractWithGameObject(*rune));
+    // Unknown templates are a data error, not neutral.
+    rune->setField(createdBy, 0);
+    rune->setField(createdBy + 1, 0);
+    rune->setField(faction, 999999);
+    CHECK_THROWS(handler.gameObjectReactionToPlayer(*rune));
+}
+
 TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of player faction metadata", "[companion][tooltip]") {
     using namespace wowee::game;
     replay::Session session("tbc");

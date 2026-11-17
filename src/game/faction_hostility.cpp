@@ -3,6 +3,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include "core/logger.hpp"
+#include <stdexcept>
 #include <unordered_map>
 
 namespace wowee {
@@ -103,8 +104,27 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     // Kept apart from playerFriendGroup, which folds the two together: the
     // friendly test below needs to ask each direction on its own.
     uint32_t playerFactionGroup = 0;
+    // The player's template as the "other" side of a game object's reaction.
+    const uint32_t ftFriend0 = ftL ? (*ftL)["Friend0"] : 0xFFFFFFFF;
+    if (ftFriend0 == 0xFFFFFFFF)
+        throw std::runtime_error("dbc_layouts.json lacks FactionTemplate Friend0; deploy current expansion metadata");
+    auto templateRow = [&](uint32_t i) {
+        FactionTemplateRow row;
+        row.id = ftDbc->getUInt32(i, ftID);
+        row.faction = ftDbc->getUInt32(i, ftFaction);
+        row.factionGroup = ftDbc->getUInt32(i, ftFG);
+        row.friendGroup = ftDbc->getUInt32(i, ftFriend);
+        row.enemyGroup = ftDbc->getUInt32(i, ftEnemy);
+        for (uint32_t f = 0; f < 4; ++f) {
+            row.enemies[f] = ftDbc->getUInt32(i, ftEnemy0 + f);
+            row.friends[f] = ftDbc->getUInt32(i, ftFriend0 + f);
+        }
+        return row;
+    };
+    FactionTemplateRow playerTemplate;
     for (uint32_t i = 0; i < ftDbc->getRecordCount(); i++) {
         if (ftDbc->getUInt32(i, ftID) == playerFtId) {
+            playerTemplate = templateRow(i);
             playerFriendGroup = ftDbc->getUInt32(i, ftFriend) | ftDbc->getUInt32(i, ftFG);
             playerFactionGroup = ftDbc->getUInt32(i, ftFG);
             playerEnemyGroup = ftDbc->getUInt32(i, ftEnemy);
@@ -125,8 +145,12 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     // Each template whose faction carries a standing, by the server's index for
     // that standing, so the live at-war flag can be asked for later.
     std::unordered_map<uint32_t, uint32_t> templateRepList;
+    // What a game object of each template thinks of the player. One
+    // direction only, unlike the symmetric map above.
+    std::unordered_map<uint32_t, int> objectReaction;
     for (uint32_t i = 0; i < ftDbc->getRecordCount(); i++) {
         uint32_t id = ftDbc->getUInt32(i, ftID);
+        objectReaction[id] = factionTemplateReaction(templateRow(i), playerTemplate);
         uint32_t parentFaction = ftDbc->getUInt32(i, ftFaction);
         uint32_t factionGroup = ftDbc->getUInt32(i, ftFG);
         groupMasks[ftDbc->getUInt32(i, ftID)] = factionGroup;
@@ -185,6 +209,7 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     gameHandler.setFactionGroupMasks(std::move(groupMasks));
     gameHandler.setFactionFriendlyMap(std::move(friendlyMap));
     gameHandler.setFactionHostileMap(std::move(factionMap));
+    gameHandler.setFactionObjectReactionMap(std::move(objectReaction));
     LOG_INFO("Faction hostility for race ", static_cast<int>(playerRace), " (FT ", playerFtId, "): ",
         hostileCount, "/", ftDbc->getRecordCount(),
         " hostile (friendGroup=0x", std::hex, playerFriendGroup, ", enemyGroup=0x", playerEnemyGroup, std::dec, ")");

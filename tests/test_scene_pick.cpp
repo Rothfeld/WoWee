@@ -18,6 +18,7 @@
 #include "ui/scene_pick.hpp"
 #include "game/corpse_harvesting.hpp"
 #include "game/game_object_interaction.hpp"
+#include "game/faction_hostility.hpp"
 #include "game/resource_tracking.hpp"
 
 using wowee::ui::ScenePick;
@@ -251,4 +252,31 @@ TEST_CASE("Large object mesh is nearer than its enclosing sphere exit", "[quest-
         [](float, float) { return std::optional<float>{0}; }));
     CHECK(wowee::ui::terrainOccludesSceneRay(ray, sphereExit,
         [](float, float) { return std::optional<float>{0}; }));
+}
+
+// FactionTemplate.dbc 2.4.3 rows: id, faction, factionGroup, friendGroup,
+// enemyGroup, enemies, friends. A game object is usable only while its
+// template regards the player better than unfriendly (CGUnit_C::CanInteract).
+TEST_CASE("Game object faction reaction follows the client's template rule", "[quest-object][faction]") {
+    using wowee::game::FactionTemplateRow;
+    using wowee::game::factionTemplateReaction;
+    const FactionTemplateRow dwarf{.id = 3, .faction = 3, .factionGroup = 3, .friendGroup = 2, .enemyGroup = 12};
+    const FactionTemplateRow orc{.id = 2, .faction = 2, .factionGroup = 5, .friendGroup = 4, .enemyGroup = 10};
+    // Doodad_DarkIronDwarfRune_G01 (BRD, entry 170584): enemy group = players.
+    const FactionTemplateRow rune{.id = 114, .faction = 77, .enemyGroup = 1};
+    // Adamantite Bound Chest and other treasure: neutral to everyone.
+    const FactionTemplateRow treasure{.id = 94, .faction = 77, .friendGroup = 8};
+    // Stormwind mailbox.
+    const FactionTemplateRow stormwind{.id = 12, .faction = 72, .factionGroup = 2, .friendGroup = 2,
+                                       .enemyGroup = 4, .friends = {72, 0, 0, 0}};
+    // Arathi Basin "Alliance Banner": Horde template, clicked by the Horde.
+    const FactionTemplateRow hordeBanner{.id = 83, .faction = 66, .factionGroup = 4, .friendGroup = 4,
+                                         .enemyGroup = 2};
+    CHECK(factionTemplateReaction(rune, dwarf) == 2);
+    CHECK(factionTemplateReaction(rune, orc) == 2);
+    CHECK(factionTemplateReaction(treasure, dwarf) == 4);
+    CHECK(factionTemplateReaction(stormwind, dwarf) == 5);
+    CHECK(factionTemplateReaction(stormwind, orc) == 2);
+    CHECK(factionTemplateReaction(hordeBanner, dwarf) == 2);
+    CHECK(factionTemplateReaction(hordeBanner, orc) == 5);
 }

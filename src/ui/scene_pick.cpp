@@ -60,7 +60,10 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         const game::GameObjectQueryResponseData* goInfo = nullptr;
         if (type == game::ObjectType::GAMEOBJECT) {
             auto go = std::static_pointer_cast<game::GameObject>(entity);
-            const bool enabled = game::gameObjectInteractionEnabled(*go);
+            // Neither cursor nor name for an object the player may not use:
+            // flagged off, or of a faction that regards the player as worse
+            // than neutral (CGUnit_C::CanInteract).
+            const bool enabled = gameHandler.canInteractWithGameObject(*go);
             if (params.trace) {
                 glm::vec3 center;
                 float radius = 0.0f, distance = 0.0f;

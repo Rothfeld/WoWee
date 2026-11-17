@@ -1638,6 +1638,13 @@ public:
         return it == factionGroupMasks_.end() ? 0 : it->second;
     }
     void setFactionFriendlyMap(std::unordered_map<uint32_t, bool> map) { factionFriendlyMap_ = std::move(map); }
+    /// How each faction template regards the player's own template, as
+    /// UnitReaction numbers it (2 hostile, 4 neutral, 5 friendly). The
+    /// template-to-template rule of CGUnit_C::UnitReaction, one direction
+    /// only - what a game object of that faction thinks of the player.
+    void setFactionObjectReactionMap(std::unordered_map<uint32_t, int> map) {
+        factionObjectReactionMap_ = std::move(map);
+    }
     /// The templates whose faction the player has a standing with, by that
     /// standing's index in the server's list. See factionAtWarLive.
     void setFactionTemplateRepList(std::unordered_map<uint32_t, uint32_t> map) {
@@ -1667,6 +1674,15 @@ public:
     /// any standing, but at Unfriendly they will not talk to one either, and
     /// the server refuses the conversation on exactly this number.
     [[nodiscard]] int unitReactionToPlayer(const Unit& unit) const;
+    /// How a game object regards the player, numbered as unitReactionToPlayer.
+    /// CGGameObject_C::ObjectReaction: the owner's reaction for an object a
+    /// unit created, else its GAMEOBJECT_FACTION template's, else neutral.
+    [[nodiscard]] int gameObjectReactionToPlayer(const GameObject& object) const;
+    /// CGUnit_C::CanInteract(GO) plus the object's own interaction flags: not
+    /// a ghost, and the object regards the player better than unfriendly. The
+    /// Blackrock Depths rune doodads (template 114) are hostile to players and
+    /// so take neither cursor nor click; an enemy city's mailbox likewise.
+    [[nodiscard]] bool canInteractWithGameObject(const GameObject& object) const;
     [[nodiscard]] bool canPlayerAttackUnit(const Unit& unit) const;
 
     // Creature move callback (online mode - triggered by SMSG_MONSTER_MOVE)
@@ -4707,6 +4723,7 @@ private:
     // Faction hostility lookup (populated from FactionTemplate.dbc)
     std::unordered_map<uint32_t, bool> factionHostileMap_;
     std::unordered_map<uint32_t, bool> factionFriendlyMap_;
+    std::unordered_map<uint32_t, int> factionObjectReactionMap_;
     std::unordered_map<uint32_t, uint32_t> factionTemplateRepList_;
 
     // Vehicle (WotLK): non-zero when player is seated in a vehicle

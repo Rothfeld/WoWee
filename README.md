@@ -962,6 +962,15 @@ Readable game objects (type 9), including the Valley of Heroes monument
 plaques, use `Interface\\Cursor\\Inspect.blp`. Out-of-range readable objects
 use `UnableInspect.blp` through the shared interaction-range check.
 
+A game object takes cursor, name tooltip and click only while it regards the
+player better than unfriendly (`CGUnit_C::CanInteract`, mirrored in CMaNGOS
+`Relations.cpp`): its creator's reaction when a unit created it, else its
+`GAMEOBJECT_FACTION` template's, else neutral. The Blackrock Depths rune
+doodads (`Doodad_DarkIronDwarfRune_*`, template 114) are hostile to players
+and are scenery. Gotcha: this needs `GAMEOBJECT_FACTION`/`GAMEOBJECT_CREATED_BY`
+in `update_fields.json` and `Friend0..3` in the `FactionTemplate` layout; an
+installed data tree carries copies of both files that do not refresh.
+
 Unit cursor picking intersects the active animation's authored bounding box,
 transformed with the rendered instance. Unanimated models use their bind-pose
 geometry box. Collision bounds can retain human dimensions on larger creatures

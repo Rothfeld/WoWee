@@ -22,6 +22,7 @@
 #include "game/transport_manager.hpp"
 #include "game/opcodes.hpp"
 #include "game/update_field_table.hpp"
+#include "game/game_object_interaction.hpp"
 #include "game/expansion_profile.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/spell_visual_system.hpp"
@@ -2962,6 +2963,42 @@ int GameHandler::unitReactionToPlayer(const Unit& unit) const {
     }
     if (unit.isHostile()) return 2;
     return isFriendlyFaction(ft) ? 5 : 4;
+}
+
+int GameHandler::gameObjectReactionToPlayer(const GameObject& object) const {
+    const auto createdBy = fieldIndex(UF::GAMEOBJECT_CREATED_BY);
+    const auto factionField = fieldIndex(UF::GAMEOBJECT_FACTION);
+    if (createdBy == 0xFFFF || factionField == 0xFFFF)
+        throw std::runtime_error("update_fields.json lacks GAMEOBJECT_CREATED_BY/GAMEOBJECT_FACTION; deploy current expansion metadata");
+    const uint64_t ownerGuid = static_cast<uint64_t>(object.getField(createdBy)) |
+                               (static_cast<uint64_t>(object.getField(createdBy + 1)) << 32);
+    if (ownerGuid != 0) {
+        const auto owner = entityController_->getEntityManager().getEntity(ownerGuid);
+        if (owner && owner->isUnit()) return unitReactionToPlayer(static_cast<const Unit&>(*owner));
+    }
+    const uint32_t ft = object.getField(factionField);
+    if (ft == 0) return 4;
+    if (auto it = factionTemplateRepList_.find(ft);
+        it != factionTemplateRepList_.end() && it->second < initialFactions_.size()) {
+        const auto& standing = initialFactions_[it->second];
+        int rank = reputationStandingFor(standing.standing).id;
+        if (standing.flags & FACTION_FLAG_AT_WAR) rank = std::min(rank, 4);
+        return rank;
+    }
+    const auto found = factionObjectReactionMap_.find(ft);
+    if (found == factionObjectReactionMap_.end()) {
+        LOG_ERROR("Game object ", object.getGuid(), " entry ", object.getEntry(),
+                  " has faction template ", ft, " absent from FactionTemplate.dbc reactions");
+        throw std::runtime_error("Game object faction template has no reaction; FactionTemplate.dbc not loaded");
+    }
+    return found->second;
+}
+
+bool GameHandler::canInteractWithGameObject(const GameObject& object) const {
+    if (!gameObjectInteractionEnabled(object)) return false;
+    if (isPlayerGhost()) return false;
+    // ReputationRank > REP_UNFRIENDLY, in UnitReaction numbering.
+    return gameObjectReactionToPlayer(object) >= 4;
 }
 
 void GameHandler::refreshUnitHostility() {

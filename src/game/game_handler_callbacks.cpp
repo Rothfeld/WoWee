@@ -3218,7 +3218,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
     if (entity) {
         if (entity->getType() == ObjectType::GAMEOBJECT) {
             auto go = std::static_pointer_cast<GameObject>(entity);
-            if (!gameObjectInteractionEnabled(*go)) {
+            if (!canInteractWithGameObject(*go)) {
                 LOG_DEBUG("Ignoring unavailable game object interaction: ", guid);
                 return;
             }

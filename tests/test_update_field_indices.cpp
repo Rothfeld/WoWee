@@ -155,6 +155,10 @@ TEST_CASE("Game object interaction fields match expansion wire layouts", "[updat
         const auto fields = declaredFields(expansion);
         REQUIRE(fields.at("GAMEOBJECT_FLAGS") == 9);
         REQUIRE(fields.at("GAMEOBJECT_DYNAMIC") == (expansion == "wotlk" ? 14 : 19));
+        // OBJECT_END + 0x0E before 3.x, + 0x09 in 3.3.5; the creator guid
+        // opens the block in every one of them.
+        CHECK(fields.at("GAMEOBJECT_FACTION") == (expansion == "wotlk" ? 15 : 20));
+        CHECK(fields.at("GAMEOBJECT_CREATED_BY") == 6);
     }
 }
 

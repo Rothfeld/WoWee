@@ -134,6 +134,8 @@ enum class UF : uint16_t {
     UNIT_FIELD_CREATEDBY_HI,
 
     // GameObject fields
+    /// Low word of the creating unit's guid; the high word follows it.
+    GAMEOBJECT_CREATED_BY,
     GAMEOBJECT_DISPLAYID,
     GAMEOBJECT_FLAGS,
     GAMEOBJECT_BYTES_1,
@@ -142,6 +144,8 @@ enum class UF : uint16_t {
     // fraction of 65535. Transport phase is WotLK-only; the low bits carry
     // per-player quest-object activation in earlier expansions too.
     GAMEOBJECT_DYNAMIC,
+    /// FactionTemplate id; build 8606 refuses use of objects hostile to the player.
+    GAMEOBJECT_FACTION,
     GAMEOBJECT_LEVEL,
 
     // Item fields
