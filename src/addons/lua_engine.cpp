@@ -2071,7 +2071,7 @@ static bool fillItemTooltipById(wowee::ui::Widget* w, game::GameHandler* gh,
                                 uint32_t itemId);
 static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
                                 uint32_t itemId);
-static void appendRandomSuffix(wowee::ui::Widget* w, game::GameHandler* gh,
+static void appendRandomSuffix(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
                                const game::ItemDef& item);
 static void appendDurabilityLine(wowee::ui::Widget* w, const game::ItemDef& item);
 
@@ -3220,7 +3220,7 @@ int lua_Tooltip_SetAuctionItem(lua_State* L) {
         def.itemId           = row.itemEntry;
         def.randomPropertyId = static_cast<int32_t>(row.randomPropertyId);
         def.suffixFactor     = row.suffixFactor;
-        appendRandomSuffix(w, gh, def);
+        appendRandomSuffix(L, w, gh, def);
     }
     lua_pushboolean(L, filled ? 1 : 0);
     return 1;
@@ -3265,13 +3265,27 @@ static void appendEnchantLines(wowee::ui::Widget* w, game::GameHandler* gh,
 /// The stats are asked for again rather than read off the ItemDef. buildItemDef
 /// folds them into the base figures, and those are not what the tooltip is
 /// showing: it is showing the template's.
-static void appendRandomSuffix(wowee::ui::Widget* w, game::GameHandler* gh,
+static void appendRandomSuffix(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
                                const game::ItemDef& item) {
     if (!w || !gh || w->tooltipLines.empty()) return;
     if (item.soulbound) {
+        // A bound item's binding line reads ITEM_SOULBOUND instead of the
+        // template's ITEM_BIND_ON_* line. Compared and replaced through the
+        // GlobalStrings constants the tooltip shim wrote the line from.
+        const auto global = [L](const char* name) {
+            lua_pushstring(L, name);
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            assert(lua_isstring(L, -1));
+            std::string value = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            return value;
+        };
+        const std::string bindLines[] = {global("ITEM_BIND_ON_PICKUP"), global("ITEM_BIND_ON_EQUIP"),
+                                         global("ITEM_BIND_ON_USE")};
+        const std::string soulbound = global("ITEM_SOULBOUND");
         for (auto& line : w->tooltipLines) {
-            if (line.left == "Binds when picked up" || line.left == "Binds when equipped" ||
-                line.left == "Binds when used") line.left = "Soulbound";
+            if (std::find(std::begin(bindLines), std::end(bindLines), line.left) != std::end(bindLines))
+                line.left = soulbound;
         }
     }
     if (item.randomPropertyId == 0) return;
@@ -3355,7 +3369,7 @@ int lua_Tooltip_AppendItemEnchants(lua_State* L) {
     if (const game::ItemSlot* s =
             wowee::addons::containerItemSlot(gh->getInventory(), bag, slot);
         s && !s->empty()) {
-        appendRandomSuffix(w, gh, s->item);
+        appendRandomSuffix(L, w, gh, s->item);
     }
     appendEnchantLines(w, gh, gh->getBagItemGuid(bag, slot - 1));
     return 0;
@@ -3381,7 +3395,7 @@ int lua_Tooltip_AppendEquippedEnchants(lua_State* L) {
     if (const game::ItemSlot* s =
             wowee::addons::inventorySlotItem(gh->getInventory(), slot);
         s && !s->empty()) {
-        appendRandomSuffix(w, gh, s->item);
+        appendRandomSuffix(L, w, gh, s->item);
     }
     appendEnchantLines(w, gh, gh->getEquipSlotGuid(slot - 1));
     return 0;
@@ -3433,7 +3447,7 @@ int lua_Tooltip_SetInventoryItem(lua_State* L) {
     } else {
         // Only on the by-id path. fillItemTooltip builds from the instance and
         // has named the suffix itself.
-        appendRandomSuffix(w, gh, s.item);
+        appendRandomSuffix(L, w, gh, s.item);
     }
     // Durability lives on the instance, same as the suffix above - the
     // paperdoll's own icon tint already reads it correctly, but the tooltip
@@ -8924,9 +8938,9 @@ void LuaEngine::registerCoreAPI() {
         "        return true\n"
         "    end\n"
         "    if embedded and data then\n"
-        "        if data.bindType == 1 then self:AddLine(ITEM_BIND_ON_PICKUP or 'Binds when picked up', 1, 1, 1)\n"
-        "        elseif data.bindType == 2 then self:AddLine(ITEM_BIND_ON_EQUIP or 'Binds when equipped', 1, 1, 1)\n"
-        "        elseif data.bindType == 3 then self:AddLine(ITEM_BIND_ON_USE or 'Binds when used', 1, 1, 1) end\n"
+        "        if data.bindType == 1 then self:AddLine(ITEM_BIND_ON_PICKUP, 1, 1, 1)\n"
+        "        elseif data.bindType == 2 then self:AddLine(ITEM_BIND_ON_EQUIP, 1, 1, 1)\n"
+        "        elseif data.bindType == 3 then self:AddLine(ITEM_BIND_ON_USE, 1, 1, 1) end\n"
         "    end\n"
         "    -- Equip slot and subclass on same line\n"
         "    if equipSlot and equipSlot ~= '' then\n"
@@ -8966,9 +8980,9 @@ void LuaEngine::registerCoreAPI() {
         // one. Left as it is rather than changed on inference - what FrameXML's
         // tooltip shows is a question about FrameXML.
         "        if embedded then\n"
-        "        elseif data.bindType == 1 then self:AddLine('Binds when picked up', 1, 1, 1)\n"
-        "        elseif data.bindType == 2 then self:AddLine('Binds when equipped', 1, 1, 1)\n"
-        "        elseif data.bindType == 3 then self:AddLine('Binds when used', 1, 1, 1) end\n"
+        "        elseif data.bindType == 1 then self:AddLine(ITEM_BIND_ON_PICKUP, 1, 1, 1)\n"
+        "        elseif data.bindType == 2 then self:AddLine(ITEM_BIND_ON_EQUIP, 1, 1, 1)\n"
+        "        elseif data.bindType == 3 then self:AddLine(ITEM_BIND_ON_USE, 1, 1, 1) end\n"
         "        -- Armor\n"
         "        if data.armor and data.armor > 0 then\n"
         "            self:AddLine(data.armor..' Armor', 1, 1, 1)\n"
