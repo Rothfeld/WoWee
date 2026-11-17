@@ -5,6 +5,7 @@
 #include "game/inventory.hpp"
 #include "rendering/animation/weapon_type.hpp"
 #include <string>
+#include "pipeline/char_sections.hpp"
 #include <vector>
 #include <unordered_set>
 #include <cstdint>
@@ -29,7 +30,7 @@ struct PlayerTextureInfo {
     /// character model asks for as texture type 8. Empty on the stock models,
     /// which have no type-8 texture and never look for one.
     std::string skinExtraPath;
-    std::vector<std::string> underwearPaths;
+    std::vector<pipeline::SkinLayer> underwearPaths;
 };
 
 /// Handles player character visual appearance: skin compositing, geoset selection,
@@ -84,7 +85,7 @@ public:
 
     // Saved skin state accessors (used by game_screen.cpp for equipment re-compositing)
     [[nodiscard]] const std::string& getBodySkinPath() const { return bodySkinPath_; }
-    [[nodiscard]] const std::vector<std::string>& getUnderwearPaths() const { return underwearPaths_; }
+    [[nodiscard]] const std::vector<pipeline::SkinLayer>& getUnderwearPaths() const { return underwearPaths_; }
     [[nodiscard]] uint32_t getSkinTextureSlotIndex() const { return skinTextureSlotIndex_; }
     [[nodiscard]] uint32_t getCloakTextureSlotIndex() const { return cloakTextureSlotIndex_; }
 
@@ -106,7 +107,7 @@ private:
 
     // Saved at spawn for skin re-compositing on equipment changes
     std::string bodySkinPath_;
-    std::vector<std::string> underwearPaths_;
+    std::vector<pipeline::SkinLayer> underwearPaths_;  // face + underwear, with regions
     uint32_t skinTextureSlotIndex_ = 0;
     uint32_t cloakTextureSlotIndex_ = 0;
 

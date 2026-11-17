@@ -1140,6 +1140,16 @@ wowee_add_test(test_ready_stance_data
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(ready_stance_data PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_char_section_regions ────────────────────────────────
+# CharSections body regions by section/column vs the old file-name rule.
+wowee_add_test(test_char_section_regions
+    SOURCES test_char_section_regions.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/char_sections.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
+set_tests_properties(char_section_regions PROPERTIES SKIP_RETURN_CODE 4)
+
 # ── test_m2_color_alpha ──────────────────────────────────────
 # Loads the peasant lumberjack carry models (WotLK v264 + vanilla v256) and
 # pins the M2 color-alpha track parsing that hides the duplicate wood bundle.

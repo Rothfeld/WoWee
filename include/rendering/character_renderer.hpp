@@ -13,6 +13,7 @@
 #include <memory>
 #include <vector>
 #include <optional>
+#include "pipeline/char_sections.hpp"
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
@@ -423,13 +424,15 @@ public:
      * Build a composited character skin texture by alpha-blending overlay
      * layers onto a base skin BLP. Returns the resulting VkTexture*.
      */
-    VkTexture* compositeTextures(const std::vector<std::string>& layerPaths);
+    /// layers[0] is the body skin; each later layer goes to the atlas region
+    /// its CharSections section and column name (pipeline::SkinLayer).
+    VkTexture* compositeTextures(const std::vector<pipeline::SkinLayer>& layers);
 
     /**
      * Build a composited character skin with explicit region-based equipment overlays.
      */
     VkTexture* compositeWithRegions(const std::string& basePath,
-                                const std::vector<std::string>& baseLayers,
+                                const std::vector<pipeline::SkinLayer>& baseLayers,
                                 const std::vector<std::pair<int, std::string>>& regionLayers);
 
     /** Clear the composite texture cache (forces re-compositing on next call). */

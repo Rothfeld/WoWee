@@ -1950,7 +1950,7 @@ void EntitySpawner::applyCreatureDisplayTextures(uint32_t displayId, uint32_t mo
                             uint32_t npcSkin = static_cast<uint32_t>(extraCopy.skinId);
                             uint32_t npcFace = static_cast<uint32_t>(extraCopy.faceId);
                             std::string npcFaceLower, npcFaceUpper;
-                            std::vector<std::string> npcUnderwear;
+                            std::vector<pipeline::SkinLayer> npcUnderwear;
 
                             // The one reader, in pipeline/char_sections.hpp.
                             //
@@ -1981,9 +1981,9 @@ void EntitySpawner::applyCreatureDisplayTextures(uint32_t displayId, uint32_t mo
 
                             if (!def.basePath.empty()) {
                                 allPaths.push_back(def.basePath);
-                                if (!npcFaceLower.empty()) { def.overlayPaths.push_back(npcFaceLower); allPaths.push_back(npcFaceLower); }
-                                if (!npcFaceUpper.empty()) { def.overlayPaths.push_back(npcFaceUpper); allPaths.push_back(npcFaceUpper); }
-                                for (const auto& uw : npcUnderwear) { def.overlayPaths.push_back(uw); allPaths.push_back(uw); }
+                                if (!npcFaceLower.empty()) { def.overlayPaths.push_back({npcFaceLower, pipeline::SkinRegion::FaceLower}); allPaths.push_back(npcFaceLower); }
+                                if (!npcFaceUpper.empty()) { def.overlayPaths.push_back({npcFaceUpper, pipeline::SkinRegion::FaceUpper}); allPaths.push_back(npcFaceUpper); }
+                                for (const auto& uw : npcUnderwear) { def.overlayPaths.push_back(uw); allPaths.push_back(uw.path); }
                             }
                         }
                     }

@@ -1,6 +1,7 @@
 #include "pipeline/char_sections.hpp"
 
 #include "pipeline/dbc_loader.hpp"
+#include "core/logger.hpp"
 #include "pipeline/m2_loader.hpp"
 
 namespace wowee {
@@ -72,11 +73,17 @@ CharacterSectionTextures resolveCharacterSections(
             }
         } else if (section == kSectionUnderwear && !foundUnderwear &&
                    colour == who.skinId) {
-            for (uint32_t col = f.texture1; col <= f.texture1 + 2; col++) {
-                std::string tex = charSections->getString(r, col);
+            for (uint32_t column = 0; column < 3; column++) {
+                std::string tex = charSections->getString(r, f.texture1 + column);
                 if (tex.empty()) continue;
                 if (keepUnderwear && !keepUnderwear(tex, keepUnderwearContext)) continue;
-                out.underwear.push_back(tex);
+                const auto region = charSectionRegion(kSectionUnderwear, column);
+                if (!region) {
+                    LOG_ERROR("CharSections underwear row names texture column ", column + 1,
+                              " (", tex, "), which has no body region");
+                    continue;
+                }
+                out.underwear.push_back({tex, *region});
             }
             foundUnderwear = !out.underwear.empty();
         }
@@ -90,6 +97,14 @@ CharacterSectionTextures resolveCharacterSections(
         out.haveFace = true;
     }
     return out;
+}
+
+std::optional<SkinRegion> charSectionRegion(uint32_t section, uint32_t column) {
+    if (section == kSectionFace && column == 0) return SkinRegion::FaceLower;
+    if (section == kSectionFace && column == 1) return SkinRegion::FaceUpper;
+    if (section == kSectionUnderwear && column == 0) return SkinRegion::Pelvis;
+    if (section == kSectionUnderwear && column == 1) return SkinRegion::Torso;
+    return std::nullopt;
 }
 
 void applyCharacterTextures(M2Model& model,
@@ -117,7 +132,7 @@ void applyCharacterTextures(M2Model& model,
                 if (!textures.skinExtra.empty()) {
                     tex.filename = textures.skinExtra;
                 } else if (!textures.underwear.empty()) {
-                    tex.filename = textures.underwear.front();
+                    tex.filename = textures.underwear.front().path;
                 } else if (!textures.bodySkin.empty()) {
                     tex.filename = textures.bodySkin;
                 }

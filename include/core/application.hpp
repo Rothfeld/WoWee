@@ -147,7 +147,7 @@ public:
 
     // Character skin composite state - delegated to AppearanceComposer
     [[nodiscard]] const std::string& getBodySkinPath() const { return appearanceComposer_ ? appearanceComposer_->getBodySkinPath() : emptyString_; }
-    [[nodiscard]] const std::vector<std::string>& getUnderwearPaths() const { return appearanceComposer_ ? appearanceComposer_->getUnderwearPaths() : emptyStringVec_; }
+    [[nodiscard]] const std::vector<pipeline::SkinLayer>& getUnderwearPaths() const { return appearanceComposer_ ? appearanceComposer_->getUnderwearPaths() : emptySkinLayers_; }
     [[nodiscard]] uint32_t getSkinTextureSlotIndex() const { return appearanceComposer_ ? appearanceComposer_->getSkinTextureSlotIndex() : 0; }
     [[nodiscard]] uint32_t getCloakTextureSlotIndex() const { return appearanceComposer_ ? appearanceComposer_->getCloakTextureSlotIndex() : 0; }
     [[nodiscard]] uint32_t getGryphonDisplayId() const { return entitySpawner_ ? entitySpawner_->getGryphonDisplayId() : 0; }
@@ -386,6 +386,7 @@ private:
     // Static empty values for null-safe delegation
     static inline const std::string emptyString_;
     static inline const std::vector<std::string> emptyStringVec_;
+    static inline const std::vector<pipeline::SkinLayer> emptySkinLayers_;
 
     float facingSendCooldown_ = 0.0f;        // Rate-limits MSG_MOVE_SET_FACING
     float lastSentCanonicalYaw_ = 1000.0f;   // Sentinel - triggers first send

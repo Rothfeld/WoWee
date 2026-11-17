@@ -153,16 +153,15 @@ void AppearanceComposer::compositePlayerSkin(uint32_t modelSlotId, const PlayerT
     // Include face textures so compositeWithRegions can rebuild the full base
     bodySkinPath_ = texInfo.bodySkinPath;
     underwearPaths_.clear();
-    if (!texInfo.faceLowerPath.empty()) underwearPaths_.push_back(texInfo.faceLowerPath);
-    if (!texInfo.faceUpperPath.empty()) underwearPaths_.push_back(texInfo.faceUpperPath);
+    if (!texInfo.faceLowerPath.empty()) underwearPaths_.push_back({texInfo.faceLowerPath, pipeline::SkinRegion::FaceLower});
+    if (!texInfo.faceUpperPath.empty()) underwearPaths_.push_back({texInfo.faceUpperPath, pipeline::SkinRegion::FaceUpper});
     for (const auto& up : texInfo.underwearPaths) underwearPaths_.push_back(up);
 
     // Composite body skin + face + underwear overlays
     {
-        std::vector<std::string> layers;
-        layers.push_back(texInfo.bodySkinPath);
-        if (!texInfo.faceLowerPath.empty()) layers.push_back(texInfo.faceLowerPath);
-        if (!texInfo.faceUpperPath.empty()) layers.push_back(texInfo.faceUpperPath);
+        std::vector<pipeline::SkinLayer> layers{{texInfo.bodySkinPath, pipeline::SkinRegion::FullAtlas}};
+        if (!texInfo.faceLowerPath.empty()) layers.push_back({texInfo.faceLowerPath, pipeline::SkinRegion::FaceLower});
+        if (!texInfo.faceUpperPath.empty()) layers.push_back({texInfo.faceUpperPath, pipeline::SkinRegion::FaceUpper});
         for (const auto& up : texInfo.underwearPaths) {
             layers.push_back(up);
         }

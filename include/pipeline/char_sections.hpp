@@ -19,6 +19,7 @@
  */
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,22 @@ struct CharacterAppearance {
     uint8_t hairColorId = 0;
 };
 
+/// Where a CharSections texture goes on the character body atlas. It follows
+/// from the row's section and texture column - face texture 1 is FaceLower,
+/// texture 2 FaceUpper; underwear texture 1 Pelvis, texture 2 Torso - and
+/// never from the file name.
+enum class SkinRegion : uint8_t { FullAtlas, FaceLower, FaceUpper, Pelvis, Torso };
+
+/// One texture to composite onto the body skin, with its region.
+struct SkinLayer {
+    std::string path;
+    SkinRegion region = SkinRegion::FullAtlas;
+};
+
+/// Region of CharSections texture column `column` (0-based) in `section`;
+/// nullopt for a section/column that is not composited onto the body.
+std::optional<SkinRegion> charSectionRegion(uint32_t section, uint32_t column);
+
 /// The textures CharSections names for that character.
 struct CharacterSectionTextures {
     std::string bodySkin;
@@ -50,7 +67,7 @@ struct CharacterSectionTextures {
     std::string faceLower;
     std::string faceUpper;
     std::string hair;
-    std::vector<std::string> underwear;
+    std::vector<SkinLayer> underwear;  ///< Pelvis, then Torso
 
     /// True when the exact (face, skin) pair was found rather than approximated.
     bool exactFace = false;

@@ -230,7 +230,7 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
 
     std::string bodySkinPath = defaultSkin;
     std::string skinExtraPath, hairTexturePath, faceLowerPath, faceUpperPath;
-    std::vector<std::string> underwearPaths;
+    std::vector<pipeline::SkinLayer> underwearPaths;
 
     if (auto charSectionsDbc = assetManager_->loadDBC("CharSections.dbc");
         charSectionsDbc && charSectionsDbc->isLoaded()) {
@@ -280,10 +280,9 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     // Composite base skin + face + underwear overlays
     rendering::VkTexture* compositeTex = nullptr;
     {
-        std::vector<std::string> layers;
-        layers.push_back(bodySkinPath);
-        if (!faceLowerPath.empty()) layers.push_back(faceLowerPath);
-        if (!faceUpperPath.empty()) layers.push_back(faceUpperPath);
+        std::vector<pipeline::SkinLayer> layers{{bodySkinPath, pipeline::SkinRegion::FullAtlas}};
+        if (!faceLowerPath.empty()) layers.push_back({faceLowerPath, pipeline::SkinRegion::FaceLower});
+        if (!faceUpperPath.empty()) layers.push_back({faceUpperPath, pipeline::SkinRegion::FaceUpper});
         for (const auto& up : underwearPaths) layers.push_back(up);
         if (layers.size() > 1) {
             compositeTex = charRenderer->compositeTextures(layers);
@@ -302,7 +301,7 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     // stock model this still falls through to the underwear art it always used.
     rendering::VkTexture* skinExtraTex = nullptr;
     if (!skinExtraPath.empty()) skinExtraTex = charRenderer->loadTexture(skinExtraPath);
-    else if (!underwearPaths.empty()) skinExtraTex = charRenderer->loadTexture(underwearPaths[0]);
+    else if (!underwearPaths.empty()) skinExtraTex = charRenderer->loadTexture(underwearPaths[0].path);
     else skinExtraTex = charRenderer->loadTexture(pelvisPath);
 
     const PlayerTextureSlots& slots = playerTextureSlotsByModelId_[modelId];
@@ -355,8 +354,8 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     st.facialFeatures = facialFeatures;
     st.bodySkinPath = bodySkinPath;
     // Include face textures so compositeWithRegions can rebuild the full base
-    if (!faceLowerPath.empty()) st.underwearPaths.push_back(faceLowerPath);
-    if (!faceUpperPath.empty()) st.underwearPaths.push_back(faceUpperPath);
+    if (!faceLowerPath.empty()) st.underwearPaths.push_back({faceLowerPath, pipeline::SkinRegion::FaceLower});
+    if (!faceUpperPath.empty()) st.underwearPaths.push_back({faceUpperPath, pipeline::SkinRegion::FaceUpper});
     for (const auto& up : underwearPaths) st.underwearPaths.push_back(up);
     onlinePlayerAppearance_[guid] = std::move(st);
 }

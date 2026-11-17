@@ -1152,25 +1152,16 @@ namespace {
 /// only be answered by guessing.
 struct AtlasRegion256 { int x, y, w, h; bool known; };
 
-AtlasRegion256 regionFor(const std::string& pathLower) {
-    if (pathLower.find("faceupper") != std::string::npos) return {  .x = 0, .y = 160, .w = 128, .h = 32, .known = true};
-    if (pathLower.find("facelower") != std::string::npos) return {  .x = 0, .y = 192, .w = 128, .h = 64, .known = true};
-    if (pathLower.find("pelvis")    != std::string::npos) return {.x = 128,  .y = 96, .w = 128, .h = 64, .known = true};
-    if (pathLower.find("torso")     != std::string::npos) return {.x = 128,   .y = 0, .w = 128, .h = 64, .known = true};
-    if (pathLower.find("armupper")  != std::string::npos) return {  .x = 0,   .y = 0, .w = 128, .h = 64, .known = true};
-    if (pathLower.find("armlower")  != std::string::npos) return {  .x = 0,  .y = 64, .w = 128, .h = 64, .known = true};
-    if (pathLower.find("hand")      != std::string::npos) return {  .x = 0, .y = 128, .w = 128, .h = 32, .known = true};
-    if (pathLower.find("foot")      != std::string::npos ||
-        pathLower.find("feet")      != std::string::npos) return {.x = 128, .y = 224, .w = 128, .h = 32, .known = true};
-    if (pathLower.find("legupper")  != std::string::npos ||
-        pathLower.find("leg")       != std::string::npos) return {.x = 128, .y = 160, .w = 128, .h = 64, .known = true};
+AtlasRegion256 regionFor(pipeline::SkinRegion region) {
+    using R = pipeline::SkinRegion;
+    switch (region) {
+        case R::FaceUpper: return {.x = 0,   .y = 160, .w = 128, .h = 32, .known = true};
+        case R::FaceLower: return {.x = 0,   .y = 192, .w = 128, .h = 64, .known = true};
+        case R::Pelvis:    return {.x = 128, .y = 96,  .w = 128, .h = 64, .known = true};
+        case R::Torso:     return {.x = 128, .y = 0,   .w = 128, .h = 64, .known = true};
+        case R::FullAtlas: break;
+    }
     return {.x = 0, .y = 0, .w = 0, .h = 0, .known = false};
-}
-
-std::string lowerPath(const std::string& s) {
-    std::string out = s;
-    for (auto& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return out;
 }
 
 /// The atlas scale a layer of this size implies for its region. A face authored
@@ -1183,7 +1174,10 @@ int impliedScale(const AtlasRegion256& region, int overlayWidth) {
 
 }  // namespace
 
-VkTexture* CharacterRenderer::compositeTextures(const std::vector<std::string>& layerPaths) {
+VkTexture* CharacterRenderer::compositeTextures(const std::vector<pipeline::SkinLayer>& layers) {
+    std::vector<std::string> layerPaths;
+    layerPaths.reserve(layers.size());
+    for (const auto& layer : layers) layerPaths.push_back(layer.path);
     if (layerPaths.empty() || !assetManager || !assetManager->isInitialized()) {
         return whiteTexture_.get();
     }
@@ -1256,7 +1250,7 @@ VkTexture* CharacterRenderer::compositeTextures(const std::vector<std::string>& 
     // for art that agrees with its body, which is every set that shipped with
     // the game; a set that asks for more gets a bigger atlas and is placed at
     // its own resolution.
-    struct LoadedOverlay { std::string path; pipeline::BLPImage image; };
+    struct LoadedOverlay { std::string path; pipeline::SkinRegion region; pipeline::BLPImage image; };
     std::vector<LoadedOverlay> overlays;
     overlays.reserve(layerPaths.size());
     int requiredScale = coordScale;
@@ -1285,14 +1279,15 @@ VkTexture* CharacterRenderer::compositeTextures(const std::vector<std::string>& 
         applyMagentaKeyIfNeeded(overlay, layerPaths[layer]);
         // A full-atlas layer speaks for itself and is not a region at all.
         if (overlay.width != width || overlay.height != height) {
-            const AtlasRegion256 region = regionFor(lowerPath(layerPaths[layer]));
+            const AtlasRegion256 region = regionFor(layers[layer].region);
             if (region.known) {
                 const int want = impliedScale(region, overlay.width);
                 if (want > largestRegionScale) largestRegionScale = want;
                 sawRegionLayer = true;
             }
         }
-        overlays.push_back({.path = layerPaths[layer], .image = std::move(overlay)});
+        overlays.push_back({.path = layerPaths[layer], .region = layers[layer].region,
+                            .image = std::move(overlay)});
     }
 
     // Grow to the most demanding layer.
@@ -1350,7 +1345,7 @@ VkTexture* CharacterRenderer::compositeTextures(const std::vector<std::string>& 
         } else {
             // Where this layer belongs, from the one table that also sized the
             // canvas above.
-            const AtlasRegion256 region = regionFor(lowerPath(loaded.path));
+            const AtlasRegion256 region = regionFor(loaded.region);
             if (!region.known) {
                 // Unknown -- center placement as fallback
                 const int cx = (width - overlay.width) / 2;
@@ -1456,11 +1451,11 @@ void CharacterRenderer::clearCompositeCache() {
 }
 
 VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
-                                                const std::vector<std::string>& baseLayers,
+                                                const std::vector<pipeline::SkinLayer>& baseLayers,
                                                 const std::vector<std::pair<int, std::string>>& regionLayers) {
     // Build cache key from all inputs to avoid redundant compositing
     std::string cacheKey = basePath;
-    for (const auto& bl : baseLayers) { cacheKey += '|'; cacheKey += bl; }
+    for (const auto& bl : baseLayers) { cacheKey += '|'; cacheKey += bl.path; }
     cacheKey += '#';
     for (const auto& rl : regionLayers) {
         cacheKey += std::to_string(rl.first);
@@ -1498,11 +1493,6 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
     };
 
     // First, build base skin + underwear using existing compositeTextures
-    std::vector<std::string> layers;
-    layers.push_back(basePath);
-    for (const auto& ul : baseLayers) {
-        layers.push_back(ul);
-    }
     // Load base composite into CPU buffer
     if (!assetManager || !assetManager->isInitialized()) {
         return whiteTexture_.get();
@@ -1572,7 +1562,8 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
     // If we upscaled from 256->512, scale coords and texels with blitOverlayScaled2x.
     // For native 512/1024 textures, face overlays are full atlas size (hit width==width branch).
     bool upscaled = (base.width == kBaseTexSize && base.height == kBaseTexSize && width == kUpscaleTexSize);
-    for (const auto& ul : baseLayers) {
+    for (const auto& baseLayer : baseLayers) {
+        const std::string& ul = baseLayer.path;
         if (ul.empty()) continue;
         pipeline::BLPImage overlay;
         if (predecodedBLPCache_) {
@@ -1595,32 +1586,15 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
         } else {
             // WoW 256-scale atlas coordinates (from CharComponentTextureSections)
             int dstX = 0, dstY = 0;
-            std::string pathLower = ul;
-            for (auto& c : pathLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
             // Scale factor from 256-base coordinates to actual canvas size
             int coordScale = width / 256;
             if (coordScale < 1) coordScale = 1;
             bool useScale = true;
 
-            if (pathLower.find("faceupper") != std::string::npos) {
-                dstX = 0; dstY = 160;
-            } else if (pathLower.find("facelower") != std::string::npos) {
-                dstX = 0; dstY = 192;
-            } else if (pathLower.find("pelvis") != std::string::npos) {
-                dstX = 128; dstY = 96;
-            } else if (pathLower.find("torso") != std::string::npos) {
-                dstX = 128; dstY = 0;
-            } else if (pathLower.find("armupper") != std::string::npos) {
-                dstX = 0; dstY = 0;
-            } else if (pathLower.find("armlower") != std::string::npos) {
-                dstX = 0; dstY = 64;
-            } else if (pathLower.find("hand") != std::string::npos) {
-                dstX = 0; dstY = 128;
-            } else if (pathLower.find("foot") != std::string::npos || pathLower.find("feet") != std::string::npos) {
-                dstX = 128; dstY = 224;
-            } else if (pathLower.find("legupper") != std::string::npos || pathLower.find("leg") != std::string::npos) {
-                dstX = 128; dstY = 160;
+            const AtlasRegion256 region = regionFor(baseLayer.region);
+            if (region.known) {
+                dstX = region.x; dstY = region.y;
             } else {
                 // Fallback: center overlay on canvas (already in canvas coords)
                 dstX = (width - overlay.width) / 2;

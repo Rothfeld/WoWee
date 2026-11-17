@@ -254,8 +254,7 @@ void EntitySpawner::processAsyncNpcCompositeResults(bool unlimited) {
                 compositeTex = charRenderer->compositeWithRegions(info.basePath,
                     info.overlayPaths, info.regionLayers);
             } else if (!info.overlayPaths.empty()) {
-                std::vector<std::string> skinLayers;
-                skinLayers.push_back(info.basePath);
+                std::vector<pipeline::SkinLayer> skinLayers{{info.basePath, pipeline::SkinRegion::FullAtlas}};
                 for (const auto& op : info.overlayPaths) skinLayers.push_back(op);
                 compositeTex = charRenderer->compositeTextures(skinLayers);
             }
@@ -479,7 +478,7 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
                                                                 &sections.hair}) {
                                     if (!path->empty()) displaySkinPaths.push_back(*path);
                                 }
-                                for (const auto& uw : sections.underwear) displaySkinPaths.push_back(uw);
+                                for (const auto& uw : sections.underwear) displaySkinPaths.push_back(uw.path);
                             }
                             // Equipment region textures
                             auto idiDbc = am->loadDBC("ItemDisplayInfo.dbc");
@@ -723,7 +722,7 @@ std::vector<std::string> EntitySpawner::resolveEquipmentTexturePaths(uint64_t gu
     // Add base skin + underwear paths
     if (!st.bodySkinPath.empty()) paths.push_back(st.bodySkinPath);
     for (const auto& up : st.underwearPaths) {
-        if (!up.empty()) paths.push_back(up);
+        if (!up.path.empty()) paths.push_back(up.path);
     }
 
     // Resolve equipment region texture paths (same logic as setOnlinePlayerEquipment)

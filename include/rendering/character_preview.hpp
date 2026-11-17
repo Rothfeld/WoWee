@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pipeline/char_sections.hpp"
+
 #include "game/character.hpp"
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
@@ -210,7 +212,7 @@ private:
     /// CharSections' second texture on the skin row: the Skin Extra art an
     /// HD model draws its ears, eyes and mouth from.
     std::string skinExtraPath_;
-    std::vector<std::string> baseLayers_; // face + underwear, etc.
+    std::vector<pipeline::SkinLayer> baseLayers_; // face + underwear, with regions
     uint32_t skinTextureSlotIndex_ = 0;
 
     bool appearanceGeosetsLoaded_ = false;

@@ -6,6 +6,7 @@
 #include "core/creature_scale.hpp"
 #include "game/game_services.hpp"
 #include "pipeline/blp_loader.hpp"
+#include "pipeline/char_sections.hpp"
 #include <memory>
 #include <string>
 #include <utility>
@@ -562,7 +563,7 @@ private:
         uint32_t modelId;
         uint32_t displayId;
         std::string basePath;
-        std::vector<std::string> overlayPaths;
+        std::vector<pipeline::SkinLayer> overlayPaths;  // face + underwear, with regions
         std::vector<std::pair<int, std::string>> regionLayers;
         std::vector<uint32_t> skinTextureSlots;
         bool hasComposite = false;
@@ -593,7 +594,7 @@ private:
         uint32_t appearanceBytes = 0;
         uint8_t facialFeatures = 0;
         std::string bodySkinPath;
-        std::vector<std::string> underwearPaths;
+        std::vector<pipeline::SkinLayer> underwearPaths;  // face + underwear, with regions
     };
     std::unordered_map<uint64_t, OnlinePlayerAppearanceState> onlinePlayerAppearance_;
     std::unordered_map<uint64_t, std::pair<std::array<uint32_t, 19>, std::array<uint8_t, 19>>> pendingOnlinePlayerEquipment_;

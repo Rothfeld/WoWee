@@ -621,7 +621,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     std::string faceLowerPath;
     std::string faceUpperPath;
     std::string hairScalpPath;
-    std::vector<std::string> underwearPaths;
+    std::vector<pipeline::SkinLayer> underwearPaths;
     bodySkinPath_.clear();
     baseLayers_.clear();
 
@@ -706,23 +706,17 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     }
     // Composite body skin + face + underwear overlays
     if (!bodySkinPath_.empty()) {
-        std::vector<std::string> layers;
-        layers.push_back(bodySkinPath_);
-        // Face lower texture composited onto body at the face region
-        if (!faceLowerPath.empty()) {
-            layers.push_back(faceLowerPath);
-        }
-        if (!faceUpperPath.empty()) {
-            layers.push_back(faceUpperPath);
-        }
+        std::vector<pipeline::SkinLayer> layers{{bodySkinPath_, pipeline::SkinRegion::FullAtlas}};
+        if (!faceLowerPath.empty()) layers.push_back({faceLowerPath, pipeline::SkinRegion::FaceLower});
+        if (!faceUpperPath.empty()) layers.push_back({faceUpperPath, pipeline::SkinRegion::FaceUpper});
         for (const auto& up : underwearPaths) {
             layers.push_back(up);
         }
 
         // Cache for later equipment compositing.
         // Keep baseLayers_ without the base skin (compositeWithRegions takes basePath separately).
-        if (!faceLowerPath.empty()) baseLayers_.push_back(faceLowerPath);
-        if (!faceUpperPath.empty()) baseLayers_.push_back(faceUpperPath);
+        if (!faceLowerPath.empty()) baseLayers_.push_back({faceLowerPath, pipeline::SkinRegion::FaceLower});
+        if (!faceUpperPath.empty()) baseLayers_.push_back({faceUpperPath, pipeline::SkinRegion::FaceUpper});
         for (const auto& up : underwearPaths) baseLayers_.push_back(up);
 
         if (layers.size() > 1) {
