@@ -189,13 +189,8 @@ uint32_t M2Renderer::gatherLocalLights(const glm::vec3& cameraPos,
                 const glm::vec3 delta = worldPos - cameraPos;
                 const float distSq = glm::dot(delta, delta);
                 if (distSq <= 300.0f * 300.0f) {
-                    const bool chandelier =
-                        model->name.find("Chandelier") != std::string::npos ||
-                        model->name.find("chandelier") != std::string::npos;
-                    // A hearth or campfire throws light much further than a
-                    // candle, and burns oranger than a lamp wick.
-                    float radius    = chandelier ? 10.0f : 5.0f;
-                    float intensity = chandelier ? 1.25f : 0.85f;
+                    float radius    = 5.0f;
+                    float intensity = 0.85f;
                     glm::vec3 color(1.0f, 0.58f, 0.22f);
                     if (openFlame) {
                         // Local lights are not shadowed, so this radius is the
