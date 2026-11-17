@@ -429,5 +429,11 @@
     "LocTop": 6,
     "MapID": 1,
     "ParentWorldMapID": 10
+  },
+  "ItemSubClass": {
+    "ClassID": 0,
+    "SubClassID": 1,
+    "DisplayName": 10,
+    "VerboseName": 27
   }
 }

@@ -4574,6 +4574,10 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
               " invType=", data.inventoryType, " valid=", data.valid);
 
     if (data.valid) {
+        // The client's own names (ItemSubClass.dbc), where the layout has them.
+        if (auto dbcName = itemSubclassDisplayName(data.itemClass, data.subClass)) {
+            data.subclassName = std::move(*dbcName);
+        }
         owner_.itemInfoCacheRef()[data.entry] = data;
         rebuildOnlineInventory();
         maybeDetectVisibleItemLayout();
@@ -6071,6 +6075,41 @@ void InventoryHandler::addMoneyCopper(uint32_t amount) {
 // ============================================================
 // Repair cost estimation from DBC data
 // ============================================================
+
+std::optional<std::string> InventoryHandler::itemSubclassDisplayName(uint32_t itemClass,
+                                                                    uint32_t subClass) const {
+    if (!itemSubclassesLoaded_) {
+        auto* am = owner_.services().assetManager;
+        if (!am || !am->isInitialized()) return std::nullopt;
+        itemSubclassesLoaded_ = true;
+        const auto* layout = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("ItemSubClass") : nullptr;
+        if (!layout) {
+            LOG_WARNING("No ItemSubClass layout for this expansion; item subclass names come from"
+                        " the built-in table in world_packets_entity.cpp");
+            return std::nullopt;
+        }
+        auto dbc = am->loadDBC("ItemSubClass.dbc");
+        if (!dbc || !dbc->isLoaded()) {
+            LOG_ERROR("ItemSubClass.dbc missing though its layout is declared");
+            return std::nullopt;
+        }
+        itemSubclassLayout_ = true;
+        for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+            itemSubclassNames_[{dbc->getUInt32(r, layout->field("ClassID")),
+                                dbc->getUInt32(r, layout->field("SubClassID"))}] =
+                dbc->getString(r, layout->field("DisplayName"));
+        }
+        LOG_INFO("ItemSubClass.dbc: ", itemSubclassNames_.size(), " subclasses");
+    }
+    if (!itemSubclassLayout_) return std::nullopt;
+    const auto it = itemSubclassNames_.find({itemClass, subClass});
+    if (it == itemSubclassNames_.end()) {
+        LOG_WARNING("ItemSubClass.dbc has no row for class ", itemClass, " subclass ", subClass);
+        return std::string{};
+    }
+    return it->second;
+}
 
 const ItemSetInfo* InventoryHandler::getItemSetInfo(uint32_t setId) const {
     if (setId == 0) return nullptr;

@@ -852,6 +852,14 @@ private:
     mutable std::unordered_map<uint32_t, float> durabilityQuality_;
     void loadRepairDbc() const;
 
+    /// ItemSubClass.dbc display name ("Shield", "Libram", "Bag"); empty when
+    /// the row is absent. Null optional when the active layout has no
+    /// ItemSubClass, which is every expansion but TBC.
+    std::optional<std::string> itemSubclassDisplayName(uint32_t itemClass, uint32_t subClass) const;
+    mutable bool itemSubclassesLoaded_ = false;
+    mutable bool itemSubclassLayout_ = false;
+    mutable std::map<std::pair<uint32_t, uint32_t>, std::string> itemSubclassNames_;
+
     mutable bool itemSetsLoaded_ = false;
     mutable std::unordered_map<uint32_t, ItemSetInfo> itemSets_;
     uint32_t estimateItemRepairCost(uint64_t itemGuid) const;
