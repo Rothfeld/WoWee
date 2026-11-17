@@ -275,6 +275,13 @@
     "SkillLineID": 1,
     "SpellID": 2
   },
+  "SkillRaceClassInfo": {
+    "ID": 0,
+    "SkillID": 1,
+    "RaceMask": 2,
+    "ClassMask": 3,
+    "Flags": 4
+  },
   "Spell": {
     "Attributes": 5,
     "AttributesEx": 6,

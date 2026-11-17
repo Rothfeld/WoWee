@@ -1220,4 +1220,13 @@ an installed data tree keeps old copies. Not modelled: spell modifiers in
 descriptions and tooltip values other than cost, and the hidden range of
 self-cast spells such as Slice and Dice (native omits its 100 yd range).
 
+The 2.4.3 spellbook has General plus one tab per class skill line:
+SkillLine.dbc category 7 whose SkillRaceClassInfo row for the player's race
+and class has flag 0x400 (rogue: Assassination, Combat, Subtlety; Internal
+once a test spell of it is known). Professions, Lockpicking, Poisons,
+racials, another class's spells and spells without a skill line (Hearthstone)
+are in General. Tabs and spells are in name order, spells of one name by
+id; all known ranks are listed. Gotcha: `SkillRaceClassInfo` is a
+`dbc_layouts.json` entry, so an installed data tree needs the new copy.
+
 Repeated rebuilds of unchanged objects: see [incremental build cache repair](docs/incremental-builds.md).

@@ -1822,21 +1822,145 @@ void SpellHandler::confirmPetUnlearn() {
     petUnlearnCost_ = 0;
 }
 
+bool SpellHandler::isListedInSpellbook(uint32_t spellId) {
+    // Spell attribute 0x80: not displayed (talent passives, Riding).
+    // Spell attribute 0x20: a tradeskill recipe, listed by its profession
+    // window (Instant Poison, Smelt Copper). AttributesEx4 0x8000: not in the
+    // spellbook (Mining, Herb Gathering). Talent ranks come and go with no
+    // chat line and no SPELLS_CHANGED in 2.4.3: they are not in the book.
+    loadSpellNameCache();
+    const auto cached = owner_.spellNameCacheRef().find(spellId);
+    if (cached != owner_.spellNameCacheRef().end() && (cached->second.attr & 0xA0u)) return false;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* spellLayout = layouts ? layouts->getLayout("Spell") : nullptr;
+    const auto spellDbc = owner_.services().assetManager ? owner_.services().assetManager->loadDBC("Spell.dbc") : nullptr;
+    if (!spellLayout || !spellDbc) {
+        LOG_ERROR("Spellbook listing of spell ", spellId, ": Spell.dbc or its layout is missing");
+        return true;
+    }
+    const auto field = spellLayout->field("AttributesEx4");
+    const auto row = spellDbc->findRecordById(spellId);
+    return !(row >= 0 && field < spellDbc->getFieldCount() && (spellDbc->getUInt32(row, field) & 0x8000u));
+}
+
+void SpellHandler::loadSkillRaceClassInfoDbc() {
+    if (skillRaceClassInfoLoaded_) return;
+    auto* am = owner_.services().assetManager;
+    if (!am || !am->isInitialized()) return;
+    skillRaceClassInfoLoaded_ = true;
+    const auto dbc = am->loadDBC("SkillRaceClassInfo.dbc");
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* layout = layouts ? layouts->getLayout("SkillRaceClassInfo") : nullptr;
+    if (!dbc || !dbc->isLoaded() || !layout) {
+        LOG_ERROR("SkillRaceClassInfo.dbc or its layout is missing: spellbook class tabs cannot be decided");
+        return;
+    }
+    const uint32_t skillField = (*layout)["SkillID"];
+    const uint32_t raceField = (*layout)["RaceMask"];
+    const uint32_t classField = (*layout)["ClassMask"];
+    const uint32_t flagsField = (*layout)["Flags"];
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        skillRaceClassInfo_[dbc->getUInt32(i, skillField)].push_back(
+            {.raceMask = dbc->getUInt32(i, raceField), .classMask = dbc->getUInt32(i, classField),
+             .flags = dbc->getUInt32(i, flagsField)});
+    }
+    LOG_INFO("Loaded SkillRaceClassInfo for ", skillRaceClassInfo_.size(), " skill lines");
+}
+
+// The 2.4.3 spellbook, as the original answers GetSpellTabInfo and
+// GetSpellName (_experiments/20261117T203719.037964Z.spellbook_tabs_pair2,
+// human rogue):
+//
+// - General first, then one tab per class skill line - SkillLine.dbc category 7
+//   whose SkillRaceClassInfo row for the player's race and class carries flag
+//   0x400 - in name order. A rogue gets Assassination, Combat, Subtlety; the
+//   Internal line (769, flag 0x400 for every class) earns a tab of its own once
+//   Test Grow (18209) is known. Lockpicking and Poisons (category 7, flag 0x80),
+//   Mining, First Aid, racials and another class's lines (Fire, Arcane on a
+//   rogue: no row for the rogue) all go to General, and so does Hearthstone,
+//   which has no skill line at all.
+// - Tab name and icon are the skill line's own (Assassination is
+//   Ability_Rogue_Eviscerate from SkillLine.dbc; its talent tab's would be
+//   Ability_Rogue_Garrote).
+// - Every rank the client is told about is listed; superseded ranks are taken
+//   away by the server with SMSG_SUPERCEDED_SPELL, not hidden here. Fireball
+//   ranks 1-10 learned out of order list as Rank 1 ... Rank 10.
+// - Within a tab, name order, then spell id. Equal name and rank (Intuition,
+//   Envenom) come in an order that changed between native dumps.
+// - Not listed: Spell attribute 0x80 (talent passives, Riding), AttributesEx4
+//   0x8000 (Mining, Herb Gathering) and tradeskill recipes, attribute 0x20
+//   (Instant Poison, Smelt Copper).
+void SpellHandler::buildTbcSpellBookTabs() {
+    static constexpr uint32_t kCategoryClass = 7;
+    static constexpr uint32_t kSkillRaceClassTabFlag = 0x400;
+    const uint8_t race = owner_.getPlayerRace();
+    const uint8_t cls = owner_.getPlayerClass();
+    assert(race > 0 && cls > 0);
+    const uint32_t raceBit = 1u << (race - 1);
+    const uint32_t classBit = 1u << (cls - 1);
+    const auto isClassTabLine = [&](uint32_t skillLine) {
+        const auto catIt = owner_.skillLineCategoriesRef().find(skillLine);
+        if (catIt == owner_.skillLineCategoriesRef().end() || catIt->second != kCategoryClass) return false;
+        const auto rowsIt = skillRaceClassInfo_.find(skillLine);
+        if (rowsIt == skillRaceClassInfo_.end()) return false;
+        return std::any_of(rowsIt->second.begin(), rowsIt->second.end(), [&](const SkillRaceClassRow& row) {
+            return (row.raceMask & raceBit) && (row.classMask & classBit) && (row.flags & kSkillRaceClassTabFlag);
+        });
+    };
+
+    std::vector<uint32_t> general;
+    std::map<uint32_t, std::vector<uint32_t>> byLine;
+    for (uint32_t spellId : knownSpells_) {
+        if (!isListedInSpellbook(spellId)) continue;
+        const auto lineIt = owner_.spellToSkillLineRef().find(spellId);
+        if (lineIt != owner_.spellToSkillLineRef().end() && isClassTabLine(lineIt->second))
+            byLine[lineIt->second].push_back(spellId);
+        else
+            general.push_back(spellId);
+    }
+
+    const auto byNameThenId = [this](uint32_t a, uint32_t b) {
+        const std::string& na = owner_.getSpellName(a);
+        const std::string& nb = owner_.getSpellName(b);
+        if (na != nb) return na < nb;
+        return a < b;
+    };
+    if (!general.empty()) {
+        std::sort(general.begin(), general.end(), byNameThenId);
+        spellBookTabs_.push_back({.name = "General", .texture = "Interface\\Icons\\Ability_Kick",
+                                  .spellIds = std::move(general)});
+    }
+    std::vector<SpellBookTab> lines;
+    for (auto& [skillLine, spells] : byLine) {
+        std::sort(spells.begin(), spells.end(), byNameThenId);
+        std::string texture;
+        if (const auto iconIt = owner_.skillLineIconsRef().find(skillLine); iconIt != owner_.skillLineIconsRef().end())
+            texture = owner_.getIconPath(iconIt->second);
+        if (texture.empty()) LOG_ERROR("Spellbook tab for skill line ", skillLine, " has no resolvable icon");
+        lines.push_back({.name = owner_.skillLineNamesRef().at(skillLine), .texture = std::move(texture),
+                         .spellIds = std::move(spells)});
+    }
+    std::sort(lines.begin(), lines.end(), [](const SpellBookTab& a, const SpellBookTab& b) { return a.name < b.name; });
+    for (auto& tab : lines) spellBookTabs_.push_back(std::move(tab));
+}
+
 const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() {
-    // Must be an instance member, not static - a static is shared across all
-    // SpellHandler instances, so switching characters with the same spell count
-    // would skip the rebuild and return the previous character's tabs.
-    if (lastSpellCount_ == knownSpells_.size() && !spellBookTabsDirty_)
-        return spellBookTabs_;
-    lastSpellCount_ = knownSpells_.size();
-    spellBookTabsDirty_ = false;
+    // Rebuilt whenever the set of known spells changes, including a rank
+    // replaced by SMSG_SUPERCEDED_SPELL, which leaves the count unchanged.
+    // Instance state, not static: switching characters must not reuse tabs.
+    const auto mix = [](uint64_t x) {
+        x += 0x9E3779B97F4A7C15ull;
+        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+        x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+        return x ^ (x >> 31);
+    };
+    uint64_t signature = mix((uint64_t(owner_.getPlayerRace()) << 40) | (uint64_t(owner_.getPlayerClass()) << 32) |
+                             knownSpells_.size());
+    for (uint32_t id : knownSpells_) signature += mix(id);
+    if (spellBookBuilt_ && signature == spellBookSignature_) return spellBookTabs_;
     spellBookTabs_.clear();
     loadSpellNameCache();
     loadSkillLineAbilityDbc();
-    const auto* layouts = pipeline::getActiveDBCLayout();
-    const auto* spellLayout = layouts ? layouts->getLayout("Spell") : nullptr;
-    const auto spellDbc = owner_.services().assetManager
-        ? owner_.services().assetManager->loadDBC("Spell.dbc") : nullptr;
 
     // Which SkillLine.dbc categories earn a tab of their own.
     //
@@ -1878,25 +2002,26 @@ const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() 
 
     const auto* registry = owner_.services().expansionRegistry;
     const bool tbc = registry && registry->getActive() && registry->getActive()->id == "tbc";
+    if (tbc) {
+        owner_.loadSkillLineDbc();
+        loadSkillRaceClassInfoDbc();
+        // Not cached until everything the answer depends on is there: the
+        // tables, and the race and class the class tabs are chosen by.
+        if (!owner_.skillLineAbilityLoadedRef() || !owner_.skillLineDbcLoadedRef() || !skillRaceClassInfoLoaded_ ||
+            owner_.getPlayerRace() == 0 || owner_.getPlayerClass() == 0)
+            return spellBookTabs_;
+        buildTbcSpellBookTabs();
+        spellBookBuilt_ = true;
+        spellBookSignature_ = signature;
+        return spellBookTabs_;
+    }
+    spellBookBuilt_ = true;
+    spellBookSignature_ = signature;
     std::map<uint32_t, std::vector<uint32_t>> bySkillLine;
     std::vector<uint32_t> general;
 
     for (uint32_t spellId : knownSpells_) {
-        // SPELL_ATTR_DO_NOT_DISPLAY: internal spells stay known for gameplay
-        // but must not appear as entries in the player's spellbook.
-        const auto cached = owner_.spellNameCacheRef().find(spellId);
-        if (cached != owner_.spellNameCacheRef().end() && (cached->second.attr & 0x80u)) continue;
-        if (spellDbc && spellLayout) {
-            const auto field = spellLayout->field("AttributesEx4");
-            const auto row = spellDbc->findRecordById(spellId);
-            if (row >= 0 && field < spellDbc->getFieldCount() &&
-                (spellDbc->getUInt32(row, field) & 0x8000u)) continue;
-        }
-        // Item-granted spells remain castable but have no spellbook skill line.
-        if (tbc && !owner_.spellToSkillLineRef().count(spellId)) continue;
-        // Trade-spell entries are exposed by the profession window, not the book.
-        const auto spellEntry = owner_.spellNameCacheRef().find(spellId);
-        if (spellEntry != owner_.spellNameCacheRef().end() && (spellEntry->second.attr & 0x20u)) continue;
+        if (!isListedInSpellbook(spellId)) continue;
         auto slIt = owner_.spellToSkillLineRef().find(spellId);
         if (slIt != owner_.spellToSkillLineRef().end()) {
             uint32_t skillLineId = slIt->second;
@@ -1916,8 +2041,7 @@ const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() 
 
     if (!general.empty()) {
         std::sort(general.begin(), general.end(), byName);
-        spellBookTabs_.push_back({.name = "General", .texture = tbc
-            ? "Interface\\Icons\\Ability_Kick" : "Interface\\Icons\\INV_Misc_Book_09",
+        spellBookTabs_.push_back({.name = "General", .texture = "Interface\\Icons\\INV_Misc_Book_09",
             .spellIds = std::move(general)});
     }
 

@@ -576,10 +576,25 @@ private:
     uint32_t optimisticGcdSpellId_ = 0;
     uint8_t optimisticGcdCastCount_ = 0;
 
-    // Spell book tabs
+    // Spell book tabs, rebuilt when the known spells, race or class change.
     std::vector<SpellBookTab> spellBookTabs_;
-    size_t lastSpellCount_ = 0;
-    bool spellBookTabsDirty_ = true;
+    uint64_t spellBookSignature_ = 0;
+    bool spellBookBuilt_ = false;
+    void buildTbcSpellBookTabs();
+public:
+    /// Whether a known spell has an entry in the spellbook at all.
+    bool isListedInSpellbook(uint32_t spellId);
+private:
+
+    // SkillRaceClassInfo.dbc: skill line -> rows of (race mask, class mask, flags).
+    struct SkillRaceClassRow {
+        uint32_t raceMask = 0;
+        uint32_t classMask = 0;
+        uint32_t flags = 0;
+    };
+    std::unordered_map<uint32_t, std::vector<SkillRaceClassRow>> skillRaceClassInfo_;
+    bool skillRaceClassInfoLoaded_ = false;
+    void loadSkillRaceClassInfoDbc();
 
     // Talent wipe confirm dialog
     bool talentWipePending_ = false;
