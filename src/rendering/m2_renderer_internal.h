@@ -23,6 +23,23 @@ namespace wowee {
 namespace rendering {
 namespace m2_internal {
 
+inline bool opacityVaries(const pipeline::M2AnimationTrack& track) {
+    return track.sequences.size() > 1 || std::any_of(
+        track.sequences.begin(), track.sequences.end(),
+        [](const auto& keys) { return keys.floatValues.size() > 1; });
+}
+
+inline float animatedBatchOpacity(const M2ModelGPU& model,
+                                  const M2ModelGPU::BatchGPU& batch,
+                                  const M2Instance& instance) {
+    return m2_track::sampleFloat(batch.animatedColorAlpha,
+        instance.currentSequenceIndex, instance.animTime, instance.globalSequenceTime,
+        model.globalSequenceDurations, 1.0f) *
+        m2_track::sampleFloat(batch.animatedTextureWeight,
+        instance.currentSequenceIndex, instance.animTime, instance.globalSequenceTime,
+        model.globalSequenceDurations, 1.0f);
+}
+
 // ---- RNG helpers ----
 inline std::mt19937& rng() {
     static std::mt19937 gen(std::random_device{}());

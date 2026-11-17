@@ -2310,7 +2310,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                     // world burns white: Orgrimmar's carries (1.0, 0.329, 0.0).
                     bgpu.tint = model.colorRGB[batch.colorIndex];
                 }
-                if (batch.colorIndex < model.colorAlphas.size()) {
+                if (batch.colorIndex < model.colorAlphaTracks.size() &&
+                    m2_internal::opacityVaries(model.colorAlphaTracks[batch.colorIndex])) {
+                    bgpu.animatedColorAlpha = model.colorAlphaTracks[batch.colorIndex];
+                } else if (batch.colorIndex < model.colorAlphas.size()) {
                     float ca = model.colorAlphas[batch.colorIndex];
                     if (ca > 0.001f) animAlpha *= ca;
                     if (batch.colorIndex < model.colorAlphaTracks.size() &&
@@ -2318,7 +2321,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                 }
                 const uint16_t weightIndex = batch.transparencyIndex < model.textureWeightLookup.size()
                     ? model.textureWeightLookup[batch.transparencyIndex] : uint16_t(0xffff);
-                if (weightIndex < model.textureWeights.size()) {
+                if (weightIndex < model.textureWeightTracks.size() &&
+                    m2_internal::opacityVaries(model.textureWeightTracks[weightIndex])) {
+                    bgpu.animatedTextureWeight = model.textureWeightTracks[weightIndex];
+                } else if (weightIndex < model.textureWeights.size()) {
                     float tw = model.textureWeights[weightIndex];
                     if (tw > 0.001f) animAlpha *= tw;
                     if (weightIndex < model.textureWeightTracks.size() &&

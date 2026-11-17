@@ -380,6 +380,41 @@ TEST_CASE("state effects play Stand intro once before authored Hold", "[m2][stat
     CHECK_FALSE(instance.playingVariation);
 }
 
+TEST_CASE("batch opacity follows instance clocks and animation sequence", "[m2][material-opacity]") {
+    using namespace wowee::rendering;
+    M2ModelGPU model;
+    model.globalSequenceDurations = {1000};
+    M2ModelGPU::BatchGPU batch;
+    M2Instance instance;
+    instance.currentSequenceIndex = 0;
+    CHECK(m2_internal::animatedBatchOpacity(model, batch, instance) == 1.0f);
+    auto& alpha = batch.animatedColorAlpha;
+    alpha.interpolationType = 1;
+    alpha.sequences.resize(2);
+    alpha.sequences[0].timestamps = {0, 500, 1000};
+    alpha.sequences[0].floatValues = {0, .4f, 0};
+    alpha.sequences[1].timestamps = {0};
+    alpha.sequences[1].floatValues = {.7f};
+    CHECK(m2_internal::opacityVaries(alpha));
+    CHECK(m2_internal::animatedBatchOpacity(model, batch, instance) == 0.0f);
+    instance.animTime = 250;
+    CHECK(m2_internal::animatedBatchOpacity(model, batch, instance) == Catch::Approx(.2f));
+    instance.currentSequenceIndex = 1;
+    CHECK(m2_internal::animatedBatchOpacity(model, batch, instance) == Catch::Approx(.7f));
+    auto& weight = batch.animatedTextureWeight;
+    weight.globalSequence = 0;
+    weight.interpolationType = 1;
+    weight.sequences.resize(1);
+    weight.sequences[0].timestamps = {0, 500, 1000};
+    weight.sequences[0].floatValues = {0, 1, 0};
+    instance.globalSequenceTime = 1250;
+    CHECK(m2_internal::animatedBatchOpacity(model, batch, instance) == Catch::Approx(.35f));
+    auto second = instance;
+    second.globalSequenceTime = 1500;
+    CHECK(m2_internal::animatedBatchOpacity(model, batch, second) == Catch::Approx(.7f));
+    CHECK(m2_internal::animatedBatchOpacity(model, batch, instance) == Catch::Approx(.35f));
+}
+
 TEST_CASE("inherited billboard rotation preserves orbit and faces camera", "[m2][billboard-parent]") {
     using namespace wowee::rendering;
     M2ModelGPU model;

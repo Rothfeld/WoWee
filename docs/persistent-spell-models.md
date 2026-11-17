@@ -1,12 +1,24 @@
 # Persistent spell models
 
-Run `build/bin/test_m2_structs '[bone-scale],[state-effect]'` for authored scale
-and state-effect startup tests.
+Run `build/bin/test_m2_structs '[bone-scale],[state-effect],[billboard-parent],[material-opacity]'`
+for authored scale, lifecycle, inherited billboard and batch opacity tests.
 
 M2 bone tracks retain zero, tiny, and negative scale values. Zero collapses
 geometry during an authored hidden phase; negative values mirror an axis.
 Only absent scale tracks use identity. Shader normal normalization keeps
 collapsed geometry finite without replacing its scale.
+
+Billboard bones face their inherited card plane toward the camera around the
+animated pivot. Parent rotation moves their orbit without tilting the final
+card plane away from the viewer. This matters for `spells/sap_state_head.m2`,
+whose star billboards sit under two animated parent bones.
+
+Varying color-alpha and texture-weight tracks are sampled per batch and instance
+using the current animation sequence and local/global clocks. Their product
+multiplies instance alpha; static material alpha remains in the material UBO.
+`spells/detectstealth_state_head.m2` starts opacity tracks at zero and later
+raises them during its glow cycle. Selecting only an initial nonzero key cannot
+represent that authored cycle.
 
 Aura state models start at the beginning of Stand (0). When Hold (158) exists,
 the regular one-shot transition enters that loop. These instances do not use
