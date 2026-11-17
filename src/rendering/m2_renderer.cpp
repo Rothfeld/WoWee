@@ -1944,6 +1944,13 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         gpuModel.ribbonTextures.resize(model.ribbonEmitters.size(), whiteTexture_.get());
         gpuModel.ribbonTexSets.resize(model.ribbonEmitters.size(), VK_NULL_HANDLE);
         for (size_t ri = 0; ri < model.ribbonEmitters.size(); ri++) {
+            // materialIndex names an entry of the model's material table,
+            // not a render batch. Read as a batch index, Arcane_Missile_Lvl1's
+            // material 2 (blend 4) was past its two batches and the trail drew
+            // alpha-blended and dark instead of additive. All 1087 TBC
+            // ribbons name a material inside the table.
+            const uint16_t material = model.ribbonEmitters[ri].materialIndex;
+            gpuModel.ribbonBlendModes.push_back(model.materials.at(material).blendMode);
             // Resolve texture: ribbon textureIndex is a direct index into the
             // model's texture array (NOT through the textureLookup table).
             uint16_t texDirect = model.ribbonEmitters[ri].textureIndex;

@@ -433,10 +433,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             const auto& em = gpu.ribbonEmitters[ri];
 
             // Select blend pipeline based on material blend mode
-            bool additive = false;
-            if (em.materialIndex < gpu.batches.size()) {
-                additive = (gpu.batches[em.materialIndex].blendMode >= 3);
-            }
+            const bool additive = gpu.ribbonBlendModes.at(ri) >= 3;
             VkPipeline pipe = additive ? ribbonAdditivePipeline_ : ribbonPipeline_;
 
             // Descriptor set for texture

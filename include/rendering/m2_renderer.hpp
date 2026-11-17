@@ -201,6 +201,8 @@ struct M2ModelGPU {
     std::vector<pipeline::M2RibbonEmitter> ribbonEmitters;
     std::vector<VkTexture*> ribbonTextures;       // Resolved texture per ribbon emitter
     std::vector<VkDescriptorSet> ribbonTexSets;   // Descriptor sets per ribbon emitter
+    // M2 material blend mode the ribbon's materialIndex names (3+ additive).
+    std::vector<uint16_t> ribbonBlendModes;
 
     // Texture transform data for UV animation
     std::vector<pipeline::M2TextureTransform> textureTransforms;
