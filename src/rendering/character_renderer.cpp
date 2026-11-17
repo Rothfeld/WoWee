@@ -2290,10 +2290,11 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             }
         }
 
-        // Skip weapon instances for animation - their transforms are set by parent
-        // bones. Enchant visuals are the exception: they are pure animated FX.
-        if (inst.hasOverrideModelMatrix && !inst.isEffectModel) continue;
-
+        // Attached item models (weapons, shoulders, helms) take their placement
+        // from the wearer's bone, but run their own clock: texture animations,
+        // colour/transparency tracks and bones advance on it. The Warglaive of
+        // Azzinoth's fel glow scrolls on global sequence 0 (5267 ms) and its
+        // attachment bones scale on global sequence 1.
         float distSq = glm::distance2(inst.position, cameraPos);
         if (distSq > animUpdateRadiusSq && !inst.isSceneModel) continue;
 
@@ -2498,6 +2499,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
 
             weapIt->second.overrideModelMatrix = weaponMat;
             weapIt->second.hasOverrideModelMatrix = true;
+            // Animation distance culling works off instance position.
+            weapIt->second.position = instance.position;
 
             // Item visuals ride the weapon at their attachment on it: the
             // weapon bone carries it (Glave_1H_DualBlade_D_02 scales its

@@ -407,9 +407,8 @@ private:
         bool hasOverrideModelMatrix = false;
         glm::mat4 overrideModelMatrix{1.0f};
 
-        // Enchant visual attached to a weapon. Such a model is nothing but the
-        // additive FX batches that attached weapons otherwise drop, and it still
-        // needs its animation advanced even though its transform comes from the parent.
+        // Enchant visual attached to a weapon: a model of nothing but additive
+        // FX batches, drawn unlit.
         bool isEffectModel = false;
 
         // A scene rather than a character: the glue-screen backdrops. Two things
