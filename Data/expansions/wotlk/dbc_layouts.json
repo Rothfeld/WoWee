@@ -362,7 +362,8 @@
     "RightHandEffect": 7,
     "SpecialEffect0": 11,
     "SpecialEffect1": 12,
-    "SpecialEffect2": 13
+    "SpecialEffect2": 13,
+    "WorldEffect": 14
   },
   "Talent": {
     "Column": 3,

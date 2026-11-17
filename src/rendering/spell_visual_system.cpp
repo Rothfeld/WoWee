@@ -69,7 +69,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         {.name = "LeftHandEffect",   .fallback = 6}, {.name = "RightHandEffect",  .fallback = 7},
         {.name = "ChestEffect",      .fallback = 4}, {.name = "HeadEffect",       .fallback = 3},
         {.name = "BreathEffect",     .fallback = 8}, {.name = "SpecialEffect1",  .fallback = 12},
-        {.name = "SpecialEffect2",  .fallback = 13},
+        {.name = "SpecialEffect2",  .fallback = 13}, {.name = "WorldEffect",     .fallback = 14},
     };
     constexpr size_t numKitFields = sizeof(kitFieldDefs) / sizeof(kitFieldDefs[0]);
     uint32_t kitFields[numKitFields];
@@ -111,7 +111,9 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // ChestEffect attaches to M2 attachment 34 (Chest); 5 is
             // ShoulderRight, which quillboar and most creatures lack, so
             // Sinister Strike's chest impact fell back to the unit's feet.
-            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 34, 18, kAttachBreath, 0, 0};
+            // WorldEffect (314 TBC kits, e.g. kit 66 Entangling Roots'
+            // EntanglingRoots_State) stands at the unit's position.
+            static constexpr uint32_t attachments[] = {0, 0, 2, 1, 34, 18, kAttachBreath, 0, 0, 0};
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
