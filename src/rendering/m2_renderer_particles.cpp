@@ -73,23 +73,6 @@ glm::vec3 M2Renderer::interpFBlockVec3(const pipeline::M2FBlock& fb, float lifeR
     return fb.vec3Values.back();
 }
 
-std::vector<glm::vec3> M2Renderer::getWaterVegetationPositions(const glm::vec3& camPos, float maxDist) const {
-    std::vector<glm::vec3> result;
-    float maxDistSq = maxDist * maxDist;
-    // The same list, for the same reason; see renderM2Particles. A ribbon
-    // emitter is a particle emitter as far as this list is concerned.
-    for (size_t idx : particleInstanceIndices_) {
-        if (idx >= instances.size()) continue;
-        const auto& inst = instances[idx];
-        if (!inst.cachedModel || !inst.cachedModel->isWaterVegetation) continue;
-        glm::vec3 diff = inst.position - camPos;
-        if (glm::dot(diff, diff) <= maxDistSq) {
-            result.push_back(inst.position);
-        }
-    }
-    return result;
-}
-
 void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt) {
 
     if (inst.emitterAccumulators.size() != gpu.particleEmitters.size()) {

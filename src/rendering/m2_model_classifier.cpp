@@ -233,10 +233,6 @@ M2ClassificationResult classifyM2Model(
                         || has(n, "portalfx")       || has(n, "spellportal")
                         || has(fullPath, "\\instanceportal\\") || has(fullPath, "/instanceportal/");
 
-    r.isWaterVegetation = has(n, "cattail") || has(n, "reed")     || has(n, "bulrush")
-                        || has(n, "seaweed") || has(n, "kelp")    || has(n, "lilypad")
-                        || has(n, "waterlily");
-
     r.isWaterfall       = has(n, "waterfall");
 
     r.isElvenLike   = has(n, "elf")     || has(n, "elven") || has(n, "quel");

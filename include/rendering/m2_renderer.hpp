@@ -132,8 +132,6 @@ struct M2ModelGPU {
     bool isSmallFoliage = false;    // Small foliage (bushes, grass, plants) - skip during taxi
     bool isInvisibleTrap = false;   // Invisible trap objects (don't render, no collision)
     bool isGroundDetail = false;    // Ground clutter/detail doodads (special fallback render path)
-    bool isWaterVegetation = false; // Cattails, reeds, kelp etc. near water (insect spawning)
-    bool isWaterfall = false;       // Waterfall model (ambient sound + splash particles)
     bool isBrazierOrFire = false;   // Brazier / campfire / bonfire model
     bool isGroundFire = false;      // Ground fire whose halo follows its lowest flame emitter
     bool isTorch = false;           // Wall-mounted or standing torch
@@ -181,7 +179,6 @@ struct M2ModelGPU {
     bool hasAnimation = false;  // True if any bone has keyframes
     uint32_t rtMesh = ~0u;      // RtScene mesh, or ~0u when it does not cast
     bool isSpellEffect = false;  // True for spell effect models (skip particle dampeners)
-    bool isInstancePortal = false; // Instance portal model (spin + glow)
     bool disableAnimation = false; // Keep foliage/tree doodads visually stable
     bool shadowWindFoliage = false; // Apply wind sway in shadow pass for foliage/tree cards
     bool isHangingCloth = false;    // Banner/flag/tapestry: sways from the end it is held by
@@ -319,7 +316,6 @@ struct M2Instance {
     bool cachedHasParticleEmitters = false;
     bool cachedIsGroundDetail = false;
     bool cachedIsInvisibleTrap = false;
-    bool cachedIsInstancePortal = false;
     bool cachedIsSkyBird = false;
     bool cachedIsLightBeam = false;
     bool cachedIsTransportDoodad = false;
@@ -767,7 +763,6 @@ public:
     }
     [[nodiscard]] float environmentDetail() const { return environmentDetail_; }
 
-    [[nodiscard]] std::vector<glm::vec3> getWaterVegetationPositions(const glm::vec3& camPos, float maxDist) const;
 
     // Pre-decoded BLP cache: set by terrain manager before calling loadModel()
     // so loadTexture() can skip the expensive assetManager->loadTexture() call.
@@ -1170,8 +1165,6 @@ private:
     std::vector<size_t> particleOnlyInstanceIndices_; // !hasAnimation && hasParticleEmitters
     std::vector<size_t> particleInstanceIndices_;    // ALL instances with particle emitters
 
-    // Spinning portal instances
-    std::vector<size_t> portalInstanceIndices_; // Indices into instances[] for spinning portals
 
     // M2 particle emitter system
     static constexpr size_t MAX_M2_PARTICLES = 4000;

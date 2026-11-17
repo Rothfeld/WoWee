@@ -1581,12 +1581,9 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     }
     gpuModel.isSmallFoliage              = cls.isSmallFoliage;
     gpuModel.isSpellEffect               = cls.isSpellEffect;
-    gpuModel.isInstancePortal            = cls.isInstancePortal;
-    gpuModel.isWaterVegetation           = cls.isWaterVegetation;
     gpuModel.isElvenLike                 = cls.isElvenLike;
     gpuModel.isLanternLike               = cls.isLanternLike;
     gpuModel.isKoboldFlame               = cls.isKoboldFlame;
-    gpuModel.isWaterfall                 = cls.isWaterfall;
     gpuModel.isBrazierOrFire             = cls.isBrazierOrFire;
     gpuModel.isGroundFire                = cls.isGroundFire;
     gpuModel.isForge                     = cls.isForge;

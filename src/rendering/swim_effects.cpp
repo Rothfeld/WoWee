@@ -79,28 +79,6 @@ void SwimEffects::buildBubblePipeline(
         .build(device, vkCtx->getPipelineCache());
 }
 
-/// The insect pipeline: the midges that hover over still water.
-void SwimEffects::buildInsectPipeline(
-        VkDevice device, const VkPipelineShaderStageCreateInfo& vertStage,
-        const VkPipelineShaderStageCreateInfo& fragStage,
-        const VkVertexInputBindingDescription& binding,
-        const std::vector<VkVertexInputAttributeDescription>& attrs) {
-    const std::vector<VkDynamicState> dynamicStates = viewportAndScissorDynamic();
-
-    insectPipeline = PipelineBuilder()
-        .setShaders(vertStage, fragStage)
-        .setVertexInput({binding}, attrs)
-        .setTopology(VK_PRIMITIVE_TOPOLOGY_POINT_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(false, false, VK_COMPARE_OP_LESS)
-        .setColorBlendAttachment(PipelineBuilder::blendAlpha())
-        .setMultisample(targetSamples_)
-        .setLayout(insectPipelineLayout)
-        .setRenderPass(targetPass_)
-        .setDynamicStates(dynamicStates)
-        .build(device, vkCtx->getPipelineCache());
-}
-
 bool SwimEffects::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout) {
     LOG_INFO("Initializing swim effects");
 
@@ -163,30 +141,6 @@ bool SwimEffects::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         }
     }
 
-    // ---- Insect pipeline (dark point sprites) ----
-    {
-        auto shaders = loadShaderPair(device, "assets/shaders/swim_ripple.vert.spv", "assets/shaders/swim_insect.frag.spv", "swim_ripple");
-        if (!shaders) return false;
-        const auto& vertStage = shaders.vertStage;
-        const auto& fragStage = shaders.fragStage;
-
-        insectPipelineLayout = createPipelineLayout(device, {perFrameLayout}, {});
-        if (insectPipelineLayout == VK_NULL_HANDLE) {
-            LOG_ERROR("Failed to create insect pipeline layout");
-            return false;
-        }
-
-        // Depth test disabled - insects are screen-space sprites that must always
-        // render above the water surface regardless of scene geometry.
-        buildInsectPipeline(device, vertStage, fragStage, binding, attrs);
-
-
-        if (insectPipeline == VK_NULL_HANDLE) {
-            LOG_ERROR("Failed to create insect pipeline");
-            return false;
-        }
-    }
-
     // ---- Create dynamic mapped vertex buffers ----
     rippleDynamicVBSize = MAX_RIPPLE_PARTICLES * 5 * sizeof(float);
     {
@@ -214,25 +168,10 @@ bool SwimEffects::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         }
     }
 
-    insectDynamicVBSize = MAX_INSECT_PARTICLES * 5 * sizeof(float);
-    {
-        AllocatedBuffer buf = createBuffer(vkCtx->getAllocator(), insectDynamicVBSize,
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        insectDynamicVB = buf.buffer;
-        insectDynamicVBAlloc = buf.allocation;
-        insectDynamicVBAllocInfo = buf.info;
-        if (insectDynamicVB == VK_NULL_HANDLE) {
-            LOG_ERROR("Failed to create insect dynamic vertex buffer");
-            return false;
-        }
-    }
-
     ripples.reserve(MAX_RIPPLE_PARTICLES);
     bubbles.reserve(MAX_BUBBLE_PARTICLES);
-    insects.reserve(MAX_INSECT_PARTICLES);
     rippleVertexData.reserve(MAX_RIPPLE_PARTICLES * 5);
     bubbleVertexData.reserve(MAX_BUBBLE_PARTICLES * 5);
-    insectVertexData.reserve(MAX_INSECT_PARTICLES * 5);
 
     LOG_INFO("Swim effects initialized");
     return true;
@@ -250,16 +189,11 @@ void SwimEffects::shutdown() {
         destroy(device, bubblePipeline);
         destroy(device, bubblePipelineLayout);
         destroy(allocator, bubbleDynamicVB, bubbleDynamicVBAlloc);
-
-        destroy(device, insectPipeline);
-        destroy(device, insectPipelineLayout);
-        destroy(allocator, insectDynamicVB, insectDynamicVBAlloc);
     }
 
     vkCtx = nullptr;
     ripples.clear();
     bubbles.clear();
-    insects.clear();
 }
 
 void SwimEffects::recreatePipelines() {
@@ -276,7 +210,6 @@ void SwimEffects::recreatePipelines() {
     // Destroy old pipelines (NOT layouts)
     destroy(device, ripplePipeline);
     destroy(device, bubblePipeline);
-    destroy(device, insectPipeline);
 
     // Shared vertex input: pos(vec3) + size(float) + alpha(float) = 5 floats
     VkVertexInputBindingDescription binding = tightVertexBinding(5 * sizeof(float));
@@ -311,19 +244,6 @@ void SwimEffects::recreatePipelines() {
 
     }
 
-    // ---- Rebuild insect pipeline ----
-    {
-        VkShaderModule vertModule;
-        (void)vertModule.loadFromFile(device, "assets/shaders/swim_ripple.vert.spv");
-        VkShaderModule fragModule;
-        (void)fragModule.loadFromFile(device, "assets/shaders/swim_insect.frag.spv");
-
-        VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
-        VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);
-
-        buildInsectPipeline(device, vertStage, fragStage, binding, attrs);
-
-    }
 }
 
 void SwimEffects::spawnRipple(const glm::vec3& pos, const glm::vec3& moveDir, float waterH) {
@@ -387,31 +307,6 @@ void SwimEffects::spawnBubble(const glm::vec3& pos, float /*waterH*/) {
     p.alpha = 0.6f;
 
     bubbles.push_back(p);
-}
-
-void SwimEffects::spawnInsect(const glm::vec3& vegPos) {
-    if (static_cast<int>(insects.size()) >= MAX_INSECT_PARTICLES) return;
-
-    InsectParticle p;
-    p.orbitCenter = vegPos;
-    p.phase = randFloat(0.0f, 6.2832f);
-    p.orbitRadius = randFloat(0.5f, 2.0f);
-    p.orbitSpeed = randFloat(1.5f, 4.0f);
-    p.heightOffset = randFloat(0.5f, 3.0f);
-    p.lifetime = 0.0f;
-    p.maxLifetime = randFloat(3.0f, 8.0f);
-    p.size = randFloat(2.0f, 3.0f);
-    p.alpha = randFloat(0.6f, 0.9f);
-
-    // Start at orbit position
-    float angle = p.phase;
-    p.position = vegPos + glm::vec3(
-        std::cos(angle) * p.orbitRadius,
-        std::sin(angle) * p.orbitRadius,
-        p.heightOffset
-    );
-
-    insects.push_back(p);
 }
 
 void SwimEffects::update(const Camera& camera, const CameraController& cc,
@@ -522,23 +417,6 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
         bubbles.clear();
     }
 
-    // --- Insect spawning near water vegetation ---
-    if (m2Renderer) {
-        auto vegPositions = m2Renderer->getWaterVegetationPositions(camPos, 60.0f);
-        if (!vegPositions.empty()) {
-            // Spawn rate: ~4/sec per nearby vegetation cluster (capped by MAX_INSECT_PARTICLES)
-            float spawnRate = std::min(static_cast<float>(vegPositions.size()) * 4.0f, 20.0f);
-            insectSpawnAccum += spawnRate * deltaTime;
-            while (insectSpawnAccum >= 1.0f && static_cast<int>(insects.size()) < MAX_INSECT_PARTICLES) {
-                // Pick a random vegetation position to spawn near
-                int idx = static_cast<int>(randFloat(0.0f, static_cast<float>(vegPositions.size()) - 0.01f));
-                spawnInsect(vegPositions[idx]);
-                insectSpawnAccum -= 1.0f;
-            }
-            if (insectSpawnAccum > 2.0f) insectSpawnAccum = 0.0f;
-        }
-    }
-
     // --- Update ripples (splash droplets with gravity) ---
     for (int i = static_cast<int>(ripples.size()) - 1; i >= 0; --i) {
         auto& p = ripples[i];
@@ -588,42 +466,6 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
         }
     }
 
-    // --- Update insects (erratic orbiting flight) ---
-    for (int i = static_cast<int>(insects.size()) - 1; i >= 0; --i) {
-        auto& p = insects[i];
-        p.lifetime += deltaTime;
-        if (p.lifetime >= p.maxLifetime) {
-            insects[i] = insects.back();
-            insects.pop_back();
-            continue;
-        }
-
-        float t = p.lifetime / p.maxLifetime;
-        float time = p.lifetime * p.orbitSpeed + p.phase;
-
-        // Erratic looping: primary orbit + secondary wobble
-        float primaryAngle = time;
-        float wobbleAngle = std::sin(time * 2.3f) * 0.8f;
-        float radius = p.orbitRadius + std::sin(time * 1.7f) * 0.3f;
-
-        float heightWobble = std::sin(time * 1.1f + p.phase * 0.5f) * 0.5f;
-
-        p.position = p.orbitCenter + glm::vec3(
-            std::cos(primaryAngle + wobbleAngle) * radius,
-            std::sin(primaryAngle + wobbleAngle) * radius,
-            p.heightOffset + heightWobble
-        );
-
-        // Fade in/out
-        if (t < 0.1f) {
-            p.alpha = glm::mix(0.0f, 0.8f, t / 0.1f);
-        } else if (t > 0.85f) {
-            p.alpha = glm::mix(0.8f, 0.0f, (t - 0.85f) / 0.15f);
-        } else {
-            p.alpha = 0.8f;
-        }
-    }
-
     // --- Build vertex data ---
     rippleVertexData.clear();
     rippleVertexData.reserve(ripples.size() * 5);
@@ -645,19 +487,10 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
         bubbleVertexData.push_back(p.alpha);
     }
 
-    insectVertexData.clear();
-    insectVertexData.reserve(insects.size() * 5);
-    for (const auto& p : insects) {
-        insectVertexData.push_back(p.position.x);
-        insectVertexData.push_back(p.position.y);
-        insectVertexData.push_back(p.position.z);
-        insectVertexData.push_back(p.size);
-        insectVertexData.push_back(p.alpha);
-    }
 }
 
 void SwimEffects::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
-    if (rippleVertexData.empty() && bubbleVertexData.empty() && insectVertexData.empty()) return;
+    if (rippleVertexData.empty() && bubbleVertexData.empty()) return;
 
     VkDeviceSize offset = 0;
 
@@ -689,19 +522,6 @@ void SwimEffects::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
         vkCmdDraw(cmd, static_cast<uint32_t>(bubbleVertexData.size() / 5), 1, 0, 0);
     }
 
-    // --- Render insects ---
-    if (!insectVertexData.empty() && insectPipeline != VK_NULL_HANDLE) {
-        VkDeviceSize uploadSize = insectVertexData.size() * sizeof(float);
-        if (insectDynamicVBAllocInfo.pMappedData) {
-            std::memcpy(insectDynamicVBAllocInfo.pMappedData, insectVertexData.data(), uploadSize);
-        }
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, insectPipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, insectPipelineLayout,
-            0, 1, &perFrameSet, 0, nullptr);
-        vkCmdBindVertexBuffers(cmd, 0, 1, &insectDynamicVB, &offset);
-        vkCmdDraw(cmd, static_cast<uint32_t>(insectVertexData.size() / 5), 1, 0, 0);
-    }
 }
 
 } // namespace rendering

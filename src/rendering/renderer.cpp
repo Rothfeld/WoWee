@@ -3840,9 +3840,6 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
             return waterRenderer ? waterRenderer->getNearestWaterHeightAt(x, y, z, 3.0f)
                                  : std::nullopt;
         });
-        if (swimEffects) {
-            swimEffects->setM2Renderer(m2Renderer.get());
-        }
         // Initialize SpellVisualSystem once M2Renderer is available (§4.4)
         if (!spellVisualSystem_) {
             spellVisualSystem_ = std::make_unique<SpellVisualSystem>();

@@ -168,7 +168,6 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     instance.cachedBoundRadius = mdlRef.boundRadius;
     instance.cachedIsGroundDetail = mdlRef.isGroundDetail;
     instance.cachedIsInvisibleTrap = mdlRef.isInvisibleTrap;
-    instance.cachedIsInstancePortal = mdlRef.isInstancePortal;
     instance.cachedIsSkyBird = mdlRef.isSkyBird;
     instance.cachedIsLightBeam = mdlRef.isLightBeam;
     instance.cachedIsTransportDoodad = mdlRef.isTransportDoodad;
@@ -202,9 +201,6 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     instances.push_back(instance);
     size_t idx = instances.size() - 1;
     // Track special instances for fast-path iteration
-    if (mdlRef.isInstancePortal) {
-        portalInstanceIndices_.push_back(idx);
-    }
     if (!mdlRef.particleEmitters.empty()) {
         particleInstanceIndices_.push_back(idx);
     }

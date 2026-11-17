@@ -318,13 +318,11 @@ void M2Renderer::removeInstance(uint32_t instanceId) {
 
     // Rebuild the lightweight auxiliary index vectors (portal, particles, etc.)
     // These are small vectors of indices that are rebuilt cheaply.
-    portalInstanceIndices_.clear();
     animatedInstanceIndices_.clear();
     particleOnlyInstanceIndices_.clear();
     particleInstanceIndices_.clear();
     for (size_t i = 0; i < instances.size(); i++) {
         auto& ri = instances[i];
-        if (ri.cachedIsInstancePortal) portalInstanceIndices_.push_back(i);
         if (ri.externalPose) {
             if (ri.cachedModel && (!ri.cachedModel->particleEmitters.empty() ||
                                    !ri.cachedModel->ribbonEmitters.empty()))
@@ -464,7 +462,6 @@ void M2Renderer::clear() {
     instanceDedupMap_.clear();
     for (auto& ids : cullSubmittedIds_) ids.clear();
     for (auto& ids : cullReadableIds_) ids.clear();
-    portalInstanceIndices_.clear();
     animatedInstanceIndices_.clear();
     particleOnlyInstanceIndices_.clear();
     particleInstanceIndices_.clear();
@@ -494,7 +491,6 @@ void M2Renderer::clearInstances() {
     instanceDedupMap_.clear();
     for (auto& ids : cullSubmittedIds_) ids.clear();
     for (auto& ids : cullReadableIds_) ids.clear();
-    portalInstanceIndices_.clear();
     animatedInstanceIndices_.clear();
     particleOnlyInstanceIndices_.clear();
     particleInstanceIndices_.clear();
@@ -515,7 +511,6 @@ void M2Renderer::rebuildSpatialIndex() {
     boneSeedInstanceByModel_.clear();
     instanceDedupMap_.clear();
     instanceIndexById.reserve(instances.size());
-    portalInstanceIndices_.clear();
     animatedInstanceIndices_.clear();
     particleOnlyInstanceIndices_.clear();
     particleInstanceIndices_.clear();
@@ -537,6 +532,7 @@ void M2Renderer::rebuildSpatialIndex() {
             instanceDedupMap_[dk] = inst.id;
         }
 
+<<<<<<< HEAD
         if (inst.cachedIsInstancePortal) {
             portalInstanceIndices_.push_back(i);
         }
@@ -553,6 +549,15 @@ void M2Renderer::rebuildSpatialIndex() {
             } else if (inst.cachedHasParticleEmitters) {
                 particleOnlyInstanceIndices_.push_back(i);
             }
+=======
+        if (inst.cachedHasParticleEmitters) {
+            particleInstanceIndices_.push_back(i);
+        }
+        if (inst.cachedHasAnimation && !inst.cachedDisableAnimation) {
+            animatedInstanceIndices_.push_back(i);
+        } else if (inst.cachedHasParticleEmitters) {
+            particleOnlyInstanceIndices_.push_back(i);
+>>>>>>> d0f3591 (Remove invented midges over water plants named cattail/reed/kelp)
         }
 
         insertBounds(spatialGrid, inst.worldBoundsMin, inst.worldBoundsMax, inst.id);

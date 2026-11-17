@@ -76,7 +76,6 @@ struct M2ClassificationResult {
     bool isSmallFoliage     = false; ///< Small bush/grass/plant (skip during taxi/flight)
     bool isSpellEffect      = false; ///< Spell effect / particle-dominated visual
     bool isInstancePortal   = false; ///< Instance portal (additive, spin, no collision)
-    bool isWaterVegetation  = false; ///< Aquatic vegetation (cattails, kelp, reeds, etc.)
     bool isElvenLike        = false; ///< Night elf / Blood elf themed model
     bool isLanternLike      = false; ///< Lantern/lamp/light model
     bool isKoboldFlame      = false; ///< Kobold candle/torch model
