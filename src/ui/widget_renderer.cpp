@@ -1244,10 +1244,12 @@ void WidgetRenderer::drawCooldown(ImDrawList* dl, const Widget& w,
     dl->PathClear();
     dl->PathLineTo(centre);
     for (int i = 0; i <= used; ++i) {
-        // -pi/2 starts at the top; positive sweep runs clockwise on a screen
-        // whose y grows downward.
-        const float a = -kTwoPi * 0.25f +
-                        kTwoPi * remaining * (static_cast<float>(i) / used);
+        // -pi/2 is twelve o'clock and angles grow clockwise on a screen whose
+        // y grows downward. The dark wedge runs from the moving edge clockwise
+        // back to twelve, so the edge itself travels clockwise as native's
+        // does; starting the wedge at twelve made the edge run backwards.
+        const float start = -kTwoPi * 0.25f + kTwoPi * (1.0f - remaining);
+        const float a = start + kTwoPi * remaining * (static_cast<float>(i) / used);
         dl->PathLineTo(ImVec2(centre.x + std::cos(a) * radius,
                               centre.y + std::sin(a) * radius));
     }
@@ -1255,7 +1257,7 @@ void WidgetRenderer::drawCooldown(ImDrawList* dl, const Widget& w,
     if (w.cooldownDrawEdge) {
         // One bright spoke along the leading edge, which is what makes a slow
         // sweep readable at a glance.
-        const float edge = -kTwoPi * 0.25f + kTwoPi * remaining;
+        const float edge = -kTwoPi * 0.25f + kTwoPi * (1.0f - remaining);
         dl->AddLine(centre,
                     ImVec2(centre.x + std::cos(edge) * radius,
                            centre.y + std::sin(edge) * radius),
