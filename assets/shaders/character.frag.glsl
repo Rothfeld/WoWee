@@ -392,6 +392,15 @@ void main() {
 
         result = rtAmbient(rt, ambientColor.rgb) * texColor.rgb
                + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb);
+        if (lightDir.w != 0.0) {
+            // TBC: creatures and players are M2 models and take the same
+            // light as every other M2 (m2.vert/m2.frag): LightParams ambient
+            // plus diffuse by N.L, saturated, times the texture. No floor
+            // under N.L and no added highlight; those were this renderer's.
+            vec3 legacyLight = clamp(ambientColor.rgb +
+                max(dot(norm, ldir), 0.0) * lightColor.rgb, 0.0, 1.0);
+            result = texColor.rgb * (ambientColor.rgb + shadow * (legacyLight - ambientColor.rgb));
+        }
     }
 
     if (unlit == 0) result += localLightContribution(FragPos, norm, texColor.rgb);
