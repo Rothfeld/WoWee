@@ -2505,7 +2505,6 @@ void SpellHandler::updateTimers(float dt) {
     // however many ended in it.
     if (anyCooldownEnded && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_COOLDOWN", {});
-        owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_USABLE", {});
         owner_.addonEventCallbackRef()("SPELL_UPDATE_USABLE", {});
         owner_.addonEventCallbackRef()("SPELL_UPDATE_COOLDOWN", {});
     }
@@ -2522,6 +2521,23 @@ void SpellHandler::updateTimers(float dt) {
         announcedAutoAttack_ = swingNow;
         owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_STATE", {});
         if (castChanged) owner_.addonEventCallbackRef()("CURRENT_SPELL_CAST_CHANGED", {});
+    }
+    // ACTIONBAR_UPDATE_USABLE when, and only when, some slot's IsUsableAction
+    // answer changed. Native 2.4.3 fires it as energy crosses a cost, on
+    // entering and leaving combat, on stealth and on a cooldown event, and not
+    // for 100 -> 90 -> 80 energy, where nothing on the bar changes. The buttons
+    // repaint on nothing else, so a missed change leaves them stale: Ambush
+    // bright after stealth broke.
+    if (owner_.getState() == WorldState::IN_WORLD && owner_.services().assetManager &&
+        owner_.services().assetManager->isInitialized()) {
+        const auto& bar = owner_.getActionBar();
+        std::vector<SpellUsability> now(bar.size());
+        for (size_t i = 0; i < bar.size(); ++i)
+            if (!bar[i].isEmpty()) now[i] = actionUsability(owner_, bar[i]);
+        if (now != announcedUsability_) {
+            announcedUsability_ = std::move(now);
+            owner_.fireAddonEvent("ACTIONBAR_UPDATE_USABLE", {});
+        }
     }
     // Tick down unit cast states
     for (auto it = unitCastStates_.begin(); it != unitCastStates_.end(); ) {

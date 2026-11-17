@@ -3,6 +3,7 @@
 #include "game/world_packets.hpp"
 #include "game/opcode_table.hpp"
 #include "game/spell_defines.hpp"
+#include "game/spell_prerequisites.hpp"
 #include "game/handler_types.hpp"
 #include "audio/spell_sound_manager.hpp"
 #include "network/packet.hpp"
@@ -532,6 +533,8 @@ private:
     // announced once whichever of the many cast paths changed it.
     uint32_t announcedCastSpellId_ = 0;
     bool announcedAutoAttack_ = false;
+    // IsUsableAction of every bar slot as last announced; see updateTimers.
+    std::vector<SpellUsability> announcedUsability_;
     float castTimeRemaining_ = 0.0f;
     float castTimeTotal_ = 0.0f;
     bool restorationActive_ = false;

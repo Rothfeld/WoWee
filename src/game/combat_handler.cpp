@@ -962,10 +962,9 @@ void CombatHandler::handlePowerUpdate(network::Packet& packet) {
         auto unitId = owner_.guidToUnitId(guid);
         if (!unitId.empty()) {
             owner_.fireAddonEvent("UNIT_POWER", {unitId});
-            if (guid == owner_.getPlayerGuid()) {
-                owner_.fireAddonEvent("ACTIONBAR_UPDATE_USABLE", {});
-                owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
-            }
+            // ACTIONBAR_UPDATE_USABLE comes from SpellHandler::updateTimers,
+            // only when a button's answer changed.
+            if (guid == owner_.getPlayerGuid()) owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
         }
     }
 }

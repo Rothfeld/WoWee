@@ -1436,11 +1436,9 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 if (result.maxPowerTypeChanged >= 0 && result.maxPowerTypeChanged < 7)
                     pendingEvents_.emit(kMaxPowerEvents[result.maxPowerTypeChanged], {unitId});
                 pendingEvents_.emit("UNIT_POWER", {unitId});
-                // When player power changes, action bar usability may change
-                if (block.guid == owner_.getPlayerGuid()) {
-                    pendingEvents_.emit("ACTIONBAR_UPDATE_USABLE", {});
-                    pendingEvents_.emit("SPELL_UPDATE_USABLE", {});
-                }
+                // ACTIONBAR_UPDATE_USABLE comes from SpellHandler::updateTimers,
+                // only when a button's answer changed.
+                if (block.guid == owner_.getPlayerGuid()) pendingEvents_.emit("SPELL_UPDATE_USABLE", {});
             }
         }
     }
