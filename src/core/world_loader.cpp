@@ -1266,7 +1266,11 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
                 }
             }
         }
+        // Built as the original builds it, before any target exists; the
+        // target the world load already set is announced after.
+        if (gameHandler_) gameHandler_->setInterfaceLoading(true);
         addonManager_->loadAllAddons();
+        if (gameHandler_) gameHandler_->setInterfaceLoading(false);
         app_.addonsLoaded_ = true;
         addonManager_->fireEvent("VARIABLES_LOADED");
         // After VARIABLES_LOADED, which is when the chat window
@@ -1277,6 +1281,10 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
         addonManager_->fireEvent("PLAYER_LOGIN");
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+        if (gameHandler_ && gameHandler_->getTargetGuid() != 0)
+            addonManager_->fireEvent("PLAYER_TARGET_CHANGED");
+        if (gameHandler_ && gameHandler_->getFocusGuid() != 0)
+            addonManager_->fireEvent("PLAYER_FOCUS_CHANGED");
         if (gameHandler_ && gameHandler_->isPlayerDead() && !gameHandler_->isPlayerGhost()) {
             addonManager_->fireEvent("PLAYER_DEAD");
         }

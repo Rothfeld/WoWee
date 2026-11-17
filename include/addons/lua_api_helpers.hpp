@@ -345,6 +345,19 @@ inline uint64_t getEntityTargetGuid(game::GameHandler* gh, uint64_t guid) {
 
 // Resolve WoW unit IDs to GUID
 inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
+    // The interface's first build happens, in the original, before the world
+    // is entered: no target, focus or mouseover exists for it. WoWee builds it
+    // after the world load, by which time an attacker may already be targeted,
+    // and TargetFrame's OnLoad (TargetFrame_Update -> TargetofTarget_Update)
+    // then indexes TargetofTargetFrame, which the XML creates after it - the
+    // file failed to build and the frame's name never updated (ledger #107).
+    // world_loader sends PLAYER_TARGET_CHANGED / PLAYER_FOCUS_CHANGED once
+    // the build is done.
+    if (gh->isInterfaceLoading() &&
+        (uid.rfind("target", 0) == 0 || uid.rfind("focus", 0) == 0 ||
+         uid.rfind("mouseover", 0) == 0)) {
+        return 0;
+    }
     if (uid == "player")      return gh->getPlayerGuid();
     if (uid == "target")      return gh->getTargetGuid();
     if (uid == "focus")       return gh->getFocusGuid();

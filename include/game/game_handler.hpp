@@ -2989,6 +2989,11 @@ public:
     void addScriptError(const std::string& msg) {
         if (uiErrorCallback_) uiErrorCallback_(msg);
     }
+    /// True while the interface is first being built (world_loader). The
+    /// original builds it before entering the world, so no target, focus or
+    /// mouseover exists for it yet; see resolveUnitGuid.
+    [[nodiscard]] bool isInterfaceLoading() const { return interfaceLoading_; }
+    void setInterfaceLoading(bool loading) { interfaceLoading_ = loading; }
     void addUIInfoMessage(const std::string& msg) {
         fireAddonEvent("UI_INFO_MESSAGE", {msg});
     }
@@ -5095,6 +5100,7 @@ private:
     // Absolute time (ms since epoch) when PvP corpse-reclaim delay expires.
     // 0 means no active delay (reclaim allowed immediately upon proximity).
     uint64_t corpseReclaimAvailableMs_ = 0;
+    bool interfaceLoading_ = false;
     // Death release timer latched by latchReleaseTimer at each death.
     uint64_t releaseDeadlineMs_ = 0;  // steady-clock ms, 0 = none
     bool releaseNoTimer_ = false;

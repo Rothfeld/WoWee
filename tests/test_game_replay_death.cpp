@@ -134,3 +134,28 @@ TEST_CASE("an exploration discovery prints its experience in chat and on screen"
     CHECK(info.back() == "Discovered: Razorfen Kraul");
     CHECK(s.handler().getChatHistory().size() == lines);
 }
+
+#include "addons/lua_api_helpers.hpp"
+
+TEST_CASE("the interface's first build sees no target, focus or mouseover", "[replay][interface]") {
+    // Ledger #107: an attacker auto-targeted during the world load made
+    // TargetFrame's OnLoad reach TargetofTargetFrame before the XML created
+    // it; the original builds the interface before any target exists.
+    Session s("tbc");
+    spawnAlivePlayer(s);
+    constexpr uint64_t kQuilguard = 0xF130001154596BB4ull;
+    s.receive(UpdateObject().tbc().create(kQuilguard, ObjectType::UNIT,
+                                          {{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_MAXHEALTH, 100}}));
+    s.handler().setTarget(kQuilguard);
+    s.handler().setFocus(kQuilguard);
+    auto& gh = s.handler();
+    gh.setInterfaceLoading(true);
+    CHECK(wowee::addons::resolveUnitGuid(&gh, "target") == 0);
+    CHECK(wowee::addons::resolveUnitGuid(&gh, "targettarget") == 0);
+    CHECK(wowee::addons::resolveUnitGuid(&gh, "focus") == 0);
+    CHECK(wowee::addons::resolveUnitGuid(&gh, "mouseover") == 0);
+    CHECK(wowee::addons::resolveUnitGuid(&gh, "player") == Session::kPlayerGuid);
+    gh.setInterfaceLoading(false);
+    CHECK(wowee::addons::resolveUnitGuid(&gh, "target") == kQuilguard);
+    CHECK(wowee::addons::resolveUnitGuid(&gh, "focus") == kQuilguard);
+}
