@@ -910,6 +910,58 @@ VkDescriptorSet GameScreen::getSpellIcon(uint32_t spellId, pipeline::AssetManage
 // Nameplates - world-space health bars projected to screen
 // ============================================================
 
+GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
+        game::GameHandler& gameHandler, uint64_t guid,
+        const glm::vec3& unitPosition, const glm::vec3& nameAnchor,
+        const rendering::Camera& camera) const {
+    const auto entity = gameHandler.getEntityManager().getEntity(guid);
+    if (!entity || !entity->isUnit()) return {};
+    const auto& unit = static_cast<const game::Unit&>(*entity);
+    if (!unit.getMaxHealth() || (unit.getUnitFlags() & game::UNIT_FLAG_NOT_SELECTABLE)) return {};
+    const bool isPlayer = entity->getType() == game::ObjectType::PLAYER;
+    const bool own = guid == gameHandler.getPlayerGuid();
+    const bool target = guid == gameHandler.getTargetGuid();
+    const bool hostile = unit.isHostile();
+    const uint32_t creatureType = isPlayer ? 0 : gameHandler.getCreatureType(unit.getEntry());
+    const bool totem = creatureType == 11;
+    const bool companion = creatureType == 12;
+    const bool summon = !isPlayer && !totem && game::unitSummonedByGuid(*entity) != 0;
+    const bool pet = summon && (unit.getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED);
+    const bool guardian = summon && !pet;
+    const bool enemyPlate = hostile || (!isPlayer && gameHandler.unitReactionToPlayer(unit) <= 4);
+    bool plate = enemyPlate ? settingsPanel_.showEnemyNameplates_ : settingsPanel_.showFriendlyNameplates_;
+    if (totem) plate = plate && addons::storedCVarValue(
+        hostile ? "nameplateShowEnemyTotems" : "nameplateShowFriendlyTotems", hostile ? "1" : "0") != "0";
+    if (pet || guardian) {
+        const char* key = pet ? (hostile ? "nameplateShowEnemyPets" : "nameplateShowFriendlyPets")
+                             : (hostile ? "nameplateShowEnemyGuardians" : "nameplateShowFriendlyGuardians");
+        plate = plate && addons::storedCVarValue(key, "1") != "0";
+    }
+    if (own || companion || (game::isPreWotlk() && !unit.getHealth())) plate = false;
+    if (!game::isPreWotlk() && !unit.getHealth() && !target) return {};
+    const glm::mat4 viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
+    if (plate && game::isPreWotlk()) {
+        const auto player = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
+        if (!player) return {};
+        const glm::vec3 playerPosition = core::coords::canonicalToRender(
+            glm::vec3(player->getX(), player->getY(), player->getZ()));
+        const glm::vec3 delta = unitPosition - playerPosition;
+        const glm::vec4 clip = viewProj * glm::vec4(nameAnchor + glm::vec3(0, 0, 2.0f / 3.0f), 1);
+        plate = glm::dot(delta, delta) <= 400.0f &&
+            ui::legacyPlateAnchorVisible(clip.x, clip.y, clip.z, clip.w);
+    }
+    const char* nameCVar = isPlayer ? (hostile ? "unitNameEnemyPlayerName" : "unitNameFriendlyPlayerName")
+        : companion ? "unitNameCompanionName"
+        : totem ? (hostile ? "unitNameEnemyTotemName" : "unitNameFriendlyTotemName")
+        : pet ? (hostile ? "unitNameEnemyPetName" : "unitNameFriendlyPetName")
+        : guardian ? (hostile ? "unitNameEnemyGuardianName" : "unitNameFriendlyGuardianName")
+        : creatureType == 8 ? "unitNameNonCombatCreatureName" : "unitNameNPC";
+    const bool name = own || plate || target || guid == worldHoverGuid_ ||
+        addons::storedCVarValue(nameCVar, "1") != "0";
+    if (own && addons::storedCVarValue("unitNameOwn", "0") == "0") return {};
+    return {plate, name};
+}
+
 void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     if (gameHandler.getState() != game::WorldState::IN_WORLD) return;
 
@@ -1001,46 +1053,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         const bool isHostile = unit->isHostile();
 
         const uint32_t creatureType = isPlayer ? 0 : gameHandler.getCreatureType(unit->getEntry());
-        const bool isTotem = creatureType == 11;
         // Non-combat pets have their own creature type. Their PLAYER_CONTROLLED
         // flag and summoner also occur on combat pets, but companions show names
         // without health plates even when friendly pet plates are enabled.
         const bool isCompanion = creatureType == 12;
 
-        // Pets and guardians, which the panels separate and which separate the
-        // same way the game does: both are summons carrying a summoner, and
-        // only the one a player steers is a pet. A totem is neither - it has a
-        // summoner too, and its own rows above.
-        //
-        // A unit nobody summoned, or an expansion whose table has no entry for
-        // the field, reads as neither and keeps its plate.
-        const bool isSummon = !isPlayer && !isTotem &&
-                              game::unitSummonedByGuid(*entityPtr) != 0;
-        const bool isPet = isSummon &&
-            (unit->getUnitFlags() & game::UNIT_FLAG_PLAYER_CONTROLLED) != 0;
-        const bool isGuardian = isSummon && !isPet;
-
-        const bool enemyPlate = isHostile || (!isPlayer && gameHandler.unitReactionToPlayer(*unit) <= 4);
-        bool showPlate = enemyPlate ? settingsPanel_.showEnemyNameplates_
-                                   : settingsPanel_.showFriendlyNameplates_;
-        if (isTotem) {
-            showPlate = showPlate && addons::storedCVarValue(
-                isHostile ? "nameplateShowEnemyTotems" : "nameplateShowFriendlyTotems",
-                isHostile ? "1" : "0") != "0";
-        }
-        if (isPet || isGuardian) {
-            const char* plateCVar = isPet
-                ? (isHostile ? "nameplateShowEnemyPets" : "nameplateShowFriendlyPets")
-                : (isHostile ? "nameplateShowEnemyGuardians" : "nameplateShowFriendlyGuardians");
-            showPlate = showPlate && addons::storedCVarValue(plateCVar, "1") != "0";
-        }
-
-        if (guid == playerGuid || isCompanion) showPlate = false;
-
         // Legacy corpses retain plain names, governed by the usual name
         // settings and target/hover overrides, but never a health plate.
         const bool isCorpse = (unit->getHealth() == 0);
-        if (isCorpse && legacyPlates) showPlate = false;
         if (isCorpse && !legacyPlates && !isTarget) continue;
 
         // Prefer the renderer's actual instance position so the nameplate tracks the
@@ -1060,17 +1080,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (!characters->getInstanceNamePosition(instanceId, unit->getMountDisplayId() != 0, renderPos))
             continue; // The model has not spawned yet.
 
-        if (showPlate && legacyPlates) {
-            const glm::vec3 playerRender = core::coords::canonicalToRender(playerCanonical);
-            const glm::vec3 separation = unitPosition - playerRender;
-            // Plate visibility is a unit-to-player range, independent of camera zoom.
-            if (glm::dot(separation, separation) > 20.0f * 20.0f) showPlate = false;
-            const glm::vec4 plateAnchor = viewProj *
-                glm::vec4(renderPos + glm::vec3(0.0f, 0.0f, 2.0f / 3.0f), 1.0f);
-            if (!ui::legacyPlateAnchorVisible(plateAnchor.x, plateAnchor.y,
-                                              plateAnchor.z, plateAnchor.w))
-                showPlate = false;
-        }
+        const auto labelVisibility = unitLabelVisibility(gameHandler, guid, unitPosition, renderPos, *camera);
+        const bool showPlate = labelVisibility.plate;
 
         // Build 8606 draws the raid atlas on a one-yard camera-facing quad,
         // bottom anchored to the name attachment when no nameplate is visible.
@@ -1503,21 +1514,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // so turning a name off here leaves the plate and takes the text,
         // which is what these settings mean. The current target keeps its
         // name whatever is set, as it keeps its plate.
-        const char* nameCVar =
-            isPlayer ? (isHostile ? "unitNameEnemyPlayerName"
-                                  : "unitNameFriendlyPlayerName")
-            : isCompanion ? "unitNameCompanionName"
-            : isTotem ? (isHostile ? "unitNameEnemyTotemName"
-                                   : "unitNameFriendlyTotemName")
-            : isPet ? (isHostile ? "unitNameEnemyPetName"
-                                 : "unitNameFriendlyPetName")
-            : isGuardian ? (isHostile ? "unitNameEnemyGuardianName"
-                                      : "unitNameFriendlyGuardianName")
-                     : (gameHandler.getCreatureType(unit->getEntry()) == 8
-                            ? "unitNameNonCombatCreatureName"   // critters
-                            : "unitNameNPC");
-        const bool showThisName =
-            guid == playerGuid || showPlate || isTarget || guid == worldHoverGuid_ || addons::storedCVarValue(nameCVar, "1") != "0";
+        const bool showThisName = labelVisibility.name;
 
         uint32_t level = unit->getLevel();
         const std::string& unitName = unit->getName();

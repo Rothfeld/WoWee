@@ -55,9 +55,9 @@ void QuestMarkerRenderer::syncModels(M2Renderer& renderer, pipeline::AssetManage
             LOG_INFO("Quest marker model loaded: ", paths[variant]);
         }
         glm::vec3 position = marker.position;
-        // Flight discovery is half a yard above the authored name attachment.
+        // Flight discovery receives the name-layout anchor from the HUD policy.
         const bool flightDiscovery = marker.type == 3;
-        position.z += flightDiscovery ? 0.5f : marker.boundingHeight + 0.3f;
+        if (!flightDiscovery) position.z += marker.boundingHeight + 0.3f;
         auto it = placements_.find(guid);
         if (it != placements_.end() &&
             (modelWasMissing || it->second.modelId != modelId ||

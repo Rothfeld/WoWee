@@ -5971,9 +5971,13 @@ void Application::updateQuestMarkers() {
         float boundingHeight = 0.0f;
         if (!instanceId || !characters->getInstanceHeight(instanceId, boundingHeight)) continue;
         if (!characters->getInstancePosition(instanceId, renderPos)) continue;
+        const glm::vec3 unitPosition = renderPos;
         if (markerType == 3 && !characters->getInstanceNamePosition(instanceId,
                 std::static_pointer_cast<game::Unit>(entity)->getMountDisplayId() != 0, renderPos))
             continue;
+        if (markerType == 3 && uiManager && uiManager->getGameScreen().unitLabelVisibility(
+                *gameHandler, guid, unitPosition, renderPos, *renderer->getCamera()).worldName())
+            renderPos.z += 0.5f;
 
         // M2 assets carry the marker geometry and animation.
         questMarkerRenderer->setMarker(guid, renderPos, markerType, boundingHeight, markerGrayscale);

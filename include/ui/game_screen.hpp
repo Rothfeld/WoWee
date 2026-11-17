@@ -27,7 +27,7 @@
 namespace wowee {
 namespace core { class AppearanceComposer; class Window; }
 namespace pipeline { class AssetManager; }
-namespace rendering { class Renderer; namespace world_map { class WorldMapFacade; } }
+namespace rendering { class Renderer; class Camera; namespace world_map { class WorldMapFacade; } }
 namespace ui {
 
 /**
@@ -37,6 +37,14 @@ namespace ui {
  */
 class GameScreen {
 public:
+    struct UnitLabelVisibility {
+        bool plate = false;
+        bool name = false;
+        bool worldName() const { return name && !plate; }
+    };
+    UnitLabelVisibility unitLabelVisibility(game::GameHandler& gameHandler,
+        uint64_t guid, const glm::vec3& unitPosition, const glm::vec3& nameAnchor,
+        const rendering::Camera& camera) const;
     /// Put the inspect window up, whichever interface draws it.
     ///
     /// Seven places used to set a flag behind this client's own window and its
