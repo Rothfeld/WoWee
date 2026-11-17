@@ -115,9 +115,9 @@ private:
     };
 
     void loadSpellVisualDbc();
-    void playModelEffect(uint32_t visualId, const std::string& modelPath, const glm::vec3& worldPosition,
-                         bool useImpactKit, uint32_t attachInstanceId, uint32_t kitId);
-    std::unordered_map<uint32_t, std::string> kitPaths_;
+    // duration <= 0: the model's own animation length.
+    void spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
+                         float duration, bool isPrecast);
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     struct KitEffect { std::string path; uint32_t attachment; };
     std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;
@@ -148,9 +148,6 @@ private:
     std::vector<PhysicalProjectile> physicalProjectiles_;
     std::vector<SpellMissile> spellMissiles_;
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path
-    std::unordered_map<uint32_t, std::string> spellVisualPrecastPath_; // visualId → precast M2 path
-    std::unordered_map<uint32_t, std::string> spellVisualCastPath_;   // visualId → cast M2 path
-    std::unordered_map<uint32_t, std::string> spellVisualImpactPath_; // visualId → impact M2 path
     std::unordered_map<std::string, uint32_t> spellVisualModelIds_;   // M2 path → M2Renderer modelId
     std::unordered_set<uint32_t> spellVisualFailedModels_;           // modelIds that failed to load (negative cache)
     uint32_t nextSpellVisualModelId_ = 999000; // Reserved range 999000-999799
@@ -160,12 +157,6 @@ private:
     static constexpr float SPELL_VISUAL_MAX_DURATION = 5.0f;
     static constexpr float SPELL_VISUAL_DEFAULT_DURATION = 2.0f;
     static constexpr float SPELL_MISSILE_MAX_DURATION = 4.0f;
-
-    // Determine character attachment point from model path keywords
-    static uint32_t classifyAttachmentId(const std::string& modelPath);
-
-    // Apply height offset based on model path keywords (Hand → hands, Chest → chest, Base → ground)
-    static glm::vec3 applyEffectHeightOffset(const glm::vec3& basePos, const std::string& modelPath);
 };
 
 } // namespace rendering
