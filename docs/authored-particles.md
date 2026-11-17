@@ -47,3 +47,14 @@ Native comparisons require matching camera projection and observing motion.
 Independent animation clocks and randomized births do not share exact phases.
 Compare trail shape, sprite width, lifecycle and disappearance across a clip,
 not the location of a single bright particle in one frame.
+
+Legacy emitter header: versions 256-261 store blend mode and emitter type as
+uint16 at +0x28/+0x2A; versions 262 and 263 store them as bytes at
++0x28/+0x29 (263 adds a uint16 particle colour index at +0x2A). Reading 262
+with the uint16 layout yields emitter type 0 (no plane or sphere area);
+GnomereganVent at the Gnomeregan entrance then collapses its 8-10 yard green
+plumes into a point.
+
+Particle sizes are the authored lifecycle scale times placement scale, with no
+caps: GnomereganVent smoke grows 2.78 -> 4.44 -> 8.33. An all-zero lifecycle
+alpha is authored (14 TBC emitters) and draws nothing.
