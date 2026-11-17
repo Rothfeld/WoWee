@@ -18,6 +18,8 @@
 #include <cassert>
 #include <cstdlib>
 #include <limits>
+#include <cstring>
+#include <random>
 #include <glm/gtc/constants.hpp>
 
 namespace wowee {
@@ -142,7 +144,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 if (procFields[k] >= fc || procParamFields[k] >= fc) continue;
                 const uint32_t procedure = kitDbc->getUInt32(i, procFields[k]);
                 const float param = kitDbc->getFloat(i, procParamFields[k]);
-                if (procedure == kCharProcColor) {
+                if (procedure == kCharProcChain && param != 0.0f) {
+                    assert(std::isfinite(param) && param > 0.0f && param < 65536.0f);
+                    kitChainEffects_[kitId] = static_cast<uint32_t>(param);
+                } else if (procedure == kCharProcColor) {
                     // 0xRRGGBB as a float: Ghost 0x8CB9FD, Frostbolt 0x3C3CFF.
                     assert(std::isfinite(param) && param >= 0.0f && param < 16777216.0f);
                     const auto rgb = static_cast<uint32_t>(param);
@@ -202,6 +207,41 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     }
     LOG_INFO("SpellVisual: loaded ", kitEffects_.size(), " kits with effects, missile=", loadedMissile,
              " (of ", svDbc->getRecordCount(), " visual records)");
+    loadChainEffects();
+}
+
+void SpellVisualSystem::loadChainEffects() {
+    auto dbc = cachedAssetManager_->loadDBC("SpellChainEffects.dbc");
+    if (!dbc || !dbc->isLoaded()) {
+        LOG_WARNING("SpellVisual: SpellChainEffects.dbc unavailable; channel beams are not drawn");
+        return;
+    }
+    if (dbc->getRecordSize() != 173) {
+        LOG_WARNING("SpellVisual: SpellChainEffects.dbc records are ", dbc->getRecordSize(),
+                    " bytes, not the TBC 2.4.3 173; channel beams are not drawn");
+        return;
+    }
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        const uint8_t* record = dbc->getRecord(i);
+        ChainEffect effect;
+        effect.avgSegLen = dbc->getFloat(i, 1);
+        effect.width = dbc->getFloat(i, 2);
+        effect.texCoordScale = dbc->getFloat(i, 4);
+        effect.texture = dbc->getString(i, 7);
+        effect.waveHeight = dbc->getFloat(i, 19);
+        effect.waveFreq = dbc->getFloat(i, 20);
+        effect.waveSpeed = dbc->getFloat(i, 21);
+        effect.minWaveAngle = dbc->getFloat(i, 22);
+        effect.maxWaveAngle = dbc->getFloat(i, 23);
+        effect.minWaveSpin = dbc->getFloat(i, 24);
+        effect.maxWaveSpin = dbc->getFloat(i, 25);
+        effect.alpha = record[156] / 255.0f;
+        effect.color = glm::vec3(record[157], record[158], record[159]) / 255.0f;
+        effect.blendMode = record[160];
+        chainEffects_[dbc->getUInt32(i, 0)] = std::move(effect);
+    }
+    LOG_INFO("SpellVisual: loaded ", chainEffects_.size(), " chain effects, ", kitChainEffects_.size(),
+             " kits draw one");
 }
 
 void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec3& worldPosition,
@@ -568,6 +608,104 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
     }
 }
 
+void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
+    if (!m2Renderer_) return;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    if (!spellVisualDbcLoaded_) return;
+
+    // ChannelKit effects of channels seen only through the fields. A unit
+    // whose MSG_CHANNEL_START was received already has them, for that
+    // channel's duration; startChannelVisual replaces held ones.
+    std::unordered_map<uint32_t, uint32_t> current;
+    for (const auto& channel : channels)
+        if (channel.casterInstanceId) current[channel.casterInstanceId] = channel.visualId;
+    for (auto it = fieldChannels_.begin(); it != fieldChannels_.end();) {
+        const auto now = current.find(it->first);
+        if (now == current.end() || now->second != it->second) {
+            if (heldChannelKits_.erase(it->first)) updateChannelVisual(it->first, 0);
+            it = fieldChannels_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto& channel : channels) {
+        if (!channel.casterInstanceId || fieldChannels_.count(channel.casterInstanceId)) continue;
+        fieldChannels_[channel.casterInstanceId] = channel.visualId;
+        const bool playing = std::any_of(activeSpellVisuals_.begin(), activeSpellVisuals_.end(),
+            [&](const SpellVisualInstance& v) { return v.isChannel && v.attachInstanceId == channel.casterInstanceId; });
+        if (playing) continue;
+        startChannelVisual(channel.visualId, channel.casterPosition, std::numeric_limits<uint32_t>::max(),
+                           channel.casterInstanceId);
+        heldChannelKits_.insert(channel.casterInstanceId);
+    }
+
+    std::vector<M2Renderer::ChainStrip> strips;
+    std::unordered_set<uint64_t> live;
+    static thread_local std::mt19937 random{std::random_device{}()};
+    for (const auto& channel : channels) {
+        if (!channel.hasTarget) continue;
+        const auto kit = channelKits_.find(channel.visualId);
+        if (kit == channelKits_.end() || !kit->second) continue;
+        const auto chainId = kitChainEffects_.find(kit->second);
+        if (chainId == kitChainEffects_.end()) continue;
+        const auto found = chainEffects_.find(chainId->second);
+        assert(found != chainEffects_.end());
+        const ChainEffect& effect = found->second;
+        if (effect.blendMode != 2 && effect.blendMode != 3 && effect.blendMode != 4) {
+            static std::unordered_set<uint32_t> said;
+            if (said.insert(chainId->second).second)
+                LOG_WARNING("SpellVisual: chain effect ", chainId->second, " blend mode ", int(effect.blendMode),
+                            " is not drawn (only 2, 3 and 4 are implemented)");
+            continue;
+        }
+        live.insert(channel.casterGuid);
+        auto [state, created] = beams_.try_emplace(channel.casterGuid);
+        if (created) {
+            state->second.age = beamClock_;
+            state->second.waveAngle = std::uniform_real_distribution<float>(
+                std::min(effect.minWaveAngle, effect.maxWaveAngle), std::max(effect.minWaveAngle, effect.maxWaveAngle))(random);
+            state->second.waveSpin = std::uniform_real_distribution<float>(
+                std::min(effect.minWaveSpin, effect.maxWaveSpin), std::max(effect.minWaveSpin, effect.maxWaveSpin))(random);
+            LOG_INFO("Channel beam: caster=0x", std::hex, channel.casterGuid, std::dec, " visual=", channel.visualId,
+                     " kit=", kit->second, " chain=", chainId->second, " texture=", effect.texture);
+        }
+        const float t = beamClock_ - state->second.age;
+        const glm::vec3 axis = channel.end - channel.start;
+        const float length = glm::length(axis);
+        if (length < 1e-3f) continue;
+        const glm::vec3 dir = axis / length;
+        // The wave's plane: world up made perpendicular to the beam, turned
+        // about the beam by the wave angle (and its spin over time).
+        glm::vec3 up = glm::vec3(0, 0, 1) - dir * dir.z;
+        if (glm::length(up) < 1e-4f) up = glm::vec3(1, 0, 0) - dir * dir.x;
+        up = glm::normalize(up);
+        const float angle = state->second.waveAngle + state->second.waveSpin * t;
+        const glm::vec3 across = glm::normalize(up * std::cos(angle) + glm::cross(dir, up) * std::sin(angle));
+        const int segments = std::max(1, static_cast<int>(std::ceil(length / std::max(effect.avgSegLen, 0.05f))));
+        M2Renderer::ChainStrip strip;
+        strip.texturePath = effect.texture;
+        strip.additive = effect.blendMode != 2;
+        strip.color = effect.color;
+        strip.alpha = effect.alpha;
+        // Width is half the strip: Green Beam (0.25) measured 6.5 px across
+        // in the original against 3.1 px drawn 0.25 wide (close0 capture).
+        strip.halfWidth = effect.width;
+        for (int i = 0; i <= segments; ++i) {
+            const float s = length * static_cast<float>(i) / static_cast<float>(segments);
+            const float wave = effect.waveHeight * std::sin(effect.waveFreq * s - effect.waveSpeed * t);
+            strip.spine.push_back(channel.start + dir * s + across * wave);
+            // TexCoordScale repeats of the texture over the whole beam
+            // (Green Beam -2: SoulBeam.blp twice, reversed). Repeating it
+            // every TextureLength (2) yards showed the texture's own ripple
+            // as a zigzag the original does not have.
+            strip.u.push_back(effect.texCoordScale * s / length);
+        }
+        strips.push_back(std::move(strip));
+    }
+    std::erase_if(beams_, [&](const auto& entry) { return !live.count(entry.first); });
+    m2Renderer_->setChainStrips(std::move(strips));
+}
+
 void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& casterPosition,
                                            uint32_t casterInstanceId) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
@@ -780,6 +918,7 @@ void SpellVisualSystem::placeOnUnit(const SpellVisualInstance& visual, Character
 }
 
 void SpellVisualSystem::update(float deltaTime) {
+    beamClock_ += deltaTime;
     if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
         std::erase_if(unitAuraVisuals_, [&](const auto& entry) {
             glm::vec3 position;
@@ -902,6 +1041,10 @@ void SpellVisualSystem::cancelAllPrecastVisuals() {
 
 void SpellVisualSystem::reset() {
     unitAuraVisuals_.clear();
+    beams_.clear();
+    fieldChannels_.clear();
+    heldChannelKits_.clear();
+    if (m2Renderer_) m2Renderer_->setChainStrips({});
     // Clear lingering spell visual instances from the previous map/combat session.
     // Without this, old effects could remain visible after teleport or map change.
     for (auto& sv : activeSpellVisuals_) {

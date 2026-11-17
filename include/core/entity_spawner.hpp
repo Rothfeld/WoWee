@@ -268,6 +268,13 @@ public:
     void syncLocalFootprintModels();
     /// CreatureDisplayInfo.ModelID for a display, 0 when the display is unknown.
     [[nodiscard]] uint32_t creatureModelDataIdForDisplay(uint32_t displayId) const;
+    /// Model-space position of an attachment on a helper model that is not
+    /// drawn (isHelperCreatureModel: InvisibleStalker and the like), at its
+    /// bind pose. The original still places spell effects on those models:
+    /// Netherstorm Trigger (display 11686, InvisibleStalker.mdx) channels
+    /// Green Beam from above its feet. nullopt for other models or when the
+    /// model has no such attachment.
+    std::optional<glm::vec3> helperModelAttachment(uint32_t displayId, uint32_t attachmentId);
     uint32_t remoteIdleAnimation(uint64_t guid) const;
     /// Precast/channel kit animation a remote unit holds while casting; it is
     /// the unit's idle until cleared (0), so a movement update that stops the
@@ -693,6 +700,8 @@ private:
     std::unordered_set<uint32_t> gameObjectDisplayIdFailedCache_;
     std::unordered_map<uint32_t, uint32_t> gameObjectDisplayIdWmoCache_;
     std::unordered_map<uint64_t, GameObjectInstanceInfo> gameObjectInstances_;
+    // Helper-model attachments by display id (empty: not a helper model).
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, glm::vec3>> helperAttachments_;
     /// States that arrived before their model did, applied when it spawns.
     std::unordered_map<uint64_t, uint8_t> gameObjectPendingState_;
     /// Last GOState applied per spawned game object, for rules that need its type later.

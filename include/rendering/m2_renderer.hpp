@@ -556,6 +556,21 @@ public:
      */
     void renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
 
+    /// A SpellChainEffects.dbc beam for one frame: a camera-facing strip
+    /// through spine points, drawn with the ribbon pipelines after the M2
+    /// ribbons. u runs along the strip, v across it (0 one edge, 1 the other).
+    struct ChainStrip {
+        std::string texturePath;
+        bool additive = true;
+        glm::vec3 color{1.0f};
+        float alpha = 1.0f;
+        float halfWidth = 0.0f;
+        std::vector<glm::vec3> spine;
+        std::vector<float> u;
+    };
+    /// Replaces the beams drawn from the next frame on.
+    void setChainStrips(std::vector<ChainStrip> strips) { chainStrips_ = std::move(strips); }
+
     void setInstancePosition(uint32_t instanceId, const glm::vec3& position);
     /// WOWEE_M2_CENSUS: what a model is actually drawn at, said once each.
     void censusInstance(const M2Instance& instance);
@@ -1165,6 +1180,11 @@ private:
         uint32_t        vertexCount;
     };
     std::vector<RibbonDrawCall> ribbonDraws_;
+    std::vector<ChainStrip> chainStrips_;
+    /// Ribbon-layout descriptor set per chain texture path, from materialDescPool_
+    /// (dropped with the pool's reset in clear()).
+    std::unordered_map<std::string, VkDescriptorSet> chainTexSets_;
+    VkDescriptorSet chainTextureSet(const std::string& path);
     void renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
 
     // Particle group structures (reused each frame)

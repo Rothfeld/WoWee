@@ -48,6 +48,7 @@
 #include "rendering/weather.hpp"
 #include "rendering/lighting_manager.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/spell_visual_system.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/minimap.hpp"
@@ -97,6 +98,7 @@
 #include <cstdlib>
 #include <climits>
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <optional>
 #include <sstream>
@@ -4059,6 +4061,82 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         }
     }
 
+    syncChannelVisuals();
+}
+
+// Channels as the units' fields hold them, for their ChannelKit effects and
+// beams. Beam ends sit on M2 attachment 34 (Chest), where the kit's
+// ChestEffect also plays, also on helper models WoWee does not draw
+// (Netherstorm Trigger, InvisibleStalker.mdx), else on the object's position.
+void Application::syncChannelVisuals() {
+    auto* visuals = renderer ? renderer->getSpellVisualSystem() : nullptr;
+    if (!visuals || !gameHandler) return;
+    const uint16_t spellField = game::fieldIndex(game::UF::UNIT_CHANNEL_SPELL);
+    const uint16_t objectLo = game::fieldIndex(game::UF::UNIT_FIELD_CHANNEL_OBJECT_LO);
+    const uint16_t objectHi = game::fieldIndex(game::UF::UNIT_FIELD_CHANNEL_OBJECT_HI);
+    std::vector<rendering::SpellVisualSystem::UnitChannel> channels;
+    if (spellField == 0xFFFF || objectLo == 0xFFFF || objectHi == 0xFFFF) {
+        visuals->syncChannels(channels);
+        return;
+    }
+    gameHandler->loadSpellNameCache();
+    const auto& spells = gameHandler->spellNameCacheRef();
+    auto* characters = renderer->getCharacterRenderer();
+    const uint64_t self = gameHandler->getPlayerGuid();
+    auto instanceOf = [&](uint64_t guid) -> uint32_t {
+        return guid == self ? renderer->getCharacterInstanceId() : gameHandler->resolveUnitRenderInstance(guid);
+    };
+    // Where a beam meets this object, false when it is not in the world.
+    auto endpoint = [&](const game::Entity& entity, glm::vec3& out) {
+        const uint32_t instance = (entity.getType() == game::ObjectType::UNIT ||
+                                   entity.getType() == game::ObjectType::PLAYER) ? instanceOf(entity.getGuid()) : 0;
+        glm::mat4 chest(1.0f);
+        if (instance && characters && characters->getAttachmentTransform(instance, 34, chest)) {
+            out = glm::vec3(chest[3]);
+            return true;
+        }
+        if (instance && characters && characters->getInstancePosition(instance, out)) return true;
+        if (entity.getGuid() == self) { out = renderer->getCharacterPosition(); return true; }
+        out = core::coords::canonicalToRender(glm::vec3(entity.getX(), entity.getY(), entity.getZ()));
+        // An undrawn helper model's chest, placed as CharacterRenderer would
+        // place the model: facing + 90 degrees about Z, object scale.
+        if (instance == 0 && entitySpawner_ && (entity.getType() == game::ObjectType::UNIT)) {
+            const auto& unit = static_cast<const game::Unit&>(entity);
+            if (const auto offset = entitySpawner_->helperModelAttachment(unit.getDisplayId(), 34)) {
+                const uint32_t scaleBits = entity.getField(game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X));
+                float scale = 1.0f;
+                if (scaleBits) std::memcpy(&scale, &scaleBits, sizeof(scale));
+                const float yaw = entity.getOrientation() + glm::radians(90.0f);
+                const glm::vec3 local = *offset * scale;
+                out += glm::vec3(local.x * std::cos(yaw) - local.y * std::sin(yaw),
+                                 local.x * std::sin(yaw) + local.y * std::cos(yaw), local.z);
+            }
+        }
+        return true;
+    };
+    const auto& entities = gameHandler->getEntityManager().getEntities();
+    for (const auto& [guid, entity] : entities) {
+        if (!entity || (entity->getType() != game::ObjectType::UNIT && entity->getType() != game::ObjectType::PLAYER))
+            continue;
+        const uint32_t spellId = entity->getField(spellField);
+        if (!spellId) continue;
+        const auto spell = spells.find(spellId);
+        if (spell == spells.end() || !spell->second.spellVisualId) continue;
+        rendering::SpellVisualSystem::UnitChannel channel;
+        channel.casterGuid = guid;
+        channel.casterInstanceId = instanceOf(guid);
+        channel.visualId = spell->second.spellVisualId;
+        endpoint(*entity, channel.casterPosition);
+        channel.start = channel.casterPosition;
+        const uint64_t target = static_cast<uint64_t>(entity->getField(objectLo)) |
+                                (static_cast<uint64_t>(entity->getField(objectHi)) << 32);
+        if (target && target != guid) {
+            if (const auto targetEntity = gameHandler->getEntityManager().getEntity(target))
+                channel.hasTarget = endpoint(*targetEntity, channel.end);
+        }
+        channels.push_back(channel);
+    }
+    visuals->syncChannels(channels);
 }
 
 void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {

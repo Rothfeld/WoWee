@@ -19,6 +19,13 @@ enum class UF : uint16_t {
     // Unit fields
     UNIT_FIELD_TARGET_LO,
     UNIT_FIELD_TARGET_HI,
+    /// What the unit channels at (a unit or game object) and the spell it
+    /// channels. Held for the whole channel, so a channel that began before
+    /// the unit came into view is still known: Netherstorm Trigger's Green
+    /// Beam (33346) at Forge Camp: Mageddon runs for ten minutes.
+    UNIT_FIELD_CHANNEL_OBJECT_LO,
+    UNIT_FIELD_CHANNEL_OBJECT_HI,
+    UNIT_CHANNEL_SPELL,
     UNIT_FIELD_BYTES_0,
     UNIT_FIELD_BYTES_1,  // byte2 = visibility flags; byte3 is expansion-dependent
     UNIT_FIELD_BYTES_2,  // WotLK: byte3 = shapeshift form (BYTES_1 byte3 is the anim tier there)

@@ -1,6 +1,7 @@
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/creature_locomotion.hpp"
 #include "rendering/aura_marker_visibility.hpp"
+#include "rendering/m2_model_classifier.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/weapon_attachment.hpp"
 #include "core/helm_visual.hpp"
@@ -1072,6 +1073,30 @@ uint32_t EntitySpawner::combatBloodSpurt(uint32_t displayId, bool large, bool ba
     const auto spurt = bloodTables_->spurts.find(level->second);
     assert(spurt != bloodTables_->spurts.end());
     return spurt->second[(back ? 2 : 0) + (large ? 1 : 0)];
+}
+
+std::optional<glm::vec3> EntitySpawner::helperModelAttachment(uint32_t displayId, uint32_t attachmentId) {
+    auto [entry, created] = helperAttachments_.try_emplace(displayId);
+    if (created) {
+        std::string path = getModelPathForDisplayId(displayId);
+        std::string lower = path;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (!path.empty() && rendering::isHelperCreatureModel(lower) && assetManager_) {
+            const auto data = assetManager_->readFile(path);
+            if (data.empty()) {
+                LOG_ERROR("Helper model unreadable: ", path);
+            } else {
+                const pipeline::M2Model model = pipeline::M2Loader::load(data);
+                for (const auto& attachment : model.attachments)
+                    entry->second.emplace(attachment.id, attachment.position);
+                LOG_INFO("Helper model ", path, " display ", displayId, ": ", model.attachments.size(), " attachments");
+            }
+        }
+    }
+    const auto found = entry->second.find(attachmentId);
+    if (found == entry->second.end()) return std::nullopt;
+    return found->second;
 }
 
 uint32_t EntitySpawner::creatureModelDataIdForDisplay(uint32_t displayId) const {

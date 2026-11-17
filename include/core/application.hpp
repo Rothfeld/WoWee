@@ -186,6 +186,7 @@ private:
     /// once at spawn and would otherwise stay there while its target circle
     /// follows the entity, which reads as a ring sliding off a still NPC.
     void syncRenderInstancesToEntities(float deltaTime);
+    void syncChannelVisuals();
     void render();
     void performLogoutToLogin();
     void processDeferredLogoutToLogin();

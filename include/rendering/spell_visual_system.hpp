@@ -49,6 +49,22 @@ public:
     void startChannelVisual(uint32_t visualId, const glm::vec3& position,
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
+    /// A unit's channel as its UNIT_CHANNEL_SPELL / UNIT_FIELD_CHANNEL_OBJECT
+    /// fields hold it. start and end are the beam's ends, valid with hasTarget.
+    struct UnitChannel {
+        uint64_t casterGuid = 0;
+        uint32_t casterInstanceId = 0;
+        uint32_t visualId = 0;
+        glm::vec3 casterPosition{0.0f};
+        bool hasTarget = false;
+        glm::vec3 start{0.0f};
+        glm::vec3 end{0.0f};
+    };
+    /// Every unit channelling now, once a frame. A channel that began before
+    /// its caster came into view (no MSG_CHANNEL_START) gets its ChannelKit
+    /// effects here, held until the fields clear; one with a target draws the
+    /// ChannelKit's SpellChainEffects beam (CharProc 0) from start to end.
+    void syncChannels(const std::vector<UnitChannel>& channels);
     // SpellVisual.dbc Precast/Cast/ChannelKit -> SpellVisualKit.dbc AnimID
     // (column 2, an AnimationData.dbc id). kNoAnimation when the stage has no
     // kit or its kit names no animation (-1). Column 1 is not an animation:
@@ -179,6 +195,11 @@ private:
     /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
     /// carries it on bone 82 in front of the face, bone +X forward.
     static constexpr uint32_t kAttachBreath = 17;
+    /// SpellVisualKit CharProc 0: CharParamZero is a SpellChainEffects.dbc id,
+    /// the beam drawn while the kit plays. All 284 TBC kits with procedure 0
+    /// and a parameter name an existing record; Green Beam's (33346) channel
+    /// kit 6674 names 269 (SoulBeam.blp), Drain Life's kit 402 names 8.
+    static constexpr uint32_t kCharProcChain = 0;
     static constexpr uint32_t kCharProcColor = 1;
     static constexpr uint32_t kCharProcOpacity = 14;
     struct UnitAuraVisuals {
@@ -195,6 +216,26 @@ private:
     std::unordered_map<uint32_t, KitCharacterProcedures> kitCharacterProcedures_;
     void applyCharacterProcedures(uint32_t attachInstanceId, const std::vector<uint32_t>& applied);
     std::unordered_map<uint32_t, UnitAuraVisuals> unitAuraVisuals_;
+    /// SpellChainEffects.dbc, TBC 2.4.3 173-byte records: dwords 0-38, then
+    /// bytes Alpha, Red, Green, Blue, BlendMode at +156, Combo string +161,
+    /// RenderLayer +165, TextureLength float +169.
+    struct ChainEffect {
+        std::string texture;
+        float avgSegLen = 0, width = 0, texCoordScale = 0;
+        float waveHeight = 0, waveFreq = 0, waveSpeed = 0;
+        float minWaveAngle = 0, maxWaveAngle = 0, minWaveSpin = 0, maxWaveSpin = 0;
+        glm::vec3 color{1.0f};
+        float alpha = 1.0f;
+        uint8_t blendMode = 0;
+    };
+    std::unordered_map<uint32_t, ChainEffect> chainEffects_;
+    std::unordered_map<uint32_t, uint32_t> kitChainEffects_;  // kit -> chain effect id
+    void loadChainEffects();
+    struct BeamState { float age = 0, waveAngle = 0, waveSpin = 0; };
+    std::unordered_map<uint64_t, BeamState> beams_;           // caster guid
+    std::unordered_map<uint32_t, uint32_t> fieldChannels_;    // caster instance -> visual
+    std::unordered_set<uint32_t> heldChannelKits_;            // instances whose kit we started
+    float beamClock_ = 0.0f;
     // Model ID for a cast, impact or missile model, loading it on first use.
     // 0 when it cannot be loaded.
     uint32_t loadSpellModel(const std::string& modelPath);

@@ -171,3 +171,12 @@ TEST_CASE("TBC release-timer byte flags use PLAYER_FIELD_BYTES", "[update-fields
     const auto tbc = declaredFields("tbc");
     CHECK(tbc.at("PLAYER_FIELD_BYTES") == tbc.at("UNIT_END") + 0x4E4);
 }
+
+TEST_CASE("TBC channel fields are what the server sends", "[update-fields][channel]") {
+    // CMaNGOS TBC UpdateFields.h: UNIT_FIELD_CHANNEL_OBJECT = OBJECT_END + 0x0E
+    // (two words), UNIT_CHANNEL_SPELL = OBJECT_END + 0x9F.
+    const auto tbc = declaredFields("tbc");
+    CHECK(tbc.at("UNIT_FIELD_CHANNEL_OBJECT_LO") == 6 + 0x0E);
+    CHECK(tbc.at("UNIT_FIELD_CHANNEL_OBJECT_HI") == 6 + 0x0F);
+    CHECK(tbc.at("UNIT_CHANNEL_SPELL") == 6 + 0x9F);
+}

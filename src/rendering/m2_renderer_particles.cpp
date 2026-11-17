@@ -18,6 +18,7 @@
 #include <cmath>
 #include <random>
 #include <limits>
+#include <cassert>
 #include <set>
 #include <stdexcept>
 
@@ -652,6 +653,41 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         }
     }
 
+    // SpellChainEffects beams: widened across their own direction and the
+    // line of sight, as the trails above.
+    for (const auto& strip : chainStrips_) {
+        assert(strip.spine.size() == strip.u.size());
+        if (strip.spine.size() < 2) continue;
+        const VkDescriptorSet texSet = chainTextureSet(strip.texturePath);
+        if (!texSet) continue;
+        const uint32_t firstVert = static_cast<uint32_t>(written);
+        for (size_t i = 0; i < strip.spine.size(); ++i) {
+            if (written + 2 > MAX_RIBBON_VERTS) break;
+            const glm::vec3& p = strip.spine[i];
+            const glm::vec3 dir = strip.spine[i + 1 < strip.spine.size() ? i + 1 : i] - strip.spine[i > 0 ? i - 1 : i];
+            glm::vec3 side = upWorld;
+            const glm::vec3 cross = glm::cross(dir, camPos - p);
+            if (glm::length(cross) > 1e-6f) side = glm::normalize(cross);
+            for (int edge = 0; edge < 2; ++edge) {
+                const glm::vec3 v = p + side * (edge == 0 ? strip.halfWidth : -strip.halfWidth);
+                float* out = dst + written * 9;
+                out[0] = v.x; out[1] = v.y; out[2] = v.z;
+                out[3] = strip.color.r; out[4] = strip.color.g; out[5] = strip.color.b;
+                out[6] = strip.alpha;
+                out[7] = strip.u[i];
+                out[8] = static_cast<float>(edge);
+                ++written;
+            }
+        }
+        const uint32_t vertCount = static_cast<uint32_t>(written) - firstVert;
+        if (vertCount >= 4) {
+            draws.push_back({.texSet = texSet, .pipeline = strip.additive ? ribbonAdditivePipeline_ : ribbonPipeline_,
+                             .firstVertex = firstVert, .vertexCount = vertCount});
+        } else {
+            written = firstVert;
+        }
+    }
+
     // Periodic diagnostic: spell ribbon draw count
     {
         static uint32_t ribbonDiagFrame_ = 0;
@@ -703,6 +739,36 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         vkCmdBindVertexBuffers(cmd, 0, 1, &ribbonVB_[frame], &offset);
         vkCmdDraw(cmd, dc.vertexCount, 1, dc.firstVertex, 0);
     }
+}
+
+VkDescriptorSet M2Renderer::chainTextureSet(const std::string& path) {
+    if (const auto found = chainTexSets_.find(path); found != chainTexSets_.end()) return found->second;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    // Repeats along the beam (u), clamps across it (v).
+    VkTexture* texture = loadTexture(path, 0x1);
+    if (!texture || !texture->isValid()) {
+        LOG_ERROR("Chain effect texture unavailable: ", path);
+    } else if (particleTexLayout_ && materialDescPool_) {
+        VkDescriptorSetAllocateInfo ai{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = materialDescPool_;
+        ai.descriptorSetCount = 1;
+        ai.pSetLayouts = &particleTexLayout_;
+        if (vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &set) == VK_SUCCESS) {
+            const VkDescriptorImageInfo image = texture->descriptorInfo();
+            VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = set;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &image;
+            vkUpdateDescriptorSets(vkCtx_->getDevice(), 1, &write, 0, nullptr);
+        } else {
+            LOG_ERROR("Chain effect descriptor set allocation failed: ", path);
+            set = VK_NULL_HANDLE;
+        }
+    }
+    chainTexSets_[path] = set;  // a failure is reported once, not every frame
+    return set;
 }
 
 void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,

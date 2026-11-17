@@ -1211,6 +1211,27 @@ included: Knockdown (5164/16790) and Backhand (6253) impact kit 348 throw the
 target down with Knockdown (121). The local player's kit animation plays once
 over its combat state and the stun the spell applies (`CombatFSM::triggerKitAnimation`).
 
+Channel beams come from the channel's fields, not from `MSG_CHANNEL_START`:
+`UNIT_CHANNEL_SPELL` (TBC index 165) and `UNIT_FIELD_CHANNEL_OBJECT` (20/21)
+stay set for the whole channel, so a unit that was already channelling when it
+came into view still shows it. Netherstorm Trigger's Green Beam (33346) at
+Forge Camp: Mageddon is cast every ten minutes and was never seen starting.
+`SpellVisual.ChannelKit` -> `SpellVisualKit` CharProc 0 names a
+`SpellChainEffects.dbc` row in CharParamZero (all 284 such TBC kits do; Green
+Beam kit 6674 -> 269 SoulBeam.blp, Drain Life kit 402 -> 8). The beam is a
+camera-facing strip from caster to target, both at attachment 34 (Chest);
+WoWee does not draw helper models (InvisibleStalker.mdx), so their bind-pose
+chest is read from the model file. Measured against the original at Mageddon
+(`_experiments/20261117T230336Z.channel_beam_fel_sigil/`): Width is half the
+strip, TexCoordScale is texture repeats over the whole beam, the wave is
+`WaveHeight * sin(WaveFreq * s - WaveSpeed * t)` with s yards from the caster,
+in the plane of world up turned about the beam by Min/MaxWaveAngle (plus
+spin), and colour/alpha/blend come from the record's bytes. The TBC record is
+173 bytes: dwords 0-38, then Alpha, Red, Green, Blue, BlendMode bytes at +156.
+Not implemented: joints, noise, arcs, flicker, pulse, Combo rows, blend 6,
+chains on cast/impact kits (Chain Lightning). Channel kit effects of a channel
+known only from the fields are held until the fields clear.
+
 Small solid M2 props keep their geometry even when they contain multiple
 emitters. Spherical emitters use their authored area and radial velocity;
 flag 0x100 selects vertical velocity. Ordinary particle colors retain their
