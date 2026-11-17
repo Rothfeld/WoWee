@@ -746,6 +746,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             highestParticleZ = std::max(highestParticleZ, worldPosition.z);
             widestParticle = std::max(widestParticle, scale);
 
+            const bool xyQuad = (em.flags & kParticleXYQuad) != 0;
             const unsigned sprites = em.headOrTail == 2 ? 2 : 1;
             for (unsigned sprite = 0; sprite < sprites; ++sprite) {
                 assert(vbWritten < particleVertexCapacity_[frame]);
@@ -757,10 +758,15 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[4] = color.g;
                 vd[5] = color.b;
                 vd[6] = alpha;
-                vd[7] = particleSpriteHalfWidth(scale, placementScale);
+                // XYQuad (flag 0x1000) sprites lie in the model's XY plane
+                // instead of facing the camera. Marked by a negative size;
+                // the tail slot carries the model X axis for the quad.
+                vd[7] = xyQuad ? -particleSpriteHalfWidth(scale, placementScale)
+                               : particleSpriteHalfWidth(scale, placementScale);
                 const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
                 vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
-                const glm::vec3 displacement = tail ? -worldVelocity * em.tailLength : glm::vec3(0);
+                const glm::vec3 displacement = xyQuad ? glm::normalize(glm::vec3(inst.modelMatrix[0]))
+                    : tail ? -worldVelocity * em.tailLength : glm::vec3(0);
                 vd[9] = displacement.x;
                 vd[10] = displacement.y;
                 vd[11] = displacement.z;

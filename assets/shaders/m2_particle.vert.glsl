@@ -57,7 +57,13 @@ void main() {
     const vec2 corners[6] = vec2[](vec2(0,0), vec2(1,0), vec2(1,1),
                                    vec2(0,0), vec2(1,1), vec2(0,1));
     vUV = corners[gl_VertexIndex];
-    if (dot(aTail, aTail) > 0.00000001) {
+    if (aSize < 0.0) {
+        // XYQuad: flat in the model's XY plane; aTail is the model X axis.
+        vec3 axisX = aTail;
+        vec3 axisY = normalize(cross(vec3(0.0, 0.0, 1.0), axisX));
+        vec2 c = (vUV * 2.0 - 1.0) * -aSize;
+        viewPos4 = view * vec4(aPos + axisX * c.x + axisY * c.y, 1.0);
+    } else if (dot(aTail, aTail) > 0.00000001) {
         vec3 tailView = mat3(view) * aTail;
         float projectedLength = length(tailView.xy);
         vec2 side = projectedLength > 0.00001

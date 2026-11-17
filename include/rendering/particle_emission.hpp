@@ -8,6 +8,9 @@
 namespace wowee::rendering {
 inline constexpr uint32_t kParticleNoTrail = 0x10;
 inline constexpr uint32_t kParticleInModelSpace = 0x80;
+// Sprites lie flat in the model's XY plane (ground rings: WaterElemental
+// #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001).
+inline constexpr uint32_t kParticleXYQuad = 0x1000;
 
 // M2/WMO placements carry uniform scale in their transform. Matrix-created
 // doodads have no separate scalar placement value; measure their basis.
