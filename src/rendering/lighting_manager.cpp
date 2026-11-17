@@ -373,7 +373,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     // layer, and the models fade toward the plain sky there.
     {
         std::vector<std::pair<std::string, float>> target;
-        if (!isIndoors_) {
+        {
             std::vector<WeightedVolume> blend(
                 activeVolumes_.begin(),
                 activeVolumes_.begin() + std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES));
@@ -416,14 +416,11 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     // Sample and blend lighting
     LightingParams newParams;
 
-    if (isIndoors_) {
-        // Indoor lighting: static ambient-heavy
-        newParams.ambientColor = glm::vec3(0.6f, 0.6f, 0.65f);
-        newParams.diffuseColor = glm::vec3(0.3f, 0.3f, 0.35f);
-        newParams.fogColor = glm::vec3(0.3f, 0.3f, 0.4f);
-        newParams.fogStart = 50.0f;
-        newParams.fogEnd = 300.0f;
-    } else if (!activeVolumes_.empty() || defaultVolume) {
+    // Interiors are lit by their WMO (MOHD ambient, MOCV, wmo.frag's
+    // interior path) and fogged by its MFOG; the scene parameters here stay
+    // Light.dbc's. There used to be a fixed grey indoor set behind a flag no
+    // caller ever set.
+    if (!activeVolumes_.empty() || defaultVolume) {
         // Outdoor with DBC lighting - blend multiple volumes
         // Default member initializers are fallback lighting, not a zero blend.
         newParams.ambientColor = glm::vec3(0.0f);

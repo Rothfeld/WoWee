@@ -218,7 +218,6 @@ public:
     /**
      * Set whether player is indoors (disables outdoor lighting)
      */
-    void setIndoors(bool indoors) { isIndoors_ = indoors; }
     /// How far the distance fog is pulled toward the sky's horizon colour.
     /// 0 keeps LightParams' own fog colour, 1 is the sky itself. See
     /// LightingManager::update.
@@ -339,7 +338,6 @@ private:
     std::vector<SkyboxLayer> skyboxLayers_;
     /// When update last ran, for smoothing by real time rather than by frame.
     std::chrono::steady_clock::time_point lastUpdate_{};
-    bool isIndoors_ = false;
     float fogSkyBlend_ = 0.0f;
     float fogStrength_ = 1.0f;
 
