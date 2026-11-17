@@ -6837,9 +6837,10 @@ void registerSystemLuaAPI(lua_State* L) {
                 // first for warlocks and the second for everyone else.
                 {"HasPetSpells", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            if (!gh) { lua_pushnil(L); return 1; }
+            // No pet: 2.4.3 answers nil, nil.
+            if (!gh) { lua_pushnil(L); lua_pushnil(L); return 2; }
             const auto& spells = gh->getPetSpells();
-            if (spells.empty()) { lua_pushnil(L); return 1; }
+            if (spells.empty()) { lua_pushnil(L); lua_pushnil(L); return 2; }
             lua_pushnumber(L, static_cast<lua_Number>(spells.size()));
             constexpr uint8_t kWarlock = 9;
             lua_pushstring(L, gh->getPlayerClass() == kWarlock ? "DEMON" : "PET");

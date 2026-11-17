@@ -4,6 +4,7 @@
 #include "game/shapeshift_forms.hpp"
 #include "addons/lua_api_helpers.hpp"
 #include "game/item_text.hpp"
+#include "game/game_utils.hpp"
 #include "addons/lua_engine.hpp"
 #include "core/logger.hpp"
 #include <set>
@@ -592,7 +593,8 @@ static int lua_GetNumSpellTabs(lua_State* L) {
 //                             highestRankOffset, highestRankNumSpells
 // tabIndex is 1-based; offset is 1-based global spell book slot
 //
-// Six values, and the last two are not optional. SpellBook_GetTabInfo unpacks
+// 2.4.3 answers the first four only (FrameXML there reads four). From WotLK:
+// six values, and the last two are not optional. SpellBook_GetTabInfo unpacks
 // all six and then, when ShowAllSpellRanks is off - which is the default -
 // throws away offset and numSpells and uses the highest-rank pair instead. So
 // a four-value answer leaves both nil on the ordinary path and the spellbook
@@ -625,12 +627,22 @@ static int lua_GetSpellTabInfo(lua_State* L) {
         lua_pushnumber(s, 0);    // highestRankNumSpells
         return 6;
     };
+    // 2.4.3 answers four values, and a tab that does not exist is
+    // nil, nil, 0, 0 (tab 0 and tab GetNumSpellTabs() + 1 alike).
+    const bool tbc = game::isActiveExpansion("tbc");
+    auto missingTbcTab = [](lua_State* s) {
+        lua_pushnil(s);
+        lua_pushnil(s);
+        lua_pushnumber(s, 0);
+        lua_pushnumber(s, 0);
+        return 4;
+    };
     if (!gh || tabIdx < 1) {
-        return emptyTab(L);
+        return tbc ? missingTbcTab(L) : emptyTab(L);
     }
     const auto& tabs = gh->getSpellBookTabs();
     if (tabIdx > static_cast<int>(tabs.size())) {
-        return emptyTab(L);
+        return tbc ? missingTbcTab(L) : emptyTab(L);
     }
     // Compute offset: sum of spells in all preceding tabs (1-based)
     int offset = 0;
@@ -641,6 +653,7 @@ static int lua_GetSpellTabInfo(lua_State* L) {
     lua_pushstring(L, tab.texture.c_str());        // texture
     lua_pushnumber(L, offset);                     // offset (0-based for WoW compat)
     lua_pushnumber(L, tab.spellIds.size());        // numSpells
+    if (tbc) return 4;
     // The highest-rank pair, which is what FrameXML actually reads: with
     // ShowAllSpellRanks off - the default - SpellBook_GetTabInfo throws away
     // the first offset and count and keeps these. Returning four values left
@@ -706,6 +719,12 @@ static int lua_GetSpellBookItemName(lua_State* L) {
 // panel could name a spell and not cast it.
 
 
+/// Whether this is the (slot, bookType) form with a slot below 1, which 2.4.3
+/// refuses with "Invalid spell slot" from GetSpellName and GetSpellTexture.
+static bool bookSlotBelowOne(lua_State* L) {
+    return !lua_isnoneornil(L, 2) && lua_isnumber(L, 1) && lua_tonumber(L, 1) < 1;
+}
+
 /// GetSpellName(slot, bookType) → name, rank.
 static int lua_GetSpellName(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -713,8 +732,15 @@ static int lua_GetSpellName(lua_State* L) {
     // spellbook passes SpellBookFrame.bookType to every one of these, and
     // resolving a pet slot through the player's tabs names one of the player's
     // own spells - the wrong answer wearing the shape of a right one.
+    if (game::isActiveExpansion("tbc") && bookSlotBelowOne(L))
+        return luaL_error(L, "GetSpellName(): Invalid spell slot");
     const uint32_t id = spellIdForCall(L, gh);
-    if (id == 0) { return luaReturnNil(L); }
+    if (id == 0) {
+        // Past the end of the book 2.4.3 answers nil, nil.
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
     const std::string& name = gh->getSpellName(id);
     lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
     lua_pushstring(L, gh->getSpellRank(id).c_str());
@@ -733,10 +759,6 @@ static int lua_CastSpell(lua_State* L) {
     return 0;
 }
 
-/// IsPassiveSpell(slot, bookType) → whether the spell is passive, which is how
-/// the book decides not to draw a cast button for it. Spell attributes are not
-/// read from the DBC yet, so this answers no - which draws a button for a
-/// passive rather than hiding a real one, the less wrong way round.
 /// IsPassiveSpell(id or index, bookType) → whether the spell is never cast.
 ///
 /// It answered no for everything, so the spell book drew a passive with the
@@ -746,13 +768,15 @@ static int lua_CastSpell(lua_State* L) {
 /// interruptibility.
 static int lua_IsPassiveSpell(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    if (!gh) { lua_pushnil(L); return 1; }
     // Both forms: IsPassiveSpell(spellId) and IsPassiveSpell(slot, bookType),
     // which is the one the spellbook uses - and reading a slot as an id
     // answered for whichever spell happens to carry the number 1, 2 or 3.
     // The result decides whether a spell is drawn as castable at all.
     const uint32_t id = spellIdForCall(L, gh);
-    lua_pushboolean(L, gh->isSpellPassive(id) ? 1 : 0);
+    // 1 or nil, as 2.4.3 answers.
+    if (gh->isSpellPassive(id)) lua_pushnumber(L, 1);
+    else lua_pushnil(L);
     return 1;
 }
 
@@ -1102,6 +1126,8 @@ static int lua_GetSpellInfo(lua_State* L) {
 static int lua_GetSpellTexture(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
+    if (game::isActiveExpansion("tbc") && bookSlotBelowOne(L))
+        return luaL_error(L, "GetSpellTexture(): Invalid spell slot");
 
     const uint32_t spellId = spellIdForCall(L, gh);
     if (spellId == 0) { return luaReturnNil(L); }
