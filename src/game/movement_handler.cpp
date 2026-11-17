@@ -2359,6 +2359,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     owner_.clearGossipPois();
     owner_.worldStateMapIdRef() = mapId;
     owner_.worldStateZoneIdRef() = 0;
+    owner_.worldStateAreaIdRef() = 0;
     owner_.activeAreaTriggersRef().clear();
     const bool deeprunTram = mapId == 369;
     owner_.areaTriggerCheckTimerRef() = deeprunTram ? -1.0f : -5.0f;

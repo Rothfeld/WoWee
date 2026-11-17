@@ -1304,8 +1304,9 @@ void GameHandler::registerCoreOpcodes() {
         // TBC added areaId in 2.1.0; WotLK kept it. Classic/Turtle use the shorter format.
         size_t remaining = packet.getRemainingSize();
         bool hasAreaId = isActiveExpansion("tbc") || isActiveExpansion("wotlk");
+        worldStateAreaId_ = 0;
         if (hasAreaId && remaining >= 6) {
-            packet.readUInt32(); // areaId
+            worldStateAreaId_ = packet.readUInt32();
         }
         uint16_t count = packet.readUInt16();
         size_t needed = static_cast<size_t>(count) * 8;
@@ -1333,6 +1334,10 @@ void GameHandler::registerCoreOpcodes() {
             uint32_t val = packet.readUInt32();
             worldStates_[key] = val;
         }
+        // Build 8606 fires UPDATE_WORLD_STATES for this packet as it does for
+        // each SMSG_UPDATE_WORLD_STATE: teleporting out of Hellfire Peninsula
+        // (five update packets, then this one) fired the event six times.
+        fireAddonEvent("UPDATE_WORLD_STATES", {});
     };
 
     // ---- SMSG_ACTION_BUTTONS ----

@@ -1113,9 +1113,11 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
         // FrameXML arranges itself from this event, so the interface diagnostics
         // wait for it rather than describing a layout nobody ever sees.
         ui::frameXmlNoteWorldEntry();
-        // Also fire ZONE_CHANGED_NEW_AREA and UPDATE_WORLD_STATES so map/BG addons refresh
+        // Also fire ZONE_CHANGED_NEW_AREA so map addons refresh. No
+        // UPDATE_WORLD_STATES here: build 8606 fires that only for the world
+        // state packets, which arrive after this event (EPL -> Nagrand:
+        // PLAYER_ENTERING_WORLD, then seven UPDATE_WORLD_STATES 2.4 s later).
         fireAddonEvent("ZONE_CHANGED_NEW_AREA", {});
-        fireAddonEvent("UPDATE_WORLD_STATES", {});
         // Entering a battleground, told apart by the map itself rather than by
         // anything the server says about it - BattlemasterList.dbc names the
         // maps and this client already reads it for the queue list.

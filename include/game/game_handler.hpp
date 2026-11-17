@@ -2327,6 +2327,7 @@ public:
     }
     uint32_t getWorldStateMapId() const { return worldStateMapId_; }
     uint32_t getWorldStateZoneId() const { return worldStateZoneId_; }
+    uint32_t getWorldStateAreaId() const { return worldStateAreaId_; }
     uint64_t getActiveCritterGuid() const { return activeCritterGuid_; }
     uint32_t getActiveCritterSpellId() const { return activeCritterSpellId_; }
     void setActiveCritter(uint64_t guid, uint32_t spellId) {
@@ -3800,6 +3801,7 @@ public:
     auto& worldStateMapIdRef() { return worldStateMapId_; }
     auto& worldStatesRef() { return worldStates_; }
     auto& worldStateZoneIdRef() { return worldStateZoneId_; }
+    auto& worldStateAreaIdRef() { return worldStateAreaId_; }
     auto& minimapPingsRef() { return minimapPings_; }
     /// Drops the points of interest the quest handler is holding.
     ///
@@ -4453,6 +4455,7 @@ private:
     // ---- World state and faction initialization snapshots ----
     uint32_t worldStateMapId_ = 0;
     uint32_t worldStateZoneId_ = 0;
+    uint32_t worldStateAreaId_ = 0;
     // The active non-combat companion and the spell that called it. Re-casting
     // that spell dismisses rather than re-summons, which is how a companion is
     // put away: it has no aura to cancel from the buff bar, so this toggle is
