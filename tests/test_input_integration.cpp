@@ -2447,3 +2447,18 @@ TEST_CASE_METHOD(Integration, "A click on a nameplate acts on the plate's unit, 
     CHECK(handler.getTargetGuid() == kPlateUnit);
     CHECK(session.sent().of(Opcode::CMSG_LOOT).empty());
 }
+
+TEST_CASE_METHOD(Integration, "Every widget carries its C handle in slot 0", "[lua][widget-handle]") {
+    // Tablet-2.0 Register(frame, otherFrame) and AceHook-2.1 HookScript tell a
+    // widget from a plain table by t[0]; the original client fills it with the
+    // widget's userdata on frames and regions alike.
+    run(R"lua(
+        handleFrame = CreateFrame('Button', nil, UIParent)
+        handleOther = CreateFrame('Frame')
+        handleTex = handleFrame:CreateTexture()
+        handleText = handleFrame:CreateFontString()
+    )lua");
+    truth("type(handleFrame[0]) == 'userdata' and type(handleTex[0]) == 'userdata' and type(handleText[0]) == 'userdata'");
+    truth("handleFrame[0] ~= handleOther[0] and handleFrame[0] ~= handleTex[0]");
+    truth("#handleFrame == 0");
+}

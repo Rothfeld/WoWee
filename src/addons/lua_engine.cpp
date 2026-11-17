@@ -24,6 +24,8 @@
 #include <climits>
 #include <set>
 #include <cstdlib>
+#include <cassert>
+#include <cstdint>
 // The clipboard, for paste and copy in an edit box.
 #include <SDL3/SDL.h>
 #include "addons/lua_api_helpers.hpp"
@@ -375,6 +377,21 @@ static int lua_Frame_GetName(lua_State* L) {
 // SetTexture all day and nothing existed to draw.
 
 namespace {
+
+/// Store a widget's handle on the table at the top of the stack: __wid for
+/// this client, and [0] as a light userdata, the slot the original client
+/// fills with the widget's C object on every frame and region. Libraries
+/// tell a widget from a plain table by it - Tablet-2.0's Register(frame,
+/// otherFrame) copies the other frame's registration only when
+/// otherFrame[0] is set, AceHook-2.1 HookScript refuses a table without it
+/// - so without [0] a FuBar minimap button registered no tooltip at all.
+void setWidgetHandle(lua_State* L, uint32_t id) {
+    assert(id != 0);
+    lua_pushinteger(L, static_cast<lua_Integer>(id));
+    lua_setfield(L, -2, "__wid");
+    lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(id)));
+    lua_rawseti(L, -2, 0);
+}
 
 uint32_t widgetIdOf(lua_State* L, int index) {
     if (!lua_istable(L, index)) return 0;
@@ -5813,8 +5830,7 @@ static int lua_Frame_CreateTexture(lua_State* L) {
             w->layer = wowee::ui::parseDrawLayer(layer);
             w->objectType = "Texture";
         }
-        lua_pushinteger(L, static_cast<lua_Integer>(id));
-        lua_setfield(L, -2, "__wid");
+        setWidgetHandle(L, id);
     }
     // A region's parent, which is the frame it was created on.
     //
@@ -5848,8 +5864,7 @@ static int lua_Frame_CreateFontString(lua_State* L) {
             w->layer = wowee::ui::parseDrawLayer(layer);
             w->objectType = "FontString";
         }
-        lua_pushinteger(L, static_cast<lua_Integer>(id));
-        lua_setfield(L, -2, "__wid");
+        setWidgetHandle(L, id);
     }
     // A region's parent, which is the frame it was created on.
     //
@@ -6095,8 +6110,7 @@ static int lua_CreateFrame(lua_State* L) {
             }
             if (w->isSlider) w->mouseEnabled = true;
         }
-        lua_pushinteger(L, static_cast<lua_Integer>(id));
-        lua_setfield(L, -2, "__wid");
+        setWidgetHandle(L, id);
 
         // Remember the table against its widget id so input dispatch can get
         // back from a hit to the frame whose scripts must run.

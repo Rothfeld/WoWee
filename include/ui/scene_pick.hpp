@@ -9,6 +9,7 @@
 // way, which is exactly how one of them quietly diverges. What genuinely
 // differs between them is expressed as parameters instead.
 
+#include <optional>
 #include <cstdint>
 #include <functional>
 #include <memory>
