@@ -3252,12 +3252,17 @@ void SpellHandler::handleRemovedSpell(network::Packet& packet) {
     knownSpells_.erase(spellId);
     syncPreWotlkTalentsFromKnownSpells();
     LOG_INFO("Removed spell: ", spellId);
-    // Braced. The two lines below were indented as though they sat inside the
-    // check above and did not - the first if has no body braces - so the
-    // crafting refresh called the callback without testing it, and a null one
-    // throws rather than doing nothing.
+    // A spell with a spellbook entry is announced as 2.4.3 does - "You have
+    // unlearned Raptor Strike (Rank 2)." - before SPELLS_CHANGED. A spell
+    // without one, such as a talent rank replaced by the next, goes with no
+    // line and no event (LearnTalent twice on Improved Gouge: native fires
+    // only CHARACTER_POINTS_CHANGED).
+    if (isListedInSpellbook(spellId)) {
+        if (const std::string text = spellGlobalStringLine(owner_, "ERR_SPELL_UNLEARNED_S", spellId); !text.empty())
+            owner_.addSystemChatMessage(text);
+        if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("SPELLS_CHANGED", {});
+    }
     if (owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("SPELLS_CHANGED", {});
         // The mirror of COMPANION_LEARNED on the other side of this file. The
         // mounts and critters list is built from the spellbook, so losing a
         // spell can take one off it, and the pet tab refreshes on this and on
@@ -3266,32 +3271,6 @@ void SpellHandler::handleRemovedSpell(network::Packet& packet) {
         // A crafting window's recipes are the spells that just changed, and
         // it refreshes on its own event rather than on that one.
         if (craftingWindowOpen_) owner_.addonEventCallbackRef()("TRADE_SKILL_UPDATE", {});
-    }
-
-    // Learning a new talent rank legitimately removes/replaces its internal
-    // talent spell. That is rank bookkeeping, not the player unlearning the
-    // talent, and presenting it as "You have unlearned" is backwards.
-    loadTalentDbc();
-    bool isTalentRankSpell = false;
-    for (const auto& [talentId, talent] : talentCache_) {
-        (void)talentId;
-        for (uint32_t rankSpell : talent.rankSpells) {
-            if (rankSpell == spellId) {
-                isTalentRankSpell = true;
-                break;
-            }
-        }
-        if (isTalentRankSpell) break;
-    }
-
-    if (!isTalentRankSpell) {
-        const std::string& name = owner_.getSpellName(spellId);
-        if (!name.empty())
-            owner_.addSystemChatMessage("You have unlearned: " + name + ".");
-        else
-            owner_.addSystemChatMessage("A spell has been removed.");
-    } else {
-        LOG_DEBUG("Suppressed talent-rank removal chat for spell ", spellId);
     }
 
     bool barChanged = false;
