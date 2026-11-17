@@ -2822,14 +2822,7 @@ void Application::applyServerMovementState(float deltaTime) {
                 if (auto* ac = renderer->getAnimationController()) ac->setMountPitchRoll(pitchRad, 0.0f);
             }
         } else if (gameHandler->isSwimming()) {
-            // A swimmer goes where the camera looks, so its pitch is the camera's.
-            if (auto* cam = renderer->getCamera()) {
-                glm::vec3 fwd = cam->getForward();
-                float len = glm::length(fwd);
-                if (len > 1e-4f) {
-                    gameHandler->setMovementPitch(std::asin(std::clamp(fwd.z / len, -1.0f, 1.0f)));
-                }
-            }
+            gameHandler->setMovementPitch(renderer->getCameraController()->getSwimPitchRad());
         } else if (gameHandler->isMounted()) {
             // Reset mount pitch when not flying
             if (auto* ac = renderer->getAnimationController()) ac->setMountPitchRoll(0.0f, 0.0f);

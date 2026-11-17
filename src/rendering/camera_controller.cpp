@@ -499,7 +499,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                     bool nearSurface = depthFromFeet <= swimSurfaceOffset_ + 0.55f;
                     bool reachableRamp = (floorDelta >= -0.30f && floorDelta <= 1.10f);
                     bool shallowRampWater = waterOverFloor <= 1.55f;
-                    bool notDiving = f.forward3D.z > -0.20f && !f.xDown;
+                    bool notDiving = f.swimForward.z > -0.20f && !f.xDown;
                     if (nearSurface && reachableRamp && shallowRampWater && notDiving) {
                         inWater = false;
                     }
@@ -507,7 +507,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
 
                 // Forward plank/ramp assist: sample structure floors ahead so water exit
                 // can happen when the ramp is in front of us (not only under our feet).
-                if (swimming && inWater && f.nowForward && f.forward3D.z > -0.20f && !f.xDown) {
+                if (swimming && inWater && f.nowForward && f.swimForward.z > -0.20f && !f.xDown) {
                     auto queryFloorAt = [&](float x, float y, float probeZ) -> std::optional<float> {
                         std::optional<float> best;
                         if (terrainManager) {
@@ -588,19 +588,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                               ? swimSpeedOverride_ : f.speed * SWIM_SPEED_FACTOR;
         float waterSurfaceZ = waterH ? (*waterH - swimSurfaceOffset_) : targetPos.z;
 
-        // For auto-run/auto-swim: use character facing (immune to camera pan)
-        // For manual W key: use camera direction (swim where you look)
-        glm::vec3 swimForward;
-        if (autoRunning || (leftMouseDown && rightMouseDown)) {
-            // Auto-running: use character's horizontal facing direction
-            swimForward = f.forward;
-        } else {
-            // Manual control: use camera's 3D direction (swim where you look)
-            swimForward = glm::normalize(f.forward3D);
-            if (glm::dot(swimForward, swimForward) < 1e-8f) {
-                swimForward = f.forward;
-            }
-        }
+        const glm::vec3 swimForward = f.swimForward;
         // Use character's facing direction for strafe, not camera's right vector
         glm::vec3 swimRight = f.right;  // Character's right (horizontal facing), not camera's
 
@@ -625,7 +613,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         // Space's upward impulse is handled above. X swims down continuously
         // at the server's swim speed, rather than an unrelated buoyancy speed.
         bool diveKey = f.xDown;
-        bool diveIntent = diveKey || (f.nowForward && (f.forward3D.z < -0.28f));
+        bool diveIntent = diveKey || (f.nowForward && (swimForward.z < -0.28f));
         if (diveKey) {
             verticalVelocity = -swimSpeed;
         } else {
@@ -3055,18 +3043,8 @@ void CameraController::update(float deltaTime) {
 
     // Get camera axes - project forward onto XY plane for walking
     glm::vec3 forward3D = camera->getForward();
-    // In water the camera always steers, moving or turning, the way holding the
-    // right button steers on land.
-    //
-    // Swimming took its forward from the camera's 3D direction but its strafe
-    // and its facing from the character's own, so the two disagreed the moment
-    // the camera was panned: the swimmer went one way, sidled another, and kept
-    // facing a third, with the stroke animation pointing wherever the body
-    // happened to be left. Retail turns the swimmer to the camera and swims
-    // them where they look.
-    //
-    // Only while there is movement input. Treading on the spot and orbiting the
-    // camera to look around should not spin the character on the water.
+    // Left-button orbit changes the view while movement retains character
+    // facing. Right-button/touch steering owns facing on land and in water.
     // steering_ is the touch controls saying a finger is dragging the view.
     // On a phone that is what the right mouse button is on a desktop: the
     // character turns to face where the player is looking, so that walking
@@ -3074,8 +3052,7 @@ void CameraController::update(float deltaTime) {
     // A chair owns body orientation. Mouse/touch orbit may move the camera,
     // but must not replace the server's seat heading or send a new facing.
     bool cameraDrivesFacing = !seatedInChair_ &&
-                              (rightMouseDown || mouseAutorun || steering_ ||
-                               (swimming && hasMoveInput));
+                              (rightMouseDown || mouseAutorun || steering_);
     // During taxi flights, orientation is controlled by the flight path, not player input
     if (cameraDrivesFacing && !externalFollow_) {
         facingYaw = yaw;
@@ -3102,6 +3079,16 @@ void CameraController::update(float deltaTime) {
         }
     }
     if (!isFlightAirborne()) flightPitchDeg_ = 0.0f;
+    if (!swimming) swimPitchDeg_ = 0.0f;
+    if (swimming && cameraDrivesFacing && !externalFollow_) {
+        const float len = glm::length(forward3D);
+        assert(len > 1e-4f);
+        swimPitchDeg_ = glm::degrees(std::asin(std::clamp(forward3D.z / len, -1.0f, 1.0f)));
+    }
+    const float swimPitchRad = glm::radians(swimPitchDeg_);
+    const glm::vec3 swimForward(std::cos(moveYawRad) * std::cos(swimPitchRad),
+                               std::sin(moveYawRad) * std::cos(swimPitchRad),
+                               std::sin(swimPitchRad));
     const float flightPitchRad = glm::radians(flightPitchDeg_);
     const glm::vec3 flightForward(std::cos(moveYawRad) * std::cos(flightPitchRad),
                                   std::sin(moveYawRad) * std::cos(flightPitchRad),
@@ -3174,6 +3161,7 @@ void CameraController::update(float deltaTime) {
     f.right = right;
     f.forward3D = forward3D;
     f.flightForward = flightForward;
+    f.swimForward = swimForward;
     f.movement = movement;
     f.nowForward = nowForward;
     f.nowBackward = nowBackward;

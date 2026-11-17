@@ -254,6 +254,7 @@ public:
     /// steers, and held when it does not. What the mount tilts to and what
     /// the server is told.
     [[nodiscard]] float getFlightPitchRad() const { return glm::radians(flightPitchDeg_); }
+    [[nodiscard]] float getSwimPitchRad() const { return glm::radians(swimPitchDeg_); }
     [[nodiscard]] bool isAscending() const { return wasAscending_; }
     [[nodiscard]] bool isDescending() const { return wasDescending_; }
     void setHoverActive(bool active) { hoverActive_ = active; }
@@ -350,6 +351,7 @@ private:
         glm::vec3 right{0.0f};
         glm::vec3 forward3D{0.0f};    ///< the camera's own forward, with pitch
         glm::vec3 flightForward{0.0f};   ///< where W flies: the facing, at the flight pitch
+        glm::vec3 swimForward{0.0f};     ///< character facing and retained swim pitch
         glm::vec3 movement{0.0f};     ///< the horizontal move this frame; the modes adjust it
         bool nowForward = false;
         bool nowBackward = false;
@@ -797,6 +799,7 @@ private:
     bool flyingActive_ = false;
     bool flightAirborne_ = false;
     float flightPitchDeg_ = 0.0f;
+    float swimPitchDeg_ = 0.0f;
     // Server-driven hover (HOVER flag): float at fixed height above ground.
     bool hoverActive_ = false;
     bool mounted_ = false;
