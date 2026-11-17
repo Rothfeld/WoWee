@@ -1228,9 +1228,17 @@ static int lua_PickupInventoryItem(lua_State* L) {
     // Carrying something: equip it here, which is the other half of the drag.
     uint8_t srcBag = 0, srcSlot = 0;
     if (cursorWireSlot(srcBag, srcSlot)) {
+        const auto held = cursorItemSlot();
         gh->swapContainerItems(srcBag, srcSlot, 0xFF,
                                static_cast<uint8_t>(slot - 1));
         clearCursorItem(L);
+        // The slot it was picked up from is no longer held: without this the
+        // bag button stayed greyed after the drop, and for good when the
+        // server refused the equip (can't dual wield).
+        if (held.equipped) gh->fireAddonEvent("ITEM_LOCK_CHANGED", {std::to_string(held.slot)});
+        else gh->fireAddonEvent("ITEM_LOCK_CHANGED",
+                                {std::to_string(held.bag), std::to_string(held.slot)});
+        gh->fireAddonEvent("ITEM_LOCK_CHANGED", {std::to_string(slot)});
         return 0;
     }
 
