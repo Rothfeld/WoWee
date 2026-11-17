@@ -81,7 +81,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
 
     // Creature despawn callback (online mode) - remove creature models
     gameHandler_.setCreatureDespawnCallback([this](uint64_t guid) {
-        entitySpawner_.despawnCreature(guid);
+        entitySpawner_.despawnCreatureFromServer(guid);
     });
 
     gameHandler_.setPlayerDespawnCallback([this](uint64_t guid) {

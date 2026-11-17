@@ -1,4 +1,5 @@
 #include "core/entity_spawner.hpp"
+#include "rendering/unit_fade.hpp"
 #include "core/game_object_animation_policy.hpp"
 
 #include <set>
@@ -1734,6 +1735,20 @@ void EntitySpawner::erasePendingGuidIfUnqueued(uint64_t guid) {
         if (pending.guid == guid) return;
     }
     pendingCreatureSpawnGuids_.erase(guid);
+}
+
+void EntitySpawner::despawnCreatureFromServer(uint64_t guid) {
+    // Native fades a despawning corpse out (ledger #75c). The instance is
+    // handed to the renderer to fade and remove; everything here forgets the
+    // guid at once, so a respawn under the same guid starts clean.
+    const bool corpse = deadCreatureGuids_.count(guid) != 0;
+    auto it = creatureInstances_.find(guid);
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    if (corpse && it != creatureInstances_.end() && characters) {
+        characters->fadeOutAndRemove(it->second, rendering::kUnitFadeSeconds);
+        creatureInstances_.erase(it);  // despawnCreature must not remove it now
+    }
+    despawnCreature(guid);
 }
 
 void EntitySpawner::despawnCreature(uint64_t guid) {

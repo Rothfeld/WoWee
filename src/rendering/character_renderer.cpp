@@ -19,6 +19,7 @@
 #include <atomic>
 #include "rendering/character_renderer.hpp"
 #include "rendering/character_emitters.hpp"
+#include "rendering/unit_fade.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/visual_mesh_pick.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
@@ -2235,6 +2236,11 @@ void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from
 }
 
 void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
+    // Instances whose fade-out reached zero last frame (drawn at zero opacity,
+    // which the draw skips). Removed here, outside the iteration below.
+    for (const uint32_t id : fadedOut_) removeInstance(id);
+    fadedOut_.clear();
+
     // Distance culling for animation updates in dense areas.
     const float animUpdateRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_RENDER_RADIUS", 130));
     const float animUpdateRadiusSq = animUpdateRadius * animUpdateRadius;
@@ -2244,6 +2250,22 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
 
     for (auto& pair : instances) {
         auto& inst = pair.second;
+
+        // Fade-out ahead of removal; the instance goes once it reaches zero.
+        if (inst.fadeOutDuration > 0.0f) {
+            inst.fadeOutTime += deltaTime;
+            const float opacity = fadeOutOpacity(inst.fadeOutStartOpacity, inst.fadeOutTime,
+                                                 inst.fadeOutDuration);
+            inst.opacity = opacity;
+            for (const auto& attachment : inst.weaponAttachments) {
+                if (auto w = instances.find(attachment.weaponInstanceId); w != instances.end())
+                    w->second.opacity = opacity;
+                for (const auto& effect : attachment.effects)
+                    if (auto e = instances.find(effect.effectInstanceId); e != instances.end())
+                        e->second.opacity = opacity;
+            }
+            if (inst.fadeOutTime >= inst.fadeOutDuration) fadedOut_.push_back(pair.first);
+        }
 
         // Update fade-in opacity
         if (inst.fadeInDuration > 0.0f && inst.opacity < 1.0f) {
@@ -4120,6 +4142,21 @@ const pipeline::M2Model* CharacterRenderer::getInstanceModelData(uint32_t instan
     auto instIt = instances.find(instanceId);
     if (instIt == instances.end()) return nullptr;
     return getModelData(instIt->second.modelId);
+}
+
+void CharacterRenderer::fadeOutAndRemove(uint32_t instanceId, float durationSeconds) {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return;
+    if (durationSeconds <= 0.0f) {
+        removeInstance(instanceId);
+        return;
+    }
+    auto& inst = it->second;
+    if (inst.fadeOutDuration > 0.0f) return;  // already fading out
+    inst.fadeInDuration = 0.0f;
+    inst.fadeOutStartOpacity = inst.opacity;
+    inst.fadeOutTime = 0.0f;
+    inst.fadeOutDuration = durationSeconds;
 }
 
 void CharacterRenderer::startFadeIn(uint32_t instanceId, float durationSeconds) {

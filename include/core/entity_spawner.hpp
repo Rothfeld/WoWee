@@ -62,6 +62,9 @@ public:
 
     // Immediate despawn
     void despawnCreature(uint64_t guid);
+    /// The server removed this unit (destroy or out of range). A corpse fades
+    /// out over rendering::kUnitFadeSeconds; anything else goes at once.
+    void despawnCreatureFromServer(uint64_t guid);
     void despawnPlayer(uint64_t guid);
     void despawnGameObject(uint64_t guid);
 

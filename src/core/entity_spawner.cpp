@@ -1,5 +1,6 @@
 #include "core/weapon_attachment.hpp"
 #include "core/entity_spawner.hpp"
+#include "rendering/unit_fade.hpp"
 #include "rendering/m2_model_classifier.hpp"
 #include "core/appearance_composer.hpp"
 #include "pipeline/char_sections.hpp"
@@ -1353,7 +1354,7 @@ if (deadCreatureGuids_.count(guid)) {
         charRenderer->playAnimation(instanceId, rendering::anim::STAND, true);
     }
 }
-charRenderer->startFadeIn(instanceId, 0.5f);
+charRenderer->startFadeIn(instanceId, rendering::kUnitFadeSeconds);
 }
 
 // Choose one mesh per clothing group for a character-style NPC.

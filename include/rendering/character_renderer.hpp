@@ -126,6 +126,9 @@ public:
     void moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
                         bool updateAnimation = true);
     void startFadeIn(uint32_t instanceId, float durationSeconds);
+    /// Fade the instance, its weapons and their effects out from their
+    /// current opacity, then remove it. The caller forgets the instance now.
+    void fadeOutAndRemove(uint32_t instanceId, float durationSeconds);
     void setLocomotionSpeed(uint32_t instanceId, float speed);
     /// Print a footprint for every authored footfall event ($FL0, $RR1, ...)
     /// each unit's current sequence passed since the last call, at that foot.
@@ -356,6 +359,10 @@ private:
         float cameraOpacity = 1.0f;
         float fadeInTime = 0.0f;     // elapsed fade time (seconds)
         float fadeInDuration = 0.0f; // total fade duration (0 = no fade)
+        // Fade-out ahead of removal (fadeOutAndRemove); 0 = not fading out.
+        float fadeOutDuration = 0.0f;
+        float fadeOutTime = 0.0f;
+        float fadeOutStartOpacity = 1.0f;
 
         // Movement interpolation
         bool isMoving = false;
@@ -590,6 +597,7 @@ private:
     uint32_t numAnimThreads_ = 1;
     std::vector<std::future<void>> animFutures_;
     std::vector<std::reference_wrapper<CharacterInstance>> toUpdate_;  // reused across frames
+    std::vector<uint32_t> fadedOut_;  // fade-out finished; removed at the next update
 
     // Shadow pipeline resources
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
