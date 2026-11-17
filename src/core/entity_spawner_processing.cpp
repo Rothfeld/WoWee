@@ -1843,6 +1843,7 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     if (!m2) return;
 
     const uint32_t instanceId = it->second.instanceId;
+    gameObjectAppliedState_[guid] = goState;
     // Canonical GOState: 0 ACTIVE (open), 1 READY (closed), 2 ACTIVE_ALTERNATIVE
     // (destroyed). The animation ids are the game's own: OPEN, CLOSE, DESTROY.
     const uint32_t anim = goState == 0 ? 148u : (goState == 2 ? 149u : 146u);
@@ -1932,6 +1933,25 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
 }
 
 void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
+    // A door's open state can arrive before its query response (BRS
+    // portcullises: state 0 at 22:01:01.8, type at 22:01:02.7), when
+    // applyGameObjectState could not yet tell it was a door and left its
+    // collision shut. Apply the door rule now to those already in view.
+    if (auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr; m2 && gameHandler_) {
+        const auto* doorInfo = gameHandler_->getCachedGameObjectInfo(entry);
+        if (doorInfo && (doorInfo->type == 0u || doorInfo->type == 35u)) {
+            for (const auto& [guid, state] : gameObjectAppliedState_) {
+                auto inst = gameObjectInstances_.find(guid);
+                if (inst == gameObjectInstances_.end() || inst->second.isWmo) continue;
+                auto entity = gameHandler_->getEntityManager().getEntity(guid);
+                if (!entity || entity->getType() != game::ObjectType::GAMEOBJECT) continue;
+                if (std::static_pointer_cast<game::GameObject>(entity)->getEntry() != entry) continue;
+                m2->setSkipCollision(inst->second.instanceId, state == 0);
+                LOG_INFO("Door collision after query: guid=0x", std::hex, guid, std::dec,
+                         " entry=", entry, " state=", static_cast<int>(state));
+            }
+        }
+    }
     auto it = gameObjectPendingAnimPolicy_.find(entry);
     if (it == gameObjectPendingAnimPolicy_.end()) return;
     auto* m2Renderer = renderer_ ? renderer_->getM2Renderer() : nullptr;
@@ -1952,6 +1972,7 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
 }
 
 void EntitySpawner::despawnGameObject(uint64_t guid) {
+    gameObjectAppliedState_.erase(guid);
     pendingTransportDoodadBatches_.erase(
         std::remove_if(pendingTransportDoodadBatches_.begin(), pendingTransportDoodadBatches_.end(),
                        [guid](const PendingTransportDoodadBatch& b) { return b.guid == guid; }),

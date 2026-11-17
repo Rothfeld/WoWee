@@ -690,6 +690,8 @@ private:
     std::unordered_map<uint64_t, GameObjectInstanceInfo> gameObjectInstances_;
     /// States that arrived before their model did, applied when it spawns.
     std::unordered_map<uint64_t, uint8_t> gameObjectPendingState_;
+    /// Last GOState applied per spawned game object, for rules that need its type later.
+    std::unordered_map<uint64_t, uint8_t> gameObjectAppliedState_;
     struct PendingTransportMove {
         float x = 0.0f, y = 0.0f, z = 0.0f, orientation = 0.0f;
     };
