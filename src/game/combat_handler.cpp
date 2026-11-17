@@ -13,6 +13,7 @@
 #include "game/update_field_table.hpp"
 #include "game/opcode_table.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/camera.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/combat_sound_manager.hpp"
 #include "audio/activity_sound_manager.hpp"
@@ -22,6 +23,8 @@
 #include "core/logger.hpp"
 #include "network/world_socket.hpp"
 #include <algorithm>
+#include <cassert>
+#include <chrono>
 #include <cmath>
 #include <ctime>
 #include <random>
@@ -1460,49 +1463,36 @@ void CombatHandler::targetLastTarget() {
 
 void CombatHandler::cycleTarget(bool reverse, const char* noneMessage,
                                 const std::function<bool(uint64_t, Entity&)>& wanted) {
-    constexpr float kRangeSq = 40.0f * 40.0f;
+    // The rule is in tab_target.hpp with the measurements it came from.
+    auto* renderer = core::Application::getInstance().getRenderer();
+    assert(renderer && renderer->getCamera() && "target cycling needs the camera");
+    const glm::mat4 viewProjection = renderer->getCamera()->getViewProjectionMatrix();
 
-    float px = 0.0f, py = 0.0f, pz = 0.0f;
-    if (auto self = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
-        px = self->getX(); py = self->getY(); pz = self->getZ();
-    }
+    const auto& movement = owner_.getMovementInfo();
+    const glm::vec3 player(movement.x, movement.y, movement.z);
 
-    struct Cand { uint64_t guid; float distSq; };
-    std::vector<Cand> cands;
+    std::vector<TabCandidate> candidates;
     for (const auto& [guid, entity] : owner_.getEntityManager().getEntities()) {
         if (!entity || guid == owner_.getPlayerGuid()) continue;
-        const float dx = entity->getX() - px;
-        const float dy = entity->getY() - py;
-        const float dz = entity->getZ() - pz;
-        const float distSq = dx * dx + dy * dy + dz * dz;
-        if (distSq > kRangeSq) continue;
+        const glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
+        if (!isInTabRange(player, pos) || !isInTabCone(player, movement.orientation, pos)) continue;
+        if (!isOnScreen(viewProjection, core::coords::canonicalToRender(pos))) continue;
         if (!wanted(guid, *entity)) continue;
-        cands.push_back({.guid = guid, .distSq = distSq});
+        candidates.push_back({.guid = guid, .distance = glm::distance(player, pos)});
     }
-    std::sort(cands.begin(), cands.end(),
-              [](const Cand& a, const Cand& b) { return a.distSq < b.distSq; });
 
-    if (cands.empty()) {
+    const uint64_t nowMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    const bool restart = nowMs - lastTabTargetMs_ > kTabCycleResetMs;
+    lastTabTargetMs_ = nowMs;
+
+    const uint64_t next = pickTabTarget(std::move(candidates), owner_.getTargetGuid(), restart, reverse);
+    if (next == 0) {
         owner_.addSystemChatMessage(noneMessage);
         return;
     }
-
-    std::vector<uint64_t> order;
-    order.reserve(cands.size());
-    for (const auto& c : cands) order.push_back(c.guid);
-
-    // Not on the list: start at the near end, or the far one going backwards.
-    auto it = std::find(order.begin(), order.end(), owner_.getTargetGuid());
-    if (it == order.end()) {
-        setTarget(reverse ? order.back() : order.front());
-        return;
-    }
-    if (reverse) {
-        setTarget(it == order.begin() ? order.back() : *(it - 1));
-    } else {
-        auto next = it + 1;
-        setTarget(next == order.end() ? order.front() : *next);
-    }
+    setTarget(next);
 }
 
 bool CombatHandler::isGroupMemberGuid(uint64_t guid) const {
@@ -1513,7 +1503,8 @@ bool CombatHandler::isGroupMemberGuid(uint64_t guid) const {
 }
 
 void CombatHandler::targetEnemy(bool reverse) {
-    // Corpses are never candidates - that is what mouse looting is for.
+    // Corpses are never candidates: native skipped a creature the player had
+    // just killed.
     cycleTarget(reverse, "No enemies in range.", [this](uint64_t guid, Entity& e) {
         const auto t = e.getType();
         if (t != ObjectType::UNIT && t != ObjectType::PLAYER) return false;
@@ -1533,8 +1524,10 @@ bool CombatHandler::isEnemyTarget(uint64_t guid, const Unit& unit) const {
 
 void CombatHandler::targetFriend(bool reverse) {
     // Dead friends stay targetable - you need to select them to resurrect them.
+    // Native /targetfriend picked Stormwind City Guards, so creatures count too.
     cycleTarget(reverse, "No friendly targets in range.", [this](uint64_t, Entity& e) {
-        return e.getType() == ObjectType::PLAYER &&
+        const auto t = e.getType();
+        return (t == ObjectType::PLAYER || t == ObjectType::UNIT) &&
             owner_.unitReactionToPlayer(static_cast<const Unit&>(e)) >= 5;
     });
 }
@@ -1586,118 +1579,9 @@ void CombatHandler::targetLastFriend() {
     setTarget(lastFriendTargetGuid_);
 }
 
-void CombatHandler::tabTarget(float playerX, float playerY, float playerZ) {
-    // Maximum tab-target range in yards (matches the WoW client).
-    constexpr float kTabRange   = 40.0f;
-    constexpr float kTabRangeSq = kTabRange * kTabRange;
-    // A pause this long between tab presses restarts the cycle from the
-    // nearest enemy instead of continuing a stale rotation.
-    constexpr uint64_t kCycleResetMs = 4000;
-
-    const bool playerInCombat = owner_.isInCombat();
-
-    // Helper: returns true if the entity is an enemy that can be tab-targeted.
-    // Corpses are never tab targets while fighting; out of combat they only
-    // qualify when they still hold loot.
-    auto isValidTabTarget = [&](const std::shared_ptr<Entity>& e) -> bool {
-        if (!e) return false;
-        const uint64_t guid = e->getGuid();
-        auto* unit = dynamic_cast<Unit*>(e.get());
-        if (!unit) return false;
-        if (unit->getHealth() == 0) {
-            if (playerInCombat) return false;
-            auto lootIt = owner_.localLootStateRef().find(guid);
-            return lootIt != owner_.localLootStateRef().end() &&
-                   !lootIt->second.data.items.empty();
-        }
-        return isEnemyTarget(guid, *unit);
-    };
-
-    // Restart the cycle after a pause - the player has moved on; the next tab
-    // should grab the nearest enemy, not resume an old rotation.
-    const uint64_t nowMs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-    if (nowMs - lastTabTargetMs_ > kCycleResetMs)
-        owner_.tabCycleStaleRef() = true;
-    lastTabTargetMs_ = nowMs;
-
-    // Rebuild cycle list if stale (entity added/removed since last tab press).
-    if (owner_.tabCycleStaleRef()) {
-        owner_.tabCycleListRef().clear();
-        owner_.tabCycleIndexRef() = -1;
-
-        struct EntityDist { uint64_t guid; float distSq; bool dead; };
-        std::vector<EntityDist> sortable;
-        const auto& entities = owner_.getEntityManager().getEntities();
-        sortable.reserve(entities.size());
-
-        for (const auto& [guid, entity] : entities) {
-            auto t = entity->getType();
-            if (t != ObjectType::UNIT && t != ObjectType::PLAYER) continue;
-            if (guid == owner_.getPlayerGuid()) continue;
-            if (!isValidTabTarget(entity)) continue;
-            float dx = entity->getX() - playerX;
-            float dy = entity->getY() - playerY;
-            float dz = entity->getZ() - playerZ;
-            // Sort by squared distance - monotonic with distance, skips sqrt per entity.
-            float distSq = dx*dx + dy*dy + dz*dz;
-            if (distSq > kTabRangeSq) continue;
-            auto* unit = static_cast<Unit*>(entity.get());
-            sortable.push_back({.guid = guid, .distSq = distSq, .dead = unit->getHealth() == 0});
-        }
-
-        // Live enemies cycle first (nearest to farthest); lootable corpses last.
-        std::sort(sortable.begin(), sortable.end(),
-                  [](const EntityDist& a, const EntityDist& b) {
-                      if (a.dead != b.dead) return b.dead;
-                      return a.distSq < b.distSq;
-                  });
-
-        owner_.tabCycleListRef().reserve(sortable.size());
-        for (const auto& ed : sortable) {
-            owner_.tabCycleListRef().push_back(ed.guid);
-        }
-        owner_.tabCycleStaleRef() = false;
-    }
-
-    if (owner_.tabCycleListRef().empty()) {
-        clearTarget();
-        return;
-    }
-
-    // If the current target was picked by other means (click, assist), resume
-    // the cycle from its position so tab advances to the NEXT enemy instead of
-    // jumping back to wherever the old rotation left off.
-    {
-        const uint64_t curTarget = owner_.getTargetGuid();
-        if (curTarget != 0) {
-            const auto& list = owner_.tabCycleListRef();
-            for (size_t i = 0; i < list.size(); ++i) {
-                if (list[i] == curTarget) {
-                    owner_.tabCycleIndexRef() = static_cast<int>(i);
-                    break;
-                }
-            }
-        }
-    }
-
-    // Advance through the cycle, skipping any entry that has since died or
-    // turned friendly (e.g. NPC killed between two tab presses).
-    int tries = static_cast<int>(owner_.tabCycleListRef().size());
-    while (tries-- > 0) {
-        owner_.tabCycleIndexRef() = (owner_.tabCycleIndexRef() + 1) % static_cast<int>(owner_.tabCycleListRef().size());
-        uint64_t guid = owner_.tabCycleListRef()[owner_.tabCycleIndexRef()];
-        auto entity = owner_.getEntityManager().getEntity(guid);
-        if (isValidTabTarget(entity)) {
-            setTarget(guid);
-            return;
-        }
-    }
-
-    // All cached entries are stale - clear target and force a fresh rebuild next time.
-    owner_.tabCycleStaleRef() = true;
-    clearTarget();
+void CombatHandler::tabTarget() {
+    // The Tab binding is TARGETNEARESTENEMY, which is TargetNearestEnemy().
+    targetEnemy(false);
 }
 
 void CombatHandler::assistTarget() {

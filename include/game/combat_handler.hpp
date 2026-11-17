@@ -117,7 +117,7 @@ public:
     /// target survives half a fight's worth of tab-targeting.
     void targetLastEnemy();
     void targetLastFriend();
-    void tabTarget(float playerX, float playerY, float playerZ);
+    void tabTarget();
     void assistTarget();
 
     // --- PvP ---
@@ -144,8 +144,8 @@ public:
     void removeCombatTextForGuid(uint64_t guid);
 
 private:
-    // Last tab-target press (steady-clock ms); a pause restarts the cycle
-    // from the nearest enemy instead of resuming a stale rotation.
+    // Last target-cycling press (steady-clock ms); a pause longer than
+    // kTabCycleResetMs restarts the cycle at the nearest unit.
     uint64_t lastTabTargetMs_ = 0;
 
     // One remembered target of each kind, for targetLastEnemy/Friend. Written
@@ -154,11 +154,10 @@ private:
     uint64_t lastEnemyTargetGuid_ = 0;
     uint64_t lastFriendTargetGuid_ = 0;
 
-    /// The walk both cycles do: everything alive within range that `wanted`
-    /// accepts, nearest first, then step to the next one past the current
-    /// target. Written out twice with two predicates before this, and the two
-    /// had already drifted - one skipped the dead and the other did not, which
-    /// is right both times and was not written down anywhere.
+    /// The walk every cycle does: units `wanted` accepts that lie in the cone
+    /// in front of the character, on screen and within range (tab_target.hpp),
+    /// nearest first, then step past the current target. One predicate per
+    /// cycle; the enemy cycle skips the dead and the friendly one does not.
     void cycleTarget(bool reverse, const char* noneMessage,
                      const std::function<bool(uint64_t, Entity&)>& wanted);
 

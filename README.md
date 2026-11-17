@@ -929,6 +929,18 @@ uses render-space facing, stops within three yards and resumes when the target
 moves away. Forward/backward, strafe and turn input cancel follow. Follow does
 not latch the independent autorun toggle.
 
+### Tab targeting
+
+`build/bin/test_tab_target` checks the rule. Tab (TargetNearestEnemy) and
+TargetNearestFriend pick only units within 30 degrees of the character's
+facing, on screen and within 41 yards (3D), nearest first; each further press
+steps one unit farther and wraps. A press more than 3 seconds after the
+previous one starts again at the nearest. Corpses are skipped. These values
+were measured on the 2.4.3 client; `include/game/tab_target.hpp` lists the
+measurements. Gotcha: the native client also sometimes appends units within
+about 10 yards outside the cone after the cone units; that set could not be
+reduced to a rule and is not reproduced.
+
 ### Duel requests
 
 The duel menu casts spell 7266 through the active expansion packet parser.

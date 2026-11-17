@@ -587,7 +587,7 @@ public:
     uint64_t getTargetGuid() const override { return targetGuid; }
     std::shared_ptr<Entity> getTarget() const override;
     bool hasTarget() const override { return targetGuid != 0; }
-    void tabTarget(float playerX, float playerY, float playerZ);
+    void tabTarget();
 
     // Focus targeting
     void setFocus(uint64_t guid) override;

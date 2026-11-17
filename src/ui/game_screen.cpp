@@ -1203,8 +1203,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         // The manager filters consumed physical presses, not unrelated pad
         // sources of the same command.
         if (!textFocus && bindings.isCommandPressed("TARGETNEARESTENEMY")) {
-            const auto& movement = gameHandler.getMovementInfo();
-            gameHandler.tabTarget(movement.x, movement.y, movement.z);
+            gameHandler.tabTarget();
         }
 
         if (!textFocus &&

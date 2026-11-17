@@ -2133,8 +2133,8 @@ void GameHandler::declineResurrect() {
     if (combatHandler_) combatHandler_->declineResurrect();
 }
 
-void GameHandler::tabTarget(float playerX, float playerY, float playerZ) {
-    if (combatHandler_) combatHandler_->tabTarget(playerX, playerY, playerZ);
+void GameHandler::tabTarget() {
+    if (combatHandler_) combatHandler_->tabTarget();
 }
 
 void GameHandler::addLocalChatMessage(const MessageChatData& msg) {
