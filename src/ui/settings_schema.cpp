@@ -405,8 +405,6 @@ constexpr SettingDesc kSchema[] = {
      "if WatchFrame_Update then WatchFrame_Update() end "
      "if IsAddOnLoaded and IsAddOnLoaded('Blizzard_AchievementUI') "
      "and AchievementFrame_ForceUpdate then AchievementFrame_ForceUpdate() end"},
-    {"showitemlevel", "Item level in tooltips", SettingKind::Bool, 0, 0, 0, "Interface", "",
-     "Show an item's level in its tooltip.", "", 1, "", "cvar:showItemLevel"},
 
     {"equipmentmanager", "Equipment manager", SettingKind::Bool, 0, 0, 0, "Interface", "Character sheet",
      "Save sets of gear on the character sheet and swap between them\n"

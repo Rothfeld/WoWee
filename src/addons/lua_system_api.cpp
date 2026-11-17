@@ -827,7 +827,6 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "lockactionbars") lua_pushstring(L, "0");
     // On, which is what the tooltip has always drawn. Unset it fell to zero,
     // and that would have taken the line away the moment anything read it.
-    else if (n == "showitemlevel") lua_pushstring(L, "1");
     // Off: trades arrive as they always have unless the player says otherwise.
     else if (n == "blocktrades") lua_pushstring(L, "0");
     // On, which is what the aura icons have always drawn.
