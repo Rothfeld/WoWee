@@ -2410,9 +2410,8 @@ void GameHandler::registerRemainingOpcodes() {
             if (playSoundCallback_) playSoundCallback_(soundId);
         }
     };
-    // uint64 targetGuid + uint32 visualId (same structure as SMSG_PLAY_SPELL_VISUAL)
+    // uint64 targetGuid + uint32 kitId (same structure as SMSG_PLAY_SPELL_VISUAL)
     dispatchTable_[Opcode::SMSG_PLAY_SPELL_IMPACT] = [this](network::Packet& packet) {
-        // uint64 targetGuid + uint32 visualId (same structure as SMSG_PLAY_SPELL_VISUAL)
         if (!packet.hasRemaining(12)) {
             packet.skipAll(); return;
         }
@@ -2430,9 +2429,13 @@ void GameHandler::registerRemainingOpcodes() {
             glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
             spawnPos = core::coords::canonicalToRender(canonical);
         }
+        // A SpellVisualKit id, like SMSG_PLAY_SPELL_VISUAL's (CMaNGOS
+        // HandleTrainerBuySpellOpcode: "index from SpellVisualKit.dbc"). Kit
+        // 362 on a trainer purchase is the player's salute (EmoteSalute 113)
+        // and Learn_Impact_Base light.
         if (auto* sv = renderer->getSpellVisualSystem())
-            sv->playSpellVisual(impVisualId, spawnPos, /*useImpactKit=*/true,
-                                resolveUnitRenderInstance(impTargetGuid));
+            sv->playSpellVisualKit(impVisualId, spawnPos,
+                                   resolveUnitRenderInstance(impTargetGuid));
     };
     // SMSG_READ_ITEM_OK - moved to InventoryHandler::registerOpcodes
     // SMSG_READ_ITEM_FAILED - moved to InventoryHandler::registerOpcodes
