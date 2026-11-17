@@ -4025,8 +4025,18 @@ int lua_Region_Hide(lua_State* L) {
     lua_pushboolean(L, 0); lua_setfield(L, 1, "__visible");
     return 0;
 }
+static std::pair<wowee::ui::Widget::TooltipLine*, bool> tooltipLineForFontString(
+    lua_State* L, const wowee::ui::Widget* w);
+
 int lua_Region_IsShown(lua_State* L) {
     const auto* w = widgetOf(L, 1);
+    // A tooltip line's FontStrings are drawn from the tooltip's line storage:
+    // TextLeftN is shown for every line up to NumLines, TextRightN only when
+    // that line carries right-hand text (GameTooltip:AddDoubleLine / rank).
+    if (auto [line, right] = tooltipLineForFontString(L, w); line) {
+        lua_pushboolean(L, right ? !line->right.empty() : 1);
+        return 1;
+    }
     lua_pushboolean(L, w ? (w->shown ? 1 : 0) : 0);
     return 1;
 }
