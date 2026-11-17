@@ -319,7 +319,10 @@
     "SpellVisualID": 122,
     "TargetAuraState": 19,
     "Targets": 14,
-    "Tooltip": 178
+    "Tooltip": 178,
+    "SpellFamilyName": 199,
+    "SpellFamilyFlags0": 200,
+    "SpellFamilyFlags1": 201
   },
   "SpellIcon": {
     "ID": 0,

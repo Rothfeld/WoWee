@@ -2503,6 +2503,12 @@ public:
 
     // Convenience: apply flat+pct modifier to a base value.
     // result = (base + flatMod) * (1.0 + pctMod/100.0), clamped to >= 0.
+    /// Flat and percent modifiers of one op that apply to one spell: the sum
+    /// over every group bit set in the spell's SpellFamilyFlags. The server
+    /// sends one total per (bit, op) (CMaNGOS Player::AddSpellMod), so a
+    /// spell gets each bit's total once.
+    std::pair<int32_t, int32_t> spellModifiersFor(uint32_t spellId, SpellModOp op) const;
+
     static int32_t applySpellMod(int32_t base, int32_t flat, int32_t pct) {
         int64_t v = static_cast<int64_t>(base) + flat;
         if (pct != 0) v = v + (v * pct + 50) / 100;  // round half-up
@@ -4063,6 +4069,9 @@ public:
         // Spell.dbc TargetAuraState: the aura state the target must be in for the spell
         // to be castable (e.g. Execute → AURA_STATE_HEALTHLESS_20_PERCENT). 0 = none.
         uint32_t targetAuraState = 0;
+        /// Spell.dbc SpellFamilyFlags, the 64-bit class mask. Bit n is the
+        /// group n of SMSG_SET_FLAT/PCT_SPELL_MODIFIER.
+        uint64_t familyFlags = 0;
     };
     static constexpr size_t PLAYER_EXPLORED_ZONES_COUNT = 128;
     std::string getAreaName(uint32_t areaId) const;

@@ -2916,16 +2916,39 @@ std::string GameHandler::getSpellIconPath(uint32_t spellId) const {
     return spellIconPathResolver_ ? spellIconPathResolver_(spellId) : std::string{};
 }
 
+std::pair<int32_t, int32_t> GameHandler::spellModifiersFor(uint32_t spellId, SpellModOp op) const {
+    loadSpellNameCache();
+    const auto it = spellNameCache_.find(spellId);
+    if (it == spellNameCache_.end() || it->second.familyFlags == 0) return {0, 0};
+    const uint64_t flags = it->second.familyFlags;
+    int32_t flat = 0, pct = 0;
+    for (const auto& [key, value] : spellFlatMods_)
+        if (key.op == op && (flags >> key.group) & 1u) flat += value;
+    for (const auto& [key, value] : spellPctMods_)
+        if (key.op == op && (flags >> key.group) & 1u) pct += value;
+    return {flat, pct};
+}
+
 GameHandler::SpellDataInfo GameHandler::getSpellData(uint32_t spellId) const {
     SpellDataInfo info = spellDataResolver_ ? spellDataResolver_(spellId) : SpellDataInfo{};
-    if (info.manaCostPct == 0) return info;
-    auto player = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(playerGuid));
-    if (!player) return info;
-    constexpr uint8_t kPowerMana = 0;
-    const uint32_t pool = info.powerType == kPowerMana
-        ? player->getField(fieldIndex(UF::UNIT_FIELD_BASE_MANA))
-        : player->getMaxPowerByType(info.powerType);
-    info.manaCost += spellclass::percentPowerCost(pool, info.manaCostPct);
+    if (info.manaCostPct != 0) {
+        auto player = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(playerGuid));
+        if (!player) return info;
+        constexpr uint8_t kPowerMana = 0;
+        const uint32_t pool = info.powerType == kPowerMana
+            ? player->getField(fieldIndex(UF::UNIT_FIELD_BASE_MANA))
+            : player->getMaxPowerByType(info.powerType);
+        info.manaCost += spellclass::percentPowerCost(pool, info.manaCostPct);
+    }
+    // The player's cost modifiers (talents, set bonuses: Assassination
+    // Armor's 4-piece makes Eviscerate 35 -> 25 Energy on the original's
+    // tooltip).
+    if (info.manaCost > 0) {
+        const auto [flat, pct] = spellModifiersFor(spellId, SpellModOp::Cost);
+        if (flat != 0 || pct != 0)
+            info.manaCost = static_cast<uint32_t>(
+                applySpellMod(static_cast<int32_t>(info.manaCost), flat, pct));
+    }
     return info;
 }
 

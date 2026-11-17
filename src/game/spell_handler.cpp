@@ -3538,6 +3538,8 @@ void SpellHandler::loadSpellNameCache() const {
     const uint32_t effect2Field = spellL ? spellL->field("Effect2") : 0xFFFFFFFF;
     const auto equippedClassField = spellL ? spellL->field("EquippedItemClass") : 0xFFFFFFFF;
     const auto equippedMaskField = spellL ? spellL->field("EquippedItemSubClassMask") : 0xFFFFFFFF;
+    const auto familyFlags0Field = spellL ? spellL->tryField("SpellFamilyFlags0") : 0xFFFFFFFF;
+    const auto familyFlags1Field = spellL ? spellL->tryField("SpellFamilyFlags1") : 0xFFFFFFFF;
     // Every column the recipe read needs, named and in range. Named and in
     // range is the whole question: the old test was that the file had enough
     // fields for the WotLK numbers, which says nothing about whether those are
@@ -3638,6 +3640,10 @@ void SpellHandler::loadSpellNameCache() const {
                 entry.implicitTargetA = dbc->getUInt32(i, implicitTargetAField);
             }
             const uint32_t effectFields[3] = {effect0Field, effect1Field, effect2Field};
+            if (familyFlags0Field < fieldCount && familyFlags1Field < fieldCount) {
+                entry.familyFlags = dbc->getUInt32(i, familyFlags0Field) |
+                    (static_cast<uint64_t>(dbc->getUInt32(i, familyFlags1Field)) << 32);
+            }
             if (equippedClassField < fieldCount && equippedMaskField < fieldCount) {
                 entry.equippedItemClass = static_cast<int32_t>(dbc->getUInt32(i, equippedClassField));
                 entry.equippedItemSubClassMask = dbc->getUInt32(i, equippedMaskField);
@@ -4416,7 +4422,12 @@ void SpellHandler::handleSpellModifier(network::Packet& packet, bool isFlat) {
         uint8_t groupIndex = packet.readUInt8();
         uint8_t modOpRaw   = packet.readUInt8();
         int32_t value      = static_cast<int32_t>(packet.readUInt32());
-        if (groupIndex > 5 || modOpRaw >= GameHandler::SPELL_MOD_OP_COUNT) continue;
+        // groupIndex is a SpellFamilyFlags bit, 0 to 63.
+        if (groupIndex > 63 || modOpRaw >= GameHandler::SPELL_MOD_OP_COUNT) {
+            LOG_WARNING("Spell modifier out of range: group ", static_cast<int>(groupIndex),
+                        " op ", static_cast<int>(modOpRaw));
+            continue;
+        }
         GameHandler::SpellModKey key{ .op = static_cast<GameHandler::SpellModOp>(modOpRaw), .group = groupIndex };
         modMap[key] = value;
     }
