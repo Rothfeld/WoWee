@@ -5,7 +5,6 @@
 #include "core/logger.hpp"
 #include <random>
 #include <algorithm>
-#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <optional>
@@ -159,6 +158,9 @@ bool AmbientSoundManager::loadSound(const std::string& path, AmbientSample& samp
 }
 
 void AmbientSoundManager::setAmbience(const std::string& path) {
+    // AudioCoordinator asks every frame, from before the asset manager is
+    // handed over (login, world entry); the request is taken once it is.
+    if (!initialized_) return;
     if (path == ambience_.path) return;
     if (ambienceSoundId_ != 0) AudioEngine::instance().stopSound(ambienceSoundId_);
     ambienceSoundId_ = 0;
@@ -170,7 +172,6 @@ void AmbientSoundManager::setAmbience(const std::string& path) {
         LOG_INFO("Ambient: no area ambience");
         return;
     }
-    assert(assets_ && "setAmbience before initialize");
     if (!loadSound(path, ambience_, assets_)) {
         LOG_ERROR("AmbientSoundManager: ambience ", path, " could not be loaded");
         return;
