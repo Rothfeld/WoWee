@@ -471,7 +471,8 @@ void SpellHandler::launchRangedWeaponProjectile(uint32_t spellId, uint64_t targe
             modelPath = "Item\\ObjectComponents\\Weapon\\Thrown_1H_Dagger_A_01.m2";
     } else if (spellId == 75 || (!ranged.empty() &&
                (ranged.item.inventoryType == InvType::RANGED_BOW ||
-                ranged.item.subclassName == "Bow" || ranged.item.subclassName == "Crossbow"))) {
+                isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_BOW) ||
+                isWeaponSubclass(ranged.item.itemClass, ranged.item.subClass, WEAPON_SUBCLASS_CROSSBOW)))) {
         modelPath = "Item\\ObjectComponents\\Ammo\\ArrowFlight_01.m2";
     } else {
         modelPath = "Item\\ObjectComponents\\Ammo\\BulletFlight_01.m2";

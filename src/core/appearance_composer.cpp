@@ -644,7 +644,6 @@ void AppearanceComposer::showFishingPole(bool show) {
 
     const auto isFishingPole = [this](const game::ItemSlot& slot) {
         if (slot.empty()) return false;
-        if (slot.item.subclassName == "Fishing Pole") return true;
         const auto* info = gameHandler_->getItemInfo(slot.item.itemId);
         return info && info->valid && info->itemClass == 2 && info->subClass == 20;
     };

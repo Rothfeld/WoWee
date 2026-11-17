@@ -153,10 +153,31 @@ inline std::vector<EquipSlot> comparableEquipSlots(uint8_t inventoryType) {
     }
 }
 
+// ItemSubclassWeapon (CMaNGOS ItemPrototype.h), for item class 2.
+inline constexpr uint32_t ITEM_CLASS_WEAPON = 2;
+enum WeaponSubclass : uint32_t {
+    WEAPON_SUBCLASS_BOW = 2,
+    WEAPON_SUBCLASS_POLEARM = 6,
+    WEAPON_SUBCLASS_STAFF = 10,
+    WEAPON_SUBCLASS_FIST = 13,
+    WEAPON_SUBCLASS_DAGGER = 15,
+    WEAPON_SUBCLASS_CROSSBOW = 18,
+    WEAPON_SUBCLASS_WAND = 19,
+};
+
+/// True for a weapon of the given ItemSubclassWeapon.
+inline bool isWeaponSubclass(uint32_t itemClass, uint32_t subClass, WeaponSubclass want) {
+    return itemClass == ITEM_CLASS_WEAPON && subClass == want;
+}
+
 struct ItemDef {
     uint32_t itemId = 0;
     std::string name;
     std::string subclassName;  // "Sword", "Mace", "Shield", etc.
+    // Item class and subclass ids (Item.dbc / item query). Behaviour reads
+    // these; subclassName is display text only.
+    uint32_t itemClass = 0;
+    uint32_t subClass = 0;
     ItemQuality quality = ItemQuality::COMMON;
     uint8_t inventoryType = 0;
     uint32_t stackCount = 1;

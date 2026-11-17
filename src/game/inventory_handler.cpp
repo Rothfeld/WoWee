@@ -4922,6 +4922,8 @@ ItemDef InventoryHandler::buildItemDef(uint32_t entry, uint32_t stackCount,
         def.maxStack = std::max(1, info.maxStack);
         def.displayInfoId = info.displayInfoId;
         def.subclassName = info.subclassName;
+        def.itemClass = info.itemClass;
+        def.subClass = info.subClass;
         def.damageMin = info.damageMin;
         def.damageMax = info.damageMax;
         def.delayMs = info.delayMs;
@@ -5091,6 +5093,8 @@ void InventoryHandler::rebuildOnlineInventory() {
             def.maxStack = std::max(1, infoIt->second.maxStack);
             def.displayInfoId = infoIt->second.displayInfoId;
             def.subclassName = infoIt->second.subclassName;
+            def.itemClass = infoIt->second.itemClass;
+            def.subClass = infoIt->second.subClass;
             def.damageMin = infoIt->second.damageMin;
             def.damageMax = infoIt->second.damageMax;
             def.delayMs = infoIt->second.delayMs;
@@ -5182,6 +5186,8 @@ void InventoryHandler::rebuildOnlineInventory() {
                 def.maxStack = std::max(1, infoIt->second.maxStack);
                 def.displayInfoId = infoIt->second.displayInfoId;
                 def.subclassName = infoIt->second.subclassName;
+                def.itemClass = infoIt->second.itemClass;
+                def.subClass = infoIt->second.subClass;
                 def.damageMin = infoIt->second.damageMin;
                 def.damageMax = infoIt->second.damageMax;
                 def.delayMs = infoIt->second.delayMs;
