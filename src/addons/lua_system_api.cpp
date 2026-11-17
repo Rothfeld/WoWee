@@ -1932,6 +1932,20 @@ static int lua_GetAddOnInfo(lua_State* L) {
     return 8;
 }
 
+// IsAddOnLoadOnDemand(addonNameOrIndex) -> 1 or nil, as the 2.4.3 API.
+// Ace2's AceLibrary calls it while registering every library it embeds.
+static int lua_IsAddOnLoadOnDemand(lua_State* L) {
+    const int idx = pushAddonRegistryAndIndex(L, 1);
+    if (idx < 1) { lua_pushnil(L); return 1; }
+    lua_rawgeti(L, -1, idx);
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); lua_pushnil(L); return 1; }
+    lua_getfield(L, -1, "loadOnDemand");
+    const bool lod = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 3);
+    if (lod) lua_pushnumber(L, 1); else lua_pushnil(L);
+    return 1;
+}
+
 // GetAddOnMetadata(addonNameOrIndex, key) → value
 static int lua_GetAddOnMetadata(lua_State* L) {
     const int idx = pushAddonRegistryAndIndex(L, 1);
@@ -7070,6 +7084,7 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"CombatLog_Object_IsA", lua_CombatLog_Object_IsA},
                 {"GetNumAddOns",      lua_GetNumAddOns},
                 {"GetAddOnInfo",      lua_GetAddOnInfo},
+                {"IsAddOnLoadOnDemand", lua_IsAddOnLoadOnDemand},
                 // Turning an addon off, which the "an addon did something it
                 // is not allowed to" popup offers as its first button before
                 // reloading. Answered with nothing, that button reloaded and
