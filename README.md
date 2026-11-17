@@ -657,8 +657,14 @@ as its mesh does: `BFD_WaterFalls01.m2` splash (authored 190,218,220) is blue
 under placement (84,125,223) and `BFD_WaterFalls10.m2` teal under (43,91,100).
 Flag 0x1000 (XYQuad) sprites lie flat in the model XY plane:
 `WaterElemental.m2` #16/#21 are the ground rings under an Aqua Guardian.
-Flag 0x400 is not rendered; drawing those particles pinned at their birth
-point or stretched from it did not match the original client.
+Flag 0x400 pins a tail to its birth point: the tail runs back along
+`-velocity * tailLength` but never past where the particle was born. 2204 of
+3522 TBC tail emitters carry it, many with tailLength 10 s; without the limit
+Bloodlust/Summon hand rings and the fire precast hand sparks drew 3-9 yd
+spokes absent in the original, while acid breath drops (0.1 s) keep their
+short tail. Whether unpinned tails also stop at birth is unverified (about
+ten TBC emitters would differ). Evidence:
+`_experiments/20261117T233000Z.flag400_spokes` in the workspace.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
 
 ### Quest object sparkle

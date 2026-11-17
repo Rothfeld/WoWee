@@ -184,6 +184,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             // frame (DR_Draenei_HoloRunes02 sparks at 8 fps).
             p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
                                                          localPos, p.life, dt));
+            p.birthPosition = p.position;
             p.gravityDirection = particleGravityDirection(birthTransform);
             p.birthBasis = glm::mat3(birthTransform);
             if (!em.geometryModel.empty()) {
@@ -982,7 +983,9 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
                 vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
                 const glm::vec3 displacement = xyQuad ? glm::normalize(glm::vec3(inst.modelMatrix[0]))
-                    : tail ? -worldVelocity * em.tailLength : glm::vec3(0);
+                    : tail ? particleTailVector(em.flags, worldVelocity, em.tailLength,
+                        glm::vec3(cachedParticleTransform * glm::vec4(p.birthPosition, 1)) - worldPosition)
+                    : glm::vec3(0);
                 vd[9] = displacement.x;
                 vd[10] = displacement.y;
                 vd[11] = displacement.z;

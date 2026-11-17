@@ -395,3 +395,17 @@ TEST_CASE("Legacy emitters read geometry model and tumble range", "[m2][particle
     CHECK(model.particleEmitters[0].tumbleMin == glm::vec3(0.0f));
     CHECK(model.particleEmitters[0].tumbleMax == glm::vec3(0.0f, 0.0f, 8.0f));
 }
+
+TEST_CASE("Pinned particle tails end at the birth point", "[m2][particle]") {
+    using namespace wowee::rendering;
+    // Bloodlust hand ring (0x479): 0.28 yd/s, tailLength 10 s, 0.1 yd from birth.
+    const glm::vec3 velocity(0.28f, 0.0f, 0.0f);
+    const glm::vec3 toBirth(-0.1f, 0.0f, 0.0f);
+    const glm::vec3 pinned = particleTailVector(0x479, velocity, 10.0f, toBirth);
+    CHECK(pinned.x == Catch::Approx(-0.1f));
+    // Without 0x400 the tail keeps its full authored length.
+    CHECK(particleTailVector(0x79, velocity, 10.0f, toBirth).x == Catch::Approx(-2.8f));
+    // Acid breath drop (0x429) far from its birth: velocity tail.
+    const glm::vec3 drop = particleTailVector(0x429, glm::vec3(0, 4.44f, 0), 0.1f, glm::vec3(0, -3.0f, 0));
+    CHECK(drop.y == Catch::Approx(-0.444f));
+}

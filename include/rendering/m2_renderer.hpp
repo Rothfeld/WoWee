@@ -239,6 +239,8 @@ struct M2Particle {
     float life;        // current age in seconds
     float maxLife;     // total lifespan
     int emitterIndex;  // which emitter spawned this
+    /// Where it was born, in its simulation space (see kParticlePinned).
+    glm::vec3 birthPosition{0.0f};
     /// Emitter orientation at birth, in the particle's simulation space;
     /// a geometry-model particle draws its mesh in it.
     glm::mat3 birthBasis{1.0f};

@@ -11,6 +11,21 @@ inline constexpr uint32_t kParticleInModelSpace = 0x80;
 // Sprites lie flat in the model's XY plane (ground rings: WaterElemental
 // #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001).
 inline constexpr uint32_t kParticleXYQuad = 0x1000;
+inline constexpr uint32_t kParticlePinned = 0x400;
+
+// A tail quad runs from the particle back along -velocity * tailLength.
+// Pinned tails (0x400) end at the particle's birth point at most. 2204 of
+// the 3522 TBC tail emitters are pinned, many authoring tailLength 10 s:
+// Bloodlust/Summon hand rings (0x479, 0.28 yd/s, 10 s) and the fire precast
+// hand sparks (0x439, -1.67 yd/s inward, 5.45 s) otherwise draw 3-9 yd spokes
+// the original client does not show. Acid breath drops (0x429, 4.44 yd/s,
+// 0.1 s) keep their short velocity tail once past their birth point.
+inline glm::vec3 particleTailVector(uint32_t flags, const glm::vec3& velocity, float tailLength,
+                                    const glm::vec3& toBirth) {
+    const glm::vec3 tail = -velocity * tailLength;
+    if (!(flags & kParticlePinned)) return tail;
+    return glm::dot(tail, tail) > glm::dot(toBirth, toBirth) ? toBirth : tail;
+}
 
 // M2/WMO placements carry uniform scale in their transform. Matrix-created
 // doodads have no separate scalar placement value; measure their basis.
