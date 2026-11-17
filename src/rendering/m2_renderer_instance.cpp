@@ -333,10 +333,10 @@ void M2Renderer::setSkipCollision(uint32_t instanceId, bool skip) {
     }
 }
 
-void M2Renderer::setSkipWallCollision(uint32_t instanceId, bool skip) {
+void M2Renderer::setRequireAuthoredWallCollision(uint32_t instanceId) {
     for (auto& inst : instances) {
         if (inst.id == instanceId) {
-            inst.skipWallCollision = skip;
+            inst.requireAuthoredWallCollision = true;
             return;
         }
     }
@@ -1225,7 +1225,8 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
         const bool authoredCollision = model.collision.valid();
         if ((model.collisionNoBlock && !authoredCollision) ||
             model.isInvisibleTrap || model.isSpellEffect) continue;
-        if (instance.skipCollision || instance.skipWallCollision) continue;
+        if (instance.skipCollision ||
+            (instance.requireAuthoredWallCollision && !authoredCollision)) continue;
         if (instance.scale <= 0.001f) continue;
 
         // --- Mesh-based wall collision: closest-point push ---

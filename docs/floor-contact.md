@@ -19,6 +19,13 @@ Releasing movement input must not erase the airborne trajectory; FALL_LAND
 clears it. Native TBC captures on this route use zero launch speed and
 7 yards/second horizontal travel without a JUMP opcode.
 
+WMO child props require authored collision geometry for wall blocking. Evaluate
+this policy against the renderer's cached model. Tile preparation intentionally
+uses empty model placeholders for repeated or already uploaded assets; an empty
+placeholder says nothing about collision in the cached model. Both initial and
+reused instances must block against the same authored triangles. Decorative
+children without collision meshes must not gain bounding-box walls.
+
 Paired native/client recordings and supported-ramp checks are retained in the
 parent workspace under `_experiments/20261117T000028Z.balcony_contact`.
 The movement helper regressions run with:

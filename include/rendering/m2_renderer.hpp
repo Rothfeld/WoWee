@@ -334,7 +334,7 @@ struct M2Instance {
     float afloatRecheck = 0.0f;
     bool cachedIsValid = false;
     bool skipCollision = false;    // Fully non-collidable visual/effect instance
-    bool skipWallCollision = false; // Keep authored floors, suppress only wall blocking
+    bool requireAuthoredWallCollision = false; // Never invent walls for decorative WMO children
     float cachedBoundRadius = 0.0f;
     glm::vec3 cachedCullCenter{0.0f};              // transformed visual-bounds center
     float cachedVisualRadius = 0.0f;               // transformed visual-bounds half diagonal
@@ -615,7 +615,7 @@ public:
     /// distance can't cull it while the server still considers it visible.
     void setInstanceIsGameObject(uint32_t instanceId, bool isGameObject);
     void setSkipCollision(uint32_t instanceId, bool skip);
-    void setSkipWallCollision(uint32_t instanceId, bool skip);
+    void setRequireAuthoredWallCollision(uint32_t instanceId);
     void clear();
     /** Drop all instances but keep models in GPU memory. Cheap path for the
      *  editor's rebuild loop where the same model is re-instanced repeatedly. */
