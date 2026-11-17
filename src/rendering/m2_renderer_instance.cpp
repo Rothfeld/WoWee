@@ -1375,7 +1375,13 @@ float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec
         if (requiredInstanceId != 0 && instance.id != requiredInstanceId) continue;
         if (instance.id == excludedInstanceId || !instance.cachedModel) continue;
         const auto& model = *instance.cachedModel;
-        if (model.isInvisibleTrap || model.isSpellEffect) continue;
+        // Picking one object (requiredInstanceId) tests every batch it draws.
+        // Shattrath's city portals (MagePortal_*.m2) are a single additive
+        // quad; build 8606 takes the cursor over that quad (pair 0 hover),
+        // so neither the spell-effect class nor additive blending removes
+        // an object's own surface. Occlusion queries still skip them.
+        const bool ownSurface = requiredInstanceId != 0;
+        if (model.isInvisibleTrap || (model.isSpellEffect && !ownSurface)) continue;
         float enter = 0.0f;
         if (!segmentIntersectsAABB(origin, end, instance.worldBoundsMin,
                                    instance.worldBoundsMax, enter)) continue;
@@ -1401,7 +1407,7 @@ float M2Renderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec
         for (const auto& batch : model.batches) {
             // Additive flame/glow cards and invisible/alternate batches do not
             // turn empty space between the solid candles into an occluder.
-            if (batch.submeshLevel != 0 || batch.blendMode >= 2 ||
+            if (batch.submeshLevel != 0 || (batch.blendMode >= 2 && !ownSurface) ||
                 batch.batchOpacity < 0.01f || batch.starLayer) continue;
             assert(batch.indexStart + batch.indexCount <= model.pickIndices.size());
             closest = pickVisualTriangles(positions,
