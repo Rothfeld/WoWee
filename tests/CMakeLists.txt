@@ -167,6 +167,10 @@ endfunction()
 wowee_add_test(test_sell_count
     SOURCES test_sell_count.cpp)
 
+# WorldStateAlwaysUpFrame lines from WorldStateUI.dbc rows. Header-only.
+wowee_add_test(test_world_state_ui
+    SOURCES test_world_state_ui.cpp)
+
 # Group loot roll and item chat lines from GlobalStrings. Header-only.
 # WOWEE_TBC_GLOBALSTRINGS=<extracted tbc>/interface/framexml/globalstrings.lua
 # also checks every pattern against the client's file.

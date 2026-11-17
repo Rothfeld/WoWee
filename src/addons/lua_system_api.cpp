@@ -30,7 +30,9 @@
 #include "ui/widget_tree.hpp"
 #include "rendering/camera_controller.hpp"
 #include "addons/lua_engine.hpp"
-#include "game/bg_score_defs.hpp"
+#include "game/world_state_ui.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_layout.hpp"
 #include "game/calendar_month.hpp"
 #include "game/calendar_data.hpp"
 #include "game/pet_action.hpp"
@@ -3692,67 +3694,87 @@ static int lua_ReturnOne(lua_State* L) {
     return 1;
 }
 
-// The always-up battleground score lines, in the order FrameXML asks for them.
-// The server sends world states as bare key/value pairs, so the labels come
-// from the shared table this client's own heads-up display also reads.
-struct WorldStateLine {
-    std::string text;
-};
-
-static std::vector<WorldStateLine> worldStateLines(game::GameHandler* gh) {
-    std::vector<WorldStateLine> out;
-    if (!gh) return out;
-    const game::BgScoreDef* def = game::findBgScoreDef(gh->getWorldStateMapId());
-    if (!def) return out;
-
-    auto alliance = gh->getWorldState(def->allianceKey);
-    auto horde    = gh->getWorldState(def->hordeKey);
-    if (!alliance && !horde) return out;
-
-    uint32_t maxScore = def->hardcodedMax;
-    if (def->maxKey != 0) {
-        if (auto mv = gh->getWorldState(def->maxKey)) maxScore = *mv;
+// WorldStateAlwaysUpFrame's lines: WorldStateUI.dbc rows for the player's map
+// and area, filled in from the server's world states (game/world_state_ui.hpp).
+static std::vector<game::WorldStateUILine> worldStateUILines(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    auto* svc = getLuaServices(L);
+    if (!gh || !svc || !svc->getLiveAreaId || !svc->getLiveZoneId) return {};
+    auto* am = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* l = layouts ? layouts->getLayout("WorldStateUI") : nullptr;
+    const auto* areaLayout = layouts ? layouts->getLayout("AreaTable") : nullptr;
+    if (!am || !l || !areaLayout) {
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            LOG_ERROR("WorldStateUI: no asset manager or no WorldStateUI/AreaTable layout "
+                      "in the installed dbc_layouts.json; world state lines unavailable");
+        }
+        return {};
     }
-    const bool showMax = maxScore > 0 && def->unit && def->unit[0] != '\0';
+    const auto dbc = am->loadDBC("WorldStateUI.dbc");
+    const auto areas = am->loadDBC("AreaTable.dbc");
+    if (!dbc || !dbc->isLoaded() || !areas || !areas->isLoaded()) return {};
 
-    char buf[96];
-    for (int side = 0; side < 2; ++side) {
-        const char* label = side == 0 ? "Alliance" : "Horde";
-        const uint32_t score = (side == 0 ? alliance : horde).value_or(0);
-        if (showMax) snprintf(buf, sizeof(buf), "%s: %u/%u", label, score, maxScore);
-        else         snprintf(buf, sizeof(buf), "%s: %u", label, score);
-        out.push_back({buf});
+    // The area under the player and each of its parents, plus the zone.
+    std::vector<uint32_t> chain;
+    const uint32_t parentField = areaLayout->field("ParentAreaNum");
+    for (uint32_t a = svc->getLiveAreaId(); a != 0 && chain.size() < 16;) {
+        chain.push_back(a);
+        const int32_t r = areas->findRecordById(a);
+        if (r < 0) break;
+        a = areas->getUInt32(static_cast<uint32_t>(r), parentField);
     }
-    return out;
+    chain.push_back(svc->getLiveZoneId());
+
+    std::vector<game::WorldStateUIRow> rows;
+    rows.reserve(dbc->getRecordCount());
+    for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+        game::WorldStateUIRow row;
+        row.id = dbc->getUInt32(r, l->field("ID"));
+        row.mapId = dbc->getUInt32(r, l->field("MapID"));
+        row.areaId = dbc->getUInt32(r, l->field("AreaID"));
+        row.stateVariable = dbc->getUInt32(r, l->field("StateVariable"));
+        row.type = dbc->getUInt32(r, l->field("Type"));
+        row.icon = dbc->getString(r, l->field("Icon"));
+        row.text = dbc->getString(r, l->field("String"));
+        row.tooltip = dbc->getString(r, l->field("Tooltip"));
+        row.dynamicIcon = dbc->getString(r, l->field("DynamicIcon"));
+        row.dynamicTooltip = dbc->getString(r, l->field("DynamicTooltip"));
+        row.extendedUI = dbc->getString(r, l->field("ExtendedUI"));
+        for (int k = 0; k < 3; ++k) {
+            row.extendedUIStateVariables[k] = dbc->getUInt32(
+                r, l->field("ExtendedUIStateVariable" + std::to_string(k)));
+        }
+        rows.push_back(std::move(row));
+    }
+    return game::worldStateUILines(rows, gh->getCurrentMapId(), chain,
+        [gh](uint32_t key) { return gh->getWorldState(key); });
 }
 
-// GetNumWorldStateUI() - how many always-up lines there are to draw.
+// GetNumWorldStateUI() - how many lines there are, shown or not (state 0).
 static int lua_GetNumWorldStateUI(lua_State* L) {
-    lua_pushinteger(L, static_cast<lua_Integer>(worldStateLines(getGameHandler(L)).size()));
+    lua_pushinteger(L, static_cast<lua_Integer>(worldStateUILines(L).size()));
     return 1;
 }
 
-// GetWorldStateUIInfo(index) → uiType, state, text, icon, dynamicIcon, tooltip,
+// GetWorldStateUIInfo(index) -> uiType, state, text, icon, dynamicIcon, tooltip,
 // dynamicTooltip, extendedUI, extendedUIState1, extendedUIState2, extendedUIState3
-//
-// uiType 0 keeps worldstateframe.lua out of its world-PvP branch, which is the
-// one gated on a CVar and on IsSubZonePVPPOI. state 1 means "show, no flash".
 static int lua_GetWorldStateUIInfo(lua_State* L) {
-    const int index = static_cast<int>(luaL_optinteger(L, 1, 0));
-    const auto lines = worldStateLines(getGameHandler(L));
+    const int index = static_cast<int>(luaL_checkinteger(L, 1));
+    const auto lines = worldStateUILines(L);
     if (index < 1 || index > static_cast<int>(lines.size())) return 0;
-
-    lua_pushinteger(L, 0);                              // uiType
-    lua_pushinteger(L, 1);                              // state
-    lua_pushstring(L, lines[index - 1].text.c_str());   // text
-    lua_pushstring(L, "");                              // icon
-    lua_pushstring(L, "");                              // dynamicIcon
-    lua_pushstring(L, "");                              // tooltip
-    lua_pushstring(L, "");                              // dynamicTooltip
-    lua_pushstring(L, "");                              // extendedUI
-    lua_pushinteger(L, 0);                              // extendedUIState1
-    lua_pushinteger(L, 0);                              // extendedUIState2
-    lua_pushinteger(L, 0);                              // extendedUIState3
+    const auto& line = lines[static_cast<size_t>(index - 1)];
+    lua_pushinteger(L, line.uiType);
+    lua_pushinteger(L, line.state);
+    lua_pushstring(L, line.text.c_str());
+    lua_pushstring(L, line.icon.c_str());
+    lua_pushstring(L, line.dynamicIcon.c_str());
+    lua_pushstring(L, line.tooltip.c_str());
+    lua_pushstring(L, line.dynamicTooltip.c_str());
+    lua_pushstring(L, line.extendedUI.c_str());
+    for (const uint32_t v : line.extendedUIStates) lua_pushinteger(L, v);
     return 11;
 }
 

@@ -515,6 +515,22 @@
     "MapID": 1,
     "ParentWorldMapID": 10
   },
+  "WorldStateUI": {
+    "AreaID": 2,
+    "DynamicIcon": 41,
+    "DynamicTooltip": 42,
+    "ExtendedUI": 59,
+    "ExtendedUIStateVariable0": 60,
+    "ExtendedUIStateVariable1": 61,
+    "ExtendedUIStateVariable2": 62,
+    "ID": 0,
+    "Icon": 3,
+    "MapID": 1,
+    "StateVariable": 39,
+    "String": 4,
+    "Tooltip": 21,
+    "Type": 40
+  },
   "ItemSubClass": {
     "ClassID": 0,
     "SubClassID": 1,
