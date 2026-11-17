@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rendering/body_collision.hpp"
 #include "rendering/collision_geometry.hpp"
 #include "rendering/spatial_grid.hpp"
 #include "rendering/shadow_params.hpp"
@@ -614,6 +615,10 @@ public:
     bool constrainFloorSnap(const glm::vec3& from, float requestedZ,
                             float radius, float height,
                             float& supportZ, float& supportNormalZ) const;
+    // Where a grounded body ends after stepping up by at most maxStepUp,
+    // across to `to` and back down onto authored M2 collision faces.
+    [[nodiscard]] glm::vec3 stepBody(const glm::vec3& from, const glm::vec3& to,
+                                     float radius, float height, float maxStepUp) const;
 
     /// Every doodad the floor query would consider here, and what each one
     /// contributes. The WMO side has had debugDumpGroupsAtPosition for this
@@ -740,6 +745,10 @@ public:
     void setPredecodedBLPCache(std::unordered_map<std::string, pipeline::BLPImage>* cache) { predecodedBLPCache_ = cache; }
 
 private:
+    // Authored collision faces of every movement-blocking instance overlapping
+    // the world box, transformed to world space.
+    void appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
+                                      std::vector<movement::BodyTriangle>& triangles) const;
     bool initialized_ = false;
     bool insideInterior = false;
     pipeline::AssetManager* assetManager = nullptr;

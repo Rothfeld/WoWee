@@ -116,4 +116,34 @@ inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
     return collided;
 }
 
+// Grounded step: lift the body by up to maxStepUp (less under a ceiling),
+// move it across without rising, then lower it no further than the original
+// sole. The result rests on whatever authored face the descent meets first,
+// whatever that face's slope: build 8606 places the body at exactly this
+// height against the 74-degree sides of the Exodar table and on hammer
+// handles. Whether that face can support standing is the caller's floor
+// decision. A descent that meets nothing ends at the original sole height,
+// on the ground the walker already stood on.
+inline glm::vec3 stepBodyAcross(const glm::vec3& from, const glm::vec3& to,
+        float radius, float height, std::span<const BodyTriangle> triangles, float maxStepUp) {
+    assert(std::abs(to.z - from.z) < 1e-6f);
+    assert(std::isfinite(maxStepUp) && maxStepUp > 0.0f);
+    const auto firstContact = [&](const glm::vec3& start, const glm::vec3& delta) {
+        std::optional<BodyContact> first;
+        for (const auto& triangle : triangles) {
+            const auto contact = sweepBodyTriangle(start, delta, radius, height, triangle);
+            if (contact && (!first || contact->time < first->time)) first = contact;
+        }
+        return first;
+    };
+    glm::vec3 up(0.0f, 0.0f, maxStepUp);
+    if (const auto ceiling = firstContact(from, up))
+        up.z = std::max(0.0f, up.z * ceiling->time - 0.0014f);
+    glm::vec3 across;
+    moveBody(from + up, to + up, radius, height, triangles, across, false);
+    const glm::vec3 down(0.0f, 0.0f, from.z - across.z);
+    const auto support = firstContact(across, down);
+    return across + down * (support ? support->time : 1.0f);
+}
+
 } // namespace wowee::rendering::movement

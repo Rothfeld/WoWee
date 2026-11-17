@@ -36,6 +36,21 @@ a grounded step. A vertical side collision may block penetration but ends a
 fall only when a walkable M2 floor reaches the feet. This keeps the next lateral
 sweep from gaining a grounded step allowance while hanging against a prop.
 
+Grounded movement that runs into authored M2 collision steps: the body rises
+by at most `kMaxStepUp`, moves across, and descends onto the first face it
+meets, whatever that face's slope. Ground-follow then decides support: a
+walkable face keeps the walker grounded, a steep one starts a fall from rest.
+Native TBC places the beveled body at exactly that resting height (within a
+few millimetres, measured against the exported placed meshes) on the Exodar
+table's 74-degree pedestal sides and on the hammer handles beside it, then
+falls or walks on. Without the step, WoWee slid along the pedestal at floor
+height. Native rose up to 0.92 yards in one frame there, more than the 0.6
+budget, so the native step height is not established by this evidence.
+Native outcomes depend on frame rate: uncapped on a busy host it climbed the
+table in three of four identical walks; capped at 20 fps it never did.
+Compare at a matched frame rate. Evidence:
+`_experiments/20261117T171500Z.table_collision_data_rule`.
+
 M2 support probes use the moving body's radius and lower beveled envelope.
 Each offset sample carries its height above the sole; subtract that height from
 the mesh hit to obtain supported sole height. A prop touching the body's side

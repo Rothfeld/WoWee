@@ -1143,17 +1143,9 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
     return bestFloor;
 }
 
-bool M2Renderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
-                                   float radius, float height,
-                                   float& supportZ, float& supportNormalZ) const {
-    assert(requestedZ < from.z);
-    QueryTimer timer(&queryTimeMs, &queryCallCount);
-    const glm::vec3 to(from.x, from.y, requestedZ);
-    const glm::vec3 delta = to - from;
-    const glm::vec3 worldLow(from.x-radius, from.y-radius, requestedZ);
-    const glm::vec3 worldHigh(from.x+radius, from.y+radius, from.z+height);
+void M2Renderer::appendBodyCollisionTriangles(const glm::vec3& worldLow, const glm::vec3& worldHigh,
+                                              std::vector<movement::BodyTriangle>& triangles) const {
     gatherCandidates(worldLow, worldHigh, tl_m2_candidateScratch);
-    std::optional<movement::BodyContact> first;
     for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
         if (instance.skipCollision || !instance.cachedModel || instance.scale <= 0.001f ||
@@ -1187,14 +1179,42 @@ bool M2Renderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
                 triangle[corner] = glm::vec3(instance.modelMatrix * glm::vec4(
                     model.collision.vertices[model.collision.indices[ti*3+corner]], 1));
             }
-            const auto contact = movement::sweepBodyTriangle(from, delta, radius, height, triangle);
-            if (contact && (!first || contact->time < first->time)) first = contact;
+            triangles.push_back(triangle);
         }
+    }
+}
+
+bool M2Renderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
+                                   float radius, float height,
+                                   float& supportZ, float& supportNormalZ) const {
+    assert(requestedZ < from.z);
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    const glm::vec3 to(from.x, from.y, requestedZ);
+    const glm::vec3 delta = to - from;
+    thread_local std::vector<movement::BodyTriangle> triangles;
+    triangles.clear();
+    appendBodyCollisionTriangles(glm::vec3(from.x-radius, from.y-radius, requestedZ),
+                                 glm::vec3(from.x+radius, from.y+radius, from.z+height), triangles);
+    std::optional<movement::BodyContact> first;
+    for (const auto& triangle : triangles) {
+        const auto contact = movement::sweepBodyTriangle(from, delta, radius, height, triangle);
+        if (contact && (!first || contact->time < first->time)) first = contact;
     }
     if (!first) return false;
     supportZ = from.z + delta.z * first->time;
     supportNormalZ = first->normal.z;
     return true;
+}
+
+glm::vec3 M2Renderer::stepBody(const glm::vec3& from, const glm::vec3& to,
+                               float radius, float height, float maxStepUp) const {
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    thread_local std::vector<movement::BodyTriangle> triangles;
+    triangles.clear();
+    appendBodyCollisionTriangles(glm::min(from, to) - glm::vec3(radius, radius, 0.0f),
+                                 glm::max(from, to) + glm::vec3(radius, radius, height + maxStepUp),
+                                 triangles);
+    return movement::stepBodyAcross(from, to, radius, height, triangles, maxStepUp);
 }
 
 bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,

@@ -8,10 +8,12 @@
 // the box surface for the distance test, and a plane-intersection solved by
 // hand for the ray test - rather than by calling the functions a second way.
 #include "rendering/body_collision.hpp"
+#include "rendering/movement_limits.hpp"
 #include <catch_amalgamated.hpp>
 
 #include <cmath>
 #include <limits>
+#include <vector>
 
 #include <glm/glm.hpp>
 
@@ -352,4 +354,56 @@ TEST_CASE("ground snap cannot erase beveled side contact") {
     CHECK(first->normal.z > 0.0f);
     // The side catches the lower bevel, but does not provide a walkable floor.
     CHECK(first->normal.z < .642787635f);
+}
+
+TEST_CASE("grounded step rests on the steep authored face it walks into") {
+    using namespace wowee::rendering::movement;
+    // One side of DR_TABLE_MEDIUM_01's collision pedestal: a face rising
+    // 1.45 yards while leaning 0.416 yards inward, normal (-0.961, 0, 0.276).
+    const float lean = 1.45f * 0.276f / 0.961f;
+    const std::vector<BodyTriangle> side = {
+        BodyTriangle{glm::vec3(1,-2,0),glm::vec3(1+lean,2,1.45f),glm::vec3(1,2,0)},
+        BodyTriangle{glm::vec3(1,-2,0),glm::vec3(1+lean,-2,1.45f),glm::vec3(1+lean,2,1.45f)}};
+    const float radius = .305556f, height = 2.03127f;
+    // The body's full-width bevel corners meet the face first.
+    const float faceAtBevel = 1 + lean * radius * kBodyBevel / 1.45f;
+    const glm::vec3 from(faceAtBevel - radius - .01f, 0, 0), to(from.x + .12f, 0, 0);
+
+    glm::vec3 ordinary;
+    REQUIRE(moveBody(from, to, radius, height, side, ordinary, false));
+    const glm::vec3 stepped = stepBodyAcross(from, to, radius, height, side, kMaxStepUp);
+    CHECK(stepped.x == Catch::Approx(to.x).margin(.0001f));
+    CHECK(stepped.x > ordinary.x);
+    // The body ends where it rests on the face: lowering it any further
+    // must meet the face immediately, with an unwalkable contact.
+    REQUIRE(stepped.z > .2f);
+    std::optional<BodyContact> below;
+    for (const auto& triangle : side) {
+        const auto contact = sweepBodyTriangle(stepped + glm::vec3(0,0,.01f), {0,0,-.1f},
+                                               radius, height, triangle);
+        if (contact && (!below || contact->time < below->time)) below = contact;
+    }
+    REQUIRE(below);
+    CHECK(below->time * .1f == Catch::Approx(.01f).margin(.0002f));
+    CHECK(!isWalkableNormal(below->normal.z));
+}
+
+TEST_CASE("grounded step over a low authored edge returns to the sole height") {
+    using namespace wowee::rendering::movement;
+    // A 0.2-yard block one yard deep: the step crosses its top and, with no
+    // face beneath the far side, ends back at the original sole height.
+    std::vector<BodyTriangle> block;
+    const auto quad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
+        block.push_back({a,b,c});
+        block.push_back({a,c,d});
+    };
+    quad({0,-2,0},{0,2,0},{0,2,.2f},{0,-2,.2f});
+    quad({0,-2,.2f},{0,2,.2f},{.1f,2,.2f},{.1f,-2,.2f});
+    quad({.1f,-2,.2f},{.1f,2,.2f},{.1f,2,0},{.1f,-2,0});
+    const float radius = .305556f, height = 2.03127f;
+    const glm::vec3 from(-radius - .01f, 0, 0), onTop(.05f, 0, 0), beyond(.5f, 0, 0);
+    CHECK(stepBodyAcross(from, onTop, radius, height, block, kMaxStepUp).z ==
+          Catch::Approx(.2f).margin(.002f));
+    CHECK(stepBodyAcross(from, beyond, radius, height, block, kMaxStepUp).z ==
+          Catch::Approx(0.f).margin(.0001f));
 }

@@ -355,6 +355,35 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
                         " grounded=", grounded);
                 }
             }
+            // Build 8606 steps a grounded body onto the authored face it walks
+            // into, whatever that face's slope: native feet rest exactly on the
+            // Exodar table's 74-degree sides and on hammer handles before
+            // falling or walking on. Ground-follow then decides whether that
+            // face supports standing. Ledger #12.
+            if (horizontalContact && grounded && !swimming && !isFlightAirborne()) {
+                const glm::vec3 stepped = m2Renderer->stepBody(stepPos, horizontal,
+                    collisionRadius_, collisionHeight_, movement::kMaxStepUp);
+                const glm::vec2 intent(horizontal - stepPos);
+                bool farther = glm::dot(glm::vec2(stepped - stepPos), intent) >
+                    glm::dot(glm::vec2(horizontalAdjusted - stepPos), intent) + 1e-6f;
+                // The step's raised path must also clear building geometry.
+                if (farther && wmoRenderer) {
+                    const glm::vec3 raised(stepPos.x, stepPos.y, std::max(stepPos.z, stepped.z));
+                    glm::vec3 ignored;
+                    farther = !wmoRenderer->checkWallCollision(stepPos, raised, ignored,
+                                  cachedInsideWMO, true, collisionRadius_, collisionHeight_) &&
+                              !wmoRenderer->checkWallCollision(raised, stepped, ignored,
+                                  cachedInsideWMO, true, collisionRadius_, collisionHeight_);
+                }
+                static const bool traceStep = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
+                if (traceStep) {
+                    LOG_INFO("M2 grounded step: from=", stepPos.x, ",", stepPos.y, ",", stepPos.z,
+                        " stepped=", stepped.x, ",", stepped.y, ",", stepped.z,
+                        " ordinary=", horizontalAdjusted.x, ",", horizontalAdjusted.y, ",", horizontalAdjusted.z,
+                        " selected=", farther);
+                }
+                if (farther) horizontalAdjusted = stepped;
+            }
             candidate = horizontalAdjusted + glm::vec3(0.0f, 0.0f, candidate.z - stepPos.z);
             glm::vec3 adjusted;
             if (m2Renderer->checkCollision(horizontalAdjusted, candidate, adjusted,
