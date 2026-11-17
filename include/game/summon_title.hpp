@@ -6,11 +6,16 @@
 // "%s's Companion", UNITNAME_TITLE_MINION "%s's Minion", ...); the client
 // picks one and fills in the owner's name. Two cases are established:
 //   - a non-combat pet (creature type 12) names its creator as Companion;
-//   - a unit created by a creature names it as Minion: the Razorfen
-//     Geomancer's Stone Rumbler (CMaNGOS spell 8270, SUMMON_PET; only
-//     UNIT_FIELD_CREATEDBY and UNIT_CREATED_BY_SPELL set) reads
-//     "<Razorfen Geomancer's Minion>" in the original
-//     (_experiments/20261117T152914Z.stale_target_frame/original_rumbler.png).
+//   - a unit created by a creature is its Pet when it is a beast (creature
+//     type 1) and its Minion otherwise. All four are SUMMON_PET (effect 56)
+//     cast by creature EventAI; original 2.4.3 on GM Island
+//     (_experiments/20261117T164500Z.summon_title/original-spawned2.png,
+//     original-close1.png, original-close2.png):
+//       Tamed Hyena (beast, family 25, tameable) <Razorfen Beastmaster's Pet>
+//       Tamed Ravager (beast, family 0, not tameable) <Mag'har Hunter's Pet>
+//       Stone Rumbler (elemental, family 0) <Razorfen Geomancer's Minion>
+//       Voidwalker Minion (demon, family 16) <Defias Conjurer's Minion>
+//     So neither family nor the tameable flag decides it; the type does.
 // Units summoned by players (hunter and warlock pets, totems, guardians) are
 // not decided here: no capture says which pattern they take.
 
@@ -19,7 +24,7 @@
 
 namespace wowee::game {
 
-enum class SummonTitle { None, Companion, Minion };
+enum class SummonTitle { None, Companion, Pet, Minion };
 
 /// A player guid has a zero high word; creatures, pets and vehicles do not.
 inline bool isPlayerGuid(uint64_t guid) { return guid != 0 && (guid >> 48) == 0; }
@@ -27,7 +32,9 @@ inline bool isPlayerGuid(uint64_t guid) { return guid != 0 && (guid >> 48) == 0;
 inline SummonTitle summonTitle(uint32_t creatureType, uint64_t creatorGuid) {
     if (creatorGuid == 0) return SummonTitle::None;
     if (creatureType == 12) return SummonTitle::Companion;  // non-combat pet
-    if (!isPlayerGuid(creatorGuid)) return SummonTitle::Minion;
+    constexpr uint32_t kCreatureTypeBeast = 1;
+    if (!isPlayerGuid(creatorGuid))
+        return creatureType == kCreatureTypeBeast ? SummonTitle::Pet : SummonTitle::Minion;
     return SummonTitle::None;
 }
 
@@ -35,6 +42,7 @@ inline SummonTitle summonTitle(uint32_t creatureType, uint64_t creatorGuid) {
 inline const char* summonTitleGlobal(SummonTitle title) {
     switch (title) {
     case SummonTitle::Companion: return "UNITNAME_TITLE_COMPANION";
+    case SummonTitle::Pet:       return "UNITNAME_TITLE_PET";
     case SummonTitle::Minion:    return "UNITNAME_TITLE_MINION";
     case SummonTitle::None:      return nullptr;
     }

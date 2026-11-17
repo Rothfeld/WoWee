@@ -14,6 +14,16 @@ TEST_CASE("a creature's summon is its minion", "[summon-title]") {
     CHECK(formatSummonTitle("%s's Minion", "Razorfen Geomancer") == "Razorfen Geomancer's Minion");
 }
 
+TEST_CASE("a creature's beast summon is its pet", "[summon-title]") {
+    // Original captures, 20261117T164500Z.summon_title: Tamed Hyena (beast,
+    // family 25) and Tamed Ravager (beast, family 0) read "<X's Pet>";
+    // Voidwalker Minion (demon, family 16) reads "<Defias Conjurer's Minion>".
+    const auto hyena = summonTitle(1, 0xF1300011B4000001ull);
+    REQUIRE(hyena == SummonTitle::Pet);
+    CHECK(std::string(summonTitleGlobal(hyena)) == "UNITNAME_TITLE_PET");
+    CHECK(summonTitle(3, 0xF130000026B00001ull) == SummonTitle::Minion);
+}
+
 TEST_CASE("a non-combat pet is its owner's companion", "[summon-title]") {
     CHECK(summonTitle(12, 0x0000000000000004ull) == SummonTitle::Companion);
     CHECK(std::string(summonTitleGlobal(SummonTitle::Companion)) == "UNITNAME_TITLE_COMPANION");
