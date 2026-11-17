@@ -334,6 +334,10 @@ struct M2Instance {
     /// ribbons of models CharacterRenderer draws (creatures, players and
     /// their attached weapons), which share the character's skeleton.
     bool externalPose = false;
+    /// The owner holds a finished one-shot sequence on its last frame (a
+    /// corpse at the end of Death): its animation clock has stopped, so no
+    /// particles are born. Those alive finish their lives.
+    bool externalClockHeld = false;
 
     void recomputeCachedCullFactors();
 
@@ -436,6 +440,7 @@ public:
         float animTimeMs = 0.0f;
         float globalSequenceTimeMs = 0.0f;
         float fade = 1.0f;
+        bool clockHeld = false;
     };
     /// An instance of an emitter model whose pose its owner supplies.
     uint32_t createExternalPoseInstance(uint32_t modelId, const glm::mat4& modelMatrix);

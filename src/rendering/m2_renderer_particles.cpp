@@ -79,6 +79,10 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         inst.emitterAccumulators.resize(gpu.particleEmitters.size(), 0.0f);
     }
 
+    // A held last frame is a stopped clock: nothing is born (see
+    // characterEmitterClockHeld). Particles already alive finish their lives.
+    if (inst.externalPose && inst.externalClockHeld) return;
+
     std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {

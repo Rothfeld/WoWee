@@ -368,6 +368,7 @@ void M2Renderer::setExternalPose(uint32_t instanceId, const ExternalPose& pose) 
     inst.animTime = pose.animTimeMs;
     inst.globalSequenceTime = pose.globalSequenceTimeMs;
     inst.fade = pose.fade;
+    inst.externalClockHeld = pose.clockHeld;
 }
 
 void M2Renderer::updateExternalPoseEffects(float deltaTime) {

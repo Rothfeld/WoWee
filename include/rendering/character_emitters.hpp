@@ -45,6 +45,15 @@ inline float characterEmitterFade(bool visible, float opacity, float cameraOpaci
     return visible ? opacity * cameraOpacity : 0.0f;
 }
 
+/// Whether the owner holds a finished one-shot sequence on its last frame
+/// (a corpse at the end of Death). Its animation clock has stopped and its
+/// emitters bear no particles: ElementalEarth's Death bursts keep rate 100
+/// from 27701 ms to a key at 33333 ms, past Death's end at 30000 ms, and the
+/// original client leaves the Stone Rumbler's corpse without them.
+inline bool characterEmitterClockHeld(bool loop, uint32_t sequenceDurationMs, float timeMs) {
+    return !loop && sequenceDurationMs > 0 && timeMs >= static_cast<float>(sequenceDurationMs);
+}
+
 /// The M2Renderer model id for a character model's emitters. Hashed from the
 /// model path and the character model id, as world doodads hash their path.
 inline uint32_t characterEmitterModelId(const std::string& modelName, uint32_t characterModelId) {

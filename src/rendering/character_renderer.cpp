@@ -2572,6 +2572,8 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
         pose.animTimeMs = time;
         pose.globalSequenceTimeMs = instance.globalSequenceTime;
         pose.fade = fade;
+        pose.clockHeld = !model.sequences.empty() && characterEmitterClockHeld(
+            instance.animationLoop, model.sequences[sequence].duration, instance.animationTime);
         m2Renderer.setExternalPose(companion->second.m2InstanceId, pose);
     }
 }
