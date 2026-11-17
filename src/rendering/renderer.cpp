@@ -2389,6 +2389,14 @@ void Renderer::update(float deltaTime) {
         m2AnimLaunched = false;
     }
 
+    // Character emitters: the skeletons were posed above, and the M2 worker
+    // has let go of its instance table. Pose each character's emitter
+    // instance from its skeleton, then run those emitters.
+    if (characterRenderer && m2Renderer) {
+        characterRenderer->syncEmitters(*m2Renderer);
+        m2Renderer->updateExternalPoseEffects(deltaTime);
+    }
+
     // Footsteps: age visual prints, then let authored footfall events add new ones.
     if (footprintRenderer) {
         footprintRenderer->update(deltaTime);

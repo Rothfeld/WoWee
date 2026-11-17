@@ -18,6 +18,8 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/character_emitters.hpp"
+#include "rendering/m2_renderer.hpp"
 #include "rendering/visual_mesh_pick.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
 #include "rendering/collision_geometry.hpp"
@@ -2492,6 +2494,78 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         }
     }
 }
+void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
+    // Drop emitters whose owner is gone, no longer drawn, replaced by another
+    // model, or whose M2 instance a renderer-wide clear removed.
+    for (auto it = emitterCompanions_.begin(); it != emitterCompanions_.end();) {
+        const auto owner = instances.find(it->first);
+        const bool keep = owner != instances.end() &&
+            owner->second.modelId == it->second.characterModelId &&
+            characterEmitterFade(owner->second.visible, owner->second.opacity,
+                                 owner->second.cameraOpacity) > 0.0f &&
+            m2Renderer.hasInstance(it->second.m2InstanceId);
+        if (keep) { ++it; continue; }
+        if (m2Renderer.hasInstance(it->second.m2InstanceId))
+            m2Renderer.removeInstance(it->second.m2InstanceId);
+        it = emitterCompanions_.erase(it);
+    }
+
+    for (const auto& [id, instance] : instances) {
+        const float fade = characterEmitterFade(instance.visible, instance.opacity,
+                                                instance.cameraOpacity);
+        if (fade <= 0.0f) continue;
+        const auto modelIt = models.find(instance.modelId);
+        if (modelIt == models.end()) continue;
+        const auto& model = modelIt->second.data;
+        if (!hasEffectEmitters(model)) continue;
+
+        const glm::mat4 modelMatrix = instance.hasOverrideModelMatrix
+            ? instance.overrideModelMatrix : getModelMatrix(instance);
+        auto companion = emitterCompanions_.find(id);
+        if (companion == emitterCompanions_.end()) {
+            const uint32_t emitterModelId = characterEmitterModelId(model.name, instance.modelId);
+            if (!m2Renderer.hasModel(emitterModelId)) {
+                if (!m2Renderer.loadModel(emitterOnlyModel(model), emitterModelId)) {
+                    LOG_ERROR("Character emitters: cannot load '", model.name, "' into the M2 renderer");
+                    throw std::runtime_error("Cannot load character emitters: " + model.name);
+                }
+                emitterModelsLoaded_.insert(emitterModelId);
+            } else if (!emitterModelsLoaded_.count(emitterModelId)) {
+                LOG_ERROR("Character emitters: model id ", emitterModelId, " for '", model.name,
+                          "' is already taken in the M2 renderer");
+                throw std::runtime_error("Character emitter model id collision: " + model.name);
+            }
+            const uint32_t m2InstanceId = m2Renderer.createExternalPoseInstance(emitterModelId, modelMatrix);
+            if (!m2InstanceId) {
+                LOG_ERROR("Character emitters: cannot create instance for '", model.name, "'");
+                throw std::runtime_error("Cannot create character emitter instance: " + model.name);
+            }
+            companion = emitterCompanions_.emplace(id, EmitterCompanion{instance.modelId, m2InstanceId}).first;
+            LOG_INFO("Character emitters: '", model.name, "' character instance=", id,
+                     " particles=", model.particleEmitters.size(),
+                     " ribbons=", model.ribbonEmitters.size());
+        }
+
+        // The sequence and time the skeleton was posed with this frame, so the
+        // emitters' rate, lifespan and speed tracks follow the same animation.
+        // Attached weapons keep no sequence of their own: their first one.
+        const int sequence = instance.currentSequenceIndex >= 0 &&
+            instance.currentSequenceIndex < static_cast<int>(model.sequences.size())
+            ? instance.currentSequenceIndex : 0;
+        const float time = model.sequences.empty() ? instance.animationTime
+            : animationSampleTime(instance.currentAnimationId, model.sequences[sequence],
+                                  instance.animationTime);
+        M2Renderer::ExternalPose pose;
+        pose.modelMatrix = modelMatrix;
+        pose.boneMatrices = &instance.boneMatrices;
+        pose.sequenceIndex = sequence;
+        pose.animTimeMs = time;
+        pose.globalSequenceTimeMs = instance.globalSequenceTime;
+        pose.fade = fade;
+        m2Renderer.setExternalPose(companion->second.m2InstanceId, pose);
+    }
+}
+
 // --- Bone transform calculation ---
 
 constexpr int32_t kKeyBoneShoulderL = 2;

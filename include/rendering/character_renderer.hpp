@@ -31,6 +31,7 @@ class FootprintRenderer;
 class Camera;
 class VkContext;
 class VkTexture;
+class M2Renderer;
 
 // Enchant visual (glint, glow) attached to a weapon at one of the weapon model's
 // own item-visual attachment points.
@@ -73,6 +74,10 @@ public:
                     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT);
     void shutdown();
     void clear();  // Remove all models/instances/textures but keep pipelines/pools
+    /// Drive the particle and ribbon emitters of every drawn instance through
+    /// the M2 renderer (rendering/character_emitters.hpp). Main thread, after
+    /// this frame's update() and after M2Renderer::update has returned.
+    void syncEmitters(M2Renderer& m2Renderer);
 
     void setAssetManager(pipeline::AssetManager* am) { assetManager = am; }
 
@@ -520,6 +525,14 @@ private:
 
     std::unordered_map<uint32_t, M2ModelGPU> models;
     std::unordered_map<uint32_t, CharacterInstance> instances;
+    // Emitter instance in the M2 renderer per character instance, and the
+    // emitter-only models this renderer has loaded there.
+    struct EmitterCompanion {
+        uint32_t characterModelId = 0;
+        uint32_t m2InstanceId = 0;
+    };
+    std::unordered_map<uint32_t, EmitterCompanion> emitterCompanions_;
+    std::unordered_set<uint32_t> emitterModelsLoaded_;
 
     uint32_t nextInstanceId = 1;
 

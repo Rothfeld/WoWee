@@ -1569,6 +1569,10 @@ wowee_add_test(test_death_release SOURCES test_death_release.cpp)
 # Floating label, default tooltip or none, from a generic object's template.
 wowee_add_test(test_object_name_tooltip SOURCES test_object_name_tooltip.cpp)
 
+# ── test_character_emitters ──────────────────────────────────
+# Emitter-only model copy and fade rules for creature/player/weapon emitters.
+wowee_add_test(test_character_emitters SOURCES test_character_emitters.cpp)
+
 # ── test_scene_pick ──────────────────────────────────────────
 # Which of ScenePick's answers a caller wants. closestGuid and resolve()
 # disagree exactly where a wide object stands beside an NPC, which is where the
