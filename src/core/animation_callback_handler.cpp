@@ -10,6 +10,7 @@
 #include "rendering/camera_controller.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/combat_fsm.hpp"
 #include "rendering/animation/emote_registry.hpp"
 #include "rendering/animation/stand_pose.hpp"
 #include "game/game_handler.hpp"
@@ -248,40 +249,61 @@ void AnimationCallbackHandler::setupCallbacks() {
         }
     });
 
-    // Hit reaction callback - plays one-shot dodge/block/wound animation on the victim
+    // Victim reaction from SMSG_ATTACKERSTATEUPDATE, one rule for the local
+    // player, other players and creatures. AnimationData: CombatWound (9),
+    // CombatCritical (10), Dodge (30), ShieldBlock (24), and the parry of the
+    // victim's ready grip (20-23). Character models author ShieldBlock, not
+    // Block (36): humanmale/dwarfmale/orcfemale.m2 have 24 and lack 36.
     gameHandler_.setHitReactionCallback([this](uint64_t victimGuid, game::GameHandler::HitReaction reaction) {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
 
-        // Determine animation based on reaction type
-        uint32_t animId = rendering::anim::COMBAT_WOUND;
-        switch (reaction) {
-            case game::GameHandler::HitReaction::DODGE:      animId = rendering::anim::DODGE; break;
-            case game::GameHandler::HitReaction::PARRY:      break; // Parry already handled by existing system
-            case game::GameHandler::HitReaction::BLOCK:      animId = rendering::anim::BLOCK; break;
-            case game::GameHandler::HitReaction::SHIELD_BLOCK: animId = rendering::anim::SHIELD_BLOCK; break;
-            case game::GameHandler::HitReaction::CRIT_WOUND: animId = rendering::anim::COMBAT_CRITICAL; break;
-            case game::GameHandler::HitReaction::WOUND:      animId = rendering::anim::COMBAT_WOUND; break;
-        }
-
-        // For local player: use AnimationController state
-        bool isLocalPlayer = (victimGuid == gameHandler_.getPlayerGuid());
+        const bool isLocalPlayer = (victimGuid == gameHandler_.getPlayerGuid());
+        uint32_t instanceId = 0;
         if (isLocalPlayer) {
             if (gameHandler_.isPlayerDead() && !gameHandler_.isPlayerGhost()) return;
-            auto* ac = renderer_.getAnimationController();
-            if (ac) {
-                uint32_t charInstId = renderer_.getCharacterInstanceId();
-                if (charInstId && cr->hasAnimation(charInstId, animId))
-                    ac->triggerHitReaction(animId);
+            instanceId = renderer_.getCharacterInstanceId();
+        } else {
+            instanceId = entitySpawner_.getCreatureInstanceId(victimGuid);
+            if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(victimGuid);
+        }
+        if (instanceId == 0) return;
+        auto* ac = renderer_.getAnimationController();
+
+        uint32_t animId = 0;
+        switch (reaction) {
+            case game::GameHandler::HitReaction::WOUND:      animId = rendering::anim::COMBAT_WOUND; break;
+            case game::GameHandler::HitReaction::CRIT_WOUND: animId = rendering::anim::COMBAT_CRITICAL; break;
+            case game::GameHandler::HitReaction::DODGE:      animId = rendering::anim::DODGE; break;
+            case game::GameHandler::HitReaction::BLOCK:
+            case game::GameHandler::HitReaction::SHIELD_BLOCK: animId = rendering::anim::SHIELD_BLOCK; break;
+            case game::GameHandler::HitReaction::PARRY: {
+                uint32_t ready = 0;
+                if (isLocalPlayer) {
+                    if (!ac) return;
+                    ready = ac->meleeReadyAnimation();
+                } else {
+                    auto unit = std::dynamic_pointer_cast<game::Unit>(
+                        gameHandler_.getEntityManager().getEntity(victimGuid));
+                    if (!unit) return;
+                    ready = entitySpawner_.meleeReadyAnimation(*unit);
+                }
+                animId = rendering::parryAnimationForReady(ready);
+                break;
             }
+        }
+        if (!cr->hasAnimation(instanceId, animId)) {
+            LOG_DEBUG("Hit reaction ", animId, " not authored for unit 0x", std::hex, victimGuid, std::dec);
             return;
         }
+        LOG_DEBUG("Hit reaction ", animId, " on 0x", std::hex, victimGuid, std::dec,
+                  isLocalPlayer ? " (local player)" : "");
 
-        // For NPCs/other players: direct playAnimation
-        uint32_t instanceId = entitySpawner_.getCreatureInstanceId(victimGuid);
-        if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(victimGuid);
-        if (instanceId != 0 && cr->hasAnimation(instanceId, animId))
-            cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteIdleAnimation(victimGuid));
+        if (isLocalPlayer) {
+            if (ac) ac->triggerHitReaction(animId);
+            return;
+        }
+        cr->playAnimation(instanceId, animId, false, entitySpawner_.remoteIdleAnimation(victimGuid));
     });
 
     // Stun state callback - enters/exits STUNNED animation on local player

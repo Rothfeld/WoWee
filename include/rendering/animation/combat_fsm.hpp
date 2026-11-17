@@ -19,6 +19,14 @@ namespace rendering {
 // Stun overrides all combat states. Spell state cleared on interrupts.
 // offHandTurn_ alternation managed internally.
 // ============================================================================
+/// Ready stance for a melee grip: unarmed, one-hand, two-hand, or polearm and
+/// staff (Ready2HL). Same loadout rule as the combat idle stance.
+uint32_t meleeReadyAnimation(const WeaponLoadout& loadout);
+
+/// AnimationData pairs each melee ready stance with a parry of the same grip:
+/// ReadyUnarmed/1H/2H/2HL (25-28) -> ParryUnarmed/1H/2H/2HL (20-23).
+uint32_t parryAnimationForReady(uint32_t readyAnimId);
+
 class CombatFSM {
 public:
     enum class State : uint8_t {
@@ -98,8 +106,11 @@ private:
     bool spellFinalizeAnimSeen_ = false;
     uint8_t spellFinalizeFrames_ = 0;
 
-    // Hit reaction
+    // Hit reaction. Completion counts only once the renderer has shown the
+    // reaction: on the frame it is requested the previous pose is current.
     uint32_t hitReactionAnimId_ = 0;
+    bool hitReactionAnimSeen_ = false;
+    uint8_t hitReactionFrames_ = 0;
 
     // Stun
     bool stunned_ = false;

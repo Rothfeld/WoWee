@@ -169,6 +169,48 @@ TEST_CASE("CombatFSM: hit reaction", "[combat]") {
     CHECK(fsm.getState() == CombatFSM::State::HIT_REACTION);
 }
 
+// The renderer still shows the ready stance on the frame the reaction is
+// requested; that is not the reaction's completion.
+TEST_CASE("CombatFSM: hit reaction plays before it completes", "[combat]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+    fsm.setState(CombatFSM::State::COMBAT_IDLE);
+
+    fsm.triggerHitReaction(anim::DODGE);
+    auto in = combatInput();
+    in.haveAnimState = true;
+    in.currentAnimId = anim::READY_UNARMED;
+    in.currentAnimTime = 500.0f;
+    in.currentAnimDuration = 1000.0f;
+    auto first = fsm.resolve(in, caps, wl);
+    REQUIRE(first.valid);
+    CHECK(first.animId == anim::DODGE);
+    CHECK_FALSE(first.loop);
+
+    in.currentAnimId = anim::DODGE;
+    in.currentAnimTime = 100.0f;
+    in.currentAnimDuration = 800.0f;
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::DODGE);
+
+    in.currentAnimTime = 800.0f;
+    auto after = fsm.resolve(in, caps, wl);
+    CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+    CHECK(after.animId == anim::READY_UNARMED);
+}
+
+TEST_CASE("Parry animation follows the ready stance grip", "[combat]") {
+    CHECK(parryAnimationForReady(anim::READY_UNARMED) == anim::PARRY_UNARMED);
+    CHECK(parryAnimationForReady(anim::READY_1H) == anim::PARRY_1H);
+    CHECK(parryAnimationForReady(anim::READY_2H) == anim::PARRY_2H);
+    CHECK(parryAnimationForReady(anim::READY_2H_LOOSE) == anim::PARRY_2H_LOOSE);
+    WeaponLoadout staff;
+    staff.inventoryType = wowee::game::InvType::TWO_HAND;
+    staff.is2HLoose = true;
+    CHECK(meleeReadyAnimation(staff) == anim::READY_2H_LOOSE);
+    CHECK(meleeReadyAnimation(unarmedLoadout()) == anim::READY_UNARMED);
+}
+
 TEST_CASE("CombatFSM: reset clears all state", "[combat]") {
     CombatFSM fsm;
     fsm.onEvent(AnimEvent::COMBAT_ENTER);

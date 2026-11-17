@@ -113,6 +113,8 @@ public:
     /// Trigger a ranged shot animation (Auto Shot, Shoot, Throw)
     void triggerRangedShot();
     [[nodiscard]] RangedWeaponType getEquippedRangedType() const { return weaponLoadout_.rangedType; }
+    /// Melee ready stance of the equipped main hand (CombatFSM::meleeReadyAnimation rule).
+    [[nodiscard]] uint32_t meleeReadyAnimation() const { return rendering::meleeReadyAnimation(weaponLoadout_); }
     void setCharging(bool charging);
     [[nodiscard]] bool isCharging() const { return charging_; }
 

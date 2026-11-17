@@ -2,9 +2,28 @@
 #include "rendering/animation/animation_ids.hpp"
 #include "game/inventory.hpp"
 #include "core/logger.hpp"
+#include <cassert>
 
 namespace wowee {
 namespace rendering {
+
+uint32_t meleeReadyAnimation(const WeaponLoadout& loadout) {
+    if (loadout.inventoryType == game::InvType::NON_EQUIP) return anim::READY_UNARMED;
+    if (loadout.is2HLoose) return anim::READY_2H_LOOSE;
+    if (loadout.inventoryType == game::InvType::TWO_HAND) return anim::READY_2H;
+    return anim::READY_1H;
+}
+
+uint32_t parryAnimationForReady(uint32_t readyAnimId) {
+    switch (readyAnimId) {
+        case anim::READY_UNARMED:  return anim::PARRY_UNARMED;
+        case anim::READY_1H:       return anim::PARRY_1H;
+        case anim::READY_2H:       return anim::PARRY_2H;
+        case anim::READY_2H_LOOSE: return anim::PARRY_2H_LOOSE;
+    }
+    assert(!"parryAnimationForReady: not a melee ready stance");
+    return anim::PARRY_UNARMED;
+}
 
 // ── One-shot completion helper ───────────────────────────────────────────────
 
@@ -103,7 +122,15 @@ void CombatFSM::triggerHitReaction(uint32_t animId) {
     if (state_ == State::SPELL_PRECAST || state_ == State::SPELL_CASTING || state_ == State::SPELL_FINALIZE) {
         clearSpellState();
     }
+    // Zero clears a pending reaction (AnimationController::reset).
+    if (animId == 0) {
+        hitReactionAnimId_ = 0;
+        if (state_ == State::HIT_REACTION) state_ = State::INACTIVE;
+        return;
+    }
     hitReactionAnimId_ = animId;
+    hitReactionAnimSeen_ = false;
+    hitReactionFrames_ = 0;
     state_ = State::HIT_REACTION;
 }
 
@@ -277,8 +304,11 @@ void CombatFSM::updateTransitions(const Input& in) {
                 hitReactionAnimId_ = 0;
                 state_ = State::INACTIVE;
             } else if (in.haveAnimState) {
-                uint32_t expectedAnim = hitReactionAnimId_ ? hitReactionAnimId_ : anim::COMBAT_WOUND;
-                if (oneShotComplete(in, expectedAnim)) {
+                if (in.currentAnimId == hitReactionAnimId_) hitReactionAnimSeen_ = true;
+                // A model lacking the reaction never shows it; finish like
+                // the spell finalize does.
+                if ((hitReactionAnimSeen_ && oneShotComplete(in, hitReactionAnimId_)) ||
+                    (!hitReactionAnimSeen_ && ++hitReactionFrames_ > 10)) {
                     hitReactionAnimId_ = 0;
                     state_ = in.inCombat ? State::COMBAT_IDLE : State::INACTIVE;
                 }
@@ -432,8 +462,7 @@ AnimOutput CombatFSM::resolve(const Input& in, const AnimCapabilitySet& caps,
             break;
 
         case State::HIT_REACTION:
-            animId = hitReactionAnimId_ ? hitReactionAnimId_
-                   : (caps.resolvedCombatWound ? caps.resolvedCombatWound : anim::COMBAT_WOUND);
+            animId = hitReactionAnimId_;
             loop = false;
             break;
 
