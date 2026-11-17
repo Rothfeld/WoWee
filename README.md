@@ -712,6 +712,16 @@ XP appears above the player as `XP: <amount>` in purple, using FRIZQT__.TTF.
 Ordinary damage lasts 1.5 seconds; XP lasts 4.5 seconds. The build-8606 popup
 parameter table begins at 0xBBF1C0 (28-byte records); XP formatting is at
 0x6089E0. Incoming floating combat text follows the `enableCombatText` setting.
+Damage numbers over a unit (include/ui/floating_combat_text.hpp) keep a fixed
+on-screen size at any distance: 30 interface units, critical 45 after a pop to
+twice that over 150 ms. Ability yellow is (255,222,0). An ordinary number is born
+with its bottom on the plain name line and climbs 1.4 yd/s; a critical hangs below
+the line and stays. Opacity ramps to 0.1 over 150 ms, then is full until 0.76 s
+(critical 1.0 s) and fades out by 1.5 s. Shadow: black at half opacity, 3 px right
+and 1 px up at 720 lines. Texts over one unit never overlap: the newest keeps its
+place, older ones are lifted a row (two font heights) at a time while within one
+row of their own height, otherwise set to the right. Check with
+`build/bin/test_floating_combat_text`.
 
 Particle births retain their time within each render frame. Existing particles advance
 before emission; new particles start at their elapsed age since birth, including

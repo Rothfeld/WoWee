@@ -1424,6 +1424,17 @@ target_link_libraries(test_damage_meter PRIVATE catch2_main)
 add_test(NAME damage_meter COMMAND test_damage_meter)
 register_test_target(test_damage_meter)
 
+# ── test_floating_combat_text ─────────────────────────────────
+add_executable(test_floating_combat_text
+    test_floating_combat_text.cpp
+    ${TEST_COMMON_SOURCES}
+)
+target_include_directories(test_floating_combat_text PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_floating_combat_text SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_floating_combat_text PRIVATE catch2_main)
+add_test(NAME floating_combat_text COMMAND test_floating_combat_text)
+register_test_target(test_floating_combat_text)
+
 # ── test_combat_fsm ──────────────────────────────────────────
 add_executable(test_combat_fsm
     test_combat_fsm.cpp

@@ -6,6 +6,9 @@
 // ============================================================
 #include "ui/combat_ui.hpp"
 #include "ui/interface_fonts.hpp"
+#include "ui/floating_combat_text.hpp"
+#include "core/entity_spawner.hpp"
+#include "rendering/character_renderer.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "ui/buff_bar_layout.hpp"
 #include "ui/framexml_takeover.hpp"
@@ -98,6 +101,28 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     if (!font) { LOG_ERROR("Combat text requires Fonts\\FRIZQT__.TTF"); return; }
     const float baseFontSize = 22.0f * screenH / 600.0f;
 
+    const float uiScale = screenH / 768.0f;
+    struct WorldText {
+        uint64_t guid;
+        fct::Box box;
+        std::string text;
+        ImVec4 color;
+        float alpha;
+    };
+    std::vector<WorldText> worldTexts;
+    auto& app = core::Application::getInstance();
+    const auto nameAnchorFor = [&](uint64_t guid, glm::vec3& out) {
+        auto* spawner = app.getEntitySpawner();
+        auto* characters = appRenderer ? appRenderer->getCharacterRenderer() : nullptr;
+        if (!spawner || !characters) return false;
+        const auto entity = gameHandler.getEntityManager().getEntity(guid);
+        if (!entity || !entity->isUnit()) return false;
+        const auto& unit = static_cast<const game::Unit&>(*entity);
+        const auto instanceId = guid == gameHandler.getPlayerGuid() ? appRenderer->getCharacterInstanceId()
+                                                                    : spawner->characterInstanceIdForGuid(guid);
+        return characters->getInstanceNamePosition(instanceId, unit.getMountDisplayId() != 0, out);
+    };
+
     // HUD fallback: entries without world-space anchor use classic screen-position layout.
     // We still need an ImGui window for those.
     const float hudIncomingX = screenW * 0.40f;
@@ -154,7 +179,9 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         // XP 500/2000/4500 ms. Keep full opacity between fade intervals.
         const float fadeIn = reward ? 0.5f : 0.15f;
         const float fadeOut = reward ? 2.0f : isCrit ? 1.0f : 0.76f;
-        const float alpha = std::clamp(std::min(entry.age / fadeIn,
+        const bool worldNumber = outgoing && !reward && entry.type != game::CombatTextEntry::PROC_TRIGGER;
+        const float alpha = worldNumber ? fct::alpha(entry.age, isCrit) :
+            std::clamp(std::min(entry.age / fadeIn,
             (entry.lifetime() - entry.age) / (entry.lifetime() - fadeOut)), 0.0f, 1.0f);
 
         // --- Format text and color (identical logic for both world and HUD paths) ---
@@ -166,13 +193,13 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 snprintf(text, sizeof(text), outgoing ? "%d" : "-%d", entry.amount);
                 color = outgoing ?
                     (entry.type == game::CombatTextEntry::MELEE_DAMAGE ?
-                     ImVec4(1,1,1,alpha) : ImVec4(1,1,0,alpha)) :
+                     ImVec4(1,1,1,alpha) : ImVec4(1,222.0f/255.0f,0,alpha)) :
                     ImVec4(1.0f, 0.3f, 0.3f, alpha);
                 break;
             case game::CombatTextEntry::CRIT_DAMAGE:
                 snprintf(text, sizeof(text), outgoing ? "%d" : "-%d", entry.amount);
                 color = outgoing ?
-                    (entry.spellId ? ImVec4(1,1,0,alpha) : ImVec4(1,1,1,alpha)) :
+                    (entry.spellId ? ImVec4(1,222.0f/255.0f,0,alpha) : ImVec4(1,1,1,alpha)) :
                     ImVec4(1.0f, 0.5f, 0.0f, alpha);
                 break;
             case game::CombatTextEntry::HEAL:
@@ -370,49 +397,48 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         ImU32 shadowCol = IM_COL32(0, 0, 0, static_cast<int>(alpha * 180));
         ImU32 textCol   = ImGui::ColorConvertFloat4ToU32(color);
 
-        // --- Try world-space anchor if we have a destination entity ---
-        // Types that should always stay as HUD elements (no world anchor)
+        // Types that stay HUD elements (no world anchor).
         bool isHudOnly = entry.type == game::CombatTextEntry::PROC_TRIGGER || !outgoing;
-        const uint64_t anchorGuid = reward ? gameHandler.getPlayerGuid() : entry.dstGuid;
 
         bool rendered = false;
-        if (!isHudOnly && camera && anchorGuid != 0) {
-            // Look up the destination entity's render position
-            glm::vec3 renderPos;
-            bool havePos = core::Application::getInstance().getRenderPositionForGuid(anchorGuid, renderPos);
-            if (!havePos) {
-                // Fallback to entity canonical position
-                auto entity = gameHandler.getEntityManager().getEntity(anchorGuid);
-                if (entity) {
-                    auto* unit = entity->isUnit() ? static_cast<game::Unit*>(entity.get()) : nullptr;
-                    if (unit) {
-                        renderPos = core::coords::canonicalToRender(
-                            glm::vec3(unit->getX(), unit->getY(), unit->getZ()));
-                        havePos = true;
-                    }
+        if (worldNumber && camera && entry.dstGuid != 0) {
+            // Numbers start at the bottom of the unit's plain name line
+            // (name attachment + 0.25 yd): ordinary ones sit on it and climb,
+            // critical ones hang below it and stay. Laid out per unit after every
+            // entry is known.
+            glm::vec3 anchor;
+            if (nameAnchorFor(entry.dstGuid, anchor)) {
+                anchor.z += fct::kNameLineOffset;
+                if (!isCrit) anchor.z += fct::kRiseYardsPerSecond * entry.age;
+                const glm::vec4 clipPos = viewProj * glm::vec4(anchor, 1.0f);
+                if (clipPos.w > 0.01f) {
+                    const glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
+                    const float fontPx = fct::kFontHeight * uiScale *
+                        (isCrit ? fct::kCritScale * fct::critPulse(entry.age) : 1.0f);
+                    fct::Box box;
+                    box.naturalX = (ndc.x * 0.5f + 0.5f) * screenW;
+                    box.naturalTop = (ndc.y * 0.5f + 0.5f) * screenH - (isCrit ? 0.0f : fontPx);
+                    box.fontPx = fontPx;
+                    box.width = font->CalcTextSizeA(fontPx, FLT_MAX, 0.0f, text).x;
+                    worldTexts.push_back({entry.dstGuid, box, text, color, alpha});
                 }
             }
-
-            if (havePos) {
-                // Float upward from above the entity's head
-                renderPos.z += reward ? 2.0f : 2.5f + 2.0f * progress;
-
-                // Project to screen
+            continue;
+        }
+        if (!isHudOnly && camera) {
+            // Experience above the player.
+            glm::vec3 renderPos;
+            if (core::Application::getInstance().getRenderPositionForGuid(gameHandler.getPlayerGuid(), renderPos)) {
+                renderPos.z += 2.0f;
                 glm::vec4 clipPos = viewProj * glm::vec4(renderPos, 1.0f);
                 if (clipPos.w > 0.01f) {
                     glm::vec3 ndc = glm::vec3(clipPos) / clipPos.w;
                     if (ndc.x >= -1.5f && ndc.x <= 1.5f && ndc.y >= -1.5f && ndc.y <= 1.5f) {
                         float sx = (ndc.x * 0.5f + 0.5f) * screenW;
                         float sy = (ndc.y * 0.5f + 0.5f) * screenH;
-
-
-                        // Center the text horizontally on the projected point
                         ImVec2 ts = font->CalcTextSizeA(renderFontSize, FLT_MAX, 0.0f, text);
                         sx -= ts.x * 0.5f;
-
-                        // Clamp to screen bounds
                         sx = std::max(2.0f, std::min(sx, screenW - ts.x - 2.0f));
-
                         drawList->AddText(font, renderFontSize,
                                           ImVec2(sx + 1.0f, sy + 1.0f), shadowCol, text);
                         drawList->AddText(font, renderFontSize,
@@ -456,6 +482,27 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
 
     if (needsHudWindow) {
         ImGui::End();
+    }
+
+    // Entries are oldest first; layout wants each unit's newest first.
+    std::stable_sort(worldTexts.begin(), worldTexts.end(),
+        [](const WorldText& a, const WorldText& b) { return a.guid < b.guid; });
+    for (size_t begin = 0; begin < worldTexts.size();) {
+        size_t end = begin;
+        while (end < worldTexts.size() && worldTexts[end].guid == worldTexts[begin].guid) ++end;
+        std::vector<fct::Box> boxes;
+        for (size_t i = end; i-- > begin;) boxes.push_back(worldTexts[i].box);
+        fct::layout(boxes);
+        for (size_t i = begin; i < end; ++i) worldTexts[i].box = boxes[end - 1 - i];
+        begin = end;
+    }
+    for (const auto& t : worldTexts) {
+        const float x = t.box.x - 0.5f * t.box.width;
+        const ImU32 shadow = IM_COL32(0, 0, 0, static_cast<int>(t.alpha * fct::kShadowAlpha * 255.0f));
+        drawList->AddText(font, t.box.fontPx,
+            ImVec2(x + fct::kShadowX * uiScale, t.box.top + fct::kShadowY * uiScale), shadow, t.text.c_str());
+        drawList->AddText(font, t.box.fontPx, ImVec2(x, t.box.top),
+            ImGui::ColorConvertFloat4ToU32(t.color), t.text.c_str());
     }
 }
 

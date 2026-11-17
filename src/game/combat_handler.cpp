@@ -439,10 +439,6 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
     entry.powerType = powerType;
     entry.srcGuid = srcGuid;
     entry.dstGuid = dstGuid;
-    // Random horizontal stagger so simultaneous hits don't stack vertically
-    static std::mt19937 rng(std::random_device{}());
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    entry.xSeed = dist(rng);
     combatText_.push_back(entry);
 
     // UNIT_COMBAT - the same hit, for the frames that draw their own feedback
