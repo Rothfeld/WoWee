@@ -1794,6 +1794,18 @@ int lua_Tooltip_AddLine(lua_State* L) {
     w->tooltipLines.push_back(std::move(line));
     return 0;
 }
+/// GameTooltip:AddTexture(path) - a picture at the start of the last line,
+/// which is how the item tooltip puts the socket icon before "Red Socket".
+/// Drawn through the line's own markup as an inline texture the height of
+/// the text.
+int lua_Tooltip_AddTexture(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    if (!w || w->tooltipLines.empty()) return 0;
+    const char* path = luaL_checkstring(L, 2);
+    auto& line = w->tooltipLines.back();
+    line.left = std::string("|T") + path + ":0|t " + line.left;
+    return 0;
+}
 /// GameTooltip:SetFrameStack(showHidden) - what is under the cursor.
 ///
 /// This is /framestack, and it is the answer to every "what is drawing that?"
@@ -2070,7 +2082,7 @@ int lua_Tooltip_SetText(lua_State* L) {
 static bool fillItemTooltipById(wowee::ui::Widget* w, game::GameHandler* gh,
                                 uint32_t itemId);
 static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
-                                uint32_t itemId);
+                                uint32_t itemId, const game::ItemDef* inst = nullptr);
 static void appendRandomSuffix(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
                                const game::ItemDef& item);
 static void appendDurabilityLine(wowee::ui::Widget* w, const game::ItemDef& item);
@@ -3147,8 +3159,20 @@ static bool fillItemTooltipById(wowee::ui::Widget* w, game::GameHandler* gh,
 ///
 /// isTooltip is set before the call because SetText refuses a frame that is not
 /// one, and the builder opens with SetText.
+/// The instance facts the tooltip builder prints: whether the item is bound
+/// and its durability. Pushed as the builder's fourth argument.
+static void pushItemInstance(lua_State* L, const game::ItemDef& item) {
+    lua_newtable(L);
+    lua_pushboolean(L, item.soulbound ? 1 : 0);
+    lua_setfield(L, -2, "soulbound");
+    lua_pushnumber(L, item.curDurability);
+    lua_setfield(L, -2, "durability");
+    lua_pushnumber(L, item.maxDurability);
+    lua_setfield(L, -2, "maxDurability");
+}
+
 static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
-                                uint32_t itemId) {
+                                uint32_t itemId, const game::ItemDef* inst) {
     auto* w = widgetOf(L, 1);
     if (!w || !gh || itemId == 0) return false;
     const int top = lua_gettop(L);
@@ -3159,7 +3183,9 @@ static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
         w->tooltipLines.clear();
         lua_pushvalue(L, 1);                                  // self
         lua_pushnumber(L, static_cast<lua_Number>(itemId));
-        if (lua_pcall(L, 2, 1, 0) == 0) {
+        lua_pushnil(L);                                       // embedded
+        if (inst) pushItemInstance(L, *inst); else lua_pushnil(L);
+        if (lua_pcall(L, 4, 1, 0) == 0) {
             const bool ok = lua_toboolean(L, -1) != 0;
             lua_settop(L, top);
             if (ok) { w->shown = true; fireTooltipSetItem(L); return true; }
@@ -3441,20 +3467,17 @@ int lua_Tooltip_SetInventoryItem(lua_State* L) {
     // floor: the slot knows the name and quality even for an entry no
     // GetItemInfo has arrived for, and answering nothing there would be worse
     // than answering briefly.
-    if (!fillItemTooltipById(L, gh, s.item.itemId)) {
+    if (!fillItemTooltipById(L, gh, s.item.itemId, &s.item)) {
         fillItemTooltip(w, s.item, gh);
         noteTooltipItem(L, s.item.itemId);
         fireTooltipSetItem(L);
+        // The by-id builder prints durability in its place; this one cannot.
+        appendDurabilityLine(w, s.item);
     } else {
         // Only on the by-id path. fillItemTooltip builds from the instance and
         // has named the suffix itself.
         appendRandomSuffix(L, w, gh, s.item);
     }
-    // Durability lives on the instance, same as the suffix above - the
-    // paperdoll's own icon tint already reads it correctly, but the tooltip
-    // never carried it, so hovering an equipped item said nothing a bag
-    // item's own ImGui tooltip already says.
-    appendDurabilityLine(w, s.item);
     // Equipment only: the guid list behind it is one per equipped slot, and a
     // bank slot's id would read off the end of it.
     if (slot <= static_cast<int>(game::EquipSlot::NUM_SLOTS)) {
@@ -6727,6 +6750,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetNumPoints",    lua_Region_GetNumPoints},
         {"AddMessage",      lua_MessageFrame_AddMessage},
         {"AddLine",         lua_Tooltip_AddLine},
+        {"AddTexture",      lua_Tooltip_AddTexture},
         {"SetOwner",        lua_Tooltip_SetOwner},
         {"SetAction",       lua_Tooltip_SetAction},
         {"SetInventoryItem", lua_Tooltip_SetInventoryItem},
@@ -8884,204 +8908,224 @@ void LuaEngine::registerCoreAPI() {
         "    local link = self and rawget(self, '__hyperlink')\n"
         "    if link then self:SetHyperlink(link) end\n"
         "end\n"
-        // Shared item tooltip builder using GetItemInfo return values
-        "function _WoweePopulateItemTooltip(self, itemId, embedded)\n"
+        // The item tooltip, laid out in the original's order with its
+        // GlobalStrings: binding, unique, slot/subclass, damage, armour, block,
+        // base stats, resistances, sockets, durability, requirements, Equip
+        // ratings and spells, flavour text, the item set, right-click hints.
+        // inst is the held item's instance (soulbound, durability) when the
+        // tooltip is for a bag or equipment slot.
+        "function _WoweePopulateItemTooltip(self, itemId, embedded, inst)\n"
         "    local name, itemLink, quality, iLevel, reqLevel, class, subclass, maxStack, equipSlot, texture, sellPrice = GetItemInfo(itemId)\n"
         "    if not name then return false end\n"
         "    local qColors = {[0]={0.62,0.62,0.62},[1]={1,1,1},[2]={0.12,1,0},[3]={0,0.44,0.87},[4]={0.64,0.21,0.93},[5]={1,0.5,0},[6]={0.9,0.8,0.5},[7]={0,0.8,1}}\n"
         "    local c = qColors[quality or 1] or {1,1,1}\n"
         "    if embedded then self:AddLine(name, c[1], c[2], c[3])\n"
         "    else self:SetText(name, c[1], c[2], c[3]); self.__itemId = itemId end\n"
-        // Colorblind Mode names the quality instead of only colouring it.
-        //
-        // The colour is the whole of how an item's quality is told here, which
-        // is exactly the assumption the setting exists to undo. It goes
-        // directly under the name, in the quality colour, which is where the
-        // real client puts it.
-        "    if GetCVar(\'colorblindMode\') == \'1\' then\n"
-        "        local qNames = {[0]=\'Poor\',[1]=\'Common\',[2]=\'Uncommon\',[3]=\'Rare\',\n"
-        "                        [4]=\'Epic\',[5]=\'Legendary\',[6]=\'Artifact\',[7]=\'Heirloom\'}\n"
-        "        local qn = qNames[quality or 1]\n"
+        "    if GetCVar('colorblindMode') == '1' then\n"
+        "        local qn = _G['ITEM_QUALITY'..(quality or 1)..'_DESC']\n"
         "        if qn then self:AddLine(qn, c[1], c[2], c[3]) end\n"
         "    end\n"
-        // Read here rather than below the class line, because what a bag says
-        // about itself takes the place of that line.
         "    local data = _GetItemTooltipData(itemId)\n"
-        "    if data and data.recipe then\n"
+        "    if not data then return true end\n"
+        "    local red = RED_FONT_COLOR\n"
+        "    local function met(ok) if ok then return 1, 1, 1 end return red.r, red.g, red.b end\n"
+        "    if data.recipe then\n"
         "        if data.requiredSkillName then\n"
         "            local requirement = data.requiredSkillName\n"
         "            if data.requiredSkillRank > 0 then requirement = requirement..' ('..data.requiredSkillRank..')' end\n"
-        "            local met = data.requiredSkillMet and 1 or 0.1\n"
-        "            self:AddLine(format(ITEM_REQ_SKILL or 'Requires %s', requirement), 1, met, met)\n"
+        "            self:AddLine(format(ITEM_REQ_SKILL, requirement), met(data.requiredSkillMet))\n"
         "        end\n"
         "        local recipe = data.recipe\n"
         "        local useColor = recipe.itemId > 0 and 1 or 0\n"
-        "        if data.description then self:AddLine('Use: '..data.description, useColor, 1, useColor, 1) end\n"
-        "        if recipe.known then self:AddLine(ITEM_SPELL_KNOWN or 'Already Known', 1, 0.1, 0.1) end\n"
+        "        if data.description then self:AddLine(ITEM_SPELL_TRIGGER_ONUSE..' '..data.description, useColor, 1, useColor, 1) end\n"
+        "        if recipe.known then self:AddLine(ITEM_SPELL_KNOWN, red.r, red.g, red.b) end\n"
         "        if recipe.itemId == 0 then return true end\n"
         "        self:AddLine(' ')\n"
-        "        if not _WoweePopulateItemTooltip(self, recipe.itemId, true) then self:AddLine(RETRIEVING_ITEM_INFO or 'Retrieving item information', 1, 1, 1) end\n"
+        "        if not _WoweePopulateItemTooltip(self, recipe.itemId, true) then self:AddLine(RETRIEVING_ITEM_INFO, 1, 1, 1) end\n"
         "        local reagents = {}\n"
         "        for _, reagent in ipairs(recipe.reagents) do\n"
         "            local reagentName = GetItemInfo(reagent.itemId) or RETRIEVING_ITEM_INFO\n"
-        "            tinsert(reagents, reagentName..' ('..reagent.count..')')\n"
+        "            if reagent.count > 1 then reagentName = reagentName..' ('..reagent.count..')' end\n"
+        "            tinsert(reagents, reagentName)\n"
         "        end\n"
-        "        if #reagents > 0 then self:AddLine(' '); self:AddLine('Requires '..table.concat(reagents, ', '), 1, 1, 1, 1) end\n"
+        "        if #reagents > 0 then self:AddLine(' '); self:AddLine(format(ITEM_REQ_SKILL, table.concat(reagents, ', ')), 1, 1, 1, 1) end\n"
         "        return true\n"
         "    end\n"
-        "    if embedded and data then\n"
-        "        if data.bindType == 1 then self:AddLine(ITEM_BIND_ON_PICKUP, 1, 1, 1)\n"
-        "        elseif data.bindType == 2 then self:AddLine(ITEM_BIND_ON_EQUIP, 1, 1, 1)\n"
-        "        elseif data.bindType == 3 then self:AddLine(ITEM_BIND_ON_USE, 1, 1, 1) end\n"
+        "    -- Binding, then what kind of item it is.\n"
+        "    if inst and inst.soulbound then self:AddLine(ITEM_SOULBOUND, 1, 1, 1)\n"
+        "    elseif data.bindType == 1 then self:AddLine(ITEM_BIND_ON_PICKUP, 1, 1, 1)\n"
+        "    elseif data.bindType == 2 then self:AddLine(ITEM_BIND_ON_EQUIP, 1, 1, 1)\n"
+        "    elseif data.bindType == 3 then self:AddLine(ITEM_BIND_ON_USE, 1, 1, 1)\n"
+        "    elseif data.bindType == 4 then self:AddLine(ITEM_BIND_QUEST, 1, 1, 1) end\n"
+        "    if data.conjured then self:AddLine(ITEM_CONJURED, 1, 1, 1) end\n"
+        "    if data.maxCount == 1 then self:AddLine(ITEM_UNIQUE, 1, 1, 1)\n"
+        "    elseif data.maxCount > 1 then self:AddLine(format(ITEM_UNIQUE_MULTIPLE, data.maxCount), 1, 1, 1)\n"
+        "    elseif data.isUniqueEquipped then self:AddLine(ITEM_UNIQUE_EQUIPPABLE, 1, 1, 1) end\n"
+        "    if data.locked then\n"
+        "        self:AddLine(LOCKED, 1, 0.5, 0.25)\n"
+        "        for _, req in ipairs(data.lockRequirements or {}) do\n"
+        "            self:AddLine(format(ITEM_MIN_SKILL, req.name, req.skill), 1, 0.5, 0.25)\n"
+        "        end\n"
         "    end\n"
-        "    -- Equip slot and subclass on same line\n"
-        "    if equipSlot and equipSlot ~= '' then\n"
-        "        local slotNames = {INVTYPE_HEAD='Head',INVTYPE_NECK='Neck',INVTYPE_SHOULDER='Shoulder',\n"
-        "            INVTYPE_CHEST='Chest',INVTYPE_WAIST='Waist',INVTYPE_LEGS='Legs',INVTYPE_FEET='Feet',\n"
-        "            INVTYPE_WRIST='Wrist',INVTYPE_HAND='Hands',INVTYPE_FINGER='Finger',\n"
-        "            INVTYPE_TRINKET='Trinket',INVTYPE_CLOAK='Back',INVTYPE_WEAPON='One-Hand',\n"
-        "            INVTYPE_SHIELD='Off Hand',INVTYPE_2HWEAPON='Two-Hand',INVTYPE_RANGED='Ranged',\n"
-        "            INVTYPE_WEAPONMAINHAND='Main Hand',INVTYPE_WEAPONOFFHAND='Off Hand',\n"
-        "            INVTYPE_HOLDABLE='Held In Off-Hand',INVTYPE_TABARD='Tabard',INVTYPE_ROBE='Chest'}\n"
-        "        local slotText = slotNames[equipSlot] or ''\n"
-        "        local subText = (subclass and subclass ~= '') and subclass or ''\n"
-        "        if slotText ~= '' or subText ~= '' then\n"
-        "            local met = (not data or data.subclassProficiencyMet) and 1 or 0.1\n"
-        "            self:AddDoubleLine(slotText, subText, 1,1,1, 1,met,met)\n"
+        "    if data.startsQuest then self:AddLine(ITEM_STARTS_QUEST, 1, 1, 1) end\n"
+        "    -- Slot and subclass. The subclass is named for weapons and for armour\n"
+        "    -- other than Miscellaneous (rings, trinkets, held-in-off-hand items).\n"
+        "    if data.containerSlots then\n"
+        "        self:AddLine(format(CONTAINER_SLOTS, data.containerSlots, subclass or ''), 1, 1, 1)\n"
+        "    elseif equipSlot and equipSlot ~= '' then\n"
+        "        local slotText = _G[equipSlot] or ''\n"
+        "        local subText = ''\n"
+        "        if data.itemClass == 2 or (data.itemClass == 4 and data.subClass ~= 0) or data.itemClass == 6 then\n"
+        "            subText = subclass or ''\n"
         "        end\n"
-        // A bag says how much it holds, which is what the class line would
-        // otherwise be spent on: "16 Slot Bag" rather than "Container". The
-        // subclass names the kind, so a quiver and an ammo pouch read as
-        // themselves.
-        "    elseif data and data.containerSlots then\n"
-        "        local kind = (subclass and subclass ~= '') and subclass or (class or 'Bag')\n"
-        "        self:AddLine(format(CONTAINER_SLOTS or '%d Slot %s', data.containerSlots, kind),\n"
-        "                     1, 1, 1)\n"
-        "    elseif class and class ~= '' and select(4, GetBuildInfo()) >= 30000 then\n"
-        "        self:AddLine(class, 1, 1, 1)\n"
+        "        if subText ~= '' then\n"
+        "            local r, g, b = met(data.subclassProficiencyMet)\n"
+        "            self:AddDoubleLine(slotText, subText, 1, 1, 1, r, g, b)\n"
+        "        elseif slotText ~= '' then\n"
+        "            self:AddLine(slotText, 1, 1, 1)\n"
+        "        end\n"
         "    end\n"
-        "    -- Fetch detailed stats from C side\n"
-        "    if data then\n"
-        "        -- Bind type\n"
-        "        if data.isHeroic then self:AddLine('Heroic', 0, 1, 0) end\n"
-        "        if data.isUnique then self:AddLine('Unique', 1, 1, 1)\n"
-        "        elseif data.isUniqueEquipped then self:AddLine('Unique-Equipped', 1, 1, 1) end\n"
-        // The fourth copy of this table, and the one that cannot share: it is
-        // Lua source compiled into the tooltip shim. It stops at 3, like the C++
-        // copy beside it used to, so a quest item says nothing here about being
-        // one. Left as it is rather than changed on inference - what FrameXML's
-        // tooltip shows is a question about FrameXML.
-        "        if embedded then\n"
-        "        elseif data.bindType == 1 then self:AddLine(ITEM_BIND_ON_PICKUP, 1, 1, 1)\n"
-        "        elseif data.bindType == 2 then self:AddLine(ITEM_BIND_ON_EQUIP, 1, 1, 1)\n"
-        "        elseif data.bindType == 3 then self:AddLine(ITEM_BIND_ON_USE, 1, 1, 1) end\n"
-        "        -- Armor\n"
-        "        if data.armor and data.armor > 0 then\n"
-        "            self:AddLine(data.armor..' Armor', 1, 1, 1)\n"
-        "        end\n"
-        "        -- Weapon damage and speed\n"
-        "        if data.damageMin and data.damageMax and data.damageMin > 0 then\n"
-        "            local speed = (data.speed or 0) / 1000\n"
-        "            if speed > 0 then\n"
-        "                self:AddDoubleLine(string.format('%.0f - %.0f Damage', data.damageMin, data.damageMax), string.format('Speed %.2f', speed), 1,1,1, 1,1,1)\n"
-        "                local dps = (data.damageMin + data.damageMax) / 2 / speed\n"
-        "                self:AddLine(string.format('(%.1f damage per second)', dps), 1, 1, 1)\n"
-        "            end\n"
-        "        end\n"
-        "        -- Stats\n"
-        "        local statColor = embedded and 1 or 0\n"
-        "        if data.stamina then self:AddLine('+'..data.stamina..' Stamina', statColor, 1, statColor) end\n"
-        "        if data.strength then self:AddLine('+'..data.strength..' Strength', statColor, 1, statColor) end\n"
-        "        if data.agility then self:AddLine('+'..data.agility..' Agility', statColor, 1, statColor) end\n"
-        "        if data.intellect then self:AddLine('+'..data.intellect..' Intellect', statColor, 1, statColor) end\n"
-        "        if data.spirit then self:AddLine('+'..data.spirit..' Spirit', statColor, 1, statColor) end\n"
-        "        -- Extra stats (hit, crit, haste, AP, SP, etc.)\n"
-        "        if data.extraStats then\n"
-        "            local statNames = {[3]='Agility',[4]='Strength',[5]='Intellect',[6]='Spirit',[7]='Stamina',\n"
-        "                [12]='Defense Rating',[13]='Dodge Rating',[14]='Parry Rating',[15]='Block Rating',\n"
-        "                [16]='Melee Hit Rating',[17]='Ranged Hit Rating',[18]='Spell Hit Rating',\n"
-        "                [19]='Melee Crit Rating',[20]='Ranged Crit Rating',[21]='Spell Crit Rating',\n"
-        "                [28]='Melee Haste Rating',[29]='Ranged Haste Rating',[30]='Spell Haste Rating',\n"
-        "                [31]='Hit Rating',[32]='Crit Rating',[36]='Haste Rating',\n"
-        "                [33]='Resilience Rating',[34]='Attack Power',[35]='Spell Power',\n"
-        "                [37]='Expertise Rating',[38]='Attack Power',[39]='Ranged Attack Power',\n"
-        "                [43]='Mana per 5 sec.',[44]='Armor Penetration Rating',\n"
-        "                [45]='Spell Power',[46]='Health per 5 sec.',[47]='Spell Penetration'}\n"
-        "            for _, stat in ipairs(data.extraStats) do\n"
-        "                local name = statNames[stat.type]\n"
-        "                if name and stat.value ~= 0 then\n"
-        "                    local prefix = stat.value > 0 and '+' or ''\n"
-        "                    self:AddLine(prefix..stat.value..' '..name, 0, 1, 0)\n"
+        "    -- Damage, every entry, then the damage per second of all of them.\n"
+        "    local speed = (data.speed or 0) / 1000\n"
+        "    if #data.damages > 0 and data.itemClass == 6 then\n"
+        "        local d = data.damages[1]\n"
+        "        local avg = (d.min + d.max) / 2\n"
+        "        if d.school > 0 then self:AddLine(format(PLUS_AMMO_SCHOOL_DAMAGE_TEMPLATE, avg, _G['SPELL_SCHOOL'..d.school..'_CAP']), 1, 1, 1)\n"
+        "        else self:AddLine(format(PLUS_AMMO_DAMAGE_TEMPLATE, avg), 1, 1, 1) end\n"
+        "    elseif #data.damages > 0 and speed > 0 then\n"
+        "        local total = 0\n"
+        "        for i, d in ipairs(data.damages) do\n"
+        "            local school = d.school > 0 and _G['SPELL_SCHOOL'..d.school..'_CAP'] or nil\n"
+        "            local text\n"
+        "            if i == 1 then\n"
+        "                if d.min == d.max then\n"
+        "                    text = school and format(SINGLE_DAMAGE_TEMPLATE_WITH_SCHOOL, d.min, school) or format(SINGLE_DAMAGE_TEMPLATE, d.min)\n"
+        "                else\n"
+        "                    text = school and format(DAMAGE_TEMPLATE_WITH_SCHOOL, d.min, d.max, school) or format(DAMAGE_TEMPLATE, d.min, d.max)\n"
         "                end\n"
-        "            end\n"
-        "        end\n"
-        "        -- Resistances\n"
-        "        if data.fireRes and data.fireRes ~= 0 then self:AddLine('+'..data.fireRes..' Fire Resistance', 0, 1, 0) end\n"
-        "        if data.natureRes and data.natureRes ~= 0 then self:AddLine('+'..data.natureRes..' Nature Resistance', 0, 1, 0) end\n"
-        "        if data.frostRes and data.frostRes ~= 0 then self:AddLine('+'..data.frostRes..' Frost Resistance', 0, 1, 0) end\n"
-        "        if data.shadowRes and data.shadowRes ~= 0 then self:AddLine('+'..data.shadowRes..' Shadow Resistance', 0, 1, 0) end\n"
-        "        if data.arcaneRes and data.arcaneRes ~= 0 then self:AddLine('+'..data.arcaneRes..' Arcane Resistance', 0, 1, 0) end\n"
-        "        -- Item spell effects (Use: / Equip: / Chance on Hit:)\n"
-        "        if data.itemSpells then\n"
-        "            local triggerLabels = {[0]='Use: ',[1]='Equip: ',[2]='Chance on hit: ',[5]=''}\n"
-        "            for _, sp in ipairs(data.itemSpells) do\n"
-        "                local label = triggerLabels[sp.trigger] or ''\n"
-        "                local text = sp.description or sp.name or ''\n"
-        "                if text ~= '' then\n"
-        "                    self:AddLine(label .. text, 0, 1, 0, 1)\n"
+        "                self:AddDoubleLine(text, format('%s %.2f', SPEED, speed), 1, 1, 1, 1, 1, 1)\n"
+        "            else\n"
+        "                if d.min == d.max then\n"
+        "                    text = school and format(PLUS_SINGLE_DAMAGE_TEMPLATE_WITH_SCHOOL, d.min, school) or format(PLUS_SINGLE_DAMAGE_TEMPLATE, d.min)\n"
+        "                else\n"
+        "                    text = school and format(PLUS_DAMAGE_TEMPLATE_WITH_SCHOOL, d.min, d.max, school) or format(PLUS_DAMAGE_TEMPLATE, d.min, d.max)\n"
         "                end\n"
+        "                self:AddLine(text, 1, 1, 1)\n"
         "            end\n"
+        "            total = total + (d.min + d.max) / 2\n"
         "        end\n"
-        "        -- Gem sockets\n"
-        "        if data.sockets then\n"
-        "            local socketNames = {[1]='Meta',[2]='Red',[4]='Yellow',[8]='Blue'}\n"
-        "            for _, sock in ipairs(data.sockets) do\n"
-        "                local colorName = socketNames[sock.color] or 'Prismatic'\n"
-        "                self:AddLine('[' .. colorName .. ' Socket]', 0.5, 0.5, 0.5)\n"
-        "            end\n"
+        "        self:AddLine(format(DPS_TEMPLATE, total / speed), 1, 1, 1)\n"
+        "    end\n"
+        "    if data.armor and data.armor > 0 then self:AddLine(format(ARMOR_TEMPLATE, data.armor), 1, 1, 1) end\n"
+        "    if data.block then self:AddLine(format(SHIELD_BLOCK_TEMPLATE, data.block), 1, 1, 1) end\n"
+        "    -- Base stats in template order, white.\n"
+        "    local baseStats = {[0]='ITEM_MOD_MANA', [1]='ITEM_MOD_HEALTH', [3]='ITEM_MOD_AGILITY', [4]='ITEM_MOD_STRENGTH',\n"
+        "                       [5]='ITEM_MOD_INTELLECT', [6]='ITEM_MOD_SPIRIT', [7]='ITEM_MOD_STAMINA'}\n"
+        "    for _, st in ipairs(data.stats) do\n"
+        "        local key = baseStats[st.type]\n"
+        "        if key then\n"
+        "            self:AddLine(format(_G[key], st.value < 0 and 45 or 43, math.abs(st.value)), 1, 1, 1)\n"
         "        end\n"
-        "        if data.socketBonus then\n"
-        "            self:AddLine('Socket Bonus: '..data.socketBonus, 0.5, 0.5, 0.5)\n"
-        "        end\n"
-        "        if data.classes then self:AddLine('Classes: '..data.classes, 1, 1, 1) end\n"
-        "        if data.races then self:AddLine('Races: '..data.races, 1, 1, 1) end\n"
-        "        -- Required level\n"
-        "        if data.requiredLevel and data.requiredLevel > 1 then\n"
-        "            local met = UnitLevel('player') >= data.requiredLevel and 1 or 0.1\n"
-        "            self:AddLine('Requires Level '..data.requiredLevel, 1, met, met)\n"
-        "        end\n"
-        "        if data.requiredFaction then\n"
-        "            self:AddLine('Requires '..data.requiredFaction..' - '..data.requiredStanding, 1, 1, 1)\n"
-        "        end\n"
-        "        -- Flavor text\n"
-        "        if data.description then self:AddLine('\"'..data.description..'\"', 1, 0.82, 0, 1) end\n"
-        "        if data.startsQuest then self:AddLine('This Item Begins a Quest', 1, 0.82, 0) end\n"
-        // The set block, as the original prints it: a blank line, "Name (n/m)"
-        // in gold, every piece indented - worn ones light yellow, the rest
-        // grey - another blank line, then each bonus: reached ones green as
-        // ITEM_SET_BONUS, the rest grey as ITEM_SET_BONUS_GRAY with the count.
-        "        if data.set then\n"
-        "            local set = data.set\n"
-        "            self:AddLine(' ')\n"
-        "            self:AddLine(format(ITEM_SET_NAME, set.name, set.equipped, set.total), 1, 0.82, 0)\n"
-        "            for _, piece in ipairs(set.pieces) do\n"
-        "                if piece.name then\n"
-        "                    if piece.equipped then self:AddLine('  '..piece.name, 1, 1, 0.6)\n"
-        "                    else self:AddLine('  '..piece.name, 0.5, 0.5, 0.5) end\n"
-        "                end\n"
-        "            end\n"
-        "            if #set.bonuses > 0 then self:AddLine(' ') end\n"
-        "            for _, bonus in ipairs(set.bonuses) do\n"
-        "                if bonus.active then self:AddLine(format(ITEM_SET_BONUS, bonus.text), 0, 1, 0, 1)\n"
-        "                else self:AddLine(format(ITEM_SET_BONUS_GRAY, bonus.threshold, bonus.text), 0.5, 0.5, 0.5, 1) end\n"
+        "    end\n"
+        "    -- Resistances, holy through arcane; one line when all six agree.\n"
+        "    local res = {data.holyRes or 0, data.fireRes or 0, data.natureRes or 0, data.frostRes or 0, data.shadowRes or 0, data.arcaneRes or 0}\n"
+        "    if res[1] ~= 0 and res[1] == res[2] and res[1] == res[3] and res[1] == res[4] and res[1] == res[5] and res[1] == res[6] then\n"
+        "        self:AddLine(format(ITEM_RESIST_ALL, res[1] < 0 and 45 or 43, math.abs(res[1])), 1, 1, 1)\n"
+        "    else\n"
+        "        for school = 1, 6 do\n"
+        "            local v = res[school]\n"
+        "            if v ~= 0 then\n"
+        "                self:AddLine(format(ITEM_RESIST_SINGLE, v < 0 and 45 or 43, math.abs(v), _G['SPELL_SCHOOL'..school..'_CAP']), 1, 1, 1)\n"
         "            end\n"
         "        end\n"
         "    end\n"
-        "    -- Sell price from GetItemInfo\n"
-        // Through the one money formatter, which writes the coin's picture
-        // rather than a letter. This split the copper up itself and appended
-        // 'g', 's' and 'c' - a third copy of the same arithmetic, and the only
-        // one left still writing letters.
+        "    -- Sockets and their bonus, grey.\n"
+        "    if data.sockets then\n"
+        "        local socketNames = {[1]=EMPTY_SOCKET_META, [2]=EMPTY_SOCKET_RED, [4]=EMPTY_SOCKET_YELLOW, [8]=EMPTY_SOCKET_BLUE}\n"
+        "        local socketTextures = {[1]='Meta', [2]='Red', [4]='Yellow', [8]='Blue'}\n"
+        "        for _, sock in ipairs(data.sockets) do\n"
+        "            if socketNames[sock.color] then\n"
+        "                self:AddLine(socketNames[sock.color], 0.5, 0.5, 0.5)\n"
+        "                self:AddTexture('Interface\\\\ItemSocketingFrame\\\\UI-EmptySocket-'..socketTextures[sock.color])\n"
+        "            end\n"
+        "        end\n"
+        "    end\n"
+        "    if data.socketBonus then self:AddLine(format(ITEM_SOCKET_BONUS, data.socketBonus), 0.5, 0.5, 0.5) end\n"
+        "    if inst and inst.maxDurability and inst.maxDurability > 0 then\n"
+        "        self:AddLine(format(DURABILITY_TEMPLATE, inst.durability, inst.maxDurability), met(inst.durability > 0))\n"
+        "    end\n"
+        "    -- Who may use it.\n"
+        "    if data.classes then self:AddLine(format(ITEM_CLASSES_ALLOWED, data.classes), met(data.classesMet)) end\n"
+        "    if data.races then self:AddLine(format(ITEM_RACES_ALLOWED, data.races), met(data.racesMet)) end\n"
+        "    if data.requiredLevel and data.requiredLevel > 1 then\n"
+        "        self:AddLine(format(ITEM_MIN_LEVEL, data.requiredLevel), met(UnitLevel('player') >= data.requiredLevel))\n"
+        "    end\n"
+        "    if data.requiredSkillName then\n"
+        "        if data.requiredSkillRank > 0 then\n"
+        "            self:AddLine(format(ITEM_MIN_SKILL, data.requiredSkillName, data.requiredSkillRank), met(data.requiredSkillMet))\n"
+        "        else\n"
+        "            self:AddLine(format(ITEM_REQ_SKILL, data.requiredSkillName), met(data.requiredSkillMet))\n"
+        "        end\n"
+        "    end\n"
+        "    if data.requiredSpellName then self:AddLine(format(ITEM_REQ_SKILL, data.requiredSpellName), met(data.requiredSpellMet)) end\n"
+        "    if data.requiredFaction then\n"
+        "        self:AddLine(format(ITEM_REQ_REPUTATION, data.requiredFaction, data.requiredStanding), met(data.requiredStandingMet))\n"
+        "    end\n"
+        "    -- Equip ratings in template order, then the item's spells.\n"
+        "    local ratings = {[12]='DEFENSE_SKILL_RATING', [13]='DODGE_RATING', [14]='PARRY_RATING', [15]='BLOCK_RATING',\n"
+        "        [16]='HIT_MELEE_RATING', [17]='HIT_RANGED_RATING', [18]='HIT_SPELL_RATING', [19]='CRIT_MELEE_RATING',\n"
+        "        [20]='CRIT_RANGED_RATING', [21]='CRIT_SPELL_RATING', [22]='HIT_TAKEN_MELEE_RATING',\n"
+        "        [23]='HIT_TAKEN_RANGED_RATING', [24]='HIT_TAKEN_SPELL_RATING', [25]='CRIT_TAKEN_MELEE_RATING',\n"
+        "        [26]='CRIT_TAKEN_RANGED_RATING', [27]='CRIT_TAKEN_SPELL_RATING', [28]='HASTE_MELEE_RATING',\n"
+        "        [29]='HASTE_RANGED_RATING', [30]='HASTE_SPELL_RATING', [31]='HIT_RATING', [32]='CRIT_RATING',\n"
+        "        [33]='HIT_TAKEN_RATING', [34]='CRIT_TAKEN_RATING', [35]='RESILIENCE_RATING', [36]='HASTE_RATING',\n"
+        "        [37]='EXPERTISE_RATING'}\n"
+        "    for _, st in ipairs(data.stats) do\n"
+        "        local key = ratings[st.type]\n"
+        "        if key then self:AddLine(ITEM_SPELL_TRIGGER_ONEQUIP..' '..format(_G['ITEM_MOD_'..key], st.value), 0, 1, 0, 1) end\n"
+        "    end\n"
+        "    if data.itemSpells then\n"
+        "        local labels = {[0]=ITEM_SPELL_TRIGGER_ONUSE, [1]=ITEM_SPELL_TRIGGER_ONEQUIP, [2]=ITEM_SPELL_TRIGGER_ONPROC, [5]=ITEM_SPELL_TRIGGER_ONUSE}\n"
+        "        for _, sp in ipairs(data.itemSpells) do\n"
+        "            local label = labels[sp.trigger]\n"
+        "            if label and sp.description and sp.description ~= '' then\n"
+        "                local text = label..' '..sp.description\n"
+        "                if (sp.trigger == 0 or sp.trigger == 5) and sp.cooldownMs > 0 then\n"
+        "                    local s = math.floor(sp.cooldownMs / 1000)\n"
+        "                    local t\n"
+        "                    if s >= 86400 then t = format(DAYS_ABBR, math.floor(s / 86400))\n"
+        "                    elseif s >= 3600 then t = format(HOURS_ABBR, math.floor(s / 3600))\n"
+        "                    elseif s >= 60 then t = format(MINUTES_ABBR, math.floor(s / 60))\n"
+        "                    else t = format(SECONDS_ABBR, s) end\n"
+        "                    text = text..' '..format(ITEM_COOLDOWN_TOTAL, t)\n"
+        "                end\n"
+        "                self:AddLine(text, 0, 1, 0, 1)\n"
+        "            end\n"
+        "        end\n"
+        "    end\n"
+        "    if data.description then self:AddLine('\"'..data.description..'\"', 1, 0.82, 0, 1) end\n"
+        "    if data.set then\n"
+        "        local set = data.set\n"
+        "        self:AddLine(' ')\n"
+        "        self:AddLine(format(ITEM_SET_NAME, set.name, set.equipped, set.total), 1, 0.82, 0)\n"
+        "        for _, piece in ipairs(set.pieces) do\n"
+        "            if piece.name then\n"
+        "                if piece.equipped then self:AddLine('  '..piece.name, 1, 1, 0.6)\n"
+        "                else self:AddLine('  '..piece.name, 0.5, 0.5, 0.5) end\n"
+        "            end\n"
+        "        end\n"
+        "        if #set.bonuses > 0 then self:AddLine(' ') end\n"
+        "        for _, bonus in ipairs(set.bonuses) do\n"
+        "            if bonus.active then self:AddLine(format(ITEM_SET_BONUS, bonus.text), 0, 1, 0, 1)\n"
+        "            else self:AddLine(format(ITEM_SET_BONUS_GRAY, bonus.threshold, bonus.text), 0.5, 0.5, 0.5, 1) end\n"
+        "        end\n"
+        "    end\n"
+        "    -- What a right click does, for an item the player holds.\n"
+        "    if inst then\n"
+        "        if data.readable then self:AddLine(ITEM_READABLE, 0, 1, 0)\n"
+        "        elseif data.openable then self:AddLine(ITEM_OPENABLE, 0, 1, 0) end\n"
+        "        if data.sockets then self:AddLine(ITEM_SOCKETABLE, 0, 1, 0) end\n"
+        "    end\n"
         "    if sellPrice and sellPrice > 0 and select(4, GetBuildInfo()) >= 30000 then\n"
         "        self:AddLine('Sell Price: '..GetCoinTextureString(sellPrice), 1, 1, 1)\n"
         "    end\n"
@@ -9116,7 +9160,7 @@ void LuaEngine::registerCoreAPI() {
         "        self.__itemId = tonumber(id)\n"
         "        return\n"
         "    end\n"
-        "    _WoweePopulateItemTooltip(self, tonumber(id))\n"
+        "    _WoweePopulateItemTooltip(self, tonumber(id), nil, _GetContainerItemInstance(bag, slot))\n"
         "    self:_WoweeAppendItemEnchants(bag, slot)\n"
         "end\n"
         // The spellbook's tooltip. SpellButton_OnEnter calls this and nothing

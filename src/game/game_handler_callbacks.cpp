@@ -4218,6 +4218,21 @@ std::string GameHandler::formatSpellDescription(uint32_t selfSpellId,
                         v = std::lround(typedValue);
                     else v = LONG_MIN;
                 }
+                if (v != LONG_MIN && code == 's') {
+                    // A rolled effect reads as its range: Minor Healing
+                    // Potion's "Restores $s1 health." is "Restores 70 to 90
+                    // health." on the original (439: base 69, dice 1..21).
+                    const auto* entry = getSpellNameEntry(target);
+                    if (entry && entry->effectDieSides[idx] > entry->effectBaseDice[idx] &&
+                        entry->effectBasePoints[idx] + entry->effectBaseDice[idx] >= 0) {
+                        const long lo = entry->effectBasePoints[idx] + entry->effectBaseDice[idx];
+                        const long hi = entry->effectBasePoints[idx] + entry->effectDieSides[idx];
+                        out += std::to_string(lo) + " to " + std::to_string(hi);
+                        lastValue = hi;
+                        resolved = true;
+                        break;
+                    }
+                }
                 if (v != LONG_MIN) { out += std::to_string(v); lastValue = v; resolved = true; }
                 break;
             }

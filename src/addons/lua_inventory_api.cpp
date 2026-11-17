@@ -2126,10 +2126,93 @@ static int lua_GetItemTooltipData(lua_State* L) {
         lua_pushnumber(L, info->containerSlots);
         lua_setfield(L, -2, "containerSlots");
     }
-    // Unique / Heroic flags
+    // What the tooltip builder needs to lay the item out as the original
+    // does; see _WoweePopulateItemTooltip.
+    lua_pushnumber(L, info->itemClass);
+    lua_setfield(L, -2, "itemClass");
+    lua_pushnumber(L, info->subClass);
+    lua_setfield(L, -2, "subClass");
+    lua_pushnumber(L, info->maxCount);
+    lua_setfield(L, -2, "maxCount");
     if (info->maxCount == 1) { lua_pushboolean(L, 1); lua_setfield(L, -2, "isUnique"); }
-    if (info->itemFlags & 0x8) { lua_pushboolean(L, 1); lua_setfield(L, -2, "isHeroic"); }
-    if (info->itemFlags & 0x1000000) { lua_pushboolean(L, 1); lua_setfield(L, -2, "isUniqueEquipped"); }
+    // ITEM_FLAG_UNIQUE_EQUIPPABLE is 0x80000 before WotLK (CMaNGOS TBC
+    // ItemPrototype.h) and 0x1000000 in WotLK; ITEM_FLAG_CONJURED is 0x2.
+    const uint32_t uniqueEquippedFlag = game::isPreWotlk() ? 0x80000u : 0x1000000u;
+    if (info->itemFlags & uniqueEquippedFlag) { lua_pushboolean(L, 1); lua_setfield(L, -2, "isUniqueEquipped"); }
+    if (info->itemFlags & 0x2u) { lua_pushboolean(L, 1); lua_setfield(L, -2, "conjured"); }
+    // ITEM_FLAG_HAS_LOOT, or a lock: "<Right Click to Open>" on a bag item.
+    if (info->lockId != 0) {
+        lua_pushboolean(L, 1);
+        lua_setfield(L, -2, "locked");
+        // Lock.dbc: Type[8] at 1, Index[8] at 9, Skill[8] at 17. A skill lock
+        // (type 2) with a rank is printed "Requires Lockpicking (1)" with
+        // LockType.dbc's name.
+        auto* am = gh->services().assetManager;
+        const auto locks = am ? am->loadDBC("Lock.dbc") : nullptr;
+        const auto types = am ? am->loadDBC("LockType.dbc") : nullptr;
+        const int32_t row = locks && locks->isLoaded() ? locks->findRecordById(info->lockId) : -1;
+        if (row < 0 || !types || !types->isLoaded()) {
+            LOG_ERROR("Item ", itemId, " lock ", info->lockId, " not in Lock.dbc/LockType.dbc");
+        } else {
+            lua_newtable(L);
+            int n = 0;
+            for (uint32_t slot = 0; slot < 8; ++slot) {
+                if (locks->getUInt32(row, 1 + slot) != 2) continue;
+                const uint32_t skill = locks->getUInt32(row, 17 + slot);
+                if (skill == 0) continue;
+                const int32_t typeRow = types->findRecordById(locks->getUInt32(row, 9 + slot));
+                if (typeRow < 0) continue;
+                lua_newtable(L);
+                lua_pushstring(L, types->getString(typeRow, 1).c_str());
+                lua_setfield(L, -2, "name");
+                lua_pushnumber(L, skill);
+                lua_setfield(L, -2, "skill");
+                lua_rawseti(L, -2, ++n);
+            }
+            lua_setfield(L, -2, "lockRequirements");
+        }
+    }
+    if ((info->itemFlags & 0x4u) && info->lockId == 0) { lua_pushboolean(L, 1); lua_setfield(L, -2, "openable"); }
+    if (info->pageTextId != 0) { lua_pushboolean(L, 1); lua_setfield(L, -2, "readable"); }
+    if (info->block != 0) { lua_pushnumber(L, info->block); lua_setfield(L, -2, "block"); }
+    if (info->holyRes != 0) { lua_pushnumber(L, info->holyRes); lua_setfield(L, -2, "holyRes"); }
+    // Every stat pair in template order, and every damage entry with its
+    // school: the tooltip prints them in that order.
+    lua_newtable(L);
+    for (size_t i = 0; i < info->stats.size(); ++i) {
+        lua_newtable(L);
+        lua_pushnumber(L, info->stats[i].statType);
+        lua_setfield(L, -2, "type");
+        lua_pushnumber(L, info->stats[i].statValue);
+        lua_setfield(L, -2, "value");
+        lua_rawseti(L, -2, static_cast<int>(i) + 1);
+    }
+    lua_setfield(L, -2, "stats");
+    lua_newtable(L);
+    for (size_t i = 0; i < info->damages.size(); ++i) {
+        lua_newtable(L);
+        lua_pushnumber(L, info->damages[i].min);
+        lua_setfield(L, -2, "min");
+        lua_pushnumber(L, info->damages[i].max);
+        lua_setfield(L, -2, "max");
+        lua_pushnumber(L, info->damages[i].school);
+        lua_setfield(L, -2, "school");
+        lua_rawseti(L, -2, static_cast<int>(i) + 1);
+    }
+    lua_setfield(L, -2, "damages");
+    // Requirements the tooltip draws red when the player falls short.
+    const uint32_t classBit = gh->getPlayerClass() ? (1u << (gh->getPlayerClass() - 1)) : 0u;
+    const uint32_t raceBit = gh->getPlayerRace() ? (1u << (gh->getPlayerRace() - 1)) : 0u;
+    lua_pushboolean(L, info->allowableClass == 0 || (info->allowableClass & classBit) != 0);
+    lua_setfield(L, -2, "classesMet");
+    lua_pushboolean(L, info->allowableRace == 0 || (info->allowableRace & raceBit) != 0);
+    lua_setfield(L, -2, "racesMet");
+    if (info->requiredSpell != 0) {
+        lua_pushstring(L, gh->getSpellName(info->requiredSpell).c_str());
+        lua_setfield(L, -2, "requiredSpellName");
+        lua_pushboolean(L, gh->getKnownSpells().count(info->requiredSpell) != 0);
+        lua_setfield(L, -2, "requiredSpellMet");
+    }
     // Bind type
     lua_pushnumber(L, info->bindType);
     lua_setfield(L, -2, "bindType");
@@ -2230,6 +2313,10 @@ static int lua_GetItemTooltipData(lua_State* L) {
             lua_setfield(L, -2, "requiredFaction");
             lua_pushstring(L, game::reputationRankName(info->requiredReputationRank));
             lua_setfield(L, -2, "requiredStanding");
+            const auto& standing = game::reputationStandingFor(
+                gh->getFactionStanding(info->requiredReputationFaction));
+            lua_pushboolean(L, standing.id - 1 >= static_cast<int>(info->requiredReputationRank));
+            lua_setfield(L, -2, "requiredStandingMet");
         }
     }
     // What the sockets give when every one holds the colour it asks for.
@@ -2271,6 +2358,8 @@ static int lua_GetItemTooltipData(lua_State* L) {
             lua_setfield(L, -2, "spellId");
             lua_pushnumber(L, info->spells[i].spellTrigger);
             lua_setfield(L, -2, "trigger");
+            lua_pushnumber(L, info->spells[i].cooldownMs);
+            lua_setfield(L, -2, "cooldownMs");
             // Get spell name for display
             const std::string& sName = gh->getSpellName(info->spells[i].spellId);
             if (!sName.empty()) { lua_pushstring(L, sName.c_str()); lua_setfield(L, -2, "name"); }
@@ -2368,6 +2457,26 @@ static int lua_GetItemTooltipData(lua_State* L) {
         lua_pushboolean(L, 1);
         lua_setfield(L, -2, "startsQuest");
     }
+    return 1;
+}
+
+// _GetContainerItemInstance(bag, slot) - the held item's instance facts the
+// tooltip builder takes as its fourth argument: soulbound and durability.
+// Nil for an empty slot.
+static int lua_GetContainerItemInstance(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const int bag = static_cast<int>(luaL_optnumber(L, 1, -1));
+    const int slot = static_cast<int>(luaL_optnumber(L, 2, 0));
+    const game::ItemSlot* s = gh && slot >= 1
+        ? containerItemSlot(gh->getInventory(), bag, slot) : nullptr;
+    if (!s || s->empty()) { lua_pushnil(L); return 1; }
+    lua_newtable(L);
+    lua_pushboolean(L, s->item.soulbound ? 1 : 0);
+    lua_setfield(L, -2, "soulbound");
+    lua_pushnumber(L, s->item.curDurability);
+    lua_setfield(L, -2, "durability");
+    lua_pushnumber(L, s->item.maxDurability);
+    lua_setfield(L, -2, "maxDurability");
     return 1;
 }
 
@@ -3713,6 +3822,7 @@ void registerInventoryLuaAPI(lua_State* L) {
                 {"IsDressableItem",   lua_IsDressableItem},
                 {"GetItemQualityColor", lua_GetItemQualityColor},
                 {"_GetItemTooltipData", lua_GetItemTooltipData},
+                {"_GetContainerItemInstance", lua_GetContainerItemInstance},
                 // GetItemSpell(item) → spellName, spellRank
                 //
                 // The "Use:" spell on an item, which is what /use and the chat

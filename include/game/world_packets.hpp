@@ -1981,7 +1981,12 @@ struct ItemQueryResponseData {
     /// False means the packet ended inside the run.
     bool readCommonRequirements(network::Packet& packet);
 
+    /// Every (type, value) pair with a non-zero value, in template order -
+    /// the order the tooltip lists them in.
+    std::vector<ExtraStat> stats;
+
     void applyStat(uint32_t statType, int32_t statValue) {
+        if (statValue != 0) stats.push_back({.statType = statType, .statValue = statValue});
         switch (statType) {
             case 3: agility = statValue; break;
             case 4: strength = statValue; break;

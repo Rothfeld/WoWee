@@ -3456,6 +3456,7 @@ public:
     // totem-category cast failures; empty if unknown.
     const std::string& getTotemCategoryName(uint32_t categoryId) const;
     const int32_t* getSpellEffectBasePoints(uint32_t spellId) const;
+
     float getSpellDuration(uint32_t spellId) const;
     std::string getEnchantName(uint32_t enchantId) const;
     /// The gem item an enchantment came out of; 0 when it is not a gem.
@@ -4042,6 +4043,10 @@ public:
         /// none.
         uint32_t descriptionVariableId = 0;
         int32_t effectBasePoints[3] = {0, 0, 0};
+        /// EffectDieSides / EffectBaseDice: a rolled effect is
+        /// basePoints + BaseDice .. basePoints + DieSides.
+        int32_t effectDieSides[3] = {0, 0, 0};
+        int32_t effectBaseDice[3] = {0, 0, 0};
         uint32_t effectIds[3] = {0, 0, 0};
         int32_t equippedItemClass = -1;
         uint32_t equippedItemSubClassMask = 0;
@@ -4073,6 +4078,12 @@ public:
         /// group n of SMSG_SET_FLAT/PCT_SPELL_MODIFIER.
         uint64_t familyFlags = 0;
     };
+    /// The cached Spell.dbc row, or null.
+    const SpellNameEntry* getSpellNameEntry(uint32_t spellId) const {
+        loadSpellNameCache();
+        const auto it = spellNameCache_.find(spellId);
+        return it == spellNameCache_.end() ? nullptr : &it->second;
+    }
     static constexpr size_t PLAYER_EXPLORED_ZONES_COUNT = 128;
     std::string getAreaName(uint32_t areaId) const;
     std::optional<uint32_t> getAreaMapId(uint32_t areaId) const;

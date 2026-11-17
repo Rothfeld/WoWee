@@ -3531,6 +3531,11 @@ void SpellHandler::loadSpellNameCache() const {
         spellL ? spellL->field("EffectItemType2") : 0xFFFFFFFF,
     };
     const uint32_t ebp0Field = spellL ? spellL->field("EffectBasePoints0") : 0xFFFFFFFF;
+    uint32_t dieSidesFields[3], baseDiceFields[3];
+    for (int e = 0; e < 3; ++e) {
+        dieSidesFields[e] = spellL ? spellL->tryField("EffectDieSides" + std::to_string(e)) : 0xFFFFFFFF;
+        baseDiceFields[e] = spellL ? spellL->tryField("EffectBaseDice" + std::to_string(e)) : 0xFFFFFFFF;
+    }
     const uint32_t ebp1Field = spellL ? spellL->field("EffectBasePoints1") : 0xFFFFFFFF;
     const uint32_t ebp2Field = spellL ? spellL->field("EffectBasePoints2") : 0xFFFFFFFF;
     const uint32_t effect0Field = spellL ? spellL->field("Effect0") : 0xFFFFFFFF;
@@ -3634,6 +3639,12 @@ void SpellHandler::loadSpellNameCache() const {
             }
             // Load effect base points for $s1/$s2/$s3 tooltip substitution
             if (ebp0Field != 0xFFFFFFFF) entry.effectBasePoints[0] = static_cast<int32_t>(dbc->getUInt32(i, ebp0Field));
+            for (int e = 0; e < 3; ++e) {
+                if (dieSidesFields[e] < fieldCount && baseDiceFields[e] < fieldCount) {
+                    entry.effectDieSides[e] = static_cast<int32_t>(dbc->getUInt32(i, dieSidesFields[e]));
+                    entry.effectBaseDice[e] = static_cast<int32_t>(dbc->getUInt32(i, baseDiceFields[e]));
+                }
+            }
             if (ebp1Field != 0xFFFFFFFF) entry.effectBasePoints[1] = static_cast<int32_t>(dbc->getUInt32(i, ebp1Field));
             if (ebp2Field != 0xFFFFFFFF) entry.effectBasePoints[2] = static_cast<int32_t>(dbc->getUInt32(i, ebp2Field));
             if (implicitTargetAField != 0xFFFFFFFF && implicitTargetAField < fieldCount) {

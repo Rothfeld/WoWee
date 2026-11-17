@@ -322,7 +322,10 @@
     "Tooltip": 178,
     "SpellFamilyName": 199,
     "SpellFamilyFlags0": 200,
-    "SpellFamilyFlags1": 201
+    "SpellFamilyFlags1": 201,
+    "EffectBaseDice0": 71,
+    "EffectBaseDice1": 72,
+    "EffectBaseDice2": 73
   },
   "SpellIcon": {
     "ID": 0,
