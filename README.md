@@ -862,7 +862,13 @@ oriented by that attachment's bone alone:
 | 4 shield | 28 SheathShield | 28 SheathShield | Worn Wooden Shield 2362 |
 | 0, 5, 6, 7 | not drawn | not drawn | bows, guns, rods, fist/held props |
 
-A bow is held in the left hand, a gun in the right. A model without the
+A bow is held in the left hand, a gun in the right.
+
+The local character's state is sent with `CMSG_SETSHEATHED`, so other clients
+see it. Z (ToggleSheath) cycles unarmed -> melee -> ranged -> unarmed and skips
+a state with no item: melee-only 1 -> 0 -> 1, ranged-only 0 -> 2 -> 0 (native
+build 8606). Native keeps weapons drawn after combat ends (90 s observed after
+/stopattack and combat end); WoWee does not sheathe on combat end either. A model without the
 SheatheType's attachment draws nothing while sheathed (HumanMaleCaster.m2,
 Kobold.m2): there is no fallback point. Native observation, build 8606, on
 GnomeFemale, HumanMale, HumanMaleCaster and Kobold models:

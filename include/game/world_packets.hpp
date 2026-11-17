@@ -1076,6 +1076,12 @@ public:
     static network::Packet build(uint8_t state);
 };
 
+/** CMSG_SETSHEATHED: the local unit's sheath state (0 unarmed, 1 melee, 2 ranged). */
+class SetSheathedPacket {
+public:
+    static network::Packet build(uint32_t sheathState);
+};
+
 // ============================================================
 // Action Bar
 // ============================================================

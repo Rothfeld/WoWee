@@ -390,9 +390,9 @@ void AppearanceComposer::loadEquippedWeapons() {
         showingMiningPick_ = false;
         miningPickInstanceId_ = 0;
     }
-    showingRanged_ = false;
+    showingRanged_ = sheathState_ == kSheathStateRanged;
     if (renderer_ && renderer_->getAnimationController())
-        renderer_->getAnimationController()->setRangedWeaponActive(false);
+        renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
     if (!renderer_ || !renderer_->getCharacterRenderer() || !assetManager_ || !assetManager_->isInitialized())
         return;
     if (!gameHandler_) return;
@@ -414,8 +414,7 @@ void AppearanceComposer::loadEquippedWeapons() {
     // Main and off hand: held point by slot, sheath point by Item SheatheType.
     for (const uint32_t point : {kAttachShield, kAttachRightHand, kAttachLeftHand})
         charRenderer->detachWeapon(charInstanceId, point);
-    charRenderer->setSheathState(charInstanceId,
-        weaponsSheathed_ ? kSheathStateUnarmed : kSheathStateMelee);
+    charRenderer->setSheathState(charInstanceId, sheathState_);
 
     for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND}) {
         const auto& equipSlot = inventory.getEquipSlot(slot);
@@ -481,7 +480,7 @@ void AppearanceComposer::loadEquippedWeapons() {
         if (ok) {
             LOG_INFO("Equipped weapon: ", m2Path, " held at ", attachmentId,
                      ", sheathed at ", sheath, " (sheath type ", info->sheath, ")",
-                     weaponsSheathed_ ? " - sheathed" : " - held");
+                     ", sheath state ", int(sheathState_));
             applyEnchantVisuals(charInstanceId, static_cast<int>(slot), attachmentId);
         }
     }
@@ -690,72 +689,39 @@ void AppearanceComposer::showFishingPole(bool show) {
 
 void AppearanceComposer::showRangedWeapon(bool show) {
     if (show == showingRanged_) return;
+    showingRanged_ = show;
+    if (renderer_ && renderer_->getAnimationController())
+        renderer_->getAnimationController()->setRangedWeaponActive(show);
+    setSheathState(show ? kSheathStateRanged : kSheathStateMelee);
+}
 
-    if (!renderer_ || !renderer_->getCharacterRenderer() || !gameHandler_ || !assetManager_ || !assetManager_->isInitialized())
-        return;
+void AppearanceComposer::setSheathState(uint8_t sheathState) {
+    assert(sheathState <= kSheathStateRanged);
+    if (sheathState == sheathState_) return;
+    LOG_INFO("Local sheath state ", int(sheathState_), " -> ", int(sheathState));
+    sheathState_ = sheathState;
+    if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())
+        renderer_->getCharacterRenderer()->setSheathState(renderer_->getCharacterInstanceId(), sheathState);
+    if (gameHandler_) gameHandler_->sendSetSheathed(sheathState);
+}
 
-    auto* charRenderer = renderer_->getCharacterRenderer();
-    uint32_t charInstanceId = renderer_->getCharacterInstanceId();
-    if (charInstanceId == 0) return;
-
-    if (!show) {
-        showingRanged_ = false;
-        if (renderer_->getAnimationController())
-            renderer_->getAnimationController()->setRangedWeaponActive(false);
-        // Swap back to normal melee weapons
-        loadEquippedWeapons();
-        return;
+void AppearanceComposer::toggleWeaponsSheathed() {
+    assert(gameHandler_);
+    const auto& inventory = gameHandler_->getInventory();
+    const bool melee = !inventory.getEquipSlot(game::EquipSlot::MAIN_HAND).empty() ||
+                       !inventory.getEquipSlot(game::EquipSlot::OFF_HAND).empty();
+    const bool ranged = !inventory.getEquipSlot(game::EquipSlot::RANGED).empty();
+    uint8_t next = sheathState_;
+    for (int step = 0; step < 3; ++step) {
+        next = static_cast<uint8_t>((next + 1) % 3);
+        if (next == kSheathStateUnarmed || (next == kSheathStateMelee && melee) ||
+            (next == kSheathStateRanged && ranged))
+            break;
     }
-
-    auto& inventory = gameHandler_->getInventory();
-    const auto& rangedSlot = inventory.getEquipSlot(game::EquipSlot::RANGED);
-    if (rangedSlot.empty() || rangedSlot.item.displayInfoId == 0) return;
-
-    auto displayInfoDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
-    if (!displayInfoDbc) return;
-
-    uint32_t displayInfoId = rangedSlot.item.displayInfoId;
-    int32_t recIdx = displayInfoDbc->findRecordById(displayInfoId);
-    if (recIdx < 0) return;
-
-    const auto* idiL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
-    std::string modelName = displayInfoDbc->getString(static_cast<uint32_t>(recIdx), idiL ? (*idiL)["LeftModel"] : 1);
-    std::string textureName = displayInfoDbc->getString(static_cast<uint32_t>(recIdx), idiL ? (*idiL)["LeftModelTexture"] : 3);
-    if (modelName.empty()) return;
-
-    std::string modelFile = modelName;
-    {
-        size_t dotPos = modelFile.rfind('.');
-        if (dotPos != std::string::npos)
-            modelFile = modelFile.substr(0, dotPos) + ".m2";
-        else
-            modelFile += ".m2";
-    }
-
-    std::string m2Path = "Item\\ObjectComponents\\Weapon\\" + modelFile;
-    pipeline::M2Model weaponModel;
-    if (!loadWeaponM2(m2Path, weaponModel)) {
-        m2Path = "Item\\ObjectComponents\\Shield\\" + modelFile;
-        if (!loadWeaponM2(m2Path, weaponModel)) return;
-    }
-
-    std::string texturePath;
-    if (!textureName.empty()) {
-        texturePath = "Item\\ObjectComponents\\Weapon\\" + textureName + ".blp";
-        if (!assetManager_->fileExists(texturePath))
-            texturePath = "Item\\ObjectComponents\\Shield\\" + textureName + ".blp";
-    }
-
-    // Detach current right-hand weapon and attach ranged weapon
-    charRenderer->detachWeapon(charInstanceId, 1);
-    uint32_t weaponModelId = entitySpawner_->allocateWeaponModelId();
-    bool ok = charRenderer->attachWeapon(charInstanceId, 1, weaponModel, weaponModelId, texturePath);
-    if (ok) {
-        showingRanged_ = true;
-        if (renderer_->getAnimationController())
-            renderer_->getAnimationController()->setRangedWeaponActive(true);
-        LOG_INFO("Swapped to ranged weapon: ", m2Path, " at attachment 1 (right hand)");
-    }
+    showingRanged_ = next == kSheathStateRanged;
+    if (renderer_ && renderer_->getAnimationController())
+        renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
+    setSheathState(next);
 }
 
 } // namespace core

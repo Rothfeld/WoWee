@@ -66,9 +66,14 @@ public:
     void loadEquippedWeapons();
 
     // Weapon sheathe state
-    void setWeaponsSheathed(bool sheathed) { weaponsSheathed_ = sheathed; }
-    [[nodiscard]] bool isWeaponsSheathed() const { return weaponsSheathed_; }
-    void toggleWeaponsSheathed() { weaponsSheathed_ = !weaponsSheathed_; }
+    // Weapon sheath state (0 unarmed, 1 melee, 2 ranged), sent to the server.
+    void setSheathState(uint8_t sheathState);
+    [[nodiscard]] uint8_t sheathState() const { return sheathState_; }
+    void setWeaponsSheathed(bool sheathed) { setSheathState(sheathed ? 0 : 1); }
+    [[nodiscard]] bool isWeaponsSheathed() const { return sheathState_ == 0; }
+    /// Z / ToggleSheath: unarmed -> melee (main or off hand item) -> ranged
+    /// (ranged item) -> unarmed, skipping a state without its item.
+    void toggleWeaponsSheathed();
     /// Where the item in a hand is put away; NONE when the hand is empty.
     [[nodiscard]] rendering::SheathSpot sheathSpot(game::EquipSlot slot) const;
 
@@ -111,7 +116,7 @@ private:
     uint32_t skinTextureSlotIndex_ = 0;
     uint32_t cloakTextureSlotIndex_ = 0;
 
-    bool weaponsSheathed_ = false;
+    uint8_t sheathState_ = 1;
     bool showingRanged_ = false;
     bool showingMiningPick_ = false;
     uint32_t miningPickInstanceId_ = 0;

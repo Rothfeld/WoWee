@@ -1894,6 +1894,14 @@ void GameHandler::sendSetDifficulty(uint32_t difficulty, bool raid) {
     if (socialHandler_) socialHandler_->sendSetDifficulty(difficulty, raid);
 }
 
+void GameHandler::sendSetSheathed(uint8_t sheathState) {
+    assert(sheathState <= 2);
+    if (!isInWorld()) return;
+    auto packet = SetSheathedPacket::build(sheathState);
+    getSocket()->send(packet);
+    LOG_INFO("Sent CMSG_SETSHEATHED ", int(sheathState));
+}
+
 void GameHandler::setStandState(uint8_t standState) {
     if (!socialHandler_ || !isInWorld()) return;
     socialHandler_->setStandState(standState);
