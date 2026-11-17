@@ -252,6 +252,10 @@ public:
     void setActiveCharacterGuid(uint64_t guid) { activeCharacterGuid_ = guid; }
     uint64_t getActiveCharacterGuid() const { return activeCharacterGuid_; }
     const Character* getActiveCharacter() const;
+    /// Name of the realm chosen on the realm list; GetRealmName and the
+    /// realmName CVar answer with it.
+    void setRealmName(std::string name) { realmName_ = std::move(name); }
+    const std::string& getRealmName() const { return realmName_; }
 
     /**
      * Get current player movement info
@@ -4043,6 +4047,7 @@ public:
     }
 
 private:
+    std::string realmName_;
     // Dead: autoTargetAttacker moved to CombatHandler
 
     /**

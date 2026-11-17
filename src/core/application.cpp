@@ -923,6 +923,15 @@ bool Application::initialize() {
             std::string addonsDir = interfaceRoot + "/interface/AddOns";
             addonManager_->setFrameXmlDir(interfaceRoot + "/interface/FrameXML");
             addonManager_->scanAddons(addonsDir);
+            widgetRenderer_.setAddonDirectoryResolver([am = addonManager_.get()](const std::string& lowerName) {
+                for (const auto* list : {&am->getAddons(), &am->getLoadOnDemandAddons()})
+                    for (const auto& toc : *list) {
+                        std::string name = toc.addonName;
+                        for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (name == lowerName) return toc.basePath;
+                    }
+                return std::string();
+            });
             // Wire Lua errors to UI error display
             addonManager_->getLuaEngine()->setLuaErrorCallback([gh = gameHandler.get()](const std::string& err) {
                 // Not addUIError: that reports by firing an event, which runs

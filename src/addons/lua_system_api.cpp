@@ -1311,7 +1311,13 @@ static int lua_GetCVar(lua_State* L) {
     // Enemy nameplates and the minimap's rotation used to be here too - the V
     // key and the minimap's menu turn them without SetCVar - and are rows
     // bound in kClientCVars now, which answers from the row the same way.
-    if (n == "gxwindow") {
+    if (n == "realmname") {
+        // The realm chosen on the realm list. Written by the login screen in
+        // the original client; MangAdmin's header reads it.
+        auto* gh = getGameHandler(L);
+        lua_pushstring(L, gh ? gh->getRealmName().c_str() : "");
+        return 1;
+    } else if (n == "gxwindow") {
         // The schema's fullscreen row the other way round: 1 is windowed. The
         // Windowed box on the Resolution page is retired for that row, and
         // RestartGx reads this on Okay - so it has to be the window's live
@@ -7192,14 +7198,15 @@ void registerSystemLuaAPI(lua_State* L) {
         }},
                 {"GetRealmName", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            if (gh) {
-                const auto* ac = gh->getActiveCharacter();
-                lua_pushstring(L, ac ? "WoWee" : "Unknown");
-            } else lua_pushstring(L, "Unknown");
+            lua_pushstring(L, gh ? gh->getRealmName().c_str() : "");
             return 1;
         }},
                 {"GetNormalizedRealmName", [](lua_State* L) -> int {
-            lua_pushstring(L, "WoWee");
+            // The realm name without spaces, as the API defines it.
+            auto* gh = getGameHandler(L);
+            std::string name = gh ? gh->getRealmName() : "";
+            std::erase(name, ' ');
+            lua_pushstring(L, name.c_str());
             return 1;
         }},
                 // ShowHelm(show) and ShowCloak(show) are setters, and these

@@ -5809,6 +5809,13 @@ static int lua_Frame_CreateFontString(lua_State* L) {
     lua_pushstring(L, "");
     lua_setfield(L, -2, "_text");
     installRegionMethods(L, /*isTexture=*/false, /*isFontString=*/true);
+    // CreateFontString(name, layer, inherits): the third argument is a font
+    // object, by name or as the object, whose font and colour the region
+    // starts with. Ignored, every addon label made this way drew in white
+    // instead of GameFontNormal's gold (MangAdmin's "Char: |cff00ff00..|r"
+    // values, measured against build 8606).
+    if (tree && !lua_isnoneornil(L, 4))
+        applyFontObject(L, 4, tree->get(widgetIdOf(L, lua_gettop(L))));
     if (name && *name) {
         lua_pushvalue(L, -1);
         lua_setglobal(L, name);

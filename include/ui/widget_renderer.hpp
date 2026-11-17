@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 // Draws a WidgetTree.
 //
 // Kept apart from the tree itself so the layout rules stay testable without a
@@ -34,6 +36,13 @@ struct Widget;
 class WidgetRenderer {
 public:
     void initialize(pipeline::AssetManager* assets, rendering::VkContext* vkCtx);
+
+    /// Directory on disk for an addon, by folder name in lower case, or empty.
+    /// Interface\AddOns\<name>\... art is read from there rather than from
+    /// the game archives, as the original client reads loose addon files.
+    void setAddonDirectoryResolver(std::function<std::string(const std::string&)> resolver) {
+        addonDirectory_ = std::move(resolver);
+    }
 
     /// Lay the tree out for this screen and draw it. Safe to call with no
     /// device or assets - it simply does nothing, which is what the headless
@@ -158,6 +167,7 @@ private:
     pipeline::AssetManager* assets_ = nullptr;
     rendering::VkContext* vkCtx_ = nullptr;
     std::unordered_map<std::string, VkDescriptorSet> textures_;
+    std::function<std::string(const std::string&)> addonDirectory_;
     /// The cached set for a path, or null when nothing is cached for it -
     /// which is different from a cached kMissing, and both callers care.
     ///

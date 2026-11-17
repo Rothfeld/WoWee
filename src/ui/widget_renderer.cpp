@@ -12,6 +12,9 @@
 #include "ui/framexml_takeover.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/blp_loader.hpp"
+#include "stb_image.h"
+#include <filesystem>
+#include <fstream>
 #include "rendering/vk_context.hpp"
 #include "core/app_clock.hpp"
 #include "core/env_flag.hpp"
@@ -117,6 +120,50 @@ std::vector<uint8_t> WidgetRenderer::readTextureFile(const std::string& path,
                                                      std::string& resolvedOut) {
     if (!assets_ || path.empty()) return {};
 
+    // Interface\AddOns\<name>\...: a loose file in that addon's folder, as the
+    // original client loads addon art. Without an extension, .blp then .tga.
+    {
+        std::string lower = path;
+        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::replace(lower.begin(), lower.end(), '/', '\\');
+        constexpr std::string_view kAddons = "interface\\addons\\";
+        if (addonDirectory_ && lower.starts_with(kAddons)) {
+            const size_t nameEnd = lower.find('\\', kAddons.size());
+            if (nameEnd == std::string::npos) return {};
+            const std::string dir = addonDirectory_(lower.substr(kAddons.size(), nameEnd - kAddons.size()));
+            if (dir.empty()) return {};
+            std::string rest = path.substr(nameEnd + 1);
+            std::replace(rest.begin(), rest.end(), '\\', '/');
+            const bool hasExt = rest.size() > 4 && rest[rest.size() - 4] == '.';
+            const std::vector<std::string> candidates = hasExt
+                ? std::vector<std::string>{rest}
+                : std::vector<std::string>{rest + ".blp", rest + ".tga"};
+            for (const auto& candidate : candidates) {
+                // Case-insensitive walk: addons name their files however
+                // Windows let them, and the folder on disk keeps its own case.
+                std::filesystem::path at(dir);
+                std::error_code ec;
+                bool found = true;
+                for (const auto& part : std::filesystem::path(candidate)) {
+                    std::string want = part.string();
+                    for (char& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    bool matched = false;
+                    for (const auto& entry : std::filesystem::directory_iterator(at, ec)) {
+                        std::string have = entry.path().filename().string();
+                        for (char& c : have) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (have == want) { at = entry.path(); matched = true; break; }
+                    }
+                    if (!matched) { found = false; break; }
+                }
+                if (!found || !std::filesystem::is_regular_file(at, ec)) continue;
+                std::ifstream in(at, std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                resolvedOut = at.string();
+                return bytes;
+            }
+            return {};
+        }
+    }
     // Addons write "Interface\\Foo\\Bar" without the extension as often as with
     // it, and the real client accepts both.
     std::string resolved = path;
@@ -166,6 +213,26 @@ std::vector<uint8_t> WidgetRenderer::readTextureFile(const std::string& path,
     return data;
 }
 
+/// Decode interface art by its resolved file: TGA (addon folders) through
+/// stb_image, everything else as BLP.
+static pipeline::BLPImage decodeInterfaceImage(const std::vector<uint8_t>& data, const std::string& resolved) {
+    std::string ext = resolved.size() > 4 ? resolved.substr(resolved.size() - 4) : "";
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext != ".tga") return pipeline::BLPLoader::load(data);
+    int w = 0, h = 0, channels = 0;
+    stbi_uc* pixels = stbi_load_from_memory(data.data(), static_cast<int>(data.size()), &w, &h, &channels, 4);
+    pipeline::BLPImage image;
+    if (!pixels) {
+        LOG_WARNING("TGA decode failed: ", resolved, ": ", stbi_failure_reason());
+        return image;
+    }
+    image.width = w;
+    image.height = h;
+    image.data.assign(pixels, pixels + static_cast<size_t>(w) * h * 4);
+    stbi_image_free(pixels);
+    return image;
+}
+
 VkDescriptorSet WidgetRenderer::texture(const std::string& path, bool add, bool desaturated) {
     const std::string key = cacheKey(path, add, desaturated);
     auto it = textures_.find(key);
@@ -179,7 +246,7 @@ VkDescriptorSet WidgetRenderer::texture(const std::string& path, bool add, bool 
         textures_[key] = kMissing;
         return kMissing;
     }
-    auto image = pipeline::BLPLoader::load(data);
+    auto image = decodeInterfaceImage(data, resolved);
     if (!image.isValid()) {
         LOG_WARNING("Widget texture unreadable: ", resolved);
         textures_[key] = kMissing;
@@ -214,7 +281,7 @@ bool WidgetRenderer::textureSize(const std::string& path, float& w, float& h) {
     std::string resolved;
     auto data = readTextureFile(path, resolved);
     if (data.empty()) { textureSizes_[path] = {0.0f, 0.0f}; return false; }
-    const auto image = pipeline::BLPLoader::load(data);
+    const auto image = decodeInterfaceImage(data, resolved);
     if (!image.isValid() || image.width == 0 || image.height == 0) {
         textureSizes_[path] = {0.0f, 0.0f};
         return false;

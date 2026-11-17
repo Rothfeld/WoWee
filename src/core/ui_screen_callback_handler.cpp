@@ -42,6 +42,7 @@ void UIScreenCallbackHandler::setupCallbacks() {
     // Realm selection callback
     uiManager_.getRealmScreen().setOnRealmSelected([this](const std::string& realmName, const std::string& realmAddress) {
         LOG_INFO("Realm selected: ", realmName, " (", realmAddress, ")");
+        gameHandler_.setRealmName(realmName);
 
         // Parse realm address (format: "hostname:port")
         std::string host = realmAddress;
