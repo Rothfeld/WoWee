@@ -2938,6 +2938,9 @@ struct TrainerListData {
     uint32_t trainerType = 0;  // 0=class, 1=mounts, 2=tradeskills, 3=pets
     std::vector<TrainerSpell> spells;
     std::string greeting;
+    /// Distinct for every received list, so the interface can tell a fresh
+    /// list (headers expanded, selection restarted) from the open one.
+    uint32_t serial = 0;
     [[nodiscard]] bool isValid() const { return true; }
 };
 

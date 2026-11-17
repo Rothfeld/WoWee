@@ -1970,7 +1970,8 @@ TEST_CASE_METHOD(Integration, "Profession trainer recipe headers preserve servic
     handler.spellToSkillLineRef()[2658] = 186;
     handler.spellToSkillLineRef()[2659] = 186;
     lua.setGameHandler(&handler);
-    run("SetTrainerServiceTypeFilter('available', 1); SetTrainerServiceTypeFilter('unavailable', 1); ExpandTrainerSkillLine(0)");
+    run("TRADESKILL_SERVICE_LEARN = 'Recipes'; TRADESKILL_SERVICE_STEP = 'Development Skills'");
+    run("SetTrainerServiceTypeFilter('available', 1); SetTrainerServiceTypeFilter('unavailable', 1)");
     wowee::network::Packet list(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_TRAINER_LIST));
     list.writeUInt64(123);
     list.writeUInt32(2);
@@ -2000,7 +2001,7 @@ TEST_CASE_METHOD(Integration, "Profession trainer recipe headers preserve servic
     truth("GetTrainerServiceCost(4) == 2659");
     run("CollapseTrainerSkillLine(3)");
     truth("GetNumTrainerServices() == 3");
-    truth("select(4, GetTrainerServiceInfo(3)) == false");
+    truth("select('#', GetTrainerServiceInfo(3)) == 3");
     run("CollapseTrainerSkillLine(1)");
     truth("GetNumTrainerServices() == 2");
     truth("GetTrainerServiceInfo(2) == 'Recipes'");
@@ -2029,6 +2030,174 @@ TEST_CASE_METHOD(Integration, "Profession trainer recipe headers preserve servic
     truth("select(3, GetTrainerServiceInfo(1)) == 'header'");
     truth("GetTrainerServiceInfo(2) == 'Mining'");
     truth("GetTrainerServiceCost(2) == 10");
+    lua.setGameHandler(nullptr);
+}
+
+// Native 2.4.3 answers, measured at Fenthwick on the original client:
+// _experiments/20261117T203052Z.trainer_skill_headers (native-1.txt, native-3.txt).
+TEST_CASE_METHOD(Integration, "Class trainer services sit under skill line headers", "[trainer]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    handler.spellNameCacheLoadedRef() = true;
+    handler.skillLineAbilityLoadedRef() = true;
+    handler.skillLineDbcLoadedRef() = true;
+    const struct { uint32_t id; const char* name; const char* rank; uint32_t attr; uint32_t line; } spells[] = {
+        {2098, "Eviscerate", "Rank 1", 0x50010, 253}, {6760, "Eviscerate", "Rank 2", 0x50010, 253},
+        {703, "Garrote", "Rank 1", 0x270010, 253}, {8631, "Garrote", "Rank 2", 0x270010, 253},
+        {1784, "Stealth", "Rank 1", 0x1a150010, 39}, {3127, "Parry", "Passive", 0x50, 95},
+        {3420, "Crippling Poison", "Rank 1", 0x10020, 40}, {133, "Fireball", "Rank 1", 0x10000, 8},
+    };
+    for (const auto& sp : spells) {
+        auto& entry = handler.spellNameCacheRef()[sp.id];
+        entry.name = sp.name;
+        entry.rank = sp.rank;
+        entry.attr = sp.attr;
+        handler.spellToSkillLineRef()[sp.id] = sp.line;
+    }
+    handler.skillLineNamesRef()[253] = "Assassination";
+    handler.skillLineNamesRef()[39] = "Subtlety";
+    handler.skillLineNamesRef()[95] = "Defense";
+    handler.skillLineNamesRef()[40] = "Poisons";
+    handler.serverPlayerLevelRef() = 70;
+    handler.getSpellHandler()->addKnownSpell(2098);
+    handler.setGlobalStringLookup([](const char* name) -> std::string {
+        const std::string n = name;
+        if (n == "ERR_LEARN_ABILITY_S") return "You have learned a new ability: %s.";
+        if (n == "ERR_LEARN_SPELL_S") return "You have learned a new spell: %s.";
+        if (n == "ERR_LEARN_RECIPE_S") return "You have learned how to create a new item: %s.";
+        return {};
+    });
+    std::vector<std::string> events;
+    handler.setAddonEventCallback([&](const std::string& name, const std::vector<std::string>&) {
+        events.push_back(name);
+    });
+    lua.setGameHandler(&handler);
+    run("SetTrainerServiceTypeFilter('available', 1); SetTrainerServiceTypeFilter('unavailable', 1); SetTrainerServiceTypeFilter('used', 0)");
+    CHECK(std::count(events.begin(), events.end(), "TRAINER_UPDATE") == 3);
+
+    // CMaNGOS SendTrainerSpellHelper: spell, state (0 green, 1 red), cost,
+    // two point costs, level, skill, skill value, three prerequisites.
+    wowee::network::Packet list(wireOpcode(Opcode::SMSG_TRAINER_LIST));
+    list.writeUInt64(77);
+    list.writeUInt32(0);
+    const struct { uint32_t id; uint8_t state; uint8_t level; uint32_t prev; } services[] = {
+        {8631, 1, 22, 703}, {1784, 0, 1, 0}, {3127, 0, 12, 0}, {703, 0, 14, 0}, {6760, 0, 8, 2098},
+    };
+    list.writeUInt32(5);
+    for (const auto& sv : services) {
+        list.writeUInt32(sv.id); list.writeUInt8(sv.state); list.writeUInt32(100);
+        list.writeUInt32(0); list.writeUInt32(0); list.writeUInt8(sv.level);
+        list.writeUInt32(0); list.writeUInt32(0);
+        list.writeUInt32(sv.prev); list.writeUInt32(0); list.writeUInt32(0);
+    }
+    list.writeString("Hello, rogue!  Ready for some training?");
+    const wowee::network::Packet reopened = list;
+    session.receive(list);
+
+    truth("GetNumTrainerServices() == 8");
+    truth("GetTrainerSelectionIndex() == 2");
+    run("n1, r1, t1, e1 = GetTrainerServiceInfo(1)");
+    truth("n1 == 'Assassination' and r1 == '' and t1 == 'header' and e1 == 1");
+    truth("GetTrainerServiceInfo(2) == 'Eviscerate' and select(2, GetTrainerServiceInfo(2)) == 'Rank 2'");
+    truth("GetTrainerServiceInfo(3) == 'Garrote' and select(3, GetTrainerServiceInfo(3)) == 'available'");
+    truth("select(2, GetTrainerServiceInfo(4)) == 'Rank 2' and select(3, GetTrainerServiceInfo(4)) == 'unavailable'");
+    truth("GetTrainerServiceInfo(5) == 'Defense' and GetTrainerServiceInfo(6) == 'Parry'");
+    truth("GetTrainerServiceInfo(7) == 'Subtlety' and GetTrainerServiceInfo(8) == 'Stealth'");
+    truth("select('#', GetTrainerServiceInfo(9)) == 4 and GetTrainerServiceInfo(9) == nil and select(4, GetTrainerServiceInfo(9)) == 1");
+    truth("select(4, GetTrainerServiceInfo(2)) == 1");
+    truth("GetTrainerServiceSkillLine(2) == 'Assassination' and select('#', GetTrainerServiceSkillLine(1)) == 0");
+    run("a, b = GetTrainerServiceAbilityReq(2, 1)");
+    truth("a == 'Eviscerate (Rank 1)' and b == 1");
+    truth("select('#', GetTrainerServiceAbilityReq(4, 1)) == 1 and GetTrainerServiceAbilityReq(4, 1) == 'Garrote (Rank 1)'");
+    run("a, b = GetTrainerServiceAbilityReq(3, 1)");
+    truth("a == nil and b == 1");
+    run("a, b, c = GetTrainerServiceSkillReq(2)");
+    truth("a == nil and b == 0 and c == 1");
+    run("a, b = GetTrainerServiceStepReq(2)");
+    truth("a == nil and b == 1");
+    truth("select('#', IsTradeskillTrainer()) == 0");
+    truth("select('#', GetTrainerServiceItemLink(2)) == 0");
+    truth("GetTrainerServiceTypeFilter('available') == 1 and GetTrainerServiceTypeFilter('used') == nil");
+
+    // Collapsing selects the first available service left; a collapsed
+    // header answers three values.
+    run("CollapseTrainerSkillLine(1)");
+    truth("GetNumTrainerServices() == 5");
+    truth("select('#', GetTrainerServiceInfo(1)) == 3");
+    truth("GetTrainerSelectionIndex() == 3");
+    run("ok, err = pcall(ExpandTrainerSkillLine, 3)");
+    truth("not ok and string.find(err, 'Bad skill line in ExpandTrainerSkillLine', 1, true)");
+    run("ok, err = pcall(CollapseTrainerSkillLine, 99)");
+    truth("not ok and string.find(err, 'Bad skill line in CollapseTrainerSkillLine', 1, true)");
+    run("CollapseTrainerSkillLine(0)");
+    truth("GetNumTrainerServices() == 3");
+    truth("select('#', GetTrainerSelectionIndex()) == 0");
+    run("ExpandTrainerSkillLine(0)");
+    truth("GetNumTrainerServices() == 8 and GetTrainerSelectionIndex() == 2");
+    run("SelectTrainerService(4)");
+    truth("GetTrainerSelectionIndex() == 4");
+    run("SelectTrainerService(1)");
+    truth("select('#', GetTrainerSelectionIndex()) == 0");
+    run("SelectTrainerService(6)");
+
+    // Learning Garrote (Rank 1) in the open list: one ability line, the
+    // trainer refreshes, Rank 2 turns available, the selection starts over.
+    events.clear();
+    wowee::network::Packet learned(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+    learned.writeUInt32(703);
+    session.receive(learned);
+    CHECK(handler.getChatHistory().back().message == "You have learned a new ability: Garrote (Rank 1).");
+    CHECK(std::count(events.begin(), events.end(), "TRAINER_UPDATE") == 1);
+    CHECK(std::find(events.begin(), events.end(), "SPELLS_CHANGED") < std::find(events.begin(), events.end(), "TRAINER_UPDATE"));
+    truth("GetNumTrainerServices() == 7");
+    truth("GetTrainerServiceInfo(3) == 'Garrote' and select(3, GetTrainerServiceInfo(3)) == 'available'");
+    truth("GetTrainerSelectionIndex() == 2");
+
+    // CMaNGOS Player::addSpell sends the supercede before the learn; the
+    // original prints only the learn line.
+    const auto chatBefore = handler.getChatHistory().size();
+    wowee::network::Packet superceded(wireOpcode(Opcode::SMSG_SUPERCEDED_SPELL));
+    superceded.writeUInt16(703);
+    superceded.writeUInt16(8631);
+    session.receive(superceded);
+    wowee::network::Packet rank2(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+    rank2.writeUInt32(8631);
+    session.receive(rank2);
+    REQUIRE(handler.getChatHistory().size() == chatBefore + 1);
+    CHECK(handler.getChatHistory().back().message == "You have learned a new ability: Garrote (Rank 2).");
+    // The replaced rank stays used: both Garrote rows leave the list.
+    truth("GetNumTrainerServices() == 6");
+    truth("GetTrainerServiceInfo(3) == 'Defense'");
+
+    // A tradeskill recipe drops its rank and is no spellbook entry; a spell
+    // without the ability attribute is a spell.
+    events.clear();
+    wowee::network::Packet poison(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+    poison.writeUInt32(3420);
+    session.receive(poison);
+    CHECK(handler.getChatHistory().back().message == "You have learned how to create a new item: Crippling Poison.");
+    CHECK(std::count(events.begin(), events.end(), "SPELLS_CHANGED") == 0);
+    CHECK(std::count(events.begin(), events.end(), "TRAINER_UPDATE") == 1);
+    wowee::network::Packet fireball(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+    fireball.writeUInt32(133);
+    session.receive(fireball);
+    CHECK(handler.getChatHistory().back().message == "You have learned a new spell: Fireball (Rank 1).");
+
+    // Buying prints nothing more.
+    const auto chatAfter = handler.getChatHistory().size();
+    wowee::network::Packet bought(wireOpcode(Opcode::SMSG_TRAINER_BUY_SUCCEEDED));
+    bought.writeUInt64(77);
+    bought.writeUInt32(8631);
+    session.receive(bought);
+    CHECK(handler.getChatHistory().size() == chatAfter);
+
+    // A fresh list opens expanded with the selection restarted.
+    run("CollapseTrainerSkillLine(1)");
+    wowee::network::Packet again = reopened;
+    session.receive(again);
+    truth("select(4, GetTrainerServiceInfo(1)) == 1");
+    handler.setAddonEventCallback({});
     lua.setGameHandler(nullptr);
 }
 

@@ -2797,6 +2797,8 @@ void InventoryHandler::handleListInventory(network::Packet& packet) {
 void InventoryHandler::handleTrainerList(network::Packet& packet) {
     const bool isClassic = isClassicLikeExpansion();
     if (!TrainerListParser::parse(packet, currentTrainerList_, isClassic)) return;
+    static uint32_t trainerListSerial = 0;
+    currentTrainerList_.serial = ++trainerListSerial;
     trainerWindowOpen_ = true;
     owner_.closeGossip();
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRAINER_SHOW", {});
