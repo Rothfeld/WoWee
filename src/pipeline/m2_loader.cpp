@@ -1497,9 +1497,12 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             uint32_t base = header.ofsParticleEmitters + ei * emitterSize;
 
             M2ParticleEmitter em;
-            // Through version 260 these are uint16 fields. Version 263 already
-            // packs them into bytes and adds a uint16 particle color index.
-            // DR_Cookpot_01 (263) and BubblingBowl01 (260) coexist in TBC data.
+            // Through version 261 blend and emitter type are uint16 fields.
+            // From version 262 they are one byte each (263 adds a uint16
+            // particle color index after them). Across the TBC data every
+            // 260/261 emitter has zero at +0x29 and its type at +0x2A; every
+            // 262/263 emitter has its type (1-3) at +0x29. GnomereganVent
+            // (262) reads 02 01 00 00: alpha blend, plane emitter.
             em.particleId = readValue<int32_t>(m2Data, base + 0x00);
             em.flags      = readValue<uint32_t>(m2Data, base + 0x04);
             em.position.x = readValue<float>(m2Data, base + 0x08);
@@ -1508,7 +1511,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             em.bone       = readValue<uint16_t>(m2Data, base + 0x14);
             em.texture    = readValue<uint16_t>(m2Data, base + 0x16);
             em.blendingType = readValue<uint8_t>(m2Data, base + 0x28);
-            em.emitterType  = readValue<uint8_t>(m2Data, base + (header.version < 263 ? 0x2A : 0x29));
+            em.emitterType  = readValue<uint8_t>(m2Data, base + (header.version < 262 ? 0x2A : 0x29));
             em.headOrTail = readValue<uint8_t>(m2Data, base + 0x2D);
             em.tailLength = readValue<float>(m2Data, base + (isVanilla ? 0x17C : 0x15C));
             em.textureTileRotation = readValue<int16_t>(m2Data, base + 0x2E);

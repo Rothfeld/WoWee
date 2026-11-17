@@ -39,7 +39,7 @@ TEST_CASE("Hidden portal mesh opacity differs from animated fade-in", "[m2][part
 }
 
 TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particle]") {
-    for (const uint32_t version : {256u, 260u, 263u, 264u}) {
+    for (const uint32_t version : {256u, 260u, 261u, 262u, 263u, 264u}) {
         const bool legacy = version < 264;
         constexpr uint32_t emitterOffset = 512;
         std::vector<uint8_t> bytes(emitterOffset + (legacy ? 504 : 476), 0);
@@ -52,7 +52,7 @@ TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particl
         put32(legacy ? 0x140 : 0x12c, emitterOffset);
         // Original LootFX legacy header: 04 00 01 00 at +0x28.
         bytes[emitterOffset + 0x28] = 4;
-        bytes[emitterOffset + (version < 263 ? 0x2a : 0x29)] = 1;
+        bytes[emitterOffset + (version < 262 ? 0x2a : 0x29)] = 1;
         // Particle type and head/tail are separate bytes in every version.
         bytes[emitterOffset + 0x2c] = 0;
         bytes[emitterOffset + 0x2d] = 1;
@@ -70,6 +70,26 @@ TEST_CASE("TBC and Wrath particle headers preserve emitter shape", "[m2][particl
 
 #include "rendering/particle_emission.hpp"
 #include <glm/gtc/matrix_transform.hpp>
+
+TEST_CASE("Version 262 emitters read byte blend and emitter type", "[m2][particle]") {
+    // GnomereganVent.m2 (version 262), emitter 0, bytes +0x28..+0x2B: 02 01 00 00.
+    // Read as uint16 pairs this was blend 258 and type 0, a point emitter.
+    constexpr uint32_t emitterOffset = 512;
+    std::vector<uint8_t> bytes(emitterOffset + 504, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t offset, uint32_t value) {
+        std::memcpy(bytes.data() + offset, &value, sizeof(value));
+    };
+    put32(4, 262);
+    put32(0x13c, 1);
+    put32(0x140, emitterOffset);
+    const uint8_t header[] = {2, 1, 0, 0};
+    std::memcpy(bytes.data() + emitterOffset + 0x28, header, sizeof(header));
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 1);
+    CHECK(model.particleEmitters[0].blendingType == 2);
+    CHECK(model.particleEmitters[0].emitterType == 1);
+}
 
 TEST_CASE("Living portal particles follow their rotating emitter bone", "[m2][particle]") {
     using wowee::rendering::particleRenderTransform;
