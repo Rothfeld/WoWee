@@ -19,6 +19,9 @@ inline constexpr StandPose standPose(uint8_t state) {
     case 2: case 5: return {0, anim::SIT_CHAIR_MED, 0};
     case 6: return {0, anim::SIT_CHAIR_HIGH, 0};
     case 7: return {0, anim::DEAD, 0};
+    // UNIT_STAND_STATE_SUBMERGED: burrowed worms and the like lie hidden in
+    // Submerged (AnimationData 202), entered by Submerge and left by Emerge.
+    case 9: return {anim::SUBMERGE, anim::SUBMERGED, anim::EMERGE};
     default: return {0, anim::STAND, 0};
     }
 }
