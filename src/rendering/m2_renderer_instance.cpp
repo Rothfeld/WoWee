@@ -1240,6 +1240,60 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
     return bestFloor;
 }
 
+bool M2Renderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
+                                   float radius, float height,
+                                   float& supportZ, float& supportNormalZ) const {
+    assert(requestedZ < from.z);
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    const glm::vec3 to(from.x, from.y, requestedZ);
+    const glm::vec3 delta = to - from;
+    const glm::vec3 worldLow(from.x-radius, from.y-radius, requestedZ);
+    const glm::vec3 worldHigh(from.x+radius, from.y+radius, from.z+height);
+    gatherCandidates(worldLow, worldHigh, tl_m2_candidateScratch);
+    std::optional<movement::BodyContact> first;
+    for (size_t idx : tl_m2_candidateScratch) {
+        const auto& instance = instances[idx];
+        if (instance.skipCollision || !instance.cachedModel || instance.scale <= 0.001f ||
+            collisionFocus.excludes(instance.worldBoundsMin, instance.worldBoundsMax)) continue;
+        const auto& model = *instance.cachedModel;
+        if (!model.collision.valid() || model.isInvisibleTrap || model.isSpellEffect) continue;
+
+        glm::vec3 localLow(std::numeric_limits<float>::max());
+        glm::vec3 localHigh(-std::numeric_limits<float>::max());
+        for (int corner = 0; corner < 8; ++corner) {
+            const glm::vec3 world((corner & 1) ? worldHigh.x : worldLow.x,
+                                  (corner & 2) ? worldHigh.y : worldLow.y,
+                                  (corner & 4) ? worldHigh.z : worldLow.z);
+            const glm::vec3 local(instance.invModelMatrix * glm::vec4(world, 1));
+            localLow = glm::min(localLow, local);
+            localHigh = glm::max(localHigh, local);
+        }
+        model.collision.getWallTrisInRange(localLow.x, localLow.y, localHigh.x, localHigh.y,
+                                           tl_m2_collisionTriScratch);
+        thread_local std::vector<uint32_t> floorTriangles;
+        model.collision.getFloorTrisInRange(localLow.x, localLow.y, localHigh.x, localHigh.y,
+                                            floorTriangles);
+        tl_m2_collisionTriScratch.insert(tl_m2_collisionTriScratch.end(),
+                                         floorTriangles.begin(), floorTriangles.end());
+        std::sort(tl_m2_collisionTriScratch.begin(), tl_m2_collisionTriScratch.end());
+        tl_m2_collisionTriScratch.erase(std::unique(tl_m2_collisionTriScratch.begin(),
+            tl_m2_collisionTriScratch.end()), tl_m2_collisionTriScratch.end());
+        for (uint32_t ti : tl_m2_collisionTriScratch) {
+            movement::BodyTriangle triangle;
+            for (size_t corner = 0; corner < 3; ++corner) {
+                triangle[corner] = glm::vec3(instance.modelMatrix * glm::vec4(
+                    model.collision.vertices[model.collision.indices[ti*3+corner]], 1));
+            }
+            const auto contact = movement::sweepBodyTriangle(from, delta, radius, height, triangle);
+            if (contact && (!first || contact->time < first->time)) first = contact;
+        }
+    }
+    if (!first) return false;
+    supportZ = from.z + delta.z * first->time;
+    supportNormalZ = first->normal.z;
+    return true;
+}
+
 bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
                                  glm::vec3& adjustedPos, float playerRadius, float playerHeight,
                                  bool allowHorizontalRise) const {

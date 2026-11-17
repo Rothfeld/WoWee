@@ -1984,7 +1984,17 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             if (dz >= -fallCatch && (nearGround || airFalling || slopeGrace)) {
                 // HOVER: float at fixed height above ground instead of standing on it
                 static constexpr float HOVER_HEIGHT = 4.0f;  // ~4 yards above ground
-                const float snapH = hoverActive_ ? (*groundH + HOVER_HEIGHT) : *groundH;
+                float snapH = hoverActive_ ? (*groundH + HOVER_HEIGHT) : *groundH;
+                bool steepBodyContact = false;
+                if (m2Renderer && !externalFollow_ && !hoverActive_ && snapH < feetZ) {
+                    float supportZ = snapH;
+                    float supportNormalZ = 1.0f;
+                    if (m2Renderer->constrainFloorSnap(targetPos, snapH, collisionRadius_,
+                            collisionHeight_, supportZ, supportNormalZ)) {
+                        snapH = supportZ;
+                        steepBodyContact = !movement::isWalkableNormal(supportNormalZ);
+                    }
+                }
                 static const bool traceContact = core::envFlagEnabled("WOWEE_BODY_CONTACT_TRACE");
                 if (traceContact && movementTraceM2Contacts_ > 0) {
                     LOG_INFO("Ground snap after M2 contact: feet=", feetZ, " floor=", snapH,
@@ -2000,9 +2010,9 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
                 }
                 // Steep surfaces block penetration but cannot support standing.
                 // Preserve falling velocity for downhill contact projection.
-                if (!steepTerrain) verticalVelocity = 0.0f;
-                grounded = !steepTerrain;
-                lastGroundZ = *groundH;
+                if (!steepTerrain && !steepBodyContact) verticalVelocity = 0.0f;
+                grounded = !steepTerrain && !steepBodyContact;
+                lastGroundZ = snapH;
             } else {
                 grounded = false;
                 lastGroundZ = *groundH;

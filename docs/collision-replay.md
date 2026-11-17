@@ -16,3 +16,9 @@ contain original game asset data and belong outside the source repository.
 M2 exports do not include WMO floors or terrain; document any approximated floor
 used in an offline replay. A table-only replay omits nearby hammer collisions,
 which can materially change the character's supported height.
+
+Ground-follow snaps must also respect the full upright collision body. A floor
+ray below the sole can miss a prop touching its beveled side. The downward snap
+sweeps authored geometry before changing height, and steep side contacts prevent
+penetration without being treated as walkable support. This does not implement
+step-up selection; compare that behavior separately against recorded movement.

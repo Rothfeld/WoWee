@@ -641,6 +641,11 @@ public:
                         glm::vec3& adjustedPos, float playerRadius = 0.5f,
                         float playerHeight = 2.0f, bool allowHorizontalRise = true) const;
     std::optional<float> getFloorHeight(float glX, float glY, float glZ, float* outNormalZ = nullptr) const;
+    // Constrain a downward grounding snap against the complete upright body.
+    // Returns true only when authored geometry blocks the requested descent.
+    bool constrainFloorSnap(const glm::vec3& from, float requestedZ,
+                            float radius, float height,
+                            float& supportZ, float& supportNormalZ) const;
 
     /// Every doodad the floor query would consider here, and what each one
     /// contributes. The WMO side has had debugDumpGroupsAtPosition for this

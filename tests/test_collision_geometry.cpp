@@ -335,3 +335,21 @@ TEST_CASE("offset floor support agrees with the swept lower body") {
         }
     }
 }
+
+TEST_CASE("ground snap cannot erase beveled side contact") {
+    using namespace wowee::rendering::movement;
+    const std::array side = {
+        BodyTriangle{glm::vec3(0,-1,0),glm::vec3(0,1,0),glm::vec3(0,1,.25f)},
+        BodyTriangle{glm::vec3(0,-1,0),glm::vec3(0,1,.25f),glm::vec3(0,-1,.25f)}};
+    std::optional<BodyContact> first;
+    for (const auto& triangle : side) {
+        const auto contact = sweepBodyTriangle({-.1f,0,.1f}, {0,0,-.1f},
+                                               .305556f, 1.607f, triangle);
+        if (contact && (!first || contact->time < first->time)) first = contact;
+    }
+    REQUIRE(first);
+    CHECK(.1f - first->time * .1f == Catch::Approx(.25f - .1f * kBodyBevel));
+    CHECK(first->normal.z > 0.0f);
+    // The side catches the lower bevel, but does not provide a walkable floor.
+    CHECK(first->normal.z < .642787635f);
+}
