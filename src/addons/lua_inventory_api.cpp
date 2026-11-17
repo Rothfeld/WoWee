@@ -3191,7 +3191,10 @@ static int lua_GetLootSlotInfo(lua_State* L) {
         //
         lua_pushstring(L, coinIconForAmount(loot.gold));
         lua_pushstring(L, lootCoinText(loot.gold).c_str());
-        lua_pushnumber(L, loot.gold);
+        // Quantity 0: the amount is in the name. LootFrame passes quantity to
+        // SetItemButtonCount, which drew the copper total (274) on the coin
+        // icon; native shows no count there.
+        lua_pushnumber(L, 0);
         lua_pushnumber(L, 1);
         lua_pushboolean(L, 0);
         return 5;
