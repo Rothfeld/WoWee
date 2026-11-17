@@ -530,10 +530,6 @@ void M2Renderer::rebuildSpatialIndex() {
             instanceDedupMap_[dk] = inst.id;
         }
 
-<<<<<<< HEAD
-        if (inst.cachedIsInstancePortal) {
-            portalInstanceIndices_.push_back(i);
-        }
         if (inst.externalPose) {
             if (inst.cachedModel && (!inst.cachedModel->particleEmitters.empty() ||
                                      !inst.cachedModel->ribbonEmitters.empty()))
@@ -547,15 +543,6 @@ void M2Renderer::rebuildSpatialIndex() {
             } else if (inst.cachedHasParticleEmitters) {
                 particleOnlyInstanceIndices_.push_back(i);
             }
-=======
-        if (inst.cachedHasParticleEmitters) {
-            particleInstanceIndices_.push_back(i);
-        }
-        if (inst.cachedHasAnimation && !inst.cachedDisableAnimation) {
-            animatedInstanceIndices_.push_back(i);
-        } else if (inst.cachedHasParticleEmitters) {
-            particleOnlyInstanceIndices_.push_back(i);
->>>>>>> d0f3591 (Remove invented midges over water plants named cattail/reed/kelp)
         }
 
         insertBounds(spatialGrid, inst.worldBoundsMin, inst.worldBoundsMax, inst.id);
