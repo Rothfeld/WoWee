@@ -660,6 +660,16 @@ void AnimationCallbackHandler::setupCallbacks() {
             cc->applyServerStandState(standState);
         }
 
+        // Sitting, sleeping and kneeling put the weapons away: the original
+        // client sends CMSG_SETSHEATHED 0 on each (pair 1, the other client's
+        // view of its UNIT_FIELD_BYTES_2: /sit, /sleep and /kneel from melee
+        // and ranged all went to 0; standing up leaves them sheathed; /afk
+        // alone does not). Chair seats and death were not measured.
+        if (standState == AC::STAND_STATE_SIT || standState == AC::STAND_STATE_SLEEP ||
+            standState == AC::STAND_STATE_KNEEL) {
+            appearanceComposer_.setWeaponsSheathed(true);
+        }
+
         auto* ac = renderer_.getAnimationController();
         if (!ac) return;
 

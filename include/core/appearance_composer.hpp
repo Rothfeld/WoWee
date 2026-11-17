@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "core/geoset_rules.hpp"
 #include "game/character.hpp"
 #include "game/inventory.hpp"
@@ -70,6 +72,12 @@ public:
     void setSheathState(uint8_t sheathState);
     [[nodiscard]] uint8_t sheathState() const { return sheathState_; }
     void setWeaponsSheathed(bool sheathed) { setSheathState(sheathed ? 0 : 1); }
+    /// The local player's UNIT_FIELD_BYTES_2 byte 0, read every frame. A new
+    /// value (the first after login, or a change) is taken as the local state
+    /// without sending it back: the server holds the state other clients see.
+    void syncServerSheathState(uint8_t serverSheathState);
+    /// Leaving the world: the next session starts from the server's value.
+    void resetServerSheathState() { serverSheathState_.reset(); }
     [[nodiscard]] bool isWeaponsSheathed() const { return sheathState_ == 0; }
     /// Z / ToggleSheath: unarmed -> melee (main or off hand item) -> ranged
     /// (ranged item) -> unarmed, skipping a state without its item.
@@ -117,6 +125,7 @@ private:
     uint32_t cloakTextureSlotIndex_ = 0;
 
     uint8_t sheathState_ = 1;
+    std::optional<uint8_t> serverSheathState_;
     bool showingRanged_ = false;
     bool showingMiningPick_ = false;
     uint32_t miningPickInstanceId_ = 0;

@@ -2364,7 +2364,7 @@ void Application::setState(AppState newState) {
             // If we reuse a previously spawned instance without forcing a respawn, appearance (notably hair) can desync.
             npcsSpawned = false;
             playerCharacterSpawned = false;
-            if (appearanceComposer_) appearanceComposer_->setWeaponsSheathed(false);
+            if (appearanceComposer_) appearanceComposer_->resetServerSheathState();
             wasAutoAttacking_ = false;
             if (worldLoader_) worldLoader_->resetLoadedMap();
             spawnedPlayerGuid_ = 0;
@@ -2717,7 +2717,7 @@ void Application::performLogoutToLogin() {
     // --- Per-session flags ---
     npcsSpawned = false;
     playerCharacterSpawned = false;
-    if (appearanceComposer_) appearanceComposer_->setWeaponsSheathed(false);
+    if (appearanceComposer_) appearanceComposer_->resetServerSheathState();
     wasAutoAttacking_ = false;
     if (worldLoader_) worldLoader_->resetLoadedMap();
     if (worldEntryCallbacks_) worldEntryCallbacks_->resetState();
@@ -3771,6 +3771,15 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             havePPos = true;
         }
         const float pSyncRadiusSq = 320.0f * 320.0f;
+
+        // The local player's weapons follow its own UNIT_FIELD_BYTES_2 byte 0
+        // when the server's value changes (login: other clients already see
+        // that state, sheathed for a fresh session).
+        if (appearanceComposer_ && gameHandler->getPlayerGuid() != 0) {
+            if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid()))
+                appearanceComposer_->syncServerSheathState(
+                    self->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
+        }
 
         auto& _playerInstances = entitySpawner_->getPlayerInstances();
         auto& _pCreatureWasMoving = entitySpawner_->getCreatureWasMoving();
@@ -5905,7 +5914,6 @@ void Application::refreshPlayerCharacterModel() {
     spawnedFacialFeatures_ = 0;
 
     spawnSnapToGround = false; // don't snap Z - stay at the current position
-    if (appearanceComposer_) appearanceComposer_->setWeaponsSheathed(false);
     spawnPlayerCharacter();
 
     if (renderer) renderer->getCharacterPosition() = savedPos;

@@ -700,9 +700,27 @@ void AppearanceComposer::setSheathState(uint8_t sheathState) {
     if (sheathState == sheathState_) return;
     LOG_INFO("Local sheath state ", int(sheathState_), " -> ", int(sheathState));
     sheathState_ = sheathState;
+    showingRanged_ = sheathState_ == kSheathStateRanged;
+    if (renderer_ && renderer_->getAnimationController())
+        renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
     if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())
         renderer_->getCharacterRenderer()->setSheathState(renderer_->getCharacterInstanceId(), sheathState);
     if (gameHandler_) gameHandler_->sendSetSheathed(sheathState);
+}
+
+void AppearanceComposer::syncServerSheathState(uint8_t serverSheathState) {
+    assert(serverSheathState <= kSheathStateRanged);
+    if (serverSheathState_ == serverSheathState) return;
+    serverSheathState_ = serverSheathState;
+    if (serverSheathState == sheathState_) return;
+    LOG_INFO("Local sheath state ", int(sheathState_), " -> ", int(serverSheathState),
+             " (server UNIT_FIELD_BYTES_2)");
+    sheathState_ = serverSheathState;
+    showingRanged_ = sheathState_ == kSheathStateRanged;
+    if (renderer_ && renderer_->getAnimationController())
+        renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
+    if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())
+        renderer_->getCharacterRenderer()->setSheathState(renderer_->getCharacterInstanceId(), sheathState_);
 }
 
 void AppearanceComposer::toggleWeaponsSheathed() {
