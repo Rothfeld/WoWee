@@ -2106,12 +2106,17 @@ struct AttackerStateUpdateData {
     int32_t overkill = -1;
     uint32_t blocked = 0;
 
+    // HitInfo bit layout: classic and TBC (CMaNGOS Unit.h HitInfo) put
+    // CRITICALHIT at 0x80, GLANCING at 0x4000 and CRUSHING at 0x8000; WotLK
+    // moved them to 0x200, 0x10000 and 0x20000 (0x80 is its FULL_RESIST).
+    // Set by the classic and TBC readers.
+    bool legacyHitInfo = false;
+
     [[nodiscard]] bool isValid() const { return attackerGuid != 0; }
-    // WotLK's HitInfo bits; classic and TBC number these differently.
-    [[nodiscard]] bool isCrit() const     { return (hitInfo & 0x00000200) != 0; }
+    [[nodiscard]] bool isCrit() const     { return (hitInfo & (legacyHitInfo ? 0x00000080u : 0x00000200u)) != 0; }
     [[nodiscard]] bool isMiss() const     { return (hitInfo & 0x00000010) != 0; }
-    [[nodiscard]] bool isGlancing() const { return (hitInfo & 0x00010000) != 0; }
-    [[nodiscard]] bool isCrushing() const { return (hitInfo & 0x00020000) != 0; }
+    [[nodiscard]] bool isGlancing() const { return (hitInfo & (legacyHitInfo ? 0x00004000u : 0x00010000u)) != 0; }
+    [[nodiscard]] bool isCrushing() const { return (hitInfo & (legacyHitInfo ? 0x00008000u : 0x00020000u)) != 0; }
 };
 
 class AttackerStateUpdateParser {

@@ -277,3 +277,38 @@ TEST_CASE("WotLK attacker state: a short packet is refused and rewound", "[attac
     for (int i = 0; i < 12; ++i) w.u8(0);
     CHECK(refused(w.bytes));
 }
+
+TEST_CASE("HitInfo crit, glancing and crushing bits follow the expansion", "[attackerstate]") {
+    AttackerStateUpdateData legacy;
+    legacy.legacyHitInfo = true;  // CMaNGOS classic/TBC Unit.h HitInfo
+    legacy.hitInfo = 0x00000080;
+    CHECK(legacy.isCrit());
+    legacy.hitInfo = 0x00004000;
+    CHECK(legacy.isGlancing());
+    CHECK_FALSE(legacy.isCrit());
+    legacy.hitInfo = 0x00008000;
+    CHECK(legacy.isCrushing());
+    legacy.hitInfo = 0x00000200;  // UNK9 in TBC
+    CHECK_FALSE(legacy.isCrit());
+
+    AttackerStateUpdateData wotlk;
+    wotlk.hitInfo = 0x00000200;
+    CHECK(wotlk.isCrit());
+    wotlk.hitInfo = 0x00000080;  // FULL_RESIST in WotLK
+    CHECK_FALSE(wotlk.isCrit());
+    wotlk.hitInfo = 0x00010000;
+    CHECK(wotlk.isGlancing());
+    wotlk.hitInfo = 0x00020000;
+    CHECK(wotlk.isCrushing());
+}
+
+TEST_CASE("TBC reader marks the legacy HitInfo layout", "[attackerstate]") {
+    Writer w;
+    writeHead(w);
+    w.u32(1); w.u32(0); w.u32(0); w.u32(0);
+    wowee::network::Packet packet(0, w.bytes);
+    TbcPacketParsers parsers;
+    AttackerStateUpdateData data;
+    REQUIRE(parsers.parseAttackerStateUpdate(packet, data));
+    CHECK(data.legacyHitInfo);
+}

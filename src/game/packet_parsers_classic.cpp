@@ -744,6 +744,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
 // ============================================================================
 bool ClassicPacketParsers::parseAttackerStateUpdate(network::Packet& packet, AttackerStateUpdateData& data) {
     data = AttackerStateUpdateData{};
+    data.legacyHitInfo = true;
 
     auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 5) return false;  // hitInfo + at least one packed guid mask byte
