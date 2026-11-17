@@ -1087,4 +1087,24 @@ loading them before source lets Blizzard_TrainerUI defaults erase saved filters.
 Recipe item previews follow the spellTrigger=6 taught spell to its crafted item
 and reagents rather than displaying the generic Learning spell.
 
+### TBC talents and spell tooltips
+
+`build/bin/test_spell_description_format` checks Spell.dbc description tokens
+against native 2.4.3 text ("by $/1000;S1 sec." is "by 0.5 sec.").
+
+The 2.4.3 talent frame (TalentFrameBase.lua) reads GetTalentPrereqs in
+threes (tier, column, isLearnable); a fourth value aborts TalentFrame_Update
+and leaves every icon coloured with no branches. GetTalentInfo's meetsPrereq
+is not the prerequisite talent (native answers 1 for Riposte without
+Deflection). Unspent points are PLAYER_CHARACTER_POINTS1. TBC
+SMSG_REMOVED_SPELL and SMSG_SUPERCEDED_SPELL carry uint16 spell ids.
+
+Talent and spell tooltip texts come from GlobalStrings (TOOLTIP_TALENT_*,
+SPELL_*). Unmet requirements are ff2020, descriptions NORMAL_FONT_COLOR.
+Gotcha: Talent.dbc prerequisites, the description columns and
+UNIT_FIELD_BASEATTACKTIME live in `dbc_layouts.json`/`update_fields.json`;
+an installed data tree keeps old copies. Not modelled: spell modifiers in
+descriptions and tooltip values other than cost, and the hidden range of
+self-cast spells such as Slice and Dice (native omits its 100 yd range).
+
 Repeated rebuilds of unchanged objects: see [incremental build cache repair](docs/incremental-builds.md).
