@@ -137,17 +137,15 @@ size_t MemoryMonitor::getRecommendedCacheBudget() const {
     return budget < kHardCapBytes ? budget : kHardCapBytes;
 }
 
+// The two thresholds were swapped: "severe" fired at < 15% and plain
+// pressure at < 10%, so every reading between them (12294 of 91860 MB on
+// 2026-11-17 13:43) took the severe 200 ms back-off without being "pressure".
 bool MemoryMonitor::isMemoryPressure() const {
-    size_t available = getAvailableRAM();
-    // Memory pressure if < 10% RAM available
-    return available < (totalRAM_ * 10 / 100);
+    return memoryPressureAt(getAvailableRAM(), totalRAM_);
 }
 
 bool MemoryMonitor::isSevereMemoryPressure() const {
-    size_t available = getAvailableRAM();
-    // Severe pressure if < 15% RAM available - background workers should
-    // pause entirely to avoid OOM-killing other applications.
-    return available < (totalRAM_ * 15 / 100);
+    return severeMemoryPressureAt(getAvailableRAM(), totalRAM_);
 }
 
 } // namespace core

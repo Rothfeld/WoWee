@@ -1548,6 +1548,10 @@ register_test_target(test_interface_text_lines)
 # ever read as one.
 wowee_add_test(test_npc_flags SOURCES test_npc_flags.cpp)
 
+# ── test_memory_pressure ─────────────────────────────────────
+# The terrain back-off levels: severe must be a subset of pressure.
+wowee_add_test(test_memory_pressure SOURCES test_memory_pressure.cpp)
+
 # ── test_death_release ───────────────────────────────────────
 # The automatic-release timer latched at death from PLAYER_FIELD_BYTES and
 # reported by GetReleaseTimeRemaining; -1 picks the no-countdown popup text.
