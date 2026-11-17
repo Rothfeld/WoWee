@@ -772,43 +772,6 @@ void GameScreen::renderMinimapPlayerDots(const MinimapFrame& frame, const Entity
 
 }
 
-// Dead and lootable, as a small yellow-green diamond.
-void GameScreen::renderMinimapLootCorpses(const MinimapFrame& frame, const EntityList& minimapUnits) {
-    // Lootable corpse dots: small yellow-green diamonds on dead, lootable units.
-    // Shown whenever NPC dots are enabled (or always, since they're always useful).
-    {
-        for (const auto& entity : minimapUnits) {
-            auto unit = std::static_pointer_cast<game::Unit>(entity);
-            if (!unit) continue;
-            // Must be dead (health == 0) and marked lootable
-            if (unit->getHealth() != 0) continue;
-            if (!(unit->getDynamicFlags() & game::UNIT_DYNFLAG_LOOTABLE)) continue;
-
-            float sx = 0.0f, sy = 0.0f;
-            if (!frame.projectEntity(*entity, sx, sy)) continue;
-
-            // Draw a small diamond (rotated square) in light yellow-green
-            const float dr = 3.5f;
-            ImVec2 top  (sx,      sy - dr);
-            ImVec2 right(sx + dr, sy     );
-            ImVec2 bot  (sx,      sy + dr);
-            ImVec2 left (sx - dr, sy     );
-            frame.drawList->AddQuadFilled(top, right, bot, left, IM_COL32(180, 230, 80, 230));
-            frame.drawList->AddQuad      (top, right, bot, left, IM_COL32(60,  80,  20, 200), 1.0f);
-
-            // Tooltip on hover
-            if (ImGui::IsMouseHoveringRect(ImVec2(sx - dr, sy - dr), ImVec2(sx + dr, sy + dr))) {
-                const std::string& nm = unit->getName();
-                ImGui::BeginTooltip();
-                ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.3f, 1.0f), "%s",
-                                   nm.empty() ? "Lootable corpse" : nm.c_str());
-                ImGui::EndTooltip();
-            }
-        }
-    }
-
-}
-
 // Chests and resource nodes, as orange triangles - a different shape from the
 // unit dots on purpose, because they are a different thing to walk to.
 void GameScreen::renderMinimapObjectDots(const MinimapFrame& frame, const EntityList& minimapGameObjects,
@@ -1929,7 +1892,6 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     }
     renderMinimapRares(frame, minimapUnits, gameHandler);
     renderMinimapPlayerDots(frame, minimapPlayers, gameHandler);
-    renderMinimapLootCorpses(frame, minimapUnits);
     renderMinimapObjectDots(frame, minimapGameObjects, minimapQuestGoEntries, gameHandler);
     renderMinimapChests(frame, minimapGameObjects, gameHandler);
     renderMinimapResources(frame, minimapGameObjects, gameHandler);

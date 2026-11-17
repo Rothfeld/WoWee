@@ -256,7 +256,6 @@ private:
                             game::GameHandler& gameHandler);
     void renderMinimapPlayerDots(const MinimapFrame& frame, const EntityList& players,
                                  game::GameHandler& gameHandler);
-    void renderMinimapLootCorpses(const MinimapFrame& frame, const EntityList& units);
     void renderMinimapObjectDots(const MinimapFrame& frame, const EntityList& objects,
                                  const EntrySet& questGoEntries,
                                  game::GameHandler& gameHandler);
