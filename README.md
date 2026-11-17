@@ -1154,6 +1154,10 @@ even on an ally; the target does not choose the animation. Evocation 12051 holds
 ChannelCastOmni (125). `SpellVisualKit` column 1 is not an animation: it holds
 0-7 and groups kits by stage. A remote caster's hold is its idle while casting,
 so a movement update that stops the unit resumes the cast pose.
+A remote unit holds its aura's `StateKit` animation as its idle while the aura
+lasts (latest applied aura with one): Rend Blackhand's Whirlwind (13736, kit
+370) and Brood Power: Bronze (22291, kit 5769, applied with `.aura`, no cast)
+spin with Whirlwind (126) in the original. The local player does not yet.
 
 Small solid M2 props keep their geometry even when they contain multiple
 emitters. Spherical emitters use their authored area and radial velocity;

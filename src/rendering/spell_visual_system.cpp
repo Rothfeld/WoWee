@@ -515,6 +515,19 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
     else unitAuraVisuals_[attachInstanceId] = {visualIds, observerConcealed, std::move(applied)};
 }
 
+uint32_t SpellVisualSystem::auraStateAnimation(uint32_t attachInstanceId) const {
+    const auto unit = unitAuraVisuals_.find(attachInstanceId);
+    if (unit == unitAuraVisuals_.end()) return kNoAnimation;
+    for (auto visual = unit->second.applied.rbegin(); visual != unit->second.applied.rend(); ++visual) {
+        const auto kit = stateKits_.find(*visual);
+        if (kit == stateKits_.end() || !kit->second) continue;
+        const auto animation = kitAnimations_.find(kit->second);
+        if (animation != kitAnimations_.end() && animation->second != kNoAnimation)
+            return animation->second;
+    }
+    return kNoAnimation;
+}
+
 void SpellVisualSystem::applyCharacterProcedures(uint32_t attachInstanceId,
                                                  const std::vector<uint32_t>& applied) {
     glm::vec3 color(1.0f);

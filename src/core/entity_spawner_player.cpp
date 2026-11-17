@@ -920,6 +920,14 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     if (state != 0) return rendering::standPose(state).idle;
     if (const auto hold = remoteCastHolds_.find(guid); hold != remoteCastHolds_.end()) return hold->second;
+    // An aura's state animation, e.g. Whirlwind (126) under Rend's Whirlwind.
+    if (const auto* visuals = renderer_ ? renderer_->getSpellVisualSystem() : nullptr) {
+        uint32_t instance = getCreatureInstanceId(guid);
+        if (!instance) instance = getPlayerInstanceId(guid);
+        const uint32_t aura = instance ? visuals->auraStateAnimation(instance)
+                                       : rendering::SpellVisualSystem::kNoAnimation;
+        if (aura != rendering::SpellVisualSystem::kNoAnimation) return aura;
+    }
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     // A unit meleeing holds its ready stance between swings; the original
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).

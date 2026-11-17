@@ -69,6 +69,13 @@ public:
     // _experiments/20261117T181105Z.pair0_ghost_names_gossip).
     void syncAuraVisuals(uint32_t attachInstanceId, const std::vector<uint32_t>& visualIds,
                          bool observerConcealed);
+    // The animation the unit holds while its auras last: the StateKit
+    // animation (column 2) of its most recently applied aura that has one,
+    // else kNoAnimation. Brood Power: Bronze (22291, kit 5769, Whirlwind 126)
+    // applied with .aura spins the original 2.4.3 character for its five
+    // seconds without any cast or channel; Rend Blackhand's Whirlwind (13736,
+    // kit 370) spins through its two-second aura the same way.
+    uint32_t auraStateAnimation(uint32_t attachInstanceId) const;
 
     // Spawn a precast visual effect at a world position.
     // castTimeMs: server cast time in milliseconds (0 = use anim duration).
