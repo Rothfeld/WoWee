@@ -2021,6 +2021,45 @@ TEST_CASE("FontString alpha gradient reports quest reveal completion", "[quest-t
     CHECK(widget->alphaGradientLength == 5.0f);
 }
 
+TEST_CASE("Empty FontString and Button text reads back as nil", "[fontstring-text]") {
+    // Measured on 2.4.3: a new FontString, and one after SetText(""), (nil)
+    // or (), answer nil; so does a button's label. An EditBox answers "".
+    Integration f;
+    f.run(R"lua(
+        local host = CreateFrame("Frame", "EmptyTextHost", UIParent)
+        local label = host:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        assert(label:GetText() == nil)
+        label:SetText("") assert(label:GetText() == nil)
+        label:SetText("a") assert(label:GetText() == "a")
+        label:SetText(nil) assert(label:GetText() == nil)
+        label:SetText("a") label:SetText() assert(label:GetText() == nil)
+        local button = CreateFrame("Button", "EmptyTextButton", UIParent, "UIPanelButtonTemplate")
+        assert(button:GetText() == nil)
+        button:SetText("") assert(button:GetText() == nil)
+        local edit = CreateFrame("EditBox", "EmptyTextEdit", UIParent)
+        assert(edit:GetText() == "")
+    )lua");
+}
+
+TEST_CASE("Tooltip SetText keeps its wrap flag through the frame method", "[fontstring-text]") {
+    // LFMFrame: GameTooltip:SetText(AUTO_ADD_TOOLTIP, nil, nil, nil, nil, 1)
+    // draws three wrapped rows on 2.4.3; the flag was dropped on the way in.
+    Integration f;
+    f.run(R"lua(
+        wrapTip = CreateFrame('GameTooltip', 'WrapTip', UIParent)
+        wrapTip:SetText('Automatically add members to your group.', nil, nil, nil, nil, 1)
+        flatTip = CreateFrame('GameTooltip', 'FlatTip', UIParent)
+        flatTip:SetText('One line', 1, 1, 1)
+    )lua");
+    const auto* wrap = f.lua.widgets().findByName("WrapTip");
+    const auto* flat = f.lua.widgets().findByName("FlatTip");
+    REQUIRE(wrap); REQUIRE(flat);
+    REQUIRE(wrap->tooltipLines.size() == 1);
+    CHECK(wrap->tooltipLines[0].wrap);
+    CHECK(wrap->tooltipLines[0].lc[1] == Catch::Approx(210.0f / 255.0f));
+    REQUIRE(flat->tooltipLines.size() == 1);
+    CHECK_FALSE(flat->tooltipLines[0].wrap);
+}
 
 TEST_CASE_METHOD(Integration, "Named follow skips non-units and preserves selection", "[follow]") {
     replay::Session session("tbc");

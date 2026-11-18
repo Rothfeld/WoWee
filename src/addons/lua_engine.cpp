@@ -4749,11 +4749,18 @@ int lua_FontString_SetText(lua_State* L) {
     lua_setfield(L, 1, "_text");
     return 0;
 }
+/// nil for no text: 2.4.3 answers nil for a new FontString and after
+/// SetText(""), SetText(nil) or SetText(). FrameXML relies on it -
+/// LFMFrame_CanAutoAdd reads UIDropDownMenu_GetText of a cleared dropdown
+/// as "nothing selected", and "" made Auto Add Members look available.
 int lua_FontString_GetText(lua_State* L) {
     const auto* w = widgetOf(L, 1);
+    const std::string* text = nullptr;
     if (auto [line, right] = tooltipLineForFontString(L, w); line)
-        lua_pushstring(L, (right ? line->right : line->left).c_str());
-    else lua_pushstring(L, w ? w->text.c_str() : "");
+        text = &(right ? line->right : line->left);
+    else if (w) text = &w->text;
+    if (text && !text->empty()) lua_pushstring(L, text->c_str());
+    else lua_pushnil(L);
     return 1;
 }
 int lua_FontString_SetJustifyH(lua_State* L) {
@@ -7988,7 +7995,7 @@ void LuaEngine::registerCoreAPI() {
         // of blank buttons happens.
         // An edit box keeps its own text; a button shows its font string's.
         // FrameXML calls SetText on both and the widget decides which it means.
-        "function mt:SetText(text, r, g, b)\n"
+        "function mt:SetText(text, r, g, b, a, wrap)\n"
         // OnTextSet belongs to the box, not to the typing: it fires when the
         // text is *set* rather than entered, which is how the chat box learns
         // that something put a channel prefix in it. Declared on the chat edit
@@ -8001,7 +8008,9 @@ void LuaEngine::registerCoreAPI() {
         "    end\n"
         // A tooltip's SetText is its first line, not a font string's text.
         // It answers whether it took the call, so this can stop there.
-        "    if __WoweeTooltipSetText(self, text, r, g, b) then return end\n"
+        // Alpha and the wrap flag go through too: LFMFrame's
+        // SetText(AUTO_ADD_TOOLTIP, nil, nil, nil, nil, 1) wraps on 2.4.3.
+        "    if __WoweeTooltipSetText(self, text, r, g, b, a, wrap) then return end\n"
         // A SimpleHTML draws the text itself, so it goes on the widget rather
         // than into a field only Lua can read.
         //
@@ -8047,6 +8056,7 @@ void LuaEngine::registerCoreAPI() {
         "function mt:GetText()\n"
         "    if self.__isEditBox then return __WoweeEditGetText(self) end\n"
         "    if self.__fontString then return self.__fontString:GetText() end\n"
+        "    if self.__text == '' then return nil end\n"
         "    return self.__text\n"
         "end\n"
     );
