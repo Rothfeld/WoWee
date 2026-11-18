@@ -718,7 +718,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             /*uint64_t vendorGuid =*/ packet.readUInt64();
             const uint32_t vendorSlot = packet.readUInt32();   // 1-based, as the list numbers them
             const uint32_t newCount   = packet.readUInt32();   // 0xFFFFFFFF for an unlimited item
-            uint32_t itemCount  = packet.readUInt32();
+            /*uint32_t itemCount =*/ packet.readUInt32();
 
             // The stock left, said now rather than at the next reopen.
             //
@@ -761,17 +761,9 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 }
                 return;
             }
+            // No chat line of its own: native 2.4.3 buying Karaaz's Consortium
+            // Tabard prints only the item push's "You receive item:".
             if (pendingBuyItemId_ != 0) {
-                std::string itemLabel;
-                uint32_t buyQuality = 1;
-                if (const ItemQueryResponseData* info = owner_.getItemInfo(pendingBuyItemId_)) {
-                    if (!info->name.empty()) itemLabel = info->name;
-                    buyQuality = info->quality;
-                }
-                if (itemLabel.empty()) itemLabel = "item #" + std::to_string(pendingBuyItemId_);
-                std::string msg = "Purchased: " + buildItemLink(pendingBuyItemId_, buyQuality, itemLabel);
-                if (itemCount > 1) msg += " x" + std::to_string(itemCount);
-                owner_.addSystemChatMessage(msg);
                 if (auto* ac = owner_.services().audioCoordinator) {
                     if (auto* sfx = ac->getUiSoundManager())
                         sfx->playPickupBag();
