@@ -1222,26 +1222,31 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // Capture was checked per source by the manager. A consumed
             // keyboard Escape must not swallow a simultaneous controller B.
             st.interfaceConsumedKey  = false;
-            // Either cursor. With the bags handed over an item is picked up
-            // through FrameXML's, and Escape has to put that one down too -
-            // this read only the bag window's, so Escape opened the menu with
-            // an item still stuck to the pointer.
-            st.holdingItem           = inventoryScreen.isHoldingItem() ||
-                                       !frameXmlCursorItem().empty();
-            st.casting               = gameHandler.isCasting();
-            st.lootOpen              = gameHandler.isLootWindowOpen();
-            st.gossipOpen            = gameHandler.isGossipWindowOpen();
-            st.vendorOpen            = gameHandler.isVendorWindowOpen();
-            st.barberShopOpen        = gameHandler.isBarberShopOpen();
-            st.bankOpen              = gameHandler.isBankOpen();
-            st.guildBankOpen         = gameHandler.isGuildBankOpen();
-            st.trainerOpen           = gameHandler.isTrainerWindowOpen();
-            st.mailboxOpen           = gameHandler.isMailboxOpen();
-            st.auctionHouseOpen      = gameHandler.isAuctionHouseOpen();
-            st.questDetailsOpen      = gameHandler.isQuestDetailsOpen();
-            st.questOfferRewardOpen  = gameHandler.isQuestOfferRewardOpen();
-            st.questRequestItemsOpen = gameHandler.isQuestRequestItemsOpen();
-            st.tradeOpen             = gameHandler.isTradeOpen();
+            // Native 2.4.3 runs ToggleGameMenu and nothing before it:
+            // StaticPopups, the option/menu frames, CloseMenus,
+            // SpellStopCasting, SpellStopTargeting, CloseAllWindows (whose
+            // panels close the server side in their OnHide: CloseMerchant,
+            // CloseLoot, CloseGossip ...), ClearTarget, then the game menu.
+            // An item on the cursor stays there (measured: backpack open,
+            // item held - Escape closed the backpack, then cleared the
+            // target, then opened the menu with the item still held). So this
+            // client only acts first for windows it still draws itself.
+            const auto ours = [](UiElement e) { return !frameXmlOwns(e); };
+            st.holdingItem           = inventoryScreen.isHoldingItem();
+            st.casting               = ours(UiElement::GameMenu) && gameHandler.isCasting();
+            st.lootOpen              = ours(UiElement::Loot) && gameHandler.isLootWindowOpen();
+            st.gossipOpen            = ours(UiElement::Gossip) && gameHandler.isGossipWindowOpen();
+            st.vendorOpen            = ours(UiElement::Vendor) && gameHandler.isVendorWindowOpen();
+            st.barberShopOpen        = ours(UiElement::BarberShop) && gameHandler.isBarberShopOpen();
+            st.bankOpen              = ours(UiElement::Bank) && gameHandler.isBankOpen();
+            st.guildBankOpen         = ours(UiElement::GuildBank) && gameHandler.isGuildBankOpen();
+            st.trainerOpen           = ours(UiElement::ClassTrainer) && gameHandler.isTrainerWindowOpen();
+            st.mailboxOpen           = ours(UiElement::Mail) && gameHandler.isMailboxOpen();
+            st.auctionHouseOpen      = ours(UiElement::AuctionHouse) && gameHandler.isAuctionHouseOpen();
+            st.questDetailsOpen      = ours(UiElement::QuestGiver) && gameHandler.isQuestDetailsOpen();
+            st.questOfferRewardOpen  = ours(UiElement::QuestGiver) && gameHandler.isQuestOfferRewardOpen();
+            st.questRequestItemsOpen = ours(UiElement::QuestGiver) && gameHandler.isQuestRequestItemsOpen();
+            st.tradeOpen             = ours(UiElement::Trade) && gameHandler.isTradeOpen();
 
             const EscapeAction action = resolveEscape(st);
             // At warning, like the three in the pump it pairs with.
