@@ -941,6 +941,7 @@ static int lua_GetSpellCooldown(lua_State* L) {
     // A name, an id, or a book slot with the book beside it - the spellbook
     // asks in the last of those three.
     const uint32_t spellId = spellIdForCall(L, gh);
+    if (pushPendingCooldown(L, *gh, spellId)) return 3;
     float cd = gh->getSpellCooldown(spellId);
     // Also check GCD - if spell has no individual cooldown but GCD is active,
     // return the GCD timing (this is how WoW handles it)

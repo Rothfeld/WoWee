@@ -179,6 +179,20 @@ inline double luaGetTimeNow() {
     return wowee::core::appTimeSeconds();
 }
 
+/// GetSpellCooldown / GetActionCooldown of a spell whose cooldown waits for
+/// SMSG_COOLDOWN_EVENT: native 2.4.3 in Stealth answers GetTime(), 10, 0 -
+/// the start moves with the clock, the duration is the spell's cooldown and
+/// enable 0 holds the sweep back. False when the spell is not waiting.
+inline bool pushPendingCooldown(lua_State* L, game::GameHandler& gh, uint32_t spellId) {
+    if (!gh.isCooldownEventPending(spellId)) return false;
+    const auto* entry = gh.getSpellNameEntry(spellId);
+    const uint32_t ms = entry ? std::max(entry->recoveryMs, entry->categoryRecoveryMs) : 0u;
+    lua_pushnumber(L, luaGetTimeNow());
+    lua_pushnumber(L, ms / 1000.0);
+    lua_pushnumber(L, 0);
+    return true;
+}
+
 // ---- Shared WoW class/race/power name tables (indexed by ID, element 0 = unknown) ----
 inline constexpr const char* kLuaClasses[] = {
     "","Warrior","Paladin","Hunter","Rogue","Priest",

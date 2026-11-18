@@ -600,13 +600,8 @@ static int lua_GetActionCooldown(lua_State* L) {
         }
     }
     const auto& action = standIn ? *standIn : *shown;
-    if (action.type == game::ActionBarSlot::SPELL && gh->isCooldownEventPending(action.id)) {
-        // Cast, and its cooldown waits for the event: enable 0, no sweep.
-        lua_pushnumber(L, 0);
-        lua_pushnumber(L, 0);
-        lua_pushnumber(L, 0);
-        return 3;
-    }
+    // Cast, and its cooldown waits for the event: enable 0, no sweep.
+    if (action.type == game::ActionBarSlot::SPELL && pushPendingCooldown(L, *gh, action.id)) return 3;
     if (action.type == game::ActionBarSlot::ITEM) {
         // An item with no use spell has no cooldown to show: native 2.4.3
         // answers enable 0 for Mining Pick, Worn Dagger and Rough Arrow.
