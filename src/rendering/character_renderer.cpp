@@ -87,8 +87,11 @@ namespace {
 // AnimationData.dbc declares LootHold (188) and LootUp (189) as aliases
 // of Loot (50) with flags 0x20 (hold end) and 0x10 (reverse). TBC player
 // models ship only sequence 50. Native 188/189 sequences take precedence.
+// A stand-in with playable lookup flag 1 (playable_animation.hpp) runs
+// backwards: Walk for a model without Walkbackwards.
 float animationSampleTime(uint32_t requestedId, const pipeline::M2Sequence& sequence,
-                          float elapsed) {
+                          float elapsed, bool reversed) {
+    if (reversed) return std::max(0.0f, static_cast<float>(sequence.duration) - elapsed);
     if (sequence.id == anim::LOOT) {
         if (requestedId == anim::LOOT_HOLD) return static_cast<float>(sequence.duration);
         if (requestedId == anim::LOOT_UP)
@@ -2117,6 +2120,18 @@ uint32_t CharacterRenderer::animationFlags(uint32_t animationId) {
     return it == animationFlags_.end() ? 0u : it->second;
 }
 
+std::optional<PlayableStandIn> CharacterRenderer::playableStandIn(const pipeline::M2Model& model,
+                                                                  uint32_t animationId) {
+    return resolvePlayableStandIn(
+        animationId, model.playableAnimations,
+        [&](uint32_t id) {
+            return std::any_of(model.sequences.begin(), model.sequences.end(),
+                               [id](const auto& sequence) { return sequence.id == id; });
+        },
+        [this](uint32_t id) { return animationFallback(id); },
+        [this](uint32_t id) { return animationFlags(id); });
+}
+
 bool CharacterRenderer::isInstanceDead(uint32_t instanceId) const {
     const auto it = instances.find(instanceId);
     return it != instances.end() && it->second.isDead;
@@ -2256,35 +2271,34 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
         }
     }
 
-    // A model without the animation plays its AnimationData.dbc fallback:
-    // Ready1H -> ReadyUnarmed -> Stand, WalkBackwards -> Walk. The requested
-    // id stays current, so a Stand reached this way is the primary Stand and
-    // never rolls Stand fidget variations (Bear.m2 has no ReadyUnarmed; the
-    // original holds its plain Stand between swings, never the rearing
-    // fidget, _experiments/20261117T145702Z.combat_observations).
+    // A model without the animation plays the stand-in its playable lookup
+    // names (playable_animation.hpp): Ready1H -> ReadyUnarmed -> Stand,
+    // Walkbackwards -> Walk backwards. The requested id stays current, so a
+    // Stand reached this way is the primary Stand and never rolls Stand
+    // fidget variations (Bear.m2 has no ReadyUnarmed; the original holds its
+    // plain Stand between swings, never the rearing fidget,
+    // _experiments/20261117T145702Z.combat_observations).
+    instance.playReversed = false;
     if (instance.currentSequenceIndex < 0) {
-        uint32_t wanted = animationId;
-        for (int hop = 0; hop < 16 && instance.currentSequenceIndex < 0; ++hop) {
-            const auto next = animationFallback(wanted);
-            if (!next || *next == wanted) break;
-            wanted = *next;
+        if (const auto standIn = playableStandIn(model, animationId)) {
             for (size_t i = 0; i < model.sequences.size(); i++) {
-                if (model.sequences[i].id != wanted) continue;
+                if (model.sequences[i].id != standIn->animationId) continue;
                 instance.currentSequenceIndex = static_cast<int>(i);
                 if (model.sequences[i].variationIndex == 0) break;
             }
-        }
-        if (instance.currentSequenceIndex >= 0) {
-            LOG_DEBUG("Animation ", animationId, " falls back to ", wanted, " in model ", instance.modelId);
-            // AnimationData flag 0x20: the stand-in is shown on its last frame
-            // and held. Dead without its own sequence is Death's final pose,
-            // so a corpse that comes into view lies still instead of dying again.
-            if (animationFlags(animationId) & 0x20u) {
+            assert(instance.currentSequenceIndex >= 0);
+            LOG_DEBUG("Animation ", animationId, " shows ", standIn->animationId, " in model ", instance.modelId,
+                      standIn->reversed ? " backwards" : "", standIn->frozenAtEnd ? " frozen on its last frame" : "");
+            // Frozen on the last frame: Dead without its own sequence is
+            // Death's final pose, so a corpse that comes into view lies still
+            // instead of dying again.
+            if (standIn->frozenAtEnd) {
                 instance.animationLoop = false;
                 instance.holdFinalPose = true;
                 instance.animationTime =
                     static_cast<float>(model.sequences[instance.currentSequenceIndex].duration);
             }
+            instance.playReversed = standIn->reversed;
         }
     }
 
@@ -2884,7 +2898,7 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
             ? instance.currentSequenceIndex : 0;
         const float time = model.sequences.empty() ? instance.animationTime
             : animationSampleTime(instance.currentAnimationId, model.sequences[sequence],
-                                  instance.animationTime);
+                                  instance.animationTime, instance.playReversed);
         M2Renderer::ExternalPose pose;
         pose.modelMatrix = modelMatrix;
         pose.boneMatrices = &instance.boneMatrices;
@@ -3100,11 +3114,11 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
 
         int sequence = instance.currentSequenceIndex;
         float time = animationSampleTime(instance.currentAnimationId,
-                                         model.sequences[sequence], instance.animationTime);
+                                         model.sequences[sequence], instance.animationTime, instance.playReversed);
         if (instance.upperBodySequenceIndex >= 0 && instance.upperBodyBones[i]) {
             sequence = instance.upperBodySequenceIndex;
             time = animationSampleTime(model.sequences[sequence].id,
-                                       model.sequences[sequence], instance.upperBodyAnimationTime);
+                                       model.sequences[sequence], instance.upperBodyAnimationTime, false);
         }
         const int arm = armsOwnSequences ? instance.boneArm[i] : -1;
         if (arm >= 0 && instance.armSequenceIndex[arm] >= 0) {
@@ -3656,12 +3670,12 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     evalBatchColorAlpha(gpuModel.data, batch,
                                         instance.currentSequenceIndex,
                                         animationSampleTime(instance.currentAnimationId,
-                                            gpuModel.data.sequences[instance.currentSequenceIndex], instance.animationTime),
+                                            gpuModel.data.sequences[instance.currentSequenceIndex], instance.animationTime, instance.playReversed),
                                         instance.globalSequenceTime) *
                     evalBatchTextureWeight(gpuModel.data, batch,
                                            instance.currentSequenceIndex,
                                            animationSampleTime(instance.currentAnimationId,
-                                               gpuModel.data.sequences[instance.currentSequenceIndex], instance.animationTime),
+                                               gpuModel.data.sequences[instance.currentSequenceIndex], instance.animationTime, instance.playReversed),
                                            instance.globalSequenceTime),
                     0.0f, 1.0f);
                 if (batchColorAlpha <= 0.01f) {
@@ -3925,7 +3939,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                         const int seq = instance.currentSequenceIndex;
                         const float t = seq >= 0
                             ? animationSampleTime(instance.currentAnimationId,
-                                                  md.sequences[seq], instance.animationTime)
+                                                  md.sequences[seq], instance.animationTime, instance.playReversed)
                             : 0.0f;
                         const glm::vec3 tr = m2_track::sampleVec3(md.textureTransforms[index].translation,
                             seq, t, instance.globalSequenceTime, md.globalSequenceDurations,
@@ -5288,7 +5302,7 @@ bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& 
 
     const float sampleTime = instance.currentSequenceIndex >= 0
         ? animationSampleTime(instance.currentAnimationId,
-              model.sequences[instance.currentSequenceIndex], instance.animationTime)
+              model.sequences[instance.currentSequenceIndex], instance.animationTime, instance.playReversed)
         : 0.0f;
     const size_t boneCount = std::min(instance.boneMatrices.size(), model.bones.size());
     const UnitPickState state{

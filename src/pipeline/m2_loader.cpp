@@ -837,6 +837,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     }
 
     uint32_t ofsViews = 0;
+    // Pre-Wrath playable animation lookup (M2Model::playableAnimations).
+    uint32_t nPlayableAnimations = 0;
+    uint32_t ofsPlayableAnimations = 0;
     // Global flag 0x08: an M2Array of texture combiner modes follows the
     // particle emitters (TBC header 0x144, Wrath 0x130).
     uint32_t nCombinerCombos = 0;
@@ -854,8 +857,8 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             return v;
         };
 
-        // Skip playableAnimLookup M2Array (8 bytes)
-        c += 8;
+        nPlayableAnimations = r32();
+        ofsPlayableAnimations = r32();
 
         // Bones through ofsVertices (same field order as WotLK, just shifted)
         header.nBones = r32();
@@ -1069,6 +1072,21 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         }
 
         core::Logger::getInstance().debug("  Animation sequences: ", model.sequences.size());
+    }
+
+    if (nPlayableAnimations > 0) {
+        // 4096 bounds the count before doubling it; 2.4.3 models have 1 or 203.
+        const auto raw = nPlayableAnimations <= 4096
+            ? readArray<uint16_t>(m2Data, ofsPlayableAnimations, nPlayableAnimations * 2)
+            : std::vector<uint16_t>{};
+        if (raw.size() == static_cast<size_t>(nPlayableAnimations) * 2) {
+            model.playableAnimations.reserve(nPlayableAnimations);
+            for (size_t i = 0; i + 1 < raw.size(); i += 2)
+                model.playableAnimations.push_back({raw[i], raw[i + 1]});
+        } else {
+            core::Logger::getInstance().warning("M2 playable animation lookup out of range (", nPlayableAnimations,
+                                                " entries at ", ofsPlayableAnimations, ")");
+        }
     }
 
     // Read global sequence durations (used by environmental animations: smoke, fire, etc.)

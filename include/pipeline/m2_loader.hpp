@@ -274,6 +274,20 @@ struct M2Model {
     std::vector<M2Sequence> sequences;
     std::vector<uint32_t> globalSequenceDurations;  // Per-global-sequence loop durations (ms)
 
+    // Playable animation lookup (pre-Wrath header 0x2C, M2Array of uint16
+    // fallback id + uint16 flags, one entry per AnimationData id; 203 entries
+    // in the 2.4.3 models, none in Wrath models). An animation the model has
+    // maps to itself with flags 0; one it lacks names the animation shown
+    // instead: Wendigo.m2 ReadyUnarmed (25) -> Stand (0), HumanMale.m2 Dead (6)
+    // -> Death (1) flags 3, Walkbackwards (13) -> Walk (4) flags 1 on models
+    // without it. Flags: 1 plays the stand-in backwards, 3 shows it frozen on
+    // its last frame; 0, 1 and 3 are the only values in the 14695 TBC models.
+    struct PlayableAnimation {
+        uint16_t fallbackId = 0;
+        uint16_t flags = 0;
+    };
+    std::vector<PlayableAnimation> playableAnimations;
+
     // Footfall ($FSD) animation event times per sequence index, in ms from the
     // start of the sequence, sorted ascending. These are the authored keyframes
     // the game client uses to sync footstep sounds to feet hitting the ground.

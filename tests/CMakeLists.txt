@@ -2993,3 +2993,12 @@ wowee_add_test(test_tbc_cast_results SOURCES test_tbc_cast_results.cpp)
 # Projected-texture M2 quads draped over the ground. Header-only.
 wowee_add_test(test_projected_texture
     SOURCES test_projected_texture.cpp)
+
+# ── test_playable_animation ──────────────────────────────────
+# Playable lookup stand-ins and the AnimationData chain behind them.
+wowee_add_test(test_playable_animation
+    SOURCES test_playable_animation.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+            ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
+set_tests_properties(playable_animation PROPERTIES SKIP_RETURN_CODE 4)

@@ -1154,6 +1154,38 @@ Every looping animation starts on a variation drawn by M2 frequency and redraws 
 
 Walk or Run (rendering::splineGroundGaitWalks) compares the spline speed with the Walk stride at the display's own size: OBJECT_FIELD_SCALE_X enlarges the model but not the stride. Native Akama 21700 (display 20681 x1.3, Walk 2.5) ran at 6.94 yd/s at object scale 1, 2 and 3; Akama 22990 (same display, created at object scale 2) ran at 8.0; El Pollo Grande (display 589 x10) walked at 8.0. For Black Temple Akama 23089 (display 21112 x2.6, run speed 10) the rule gives Walk (stride 6.5, threshold 13); a native 21700 given display 21112 also walked at 10.4. The real Illidan event was not observed natively.
 
+### Missing animations
+
+```sh
+WOWEE_TBC_DATA_DIR=client/wowee-data/expansions/tbc build/bin/test_playable_animation
+```
+
+A model asked for an animation it has no sequence for shows the stand-in its
+own playable animation lookup names (pre-Wrath M2 header 0x2C: uint16 animation,
+uint16 flags per AnimationData id, 203 entries in every 2.4.3 creature and
+character model). Flags 3 show the stand-in frozen on its last frame (Dead ->
+Death, SitGround -> SitGroundDown, LootHold -> Loot), 1 play it backwards
+(Walkbackwards -> Walk, LootUp -> Loot); 0, 1 and 3 are the only values. Ids
+past the lookup (StealthRun 223, ...) and models without one follow
+AnimationData.dbc's Fallback chain, whose Flags give the same modes: 0x20 frozen,
+0x10 backwards on the direct Fallback only. The lookup agrees with the chain
+except for Fly (135) and SpellKneelLoop (141) -> Stand, and wound, parry, dodge
+and block -> Stand on 25 models with a ready stance but no StandWound (dragons,
+drakonids, gnolls, NetherDragon.m2, wyrms): there the chain goes StandWound ->
+ReadyUnarmed. Native build 8606 follows the lookup: `.npc playemote 39`
+(ParryUnarmed) and `43` (ShieldBlock) left JAB Nether Serpent (21329) in Stand,
+`44` (ReadyUnarmed, which it has) raised its ready stance; WoWee had shown the
+ready stance for all three. `rendering/animation/playable_animation.hpp`.
+
+M2 sequence flags 0x2, 0x4 and 0x8 copy AnimationData BodyFlags 0x200, 0x400
+and 0x800 (0x2 on every Death and SleepDown, 0x4 on SleepUp, 0x8 on Sleep, Fly
+and Dead); nothing observed depends on them yet. Gotcha: pair avatars are hidden
+from each other (`debug viewsync hide`); a creature fighting the WoWee character
+then attacks an unseen unit on native. `paired_sync.server_request('show')`
+before melee observations.
+
+Evidence and tools: `_experiments/20261118T205000Z.anim_fallback` in the workspace.
+
 ### Turning in place
 
 The standing local character plays `ShuffleLeft` (11) while the player turns it

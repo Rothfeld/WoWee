@@ -4,6 +4,7 @@
 
 #include "rendering/vk_shader.hpp"
 #include "rendering/animation/footstep_driver.hpp"
+#include "rendering/animation/playable_animation.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/hand_grip.hpp"
 
@@ -471,6 +472,9 @@ private:
         uint32_t sequenceRepeatsRemaining = 0;
         uint32_t oneShotReturnAnim = 0; // Anim to resume when a one-shot ends (0 = Stand)
         bool holdFinalPose = false; // Caller owns the transition after completion
+        // The current sequence stands in for an animation the model lacks with
+        // playable lookup flag 1: it plays from its last frame to its first.
+        bool playReversed = false;
         bool isDead = false;  // Prevents movement while in death state
         std::vector<glm::mat4> boneMatrices;  // Current bone transforms
 
@@ -614,6 +618,9 @@ private:
     void loadAnimationData();
     std::optional<uint32_t> animationFallback(uint32_t animationId);
     uint32_t animationFlags(uint32_t animationId);
+    /// The sequence animation and play mode shown for `animationId` on a
+    /// model without it (rendering/animation/playable_animation.hpp).
+    std::optional<PlayableStandIn> playableStandIn(const pipeline::M2Model& model, uint32_t animationId);
 
     // Vulkan pipelines (one per blend mode)
     VkPipeline opaquePipeline_ = VK_NULL_HANDLE;
