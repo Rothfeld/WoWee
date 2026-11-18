@@ -3303,7 +3303,9 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         }
     }
 
-    if (!isPlayer && !isCompanion && !isCorpse && entity) {
+    // The faction a standing is kept with, corpses included: a dead Quinn
+    // still reads "Gadgetzan" under "Level 35 Corpse" on native.
+    if (!isPlayer && !isCompanion && entity) {
         auto* assets = gh->services().assetManager;
         const auto* layouts = wowee::pipeline::getActiveDBCLayout();
         const auto* layout = layouts ? layouts->getLayout("FactionTemplate") : nullptr;

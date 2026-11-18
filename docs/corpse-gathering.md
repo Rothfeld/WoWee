@@ -11,7 +11,9 @@ retain their tool category.
 Lootable corpses retain the loot cursor. Without the profession, the cursor stays
 Point. With the profession, available harvesting uses Skin and failed rank/tool
 requirements use SkinError. Corpse tooltips use localized CORPSE in the level line
-and omit living faction and health-bar presentation.
+and omit the health bar. A faction with a standing stays: Quinn's corpse
+reads "Level 35 Corpse" then "Gadgetzan"
+(`../_experiments/20261118T195000Z.unit_creature_type/corpse-friend-original.png`).
 
 Native TBC reference, untrained Edrik hovering a fully looted Duskbat:
 `../_experiments/20261116T205700Z.corpse_skinning/original-untrained-corpse.png`
