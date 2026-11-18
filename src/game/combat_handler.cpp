@@ -1,4 +1,5 @@
 #include "game/combat_handler.hpp"
+#include "game/combat_text_update.hpp"
 #include "game/spell_handler.hpp"
 #include "game/combat_log_event.hpp"
 #include "game/classic_combat_chat.hpp"
@@ -423,6 +424,32 @@ void CombatHandler::announceLeaveCombat() {
 
 void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
                                   uint64_t srcGuid, uint64_t dstGuid) {
+    // COMBAT_TEXT_UPDATE: what Blizzard_CombatText draws for the player.
+    // Build 8606 fires it whatever enableCombatText says, so it is sent
+    // before the panel's filters below, which govern the world numbers.
+    {
+        using T = CombatTextEntry;
+        const bool hitsPlayer = dstGuid != 0 && dstGuid == owner_.getPlayerGuid();
+        if (hitsPlayer || type == T::HONOR_GAIN) {
+            const bool reduction = type == T::ABSORB || type == T::RESIST || type == T::BLOCK;
+            const std::string caster = srcGuid ? owner_.lookupName(srcGuid) : std::string{};
+            const auto update = combatTextUpdateFor(type, amount, spellId != 0, powerType, caster,
+                                                    reduction ? incomingHitDamage_ : -1);
+            if (!reduction) {
+                const bool damage = type == T::MELEE_DAMAGE || type == T::GLANCING || type == T::CRUSHING ||
+                                    type == T::CRIT_DAMAGE || type == T::SPELL_DAMAGE || type == T::PERIODIC_DAMAGE;
+                incomingHitDamage_ = damage && hitsPlayer ? amount : -1;
+            }
+            if (update && owner_.addonEventCallbackRef()) {
+                // Absent data reaches Lua as nil: the addon tests arg3 for a partial block.
+                std::vector<std::string> args{update->type};
+                if (!update->arg2.empty()) args.push_back(update->arg2);
+                if (!update->arg3.empty()) args.push_back(update->arg3);
+                owner_.addonEventCallbackRef()("COMBAT_TEXT_UPDATE", args);
+            }
+        }
+    }
+
     // The panel's filters, before anything is built or announced. The mapping
     // lives in combat_text_filter.hpp so it can be tested without a settings
     // store; only the lookup is here.

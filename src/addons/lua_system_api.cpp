@@ -816,10 +816,11 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // itself ticked while the client went on clearing, the panel and the game
     // disagreeing about the same switch.
     else if (n == "deselectonclick") lua_pushstring(L, "1");
-    // On, which is what this client has always done and what the real one
-    // defaults to. Unset it fell to zero, so the checkbox would have shown the
-    // numbers switched off while they were drawn.
-    else if (n == "enablecombattext") lua_pushstring(L, "1");
+    // Off: build 8606 with no enableCombatText line in Config.wtf answers
+    // "0" (pair 7, _experiments/20261118T074350Z.plates_fct), as
+    // UIOptionsFrame's SHOW_COMBAT_TEXT default says. It governs
+    // Blizzard_CombatText only; the numbers over the world do not read it.
+    else if (n == "enablecombattext") lua_pushstring(L, "0");
     // The three kinds this client draws. All on, which is what it did before
     // any of them were read; unset they fell to zero, which would have shown
     // every one of these boxes unticked while the numbers were on screen.

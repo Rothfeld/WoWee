@@ -77,3 +77,37 @@ TEST_CASE("lines these six rows do not describe are left alone", "[combattext]")
     CHECK(ruleFor(T::ENERGIZE, true, kPlayer, kPlayer).cvar == nullptr);
     CHECK(ruleFor(T::MISS, true, kPlayer, kTarget).cvar == nullptr);
 }
+
+#include "game/combat_text_update.hpp"
+
+TEST_CASE("COMBAT_TEXT_UPDATE carries build 8606's message types and data", "[combat_text][event]") {
+    using wowee::game::CombatTextEntry;
+    using wowee::game::combatTextUpdateFor;
+    // Read back on pair 7 (_experiments/20261118T074350Z.plates_fct).
+    auto hit = combatTextUpdateFor(CombatTextEntry::MELEE_DAMAGE, 13, false, 0, "Warrior 10", -1);
+    REQUIRE(hit);
+    CHECK(hit->type == "DAMAGE");
+    CHECK(hit->arg2 == "13");
+    CHECK(hit->arg3.empty());
+    auto heal = combatTextUpdateFor(CombatTextEntry::HEAL, 225, true, 0, "Edrikg", -1);
+    REQUIRE(heal);
+    CHECK(heal->type == "HEAL");
+    CHECK(heal->arg2 == "Edrikg");
+    CHECK(heal->arg3 == "225");
+    auto energy = combatTextUpdateFor(CombatTextEntry::ENERGIZE, 100, true, 3, "Edrikg", -1);
+    REQUIRE(energy);
+    CHECK(energy->type == "ENERGY");
+    CHECK(energy->arg2 == "100");
+    CHECK(combatTextUpdateFor(CombatTextEntry::MISS, 0, false, 0, "", -1)->type == "MISS");
+    auto absorbed = combatTextUpdateFor(CombatTextEntry::ABSORB, 14, false, 0, "", -1);
+    CHECK(absorbed->type == "ABSORB");
+    CHECK(absorbed->arg2.empty());
+    CHECK(combatTextUpdateFor(CombatTextEntry::RESIST, 0, true, 0, "", -1)->type == "SPELL_RESIST");
+    // A hit that did damage: Blizzard_CombatText's partial form.
+    auto partial = combatTextUpdateFor(CombatTextEntry::ABSORB, 20, false, 0, "", 30);
+    CHECK(partial->arg2 == "30");
+    CHECK(partial->arg3 == "20");
+    // A full absorb arrives as a zero-damage hit first; that line says nothing.
+    CHECK_FALSE(combatTextUpdateFor(CombatTextEntry::MELEE_DAMAGE, 0, false, 0, "", -1));
+    CHECK_FALSE(combatTextUpdateFor(CombatTextEntry::XP_GAIN, 50, false, 0, "", -1));
+}

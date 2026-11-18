@@ -669,20 +669,10 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // ---- New UI elements ----
     renderNameplates(gameHandler);  // player names always shown; NPC plates gated by the enemyplates row
     combatUI_.playSoundsForNewChat(gameHandler);
-    // Blizzard_CombatText draws its own once it is loaded, which happens the
-    // moment the player touches the float-mode dropdown in the interface
-    // options. Not an element gate: the addon arrives mid-run, so this has to
-    // keep drawing until it does and then stand down.
     offerPendingTradeItem(gameHandler);
-    // The master switch for the damage and healing numbers, which the panel
-    // offers and nothing read: the numbers were drawn whatever it said. Its own
-    // eighteen filters - fctDamage, fctHealing and the rest - are still
-    // unread; this is the one that turns the whole thing off, which is what
-    // somebody who does not want numbers over the world actually reaches for.
-    if (!frameXmlDrawsCombatText() &&
-        addons::storedCVarValue("enableCombatText", "1") != "0") {
-        combatUI_.renderCombatText(gameHandler);
-    }
+    // The numbers over the world: build 8606 draws them whatever
+    // enableCombatText says, which governs Blizzard_CombatText only.
+    combatUI_.renderCombatText(gameHandler);
     // FriendsFrame is what "social" suppresses, and its tabs are the friends
     // list, the who list and the guild roster. Only the friends list was gated
     // on this side, so handing social over left two of this client's three

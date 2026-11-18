@@ -605,6 +605,26 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
         if (entity->getGuid() == owner_.getFocusGuid()) pendingEvents_.emit("UNIT_AURA", {"focus"});
         return;
     }
+    // COMBAT_TEXT_UPDATE SPELL_AURA_START / SPELL_AURA_END, _HARMFUL for the
+    // negative slots, with the spell's name (build 8606, pair 7: Power Word:
+    // Fortitude, Rejuvenation, Weakened Soul). The first rebuild after the
+    // list was dropped is the state the player arrived with, not a change.
+    if (!previousAuras.empty()) {
+        const auto has = [](const std::vector<AuraSlot>& list, uint32_t spellId) {
+            return std::any_of(list.begin(), list.end(),
+                               [&](const AuraSlot& a) { return a.spellId == spellId; });
+        };
+        const auto announce = [&](const AuraSlot& a, const char* change) {
+            const std::string& name = owner_.getSpellName(a.spellId);
+            if (name.empty()) return;
+            const std::string type = std::string("SPELL_AURA_") + change + ((a.flags & 0x80u) ? "_HARMFUL" : "");
+            pendingEvents_.emit("COMBAT_TEXT_UPDATE", {type, name});
+        };
+        for (const auto& a : rebuilt)
+            if (!a.isEmpty() && !has(previousAuras, a.spellId)) announce(a, "START");
+        for (const auto& a : previousAuras)
+            if (!a.isEmpty() && !has(rebuilt, a.spellId)) announce(a, "END");
+    }
     owner_.getSpellHandler()->getPlayerAurasMut() = std::move(rebuilt);
     if (entity->getGuid() == owner_.getTargetGuid()) {
         owner_.getSpellHandler()->restoreTargetAuras(entity->getGuid());

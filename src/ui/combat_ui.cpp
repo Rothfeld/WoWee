@@ -123,56 +123,16 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         return characters->getInstanceNamePosition(instanceId, unit.getMountDisplayId() != 0, out);
     };
 
-    // HUD fallback: entries without world-space anchor use classic screen-position layout.
-    // We still need an ImGui window for those.
-    const float hudIncomingX = screenW * 0.40f;
-    const float hudOutgoingX = screenW * 0.68f;
-    int hudInIdx = 0, hudOutIdx = 0;
-    bool needsHudWindow = false;
-
-    // What kind of number the player asked to see.
-    //
-    // The interface offers eighteen of these and read none of them, so every
-    // kind was drawn together. Three cover what this client actually produces;
-    // the rest name things it does not draw at all - reputation changes, aura
-    // gains, combo points - and there is nothing yet for them to filter.
-    //
-    // Read once for the frame rather than per entry: a busy fight puts dozens
-    // through this loop and the answer cannot change inside it.
-    const bool showDamage =
-        addons::storedCVarValue("fctDamage", "1") != "0";
-    const bool showHealing =
-        addons::storedCVarValue("fctHealing", "1") != "0";
-    const bool showMisses =
-        addons::storedCVarValue("fctDodgeParryMiss", "1") != "0";
-
-    const auto wanted = [&](game::CombatTextEntry::Type t) {
-        using T = game::CombatTextEntry;
-        switch (t) {
-            case T::MELEE_DAMAGE: case T::SPELL_DAMAGE: case T::CRIT_DAMAGE:
-            case T::PERIODIC_DAMAGE: case T::ENVIRONMENTAL: case T::GLANCING:
-            case T::CRUSHING:
-                return showDamage;
-            case T::HEAL: case T::CRIT_HEAL: case T::PERIODIC_HEAL:
-                return showHealing;
-            case T::MISS: case T::DODGE: case T::PARRY: case T::BLOCK:
-            case T::EVADE: case T::IMMUNE: case T::DEFLECT: case T::REFLECT:
-            case T::RESIST: case T::ABSORB:
-                return showMisses;
-            default:
-                // Everything else - energy, experience, honour, dispels - has
-                // no switch of its own here and is left alone rather than
-                // hidden by somebody else's.
-                return true;
-        }
-    };
-
     for (const auto& entry : entries) {
         const bool outgoing = entry.isPlayerSource;
         const bool experience = entry.type == game::CombatTextEntry::XP_GAIN;
         const bool reward = experience || entry.type == game::CombatTextEntry::HONOR_GAIN;
-        if (!outgoing && !reward &&
-            (addons::storedCVarValue("enableCombatText", "0") == "0" || !wanted(entry.type))) continue;
+        // Lines that land on the player are Blizzard_CombatText's, which
+        // hears them as COMBAT_TEXT_UPDATE (CombatHandler::addCombatText);
+        // build 8606 draws nothing of its own for them, and nothing for a
+        // proc either.
+        if (!outgoing && !reward) continue;
+        if (entry.type == game::CombatTextEntry::PROC_TRIGGER) continue;
         const bool isCrit = entry.type == game::CombatTextEntry::CRIT_DAMAGE ||
                             entry.type == game::CombatTextEntry::CRIT_HEAL;
         // Native fade thresholds: ordinary hits 150/760/1500 ms;
@@ -397,10 +357,6 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         ImU32 shadowCol = IM_COL32(0, 0, 0, static_cast<int>(alpha * 180));
         ImU32 textCol   = ImGui::ColorConvertFloat4ToU32(color);
 
-        // Types that stay HUD elements (no world anchor).
-        bool isHudOnly = entry.type == game::CombatTextEntry::PROC_TRIGGER || !outgoing;
-
-        bool rendered = false;
         if (worldNumber && camera && entry.dstGuid != 0) {
             // Numbers start at the bottom of the unit's plain name line
             // (name attachment + 0.25 yd): ordinary ones sit on it and climb,
@@ -425,7 +381,7 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
             }
             continue;
         }
-        if (!isHudOnly && camera) {
+        if (reward && camera) {
             // Experience above the player.
             glm::vec3 renderPos;
             if (core::Application::getInstance().getRenderPositionForGuid(gameHandler.getPlayerGuid(), renderPos)) {
@@ -443,45 +399,11 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                                           ImVec2(sx + 1.0f, sy + 1.0f), shadowCol, text);
                         drawList->AddText(font, renderFontSize,
                                           ImVec2(sx, sy), textCol, text);
-                        rendered = true;
                     }
                 }
             }
         }
 
-        // Offscreen or missing world targets do not produce unrelated HUD numbers.
-        if (!rendered && !isHudOnly) continue;
-        if (!rendered) {
-            if (!needsHudWindow) {
-                needsHudWindow = true;
-                ImGui::SetNextWindowPos(ImVec2(0, 0));
-                ImGui::SetNextWindowSize(ImVec2(screenW, 400));
-                ImGuiWindowFlags flags = ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration |
-                                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav;
-                ImGui::Begin("##CombatText", nullptr, flags);
-            }
-
-            float yOffset = 200.0f - entry.age * 60.0f;
-            int& idx = outgoing ? hudOutIdx : hudInIdx;
-            float baseX = outgoing ? hudOutgoingX : hudIncomingX;
-            float xOffset = baseX + (idx % 3 - 1) * 60.0f;
-            ++idx;
-
-            ImGui::SetCursorPos(ImVec2(xOffset, yOffset));
-            ImVec2 screenPos = ImGui::GetCursorScreenPos();
-
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddText(font, renderFontSize, ImVec2(screenPos.x + 1.0f, screenPos.y + 1.0f),
-                        shadowCol, text);
-            dl->AddText(font, renderFontSize, screenPos, textCol, text);
-
-            ImVec2 ts = font->CalcTextSizeA(renderFontSize, FLT_MAX, 0.0f, text);
-            ImGui::Dummy(ts);
-        }
-    }
-
-    if (needsHudWindow) {
-        ImGui::End();
     }
 
     // Entries are oldest first; layout wants each unit's newest first.

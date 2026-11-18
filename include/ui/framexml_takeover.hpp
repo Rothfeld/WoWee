@@ -311,16 +311,12 @@ bool frameXmlWasReleased(UiElement element);
 /// Element ownership cannot answer this. An element is chosen before the run
 /// starts and stays chosen; a load-on-demand addon arrives in the middle of one
 /// because the player asked for the feature, and until it does FrameXML draws
-/// nothing for it - so this client's own version has to keep drawing and then
-/// stand down. Blizzard_CombatText is the case: it loads from the float-mode
-/// dropdown in the interface options and then draws floating combat text over
-/// the one CombatUI is already drawing.
+/// nothing for it.
 void frameXmlNoteAddOnLoaded(const std::string& addOnName);
 
 /// Whether a load-on-demand addon has loaded. Case-insensitive: the interface
 /// asks for "Blizzard_AuctionUI" and the directory is blizzard_auctionui.
 bool frameXmlAddOnLoaded(std::string_view addOnName);
-bool frameXmlDrawsCombatText();
 
 /// The icon of the item the cursor is carrying, or empty for nothing.
 ///

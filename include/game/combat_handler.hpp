@@ -209,6 +209,9 @@ private:
     float autoAttackRangeWarnCooldown_ = 0.0f;
     std::unordered_set<uint64_t> hostileAttackers_;
     std::vector<CombatTextEntry> combatText_;
+    /// Damage of the last hit announced on the player, for the partial
+    /// absorb/resist/block line that follows it (-1 after anything else).
+    int32_t incomingHitDamage_ = -1;
     static constexpr size_t MAX_COMBAT_LOG = 500;
     std::deque<CombatLogEntry> combatLog_;
     uint64_t combatLogAppended_ = 0;
