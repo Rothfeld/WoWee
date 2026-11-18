@@ -1804,12 +1804,12 @@ TEST_CASE_METHOD(Integration, "GM stationery identifies support mail without a p
     mail.stationeryId = 61;
     mail.money = 1000000;
     handler.mailInboxRef().push_back(mail);
-    CHECK(handler.getMailSenderName(mail) == "Blizzard Support");
+    CHECK(handler.getMailSenderName(mail) == "Customer Support");
     run("header = {GetInboxHeaderInfo(1)}");
-    truth("header[3] == 'Blizzard Support' and header[5] == 1000000 and header[12] == false and header[13] == true");
+    truth("header[3] == 'Customer Support' and header[5] == 1000000 and header[12] == false and header[13] == true");
     mail.senderGuid = 123;
     mail.senderName = "Player";
-    CHECK(handler.getMailSenderName(mail) == "Blizzard Support");
+    CHECK(handler.getMailSenderName(mail) == "Customer Support");
     mail.stationeryId = 41;
     handler.mailInboxRef()[0] = mail;
     run("header = {GetInboxHeaderInfo(1)}");
