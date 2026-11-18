@@ -227,13 +227,26 @@ inline const char* itemQualityColorHexRGB(uint32_t quality) {
 /// default to none, which is what every caller but the guild bank wants: a
 /// link written with an enchant is what a bank slot's contents actually are,
 /// and dropping it would show an enchanted weapon as a plain one.
+///
+/// 2.4.3 has no level field: eight fields, "item:id:enchant:gem1:gem2:gem3:
+/// gem4:suffix:unique" - the shape GetContainerItemLink answers on the
+/// original (pair 6). ExpansionRegistry sets the shape when the expansion
+/// becomes active; the other expansions keep the nine fields they had.
+enum class ItemLinkShape : uint8_t { NineFields, Tbc };
+inline ItemLinkShape& itemLinkShapeRef() {
+    static ItemLinkShape shape = ItemLinkShape::NineFields;
+    return shape;
+}
+inline void setItemLinkShape(ItemLinkShape shape) { itemLinkShapeRef() = shape; }
+
 inline std::string itemChatLink(uint32_t itemId, uint32_t quality,
                                 const std::string& name,
                                 uint32_t enchantId = 0,
                                 int32_t randomPropertyId = 0) {
+    const char* tail = itemLinkShapeRef() == ItemLinkShape::Tbc ? ":0|h[" : ":0:0|h[";
     return std::string("|c") + itemQualityColorHex(quality) + "|Hitem:" +
            std::to_string(itemId) + ":" + std::to_string(enchantId) +
-           ":0:0:0:0:" + std::to_string(randomPropertyId) + ":0:0|h[" + name +
+           ":0:0:0:0:" + std::to_string(randomPropertyId) + tail + name +
            "]|h|r";
 }
 

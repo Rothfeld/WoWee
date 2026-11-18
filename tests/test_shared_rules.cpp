@@ -410,6 +410,17 @@ TEST_CASE("an item hyperlink as 3.3.5a writes one", "[item]") {
     }
 }
 
+TEST_CASE("an item hyperlink as 2.4.3 writes one", "[item]") {
+    // Eight fields: no level. GetContainerItemLink on the original answered
+    // "|cff...|Hitem:id:0:0:0:0:0:0:unique|h[...]|h|r" (pair 6).
+    game::setItemLinkShape(game::ItemLinkShape::Tbc);
+    CHECK(game::itemChatLink(3299, 0, "Fractured Canine") ==
+          "|cff9d9d9d|Hitem:3299:0:0:0:0:0:0:0|h[Fractured Canine]|h|r");
+    CHECK(game::itemChatLink(19019, 4, "Thunderfury", 2504, -37) ==
+          "|cffa335ee|Hitem:19019:2504:0:0:0:0:-37:0|h[Thunderfury]|h|r");
+    game::setItemLinkShape(game::ItemLinkShape::NineFields);
+}
+
 TEST_CASE("the .skin beside a model", "[m2]") {
     CHECK(pipeline::skinPathForM2("Character\\Human\\Male\\HumanMale.m2") ==
           "Character\\Human\\Male\\HumanMale00.skin");

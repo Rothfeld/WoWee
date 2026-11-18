@@ -1,5 +1,6 @@
 #include "game/expansion_profile.hpp"
 #include "game/inventory_slots.hpp"
+#include "game/item_text.hpp"
 #include "core/logger.hpp"
 #include <filesystem>
 #include <fstream>
@@ -173,6 +174,7 @@ void ExpansionRegistry::activeChanged() {
     // ordinary one - on the layout it was not playing.
     slots::setBankLayout(
         slots::bankLayoutFor(activeId_ == "classic" || activeId_ == "turtle"));
+    setItemLinkShape(activeId_ == "tbc" ? ItemLinkShape::Tbc : ItemLinkShape::NineFields);
 }
 
 bool ExpansionRegistry::setActive(const std::string& id) {
