@@ -242,23 +242,20 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
     };
     table[Opcode::SMSG_CHAT_PLAYER_NOT_FOUND] = [this](network::Packet& packet) {
         std::string name = packet.readString();
-        if (!name.empty()) addSystemChatMessage("No player named '" + name + "' is currently playing.");
+        if (!name.empty()) owner_.systemGlobal("ERR_CHAT_PLAYER_NOT_FOUND_S", {name});
     };
     table[Opcode::SMSG_CHAT_PLAYER_AMBIGUOUS] = [this](network::Packet& packet) {
         std::string name = packet.readString();
-        if (!name.empty()) addSystemChatMessage("Player name '" + name + "' is ambiguous.");
+        if (!name.empty()) owner_.systemGlobal("ERR_CHAT_PLAYER_AMBIGUOUS_S", {name});
     };
     table[Opcode::SMSG_CHAT_WRONG_FACTION] = [this](network::Packet& /*packet*/) {
-        owner_.addUIError("You cannot send messages to members of that faction.");
-        owner_.raiseUiError("You cannot send messages to members of that faction.");
+        owner_.systemGlobal("ERR_CHAT_WRONG_FACTION");
     };
     table[Opcode::SMSG_CHAT_NOT_IN_PARTY] = [this](network::Packet& /*packet*/) {
-        owner_.addUIError("You are not in a party.");
-        owner_.raiseUiError("You are not in a party.");
+        owner_.systemGlobal("ERR_NOT_IN_GROUP");
     };
     table[Opcode::SMSG_CHAT_RESTRICTED] = [this](network::Packet& /*packet*/) {
-        owner_.addUIError("You cannot send chat messages in this area.");
-        owner_.raiseUiError("You cannot send chat messages in this area.");
+        owner_.systemGlobal("ERR_CHAT_RESTRICTED");
     };
 
     // ---- Channel list ----
@@ -341,6 +338,14 @@ void ChatHandler::sendChatMessage(ChatType type, const std::string& message, con
     // The text the "You are now AFK: %s" line shows once the flag arrives.
     if (type == ChatType::AFK) owner_.afkMessageRef() = message;
     if (type == ChatType::DND) owner_.dndMessageRef() = message;
+
+    // Party chat without a party is refused before sending, in chat: "/p
+    // hello" printed "You aren't in a party." (pair 6); the realm drops it
+    // silently.
+    if (type == ChatType::PARTY && !owner_.isInGroup()) {
+        owner_.systemGlobal("ERR_NOT_IN_GROUP");
+        return;
+    }
 
     // A corpse cannot speak in public. Build 8606 refuses say, yell and emote
     // with ERR_CHAT_WHILE_DEAD and sends nothing; whisper, party, guild and
@@ -1318,10 +1323,7 @@ void ChatHandler::replyToLastWhisper(const std::string& message) {
         return;
     }
 
-    if (owner_.lastWhisperSenderRef().empty()) {
-        addSystemChatMessage("No one has whispered you yet.");
-        return;
-    }
+    if (owner_.lastWhisperSenderRef().empty()) return;
 
     if (message.empty()) {
         owner_.raiseUiError("You must specify a message to send.");
@@ -1570,15 +1572,8 @@ void ChatHandler::handleMotd(network::Packet& packet) {
         LOG_INFO("========================================");
         for (const auto& line : data.lines) {
             LOG_INFO(line);
-            addSystemChatMessage(std::string("MOTD: ") + line);
+            addSystemChatMessage(line);
         }
-        // Add a visual separator after MOTD block so subsequent messages don't
-        // appear glued to the last MOTD line.
-        MessageChatData spacer;
-        spacer.type = ChatType::SYSTEM;
-        spacer.language = ChatLanguage::UNIVERSAL;
-        spacer.message = "";
-        addLocalChatMessage(spacer);
         LOG_INFO("========================================");
     }
 }
