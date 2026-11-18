@@ -39,6 +39,31 @@ inline float pickVisualTriangles(std::span<const glm::vec3> vertices,
     return limit;
 }
 
+/// MOPY material of a WMO triangle no batch draws: collision only, invisible.
+inline constexpr uint8_t kWmoCollisionOnlyMaterial = 0xFF;
+
+/// The nearest drawn WMO triangle among `triangleStarts` (offsets into
+/// `indices`, one per triangle) before `limit`. A collision-only triangle
+/// stops the player and the camera but is not seen, so it does not hide what
+/// stands behind it from the mouse: SSC's invisible hull around the Lady Vashj
+/// Bridge Console (CoilfangRaid group 10, material 0xFF, MOPY 0x48) sits
+/// 2.5 yards in front of the console, and original 2.4.3 shows the console's
+/// gear and name through it (pair 17).
+inline float pickDrawnWmoTriangles(std::span<const glm::vec3> vertices,
+                                   std::span<const uint16_t> indices,
+                                   std::span<const uint8_t> materials,
+                                   std::span<const uint32_t> triangleStarts,
+                                   const glm::vec3& origin, const glm::vec3& direction,
+                                   float limit) {
+    assert(materials.size() * 3 == indices.size());
+    for (const uint32_t start : triangleStarts) {
+        assert(start % 3 == 0 && start + 3 <= indices.size());
+        if (materials[start / 3] == kWmoCollisionOnlyMaterial) continue;
+        limit = pickVisualTriangles(vertices, indices.subspan(start, 3), origin, direction, limit);
+    }
+    return limit;
+}
+
 /// Build 8606 scene picking of a unit or game object model (CM2Scene,
 /// Wow.exe 0x70b2b0): a sphere test first, then the model's rendered
 /// triangles at the current pose. See docs/unit-size-rules.md.

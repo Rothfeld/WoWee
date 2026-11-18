@@ -127,6 +127,31 @@ TEST_CASE("Visual prop occlusion leaves gaps between solid parts selectable") {
     CHECK(pickVisualTriangles(vertices, indices, {1.5f,0,5}, {0,0,-1}, 3) == 3);
 }
 
+TEST_CASE("an invisible WMO collision hull does not hide an object from the mouse", "[go-pick]") {
+    // SSC (CoilfangRaid group 10): a collision-only quad (material 0xFF)
+    // 2.5 yards in front of the Lady Vashj Bridge Console. Original 2.4.3
+    // shows the console's gear and name through it; a drawn wall still hides.
+    using wowee::rendering::pickDrawnWmoTriangles;
+    using wowee::rendering::kWmoCollisionOnlyMaterial;
+    const std::vector<glm::vec3> vertices{
+        {-1,-1,2}, {1,-1,2}, {1,1,2}, {-1,1,2},   // hull at z=2
+        {-1,-1,0}, {1,-1,0}, {1,1,0}, {-1,1,0}};  // wall at z=0
+    const std::vector<uint16_t> indices{0,1,2, 0,2,3, 4,5,6, 4,6,7};
+    const std::vector<uint32_t> all{0, 3, 6, 9};
+    const glm::vec3 eye{0.2f, 0.1f, 5}, down{0, 0, -1};
+
+    const std::vector<uint8_t> hullInvisible{kWmoCollisionOnlyMaterial, kWmoCollisionOnlyMaterial, 4, 4};
+    CHECK(pickDrawnWmoTriangles(vertices, indices, hullInvisible, all, eye, down, 10) == 5);
+    // The object at 4 yards stands in front of the wall: nothing hides it.
+    CHECK(pickDrawnWmoTriangles(vertices, indices, hullInvisible, all, eye, down, 4) == 4);
+
+    const std::vector<uint8_t> hullDrawn{4, 4, 4, 4};
+    CHECK(pickDrawnWmoTriangles(vertices, indices, hullDrawn, all, eye, down, 10) == 3);
+    // Only the triangles the spatial grid offers are tested.
+    CHECK(pickDrawnWmoTriangles(vertices, indices, hullDrawn, std::vector<uint32_t>{6, 9},
+                                eye, down, 10) == 5);
+}
+
 TEST_CASE("NPC cursor honors server cursor and attack permission") {
     using namespace wowee::game;
     using wowee::ui::unitCursorPath;

@@ -158,12 +158,13 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             }
         }
         // Exclude the picked mesh from its own occlusion query: its collision
-        // hull can protrude beyond the visible surface.
+        // hull can protrude beyond the visible surface. Buildings hide what
+        // they draw, not their invisible collision hulls.
         if (auto* renderer = core::Application::getInstance().getRenderer()) {
             if (auto* wmo = renderer->getWMORenderer(); wmo &&
-                wmo->raycastBoundingBoxes(ray.origin, ray.direction, hitT) < hitT) {
+                wmo->raycastVisibleGeometry(ray.origin, ray.direction, hitT) < hitT) {
                 if (params.trace) LOG_DEBUG("Scene pick WMO blocked guid=", guid, " hit=", hitT,
-                    " blocker=", wmo->raycastBoundingBoxes(ray.origin, ray.direction, hitT));
+                    " blocker=", wmo->raycastVisibleGeometry(ray.origin, ray.direction, hitT));
                 continue;
             }
             if (auto* m2 = renderer->getM2Renderer(); m2 &&

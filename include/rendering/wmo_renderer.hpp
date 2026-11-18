@@ -460,6 +460,12 @@ public:
      */
     float raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
 
+    /// Distance to the first drawn WMO surface along the ray, or maxDistance.
+    /// What hides an object from the mouse: collision-only triangles
+    /// (material 0xFF) are skipped, unlike raycastBoundingBoxes, which stops
+    /// the camera at them. Two-sided, measured in world units.
+    [[nodiscard]] float raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
+
     /**
      * Limit expensive collision/raycast queries to objects near a focus point.
      */

@@ -7,6 +7,7 @@
 #include "rendering/wmo_vertex.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/wmo_renderer.hpp"
+#include "rendering/visual_mesh_pick.hpp"
 #include "rendering/rt_bvh.hpp"
 #include "rendering/rt_scene.hpp"
 #include "rendering/wmo_material_class.hpp"
@@ -4433,6 +4434,41 @@ float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3
         }
     }
 
+    return closestHit;
+}
+
+float WMORenderer::raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction,
+                                          float maxDistance) const {
+    QueryTimer timer(&queryTimeMs, &queryCallCount);
+    float closestHit = maxDistance;
+    const glm::vec3 rayEnd = origin + direction * maxDistance;
+    gatherCandidates(glm::min(origin, rayEnd) - glm::vec3(1.0f),
+                     glm::max(origin, rayEnd) + glm::vec3(1.0f), tl_candidateScratch);
+    for (size_t idx : tl_candidateScratch) {
+        const auto& instance = instances[idx];
+        if (outsideCollisionFocus(instance)) continue;
+        if (!rayIntersectsAABB(origin, direction, instance.worldBoundsMin - glm::vec3(0.5f),
+                               instance.worldBoundsMax + glm::vec3(0.5f))) continue;
+        const auto it = loadedModels.find(instance.modelId);
+        if (it == loadedModels.end()) continue;
+        // Unnormalized: a local distance along it is the world distance.
+        const glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(origin, 1.0f));
+        const glm::vec3 localDir = glm::vec3(instance.invModelMatrix * glm::vec4(direction, 0.0f));
+        const auto& groups = it->second.groups;
+        for (size_t gi = 0; gi < groups.size(); ++gi) {
+            if (gi < instance.worldGroupBounds.size()) {
+                const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
+                if (!rayIntersectsAABB(origin, direction, gMin, gMax)) continue;
+            }
+            const auto& group = groups[gi];
+            if (!trianglesAlongRay(group, localOrigin, localDir, tl_triScratch)) continue;
+            assert(group.triMaterials.size() * 3 == group.collisionIndices.size() &&
+                   "WMO group without one MOPY material per triangle");
+            closestHit = pickDrawnWmoTriangles(group.collisionVertices, group.collisionIndices,
+                                               group.triMaterials, tl_triScratch,
+                                               localOrigin, localDir, closestHit);
+        }
+    }
     return closestHit;
 }
 
