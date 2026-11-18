@@ -41,4 +41,17 @@ inline glm::vec3 lightPositionToWorld(float dbcX, float dbcY, float dbcZ) {
                      dbcZ * toYards);
 }
 
+/// Whether a Light.dbc row is its map's default light: the one lighting
+/// everywhere no volume covers. It is the row placed at the origin; its radii
+/// do not matter. Azeroth's row 1 and Kalimdor's 191 carry radius 0, but 18
+/// rows at the origin carry leftover radii - Black Temple's only row, 592
+/// (map 564, LightParams 604, ShadowmoonIllidan sky), has 20.7/263.5 - and
+/// read as volumes they sit at the far corner of the tile grid where nothing
+/// stands. Requiring radius 0 left Black Temple, Tempest Keep, Hellfire
+/// Citadel, Auchindoun, Zul'Aman, Sunwell Plateau and the rest of those maps
+/// under WoWee's built-in day sky.
+inline bool isMapDefaultLight(float dbcX, float dbcY, float dbcZ) {
+    return dbcX == 0.0f && dbcY == 0.0f && dbcZ == 0.0f;
+}
+
 }  // namespace wowee::rendering

@@ -18,6 +18,7 @@
 
 #include "rendering/light_coords.hpp"
 
+using wowee::rendering::isMapDefaultLight;
 using wowee::rendering::lightPositionToWorld;
 using wowee::rendering::LIGHT_COORD_UNITS_PER_YARD;
 
@@ -104,4 +105,16 @@ TEST_CASE("a volume no longer sits impossibly far from the world", "[light]") {
     CHECK(std::abs(pos.x) < wowee::core::coords::ZEROPOINT);
     CHECK(std::abs(pos.y) < wowee::core::coords::ZEROPOINT);
     CHECK(std::abs(564790.0f) > wowee::core::coords::ZEROPOINT);
+}
+
+TEST_CASE("a row at the origin is its map's default light, whatever its radii", "[light]") {
+    // Light 1 (map 0) and 191 (map 1): origin, radius 0.
+    CHECK(isMapDefaultLight(0.0f, 0.0f, 0.0f));
+    // Light 592, Black Temple's only row (map 564): origin, radii 20.7/263.5.
+    // Its LightParams 604 names the ShadowmoonIllidan sky; read as a volume
+    // it sat at the grid corner and the map fell back to a plain day sky.
+    // The radii are not an argument: they do not decide it.
+    // Any placed row is a volume, near the origin or not.
+    CHECK_FALSE(isMapDefaultLight(19200.0f, 0.0f, 0.0f));
+    CHECK_FALSE(isMapDefaultLight(0.0f, 0.0f, 3600.0f));
 }

@@ -125,10 +125,9 @@ bool LightingManager::loadLightDbc(pipeline::AssetManager* assetManager) {
         if (dbc->getFieldCount() > 11) {
             volume.lightParamsIdDeath = dbc->getUInt32(i, 11);
         }
-        // The map's default row has no position and no radius. It is not a
-        // volume anything is inside of; it fills what the volumes leave.
-        if (dbcX == 0.0f && dbcY == 0.0f && dbcZ == 0.0f &&
-            volume.innerRadius == 0.0f && volume.outerRadius == 0.0f) {
+        // The map's default row sits at the origin. It is not a volume anything
+        // is inside of; it fills what the volumes leave.
+        if (isMapDefaultLight(dbcX, dbcY, dbcZ)) {
             volume.isMapDefault = true;
             [[maybe_unused]] const bool fresh = defaultVolumeByMap_.emplace(volume.mapId, volume).second;
             assert(fresh && "Light.dbc has two default rows for one map");
