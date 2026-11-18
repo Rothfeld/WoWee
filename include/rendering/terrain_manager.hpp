@@ -333,6 +333,15 @@ public:
     [[nodiscard]] bool isGroundPendingAt(float glX, float glY) const;
 
     /**
+     * Append the drawn terrain triangles (world space, three vertices each)
+     * whose bounds meet the box: every unholed quad's four triangles, as
+     * TerrainMeshGenerator lays them out. For drawing onto the ground itself,
+     * e.g. the selection circle, rather than onto a surface sampled from it.
+     */
+    void appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec3& boxMax,
+                                std::vector<glm::vec3>& out) const;
+
+    /**
      * The chunk under a world position, plus the offsets within it that
      * getHeightAt samples and isHoleAt reads a quad from. Shared so those two
      * cannot drift: the first copy of this search that was written by hand

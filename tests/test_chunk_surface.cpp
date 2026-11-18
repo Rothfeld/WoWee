@@ -12,6 +12,8 @@
 // h00(1-tx)(1-ty) + h10·tx(1-ty) + h01(1-tx)ty + h11·tx·ty.
 #include <catch_amalgamated.hpp>
 
+#include <cmath>
+
 #include "pipeline/terrain_mesh.hpp"
 
 using wowee::pipeline::HeightMap;
@@ -221,5 +223,39 @@ TEST_CASE("surface normals follow individual fan triangles across a crease", "[c
         CHECK(normal.x == Catch::Approx(direction.x));
         CHECK(normal.y == Catch::Approx(direction.y));
         CHECK(normal.z == Catch::Approx(direction.z));
+    }
+}
+
+TEST_CASE("quad triangles are the surface chunkSurfacePoint samples", "[chunksurface]") {
+    // Uneven everywhere, the centre vertices off their corners' plane, so a
+    // wrong fan or a crossed axis puts a sample off the triangles.
+    const HeightMap map = gridWhere([](float x, float y) {
+        return 3.0f * std::sin(1.3f * x) + 2.0f * std::cos(0.7f * y) + 0.4f * x * y;
+    });
+    const float position[3] = {100.0f, -40.0f, 25.0f};
+    for (int qy = 0; qy < 8; qy += 3) {
+        for (int qx = 0; qx < 8; qx += 2) {
+            const auto tris = TerrainMeshGenerator::chunkQuadTriangles(position, map, qx, qy, kUnitSize);
+            for (float u = 0.05f; u < 1.0f; u += 0.15f) {
+                for (float v = 0.05f; v < 1.0f; v += 0.15f) {
+                    const glm::vec3 point = TerrainMeshGenerator::chunkSurfacePoint(
+                        position, map, qx + u, qy + v, kUnitSize);
+                    // The one triangle whose XY contains the point.
+                    int found = 0;
+                    for (size_t t = 0; t < tris.size(); t += 3) {
+                        const glm::vec3 &a = tris[t], &b = tris[t + 1], &c = tris[t + 2];
+                        const float d = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+                        const float l1 = ((b.y - c.y) * (point.x - c.x) + (c.x - b.x) * (point.y - c.y)) / d;
+                        const float l2 = ((c.y - a.y) * (point.x - c.x) + (a.x - c.x) * (point.y - c.y)) / d;
+                        const float l3 = 1.0f - l1 - l2;
+                        if (l1 < -1e-4f || l2 < -1e-4f || l3 < -1e-4f) continue;
+                        ++found;
+                        INFO("quad " << qx << "," << qy << " at " << u << "," << v);
+                        CHECK(l1 * a.z + l2 * b.z + l3 * c.z == Catch::Approx(point.z).margin(1e-3));
+                    }
+                    CHECK(found >= 1);
+                }
+            }
+        }
     }
 }

@@ -2,6 +2,8 @@
 #include <cassert>
 
 #include <vector>
+#include <algorithm>
+#include <tuple>
 
 #include "pipeline/adt_alpha.hpp"
 #include "pipeline/wdt_loader.hpp"
@@ -2240,6 +2242,36 @@ bool TerrainManager::isGroundPendingAt(float glX, float glY) const {
     if (failedTiles.find(coord) != failedTiles.end()) return false;
     assert(assetManager);
     return assetManager->fileExists(getADTPath(coord));
+}
+
+void TerrainManager::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec3& boxMax,
+                                            std::vector<glm::vec3>& out) const {
+    // One probe every half quad across the box widened by a quad: every quad
+    // the box reaches has a probe inside it, wherever its edges fall.
+    const float unitSize = CHUNK_SIZE / 8.0f;
+    const float step = unitSize * 0.5f;
+    std::vector<std::tuple<const pipeline::MapChunk*, int, int>> seen;
+    for (float x = boxMin.x - unitSize; x <= boxMax.x + unitSize; x += step) {
+        for (float y = boxMin.y - unitSize; y <= boxMax.y + unitSize; y += step) {
+            float fracX = 0.0f, fracY = 0.0f;
+            const pipeline::MapChunk* chunk = findChunkAt(x, y, fracX, fracY);
+            if (!chunk) continue;
+            const int qx = glm::clamp(static_cast<int>(std::floor(fracX)), 0, 7);
+            const int qy = glm::clamp(static_cast<int>(std::floor(fracY)), 0, 7);
+            const auto key = std::make_tuple(chunk, qx, qy);
+            if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+            seen.push_back(key);
+            if (chunk->isHole(qy, qx)) continue;  // the order isHoleAt and the mesh use
+            const auto tris = pipeline::TerrainMeshGenerator::chunkQuadTriangles(
+                chunk->position, chunk->heightMap, qx, qy, unitSize);
+            for (size_t t = 0; t < tris.size(); t += 3) {
+                const glm::vec3 lo = glm::min(tris[t], glm::min(tris[t + 1], tris[t + 2]));
+                const glm::vec3 hi = glm::max(tris[t], glm::max(tris[t + 1], tris[t + 2]));
+                if (glm::any(glm::lessThan(hi, boxMin)) || glm::any(glm::greaterThan(lo, boxMax))) continue;
+                out.insert(out.end(), {tris[t], tris[t + 1], tris[t + 2]});
+            }
+        }
+    }
 }
 
 bool TerrainManager::isHoleAt(float glX, float glY) const {

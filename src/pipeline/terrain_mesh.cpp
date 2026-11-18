@@ -1,6 +1,7 @@
 #include "pipeline/terrain_mesh.hpp"
 #include "pipeline/adt_alpha.hpp"
 #include <algorithm>
+#include <cassert>
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include <cmath>
@@ -383,6 +384,29 @@ glm::vec3 TerrainMeshGenerator::chunkSurfacePoint(const float chunkPosition[3],
     const float wC = 1.0f - wA - wB;
     const float worldZ = chunkPosition[2] + (hA * wA + hB * wB + hC * wC);
     return glm::vec3(worldX, worldY, worldZ);
+}
+
+std::array<glm::vec3, 12> TerrainMeshGenerator::chunkQuadTriangles(const float chunkPosition[3],
+                                                                   const HeightMap& heightMap,
+                                                                   int qx, int qy, float unitSize) {
+    assert(qx >= 0 && qx < 8 && qy >= 0 && qy < 8);
+    // The vertices generateChunkMesh places, by the formula chunkSurfacePoint
+    // samples with: world X falls along the rows (fracY), world Y along the
+    // columns (fracX). Heights are the interleaved 9x17 grid's.
+    auto at = [&](float fx, float fy, int index) {
+        float h = heightMap.heights[index];
+        if (!std::isfinite(h)) h = 0.0f;
+        return glm::vec3(chunkPosition[0] - fy * unitSize, chunkPosition[1] - fx * unitSize,
+                         chunkPosition[2] + h);
+    };
+    const int centre = 9 + qy * 17 + qx;
+    const float x = static_cast<float>(qx), y = static_cast<float>(qy);
+    const glm::vec3 c = at(x + 0.5f, y + 0.5f, centre);
+    const glm::vec3 tl = at(x, y, centre - 9);
+    const glm::vec3 tr = at(x + 1.0f, y, centre - 8);
+    const glm::vec3 bl = at(x, y + 1.0f, centre + 8);
+    const glm::vec3 br = at(x + 1.0f, y + 1.0f, centre + 9);
+    return {c, tl, tr, c, tr, br, c, br, bl, c, bl, tl};
 }
 } // namespace pipeline
 } // namespace wowee

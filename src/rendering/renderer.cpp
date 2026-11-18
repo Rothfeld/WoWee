@@ -2588,6 +2588,18 @@ void Renderer::refreshSelectionCirclePosition() {
         overlaySystem_->setSelectionCirclePosition(position);
 }
 
+namespace {
+
+/// Terrain and WMO triangles for the selection circle to be drawn onto.
+OverlaySystem::SurfaceTriangles selectionSurfaces(const TerrainManager* terrain, const WMORenderer* wmo) {
+    return [terrain, wmo](const glm::vec3& min, const glm::vec3& max, std::vector<glm::vec3>& out) {
+        if (terrain) terrain->appendSurfaceTriangles(min, max, out);
+        if (wmo) wmo->appendSurfaceTriangles(min, max, out);
+    };
+}
+
+}  // namespace
+
 void Renderer::clearSelectionCircle() {
     selectionInstance_ = 0;
     if (overlaySystem_) overlaySystem_->clearSelectionCircle();
@@ -3354,7 +3366,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 overlaySystem_->renderSelectionCircle(view, projection, cmd,
                     terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
                     wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
-                    m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{});
+                    m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
+                    selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
             }
             vkEndCommandBuffer(cmd);
         }
@@ -3546,7 +3559,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             overlaySystem_->renderSelectionCircle(view, projection, currentCmd,
                 terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
                 wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
-                m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{});
+                m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
+                selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
         }
 
         const auto drawCharacters = [&]() {

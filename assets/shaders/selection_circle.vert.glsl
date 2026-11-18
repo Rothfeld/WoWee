@@ -1,9 +1,13 @@
 #version 450
-layout(push_constant) uniform Push { mat4 mvp; } push;
+layout(push_constant) uniform Push {
+    mat4 mvp;
+    vec4 color;
+    vec4 square;          // centre x, y; half side
+    vec4 axisAndHeights;  // right axis x, y; lowest and highest z drawn
+} push;
 layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec2 aUV;
-layout(location = 0) out vec2 uv;
+layout(location = 0) out vec3 worldPos;
 void main() {
-    uv = aUV;
+    worldPos = aPos;
     gl_Position = push.mvp * vec4(aPos, 1.0);
 }

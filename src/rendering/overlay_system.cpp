@@ -6,6 +6,7 @@
 #include "rendering/vk_utils.hpp"
 #include "core/logger.hpp"
 #include "pipeline/asset_manager.hpp"
+#include <algorithm>
 #include <stdexcept>
 #include <cstring>
 #include <glm/gtc/matrix_transform.hpp>
@@ -28,11 +29,11 @@ void OverlaySystem::cleanup() {
     destroy(device, selCirclePipeline_);
     destroy(device, selCirclePipelineLayout_);
     for (auto& buffer : selCircleVertexBuffers_) destroyBuffer(vkCtx_->getAllocator(), buffer);
+    selCircleVertexCapacity_ = {};
     destroy(device, selCirclePool_);
     destroy(device, selCircleSetLayout_);
     selCircleSet_ = VK_NULL_HANDLE;
     selCircleTexture_.destroy(device, vkCtx_->getAllocator());
-    destroy(vkCtx_->getAllocator(), selCircleIdxBuf_, selCircleIdxAlloc_);
     destroy(device, overlayPipeline_);
     destroy(device, brightnessPipeline_);
     destroy(device, overlayPipelineLayout_);
@@ -99,6 +100,19 @@ void OverlaySystem::loadSelectionTexture(pipeline::AssetManager& assets) {
     LOG_INFO("Selection circle uses Textures/UnitSelectTexture.blp");
 }
 
+namespace {
+
+/// selection_circle.vert/.frag's push block.
+struct SelectionPush {
+    glm::mat4 mvp;
+    glm::vec4 color;
+    glm::vec4 square;          // centre x, y; half side; unused
+    glm::vec4 axisAndHeights;  // the square's right axis x, y; lowest and highest z drawn
+};
+static_assert(sizeof(SelectionPush) == 112, "must match selection_circle's push block");
+
+}  // namespace
+
 void OverlaySystem::initSelectionCircle() {
     if (selCirclePipeline_ != VK_NULL_HANDLE) return;
     if (!vkCtx_) return;
@@ -116,49 +130,33 @@ void OverlaySystem::initSelectionCircle() {
         return;
     }
 
-    // Texture plus mat4 view-projection and reaction color.
+    // Texture, mat4 view-projection, reaction colour, then the ring's
+    // square (centre, half side, its right axis) and the box's height range.
     VkPushConstantRange pcRange{};
     pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcRange.offset = 0;
-    pcRange.size = 80;
+    pcRange.size = sizeof(SelectionPush);
     if (!selCircleSet_) throw std::logic_error("Selection texture was not initialized");
     if (!selCirclePipelineLayout_)
         selCirclePipelineLayout_ = createPipelineLayout(device, {selCircleSetLayout_}, {pcRange});
 
-    // Ground-conforming grid; each frame owns its mutable vertices.
-    VkVertexInputBindingDescription vertBind{0, 20, VK_VERTEX_INPUT_RATE_VERTEX};
+    // World-space triangles of the surfaces under the ring, rebuilt each frame.
+    VkVertexInputBindingDescription vertBind{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription position{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
-    VkVertexInputAttributeDescription uv{1, 0, VK_FORMAT_R32G32_SFLOAT, 12};
-    constexpr int cells = kSelectionCells;
-    if (selCircleIdxBuf_ == VK_NULL_HANDLE) {
-        std::vector<uint16_t> indices;
-        for (int y = 0; y < cells; ++y) {
-            for (int x = 0; x < cells; ++x) {
-                const uint16_t a = y * (cells + 1) + x;
-                indices.insert(indices.end(), {a, uint16_t(a + 1), uint16_t(a + cells + 1),
-                    uint16_t(a + 1), uint16_t(a + cells + 2), uint16_t(a + cells + 1)});
-            }
-        }
-        selCircleVertCount_ = static_cast<int>(indices.size());
-        auto ibuf = uploadBuffer(*vkCtx_, indices.data(), indices.size() * sizeof(uint16_t),
-                                 VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-        selCircleIdxBuf_ = ibuf.buffer;
-        selCircleIdxAlloc_ = ibuf.allocation;
-        for (auto& buffer : selCircleVertexBuffers_) {
-            buffer = createBuffer(vkCtx_->getAllocator(), (cells + 1) * (cells + 1) * 20,
-                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-            if (!buffer.buffer) throw std::runtime_error("Selection vertex allocation failed");
-        }
-    }
 
     // Build pipeline
     selCirclePipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
-        .setVertexInput({vertBind}, {position, uv})
+        .setVertexInput({vertBind}, {position})
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        // The ring lies on the very triangles the world drew, transformed
+        // here on the CPU rather than by their own shaders: pulled forward by
+        // the smallest depth step (and the triangle's slope) so it does not
+        // fight them.
+        .setDepthBias(-1.0f, -1.0f)
         .setColorBlendAttachment(PipelineBuilder::blendAdditive())
         .setMultisample(vkCtx_->getMsaaSamples())
         .setLayout(selCirclePipelineLayout_)
@@ -178,94 +176,91 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
                                            VkCommandBuffer cmd,
                                            const HeightQuery2D& terrainHeight,
                                            const HeightQuery3D& wmoHeight,
-                                           const HeightQuery3D& m2Height) {
+                                           const HeightQuery3D& m2Height,
+                                           const SurfaceTriangles& surfaces) {
     if (!selCircleVisible_) return;
     initSelectionCircle();
     if (selCirclePipeline_ == VK_NULL_HANDLE || cmd == VK_NULL_HANDLE) return;
 
-    // The ring is where a sphere of the selection radius around the unit's
-    // position meets the ground below it, projected straight down onto
-    // terrain, WMO and M2 floors so it wraps slopes. Measured in the original
-    // 2.4.3 (GM Island hilltop, a flying creature tempspawned at known
-    // heights h over the ground): the ring stays on the ground at every
-    // height, its width is 2 * sqrt(r^2 - h^2) (Infernal display 7950, r 6.45:
-    // 12.3/12.3/11.7/9.9 yd at h 0/2/3/4 against 12.9/12.3/11.4/10.1), and it
-    // is gone once h reaches r (human r 0.84 by 1 yd, Infernal 7029 r 2.52 by
-    // 2.5-3.5 yd). It drew at the unit's feet before, flying along with it.
+    // The ring's size: a sphere of the selection radius around the unit's
+    // position meeting the ground under it. Measured in the original 2.4.3
+    // (GM Island hilltop, a flying creature tempspawned at known heights h
+    // over the ground): its width is 2 * sqrt(r^2 - h^2) (Infernal display
+    // 7950, r 6.45: 12.3/12.3/11.7/9.9 yd at h 0/2/3/4 against
+    // 12.9/12.3/11.4/10.1), and it is gone once h reaches r (human r 0.84 by
+    // 1 yd, Infernal 7029 r 2.52 by 2.5-3.5 yd).
     const glm::vec3 center = selCirclePos_;
     const float sphere = selCircleRadius_;
     // Surfaces inside the sphere's vertical extent; the ground is the one
     // nearest the unit's height.
-    auto surfaceNear = [&](float x, float y, float target) {
-        std::optional<float> best;
-        auto consider = [&](std::optional<float> h) {
-            if (h && *h >= center.z - sphere && *h <= center.z + sphere &&
-                (!best || std::abs(*h - target) < std::abs(*best - target))) best = h;
-        };
-        if (terrainHeight) consider(terrainHeight(x, y));
-        if (wmoHeight) consider(wmoHeight(x, y, center.z + sphere));
-        if (m2Height) consider(m2Height(x, y, center.z + sphere));
-        return best;
+    std::optional<float> ground;
+    auto consider = [&](std::optional<float> h) {
+        if (h && *h >= center.z - sphere && *h <= center.z + sphere &&
+            (!ground || std::abs(*h - center.z) < std::abs(*ground - center.z))) ground = h;
     };
-    const std::optional<float> ground = surfaceNear(center.x, center.y, center.z);
+    if (terrainHeight) consider(terrainHeight(center.x, center.y));
+    if (wmoHeight) consider(wmoHeight(center.x, center.y, center.z + sphere));
+    if (m2Height) consider(m2Height(center.x, center.y, center.z + sphere));
     if (!ground) return;
     const float height = std::abs(center.z - *ground);
     if (height >= sphere) return;
     const float radius = std::sqrt(sphere * sphere - height * height);
 
-    constexpr int cells = kSelectionCells;
-    auto& vertices = selCircleVertices_;
-    glm::vec2 right(view[0][0], view[1][0]);
-    right = glm::normalize(right);
-    const glm::vec2 forward(-right.y, right.x);
-    if (selCircleMeshAge_++ >= 30 || selCircleMeshPos_ != selCirclePos_ ||
-        selCircleMeshRadius_ != selCircleRadius_ || selCircleMeshRight_ != right) {
-        selCircleMeshAge_ = 0;
-        selCircleMeshPos_ = selCirclePos_;
-        selCircleMeshRadius_ = selCircleRadius_;
-        selCircleMeshRight_ = right;
-        for (int y = 0; y <= cells; ++y) {
-            for (int x = 0; x <= cells; ++x) {
-                const float u = float(x) / cells;
-                const float v = float(y) / cells;
-                const glm::vec2 xy = glm::vec2(center) + radius *
-                    ((2.0f * u - 1.0f) * right + (1.0f - 2.0f * v) * forward);
-                // Each vertex on the surface nearest the ground under the
-                // unit: a slope keeps the ring on it, a floor above or below
-                // (bridge, roof) does not take it over. Over a gap the ring
-                // stays at the ground's height.
-                const float z = surfaceNear(xy.x, xy.y, *ground).value_or(*ground);
-                const size_t offset = (y * (cells + 1) + x) * 5;
-                vertices[offset] = xy.x;
-                vertices[offset + 1] = xy.y;
-                vertices[offset + 2] = z + 0.025f;
-                vertices[offset + 3] = u;
-                vertices[offset + 4] = v;
-            }
-        }
+    // Where it is drawn: the texture projected straight down over the square
+    // centre +- radius onto every terrain and WMO triangle in the box that
+    // reaches the selection radius above and below the unit - walls, step
+    // risers and render-only detail floors included, doodads (M2) not.
+    // Native 2.4.3 beside Northshire Abbey (Huhuran's display 15739 morphed
+    // onto a tempspawn) paints the abbey wall and the stair sides in vertical
+    // streaks and leaves the lantern pillar doodad and the cypress bare.
+    // WoWee used to drape a 24x24 grid over sampled floor heights: in
+    // Ahn'Qiraj (Huhuran's hall, WMO floor) every crease of the floor between
+    // two grid vertices poked through the ring as a dark shard. Drawn on the
+    // drawn triangles themselves there is nothing to poke through.
+    // _experiments/20261118T174257Z.selection_ring_holes in the workspace.
+    const glm::vec3 boxMin(center.x - radius, center.y - radius, center.z - sphere);
+    const glm::vec3 boxMax(center.x + radius, center.y + radius, center.z + sphere);
+    auto& triangles = selCircleTriangles_;
+    triangles.clear();
+    if (surfaces) surfaces(boxMin, boxMax, triangles);
+    if (triangles.empty()) return;
+
+    const uint32_t frame = vkCtx_->getCurrentFrame();
+    auto& buffer = selCircleVertexBuffers_[frame];
+    auto& capacity = selCircleVertexCapacity_[frame];
+    if (capacity < triangles.size()) {
+        // This frame's previous use of the buffer has completed: the frame
+        // fence was waited on before recording, so it can be replaced.
+        destroyBuffer(vkCtx_->getAllocator(), buffer);
+        capacity = std::max<size_t>(triangles.size(), 4096) * 2;
+        buffer = createBuffer(vkCtx_->getAllocator(), capacity * sizeof(glm::vec3),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        if (!buffer.buffer) throw std::runtime_error("Selection vertex allocation failed");
     }
-    auto& buffer = selCircleVertexBuffers_[vkCtx_->getCurrentFrame()];
     void* mapped = nullptr;
     if (vmaMapMemory(vkCtx_->getAllocator(), buffer.allocation, &mapped) != VK_SUCCESS)
         throw std::runtime_error("Selection vertex mapping failed");
-    std::memcpy(mapped, vertices.data(), sizeof(vertices));
-    vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, sizeof(vertices));
+    const VkDeviceSize bytes = triangles.size() * sizeof(glm::vec3);
+    std::memcpy(mapped, triangles.data(), bytes);
+    vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, bytes);
     vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
-    glm::mat4 mvp = projection * view;
-    glm::vec4 color4(selCircleColor_, 1.0f);
+
+    // The texture's square turns with the camera's yaw, as before.
+    glm::vec2 right(view[0][0], view[1][0]);
+    right = glm::normalize(right);
+    SelectionPush push{};
+    push.mvp = projection * view;
+    push.color = glm::vec4(selCircleColor_, 1.0f);
+    push.square = glm::vec4(center.x, center.y, radius, 0.0f);
+    push.axisAndHeights = glm::vec4(right, boxMin.z, boxMax.z);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipelineLayout_,
                             0, 1, &selCircleSet_, 0, nullptr);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
-    vkCmdBindIndexBuffer(cmd, selCircleIdxBuf_, 0, VK_INDEX_TYPE_UINT16);
     vkCmdPushConstants(cmd, selCirclePipelineLayout_,
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        0, 64, &mvp[0][0]);
-    vkCmdPushConstants(cmd, selCirclePipelineLayout_,
-        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        64, 16, &color4[0]);
-    vkCmdDrawIndexed(cmd, static_cast<uint32_t>(selCircleVertCount_), 1, 0, 0, 0);
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+    vkCmdDraw(cmd, static_cast<uint32_t>(triangles.size()), 1, 0, 0);
 }
 
 void OverlaySystem::initOverlayPipeline() {

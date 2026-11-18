@@ -1193,11 +1193,19 @@ The animation and keybone convention also appears in
 
 ### Selection circle on the ground
 
-The ring is where a sphere of the selection radius (`core/unit_size.hpp`)
-around the unit's position meets the ground under it, projected straight down
-onto terrain, WMO and M2 floors so it wraps slopes. A unit h yards above the
-ground gets a ring of radius sqrt(r^2 - h^2) and none once h reaches r: a
-flying or jumping unit leaves it on the ground, shrinking. A rider's ring is
+The ring's size is where a sphere of the selection radius r
+(`core/unit_size.hpp`) around the unit's position meets the ground under it
+(terrain, WMO or M2 floor). A unit h yards above the ground gets a ring of
+radius sqrt(r^2 - h^2) and none once h reaches r: a flying or jumping unit
+leaves it on the ground, shrinking. `Textures/UnitSelectTexture.blp` is
+projected straight down over the square centre +- that radius onto the drawn
+terrain and WMO triangles within r above and below the unit: walls and step
+sides get vertical streaks, as native paints Northshire Abbey's wall and stair
+block; doodads (M2: the abbey's lantern pillars, a cypress) stay bare. It
+draws on the world's own triangles, depth-biased; a grid draped over sampled
+floor heights let every WMO crease between grid points poke through as a dark
+shard (Huhuran's hall in Ahn'Qiraj). Paired captures:
+`_experiments/20261118T174257Z.selection_ring_holes/` in the workspace root. A rider's ring is
 centred on the mount. The renderer reads the target's instance position when
 it records the ring, the frame its model is drawn; the UI sets the target
 after the world is recorded, so the ring used to trail a running unit by a
@@ -1206,7 +1214,10 @@ original on the GM Island hilltop with tempspawned flying creatures:
 `_experiments/20261118T084140Z.selection_circle_ground/` in the workspace
 root. Not established: native also fades the ring as h grows (Infernal 7950,
 r 6.45: ring intensity about 0.6 at 2 yd, 0.2 at 3, 0.08 at 4 of that at 0);
-WoWee draws it at full strength until it vanishes.
+WoWee draws it at full strength until it vanishes. Over WMO liquid (the grey
+sludge in Huhuran's hall, group 6 MLIQ of `ahn_qiraj.wmo`) native shows the
+ring at full strength; WoWee draws its water after the ring, which dims it
+there.
 
 ### Chair clicks and object picking
 

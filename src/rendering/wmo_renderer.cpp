@@ -3250,6 +3250,57 @@ void WMORenderer::GroupResources::getWallTrianglesInRange(
     gatherCellTriangles(cellWallTriangles, minX, minY, maxX, maxY, out);
 }
 
+void WMORenderer::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec3& boxMax,
+                                         std::vector<glm::vec3>& out) const {
+    std::vector<size_t> candidates;
+    gatherCandidates(boxMin, boxMax, candidates);
+    std::vector<uint32_t> triangles;
+    for (size_t idx : candidates) {
+        const auto& instance = instances[idx];
+        if (glm::any(glm::lessThan(instance.worldBoundsMax, boxMin)) ||
+            glm::any(glm::greaterThan(instance.worldBoundsMin, boxMax))) continue;
+        auto it = loadedModels.find(instance.modelId);
+        if (it == loadedModels.end()) continue;
+        const ModelData& model = it->second;
+        // The box in the model's own space, for the group's cell grid.
+        glm::vec3 localMin(std::numeric_limits<float>::max());
+        glm::vec3 localMax(std::numeric_limits<float>::lowest());
+        for (int corner = 0; corner < 8; ++corner) {
+            const glm::vec3 world((corner & 1) ? boxMax.x : boxMin.x, (corner & 2) ? boxMax.y : boxMin.y,
+                                  (corner & 4) ? boxMax.z : boxMin.z);
+            const glm::vec3 local(instance.invModelMatrix * glm::vec4(world, 1.0f));
+            localMin = glm::min(localMin, local);
+            localMax = glm::max(localMax, local);
+        }
+        for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+            const auto& group = model.groups[gi];
+            if (gi < instance.worldGroupBounds.size()) {
+                const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
+                if (glm::any(glm::lessThan(gMax, boxMin)) || glm::any(glm::greaterThan(gMin, boxMax))) continue;
+            }
+            // What drawWMOs leaves out: antiportals, and the distance shells,
+            // which overlap the real geometry wherever a ring can be seen.
+            if (group.isLOD || (group.groupFlags & 0x4000000u)) continue;
+            if (!instance.drawnGroups.empty() && !instance.drawnGroups[gi]) continue;
+            group.getTrianglesInRange(localMin.x, localMin.y, localMax.x, localMax.y, triangles);
+            for (uint32_t triStart : triangles) {
+                const size_t triangle = triStart / 3;
+                // MOPY material 0xFF: collision only, in no render batch.
+                if (triangle < group.triMaterials.size() && group.triMaterials[triangle] == 0xFF) continue;
+                glm::vec3 v[3];
+                for (int k = 0; k < 3; ++k) {
+                    v[k] = glm::vec3(instance.modelMatrix *
+                                     glm::vec4(group.collisionVertices[group.collisionIndices[triStart + k]], 1.0f));
+                }
+                const glm::vec3 lo = glm::min(v[0], glm::min(v[1], v[2]));
+                const glm::vec3 hi = glm::max(v[0], glm::max(v[1], v[2]));
+                if (glm::any(glm::lessThan(hi, boxMin)) || glm::any(glm::greaterThan(lo, boxMax))) continue;
+                out.insert(out.end(), {v[0], v[1], v[2]});
+            }
+        }
+    }
+}
+
 std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ, float* outNormalZ, float referenceZ,
                                                   std::optional<uint32_t>* outTerrainType) const {
     if (outTerrainType) outTerrainType->reset();

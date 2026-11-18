@@ -10,6 +10,7 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace wowee {
 namespace pipeline { class AssetManager; }
@@ -24,6 +25,10 @@ public:
     /// Height query callable: returns floor height at (x, y) or (x, y, probeZ).
     using HeightQuery2D = std::function<std::optional<float>(float x, float y)>;
     using HeightQuery3D = std::function<std::optional<float>(float x, float y, float probeZ)>;
+    /// Appends the drawn world triangles (three world-space vertices each)
+    /// whose bounds meet the box [min, max].
+    using SurfaceTriangles = std::function<void(const glm::vec3& min, const glm::vec3& max,
+                                                std::vector<glm::vec3>& out)>;
 
     explicit OverlaySystem(VkContext* ctx);
     ~OverlaySystem();
@@ -42,7 +47,8 @@ public:
                                VkCommandBuffer cmd,
                                const HeightQuery2D& terrainHeight,
                                const HeightQuery3D& wmoHeight,
-                               const HeightQuery3D& m2Height);
+                               const HeightQuery3D& m2Height,
+                               const SurfaceTriangles& surfaces);
 
     // Fullscreen color overlay (underwater tint, etc.)
     void renderOverlay(const glm::vec4& color, VkCommandBuffer cmd);
@@ -81,23 +87,13 @@ private:
     VkDescriptorSetLayout selCircleSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool selCirclePool_ = VK_NULL_HANDLE;
     VkDescriptorSet selCircleSet_ = VK_NULL_HANDLE;
-    ::VkBuffer selCircleIdxBuf_ = VK_NULL_HANDLE;
-    VmaAllocation selCircleIdxAlloc_ = VK_NULL_HANDLE;
-    int selCircleVertCount_ = 0;
+    std::array<size_t, MAX_FRAMES_IN_FLIGHT> selCircleVertexCapacity_{};
     glm::vec3 selCirclePos_{0.0f};
     glm::vec3 selCircleColor_{1.0f, 0.0f, 0.0f};
     float selCircleRadius_ = 1.5f;
     bool selCircleVisible_ = false;
-
-    // Grid of the ground-conforming ring. At 8 cells a 6 yd ring on a
-    // rounded hill (GM Island) cut through the terrain between vertices 1.6
-    // yd apart and showed as scattered shards; 24 keeps them under 0.6 yd.
-    static constexpr int kSelectionCells = 24;
-    std::array<float, (kSelectionCells + 1) * (kSelectionCells + 1) * 5> selCircleVertices_{};
-    glm::vec3 selCircleMeshPos_{0.0f};
-    glm::vec2 selCircleMeshRight_{0.0f};
-    float selCircleMeshRadius_ = 0.0f;
-    int selCircleMeshAge_ = 30;
+    // The world triangles the ring is drawn on this frame.
+    std::vector<glm::vec3> selCircleTriangles_;
 
     // Fullscreen overlay resources
     VkPipeline overlayPipeline_ = VK_NULL_HANDLE;

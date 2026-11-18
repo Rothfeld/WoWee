@@ -367,6 +367,17 @@ public:
                                             std::numeric_limits<float>::quiet_NaN(),
                                         std::optional<uint32_t>* outTerrainType = nullptr) const;
 
+    /**
+     * Append the drawn triangles (world space, three vertices each) of every
+     * group whose bounds meet the box: walls and risers as well as floors,
+     * detail geometry (MOPY 0x04) as well as collision. Not the collision-only
+     * triangles (material 0xFF), distance shells, antiportals, or groups the
+     * room walk left undrawn this frame. For drawing onto the building
+     * itself, as the selection circle is.
+     */
+    void appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec3& boxMax,
+                                std::vector<glm::vec3>& out) const;
+
     /** Query floor collision from one moving WMO instance. */
     std::optional<float> getInstanceFloorHeight(uint32_t instanceId,
                                                 float glX, float glY, float glZ,

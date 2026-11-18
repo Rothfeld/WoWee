@@ -4,6 +4,7 @@
 #include "pipeline/adt_loader.hpp"
 
 #include <glm/glm.hpp>
+#include <array>
 #include <vector>
 #include <cstdint>
 
@@ -128,6 +129,16 @@ public:
      */
     static bool chunkFractionsAt(const float chunkPosition[3], float glX, float glY,
                                  float unitSize, float& fracX, float& fracY);
+
+    /**
+     * The four triangles generateIndices emits for quad (qx, qy), qx along
+     * fracX and qy along fracY, in world space: (centre, TL, TR), (centre, TR,
+     * BR), (centre, BR, BL), (centre, BL, TL). The surface chunkSurfacePoint
+     * samples, as geometry, for drawing something onto the drawn ground.
+     */
+    static std::array<glm::vec3, 12> chunkQuadTriangles(const float chunkPosition[3],
+                                                        const HeightMap& heightMap,
+                                                        int qx, int qy, float unitSize);
 
 private:
     /**
