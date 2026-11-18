@@ -2648,6 +2648,24 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
     };
     seed(cameraGroup);
     seed(findContainingGroup(model, viewerLocalPos));
+    // Each viewpoint also stands in the room a unit there is given
+    // (roomHides): the group whose box holds it and whose surface is first
+    // below it. The best-fit box need not be that room. In Dire Maul West's
+    // Court of the Highborne the walkway's best-fit box is group 80, but its
+    // floor at z -3.57 belongs to group 72, as do the Eldreth units standing
+    // on it. Walking from 80 alone reached 72 only through a portal in view;
+    // pitching the camera down took that portal off screen and the units
+    // under the camera vanished, where build 8606 keeps drawing them.
+    const glm::vec3 localDown = glm::normalize(glm::vec3(glm::inverse(modelMatrix) * glm::vec4(0, 0, -1, 0)));
+    for (const glm::vec3& point : {cameraLocalPos, viewerLocalPos}) {
+        const int room = groupBeneath(model, point, localDown);
+        if (room < 0) continue;
+        const auto& group = model.groups[static_cast<size_t>(room)];
+        if (glm::all(glm::greaterThanEqual(point, group.boundingBoxMin)) &&
+            glm::all(glm::lessThanEqual(point, group.boundingBoxMax))) {
+            seed(room);
+        }
+    }
 
     // Exterior groups were inserted above without being queued; they are portals
     // into the interior too.

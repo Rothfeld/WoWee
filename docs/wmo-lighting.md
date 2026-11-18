@@ -35,6 +35,17 @@ group it is entered from. This walk runs without `WOWEE_WMO_CULL`; inside a
 building the portal walk stays behind that switch. WMO doodads listed only by
 interior groups (MODR) are drawn while one of those groups is drawn.
 
+Units are not drawn when their room is not reached by the portal walk, which
+runs indoors too for this (`WMORenderer::roomHides`). A unit's room is the
+interior-only group whose box holds it and whose surface is first below it.
+Inside a building the walk starts from the best-fit box groups of the camera
+and the character and from their rooms by that same surface rule. The two
+differ in Dire Maul West's Court of the Highborne (`KL_Diremaul_Instance.wmo`,
+around 26, 507, -3.57): the walkway's best-fit box is group 80, but its floor
+belongs to group 72. Starting from group 80 alone, the Eldreth units on that
+floor vanished once the camera pitched down past the 80 -> 72 portal.
+Evidence: `../_experiments/20261118T1800Z.tiltcull/`.
+
 GM Island (map 1, around 16240 16290) shows all three: `guildhousea.wmo`'s
 ground-floor rooms and their furniture behind the lodge are not drawn from the
 courtyard, and the exterior group's courtyard-facing wall backs are see-through.
