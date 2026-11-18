@@ -760,15 +760,15 @@ bool QuestDetailsParser::parse(network::Packet& packet, QuestDetailsData& data) 
     size_t preInform = packet.getReadPos();
     /*informUnit*/ packet.readUInt64();
     data.questId = packet.readUInt32();
-    data.title = normalizeWowTextTokens(packet.readString());
+    data.title = packet.readString();
     if (data.title.empty() || data.questId > 100000) {
         // Likely vanilla format - rewind past informUnit
         packet.setReadPos(preInform);
         data.questId = packet.readUInt32();
-        data.title = normalizeWowTextTokens(packet.readString());
+        data.title = packet.readString();
     }
-    data.details = normalizeWowTextTokens(packet.readString());
-    data.objectives = normalizeWowTextTokens(packet.readString());
+    data.details = packet.readString();
+    data.objectives = packet.readString();
 
     if (!packet.hasRemaining(10)) {
         LOG_DEBUG("Quest details (short): id=", data.questId, " title='", data.title, "'");
@@ -915,7 +915,7 @@ bool GossipMessageParser::parse(network::Packet& packet, GossipMessageData& data
         quest.questLevel = static_cast<int32_t>(packet.readUInt32());
         quest.questFlags = packet.readUInt32();
         quest.isRepeatable = packet.readUInt8();
-        quest.title = normalizeWowTextTokens(packet.readString());
+        quest.title = packet.readString();
         data.quests.push_back(quest);
     }
 
@@ -947,8 +947,8 @@ bool QuestRequestItemsParser::parse(network::Packet& packet, QuestRequestItemsDa
     if (!packet.hasRemaining(20)) return false;
     data.npcGuid = packet.readUInt64();
     data.questId = packet.readUInt32();
-    data.title = normalizeWowTextTokens(packet.readString());
-    data.completionText = normalizeWowTextTokens(packet.readString());
+    data.title = packet.readString();
+    data.completionText = packet.readString();
 
     if (!packet.hasRemaining(9)) {
         LOG_DEBUG("Quest request items (short): id=", data.questId, " title='", data.title, "'");
@@ -1065,8 +1065,8 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
     if (!packet.hasRemaining(20)) return false;
     data.npcGuid = packet.readUInt64();
     data.questId = packet.readUInt32();
-    data.title = normalizeWowTextTokens(packet.readString());
-    data.rewardText = normalizeWowTextTokens(packet.readString());
+    data.title = packet.readString();
+    data.rewardText = packet.readString();
 
     if (!packet.hasRemaining(8)) {
         LOG_DEBUG("Quest offer reward (short): id=", data.questId, " title='", data.title, "'");

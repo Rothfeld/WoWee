@@ -539,7 +539,7 @@ bool TbcPacketParsers::parseGossipMessage(network::Packet& packet, GossipMessage
         // WotLK adds these 5 bytes - reading them from TBC garbles the quest title
         quest.questFlags = 0;
         quest.isRepeatable = 0;
-        quest.title = normalizeWowTextTokens(packet.readString());
+        quest.title = packet.readString();
         data.quests.push_back(quest);
     }
 
@@ -694,9 +694,9 @@ bool TbcPacketParsers::parseQuestDetailsPreWotlk(network::Packet& packet, QuestD
 
     data.npcGuid = packet.readUInt64();
     data.questId = packet.readUInt32();
-    data.title      = normalizeWowTextTokens(packet.readString());
-    data.details    = normalizeWowTextTokens(packet.readString());
-    data.objectives = normalizeWowTextTokens(packet.readString());
+    data.title      = packet.readString();
+    data.details    = packet.readString();
+    data.objectives = packet.readString();
 
     if (!packet.hasRemaining(4)) {
         LOG_DEBUG("Quest details tbc/classic (short): id=", data.questId, " title='", data.title, "'");

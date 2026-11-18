@@ -2143,7 +2143,7 @@ static void appendDurabilityLine(wowee::ui::Widget* w, const game::ItemDef& item
 /// for, and answering false there is still the right answer. The caller reads
 /// it: `if ( GameTooltip:SetHyperlink(link) )` decides whether to show the
 /// tooltip at all.
-static bool fillQuestTooltip(wowee::ui::Widget* w, game::GameHandler* gh,
+static bool fillQuestTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
                              uint32_t questId) {
     if (!w || !gh || questId == 0) return false;
     // Through the public log rather than the private finder beside it: this
@@ -2173,13 +2173,15 @@ static bool fillQuestTooltip(wowee::ui::Widget* w, game::GameHandler* gh,
     if (q->level > 0) {
         line("Level " + std::to_string(q->level), 1.0f, 1.0f, 1.0f);
     }
-    if (!q->description.empty()) line(q->description, 1.0f, 1.0f, 1.0f);
+    // The two texts the quest log resolves $-tokens in (GetQuestLogQuestText),
+    // resolved the same way here.
+    if (!q->description.empty()) line(serverText(L, q->description), 1.0f, 1.0f, 1.0f);
     // What is left to do, or what to do now it is done - the same two the log
     // shows, and the same order.
     if (q->complete && !q->completionText.empty()) {
         line(q->completionText, 1.0f, 1.0f, 1.0f);
     } else if (!q->objectives.empty()) {
-        line(q->objectives, 0.75f, 0.75f, 0.75f);
+        line(serverText(L, q->objectives), 0.75f, 0.75f, 0.75f);
     }
     return true;
 }
@@ -2620,7 +2622,7 @@ int lua_Tooltip_SetHyperlink(lua_State* L) {
         gh->ensureItemInfo(id);
     }
     else if (kind == "quest")
-        filled = fillQuestTooltip(w, gh, id);
+        filled = fillQuestTooltip(L, w, gh, id);
 
     // Kept whole, so the refresh below rebuilds the item that was linked
     // rather than the template behind it, and set even when nothing could be

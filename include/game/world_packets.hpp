@@ -22,9 +22,6 @@
 namespace wowee {
 namespace game {
 
-// Normalize WoW in-text tokens (e.g. "$B", "|n") into plain text suitable for UI.
-std::string normalizeWowTextTokens(std::string text, const std::string& playerName = "");
-
 /**
  * SMSG_AUTH_CHALLENGE data (from server)
  *

@@ -10,7 +10,6 @@
 #include "core/entity_spawner.hpp"
 #include "rendering/character_renderer.hpp"
 #include <imgui.h>
-#include "ui/chat/chat_utils.hpp"
 #include "ui/sight_cache.hpp"
 #include "ui/ui_texture_load.hpp"
 
@@ -189,13 +188,11 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
 
 void ChatBubbleManager::setupCallback(game::GameHandler& gameHandler) {
     if (!callbackSet_) {
-        // Resolve $-tokens here rather than at draw time: a bubble is built once
-        // and drawn every frame. The chat panel already does this for the same
-        // text, which is why an NPC line read correctly in the log and showed
-        // its raw $r/$c/$g markers in the bubble over their head.
+        // The line as the chat frame has it: 2.4.3 resolves no $-token in what
+        // an NPC says (game/text_tokens.hpp).
         gameHandler.setChatBubbleCallback(
-            [this, &gameHandler](uint64_t guid, const std::string& msg, bool isYell) {
-                addBubble(guid, chat_utils::replaceGenderPlaceholders(msg, gameHandler), isYell);
+            [this](uint64_t guid, const std::string& msg, bool isYell) {
+                addBubble(guid, msg, isYell);
             });
         callbackSet_ = true;
     }

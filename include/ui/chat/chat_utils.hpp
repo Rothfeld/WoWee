@@ -42,14 +42,6 @@ inline std::string toLower(std::string s) {
     return s;
 }
 
-/**
- * Replace $g/$G gender, $n/$N name, $c/$C class, $r/$R race,
- * $p/$o/$s/$S pronoun, $b/$B linebreak, and |n linebreak placeholders.
- * Extracted from ChatPanel::replaceGenderPlaceholders (Phase 6.6).
- */
-std::string replaceGenderPlaceholders(const std::string& text,
-                                       game::GameHandler& gameHandler);
-
 // getEntityDisplayName was here, as a sixth copy of game::entityDisplayName
 // under a different name. Callers use that one now - it is beside the classes
 // whose names it is asking about.

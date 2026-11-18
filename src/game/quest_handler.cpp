@@ -241,10 +241,10 @@ struct QuestQueryTextCandidate {
     int score = -1000;
 };
 
-// Expand WoW text tokens ($b line breaks etc.) in quest strings; titles are
-// single-line so their line breaks collapse to spaces instead
+// Quest strings as sent; titles are single-line so their line breaks collapse
+// to spaces. The $-tokens stay: the Lua getters that native resolves them in
+// do it (addons::serverText), and the ones it does not - every title - keep them.
 static std::string normalizeQuestText(std::string s, bool singleLine) {
-    s = normalizeWowTextTokens(std::move(s));
     if (singleLine) {
         std::string out;
         out.reserve(s.size());
@@ -275,9 +275,8 @@ static bool questStringRunFitsObjectives(const std::vector<uint8_t>& data,
                                          size_t stringsStart, int nStrings,
                                          bool wotlkLayout);
 
-/// The completed line, chosen in game/quest_text.hpp and then expanded: the
-/// $b and $n tokens in it are the server's, and every other quest string on
-/// its way to the interface goes through the same normalisation.
+/// The completed line, chosen in game/quest_text.hpp, through the same
+/// normalisation as every other quest string.
 static std::string pickQuestCompletedLine(const std::string& endText,
                                           const std::string& completedText) {
     std::string chosen = questCompletedText(endText, completedText);
@@ -2454,7 +2453,7 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
     // What the quest giver says above its list. Read and discarded before, so
     // GetGreetingText had nothing to answer with and the greeting panel was
     // blank over a list that was otherwise correct.
-    questGreeting_ = normalizeWowTextTokens(packet.readString());
+    questGreeting_ = packet.readString();
     uint32_t greetingDelay = 0, greetingEmote = 0;
     if (packet.hasRemaining(8)) {
         greetingDelay = packet.readUInt32(); // questgiver_greeting.EmoteDelay
@@ -2484,7 +2483,7 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
             q.questFlags = 0;
             q.isRepeatable = 0;
         }
-        q.title = normalizeWowTextTokens(packet.readString());
+        q.title = packet.readString();
         if (q.questId != 0) {
             data.quests.push_back(std::move(q));
         }

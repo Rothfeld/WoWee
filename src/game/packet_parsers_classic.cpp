@@ -1268,7 +1268,7 @@ bool ClassicPacketParsers::parseGossipMessage(network::Packet& packet, GossipMes
         // Classic: NO questFlags, NO isRepeatable
         quest.questFlags = 0;
         quest.isRepeatable = 0;
-        quest.title = normalizeWowTextTokens(packet.readString());
+        quest.title = packet.readString();
         data.quests.push_back(quest);
     }
 

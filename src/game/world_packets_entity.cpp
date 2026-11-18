@@ -293,7 +293,7 @@ network::Packet PageTextQueryPacket::build(uint32_t pageId, uint64_t guid) {
 bool PageTextQueryResponseParser::parse(network::Packet& packet, PageTextQueryResponseData& data) {
     if (!packet.hasRemaining(4)) return false;
     data.pageId = packet.readUInt32();
-    data.text = normalizeWowTextTokens(packet.readString());
+    data.text = packet.readString();
     if (packet.hasRemaining(4)) {
         data.nextPageId = packet.readUInt32();
     } else {

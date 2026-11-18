@@ -92,38 +92,6 @@ bool ItemQueryResponseData::readCommonRequirements(network::Packet& packet) {
 }
 
 
-std::string normalizeWowTextTokens(std::string text, const std::string& playerName) {
-    if (text.empty()) return text;
-
-    size_t pos = 0;
-    while ((pos = text.find('$', pos)) != std::string::npos) {
-        if (pos + 1 >= text.size()) break;
-        const char code = text[pos + 1];
-        if (code == 'b' || code == 'B') {
-            text.replace(pos, 2, "\n");
-            ++pos;
-        } else if ((code == 'n' || code == 'N') && !playerName.empty()) {
-            text.replace(pos, 2, playerName);
-            pos += playerName.size();
-        } else {
-            ++pos;
-        }
-    }
-
-    pos = 0;
-    while ((pos = text.find("|n", pos)) != std::string::npos) {
-        text.replace(pos, 2, "\n");
-        ++pos;
-    }
-    pos = 0;
-    while ((pos = text.find("|N", pos)) != std::string::npos) {
-        text.replace(pos, 2, "\n");
-        ++pos;
-    }
-
-    return text;
-}
-
 network::Packet AuthSessionPacket::build(uint32_t build,
                                           const std::string& accountName,
                                           uint32_t clientSeed,

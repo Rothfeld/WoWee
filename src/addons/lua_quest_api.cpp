@@ -11,7 +11,7 @@
 #include "game/packed_time.hpp"
 #include "game/quest_progress.hpp"
 #include "game/quest_objectives.hpp"
-#include "ui/chat/chat_utils.hpp"
+#include "game/text_tokens.hpp"
 #include "core/logger.hpp"
 
 #include <algorithm>
@@ -35,21 +35,37 @@ namespace wowee::addons {
 // display, or a row past the visible ones when its header is collapsed.
 namespace {
 
-/// Server text as the player should read it.
-///
-/// Quest text arrives with the reader left blank - $n for their name, $c for
-/// class, $r for race, $g male:female; for a phrase that splits on gender - and
-/// the client is what fills them in. The quest giver's own panels have resolved
-/// them since pushQuestText was written, and the quest log did not: the same
-/// quest greeted the player by name while it was being offered and by the two
-/// characters "$N" once it was accepted, which is where it is read most.
-std::string forPlayer(lua_State* L, const std::string& text) {
-    if (text.empty()) return text;
-    auto* gh = getGameHandler(L);
-    return gh ? ui::chat_utils::replaceGenderPlaceholders(text, *gh) : text;
-}
 
 }  // namespace
+
+std::string serverText(lua_State* L, const std::string& text) {
+    if (text.find('$') == std::string::npos) return text;
+    auto* gh = getGameHandler(L);
+    if (!gh) {
+        LOG_WARNING("serverText: no game handler - text left with its $-tokens");
+        return text;
+    }
+    game::TextSubject subject = game::textSubjectFor(*gh);
+    // $t/$T is the honour rank's name from the interface's own strings:
+    // PVP_RANK_<rank>_<team>, team 0 Horde and 1 Alliance by race, _FEMALE
+    // for a female character. Native wrote "private" for a human and "scout"
+    // for a blood elf, both rank 0 (UnitPVPRank) and both in GM mode, whose
+    // faction template belongs to neither team - so the team is the race's.
+    if (const auto* character = gh->getActiveCharacter()) {
+        using game::Race;
+        const Race r = character->race;
+        const bool alliance = r == Race::HUMAN || r == Race::DWARF || r == Race::NIGHT_ELF ||
+                              r == Race::GNOME || r == Race::DRAENEI;
+        const int rank = 0;  // UnitPVPRank: 2.4.3 has no honour ranks left to hold
+        const std::string key = "PVP_RANK_" + std::to_string(rank) + "_" + (alliance ? "1" : "0") +
+                                (subject.female ? "_FEMALE" : "");
+        lua_getglobal(L, key.c_str());
+        if (const char* name = lua_tostring(L, -1)) subject.pvpRankName = name;
+        else LOG_WARNING("serverText: global ", key, " is not a string - $t writes nothing");
+        lua_pop(L, 1);
+    }
+    return game::resolveTextTokens(text, subject);
+}
 
 // Declared in lua_api_helpers.hpp.
 int questLogRowForQuest(game::GameHandler* gh, uint32_t questId) {
@@ -441,7 +457,7 @@ static int lua_GetQuestLogTitle(lua_State* L) {
         return 10;
     }
     const auto& q = *row->quest;
-    lua_pushstring(L, forPlayer(L, q.title).c_str());  // 1: title
+    lua_pushstring(L, q.title.c_str());  // 1: title, its $-tokens left in as native leaves them
     // A level -1 quest goes with the player: 2.4.3 answers the player's level.
     lua_pushnumber(L, q.level == -1 ? static_cast<int>(gh->getPlayerLevel()) : q.level); // 2
     // QuestInfo.dbc's name for the quest's type: Group, PvP, Raid, Dungeon...
@@ -492,8 +508,8 @@ static int lua_GetQuestLogQuestText(lua_State* L) {
     // "not stored" was true only of the store - the bytes were in hand and
     // discarded, and the quest log drew a blank panel above every objective
     // list because of it.
-    lua_pushstring(L, forPlayer(L, q.description).c_str());  // description
-    lua_pushstring(L, forPlayer(L, q.objectives).c_str());   // objectives
+    lua_pushstring(L, serverText(L, q.description).c_str());  // description
+    lua_pushstring(L, serverText(L, q.objectives).c_str());   // objectives
     return 2;
 }
 
@@ -2844,19 +2860,23 @@ QuestSource currentQuestSource(game::GameHandler* gh) {
 /// width, and a row drawn for an empty one is a blank button the player can
 /// click.
 
+/// A panel's text with its $-tokens filled in, or "" with none open.
 int pushQuestText(lua_State* L, const std::string* s) {
     if (!s || s->empty()) { lua_pushstring(L, ""); return 1; }
-    // The binding is the first point that has the player to resolve against;
-    // the parser only ever turned $b into a line break. See forPlayer.
-    lua_pushstring(L, forPlayer(L, *s).c_str());
+    lua_pushstring(L, serverText(L, *s).c_str());
     return 1;
 }
 
 }  // namespace
 
 // GetTitleText() → the quest's name, whichever panel is showing it
+//
+// As the server sent it: native resolves no token in a title, here or in the
+// quest log, the greeting list or the gossip list.
 static int lua_GetTitleText(lua_State* L) {
-    return pushQuestText(L, currentQuestSource(getGameHandler(L)).title);
+    const std::string* title = currentQuestSource(getGameHandler(L)).title;
+    lua_pushstring(L, title ? title->c_str() : "");
+    return 1;
 }
 
 // GetQuestText() → what the quest giver says when offering it
@@ -3207,11 +3227,11 @@ void registerQuestLuaAPI(lua_State* L) {
             const auto& pages = gh->getBookPages();
             if (!pages.empty()) {
                 const size_t page = static_cast<size_t>(bookPage());
-                lua_pushstring(L, page < pages.size() ? pages[page].text.c_str()
-                                                      : pages.back().text.c_str());
+                lua_pushstring(L, serverText(L, page < pages.size() ? pages[page].text
+                                                                    : pages.back().text).c_str());
                 return 1;
             }
-            lua_pushstring(L, gh->getItemText().c_str());
+            lua_pushstring(L, serverText(L, gh->getItemText()).c_str());
             return 1;
         }},
                 // ItemTextGetItem() - the heading over the page. The page
@@ -3402,7 +3422,7 @@ void registerQuestLuaAPI(lua_State* L) {
             if (gh && id != 0) {
                 for (const auto& q : gh->getQuestLog()) {
                     if (q.questId == id) {
-                        lua_pushstring(L, forPlayer(L, q.title).c_str());
+                        lua_pushstring(L, q.title.c_str());
                         return 1;
                     }
                 }

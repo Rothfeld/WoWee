@@ -1625,6 +1625,22 @@ Gotchas:
 - Watches persist across relog here (character config); 2.4.3 clears them.
 
 Evidence: `_experiments/20261118T2010Z.questlog_audit/` in the workspace root.
+### $-tokens in server text
+
+Gossip, quest and page text keep the server's tokens ("$N", "$c",
+"$gsir:madam;") until a Lua getter hands it out; `addons::serverText` then
+applies `game::resolveTextTokens` for the logged-in character. Native 2.4.3
+resolves in GetGossipText, GetGreetingText, GetQuestText, GetObjectiveText,
+GetProgressText, GetRewardText, GetQuestLogQuestText and ItemTextGetText only.
+Titles, gossip options, GetQuestLogLeaderBoard and NPC say/yell/emote/whisper
+keep "$N" as two characters on native, so they do here.
+Rule: `$n` name, `$c`/`$r` class/race lower-cased (`$C`/`$R` as UnitClass/
+UnitRace), `$b` newline, `$gmale:female;`, `$tmale:female;` the honour rank
+name (PVP_RANK_0_<team> global string, team by race), `$<id>w` a world state,
+`$d`/`$e` always 0 on native (source unknown), anything else left as "$".
+`build/bin/test_text_tokens` holds native's strings for a human male rogue and
+a blood elf female paladin. Evidence and probe scripts:
+`_experiments/20261118T203000Z.text_tokens/` in the workspace.
 
 ### Scroll lists, sliders and template anchors
 

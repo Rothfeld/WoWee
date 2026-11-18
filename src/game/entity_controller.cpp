@@ -3552,12 +3552,7 @@ void EntityController::handlePageTextQueryResponse(network::Packet& packet) {
         return;
     }
 
-    std::string playerName;
-    if (auto entity = owner_.getEntityManager().getEntity(owner_.getPlayerGuid())) {
-        if (auto unit = std::dynamic_pointer_cast<Unit>(entity))
-            playerName = unit->getName();
-    }
-    data.text = normalizeWowTextTokens(data.text, playerName);
+    // Kept as sent: ItemTextGetText fills in its $-tokens, as native does.
 
     // Append page if not already collected
     bool alreadyHave = false;

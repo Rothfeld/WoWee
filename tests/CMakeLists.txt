@@ -650,11 +650,11 @@ wowee_add_test(test_chat_window_background
     SOURCES test_chat_window_background.cpp)
 
 # ── test_text_tokens ────────────────────────────────────────
-# The server writes the player as a blank - "$N, you have done well" - and the
-# client fills it in. Nothing did on the chat path, so every scripted NPC in the
-# game addressed the player as "$N". Pure: the substitution takes the four facts
-# it needs about the reader rather than a client.
-add_executable(test_text_tokens test_text_tokens.cpp ${CMAKE_SOURCE_DIR}/src/game/text_tokens.cpp)
+# The $-token rule 2.4.3 applies to gossip, greetings, quest text and pages, as
+# measured on native. Pure: the substitution takes the facts it needs about the
+# reader rather than a client. The logger is linked for the one-time warning
+# about $d/$e, whose source is not known.
+add_executable(test_text_tokens test_text_tokens.cpp ${CMAKE_SOURCE_DIR}/src/game/text_tokens.cpp ${TEST_COMMON_SOURCES})
 target_include_directories(test_text_tokens PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_text_tokens SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_text_tokens PRIVATE catch2_main)

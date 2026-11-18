@@ -323,6 +323,14 @@ inline game::GameHandler* getGameHandler(lua_State* L) {
     return gh;
 }
 
+/// Server text as 2.4.3's Lua getters hand it out: $-tokens filled in for the
+/// logged-in character (game/text_tokens.hpp has the rule). Used by exactly
+/// the getters native resolves in - GetGossipText, GetGreetingText,
+/// GetQuestText, GetObjectiveText, GetProgressText, GetRewardText,
+/// GetQuestLogQuestText and ItemTextGetText. Titles, gossip options and
+/// objective lines are handed out as the server sent them.
+std::string serverText(lua_State* L, const std::string& text);
+
 // ---- Retrieve the widget tree that backs CreateFrame/CreateTexture ----
 // Null before the UI is up, which the bindings treat as "record nothing and
 // carry on" so an addon loaded early cannot crash on a missing tree.

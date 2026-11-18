@@ -4,17 +4,9 @@
 #include "ui/chat/chat_utils.hpp"
 #include "game/game_handler.hpp"
 #include "game/character.hpp"
-#include "game/text_tokens.hpp"
 #include <vector>
 
 namespace wowee { namespace ui { namespace chat_utils {
-
-std::string replaceGenderPlaceholders(const std::string& text,
-                                       game::GameHandler& gameHandler) {
-    // Moved to the game layer: the chat handler has to resolve these before a
-    // line reaches the interface, and it cannot reach into the UI to do it.
-    return game::resolveTextTokens(text, gameHandler);
-}
 
 namespace {
 

@@ -2716,7 +2716,7 @@ void registerSocialLuaAPI(lua_State* L) {
                 // asks for it a quest at a time rather than all at once.
                 {"GetGreetingText", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushstring(L, gh ? gh->getQuestGreeting().c_str() : "");
+            lua_pushstring(L, gh ? serverText(L, gh->getQuestGreeting()).c_str() : "");
             return 1;
         }},
                 {"GetNumAvailableQuests", [](lua_State* L) -> int {
