@@ -350,31 +350,55 @@ TEST_CASE("hostile-target spells are the ones that must not be sent unaimed",
 }
 
 // ---------------------------------------------------------------------------
-// Range between two units is edge to edge. The action bar measured centre to
-// centre, so a melee button read out of range on anything larger than a boar
-// and a ranged one went red a couple of yards before the server would refuse.
+// Range between two units takes both combat reaches. Native 2.4.3
+// IsSpellInRange, measured from a human rogue (reach 1.5) at a stunned Mottled
+// Boar whose UNIT_FIELD_COMBATREACH was set to Onyxia's 23.4 and to 5
+// (_experiments/20261118T170000Z.melee_range_pair2 in the workspace). All
+// distances are 3D, centre to centre.
 
-TEST_CASE("a ranged spell reaches its range plus both combat reaches", "[spellclass][range]") {
-    // Fireball, 35 yards, between two ordinary 1.5-yard reaches: 38 from centre.
-    CHECK(withinSpellRange(38.0f, 0.0f, 35.0f, 1.5f, 1.5f));
-    CHECK_FALSE(withinSpellRange(38.1f, 0.0f, 35.0f, 1.5f, 1.5f));
-    // With no reach known, the range alone.
-    CHECK(withinSpellRange(35.0f, 0.0f, 35.0f, 0.0f, 0.0f));
-}
+namespace {
+constexpr uint32_t kMelee = kSpellRangeFlagMelee;    // SpellRange 2, "Combat Range"
+constexpr uint32_t kRanged = kSpellRangeFlagRanged;  // SpellRange 74, "Ranged Weapon"
+constexpr float kHuman = 1.5f;
+constexpr float kOnyxia = 23.4f;
+} // namespace
 
-TEST_CASE("a melee ability reaches both reaches and a third over a yard", "[spellclass][range]") {
+TEST_CASE("melee range is both reaches and a third over a yard", "[spellclass][range]") {
+    // Sinister Strike at Onyxia: in at 26.231 yards, out at 26.236.
+    CHECK(withinSpellRange(26.231f, 0.0f, 5.0f, kMelee, kHuman, kOnyxia));
+    CHECK_FALSE(withinSpellRange(26.236f, 0.0f, 5.0f, kMelee, kHuman, kOnyxia));
+    CHECK(meleeReach(kHuman, kOnyxia) == Catch::Approx(26.2333f));
     // Never less than Combat Range, however small the two are.
-    CHECK(withinSpellRange(5.0f, 0.0f, 5.0f, 0.0f, 0.0f));
-    CHECK_FALSE(withinSpellRange(5.1f, 0.0f, 5.0f, 0.0f, 0.0f));
-    // A large target: 1.5 + 6 + 4/3 is 8.83 yards from its centre.
-    CHECK(withinSpellRange(8.8f, 0.0f, 5.0f, 1.5f, 6.0f));
-    CHECK_FALSE(withinSpellRange(8.9f, 0.0f, 5.0f, 1.5f, 6.0f));
+    CHECK(meleeReach(0.0f, 0.0f) == kCombatRangeYards);
+    CHECK(withinSpellRange(5.0f, 0.0f, 5.0f, kMelee, 1.5f, 0.627f));
+    CHECK_FALSE(withinSpellRange(5.1f, 0.0f, 5.0f, kMelee, 1.5f, 0.627f));
 }
 
-TEST_CASE("inside a minimum range is out of range", "[spellclass][range]") {
-    // A hunter's dead zone: 5 to 35, measured edge to edge like the maximum.
-    CHECK_FALSE(withinSpellRange(7.0f, 5.0f, 35.0f, 1.5f, 1.5f));
-    CHECK(withinSpellRange(8.0f, 5.0f, 35.0f, 1.5f, 1.5f));
+TEST_CASE("a spell range reaches its maximum plus both reaches", "[spellclass][range]") {
+    // Fireball (35) and Arcane Shot (35, ranged weapon): in at 58, out at 59.902.
+    CHECK(withinSpellRange(58.0f, 0.0f, 35.0f, 0, kHuman, kOnyxia));
+    CHECK_FALSE(withinSpellRange(59.902f, 0.0f, 35.0f, 0, kHuman, kOnyxia));
+    CHECK_FALSE(withinSpellRange(59.902f, 0.0f, 35.0f, kRanged, kHuman, kOnyxia));
+    // Blind (10): in at 34.849, out at 34.950.
+    CHECK(withinSpellRange(34.849f, 0.0f, 10.0f, 0, kHuman, kOnyxia));
+    CHECK_FALSE(withinSpellRange(34.950f, 0.0f, 10.0f, 0, kHuman, kOnyxia));
+}
+
+TEST_CASE("a minimum range takes both reaches too", "[spellclass][range]") {
+    // Charge (8 to 25): out at 32.838, in from 32.939 to 49.854, out at 50.058.
+    CHECK_FALSE(withinSpellRange(32.838f, 8.0f, 25.0f, 0, kHuman, kOnyxia));
+    CHECK(withinSpellRange(32.939f, 8.0f, 25.0f, 0, kHuman, kOnyxia));
+    CHECK(withinSpellRange(49.854f, 8.0f, 25.0f, 0, kHuman, kOnyxia));
+    CHECK_FALSE(withinSpellRange(50.058f, 8.0f, 25.0f, 0, kHuman, kOnyxia));
+}
+
+TEST_CASE("a ranged weapon is out inside melee reach", "[spellclass][range]") {
+    // Throw (0 to 30, flag 2) is 0 exactly where Sinister Strike is 1.
+    CHECK_FALSE(withinSpellRange(26.231f, 0.0f, 30.0f, kRanged, kHuman, kOnyxia));
+    CHECK(withinSpellRange(26.236f, 0.0f, 30.0f, kRanged, kHuman, kOnyxia));
+    // Out again past 30 plus both reaches: in at 50.467, out at 54.964.
+    CHECK(withinSpellRange(50.467f, 0.0f, 30.0f, kRanged, kHuman, kOnyxia));
+    CHECK_FALSE(withinSpellRange(54.964f, 0.0f, 30.0f, kRanged, kHuman, kOnyxia));
 }
 
 TEST_CASE("a percent cost is a share of the pool, rounded down", "[spellclass][cost]") {

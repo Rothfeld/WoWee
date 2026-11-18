@@ -207,12 +207,18 @@ private:
     uint64_t autoAttackTarget_ = 0;
     bool autoAttackOutOfRange_ = false;
     float autoAttackRangeWarnCooldown_ = 0.0f;
+    /// Seconds until "You are too far away!" is said again while the attack
+    /// stays out of reach (kSwingRangeRepeatSeconds after the last one).
+    float autoAttackRangeRepeat_ = 0.0f;
     std::unordered_set<uint64_t> hostileAttackers_;
     std::vector<CombatTextEntry> combatText_;
     /// Damage of the last hit announced on the player, for the partial
     /// absorb/resist/block line that follows it (-1 after anything else).
     int32_t incomingHitDamage_ = -1;
     static constexpr size_t MAX_COMBAT_LOG = 500;
+    /// How often the original repeats "You are too far away!" while an
+    /// attack stays out of melee reach.
+    static constexpr float kSwingRangeRepeatSeconds = 4.0f;
     std::deque<CombatLogEntry> combatLog_;
     uint64_t combatLogAppended_ = 0;
 

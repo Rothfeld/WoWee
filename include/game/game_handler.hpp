@@ -12,6 +12,7 @@
 #include "game/inventory.hpp"
 #include "game/item_set.hpp"
 #include "game/spell_defines.hpp"
+#include "game/spell_classification.hpp"
 #include "game/group_defines.hpp"
 #include "game/handler_types.hpp"
 #include "game/tbc_lfg.hpp"
@@ -2253,6 +2254,18 @@ public:
     /// (pair 8): Newton Burnside (combat reach 1.5) and Ironbark the Redeemed
     /// (7.5) both Usable at 5.550 yards and Unable at 5.556.
     bool unitWithinInteractionReach(const Unit& unit) const;
+    /// Where a unit stands against a spell's SpellRange.dbc range from the
+    /// player - native 2.4.3 IsSpellInRange, measured 3D, centre to centre,
+    /// with both units' UNIT_FIELD_COMBATREACH (spellclass::checkSpellRange).
+    /// Nothing where native answers nil: a spell with no range or not aimed
+    /// at a unit (Distract, Pick Lock), a harmful spell at a unit that cannot
+    /// be attacked, a creature type the spell excludes (Sap at a deer), or no
+    /// unit by that guid.
+    [[nodiscard]] std::optional<spellclass::SpellRangeCheck> unitSpellRange(uint32_t spellId,
+                                                                           uint64_t unitGuid) const;
+    /// Whether a unit is within the player's melee reach (spellclass::meleeReach,
+    /// 3D, centre to centre); nothing when either unit is unknown.
+    [[nodiscard]] std::optional<bool> unitWithinMeleeReach(uint64_t unitGuid) const;
     const LootResponseData& getCurrentLoot() const;
     /// ItemSet.dbc row for an item's set id; null when unknown.
     const ItemSetInfo* getItemSetInfo(uint32_t setId) const;

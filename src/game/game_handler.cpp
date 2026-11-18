@@ -750,6 +750,48 @@ bool GameHandler::isWithinInteractRange(uint64_t guid) const {
     return dx * dx + dy * dy + dz * dz <= range * range;
 }
 
+std::optional<spellclass::SpellRangeCheck> GameHandler::unitSpellRange(uint32_t spellId,
+                                                                     uint64_t unitGuid) const {
+    if (spellId == 0 || unitGuid == 0) return std::nullopt;
+    const SpellNameEntry* entry = getSpellNameEntry(spellId);
+    if (!entry) return std::nullopt;
+    const SpellDataInfo data = getSpellData(spellId);
+    if (data.maxRange <= 0.0f) return std::nullopt;
+    bool aimedAtUnit = false, harmful = false;
+    for (const uint32_t implicit : entry->implicitTargetsA) {
+        aimedAtUnit = aimedAtUnit || spellclass::isAimedAtUnit(implicit);
+        harmful = harmful || implicit == spellclass::kImplicitTargetEnemy;
+    }
+    if (!aimedAtUnit) return std::nullopt;
+    const auto entity = getEntityManager().getEntity(unitGuid);
+    const auto self = getEntityManager().getEntity(playerGuid);
+    if (!entity || !entity->isUnit() || !self || !self->isUnit()) return std::nullopt;
+    const auto& unit = static_cast<const Unit&>(*entity);
+    if (harmful && !canPlayerAttackUnit(unit)) return std::nullopt;
+    if (entry->targetCreatureType != 0) {
+        constexpr uint32_t kCreatureTypeHumanoid = 7;
+        const uint32_t type = entity->getType() == ObjectType::PLAYER
+            ? kCreatureTypeHumanoid : getCreatureType(unit.getEntry());
+        if (type == 0 || !(entry->targetCreatureType & (1u << (type - 1)))) return std::nullopt;
+    }
+    const glm::vec3 offset(entity->getX() - self->getX(), entity->getY() - self->getY(),
+                           entity->getZ() - self->getZ());
+    return spellclass::checkSpellRange(glm::length(offset), data.minRange, data.maxRange,
+                                       data.rangeFlags,
+                                       static_cast<const Unit&>(*self).getCombatReach(),
+                                       unit.getCombatReach());
+}
+
+std::optional<bool> GameHandler::unitWithinMeleeReach(uint64_t unitGuid) const {
+    const auto entity = getEntityManager().getEntity(unitGuid);
+    const auto self = getEntityManager().getEntity(playerGuid);
+    if (!entity || !entity->isUnit() || !self || !self->isUnit()) return std::nullopt;
+    const glm::vec3 offset(entity->getX() - self->getX(), entity->getY() - self->getY(),
+                           entity->getZ() - self->getZ());
+    return glm::length(offset) <= spellclass::meleeReach(static_cast<const Unit&>(*self).getCombatReach(),
+                                                         static_cast<const Unit&>(*entity).getCombatReach());
+}
+
 bool GameHandler::unitWithinInteractionReach(const Unit& unit) const {
     // 5.5555553 is CMaNGOS's interaction distance for text objects; the
     // original's unit threshold measured between 5.550 and 5.556.

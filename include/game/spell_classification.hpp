@@ -42,27 +42,67 @@ inline bool isMeleeRange(float maxRange) {
     return maxRange > 0.0f && maxRange <= kCombatRangeYards;
 }
 
-/// Whether a target at `centreDistance` is within a spell's reach, measured the
-/// way the server measures it: edge to edge, not centre to centre.
+/// SpellRange.dbc Flags: 1 is "Combat Range", the melee range of every melee
+/// ability (Sinister Strike, Kick); 2 is a ranged weapon's range (Throw,
+/// Shoot, Auto Shot, Arcane Shot).
+inline constexpr uint32_t kSpellRangeFlagMelee = 1;
+inline constexpr uint32_t kSpellRangeFlagRanged = 2;
+
+/// How far, centre to centre, one unit reaches another in melee: both
+/// UNIT_FIELD_COMBATREACH values and 4/3 of a yard, never less than Combat
+/// Range. A human (reach 1.5) reaches Onyxia (23.4) from 26.23 yards.
+inline float meleeReach(float casterReach, float targetReach) {
+    const float reach = casterReach + targetReach + 4.0f / 3.0f;
+    return reach > kCombatRangeYards ? reach : kCombatRangeYards;
+}
+
+/// Where a unit stands against a spell's range.
+enum class SpellRangeCheck { InRange, TooClose, OutOfRange };
+
+/// Where a unit `centreDistance` yards away (3D, centre to centre) stands
+/// against a spell's SpellRange.dbc row, as native 2.4.3 answers
+/// IsSpellInRange and refuses a cast before sending it ("Out of range.",
+/// "Target too close").
 ///
-/// Both units' combat reach come off the distance, so a ranged spell reaches
-/// its SpellRange yards plus the two reaches. A melee ability reaches the two
-/// reaches plus 4/3 of a yard and never less than Combat Range - which is how a
-/// warrior hits a dragon from well outside five yards of its centre. Short of
-/// the minimum range, a hunter's dead zone, is out of range too.
+/// A melee range (flag 1) is the melee reach; its MaxRange (5) plays no part.
+/// Any other range is its MaxRange plus both combat reaches. Its minimum is the
+/// melee reach for a ranged weapon (flag 2: Throw is too close inside melee
+/// reach, whatever its MinRange), else MinRange plus both reaches when it has
+/// one (Charge, 8 to 25: 32.9 to 49.9 yards from Onyxia's centre).
 ///
-/// Centre to centre, every melee button read out of range on anything larger
-/// than a boar and a ranged one went red a couple of yards early.
-inline bool withinSpellRange(float centreDistance, float minRange, float maxRange,
-                             float casterReach, float targetReach) {
-    const float reaches = casterReach + targetReach;
-    if (isMeleeRange(maxRange)) {
-        const float reach = reaches + 4.0f / 3.0f;
-        return centreDistance <= (reach > kCombatRangeYards ? reach : kCombatRangeYards);
+/// Centre to centre without the reaches, every melee button read out of range
+/// on anything larger than a boar and a ranged one went red early.
+inline SpellRangeCheck checkSpellRange(float centreDistance, float minRange, float maxRange,
+                                       uint32_t rangeFlags, float casterReach, float targetReach) {
+    if (rangeFlags & kSpellRangeFlagMelee) {
+        return centreDistance <= meleeReach(casterReach, targetReach)
+            ? SpellRangeCheck::InRange : SpellRangeCheck::OutOfRange;
     }
-    const float edge = centreDistance - reaches;
-    if (minRange > 0.0f && edge < minRange) return false;
-    return edge <= maxRange;
+    const float reaches = casterReach + targetReach;
+    if (rangeFlags & kSpellRangeFlagRanged) {
+        if (centreDistance <= meleeReach(casterReach, targetReach)) return SpellRangeCheck::TooClose;
+    } else if (minRange > 0.0f && centreDistance < minRange + reaches) {
+        return SpellRangeCheck::TooClose;
+    }
+    return centreDistance <= maxRange + reaches ? SpellRangeCheck::InRange
+                                                : SpellRangeCheck::OutOfRange;
+}
+
+inline bool withinSpellRange(float centreDistance, float minRange, float maxRange,
+                             uint32_t rangeFlags, float casterReach, float targetReach) {
+    return checkSpellRange(centreDistance, minRange, maxRange, rangeFlags, casterReach, targetReach)
+        == SpellRangeCheck::InRange;
+}
+
+/// Whether an EffectImplicitTargetA value aims a spell at one chosen unit
+/// (CMaNGOS SpellTargetInfoTable): 6 an enemy (Sinister Strike, Blind,
+/// Throw), the rest a friend or anyone (21 Flash Heal, 25 Dispel Magic, 35,
+/// 37, 45, 57, 61). Distract (ground) and self or area spells are not.
+inline bool isAimedAtUnit(uint32_t implicitTarget) {
+    switch (implicitTarget) {
+        case 6: case 21: case 25: case 35: case 37: case 45: case 57: case 61: return true;
+        default: return false;
+    }
 }
 
 /// Spell.dbc EffectImplicitTargetA values the client reasons about.

@@ -1782,7 +1782,25 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // is your own and every facing block below would otherwise use it.
     bool facingHandled = (target != 0 && target == owner_.getPlayerGuid());
 
-    // Warrior Charge (ranks 1-3): client-side range check + charge callback
+    // The original refuses a cast at a unit out of the spell's range itself,
+    // before sending anything: "Out of range." (Sinister Strike at a boar
+    // 26.67 yards from its centre with Onyxia's reach, Blind at 36.14) or
+    // "Target too close" (Throw inside melee reach), with UNIT_SPELLCAST_FAILED
+    // and no UNIT_SPELLCAST_SENT. The range is IsSpellInRange's, which takes
+    // both units' combat reach, so Sinister Strike reaches Onyxia from 26.23
+    // yards. Equipment is refused first (Throw with a broken knife: "Must have
+    // a Thrown equipped" at any distance).
+    if (target != 0 && target != owner_.getPlayerGuid()) {
+        const auto range = owner_.unitSpellRange(spellId, target);
+        if (range && *range != spellclass::SpellRangeCheck::InRange) {
+            raiseGlobalStringError(owner_, *range == spellclass::SpellRangeCheck::TooClose
+                                               ? "SPELL_FAILED_TOO_CLOSE" : "ERR_SPELL_OUT_OF_RANGE");
+            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+            return;
+        }
+    }
+
+    // Warrior Charge (ranks 1-3): target checks + charge callback
     if (spellId == 100 || spellId == 6178 || spellId == 11578) {
         // Charge is an opener: it cannot be used once the fight has started.
         if (owner_.isInCombat()) {
@@ -1831,19 +1849,10 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                 return;
             }
         }
+        // Its range, 8 to 25 yards plus both combat reaches, was checked above.
         float tx = entity->getX(), ty = entity->getY(), tz = entity->getZ();
         float dx = tx - owner_.movementInfoRef().x;
         float dy = ty - owner_.movementInfoRef().y;
-        float dz = tz - owner_.movementInfoRef().z;
-        float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist < 8.0f) {
-            raiseGlobalStringError(owner_, "SPELL_FAILED_TOO_CLOSE");
-            return;
-        }
-        if (dist > 25.0f) {
-            raiseGlobalStringError(owner_, "ERR_SPELL_OUT_OF_RANGE");
-            return;
-        }
         float yaw = std::atan2(-dy, dx);
         owner_.movementInfoRef().orientation = yaw;
         owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
@@ -1853,13 +1862,9 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         facingHandled = true;
     }
 
-    // Instant melee abilities: client-side range + facing check.
-    // Melee is decided by the spell's own range, not by its school. SpellRange calls
-    // melee "Combat Range" (5 yards), while physical-school abilities that are cast at
-    // range - Steady Shot, Multi-Shot, Taunt, Deadly Throw - carry a 30-35 yard range.
-    // Testing the school instead would range-check those at 8 yards and swallow the cast.
-    // An unknown range (SpellRange.dbc unavailable) is not treated as melee, so the
-    // server arbitrates rather than the client blocking a legitimate cast.
+    // Instant melee abilities: facing. Melee is decided by the spell's own range,
+    // not by its school: physical abilities cast at range - Steady Shot, Taunt,
+    // Deadly Throw - carry a 30-35 yard range. Their range was checked above.
     if (!facingHandled) {
         const bool isMeleeAbility = spellclass::isMeleeRange(getSpellMaxRange(spellId));
         if (isMeleeAbility && target != 0) {
@@ -1867,12 +1872,6 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             if (entity) {
                 float dx = entity->getX() - owner_.movementInfoRef().x;
                 float dy = entity->getY() - owner_.movementInfoRef().y;
-                float dz = entity->getZ() - owner_.movementInfoRef().z;
-                float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-                if (dist > 8.0f) {
-                    raiseGlobalStringError(owner_, "ERR_SPELL_OUT_OF_RANGE");
-                    return;
-                }
                 if (owner_.isAutoFaceTarget()) owner_.faceCanonicalYaw(std::atan2(-dy, dx));
                 facingHandled = true;
             }

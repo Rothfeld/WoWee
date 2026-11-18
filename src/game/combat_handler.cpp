@@ -110,11 +110,11 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_ATTACKSTART] = [this](network::Packet& packet) { handleAttackStart(packet); };
     table[Opcode::SMSG_ATTACKSTOP] = [this](network::Packet& packet) { handleAttackStop(packet); };
     table[Opcode::SMSG_ATTACKSWING_NOTINRANGE] = [this](network::Packet& /*packet*/) {
+        // Said every time: CMaNGOS sends it once per change of swing error,
+        // and the original shows it even right after its own (startAutoAttack).
         autoAttackOutOfRange_ = true;
-        if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            owner_.errorGlobal("ERR_BADATTACKPOS");
-            autoAttackRangeWarnCooldown_ = 1.25f;
-        }
+        owner_.errorGlobal("ERR_BADATTACKPOS");
+        autoAttackRangeRepeat_ = kSwingRangeRepeatSeconds;
     };
     table[Opcode::SMSG_ATTACKSWING_BADFACING] = [this](network::Packet& /*packet*/) {
         autoAttackOutOfRange_ = false;
@@ -381,6 +381,11 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
     // HandleAttackSwingOpcode leaves the loot open, so the client releases it
     // the way the window's own close does (CMSG_LOOT_RELEASE, LOOT_CLOSED).
     if (owner_.isLootWindowOpen()) owner_.closeLoot();
+    // Out of melee reach the original says so itself as the attack starts,
+    // and again when the server's SMSG_ATTACKSWING_NOTINRANGE arrives a round
+    // trip later (2.4.3, /startattack 26.47 yards from a boar with Onyxia's
+    // reach 23.4: two "You are too far away!" 70 ms apart; none at 26.16).
+    if (owner_.unitWithinMeleeReach(targetGuid) == false) owner_.errorGlobal("ERR_BADATTACKPOS");
     if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket()) {
         auto packet = AttackSwingPacket::build(targetGuid);
         owner_.getSocket()->send(packet);
@@ -931,12 +936,16 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
         autoAttackRangeWarnCooldown_ = std::max(0.0f, autoAttackRangeWarnCooldown_ - deltaTime);
     }
 
-    // CMaNGOS reports swing errors only when they change. Repeat the active
-    // range warning without resending attacks or changing attack intent.
+    // CMaNGOS reports swing errors only when they change; the original says
+    // "You are too far away!" again every 4 seconds while the attack stays out
+    // of reach (2.4.3, /startattack 26.5 to 40 yards from a boar with Onyxia's
+    // reach: 4.00 to 4.02 s after the server's). Attack intent is unchanged.
     // A successful swing, another swing error, or stopping clears the latch.
-    if (autoAttackRequested_ && autoAttackOutOfRange_ && autoAttackRangeWarnCooldown_ <= 0.0f) {
-        owner_.raiseUiError("You are too far away!");
-        autoAttackRangeWarnCooldown_ = 1.25f;
+    if (autoAttackRangeRepeat_ > 0.0f)
+        autoAttackRangeRepeat_ = std::max(0.0f, autoAttackRangeRepeat_ - deltaTime);
+    if (autoAttackRequested_ && autoAttackOutOfRange_ && autoAttackRangeRepeat_ <= 0.0f) {
+        owner_.errorGlobal("ERR_BADATTACKPOS");
+        autoAttackRangeRepeat_ = kSwingRangeRepeatSeconds;
     }
 
     // Do not cancel or resend attacks based on a guessed melee radius.
@@ -968,6 +977,7 @@ void CombatHandler::resetAllCombatState() {
     autoAttackTarget_ = 0;
     autoAttackOutOfRange_ = false;
     autoAttackRangeWarnCooldown_ = 0.0f;
+    autoAttackRangeRepeat_ = 0.0f;
     lastMeleeSwingMs_ = 0;
 }
 
