@@ -89,35 +89,6 @@ static const char* lfgJoinResultString(uint32_t result) {
     }
 }
 
-// ArenaTeamCommandErrors, as SMSG_ARENA_TEAM_COMMAND_RESULT sends them. The
-// range is sparse - the server sends 0x08 for two different refusals and skips
-// most of what lies between - so a table indexed by the value would be mostly
-// holes and would answer the wrong sentence for anything the server adds.
-static const char* arenaTeamErrorString(uint32_t error) {
-    switch (error) {
-        case 0x01: return "Internal arena team error.";
-        case 0x02: return "You are already in an arena team of that size.";
-        case 0x03: return "That player is already in an arena team of that size.";
-        case 0x04: return "You have already been invited to an arena team.";
-        case 0x05: return "That player has already been invited to an arena team.";
-        case 0x06: return "That arena team name is invalid.";
-        case 0x07: return "That arena team name already exists.";
-        // The server reuses this value for the captain leaving and for acting
-        // without the rank to do so.
-        case 0x08: return "The captain cannot leave; permissions denied.";
-        case 0x09: return "You are not in an arena team of that size.";
-        case 0x0A: return "That player is not in your arena team.";
-        case 0x0B: return "No player of that name was found.";
-        case 0x0C: return "That player is of the opposing faction.";
-        case 0x13: return "That player is ignoring you.";
-        case 0x15: return "That player's level is too low.";
-        case 0x16: return "That player's level is too high.";
-        case 0x17: return "The arena team is full.";
-        case 0x1B: return "No arena team of that name was found.";
-        case 0x1E: return "Arena teams are locked for the season.";
-        default:   return "The arena team command was refused.";
-    }
-}
 
 static const char* lfgTeleportDeniedString(uint32_t reason) {
     switch (reason) {
@@ -4666,34 +4637,40 @@ void SocialHandler::handleArenaTeamCommandResult(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
     const uint32_t error = packet.readUInt32();
 
-    // ArenaTeamCommandTypes, and it is not a dense range: 2, and everything
-    // between 4 and 13, are values the server never sends. The old table read
-    // it as 0..5 in a row, so a quit reported itself as a remove and a change
-    // of captain fell off the end.
-    const char* cmdName = "arena team";
-    switch (command) {
-        case 0x00: cmdName = "arena team create"; break;
-        case 0x01: cmdName = "arena team invite"; break;
-        case 0x03: cmdName = "arena team quit"; break;
-        case 0x0E: cmdName = "arena team captain"; break;
-        default: break;
-    }
-
-    // Whichever name the result is about. A create names the team, an invite
-    // names the player, and both are sent for the ones that concern both.
-    std::string about;
-    if (!teamName.empty()) about = teamName;
-    if (!playerName.empty())
-        about = about.empty() ? playerName : about + " / " + playerName;
-
+    // ArenaTeamCommandTypes 0 create, 1 invite, 3 quit; success prints the
+    // command's line, a failure ArenaTeamCommandErrors (CMaNGOS ArenaTeam.h),
+    // each named for its GlobalStrings line (not observed natively).
     if (error == 0) {
-        owner_.addSystemChatMessage(std::string(cmdName) + " succeeded" +
-                                    (about.empty() ? "." : ": " + about));
+        switch (command) {
+            case 0x00: owner_.systemGlobal("ERR_ARENA_TEAM_CREATE_S", {teamName}); break;
+            case 0x01: owner_.systemGlobal("ERR_ARENA_TEAM_INVITE_SS", {playerName, teamName}); break;
+            case 0x03: owner_.systemGlobal("ERR_ARENA_TEAM_QUIT_S", {teamName}); break;
+            default: LOG_INFO("SMSG_ARENA_TEAM_COMMAND_RESULT: command ", command, " ok"); break;
+        }
         return;
     }
-    owner_.addSystemChatMessage(std::string(cmdName) + " failed" +
-                                (about.empty() ? "" : " (" + about + ")") +
-                                ": " + arenaTeamErrorString(error));
+    const char* name = nullptr;
+    std::vector<std::string> args;
+    switch (error) {
+        case 0x01: name = "ERR_ARENA_TEAM_INTERNAL"; break;
+        case 0x02: name = "ERR_ALREADY_IN_ARENA_TEAM"; break;
+        case 0x03: name = "ERR_ALREADY_IN_ARENA_TEAM_S"; args = {playerName}; break;
+        case 0x04: name = "ERR_INVITED_TO_ARENA_TEAM"; break;
+        case 0x05: name = "ERR_ALREADY_INVITED_TO_ARENA_TEAM_S"; args = {playerName}; break;
+        case 0x06: name = "ERR_ARENA_TEAM_NAME_INVALID"; break;
+        case 0x07: name = "ERR_ARENA_TEAM_NAME_EXISTS_S"; args = {teamName}; break;
+        case 0x08: name = "ERR_ARENA_TEAM_PERMISSIONS"; break;
+        case 0x09: name = "ERR_ARENA_TEAM_PLAYER_NOT_IN_TEAM"; break;
+        case 0x0A: name = "ERR_ARENA_TEAM_PLAYER_NOT_IN_TEAM_SS"; args = {playerName, teamName}; break;
+        case 0x0B: name = "ERR_ARENA_TEAM_PLAYER_NOT_FOUND_S"; args = {playerName}; break;
+        case 0x0C: name = "ERR_ARENA_TEAM_NOT_ALLIED"; break;
+        case 0x13: name = "ERR_IGNORING_YOU_S"; args = {playerName}; break;
+        case 0x15: name = "ERR_ARENA_TEAM_TARGET_TOO_LOW_S"; args = {playerName}; break;
+        case 0x16: name = "ERR_ARENA_TEAM_TOO_MANY_MEMBERS_S"; args = {teamName}; break;
+        default: break;
+    }
+    if (name) owner_.systemGlobal(name, args);
+    else LOG_WARNING("SMSG_ARENA_TEAM_COMMAND_RESULT: error ", error, " (", teamName, "/", playerName, ")");
 }
 
 void SocialHandler::handleArenaTeamQueryResponse(network::Packet& packet) {
@@ -4777,28 +4754,31 @@ void SocialHandler::handleArenaTeamRoster(network::Packet& packet) {
 void SocialHandler::handleArenaTeamInvite(network::Packet& packet) {
     std::string playerName = packet.readString();
     std::string teamName = packet.readString();
-    owner_.addSystemChatMessage(playerName + " has invited you to join " + teamName + ".");
+    // UIParent answers this with the ARENA_TEAM_INVITATION popup; no line.
+    owner_.fireAddonEvent("ARENA_TEAM_INVITE_REQUEST", {playerName, teamName});
 }
 
+// ArenaTeamEvents (CMaNGOS ArenaTeam.h) are the GlobalStrings names, the
+// strings in their order (not observed natively).
 void SocialHandler::handleArenaTeamEvent(network::Packet& packet) {
     if (!packet.hasRemaining(1)) return;
-    uint8_t event = packet.readUInt8();
-    uint8_t strCount = 0;
-    if (packet.hasRemaining(1)) strCount = packet.readUInt8();
-    std::string param1, param2;
-    if (strCount >= 1 && packet.getSize() > packet.getReadPos()) param1 = packet.readString();
-    if (strCount >= 2 && packet.getSize() > packet.getReadPos()) param2 = packet.readString();
-    std::string msg;
+    const uint8_t event = packet.readUInt8();
+    uint8_t strCount = packet.hasRemaining(1) ? packet.readUInt8() : 0;
+    std::vector<std::string> strings;
+    for (uint8_t i = 0; i < strCount && packet.getSize() > packet.getReadPos(); ++i)
+        strings.push_back(packet.readString());
+    const char* name = nullptr;
     switch (event) {
-        case 0: msg = param1.empty() ? "A player has joined your arena team." : param1 + " has joined your arena team."; break;
-        case 1: msg = param1.empty() ? "A player has left the arena team." : param1 + " has left the arena team."; break;
-        case 2: msg = (!param1.empty() && !param2.empty()) ? param1 + " has been removed from the arena team by " + param2 + "." : "A player has been removed from the arena team."; break;
-        case 3: msg = param1.empty() ? "The arena team captain has changed." : param1 + " is now the arena team captain."; break;
-        case 4: msg = "Your arena team has been disbanded."; break;
-        case 5: msg = param1.empty() ? "Your arena team has been created." : "Arena team \"" + param1 + "\" has been created."; break;
-        default: msg = "Arena team event " + std::to_string(event); if (!param1.empty()) msg += ": " + param1; break;
+        case 3: name = "ERR_ARENA_TEAM_JOIN_SS"; break;
+        case 4: name = "ERR_ARENA_TEAM_LEAVE_SS"; break;
+        case 5: name = "ERR_ARENA_TEAM_REMOVE_SSS"; break;
+        case 6: name = "ERR_ARENA_TEAM_LEADER_IS_SS"; break;
+        case 7: name = "ERR_ARENA_TEAM_LEADER_CHANGED_SSS"; break;
+        case 8: name = "ERR_ARENA_TEAM_DISBANDED_S"; break;
+        default: break;
     }
-    owner_.addSystemChatMessage(msg);
+    if (name) owner_.systemGlobal(name, strings);
+    else LOG_WARNING("SMSG_ARENA_TEAM_EVENT ", int(event), " with ", strings.size(), " string(s)");
 }
 
 void SocialHandler::handleArenaTeamStats(network::Packet& packet) {
