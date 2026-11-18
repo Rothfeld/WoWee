@@ -234,7 +234,12 @@ void main() {
 
     bool isFoliage = (alphaTest == 2);
 
-    if (alphaTest != 0) {
+    if (alphaTest == 3) {
+        // Ground clutter blends by its texture alpha. 2.4.3 draws detail
+        // doodads with soft, see-through blade edges where its alpha-key
+        // trees keep hard ones, so the key below does not apply to them.
+        if (texColor.a < 1.0 / 255.0) discard;
+    } else if (alphaTest != 0) {
         // M2 alpha-key materials use an 8-bit reference of 224. Keep the
         // authored silhouette at every mip: promoting low-alpha texels to
         // coverage exposes their dark backing as a border around leaves.
@@ -265,6 +270,8 @@ void main() {
     vec3 norm = normalizedNormal(Normal);
     bool foliageTwoSided = (alphaTest == 2);
     if (!foliageTwoSided && !gl_FrontFacing) norm = -norm;
+    // Lit as the ground under it; see m2.vert.glsl.
+    if (alphaTest == 3) norm = vec3(0.0, 0.0, 1.0);
 
     // Detail normal perturbation (foliage only) - UV-based only so wind doesn't cause flicker
     if (isFoliage) {

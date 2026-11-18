@@ -319,7 +319,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                                       VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT);
     alphaTestPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), true,
                                          VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
-    // Every alpha-tested batch - a canopy, a fern, a tuft of clutter - is drawn
+    // Every alpha-tested batch - a canopy, a fern, a leaf card - is drawn
     // through this one. Alpha-to-coverage spreads the shader's sharpened alpha
     // across the samples, so a leaf edge is a coverage ramp rather than a
     // binary in-or-out, and the distance fade has somewhere to land: on the

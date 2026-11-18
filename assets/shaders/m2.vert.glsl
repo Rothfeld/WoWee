@@ -287,7 +287,12 @@ void main() {
 
     FragPos = worldPos.xyz;
     Normal = mat3(model) * norm.xyz;
-    float diffuse = max(dot(normalizedNormal(Normal), normalize(-lightDir.xyz)), 0.0);
+    // Ground clutter is lit as the ground it stands on. Its quads carry
+    // horizontal normals, and lighting those turned every tuft facing away
+    // from the sun into ambient-only blue-grey; 2.4.3 draws the same tufts in
+    // the terrain's own light whichever way they face (Dustwallow Marsh, Beezil's Wreck).
+    vec3 lightingNormal = push.isFoliage == 2 ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
+    float diffuse = max(dot(lightingNormal, normalize(-lightDir.xyz)), 0.0);
     VertexLighting = clamp(ambientColor.rgb + diffuse * lightColor.rgb, 0.0, 1.0);
 
     TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;

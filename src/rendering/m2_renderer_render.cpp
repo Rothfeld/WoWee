@@ -1993,7 +1993,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     if (forceCutout) effectiveBlendMode = 1;
 
                     VkPipeline desiredPipeline;
-                    if (forceCutout) {
+                    if (forceCutout && model.isGroundDetail) {
+                        // Blended, depth written: m2.frag keeps clutter's
+                        // texture alpha (alphaTest 3) for its soft edges.
+                        desiredPipeline = alphaTestPipeline_;
+                    } else if (forceCutout) {
                         desiredPipeline = cutoutPipeline_;
                     } else {
                         switch (effectiveBlendMode) {
@@ -2127,7 +2131,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         }
         float instanceFadeAlpha = fadeAlpha * instance.fade;
         const bool instanceFaded = instance.fade < 0.999f;
-        if (model.isGroundDetail) instanceFadeAlpha *= 0.82f;
 
         bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
         if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;

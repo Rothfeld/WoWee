@@ -73,6 +73,18 @@ names for shipped `.m2` files. Placements use MCNK's 8x8 layer and suppression
 maps, including terrain holes. Cached placements become live instances only
 near the camera, within the ground-detail distance plus patch bounds. Models
 stay pinned while their terrain tiles reference them, and unpin on unload.
+`DoodadIdTag` is confirmed by data and by native: Nagrand's grass effect 23807
+names tags 464-483, which are not row IDs, and 2.4.3 grows grass there. Over
+all ADTs, tag lookup resolves every used effect; row-ID lookup misses 21% of
+growing cells. The 2-bit MCNK layer map is read low bits first, y-major: it
+agrees with the dominant alpha layer in 96% of cells (MSB-first: 66%).
+2.4.3 lights clutter as the ground it stands on and blends it by texture
+alpha. Detail quads have horizontal normals; lighting those left every tuft
+facing away from the sun ambient-only blue-grey (Beezil's Wreck), and the
+224 alpha key thinned mipmapped fronds to specks (Hyjal Summit's HyjGra
+ferns). Native blade edges are soft and see-through near the camera while its
+alpha-key tree branches stay hard, so clutter alone skips the key.
+Evidence: `_experiments/20261118T210330Z.ground_effects/` in the workspace.
 World M2 and character opaque/alpha-key batches complete before blending.
 Their blended meshes share one camera-depth-ordered stream, far to near:
 crystal surface layers and moth wings must sort across renderer boundaries.
