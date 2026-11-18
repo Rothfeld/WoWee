@@ -173,6 +173,9 @@ TEST_CASE("MCLQ preserves depth and normalizes liquid types", "[adt][water]") {
         std::memcpy(chunk.data() + 132, &height, 4);
         for (size_t i = 0; i < 81; ++i) {
             chunk[136 + i * 8] = static_cast<uint8_t>(i * 3);
+            // Magma/slime read the first four bytes as uint16 s, t.
+            const uint16_t t = static_cast<uint16_t>(700 + i);
+            std::memcpy(chunk.data() + 138 + i * 8, &t, 2);
             std::memcpy(chunk.data() + 140 + i * 8, &height, 4);
         }
         std::vector<uint8_t> file;
@@ -188,6 +191,12 @@ TEST_CASE("MCLQ preserves depth and normalizes liquid types", "[adt][water]") {
             CHECK(liquid.depths[0] == 0);
             CHECK(liquid.depths[40] == 120);
             CHECK(liquid.depths[80] == 240);
-        } else CHECK(liquid.depths.empty());
+            CHECK(liquid.texCoords.empty());
+        } else {
+            CHECK(liquid.depths.empty());
+            REQUIRE(liquid.texCoords.size() == 81);
+            CHECK(liquid.texCoords[40] == std::array<uint16_t, 2>{120, 740});
+            CHECK(liquid.texCoords[80] == std::array<uint16_t, 2>{240, 780});
+        }
     }
 }

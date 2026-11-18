@@ -132,6 +132,8 @@ struct WMOLiquid {
     uint32_t materialColor = 0; // MOMT color2, ARGB
     std::vector<float> heights; // Height per vertex (xVerts * yVerts)
     std::vector<uint8_t> depths; // Authored liquid depth, first byte of each MLIQ vertex
+    // Magma/slime: authored texture coordinates (int16 s, t) of each MLIQ vertex
+    std::vector<std::array<int16_t, 2>> texCoords;
     std::vector<uint8_t> flags; // Flags per tile (xTiles * yTiles)
 
     [[nodiscard]] bool hasLiquid() const { return xVerts > 0 && yVerts > 0; }

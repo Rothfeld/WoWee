@@ -1907,7 +1907,23 @@ freshwater uses the animated lake texture and outdoor zone lighting shared
 with exterior WMO pools. Terrain ocean rendering remains a separate material.
 Terrain freshwater repeats its texture every four liquid cells (16.67 yards),
 including merged tile meshes; WMO pools repeat once per liquid cell.
-`build/bin/test_adt_truncation '[adt][water]'` checks MCLQ depth and liquid IDs.
+`build/bin/test_adt_truncation '[adt][water]'` checks MCLQ depth, liquid IDs
+and magma s,t.
+
+TBC magma and slime follow `psLiquidMagma.bls`/`vsLiquidMagma.bls`: opaque
+vertex colour times one animated texture (`XTextures/lava/lava.N.blp`,
+`slime/slime.N.blp`, 30 frames per 1.25 s), unlit and fogged. Texture
+coordinates are the authored vertex s,t. Fits of native 2.4.3 captures give:
+MCLQ (ADT) texture repeats every 256/3 s,t units and drifts +0.025/s along s;
+MLIQ (WMO) repeats every 256 units and drifts +0.1/s along t. Vertex colour is
+white on terrain and MOMT color2 for interior WMO groups (0x959595: Blackrock
+Mountain lava measured 0.585 of its texels). Outland terrain magma (all of it in
+Shadowmoon Valley) draws `XTextures/lavagreen`; no TBC table names that set, so
+the map selects it. Native's extra red brightness on lava is full-screen glow
+(`ffxGlow`); with it off native lava equals its texels. Gotcha: magma s,t wrap
+by multiples of 256 inside visible quads, which is seamless only at the 256/3
+repeat. Evidence and fitting scripts (`uvfit.py`, `wmofit.py`, `burst.py`):
+`_experiments/20261118T180500Z.lava_rendering/` in the workspace.
 
 Ground-detail settings preserve fractional internal percentages: native
 `groundEffectDensity=24` maps to `groundclutter=56.25` through the CVar scale

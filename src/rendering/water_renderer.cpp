@@ -48,9 +48,24 @@ struct WaterPushConstants {
     glm::vec2 screenSize;  // target size, for screen-space UVs
     glm::vec2 depthRange;  // camera near, far - the shader linearises SceneDepth with these
     float sceneValid = 0.0f; // 1 once captureSceneHistory has run; the shader used to guess this per pixel
-    float legacyWmoMode = 0.0f, textureRepeatX = 0.0f, textureRepeatY = 0.0f;
+    float legacyWmoMode = 0.0f;
+    // Water: texture repeats across the surface. Authored magma: texture offset.
+    float textureX = 0.0f, textureY = 0.0f;
 };
 static_assert(sizeof(WaterPushConstants) == 112, "the two shader declarations of this range are laid out for 112 bytes");
+
+// TBC magma and slime: psLiquidMagma.bls draws vertex colour times one
+// texture, vsLiquidMagma.bls takes the vertex's own texture coordinate plus
+// one offset for the whole draw. The authored s,t carry the coordinate; their
+// scale and the offset's drift were measured on build 8606 by fitting native
+// captures to lava.N.blp (workspace _experiments/20261118T180500Z.lava_rendering):
+// an ADT (MCLQ) texture repeats every 256/3 s,t units and drifts +0.025 per
+// second along s; a WMO (MLIQ) one repeats every 256 units and drifts +0.1 per
+// second along t. Both animate their 30 frames in 1.25 seconds.
+constexpr float kTerrainMagmaUvPerUnit = 3.0f / 256.0f;
+constexpr float kWmoMagmaUvPerUnit = 1.0f / 256.0f;
+constexpr glm::vec2 kTerrainMagmaDriftPerSecond{0.025f, 0.0f};
+constexpr glm::vec2 kWmoMagmaDriftPerSecond{0.0f, 0.1f};
 
 
 
@@ -149,8 +164,12 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
     // Immutable texture descriptors: animation selects a frame without updating
     // a descriptor that an in-flight draw may still use.
     legacyWater = game::isPreWotlk();
-    // Two authored 30-frame sequences: freshwater first, ocean second.
-    const uint32_t frameCount = legacyWater ? 60 : 1;
+    // Authored 30-frame sequences: freshwater, ocean, magma and slime in
+    // liquid basic type order, then Outland's green magma.
+    constexpr std::array<const char*, 5> kLegacySequences{
+        "XTextures/river/lake_a.", "XTextures/ocean/ocean_h.",
+        "XTextures/lava/lava.", "XTextures/slime/slime.", "XTextures/lavagreen/lavagreen."};
+    const uint32_t frameCount = legacyWater ? 30 * kLegacySequences.size() : 1;
     VkDescriptorSetLayoutBinding lakeBinding{};
     lakeBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     lakeBinding.descriptorCount = 1;
@@ -182,8 +201,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         auto& texture = liquidFrames[frame];
         if (legacyWater) {
             assert(assets);
-            const std::string prefix = frame < 30 ? "XTextures/river/lake_a." : "XTextures/ocean/ocean_h.";
-            const std::string path = prefix + std::to_string(frame % 30 + 1) + ".blp";
+            const std::string path = kLegacySequences.at(frame / 30) + std::to_string(frame % 30 + 1) + ".blp";
             const auto image = assets->loadTexture(path);
             if (!texture.uploadBLP(*vkCtx, image))
                 throw std::runtime_error("Water texture upload failed: " + path);
@@ -668,9 +686,17 @@ void WaterRenderer::updateMaterialUBO(WaterSurface& surface) {
     glm::vec4 color = getLiquidColor(surface.liquidType);
     float alpha = getLiquidAlpha(surface.liquidType);
 
-    // WMO liquid material override
-    if (surface.wmoId != 0) {
-        const uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+    const uint8_t liquidBasicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
+    if (legacyWater && liquidBasicType >= 2) {
+        // psLiquidMagma's vertex colour: white outdoors (ADT lava measured
+        // equal to its texels), the MLIQ material's MOMT color2 in an interior
+        // group (Blackrock Mountain's 0x959595 lava measured at 0.585 of its
+        // texels where the group's color2 is 149/255 = 0.584).
+        color = surface.indoorColor ? glm::vec4(glm::vec3(*surface.indoorColor), 1.0f) : glm::vec4(1.0f);
+        alpha = 1.0f;
+    } else if (surface.wmoId != 0) {
+        // WMO liquid material override
+        const uint8_t basicType = liquidBasicType;
         if (basicType == 2) {
             // Magma - bright orange-red, opaque
             color = glm::vec4(1.0f, 0.35f, 0.05f, 1.0f);
@@ -752,7 +778,7 @@ void WaterRenderer::updateMaterialUBO(WaterSurface& surface) {
 // ==============================================================
 
 void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool append,
-                                     int tileX, int tileY) {
+                                     int tileX, int tileY, bool greenMagma) {
     constexpr float TILE_SIZE = 33.33333f / 8.0f;
 
     if (!append) {
@@ -837,6 +863,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                 surface.minHeight = layer.minHeight;
                 surface.maxHeight = layer.maxHeight;
                 surface.liquidType = layer.liquidType;
+                surface.greenMagma = greenMagma;
                 // Keep mask coordinates in the MH2O chunk's native x/y order;
                 // only the world-space origin needs the terrain axis conversion.
                 surface.xOffset = layer.x;
@@ -866,6 +893,9 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                 }
 
                 surface.depths = layer.depths;
+                surface.texCoords.reserve(layer.texCoords.size());
+                for (const auto& st : layer.texCoords)
+                    surface.texCoords.push_back(glm::vec2(st[0], st[1]) * kTerrainMagmaUvPerUnit);
 
                 surface.mask = layer.mask;
                 surface.tileX = tileX;
@@ -891,6 +921,7 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
         surface.xOffset = 0;
         surface.yOffset = 0;
         surface.liquidType = key.liquidType;
+        surface.greenMagma = greenMagma;
         surface.tileX = tileX;
         surface.tileY = tileY;
 
@@ -909,6 +940,9 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
         const int gridH = MERGED_W + 1;
         surface.heights.resize(gridW * gridH, groupHeight);
         surface.depths.resize(gridW * gridH, 0);
+        // One liquid type per group: all of its layers carry s,t or none do.
+        if (!chunkLayers.front().layer->texCoords.empty())
+            surface.texCoords.resize(gridW * gridH, glm::vec2(0.0f));
 
         // Initialize mask (128×128 sub-tiles)
         // Mask uses LSB bit order: tileIndex = row * 128 + col
@@ -961,6 +995,12 @@ void WaterRenderer::loadFromTerrain(const pipeline::ADTTerrain& terrain, bool ap
                     surface.heights[mgy * gridW + mgx] = h;
                     if (!layer.depths.empty()) {
                         surface.depths[mgy * gridW + mgx] = layer.depths.at(ly * layerGridW + lx);
+                    }
+                    assert(layer.texCoords.empty() == surface.texCoords.empty());
+                    if (!layer.texCoords.empty()) {
+                        const auto& st = layer.texCoords.at(ly * layerGridW + lx);
+                        surface.texCoords[mgy * gridW + mgx] =
+                            glm::vec2(st[0], st[1]) * kTerrainMagmaUvPerUnit;
                     }
                     if (h < surface.minHeight) surface.minHeight = h;
                     if (h > surface.maxHeight) surface.maxHeight = h;
@@ -1053,6 +1093,9 @@ void WaterRenderer::loadFromWMO(const pipeline::WMOLiquid& liquid,
     const int gridWidth = static_cast<int>(surface.width) + 1;
     const int gridHeight = static_cast<int>(surface.height) + 1;
     surface.depths = liquid.depths;
+    surface.texCoords.reserve(liquid.texCoords.size());
+    for (const auto& st : liquid.texCoords)
+        surface.texCoords.push_back(glm::vec2(st[0], st[1]) * kWmoMagmaUvPerUnit);
     surface.heights.resize(static_cast<size_t>(gridWidth) * gridHeight);
     for (int y = 0; y < gridHeight; ++y) {
         for (int x = 0; x < gridWidth; ++x) {
@@ -1188,11 +1231,18 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         bool isWmoWater = (surface.wmoId != 0);
         bool canalProfile = isWmoWater || (surface.liquidType == 5);
         uint8_t basicType = (surface.liquidType == 0) ? 0 : ((surface.liquidType - 1) % 4);
-        const uint32_t textureFrame = lakeFrame + (legacyWater && !isWmoWater && basicType == 1 ? 30 : 0);
+        // Magma and slime draw their own sequences for terrain and WMO alike;
+        // WMO ocean keeps the freshwater one.
+        const bool authoredMagma = legacyWater && basicType >= 2;
+        uint32_t sequence = 0;
+        if (authoredMagma) sequence = (basicType == 2 && surface.greenMagma) ? 4 : basicType;
+        else if (legacyWater && !isWmoWater && basicType == 1) sequence = 1;
+        const uint32_t textureFrame = lakeFrame + 30 * sequence;
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                                3, 1, &liquidSets.at(textureFrame), 0, nullptr);
         // WMO water gets no wave displacement - prevents visible slosh at
         // geometry edges (bridges, docks) where water is far below the surface.
+        // Authored magma takes the legacy vertex path below, which has none.
         float waveAmp = isWmoWater ? 0.0f : (basicType == 1 ? 0.35f : 0.08f);
         float waveFreq = canalProfile ? 0.35f : (basicType == 1 ? 0.20f : 0.30f);
         float waveSpeed = canalProfile ? 1.00f : (basicType == 1 ? 1.20f : 1.40f);
@@ -1212,13 +1262,25 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
         // 1 = indoor WMO, 2 = exterior WMO, 3 = terrain depth-color ramp.
         // ADT ocean and freshwater both use authored animation and lighting.
+        // 4 = authored magma/slime: texture at the vertex s,t plus a drift.
         push.legacyWmoMode = legacyWater && basicType < 2
             ? (isWmoWater ? (surface.indoorColor ? 1.0f : 2.0f) : 3.0f) : 0.0f;
-        // ADT freshwater repeats once per four terrain cells (two repeats
-        // per 8-cell chunk); WMO liquid textures repeat once per liquid cell.
-        const float textureRepeatsPerCell = isWmoWater ? 1.0f : 0.25f;
-        push.textureRepeatX = surface.width * textureRepeatsPerCell;
-        push.textureRepeatY = surface.height * textureRepeatsPerCell;
+        if (authoredMagma) {
+            assert(!surface.texCoords.empty());
+            push.legacyWmoMode = 4.0f;
+            const glm::vec2 drift = isWmoWater ? kWmoMagmaDriftPerSecond : kTerrainMagmaDriftPerSecond;
+            // The fraction alone: a whole repeat looks the same, and a long
+            // session's time would otherwise eat the offset's precision.
+            const glm::vec2 offset = glm::fract(drift * std::max(0.0f, time));
+            push.textureX = offset.x;
+            push.textureY = offset.y;
+        } else {
+            // ADT freshwater repeats once per four terrain cells (two repeats
+            // per 8-cell chunk); WMO liquid textures repeat once per liquid cell.
+            const float textureRepeatsPerCell = isWmoWater ? 1.0f : 0.25f;
+            push.textureX = surface.width * textureRepeatsPerCell;
+            push.textureY = surface.height * textureRepeatsPerCell;
+        }
 
         vkCmdPushConstants(cmd, pipelineLayout,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1411,8 +1473,13 @@ void WaterRenderer::createWaterMesh(WaterSurface& surface) {
             vertices.push_back(0.0f);
             vertices.push_back(1.0f);
             // texcoord (2 floats)
-            vertices.push_back(static_cast<float>(x) / std::max(1, gridWidth - 1));
-            vertices.push_back(static_cast<float>(y) / std::max(1, gridHeight - 1));
+            if (!surface.texCoords.empty()) {
+                vertices.push_back(surface.texCoords.at(index).x);
+                vertices.push_back(surface.texCoords.at(index).y);
+            } else {
+                vertices.push_back(static_cast<float>(x) / std::max(1, gridWidth - 1));
+                vertices.push_back(static_cast<float>(y) / std::max(1, gridHeight - 1));
+            }
         }
     }
 

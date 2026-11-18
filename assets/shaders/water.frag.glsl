@@ -30,7 +30,8 @@ layout(push_constant) uniform Push {
     vec2 screenSize;  // size of the target being drawn into
     vec2 depthRange;  // the camera's own near and far, for linearising SceneDepth
     float sceneValid; // 1 once the refraction capture holds a frame, 0 before it
-    float legacyWmoMode, textureRepeatX, textureRepeatY;
+    float legacyWmoMode;
+    float textureX, textureY; // water: texture repeats across the surface; authored magma: texture offset
 } push;
 
 layout(set = 1, binding = 0) uniform WaterMaterial {
@@ -286,11 +287,18 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 void main() {
     float time = fogParams.z;
     float basicType = push.liquidBasicType;
+    if (push.legacyWmoMode > 3.5) {
+        // TBC psLiquidMagma: vertex colour times the animated texture, opaque,
+        // unlit, fogged. The vertex colour is waterColor (see updateMaterialUBO).
+        vec3 color = waterColor.rgb * texture(LakeTexture, TexCoord + vec2(push.textureX, push.textureY)).rgb;
+        outColor = vec4(applyFog(color, FragPos, length(viewPos.xyz - FragPos)), 1.0);
+        return;
+    }
     if (push.legacyWmoMode > 0.5) {
         // TBC psLiquidWater: indoor depth lookup is white RGB, with alpha
         // interpolated between LightParams river shallow/deep values. The
         // animated texture alpha supplies the quarter-strength highlight.
-        vec4 texel = texture(LakeTexture, TexCoord * vec2(push.textureRepeatX, push.textureRepeatY));
+        vec4 texel = texture(LakeTexture, TexCoord * vec2(push.textureX, push.textureY));
         vec3 color = waterColor.rgb + texel.rgb + 0.25 * texel.a;
         if (push.legacyWmoMode > 1.5) {
             // Exterior WMO liquid uses the zone's deep river color, flat

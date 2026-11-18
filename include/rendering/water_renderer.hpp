@@ -47,6 +47,10 @@ struct WaterSurface {
 
     std::vector<float> heights;
     std::vector<uint8_t> depths;
+    // Magma/slime: texture coordinate of each grid vertex, from the authored
+    // s,t. Empty for water, whose coordinates follow the grid.
+    std::vector<glm::vec2> texCoords;
+    bool greenMagma = false;  // magma drawn with the lavagreen sequence
     std::vector<uint8_t> mask;
 
     // Vulkan render data
@@ -103,8 +107,10 @@ public:
     bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout, pipeline::AssetManager* assets);
     void shutdown();
 
+    /// greenMagma: the tile's magma draws XTextures/lavagreen (Outland's
+    /// terrain lava natively) rather than XTextures/lava.
     void loadFromTerrain(const pipeline::ADTTerrain& terrain, bool append = false,
-                         int tileX = -1, int tileY = -1);
+                         int tileX = -1, int tileY = -1, bool greenMagma = false);
 
     void loadFromWMO(const pipeline::WMOLiquid& liquid, const glm::mat4& modelMatrix, uint32_t wmoId);
     void removeWMO(uint32_t wmoId);

@@ -37,7 +37,8 @@ layout(push_constant) uniform Push {
     vec2 screenSize;
     vec2 depthRange;
     float sceneValid;
-    float legacyWmoMode, textureRepeatX, textureRepeatY;
+    float legacyWmoMode;
+    float textureX, textureY; // water: texture repeats across the surface; authored magma: texture offset
 } push;
 
 layout(location = 0) in vec3 aPos;

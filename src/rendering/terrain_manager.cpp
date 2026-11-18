@@ -1009,7 +1009,11 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
         // Load water after all terrain chunks are uploaded
         if (waterRenderer) {
             size_t beforeSurfaces = waterRenderer->getSurfaceCount();
-            waterRenderer->loadFromTerrain(pending->terrain, true, x, y);
+            // Native draws Outland's terrain magma green; no TBC table names
+            // it (LiquidType.dbc and AreaTable.dbc carry no textures), so the
+            // map does. Shadowmoon Valley holds all of Outland's ADT magma.
+            waterRenderer->loadFromTerrain(pending->terrain, true, x, y,
+                                           mapName == "Expansion01");
             size_t afterSurfaces = waterRenderer->getSurfaceCount();
             if (afterSurfaces > beforeSurfaces) {
                 LOG_INFO("Water: tile [", x, ",", y, "] added ", afterSurfaces - beforeSurfaces,

@@ -155,6 +155,9 @@ struct ADTTerrain {
         uint8_t height;           // Height in vertices (1-9)
         std::vector<float> heights;  // Height values (width * height)
         std::vector<uint8_t> depths; // Authored opacity/depth at each grid vertex
+        // MCLQ magma/slime: authored texture coordinates (uint16 s, t) at each
+        // grid vertex, s then t. Empty for water and ocean.
+        std::vector<std::array<uint16_t, 2>> texCoords;
         std::vector<uint8_t> mask;   // Render mask (which tiles to render)
     };
 

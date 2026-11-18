@@ -691,10 +691,19 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                     liquid.liquidType = static_cast<uint16_t>(resolveWmoLiquidType(
                         model.flags, group.flags, group.liquidType, liquid.flags));
                     liquid.depths.clear();
+                    liquid.texCoords.clear();
                     if (wmoLiquidHasDepth(liquid.liquidType)) {
                         liquid.depths.resize(vertexCount);
                         for (size_t i = 0; i < vertexCount; ++i)
                             liquid.depths[i] = groupData[vertexOffset + i * VERTEX_STRIDE];
+                    } else if (liquid.liquidType != 0) {
+                        liquid.texCoords.resize(vertexCount);
+                        for (size_t i = 0; i < vertexCount; ++i) {
+                            uint32_t st = vertexOffset + static_cast<uint32_t>(i * VERTEX_STRIDE);
+                            const auto s = read<int16_t>(groupData, st);
+                            const auto t = read<int16_t>(groupData, st);
+                            liquid.texCoords[i] = {s, t};
+                        }
                     }
                     liquid.indoor = wmoUsesLocalLighting(group.flags);
                     if (liquid.indoor) {
