@@ -317,3 +317,67 @@ TEST_CASE("A monster chat line cannot skip past the end of its own packet", "[ch
         REQUIRE_FALSE(MessageChatParser::parse(packet, parsed));
     }
 }
+
+#include "game/game_object_lock.hpp"
+
+// A key opens its lock with its own opening spell. Tainted Core 31088
+// (item_template): slot 0 Throw Key 38134 (CREATE_ITEM), slot 1 Opening 3366
+// (OPEN_LOCK_ITEM), slot 2 Paralyze 38132 (not on use). Original 2.4.3 uses
+// the core at Shield Generator 185051 and the core is gone (pair 17).
+TEST_CASE("a key is used through the item spell that opens locks", "[use_item][go-lock]") {
+    std::array<ItemQueryResponseData::ItemSpell, 5> core{};
+    core[0].spellId = 38134; core[0].spellTrigger = 0;
+    core[1].spellId = 3366;  core[1].spellTrigger = 0;
+    core[2].spellId = 38132; core[2].spellTrigger = 1;
+    const auto effects = [](uint32_t spellId) {
+        switch (spellId) {
+            case 38134: return std::array<uint32_t, 3>{24, 0, 0};
+            case 3366:  return std::array<uint32_t, 3>{59, 0, 0};
+            case 38132: return std::array<uint32_t, 3>{6, 0, 0};
+            default:    return std::array<uint32_t, 3>{};
+        }
+    };
+    REQUIRE(keyOpeningSpellIndex(core, effects) == std::optional<uint8_t>{1});
+
+    std::array<ItemQueryResponseData::ItemSpell, 5> crescentKey{};
+    crescentKey[0].spellId = 3366;
+    CHECK(keyOpeningSpellIndex(crescentKey, effects) == std::optional<uint8_t>{0});
+
+    std::array<ItemQueryResponseData::ItemSpell, 5> throwOnly{};
+    throwOnly[0].spellId = 38134;
+    CHECK_FALSE(keyOpeningSpellIndex(throwOnly, effects).has_value());
+
+    SECTION("TBC CMSG_USE_ITEM names the slot the server casts") {
+        TbcPacketParsers parsers;
+        constexpr uint64_t kCore = 0x4000000000001234ull, kGenerator = 0xF11002D2DB539E5Aull;
+        auto packet = parsers.buildUseItem(0xFF, 23, kCore, 3366, 0, 0, kGenerator, 1);
+        const Bytes& bytes = packet.getData();
+        // bag(1) slot(1) spellIndex(1) castCount(1) itemGuid(8) targetMask(4)
+        REQUIRE(bytes.size() > 16);
+        CHECK(bytes[2] == 1);
+        const uint32_t mask = bytes[12] | (bytes[13] << 8) | (bytes[14] << 16) | (bytes[15] << 24);
+        CHECK(mask == 0x0800);
+    }
+}
+
+TEST_CASE("the keys a lock names depend on GO_FLAG_LOCKED", "[go-lock]") {
+    // Lock 1718 (Shield Generator): slot 0 key Tainted Core, Action 0.
+    LockRecord generator;
+    generator.type[0] = kLockKeyItem; generator.index[0] = 31088;
+    CHECK(lockKeyItems(generator, false) == std::vector<uint32_t>{31088});
+    CHECK(lockKeyItems(generator, true).empty());
+
+    // Lock 1562 (Dire Maul's Door 177198): Crescent Key with Action 1,
+    // Lockpicking 300, Quick Open, Quick Close, Blasting.
+    LockRecord direMaul;
+    direMaul.type = {kLockKeyItem, kLockKeySkill, kLockKeySkill, kLockKeySkill, kLockKeySkill, 0, 0, 0};
+    direMaul.index = {18249, 1, 10, 11, 16, 0, 0, 0};
+    direMaul.action = {1, 1, 0, 2, 1, 0, 0, 0};
+    CHECK(lockKeyItems(direMaul, true) == std::vector<uint32_t>{18249});
+    CHECK(lockKeyItems(direMaul, false) == std::vector<uint32_t>{18249});
+
+    // Lock 86 (Lady Vashj Bridge Console, Heavy Door 17153): Quick Open only.
+    LockRecord quickOpen;
+    quickOpen.type[1] = kLockKeySkill; quickOpen.index[1] = 10;
+    CHECK(lockKeyItems(quickOpen, false).empty());
+}

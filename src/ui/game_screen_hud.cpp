@@ -1802,24 +1802,27 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 ? "GameTooltip:SetOwner(WorldFrame, 'ANCHOR_CURSOR'); "
                 : "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); ";
             script += "GameTooltip:SetText(" + literal + "); ";
-            // A GO_FLAG_LOCKED object's tooltip: LOCKED in red, then
-            // LOCKED_WITH_ITEM for each key its Action 1 methods name.
-            // Original 2.4.3 (pair 0): Dire Maul's Door 177198 "Door /
-            // Locked / Requires Crescent Key"; Iron Clad Door 16397 (Lock 202,
-            // no key) "Iron Clad Door / Locked"; the unflagged Heavy Door
-            // 17153 its name only.
+            // A locked object's tooltip: LOCKED in red when GO_FLAG_LOCKED,
+            // then LOCKED_WITH_ITEM in white for each key that opens it
+            // (lockKeyItems: Action 1 keys only when flagged). Original 2.4.3:
+            // Dire Maul's Door 177198 "Door / Locked / Requires Crescent Key";
+            // Iron Clad Door 16397 (Lock 202, no key) "Iron Clad Door /
+            // Locked"; the unflagged Heavy Door 17153 its name only (pair 0);
+            // the unflagged Shield Generator 185051 "Shield Generator /
+            // Requires Tainted Core", with or without the core (pair 17).
             constexpr uint32_t kGoFlagLocked = 0x2;
             const uint32_t lockId = game::gameObjectLockId(info);
-            if (lockId != 0 &&
-                (object->getField(game::fieldIndex(game::UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked)) {
-                script += "GameTooltip:AddLine(LOCKED, RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b); ";
+            if (lockId != 0) {
+                const bool flaggedLocked =
+                    (object->getField(game::fieldIndex(game::UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
+                if (flaggedLocked)
+                    script += "GameTooltip:AddLine(LOCKED, RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b); ";
                 const auto locks = services_.assetManager->loadDBC("Lock.dbc");
                 assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
                 const int32_t row = locks->findRecordById(lockId);
                 assert(row >= 0);
-                for (uint32_t slot = 0; slot < 8; ++slot) {
-                    if (locks->getUInt32(row, 1 + slot) != 1 || locks->getUInt32(row, 25 + slot) != 1) continue;
-                    const uint32_t item = locks->getUInt32(row, 9 + slot);
+                for (const uint32_t item : game::lockKeyItems(
+                         game::readLockRecord(*locks, static_cast<uint32_t>(row)), flaggedLocked)) {
                     if (!gameHandler.getItemInfo(item)) {
                         gameHandler.ensureItemInfo(item);
                         keyNamePending = true;

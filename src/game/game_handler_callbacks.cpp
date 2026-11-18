@@ -88,9 +88,7 @@ constexpr uint32_t kGoTypeFishingHole = 25;
 
 // How the local player should open a game object, decided from its Lock.dbc row.
 enum class LockOpenMethod {
-    UseDirect,  // CMSG_GAMEOBJ_USE. Opens unlocked/quest containers and, crucially,
-                // key-item chests: the server credits the key (from a bag) and opens
-                // it. keyItemId names the key so the caller can ensure it's in a bag.
+    UseDirect,  // No known opening spell: a key lock (lockKeyItems) or CMSG_GAMEOBJ_USE.
     CastSpell,  // cast a KNOWN player OPEN_LOCK spell at the GO (rogue Pick Lock).
                 // Generic Opening spells the player does not know are rejected by
                 // the server (BAD_TARGETS), so we never fabricate a cast.
@@ -99,12 +97,11 @@ enum class LockOpenMethod {
 struct LockOpenPlan {
     LockOpenMethod method = LockOpenMethod::UseDirect;
     uint32_t spellId = 0;
-    uint32_t keyItemId = 0;  // required key item (LOCK_KEY_ITEM), 0 if none
 };
 
 // Decide how to open a game object from its Lock.dbc row. Only a known player
 // OPEN_LOCK spell yields CastSpell; every other case (including key-item locks)
-// is UseDirect, with keyItemId set so the caller can move the key into a bag.
+// is UseDirect.
 LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
                                 const GameObjectQueryResponseData* info,
                                 const std::unordered_set<uint32_t>& knownSpells,
@@ -170,8 +167,6 @@ LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
 
         for (uint32_t slot = 0; slot < 8; ++slot) {
             // Lock.dbc: Type[8] at cols 1-8, Index[8] at cols 9-16.
-            constexpr uint32_t kLockKeyItem = 1;   // requires a key item
-            constexpr uint32_t kLockKeySkill = 2;  // requires a skill (LockType id)
             const uint32_t keyType = lockDbc->getUInt32(row, 1 + slot);
             const uint32_t keyIndex = lockDbc->getUInt32(row, 9 + slot);
             if (keyIndex == 0) continue;
@@ -189,10 +184,6 @@ LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
             const uint32_t lockSkill = lockDbc->getUInt32(row, 17 + slot);
             const int32_t requiredPoints = static_cast<int32_t>(lockSkill ? lockSkill : 5 * goLevel);
 
-            if (keyType == kLockKeyItem) {
-                plan.keyItemId = keyIndex; // remember the key so we can locate it
-                continue;
-            }
             if (keyType != kLockKeySkill) continue;
 
             // A known player spell whose OPEN_LOCK effect matches this LockType
@@ -3546,68 +3537,107 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                      " entry=", goEntry, " name='", goName, "'");
             return;
         }
-        // Key-item lock: a warrior knows no open-lock spell. Open it by USING the
-        // key item on the chest (CMSG_USE_ITEM targeting the GO) - the server casts
-        // the key's on-use OPEN_LOCK spell because the player holds the key. A plain
-        // USE does not open a locked type-3 chest, and casting the item's spell via
-        // CMSG_CAST_SPELL is rejected (the player doesn't "know" it).
-        if (plan.keyItemId != 0) {
-            const ItemQueryResponseData* keyInfo = getItemInfo(plan.keyItemId);
-            uint32_t keyUseSpell = 0;
-            if (keyInfo) {
-                for (const auto& sp : keyInfo->spells)
-                    if (sp.spellTrigger == 0 && sp.spellId != 0 && keyUseSpell == 0)
-                        keyUseSpell = sp.spellId;
-            } else {
-                ensureItemInfo(plan.keyItemId); // not cached yet - request for next click
-            }
-
-            // Locate the key: wire (bag, slot) + item GUID. Keyring wire slots
+        // A key lock: the key held opens it, by using the key's own opening
+        // spell at the object (CMSG_USE_ITEM naming that spell's slot); CMaNGOS
+        // opens a key lock only for a spell cast from the key, and accepts a
+        // bare CMSG_GAMEOBJ_USE without looking at the lock at all. Original
+        // 2.4.3 (pair 17, Shield Generator 185051, key Tainted Core 31088):
+        // without the key the click sends nothing and says "Requires Tainted
+        // Core"; with it the generator stops and the core is used up.
+        const auto lockDbc = services_.assetManager->loadDBC("Lock.dbc");
+        assert(lockDbc && lockDbc->isLoaded() && lockDbc->getFieldCount() >= 33);
+        const int32_t lockRow = lockDbc->findRecordById(gameObjectLockId(goInfo));
+        assert(lockRow >= 0 && "game object lock absent from Lock.dbc");
+        const auto keys = lockKeyItems(readLockRecord(*lockDbc, static_cast<uint32_t>(lockRow)),
+                                       flaggedLocked);
+        if (!keys.empty()) {
+            // Locate a key: wire (bag, slot) + item GUID. Keyring wire slots
             // start at 86; backpack at 23 in bag 0xFF; equipped bags are 19..22.
             const Inventory& inv = getInventory();
-            uint8_t keyBag = 0xFF, keySlot = 0; uint64_t keyGuid = 0; bool keyFound = false;
-            for (int i = 0; i < inv.getBackpackSize() && !keyFound; ++i)
-                if (inv.getBackpackSlot(i).item.itemId == plan.keyItemId) {
-                    keyBag = 0xFF; keySlot = static_cast<uint8_t>(game::slots::backpackWireSlot(i));
-                    keyGuid = inv.getBackpackSlot(i).item.guid; keyFound = true;
-                }
-            for (int b = 0; b < Inventory::NUM_BAG_SLOTS && !keyFound; ++b)
-                for (int s = 0; s < inv.getBagSize(b) && !keyFound; ++s)
-                    if (inv.getBagSlot(b, s).item.itemId == plan.keyItemId) {
-                        keyBag = static_cast<uint8_t>(game::slots::wornBagContainer(b)); keySlot = static_cast<uint8_t>(s);
-                        keyGuid = inv.getBagSlot(b, s).item.guid; keyFound = true;
+            uint32_t keyItem = 0;
+            uint8_t keyBag = 0xFF, keySlot = 0; uint64_t keyGuid = 0;
+            for (const uint32_t key : keys) {
+                for (int i = 0; i < inv.getBackpackSize() && !keyItem; ++i)
+                    if (inv.getBackpackSlot(i).item.itemId == key) {
+                        keyBag = 0xFF; keySlot = static_cast<uint8_t>(game::slots::backpackWireSlot(i));
+                        keyGuid = inv.getBackpackSlot(i).item.guid; keyItem = key;
                     }
-            for (int i = 0; i < inv.getKeyringSize() && !keyFound; ++i)
-                if (inv.getKeyringSlot(i).item.itemId == plan.keyItemId) {
-                    keyBag = 0xFF; keySlot = static_cast<uint8_t>(game::slots::keyringWireSlot(i));
-                    keyGuid = inv.getKeyringSlot(i).item.guid; keyFound = true;
+                for (int b = 0; b < Inventory::NUM_BAG_SLOTS && !keyItem; ++b)
+                    for (int s = 0; s < inv.getBagSize(b) && !keyItem; ++s)
+                        if (inv.getBagSlot(b, s).item.itemId == key) {
+                            keyBag = static_cast<uint8_t>(game::slots::wornBagContainer(b)); keySlot = static_cast<uint8_t>(s);
+                            keyGuid = inv.getBagSlot(b, s).item.guid; keyItem = key;
+                        }
+                for (int i = 0; i < inv.getKeyringSize() && !keyItem; ++i)
+                    if (inv.getKeyringSlot(i).item.itemId == key) {
+                        keyBag = 0xFF; keySlot = static_cast<uint8_t>(game::slots::keyringWireSlot(i));
+                        keyGuid = inv.getKeyringSlot(i).item.guid; keyItem = key;
+                    }
+                if (keyItem) break;
+            }
+            if (!keyItem) {
+                // A locked door the player has no key for: the original
+                // sends nothing and shows GlobalStrings ERR_DOOR_LOCKED
+                // (Dire Maul's Door 177198); anything else names the key.
+                if (flaggedLocked && goType == 0) {
+                    errorGlobal("ERR_DOOR_LOCKED");
+                } else if (const ItemQueryResponseData* keyInfo = getItemInfo(keys.front())) {
+                    errorGlobal("ERR_USE_LOCKED_WITH_ITEM_S", {keyInfo->name});
+                } else {
+                    ensureItemInfo(keys.front());
+                    LOG_WARNING("GO key lock refused before key ", keys.front(),
+                                " name arrived; no error text shown");
                 }
-
-            if (keyFound && keyUseSpell != 0) {
-                auto usePacket = getPacketParsers()->buildUseItem(keyBag, keySlot, keyGuid,
-                                                                  keyUseSpell, 0, 0, guid);
-                socket->send(usePacket);
-                lastInteractedGoGuid_ = guid;
-                sendReportUse();
-                LOG_INFO("GO key-item use: keyItem=", plan.keyItemId,
-                         " spell=", keyUseSpell, " keySlot(bag=", (int)keyBag,
-                         " slot=", (int)keySlot, ") guid=0x", std::hex, guid, std::dec,
-                         " entry=", goEntry, " name='", goName, "'");
+                LOG_INFO("GO key lock refused, no key: lockId=", gameObjectLockId(goInfo),
+                         " key=", keys.front(), " flaggedLocked=", flaggedLocked,
+                         " guid=0x", std::hex, guid, std::dec, " entry=", goEntry);
                 return;
             }
+            const ItemQueryResponseData* keyInfo = getItemInfo(keyItem);
+            if (!keyInfo) {
+                ensureItemInfo(keyItem);
+                LOG_WARNING("GO key ", keyItem, " held but its spells not cached yet; click again");
+                return;
+            }
+            auto spellDbc = services_.assetManager->loadDBC("Spell.dbc");
+            const auto* spellL = pipeline::getActiveDBCLayout()
+                ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+            assert(spellDbc && spellDbc->isLoaded() && spellL);
+            const uint32_t effect0 = spellL->field("Effect0");
+            const auto index = keyOpeningSpellIndex(keyInfo->spells, [&](uint32_t spellId) {
+                std::array<uint32_t, 3> effects{};
+                const int32_t row = spellDbc->findRecordById(spellId);
+                if (row >= 0)
+                    for (uint32_t e = 0; e < 3; ++e)
+                        effects[e] = spellDbc->getUInt32(static_cast<uint32_t>(row), effect0 + e);
+                return effects;
+            });
+            if (!index) {
+                LOG_ERROR("GO key ", keyItem, " has no on-use opening spell; lockId=",
+                          gameObjectLockId(goInfo), " entry=", goEntry);
+                return;
+            }
+            auto usePacket = getPacketParsers()->buildUseItem(
+                keyBag, keySlot, keyGuid, keyInfo->spells[*index].spellId, 0, 0, guid, *index);
+            socket->send(usePacket);
+            lastInteractedGoGuid_ = guid;
+            sendReportUse();
+            LOG_INFO("GO key-item use: keyItem=", keyItem,
+                     " spell=", keyInfo->spells[*index].spellId, " index=", int(*index),
+                     " keySlot(bag=", (int)keyBag, " slot=", (int)keySlot, ") guid=0x",
+                     std::hex, guid, std::dec, " entry=", goEntry, " name='", goName, "'");
+            return;
         }
         // A locked door the player has no key or opening for: the original
         // sends nothing and shows GlobalStrings ERR_DOOR_LOCKED.
         if (flaggedLocked && goType == 0) {
             errorGlobal("ERR_DOOR_LOCKED");
             LOG_INFO("GO locked door refused: lockId=", gameObjectLockId(goInfo),
-                     " keyItem=", plan.keyItemId, " guid=0x", std::hex, guid, std::dec,
-                     " entry=", goEntry);
+                     " guid=0x", std::hex, guid, std::dec, " entry=", goEntry);
             return;
         }
         // LockOpenMethod::UseDirect - fall through to CMSG_GAMEOBJ_USE.
         LOG_INFO("GO opens via direct USE: lockId=", gameObjectLockId(goInfo),
-                 " keyItem=", plan.keyItemId,
                  " guid=0x", std::hex, guid, std::dec,
                  " entry=", goEntry, " name='", goName, "'");
     }

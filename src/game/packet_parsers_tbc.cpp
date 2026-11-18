@@ -645,11 +645,11 @@ network::Packet TbcPacketParsers::buildCastGameObjectSpell(uint32_t spellId, uin
 network::Packet TbcPacketParsers::buildUseItem(uint8_t bagIndex, uint8_t slotIndex,
                                                uint64_t itemGuid, uint32_t /*spellId*/,
                                                uint64_t targetGuid, uint64_t itemTargetGuid,
-                                               uint64_t gameObjectGuid) {
+                                               uint64_t gameObjectGuid, uint8_t spellIndex) {
     network::Packet packet(wireOpcode(LogicalOpcode::CMSG_USE_ITEM));
     packet.writeUInt8(bagIndex);
     packet.writeUInt8(slotIndex);
-    packet.writeUInt8(0);          // item spell index
+    packet.writeUInt8(spellIndex); // item spell slot the server casts
     packet.writeUInt8(0);          // cast count
     packet.writeUInt64(itemGuid);  // full 8-byte GUID
     UseItemPacket::writeTargets(packet, targetGuid, itemTargetGuid, gameObjectGuid);
