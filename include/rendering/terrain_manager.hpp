@@ -248,9 +248,17 @@ public:
 
     /**
      * Precache a set of tiles (for taxi routes, etc.)
-     * @param tiles Vector of (x, y) tile coordinates to preload
+     * @param tiles Vector of (x, y) tile coordinates to preload, highest
+     *              priority first; workers take them in this order.
      */
     void precacheTiles(const std::vector<std::pair<int, int>>& tiles);
+
+    /**
+     * Re-centre streaming on a render-space position the player was moved
+     * to (teleport, summon, reconnect): queues the load radius around it
+     * nearest tile first and queues tiles beyond the unload radius for unload.
+     */
+    void streamFrom(float renderX, float renderY);
 
     /**
      * Set streaming parameters

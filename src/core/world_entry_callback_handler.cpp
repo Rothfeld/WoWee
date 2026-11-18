@@ -12,6 +12,7 @@
 #include "game/game_handler.hpp"
 #include "pipeline/asset_manager.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <sstream>
@@ -126,17 +127,23 @@ void WorldEntryCallbackHandler::forceServerTeleportCommand(const glm::vec3& rend
     gameHandler_.sendChatMessage(game::ChatType::SAY, cmd.str(), "");
 }
 
-// Precache tiles in a radius around a position (eliminates repeated tile-loop code)
+// Precache tiles in a square around a position, nearest tile first.
 static void precacheNearbyTiles(rendering::TerrainManager* terrainMgr,
                                 const glm::vec3& renderPos, int radius) {
     if (!terrainMgr) return;
     auto [tileX, tileY] = core::coords::worldToTile(renderPos.x, renderPos.y);
     int side = 2 * radius + 1;
-    std::vector<std::pair<int,int>> tiles;
-    tiles.reserve(static_cast<size_t>(side) * static_cast<size_t>(side));
+    std::vector<std::pair<int,int>> offsets;
+    offsets.reserve(static_cast<size_t>(side) * static_cast<size_t>(side));
     for (int dy = -radius; dy <= radius; dy++)
         for (int dx = -radius; dx <= radius; dx++)
-            tiles.emplace_back(tileX + dx, tileY + dy);
+            offsets.emplace_back(dx, dy);
+    std::stable_sort(offsets.begin(), offsets.end(), [](const auto& a, const auto& b) {
+        return a.first * a.first + a.second * a.second < b.first * b.first + b.second * b.second;
+    });
+    std::vector<std::pair<int,int>> tiles;
+    tiles.reserve(offsets.size());
+    for (const auto& [dx, dy] : offsets) tiles.emplace_back(tileX + dx, tileY + dy);
     terrainMgr->precacheTiles(tiles);
 }
 
@@ -184,7 +191,7 @@ void WorldEntryCallbackHandler::setupCallbacks() {
             taxiLandingClampTimer_ = 0.0f;
             lastTaxiFlight_ = false;
             renderer_.getTerrainManager()->processReadyTiles();
-            precacheNearbyTiles(renderer_.getTerrainManager(), renderPos, 8);
+            renderer_.getTerrainManager()->streamFrom(renderPos.x, renderPos.y);
             return;
         }
 
@@ -243,12 +250,14 @@ void WorldEntryCallbackHandler::setupCallbacks() {
             // rest finalize over subsequent frames via the terrain update loop.
             renderer_.getTerrainManager()->processReadyTiles();
 
-            // Queue all remaining tiles within the load radius (8 tiles = 17x17)
-            // at the new position. precacheTiles skips already-loaded/pending tiles,
-            // so this only enqueues tiles that aren't yet in the pipeline.
-            // This ensures background workers immediately start loading everything
-            // visible from the new position (hearthstone may land far from old location).
-            precacheNearbyTiles(renderer_.getTerrainManager(), renderPos, 8);
+            // Re-centre streaming on the destination now, nearest tile first.
+            // This used to precache a 17x17 square pushed to the front of the
+            // queue in row order, which left the far corner first and the
+            // player's own tile in the middle: after GM Island -> Gadgetzan
+            // the tile under the player finalized 12 s after the teleport,
+            // behind 65 tiles beyond the unload radius that were loaded only
+            // to be unloaded again.
+            renderer_.getTerrainManager()->streamFrom(renderPos.x, renderPos.y);
             return;
         }
 

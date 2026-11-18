@@ -2468,10 +2468,21 @@ void TerrainManager::streamTiles() {
     }
 }
 
+void TerrainManager::streamFrom(float renderX, float renderY) {
+    currentTile = worldToTile(renderX, renderY);
+    lastStreamTile = currentTile;
+    LOG_INFO("Streaming re-centred on tile [", currentTile.x, ",", currentTile.y,
+             "] loaded=", loadedTiles.size());
+    streamTiles();
+}
+
 void TerrainManager::precacheTiles(const std::vector<std::pair<int, int>>& tiles) {
     std::lock_guard<std::mutex> lock(queueMutex);
 
-    for (const auto& [x, y] : tiles) {
+    // Pushed to the front back to front, so the caller's first tile is the
+    // next one a worker takes.
+    for (auto it = tiles.rbegin(); it != tiles.rend(); ++it) {
+        const auto [x, y] = *it;
         if (x < 0 || x > 63 || y < 0 || y > 63) continue;
 
         TileCoord coord = {.x = x, .y = y};
