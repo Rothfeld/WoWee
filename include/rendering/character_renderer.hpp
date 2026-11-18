@@ -152,7 +152,13 @@ public:
     /// multiplies the shaded model by a colour, CharProc 14 sets its opacity.
     /// Kept apart from display alpha, stealth and spawn fades, which write
     /// setInstanceOpacity. Carried to the unit's weapons and their effects.
+    /// The colour changes at once; the opacity moves from the drawn value to
+    /// the new one over kKitOpacityTransition seconds, eased in as the cube
+    /// of elapsed/duration, both ways (original 2.4.3: Transparency 25%/75%,
+    /// Steal Magic, Banish, Stealth, whatever the kit's CharParamOne-Three;
+    /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
     void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity);
+    static constexpr float kKitOpacityTransition = 1.0f;
     void setHoveredInstance(uint32_t instanceId);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
     [[nodiscard]] const pipeline::M2Model* getInstanceModelData(uint32_t instanceId) const;
@@ -402,7 +408,12 @@ private:
         float opacity = 1.0f;
         float cameraOpacity = 1.0f;
         glm::vec3 kitColor{1.0f};
+        // Drawn kit opacity, moving from kitOpacityFrom to kitOpacityTarget
+        // over kKitOpacityTransition seconds (see setInstanceKitAppearance).
         float kitOpacity = 1.0f;
+        float kitOpacityFrom = 1.0f;
+        float kitOpacityTarget = 1.0f;
+        float kitOpacityTime = 0.0f;
         float fadeInTime = 0.0f;     // elapsed fade time (seconds)
         float fadeInDuration = 0.0f; // total fade duration (0 = no fade)
         // Fade-out ahead of removal (fadeOutAndRemove); 0 = not fading out.

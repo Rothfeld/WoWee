@@ -2270,6 +2270,23 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             if (inst.fadeOutTime >= inst.fadeOutDuration) fadedOut_.push_back(pair.first);
         }
 
+        // Kit opacity transition, carried to the unit's weapons and their effects.
+        if (inst.kitOpacity != inst.kitOpacityTarget) {
+            inst.kitOpacityTime += deltaTime;
+            const float progress = std::min(1.0f, inst.kitOpacityTime / kKitOpacityTransition);
+            inst.kitOpacity = progress >= 1.0f ? inst.kitOpacityTarget
+                : inst.kitOpacityFrom + (inst.kitOpacityTarget - inst.kitOpacityFrom) * progress * progress * progress;
+            // Attachments follow the drawn value; their own target matches it so
+            // their entries in this loop do not start a transition.
+            for (const auto& attachment : inst.weaponAttachments) {
+                if (auto w = instances.find(attachment.weaponInstanceId); w != instances.end())
+                    w->second.kitOpacity = w->second.kitOpacityTarget = inst.kitOpacity;
+                for (const auto& effect : attachment.effects)
+                    if (auto e = instances.find(effect.effectInstanceId); e != instances.end())
+                        e->second.kitOpacity = e->second.kitOpacityTarget = inst.kitOpacity;
+            }
+        }
+
         // Update fade-in opacity
         if (inst.fadeInDuration > 0.0f && inst.opacity < 1.0f) {
             inst.fadeInTime += deltaTime;
@@ -4270,16 +4287,15 @@ void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm:
     assert(opacity >= 0.0f && opacity <= 1.0f);
     auto& instance = instances.at(instanceId);
     instance.kitColor = color;
-    instance.kitOpacity = opacity;
+    if (opacity != instance.kitOpacityTarget) {
+        instance.kitOpacityFrom = instance.kitOpacity;
+        instance.kitOpacityTarget = opacity;
+        instance.kitOpacityTime = 0.0f;
+    }
     for (const auto& attachment : instance.weaponAttachments) {
-        auto& weapon = instances.at(attachment.weaponInstanceId);
-        weapon.kitColor = color;
-        weapon.kitOpacity = opacity;
-        for (const auto& effect : attachment.effects) {
-            auto& glow = instances.at(effect.effectInstanceId);
-            glow.kitColor = color;
-            glow.kitOpacity = opacity;
-        }
+        instances.at(attachment.weaponInstanceId).kitColor = color;
+        for (const auto& effect : attachment.effects)
+            instances.at(effect.effectInstanceId).kitColor = color;
     }
 }
 
@@ -4699,7 +4715,7 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
         weapIt->second.opacity = charInstance.opacity;
         weapIt->second.cameraOpacity = charInstance.cameraOpacity;
         weapIt->second.kitColor = charInstance.kitColor;
-        weapIt->second.kitOpacity = charInstance.kitOpacity;
+        weapIt->second.kitOpacity = weapIt->second.kitOpacityTarget = charInstance.kitOpacity;
     }
 
     // Store attachment on parent character instance
@@ -5030,7 +5046,7 @@ bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t att
     fxIt->second.opacity = charIt->second.opacity;
     fxIt->second.cameraOpacity = charIt->second.cameraOpacity;
     fxIt->second.kitColor = charIt->second.kitColor;
-    fxIt->second.kitOpacity = charIt->second.kitOpacity;
+    fxIt->second.kitOpacity = fxIt->second.kitOpacityTarget = charIt->second.kitOpacity;
 
     WeaponEffectAttachment fx;
     fx.effectModelId = effectModelId;

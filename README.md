@@ -78,6 +78,11 @@ as a float), type 14 sets its opacity to `CharParamZero`. The latest applied
 aura's kit wins for each; removing it restores the previous one. A ghost is
 Ghost (8326), visual 886, kit 989: colour `0x8CB9FD`, opacity 0.5. Vertex Color
 Black (39662) draws a black silhouette, Transparency (75%) (37802) opacity 0.25.
+The colour changes in one frame and stays for the aura's lifetime;
+`CharParamOne`-`Three` do not modulate it (original 2.4.3: Brood Affliction
+Blue/Red, Ignite Flesh, Enrage, also during a Chromaggus fight). Opacity moves
+to the new value over 1 s as the cube of elapsed time, both ways, whatever the
+kit's parameters (Transparency 25%/75%, Steal Magic, Banish).
 M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
 asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U
