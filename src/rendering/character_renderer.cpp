@@ -2293,7 +2293,6 @@ void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from
 }
 
 void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
-    billboardCameraPos_ = cameraPos;
     // Instances whose fade-out reached zero last frame (drawn at zero opacity,
     // which the draw skips). Removed here, outside the iteration below.
     for (const uint32_t id : fadedOut_) removeInstance(id);
@@ -2944,46 +2943,6 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
                                 * glm::rotate(glm::mat4(1.0f), instance.torsoYawOverrideRad, glm::vec3(0.0f, 0.0f, 1.0f))
                                 * glm::translate(glm::mat4(1.0f), -bone.pivot);
             localTransform = extraYaw * localTransform;
-        }
-
-        // Spherical (0x8) and Z-cylindrical (0x40) billboard bones turn their
-        // geometry to the camera, as M2Renderer does for world models. Weapons
-        // draw through this renderer: the glow cards of Thaladred's axe
-        // (Axe_2H_OutlandRaid_D_02_Red, bones 1/2 flagged 0x208) stood edge-on
-        // across the haft where build 8606 shows them facing the viewer along
-        // it (_experiments/20261118T130509Z.weapon_glow_orientation).
-        constexpr uint32_t kBillboardFlags = 0x8 | 0x40;
-        if (bone.flags & kBillboardFlags) {
-            const glm::mat4 parent = bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < numBones
-                ? instance.boneMatrices[bone.parentBone] : glm::mat4(1.0f);
-            const glm::mat4 local = parent * localTransform;
-            const glm::vec3 pivot(local * glm::vec4(bone.pivot, 1.0f));
-            const glm::mat3 inherited(local);
-            const glm::vec3 inheritedNormal = glm::cross(inherited[1], inherited[2]);
-            const glm::mat4 modelMatrix = instance.hasOverrideModelMatrix
-                ? instance.overrideModelMatrix : getModelMatrix(instance);
-            const glm::mat4 toModel = glm::inverse(modelMatrix);
-            glm::vec3 toCamera = glm::vec3(toModel * glm::vec4(billboardCameraPos_, 1.0f)) - pivot;
-            // Up is the world's up seen from the model: a weapon hangs in the
-            // hand at any angle, and its own +Z put the card's long side
-            // across the screen where native draws it upright.
-            glm::vec3 up = glm::normalize(glm::vec3(toModel * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)));
-            if (bone.flags & 0x40) toCamera -= up * glm::dot(toCamera, up);
-            const float len2 = glm::dot(toCamera, toCamera);
-            glm::mat3 orient(1.0f);
-            if (len2 > 1e-8f && glm::dot(inheritedNormal, inheritedNormal) > 0.0f) {
-                toCamera *= glm::inversesqrt(len2);
-                if (std::abs(glm::dot(toCamera, up)) > 0.999f) up = glm::normalize(glm::cross(toCamera, glm::vec3(toModel[0])));
-                const glm::vec3 right = glm::normalize(glm::cross(up, toCamera));
-                const glm::vec3 trueUp = glm::cross(toCamera, right);
-                const glm::vec3 oldForward = glm::normalize(inheritedNormal);
-                const glm::vec3 oldRight = glm::normalize(inherited[1]);
-                const glm::vec3 oldUp = glm::cross(oldForward, oldRight);
-                orient = glm::mat3(toCamera, right, trueUp) * glm::transpose(glm::mat3(oldForward, oldRight, oldUp));
-            }
-            instance.boneMatrices[i] = glm::translate(glm::mat4(1.0f), pivot) * glm::mat4(orient * inherited) *
-                glm::translate(glm::mat4(1.0f), -bone.pivot);
-            continue;
         }
 
         // Compose with parent
