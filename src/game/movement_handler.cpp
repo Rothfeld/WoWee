@@ -2360,6 +2360,26 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
     }
 }
 
+void MovementHandler::sendPendingWorldportAck() {
+    if (!worldportAckPending_) return;
+    worldportAckPending_ = false;
+    if (!owner_.getSocket()) {
+        LOG_WARNING("MSG_MOVE_WORLDPORT_ACK not sent: no socket");
+        return;
+    }
+    network::Packet ack(wireOpcode(Opcode::MSG_MOVE_WORLDPORT_ACK));
+    owner_.getSocket()->send(ack);
+    LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK");
+
+    // Sync position immediately so the server doesn't keep stale coordinates.
+    sendMovement(Opcode::MSG_MOVE_STOP);
+    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+
+    owner_.timeSinceLastPingRef() = 0.0f;
+    LOG_WARNING("World transfer keepalive: sending immediate ping after MSG_MOVE_WORLDPORT_ACK");
+    owner_.sendPing();
+}
+
 void MovementHandler::handleTransferPending(network::Packet& packet) {
     if (packet.getRemainingSize() != 4 && packet.getRemainingSize() != 12)
         throw std::invalid_argument("Invalid SMSG_TRANSFER_PENDING payload size");
@@ -2592,21 +2612,15 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     owner_.stopAutoAttack();
     owner_.resetCastState();
 
-    if (owner_.getSocket()) {
-        network::Packet ack(wireOpcode(Opcode::MSG_MOVE_WORLDPORT_ACK));
-        owner_.getSocket()->send(ack);
-        LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK");
-
-        // Sync position immediately so the server doesn't keep stale coordinates.
-        sendMovement(Opcode::MSG_MOVE_STOP);
-        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-    }
-
-    owner_.timeSinceLastPingRef() = 0.0f;
-    if (owner_.getSocket()) {
-        LOG_WARNING("World transfer keepalive: sending immediate ping after MSG_MOVE_WORLDPORT_ACK");
-        owner_.sendPing();
-    }
+    // Acknowledged once the destination is ready, not here. Native 2.4.3
+    // stays out of the world on the server for its whole loading screen:
+    // `debug viewsync status` could not find it from the .tele until 31.7 s,
+    // and its own position changed 3 s after that. Acknowledging on receipt
+    // put this client in the new map while it was still loading, so the
+    // server could teleport it again mid-load (a GM summon did), which native
+    // answers as "(offline)". The world entry callback sends it: at once for
+    // a same-map transfer, at the start of warmup after a map load.
+    worldportAckPending_ = true;
 
     if (owner_.worldEntryCallbackRef()) {
         owner_.worldEntryCallbackRef()(mapId, serverX, serverY, serverZ, isSameMap);

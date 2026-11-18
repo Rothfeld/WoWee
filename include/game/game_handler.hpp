@@ -289,6 +289,9 @@ public:
      */
     void sendMovement(Opcode opcode);
 
+    /** Answer the last SMSG_NEW_WORLD once its world is ready (no-op if none waits). */
+    void sendPendingWorldportAck();
+
     /**
      * Update player position
      * @param x X coordinate

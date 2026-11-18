@@ -156,9 +156,29 @@ void WorldEntryCallbackHandler::setupCallbacks() {
                  " initial=", isInitialEntry);
         renderer_.resetCombatVisualState();
 
+        // A world load in progress (re-entrant call from gameHandler->update()
+        // during its warmup) owns the terrain, camera and character position
+        // until it finishes, and the loaded map id still names the map it is
+        // replacing. Defer every entry - including one on that previous map,
+        // which the same-map path below would otherwise take: a summon back to
+        // Ironforge arriving during the Kalimdor loading screen moved the
+        // character to Ironforge coordinates and then let the load finish
+        // Kalimdor around them. The current load picks the entry up when done.
+        if (worldLoader_ && worldLoader_->isLoadingWorld()) {
+            LOG_WARNING("World entry deferred: map ", mapId, " while loading (will process after current load)");
+            worldLoader_->setPendingEntry(mapId, x, y, z);
+            return;
+        }
+
+        // Same-map transfers below keep the loaded world: answer an
+        // SMSG_NEW_WORLD now. A map load answers it when its terrain is in.
+        uint32_t currentLoadedMap = worldLoader_ ? worldLoader_->getLoadedMapId() : 0xFFFFFFFF;
+        if (mapId == currentLoadedMap && renderer_.getTerrainManager()) {
+            gameHandler_.sendPendingWorldportAck();
+        }
+
         // Reconnect to the same map: terrain stays loaded but all online entities are stale.
         // Despawn them properly so the server's fresh CREATE_OBJECTs will re-populate the world.
-        uint32_t currentLoadedMap = worldLoader_ ? worldLoader_->getLoadedMapId() : 0xFFFFFFFF;
         if (entitySpawner_ && mapId == currentLoadedMap && renderer_.getTerrainManager() && isInitialEntry) {
             LOG_INFO("Reconnect to same map ", mapId, ": clearing stale online entities (terrain preserved)");
 
@@ -258,15 +278,6 @@ void WorldEntryCallbackHandler::setupCallbacks() {
             // behind 65 tiles beyond the unload radius that were loaded only
             // to be unloaded again.
             renderer_.getTerrainManager()->streamFrom(renderPos.x, renderPos.y);
-            return;
-        }
-
-        // If a world load is already in progress (re-entrant call from
-        // gameHandler->update() processing SMSG_NEW_WORLD during warmup),
-        // defer this entry. The current load will pick it up when it finishes.
-        if (worldLoader_ && worldLoader_->isLoadingWorld()) {
-            LOG_WARNING("World entry deferred: map ", mapId, " while loading (will process after current load)");
-            worldLoader_->setPendingEntry(mapId, x, y, z);
             return;
         }
 

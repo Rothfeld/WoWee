@@ -901,6 +901,8 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     movementInfo.flags2 = 0;
     if (movementHandler_) {
         movementHandler_->resetMovementClock();
+        // A transfer left unanswered by an earlier session is not this one's.
+        movementHandler_->clearPendingWorldportAck();
     }
     movementInfo.time = nextMovementTimestampMs();
     if (movementHandler_) {
@@ -1654,6 +1656,10 @@ uint32_t GameHandler::nextMovementTimestampMs() {
 
 void GameHandler::sendMovement(Opcode opcode) {
     if (movementHandler_) movementHandler_->sendMovement(opcode);
+}
+
+void GameHandler::sendPendingWorldportAck() {
+    if (movementHandler_) movementHandler_->sendPendingWorldportAck();
 }
 
 void GameHandler::sanitizeMovementForTaxi() {

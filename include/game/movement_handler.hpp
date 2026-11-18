@@ -32,6 +32,9 @@ public:
     // --- Public API (delegated from GameHandler) ---
 
     void sendMovement(Opcode opcode);
+    // Answers the last SMSG_NEW_WORLD once its world is ready; no-op when none waits.
+    void sendPendingWorldportAck();
+    void clearPendingWorldportAck() { worldportAckPending_ = false; }
     void setPosition(float x, float y, float z);
     void setOrientation(float orientation);
     void setMovementPitch(float radians) { movementInfo.pitch = radians; }
@@ -317,6 +320,7 @@ private:
     std::chrono::steady_clock::time_point movementClockStart_ = std::chrono::steady_clock::now();
     uint32_t lastMovementTimestampMs_ = 0;
     bool serverMovementAllowed_ = true;
+    bool worldportAckPending_ = false;
     uint64_t clientControlledUnit_ = 0;
     uint32_t monsterMovePacketsThisTick_ = 0;
     uint32_t monsterMovePacketsDroppedThisTick_ = 0;

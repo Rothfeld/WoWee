@@ -1072,6 +1072,12 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         });
     }
 
+    // The destination's terrain is in: now tell the server we arrived, so it
+    // adds the player to the map and sends the objects the warmup below waits
+    // for. Native acknowledges at the same point - its loading screen stays up
+    // for a few seconds after the server already has it in the world.
+    if (gameHandler_) gameHandler_->sendPendingWorldportAck();
+
     // Keep the loading screen visible until all spawn/equipment/gameobject queues
     // are fully drained. This ensures the player sees a fully populated world
     // (character clothed, NPCs placed, game objects loaded) when the screen drops.
