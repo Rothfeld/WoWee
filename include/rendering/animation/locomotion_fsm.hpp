@@ -2,6 +2,7 @@
 
 #include "rendering/animation/anim_capability_set.hpp"
 #include "rendering/animation/anim_event.hpp"
+#include "rendering/animation/turn_shuffle.hpp"
 #include <cstdint>
 
 namespace wowee {
@@ -76,20 +77,13 @@ private:
     bool jumpStartSeen_ = false;
     bool jumpEndSeen_ = false;
 
-    // Turning in place. A shuffle cycle in which the character turned is
-    // followed by another; one without a turn returns to Stand. Build 8606's
-    // own character keeps stepping for a cycle after a turn stops.
-    bool turnLeft_ = false;
-    bool turnedThisCycle_ = false;
-    bool shuffleSeen_ = false;
-    float shuffleTime_ = 0.0f;
+    // Turning in place (TURN state).
+    TurnShuffle shuffle_;
 
     static constexpr float kGraceSec = 0.12f;
 
     /// Internal: update state transitions based on input.
     void updateTransitions(const Input& in, const AnimCapabilitySet& caps);
-    void startTurn(int direction);
-    [[nodiscard]] bool shuffleCycleDone(const Input& in);
     [[nodiscard]] bool oneShotComplete(const Input& in, uint32_t expectedAnimId) const;
 };
 
