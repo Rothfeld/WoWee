@@ -1012,10 +1012,21 @@ static std::vector<SkillRow> skillRows(game::GameHandler* gh) {
     // not categorise at all is kept rather than dropped: it is something the
     // player has, and losing it silently is worse than filing it last.
     constexpr uint32_t kNotDisplayed = 12;
+    // A line drawn as a mono 1/1 bar (SkillRaceClassInfo flag 0x400) is only
+    // listed under Class Skills. 2.4.3 leaves out Racial - Human for a human
+    // rogue and Dwarven Racial for a dwarf hunter - both flag 0x492 under
+    // Secondary Skills, which then has nothing in it and no heading either -
+    // while the 0x410 Assassination and Beast Mastery lines are listed. Every
+    // other mono line in the file is a racial or a retired riding line.
+    constexpr uint32_t kClassSkills = 7;
+    constexpr uint32_t kSkillDisplayAsMono = 0x400;
+    auto* spells = gh->getSpellHandler();
     std::map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>> grouped;
     for (uint32_t id : skillOrder(gh)) {
         const uint32_t cat = gh->getSkillCategory(id);
         if (cat == kNotDisplayed) continue;
+        const uint32_t flags = spells ? spells->skillRaceClassFlags(id).value_or(0) : 0;
+        if ((flags & kSkillDisplayAsMono) && cat != kClassSkills) continue;
         grouped[{gh->getSkillCategorySortIndex(cat), cat}].push_back(id);
     }
 
@@ -1319,6 +1330,8 @@ static int lua_GetSkillLineInfo(lua_State* L) {
         // else. The costs stay nil for the same reason they are nil below -
         // zero is true in Lua and would send the heading down the
         // "Learn <skill>" branch.
+        //
+        // Twelve values: 2.4.3 answers a heading without the description.
         lua_pushstring(L, gh->getSkillCategoryName(row.categoryId).c_str());
         lua_pushboolean(L, 1);                          // 2: isHeader
         lua_pushboolean(L, gh->isSkillCategoryCollapsed(row.categoryId) ? 0 : 1);
@@ -1328,8 +1341,7 @@ static int lua_GetSkillLineInfo(lua_State* L) {
         lua_pushnil(L);                                 // 10: rankCost
         lua_pushnumber(L, 0);                           // 11: minLevel
         lua_pushnumber(L, 0);                           // 12: skillCostType
-        lua_pushstring(L, "");                          // 13: skillDescription
-        return 13;
+        return 12;
     }
     const auto& skills = gh->getPlayerSkills();
     const auto found = skills.find(row.skillId);
@@ -1338,14 +1350,28 @@ static int lua_GetSkillLineInfo(lua_State* L) {
     std::string name = gh->getSkillName(skill.skillId);
     if (name.empty()) name = "Skill " + std::to_string(skill.skillId);
 
+    // SkillRaceClassInfo.dbc flags for the player's race and class decide two
+    // of these (flag names from CMaNGOS DBCEnums.h SkillRaceClassInfoFlags):
+    // 0x400 DISPLAY_AS_MONO draws the line as a grey 1/1 bar whatever the
+    // server's value - 2.4.3 answers rank 1, max 1 for a rogue's
+    // Assassination, Combat and Subtlety, which CMaNGOS holds at 200/200 -
+    // and 0x20 CAN_UNLEARN is isAbandonable, the detail panel's Unlearn
+    // button (Mining and Blacksmithing carry it, First Aid and Cooking not).
+    constexpr uint32_t kSkillDisplayAsMono = 0x400;
+    constexpr uint32_t kSkillCanUnlearn = 0x20;
+    auto* spells = gh->getSpellHandler();
+    const uint32_t flags = spells ? spells->skillRaceClassFlags(skill.skillId).value_or(0) : 0;
+    const bool mono = (flags & kSkillDisplayAsMono) != 0;
+
     lua_pushstring(L, name.c_str());                    // 1: skillName
     lua_pushboolean(L, 0);                              // 2: isHeader
-    lua_pushboolean(L, 1);                              // 3: isExpanded
-    lua_pushnumber(L, skill.effectiveValue());           // 4: skillRank
-    lua_pushnumber(L, skill.bonusTemp);                  // 5: numTempPoints
-    lua_pushnumber(L, skill.bonusPerm);                  // 6: skillModifier
-    lua_pushnumber(L, skill.maxValue);                   // 7: skillMaxRank
-    lua_pushboolean(L, 0);                              // 8: isAbandonable
+    // nil, as 2.4.3 answers for every line that is not a heading.
+    lua_pushnil(L);                                     // 3: isExpanded
+    lua_pushnumber(L, mono ? 1 : skill.effectiveValue()); // 4: skillRank
+    lua_pushnumber(L, mono ? 0 : skill.bonusTemp);       // 5: numTempPoints
+    lua_pushnumber(L, mono ? 0 : skill.bonusPerm);       // 6: skillModifier
+    lua_pushnumber(L, mono ? 1 : skill.maxValue);        // 7: skillMaxRank
+    lua_pushboolean(L, (flags & kSkillCanUnlearn) ? 1 : 0); // 8: isAbandonable
     // Nil, not zero, and this is the whole of the "Learn Mounts" mystery.
     //
     // SkillFrame_SetStatusBar branches on these three in order:
@@ -1366,7 +1392,9 @@ static int lua_GetSkillLineInfo(lua_State* L) {
     lua_pushnil(L);                                     // 9: stepCost
     lua_pushnil(L);                                     // 10: rankCost
     lua_pushnumber(L, 0);                               // 11: minLevel
-    lua_pushnumber(L, 0);                               // 12: skillCostType
+    // 1 for every known line in 2.4.3 (class, weapon, armour, language,
+    // profession and secondary lines alike); headings answer 0.
+    lua_pushnumber(L, 1);                               // 12: skillCostType
     // The sentence the detail panel prints under the selected skill.
     //
     // Returning twelve values left it nil, and SkillDetailFrame_SetStatusBar

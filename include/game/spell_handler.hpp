@@ -642,6 +642,9 @@ public:
     bool isListedInSpellbook(uint32_t spellId);
     /// 1-based spellbook tab holding a listed spell, 0 when none does.
     int spellBookTabIndexOf(uint32_t spellId);
+    /// SkillRaceClassInfo.dbc flags of the skill line's row for the player's
+    /// race and class; nullopt when no row covers them.
+    std::optional<uint32_t> skillRaceClassFlags(uint32_t skillLine);
 private:
 
     // SkillRaceClassInfo.dbc: skill line -> rows of (race mask, class mask, flags).

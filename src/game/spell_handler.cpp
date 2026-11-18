@@ -2319,6 +2319,19 @@ void SpellHandler::loadSkillRaceClassInfoDbc() {
     LOG_INFO("Loaded SkillRaceClassInfo for ", skillRaceClassInfo_.size(), " skill lines");
 }
 
+std::optional<uint32_t> SpellHandler::skillRaceClassFlags(uint32_t skillLine) {
+    loadSkillRaceClassInfoDbc();
+    const uint8_t race = owner_.getPlayerRace();
+    const uint8_t cls = owner_.getPlayerClass();
+    if (race == 0 || cls == 0) return std::nullopt;
+    const auto it = skillRaceClassInfo_.find(skillLine);
+    if (it == skillRaceClassInfo_.end()) return std::nullopt;
+    for (const auto& row : it->second) {
+        if ((row.raceMask & (1u << (race - 1))) && (row.classMask & (1u << (cls - 1)))) return row.flags;
+    }
+    return std::nullopt;
+}
+
 // The 2.4.3 spellbook, as the original answers GetSpellTabInfo and
 // GetSpellName (_experiments/20261117T203719.037964Z.spellbook_tabs_pair2,
 // human rogue):
