@@ -2452,6 +2452,144 @@ TEST_CASE("Attack start preserves both participants movement facing", "[remote-f
     CHECK(player->getOrientation() == Catch::Approx(1.7f));
 }
 
+namespace {
+// A relayed TBC movement packet of another player, standing (no fall block).
+wowee::network::Packet remoteMove(wowee::game::Opcode opcode, uint64_t guid, uint32_t flags,
+                                  uint32_t time, float orientation) {
+    wowee::network::Packet packet(wowee::game::wireOpcode(opcode));
+    packet.writePackedGuid(guid);
+    packet.writeUInt32(flags);
+    packet.writeUInt8(0);
+    packet.writeUInt32(time);
+    for (float value : {1222.47f, -10235.2f, 43.6274f, orientation}) packet.writeFloat(value);
+    packet.writeUInt32(0);
+    return packet;
+}
+} // namespace
+
+// Native Edrikb's keyboard turn as WoWee received it
+// (_experiments/20261118T2030.remote_turn, native_key_a): START_TURN_LEFT,
+// no heartbeat, STOP_TURN 1025 ms later with the final facing.
+TEST_CASE("A remote keyboard turn turns at the turn rate between start and stop", "[remote-turn]") {
+    using namespace wowee::game;
+    using wowee::core::coords::serverToCanonicalYaw;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t guid = 19;
+    auto player = std::make_shared<Player>(guid);
+    player->setPosition(-10235.2f, 1222.47f, 43.6274f, serverToCanonicalYaw(0.0f));
+    player->turnRate = 3.141593f;
+    handler.getEntityManager().addEntity(guid, player);
+    session.receive(remoteMove(Opcode::MSG_MOVE_START_TURN_LEFT, guid, 0x10, 24028517, 0.0f));
+    // The frame that read the packet: its time passed before the packet came.
+    player->updateMovement(0.1f);
+    CHECK(player->getOrientation() == Catch::Approx(serverToCanonicalYaw(0.0f)));
+    for (int frame = 0; frame < 20; ++frame) player->updateMovement(0.025f);
+    CHECK(player->getOrientation() == Catch::Approx(serverToCanonicalYaw(0.5f * 3.141593f)).margin(1e-4));
+    CHECK_FALSE(player->isActivelyMoving());
+    for (int frame = 0; frame < 20; ++frame) player->updateMovement(0.025f);
+    session.receive(remoteMove(Opcode::MSG_MOVE_STOP_TURN, guid, 0, 24029542, 3.220f));
+    for (int frame = 0; frame < 20; ++frame) player->updateMovement(0.025f);
+    CHECK(player->getOrientation() == Catch::Approx(serverToCanonicalYaw(3.220f)).margin(1e-4));
+    const float settled = player->getOrientation();
+    player->updateMovement(1.0f);
+    CHECK(player->getOrientation() == settled);
+}
+
+// At 4 fps a frame's time mostly passed before the packet came; the stop must
+// not be reached from beyond (a turn back would shuffle the other way).
+TEST_CASE("A remote keyboard turn at a low frame rate stops without turning back", "[remote-turn]") {
+    using namespace wowee::game;
+    using wowee::core::coords::serverToCanonicalYaw;
+    using wowee::core::coords::normalizeAngleRad;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t guid = 19;
+    auto player = std::make_shared<Player>(guid);
+    player->setPosition(-10235.2f, 1222.47f, 43.6274f, serverToCanonicalYaw(3.164f));
+    player->turnRate = 3.141593f;
+    handler.getEntityManager().addEntity(guid, player);
+    session.receive(remoteMove(Opcode::MSG_MOVE_START_TURN_LEFT, guid, 0x10, 28250394, 3.164f));
+    float previous = player->getOrientation();
+    for (int frame = 0; frame < 4; ++frame) {
+        player->updateMovement(0.25f);
+        CHECK(normalizeAngleRad(player->getOrientation() - previous) >= 0.0f);
+        previous = player->getOrientation();
+    }
+    session.receive(remoteMove(Opcode::MSG_MOVE_STOP_TURN, guid, 0, 28251370, 6.231f));
+    for (int frame = 0; frame < 4; ++frame) {
+        player->updateMovement(0.25f);
+        CHECK(normalizeAngleRad(player->getOrientation() - previous) >= 0.0f);
+        previous = player->getOrientation();
+    }
+    CHECK(normalizeAngleRad(player->getOrientation() - serverToCanonicalYaw(6.231f)) == Catch::Approx(0.0f).margin(1e-4));
+}
+
+TEST_CASE("A remote right turn turns clockwise", "[remote-turn]") {
+    using namespace wowee::game;
+    using wowee::core::coords::serverToCanonicalYaw;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t guid = 19;
+    auto player = std::make_shared<Player>(guid);
+    player->setPosition(-10235.2f, 1222.47f, 43.6274f, serverToCanonicalYaw(3.220f));
+    player->turnRate = 3.141593f;
+    handler.getEntityManager().addEntity(guid, player);
+    session.receive(remoteMove(Opcode::MSG_MOVE_START_TURN_RIGHT, guid, 0x20, 24030843, 3.220f));
+    player->updateMovement(0.1f);
+    player->updateMovement(0.25f);
+    CHECK(player->getOrientation() == Catch::Approx(serverToCanonicalYaw(3.220f - 0.25f * 3.141593f)).margin(1e-4));
+}
+
+// Native mouse-look as WoWee received it (native_look): a SET_FACING per mouse
+// step, about 100 ms apart, 0.118 rad each. Native draws the turn smoothly.
+TEST_CASE("Remote mouse-look facing steps are drawn as a smooth turn", "[remote-turn]") {
+    using namespace wowee::game;
+    using wowee::core::coords::serverToCanonicalYaw;
+    using wowee::core::coords::normalizeAngleRad;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t guid = 19;
+    auto player = std::make_shared<Player>(guid);
+    player->setPosition(-10235.2f, 1222.47f, 43.6274f, serverToCanonicalYaw(0.628f));
+    player->turnRate = 3.141593f;
+    handler.getEntityManager().addEntity(guid, player);
+    const std::pair<uint32_t, float> stream[] = {{24319429, 0.510f}, {24319530, 0.392f}, {24319635, 0.274f},
+                                                 {24319748, 0.156f}, {24319847, 0.038f}, {24319947, 6.204f}};
+    float largestStep = 0.0f;
+    uint32_t previousTime = stream[0].first - 100;
+    for (const auto& [time, facing] : stream) {
+        session.receive(remoteMove(Opcode::MSG_MOVE_SET_FACING, guid, 0, time, facing));
+        // Drawn between packets in 10 ms frames: no frame jumps a whole step.
+        for (uint32_t elapsed = 0; elapsed < time - previousTime; elapsed += 10) {
+            const float before = player->getOrientation();
+            player->updateMovement(0.01f);
+            largestStep = std::max(largestStep, std::abs(normalizeAngleRad(player->getOrientation() - before)));
+        }
+        previousTime = time;
+    }
+    CHECK(largestStep < 0.118f / 4.0f);
+    player->updateMovement(0.5f);
+    CHECK(normalizeAngleRad(player->getOrientation() - serverToCanonicalYaw(6.204f)) == Catch::Approx(0.0f).margin(1e-4));
+}
+
+TEST_CASE("A remote teleport sets facing at once", "[remote-turn]") {
+    using namespace wowee::game;
+    using wowee::core::coords::serverToCanonicalYaw;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    constexpr uint64_t guid = 19;
+    auto player = std::make_shared<Player>(guid);
+    player->setPosition(-10235.2f, 1222.47f, 43.6274f, serverToCanonicalYaw(0.0f));
+    player->turnRate = 3.141593f;
+    handler.getEntityManager().addEntity(guid, player);
+    session.receive(remoteMove(Opcode::MSG_MOVE_START_TURN_LEFT, guid, 0x10, 1000, 0.0f));
+    session.receive(remoteMove(Opcode::MSG_MOVE_TELEPORT, guid, 0, 1100, 2.0f));
+    CHECK(player->getOrientation() == Catch::Approx(serverToCanonicalYaw(2.0f)));
+    player->updateMovement(0.5f);
+    CHECK(player->getOrientation() == Catch::Approx(serverToCanonicalYaw(2.0f)));
+}
+
 TEST_CASE("Skill gain uses SKILL chat category", "[skill-chat]") {
     replay::Session session("tbc");
     auto& handler = session.handler();

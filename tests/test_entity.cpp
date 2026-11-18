@@ -379,6 +379,29 @@ TEST_CASE("Remote ground correction blends without restarting motion", "[entity]
     REQUIRE(p.getX() == Catch::Approx(5.0f));
 }
 
+// A player running while it turns: its velocity, set from the packet's facing
+// and movement flags, turns with the facing until the next heartbeat.
+TEST_CASE("Remote ground movement turns with a keyboard turn", "[entity][movement][remote-turn]") {
+    // MovementHandler's velocity for running forward at server facing s.
+    const auto forward = [](float serverFacing) {
+        return glm::vec2(std::sin(serverFacing) * 7.0f, std::cos(serverFacing) * 7.0f);
+    };
+    Player p;
+    p.setPosition(0, 0, 0, 0);
+    p.updateRemoteGroundMotion({0, 0, 0}, -1.5707963f, forward(0.0f));
+    p.updateRemoteFacing(-1.5707963f, -1.5707963f, 3.141593f, 0.0f);
+    p.updateMovement(0.0f);  // the frame that read the packet
+    for (int i = 0; i < 25; ++i) p.updateMovement(0.02f);
+    // Half a second at pi rad/s: a quarter circle of radius 7/pi.
+    constexpr float radius = 7.0f / 3.141593f;
+    CHECK(p.getOrientation() == Catch::Approx(0.0f).margin(1e-4));
+    const glm::vec2 serverEnd(radius, radius);  // server (x, y) after a quarter turn left from facing 0
+    CHECK(p.getX() == Catch::Approx(serverEnd.y).margin(0.02f));
+    CHECK(p.getY() == Catch::Approx(serverEnd.x).margin(0.02f));
+    p.updateRemoteGroundMotion({p.getX(), p.getY(), 0}, 0.0f, forward(1.5707963f));
+    CHECK(p.getOrientation() == 0.0f);
+}
+
 TEST_CASE("Remote prediction stops on stale connection without rewinding", "[entity][movement]") {
     Player p;
     p.setPosition(0, 0, 0, 0);

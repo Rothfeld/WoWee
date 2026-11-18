@@ -1131,11 +1131,29 @@ one-frame mouse turn still steps once. Moving, jumping and swimming take over
 at once. A model without the sequence plays its AnimationData fallback, Stand.
 Combat ready stances, emotes and sitting keep their animation. Native 2.4.3
 shuffles its own character for keyboard and mouse-look turns, including a
-ten-pixel mouse turn, and shows other players' turns with a shuffle too.
-WoWee does not yet: a remote player's keyboard turn reaches the model as one
-facing change when the turn stops, with no shuffle.
-`build/bin/test_locomotion_fsm '[turn]'`. Evidence:
+ten-pixel mouse turn. `build/bin/test_locomotion_fsm '[turn]'`. Evidence:
 `_experiments/20261118T1952.turn_shuffle` in the workspace.
+
+Other players and creatures turning in place shuffle by the same rule
+(`rendering::TurnShuffle`), driven by the per-frame change of their drawn
+facing, while they stand alive in Stand (not moving, airborne, swimming,
+mounted, in a ready stance, emote or stand state). A model without the
+sequence keeps standing. NPC conversation turns keep their own single shuffle.
+
+Another player's facing between packets: a standing keyboard turn sends
+`MSG_MOVE_START_TURN_LEFT/RIGHT` with the start facing, no heartbeat, then
+`MSG_MOVE_STOP_TURN` with the final facing (measured 3.14 rad/s, the movement
+block's turn rate). The facing keeps turning at the mover's turn rate while
+`TURN_LEFT/RIGHT` is set; a running player's velocity turns with it, so it
+follows the arc between heartbeats. Mouse-look sends one `MSG_MOVE_SET_FACING`
+per mouse step, about every 100 ms; any other facing change is drawn over the
+mover's packet interval (120 ms after a pause), not as a step. A teleport sets
+facing at once. Native draws all of these smoothly with the shuffle.
+`build/bin/test_input_integration '[remote-turn]'`,
+`build/bin/test_entity '[remote-turn]'`. Gotcha: native draws a WoWee
+player's movement about 1.05 s after WoWee sends it (turns, running starts,
+backpedals alike; cause not found), while WoWee draws a native player's at
+once; compare shapes, not timing. Evidence: `_experiments/20261118T2030.remote_turn`.
 
 ### NPC conversation facing
 

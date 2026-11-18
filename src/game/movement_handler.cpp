@@ -168,6 +168,7 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
                     if (member == &MovementHandler::serverRunSpeed_) entity->groundRunSpeed = speed;
                     if (member == &MovementHandler::serverWalkSpeed_) entity->groundWalkSpeed = speed;
                     if (member == &MovementHandler::serverRunBackSpeed_) entity->groundBackSpeed = speed;
+                    if (member == &MovementHandler::serverTurnRate_) entity->turnRate = speed;
                 }
             }
         };
@@ -280,7 +281,7 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
     for (auto op : { Opcode::MSG_MOVE_SET_RUN_SPEED, Opcode::MSG_MOVE_SET_RUN_BACK_SPEED,
                      Opcode::MSG_MOVE_SET_WALK_SPEED, Opcode::MSG_MOVE_SET_SWIM_SPEED,
                      Opcode::MSG_MOVE_SET_SWIM_BACK_SPEED, Opcode::MSG_MOVE_SET_FLIGHT_SPEED,
-                     Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED }) {
+                     Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED, Opcode::MSG_MOVE_SET_TURN_RATE }) {
         table[op] = [this](network::Packet& packet) {
             if (owner_.getState() == WorldState::IN_WORLD) handleMoveSetSpeed(packet);
         };
@@ -1461,6 +1462,7 @@ void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
         if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED)) entity->groundRunSpeed = speed;
         if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_WALK_SPEED)) entity->groundWalkSpeed = speed;
         if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_BACK_SPEED)) entity->groundBackSpeed = speed;
+        if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_TURN_RATE)) entity->turnRate = speed;
     }
     if (moverGuid != owner_.getPlayerGuid()) return;
     if      (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED))        serverRunSpeed_      = speed;
@@ -1599,6 +1601,7 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         static_cast<uint32_t>(MovementFlags::SWIMMING) |
         static_cast<uint32_t>(MovementFlags::FLYING) |
         static_cast<uint32_t>(MovementFlags::LEVITATING);
+    const float shownYaw = entity->getOrientation();
     if (isTeleportOpcode) {
         entity->setPosition(canonical.x, canonical.y, canonical.z, canYaw);
     } else if (entity->getType() == ObjectType::PLAYER && !onTransport && airborne) {
@@ -1631,6 +1634,24 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         entity->updateRemoteGroundMotion(canonical, canYaw, glm::vec2(velocity));
     } else {
         entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, entityDuration);
+    }
+
+    // Facing between packets. A standing keyboard turn sends START_TURN, no
+    // heartbeat, then STOP_TURN with the final facing (build 8606, 3.14
+    // rad/s); native draws the turn smoothly, so the facing keeps turning at
+    // the mover's turn rate while the flag is set. Mouse-look sends a
+    // SET_FACING per mouse step (about every 100 ms); native draws those
+    // smoothly too, so a changed facing is reached over the packet interval.
+    // _experiments/20261118T2030.remote_turn.
+    if (!isTeleportOpcode) {
+        const bool turnLeft = info.hasFlag(MovementFlags::TURN_LEFT);
+        const bool turnRight = info.hasFlag(MovementFlags::TURN_RIGHT);
+        float turnSpeed = 0.0f;
+        if (turnLeft != turnRight) {
+            assert(entity->turnRate > 0.0f && "remote turn before the movement block's turn rate");
+            turnSpeed = turnLeft ? entity->turnRate : -entity->turnRate;
+        }
+        entity->updateRemoteFacing(shownYaw, canYaw, turnSpeed, durationMs / 1000.0f);
     }
 
     if (owner_.creatureMoveCallbackRef()) {

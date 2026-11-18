@@ -2842,6 +2842,7 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
             entity->groundBackSpeed = block.runBackSpeed;
+            entity->turnRate = block.turnRate;
         }
         LOG_DEBUG("  Position: (", pos.x, ", ", pos.y, ", ", pos.z, ")");
         if (block.guid == owner_.getPlayerGuid() && block.runSpeed > 0.1f && block.runSpeed < 100.0f) {
@@ -2911,6 +2912,7 @@ void EntityController::handleValuesUpdate(const UpdateBlock& block) {
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
             entity->groundBackSpeed = block.runBackSpeed;
+            entity->turnRate = block.turnRate;
         }
         updateNonPlayerTransportAttachment(block, entity, entity->getType());
     }
@@ -2947,6 +2949,7 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                     entity->groundWalkSpeed = block.walkSpeed;
                     entity->groundRunSpeed = block.runSpeed;
                     entity->groundBackSpeed = block.runBackSpeed;
+                    entity->turnRate = block.turnRate;
                 }
                 LOG_DEBUG("Updated entity position: 0x", std::hex, block.guid, std::dec);
 

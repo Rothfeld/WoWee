@@ -1830,6 +1830,7 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     remoteMovementFlags_.erase(guid);
     remoteWasMovingBackward_.erase(guid);
     remoteWasAirborne_.erase(guid);
+    remoteTurns_.erase(guid);
     hoverAirborne_.erase(guid);
     liftOffEmoted_.erase(guid);
     creatureSwimmingState_.erase(guid);

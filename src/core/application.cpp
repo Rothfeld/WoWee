@@ -251,6 +251,48 @@ float wheelClicks(float delta, uint64_t timestampNs) {
 #endif
 }
 
+// Feet of another unit turning in place: ShuffleLeft/ShuffleRight while its
+// facing turns, by the rule of the local character's shuffle
+// (rendering::TurnShuffle). Build 8606 does this for other players (keyboard
+// and mouse-look turns) and creatures (_experiments/20261118T2030.remote_turn).
+// standing: alive, still, on the ground, unmounted and idling in Stand, so
+// emotes, ready stances, stand states and casts keep their animation.
+void driveTurnShuffle(rendering::CharacterRenderer& characters, uint64_t guid, uint32_t instanceId,
+                      EntitySpawner::RemoteTurn& turn, float facing, bool standing) {
+    int turnDirection = 0;
+    if (turn.lastFacing) {
+        const float delta = coords::normalizeAngleRad(facing - *turn.lastFacing);
+        if (delta != 0.0f) turnDirection = delta > 0.0f ? 1 : -1;
+    }
+    turn.lastFacing = facing;
+    if (!standing) {
+        turn.shuffle.reset();
+        return;
+    }
+    uint32_t current = 0; float time = 0.0f, duration = 0.0f;
+    const bool haveState = characters.getAnimationState(instanceId, current, time, duration);
+    const bool shuffling = current == rendering::anim::SHUFFLE_LEFT || current == rendering::anim::SHUFFLE_RIGHT;
+    if (!turn.shuffle.active()) {
+        if (turnDirection == 0 || !haveState || current != rendering::anim::STAND) return;
+        turn.shuffle.start(turnDirection);
+        // A model without the sequence keeps standing.
+        if (!characters.hasAnimation(instanceId, turn.shuffle.animation())) {
+            turn.shuffle.reset();
+            return;
+        }
+        characters.playAnimation(instanceId, turn.shuffle.animation(), true);
+        LOG_DEBUG("Turn shuffle: guid=", guid, " start ", turn.shuffle.animation());
+    } else if (!turn.shuffle.update(turnDirection, haveState, current, time)) {
+        LOG_DEBUG("Turn shuffle: guid=", guid, " end, playing ", current);
+        if (shuffling) characters.playAnimation(instanceId, rendering::anim::STAND, true);
+    } else if (current != turn.shuffle.animation() && (shuffling || current == rendering::anim::STAND) &&
+               characters.hasAnimation(instanceId, turn.shuffle.animation())) {
+        // The turn reversed.
+        characters.playAnimation(instanceId, turn.shuffle.animation(), true);
+        LOG_DEBUG("Turn shuffle: guid=", guid, " reverse ", turn.shuffle.animation());
+    }
+}
+
 } // namespace
 
 Application* Application::instance = nullptr;
@@ -3895,6 +3937,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 if (!interactionYaw && std::abs(coords::normalizeAngleRad(facing - entity->getOrientation())) < 0.0001f)
                     npcInteractionFacing_.erase(it);
             }
+            // A conversation turn plays its own single shuffle above.
+            if (!npcInteractionFacing_.contains(guid)) {
+                driveTurnShuffle(*charRenderer, guid, instanceId, entitySpawner_->getRemoteTurns()[guid], facing,
+                    groundCreature && !creatureMount && unit->getHealth() > 0 && !entity->isActivelyMoving() &&
+                    entitySpawner_->remoteIdleAnimation(guid) == rendering::anim::STAND);
+            }
             float renderYaw = facing + glm::radians(90.0f);
             glm::vec3 groundRotation(0.0f, 0.0f, renderYaw);
             if (groundCreature && !onTransport && !creatureMount) {
@@ -4179,6 +4227,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                                     /*loop=*/true);
                     }
                 }
+
+                driveTurnShuffle(*charRenderer, guid, instanceId, entitySpawner_->getRemoteTurns()[guid],
+                    entity->getOrientation(),
+                    !deadOrCorpse && !isMovingNow && !airborne && !isSwimmingNow && !isFlyingNow &&
+                    !remoteMount && !auraLocomotion &&
+                    entitySpawner_->remoteIdleAnimation(guid) == rendering::anim::STAND);
             }
 
             // A unit standing in a WMO room the camera does not see is not

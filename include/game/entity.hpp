@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cassert>
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <array>
@@ -151,13 +152,14 @@ public:
     [[nodiscard]] float getZ() const { return z; }
     [[nodiscard]] float getOrientation() const { return orientation; }
     // Update orientation only, without disrupting an in-progress movement interpolation.
-    void setOrientation(float o) { orientation = o; }
+    void setOrientation(float o) { orientation = o; remoteFacing_ = {}; }
 
     void setPosition(float px, float py, float pz, float o) {
         x = px;
         y = py;
         z = pz;
         orientation = o;
+        remoteFacing_ = {};
         remotePredictedMotion_ = false;
         isMoving_ = false; // Instant position set cancels interpolation
         usePathMode_ = false;
@@ -212,6 +214,7 @@ public:
         moveDuration_ = totalDuration;
         moveElapsed_ = 0.0f;
         orientation = destO;
+        remoteFacing_ = {};
         isMoving_ = true;
         usePathMode_ = true;
         // Velocity for dead-reckoning after path completes
@@ -282,6 +285,7 @@ public:
             (destY - y) * (destY - y) + (destZ - z) * (destZ - z)) / durationSec;
         moveElapsed_ = 0.0f;
         orientation = destO;
+        remoteFacing_ = {};
         isMoving_ = true;
     }
 
@@ -300,9 +304,33 @@ public:
         remotePacketAge_ = 0.0f;
         moveEndX_ = position.x; moveEndY_ = position.y; moveEndZ_ = position.z;
         orientation = yaw;
+        remoteFacing_ = {};
         locomotionSpeed_ = glm::length(velocity);
         isMoving_ = true;
     }
+
+    // Facing of another player between its movement packets. The packet's
+    // facing is the target. While its TURN_LEFT/TURN_RIGHT flag is set the
+    // target keeps turning at turnSpeed (rad/s, positive = left), as build
+    // 8606 turns a standing player through a keyboard turn although no packet
+    // comes between MSG_MOVE_START_TURN and MSG_MOVE_STOP_TURN; ground
+    // movement turns with it. Other facing changes (mouse-look sends
+    // MSG_MOVE_SET_FACING about every 100 ms) are drawn from the facing shown
+    // to the target over blendSec, not as steps. Call after the position
+    // update that read the same packet; shownFacing is the facing before it.
+    void updateRemoteFacing(float shownFacing, float targetFacing, float turnSpeed, float blendSec) {
+        assert(std::isfinite(shownFacing) && std::isfinite(targetFacing) && std::isfinite(turnSpeed));
+        assert(blendSec >= 0.0f);
+        orientation = blendSec > 0.0f ? shownFacing : targetFacing;
+        remoteFacing_ = {targetFacing, turnSpeed, blendSec, true};
+    }
+
+    [[nodiscard]] float getRemoteTurnSpeed() const { return remoteFacing_.turnSpeed; }
+
+    // Turn rate from the server's movement block, updated by
+    // MSG_MOVE_SET_TURN_RATE and SMSG_SPLINE_SET_TURN_RATE; rad/s. Zero means
+    // not initialized.
+    float turnRate = 0.0f;
 
     static constexpr float remoteGravity = 19.29110527038574f;
     static constexpr float remoteTerminalVelocity = 60.148003f;
@@ -326,12 +354,22 @@ public:
     float groundBackSpeed = 0.0f;
 
     void updateMovement(float deltaTime) {
+        const float turned = advanceRemoteFacing(deltaTime);
         if (!isMoving_) return;
         if (remotePredictedMotion_) {
             // Bound extrapolation if the connection stops delivering packets.
             const float motionDt = std::min(deltaTime, std::max(0.0f, 2.0f - remotePacketAge_));
-            x += remoteVelocity_.x * motionDt;
-            y += remoteVelocity_.y * motionDt;
+            glm::vec2 displacement = remoteVelocity_ * motionDt;
+            if (turned != 0.0f && !remoteAirborne_) {
+                // On the ground the movement turns with the facing: move
+                // along the arc (its chord, turned by half the arc), then
+                // turn the velocity.
+                const float half = 0.5f * turned;
+                displacement = rotateServerTurn(displacement, half) * (std::sin(half) / half);
+                remoteVelocity_ = rotateServerTurn(remoteVelocity_, turned);
+            }
+            x += displacement.x;
+            y += displacement.y;
             if (remoteAirborne_) {
                 remoteVerticalVelocity_ = std::max(remoteVerticalVelocity_, -remoteTerminalSpeed_);
                 const float accelerationTime = std::min(motionDt,
@@ -484,6 +522,45 @@ protected:
     float moveDuration_ = 0;
     float moveElapsed_ = 0;
     float velX_ = 0, velY_ = 0, velZ_ = 0;  // Smoothed velocity for dead reckoning
+    struct RemoteFacing {
+        float target = 0.0f;
+        float turnSpeed = 0.0f;
+        float blendRemaining = 0.0f;
+        // Set by a packet: the next update's time partly passed before the
+        // packet came, so it does not turn the facing. Turning over it ran
+        // past MSG_MOVE_STOP_TURN's facing at low frame rates, and turning
+        // back to it looked like a turn the other way.
+        bool fresh = false;
+    };
+    RemoteFacing remoteFacing_;
+
+    static float wrapAngle(float a) { return std::remainder(a, 6.28318530717958647692f); }
+
+    // Canonical (x, y) is server (y, x): a counter-clockwise (left) server
+    // turn by angle is clockwise in canonical x/y.
+    static glm::vec2 rotateServerTurn(const glm::vec2& v, float angle) {
+        const float c = std::cos(angle), s = std::sin(angle);
+        return glm::vec2(c * v.x + s * v.y, -s * v.x + c * v.y);
+    }
+
+    // Advances the remote facing one frame; returns the angle turned at the
+    // turn rate (rad, positive = left).
+    float advanceRemoteFacing(float deltaTime) {
+        auto& f = remoteFacing_;
+        const float turned = f.fresh ? 0.0f : f.turnSpeed * deltaTime;
+        f.fresh = false;
+        if (turned != 0.0f) {
+            f.target = wrapAngle(f.target + turned);
+            orientation = wrapAngle(orientation + turned);
+        }
+        if (f.blendRemaining > 0.0f) {
+            const float fraction = std::min(1.0f, deltaTime / f.blendRemaining);
+            orientation = wrapAngle(orientation + wrapAngle(f.target - orientation) * fraction);
+            f.blendRemaining = std::max(0.0f, f.blendRemaining - deltaTime);
+        }
+        return turned;
+    }
+
     // CatmullRom spline for multi-segment path movement (replaces linear pathPoints_/pathSegDists_)
     std::optional<math::CatmullRomSpline> activeSpline_;
     uint32_t splineDurationMs_ = 0;
