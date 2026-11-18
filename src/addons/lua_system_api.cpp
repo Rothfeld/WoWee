@@ -6268,7 +6268,12 @@ void registerSystemLuaAPI(lua_State* L) {
             if (faction.empty()) lua_pushnil(L); else lua_pushstring(L, faction.c_str());
             return 3;
         }},
-                {"GetMouseButtonClicked",    lua_ReturnNil},
+                // The button of the click handler running now; nil outside
+                // one. Set by LuaEngine::callClickScript and Frame:Click.
+                {"GetMouseButtonClicked", [](lua_State* L) -> int {
+            lua_getglobal(L, "__WoweeMouseButtonClicked");
+            return 1;
+        }},
                 {"GetChatWindowSavedPosition",   lua_GetChatWindowSavedPosition},
                 {"GetChatWindowSavedDimensions", lua_GetChatWindowSavedDimensions},
                 {"SetChatWindowSavedPosition",   lua_SetChatWindowSavedPosition},

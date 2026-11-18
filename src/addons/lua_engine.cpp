@@ -7291,9 +7291,18 @@ void LuaEngine::registerCoreAPI() {
         "    if self:GetObjectType() == 'CheckButton' and self:IsEnabled() then\n"
         "        self:SetChecked(not self:GetChecked())\n"
         "    end\n"
-        "    if s.PreClick then s.PreClick(self, button, down) end\n"
-        "    if s.OnClick then s.OnClick(self, button, down) end\n"
-        "    if s.PostClick then s.PostClick(self, button, down) end\n"
+        // GetMouseButtonClicked answers the scripted button too (2.4.3:
+        // Click("RightButton") reads "RightButton" inside OnClick), and is
+        // restored even when a handler raises.
+        "    local previous = __WoweeMouseButtonClicked\n"
+        "    __WoweeMouseButtonClicked = button\n"
+        "    local ok, err = pcall(function()\n"
+        "        if s.PreClick then s.PreClick(self, button, down) end\n"
+        "        if s.OnClick then s.OnClick(self, button, down) end\n"
+        "        if s.PostClick then s.PostClick(self, button, down) end\n"
+        "    end)\n"
+        "    __WoweeMouseButtonClicked = previous\n"
+        "    if not ok then error(err, 0) end\n"
         "end\n"
     );
 
@@ -11953,6 +11962,22 @@ void LuaEngine::noteMouseModifiers(int button, int modifiers) {
     if (index >= 0 && index < kMouseButtons) mouseModifiers_[index] = modifiers;
 }
 
+// What GetMouseButtonClicked reads. 2.4.3 answers the button inside
+// OnMouseDown, OnMouseUp, PreClick, OnClick and PostClick - including a
+// scripted Click(button) - and nil anywhere else, OnEnter included.
+static constexpr const char* kClickButtonGlobal = "__WoweeMouseButtonClicked";
+
+void LuaEngine::callClickScript(uint32_t wid, const char* script, const char* button) {
+    lua_getglobal(L_, kClickButtonGlobal);
+    const int previous = luaL_ref(L_, LUA_REGISTRYINDEX);
+    lua_pushstring(L_, button);
+    lua_setglobal(L_, kClickButtonGlobal);
+    callFrameScript(wid, script, button);
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, previous);
+    lua_setglobal(L_, kClickButtonGlobal);
+    luaL_unref(L_, LUA_REGISTRYINDEX, previous);
+}
+
 void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons buttons) {
     if (!L_) return;
     // The cursor arrives in window pixels measured from the top, and the tree
@@ -12333,7 +12358,7 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                 }
             }
             if (pressedWid_[i] != 0)
-                callFrameScript(pressedWid_[i], "OnMouseDown", b.name);
+                callClickScript(pressedWid_[i], "OnMouseDown", b.name);
         } else if (!b.down && buttonDown_[i]) {
             buttonDown_[i] = false;
             // Before anything asks which frame was pressed, because a link is
@@ -12401,7 +12426,7 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                 }
             }
             if (pressedWid_[i] != 0) {
-                callFrameScript(pressedWid_[i], "OnMouseUp", b.name);
+                callClickScript(pressedWid_[i], "OnMouseUp", b.name);
                 // A click is press and release on the same frame, which is what
                 // lets a player slide off a button to change their mind.
                 const auto* pressed = widgets_.get(pressedWid_[i]);
@@ -12538,9 +12563,9 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                         cb && cb->enabled && cb->objectType == "CheckButton") {
                         cb->checked = !cb->checked;
                     }
-                    callFrameScript(pressedWid_[i], "PreClick", b.name);
-                    callFrameScript(pressedWid_[i], "OnClick", b.name);
-                    callFrameScript(pressedWid_[i], "PostClick", b.name);
+                    callClickScript(pressedWid_[i], "PreClick", b.name);
+                    callClickScript(pressedWid_[i], "OnClick", b.name);
+                    callClickScript(pressedWid_[i], "PostClick", b.name);
 
                     // A second click on the same frame, soon enough after the
                     // first, is also a double click - WoW sends both, and the

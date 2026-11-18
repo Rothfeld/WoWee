@@ -334,6 +334,9 @@ private:
     bool bindingRunsOnUp(const std::string& command);
 
     void callFrameScript(uint32_t wid, const char* script, const char* arg = nullptr);
+    /// callFrameScript for a mouse-button handler, with GetMouseButtonClicked
+    /// answering that button while it runs and nil again afterwards.
+    void callClickScript(uint32_t wid, const char* script, const char* button);
     /// The same, with a number. A handler that compares its argument against
     /// zero cannot be handed a numeric string.
     void callFrameScriptNumber(uint32_t wid, const char* script, double arg);
