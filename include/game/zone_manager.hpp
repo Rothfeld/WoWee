@@ -75,6 +75,13 @@ public:
     /// Shattrath carries the sanctuary bit, and neither would hold if the
     /// column were something else.
     [[nodiscard]] bool isOutdoorPvpArea(uint32_t areaId) const;
+
+    /// Whether IsFlyableArea answers 1 for an area: AreaTable Flags bit
+    /// 0x400. Measured on 2.4.3: Nagrand, Shattrath's Terrace of Light,
+    /// Hellfire Citadel and Circle of Blood Arena (0x4d0, which lacks the
+    /// 0x4000 bit the other Outland areas also carry) answer 1; Isle of
+    /// Quel'Danas, Eversong Woods, Silvermoon City and Goldshire answer nil.
+    [[nodiscard]] bool isFlyableArea(uint32_t areaId) const;
     [[nodiscard]] const ZoneInfo* getZoneInfo(uint32_t zoneId) const;
     std::string getRandomMusic(uint32_t zoneId);
     [[nodiscard]] std::vector<std::string> getAllMusicPaths() const;

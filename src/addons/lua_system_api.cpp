@@ -6358,7 +6358,13 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushboolean(L, stackable);
             return 1;
         }},
-                {"IsFlyableArea",            lua_ReturnFalse},
+                // 1 or nil, from the AreaTable flags of the area underfoot.
+                {"IsFlyableArea", [](lua_State* L) -> int {
+            auto* svc = getLuaServices(L);
+            if (svc && svc->isInFlyableArea && svc->isInFlyableArea()) lua_pushnumber(L, 1);
+            else lua_pushnil(L);
+            return 1;
+        }},
                 // The renderer knows whether the camera is inside a WMO, and
                 // the macro conditionals [indoors] / [outdoors] have read it
                 // all along. These two answered a flat false and a flat true.

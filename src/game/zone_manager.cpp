@@ -102,6 +102,11 @@ bool ZoneManager::isOutdoorPvpArea(uint32_t areaId) const {
     return (it->second & (kOutdoorPvp | kWintergrasp)) != 0;
 }
 
+bool ZoneManager::isFlyableArea(uint32_t areaId) const {
+    const auto it = areaFlags_.find(areaId);
+    return it != areaFlags_.end() && (it->second & 0x400u) != 0;
+}
+
 uint32_t ZoneManager::getMapZoneId(uint32_t mapId) const {
     const auto it = mapZones_.find(mapId);
     return it == mapZones_.end() ? 0 : resolveAreaZoneId(it->second);

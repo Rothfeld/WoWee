@@ -173,6 +173,8 @@ public:
     /// The area under the player, asked of AreaTable rather than resolved to a
     /// zone first - the world PvP flag is on the subzone. See ZoneManager.
     bool isOnOutdoorPvpObjective() const;
+    /// AreaTable flag 0x400 of the area the character stands in (IsFlyableArea).
+    bool isInFlyableArea() const;
     bool isPlayerIndoors() const { return playerIndoors_; }
     VkContext* getVkContext() const { return vkCtx; }
     VkDescriptorSetLayout getPerFrameSetLayout() const { return perFrameSetLayout; }

@@ -1867,6 +1867,11 @@ bool Renderer::isOnOutdoorPvpObjective() const {
     return false;
 }
 
+bool Renderer::isInFlyableArea() const {
+    const uint32_t areaId = getCurrentAreaId();
+    return zoneManager && areaId != 0 && zoneManager->isFlyableArea(areaId);
+}
+
 uint32_t Renderer::getCurrentAreaId() const {
     if (interiorAreaId_ != 0) return interiorAreaId_;
     if (!terrainManager) return 0;

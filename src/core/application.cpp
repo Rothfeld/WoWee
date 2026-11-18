@@ -830,6 +830,9 @@ bool Application::initialize() {
         luaSvc.isOnOutdoorPvpObjective = [r = renderer.get()]() -> bool {
             return r && r->isOnOutdoorPvpObjective();
         };
+        luaSvc.isInFlyableArea = [r = renderer.get()]() -> bool {
+            return r && r->isInFlyableArea();
+        };
         luaSvc.takeScreenshot = [uim = uiManager.get()]() {
             if (uim) uim->getGameScreen().takeScreenshot();
         };

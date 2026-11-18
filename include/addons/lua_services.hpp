@@ -212,6 +212,10 @@ struct LuaServices {
     /// the one that survives either way, being its own zone.
     std::function<bool()> isOnOutdoorPvpObjective;
 
+    /// Whether the area the character stands in carries AreaTable flag 0x400,
+    /// which is what IsFlyableArea reports on 2.4.3.
+    std::function<bool()> isInFlyableArea;
+
     /// Whether looking up drags the view down, for mouseInvertPitch.
     ///
     /// There is deliberately no counterpart for mouseSpeed, which sits beside
