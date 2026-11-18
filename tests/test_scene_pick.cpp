@@ -10,6 +10,7 @@
 #include "ui/scene_pick.hpp"
 #include "game/corpse_harvesting.hpp"
 #include "game/game_object_interaction.hpp"
+#include "game/game_object_reach.hpp"
 #include "game/faction_hostility.hpp"
 #include "game/resource_tracking.hpp"
 
@@ -150,6 +151,24 @@ TEST_CASE("an invisible WMO collision hull does not hide an object from the mous
     // Only the triangles the spatial grid offers are tested.
     CHECK(pickDrawnWmoTriangles(vertices, indices, hullDrawn, std::vector<uint32_t>{6, 9},
                                 eye, down, 10) == 5);
+}
+
+TEST_CASE("a door reaches as far as its Stand bounds grown by 5 yards", "[go-reach]") {
+    // Shield Generator 185051: display 7265 (coilfang_floor_light.m2, Stand
+    // bounds below), size 2.09919. Original 2.4.3 (pair 17) cursor: active to
+    // 8.10 yd along local +Y and 8.0 along -X, Unable from 8.15 and 8.25.
+    using wowee::game::withinGrownBox;
+    const glm::vec3 standMin{-1.451f, -1.464f, -0.709f}, standMax{1.490f, 1.477f, 2.232f};
+    constexpr float kScale = 2.09919f, kReach = 5.0f;
+    CHECK(withinGrownBox({0, 8.10f, -1.34f}, standMin, standMax, kScale, kReach));
+    CHECK_FALSE(withinGrownBox({0, 8.15f, -1.34f}, standMin, standMax, kScale, kReach));
+    CHECK(withinGrownBox({-8.0f, 0, -1.34f}, standMin, standMax, kScale, kReach));
+    CHECK_FALSE(withinGrownBox({-8.25f, 0, -1.34f}, standMin, standMax, kScale, kReach));
+    // The display box (GameObjectDisplayInfo 7265) would refuse 7.5 yd, where
+    // the original shows the active gear.
+    const glm::vec3 displayMin{-0.805f, -1.093f, -1.354f}, displayMax{1.088f, 1.093f, 1.398f};
+    CHECK_FALSE(withinGrownBox({0, 7.5f, -1.34f}, displayMin, displayMax, kScale, kReach));
+    CHECK(withinGrownBox({0, 7.5f, -1.34f}, standMin, standMax, kScale, kReach));
 }
 
 TEST_CASE("NPC cursor honors server cursor and attack permission") {

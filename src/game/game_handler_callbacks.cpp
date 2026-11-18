@@ -1,5 +1,7 @@
 #include "game/game_handler.hpp"
 #include "game/game_object_lock.hpp"
+#include "game/game_object_reach.hpp"
+#include "pipeline/m2_loader.hpp"
 #include "game/game_object_interaction.hpp"
 #include "game/stationery.hpp"
 #include "game/reputation_standing.hpp"
@@ -222,8 +224,12 @@ LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
 // when one opens it; every OPEN_LOCK and gather spell in Spell.dbc has the
 // 5-yard Combat Range, so the two agree. Chairs reach 3 yards.
 // Fishing nodes reach 100 and spell
-// focuses test a sphere. The client uses the door's animation bounds for type
-// 0; the display box stands in for them, as it does on the server. nullopt
+// focuses test a sphere. A door (type 0) is measured by its model's Stand
+// animation bounds rather than the display box: original 2.4.3 (pair 17)
+// shows Shield Generator 185051 (display 7265, scale 2.09919) usable to 8.10
+// yd along its local +Y and 8.0 yd along -X, and Unable from 8.15 / 8.25 -
+// the Stand bounds (x -1.451..1.490, y -1.464..1.477) scaled plus 5, where
+// the display box (x -0.805..1.088, y +-1.093) gives 6.7 / 7.3. nullopt
 // when the layout has no box or the display has no row.
 std::optional<bool> withinGameObjectReach(pipeline::AssetManager* assets,
                                           const GameObjectQueryResponseData* info,
@@ -262,12 +268,40 @@ std::optional<bool> withinGameObjectReach(pipeline::AssetManager* assets,
     const glm::vec3 local(offset.x * std::cos(c) - offset.y * std::sin(c),
                           offset.x * std::sin(c) + offset.y * std::cos(c),
                           offset.z);
-    for (int axis = 0; axis < 3; ++axis) {
-        const float lo = displayDbc->getFloat(static_cast<uint32_t>(row), minField + axis) * scale - reach;
-        const float hi = displayDbc->getFloat(static_cast<uint32_t>(row), maxField + axis) * scale + reach;
-        if (!(local[axis] > lo && local[axis] < hi)) return false;
+    constexpr uint32_t kGoTypeDoor = 0;
+    if (info->type == kGoTypeDoor) {
+        // Stand bounds per display, loaded once.
+        static std::unordered_map<uint32_t, std::pair<glm::vec3, glm::vec3>> standBounds;
+        auto found = standBounds.find(info->displayId);
+        if (found == standBounds.end()) {
+            const uint32_t nameField = layout->field("ModelName");
+            assert(nameField != 0xFFFFFFFF && "GameObjectDisplayInfo layout lacks ModelName");
+            const std::string path = pipeline::modelPathToM2(
+                displayDbc->getString(static_cast<uint32_t>(row), nameField));
+            const auto data = assets->readFileOptional(path);
+            if (data.empty()) {
+                LOG_WARNING("Door reach: model ", path, " of display ", info->displayId, " not found");
+                return std::nullopt;
+            }
+            const auto model = pipeline::M2Loader::load(data);
+            const auto stand = std::find_if(model.sequences.begin(), model.sequences.end(),
+                                            [](const auto& sequence) { return sequence.id == 0; });
+            if (stand == model.sequences.end()) {
+                LOG_WARNING("Door reach: model ", path, " has no Stand animation");
+                return std::nullopt;
+            }
+            found = standBounds.emplace(info->displayId,
+                                        std::make_pair(stand->boundMin, stand->boundMax)).first;
+        }
+        return withinGrownBox(local, found->second.first, found->second.second, scale, reach);
     }
-    return true;
+    const glm::vec3 boxMin(displayDbc->getFloat(static_cast<uint32_t>(row), minField),
+                           displayDbc->getFloat(static_cast<uint32_t>(row), minField + 1),
+                           displayDbc->getFloat(static_cast<uint32_t>(row), minField + 2));
+    const glm::vec3 boxMax(displayDbc->getFloat(static_cast<uint32_t>(row), maxField),
+                           displayDbc->getFloat(static_cast<uint32_t>(row), maxField + 1),
+                           displayDbc->getFloat(static_cast<uint32_t>(row), maxField + 2));
+    return withinGrownBox(local, boxMin, boxMax, scale, reach);
 }
 
 } // end anonymous namespace
