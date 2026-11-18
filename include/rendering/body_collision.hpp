@@ -27,6 +27,12 @@ inline std::array<glm::vec3, 9> bodySupportPoints(float radius) {
              {-radius, radius, bevel}, {-radius, -radius, bevel}}};
 }
 using BodyTriangle = std::array<glm::vec3, 3>;
+
+// Separation left between a body and the face it was stopped by. A contact
+// in a crease pushes the body this far along one face's normal, which can
+// carry it this far into the neighbouring face.
+inline constexpr float kContactSkin = 0.0014f;
+
 struct BodyContact {
     float time;
     glm::vec3 normal;
@@ -44,6 +50,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     if (glm::dot(triangleNormal, triangleNormal) < 1e-10f) return std::nullopt;
     float enter = -std::numeric_limits<float>::infinity();
     float leave = std::numeric_limits<float>::infinity();
+    float enterSpeed = 0.0f;
     glm::vec3 normal(0.0f);
     const auto axisOverlap = [&](glm::vec3 axis) {
         const float lengthSq = glm::dot(axis, axis);
@@ -58,7 +65,7 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
         if (std::abs(speed) < 1e-8f) return low <= 0.0f && high >= 0.0f;
         const float first = std::min(low/speed,high/speed);
         const float last = std::max(low/speed,high/speed);
-        if (first > enter) { enter=first; normal=speed>0.0f ? -axis : axis; }
+        if (first > enter) { enter=first; enterSpeed=std::abs(speed); normal=speed>0.0f ? -axis : axis; }
         leave = std::min(leave,last);
         return enter <= leave;
     };
@@ -77,7 +84,15 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
             if (!axisOverlap(glm::cross(edge,bodyEdge))) return std::nullopt;
     // Existing overlap must not trap an actor or block departure. Continuous
     // tests catch entry before overlap; tangent contact has no entering time.
-    if (enter < -1e-5f || enter > 1.0f || leave < 0.0f) return std::nullopt;
+    //
+    // Except an overlap no deeper than the contact skin, moving deeper: that is
+    // a face the body touches, entered by the skin push off its neighbour in a
+    // crease. Ignored, the body passed through it - at the Alcaz Island dock
+    // (redridgedocks03) a body sliding into the fold between the ramp and the
+    // riser in front of the beam went through the riser and was held inside
+    // the deck. A departing body entered long ago and is still let go.
+    if (enter > 1.0f || leave < 0.0f) return std::nullopt;
+    if (enter < -1e-5f && -enter * enterSpeed > kContactSkin) return std::nullopt;
     return BodyContact{std::max(0.0f,enter),normal};
 }
 
@@ -105,7 +120,7 @@ inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
             const float horizontalLength=glm::length(responseNormal);
             if (horizontalLength>1e-6f) responseNormal/=horizontalLength;
         }
-        result+=responseNormal*0.0014f;
+        result+=responseNormal*kContactSkin;
         remaining*=1.0f-first->time;
         if (to.z>from.z && first->normal.z<0.0f &&
                 glm::length(glm::vec2(to-from))<1e-6f) return collided;
@@ -138,7 +153,7 @@ inline glm::vec3 stepBodyAcross(const glm::vec3& from, const glm::vec3& to,
     };
     glm::vec3 up(0.0f, 0.0f, maxStepUp);
     if (const auto ceiling = firstContact(from, up))
-        up.z = std::max(0.0f, up.z * ceiling->time - 0.0014f);
+        up.z = std::max(0.0f, up.z * ceiling->time - kContactSkin);
     glm::vec3 across;
     moveBody(from + up, to + up, radius, height, triangles, across, false);
     const glm::vec3 down(0.0f, 0.0f, from.z - across.z);

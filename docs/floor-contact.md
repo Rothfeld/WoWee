@@ -51,6 +51,19 @@ table in three of four identical walks; capped at 20 fps it never did.
 Compare at a matched frame rate. Evidence:
 `_experiments/20261117T171500Z.table_collision_data_rule`.
 
+A body already overlapping a triangle passes through it, so an overlap left
+by a teleport or an earlier fault cannot trap it. The one exception is an
+overlap no deeper than the contact skin (`kContactSkin`, the 0.0014-yard
+separation `moveBody` leaves after a contact) on a body moving deeper: that
+is contact. In a crease the skin push off one face carries the body that far
+into the other; treated as an existing overlap, the second face was ignored
+and the body fell through it. At the Alcaz Island dock (Dustwallow Marsh,
+`redridgedocks03.m2`, uid 381622) a player walking from the deck onto the
+beam at (-2697.7, -4694.8) dropped through the riser between them and was
+held inside the deck, sunk to the chest between the boards; native 2.4.3
+rests in that fold at z 9.43. Evidence:
+`_experiments/20261118T205414.plank_gaps` in the parent workspace.
+
 M2 support probes use the moving body's radius and lower beveled envelope.
 Each offset sample carries its height above the sole; subtract that height from
 the mesh hit to obtain supported sole height. A prop touching the body's side

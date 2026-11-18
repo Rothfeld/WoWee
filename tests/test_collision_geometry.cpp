@@ -276,6 +276,46 @@ TEST_CASE("beveled body cannot tunnel through a thin wall") {
     }
 }
 
+TEST_CASE("a body falling into a crease rests on both faces") {
+    using namespace wowee::rendering::movement;
+    // Placed collision of redridgedocks03 at Alcaz Island (uid 381622): the
+    // fold between the deck's steep riser and the face in front of the beam.
+    // Native 2.4.3 stood in this fold at (-2697.70, -4694.83, 9.43). The skin
+    // push off one face used to carry the body into the other, which was then
+    // ignored as an existing overlap: the body fell through into the deck.
+    const std::array crease = {
+        BodyTriangle{glm::vec3(-2712.85693f,-4694.49658f,9.70793915f),
+                     glm::vec3(-2693.99902f,-4694.67871f,9.72304153f),
+                     glm::vec3(-2712.64478f,-4691.78418f,10.4850664f)},
+        BodyTriangle{glm::vec3(-2691.69751f,-4694.95459f,9.32808304f),
+                     glm::vec3(-2712.85693f,-4694.49658f,9.70793915f),
+                     glm::vec3(-2715.01074f,-4694.64746f,9.30869675f)}};
+    glm::vec3 body(-2697.726074f,-4694.811035f,9.414773f);
+    for (int frame = 0; frame < 20; ++frame) {
+        glm::vec3 result;
+        moveBody(body, body + glm::vec3(0,0,-0.2f), .306f, 2.031f, crease, result);
+        body = result;
+        CHECK(body.z > 9.41f);
+        CHECK(body.y < -4694.80f);
+    }
+}
+
+TEST_CASE("a body overlapping a face deeper than the skin still leaves it") {
+    using namespace wowee::rendering::movement;
+    const std::array floor = {
+        BodyTriangle{glm::vec3(-5,-5,0),glm::vec3(5,-5,0),glm::vec3(5,5,0)},
+        BodyTriangle{glm::vec3(-5,-5,0),glm::vec3(5,5,0),glm::vec3(-5,5,0)}};
+    glm::vec3 result;
+    // Sunk a hand's width into a floor: free to rise out and to walk.
+    CHECK_FALSE(moveBody({0,0,-.1f},{0,0,.5f},.3f,2.0f,floor,result));
+    CHECK(result.z == Catch::Approx(.5f));
+    CHECK_FALSE(moveBody({0,0,-.1f},{1,0,-.1f},.3f,2.0f,floor,result));
+    // Within the skin, moving deeper is contact; moving out is not.
+    CHECK(moveBody({0,0,-.001f},{0,0,-.5f},.3f,2.0f,floor,result));
+    CHECK(result.z > -.002f);
+    CHECK_FALSE(moveBody({0,0,-.001f},{0,0,.5f},.3f,2.0f,floor,result));
+}
+
 TEST_CASE("flat character head stops on either winding of a ceiling") {
     using namespace wowee::rendering::movement;
     std::array ceiling = {
