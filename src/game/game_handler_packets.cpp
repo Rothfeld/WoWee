@@ -581,7 +581,6 @@ void GameHandler::registerCoreOpcodes() {
         corpsePositionValid_ = true;
         latchReleaseTimer("SMSG_FORCED_DEATH_UPDATE");
         fireAddonEvent("PLAYER_DEAD", {});
-        addSystemChatMessage("You have been killed.");
         LOG_INFO("SMSG_FORCED_DEATH_UPDATE: player force-killed");
         packet.skipAll();
     };
@@ -885,7 +884,6 @@ void GameHandler::registerCoreOpcodes() {
         // takes this one down again. Told only in chat, the dialog stays on
         // screen offering a summon the server has already withdrawn.
         fireAddonEvent("CANCEL_SUMMON", {});
-        addSystemChatMessage("Summon cancelled.");
     };
 
     // Bind point

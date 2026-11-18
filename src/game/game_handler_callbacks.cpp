@@ -733,24 +733,9 @@ void GameHandler::applyWeather(uint32_t state, float intensity) {
     weatherType_ = state;
     weatherIntensity_ = intensity;
     LOG_INFO("Weather changed: state=", state, ", intensity=", intensity);
-    // Announce weather changes (including initial zone weather)
-    if (kind != was) {
-        const auto announced = [](WeatherKind k) {
-            return k == WeatherKind::RAIN || k == WeatherKind::SNOW ||
-                   k == WeatherKind::THUNDERSTORM;
-        };
-        const char* weatherMsg = nullptr;
-        if (intensity < 0.05f || kind == WeatherKind::NONE) {
-            if (announced(was)) weatherMsg = "The weather clears.";
-        } else if (kind == WeatherKind::RAIN) {
-            weatherMsg = "It begins to rain.";
-        } else if (kind == WeatherKind::SNOW) {
-            weatherMsg = "It begins to snow.";
-        } else if (kind == WeatherKind::THUNDERSTORM) {
-            weatherMsg = "A storm rolls in.";
-        }
-        if (weatherMsg) addSystemChatMessage(weatherMsg);
-    }
+    // No chat line: 2.4.3 announces no weather (TBC GlobalStrings has no
+    // weather line; rain began on pair 6 with nothing printed natively).
+    (void)was;
     // Notify addons of weather change
     fireAddonEvent("WEATHER_CHANGED", {std::to_string(state), std::to_string(intensity)});
     // Storm transition: trigger a low-frequency thunder rumble shake
@@ -3435,7 +3420,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                                     glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z));
         const float maxInteractDistance = (guid == hookedFishingBobberGuid_) ? 30.0f : 10.0f;
         if (inReach ? !*inReach : dist3d > maxInteractDistance) {
-            raiseUiError("Too far away.");
+            errorGlobal("ERR_USE_TOO_FAR");
             return;
         }
         if (goInfo && goType == 23) {
@@ -3443,7 +3428,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             // this error locally before sending a meeting-stone use packet.
             const uint32_t level = getPlayerLevel();
             if (level < goInfo->data[0] || level > goInfo->data[1]) {
-                raiseUiError("You do not meet the level requirements of this meeting stone.");
+                errorGlobal("ERR_MEETING_STONE_INVALID_LEVEL");
                 return;
             }
         }
@@ -3514,12 +3499,12 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
     // the lock's rank is ERR_USE_LOCKED_WITH_SPELL_KNOWN_SI "Requires %s %d".
     if (const auto lock = gameObjectProfessionLock(goInfo)) {
         if (lock->spellId == 0) {
-            addUIError("Requires " + lock->name);
+            errorGlobal("ERR_USE_LOCKED_WITH_SPELL_S", {lock->name});
             LOG_INFO("GO profession lock: ", lock->name, " not known; guid=0x", std::hex, guid, std::dec);
             return;
         }
         if (lock->playerRank < lock->requiredRank) {
-            addUIError("Requires " + lock->name + " " + std::to_string(lock->requiredRank));
+            errorGlobal("ERR_USE_LOCKED_WITH_SPELL_KNOWN_SI", {lock->name, std::to_string(lock->requiredRank)});
             LOG_INFO("GO profession lock: ", lock->name, " ", lock->playerRank, " < ", lock->requiredRank);
             return;
         }
@@ -3614,7 +3599,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         // A locked door the player has no key or opening for: the original
         // sends nothing and shows GlobalStrings ERR_DOOR_LOCKED.
         if (flaggedLocked && goType == 0) {
-            addUIError("The door is locked.");
+            errorGlobal("ERR_DOOR_LOCKED");
             LOG_INFO("GO locked door refused: lockId=", gameObjectLockId(goInfo),
                      " keyItem=", plan.keyItemId, " guid=0x", std::hex, guid, std::dec,
                      " entry=", goEntry);

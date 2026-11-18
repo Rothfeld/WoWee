@@ -888,8 +888,7 @@ void GameHandler::update(float deltaTime) {
             combatHandler_ && (combatHandler_->isAutoAttacking() || combatHandler_->hasAutoAttackIntent())) {
             pendingGameObjectInteractGuid_ = 0;
             if (spellHandler_) spellHandler_->resetCastState();
-            addUIError("Interrupted.");
-            addSystemChatMessage("Interrupted.");
+            errorGlobal("SPELL_FAILED_INTERRUPTED");
         }
         // Check if client-side cast timer expired (tick-down is in SpellHandler::updateTimers).
         // Three paths depending on whether this is a GO interaction or craft-queue cast:
@@ -3441,8 +3440,7 @@ void GameHandler::sendOptOutOfLoot(bool optOut) {
     packet.writeUInt32(optOut ? 1u : 0u);
     getSocket()->send(packet);
     LOG_INFO("CMSG_OPT_OUT_OF_LOOT: ", optOut ? "opting out" : "opting in");
-    addSystemChatMessage(optOut ? "You are now passing on random loot."
-                               : "You are now eligible for random loot.");
+    systemGlobal(optOut ? "OPT_OUT_LOOT_TOGGLE_ON" : "OPT_OUT_LOOT_TOGGLE_OFF");
 }
 
 void GameHandler::runInterfaceCommand(const std::string& lua) const {

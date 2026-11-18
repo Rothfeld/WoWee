@@ -767,8 +767,8 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_BATTLEFIELD_STATUS] = [this](network::Packet& packet) { handleBattlefieldStatus(packet); };
     table[Opcode::SMSG_BATTLEFIELD_LIST] = [this](network::Packet& packet) { handleBattlefieldList(packet); };
     table[Opcode::SMSG_BATTLEFIELD_PORT_DENIED] = [this](network::Packet& /*packet*/) {
-        owner_.addUIError("Battlefield port denied.");
-        owner_.addSystemChatMessage("Battlefield port denied.");
+        // No GlobalStrings line in TBC; CMaNGOS TBC never sends it.
+        LOG_WARNING("SMSG_BATTLEFIELD_PORT_DENIED");
     };
     table[Opcode::MSG_BATTLEGROUND_PLAYER_POSITIONS] = [this](network::Packet& packet) {
         bgPlayerPositions_.clear();
@@ -786,7 +786,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         }
     };
     table[Opcode::SMSG_REMOVED_FROM_PVP_QUEUE] = [this](network::Packet& /*packet*/) {
-        owner_.addSystemChatMessage("You have been removed from the PvP queue.");
+        LOG_WARNING("SMSG_REMOVED_FROM_PVP_QUEUE");  // no TBC GlobalStrings line
     };
     // The answer to a join, and most often a refusal. A positive value is the
     // battleground joined; the negative ones are the reasons a queue was
@@ -796,6 +796,31 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         if (!packet.hasRemaining(4)) return;
         bgJoinPendingType_ = 0;  // answered
         const int32_t result = static_cast<int32_t>(packet.readUInt32());
+        // TBC: CMaNGOS BattleGroundGroupJoinStatus, each its GlobalStrings
+        // line (not observed natively); success carries the bg type.
+        if (isActiveExpansion("tbc")) {
+            const char* line = nullptr;
+            switch (result) {
+                case -1: line = "ERR_GROUP_JOIN_BATTLEGROUND_FAIL"; break;
+                case -2: line = "ERR_GROUP_JOIN_BATTLEGROUND_DESERTERS"; break;
+                case -3: line = "ERR_BATTLEGROUND_NOT_IN_TEAM"; break;
+                case -4: line = "ERR_BATTLEGROUND_TOO_MANY_QUEUES"; break;
+                case -5: line = "ERR_BATTLEGROUND_CANNOT_QUEUE_FOR_RATED"; break;
+                case -6: line = "ERR_BATTLEDGROUND_QUEUED_FOR_RATED"; break;
+                case -7: line = "ERR_BATTLEGROUND_TEAM_LEFT_QUEUE"; break;
+                default: break;
+            }
+            if (line) { owner_.systemGlobal(line); return; }
+            if (result > 0) {
+                for (const auto& kv : kBgNames)
+                    if (kv.first == static_cast<uint32_t>(result)) {
+                        owner_.systemGlobal("ERR_GROUP_JOIN_BATTLEGROUND_S", {kv.second});
+                        return;
+                    }
+            }
+            LOG_WARNING("SMSG_GROUP_JOINED_BATTLEGROUND: unknown result ", result);
+            return;
+        }
         std::string msg;
         switch (result) {
             case -1: return;  // nothing to say
@@ -837,14 +862,14 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         owner_.addSystemChatMessage(msg);
     };
     table[Opcode::SMSG_JOINED_BATTLEGROUND_QUEUE] = [this](network::Packet& /*packet*/) {
-        owner_.addSystemChatMessage("You have joined the battleground queue.");
+        LOG_INFO("SMSG_JOINED_BATTLEGROUND_QUEUE");  // no TBC GlobalStrings line
     };
     table[Opcode::SMSG_BATTLEGROUND_PLAYER_JOINED] = [this](network::Packet& packet) {
         if (packet.hasRemaining(8)) {
             uint64_t guid = packet.readUInt64();
             auto it = owner_.getPlayerNameCache().find(guid);
             if (it != owner_.getPlayerNameCache().end() && !it->second.empty())
-                owner_.addSystemChatMessage(it->second + " has entered the battleground.");
+                owner_.systemGlobal("ERR_BG_PLAYER_JOINED_SS", {it->second, it->second});
         }
     };
     table[Opcode::SMSG_BATTLEGROUND_PLAYER_LEFT] = [this](network::Packet& packet) {
@@ -852,7 +877,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
             uint64_t guid = packet.readUInt64();
             auto it = owner_.getPlayerNameCache().find(guid);
             if (it != owner_.getPlayerNameCache().end() && !it->second.empty())
-                owner_.addSystemChatMessage(it->second + " has left the battleground.");
+                owner_.systemGlobal("ERR_BG_PLAYER_LEFT_S", {it->second});
         }
     };
 
@@ -894,20 +919,35 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_REPORT_PVP_AFK_RESULT] = [this](network::Packet& packet) {
         if (packet.hasRemaining(1)) {
             uint8_t result = packet.readUInt8();
-            if (result == 0)
-                owner_.addSystemChatMessage("AFK report submitted.");
-            else
-                owner_.raiseUiError("Cannot report that player as AFK right now.");
+            // No TBC GlobalStrings line for either answer.
+            LOG_INFO("SMSG_REPORT_PVP_AFK_RESULT ", int(result));
         }
         packet.skipAll();
     };
     table[Opcode::SMSG_INSTANCE_SAVE_CREATED] = [this](network::Packet& /*packet*/) {
-        owner_.addSystemChatMessage("You are now saved to this instance.");
+        owner_.systemGlobal("INSTANCE_SAVED");
     };
     table[Opcode::SMSG_RAID_INSTANCE_MESSAGE] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(12)) return;
         uint32_t msgType = packet.readUInt32();
         uint32_t mapId   = packet.readUInt32();
+        // TBC: type, map, seconds left (CMaNGOS Player::SendRaidInstanceMessage,
+        // RaidInstanceMessage 1-4). The welcome is FrameXML's own line, from
+        // RAID_INSTANCE_WELCOME; the warnings are GlobalStrings
+        // RAID_INSTANCE_WARNING_* (not observed natively).
+        if (isActiveExpansion("tbc")) {
+            const uint32_t seconds = packet.readUInt32();
+            const std::string map = owner_.getMapName(mapId);
+            if (map.empty()) { LOG_ERROR("SMSG_RAID_INSTANCE_MESSAGE: no name for map ", mapId); return; }
+            switch (msgType) {
+                case 1: owner_.systemGlobal("RAID_INSTANCE_WARNING_HOURS", {map, std::to_string((seconds + 3599) / 3600)}); break;
+                case 2: owner_.systemGlobal("RAID_INSTANCE_WARNING_MIN", {map, std::to_string((seconds + 59) / 60)}); break;
+                case 3: owner_.systemGlobal("RAID_INSTANCE_WARNING_MIN_SOON", {map, std::to_string((seconds + 59) / 60)}); break;
+                case 4: owner_.fireAddonEvent("RAID_INSTANCE_WELCOME", {map, std::to_string(seconds)}); break;
+                default: LOG_WARNING("SMSG_RAID_INSTANCE_MESSAGE: type ", msgType); break;
+            }
+            return;
+        }
         packet.readUInt32(); // diff
         std::string mapLabel = owner_.getMapName(mapId);
         if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
@@ -928,21 +968,19 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         instanceLockouts_.erase(it, instanceLockouts_.end());
         std::string mapLabel = owner_.getMapName(mapId);
         if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-        owner_.addSystemChatMessage(mapLabel + " has been reset.");
+        owner_.systemGlobal("INSTANCE_RESET_SUCCESS", {mapLabel});
     };
     table[Opcode::SMSG_INSTANCE_RESET_FAILED] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(8)) return;
-        uint32_t mapId  = packet.readUInt32();
-        uint32_t reason = packet.readUInt32();
-        static const char* resetFailReasons[] = {
-            "Not max level.", "Offline party members.", "Party members inside.",
-            "Party members changing zone.", "Heroic difficulty only."
-        };
-        const char* reasonMsg = (reason < 5) ? resetFailReasons[reason] : "Unknown reason.";
-        std::string mapLabel = owner_.getMapName(mapId);
-        if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-        owner_.addUIError("Cannot reset " + mapLabel + ": " + reasonMsg);
-        owner_.addSystemChatMessage("Cannot reset " + mapLabel + ": " + reasonMsg);
+        // Reason first, then the map (CMaNGOS Player::SendResetInstanceFailed:
+        // 0 players inside, 1 offline, 2 zoning in); it was read map first.
+        const uint32_t reason = packet.readUInt32();
+        const uint32_t mapId  = packet.readUInt32();
+        const std::string mapLabel = owner_.getMapName(mapId);
+        static constexpr const char* kLines[] = {"INSTANCE_RESET_FAILED", "INSTANCE_RESET_FAILED_OFFLINE",
+                                                 "INSTANCE_RESET_FAILED_ZONING"};
+        if (reason < 3 && !mapLabel.empty()) owner_.systemGlobal(kLines[reason], {mapLabel});
+        else LOG_WARNING("SMSG_INSTANCE_RESET_FAILED: reason ", reason, " map ", mapId);
     };
     table[Opcode::SMSG_INSTANCE_LOCK_WARNING_QUERY] = [this](network::Packet& packet) {
         // Nine bytes: a countdown in milliseconds, the mask of encounters
@@ -3727,12 +3765,9 @@ void SocialHandler::handleBattlefieldStatus(network::Packet& packet) {
         LOG_WARNING("Battleground queue ", queueSlot + 1, ": status ", statusId,
                     " for type ", bgTypeId, " (", bgName, "), average wait ",
                     avgWaitSec, " s, waited ", timeInQueueSec, " s");
-        switch (statusId) {
-            case 1: owner_.addSystemChatMessage("Queued for " + bgName + "."); break;
-            case 2: owner_.addSystemChatMessage(bgName + " is ready!"); break;
-            case 3: owner_.addSystemChatMessage("Entered " + bgName + "."); break;
-            default: break;
-        }
+        // No chat line: the minimap queue icon and BattlefieldFrame's
+        // prompt show these states (TBC GlobalStrings has no queued/ready
+        // line).
     }
     // The argument is which queue changed, counted from one, not what it
     // changed to. battlefieldframe.lua takes it as the index and raises the
@@ -3786,7 +3821,7 @@ void SocialHandler::acceptBattlefield(uint32_t queueSlot) {
     const BgQueueSlot* slot = nullptr;
     if (queueSlot == 0xFFFFFFFF) { for (const auto& s : bgQueues_) { if (s.statusId == 2) { slot = &s; break; } } }
     else if (queueSlot < bgQueues_.size() && bgQueues_[queueSlot].statusId == 2) slot = &bgQueues_[queueSlot];
-    if (!slot) { owner_.addSystemChatMessage("No battleground invitation pending."); return; }
+    if (!slot) { LOG_WARNING("No battleground invitation pending"); return; }
     network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_PORT));
     pkt.writeUInt8(slot->arenaType); pkt.writeUInt8(0x00); pkt.writeUInt32(slot->bgTypeId);
     pkt.writeUInt16(0x0000); pkt.writeUInt8(1);
@@ -3858,7 +3893,7 @@ void SocialHandler::declineBattlefield(uint32_t queueSlot) {
     else if (queueSlot < bgQueues_.size() &&
              (bgQueues_[queueSlot].statusId == 1 || bgQueues_[queueSlot].statusId == 2))
         slot = &bgQueues_[queueSlot];
-    if (!slot) { owner_.addSystemChatMessage("No battleground invitation pending."); return; }
+    if (!slot) { LOG_WARNING("No battleground invitation pending"); return; }
     const bool wasInvite = slot->statusId == 2;
     const std::string bgName = slot->bgName;
     network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_PORT));
@@ -3867,8 +3902,7 @@ void SocialHandler::declineBattlefield(uint32_t queueSlot) {
     owner_.getSocket()->send(pkt);
     uint32_t clearSlot = slot->queueSlot;
     if (clearSlot < bgQueues_.size()) bgQueues_[clearSlot] = BgQueueSlot{};
-    owner_.addSystemChatMessage(wasInvite ? "Battleground invitation declined."
-                                          : "Left the queue for " + bgName + ".");
+    LOG_INFO(wasInvite ? "Battleground invitation declined" : "Left the queue for ", bgName);
     // The minimap icon and the panel read the queues on this event; without
     // it they kept showing the queue until the server's next word.
     if (owner_.addonEventCallbackRef())
