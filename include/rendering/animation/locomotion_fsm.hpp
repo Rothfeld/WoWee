@@ -11,7 +11,7 @@ namespace rendering {
 // LocomotionFSM
 //
 // Pure logic state machine for movement animation. No renderer dependency.
-// States: IDLE · WALK · RUN · JUMP_START · JUMP_MID · JUMP_END · SWIM_IDLE · SWIM
+// States: IDLE · TURN · WALK · RUN · JUMP_START · JUMP_MID · JUMP_END · SWIM_IDLE · SWIM
 //
 // Grace timer is internal - no external locomotionStopGraceTimer_ needed.
 // ============================================================================
@@ -21,6 +21,8 @@ public:
         IDLE, WALK, RUN,
         JUMP_START, JUMP_MID, JUMP_END,
         SWIM_IDLE, SWIM,
+        // Standing and turning in place: ShuffleLeft/ShuffleRight.
+        TURN,
     };
 
     struct Input {
@@ -35,6 +37,9 @@ public:
         bool swimming = false;
         bool sitting = false;
         bool sprintAura = false;      // Sprint/Dash aura - use SPRINT anim
+        // Facing turned this frame by the player while standing:
+        // +1 left (counter-clockwise from above), -1 right, 0 not turning.
+        int turnDirection = 0;
         float deltaTime = 0.0f;
         // Animation state for one-shot completion detection (jump start/end)
         uint32_t currentAnimId = 0;
@@ -71,10 +76,20 @@ private:
     bool jumpStartSeen_ = false;
     bool jumpEndSeen_ = false;
 
+    // Turning in place. A shuffle cycle in which the character turned is
+    // followed by another; one without a turn returns to Stand. Build 8606's
+    // own character keeps stepping for a cycle after a turn stops.
+    bool turnLeft_ = false;
+    bool turnedThisCycle_ = false;
+    bool shuffleSeen_ = false;
+    float shuffleTime_ = 0.0f;
+
     static constexpr float kGraceSec = 0.12f;
 
     /// Internal: update state transitions based on input.
     void updateTransitions(const Input& in, const AnimCapabilitySet& caps);
+    void startTurn(int direction);
+    [[nodiscard]] bool shuffleCycleDone(const Input& in);
     [[nodiscard]] bool oneShotComplete(const Input& in, uint32_t expectedAnimId) const;
 };
 

@@ -1078,6 +1078,23 @@ Every looping animation starts on a variation drawn by M2 frequency and redraws 
 
 Walk or Run (rendering::splineGroundGaitWalks) compares the spline speed with the Walk stride at the display's own size: OBJECT_FIELD_SCALE_X enlarges the model but not the stride. Native Akama 21700 (display 20681 x1.3, Walk 2.5) ran at 6.94 yd/s at object scale 1, 2 and 3; Akama 22990 (same display, created at object scale 2) ran at 8.0; El Pollo Grande (display 589 x10) walked at 8.0. For Black Temple Akama 23089 (display 21112 x2.6, run speed 10) the rule gives Walk (stride 6.5, threshold 13); a native 21700 given display 21112 also walked at 10.4. The real Illidan event was not observed natively.
 
+### Turning in place
+
+The standing local character plays `ShuffleLeft` (11) while the player turns it
+left and `ShuffleRight` (12) while turning right, with the turn keys or by
+mouse-look (right button). Each shuffle cycle (HumanMale.m2: 500 ms, blend
+250 ms) that contained a turn is followed by another; a cycle without one
+returns to Stand, so the feet keep stepping briefly after the turn stops and a
+one-frame mouse turn still steps once. Moving, jumping and swimming take over
+at once. A model without the sequence plays its AnimationData fallback, Stand.
+Combat ready stances, emotes and sitting keep their animation. Native 2.4.3
+shuffles its own character for keyboard and mouse-look turns, including a
+ten-pixel mouse turn, and shows other players' turns with a shuffle too.
+WoWee does not yet: a remote player's keyboard turn reaches the model as one
+facing change when the turn stops, with no shuffle.
+`build/bin/test_locomotion_fsm '[turn]'`. Evidence:
+`_experiments/20261118T1952.turn_shuffle` in the workspace.
+
 ### NPC conversation facing
 
 Greeting callbacks play voice audio. Opening a gossip panel plays the emotes

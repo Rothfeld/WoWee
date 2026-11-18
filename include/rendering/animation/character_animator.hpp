@@ -115,6 +115,8 @@ public:
         bool descending = false;
         bool jumpKeyPressed = false;
         float characterYaw = 0.0f;
+        // +1 the player turned the character left this frame, -1 right, 0 not.
+        int turnDirection = 0;
         // Melee/ranged timers
         float meleeSwingTimer = 0.0f;
         float rangedShootTimer = 0.0f;

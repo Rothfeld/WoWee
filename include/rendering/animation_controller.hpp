@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <utility>
 #include <string>
 #include <vector>
@@ -221,6 +222,8 @@ private:
     bool seenAliveOnInstance_ = false;
     bool lastPlayerAnimLoopRequest_ = true;
     float lastDeltaTime_ = 0.0f;
+    // Character facing seen by the previous animation update, for turning in place.
+    std::optional<float> lastAnimatedYaw_;
 
     // ── Externally-queried state (mirrored to CharacterAnimator) ────────────
     const glm::vec3* targetPosition_ = nullptr;

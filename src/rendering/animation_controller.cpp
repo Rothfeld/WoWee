@@ -1155,6 +1155,21 @@ void AnimationController::updateCharacterAnimation() {
         }
     }
 
+    // Turning in place: the player turned the character's facing since the
+    // last update, with the turn keys or by mouse-look. Build 8606 shuffles
+    // its standing character's feet for both, toward the turn.
+    const float yaw = renderer_->getCharacterYaw();
+    int turnDirection = 0;
+    if (lastAnimatedYaw_ && (cameraController->isTurningLeft() ||
+                             cameraController->isTurningRight() ||
+                             cameraController->isRightMouseHeld())) {
+        float delta = yaw - *lastAnimatedYaw_;
+        while (delta > 180.0f) delta -= 360.0f;
+        while (delta < -180.0f) delta += 360.0f;
+        if (delta != 0.0f) turnDirection = delta > 0.0f ? 1 : -1;
+    }
+    lastAnimatedYaw_ = yaw;
+
     // When mounted, delegate to MountFSM and handle positioning
     if (!dead && isMounted()) {
         updateMountedAnimation(lastDeltaTime_);
@@ -1193,7 +1208,8 @@ void AnimationController::updateCharacterAnimation() {
     fi.ascending = cameraController->isAscending();
     fi.descending = cameraController->isDescending();
     fi.jumpKeyPressed = cameraController->isJumpKeyPressed();
-    fi.characterYaw = renderer_->getCharacterYaw();
+    fi.characterYaw = yaw;
+    fi.turnDirection = turnDirection;
     // Melee/ranged timers
     fi.meleeSwingTimer = meleeSwingTimer_;
     fi.rangedShootTimer = rangedShootTimer_;

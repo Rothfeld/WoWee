@@ -13,6 +13,28 @@ bool LocomotionFSM::oneShotComplete(const Input& in, uint32_t expectedAnimId) co
            (in.currentAnimDuration > 0.1f && in.currentAnimTime >= in.currentAnimDuration - 0.05f);
 }
 
+// ── Turning in place ────────────────────────────────────────────────────────
+
+void LocomotionFSM::startTurn(int direction) {
+    state_ = State::TURN;
+    turnLeft_ = direction > 0;
+    turnedThisCycle_ = true;
+    shuffleSeen_ = false;
+    shuffleTime_ = 0.0f;
+}
+
+// True when the looping shuffle has wrapped back to its start since it was
+// last asked about: a cycle has finished.
+bool LocomotionFSM::shuffleCycleDone(const Input& in) {
+    if (!in.haveAnimState) return true;
+    const uint32_t expected = turnLeft_ ? anim::SHUFFLE_LEFT : anim::SHUFFLE_RIGHT;
+    if (in.currentAnimId != expected) return shuffleSeen_;
+    const bool wrapped = shuffleSeen_ && in.currentAnimTime < shuffleTime_;
+    shuffleSeen_ = true;
+    shuffleTime_ = in.currentAnimTime;
+    return wrapped;
+}
+
 // ── Event handling ───────────────────────────────────────────────────────────
 
 void LocomotionFSM::onEvent(AnimEvent event) {
@@ -76,6 +98,31 @@ void LocomotionFSM::updateTransitions(const Input& in, const AnimCapabilitySet& 
                 state_ = State::RUN;
             } else if (effectiveMoving) {
                 state_ = State::WALK;
+            } else if (in.turnDirection != 0) {
+                startTurn(in.turnDirection);
+            }
+            break;
+
+        case State::TURN:
+            if (in.swimming) {
+                state_ = effectiveMoving ? State::SWIM : State::SWIM_IDLE;
+            } else if (!in.grounded && in.jumping) {
+                jumpStartSeen_ = false;
+                state_ = State::JUMP_START;
+            } else if (!in.grounded) {
+                state_ = State::JUMP_MID;
+            } else if (effectiveMoving) {
+                state_ = effectiveSprinting ? State::RUN : State::WALK;
+            } else if (in.turnDirection != 0 && (in.turnDirection > 0) != turnLeft_) {
+                startTurn(in.turnDirection);
+            } else {
+                if (in.turnDirection != 0) turnedThisCycle_ = true;
+                // Each cycle ends by asking whether the character turned
+                // during it; mouse-look turns in steps, not every frame.
+                if (shuffleCycleDone(in)) {
+                    if (!turnedThisCycle_) state_ = State::IDLE;
+                    turnedThisCycle_ = false;
+                }
             }
             break;
 
@@ -206,6 +253,11 @@ AnimOutput LocomotionFSM::resolve(const Input& in, const AnimCapabilitySet& caps
             animId = anim::STAND;
             break;
 
+        case State::TURN:
+            // A model without the shuffle plays its AnimationData fallback, Stand.
+            animId = turnLeft_ ? anim::SHUFFLE_LEFT : anim::SHUFFLE_RIGHT;
+            break;
+
         case State::WALK:
             if (movingBackward) {
                 animId = caps.resolvedWalkBackwards ? caps.resolvedWalkBackwards
@@ -279,6 +331,10 @@ void LocomotionFSM::reset() {
     wasStrafeRight_ = false;
     jumpStartSeen_ = false;
     jumpEndSeen_ = false;
+    turnLeft_ = false;
+    turnedThisCycle_ = false;
+    shuffleSeen_ = false;
+    shuffleTime_ = 0.0f;
 }
 
 } // namespace rendering

@@ -223,6 +223,7 @@ LocomotionFSM::Input CharacterAnimator::locomotionInput() const {
     locoIn.swimming = fi.swimming;
     locoIn.sitting = fi.sitting;
     locoIn.sprintAura = sprintAura_;
+    locoIn.turnDirection = fi.turnDirection;
     locoIn.deltaTime = lastDt_;
     // Animation state for one-shot completion detection (jump start/end)
     locoIn.currentAnimId = fi.currentAnimId;

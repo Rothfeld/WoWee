@@ -1,5 +1,6 @@
 // LocomotionFSM unit tests
 #include <catch_amalgamated.hpp>
+#include <cmath>
 #include "rendering/animation/locomotion_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
 
@@ -204,5 +205,115 @@ TEST_CASE("LocomotionFSM: swim stop grace preserves direction until idle", "[loc
         CHECK(fsm.resolve(in, caps).animId == anim::SWIM_IDLE);
         in.moving = true;
         CHECK(fsm.resolve(in, caps).animId == anim::SWIM);
+    }
+}
+
+// ── Turning in place ─────────────────────────────────────────────────────────
+// Build 8606 shuffles a standing character's feet while it turns, by keyboard
+// or mouse-look, and keeps stepping for a cycle after the turn stops
+// (_experiments/20261118T1952.turn_shuffle).
+
+static LocomotionFSM::Input turning(int direction, uint32_t currentAnimId, float timeMs) {
+    auto in = idle();
+    in.turnDirection = direction;
+    in.haveAnimState = true;
+    in.currentAnimId = currentAnimId;
+    in.currentAnimTime = timeMs;
+    in.currentAnimDuration = 500.0f;
+    return in;
+}
+
+TEST_CASE("LocomotionFSM: turning left in place plays ShuffleLeft", "[locomotion][turn]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+    auto out = fsm.resolve(turning(1, anim::STAND, 0.0f), caps);
+    REQUIRE(out.valid);
+    CHECK(out.animId == anim::SHUFFLE_LEFT);
+    CHECK(out.loop);
+    CHECK(fsm.getState() == LocomotionFSM::State::TURN);
+}
+
+TEST_CASE("LocomotionFSM: turning right in place plays ShuffleRight", "[locomotion][turn]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+    auto out = fsm.resolve(turning(-1, anim::STAND, 0.0f), caps);
+    CHECK(out.animId == anim::SHUFFLE_RIGHT);
+}
+
+TEST_CASE("LocomotionFSM: shuffle steps one more cycle after the turn stops", "[locomotion][turn]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+    fsm.resolve(turning(1, anim::STAND, 0.0f), caps);
+    fsm.resolve(turning(1, anim::SHUFFLE_LEFT, 100.0f), caps);
+    // Turn released mid-cycle: the shuffle keeps playing.
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_LEFT, 200.0f), caps).animId == anim::SHUFFLE_LEFT);
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_LEFT, 480.0f), caps).animId == anim::SHUFFLE_LEFT);
+    // That cycle had a turn in it: one more.
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_LEFT, 10.0f), caps).animId == anim::SHUFFLE_LEFT);
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_LEFT, 450.0f), caps).animId == anim::SHUFFLE_LEFT);
+    // A whole cycle without a turn: back to Stand.
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_LEFT, 5.0f), caps).animId == anim::STAND);
+    CHECK(fsm.getState() == LocomotionFSM::State::IDLE);
+}
+
+TEST_CASE("LocomotionFSM: mouse-look turning in steps keeps one shuffle going", "[locomotion][turn]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+    fsm.resolve(turning(-1, anim::STAND, 0.0f), caps);
+    float t = 0.0f;
+    // Facing changes on one frame in ten; frames in between have no turn.
+    for (int frame = 1; frame < 200; ++frame) {
+        t = std::fmod(t + 16.0f, 500.0f);
+        const auto out = fsm.resolve(turning(frame % 10 == 0 ? -1 : 0, anim::SHUFFLE_RIGHT, t), caps);
+        REQUIRE(out.animId == anim::SHUFFLE_RIGHT);
+    }
+}
+
+TEST_CASE("LocomotionFSM: a one-frame turn still plays a whole shuffle", "[locomotion][turn]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+    fsm.resolve(turning(-1, anim::STAND, 0.0f), caps);
+    // The renderer has not started the shuffle yet.
+    CHECK(fsm.resolve(turning(0, anim::STAND, 900.0f), caps).animId == anim::SHUFFLE_RIGHT);
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_RIGHT, 0.0f), caps).animId == anim::SHUFFLE_RIGHT);
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_RIGHT, 300.0f), caps).animId == anim::SHUFFLE_RIGHT);
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_RIGHT, 20.0f), caps).animId == anim::SHUFFLE_RIGHT);
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_RIGHT, 400.0f), caps).animId == anim::SHUFFLE_RIGHT);
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_RIGHT, 10.0f), caps).animId == anim::STAND);
+}
+
+TEST_CASE("LocomotionFSM: reversing the turn switches the shuffle", "[locomotion][turn]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+    fsm.resolve(turning(1, anim::STAND, 0.0f), caps);
+    fsm.resolve(turning(1, anim::SHUFFLE_LEFT, 100.0f), caps);
+    CHECK(fsm.resolve(turning(-1, anim::SHUFFLE_LEFT, 200.0f), caps).animId == anim::SHUFFLE_RIGHT);
+    // The left shuffle still reported by the renderer does not end the right one.
+    CHECK(fsm.resolve(turning(0, anim::SHUFFLE_LEFT, 10.0f), caps).animId == anim::SHUFFLE_RIGHT);
+}
+
+TEST_CASE("LocomotionFSM: moving ends the turn at once", "[locomotion][turn]") {
+    LocomotionFSM fsm;
+    auto caps = makeLocoCaps();
+    fsm.resolve(turning(1, anim::STAND, 0.0f), caps);
+    auto in = turning(1, anim::SHUFFLE_LEFT, 100.0f);
+    in.moving = true;
+    in.sprinting = true;
+    CHECK(fsm.resolve(in, caps).animId == anim::RUN);
+}
+
+TEST_CASE("LocomotionFSM: no shuffle while swimming or airborne", "[locomotion][turn]") {
+    auto caps = makeLocoCaps();
+    {
+        LocomotionFSM fsm;
+        auto in = turning(1, anim::STAND, 0.0f);
+        in.swimming = true;
+        CHECK(fsm.resolve(in, caps).animId == anim::SWIM_IDLE);
+    }
+    {
+        LocomotionFSM fsm;
+        auto in = turning(1, anim::STAND, 0.0f);
+        in.grounded = false;
+        CHECK(fsm.resolve(in, caps).animId == anim::JUMP);
     }
 }
