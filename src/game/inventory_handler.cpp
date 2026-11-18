@@ -309,7 +309,6 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         packet.skipAll();
     };
     table[Opcode::SMSG_READ_ITEM_FAILED] = [this](network::Packet& packet) {
-        owner_.addUIError("You cannot read this item.");
         owner_.raiseUiError("You cannot read this item.");
         packet.skipAll();
     };
@@ -570,19 +569,24 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                     buybackItems_.erase(rejected);
                     notifyBuybackChanged();
                 }
-                static const char* sellErrors[] = {
-                    "OK", "Can't find item", "Can't sell item",
-                    "Can't find vendor", "You don't own that item",
-                    "Unknown error", "Only empty bag"
-                };
-                const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
-                owner_.addUIError(std::string("Sell failed: ") + msg);
-                owner_.addSystemChatMessage(std::string("Sell failed: ") + msg);
+                // SellResult (CMaNGOS Item.h), each the GlobalStrings line
+                // its comment names, on the error line only. 5 shows nothing.
+                const char* msg = nullptr;
+                switch (result) {
+                    case 1: msg = "ERR_ITEM_NOT_FOUND"; break;
+                    case 2: msg = "ERR_VENDOR_NOT_INTERESTED"; break;
+                    case 3: msg = "ERR_VENDOR_HATES_YOU"; break;
+                    case 4: msg = "ERR_NOT_OWNER"; break;
+                    case 6: msg = "ERR_DESTROY_NONEMPTY_BAG"; break;
+                    case 7: msg = "ERR_VENDOR_DOESNT_BUY"; break;
+                    default: break;
+                }
+                if (msg) owner_.errorGlobal(msg);
                 if (auto* ac = owner_.services().audioCoordinator) {
                     if (auto* sfx = ac->getUiSoundManager())
                         sfx->playError();
                 }
-                LOG_WARNING("SMSG_SELL_ITEM error: ", (int)result, " (", msg,
+                LOG_WARNING("SMSG_SELL_ITEM error: ", (int)result, " (", msg ? msg : "silent",
                             ") itemGuid=0x", std::hex, itemGuid,
                             " vendorGuid=0x", vendorGuid, std::dec);
             }
@@ -682,17 +686,22 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 pendingBuybackSlot_ = -1;
                 pendingBuybackWireSlot_ = 0;
             }
-            const char* msg = "Purchase failed.";
+            // BuyResult (CMaNGOS Item.h), on the error line only; 6 is the
+            // realm's silent refusal.
+            const char* msg = nullptr;
             switch (errCode) {
-                case 0: msg = "Purchase failed: item not found."; break;
-                case 2: msg = "You don't have enough money."; break;
-                case 4: msg = "Seller is too far away."; break;
-                case 5: msg = "That item is sold out."; break;
-                case 6: msg = "You can't carry any more items."; break;
+                case 0:  msg = "ERR_ITEM_NOT_FOUND"; break;
+                case 1:  msg = "ERR_VENDOR_SOLD_OUT"; break;
+                case 2:  msg = "ERR_NOT_ENOUGH_MONEY"; break;
+                case 4:  msg = "ERR_VENDOR_HATES_YOU"; break;
+                case 5:  msg = "ERR_VENDOR_TOO_FAR"; break;
+                case 7:  msg = "ERR_VENDOR_SOLD_OUT"; break;
+                case 8:  msg = "ERR_ITEM_MAX_COUNT"; break;
+                case 11: msg = "ERR_CANT_EQUIP_RANK"; break;
+                case 12: msg = "ERR_CANT_EQUIP_REPUTATION"; break;
                 default: break;
             }
-            owner_.addUIError(msg);
-            owner_.addSystemChatMessage(msg);
+            if (msg) owner_.errorGlobal(msg);
             if (auto* ac = owner_.services().audioCoordinator) {
                 if (auto* sfx = ac->getUiSoundManager())
                     sfx->playError();
@@ -738,12 +747,6 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                         return item.wireSlot == pendingBuybackWireSlot_;
                     });
                 if (bought != buybackItems_.end()) {
-                    const auto& entry = *bought;
-                    std::string label = entry.item.name.empty()
-                        ? "item #" + std::to_string(entry.item.itemId) : entry.item.name;
-                    owner_.addSystemChatMessage("Bought back: " +
-                        buildItemLink(entry.item.itemId,
-                                      static_cast<uint32_t>(entry.item.quality), label));
                     buybackItems_.erase(bought);
                 }
                 pendingBuybackSlot_ = -1;
@@ -846,7 +849,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
             uint32_t aucQuality = info ? info->quality : 1u;
             std::string itemLink = buildItemLink(itemEntry, aucQuality, rawName);
-            owner_.addSystemChatMessage("Your auction of " + itemLink + " has sold!");
+            owner_.systemGlobal("ERR_AUCTION_SOLD_S", {itemLink});
         }
         packet.skipAll();
     };
@@ -872,7 +875,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             if (!suffix.empty()) rawName += " " + suffix;
         }
         uint32_t bidQuality = info ? info->quality : 1u;
-        owner_.addSystemChatMessage("You have been outbid on " + buildItemLink(itemEntry, bidQuality, rawName) + ".");
+        owner_.systemGlobal("ERR_AUCTION_OUTBID_S", {buildItemLink(itemEntry, bidQuality, rawName)});
         packet.skipAll();
     };
 
@@ -890,7 +893,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             }
             uint32_t remQuality = info ? info->quality : 1u;
             std::string remLink = buildItemLink(itemEntry, remQuality, rawName3);
-            owner_.addSystemChatMessage("Your auction of " + remLink + " has expired.");
+            owner_.systemGlobal("ERR_AUCTION_EXPIRED_S", {remLink});
         }
         packet.skipAll();
     };
@@ -1639,7 +1642,7 @@ void InventoryHandler::sellItemBySlot(int backpackIndex) {
         }
     }
     if (sellPrice == 0) {
-        owner_.raiseUiError("Cannot sell: this item has no vendor value.");
+        owner_.errorGlobal("ERR_VENDOR_NOT_INTERESTED");
         return;
     }
 
@@ -1663,10 +1666,10 @@ void InventoryHandler::sellItemBySlot(int backpackIndex) {
         notifyBuybackChanged();
         sellItem(currentVendorItems_.vendorGuid, itemGuid, count);
     } else if (itemGuid == 0) {
-        owner_.raiseUiError("Cannot sell: item not found in inventory.");
+        LOG_WARNING("sell refused locally: Cannot sell: item not found in inventory.");
         LOG_WARNING("Sell failed: missing item GUID for slot ", backpackIndex);
     } else {
-        owner_.raiseUiError("Cannot sell: no vendor.");
+        LOG_WARNING("sell refused locally: Cannot sell: no vendor.");
     }
 }
 
@@ -1683,7 +1686,7 @@ void InventoryHandler::sellItemInBag(int bagIndex, int slotIndex) {
         }
     }
     if (sellPrice == 0) {
-        owner_.raiseUiError("Cannot sell: this item has no vendor value.");
+        owner_.errorGlobal("ERR_VENDOR_NOT_INTERESTED");
         return;
     }
 
@@ -1712,9 +1715,9 @@ void InventoryHandler::sellItemInBag(int bagIndex, int slotIndex) {
         notifyBuybackChanged();
         sellItem(currentVendorItems_.vendorGuid, itemGuid, count);
     } else if (itemGuid == 0) {
-        owner_.raiseUiError("Cannot sell: item not found.");
+        LOG_WARNING("sell refused locally: Cannot sell: item not found.");
     } else {
-        owner_.raiseUiError("Cannot sell: no vendor.");
+        LOG_WARNING("sell refused locally: Cannot sell: no vendor.");
     }
 }
 
@@ -1751,7 +1754,7 @@ void InventoryHandler::repairItem(uint64_t vendorGuid, uint64_t itemGuid) {
 
     uint32_t cost = estimateItemRepairCost(itemGuid);
     if (cost > 0 && owner_.getMoneyCopper() < cost) {
-        owner_.addUIError("Not enough money");
+        owner_.errorGlobal("ERR_NOT_ENOUGH_MONEY");
         return;
     }
 
@@ -1779,7 +1782,7 @@ void InventoryHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
     uint32_t totalCost = estimateRepairAllCost();
 
     if (!useGuildBank && totalCost > 0 && owner_.getMoneyCopper() < totalCost) {
-        owner_.addUIError("Not enough money");
+        owner_.errorGlobal("ERR_NOT_ENOUGH_MONEY");
         return;
     }
 
@@ -1975,7 +1978,6 @@ void InventoryHandler::dispatchUseItem(uint8_t wowBag, uint8_t wowSlot, uint64_t
         (owner_.getSpellTargetFlags(useSpellId) & kSpellTargetFlagItem) != 0) {
         pendingItemTarget_ = PendingItemTarget{.bag = wowBag, .slot = wowSlot, .itemGuid = itemGuid, .spellId = useSpellId,
                                                .itemId = item.itemId, .itemName = item.name};
-        owner_.addSystemChatMessage("Choose an item to apply " + item.name + " to.");
         return;
     }
 
@@ -2007,7 +2009,6 @@ void InventoryHandler::dispatchUseItem(uint8_t wowBag, uint8_t wowSlot, uint64_t
             owner_.getTargetGuid() == 0) {
             pendingUnitTarget_ = PendingItemTarget{.bag = wowBag, .slot = wowSlot, .itemGuid = itemGuid, .spellId = useSpellId,
                                                    .itemId = item.itemId, .itemName = item.name, .fromSpell = false};
-            owner_.addSystemChatMessage("Choose a target for " + item.name + ".");
             return;
         }
     }
@@ -2099,7 +2100,6 @@ void InventoryHandler::beginSpellItemTargeting(uint32_t spellId, const std::stri
     pending.itemName = spellName;
     pending.fromSpell = true;
     pendingItemTarget_ = pending;
-    owner_.addSystemChatMessage("Choose an item to use " + spellName + " on.");
 }
 
 void InventoryHandler::replaceEnchant() {
@@ -2165,7 +2165,7 @@ void InventoryHandler::completeItemUseOnItem(uint64_t targetItemGuid, bool confi
             (targetInfo->itemClass == kItemClassWeapon ||
              targetInfo->itemClass == kItemClassArmor);
         if (!canDisenchant) {
-            owner_.raiseUiError("Item cannot be disenchanted");
+            owner_.errorGlobal("SPELL_FAILED_CANT_BE_DISENCHANTED");
             return;
         }
 
@@ -2782,14 +2782,7 @@ void InventoryHandler::handleListInventory(network::Packet& packet) {
                 }
             }
         }
-        if (itemsSold > 0) {
-            char buf[128];
-            std::snprintf(buf, sizeof(buf),
-                "|cffaaaaaaAuto-sold %d grey item%s for %s.|r",
-                itemsSold, itemsSold == 1 ? "" : "s",
-                game::formatCopperPrice(totalSellPrice).c_str());
-            owner_.addSystemChatMessage(buf);
-        }
+        if (itemsSold > 0) LOG_INFO("Auto-sold ", itemsSold, " grey item(s) for ", totalSellPrice, "c");
     }
 
     // Auto-repair
@@ -2805,7 +2798,7 @@ void InventoryHandler::handleListInventory(network::Packet& packet) {
         }
         if (anyDamaged) {
             repairAll(currentVendorItems_.vendorGuid, false);
-            owner_.addSystemChatMessage("|cffaaaaaaAuto-repair triggered.|r");
+            LOG_INFO("Auto-repair triggered");
         }
     }
 
@@ -3426,8 +3419,9 @@ void InventoryHandler::handleQueryNextMailTime(network::Packet& packet) {
 void InventoryHandler::setHasNewMail(bool value) {
     // Announce a chat line + sound only on the rising edge (no unread -> unread), so the
     // periodic next-mail-time poll doesn't repeat the notification while mail sits unread.
+    // No chat line: TBC GlobalStrings has none; the minimap mail icon and
+    // its sound announce it.
     if (value && !hasNewMail_) {
-        owner_.addSystemChatMessage("You have new mail.");
         if (auto* ac = owner_.services().audioCoordinator)
             if (auto* sfx = ac->getUiSoundManager()) sfx->playMailReceived();
     }
@@ -3510,11 +3504,15 @@ void InventoryHandler::handleShowBank(network::Packet& packet) {
 void InventoryHandler::handleBuyBankSlotResult(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
     uint32_t result = packet.readUInt32();
-    if (result == 0) {
-        owner_.addSystemChatMessage("Bank slot purchased.");
-        if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYERBANKBAGSLOTS_CHANGED", {});
-    } else {
-        owner_.addSystemChatMessage("Failed to purchase bank slot.");
+    // BankSlotResult (CMaNGOS Player.h): 3 is success and prints nothing.
+    switch (result) {
+        case 3:
+            if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYERBANKBAGSLOTS_CHANGED", {});
+            break;
+        case 0: owner_.errorGlobal("ERR_BANKSLOT_FAILED_TOO_MANY"); break;
+        case 1: owner_.errorGlobal("ERR_BANKSLOT_INSUFFICIENT_FUNDS"); break;
+        case 2: owner_.errorGlobal("ERR_BANKSLOT_NOTBANKER"); break;
+        default: LOG_WARNING("SMSG_BUY_BANK_SLOT_RESULT: unknown result ", result); break;
     }
 }
 
@@ -3881,12 +3879,13 @@ void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
     uint32_t error  = packet.readUInt32();
     (void)auctionId;
 
-    const char* actionNames[] = {"sell", "cancel", "bid/buyout"};
-    const char* actionStr = (action < 3) ? actionNames[action] : "unknown";
-
+    // AuctionAction / AuctionError (CMaNGOS AuctionHouseMgr.h), whose comments
+    // name the GlobalStrings line of each. An inventory refusal carries an
+    // InventoryResult after the error.
     if (error == 0) {
-        std::string msg = std::string("Auction ") + actionStr + " successful.";
-        owner_.addSystemChatMessage(msg);
+        static constexpr const char* kDone[] = {"ERR_AUCTION_STARTED", "ERR_AUCTION_REMOVED", "ERR_AUCTION_BID_PLACED"};
+        if (action < 3) owner_.systemGlobal(kDone[action]);
+        else LOG_WARNING("SMSG_AUCTION_COMMAND_RESULT: unknown action ", action);
         if (owner_.addonEventCallbackRef()) {
             owner_.addonEventCallbackRef()("PLAYER_MONEY", {});
             fireBagUpdates();
@@ -3900,18 +3899,21 @@ void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
                          lastAuctionSearch_.offset, lastAuctionSearch_.sort);
         }
     } else {
-        const char* errMsg = "Unknown error.";
+        const char* name = nullptr;
         switch (error) {
-            case 1: errMsg = "Not enough money."; break;
-            case 2: errMsg = "Item not found."; break;
-            case 5: errMsg = "Bid too low."; break;
-            case 6: errMsg = "Bid increment too low."; break;
-            case 7: errMsg = "You cannot bid on your own auction."; break;
-            case 8: errMsg = "Database error."; break;
-            default: break;
+            case 1:
+                if (packet.hasRemaining(4)) name = inventoryResultGlobalName(static_cast<uint8_t>(packet.readUInt32()));
+                break;
+            case 3:  name = "ERR_NOT_ENOUGH_MONEY"; break;
+            case 4:  name = "ERR_ITEM_NOT_FOUND"; break;
+            case 5:  name = "ERR_AUCTION_HIGHER_BID"; break;
+            case 7:  name = "ERR_AUCTION_BID_INCREMENT"; break;
+            case 10: name = "ERR_AUCTION_BID_OWN"; break;
+            case 13: name = "ERR_RESTRICTED_ACCOUNT"; break;
+            default: name = "ERR_AUCTION_DATABASE_ERROR"; break;
         }
-        owner_.addUIError(std::string("Auction ") + actionStr + " failed: " + errMsg);
-        owner_.addSystemChatMessage(std::string("Auction ") + actionStr + " failed: " + errMsg);
+        if (name) owner_.errorGlobal(name);
+        else LOG_ERROR("SMSG_AUCTION_COMMAND_RESULT: no line for error ", error);
     }
 }
 
