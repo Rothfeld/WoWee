@@ -51,6 +51,20 @@ ground-floor rooms and their furniture behind the lodge are not drawn from the
 courtyard, and the exterior group's courtyard-facing wall backs are see-through.
 Evidence: `../_experiments/20261117T2215Z.gmisland_selection_lua/` (pair-gm_d*.png).
 
+A WMO doodad is lit by its MODD colour only when every group whose MODR lists
+it uses local lighting (`pipeline::wmoDoodadUsesLocalLighting`); one listing
+group without local lighting gives it the outdoor light. 547 TBC doodads are
+listed by both kinds. Booty Bay's north entrance (`bootybay.wmo` MODD 3,
+`BootyBayEntrance_02.m2`: beams, Jolly Roger, shark jaw, lantern) has MODD
+colour (0,0,0) and groups 22 (0xb805, the tunnel) and 42 (0x8849). 2.4.3 draws
+it with the cape's night light, seen from the cape and from inside the tunnel;
+taking the first local group's colour made it a black silhouette with only the
+unlit lantern showing. Torch MODD 853 (colour (255,161,140), groups 29 0x849
+and 30 0x2805) is dark green at night in 2.4.3, not orange-red. Interior-only
+doodads keep the colour: the sacks of group 32 (MODD 943, 946, 950: colours
+near (0,0,0)) are black in 2.4.3. Evidence:
+`../_experiments/20261118T223141Z.black_mast/`.
+
 Units and game objects standing in a locally lit interior group take the
 floor's MOCV under their feet (the closest WMO surface below, the group's box
 holding them), floored by the MOHD ambient, in place of the outdoor light.

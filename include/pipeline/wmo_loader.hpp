@@ -289,5 +289,29 @@ inline std::vector<uint16_t> wmoDoodadRooms(const WMOModel& model, uint32_t dood
     return rooms;
 }
 
+/// Whether a WMO doodad is lit by its MODD colour (interior placement light)
+/// rather than by the outdoor light: only when every group whose MODR lists it
+/// uses local lighting (wmoUsesLocalLighting). One outdoor-lit group listing it
+/// is enough for the outdoor light.
+///
+/// Booty Bay's north entrance (bootybay.wmo MODD 3, BootyBayEntrance_02, the
+/// shark jaw, Jolly Roger and lantern beam) carries MODD colour (0,0,0) and is
+/// listed by the tunnel (group 22, 0xb805) and by an outdoor group (42,
+/// 0x8849). 2.4.3 draws it with the night light of the cape, from outside and
+/// from inside the tunnel. Lit by the MODD colour it was a black silhouette.
+/// Interior-only doodads keep their colour: the sacks of bootybay.wmo group 32
+/// (MODD 943, colour (0,0,0)) are black in 2.4.3 as well.
+inline bool wmoDoodadUsesLocalLighting(const WMOModel& model, uint32_t doodadIdx) {
+    bool listed = false;
+    for (const auto& group : model.groups) {
+        bool here = false;
+        for (uint16_t ref : group.doodadRefs) here = here || ref == doodadIdx;
+        if (!here) continue;
+        if (!wmoUsesLocalLighting(group.flags)) return false;
+        listed = true;
+    }
+    return listed;
+}
+
 } // namespace pipeline
 } // namespace wowee

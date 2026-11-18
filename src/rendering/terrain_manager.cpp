@@ -851,12 +851,8 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                         doodadReady.model = std::move(m2Model);
                         doodadReady.worldPosition = worldPos;
                         doodadReady.modelMatrix = worldMatrix;
-                        for (const auto& group : wmoModel.groups) {
-                            if (pipeline::wmoUsesLocalLighting(group.flags) && std::find(group.doodadRefs.begin(),
-                                    group.doodadRefs.end(), doodadIdx) != group.doodadRefs.end()) {
-                                doodadReady.indoorLighting = glm::vec3(doodad.color);
-                                break;
-                            }
+                        if (pipeline::wmoDoodadUsesLocalLighting(wmoModel, doodadIdx)) {
+                            doodadReady.indoorLighting = glm::vec3(doodad.color);
                         }
                         doodadReady.wmoUniqueId = placement.uniqueId;
                         doodadReady.rooms = pipeline::wmoDoodadRooms(wmoModel, doodadIdx);

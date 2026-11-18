@@ -509,12 +509,8 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                                 if (doodadInstId) {
                                     m2Renderer->addInstanceWmoDoodad(doodadInstId, instanceId,
                                                                      pipeline::wmoDoodadRooms(wmoModel, doodadIdx));
-                                    for (const auto& group : wmoModel.groups) {
-                                        if (pipeline::wmoUsesLocalLighting(group.flags) && std::find(group.doodadRefs.begin(),
-                                                group.doodadRefs.end(), doodadIdx) != group.doodadRefs.end()) {
-                                            m2Renderer->setInstanceIndoorLighting(doodadInstId, glm::vec3(doodad.color));
-                                            break;
-                                        }
+                                    if (pipeline::wmoDoodadUsesLocalLighting(wmoModel, doodadIdx)) {
+                                        m2Renderer->setInstanceIndoorLighting(doodadInstId, glm::vec3(doodad.color));
                                     }
                                 }
                                 loadedDoodads++;
