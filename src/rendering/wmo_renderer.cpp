@@ -4342,6 +4342,15 @@ std::vector<WMORenderer::InteriorMapGroup> WMORenderer::getInteriorMapGroups(con
 }
 
 float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
+    return raycastTriangles(origin, direction, maxDistance, false);
+}
+
+float WMORenderer::raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
+    return raycastTriangles(origin, direction, maxDistance, true);
+}
+
+float WMORenderer::raycastTriangles(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
+                                    bool camera) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     float closestHit = maxDistance;
     // The camera is a solid sphere and every solid surface stops it: floors and
@@ -4429,6 +4438,10 @@ float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3
             group.getTrianglesInRange(rMinX, rMinY, rMaxX, rMaxY, tl_triScratch);
 
             for (uint32_t triStart : tl_triScratch) {
+                if (camera && triStart / 3 < group.triMopyFlags.size() &&
+                    !wmoTriangleStopsCamera(group.triMopyFlags[triStart / 3])) {
+                    continue;
+                }
                 const glm::vec3& v0 = verts[indices[triStart]];
                 const glm::vec3& v1 = verts[indices[triStart + 1]];
                 const glm::vec3& v2 = verts[indices[triStart + 2]];

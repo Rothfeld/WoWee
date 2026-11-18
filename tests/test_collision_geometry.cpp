@@ -163,6 +163,24 @@ TEST_CASE("a ray misses what it does not point at", "[collision]") {
     }
 }
 
+TEST_CASE("the camera passes only WMO triangles flagged 0x02", "[collision][camera]") {
+    // Flag values the build 8606 camera was measured against in Black
+    // Temple (see wmoTriangleStopsCamera). Movement blocks 0x26 (rendered,
+    // not detail) and passes 0x64 (detail); the camera does the opposite.
+    SECTION("passed through") {
+        for (uint8_t mopy : {0x26, 0x66, 0x4a}) {
+            INFO("mopy " << int(mopy));
+            CHECK_FALSE(wowee::rendering::wmoTriangleStopsCamera(mopy));
+        }
+    }
+    SECTION("stopped by") {
+        for (uint8_t mopy : {0x60, 0x64, 0x48, 0x08, 0x20, 0x24}) {
+            INFO("mopy " << int(mopy));
+            CHECK(wowee::rendering::wmoTriangleStopsCamera(mopy));
+        }
+    }
+}
+
 TEST_CASE("an unset focus excludes nothing", "[collision]") {
     // Radius zero means no restriction. Reading it as an empty sphere would
     // make the whole world non-solid rather than merely slow, which is the

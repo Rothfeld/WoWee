@@ -15,6 +15,7 @@
 /// method in the building one.
 
 #include <algorithm>
+#include <cstdint>
 #include <array>
 #include <optional>
 #include <limits>
@@ -32,6 +33,26 @@ inline float pointAABBDistanceSq(const glm::vec3& p, const glm::vec3& bmin,
     const glm::vec3 nearest = glm::clamp(p, bmin, bmax);
     const glm::vec3 d = p - nearest;
     return glm::dot(d, d);
+}
+
+/// Whether a WMO triangle with these MOPY flags stops the orbit camera.
+///
+/// Build 8606's camera passes through triangles flagged 0x02 and stops at
+/// every other one, whatever else the flags say: detail (0x04), rendered
+/// and hull (0x08) triangles all stop it, from either side. Measured in Black Temple (blacktemple.wmo), native camera ray cast
+/// offline against the asset:
+///   - Den of Mortal Delights: ray through two 0x26 floor slabs (7.49, 10.40
+///     yd) stopped at the 0x60 wall at 13.32 (native 13.21);
+///   - Grand Promenade: through a front-facing 0x26 crystal (6.21) and a
+///     0x66 one (8.16);
+///   - Chamber of Command: through a 0x4a hull at 13.88 to full zoom 15;
+///   - stopped by a 0x64 tapestry, front face in the Refectory (12.52 ->
+///     12.38) and back face in the Sanctuary of Shadows (12.75 -> 12.62),
+///     and by a 0x48 hull's back face in the Den (9.17 -> 8.84).
+/// Movement collision is a different rule (wall code: hull or rendered
+/// non-detail); this one is the camera's only.
+inline constexpr bool wmoTriangleStopsCamera(uint8_t mopyFlags) {
+    return (mopyFlags & 0x02) == 0;
 }
 
 /// Moller-Trumbore. Distance along `dir` to the triangle, or negative for a

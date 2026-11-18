@@ -2256,7 +2256,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // Geometry pulls the camera inward immediately. Terrain has its own
         // slower response because sampled slope heights vary between frames.
         auto geometryLimitAlong = [&](const glm::vec3& dir) -> float {
-            traceWmoHit_ = wmoRenderer ? wmoRenderer->raycastBoundingBoxes(pivot, dir, currentDistance) : currentDistance;
+            traceWmoHit_ = wmoRenderer ? wmoRenderer->raycastCamera(pivot, dir, currentDistance) : currentDistance;
             traceM2Hit_ = m2Renderer ? m2Renderer->raycastBoundingBoxes(pivot, dir, currentDistance) : currentDistance;
             const float hit = std::min(traceWmoHit_, traceM2Hit_);
             // hit == currentDistance means no hit (returns maxDistance on miss)

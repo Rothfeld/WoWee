@@ -453,7 +453,7 @@ public:
     std::vector<InteriorMapGroup> getInteriorMapGroups(const InteriorLocation& location) const;
 
     /**
-     * Raycast against WMO bounding boxes for camera collision
+     * Raycast against every WMO triangle (occlusion: picking, sun, water columns)
      * @param origin Ray origin (e.g., character head position)
      * @param direction Ray direction (normalized)
      * @param maxDistance Maximum ray distance to check
@@ -466,6 +466,9 @@ public:
     /// (material 0xFF) are skipped, unlike raycastBoundingBoxes, which stops
     /// the camera at them. Two-sided, measured in world units.
     [[nodiscard]] float raycastVisibleGeometry(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
+    /// The same ray for the orbit camera: triangles marked MOPY 0x02 (no
+    /// camera collision) do not stop it. See wmoTriangleStopsCamera.
+    float raycastCamera(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
 
     /**
      * Limit expensive collision/raycast queries to objects near a focus point.
@@ -511,6 +514,9 @@ public:
     void setDeferNormalMaps(bool defer) { deferNormalMaps_ = defer; }
 
 private:
+    float raycastTriangles(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
+                           bool camera) const;
+
     // WMO material UBO - matches WMOMaterial in wmo.frag.glsl
     struct WMOMaterialUBO {
         int32_t hasTexture;        // 0
