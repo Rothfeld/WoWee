@@ -860,6 +860,14 @@ static int lua_GetCursorInfo(lua_State* L) {
         case CursorType::GUILDBANK:
             lua_pushstring(L, "item");
             lua_pushnumber(L, s_cursorId);
+            // The item's link third, as 2.4.3 answers: "item", 37,
+            // "|cffffffff|Hitem:37:0:0:0:0:0:0:0|h[Worn Axe]|h|r".
+            if (auto* gh = getGameHandler(L)) {
+                if (const auto* info = gh->getItemInfo(s_cursorId)) {
+                    lua_pushstring(L, game::itemChatLink(s_cursorId, info->quality < 8 ? info->quality : 1u, info->name).c_str());
+                    return 3;
+                }
+            }
             return 2;
         case CursorType::MACRO:
             lua_pushstring(L, "macro");

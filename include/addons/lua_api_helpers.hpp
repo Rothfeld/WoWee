@@ -760,6 +760,20 @@ inline const game::ItemSlot* containerItemSlot(const game::Inventory& inv,
     return nullptr;
 }
 
+/// The item the ammo slot (inventory slot 0) names, from PLAYER_AMMO_ID; 0 for
+/// none or where this expansion's field table has no such field. The ammo is
+/// not an equipped item: it stays in the bags, and the slot shows the item and
+/// how many of it the bags hold (2.4.3: Light Shot, 200).
+inline uint32_t equippedAmmoItemId(lua_State* L) {
+    const uint16_t field = game::fieldIndex(game::UF::PLAYER_AMMO_ID);
+    auto* gh = getGameHandler(L);
+    if (field == 0xFFFF || !gh) return 0;
+    auto entity = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+    const uint32_t entry = entity ? entity->getField(field) : 0;
+    if (entry) gh->ensureItemInfo(entry);
+    return entry;
+}
+
 /// One slot named by an *inventory* slot id, the interface's 1-based numbering.
 ///
 /// Equipment is 1 to 23 and everything above it was answered as absent, which

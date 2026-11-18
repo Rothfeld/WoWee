@@ -2825,42 +2825,47 @@ static int lua_GetInventorySlotInfo(lua_State* L) {
     if (slot.size() > 4 && slot.substr(slot.size() - 4) == "SLOT")
         slot = slot.substr(0, slot.size() - 4);
 
-    // WoW inventory slots are 1-indexed
+    // WoW inventory slots are 1-indexed. The textures are spelled as 2.4.3
+    // answers them, lower-case directory and .blp included, and the ammo slot
+    // shows the ranged slot's picture there: 2.4.3 answers
+    // 0, "interface\paperdoll\UI-PaperDoll-Slot-Ranged.blp" for AmmoSlot.
     struct SlotMap { const char* name; int id; const char* texture; };
     static const SlotMap mapping[] = {
-        {"HEAD",          1,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Head"},
-        {"NECK",          2,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Neck"},
-        {"SHOULDER",      3,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Shoulder"},
-        {"SHIRT",         4,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Shirt"},
-        {"CHEST",         5,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest"},
-        {"WAIST",         6,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Waist"},
-        {"LEGS",          7,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Legs"},
-        {"FEET",          8,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Feet"},
-        {"WRIST",         9,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Wrists"},
-        {"HANDS",        10,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Hands"},
-        {"FINGER0",      11,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Finger"},
-        {"FINGER1",      12,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Finger"},
-        {"TRINKET0",     13,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Trinket"},
-        {"TRINKET1",     14,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Trinket"},
-        {"BACK",         15,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest"},
-        {"MAINHAND",     16,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-MainHand"},
-        {"SECONDARYHAND",17,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-SecondaryHand"},
-        {"RANGED",       18,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Ranged"},
-        {"TABARD",       19,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Tabard"},
+        {"HEAD",          1,  "interface\\paperdoll\\UI-PaperDoll-Slot-Head.blp"},
+        {"NECK",          2,  "interface\\paperdoll\\UI-PaperDoll-Slot-Neck.blp"},
+        {"SHOULDER",      3,  "interface\\paperdoll\\UI-PaperDoll-Slot-Shoulder.blp"},
+        {"SHIRT",         4,  "interface\\paperdoll\\UI-PaperDoll-Slot-Shirt.blp"},
+        {"CHEST",         5,  "interface\\paperdoll\\UI-PaperDoll-Slot-Chest.blp"},
+        {"WAIST",         6,  "interface\\paperdoll\\UI-PaperDoll-Slot-Waist.blp"},
+        {"LEGS",          7,  "interface\\paperdoll\\UI-PaperDoll-Slot-Legs.blp"},
+        {"FEET",          8,  "interface\\paperdoll\\UI-PaperDoll-Slot-Feet.blp"},
+        {"WRIST",         9,  "interface\\paperdoll\\UI-PaperDoll-Slot-Wrists.blp"},
+        {"HANDS",        10,  "interface\\paperdoll\\UI-PaperDoll-Slot-Hands.blp"},
+        {"FINGER0",      11,  "interface\\paperdoll\\UI-PaperDoll-Slot-Finger.blp"},
+        {"FINGER1",      12,  "interface\\paperdoll\\UI-PaperDoll-Slot-Finger.blp"},
+        {"TRINKET0",     13,  "interface\\paperdoll\\UI-PaperDoll-Slot-Trinket.blp"},
+        {"TRINKET1",     14,  "interface\\paperdoll\\UI-PaperDoll-Slot-Trinket.blp"},
+        {"BACK",         15,  "interface\\paperdoll\\UI-PaperDoll-Slot-Chest.blp"},
+        {"MAINHAND",     16,  "interface\\paperdoll\\UI-PaperDoll-Slot-MainHand.blp"},
+        {"SECONDARYHAND",17,  "interface\\paperdoll\\UI-PaperDoll-Slot-SecondaryHand.blp"},
+        {"RANGED",       18,  "interface\\paperdoll\\UI-PaperDoll-Slot-Ranged.blp"},
+        {"TABARD",       19,  "interface\\paperdoll\\UI-PaperDoll-Slot-Tabard.blp"},
         // The bag buttons along the main bar ask for these by name at load, and
         // paperdollframe.lua does it in an OnLoad - so a gap here does not just
         // lose the bags, it loses the file.
-        {"BAG0",         20,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag"},
-        {"BAG1",         21,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag"},
-        {"BAG2",         22,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag"},
-        {"BAG3",         23,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag"},
-        {"AMMO",          0,  "Interface\\PaperDoll\\UI-PaperDoll-Slot-Ammo"},
+        {"BAG0",         20,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"BAG1",         21,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"BAG2",         22,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"BAG3",         23,  "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp"},
+        {"AMMO",          0,  "interface\\paperdoll\\UI-PaperDoll-Slot-Ranged.blp"},
     };
     for (const auto& m : mapping) {
         if (slot == m.name) {
             lua_pushnumber(L, m.id);
             lua_pushstring(L, m.texture);
-            lua_pushboolean(L, m.id == 18 ? 1 : 0); // checkRelic: only ranged slot
+            // checkRelic, the ranged slot alone; the others answer two values.
+            if (m.id != 18) return 2;
+            lua_pushnumber(L, 1);
             return 3;
         }
     }
@@ -2943,6 +2948,11 @@ static int lua_GetInventoryItemCount(lua_State* L) {
     const int slotId = static_cast<int>(luaL_optnumber(L, 2, 0));
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
+    if (gh && uidStr == "player" && slotId == 0) {
+        const uint32_t ammo = equippedAmmoItemId(L);
+        lua_pushnumber(L, ammo ? gh->getInventory().countItem(ammo) : 0);
+        return 1;
+    }
     // Not 1..19: the bank is addressed through this too - bankframe.lua asks
     // GetInventoryItemCount("player", BankButtonIDToInvSlotID(id)) for every
     // one of its twenty-eight slots, and those ids start at forty.
@@ -2951,7 +2961,12 @@ static int lua_GetInventoryItemCount(lua_State* L) {
         return 1;
     }
     const auto& slot = *inventorySlotItem(gh->getInventory(), slotId);
-    if (slot.empty()) { lua_pushnumber(L, 0); return 1; }
+    // An empty equipment slot (head through tabard) answers 1 in 2.4.3, as an
+    // occupied one does; the bag slots were not compared.
+    if (slot.empty()) {
+        lua_pushnumber(L, slotId >= 1 && slotId <= static_cast<int>(game::EquipSlot::TABARD) + 1 ? 1 : 0);
+        return 1;
+    }
     // A single item reports a stack of one rather than zero, which is how the
     // count is drawn: zero would print nothing where the client prints nothing
     // for one either, but the two mean different things to a caller.
@@ -3005,7 +3020,13 @@ static int lua_GetInventoryItemLink(lua_State* L) {
     uint32_t itemId = 0;
     std::string name;
     uint32_t q = 1;
-    if (uidStr == "player") {
+    if (uidStr == "player" && slotId == 0) {
+        itemId = equippedAmmoItemId(L);
+        const auto* info = itemId ? gh->getItemInfo(itemId) : nullptr;
+        if (!info) { return luaReturnNil(L); }
+        name = info->name;
+        q = info->quality;
+    } else if (uidStr == "player") {
         const auto& inv = gh->getInventory();
         const game::ItemSlot* sp = inventorySlotItem(inv, slotId);
         if (!sp) { return luaReturnNil(L); }
@@ -3045,6 +3066,12 @@ static int lua_GetInventoryItemID(lua_State* L) {
         return 1;
     }
 
+    if (slotId == 0) {
+        const uint32_t ammo = equippedAmmoItemId(L);
+        if (!ammo) { return luaReturnNil(L); }
+        lua_pushnumber(L, ammo);
+        return 1;
+    }
     const game::ItemSlot* sp = inventorySlotItem(gh->getInventory(), slotId);
     if (!sp || sp->empty()) { return luaReturnNil(L); }
     const auto& slot = *sp;
@@ -3067,6 +3094,16 @@ static int lua_GetInventoryItemTexture(lua_State* L) {
     // the cache that feeds every bag frame it draws never ran.
     if (!lua_isnumber(L, 2)) return luaReturnNil(L);
     int slotId = static_cast<int>(lua_tonumber(L, 2));
+    if (gh && slotId == 0) {
+        std::string who(uid);
+        toLowerInPlace(who);
+        const uint32_t ammo = who == "player" ? equippedAmmoItemId(L) : 0;
+        const auto* info = ammo ? gh->getItemInfo(ammo) : nullptr;
+        if (!info || !info->displayInfoId) { return luaReturnNil(L); }
+        const std::string path = gh->getItemIconPath(info->displayInfoId);
+        lua_pushstring(L, path.empty() ? "Interface\\Icons\\INV_Misc_QuestionMark" : path.c_str());
+        return 1;
+    }
     // 1..19 is head through tabard; 20..23 are the four bag slots. The bag bar
     // buttons ask about those four, and stopping at 19 answered "no bag" for
     // every one of them.

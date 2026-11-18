@@ -3870,6 +3870,14 @@ int lua_Tooltip_SetInventoryItem(lua_State* L) {
     auto* w = widgetOf(L, 1);
     auto* gh = wowee::addons::getGameHandler(L);
     const int slot = static_cast<int>(luaL_optnumber(L, 3, 0));
+    if (w && gh && slot == 0) {
+        // The ammo slot: the item PLAYER_AMMO_ID names, which lives in the bags.
+        std::string who(luaL_optstring(L, 2, "player"));
+        wowee::addons::toLowerInPlace(who);
+        const uint32_t ammo = who == "player" ? wowee::addons::equippedAmmoItemId(L) : 0;
+        lua_pushboolean(L, ammo && fillItemTooltipById(L, gh, ammo) ? 1 : 0);
+        return 1;
+    }
     if (!w || !gh || slot < 1) { lua_pushboolean(L, 0); return 1; }
 
     // The unit argument was ignored, so every slot of the inspect paperdoll
