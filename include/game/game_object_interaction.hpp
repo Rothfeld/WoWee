@@ -66,7 +66,7 @@ inline constexpr GameObjectTypeRule kGameObjectTypeRules[] = {
     {3,  "CHEST",              true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::Server, "Use; gear natively (Warpwood Pod 179526)"},
     {4,  "BINDER",             false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Absent"},
     {5,  "GENERIC",            false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Server, "Refused; label from data0/data1"},
-    {6,  "TRAP",               true,  ObjectNameTooltip::Default, "Interact",  GameObjectRuleSource::NeedsCapture, "Use casts the trap spell"},
+    {6,  "TRAP",               false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Not interactive: Drakonid Bones 179804 in BWL"},
     {7,  "CHAIR",              true,  ObjectNameTooltip::None,    "Interact",  GameObjectRuleSource::Server, "Use (sit); no name is WoWee's earlier rule"},
     {8,  "SPELL_FOCUS",        false, ObjectNameTooltip::None,    nullptr,     GameObjectRuleSource::Native, "Forge 1685: no cursor natively"},
     {9,  "TEXT",               true,  ObjectNameTooltip::Default, "Inspect",   GameObjectRuleSource::Server, "Page"},
