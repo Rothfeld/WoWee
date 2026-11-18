@@ -504,9 +504,12 @@ void main() {
     if (blendMode == 5 || blendMode == 6) {
         // Mod / Mod2x multiply what is behind: the unlit texture, fogged
         // toward the factor that leaves the scene unchanged (1 and 0.5).
+        // A faded model's multiply layer fades toward that factor too, as an
+        // additive one adds less light: a stealthed Warglaive of Azzinoth's
+        // Mod2x reflection otherwise whitened the 0.3 blade.
         float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
         vec3 neutral = vec3(blendMode == 5 ? 1.0 : 0.5);
-        outColor = vec4(mix(neutral, texColor.rgb, fogFactor), texColor.a * opacity);
+        outColor = vec4(mix(neutral, texColor.rgb, fogFactor * opacity), texColor.a * opacity);
         return;
     }
     if (blendMode == 3 || blendMode == 4 || blendMode == 7) {

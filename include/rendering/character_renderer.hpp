@@ -628,6 +628,15 @@ private:
     VkPipeline translucentPipeline_ = VK_NULL_HANDLE;
     VkPipeline cameraDepthPipeline_ = VK_NULL_HANDLE;
     VkPipeline cameraFadePipeline_ = VK_NULL_HANDLE;
+    // A fading instance's blended batches (alpha, additive, mod, mod2x) test
+    // LESS_OR_EQUAL against its own depth prepass: a material layer drawn on
+    // the same triangles as the faded base composites over it, as in 2.4.3
+    // (Warglaive of Azzinoth's alpha layer keeps the stealthed blade denser
+    // than the body).
+    VkPipeline fadeAlphaPipeline_ = VK_NULL_HANDLE;
+    VkPipeline fadeAdditivePipeline_ = VK_NULL_HANDLE;
+    VkPipeline fadeModPipeline_ = VK_NULL_HANDLE;
+    VkPipeline fadeMod2xPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
 
     // Descriptor set layouts

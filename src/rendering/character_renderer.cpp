@@ -357,6 +357,12 @@ void CharacterRenderer::buildMainPassPipelines(VkDevice device, VkRenderPass mai
     cameraDepthPipeline_ = buildCharPipeline(depthOnly, true);
     cameraFadePipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), false,
                                            false, VK_COMPARE_OP_EQUAL);
+    fadeAlphaPipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), false,
+                                          false, VK_COMPARE_OP_LESS_OR_EQUAL);
+    fadeAdditivePipeline_ = buildCharPipeline(PipelineBuilder::blendAdditive(), false,
+                                             false, VK_COMPARE_OP_LESS_OR_EQUAL);
+    fadeModPipeline_ = buildCharPipeline(mod, false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
+    fadeMod2xPipeline_ = buildCharPipeline(mod2x, false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
 
 }
 
@@ -595,6 +601,10 @@ void CharacterRenderer::shutdown() {
     destroyPipeline(translucentPipeline_);
     destroyPipeline(cameraDepthPipeline_);
     destroyPipeline(cameraFadePipeline_);
+    destroyPipeline(fadeAlphaPipeline_);
+    destroyPipeline(fadeAdditivePipeline_);
+    destroyPipeline(fadeModPipeline_);
+    destroyPipeline(fadeMod2xPipeline_);
 
     destroy(device, pipelineLayout_);
 
@@ -3383,12 +3393,25 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     // table iteration lets a distant moth paint over a nearer one. Establish
     // camera depth order, then finish solid geometry for ALL instances before
     // compositing their blended surfaces back to front.
+    //
+    // Pass 0 draws solid batches. A fading instance has none: its depth
+    // prepass (-1) and blended colour (1) run together, one instance at a
+    // time, in the blended stream. Its prepass must not run with the solid
+    // geometry: a stealthed rogue in front of an opaque one then wrote depth
+    // before the opaque one was drawn, and cut it out of the picture where
+    // 2.4.3 shows it through the faded body.
     const auto order = onlyInstance ? std::vector<std::pair<float, uint32_t>>{{0, onlyInstance}}
                                     : drawOrder(camera);
-    const int firstPass = phase == RenderPhase::Blended ? 1 : -1;
-    const int endPass = phase == RenderPhase::Solid ? 1 : 2;
-    for (int pass = firstPass; pass < endPass; ++pass) {
-    for (const auto& [depth, id] : order) {
+    std::vector<std::pair<int, uint32_t>> steps;
+    steps.reserve(order.size() * 3);
+    if (phase != RenderPhase::Blended)
+        for (const auto& entry : order) steps.emplace_back(0, entry.second);
+    if (phase != RenderPhase::Solid)
+        for (const auto& entry : order) {
+            steps.emplace_back(-1, entry.second);
+            steps.emplace_back(1, entry.second);
+        }
+    for (const auto& [pass, id] : steps) {
         auto& instance = instances.at(id);
         // Whole-model fades need the same nearest-surface depth prepass as
         // camera fading. Blending triangles while writing depth exposes mesh
@@ -3769,6 +3792,12 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 }
                 if (fadingSolid) {
                     desiredPipeline = pass == -1 ? cameraDepthPipeline_ : cameraFadePipeline_;
+                } else if (surfaceFade) {
+                    if (desiredPipeline == alphaPipeline_) desiredPipeline = fadeAlphaPipeline_;
+                    else if (desiredPipeline == additivePipeline_) desiredPipeline = fadeAdditivePipeline_;
+                    else if (desiredPipeline == modPipeline_) desiredPipeline = fadeModPipeline_;
+                    else if (desiredPipeline == mod2xPipeline_) desiredPipeline = fadeMod2xPipeline_;
+                    else assert(!"fading instance batch without a fade pipeline");
                 }
                 if (desiredPipeline != currentPipeline) {
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
@@ -3966,7 +3995,10 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 // Per-batch depth bias from materialLayer to separate coplanar
                 // armor pieces (chest/legs/gloves) that share identical depth.
-                vkCmdSetDepthBias(cmd, static_cast<float>(batch.materialLayer) * 0.5f, 0.0f, 0.0f);
+                // A fading instance's layers sit at its base's depth instead,
+                // to pass the LESS_OR_EQUAL test against its own prepass.
+                vkCmdSetDepthBias(cmd, surfaceFade ? 0.0f : static_cast<float>(batch.materialLayer) * 0.5f,
+                                  0.0f, 0.0f);
 
                 vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             }
@@ -4044,7 +4076,6 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
             vkCmdDrawIndexed(cmd, gpuModel.indexCount, 1, 0, 0, 0);
         }
-    }
     }
 }
 
@@ -5587,6 +5618,10 @@ void CharacterRenderer::recreatePipelines() {
     destroy(device, translucentPipeline_);
     destroy(device, cameraDepthPipeline_);
     destroy(device, cameraFadePipeline_);
+    destroy(device, fadeAlphaPipeline_);
+    destroy(device, fadeAdditivePipeline_);
+    destroy(device, fadeModPipeline_);
+    destroy(device, fadeMod2xPipeline_);
 
     // --- Load shaders ---
     rendering::VkShaderModule charVert, charFrag;
@@ -5609,7 +5644,8 @@ void CharacterRenderer::recreatePipelines() {
     charFrag.destroy();
 
     if (!opaquePipeline_ || !alphaTestPipeline_ || !alphaPipeline_ || !additivePipeline_ ||
-        !modPipeline_ || !mod2xPipeline_ || !translucentPipeline_ || !cameraDepthPipeline_ || !cameraFadePipeline_) {
+        !modPipeline_ || !mod2xPipeline_ || !translucentPipeline_ || !cameraDepthPipeline_ || !cameraFadePipeline_ ||
+        !fadeAlphaPipeline_ || !fadeAdditivePipeline_ || !fadeModPipeline_ || !fadeMod2xPipeline_) {
         LOG_ERROR("CharacterRenderer::recreatePipelines FAILED: opaque=", (void*)opaquePipeline_,
                   " alphaTest=", (void*)alphaTestPipeline_,
                   " alpha=", (void*)alphaPipeline_,
