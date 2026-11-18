@@ -2663,6 +2663,30 @@ static std::string auraDispelName(game::GameHandler* gh, uint32_t spellId) {
     return dbc->getString(static_cast<uint32_t>(row), layout->field("Name"));
 }
 
+/// "5 minutes remaining": the SPELL_TIME_REMAINING_* line of an aura or totem
+/// tooltip, for `ms` milliseconds left.
+///
+/// Days, hours and minutes round up, seconds down - the rule of uiparent.lua's
+/// SecondsToTimeAbbrev, which the buff frame's "0 s" follows too. Native Wing
+/// Clip reads "2 seconds" at 2.2 s left and "0 seconds remaining" for its last
+/// second and until the server removes it; Hunter's Mark at 1:46 reads "2
+/// minutes"; Stoneclaw Totem counts 2, 1, 0 seconds the same way. Callers
+/// clamp an expired timer at zero, so this never reads below it.
+static std::string timeRemainingText(lua_State* L, int32_t ms) {
+    const int32_t unitMs = ms >= 86400000 ? 86400000 : ms >= 3600000 ? 3600000 : ms >= 60000 ? 60000 : 1000;
+    const int32_t amount = unitMs == 1000 ? ms / 1000 : (ms + unitMs - 1) / unitMs;
+    const char* formatName = unitMs == 86400000 ? "SPELL_TIME_REMAINING_DAYS" :
+        unitMs == 3600000 ? "SPELL_TIME_REMAINING_HOURS" :
+        unitMs == 60000 ? "SPELL_TIME_REMAINING_MIN" : "SPELL_TIME_REMAINING_SEC";
+    lua_getglobal(L, formatName);
+    std::string text = luaL_checkstring(L, -1);
+    lua_pop(L, 1);
+    const auto placeholder = text.find("%d");
+    if (placeholder == std::string::npos) luaL_error(L, "Invalid aura duration format: %s", formatName);
+    text.replace(placeholder, 2, std::to_string(amount));
+    return wowee::ui::resolvePluralEscapes(text);
+}
+
 /// An aura's tooltip, as native 2.4.3 draws it for the buff frame
 /// (SetPlayerBuff) and the target/party/pet frames (SetUnitBuff/Debuff):
 /// the name in gold with the dispel category at its right in the same gold,
@@ -2705,26 +2729,7 @@ static void fillAuraTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandle
     if (aura.durationMs > 0) {
         const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
-        // Days, hours and minutes round up, seconds down - the rule of
-        // uiparent.lua's SecondsToTimeAbbrev, which the buff frame's "0 s"
-        // follows too. Native Wing Clip reads "2 seconds" at 2.2 s left and
-        // "0 seconds remaining" for its last second and until the server
-        // removes it; Hunter's Mark at 1:46 reads "2 minutes". An expired
-        // timer stays at zero (getRemainingMs clamps), never below.
-        const int32_t ms = aura.getRemainingMs(now);
-        const int32_t unitMs = ms >= 86400000 ? 86400000 : ms >= 3600000 ? 3600000 : ms >= 60000 ? 60000 : 1000;
-        const int32_t amount = unitMs == 1000 ? ms / 1000 : (ms + unitMs - 1) / unitMs;
-        const int32_t unitSeconds = unitMs / 1000;
-        const char* formatName = unitSeconds == 86400 ? "SPELL_TIME_REMAINING_DAYS" :
-            unitSeconds == 3600 ? "SPELL_TIME_REMAINING_HOURS" :
-            unitSeconds == 60 ? "SPELL_TIME_REMAINING_MIN" : "SPELL_TIME_REMAINING_SEC";
-        lua_getglobal(L, formatName);
-        std::string text = luaL_checkstring(L, -1);
-        lua_pop(L, 1);
-        const auto placeholder = text.find("%d");
-        if (placeholder == std::string::npos) luaL_error(L, "Invalid aura duration format: %s", formatName);
-        text.replace(placeholder, 2, std::to_string(amount));
-        addLine(wowee::ui::resolvePluralEscapes(text), true, false);
+        addLine(timeRemainingText(L, aura.getRemainingMs(now)), true, false);
     }
     lua_pushinteger(L, aura.spellId);
     lua_setfield(L, 1, "__spellId");
@@ -2761,6 +2766,32 @@ static int tooltipSetUnitAura(lua_State* L, bool wantBuff) {
 
 int lua_Tooltip_SetUnitBuff(lua_State* L) { return tooltipSetUnitAura(L, true); }
 int lua_Tooltip_SetUnitDebuff(lua_State* L) { return tooltipSetUnitAura(L, false); }
+
+/// SetTotem(slot): the totem bar's button. Native 2.4.3 (pair 8, Stoneskin
+/// and Stoneclaw Totem): the totem's spell name in gold, then the time left
+/// in white - "2 minutes remaining" - and nothing else.
+int lua_Tooltip_SetTotem(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    const int slot = static_cast<int>(luaL_checkinteger(L, 2));
+    if (!w || !gh) return 0;
+    w->isTooltip = true;
+    clearTooltipUnit(L, *w);
+    w->tooltipLines.clear();
+    if (slot < 1 || slot > game::GameHandler::NUM_TOTEM_SLOTS) return 0;
+    const auto& totem = gh->getTotemSlot(slot - 1);
+    if (!totem.active()) return 0;
+    wowee::ui::Widget::TooltipLine title;
+    title.left = gh->getSpellName(totem.spellId);
+    title.lc[0] = 1.0f; title.lc[1] = 210.0f / 255.0f; title.lc[2] = 0.0f; title.lc[3] = 1.0f;
+    w->tooltipLines.push_back(std::move(title));
+    wowee::ui::Widget::TooltipLine time;
+    time.left = timeRemainingText(L, static_cast<int32_t>(totem.remainingMs()));
+    time.lc[0] = time.lc[1] = time.lc[2] = time.lc[3] = 1.0f;
+    w->tooltipLines.push_back(std::move(time));
+    w->shown = true;
+    return 0;
+}
 
 /// SetUnitAura(unit, index, filter): HARMFUL in the filter counts debuffs.
 int lua_Tooltip_SetUnitAura(lua_State* L) {
@@ -7132,6 +7163,7 @@ void LuaEngine::registerCoreAPI() {
         {"SetUnitBuff",   lua_Tooltip_SetUnitBuff},
         {"SetUnitDebuff", lua_Tooltip_SetUnitDebuff},
         {"SetUnitAura",   lua_Tooltip_SetUnitAura},
+        {"SetTotem",      lua_Tooltip_SetTotem},
         {"SetQuestLogRewardSpell", lua_Tooltip_SetQuestLogRewardSpell},
         {"SetEquipmentSet",        lua_Tooltip_SetEquipmentSet},
         {"SetLFGCompletionReward", lua_Tooltip_SetLFGCompletionReward},
@@ -9071,17 +9103,6 @@ void LuaEngine::registerCoreAPI() {
         "    self:ClearLines()\n"
         "    local name = GetSendMailItem(index)\n"
         "    if name then self:SetText(name, 1, 1, 1) end\n"
-        "end\n"
-        // A totem's tooltip is its spell's, and the totem bar is drawn by
-        // whichever side owns it.
-        "function __WoweeFrameMT:SetTotem(slot)\n"
-        "    self:ClearLines()\n"
-        "    local _, name, _, duration = GetTotemInfo(slot)\n"
-        "    if not name or name == '' then return end\n"
-        "    self:SetText(name, 1, 1, 1)\n"
-        "    if duration and duration > 0 then\n"
-        "        self:AddLine(string.format('%.0f sec remaining', duration), 1, 1, 1)\n"
-        "    end\n"
         "end\n"
         // What the minimap's tracking button is showing. 1.12's Minimap.xml
         // opens the tracking frame's OnEnter with SetOwner and this, and it was
