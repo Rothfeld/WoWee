@@ -408,6 +408,11 @@
     "ID": 0,
     "Path": 1
   },
+  "SpellDispelType": {
+    "ID": 0,
+    "Name": 1,
+    "ImmunityPossible": 19
+  },
   "SpellItemEnchantment": {
     "ID": 0,
     "ItemVisual": 30,

@@ -202,3 +202,16 @@ TEST_CASE("Pre-WotLK expansions publish no companion field", "[update_fields]") 
         REQUIRE_FALSE(j.contains("UNIT_FIELD_CRITTER"));
     }
 }
+
+TEST_CASE("TBC SpellDispelType names the aura tooltip's dispel category", "[dbc][layout]") {
+    // 2.4.3 SpellDispelType.dbc: ID, Name_lang (16 locales + flags), Mask,
+    // ImmunityPossible, InternalName. Native aura tooltips show Name for the
+    // rows with ImmunityPossible set (Magic, Curse, Disease, Poison).
+    DBCLayout layout;
+    REQUIRE(layout.loadFromJson(layoutPath("tbc")));
+    const auto* dispel = layout.getLayout("SpellDispelType");
+    REQUIRE(dispel);
+    CHECK(dispel->field("ID") == 0);
+    CHECK(dispel->field("Name") == 1);
+    CHECK(dispel->field("ImmunityPossible") == 19);
+}

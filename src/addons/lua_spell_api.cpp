@@ -193,118 +193,157 @@ static bool auraVisible(game::GameHandler& gh, uint32_t spellId) {
     return !(found->second.attr & 0x80u) && !(found->second.attrEx & 0x10000000u);
 }
 
-static int lua_UnitAura(lua_State* L, bool wantBuff) {
-    auto* gh = getGameHandler(L);
-    if (!gh) { return luaReturnNil(L); }
-    const char* uid = luaL_optstring(L, 1, "player");
-    int index = static_cast<int>(luaL_optnumber(L, 2, 1));
-    if (index < 1) { return luaReturnNil(L); }
+/// Milliseconds on the same clock AuraSlot::receivedAtMs was stamped from.
+static uint64_t auraNowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 
-    std::string uidStr(uid);
-    toLowerInPlace(uidStr);
+const game::AuraSlot* findUnitAura(game::GameHandler& gh, std::string unit, int index,
+                                   bool wantBuff, const char* filter) {
+    if (index < 1) return nullptr;
+    toLowerInPlace(unit);
 
     const std::vector<game::AuraSlot>* auras = nullptr;
-    if (uidStr == "player")      auras = &gh->getPlayerAuras();
-    else if (uidStr == "target") auras = &gh->getTargetAuras();
+    if (unit == "player")      auras = &gh.getPlayerAuras();
+    else if (unit == "target") auras = &gh.getTargetAuras();
     else {
         // Try party/raid/focus via GUID lookup in unitAurasCache
-        uint64_t guid = resolveUnitGuid(gh, uidStr);
-        if (guid != 0) auras = gh->getUnitAuras(guid);
+        uint64_t guid = resolveUnitGuid(&gh, unit);
+        if (guid != 0) auras = gh.getUnitAuras(guid);
     }
-    if (!auras) { return luaReturnNil(L); }
+    if (!auras) return nullptr;
 
     // "RAID" on a debuff means only what this character can remove. The index
     // counts into the filtered list, so the test has to come before the count
     // - filtering after it would answer the wrong aura for every index past
     // the first one skipped.
-    const char* filterArg = luaL_optstring(L, 3, "");
     bool dispellableOnly = false;
-    if (!wantBuff && filterArg) {
-        std::string f(filterArg);
+    if (!wantBuff && filter) {
+        std::string f(filter);
         for (char& c : f) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         dispellableOnly = f.find("RAID") != std::string::npos;
     }
-    const uint8_t playerClass = gh->getPlayerClass();
+    const uint8_t playerClass = gh.getPlayerClass();
 
     // Filter to buffs or debuffs and find the Nth one
     int found = 0;
     for (const auto& aura : *auras) {
-        if (aura.isEmpty() || aura.spellId == 0 || !auraVisible(*gh, aura.spellId)) continue;
+        if (aura.isEmpty() || aura.spellId == 0 || !auraVisible(gh, aura.spellId)) continue;
         bool isDebuff = (aura.flags & 0x80) != 0;
         if (wantBuff ? isDebuff : !isDebuff) continue;
         if (dispellableOnly &&
-            !classCanDispel(playerClass, gh->getSpellDispelType(aura.spellId))) {
+            !classCanDispel(playerClass, gh.getSpellDispelType(aura.spellId))) {
             continue;
         }
-        found++;
-        if (found == index) {
-            // Return: name, rank, icon, count, debuffType, duration, expirationTime, ...spellId
-            std::string name = gh->getSpellName(aura.spellId);
-            if (name.empty()) {
-                // An aura this client's Spell.dbc has no row for draws as
-                // "Unknown" with no icon, and nothing said which one it was.
-                // A realm's own spells are the usual cause - a server can put
-                // any id on a unit, and only a patched client knows its name.
-                static std::set<uint32_t> saidNoName;
-                if (saidNoName.insert(aura.spellId).second) {
-                    LOG_WARNING("Aura spell ", aura.spellId, " on ", uidStr,
-                                " has no Spell.dbc row, so it shows as 'Unknown' with no "
-                                "icon (", (aura.flags & 0x80) ? "debuff" : "buff",
-                                ", flags 0x", std::hex, static_cast<int>(aura.flags), std::dec,
-                                ", caster 0x", std::hex, aura.casterGuid, std::dec, ")");
-                }
+        if (++found == index) return &aura;
+    }
+    return nullptr;
+}
+
+static int lua_UnitAura(lua_State* L, bool wantBuff) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { return luaReturnNil(L); }
+    std::string uidStr(luaL_optstring(L, 1, "player"));
+    toLowerInPlace(uidStr);
+    const int index = static_cast<int>(luaL_optnumber(L, 2, 1));
+    const game::AuraSlot* found = findUnitAura(*gh, uidStr, index, wantBuff, luaL_optstring(L, 3, ""));
+    if (found) {
+        const game::AuraSlot& aura = *found;
+        // Return: name, rank, icon, count, debuffType, duration, expirationTime, ...spellId
+        std::string name = gh->getSpellName(aura.spellId);
+        if (name.empty()) {
+            // An aura this client's Spell.dbc has no row for draws as
+            // "Unknown" with no icon, and nothing said which one it was.
+            // A realm's own spells are the usual cause - a server can put
+            // any id on a unit, and only a patched client knows its name.
+            static std::set<uint32_t> saidNoName;
+            if (saidNoName.insert(aura.spellId).second) {
+                LOG_WARNING("Aura spell ", aura.spellId, " on ", uidStr,
+                            " has no Spell.dbc row, so it shows as 'Unknown' with no "
+                            "icon (", (aura.flags & 0x80) ? "debuff" : "buff",
+                            ", flags 0x", std::hex, static_cast<int>(aura.flags), std::dec,
+                            ", caster 0x", std::hex, aura.casterGuid, std::dec, ")");
             }
-            lua_pushstring(L, name.empty() ? "Unknown" : name.c_str()); // name
-            lua_pushstring(L, "");           // rank
-            std::string iconPath = gh->getSpellIconPath(aura.spellId);
-            if (!iconPath.empty()) lua_pushstring(L, iconPath.c_str());
-            else lua_pushnil(L);             // icon texture path
-            lua_pushnumber(L, aura.charges); // count
-            // debuffType: resolve from Spell.dbc dispel type
-            {
-                uint8_t dt = gh->getSpellDispelType(aura.spellId);
-                switch (dt) {
-                    case 1:  lua_pushstring(L, "Magic");  break;
-                    case 2:  lua_pushstring(L, "Curse");  break;
+        }
+        lua_pushstring(L, name.empty() ? "Unknown" : name.c_str()); // name
+        lua_pushstring(L, "");           // rank
+        std::string iconPath = gh->getSpellIconPath(aura.spellId);
+        if (!iconPath.empty()) lua_pushstring(L, iconPath.c_str());
+        else lua_pushnil(L);             // icon texture path
+        lua_pushnumber(L, aura.charges); // count
+        // 2.4.3's shape, which stock targetframe.lua reads as
+        //   UnitBuff   -> name, rank, icon, count, duration, timeLeft
+        //   UnitDebuff -> name, rank, icon, count, debuffType, duration, timeLeft
+        // with duration nil for an aura whose timer this client does not know.
+        // Answering the 3.x shape put the dispel type where TargetFrame reads a
+        // buff's duration: `duration > 0` raised on any Magic buff on the
+        // target ("attempt to compare number with string") and the target
+        // frame drew none of its buffs or debuffs.
+        const int iface = interfaceVersion(L);
+        if (iface >= 20000 && iface < 30000) {
+            if (!wantBuff) {
+                switch (gh->getSpellDispelType(aura.spellId)) {
+                    case 1:  lua_pushstring(L, "Magic");   break;
+                    case 2:  lua_pushstring(L, "Curse");   break;
                     case 3:  lua_pushstring(L, "Disease"); break;
-                    case 4:  lua_pushstring(L, "Poison"); break;
-                    default: lua_pushnil(L);              break;
+                    case 4:  lua_pushstring(L, "Poison");  break;
+                    default: lua_pushnil(L);               break;
                 }
             }
-            lua_pushnumber(L, aura.maxDurationMs > 0 ? aura.maxDurationMs / 1000.0 : 0); // duration
-            // expirationTime: GetTime() + remaining seconds (so addons can compute countdown)
-            if (aura.durationMs > 0) {
-                uint64_t auraNowMs = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count());
-                int32_t remMs = aura.getRemainingMs(auraNowMs);
-                lua_pushnumber(L, luaGetTimeNow() + remMs / 1000.0);
-            } else {
-                lua_pushnumber(L, 0);  // permanent aura
-            }
-            // caster: return unit ID string if caster is known
-            if (aura.casterGuid != 0) {
-                if (aura.casterGuid == gh->getPlayerGuid())
-                    lua_pushstring(L, "player");
-                else if (aura.casterGuid == gh->getTargetGuid())
-                    lua_pushstring(L, "target");
-                else if (aura.casterGuid == gh->getFocusGuid())
-                    lua_pushstring(L, "focus");
-                else if (aura.casterGuid == gh->getPetGuid())
-                    lua_pushstring(L, "pet");
-                else {
-                    char cBuf[32];
-                    snprintf(cBuf, sizeof(cBuf), "0x%016llX", (unsigned long long)aura.casterGuid);
-                    lua_pushstring(L, cBuf);
-                }
+            if (aura.durationMs > 0 && aura.maxDurationMs > 0) {
+                lua_pushnumber(L, aura.maxDurationMs / 1000.0);
+                lua_pushnumber(L, aura.getRemainingMs(auraNowMs()) / 1000.0);
             } else {
                 lua_pushnil(L);
+                lua_pushnil(L);
             }
-            lua_pushboolean(L, 0);           // isStealable
-            lua_pushboolean(L, 0);           // shouldConsolidate
-            lua_pushnumber(L, aura.spellId); // spellId
-            return 11;
+            return wantBuff ? 6 : 7;
         }
+        // debuffType: resolve from Spell.dbc dispel type
+        {
+            uint8_t dt = gh->getSpellDispelType(aura.spellId);
+            switch (dt) {
+                case 1:  lua_pushstring(L, "Magic");  break;
+                case 2:  lua_pushstring(L, "Curse");  break;
+                case 3:  lua_pushstring(L, "Disease"); break;
+                case 4:  lua_pushstring(L, "Poison"); break;
+                default: lua_pushnil(L);              break;
+            }
+        }
+        lua_pushnumber(L, aura.maxDurationMs > 0 ? aura.maxDurationMs / 1000.0 : 0); // duration
+        // expirationTime: GetTime() + remaining seconds (so addons can compute countdown)
+        if (aura.durationMs > 0) {
+            uint64_t auraNowMs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            int32_t remMs = aura.getRemainingMs(auraNowMs);
+            lua_pushnumber(L, luaGetTimeNow() + remMs / 1000.0);
+        } else {
+            lua_pushnumber(L, 0);  // permanent aura
+        }
+        // caster: return unit ID string if caster is known
+        if (aura.casterGuid != 0) {
+            if (aura.casterGuid == gh->getPlayerGuid())
+                lua_pushstring(L, "player");
+            else if (aura.casterGuid == gh->getTargetGuid())
+                lua_pushstring(L, "target");
+            else if (aura.casterGuid == gh->getFocusGuid())
+                lua_pushstring(L, "focus");
+            else if (aura.casterGuid == gh->getPetGuid())
+                lua_pushstring(L, "pet");
+            else {
+                char cBuf[32];
+                snprintf(cBuf, sizeof(cBuf), "0x%016llX", (unsigned long long)aura.casterGuid);
+                lua_pushstring(L, cBuf);
+            }
+        } else {
+            lua_pushnil(L);
+        }
+        lua_pushboolean(L, 0);           // isStealable
+        lua_pushboolean(L, 0);           // shouldConsolidate
+        lua_pushnumber(L, aura.spellId); // spellId
+        return 11;
     }
     lua_pushnil(L);
     return 1;
@@ -346,12 +385,6 @@ static bool filterWantsHarmful(const char* filter) {
     std::string upper(filter);
     for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     return upper.find("HARMFUL") != std::string::npos;
-}
-
-/// Milliseconds on the same clock AuraSlot::receivedAtMs was stamped from.
-static uint64_t auraNowMs() {
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 // GetPlayerBuff(index, filter) -> slot, untilCancelled

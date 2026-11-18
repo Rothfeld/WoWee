@@ -628,6 +628,14 @@ inline int pushFactionRow(lua_State* L, game::GameHandler* gh,
 /// question start to disagree.
 uint32_t currencyListItemId(lua_State* L, int index);
 
+/// The aura UnitBuff/UnitDebuff(unit, index, filter) answer for, or nullptr.
+///
+/// Shared with GameTooltip:SetUnitBuff/SetUnitDebuff, which hover the icons
+/// the target, party and pet frames drew from those calls: both have to count
+/// the same filtered list or the tooltip describes the neighbouring icon.
+const game::AuraSlot* findUnitAura(game::GameHandler& gh, std::string unit, int index,
+                                   bool wantBuff, const char* filter);
+
 // Resolve unit IDs (player, target, focus, mouseover, pet, targettarget, etc.) to entity
 inline game::Unit* resolveUnit(lua_State* L, const char* unitId) {
     auto* gh = getGameHandler(L);

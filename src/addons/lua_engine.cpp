@@ -2606,14 +2606,50 @@ int lua_Tooltip_SetSpellByID(lua_State* L) {
     return 1;
 }
 
-int lua_Tooltip_SetPlayerBuff(lua_State* L) {
-    auto* w = widgetOf(L, 1);
-    auto* gh = wowee::addons::getGameHandler(L);
-    const int slot = static_cast<int>(luaL_checkinteger(L, 2)) -
-        (wowee::addons::interfaceVersion(L) >= 20000 ? 1 : 0);
-    if (!w || !gh || slot < 0 || static_cast<size_t>(slot) >= gh->getPlayerAuras().size()) return 0;
-    const auto& aura = gh->getPlayerAuras()[slot];
-    if (aura.isEmpty()) return 0;
+/// The dispel category an aura tooltip names at the right of its title, or
+/// empty for none.
+///
+/// Native 2.4.3 writes SpellDispelType.dbc's localized name there, in the
+/// title's gold: "Curse" on Gehennas' Curse, "Magic" on Hunter's Mark and on
+/// Power Word: Fortitude. Frenzy (type 9) and Shadowstalker Stealth (type 5)
+/// have a dispel type and show none; in the DBC the four that show (Magic,
+/// Curse, Disease, Poison) are exactly the rows with ImmunityPossible set.
+/// Evidence: _experiments/20261118T0807.aura_tooltip_dispel.
+static std::string auraDispelName(game::GameHandler* gh, uint32_t spellId) {
+    const uint8_t dispelType = gh->getSpellDispelType(spellId);
+    if (dispelType == 0) return {};
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* layout = layouts ? layouts->getLayout("SpellDispelType") : nullptr;
+    auto* assets = gh->services().assetManager;
+    if (!layout || !assets) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            LOG_WARNING("Aura tooltips omit the dispel category: dbc_layouts.json lacks "
+                        "SpellDispelType; deploy current expansion metadata");
+        }
+        return {};
+    }
+    const auto dbc = assets->loadDBC("SpellDispelType.dbc");
+    const int32_t row = dbc ? dbc->findRecordById(dispelType) : -1;
+    if (row < 0) {
+        LOG_WARNING("Spell ", spellId, " dispel type ", static_cast<int>(dispelType),
+                    " has no SpellDispelType.dbc row");
+        return {};
+    }
+    if (dbc->getUInt32(static_cast<uint32_t>(row), layout->field("ImmunityPossible")) == 0) return {};
+    return dbc->getString(static_cast<uint32_t>(row), layout->field("Name"));
+}
+
+/// An aura's tooltip, as native 2.4.3 draws it for the buff frame
+/// (SetPlayerBuff) and the target/party/pet frames (SetUnitBuff/Debuff):
+/// the name in gold with the dispel category at its right in the same gold,
+/// the spell's Tooltip text in white, then the time left in gold from
+/// SPELL_TIME_REMAINING_*. Buffs and debuffs are drawn alike; stacks are not
+/// mentioned (Sunder Armor at three stacks shows none). A permanent aura has
+/// no time line.
+static void fillAuraTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
+                            const game::AuraSlot& aura) {
     w->isTooltip = true;
     clearTooltipUnit(L, *w);
     w->tooltipLines.clear();
@@ -2626,6 +2662,11 @@ int lua_Tooltip_SetPlayerBuff(lua_State* L) {
         w->tooltipLines.push_back(std::move(line));
     };
     addLine(gh->getSpellName(aura.spellId), true, false);
+    if (auto dispel = auraDispelName(gh, aura.spellId); !dispel.empty()) {
+        auto& title = w->tooltipLines.back();
+        title.right = std::move(dispel);
+        std::copy(std::begin(title.lc), std::end(title.lc), std::begin(title.rc));
+    }
     const auto* layouts = pipeline::getActiveDBCLayout();
     const auto* layout = layouts ? layouts->getLayout("Spell") : nullptr;
     auto* assets = gh->services().assetManager;
@@ -2651,14 +2692,51 @@ int lua_Tooltip_SetPlayerBuff(lua_State* L) {
         std::string text = luaL_checkstring(L, -1);
         lua_pop(L, 1);
         const auto placeholder = text.find("%d");
-        if (placeholder == std::string::npos) return luaL_error(L, "Invalid aura duration format: %s", formatName);
+        if (placeholder == std::string::npos) luaL_error(L, "Invalid aura duration format: %s", formatName);
         text.replace(placeholder, 2, std::to_string(amount));
         addLine(wowee::ui::resolvePluralEscapes(text), true, false);
     }
     lua_pushinteger(L, aura.spellId);
     lua_setfield(L, 1, "__spellId");
     w->shown = true;
+}
+
+int lua_Tooltip_SetPlayerBuff(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    const int slot = static_cast<int>(luaL_checkinteger(L, 2)) -
+        (wowee::addons::interfaceVersion(L) >= 20000 ? 1 : 0);
+    if (!w || !gh || slot < 0 || static_cast<size_t>(slot) >= gh->getPlayerAuras().size()) return 0;
+    const auto& aura = gh->getPlayerAuras()[slot];
+    if (aura.isEmpty()) return 0;
+    fillAuraTooltip(L, w, gh, aura);
     return 0;
+}
+
+/// SetUnitBuff/SetUnitDebuff(unit, index, filter): the icon the target,
+/// party or pet frame drew from UnitBuff/UnitDebuff with the same arguments.
+static int tooltipSetUnitAura(lua_State* L, bool wantBuff) {
+    auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    const char* unit = luaL_checkstring(L, 2);
+    const int index = static_cast<int>(luaL_checkinteger(L, 3));
+    const char* filter = luaL_optstring(L, 4, "");
+    if (!w || !gh) return 0;
+    w->tooltipLines.clear();
+    const auto* aura = wowee::addons::findUnitAura(*gh, unit, index, wantBuff, filter);
+    if (!aura) return 0;
+    fillAuraTooltip(L, w, gh, *aura);
+    return 0;
+}
+
+int lua_Tooltip_SetUnitBuff(lua_State* L) { return tooltipSetUnitAura(L, true); }
+int lua_Tooltip_SetUnitDebuff(lua_State* L) { return tooltipSetUnitAura(L, false); }
+
+/// SetUnitAura(unit, index, filter): HARMFUL in the filter counts debuffs.
+int lua_Tooltip_SetUnitAura(lua_State* L) {
+    std::string filter(luaL_optstring(L, 4, "HELPFUL"));
+    for (char& c : filter) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return tooltipSetUnitAura(L, filter.find("HARMFUL") == std::string::npos);
 }
 
 /// A glyph in its socket, hovered on the glyph panel.
@@ -7021,6 +7099,9 @@ void LuaEngine::registerCoreAPI() {
         {"SetGuildBankItem", lua_Tooltip_SetGuildBankItem},
         {"SetSpellByID",    lua_Tooltip_SetSpellByID},
         {"SetPlayerBuff", lua_Tooltip_SetPlayerBuff},
+        {"SetUnitBuff",   lua_Tooltip_SetUnitBuff},
+        {"SetUnitDebuff", lua_Tooltip_SetUnitDebuff},
+        {"SetUnitAura",   lua_Tooltip_SetUnitAura},
         {"SetQuestLogRewardSpell", lua_Tooltip_SetQuestLogRewardSpell},
         {"SetEquipmentSet",        lua_Tooltip_SetEquipmentSet},
         {"SetLFGCompletionReward", lua_Tooltip_SetLFGCompletionReward},
@@ -7950,7 +8031,7 @@ void LuaEngine::registerCoreAPI() {
         "SetStatusBarTexture=1,SetTexCoord=1,SetText=1,\n"
         "SetTexture=1,SetToplevel=1,\n"
         "SetUIPanel=1,SetUnit=1,\n"
-        "SetUnitBuff=1,SetUnitDebuff=1,SetValue=1,SetValueStep=1,\n"
+        "SetValue=1,SetValueStep=1,\n"
         "SetVertexColor=1,SetVerticalScroll=1,SetWidth=1,SetZoom=1,Show=1,ShowUIPanel=1,\n"
         "ShowUIPanelFailed=1,StartMovie=1,StartMoving=1,Stop=1,\n"
         "StopMovie=1,StopMovingOrSizing=1,ToggleInputLanguage=1,\n"
@@ -8903,22 +8984,6 @@ void LuaEngine::registerCoreAPI() {
         "end\n"
         // NumLines and GetText come from the widget itself, which is where
         // the lines now live.
-        "function __WoweeFrameMT:SetUnitBuff(unit, index, filter)\n"
-        "    self:ClearLines()\n"
-        "    local name, rank, icon, count, debuffType, duration, expTime, caster, steal, consolidate, spellId = UnitBuff(unit, index, filter)\n"
-        "    if name then\n"
-        "        self:SetText(name, 1, 1, 1)\n"
-        "        if duration and duration > 0 then\n"
-        "            self:AddLine(string.format('%.0f sec remaining', expTime - GetTime()), 1, 1, 1)\n"
-        "        end\n"
-        "        self.__spellId = spellId\n"
-        "    end\n"
-        "end\n"
-        // The one the buff frame actually calls. SetUnitBuff and
-        // SetUnitDebuff were written and this was left in the no-op
-        // allowlist, so every buff and debuff on the default buff frame
-        // hovered to an empty tooltip - buffframe.lua reaches for SetUnitAura
-        // in both its handlers and neither of the two that exist.
         // Three more that were left in the no-op allowlist while everything
         // they need was bound. Each is a hover that wrote nothing: a quest
         // reward in the questgiver window, its spell reward, and an item on
@@ -9113,46 +9178,6 @@ void LuaEngine::registerCoreAPI() {
         "    if not name or name == '' then return end\n"
         "    self:SetText(name, 1, 1, 1)\n"
         "    if count and count > 1 then self:AddLine('x' .. count, 1, 1, 1) end\n"
-        "end\n"
-        "function __WoweeFrameMT:SetUnitAura(unit, index, filter)\n"
-        "    self:ClearLines()\n"
-        "    local name, rank, icon, count, debuffType, duration, expTime, caster, steal, consolidate, spellId = UnitAura(unit, index, filter)\n"
-        "    if not name then return end\n"
-        // Harmful auras name their school and are titled in red; a buff is
-        // white. filter is what the caller asked for, debuffType is what came
-        // back, and either is enough to tell them apart.
-        "    local harmful = debuffType ~= nil or (filter and string.find(filter, 'HARMFUL'))\n"
-        "    if harmful then self:SetText(name, 1, 0, 0) else self:SetText(name, 1, 1, 1) end\n"
-        "    if debuffType then self:AddLine(debuffType, 0.5, 0.5, 0.5) end\n"
-        "    if count and count > 1 then self:AddLine(count .. ' stacks', 1, 1, 1) end\n"
-        // What the aura actually does, which is the whole reason a buff is
-        // worth hovering. The tooltip gave its name, its stacks and its time
-        // left and never said that Power Word: Fortitude increases Stamina by
-        // 165 - so nothing on the buff bar described its own effect.
-        //
-        // Above the time remaining, as WoW orders it: the description belongs
-        // to the aura and the countdown to this moment.
-        "    local desc = GetSpellDescription and spellId and GetSpellDescription(spellId)\n"
-        "    if desc and desc ~= '' then self:AddLine(desc, 1, 0.82, 0, 1) end\n"
-        "    if duration and duration > 0 and expTime then\n"
-        "        self:AddLine(string.format('%.0f sec remaining', expTime - GetTime()), 1, 1, 1)\n"
-        "    end\n"
-        "    self.__spellId = spellId\n"
-        "end\n"
-        // Through SetUnitAura rather than beside it. This had the name and the
-        // dispel type and nothing else - no stacks, no time left, no
-        // description - so a debuff tooltip said strictly less than a buff's,
-        // and any line added to one had to be remembered for the other.
-        "function __WoweeFrameMT:SetUnitDebuff(unit, index, filter)\n"
-        // HARMFUL is what makes UnitAura count debuffs rather than buffs, and
-        // a caller's own filter - 'RAID' from the raid frames - has to keep it
-        // rather than replace it.
-        "    if filter and filter ~= '' then\n"
-        "        if not string.find(filter, 'HARMFUL') then filter = filter .. '|HARMFUL' end\n"
-        "    else\n"
-        "        filter = 'HARMFUL'\n"
-        "    end\n"
-        "    return self:SetUnitAura(unit, index, filter)\n"
         "end\n"
         // A tooltip built from a link fills itself in again while it is up.
         //
