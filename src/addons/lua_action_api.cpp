@@ -566,6 +566,24 @@ static int lua_PickupAction(lua_State* L) {
                          (held == CursorType::SPELL || held == CursorType::ITEM ||
                           held == CursorType::MACRO);
 
+    // Native 2.4.3 takes an item only if it can be equipped or has a use
+    // spell: Mining Pick, Rough Arrow and Linen Bandage go on, Blinding
+    // Powder, Flash Powder and the Guild Charter (no InventoryType, no
+    // on-use spell) do not. A refused drop changes nothing - no event, no
+    // error, the item stays on the cursor.
+    if (holding && held == CursorType::ITEM) {
+        const auto* info = gh->getItemInfo(heldId);
+        if (!info || !info->valid) {
+            LOG_WARNING("PlaceAction: item ", heldId, " has no query response; not placed");
+            return 0;
+        }
+        const bool useSpell = std::any_of(info->spells.begin(), info->spells.end(), [](const auto& spell) {
+            constexpr uint32_t kTriggerOnUse = 0;
+            return spell.spellId != 0 && spell.spellTrigger == kTriggerOnUse;
+        });
+        if (info->inventoryType == 0 && !useSpell) return 0;
+    }
+
     if (holding) {
         gh->setActionBarSlot(slot - 1, typeForCursor(held), heldId);
     } else if (hadAction) {
