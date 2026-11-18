@@ -447,19 +447,17 @@ void GameHandler::registerCoreOpcodes() {
     // Bind / heartstone / phase / barber / corpse
     // -----------------------------------------------------------------------
     dispatchTable_[Opcode::SMSG_PLAYERBOUND] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(16)) return;
+        // TBC: binder guid and area id (CMaNGOS Spell::EffectBind), the
+        // area the "%s is now your home." line names. Wrath adds the map.
+        const bool hasMap = !isPreWotlk();
+        if (!packet.hasRemaining(hasMap ? 16 : 12)) return;
         /*uint64_t binderGuid =*/ packet.readUInt64();
-        uint32_t mapId  = packet.readUInt32();
-        uint32_t zoneId = packet.readUInt32();
-        bool changed = !hasHomeBind_ || homeBindMapId_ != mapId || homeBindZoneId_ != zoneId;
-        homeBindMapId_  = mapId;
-        homeBindZoneId_ = zoneId;
-        if (!changed) return;
-        std::string pbMsg = "Your home location has been set";
-        std::string zoneName = getAreaName(zoneId);
-        if (!zoneName.empty()) pbMsg += " to " + zoneName;
-        pbMsg += '.';
-        addSystemChatMessage(pbMsg);
+        if (hasMap) homeBindMapId_ = packet.readUInt32();
+        const uint32_t areaId = packet.readUInt32();
+        homeBindZoneId_ = areaId;
+        const std::string areaName = getAreaName(areaId);
+        if (areaName.empty()) LOG_ERROR("SMSG_PLAYERBOUND: no name for area ", areaId);
+        else systemGlobal("ERR_DEATHBIND_SUCCESS_S", {areaName});
     };
     // The innkeeper asking whether to make this the player's home. It was
     // skipped because this client's own gossip window never waited for it - it
@@ -514,10 +512,15 @@ void GameHandler::registerCoreOpcodes() {
             uint32_t itemId    = packet.readUInt32();
             if (guid == playerGuid) {
                 const float amount = static_cast<float>(std::min(threshold, 3u)) / 3.0f;
-                if (threshold == 1) addSystemChatMessage("You feel tipsy.");
-                else if (threshold == 2) addSystemChatMessage("You feel drunk.");
-                else if (threshold >= 3) addSystemChatMessage("You feel completely smashed.");
-                else addSystemChatMessage("You feel sober again.");
+                // DRUNK_MESSAGE_SELF1..4 by threshold (sober, tipsy, drunk,
+                // smashed); the _ITEM_ form names what was drunk.
+                const std::string n = std::to_string(std::min(threshold, 3u) + 1);
+                const auto* item = itemId ? getItemInfo(itemId) : nullptr;
+                const std::string itemName = item ? item->name : std::string{};
+                if (!itemName.empty())
+                    systemGlobal(("DRUNK_MESSAGE_ITEM_SELF" + n).c_str(), {itemName});
+                else
+                    systemGlobal(("DRUNK_MESSAGE_SELF" + n).c_str());
                 if (auto* renderer = services_.renderer) {
                     if (auto* camera = renderer->getCameraController()) {
                         camera->setIntoxication(amount);
@@ -661,8 +664,7 @@ void GameHandler::registerCoreOpcodes() {
                      : "");
     };
     dispatchTable_[Opcode::SMSG_FEIGN_DEATH_RESISTED] = [this](network::Packet& /*packet*/) {
-        addUIError("Your Feign Death was resisted.");
-        addSystemChatMessage("Your Feign Death attempt was resisted.");
+        errorGlobal("ERR_FEIGN_DEATH_RESISTED");
     };
     dispatchTable_[Opcode::SMSG_CHANNEL_MEMBER_COUNT] = [](network::Packet& packet) {
         std::string chanName = packet.readString();
@@ -904,13 +906,9 @@ void GameHandler::registerCoreOpcodes() {
             homeBindPos_ = canonical;
             if (bindPointCallback_)
                 bindPointCallback_(data.mapId, canonical.x, canonical.y, canonical.z);
-            if (wasSet && changed) {
-                std::string bindMsg = "Your home has been set";
-                std::string zoneName = getAreaName(data.zoneId);
-                if (!zoneName.empty()) bindMsg += " to " + zoneName;
-                bindMsg += '.';
-                addSystemChatMessage(bindMsg);
-            }
+            // No line here: SMSG_PLAYERBOUND carries the binding's own.
+            (void)wasSet;
+            (void)changed;
         }
     };
 
@@ -1174,7 +1172,7 @@ void GameHandler::registerCoreOpcodes() {
         }
     };
     dispatchTable_[Opcode::SMSG_NEW_TAXI_PATH] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("New flight path discovered!");
+        systemGlobal("ERR_NEWTAXIPATH");
     };
 
     // (MSG_TALENT_WIPE_CONFIRM → registered by SpellHandler, which owns the
@@ -1207,8 +1205,6 @@ void GameHandler::registerCoreOpcodes() {
                 constexpr uint32_t kFishingBobberBiteAnimation = 153;
                 if (gameObjectCustomAnimCallback_)
                     gameObjectCustomAnimCallback_(guid, kFishingBobberBiteAnimation);
-                addUIError("A fish is on your line! Right-click to reel it in.");
-                addSystemChatMessage("A fish is on your line! Right-click to reel it in.");
                 withSoundManager(&audio::AudioCoordinator::getUiSoundManager,
                                  [](auto* sfx) { sfx->playFishingBite(); });
                 LOG_WARNING("Fishing bite ready: guid=0x", std::hex, guid, std::dec,
@@ -1254,18 +1250,15 @@ void GameHandler::registerCoreOpcodes() {
     dispatchTable_[Opcode::SMSG_ALL_ACHIEVEMENT_DATA] = [this](network::Packet& packet) {
         handleAllAchievementData(packet);
     };
-    // Both are errors rather than remarks, and the real client shows them on
-    // the error line rather than in the chat log - ERR_FISH_NOT_HOOKED and
-    // ERR_FISH_ESCAPED are globalstrings. raiseUiError puts them there, fires
-    // UI_ERROR_MESSAGE so the interface's own error frame draws them, and
-    // keeps the chat line this client has always written.
+    // Errors on the red line only: ERR_FISH_NOT_HOOKED ("No fish are
+    // hooked.") and ERR_FISH_ESCAPED ("Your fish got away!").
     dispatchTable_[Opcode::SMSG_FISH_NOT_HOOKED] = [this](network::Packet& /*packet*/) {
         hookedFishingBobberGuid_ = 0;
-        raiseUiError("Your fish got away.");
+        errorGlobal("ERR_FISH_NOT_HOOKED");
     };
     dispatchTable_[Opcode::SMSG_FISH_ESCAPED] = [this](network::Packet& /*packet*/) {
         hookedFishingBobberGuid_ = 0;
-        raiseUiError("Your fish escaped!");
+        errorGlobal("ERR_FISH_ESCAPED");
     };
 
     // ---- Auto-repeat / auras / dispel / totem ----
