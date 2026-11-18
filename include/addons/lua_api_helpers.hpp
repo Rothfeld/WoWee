@@ -14,6 +14,7 @@
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
 #include "game/spell_classification.hpp"
+#include "game/game_utils.hpp"
 #include "game/update_field_table.hpp"
 #include "game/inventory_slots.hpp"
 #include "game/reputation_standing.hpp"
@@ -578,6 +579,13 @@ inline int pushFactionInfo(lua_State* L, game::GameHandler* gh,
     // top, with Alliance, Horde, Steamwheedle Cartel and the rest inside them.
     lua_pushboolean(L, isHeader ? 1 : 0);                       // 9: isHeader
     lua_pushboolean(L, isCollapsed ? 1 : 0);                    // 10: isCollapsed
+    // 2.4.3 answers eleven, isWatched eleventh (measured: ReputationFrame reads
+    // `..., isHeader, isCollapsed, isWatched = GetFactionInfo(i)`); hasRep and
+    // isChild are 3.x additions.
+    if (game::isActiveExpansion("tbc")) {
+        lua_pushboolean(L, f.factionId == gh->getWatchedFactionId() ? 1 : 0);  // 11: isWatched
+        return 11;
+    }
     lua_pushboolean(L, hasRep ? 1 : 0);                         // 11: hasRep
     lua_pushboolean(L, f.factionId == gh->getWatchedFactionId() ? 1 : 0);  // 12: isWatched
     lua_pushboolean(L, isChild ? 1 : 0);                        // 13: isChild
