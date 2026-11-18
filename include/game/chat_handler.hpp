@@ -90,7 +90,9 @@ public:
     /// original's away lines when `announce` (an update, not the create block).
     void onAwayFlags(bool afk, bool dnd, bool announce);
     /// CHAT_MSG_CHANNEL_NOTICE(_USER) for one SMSG_CHANNEL_NOTIFY.
-    void fireChannelNotice(const ChannelNotifyData& data, int number);
+    void fireChannelNotice(const ChannelNotifyData& data, int number, bool waited = false);
+    /// Fire the held notices about `guid`, or every expired one.
+    void flushNoticesAwaitingName(uint64_t guid, bool expired);
     void replyToLastWhisper(const std::string& message);
 
     // ---- Methods moved from GameHandler ----
@@ -126,6 +128,15 @@ private:
         double deadline = 0.0;
     };
     std::deque<ChatAwaitingName> chatAwaitingName_;
+    /// A channel notice naming a player not known yet, held for the name
+    /// query as a chat line is (fireChannelNotice).
+    struct ChannelNoticeAwaitingName {
+        ChannelNotifyData data;
+        int number = 0;
+        uint64_t guid = 0;
+        double deadline = 0.0;
+    };
+    std::deque<ChannelNoticeAwaitingName> noticesAwaitingName_;
     /// Long enough for a name query to come back on a working connection,
     /// short enough that a line does not feel withheld.
     static constexpr double kNameWaitSeconds = 1.0;

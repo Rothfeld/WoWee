@@ -921,9 +921,28 @@ void ChatHandler::flushChatAwaitingName(uint64_t guid) {
     // Delivered outside the walk: each one runs the whole chat path, which can
     // hold another line of its own.
     for (auto& data : ready) deliverChatMessage(std::move(data), /*alreadyWaited=*/true);
+    flushNoticesAwaitingName(guid, false);
+}
+
+void ChatHandler::flushNoticesAwaitingName(uint64_t guid, bool expired) {
+    if (noticesAwaitingName_.empty()) return;
+    const double now = core::appTimeSeconds();
+    std::vector<ChannelNoticeAwaitingName> ready;
+    for (auto it = noticesAwaitingName_.begin(); it != noticesAwaitingName_.end();) {
+        if (expired ? now >= it->deadline : it->guid == guid) {
+            if (expired) LOG_WARNING("Channel notice: no name for ", formatChatLogGuid(it->guid),
+                                     " within ", kNameWaitSeconds, "s - showing it without one");
+            ready.push_back(std::move(*it));
+            it = noticesAwaitingName_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto& n : ready) fireChannelNotice(n.data, n.number, true);
 }
 
 void ChatHandler::expireChatAwaitingName() {
+    flushNoticesAwaitingName(0, true);
     if (chatAwaitingName_.empty()) return;
     const double now = core::appTimeSeconds();
     std::vector<MessageChatData> ready;
@@ -1089,7 +1108,7 @@ ChannelNotice channelNotice(ChannelNotifyType type) {
 // General - Elwynn Forest]" (pair 6, native at login). arg8 is the channel
 // number and arg9 the bare name, which ChatFrame matches against the
 // channels the frame shows.
-void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number) {
+void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number, bool waited) {
     const ChannelNotice notice = channelNotice(data.notifyType);
     if (!notice.name) {
         LOG_DEBUG("Channel notify type ", static_cast<int>(data.notifyType), " for channel ", data.channelName);
@@ -1097,6 +1116,17 @@ void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number) {
     }
     if (!owner_.addonEventCallbackRef()) return;
     auto name = [this](uint64_t guid) { return guid ? knownPlayerName(guid) : std::string{}; };
+    // A player named only by guid ("Owner changed to %s") waits for the name
+    // query, as a chat line from a stranger does: printed at once it read
+    // "[1. General] Owner changed to ."
+    if (!waited) {
+        for (const uint64_t guid : {data.senderGuid, data.sourceGuid}) {
+            if (guid == 0 || !data.playerName.empty() || !name(guid).empty()) continue;
+            owner_.queryPlayerName(guid);
+            noticesAwaitingName_.push_back({data, number, guid, core::appTimeSeconds() + kNameWaitSeconds});
+            return;
+        }
+    }
     std::string player = data.playerName.empty() ? name(data.senderGuid) : data.playerName;
     std::string second = name(data.sourceGuid);
     if (notice.user && player.empty())
