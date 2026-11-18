@@ -18,9 +18,10 @@ struct TbcLfgResult {
 };
 struct TbcLfgState {
     std::array<uint32_t, 3> slots{};
-    std::array<int, 3> types{1, 1, 1};
+    // An empty slot reports type 2 (Dungeon), as 2.4.3 does after login.
+    std::array<int, 3> types{2, 2, 2};
     uint32_t more = 0;
-    int moreType = 1;
+    int moreType = 2;
     std::string comment;
     bool queued = false, lfg = false, lfm = false, autofill = false;
     uint32_t queryType = 0, queryEntry = 0, total = 0;

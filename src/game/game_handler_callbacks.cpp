@@ -706,6 +706,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     playerNextLevelXp_ = 0;
     serverPlayerLevel_ = 1;
     tbcLfg_ = {};
+    tbcLfgAnnouncePending_ = false;
     std::fill(playerExploredZones_.begin(), playerExploredZones_.end(), 0u);
     hasPlayerExploredZones_ = false;
     playerSkills_.clear();
@@ -1986,6 +1987,14 @@ void GameHandler::onInterfaceReady(uint32_t liveZoneId) {
         else infoGlobal(n.name.c_str(), n.args);
     }
     if (chatHandler_) chatHandler_->onInterfaceReady(liveZoneId);
+    // 2.4.3 has FrameXML up before the login SMSG_LFG_UPDATE arrives, so
+    // LFGFrame_Update runs after VARIABLES_LOADED and LFM_AUTO_ADD ends as
+    // the reported autofill state (false, not the saved-variable nil).
+    if (tbcLfgAnnouncePending_ && addonEventCallback_) {
+        tbcLfgAnnouncePending_ = false;
+        addonEventCallback_("MEETINGSTONE_CHANGED", {});
+        addonEventCallback_("LFG_UPDATE", {});
+    }
 }
 
 void GameHandler::onAwayFlags(bool afk, bool dnd, bool announce) {

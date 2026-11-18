@@ -3671,7 +3671,9 @@ void GameHandler::loadLfgDungeonDbc() const {
         lfgDungeonNameCache_[id] = name;
         if (dbc->getFieldCount() == 24) {
             // Original 2.4.3 LFGDungeons: name locales 1..16, mask 17,
-            // min/max level 18/19, type 20, faction 21, order 22, expansion 23.
+            // min/max level 18/19, type 20, faction 21, texture 22 (a string:
+            // "ScarletMonastery", the LFGIcon- suffix GetLFGTypeEntries
+            // returns), expansion 23.
             LfgDungeon dungeon;
             dungeon.id = id;
             dungeon.name = std::move(name);
@@ -3679,7 +3681,7 @@ void GameHandler::loadLfgDungeonDbc() const {
             dungeon.maxLevel = dbc->getUInt32(i, 19);
             dungeon.typeId = dbc->getUInt32(i, 20);
             dungeon.faction = static_cast<int32_t>(dbc->getUInt32(i, 21));
-            dungeon.orderIndex = dbc->getUInt32(i, 22);
+            dungeon.texture = dbc->getString(i, 22);
             dungeon.expansion = dbc->getUInt32(i, 23);
             lfgDungeons_.push_back(std::move(dungeon));
             continue;

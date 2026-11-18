@@ -1916,10 +1916,15 @@ void GameHandler::registerRemainingOpcodes() {
         };
         if (packet.hasRemaining(1)) {
             uint8_t reason = packet.readUInt8();
+            LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", static_cast<int>(reason));
+            // CMaNGOS answers every CMSG_LFM_SET_AUTOFILL / CMSG_LFG_SET_AUTOJOIN
+            // with reason 0 (MEETINGSTONE_FAIL_NONE), including the ones
+            // LFMFrame sends at login; 2.4.3 prints nothing for it.
+            // The texts below for 1-3 are not checked against 2.4.3.
+            if (reason == 0) return;
             const char* msg = (reason < 4) ? kMeetingstoneErrors[reason]
                                            : "Meeting Stone: Could not join group.";
             addSystemChatMessage(msg);
-            LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", static_cast<int>(reason));
         }
     };
     // Player was removed from the meeting stone queue (left, or group disbanded)
@@ -3401,8 +3406,13 @@ void GameHandler::registerRemainingOpcodes() {
         Opcode::SMSG_VOICE_SET_TALKER_MUTED
     }) { registerSkipHandler(op); }
 
-    const auto lfgChanged = [this]() {
-        if (addonEventCallback_) addonEventCallback_("MEETINGSTONE_CHANGED", {});
+    // Observed on 2.4.3: each SMSG_LFG_UPDATE raises MEETINGSTONE_CHANGED
+    // then LFG_UPDATE; the slot/queue updates raise LFG_UPDATE alone.
+    const auto lfgChanged = [this](bool meetingStone = false) {
+        if (!noticesInterfaceReady_) { tbcLfgAnnouncePending_ = true; return; }
+        if (!addonEventCallback_) return;
+        if (meetingStone) addonEventCallback_("MEETINGSTONE_CHANGED", {});
+        addonEventCallback_("LFG_UPDATE", {});
     };
     dispatchTable_[Opcode::SMSG_LFG_UPDATE] = [this, lfgChanged](network::Packet& packet) {
         requireLfgBytes(packet, 3);
@@ -3410,7 +3420,7 @@ void GameHandler::registerRemainingOpcodes() {
         tbcLfg_.lfg = packet.readUInt8() != 0;
         tbcLfg_.lfm = packet.readUInt8() != 0;
         if (tbcLfg_.lfm) { requireLfgBytes(packet, 4); tbcLfg_.more = packet.readUInt32(); }
-        lfgChanged();
+        lfgChanged(true);
     };
     dispatchTable_[Opcode::SMSG_LFG_UPDATE_LFG] = [this, lfgChanged](network::Packet& packet) {
         requireLfgBytes(packet, 12);

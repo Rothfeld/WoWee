@@ -5293,6 +5293,9 @@ private:
 
     // LFG dungeon name cache (lazy-loaded from LFGDungeons.dbc; WotLK only)
     TbcLfgState tbcLfg_;
+    /// An LFG update that arrived before FrameXML loaded (the login
+    /// SMSG_LFG_UPDATE does); announced once the interface is ready.
+    bool tbcLfgAnnouncePending_ = false;
     mutable std::unordered_map<uint32_t, std::string> lfgDungeonNameCache_;
     mutable std::vector<LfgDungeon> lfgDungeons_;
     mutable std::vector<Companion> mountSpells_;
