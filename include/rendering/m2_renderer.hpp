@@ -23,6 +23,7 @@
 #include <string>
 #include <functional>
 #include <optional>
+#include <limits>
 #include <random>
 #include <chrono>
 #include <future>
@@ -263,6 +264,9 @@ struct M2Instance {
     uint32_t wmoRoomInstance = 0;
     std::vector<uint16_t> wmoRooms;
     uint32_t indoorLighting = 0; // packed MODD RGB in bits 8..31, bit 1 enables
+    // Game objects: where and how long ago their interior light was asked.
+    glm::vec3 interiorLightQueriedAt{std::numeric_limits<float>::max()};
+    float interiorLightAge = 0.0f;
     glm::vec3 position;
     glm::vec3 rotation;  // Euler angles in degrees
     float scale;
@@ -621,6 +625,11 @@ public:
     /// Answers whether any of the given groups of a WMO instance is drawn this frame.
     using WmoRoomQuery = std::function<bool(uint32_t wmoInstanceId, const std::vector<uint16_t>& groups)>;
     void setWmoRoomQuery(WmoRoomQuery query) { wmoRoomDrawn_ = std::move(query); }
+    /// Light of a game object standing at a world position in a WMO interior,
+    /// or nothing outdoors (WMORenderer::interiorObjectLight). Game objects
+    /// take it as interior doodads take their MODD colour.
+    using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
+    void setInteriorLightQuery(InteriorLightQuery query) { interiorLightQuery_ = std::move(query); }
     void setInstanceHighlight(uint32_t instanceId, float amount);
     /// See M2Instance::fade.
     void setInstanceFade(uint32_t instanceId, float alpha);
@@ -1175,6 +1184,7 @@ private:
         float effectiveMaxDistSq;
     };
     WmoRoomQuery wmoRoomDrawn_;
+    InteriorLightQuery interiorLightQuery_;
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2
     struct GlowSprite {

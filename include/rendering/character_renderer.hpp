@@ -15,6 +15,7 @@
 #include <memory>
 #include <vector>
 #include <optional>
+#include <limits>
 #include "pipeline/char_sections.hpp"
 #include <unordered_map>
 #include <unordered_set>
@@ -158,6 +159,10 @@ public:
     /// Steal Magic, Banish, Stealth, whatever the kit's CharParamOne-Three;
     /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
     void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity);
+    /// Light of a model standing at a world position in a WMO interior, or
+    /// nothing outdoors (WMORenderer::interiorObjectLight).
+    using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
+    void setInteriorLightQuery(InteriorLightQuery query) { interiorLightQuery_ = std::move(query); }
     static constexpr float kKitOpacityTransition = 1.0f;
     void setHoveredInstance(uint32_t instanceId);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
@@ -408,6 +413,11 @@ private:
         float opacity = 1.0f;
         float cameraOpacity = 1.0f;
         glm::vec3 kitColor{1.0f};
+        // Floor light of a locally lit WMO interior under the instance, or
+        // nothing outdoors (setInteriorLightQuery); re-asked as it moves.
+        std::optional<glm::vec3> interiorLight;
+        glm::vec3 interiorLightQueriedAt{std::numeric_limits<float>::max()};
+        float interiorLightAge = 0.0f;
         // Drawn kit opacity, moving from kitOpacityFrom to kitOpacityTarget
         // over kKitOpacityTransition seconds (see setInstanceKitAppearance).
         float kitOpacity = 1.0f;
@@ -654,6 +664,7 @@ private:
 public:
     void processPendingNormalMaps(int budget = 4);
 private:
+    InteriorLightQuery interiorLightQuery_;
 
     // Normal mapping / POM settings
     bool normalMappingEnabled_ = true;

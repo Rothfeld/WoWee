@@ -2372,6 +2372,10 @@ void Renderer::update(float deltaTime) {
     std::future<void> m2AnimFuture;
     bool m2AnimLaunched = false;
     if (m2Renderer && camera) {
+        WMORenderer* wmo = wmoRenderer.get();
+        m2Renderer->setInteriorLightQuery(wmo ? M2Renderer::InteriorLightQuery(
+            [wmo](const glm::vec3& position) { return wmo->interiorObjectLight(position); })
+            : M2Renderer::InteriorLightQuery{});
         float m2DeltaTime = deltaTime;
         glm::vec3 m2CamPos = camera->getPosition();
         glm::mat4 m2ViewProj = camera->getProjectionMatrix() * camera->getViewMatrix();
@@ -2384,6 +2388,10 @@ void Renderer::update(float deltaTime) {
 
     // Update character animations (runs in parallel with M2 animation above)
     if (characterRenderer && camera) {
+        WMORenderer* wmo = wmoRenderer.get();
+        characterRenderer->setInteriorLightQuery(wmo ? CharacterRenderer::InteriorLightQuery(
+            [wmo](const glm::vec3& position) { return wmo->interiorObjectLight(position); })
+            : CharacterRenderer::InteriorLightQuery{});
         characterRenderer->update(deltaTime, camera->getPosition());
     }
 

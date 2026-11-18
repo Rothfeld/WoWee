@@ -411,6 +411,14 @@ public:
     bool isInsideInteriorWMO(float glX, float glY, float glZ) const;
     std::optional<WMOFogSample> getFog(const glm::vec3& position, bool underwater) const;
 
+    /// Light of a unit or game object standing at `position`, or nothing when
+    /// it stands outdoors. The closest WMO surface below its feet decides:
+    /// in a locally lit interior group whose box holds it, it is that floor's vertex colour
+    /// (MOCV) under the feet, floored by the root's MOHD ambient as the
+    /// interior surfaces are. Anything else under the feet (an exterior group,
+    /// no WMO) leaves the object to the outdoor Light.dbc light.
+    std::optional<glm::vec3> interiorObjectLight(const glm::vec3& position) const;
+
     struct InteriorLocation {
         uint32_t rootId, nameSet, groupId, groupIndex, instanceId;
         std::string sourcePath;
@@ -554,6 +562,9 @@ private:
         // Collision geometry (positions only, for floor raycasting)
         std::vector<glm::vec3> collisionVertices;
         std::vector<uint16_t> collisionIndices;
+        // MOCV per collision vertex, for groups lit locally (see
+        // interiorObjectLight); empty for every other group.
+        std::vector<glm::vec3> collisionColors;
 
         // 2D spatial grid for fast triangle lookup (built at load time).
         // Bins triangles by their XY bounding box into grid cells.

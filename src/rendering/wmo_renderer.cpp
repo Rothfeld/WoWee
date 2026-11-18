@@ -1998,6 +1998,10 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     for (const auto& v : group.vertices) {
         resources.collisionVertices.push_back(v.position);
     }
+    if ((group.flags & 0x4) && pipeline::wmoUsesLocalLighting(group.flags)) {
+        resources.collisionColors.reserve(group.vertices.size());
+        for (const auto& v : group.vertices) resources.collisionColors.emplace_back(v.color);
+    }
     resources.triMaterials = group.triMaterials;
     if (!group.triFlags.empty()) {
         // Store all triangles but tag each with MOPY flags for collision filtering
@@ -4019,6 +4023,61 @@ std::optional<WMOFogSample> WMORenderer::getFog(const glm::vec3& position, bool 
     const auto& model = loadedModels.at(instance->modelId);
     return sampleWMOFog(model.fogs, model.groups[location->groupIndex].fogIndices,
                         location->localPosition, underwater);
+}
+
+std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& position) const {
+    // From a little above the feet, so the floor stood on is found and a
+    // ceiling just overhead is not.
+    const glm::vec3 origin = position + glm::vec3(0.0f, 0.0f, 0.5f);
+    gatherCandidates(origin - glm::vec3(0.5f, 0.5f, 500.0f), origin + glm::vec3(0.5f), tl_candidateScratch);
+    float bestDistance = std::numeric_limits<float>::max();
+    std::optional<glm::vec3> light;
+    for (size_t index : tl_candidateScratch) {
+        const auto& instance = instances[index];
+        const auto modelIt = loadedModels.find(instance.modelId);
+        if (modelIt == loadedModels.end()) continue;
+        const auto& model = modelIt->second;
+        const glm::vec3 local(instance.invModelMatrix * glm::vec4(origin, 1.0f));
+        const glm::vec3 down = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(0, 0, -1, 0)));
+        for (const auto& group : model.groups) {
+            // An interior lights only what stands within its box: Undercity's
+            // floors lie under Tirisfal's ruins, and a unit up on the terrain
+            // is not in them.
+            if (!group.collisionColors.empty() &&
+                (glm::any(glm::lessThan(local, group.boundingBoxMin)) ||
+                 glm::any(glm::greaterThan(local, group.boundingBoxMax)))) continue;
+            if (!trianglesAlongRay(group, local, down, tl_triScratch)) continue;
+            const auto& indices = group.collisionIndices;
+            const auto& vertices = group.collisionVertices;
+            for (uint32_t triangle : tl_triScratch) {
+                const glm::vec3& v0 = vertices[indices[triangle]];
+                const glm::vec3& v1 = vertices[indices[triangle + 1]];
+                const glm::vec3& v2 = vertices[indices[triangle + 2]];
+                const float distance = rayTriangleIntersect(local, down, v0, v1, v2);
+                if (distance <= 0.0f || distance >= bestDistance) continue;
+                bestDistance = distance;
+                if (group.collisionColors.empty()) {
+                    light.reset();
+                    continue;
+                }
+                // Barycentric weights of the hit point.
+                const glm::vec3 hit = local + down * distance;
+                const glm::vec3 e1 = v1 - v0, e2 = v2 - v0, d = hit - v0;
+                const float d11 = glm::dot(e1, e1), d12 = glm::dot(e1, e2), d22 = glm::dot(e2, e2);
+                const float dp1 = glm::dot(d, e1), dp2 = glm::dot(d, e2);
+                const float denom = d11 * d22 - d12 * d12;
+                if (denom == 0.0f) continue;
+                const float b1 = (d22 * dp1 - d12 * dp2) / denom;
+                const float b2 = (d11 * dp2 - d12 * dp1) / denom;
+                const auto& colors = group.collisionColors;
+                const glm::vec3 mocv = colors[indices[triangle]] * (1.0f - b1 - b2) +
+                                       colors[indices[triangle + 1]] * b1 +
+                                       colors[indices[triangle + 2]] * b2;
+                light = glm::max(mocv, model.wmoAmbientColor);
+            }
+        }
+    }
+    return light;
 }
 
 std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(const glm::vec3& position, bool indoorOnly) const {

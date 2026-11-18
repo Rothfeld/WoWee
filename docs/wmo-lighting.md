@@ -40,6 +40,16 @@ ground-floor rooms and their furniture behind the lodge are not drawn from the
 courtyard, and the exterior group's courtyard-facing wall backs are see-through.
 Evidence: `../_experiments/20261117T2215Z.gmisland_selection_lua/` (pair-gm_d*.png).
 
+Units and game objects standing in a locally lit interior group take the
+floor's MOCV under their feet (the closest WMO surface below, the group's box
+holding them), floored by the MOHD ambient, in place of the outdoor light.
+Units use it as their light; game objects use it as interior doodads use their
+MODD colour. Shattrath's Terrace of Light braziers (`ANCIENT_D_STANDING_LIGHT.m2`,
+group 1, MOGP 0xb805) are purple there, not the green of outdoor Light 458; a
+unit beside one measures 0.9x the MOCV (178,153,231) under it. Not modelled:
+native lit sides of units reach about 1.8x MOCV, and game objects are about
+0.45x MOCV natively (WoWee about 1.3x brighter, as for interior doodads).
+
 TBC uses authored textures, vertex colors and environment lighting without
 the extra point lights synthesized from fixture names, glow meshes or lava.
 Those synthetic lights are not authored light records.

@@ -62,6 +62,13 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float uvOffset2Y;
     int combiner0;
     int combiner1;
+    // Light of a unit standing in a locally lit WMO interior group: the
+    // floor's MOCV under its feet (WMORenderer::interiorObjectLight). Takes
+    // the place of the outdoor light while interiorLit is set.
+    float interiorLightR;
+    float interiorLightG;
+    float interiorLightB;
+    int interiorLit;
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
@@ -459,6 +466,9 @@ void main() {
             vec3 legacyLight = clamp(ambientColor.rgb +
                 max(dot(norm, ldir), 0.0) * lightColor.rgb, 0.0, 1.0);
             result = texColor.rgb * (ambientColor.rgb + shadow * (legacyLight - ambientColor.rgb));
+        }
+        if (interiorLit != 0) {
+            result = texColor.rgb * vec3(interiorLightR, interiorLightG, interiorLightB);
         }
     }
 

@@ -251,6 +251,8 @@ struct CharMaterialUBO {
     float uvOffsetX, uvOffsetY;
     float uvOffset2X, uvOffset2Y;
     int32_t combiner0, combiner1;  // texture stage modes, see character.frag
+    float interiorLightR, interiorLightG, interiorLightB;
+    int32_t interiorLit;
 };
 
 // GPU vertex struct with tangent (expanded from M2Vertex for normal mapping)
@@ -2270,6 +2272,18 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             if (inst.fadeOutTime >= inst.fadeOutDuration) fadedOut_.push_back(pair.first);
         }
 
+        // Interior light under the feet, asked again once the instance has
+        // moved a quarter yard or a second has passed (a WMO loading in).
+        if (interiorLightQuery_) {
+            inst.interiorLightAge += deltaTime;
+            const glm::vec3 moved = inst.position - inst.interiorLightQueriedAt;
+            if (inst.interiorLightAge >= 1.0f || glm::dot(moved, moved) > 0.0625f) {
+                inst.interiorLight = interiorLightQuery_(inst.position);
+                inst.interiorLightQueriedAt = inst.position;
+                inst.interiorLightAge = 0.0f;
+            }
+        }
+
         // Kit opacity transition, carried to the unit's weapons and their effects.
         if (inst.kitOpacity != inst.kitOpacityTarget) {
             inst.kitOpacityTime += deltaTime;
@@ -3470,6 +3484,12 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 matData.kitColorR = instance.kitColor.r;
                 matData.kitColorG = instance.kitColor.g;
                 matData.kitColorB = instance.kitColor.b;
+                matData.interiorLit = instance.interiorLight ? 1 : 0;
+                if (instance.interiorLight) {
+                    matData.interiorLightR = instance.interiorLight->r;
+                    matData.interiorLightG = instance.interiorLight->g;
+                    matData.interiorLightB = instance.interiorLight->b;
+                }
                 matData.alphaTest = blendNeedsCutout ? 1 : 0;
                 matData.colorKeyBlack = 0;
                 matData.unlit = unlit ? 1 : 0;
@@ -3645,6 +3665,12 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             matData.kitColorR = instance.kitColor.r;
             matData.kitColorG = instance.kitColor.g;
             matData.kitColorB = instance.kitColor.b;
+            matData.interiorLit = instance.interiorLight ? 1 : 0;
+            if (instance.interiorLight) {
+                matData.interiorLightR = instance.interiorLight->r;
+                matData.interiorLightG = instance.interiorLight->g;
+                matData.interiorLightB = instance.interiorLight->b;
+            }
             matData.alphaTest = 0;
             matData.combiner0 = 1;  // Mod: texture alpha, as before stage modes
             matData.colorKeyBlack = 0;
