@@ -198,21 +198,19 @@ TEST_CASE("Particle widths follow authored matrix placement scale", "[m2][partic
     CHECK(particlePlacementScale(glm::scale(glm::mat4(1), glm::vec3(0))) == 0);
 }
 
-TEST_CASE("Spherical emitters tilt from +Z by the vertical range", "[m2][particle]") {
+TEST_CASE("Flat spherical emitters spread across their area and travel radially", "[m2][particle]") {
     using wowee::rendering::sphericalParticleEmission;
-    // Etherial.m2 Death #17-#21: vertical 0, any horizontal angle -> straight up.
-    const auto up = sphericalParticleEmission(2, 4, 0, 1.57079632679f, 1, 0x400);
-    CHECK(up.offset.z == Catch::Approx(4));
-    CHECK(up.direction.z == Catch::Approx(1));
-    CHECK(std::abs(up.direction.x) < 1e-6f);
-    const auto tilted = sphericalParticleEmission(2, 4, 1.57079632679f, 0, 1, 0x429);
-    CHECK(tilted.offset.y == Catch::Approx(4));
-    CHECK(std::abs(tilted.offset.z) < 1e-5f);
-    const auto side = sphericalParticleEmission(2, 4, 1.57079632679f, 1.57079632679f, 1, 0x429);
-    CHECK(side.offset.x == Catch::Approx(4));
-    const auto vertical = sphericalParticleEmission(2, 4, 1.57079632679f, 0, 1, 0x529);
-    CHECK(vertical.offset == tilted.offset);
+    const auto horizontal = sphericalParticleEmission(2, 4, 0, 0, 1, 0x429);
+    CHECK(horizontal.offset.y == Catch::Approx(4));
+    CHECK(horizontal.offset.z == 0);
+    CHECK(horizontal.direction.y == Catch::Approx(1));
+    CHECK(horizontal.direction.z == 0);
+    const auto vertical = sphericalParticleEmission(2, 4, 0, 0, 1, 0x529);
+    CHECK(vertical.offset == horizontal.offset);
     CHECK(vertical.direction == glm::vec3(0, 0, 1));
+    const auto side = sphericalParticleEmission(2, 4, 0, 1.57079632679f, 1, 0x429);
+    CHECK(side.offset.x == Catch::Approx(4));
+    CHECK(side.offset.z == 0);
 }
 
 TEST_CASE("Summoning portal emits a ring rather than filling its center", "[m2][particle]") {
