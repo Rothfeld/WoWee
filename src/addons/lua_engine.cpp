@@ -2682,9 +2682,16 @@ static void fillAuraTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandle
     if (aura.durationMs > 0) {
         const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
-        const auto seconds = (aura.getRemainingMs(now) + 999) / 1000;
-        const auto unitSeconds = seconds >= 86400 ? 86400 : seconds >= 3600 ? 3600 : seconds >= 60 ? 60 : 1;
-        const auto amount = (seconds + unitSeconds - 1) / unitSeconds;
+        // Days, hours and minutes round up, seconds down - the rule of
+        // uiparent.lua's SecondsToTimeAbbrev, which the buff frame's "0 s"
+        // follows too. Native Wing Clip reads "2 seconds" at 2.2 s left and
+        // "0 seconds remaining" for its last second and until the server
+        // removes it; Hunter's Mark at 1:46 reads "2 minutes". An expired
+        // timer stays at zero (getRemainingMs clamps), never below.
+        const int32_t ms = aura.getRemainingMs(now);
+        const int32_t unitMs = ms >= 86400000 ? 86400000 : ms >= 3600000 ? 3600000 : ms >= 60000 ? 60000 : 1000;
+        const int32_t amount = unitMs == 1000 ? ms / 1000 : (ms + unitMs - 1) / unitMs;
+        const int32_t unitSeconds = unitMs / 1000;
         const char* formatName = unitSeconds == 86400 ? "SPELL_TIME_REMAINING_DAYS" :
             unitSeconds == 3600 ? "SPELL_TIME_REMAINING_HOURS" :
             unitSeconds == 60 ? "SPELL_TIME_REMAINING_MIN" : "SPELL_TIME_REMAINING_SEC";
