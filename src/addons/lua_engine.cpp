@@ -2016,6 +2016,12 @@ int lua_Tooltip_SetOwner(lua_State* L) {
     a.point = point;
     a.relativeTo = owner;
     a.relativePoint = rel;
+    // SetOwner(owner, anchor, x, y): the offsets go on that anchor. The target
+    // frame's aura buttons ask for ANCHOR_BOTTOMRIGHT 15, -25 (targetframe.xml);
+    // dropping them put the tooltip under the cursor, 25 units higher and 15
+    // further left than native draws it.
+    a.x = static_cast<float>(luaL_optnumber(L, 4, 0));
+    a.y = static_cast<float>(luaL_optnumber(L, 5, 0));
     tree->clearPoints(id);
     tree->addPoint(id, a);
     return 0;
