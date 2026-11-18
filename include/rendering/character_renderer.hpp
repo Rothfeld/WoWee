@@ -211,6 +211,10 @@ public:
     /// currently playing; nullptr if the model has none for that sequence.
     [[nodiscard]] const std::vector<uint32_t>* getFootstepEventTimes(uint32_t instanceId) const;
     [[nodiscard]] bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
+    // In the corpse pose: Death or Dead was played and no revival (Stand) since.
+    // Native 2.4.3 keeps a corpse lying through emotes and spell cast/kit
+    // animations aimed at it (_experiments/20261118T1320Z.death_over_emote).
+    [[nodiscard]] bool isInstanceDead(uint32_t instanceId) const;
     /// Ground covered per second at authored rate: |moveSpeed| of the
     /// animation's primary sequence times the instance scale. nullopt when the
     /// model has no such sequence or it authors no movement.

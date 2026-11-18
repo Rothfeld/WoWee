@@ -543,7 +543,7 @@ void GameHandler::registerCoreOpcodes() {
             uint64_t animGuid = packet.readPackedGuid();
             if (packet.hasRemaining(4)) {
                 uint32_t animId = packet.readUInt32();
-                if (emoteAnimCallback_) emoteAnimCallback_(animGuid, animId, /*isState=*/false, 0);
+                playServerEmote(animGuid, animId, /*isState=*/false, 0);
             }
         }
     };

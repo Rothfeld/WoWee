@@ -1460,12 +1460,12 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             uint32_t oldEmote = unit->getNpcEmoteState();
             unit->setNpcEmoteState(val);
             // Fire emote animation callback so entity_spawner can update the NPC's idle anim
-            if (val != oldEmote && owner_.emoteAnimCallbackRef()) {
+            if (val != oldEmote) {
                 uint32_t animId = val != 0 ? rendering::AnimationController::getEmoteAnimByEmotesId(val) : 0;
                 if (val == 0 || animId != 0) {
                     // UNIT_NPC_EMOTESTATE is persistent by definition - a zero
                     // here genuinely clears the state loop.
-                    owner_.emoteAnimCallbackRef()(block.guid, animId, /*isState=*/true, val);
+                    owner_.playServerEmote(block.guid, animId, /*isState=*/true, val);
                 } else {
                     LOG_DEBUG("UNIT_NPC_EMOTESTATE emoteId=", val, " had no Emotes.dbc animation mapping");
                 }

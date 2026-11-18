@@ -3,6 +3,7 @@
 #include <catch_amalgamated.hpp>
 
 #include "game_replay.hpp"
+#include "rendering/animation/animation_ids.hpp"
 
 #include <algorithm>
 #include <string>
@@ -133,6 +134,64 @@ TEST_CASE("an exploration discovery prints its experience in chat and on screen"
     discover(0);
     CHECK(info.back() == "Discovered: Razorfen Kraul");
     CHECK(s.handler().getChatHistory().size() == lines);
+}
+
+TEST_CASE("a corpse keeps its death pose through server emotes", "[replay][death][emote]") {
+    // Vashj'ir Honor Guard (21218): its relay scripts talk on after it died,
+    // and DoDisplayText plays each text's emote through Unit::HandleEmote -
+    // SMSG_EMOTE (ONESHOT_TALK 1, ONESHOT_ROAR 15) or UNIT_NPC_EMOTESTATE.
+    // Native 2.4.3 left the corpse lying through .npc playemote 15, 1, 0 and
+    // 64 (_experiments/20261118T1320Z.death_over_emote in the workspace).
+    Session s("tbc");
+    spawnAlivePlayer(s);
+    constexpr uint64_t kHonorGuard = 0xF1300052E2000001ull;
+    s.receive(UpdateObject().tbc().create(kHonorGuard, ObjectType::UNIT,
+                                          {{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_MAXHEALTH, 100}}));
+    struct Played { uint64_t guid; uint32_t animation; bool state; uint32_t emote; };
+    std::vector<Played> played;
+    s.handler().setEmoteAnimCallback([&](uint64_t guid, uint32_t animation, bool state, uint32_t emote) {
+        played.push_back({guid, animation, state, emote});
+    });
+    // Unit::HandleEmoteCommand: emote id, then the source's full guid.
+    const auto emote = [&](uint32_t id) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_EMOTE));
+        p.writeUInt32(id);
+        p.writeUInt64(kHonorGuard);
+        s.receive(p);
+    };
+    const auto emoteState = [&](uint32_t id) {
+        s.receive(UpdateObject().tbc().values(kHonorGuard, {{UF::UNIT_NPC_EMOTESTATE, id}}));
+    };
+
+    // STATE_DANCE (10): the test has no Emotes.dbc, and the built-in table
+    // has no row for 64.
+    emote(1);
+    emoteState(10);
+    REQUIRE(played.size() == 2);
+    CHECK(played[0].animation == wowee::rendering::anim::EMOTE_TALK);
+    CHECK_FALSE(played[0].state);
+    CHECK(played[1].state);
+    CHECK(played[1].emote == 10);
+
+    // Death in the middle of the state, as Unit::SetDeathState leaves it: the
+    // emote state field is not touched.
+    s.receive(UpdateObject().tbc().values(kHonorGuard, {{UF::UNIT_FIELD_HEALTH, 0}}));
+    emote(15);
+    emote(1);
+    emoteState(0);
+    emoteState(10);
+    CHECK(played.size() == 2);
+    // The state is still the unit's; only its animation waits.
+    const auto unit = std::dynamic_pointer_cast<wowee::game::Unit>(
+        s.handler().getEntityManager().getEntity(kHonorGuard));
+    REQUIRE(unit);
+    CHECK(unit->getNpcEmoteState() == 10);
+
+    // Respawned, it emotes again.
+    s.receive(UpdateObject().tbc().values(kHonorGuard, {{UF::UNIT_FIELD_HEALTH, 100}}));
+    emote(15);
+    REQUIRE(played.size() == 3);
+    CHECK(played[2].animation == wowee::rendering::anim::EMOTE_ROAR);
 }
 
 #include "addons/lua_api_helpers.hpp"

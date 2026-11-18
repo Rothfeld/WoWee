@@ -279,7 +279,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (!cr) return;
         uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(guid);
-        if (instanceId == 0) return;
+        if (instanceId == 0 || cr->isInstanceDead(instanceId)) return;
         const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
         if (!unit) return;
         entitySpawner_.setCreatureRangedDrawn(guid, false);
@@ -324,6 +324,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             if (instanceId == 0) instanceId = entitySpawner_.getPlayerInstanceId(victimGuid);
         }
         if (instanceId == 0) return;
+        if (!isLocalPlayer && cr->isInstanceDead(instanceId)) return;
         auto* ac = renderer_.getAnimationController();
 
         uint32_t animId = 0;
@@ -567,6 +568,18 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (instanceId == 0) return;
         auto* ac = isLocalPlayer ? renderer_.getAnimationController() : nullptr;
         if (isLocalPlayer && !ac) return;
+        // A corpse keeps lying: native 2.4.3 showed no Whirlwind (37641 cast
+        // kit, animation 126) for an SMSG_SPELL_GO sent from a dead Vashj'ir
+        // Honor Guard, where WoWee stood it up spinning (Leotheras the Blind
+        // was left whirling on the ground).
+        if (!isLocalPlayer && cr->isInstanceDead(instanceId)) {
+            castHolds_.erase(guid);
+            castOneShots_.erase(guid);
+            entitySpawner_.setRemoteCastHold(guid, 0);
+            LOG_DEBUG("Cast animation phase ", static_cast<int>(phase), " of spell ", spellId,
+                      " on corpse 0x", std::hex, guid, std::dec, " ignored");
+            return;
+        }
 
         const auto idle = [&] { return entitySpawner_.remoteIdleAnimation(guid); };
         const auto hold = [&](uint32_t spell, uint32_t animation, bool channel) {

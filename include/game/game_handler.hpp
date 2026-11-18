@@ -475,6 +475,12 @@ public:
     // one-shots play once and return to the prior state.
     using EmoteAnimCallback = std::function<void(uint64_t, uint32_t, bool, uint32_t)>;
     void setEmoteAnimCallback(EmoteAnimCallback cb) { emoteAnimCallback_ = std::move(cb); }
+    // A server emote on another unit (SMSG_EMOTE, UNIT_NPC_EMOTESTATE,
+    // SMSG_FORCE_ANIM), handed to the emote callback unless the unit is a
+    // corpse: native 2.4.3 keeps a dead unit in its death pose through one-shot
+    // emotes and emote state changes (CMaNGOS DB scripts go on talking, with
+    // their emotes, after the speaker died).
+    void playServerEmote(uint64_t guid, uint32_t animId, bool isState, uint32_t emoteId);
 
     /**
      * Get chat history (recent messages)

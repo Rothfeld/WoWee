@@ -77,6 +77,24 @@ void GameHandler::registerSkipHandler(LogicalOpcode op) {
 void GameHandler::registerHandler(LogicalOpcode op, void (GameHandler::*handler)(network::Packet&)) {
     dispatchTable_[op] = [this, handler](network::Packet& packet) { (this->*handler)(packet); };
 }
+
+// Native 2.4.3, Vashj'ir Honor Guard (21218) killed with .die: .npc playemote
+// 15 (ONESHOT_ROAR), 1 (ONESHOT_TALK), 0 and 64 (state) on the corpse left it
+// lying in its death pose; WoWee stood it up to roar and kept it standing
+// (_experiments/20261118T1320Z.death_over_emote in the workspace).
+// The emote state itself is still stored on the unit by the update path.
+void GameHandler::playServerEmote(uint64_t guid, uint32_t animId, bool isState, uint32_t emoteId) {
+    if (!emoteAnimCallback_) return;
+    if (guid != getPlayerGuid()) {
+        const auto unit = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(guid));
+        if (unit && isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags())) {
+            LOG_DEBUG("Emote ", emoteId, " (animation ", animId, isState ? ", state" : "",
+                      ") on corpse 0x", std::hex, guid, std::dec, " keeps its death pose");
+            return;
+        }
+    }
+    emoteAnimCallback_(guid, animId, isState, emoteId);
+}
 GameHandler::GameHandler(GameServices& services)
     : services_(services) {
     LOG_DEBUG("GameHandler created");

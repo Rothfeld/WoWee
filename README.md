@@ -1040,6 +1040,22 @@ orientation. Other clients can see a different facing for the same vendor.
 `build/bin/test_input_integration '[npc-facing],[merchant]'` checks turning and merchant
 interaction lifetime.
 
+### Corpses keep their death pose
+
+A dead unit stays in Death/Dead whatever animation the server asks of it.
+CMaNGOS DB scripts go on talking after the speaker died, each text playing its
+emote (Vashj'ir Honor Guard 21218 relays: ONESHOT_TALK, ONESHOT_ROAR), and
+UNIT_NPC_EMOTESTATE survives death. Native build 8606 kept a killed Honor Guard
+lying through `.npc playemote 15`, `1`, `0` and `10`/`64`, and through an
+SMSG_SPELL_GO of Whirlwind 37641 (cast kit animation 126) sent from the corpse
+with `.debug send opcode`. WoWee stood those corpses up (Leotheras the Blind
+whirling on the ground). `GameHandler::playServerEmote` drops server emotes on
+a corpse (the state is still stored); `CharacterRenderer::isInstanceDead`
+gates cast, kit, field-channel, swing and hit-reaction animations of remote
+units. `build/bin/test_game_replay '[death][emote]'`. Evidence:
+`_experiments/20261118T1320Z.death_over_emote` in the workspace. Unverified
+against native: swing/hit/channel-field packets aimed at a corpse.
+
 ### Sheathed weapons
 
 The unit sheath state (`UNIT_FIELD_BYTES_2` byte 0: 0 unarmed, 1 melee,

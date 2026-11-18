@@ -2072,6 +2072,11 @@ uint32_t CharacterRenderer::animationFlags(uint32_t animationId) {
     return it == animationFlags_.end() ? 0u : it->second;
 }
 
+bool CharacterRenderer::isInstanceDead(uint32_t instanceId) const {
+    const auto it = instances.find(instanceId);
+    return it != instances.end() && it->second.isDead;
+}
+
 void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId, bool loop,
                                       uint32_t oneShotReturnAnim, bool holdFinalPose) {
     auto it = instances.find(instanceId);

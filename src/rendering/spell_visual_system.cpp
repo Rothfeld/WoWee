@@ -874,8 +874,9 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
         return;
     }
     auto* cr = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    // A corpse keeps its death pose (CharacterRenderer::isInstanceDead).
     if (cr && attachInstanceId && animation->second != 0xffffffffu &&
-        cr->hasAnimation(attachInstanceId, animation->second)) {
+        !cr->isInstanceDead(attachInstanceId) && cr->hasAnimation(attachInstanceId, animation->second)) {
         uint32_t current = 0; float time = 0, duration = 0;
         cr->getAnimationState(attachInstanceId, current, time, duration);
         if (current == anim::SITTING || current == anim::SIT_GROUND_DOWN) {

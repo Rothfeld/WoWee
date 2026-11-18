@@ -4302,14 +4302,15 @@ void Application::syncChannelVisuals() {
             if (held != 0 && !fieldChannelAnimations_.contains(channel.casterGuid)) continue;  // a cast's own hold
             entitySpawner_->setRemoteCastHold(channel.casterGuid, animation);
             fieldChannelAnimations_[channel.casterGuid] = animation;
-            characters->playAnimation(channel.casterInstanceId, animation, true);
+            if (!characters->isInstanceDead(channel.casterInstanceId))
+                characters->playAnimation(channel.casterInstanceId, animation, true);
             LOG_DEBUG("Channel field animation ", animation, " on 0x", std::hex, channel.casterGuid, std::dec);
         }
         for (auto it = fieldChannelAnimations_.begin(); it != fieldChannelAnimations_.end();) {
             if (still.contains(it->first)) { ++it; continue; }
             if (entitySpawner_->remoteCastHold(it->first) == it->second) {
                 entitySpawner_->setRemoteCastHold(it->first, 0);
-                if (const uint32_t instance = instanceOf(it->first))
+                if (const uint32_t instance = instanceOf(it->first); instance && !characters->isInstanceDead(instance))
                     characters->playAnimation(instance, entitySpawner_->remoteIdleAnimation(it->first), true);
             }
             it = fieldChannelAnimations_.erase(it);
