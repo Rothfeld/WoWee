@@ -869,8 +869,9 @@ bool& optOutOfLoot() { static bool out = false; return out; }
 
 /// Which row the panel has selected. The client has no opinion - it is what
 /// the player last clicked - so it lives here rather than being invented.
+/// Nothing until a row is clicked: 2.4.3 answers 0 before that.
 int& selectedFaction() {
-    static int selected = 1;
+    static int selected = 0;
     return selected;
 }
 

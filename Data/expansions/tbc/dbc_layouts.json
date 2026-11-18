@@ -120,6 +120,7 @@
     "Text": 1
   },
   "Faction": {
+    "Description": 36,
     "ID": 0,
     "Name": 19,
     "ReputationBase0": 10,

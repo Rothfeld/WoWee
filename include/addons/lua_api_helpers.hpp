@@ -542,7 +542,7 @@ inline int pushFactionInfo(lua_State* L, game::GameHandler* gh,
         (f.flags & game::GameHandler::FACTION_FLAG_PEACE_FORCED) != 0;
 
     lua_pushstring(L, f.name.c_str());                          // 1: name
-    lua_pushstring(L, "");                                      // 2: description
+    lua_pushstring(L, gh->getFactionDescription(f.factionId).c_str()); // 2: description
     lua_pushnumber(L, band.id);                                 // 3: standingId
     lua_pushnumber(L, band.floor);                              // 4: barMin
     // The bar's top is one past the last value still at this standing, so a
@@ -550,7 +550,9 @@ inline int pushFactionInfo(lua_State* L, game::GameHandler* gh,
     lua_pushnumber(L, band.ceiling + 1);                        // 5: barMax
     lua_pushnumber(L, value);                                   // 6: barValue
     lua_pushboolean(L, atWar ? 1 : 0);                          // 7: atWarWith
-    lua_pushboolean(L, peaceForced ? 0 : 1);                    // 8: canToggleAtWar
+    // A heading the player holds no standing with cannot be declared on:
+    // 2.4.3 answers nil for Alliance Forces while it answers isHeader.
+    lua_pushboolean(L, hasRep && !peaceForced ? 1 : 0);         // 8: canToggleAtWar
     // Whether this row is a heading, and whether it is drawn indented. Both
     // come from Faction.dbc's parent chain, and both used to be false because
     // the rule looked for was the wrong one: a header was taken to be a parent

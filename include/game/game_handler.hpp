@@ -2784,6 +2784,9 @@ public:
     }
 
     const std::string& getFactionNamePublic(uint32_t factionId) const;
+    /// Faction.dbc's description, which the reputation detail panel prints;
+    /// empty where the file has none or this expansion's layout names none.
+    const std::string& getFactionDescription(uint32_t factionId) const;
     uint32_t getWatchedFactionId() const { return watchedFactionId_; }
     void setWatchedFactionId(uint32_t factionId);
     // Declare war / make peace with a faction (CMSG_SET_FACTION_ATWAR). No-op on
@@ -4962,6 +4965,7 @@ private:
     std::unordered_map<uint32_t, int32_t> factionStandings_;
     // Faction name cache (factionId → name), populated lazily from Faction.dbc
     mutable std::unordered_map<uint32_t, std::string> factionNameCache_;
+    mutable std::unordered_map<uint32_t, std::string> factionDescriptionCache_;
     // repListId → factionId mapping (populated with factionNameCache)
     mutable std::unordered_map<uint32_t, uint32_t> factionRepListToId_;
     // factionId → repListId reverse mapping

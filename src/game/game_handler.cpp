@@ -3084,6 +3084,9 @@ void GameHandler::loadFactionNameCache() const {
     assert(layout);
     const uint32_t nameField = (*layout)["Name"];
     assert(nameField < dbc->getFieldCount());
+    // Not every expansion's layout names it; without one the panel prints
+    // no description rather than a wrong column.
+    const uint32_t descriptionField = layout->tryField("Description");
     const bool hasRepListField = dbc->getFieldCount() > REPLIST_FIELD;
     const bool hasParentField = dbc->getFieldCount() > PARENT_FIELD;
 
@@ -3096,6 +3099,10 @@ void GameHandler::loadFactionNameCache() const {
             if (!name.empty()) {
                 factionNameCache_[factionId] = std::move(name);
             }
+        }
+        if (descriptionField < dbc->getFieldCount()) {
+            std::string description = dbc->getString(i, descriptionField);
+            if (!description.empty()) factionDescriptionCache_[factionId] = std::move(description);
         }
         if (hasParentField) {
             const uint32_t parentId = dbc->getUInt32(i, PARENT_FIELD);
@@ -3406,6 +3413,14 @@ std::string GameHandler::getFactionName(uint32_t factionId) const {
     auto it = factionNameCache_.find(factionId);
     if (it != factionNameCache_.end()) return it->second;
     return "faction #" + std::to_string(factionId);
+}
+
+const std::string& GameHandler::getFactionDescription(uint32_t factionId) const {
+    loadFactionNameCache();
+    auto it = factionDescriptionCache_.find(factionId);
+    if (it != factionDescriptionCache_.end()) return it->second;
+    static const std::string empty;
+    return empty;
 }
 
 const std::string& GameHandler::getFactionNamePublic(uint32_t factionId) const {
@@ -4739,9 +4754,19 @@ const std::vector<GameHandler::ReputationRow>& GameHandler::getReputationRows() 
         const uint32_t parent = getFactionParentId(id);
         children[displayed.count(parent) ? parent : 0u].push_back(id);
     }
+    // 2.4.3 orders siblings by name: a human's Alliance group reads
+    // Darnassus, Exodar, Gnomeregan Exiles, Ironforge, Stormwind, and the
+    // Alliance Forces group follows Alliance, where the server's (and
+    // ReputationListID's) order is Gnomeregan Exiles, Stormwind, Ironforge,
+    // Darnassus, Exodar. The other expansions keep the server's order, which
+    // has not been compared against their clients.
+    const bool byName = isActiveExpansion("tbc");
     const auto byRank = [&](uint32_t a, uint32_t b) {
-        if (rank[a] != rank[b]) return rank[a] < rank[b];
-        return getFactionNamePublic(a) < getFactionNamePublic(b);
+        if (!byName && rank[a] != rank[b]) return rank[a] < rank[b];
+        const std::string& na = getFactionNamePublic(a);
+        const std::string& nb = getFactionNamePublic(b);
+        if (na != nb) return na < nb;
+        return a < b;
     };
     for (auto& [parent, kids] : children) {
         (void)parent;
