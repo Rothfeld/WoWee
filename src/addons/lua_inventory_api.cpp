@@ -1786,16 +1786,26 @@ static int lua_EquipItemByName(lua_State* L) {
         }
         // Not carried (worn already): fall through to the server's choice.
     }
+    // Picked up and auto-equipped from the cursor, as native 2.4.3 does it:
+    // EquipItemByName(ring) asks AUTOEQUIP_BIND with the ring on the cursor.
+    const auto pickUpAndEquip = [L](int bag, int slot) {
+        lua_getglobal(L, "PickupContainerItem");
+        lua_pushnumber(L, bag);
+        lua_pushnumber(L, slot);
+        lua_call(L, 2, 0);
+        lua_getglobal(L, "AutoEquipCursorItem");
+        lua_call(L, 0, 0);
+    };
     const auto& inv = gh->getInventory();
     for (int i = 0; i < inv.getBackpackSize(); ++i) {
         const auto& sl = inv.getBackpackSlot(i);
-        if (!sl.empty() && sl.item.itemId == itemId) { gh->autoEquipItemBySlot(i); return 0; }
+        if (!sl.empty() && sl.item.itemId == itemId) { pickUpAndEquip(0, i + 1); return 0; }
     }
     for (int bag = 0; bag < game::Inventory::NUM_BAG_SLOTS; ++bag) {
         for (int i = 0; i < inv.getBagSize(bag); ++i) {
             const auto& sl = inv.getBagSlot(bag, i);
             if (!sl.empty() && sl.item.itemId == itemId) {
-                gh->autoEquipItemInBag(bag, i);
+                pickUpAndEquip(bag + 1, i + 1);
                 return 0;
             }
         }
