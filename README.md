@@ -736,6 +736,34 @@ ERR_MAIL_SENT on the info line; taking an item or money shows nothing. TBC
 MailFrame hears MAIL_FAILED, without an argument, after every mail result,
 successes included.
 
+### Client notices
+
+The lines the client writes itself use the loaded GlobalStrings.lua through
+`GameHandler::systemGlobal` (chat, CHAT_MSG_SYSTEM), `errorGlobal` (red
+UI_ERROR_MESSAGE line) and `infoGlobal` (yellow UI_INFO_MESSAGE line). Where
+2.4.3 puts each was measured on pair 6 with an event spy that echoes
+SYSMSG/UI_ERROR_MESSAGE/UI_INFO_MESSAGE into chat:
+
+| Action | 2.4.3 |
+|---|---|
+| `.gm on` (SMSG_NOTIFICATION) | error line only: "GM mode is ON" |
+| `/afk`, `/dnd` | chat, from PLAYER_FLAGS: MARKED_AFK_MESSAGE, CLEARED_AFK, MARKED_DND, CLEARED_DND (none when DND gives way to AFK) |
+| invite / accept / leave / kick | ERR_INVITE_PLAYER_S, ERR_JOINED_GROUP_S (inviter only), ERR_INVITED_TO_GROUP_SS, ERR_LEFT_GROUP_YOU, ERR_LEFT_GROUP_S |
+| party command errors | chat: ERR_BAD_PLAYER_NAME_S, ERR_NOT_IN_GROUP, ...; `/invite` self: error line |
+| duel | ERR_DUEL_REQUESTED (challenger), DUEL_WINNER_KNOCKOUT in chat; declined: info line ERR_DUEL_CANCELLED |
+| trade | ERR_INITIATE_TRADE_S in chat; the one asked gets the window, no line; cancelled: info line |
+| channels | CHAT_MSG_CHANNEL_NOTICE(_USER) for ChatFrame to word: "Joined Channel: [6. chantestx]" |
+| `/who` | WHO_LIST_FORMAT rows, WHO_NUM_RESULTS |
+| `/p` without a party | ERR_NOT_IN_GROUP in chat, nothing sent |
+
+Gotchas: TBC SMSG_WHO has a gender byte before the zone. JoinPermanentChannel
+must answer zone channel 0, not nil, or SlashCmdList JOIN prints "Invalid
+channel name" and never lists the channel. The realm answers nothing to
+`/friend` of an unknown name; "Player not found." is `/removefriend`'s own.
+TBC item links have eight fields (no level). GM mail is from "Customer
+Support" with stationery icon Mail_GMIcon (Stationery.dbc item icon).
+Evidence: `_experiments/20261118T074332Z.chatlines_native/` in the workspace.
+
 ### Group loot rolls
 
 At most four rolls are announced (START_LOOT_ROLL); TBC FrameXML has four
