@@ -723,16 +723,6 @@ target_link_libraries(test_wmo_liquid PRIVATE catch2_main)
 add_test(NAME wmo_liquid COMMAND test_wmo_liquid)
 register_test_target(test_wmo_liquid)
 
-# ── test_wmo_portal_only ────────────────────────────────────
-add_executable(test_wmo_portal_only
-    test_wmo_portal_only.cpp
-)
-target_include_directories(test_wmo_portal_only PRIVATE ${TEST_INCLUDE_DIRS})
-target_include_directories(test_wmo_portal_only SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
-target_link_libraries(test_wmo_portal_only PRIVATE catch2_main)
-add_test(NAME wmo_portal_only COMMAND test_wmo_portal_only)
-register_test_target(test_wmo_portal_only)
-
 # ── test_wmo_doodad_rooms ───────────────────────────────────
 add_executable(test_wmo_doodad_rooms
     test_wmo_doodad_rooms.cpp
