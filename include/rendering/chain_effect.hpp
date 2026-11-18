@@ -6,6 +6,7 @@
 /// Measured against build 8606 with paired captures of the same server beam
 /// (_experiments/20261118T1328Z.hydross_beam_scroll in the workspace root).
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <string_view>
@@ -54,5 +55,38 @@ inline std::vector<uint32_t> chainComboStrands(std::string_view combo) {
 /// NoiseScale of the beam's length. Native ManaBeam (0.01) at 28 yd kinks by
 /// about 0.15 yd on screen; Sunshatter's bolt (0.019) at 24 yd by about 0.5 yd.
 inline float chainNoiseRadius(float noiseScale, float length) { return noiseScale * length; }
+
+/// How far joint i (1-based, of JointCount spread evenly between the ends)
+/// may stray from the line, in yards: JointOffsetRadius, times
+/// MinorJointScale on every JointsPerMinorJoint-th joint and MajorJointScale
+/// on every (JointsPerMinorJoint x MinorJointsPerMajorJoint)-th. Native
+/// Open Portal from Shattrath 46801 (chain 411: 27 joints, 0.07, 3, 4, 3.7,
+/// 8.45) over 24 yd: strands kinked about every yard, bent over several,
+/// spread about a yard across; WoWee drew them straight (NoiseScale 0).
+struct ChainJoints {
+    uint32_t count = 0, perMinor = 0, minorPerMajor = 0;
+    float radius = 0, minorScale = 0, majorScale = 0;
+};
+inline float chainJointRadius(const ChainJoints& joints, uint32_t i) {
+    assert(i >= 1 && i <= joints.count);
+    if (joints.perMinor && joints.minorPerMajor && i % (joints.perMinor * joints.minorPerMajor) == 0)
+        return joints.radius * joints.majorScale;
+    if (joints.perMinor && i % joints.perMinor == 0) return joints.radius * joints.minorScale;
+    return joints.radius;
+}
+
+/// The joints' offset at fraction f (0..1) along the beam: straight between
+/// neighbouring joints, zero at the ends. `offsets` holds one per joint.
+template <typename T>
+T chainJointOffsetAt(const std::vector<T>& offsets, float f) {
+    const size_t n = offsets.size();
+    if (n == 0) return T(0);
+    const float x = std::clamp(f, 0.0f, 1.0f) * static_cast<float>(n + 1);
+    const size_t k = static_cast<size_t>(x);
+    const float a = x - static_cast<float>(k);
+    const T before = (k == 0 || k > n) ? T(0) : offsets[k - 1];
+    const T after = k >= n ? T(0) : offsets[k];
+    return before * (1.0f - a) + after * a;
+}
 
 }  // namespace wowee::rendering

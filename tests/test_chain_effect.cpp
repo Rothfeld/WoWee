@@ -9,6 +9,9 @@
 using wowee::rendering::chainComboStrands;
 using wowee::rendering::chainNoiseRadius;
 using wowee::rendering::chainTexCoord;
+using wowee::rendering::ChainJoints;
+using wowee::rendering::chainJointOffsetAt;
+using wowee::rendering::chainJointRadius;
 
 namespace {
 // Repeats of the texture over a beam at time t.
@@ -70,4 +73,26 @@ TEST_CASE("Combo names further rows, with ID bits 7 and 8 in the entry's last by
 TEST_CASE("Noise strays by NoiseScale of the beam length", "[chain]") {
     CHECK(chainNoiseRadius(0.01f, 28.0f) == Catch::Approx(0.28f));
     CHECK(chainNoiseRadius(0.0f, 28.0f) == 0.0f);
+}
+
+TEST_CASE("Every third joint is minor, every twelfth major (Akil'zon's Electrical Storm 279)", "[chain]") {
+    const ChainJoints j{.count = 27, .perMinor = 3, .minorPerMajor = 4, .radius = 0.07f, .minorScale = 3.7f, .majorScale = 8.45f};
+    CHECK(chainJointRadius(j, 1) == Catch::Approx(0.07f));
+    CHECK(chainJointRadius(j, 3) == Catch::Approx(0.259f));
+    CHECK(chainJointRadius(j, 12) == Catch::Approx(0.5915f));
+    CHECK(chainJointRadius(j, 24) == Catch::Approx(0.5915f));
+    CHECK(chainJointRadius(j, 27) == Catch::Approx(0.259f));
+    const ChainJoints plain{.count = 27, .radius = 0.145f};  // Sunshatter 215: no minor/major
+    CHECK(chainJointRadius(plain, 12) == Catch::Approx(0.145f));
+}
+
+TEST_CASE("Joint offsets are joined by straight lines and vanish at the ends", "[chain]") {
+    const std::vector<float> offsets{1.0f, -1.0f, 0.5f};  // joints at 1/4, 2/4, 3/4
+    CHECK(chainJointOffsetAt(offsets, 0.0f) == Catch::Approx(0.0f));
+    CHECK(chainJointOffsetAt(offsets, 0.125f) == Catch::Approx(0.5f));
+    CHECK(chainJointOffsetAt(offsets, 0.25f) == Catch::Approx(1.0f));
+    CHECK(chainJointOffsetAt(offsets, 0.375f) == Catch::Approx(0.0f));
+    CHECK(chainJointOffsetAt(offsets, 0.75f) == Catch::Approx(0.5f));
+    CHECK(chainJointOffsetAt(offsets, 1.0f) == Catch::Approx(0.0f));
+    CHECK(chainJointOffsetAt(std::vector<float>{}, 0.5f) == 0.0f);
 }

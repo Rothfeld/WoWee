@@ -1723,6 +1723,27 @@ caster's own position as destination and play there; Volcanic Geyser 42052
 a model lacking that attachment are not drawn (Soul Scream 41545 on
 WellofSoulsPain.m2); other slots fall back to the unit position.
 
+Joints (fields 9-18): JointCount points evenly between the ends, each
+straying up to JointOffsetRadius yards, times MinorJointScale every
+JointsPerMinorJoint-th joint and MajorJointScale every (JointsPerMinorJoint x
+MinorJointsPerMajorJoint)-th; the beam runs straight between joints. They walk
+to new random spots at JointMoveSpeed / MajorJointMoveSpeed yd/s, redrawn at
+most every MinDurBetweenJoints. Flicker (fields 32-35): a row is drawn for
+U(Min,MaxFlickerOn) s, hidden for U(Min,MaxFlickerOff) s, repeatedly. Native
+Open Portal from Shattrath 46801 (chain 411 drawn eight times: 27 joints,
+0.07 / 3.7 / 8.45, flicker 0.3-0.5 on, 0.4-0.65 off) over 24 yd: 1.33 strands
+visible per column, spread 0.5-0.9 yd; WoWee before: one straight dense
+bundle, after: 1.65 strands, 0.7-1.7 yd (strands wider than native's). The
+same rows are Akil'zon's Electrical Storm 43648 (279) and Electrical Arc
+43653 (278), not cast natively here. Unverified: radius in yards vs a
+fraction of length (only one length measured), whether joints move or jump,
+pulse (PulseSpeed/OnLength/FadeLength). Hex Lord Malacrass: Siphon Soul 43501
+is chain 272 (flicker 0.48-0.66 / 0.26-0.55, joint radius 0) plus 273 from
+Combo, so it now breaks up; its beam end height and Spirit Bolts 43383 (aura
+23 triggering 43382, AoE enemies within 28 yd at the caster, missile 3435)
+are not compared: a tempspawned creature's `.cast target 43383` channelled
+but the server sent no 43382.
+
 A channel whose ChannelKit names no beam draws its StateKit's (the channel's
 target holds that aura): Black Temple's Sister of Pain (22956) and Sister of
 Pleasure (22964) channel Shared Bonds 41363 (visual 8244, StateKit 7030 ->

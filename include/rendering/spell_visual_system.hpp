@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <glm/glm.hpp>
+#include "rendering/chain_effect.hpp"
 #include "rendering/m2_renderer.hpp"
 
 namespace wowee {
@@ -300,6 +301,9 @@ private:
         std::string texture;
         float avgSegLen = 0, width = 0, noiseScale = 0, texCoordScale = 0, textureLength = 0;
         float minDurBetweenJoints = 0;
+        ChainJoints joints;
+        float jointMoveSpeed = 0, majorJointMoveSpeed = 0;
+        glm::vec2 flickerOn{0.0f}, flickerOff{0.0f};  // seconds, min..max
         float arcHeight = 0, minArcAngle = 0, maxArcAngle = 0, minArcSpin = 0, maxArcSpin = 0;
         std::vector<uint32_t> strands;  // Combo: further rows drawn between the same ends
         float waveHeight = 0, waveFreq = 0, waveSpeed = 0;
@@ -319,6 +323,11 @@ private:
         uint32_t chainId = 0;
         float waveAngle = 0, waveSpin = 0, arcAngle = 0, arcSpin = 0, nextJoints = 0;
         std::vector<glm::vec2> from, to;
+        // Joint offsets in yards (up, side) and where each is heading.
+        std::vector<glm::vec2> joints, jointTargets;
+        float jointsMoved = 0;  // beamClock_ of the last joint step
+        bool flickerOn = true;
+        float flickerUntil = 0;  // beamClock_ of the next flicker change; 0 before the first
     };
     struct BeamState {
         float age = 0;

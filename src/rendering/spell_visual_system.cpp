@@ -318,6 +318,13 @@ void SpellVisualSystem::loadChainEffects() {
         effect.noiseScale = dbc->getFloat(i, 3);
         effect.texCoordScale = dbc->getFloat(i, 4);
         effect.minDurBetweenJoints = dbc->getFloat(i, 17);
+        effect.joints = {.count = dbc->getUInt32(i, 9), .perMinor = dbc->getUInt32(i, 11),
+                         .minorPerMajor = dbc->getUInt32(i, 12), .radius = dbc->getFloat(i, 10),
+                         .minorScale = dbc->getFloat(i, 13), .majorScale = dbc->getFloat(i, 14)};
+        effect.jointMoveSpeed = dbc->getFloat(i, 15);
+        effect.majorJointMoveSpeed = dbc->getFloat(i, 18);
+        effect.flickerOn = {dbc->getFloat(i, 32), dbc->getFloat(i, 33)};
+        effect.flickerOff = {dbc->getFloat(i, 34), dbc->getFloat(i, 35)};
         effect.arcHeight = dbc->getFloat(i, 26);
         effect.minArcAngle = dbc->getFloat(i, 27);
         effect.maxArcAngle = dbc->getFloat(i, 28);
@@ -840,18 +847,85 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
                 out[i] = glm::vec2(std::cos(a), std::sin(a)) * r;
             }
         };
+        // Flicker: a row with Min/MaxFlickerOn/Off is drawn for a random
+        // on-time, hidden for a random off-time, again and again. Native Open
+        // Portal from Shattrath 46801 (chain 411 eight times, on 0.3-0.5 s,
+        // off 0.4-0.65 s) shows one to four of its strands at a time; all
+        // eight drawn steadily made one dense bright bundle.
+        if (effect.flickerOn.y > 0.0f || effect.flickerOff.y > 0.0f) {
+            auto between = [&](glm::vec2 range) {
+                return std::uniform_real_distribution<float>(std::min(range.x, range.y), std::max(range.x, range.y))(random);
+            };
+            if (strand.flickerUntil == 0.0f) {
+                strand.flickerOn = std::uniform_real_distribution<float>(0.0f, 1.0f)(random) < 0.5f;
+                strand.flickerUntil = beamClock_ + between(strand.flickerOn ? effect.flickerOn : effect.flickerOff) *
+                                      std::uniform_real_distribution<float>(0.0f, 1.0f)(random);
+            }
+            while (beamClock_ >= strand.flickerUntil) {
+                strand.flickerOn = !strand.flickerOn;
+                strand.flickerUntil += std::max(between(strand.flickerOn ? effect.flickerOn : effect.flickerOff), 0.01f);
+            }
+            if (!strand.flickerOn) continue;
+        }
+        const bool redraw = effect.minDurBetweenJoints > 0.0f && beamClock_ >= strand.nextJoints;
         // A changed segment count (the units moved) redraws the offsets.
         if (strand.to.size() != static_cast<size_t>(segments + 1)) {
             drawNoise(strand.from);
             drawNoise(strand.to);
             strand.nextJoints = beamClock_ + effect.minDurBetweenJoints;
-        } else if (effect.minDurBetweenJoints > 0.0f && beamClock_ >= strand.nextJoints) {
+        } else if (redraw) {
             // Every MinDurBetweenJoints the vertices head for new offsets
             // (Sunshatter, 0.08 s: native's kinks drift and are gone within a
             // few tenths of a second). Rows with 0 keep theirs.
             strand.from = strand.to;
             drawNoise(strand.to);
             strand.nextJoints = beamClock_ + effect.minDurBetweenJoints;
+        }
+        // Joints: JointCount points evenly between the ends, each straying
+        // up to chainJointRadius yards; the beam runs straight from joint to
+        // joint. Each walks toward a random spot in its disc at JointMoveSpeed
+        // (MajorJointMoveSpeed for major joints) yards a second and picks the
+        // next one on arrival, at most every MinDurBetweenJoints; without a
+        // speed it jumps there every MinDurBetweenJoints.
+        const ChainJoints& jointSpec = effect.joints;
+        auto jointTarget = [&](uint32_t i) {
+            std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+            const float r = std::sqrt(unit(random)) * chainJointRadius(jointSpec, i);
+            const float a = glm::two_pi<float>() * unit(random);
+            return glm::vec2(std::cos(a), std::sin(a)) * r;
+        };
+        if (strand.joints.size() != jointSpec.count) {
+            strand.joints.clear();
+            strand.jointTargets.clear();
+            for (uint32_t i = 1; i <= jointSpec.count; ++i) {
+                strand.joints.push_back(jointTarget(i));
+                strand.jointTargets.push_back(jointTarget(i));
+            }
+            strand.jointsMoved = beamClock_;
+        }
+        if (jointSpec.count && beamClock_ > strand.jointsMoved) {
+            const float dt = beamClock_ - strand.jointsMoved;
+            for (uint32_t i = 1; i <= jointSpec.count; ++i) {
+                glm::vec2& at = strand.joints[i - 1];
+                glm::vec2& target = strand.jointTargets[i - 1];
+                const bool major = jointSpec.perMinor && jointSpec.minorPerMajor &&
+                                   i % (jointSpec.perMinor * jointSpec.minorPerMajor) == 0;
+                const float speed = major ? effect.majorJointMoveSpeed : effect.jointMoveSpeed;
+                if (speed > 0.0f) {
+                    const glm::vec2 step = target - at;
+                    const float left = glm::length(step);
+                    if (left <= speed * dt) {
+                        at = target;
+                        if (redraw) target = jointTarget(i);
+                    } else {
+                        at += step / left * speed * dt;
+                    }
+                } else if (redraw) {
+                    at = target;
+                    target = jointTarget(i);
+                }
+            }
+            strand.jointsMoved = beamClock_;
         }
         const float toward = effect.minDurBetweenJoints > 0.0f
             ? std::clamp(1.0f - (strand.nextJoints - beamClock_) / effect.minDurBetweenJoints, 0.0f, 1.0f) : 1.0f;
@@ -871,7 +945,8 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
         for (int i = 0; i <= segments; ++i) {
             const float s = length * static_cast<float>(i) / static_cast<float>(segments);
             const float wave = effect.waveHeight * std::sin(effect.waveFreq * s - effect.waveSpeed * t);
-            const glm::vec2 o = glm::mix(strand.from[i], strand.to[i], toward) * noise;
+            const glm::vec2 o = glm::mix(strand.from[i], strand.to[i], toward) * noise +
+                                chainJointOffsetAt(strand.joints, s / length);
             strip.spine.push_back(start + dir * s + across * wave + bow * std::sin(glm::pi<float>() * s / length) +
                                   up * o.x + side * o.y);
             strip.u.push_back(chainTexCoord(s, length, effect.texCoordScale, effect.textureLength, t));
