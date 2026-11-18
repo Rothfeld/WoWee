@@ -1492,6 +1492,44 @@ none). Spell buttons count their reagent (Vanish shows Flash Powder).
 Evidence and probe addon: `_experiments/20261117T214218Z.usable_action_pair2`
 in the workspace.
 
+### Action bar macros, stances and keys
+
+Measured on pair 2 against native 2.4.3 (rogue). A macro button stands for
+the spell or item of its `#showtooltip <name>` line, else of its first
+`/cast`, `/use` or `/castsequence` line whose conditions hold (`[stealth]`
+picks Ambush in stealth, Sinister Strike out of it). Its icon is its own,
+or for the question mark (macro icon 1) that spell's or item's icon;
+`IsUsableAction`, `GetActionCooldown`, `IsActionInRange`, `GetActionCount`,
+`IsConsumableAction` and `IsCurrentAction` answer for that spell or item.
+`/say hi` is usable with enable 0; a name the player lacks
+(`/cast Sinister Strike(Rank 1)`, `/use 13` on an empty slot) is unusable.
+The tooltip is the spell's with `#showtooltip`, else the macro name.
+2.4.3 macro ids are 1-18 (account) and 19-36 (character), and
+`CreateMacro(name, iconIndex, body, local, perCharacter)` takes an index
+into the 780-entry icon list: the question mark, then Ability_* and
+Spell_* icons by name. Gotcha: a character config with 3.3.5 ids (37-54)
+keeps those macros, but on TBC the interface no longer lists them.
+
+An item goes onto a button only if it can be equipped or has an on-use
+spell; Blinding Powder or Copper Ore stays on the cursor, silently. A
+button whose spell the player does not know (a superseded rank stored
+by the server) is empty: `HasAction` nil.
+
+The stance bar lists the forms the known spells take (aura 36,
+EffectMiscValue); `GetShapeshiftForm` is the place on that bar (1 in
+Stealth). An active form spell shows its `ActiveIconID` and counts as
+current. A cast also counts as current from `UNIT_SPELLCAST_SENT` until
+the server answers it. Default keys: Shift-1..6 page the main bar,
+Ctrl-1..0 are the bonus bar, Ctrl-F1..F10 the stance bar.
+
+Spell descriptions apply the damage modifier (SpellModOp 0) to direct
+damage effects only; a fractional result reads as "316 to 317%". Gotcha:
+CMaNGOS sends SMSG_SET_FLAT/PCT_SPELL_MODIFIER only while it applies
+auras. A relaunch inside the 30 s logout window resumes the old session
+and receives none, so costs and damage read unmodified. Evidence and
+probe addon: `_experiments/20261118T074449Z.actionbar_pair2` in the
+workspace.
+
 ### TBC Lua answer conventions and protected functions
 
 On a TBC login `applyApiConventions` (src/addons/expansion_api_surface.cpp)
