@@ -1754,15 +1754,23 @@ void AddonManager::saveAllSavedVariables() {
     if (!characterName_.empty() && !registeredCharacterVariables_.empty())
         luaEngine_.saveSavedVariables((savedRoot / ("FrameXML." + characterName_ + ".lua.saved")).string(), registeredCharacterVariables_);
 
-    for (const auto& addon : addons_) {
-        auto savedVars = addon.getSavedVariables();
+    // Load-on-demand addons too, once loaded: Blizzard_TrainerUI keeps its
+    // three TRAINER_FILTER_* type filters this way, and 2.4.3 writes them to
+    // WTF/Account/<account>/SavedVariables/Blizzard_TrainerUI.lua. Leaving
+    // them out kept whatever file an older build had written forever.
+    std::vector<const TocFile*> loaded;
+    for (const auto& addon : addons_) loaded.push_back(&addon);
+    for (const auto& addon : lodAddons_)
+        if (lodLoaded_.count(lowered(addon.addonName))) loaded.push_back(&addon);
+    for (const TocFile* addon : loaded) {
+        auto savedVars = addon->getSavedVariables();
         if (!savedVars.empty()) {
-            std::string svPath = getSavedVariablesPath(addon);
+            std::string svPath = getSavedVariablesPath(*addon);
             luaEngine_.saveSavedVariables(svPath, savedVars);
         }
-        auto savedVarsPC = addon.getSavedVariablesPerCharacter();
+        auto savedVarsPC = addon->getSavedVariablesPerCharacter();
         if (!savedVarsPC.empty()) {
-            std::string svpcPath = getSavedVariablesPerCharacterPath(addon);
+            std::string svpcPath = getSavedVariablesPerCharacterPath(*addon);
             if (!svpcPath.empty()) {
                 luaEngine_.saveSavedVariables(svpcPath, savedVarsPC);
             }

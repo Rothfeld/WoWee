@@ -124,3 +124,35 @@ TEST_CASE_METHOD(PackagedAddon, "Saved globals replace source defaults before AD
     CHECK(manager.interfaceCommandBoolean("LoadedColumns == 18"));
     CHECK(manager.interfaceCommandBoolean("LoadedCharacter == 42"));
 }
+
+// Blizzard_TrainerUI is load-on-demand and keeps its TRAINER_FILTER_* type
+// filters as SavedVariables; 2.4.3 writes them once it has been loaded.
+TEST_CASE_METHOD(PackagedAddon, "Load-on-demand addon settings are saved once loaded",
+                 "[addons][saved-variables][trainer]") {
+    writeFile(code / "PersistenceTest.toc",
+              "## LoadOnDemand: 1\n"
+              "## SavedVariables: PackagedSettings\n"
+              "PersistenceTest.lua\n");
+    {
+        addons::AddonManager manager;
+        REQUIRE(manager.initialize(nullptr));
+        manager.setCharacterName("Alice");
+        manager.scanAddons((root / "install" / "addons").string());
+        REQUIRE(manager.getLoadOnDemandAddons().size() == 1);
+        manager.loadAllAddons();
+        manager.saveAllSavedVariables();
+        CHECK_FALSE(fs::exists(saved / "PersistenceTest.lua.saved"));
+        REQUIRE(manager.runScript("LoadAddOn('PersistenceTest'); PackagedSettings.columns = 18"));
+        manager.saveAllSavedVariables();
+        REQUIRE(fs::exists(saved / "PersistenceTest.lua.saved"));
+    }
+    {
+        addons::AddonManager manager;
+        REQUIRE(manager.initialize(nullptr));
+        manager.setCharacterName("Alice");
+        manager.scanAddons((root / "install" / "addons").string());
+        manager.loadAllAddons();
+        REQUIRE(manager.runScript("LoadAddOn('PersistenceTest')"));
+        CHECK(manager.interfaceCommandBoolean("PackagedSettings.columns == 18"));
+    }
+}
