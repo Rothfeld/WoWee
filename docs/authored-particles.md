@@ -13,6 +13,13 @@ Particle attachment follows flags, independently of emitter shape:
 - `ModelSpace` (`0x80`) keeps those trailing particles relative to the placed
   model. Otherwise their birth positions remain in world space.
 - `0x20` is `UnLit`, not a coordinate-space flag.
+- `0x4000` keeps trailing particles in the placed model's frame, like
+  `ModelSpace` (285 TBC emitters). Zul'jin's claws (item 33975,
+  `Hand_1H_ZulAman_D_01Right.m2`, 0x4429/0x4629) keep their frost wisps on the
+  claw through swings and jumps in the original; in world space they left a
+  trail and a column behind each jump. Shaman_Frost (0x209) and Widow's
+  Remorse's smoke (0x22d) do trail natively. Whether 0x4000 particles also
+  follow an animated emitter bone is not observed.
 
 These names are documented in
 [wowdev/pywowlib's particle flags](https://github.com/wowdev/pywowlib/blob/master/enums/m2_enums.py).
