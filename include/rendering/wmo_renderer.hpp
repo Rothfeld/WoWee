@@ -628,6 +628,8 @@ private:
         /// walked through only if it was meant to be, and Darkshore's bridges
         /// are 428 triangles of it.
         bool noBlockingTriangles = false;
+        /// MOGP 0x80: no collision triangles, never the group a point is in.
+        bool unreachable = false;
 
         // Scratch bitset for deduplicating triangle queries (sized to numTriangles)
         mutable std::vector<uint8_t> triVisited;

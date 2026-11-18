@@ -1418,7 +1418,10 @@ among the group boxes the vertical through the point crosses; the point is
 indoors when that group is indoor (0x2000) and the point lies inside some
 group box of the building. Group boxes overlap: Black Temple's indoor Den of
 Mortal Delights box covers the outdoor Supremus ramp, the Lion's Pride Inn
-kitchen box its porch and roof. IsIndoors() and [indoors] additionally need
+kitchen box its porch and roof. Unreachable groups (MOGP 0x80: Black Temple 39/40/46/48, Stormwind's
+cathedral copies, a few in Darnassus, Shadowfang, Blackrock Spire) have no
+collision, never contain a point, and are not drawn while the camera is in a
+reachable group's box. IsIndoors() and [indoors] additionally need
 the group to lack MOGP 0x8000 (Undercity, the Great Forge: nil in 8606).
 Native WMO movement collision looked one-sided in Black Temple and
 Undercity (walls passed from behind, ceilings fallen through from above);

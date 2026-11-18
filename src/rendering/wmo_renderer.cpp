@@ -46,6 +46,9 @@ namespace wowee {
 namespace rendering {
 
 namespace {
+
+/// MOGP flag 0x80: unreachable group (see createGroupResources).
+constexpr uint32_t kWMOGroupUnreachable = 0x80;
 /// Where a WMO surface stops being a floor and becomes a wall, as the absolute
 /// z of its normal: cos 49.46 degrees.
 ///
@@ -1640,7 +1643,24 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
         const bool usePortalCulling = portalVisibleGroups(instance, model, camPos, portalViewerPos, frustum, viewProj,
                                                           doPortalCull, portalVisibleGroupSet_);
 
+        // Unreachable groups (MOGP 0x80) are stand-ins for parts of the
+        // building: Black Temple's 39, 40, 46 and 48 repeat the courtyard, the
+        // Den and the Chamber of Command, Stormwind's the cathedral. With the
+        // camera inside one of the building's reachable group boxes 8606 does
+        // not draw them: at the Grand Promenade stairs (782, 174) group 48's
+        // smooth copy of the steps covered the real ones in WoWee, and at the
+        // Den of Mortal Delights entrance (810.6, 466) group 46's floor hid
+        // the stairs below it.
+        const glm::vec3 localCam(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
+        const bool cameraInBuilding = std::any_of(model.groups.begin(), model.groups.end(),
+            [&](const auto& group) {
+                return !group.unreachable &&
+                       glm::all(glm::greaterThanEqual(localCam, group.boundingBoxMin)) &&
+                       glm::all(glm::lessThanEqual(localCam, group.boundingBoxMax));
+            });
+
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+            if (cameraInBuilding && model.groups[gi].unreachable) continue;
             if (usePortalCulling &&
                 portalVisibleGroupSet_.find(static_cast<uint32_t>(gi)) == portalVisibleGroupSet_.end()) {
                 result.portalCulled++;
@@ -2019,7 +2039,19 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         for (const auto& v : group.vertices) resources.collisionColors.emplace_back(v.color);
     }
     resources.triMaterials = group.triMaterials;
-    if (!group.triFlags.empty()) {
+    // MOGP 0x80 (unreachable): a group no one stands in - Black Temple's
+    // Den of Mortal Delights, haremstair, sewersection01 and Chamber of
+    // Command copies (groups 39, 40, 46, 48), drawn from outside. 8606 has
+    // no collision with them: teleported onto group 46's floor at the Den
+    // stairs (810.6, 466, 195.2) native fell to hall11's floor at 192.8,
+    // where WoWee stood on it. The CMaNGOS vmap extractor drops them too
+    // (WMOGroup::ShouldSkip). They keep their render geometry and box; no
+    // triangle of theirs is offered to any query, and no containment test
+    // places a point in them.
+    resources.unreachable = (groupFlags & kWMOGroupUnreachable) != 0;
+    if (resources.unreachable) {
+        // Vertices stay for the box; without indices nothing can be hit.
+    } else if (!group.triFlags.empty()) {
         // Store all triangles but tag each with MOPY flags for collision filtering
         resources.collisionIndices = group.indices;
         size_t numTris = group.indices.size() / 3;
@@ -2067,7 +2099,7 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
         // through it" looks like from here.
         const size_t tris = resources.collisionIndices.size() / 3;
         resources.noBlockingTriangles = (tris > 0 && hull == 0 && renderedSolid == 0);
-        if (tris == 0 || resources.noBlockingTriangles) {
+        if (!resources.unreachable && (tris == 0 || resources.noBlockingTriangles)) {
             LOG_WARNING("WMO group offers no floor: verts=",
                         resources.collisionVertices.size(),
                         " tris=", tris,
@@ -2204,6 +2236,7 @@ int WMORenderer::findContainingGroup(const ModelData& model, const glm::vec3& lo
 
     for (size_t gi = 0; gi < model.groups.size(); gi++) {
         const auto& group = model.groups[gi];
+        if (group.unreachable) continue;
         if (localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
             localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
             localPos.z >= group.boundingBoxMin.z && localPos.z <= group.boundingBoxMax.z) {
@@ -2282,7 +2315,7 @@ bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelDa
         for (size_t gi = 0; cameraIndoors && gi < model.groups.size(); ++gi) {
             if (static_cast<int>(gi) == camGroup) continue;
             const auto& g = model.groups[gi];
-            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR)) continue;
+            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR) || g.unreachable) continue;
             if (glm::all(glm::greaterThanEqual(localRealCam, g.boundingBoxMin)) &&
                 glm::all(glm::lessThanEqual(localRealCam, g.boundingBoxMax))) {
                 cameraIndoors = false;
@@ -2524,7 +2557,7 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
         for (size_t gi = 0; gi < model.groups.size(); gi++) {
             if (static_cast<int>(gi) == cameraGroup) continue;
             const auto& g = model.groups[gi];
-            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR)) continue;
+            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR) || g.unreachable) continue;
             if (cameraLocalPos.x >= g.boundingBoxMin.x && cameraLocalPos.x <= g.boundingBoxMax.x &&
                 cameraLocalPos.y >= g.boundingBoxMin.y && cameraLocalPos.y <= g.boundingBoxMax.y &&
                 cameraLocalPos.z >= g.boundingBoxMin.z && cameraLocalPos.z <= g.boundingBoxMax.z) {
@@ -3951,7 +3984,7 @@ void WMORenderer::updateActiveGroup(float glX, float glY, float glZ) {
                 // Still inside active group?
                 if (activeGroup_.groupIdx >= 0 && static_cast<size_t>(activeGroup_.groupIdx) < model.groups.size()) {
                     const auto& group = model.groups[activeGroup_.groupIdx];
-                    if (localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
+                    if (!group.unreachable && localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
                         localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
                         localPos.z >= group.boundingBoxMin.z && localPos.z <= group.boundingBoxMax.z) {
                         return;  // Still in same group
@@ -3962,7 +3995,7 @@ void WMORenderer::updateActiveGroup(float glX, float glY, float glZ) {
                 for (uint32_t ngi : activeGroup_.neighborGroups) {
                     if (ngi < model.groups.size()) {
                         const auto& group = model.groups[ngi];
-                        if (localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
+                        if (!group.unreachable && localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
                             localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
                             localPos.z >= group.boundingBoxMin.z && localPos.z <= group.boundingBoxMax.z) {
                             // Moved to a neighbor group - update
@@ -4109,6 +4142,7 @@ bool WMORenderer::isInsideWMOGroups(float glX, float glY, float glZ,
         const glm::vec3 localPos =
             glm::vec3(instance.invModelMatrix * glm::vec4(glX, glY, glZ, 1.0f));
         for (const auto& group : model.groups) {
+            if (group.unreachable) continue;
             if (interiorOnly && !(group.groupFlags & kWMOGroupIndoor)) continue;
             if (localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
                 localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
@@ -4272,7 +4306,7 @@ std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(co
         const glm::vec3 local(instance.invModelMatrix * glm::vec4(position, 1));
         if (indoorOnly &&
             std::none_of(model.groups.begin(), model.groups.end(), [&](const auto& group) {
-                return glm::all(glm::greaterThanEqual(local, group.boundingBoxMin)) &&
+                return !group.unreachable && glm::all(glm::greaterThanEqual(local, group.boundingBoxMin)) &&
                        glm::all(glm::lessThanEqual(local, group.boundingBoxMax));
             })) {
             continue;
