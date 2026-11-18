@@ -61,7 +61,7 @@ TEST_CASE("Combo names further rows, with ID bits 7 and 8 in the entry's last by
     // Chain 237 (Blades of Azzinoth's Tear of Azzinoth Summon Channel).
     CHECK(chainComboStrands(std::string("o\x01\x01\x03o\x01\x01\x13", 8)) == std::vector<uint32_t>{239, 239});
     // Chain 302: bit 8.
-    CHECK(chainComboStrands(std::string("-\x01\x011", 4)) == std::vector<uint32_t>{301});
+    CHECK(chainComboStrands(std::string("-\x01\x01" "1", 4)) == std::vector<uint32_t>{301});
     // Chain 48: below 128.
     CHECK(chainComboStrands(std::string("1\x01\x01\x01", 4)) == std::vector<uint32_t>{49});
     CHECK(chainComboStrands("").empty());
