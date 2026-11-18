@@ -5333,7 +5333,18 @@ void Application::render() {
                     // fields, and now so does this.
                     uint8_t race = 0, gender = 0, facial = 0;
                     uint32_t appearance = 0;
-                    if (face.guid != 0 &&
+                    // A morphed player (Little Red Riding Hood, polymorph) is
+                    // drawn from its display, as a creature is: the original's
+                    // portrait shows the transform, not the character.
+                    bool morphed = false;
+                    if (const uint16_t nativeField = game::fieldIndex(game::UF::UNIT_FIELD_NATIVEDISPLAYID);
+                        face.guid != 0 && nativeField != 0xFFFF) {
+                        if (game::Unit* u = gameHandler->getUnitByGuid(face.guid)) {
+                            const uint32_t native = u->getField(nativeField);
+                            morphed = native != 0 && u->getDisplayId() != 0 && u->getDisplayId() != native;
+                        }
+                    }
+                    if (face.guid != 0 && !morphed &&
                         gameHandler->getPlayerAppearance(face.guid, race, gender,
                                                          appearance, facial)) {
                         // What they are visibly wearing, where it is known.

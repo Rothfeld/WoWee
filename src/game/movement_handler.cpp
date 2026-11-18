@@ -104,8 +104,7 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
                      Opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE,
                      Opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE,
                      Opcode::SMSG_SPLINE_MOVE_LAND_WALK,
-                     Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL,
-                     Opcode::SMSG_SPLINE_MOVE_ROOT }) {
+                     Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL }) {
         table[op] = [](network::Packet& packet) {
             if (packet.hasRemaining(1))
                 (void)packet.readPackedGuid();
@@ -295,8 +294,26 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
     };
 
     // Spline move flag changes for other units (unroot/water_walk)
-    for (auto op : {Opcode::SMSG_SPLINE_MOVE_UNROOT,
-                    Opcode::SMSG_SPLINE_MOVE_WATER_WALK}) {
+    // Spline root/unroot. CMaNGOS Unit::SendMoveRoot uses these instead of
+    // SMSG_FORCE_MOVE_(UN)ROOT while the server, not the client, moves the
+    // unit - including the local player while feared, confused or charmed.
+    // Big Bad Wolf (Karazhan): Wide Swipe 30761 stuns (FORCE_MOVE_ROOT),
+    // Terrifying Howl 30752 fears before the stun ends, and the stun's end
+    // then arrives as SMSG_SPLINE_MOVE_UNROOT for the player's own guid.
+    // Ignoring it left the character rooted after the fear until the next
+    // forced unroot (39 s on pair 5). No acknowledgement is sent for these.
+    for (auto [op, rooted] : {std::pair{Opcode::SMSG_SPLINE_MOVE_ROOT, true},
+                              std::pair{Opcode::SMSG_SPLINE_MOVE_UNROOT, false}}) {
+        table[op] = [this, rooted](network::Packet& packet) {
+            if (!packet.hasRemaining(1)) return;
+            const uint64_t guid = packet.readPackedGuid();
+            if (guid != owner_.getPlayerGuid()) return;
+            LOG_INFO(rooted ? "SMSG_SPLINE_MOVE_ROOT" : "SMSG_SPLINE_MOVE_UNROOT", " for the player");
+            if (rooted) movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ROOT);
+            else movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ROOT);
+        };
+    }
+    for (auto op : {Opcode::SMSG_SPLINE_MOVE_WATER_WALK}) {
         table[op] = [](network::Packet& packet) {
             // Minimal parse: PackedGuid only - no animation-relevant state change.
             if (packet.hasRemaining(1)) {

@@ -2560,7 +2560,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
 
             const bool sheathed = weaponSheathed(instance, wa);
             const bool hiddenHoldable = sheathed && wa.sheathAttachmentId == UINT32_MAX;
-            weapIt->second.visible = instance.visible && !hiddenHoldable;
+            weapIt->second.visible = instance.visible && !instance.replaced && !hiddenHoldable;
             for (const auto& effect : wa.effects)
                 instances.at(effect.effectInstanceId).visible = weapIt->second.visible;
             if (hiddenHoldable) continue;
@@ -2613,7 +2613,7 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
         const auto owner = instances.find(it->first);
         const bool keep = owner != instances.end() &&
             owner->second.modelId == it->second.characterModelId &&
-            characterEmitterFade(owner->second.visible, owner->second.opacity,
+            characterEmitterFade(owner->second.visible && !owner->second.replaced, owner->second.opacity,
                                  owner->second.cameraOpacity) > 0.0f &&
             m2Renderer.hasInstance(it->second.m2InstanceId);
         if (keep) { ++it; continue; }
@@ -2623,7 +2623,7 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
     }
 
     for (const auto& [id, instance] : instances) {
-        const float fade = characterEmitterFade(instance.visible, instance.opacity,
+        const float fade = characterEmitterFade(instance.visible && !instance.replaced, instance.opacity,
                                                 instance.cameraOpacity);
         if (fade <= 0.0f) continue;
         const auto modelIt = models.find(instance.modelId);
@@ -2995,7 +2995,7 @@ std::vector<std::pair<float, uint32_t>> CharacterRenderer::drawOrder(const Camer
     order.reserve(instances.size());
     const auto& view = camera.getViewMatrix();
     for (const auto& [id, instance] : instances) {
-        if (!instance.visible) continue;
+        if (!instance.visible || instance.replaced) continue;
         const glm::vec3 position = instance.hasOverrideModelMatrix
             ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
         order.emplace_back((view * glm::vec4(position, 1.0f)).z, id);
@@ -3121,7 +3121,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         if (pass == -1 && !surfaceFade) continue;
 
         // Skip invisible instances (e.g., player in first-person mode)
-        if (!instance.visible) continue;
+        if (!instance.visible || instance.replaced) continue;
 
         // Character instance culling: test both distance and frustum visibility
         if (!instance.hasOverrideModelMatrix && !instance.isSceneModel) {
@@ -3917,7 +3917,7 @@ void CharacterRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& light
     VkDescriptorSet currentTexSet = VK_NULL_HANDLE;
     for (auto& pair : instances) {
         auto& inst = pair.second;
-        if (!inst.visible) continue;
+        if (!inst.visible || inst.replaced) continue;
 
         // Distance cull against shadow frustum
         glm::vec3 diff = inst.position - shadowCenter;
@@ -5038,6 +5038,23 @@ bool CharacterRenderer::getInstanceFootZ(uint32_t instanceId, float& outFootZ) c
     const auto& model = mIt->second.data;
     float scale = std::max(0.001f, inst.scale);
     outFootZ = inst.position.z + model.boundMin.z * scale;
+    return true;
+}
+
+void CharacterRenderer::setInstanceReplaced(uint32_t instanceId, bool replaced) {
+    instances.at(instanceId).replaced = replaced;
+}
+
+bool CharacterRenderer::isInstanceDrawnVisible(uint32_t instanceId, float& cameraOpacity) const {
+    const auto& instance = instances.at(instanceId);
+    cameraOpacity = instance.cameraOpacity;
+    return instance.visible;
+}
+
+bool CharacterRenderer::getInstanceRotation(uint32_t instanceId, glm::vec3& outRotation) const {
+    auto it = instances.find(instanceId);
+    if (it == instances.end()) return false;
+    outRotation = it->second.rotation;
     return true;
 }
 

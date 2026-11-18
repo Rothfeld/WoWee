@@ -1226,6 +1226,26 @@ the spline's Runmode bit is set on every packet (CMaNGOS PacketBuilder), so it
 says nothing about gait. Gait comes from spline speed, which is the walk speed
 (confuse) or run speed (fear). Charm uses the same path but was not checked
 live.
+While the server moves the character, CMaNGOS sends root changes as
+`SMSG_SPLINE_MOVE_ROOT`/`UNROOT` for the player's own guid (no ack) instead of
+`SMSG_FORCE_MOVE_(UN)ROOT`. Big Bad Wolf (Karazhan) stuns with Wide Swipe
+30761 and fears with Terrifying Howl 30752; a stun ending during the fear
+arrives as a spline unroot. Ignored, it left the character rooted after the
+fear (39 s on pair 5) and standing still while the fear moved it.
+
+### Morphed players
+
+A player whose `UNIT_FIELD_DISPLAYID` differs from `UNIT_FIELD_NATIVEDISPLAYID`
+(TBC index 153) is drawn as that creature display, local player included,
+and its portrait follows: Little Red Riding Hood 30753 (transform to creature
+17602, display 17629, a gnome girl in a red hood) in the original. The
+character instance stays (position, facing, animation, attachment points)
+but is not drawn; a creature instance with the display's appearance
+(CreatureDisplayInfoExtra clothing and helmet) copies its transform,
+animation and first-person visibility each frame. Gotcha: the field is new
+in `update_fields.json`; an installed data tree without it draws no morph.
+Not done: weapons in the creature's hands, mounted morphs, hover/click on the
+creature instance (picking still uses the hidden character).
 
 ### Projected ground textures
 

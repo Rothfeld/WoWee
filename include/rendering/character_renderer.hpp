@@ -194,6 +194,9 @@ public:
     void setTextureSlotOverride(uint32_t instanceId, uint16_t textureSlot, VkTexture* texture);
     void clearTextureSlotOverride(uint32_t instanceId, uint16_t textureSlot);
     void setInstanceVisible(uint32_t instanceId, bool visible);
+    void setInstanceReplaced(uint32_t instanceId, bool replaced);
+    /// The instance's own visibility (first-person, taxi) and camera opacity.
+    bool isInstanceDrawnVisible(uint32_t instanceId, float& cameraOpacity) const;
     void removeInstance(uint32_t instanceId);
     bool getAnimationState(uint32_t instanceId, uint32_t& animationId, float& animationTimeMs, float& animationDurationMs) const;
     /// Footfall ($FSD) event times in ms for the sequence the instance is
@@ -232,6 +235,7 @@ public:
     bool getInstancePosition(uint32_t instanceId, glm::vec3& outPos) const;
     /// The instance's model yaw (rotation about world Z), radians.
     bool getInstanceYaw(uint32_t instanceId, float& outYaw) const;
+    bool getInstanceRotation(uint32_t instanceId, glm::vec3& outRotation) const;
 
     /** Debug: Log all available animations for an instance */
     void dumpAnimations(uint32_t instanceId) const;
@@ -366,6 +370,9 @@ private:
         glm::vec3 rotation;
         float scale;
         bool visible = true;  // For first-person camera hiding
+        // Drawn by another instance in its place (a morphed player's creature
+        // model); kept updated but never drawn, its weapons and emitters neither.
+        bool replaced = false;
         float torsoYawOverrideRad = 0.0f;
 
         // Animation state

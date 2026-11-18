@@ -558,6 +558,14 @@ private:
     std::unordered_map<uint32_t, bool> modelIdIsWolfLike_;
 
     void syncCreatureVisualState();
+    /// Players whose UNIT_FIELD_DISPLAYID differs from their native display
+    /// (Little Red Riding Hood, polymorph, `.modify morph`): drawn as that
+    /// creature display over the hidden character model.
+    void syncPlayerMorphs();
+    void applyCreatureInstanceAppearance(uint32_t instanceId, uint32_t modelId, uint32_t displayId);
+    struct PlayerMorph { uint32_t displayId = 0; uint32_t instanceId = 0; uint32_t playerInstanceId = 0;
+                         uint32_t animation = 0xFFFFFFFFu; };
+    std::unordered_map<uint64_t, PlayerMorph> playerMorphs_;
 
     // --- Creature async loads ---
     struct PreparedCreatureModel {

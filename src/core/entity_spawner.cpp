@@ -87,6 +87,94 @@ void EntitySpawner::update() {
     processPendingMount();
     processPendingRemotePlayerMounts();
     syncCreatureVisualState();
+    syncPlayerMorphs();
+}
+
+// A player's display that is not its native display is a creature model:
+// Little Red Riding Hood (30753, SPELL_AURA_TRANSFORM to creature 17602,
+// display 17629) turns the Big Bad Wolf's target into Red Riding Hood in the
+// original, local player and other players alike, and back when the aura
+// ends. The character instance keeps its position, facing, animation and
+// attachments; the creature instance is drawn in its place and follows it.
+void EntitySpawner::syncPlayerMorphs() {
+    if (!renderer_ || !gameHandler_) return;
+    auto* cr = renderer_->getCharacterRenderer();
+    if (!cr) return;
+    const uint16_t nativeField = game::fieldIndex(game::UF::UNIT_FIELD_NATIVEDISPLAYID);
+    if (nativeField == 0xFFFF) return;  // expansion layout without the field
+    std::vector<uint64_t> players;
+    players.reserve(playerInstances_.size() + 1);
+    players.push_back(gameHandler_->getPlayerGuid());
+    for (const auto& [guid, instance] : playerInstances_) players.push_back(guid);
+
+    auto drop = [&](uint64_t guid) {
+        const auto found = playerMorphs_.find(guid);
+        if (found == playerMorphs_.end()) return;
+        cr->removeInstance(found->second.instanceId);
+        if (cr->getInstanceModelData(found->second.playerInstanceId))
+            cr->setInstanceReplaced(found->second.playerInstanceId, false);
+        LOG_INFO("Player morph ended: guid=0x", std::hex, guid, std::dec, " display=", found->second.displayId);
+        playerMorphs_.erase(found);
+    };
+    std::erase_if(playerMorphs_, [&](auto& entry) {
+        if (std::find(players.begin(), players.end(), entry.first) != players.end()) return false;
+        cr->removeInstance(entry.second.instanceId);
+        return true;
+    });
+    for (const uint64_t guid : players) {
+        const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_->getEntityManager().getEntity(guid));
+        const uint32_t playerInstance = characterInstanceIdForGuid(guid);
+        if (!unit || !playerInstance) { drop(guid); continue; }
+        const uint32_t display = unit->getDisplayId();
+        const uint32_t native = unit->getField(nativeField);
+        const bool morphed = native != 0 && display != 0 && display != native;
+        auto found = playerMorphs_.find(guid);
+        if (found != playerMorphs_.end() &&
+            (!morphed || found->second.displayId != display || found->second.playerInstanceId != playerInstance)) {
+            drop(guid);
+            found = playerMorphs_.end();
+        }
+        if (!morphed) continue;
+        glm::vec3 position, rotation;
+        if (!cr->getInstancePosition(playerInstance, position) || !cr->getInstanceRotation(playerInstance, rotation))
+            continue;
+        if (found == playerMorphs_.end()) {
+            uint32_t modelId = 0;
+            std::string modelPath;
+            float unusedHeight = 0.0f;
+            if (!loadRemoteMountModel(display, modelId, modelPath, unusedHeight)) {
+                LOG_WARNING("Player morph: display ", display, " has no loadable model; guid=0x", std::hex, guid);
+                playerMorphs_[guid] = {.displayId = display, .instanceId = 0, .playerInstanceId = playerInstance};
+                continue;
+            }
+            const float scale = creatureDisplayScale(display) * creatureModelScale(display) *
+                                cr->getInstanceScale(playerInstance);
+            const uint32_t instance = cr->createInstance(modelId, position, rotation, scale);
+            if (!instance) continue;
+            cr->setInstanceCreatureModel(instance, display, creatureModelDataIdForDisplay(display));
+            applyCreatureInstanceAppearance(instance, modelId, display);
+            LOG_INFO("Player morph: guid=0x", std::hex, guid, std::dec, " display ", display, " native ", native,
+                     " model=", modelPath, " scale=", scale);
+            found = playerMorphs_.emplace(guid, PlayerMorph{.displayId = display, .instanceId = instance,
+                                                              .playerInstanceId = playerInstance}).first;
+        }
+        auto& morph = found->second;
+        if (!morph.instanceId) continue;
+        cr->setInstanceReplaced(playerInstance, true);
+        // First-person hiding and camera fade belong to the character; the
+        // creature drawn for it follows them.
+        float cameraOpacity = 1.0f;
+        cr->setInstanceVisible(morph.instanceId, cr->isInstanceDrawnVisible(playerInstance, cameraOpacity));
+        cr->setInstanceCameraOpacity(morph.instanceId, cameraOpacity);
+        cr->setInstancePosition(morph.instanceId, position);
+        cr->setInstanceRotation(morph.instanceId, rotation);
+        uint32_t animation = 0;
+        float timeMs = 0.0f, durationMs = 0.0f;
+        if (cr->getAnimationState(playerInstance, animation, timeMs, durationMs) && animation != morph.animation) {
+            morph.animation = animation;
+            cr->playAnimation(morph.instanceId, cr->hasAnimation(morph.instanceId, animation) ? animation : 0u, true);
+        }
+    }
 }
 
 void EntitySpawner::syncCreatureVisualState() {
@@ -2272,6 +2360,103 @@ float EntitySpawner::creatureRenderScale(const game::Unit& unit, uint32_t displa
     return serverScale * resolveCreatureFamilyScale(base, unit.getLevel(), pet, family);
 }
 
+// The per-instance part of a creature display's appearance: material rules,
+// hair/skin/head overrides, one clothing mesh per group, and the shoulder and
+// helmet models of a character-style display (CreatureDisplayInfoExtra).
+void EntitySpawner::applyCreatureInstanceAppearance(uint32_t instanceId, uint32_t modelId, uint32_t displayId) {
+    auto* charRenderer = renderer_->getCharacterRenderer();
+    const auto itDisplayData = displayDataMap_.find(displayId);
+    // CreatureDisplayInfoExtra identifies the character-style NPCs whose
+    // character geosets and composite textures still need the legacy rules.
+    // Other creature and vehicle atlases must obey their authored blend modes.
+    const bool humanoidAppearance = itDisplayData != displayDataMap_.end() &&
+        itDisplayData->second.extraDisplayId != 0 &&
+        humanoidExtraMap_.find(itDisplayData->second.extraDisplayId) != humanoidExtraMap_.end();
+    charRenderer->setInstanceCreatureMaterialRules(instanceId, !humanoidAppearance);
+
+    // Per-instance hair, skin and head-detail overrides. These run for every
+    // NPC, cached model or not, so two NPCs sharing a model still get their own
+    // colouring.
+    applyHumanoidInstanceOverrides(instanceId, modelId, displayId);
+    // A humanoid NPC geoset mask used to be built here, behind
+    // `static constexpr bool kEnableNpcSafeGeosetMask = false`. Same story as
+    // the block below: disabled, unreachable, and edited tonight as though it
+    // were live.
+
+    // The humanoid geoset and equipment overrides that used to sit here are
+    // gone. They were three hundred and ninety-five lines behind
+    // `static constexpr bool kEnableNpcHumanoidOverrides = false`, and the
+    // comment above them said why: too aggressive, made NPCs invisible.
+    //
+    // Code that cannot run is not a record of an idea, it is a place for
+    // mistakes to hide. This block was edited twice tonight - once to stop a
+    // geoset filter hiding a body, once to stop a zero facial-hair variant
+    // becoming a beard - and neither edit could have done anything. Both were
+    // real faults, and both had to be found again in the code that does run.
+    //
+    // git has it if the idea is wanted back.
+
+    // Character-style NPC models can carry several conflicting clothing meshes
+    // at once - a cape and no cape, a robe skirt over trousers. Pick one per
+    // clothing group and leave every other batch of the model alone.
+    normalizeHumanoidClothingGeosets(instanceId, modelId, displayId);
+
+    if (humanoidAppearance) {
+        const auto& extra = humanoidExtraMap_.at(itDisplayData->second.extraDisplayId);
+        if (extra.equipDisplayId[1] != 0) {
+            const auto dbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
+            assert(dbc && dbc->isLoaded());
+            const auto row = dbc->findRecordById(extra.equipDisplayId[1]);
+            assert(row >= 0);
+            const auto* layout = pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo");
+            assert(layout);
+            const std::string directory = "Item\\ObjectComponents\\Shoulder\\";
+            const auto suffix = raceGenderSuffix(extra.raceId, extra.sexId);
+            for (uint32_t side = 0; side < 2; ++side) {
+                std::string modelName = dbc->getString(row,
+                    (*layout)[side == 0 ? "LeftModel" : "RightModel"]);
+                if (modelName.empty()) continue;
+                if (const auto dot = modelName.rfind('.'); dot != std::string::npos)
+                    modelName.resize(dot);
+                const auto racialPath = directory + modelName + suffix + ".m2";
+                const auto path = assetManager_->fileExists(racialPath)
+                    ? racialPath : directory + modelName + ".m2";
+                const auto textureName = dbc->getString(row,
+                    (*layout)[side == 0 ? "LeftModelTexture" : "RightModelTexture"]);
+                std::string texturePath;
+                if (!textureName.empty()) {
+                    const auto racialTexture = directory + textureName + suffix + ".blp";
+                    texturePath = assetManager_->fileExists(racialTexture)
+                        ? racialTexture : directory + textureName + ".blp";
+                }
+                pipeline::M2Model shoulder;
+                if (!loadWeaponM2(path, shoulder) ||
+                    !charRenderer->attachWeapon(instanceId, side == 0 ? 6 : 5, shoulder,
+                                                 nextWeaponModelId_++, texturePath)) {
+                    LOG_ERROR("NPC shoulder attachment failed: display=", displayId,
+                              " side=", side, " path=", path);
+                }
+            }
+        }
+        const auto helm = resolveHelmVisual(*assetManager_, extra.equipDisplayId[0],
+                                            extra.raceId, extra.sexId);
+        if (helm.valid()) {
+            const std::string path = !helm.racialModelPath.empty() &&
+                assetManager_->fileExists(helm.racialModelPath)
+                ? helm.racialModelPath : helm.baseModelPath;
+            pipeline::M2Model model;
+            if (!loadWeaponM2(path, model) ||
+                !charRenderer->attachWeapon(instanceId, kAttachHelm, model,
+                                             nextWeaponModelId_++, helm.texturePath)) {
+                LOG_ERROR("NPC helmet attachment failed: display=", displayId, " path=", path);
+            } else {
+                LOG_DEBUG("Attached NPC helmet: display=", displayId, " path=", path);
+            }
+        }
+    }
+
+}
+
 void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x, float y, float z, float orientation, float scale) {
     if (!renderer_ || !renderer_->getCharacterRenderer() || !assetManager_) return;
 
@@ -2392,94 +2577,7 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     }
     LOG_DEBUG("Creature instance ", instanceId, " for guid 0x", std::hex, guid, std::dec, " display ", displayId);
 
-    // CreatureDisplayInfoExtra identifies the character-style NPCs whose
-    // character geosets and composite textures still need the legacy rules.
-    // Other creature and vehicle atlases must obey their authored blend modes.
-    const bool humanoidAppearance = itDisplayData != displayDataMap_.end() &&
-        itDisplayData->second.extraDisplayId != 0 &&
-        humanoidExtraMap_.find(itDisplayData->second.extraDisplayId) != humanoidExtraMap_.end();
-    charRenderer->setInstanceCreatureMaterialRules(instanceId, !humanoidAppearance);
-
-    // Per-instance hair, skin and head-detail overrides. These run for every
-    // NPC, cached model or not, so two NPCs sharing a model still get their own
-    // colouring.
-    applyHumanoidInstanceOverrides(instanceId, modelId, displayId);
-    // A humanoid NPC geoset mask used to be built here, behind
-    // `static constexpr bool kEnableNpcSafeGeosetMask = false`. Same story as
-    // the block below: disabled, unreachable, and edited tonight as though it
-    // were live.
-
-    // The humanoid geoset and equipment overrides that used to sit here are
-    // gone. They were three hundred and ninety-five lines behind
-    // `static constexpr bool kEnableNpcHumanoidOverrides = false`, and the
-    // comment above them said why: too aggressive, made NPCs invisible.
-    //
-    // Code that cannot run is not a record of an idea, it is a place for
-    // mistakes to hide. This block was edited twice tonight - once to stop a
-    // geoset filter hiding a body, once to stop a zero facial-hair variant
-    // becoming a beard - and neither edit could have done anything. Both were
-    // real faults, and both had to be found again in the code that does run.
-    //
-    // git has it if the idea is wanted back.
-
-    // Character-style NPC models can carry several conflicting clothing meshes
-    // at once - a cape and no cape, a robe skirt over trousers. Pick one per
-    // clothing group and leave every other batch of the model alone.
-    normalizeHumanoidClothingGeosets(instanceId, modelId, displayId);
-
-    if (humanoidAppearance) {
-        const auto& extra = humanoidExtraMap_.at(itDisplayData->second.extraDisplayId);
-        if (extra.equipDisplayId[1] != 0) {
-            const auto dbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
-            assert(dbc && dbc->isLoaded());
-            const auto row = dbc->findRecordById(extra.equipDisplayId[1]);
-            assert(row >= 0);
-            const auto* layout = pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo");
-            assert(layout);
-            const std::string directory = "Item\\ObjectComponents\\Shoulder\\";
-            const auto suffix = raceGenderSuffix(extra.raceId, extra.sexId);
-            for (uint32_t side = 0; side < 2; ++side) {
-                std::string modelName = dbc->getString(row,
-                    (*layout)[side == 0 ? "LeftModel" : "RightModel"]);
-                if (modelName.empty()) continue;
-                if (const auto dot = modelName.rfind('.'); dot != std::string::npos)
-                    modelName.resize(dot);
-                const auto racialPath = directory + modelName + suffix + ".m2";
-                const auto path = assetManager_->fileExists(racialPath)
-                    ? racialPath : directory + modelName + ".m2";
-                const auto textureName = dbc->getString(row,
-                    (*layout)[side == 0 ? "LeftModelTexture" : "RightModelTexture"]);
-                std::string texturePath;
-                if (!textureName.empty()) {
-                    const auto racialTexture = directory + textureName + suffix + ".blp";
-                    texturePath = assetManager_->fileExists(racialTexture)
-                        ? racialTexture : directory + textureName + ".blp";
-                }
-                pipeline::M2Model shoulder;
-                if (!loadWeaponM2(path, shoulder) ||
-                    !charRenderer->attachWeapon(instanceId, side == 0 ? 6 : 5, shoulder,
-                                                 nextWeaponModelId_++, texturePath)) {
-                    LOG_ERROR("NPC shoulder attachment failed: display=", displayId,
-                              " side=", side, " path=", path);
-                }
-            }
-        }
-        const auto helm = resolveHelmVisual(*assetManager_, extra.equipDisplayId[0],
-                                            extra.raceId, extra.sexId);
-        if (helm.valid()) {
-            const std::string path = !helm.racialModelPath.empty() &&
-                assetManager_->fileExists(helm.racialModelPath)
-                ? helm.racialModelPath : helm.baseModelPath;
-            pipeline::M2Model model;
-            if (!loadWeaponM2(path, model) ||
-                !charRenderer->attachWeapon(instanceId, kAttachHelm, model,
-                                             nextWeaponModelId_++, helm.texturePath)) {
-                LOG_ERROR("NPC helmet attachment failed: display=", displayId, " path=", path);
-            } else {
-                LOG_DEBUG("Attached NPC helmet: display=", displayId, " path=", path);
-            }
-        }
-    }
+    applyCreatureInstanceAppearance(instanceId, modelId, displayId);
 
     // Try attaching NPC held weapons; if update fields are not ready yet,
     // IN_GAME retry loop will attempt again shortly.
