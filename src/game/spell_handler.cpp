@@ -3379,8 +3379,18 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         if (ends.empty() && data.destination)
                             ends.push_back({0, core::coords::canonicalToRender(
                                 core::coords::serverToCanonical(*data.destination))});
+                        // A spell whose effect jumps between targets (EffectChainTarget
+                        // above 1) runs its beam caster -> first target -> second ...
+                        // in the packet's hit order, as native Mother Shahraz's
+                        // Sinister Beam 40859 (chain targets 10); others fan out
+                        // from the caster.
+                        bool chained = false;
+                        owner_.loadSpellNameCache();
+                        if (const auto spell = owner_.spellNameCacheRef().find(data.spellId);
+                            spell != owner_.spellNameCacheRef().end())
+                            for (uint32_t jumps : spell->second.effectChainTargets) chained |= jumps > 1;
                         svs->playCastKit(visualId, casterPos,
-                                         owner_.resolveUnitRenderInstance(data.casterUnit), ends,
+                                         owner_.resolveUnitRenderInstance(data.casterUnit), ends, chained,
                                          std::max(0.0f, getSpellDuration(data.spellId)));
                         if (data.destination)
                             svs->playInstantAreaKit(visualId, core::coords::canonicalToRender(
@@ -4477,6 +4487,10 @@ void SpellHandler::loadSpellNameCache() const {
                     "extracted and does not refresh itself.");
     }
     const uint32_t aura0Field = spellL ? spellL->field("EffectApplyAuraName0") : 0xFFFFFFFF;
+    const uint32_t chainTargetFields[3] = {
+        spellL ? spellL->field("EffectChainTarget0") : 0xFFFFFFFF,
+        spellL ? spellL->field("EffectChainTarget1") : 0xFFFFFFFF,
+        spellL ? spellL->field("EffectChainTarget2") : 0xFFFFFFFF};
     const uint32_t aura1Field = spellL ? spellL->field("EffectApplyAuraName1") : 0xFFFFFFFF;
     const uint32_t aura2Field = spellL ? spellL->field("EffectApplyAuraName2") : 0xFFFFFFFF;
     const uint32_t implicitTargetAField =
@@ -4593,6 +4607,8 @@ void SpellHandler::loadSpellNameCache() const {
                 if (auraFields[effect] != 0xFFFFFFFF && auraFields[effect] < fieldCount) {
                     entry.effectAuraIds[effect] = dbc->getUInt32(i, auraFields[effect]);
                 }
+                if (chainTargetFields[effect] < fieldCount)
+                    entry.effectChainTargets[effect] = dbc->getUInt32(i, chainTargetFields[effect]);
             }
             // Duration: read DurationIndex and resolve via SpellDuration.dbc later
             if (durIdxField != 0xFFFFFFFF)

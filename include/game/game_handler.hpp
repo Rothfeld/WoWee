@@ -4218,6 +4218,9 @@ public:
         // says which, and it is the only thing that distinguishes a tracking
         // spell (44 creatures, 45 resources) from any other buff.
         uint32_t effectAuraIds[3] = {0, 0, 0};
+        /// Spell.dbc EffectChainTarget: targets an effect jumps between (Chain
+        /// Lightning 421: 3); 0 or 1 for a single target.
+        uint32_t effectChainTargets[3] = {0, 0, 0};
         // Spell.dbc EffectImplicitTargetA - what the spell expects to be aimed
         // at. 21 means a friendly unit, which is how heals and buffs are told
         // apart from damage that shares the same effect and school.

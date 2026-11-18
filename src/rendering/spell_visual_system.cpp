@@ -915,17 +915,28 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
     std::unordered_set<uint64_t> live;
     for (const auto& channel : channels) {
         if (!channel.hasTarget) continue;
-        const auto kit = channelKits_.find(channel.visualId);
-        if (kit == channelKits_.end() || !kit->second) continue;
-        const auto chainId = kitChainEffects_.find(kit->second);
-        if (chainId == kitChainEffects_.end()) continue;
+        // The ChannelKit's beam, else the StateKit's: Shared Bonds 41363
+        // (visual 8244, no ChannelKit, StateKit 7030 -> chain 2 HealBeam),
+        // channelled by Black Temple's Sister of Pain and Sister of Pleasure
+        // at each other, is a beam between the two natively (build 8606,
+        // pair 15); the channel's target holds the aura.
+        auto kitChain = [&](const std::unordered_map<uint32_t, uint32_t>& kits)
+            -> std::pair<uint32_t, uint32_t> {
+            const auto kit = kits.find(channel.visualId);
+            if (kit == kits.end() || !kit->second) return {0, 0};
+            const auto chain = kitChainEffects_.find(kit->second);
+            return chain == kitChainEffects_.end() ? std::pair<uint32_t, uint32_t>{0, 0}
+                                                   : std::pair{kit->second, chain->second};
+        };
+        auto [kitId, chain] = kitChain(channelKits_);
+        if (!chain) std::tie(kitId, chain) = kitChain(stateKits_);
+        if (!chain) continue;
         live.insert(channel.casterGuid);
         auto [state, created] = beams_.try_emplace(channel.casterGuid);
         if (created) {
-            state->second = newBeamState(chainId->second);
+            state->second = newBeamState(chain);
             LOG_INFO("Channel beam: caster=0x", std::hex, channel.casterGuid, std::dec, " visual=", channel.visualId,
-                     " kit=", kit->second, " chain=", chainId->second,
-                     " texture=", chainEffects_.at(chainId->second).texture);
+                     " kit=", kitId, " chain=", chain, " texture=", chainEffects_.at(chain).texture);
         }
         appendBeamStrip(strips, channel.start, channel.end, beamClock_ - state->second.age,
                         state->second);
@@ -933,7 +944,7 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
     // Cast kit beams, for as long as their kit plays.
     std::erase_if(castBeams_, [&](const CastBeam& beam) { return beamClock_ - beam.born >= beam.lifetime; });
     for (auto& beam : castBeams_) {
-        appendBeamStrip(strips, beamEnd(beam.casterInstanceId, beam.casterPosition),
+        appendBeamStrip(strips, beamEnd(beam.start.instanceId, beam.start.position),
                         beamEnd(beam.end.instanceId, beam.end.position), beamClock_ - beam.born, beam.state);
     }
     std::erase_if(beams_, [&](const auto& entry) { return !live.count(entry.first); });
@@ -942,7 +953,7 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
 
 void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPosition,
                                     uint32_t casterInstanceId, const std::vector<ChainEnd>& ends,
-                                    float spellSeconds) {
+                                    bool chained, float spellSeconds) {
     if (!m2Renderer_ || visualId == 0) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     const auto kit = castKits_.find(visualId);
@@ -959,13 +970,14 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
                         " but neither an effect model nor a spell duration times it; beam not drawn");
         return;
     }
+    ChainEnd from{casterInstanceId, casterPosition};
     for (const auto& end : ends) {
-        castBeams_.push_back({.chainId = chainId->second, .casterInstanceId = casterInstanceId,
-                              .casterPosition = casterPosition, .end = end, .born = beamClock_,
+        castBeams_.push_back({.chainId = chainId->second, .start = from, .end = end, .born = beamClock_,
                               .lifetime = plays, .state = newBeamState(chainId->second)});
+        if (chained) from = end;
     }
     LOG_INFO("SpellVisual: cast kit ", kit->second, " beam chain ", chainId->second, " to ", ends.size(),
-             " end(s) for ", plays, " s");
+             " end(s) for ", plays, " s", chained ? ", hopping" : "");
 }
 
 void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& destination) {

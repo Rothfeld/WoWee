@@ -1719,6 +1719,22 @@ caster's own position as destination and play there; Volcanic Geyser 42052
 a model lacking that attachment are not drawn (Soul Scream 41545 on
 WellofSoulsPain.m2); other slots fall back to the unit position.
 
+A channel whose ChannelKit names no beam draws its StateKit's (the channel's
+target holds that aura): Black Temple's Sister of Pain (22956) and Sister of
+Pleasure (22964) channel Shared Bonds 41363 (visual 8244, StateKit 7030 ->
+chain 2 HealBeam) at each other once in combat; native shows the yellow beam
+between them (pair 15, `.damage 1` on a tempspawned pair). Open: native shows
+7030's HolyDivineShield_State_Base dome only on the first channel's target
+(Pleasure) although both hold 41363 (`.list auras`); WoWee shows it on both.
+A cast kit beam of a spell with EffectChainTarget above 1 hops caster ->
+first hit -> second hit in SMSG_SPELL_GO order (native Sinister Beam 40859,
+chain targets 10: two bolts meeting at the first target); others fan out.
+Open: BlendMode 4 rows (23, all with black-on-white `*_Inverted`/WebBlack
+textures; Mother Shahraz's beams 40827/40859-40861 -> 173-179) natively show
+a thin purple bolt with dark edges; WoWee adds the texture and draws a broad
+pale band. Adding the inverted texture made it thin but pink-white, so that
+rule was not kept.
+
 Every spell effect model is drawn at its `SpellVisualEffectName.Scale` (TBC
 field 4), on top of the unit/attachment scale. One file has rows at several
 sizes: `Shock_Missile` 1, 4 and 8 - Void Reaver's Arcane Orb (34172, visual

@@ -52,8 +52,9 @@ public:
     /// the spell's duration (spellSeconds): Essence of Anger's Spite 41376
     /// (kit 7979, chain 220, 6 s aura) held its beams 6.1 s, until 41377
     /// (spite2.json). With neither (42784's kit 8183) the beam is not drawn.
+    /// `chained`: a jumping spell's beam runs caster -> ends[0] -> ends[1] ...
     void playCastKit(uint32_t visualId, const glm::vec3& casterPosition, uint32_t casterInstanceId,
-                     const std::vector<ChainEnd>& ends, float spellSeconds);
+                     const std::vector<ChainEnd>& ends, bool chained, float spellSeconds);
     // SpellVisual InstantAreaKit (TBC column 22) plays at the SMSG_SPELL_GO
     // destination (TARGET_FLAG_DEST_LOCATION), unattached; a spell with no
     // destination plays none. Build 8606, pair 12
@@ -329,8 +330,7 @@ private:
     float beamClock_ = 0.0f;
     struct CastBeam {
         uint32_t chainId = 0;
-        uint32_t casterInstanceId = 0;
-        glm::vec3 casterPosition{0.0f};
+        ChainEnd start;
         ChainEnd end;
         float born = 0.0f, lifetime = 0.0f;
         BeamState state;
