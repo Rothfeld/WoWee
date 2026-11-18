@@ -172,12 +172,7 @@ static int lua_HasAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnFalse(L); }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1; // WoW uses 1-indexed slots
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size())) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    lua_pushboolean(L, !bar[slot].isEmpty());
+    lua_pushboolean(L, game::shownAction(*gh, slot) != nullptr);
     return 1;
 }
 
@@ -186,12 +181,12 @@ static int lua_GetActionTexture(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+    const auto* shown = game::shownAction(*gh, slot);
+    if (!shown) {
         lua_pushnil(L);
         return 1;
     }
-    const auto& action = bar[slot];
+    const auto& action = *shown;
     if (action.type == game::ActionBarSlot::SPELL) {
         std::string icon = gh->getSpellIconPath(action.id);
         if (!icon.empty()) {
@@ -218,13 +213,10 @@ static int lua_IsCurrentAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int slot = static_cast<int>(luaL_optnumber(L, 1, 0)) - 1;
     bool current = false;
-    if (gh && slot >= 0) {
-        const auto& bar = gh->getActionBar();
-        if (slot < static_cast<int>(bar.size()) &&
-            bar[slot].type == game::ActionBarSlot::SPELL) {
-            current = game::isCurrentSpellAction(bar[slot].id, gh->getActiveActionSpellId(),
-                                                 gh->hasAutoAttackIntent());
-        }
+    if (const auto* shown = gh ? game::shownAction(*gh, slot) : nullptr;
+        shown && shown->type == game::ActionBarSlot::SPELL) {
+        current = game::isCurrentSpellAction(shown->id, gh->getActiveActionSpellId(),
+                                             gh->hasAutoAttackIntent());
     }
     lua_pushboolean(L, current);
     return 1;
@@ -238,13 +230,13 @@ static int lua_IsUsableAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); lua_pushboolean(L, 0); return 2; }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+    const auto* shown = game::shownAction(*gh, slot);
+    if (!shown) {
         lua_pushboolean(L, 0);
         lua_pushboolean(L, 0);
         return 2;
     }
-    const auto usability = game::actionUsability(*gh, bar[slot]);
+    const auto usability = game::actionUsability(*gh, *shown);
     lua_pushboolean(L, usability.usable ? 1 : 0);
     lua_pushboolean(L, usability.noPower ? 1 : 0);
     return 2;
@@ -255,12 +247,12 @@ static int lua_IsActionInRange(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+    const auto* shown = game::shownAction(*gh, slot);
+    if (!shown) {
         lua_pushnil(L);
         return 1;
     }
-    const auto& action = bar[slot];
+    const auto& action = *shown;
     uint32_t spellId = 0;
     if (action.type == game::ActionBarSlot::SPELL) {
         spellId = action.id;
@@ -277,11 +269,11 @@ static int lua_GetActionInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return 0; }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+    const auto* shown = game::shownAction(*gh, slot);
+    if (!shown) {
         return 0;
     }
-    const auto& action = bar[slot];
+    const auto& action = *shown;
     switch (action.type) {
         case game::ActionBarSlot::SPELL:
             lua_pushstring(L, "spell");
@@ -314,12 +306,12 @@ static int lua_GetActionCount(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnZero(L); }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+    const auto* shown = game::shownAction(*gh, slot);
+    if (!shown) {
         lua_pushnumber(L, 0);
         return 1;
     }
-    const auto& action = bar[slot];
+    const auto& action = *shown;
     if (action.type == game::ActionBarSlot::ITEM && action.id != 0) {
         lua_pushnumber(L, game::actionItemCount(*gh, action.id));
     } else if (action.type == game::ActionBarSlot::SPELL) {
@@ -337,14 +329,14 @@ static int lua_GetActionCooldown(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1); return 3; }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+    const auto* shown = game::shownAction(*gh, slot);
+    if (!shown) {
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 1);
         return 3;
     }
-    const auto& action = bar[slot];
+    const auto& action = *shown;
     if (action.type == game::ActionBarSlot::SPELL && gh->isCooldownEventPending(action.id)) {
         // Cast, and its cooldown waits for the event: enable 0, no sweep.
         lua_pushnumber(L, 0);
@@ -427,9 +419,9 @@ static int lua_UseAction(lua_State* L) {
         return lua_PlaceAction(L);
     }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-    const auto& bar = gh->getActionBar();
-    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) return 0;
-    const auto& action = bar[slot];
+    const auto* shown = game::shownAction(*gh, slot);
+    if (!shown) return 0;
+    const auto& action = *shown;
     // The end of the chain a click travels, and the last place it can stop
     // without saying so: an empty slot, a cooldown, or a type nothing acts on
     // all look the same from the button. At debug level, because pressing a

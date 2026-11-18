@@ -1,4 +1,5 @@
 #include "addons/lua_engine.hpp"
+#include "game/spell_prerequisites.hpp"
 #include "game/summon_title.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
@@ -2459,13 +2460,13 @@ int lua_Tooltip_SetAction(lua_State* L) {
     auto* gh = wowee::addons::getGameHandler(L);
     const int slot = static_cast<int>(luaL_optnumber(L, 2, 0)) - 1;
     if (!w || !gh || slot < 0) { lua_pushboolean(L, 0); return 1; }
-    const auto& bar = gh->getActionBar();
-    if (slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+    const auto* shown = wowee::game::shownAction(*gh, slot);
+    if (!shown) {
         lua_pushboolean(L, 0);
         return 1;
     }
 
-    const auto& action = bar[slot];
+    const auto& action = *shown;
     // An item on the bar gets the tooltip the bags give it, stats and all.
     // Naming it and stopping meant the same potion described itself two
     // different ways depending on where it was hovered.

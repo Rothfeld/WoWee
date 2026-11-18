@@ -1326,6 +1326,14 @@ SpellUsability spellUsability(GameHandler& owner, uint32_t spellId) {
     return castableNow(owner, spellId);
 }
 
+const ActionBarSlot* shownAction(GameHandler& owner, int slot) {
+    const auto& bar = owner.getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) return nullptr;
+    const auto& action = bar[static_cast<size_t>(slot)];
+    if (action.type == ActionBarSlot::SPELL && !owner.getKnownSpells().count(action.id)) return nullptr;
+    return &action;
+}
+
 SpellUsability actionUsability(GameHandler& owner, const ActionBarSlot& slot) {
     switch (slot.type) {
         case ActionBarSlot::SPELL:

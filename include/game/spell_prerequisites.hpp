@@ -36,6 +36,13 @@ bool isConsumableAction(GameHandler& owner, const ActionBarSlot& slot);
 /// Whether the global cooldown covers this spell: StartRecoveryCategory 133.
 bool onGlobalCooldown(GameHandler& owner, uint32_t spellId);
 
+/// Bar slot `slot` (0-based) as the interface sees it: nullptr when it is out
+/// of range, empty, or holds a spell the player does not know. Native 2.4.3
+/// with Sinister Strike Rank 1 (1752) stored on button 2 of a character that
+/// knows only Rank 10: HasAction nil, GetActionInfo nothing, GetActionTexture
+/// nil, IsUsableAction nil - an empty button.
+const ActionBarSlot* shownAction(GameHandler& owner, int slot);
+
 /// The same answer for an action bar slot: a spell by spellUsability, an item
 /// by being carried (equipped counts) and by its use spell.
 SpellUsability actionUsability(GameHandler& owner, const ActionBarSlot& slot);
