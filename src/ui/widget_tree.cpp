@@ -1286,21 +1286,21 @@ bool WidgetTree::buttonArtVisible(const Widget& w) const {
     const bool usable = owner->enabled &&
                         owner->forcedState != Widget::Forced::Disabled;
 
+    // A state with no art of its own keeps the normal art: 2.4.3 draws a
+    // disabled channel header, whose template has a NormalTexture and nothing
+    // else, with its bar (pair 11, the empty Group and Custom headers).
+    auto hasArt = [&](ButtonArt art) {
+        for (uint32_t id : owner->children)
+            if (const Widget* c = get(id); c && c->buttonArt == art) return true;
+        return false;
+    };
     switch (w.buttonArt) {
         case ButtonArt::Highlight:       return (hovered || owner->highlightLocked) && usable;
         case ButtonArt::Disabled:        return !usable;
         case ButtonArt::Pushed:          return usable && pressed;
-        // A disabled button without a DisabledTexture keeps showing its
-        // NormalTexture, unchanged (2.4.3: the box of a disabled
-        // OptionsCheckButtonTemplate, a disabled icon-only Button). One
-        // with a DisabledTexture shows that instead.
         case ButtonArt::Normal:
-            if (usable) return !pressed;
-            for (uint32_t child : owner->children) {
-                const Widget* art = get(child);
-                if (art && art->buttonArt == ButtonArt::Disabled) return false;
-            }
-            return true;
+            if (!usable) return !hasArt(ButtonArt::Disabled);
+            return !pressed || !hasArt(ButtonArt::Pushed);
         case ButtonArt::Checked:         return owner->checked && usable;
         case ButtonArt::DisabledChecked: return owner->checked && !usable;
         default:                         return true;

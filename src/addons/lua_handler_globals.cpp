@@ -152,4 +152,19 @@ int lua_WoweeFireOnLoad(lua_State* L) {
     return 0;
 }
 
+int lua_WoweeCallScript(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    const char* script = luaL_checkstring(L, 2);
+    lua_getfield(L, 1, "__scripts");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0; }
+    lua_getfield(L, -1, script);
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return 0; }
+    lua_remove(L, -2);                    // __scripts, leaving the handler
+    const int extra = lua_gettop(L) - 3;  // arguments after the script name
+    lua_pushvalue(L, 1);                  // self
+    for (int i = 0; i < extra; ++i) lua_pushvalue(L, 3 + i);
+    if (pcallScript(L, script, extra + 1, 0) != 0) return lua_error(L);
+    return 0;
+}
+
 }  // namespace wowee::addons

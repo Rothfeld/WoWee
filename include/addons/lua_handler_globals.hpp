@@ -60,4 +60,10 @@ int pcallScript(lua_State* L, const char* script, int nargs, int errfunc);
 /// name in scope around the call.
 int lua_WoweeFireOnLoad(lua_State* L);
 
+/// __WoweeCallScript(frame, scriptName, ...) - run one of a frame's own
+/// handlers the way a real event runs it, legacy `this` and argN included.
+/// Button:Click() goes through here: a TBC OnClick reads `this`, and called
+/// directly it saw whatever frame had last been handled.
+int lua_WoweeCallScript(lua_State* L);
+
 }  // namespace wowee::addons

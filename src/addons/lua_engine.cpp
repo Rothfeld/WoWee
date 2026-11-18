@@ -7033,6 +7033,9 @@ void LuaEngine::registerCoreAPI() {
     lua_pushcfunction(L_, lua_WoweeFireOnLoad);
     lua_setglobal(L_, "__WoweeFireOnLoad");
 
+    lua_pushcfunction(L_, lua_WoweeCallScript);
+    lua_setglobal(L_, "__WoweeCallScript");
+
     lua_pushcfunction(L_, lua_GetMouseFocus);
     lua_setglobal(L_, "GetMouseFocus");
 
@@ -7580,9 +7583,11 @@ void LuaEngine::registerCoreAPI() {
         "    local previous = __WoweeMouseButtonClicked\n"
         "    __WoweeMouseButtonClicked = button\n"
         "    local ok, err = pcall(function()\n"
-        "        if s.PreClick then s.PreClick(self, button, down) end\n"
-        "        if s.OnClick then s.OnClick(self, button, down) end\n"
-        "        if s.PostClick then s.PostClick(self, button, down) end\n"
+        // Through the handler dispatch, so a TBC body reading `this` and
+        // arg1 sees this button: FriendsFrameTab3:Click() selected tab 0.
+        "        __WoweeCallScript(self, 'PreClick', button, down)\n"
+        "        __WoweeCallScript(self, 'OnClick', button, down)\n"
+        "        __WoweeCallScript(self, 'PostClick', button, down)\n"
         "    end)\n"
         "    __WoweeMouseButtonClicked = previous\n"
         "    if not ok then error(err, 0) end\n"
