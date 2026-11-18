@@ -1579,7 +1579,11 @@ or for the question mark (macro icon 1) that spell's or item's icon;
 `/say hi` is usable with enable 0; a name the player lacks
 (`/cast Sinister Strike(Rank 1)`, `/use 13` on an empty slot) is unusable.
 The tooltip is the spell's with `#showtooltip`, else the macro name.
-2.4.3 macro ids are 1-18 (account) and 19-36 (character), and
+Macros are listed by name in each half and kept by identity: account n,
+character 0x01000000|n (server action type 0x40/0x41, as native). The
+interface's index is the place in the sorted half, so a rename moves a
+macro's index while its buttons keep it. 2.4.3 indexes are 1-18
+(account) and 19-36 (character), and
 `CreateMacro(name, iconIndex, body, local, perCharacter)` takes an index
 into the 780-entry icon list: the question mark, then Ability_* and
 Spell_* icons by name. Gotcha: a character config with 3.3.5 ids (37-54)
