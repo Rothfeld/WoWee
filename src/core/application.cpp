@@ -3911,7 +3911,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     charRenderer->getInstanceScale(instanceId), renderPos, renderYaw,
                     [&](const glm::vec3& sample) {
                         return movingEntityFloor(renderer.get(), sample, std::nullopt);
-                    });
+                    }, unit->getHealth() == 0);
             }
             charRenderer->setInstanceRotation(instanceId, groundRotation);
             if (creatureMount) {
