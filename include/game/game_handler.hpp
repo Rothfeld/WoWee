@@ -2497,6 +2497,14 @@ public:
     /// no bar of their own. Read from the file rather than written out here,
     /// because a table of class-and-form guesses is not checkable.
     uint32_t getBonusActionBarOffset() const;
+    /// The unit the player's camera looks from (PLAYER_FARSIGHT), or 0.
+    uint64_t getFarsightGuid() const;
+    /// The unit the player possesses (UNIT_FIELD_CHARM while a possession
+    /// aura holds it), or 0.
+    uint64_t getPossessedGuid() const;
+    /// The spell of that possession, for the possess bar's buttons, or 0.
+    uint32_t getPossessSpellId() const;
+    uint64_t lastPossessedGuid_ = 0;
     uint64_t getComboTarget() const { return comboTarget_; }
 
     // Death Knight rune state (6 runes: 0-1=Blood, 2-3=Unholy, 4-5=Frost; may become Death=3)

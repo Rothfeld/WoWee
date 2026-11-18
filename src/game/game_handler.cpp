@@ -754,6 +754,18 @@ void GameHandler::update(float deltaTime) {
     updateNetworking();
     if (!socket) return;  // disconnect() may have been called
 
+    // Possession starting or ending moves the possessed unit's actions onto
+    // bonus bar five and the possess bar in or out (BonusActionBar_OnEvent,
+    // PossessBar_OnEvent both listen for UPDATE_BONUS_ACTIONBAR).
+    if (const uint64_t possessed = getPossessedGuid(); possessed != lastPossessedGuid_) {
+        LOG_INFO("Possession: 0x", std::hex, lastPossessedGuid_, " -> 0x", possessed, std::dec,
+                 " spell ", getPossessSpellId(), " farsight 0x", std::hex, getFarsightGuid(), std::dec);
+        lastPossessedGuid_ = possessed;
+        fireAddonEvent("UPDATE_BONUS_ACTIONBAR", {});
+        fireAddonEvent("ACTIONBAR_PAGE_CHANGED", {});
+        fireAddonEvent("PET_BAR_UPDATE", {});
+    }
+
     // Sends a Warden response built off the main thread. Nothing else does:
     // without this the server's check goes unanswered and it drops the
     // connection a few seconds later.
@@ -3733,7 +3745,51 @@ void GameHandler::rebuildCompanions() const {
              critterSpells_.size(), " critters from ", known.size(), " known spells");
 }
 
+namespace {
+uint64_t playerGuidField(const GameHandler& gh, UF field) {
+    const uint16_t idx = fieldIndex(field);
+    if (idx == 0xFFFF) return 0;
+    const auto e = gh.getEntityManager().getEntity(gh.getPlayerGuid());
+    if (!e) return 0;
+    return (static_cast<uint64_t>(e->getField(static_cast<uint16_t>(idx + 1))) << 32) | e->getField(idx);
+}
+} // namespace
+
+uint64_t GameHandler::getFarsightGuid() const { return playerGuidField(*this, UF::PLAYER_FARSIGHT); }
+
+uint32_t GameHandler::getPossessSpellId() const {
+    // The possession aura sits on the unit possessed for Mind Control and
+    // Control Piece (cast by the player), and on the player for spells that
+    // possess through the caster. Aura types from SpellAuraDefines:
+    // MOD_POSSESS 2, MOD_CHARM 6, MOD_POSSESS_PET 128, AOE_CHARM 177.
+    const uint64_t charm = playerGuidField(*this, UF::UNIT_FIELD_CHARM);
+    if (charm == 0) return 0;
+    const auto possessing = [&](uint32_t spellId) {
+        const_cast<GameHandler*>(this)->getSpellName(spellId);
+        const auto it = spellNameCache_.find(spellId);
+        if (it == spellNameCache_.end()) return false;
+        for (uint32_t type : it->second.effectAuraIds)
+            if (type == 2 || type == 6 || type == 128 || type == 177) return true;
+        return false;
+    };
+    if (const auto* auras = getUnitAuras(charm))
+        for (const auto& a : *auras)
+            if (!a.isEmpty() && possessing(a.spellId)) return a.spellId;
+    for (const auto& a : getPlayerAuras())
+        if (!a.isEmpty() && possessing(a.spellId)) return a.spellId;
+    return 0;
+}
+
+uint64_t GameHandler::getPossessedGuid() const {
+    return getPossessSpellId() ? playerGuidField(*this, UF::UNIT_FIELD_CHARM) : 0;
+}
+
 uint32_t GameHandler::getBonusActionBarOffset() const {
+    // Build 8606 while Mind Control holds a Privateer (pair 7,
+    // _experiments/20261118T074350Z.plates_fct): GetBonusBarOffset() 5,
+    // BonusActionBarFrame shown, PetActionBarFrame hidden, HasAction true for
+    // 121-130 - the possessed unit's ten actions on bonus bar five.
+    if (getPossessedGuid() != 0) return 5;
     const uint8_t form = shapeshiftFormId_;
     if (form == 0) return 0;
 

@@ -2977,9 +2977,22 @@ void Application::applyServerMovementState(float deltaTime) {
     bool landingClampActive = !onTaxi && worldEntryCallbacks_ && worldEntryCallbacks_->getTaxiLandingClampTimer() > 0.0f &&
                               worldEntryCallbacks_->getWorldEntryMovementGraceTimer() <= 0.0f &&
                               !gameHandler->isMounted();
+    // Possession: build 8606 looks from the unit PLAYER_FARSIGHT names (the
+    // server's Camera::SetView) and the player's own character stays put.
+    // Walking the possessed unit is not implemented; its actions are on bonus
+    // bar five.
+    const uint64_t farsight = gameHandler ? gameHandler->getFarsightGuid() : 0;
+    std::optional<glm::vec3> viewTarget;
+    if (farsight != 0 && farsight != gameHandler->getPlayerGuid()) {
+        glm::vec3 viewPos;
+        if (getRenderPositionForGuid(farsight, viewPos)) viewTarget = viewPos;
+    }
+    renderer->getCameraController()->setViewTarget(viewTarget);
+    const bool possessing = gameHandler && gameHandler->getPossessedGuid() != 0;
+    if (possessing) renderer->getCameraController()->clearMovementInputs();
     renderer->getCameraController()->setExternalFollow(
         externallyDrivenMotion || landingClampActive || hearthFreeze ||
-        transportTransferFreeze || deckFloorPending_);
+        transportTransferFreeze || deckFloorPending_ || possessing);
     renderer->getCameraController()->setExternalMoving(externallyDrivenMotion);
     if (externallyDrivenMotion) {
         // Drop any stale local movement toggles while server drives taxi motion.

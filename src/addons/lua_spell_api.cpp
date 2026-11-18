@@ -466,6 +466,21 @@ static int lua_GetPlayerBuffDispelType(lua_State* L) {
 // CancelPlayerBuff(slot)
 static int lua_CancelPlayerBuff(lua_State* L) {
     auto* gh = getGameHandler(L);
+    // PossessBar_Clicked(2) passes the name GetPossessInfo(1) gave: the
+    // possession's spell, which for Mind Control is the player's channel and
+    // for Control Piece an aura on the player.
+    if (gh && lua_type(L, 1) == LUA_TSTRING) {
+        const std::string name = lua_tostring(L, 1);
+        const uint32_t possess = gh->getPossessSpellId();
+        if (possess && gh->getSpellName(possess) == name) {
+            if (gh->isChanneling() && gh->getCurrentCastSpellId() == possess) gh->cancelCast();
+            else gh->cancelAura(possess);
+            return 0;
+        }
+        for (const auto& a : gh->getPlayerAuras())
+            if (!a.isEmpty() && gh->getSpellName(a.spellId) == name) { gh->cancelAura(a.spellId); return 0; }
+        return 0;
+    }
     const auto* aura = playerAuraAt(L, gh, static_cast<int>(luaL_optnumber(L, 1, -1)));
     if (aura) gh->cancelAura(aura->spellId);
     return 0;

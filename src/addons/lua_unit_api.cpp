@@ -1236,7 +1236,9 @@ static int lua_UnitCharacterPoints(lua_State* L) {
 
 static int lua_PetHasActionBar(lua_State* L) {
     auto* gh = getGameHandler(L);
-    lua_pushboolean(L, gh && gh->hasPet());
+    // nil under Mind Control in build 8606: the possessed unit's actions are
+    // on bonus bar five, not the pet bar.
+    lua_pushboolean(L, gh && gh->hasPet() && gh->getPossessedGuid() == 0);
     return 1;
 }
 static int lua_PetCanBeDismissed(lua_State* L) {

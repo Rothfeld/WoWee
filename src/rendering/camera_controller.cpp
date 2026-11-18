@@ -2551,7 +2551,7 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
         flightAirborne_ = false;
         LOG_WARNING("Flight: landed");
     }
-    updateOrbitCamera(deltaTime, f, targetPos);
+    updateOrbitCamera(deltaTime, f, viewTarget_ ? *viewTarget_ : targetPos);
     static const bool traceMovement = core::envFlagEnabled("WOWEE_MOVEMENT_TRACE");
     if (traceMovement && followTarget) {
         // Render coordinates, yards, degrees, seconds. SDL ticks are process-relative.
@@ -2805,7 +2805,7 @@ void CameraController::update(float deltaTime) {
 
         // Position camera behind character during taxi
         if (thirdPerson && followTarget) {
-            glm::vec3 targetPos = *followTarget;
+            glm::vec3 targetPos = viewTarget_ ? *viewTarget_ : *followTarget;
             glm::vec3 forward3D = camera->getForward();
 
             // Pivot point at upper chest/neck

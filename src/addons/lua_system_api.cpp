@@ -2481,36 +2481,6 @@ static int lua_GetMapOverlayInfo(lua_State* L) {
 // `for id = 1, count`, which raises on nil and took the whole menu down.
 
 /// Aura ids that make a spell a tracking spell.
-/// The spell possessing the player, or zero.
-///
-/// Which aura it is decides what the possess bar's cancel button cancels, so
-/// this selects on the aura *type* rather than on anything looser: only a
-/// spell that applies one of the four possession auras can be returned, and if
-/// none is found the caller shows no bar rather than a button that would
-/// cancel something else. Values from AzerothCore's SpellAuraDefines.
-static uint32_t possessAuraSpellId(wowee::game::GameHandler* gh) {
-    if (!gh) return 0;
-    constexpr uint32_t kModPossess = 2;
-    constexpr uint32_t kModCharm = 6;
-    constexpr uint32_t kModPossessPet = 128;
-    constexpr uint32_t kAoeCharm = 177;
-    for (const auto& aura : gh->getPlayerAuras()) {
-        if (aura.isEmpty()) continue;
-        // Asking for the name is what fills the cache; the entry is not there
-        // to be read until something has.
-        gh->getSpellName(aura.spellId);
-        auto it = gh->spellNameCacheRef().find(aura.spellId);
-        if (it == gh->spellNameCacheRef().end()) continue;
-        for (uint32_t type : it->second.effectAuraIds) {
-            if (type == kModPossess || type == kModCharm ||
-                type == kModPossessPet || type == kAoeCharm) {
-                return aura.spellId;
-            }
-        }
-    }
-    return 0;
-}
-
 static constexpr uint32_t kAuraTrackCreatures = 44;
 static constexpr uint32_t kAuraTrackResources = 45;
 
@@ -6584,85 +6554,29 @@ void registerSystemLuaAPI(lua_State* L) {
                 // rather than releases.
                 {"IsPossessBarVisible", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            bool possessing = false;
-            if (gh) {
-                const uint16_t idx = wowee::game::fieldIndex(
-                    wowee::game::UF::UNIT_FIELD_CHARM);
-                if (idx != 0xFFFF) {
-                    if (auto e = gh->getEntityManager().getEntity(gh->getPlayerGuid())) {
-                        const uint64_t lo = e->getField(idx);
-                        const uint64_t hi = e->getField(static_cast<uint16_t>(idx + 1));
-                        possessing = ((hi << 32) | lo) != 0;
-                    }
-                }
-            }
-            lua_pushboolean(L,
-                (possessing && possessAuraSpellId(gh) != 0) ? 1 : 0);
+            lua_pushboolean(L, gh && gh->getPossessedGuid() != 0);
             return 1;
         }},
-                // GetPossessInfo(slot) → texture, name, enabled
-                //
-                // Slot two only, which is POSSESS_CANCEL_SLOT.
-                // PossessButton_OnClick reads the *name* from here and hands it
-                // to CancelUnitBuff("player", name) - that button is how
-                // someone gets out of a mind control, so it has to name the
-                // possessing aura and nothing else.
-                //
-                // The other slot answers nil, which hides its button. What
-                // belongs there is the possessed unit's own action, and this
-                // client has no way to know which of its ten action slots that
-                // is - a wrong icon on a bar whose other button works is worse
-                // than one button.
-                // GetPossessInfo(slot) → texture, name, enabled.
-                //
-                // Two slots, and they are different things. Slot two is the
-                // way out: PossessButton_OnClick reads the name back and
-                // cancels that buff on the player, so it has to be the
-                // possessing aura's. Slot one is the possessed unit's own
-                // action, and its button does nothing when clicked - it is an
-                // icon and a tooltip.
-                //
-                // Which action was recorded as unknown and is not.
-                // Player::PossessSpellInitialize sends SMSG_PET_SPELLS built by
-                // CharmInfo::BuildActionBar, and InitPossessCreateSpells fills
-                // that bar by calling AddSpellToActionBar(spell, ACT_PASSIVE, i)
-                // for the creature's spells in order - pinned to index i, since
-                // that function skips every slot but the one it was given. So
-                // the possessed creature's first spell is bar slot zero, which
-                // is the slot this button is for.
+                // GetPossessInfo(slot) -> texture, name. Build 8606 under Mind
+                // Control (pair 7, _experiments/20261118T074350Z.plates_fct):
+                // slot 1 "Interface\Icons\Spell_Shadow_ShadowWordDominate",
+                // "Mind Control", nil - the possession's spell, whose name
+                // PossessBar_Clicked(2) hands to CancelPlayerBuff; slot 2
+                // "Interface\Icons\Spell_Shadow_SacrificialShield", nil, nil.
                 {"GetPossessInfo", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int slot = static_cast<int>(luaL_optnumber(L, 1, 0));
-            constexpr int kCancelSlot = 2;
-            if (!gh) return luaReturnNil(L);
-            if (slot == 1) {
-                const uint32_t packed = gh->getPetActionSlot(0);
-                if (packed == 0) return luaReturnNil(L);
-                const auto type = game::pet::petActionType(packed);
-                // A command or a stance is not something to show here - an
-                // empty possess bar carries one of those in slot zero, and
-                // drawing its icon would put a Follow arrow where the
-                // creature's spell belongs.
-                if (type == game::pet::ActionType::Command ||
-                    type == game::pet::ActionType::Reaction) {
-                    return luaReturnNil(L);
-                }
-                const uint32_t spellId = game::pet::petActionId(packed);
-                if (spellId == 0) return luaReturnNil(L);
-                const std::string icon = gh->getSpellIconPath(spellId);
-                if (icon.empty()) lua_pushnil(L); else lua_pushstring(L, icon.c_str());
-                lua_pushstring(L, gh->getSpellName(spellId).c_str());
-                lua_pushboolean(L, 1);
-                return 3;
+            if (!gh || !gh->getPossessedGuid()) return luaReturnNil(L);
+            if (slot == 2) {
+                lua_pushstring(L, "Interface\\Icons\\Spell_Shadow_SacrificialShield");
+                return 1;
             }
-            if (slot != kCancelSlot) return luaReturnNil(L);
-            const uint32_t spellId = possessAuraSpellId(gh);
-            if (spellId == 0) return luaReturnNil(L);
+            if (slot != 1) return luaReturnNil(L);
+            const uint32_t spellId = gh->getPossessSpellId();
             const std::string icon = gh->getSpellIconPath(spellId);
             if (icon.empty()) lua_pushnil(L); else lua_pushstring(L, icon.c_str());
             lua_pushstring(L, gh->getSpellName(spellId).c_str());
-            lua_pushboolean(L, 1);
-            return 3;
+            return 2;
         }},
                 // IsRaidOfficer() - whether this player is an assistant.
                 //

@@ -312,6 +312,9 @@ public:
     void setIntoxication(float amount) { intoxication_ = std::clamp(amount, 0.0f, 1.0f); }
     void setMountHeightOffset(float offset) { mountHeightOffset_ = offset; }
     void setExternalFollow(bool enabled) { externalFollow_ = enabled; }
+    /// Where the orbit camera looks from instead of the followed character:
+    /// the unit named by PLAYER_FARSIGHT (a possessed unit), or nothing.
+    void setViewTarget(std::optional<glm::vec3> target) { viewTarget_ = target; }
     void setExternalMoving(bool moving) { externalMoving_ = moving; }
     /// The server holds the character (SMSG_CLIENT_CONTROL_UPDATE allowMove=0:
     /// confuse, fear, charm). Keys and mouse steering no longer move or turn it;
@@ -522,6 +525,7 @@ private:
     float currentDistance = kStartDistance;     // Distance the zoom has reached
     float collisionDistance = kStartDistance;   // Max allowed by collision
     bool externalFollow_ = false;
+    std::optional<glm::vec3> viewTarget_;
     static constexpr float MIN_DISTANCE = 0.5f;     // Minimum zoom (first-person threshold)
     float distanceMax_ = 15.0f;          // cameraDistanceMax default
     float distanceMaxFactor_ = 1.0f;     // cameraDistanceMaxFactor default

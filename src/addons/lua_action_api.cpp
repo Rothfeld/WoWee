@@ -368,9 +368,55 @@ static void setCursorType(lua_State* L, CursorType type) {
     }
 }
 
+// Bonus bar five while the player possesses a unit: action slots 121-130 are
+// the possessed unit's ten actions from SMSG_PET_SPELLS (build 8606 under
+// Mind Control: HasAction true for 121-130, GetBonusBarOffset() 5). A spell
+// there is cast by the possessed unit.
+static bool possessSlot(game::GameHandler* gh, int slot1, uint32_t& packed) {
+    if (!gh || slot1 < 121 || slot1 > 120 + game::GameHandler::PET_ACTION_BAR_SLOTS) return false;
+    if (gh->getPossessedGuid() == 0) return false;
+    packed = gh->getPetActionSlot(slot1 - 121);
+    return true;
+}
+static uint32_t possessSpell(uint32_t packed) {
+    const auto type = game::pet::petActionType(packed);
+    if (type == game::pet::ActionType::Command || type == game::pet::ActionType::Reaction) return 0;
+    return game::pet::petActionId(packed);
+}
+// The icon of a possessed unit's command or stance: build 8606 controlling a
+// Human Footman draws Ability_GhoulFrenzy, Ability_Tracking,
+// Spell_Nature_TimeStop (attack, follow, stay) and Ability_Racial_BloodRage,
+// Ability_Defend, Ability_Seal (aggressive, defensive, passive) - the
+// PET_*_TEXTURE globals.
+static const char* possessTokenTexture(uint32_t packed) {
+    const uint32_t action = game::pet::petActionId(packed);
+    switch (game::pet::petActionType(packed)) {
+        case game::pet::ActionType::Command:
+            switch (action) {
+                case game::pet::kStay: return "PET_WAIT_TEXTURE";
+                case game::pet::kFollow: return "PET_FOLLOW_TEXTURE";
+                case game::pet::kAttack: return "PET_ATTACK_TEXTURE";
+                case game::pet::kAbandon: return "PET_DISMISS_TEXTURE";
+                default: return nullptr;
+            }
+        case game::pet::ActionType::Reaction:
+            switch (action) {
+                case game::pet::kPassive: return "PET_PASSIVE_TEXTURE";
+                case game::pet::kDefensive: return "PET_DEFENSIVE_TEXTURE";
+                case game::pet::kAggressive: return "PET_AGGRESSIVE_TEXTURE";
+                default: return nullptr;
+            }
+        default: return nullptr;
+    }
+}
+
 static int lua_HasAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnFalse(L); }
+    if (uint32_t packed; possessSlot(gh, static_cast<int>(luaL_checknumber(L, 1)), packed)) {
+        lua_pushboolean(L, packed != 0);
+        return 1;
+    }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1; // WoW uses 1-indexed slots
     lua_pushboolean(L, game::shownAction(*gh, slot) != nullptr);
     return 1;
@@ -380,6 +426,16 @@ static int lua_HasAction(lua_State* L) {
 static int lua_GetActionTexture(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
+    if (uint32_t packed; possessSlot(gh, static_cast<int>(luaL_checknumber(L, 1)), packed)) {
+        if (const char* token = possessTokenTexture(packed)) {
+            lua_getglobal(L, token);
+            return 1;
+        }
+        const uint32_t spell = possessSpell(packed);
+        const std::string icon = spell ? gh->getSpellIconPath(spell) : std::string{};
+        if (icon.empty()) lua_pushnil(L); else lua_pushstring(L, icon.c_str());
+        return 1;
+    }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
     const auto* shown = game::shownAction(*gh, slot);
     if (!shown) {
@@ -441,6 +497,11 @@ static int lua_IsCurrentAction(lua_State* L) {
 static int lua_IsUsableAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); lua_pushboolean(L, 0); return 2; }
+    if (uint32_t packed; possessSlot(gh, static_cast<int>(luaL_checknumber(L, 1)), packed)) {
+        lua_pushboolean(L, packed != 0);
+        lua_pushboolean(L, 0);
+        return 2;
+    }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
     const auto* shown = game::shownAction(*gh, slot);
     if (!shown) {
@@ -499,6 +560,10 @@ static int lua_IsActionInRange(lua_State* L) {
 static int lua_GetActionInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return 0; }
+    // Nothing for a possessed unit's action, its spells included: build 8606
+    // controlling a Human Footman answers nil for 121-130 while
+    // GetActionTexture names each icon.
+    if (uint32_t packed; possessSlot(gh, static_cast<int>(luaL_checknumber(L, 1)), packed)) return 0;
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
     const auto* shown = game::shownAction(*gh, slot);
     if (!shown) {
@@ -678,6 +743,17 @@ static int lua_UseAction(lua_State* L) {
                             s_cursorType == CursorType::MACRO)) {
         lua_settop(L, 1);
         return lua_PlaceAction(L);
+    }
+    if (uint32_t packed; possessSlot(gh, static_cast<int>(luaL_checknumber(L, 1)), packed)) {
+        if (packed == 0) return 0;
+        uint64_t target = gh->hasTarget() ? gh->getTargetGuid() : 0;
+        if (const char* unit = lua_tostring(L, 2); unit && *unit) {
+            std::string uid(unit);
+            toLowerInPlace(uid);
+            if (const uint64_t named = resolveUnitGuid(gh, uid)) target = named;
+        }
+        gh->sendPetAction(packed, target);
+        return 0;
     }
     int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
     const auto* shown = game::shownAction(*gh, slot);
