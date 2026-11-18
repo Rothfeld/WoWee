@@ -446,6 +446,37 @@ struct Widget {
         return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
     }
 
+    /// The value a bar holds after being given `v`, as build 8606 stores it.
+    ///
+    /// Inside the range, always: SetValue(50) on a 0..32 bar reads back 32,
+    /// for a StatusBar and a Slider alike. A slider with a step also lands on
+    /// a step counted from the minimum, rounded to the nearest (half up) - and
+    /// the last whole step before the maximum is the maximum itself, so 0..50
+    /// by 16 holds 0, 16, 32 and 50, never 48. A range shorter than one step
+    /// holds only its minimum. Measured on the 2.4.3 client:
+    ///
+    ///     0..50 by 16:  7->0  8->16  25->32  41->50  49->50
+    ///     3..50 by 16:  8->3  24->19  30->50
+    ///     0..10 by 4:   1->0  2->4  5->4  6->10
+    ///     0..10 by 16:  9->0  10->0
+    ///
+    /// FauxScrollFrame_Update gives its scroll bar a range of whole rows and a
+    /// step of one row, so this is what keeps the bar - and the list offset
+    /// read off it - on a row when the arrows or the wheel move it by half the
+    /// bar's height.
+    [[nodiscard]] float barSettle(float v) const {
+        const float lo = barMin;
+        const float hi = barMax > barMin ? barMax : barMin;
+        v = v < lo ? lo : (v > hi ? hi : v);
+        if (!isSlider || !(sliderStep > 0.0f)) return v;
+        // Whole steps in the range; the epsilon keeps 0.3 by 0.1 at three.
+        const float steps = (hi - lo) / sliderStep;
+        const float whole = static_cast<float>(static_cast<long long>(steps + steps * 1e-5f));
+        if (whole < 1.0f) return lo;
+        const float k = static_cast<float>(static_cast<long long>((v - lo) / sliderStep + 0.5f));
+        return k >= whole ? hi : lo + k * sliderStep;
+    }
+
     /// A SimpleHTML holds one block of text on the frame itself, the way an
     /// edit box and a message frame do - the interface calls SetText on the
     /// frame rather than on a font string inside it. ItemTextFrame's page is

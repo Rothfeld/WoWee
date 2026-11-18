@@ -1196,7 +1196,14 @@ uint32_t WidgetTree::hitTestFor(float x, float y, bool forWheel) const {
         // The wheel is enabled separately from the mouse and a scroll frame
         // asks for only the wheel, so requiring mouseEnabled for both hid
         // every one of them from the cursor.
-        if (!w.mouseEnabled && !(forWheel && w.wheelEnabled)) continue;
+        //
+        // And for the wheel, only those: a frame that takes the mouse and not
+        // the wheel is passed through. On 2.4.3 a FauxScrollFrame's rows are
+        // buttons laid over the scroll frame as its siblings, and the wheel
+        // over a row scrolls the list (MangAdmin's teleport lists, measured).
+        // Stopping at the row and walking up its parents never reached the
+        // scroll frame.
+        if (forWheel ? !w.wheelEnabled : !w.mouseEnabled) continue;
         if (w.rectW <= 0.0f || w.rectH <= 0.0f) continue;
         // A rect with a NaN in it matches *everything*. Every comparison
         // against a NaN is false, so both `x < left` and `x > right` are false

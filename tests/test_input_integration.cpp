@@ -351,6 +351,103 @@ TEST_CASE_METHOD(Integration, "Real wheel handlers own fractional UI travel and 
     CHECK(glm::length(camera.getPosition() - before) > 0.0001f);
 }
 
+// Build 8606 measurements: _experiments/20261118T140302.014047Z.faux_scroll_api
+// (probe*.txt typed into the 2.4.3 client's chat, probe*_original.png).
+TEST_CASE_METHOD(Integration, "Sliders, status bars and scroll frames hold values as 2.4.3 does",
+                 "[lua][scroll][faux]") {
+    run(R"lua(
+        s = CreateFrame('Slider', nil, UIParent)
+        changed = 0
+        s:SetScript('OnValueChanged', function() changed = changed + 1 end)
+        function settle(lo, hi, list)
+            s:SetMinMaxValues(lo, hi)
+            local out = {}
+            for _, v in ipairs(list) do s:SetValue(v); out[#out + 1] = s:GetValue() end
+            return table.concat(out, ' ')
+        end
+    )lua");
+    // A new slider spans 0..0.
+    truth("select(2, s:GetMinMaxValues()) == 0");
+    // Clamped, without a step; one handler run per real change.
+    truth("settle(0, 32, {50}) == '32' and changed == 1");
+    run("s:SetValue(50)");
+    truth("changed == 1");
+    truth("settle(0, 32, {-5}) == '0' and changed == 2");
+    // On a step counted from the minimum; the last whole step is the maximum.
+    run("s:SetValueStep(16)");
+    truth("settle(0, 50, {41, 43, 30, 8, 7, 24, 25, 49}) == '50 50 32 16 0 32 32 50'");
+    truth("settle(3, 50, {41, 43, 30, 8, 7, 24, 25, 49}) == '50 50 50 3 3 19 19 50'");
+    truth("settle(0, 10, {10, 9.9}) == '0 0'");
+    run("s:SetValueStep(4)");
+    truth("settle(0, 10, {0, 1, 2, 3, 5, 6, 7, 10}) == '0 0 4 4 4 10 10 10'");
+    // A new range or step moves the value onto it, and says so.
+    run("s:SetValueStep(16); s:SetMinMaxValues(0, 100); s:SetValue(32); changed = 0; s:SetMinMaxValues(0, 40)");
+    truth("s:GetValue() == 40 and changed == 1");
+    run("s:SetValueStep(0); s:SetMinMaxValues(0, 100); s:SetValue(33); changed = 0; s:SetValueStep(16)");
+    truth("s:GetValue() == 32 and changed == 1");
+
+    // A status bar is clamped too, on SetValue and on a new range.
+    run(R"lua(
+        bar = CreateFrame('StatusBar', nil, UIParent)
+        bar:SetMinMaxValues(0, 10); bar:SetValue(20)
+        high = bar:GetValue(); bar:SetValue(-3); low = bar:GetValue()
+        bar:SetValue(7); barChanged = 0
+        bar:SetScript('OnValueChanged', function() barChanged = barChanged + 1 end)
+        bar:SetMinMaxValues(0, 5)
+    )lua");
+    truth("high == 10 and low == 0 and bar:GetValue() == 5 and barChanged == 1");
+
+    // A scroll frame keeps the offset it is given, past its range either way.
+    run(R"lua(
+        sf = CreateFrame('ScrollFrame', nil, UIParent)
+        sf:SetWidth(100); sf:SetHeight(100); sf:SetPoint('CENTER')
+        child = CreateFrame('Frame', nil, sf); child:SetWidth(100); child:SetHeight(50)
+        sf:SetScrollChild(child)
+        scrolled = 0
+        sf:SetScript('OnVerticalScroll', function(self, value) scrolled = scrolled + 1; last = value end)
+        sf:SetVerticalScroll(32); sf:SetVerticalScroll(32)
+    )lua");
+    truth("sf:GetVerticalScrollRange() == 0 and sf:GetVerticalScroll() == 32 and scrolled == 1 and last == 32");
+    run("sf:SetVerticalScroll(-7)");
+    truth("sf:GetVerticalScroll() == -7 and scrolled == 2");
+
+    // FauxScrollFrame's arithmetic on MangAdmin's teleport list: 20 rows of
+    // 16 in a frame 225 tall, 12 shown. The bar runs to 128 and the real
+    // range is 95; the end of the bar has to reach row 8, the last offset.
+    run(R"lua(
+        list = CreateFrame('ScrollFrame', nil, UIParent)
+        list:SetWidth(224); list:SetHeight(225); list:SetPoint('CENTER')
+        rows = CreateFrame('Frame', nil, list); rows:SetWidth(224); rows:SetHeight(20 * 16)
+        list:SetScrollChild(rows)
+        list.offset = 0
+        listBar = CreateFrame('Slider', nil, list)
+        listBar:SetScript('OnValueChanged', function(self, value) list:SetVerticalScroll(value) end)
+        list:SetScript('OnVerticalScroll', function(self, value)
+            self.offset = math.floor(value / 16 + 0.5)
+        end)
+        listBar:SetMinMaxValues(0, (20 - 12) * 16); listBar:SetValueStep(16)
+        listBar:SetValue(0 + 193 / 2)   -- ScrollFrameTemplate_OnMouseWheel: half the bar
+    )lua");
+    truth("listBar:GetValue() == 96 and list.offset == 6");
+    run("listBar:SetValue(listBar:GetValue() + 193 / 2)");
+    truth("listBar:GetValue() == 128 and list.offset == 8");
+
+    // The wheel over a row laid on the list - a sibling button taking the
+    // mouse and not the wheel - reaches the scroll frame below it.
+    run(R"lua(
+        wheelFrame = CreateFrame('Frame', nil, UIParent)
+        wheelFrame:SetWidth(300); wheelFrame:SetHeight(300); wheelFrame:SetPoint('CENTER')
+        wheelFrame:EnableMouseWheel(true)
+        wheeled = 0; wheelFrame:SetScript('OnMouseWheel', function() wheeled = wheeled + 1 end)
+        row = CreateFrame('Button', nil, UIParent)
+        row:SetWidth(300); row:SetHeight(300); row:SetPoint('CENTER'); row:SetFrameStrata('HIGH')
+        row:EnableMouse(true)
+    )lua");
+    layout();
+    REQUIRE(lua.dispatchMouseWheel(400, 300, 1.0f));
+    truth("wheeled == 1");
+}
+
 // Build 8606 measurements: _experiments/20261117T202346.492175Z.camera_max_distance.
 TEST_CASE_METHOD(Integration, "Camera zoom follows the original's distance CVars", "[camera][zoom]") {
     rendering::Camera camera;

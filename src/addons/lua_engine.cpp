@@ -1393,36 +1393,40 @@ float scrollOffsetArg(lua_State* L, int index) {
     return std::isnan(v) ? 0.0f : static_cast<float>(v);
 }
 
+/// Not clamped to the scroll range. The 2.4.3 client stores what it is given
+/// - SetVerticalScroll(32) on a frame whose child fits reads back 32, and -7
+/// reads back -7 - and runs OnVerticalScroll with it.
+///
+/// A FauxScrollFrame depends on that. Its scroll child is the rows times the
+/// row height, so a list whose frame is a little taller than the rows it shows
+/// has a real range smaller than its scroll bar's: MangAdmin's teleport list
+/// is 225 tall for 12 rows of 16, and with 20 entries the range was 95 while
+/// the bar ran to 128. Clamped, the bar's end scrolled to 95, the offset
+/// FauxScrollFrame_OnVerticalScroll reads off it came to 6 instead of 8, and
+/// the last two destinations could never be shown. The scroll bar is what
+/// keeps a real scroll frame inside its range - ScrollFrame_OnScrollRangeChanged
+/// gives the bar that range - so nothing is lost by storing the value as given.
 int lua_ScrollFrame_SetVerticalScroll(lua_State* L) {
-    auto* tree = wowee::addons::getWidgetTree(L);
-    const uint32_t id = widgetIdOf(L, 1);
-    if (!tree || id == 0) return 0;
-    if (auto* w = tree->get(id)) {
-        const float v = scrollOffsetArg(L, 2);
-        const float max = scrollRange(*tree, id, true);
-        const float clamped = (v < 0.0f) ? 0.0f : (v > max ? max : v);
-        const bool moved = (clamped != w->scrollY);
-        w->scrollY = clamped;
-        // OnVerticalScroll is how the scroll bar beside the frame learns where
-        // the frame now is; UIPanelScrollFrameTemplate's body sets the bar's
-        // value from it. Announced only on a change, because the interface
-        // sets the scroll it already has on every update.
-        if (moved) callScriptOnTable(L, 1, "OnVerticalScroll", clamped);
-    }
+    auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    const float v = scrollOffsetArg(L, 2);
+    const bool moved = (v != w->scrollY);
+    w->scrollY = v;
+    // OnVerticalScroll is how the scroll bar beside the frame learns where
+    // the frame now is; UIPanelScrollFrameTemplate's body sets the bar's
+    // value from it. Announced only on a change, because the interface
+    // sets the scroll it already has on every update - and the 2.4.3 client
+    // runs it once for the same value set twice.
+    if (moved) callScriptOnTable(L, 1, "OnVerticalScroll", v);
     return 0;
 }
 int lua_ScrollFrame_SetHorizontalScroll(lua_State* L) {
-    auto* tree = wowee::addons::getWidgetTree(L);
-    const uint32_t id = widgetIdOf(L, 1);
-    if (!tree || id == 0) return 0;
-    if (auto* w = tree->get(id)) {
-        const float v = scrollOffsetArg(L, 2);
-        const float max = scrollRange(*tree, id, false);
-        const float clamped = (v < 0.0f) ? 0.0f : (v > max ? max : v);
-        const bool moved = (clamped != w->scrollX);
-        w->scrollX = clamped;
-        if (moved) callScriptOnTable(L, 1, "OnHorizontalScroll", clamped);
-    }
+    auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    const float v = scrollOffsetArg(L, 2);
+    const bool moved = (v != w->scrollX);
+    w->scrollX = v;
+    if (moved) callScriptOnTable(L, 1, "OnHorizontalScroll", v);
     return 0;
 }
 int lua_ScrollFrame_GetVerticalScroll(lua_State* L) {
@@ -5675,10 +5679,40 @@ int lua_Frame_SetBackdropBorderColor(lua_State* L) {
     return 0;
 }
 
+/// Store a bar's value and, when that changed it, run OnValueChanged with it.
+///
+/// Called through the table so the handler runs with self, and only on a real
+/// change, because several of these set the value they already have on every
+/// update - which also stops a handler that sets its own bar from recurring.
+/// The 2.4.3 client is the same: SetValue(50) twice runs the handler once.
+static void storeBarValue(lua_State* L, wowee::ui::Widget* w, float value) {
+    if (value == w->barValue) return;
+    w->barValue = value;
+    lua_getfield(L, 1, "__scripts");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "OnValueChanged");
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, 1);
+            lua_pushnumber(L, value);
+            if (pcallScript(L, "OnValueChanged", 2, 0) != 0)
+                recordScriptError(L, "OnValueChanged");
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+}
+
+/// A new range pulls the value into it, and onto the slider's steps, with
+/// OnValueChanged when that moved it - measured on 2.4.3: a bar at 7 given
+/// 0..5 reads 5 and has run its handler, and a slider at 32 by 16 given 0..40
+/// reads 40. ScrollFrame_OnScrollRangeChanged leans on it, shrinking the bar
+/// under a list that got shorter.
 int lua_StatusBar_SetMinMaxValues(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         w->barMin = static_cast<float>(luaL_optnumber(L, 2, 0.0));
         w->barMax = static_cast<float>(luaL_optnumber(L, 3, 1.0));
+        storeBarValue(L, w, w->barSettle(w->barValue));
     }
     return 0;
 }
@@ -5691,9 +5725,11 @@ int lua_StatusBar_GetMinMaxValues(lua_State* L) {
 int lua_StatusBar_SetValue(lua_State* L) {
     auto* w = widgetOf(L, 1);
     if (!w) return 0;
-    const float value = static_cast<float>(luaL_optnumber(L, 2, 0.0));
-    const bool changed = (value != w->barValue);
-    w->barValue = value;
+    // Kept inside the range and, for a slider, on its steps - see barSettle.
+    // FauxScrollFrame lists depend on it: the arrows and the wheel move the
+    // bar by half its height, and only the clamp and the step bring that back
+    // to a whole row inside the list.
+    const float value = w->barSettle(static_cast<float>(luaL_optnumber(L, 2, 0.0)));
 
     // A value set from code fires OnValueChanged, as in WoW - for a status bar
     // as well as a slider. The note here used to say a status bar does not,
@@ -5706,26 +5742,7 @@ int lua_StatusBar_SetValue(lua_State* L) {
     // bar was last touched, and only corrected itself when the cursor crossed
     // the bar and OnEnter refreshed the text by another route. Killing a mob
     // moved the fill and left the percentage stale.
-    //
-    // Called through the table so the handler runs with self, and only on a
-    // real change, because several of these set the value they already have on
-    // every update - which also stops a handler that sets its own bar from
-    // recurring.
-    if (changed) {
-        lua_getfield(L, 1, "__scripts");
-        if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "OnValueChanged");
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, 1);
-                lua_pushnumber(L, value);
-                if (pcallScript(L, "OnValueChanged", 2, 0) != 0)
-                    recordScriptError(L, "OnValueChanged");
-            } else {
-                lua_pop(L, 1);
-            }
-        }
-        lua_pop(L, 1);
-    }
+    storeBarValue(L, w, value);
     return 0;
 }
 /// ColorSelect:SetColorRGB(r, g, b) - the colour the picker is showing.
@@ -6161,9 +6178,13 @@ int lua_Cooldown_Clear(lua_State* L) {
     return 0;
 }
 
+/// A new step puts the value on it straight away, firing OnValueChanged when
+/// that moves it: on 2.4.3 a slider at 33.3 given a step of 16 reads 32.
 int lua_Slider_SetValueStep(lua_State* L) {
-    if (auto* w = widgetOf(L, 1))
+    if (auto* w = widgetOf(L, 1)) {
         w->sliderStep = static_cast<float>(luaL_optnumber(L, 2, 0.0));
+        storeBarValue(L, w, w->barSettle(w->barValue));
+    }
     return 0;
 }
 int lua_Slider_GetValueStep(lua_State* L) {
@@ -6540,6 +6561,9 @@ static int lua_CreateFrame(lua_State* L) {
             // explicit SetOrientation from the XML still overrides this, since
             // the emitter writes it after the frame is created.
             if (w->isSlider) w->barVertical = true;
+            // A new slider's range is 0..0 on 2.4.3, so a value set before
+            // SetMinMaxValues reads back 0, as it does there.
+            if (w->isSlider) w->barMax = 0.0f;
             w->isCooldown = (ft == "Cooldown");
             // Marked at creation rather than only when a child is set, so a
             // scroll frame clips what is under it even while it is empty.
@@ -12393,12 +12417,8 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                                        : (x - w->left) / extent;
                 }
                 f = std::clamp(f, 0.0f, 1.0f);
-                float value = w->barMin + f * span;
-                if (w->sliderStep > 0.0f) {
-                    value = w->barMin +
-                            std::round((value - w->barMin) / w->sliderStep) * w->sliderStep;
-                    value = std::clamp(value, w->barMin, w->barMax);
-                }
+                // On the slider's steps the same way SetValue puts it there.
+                const float value = w->barSettle(w->barMin + f * span);
                 if (value != w->barValue) {
                     w->barValue = value;
                     // With the value, because that is the argument the handler
