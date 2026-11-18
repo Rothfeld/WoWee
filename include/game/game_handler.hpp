@@ -3583,6 +3583,12 @@ public:
     void requestItemRefundInfo(uint64_t itemGuid);
     /// Hand an item back for what was paid for it.
     void refundItem(uint64_t itemGuid);
+    /// SMSG_LOOT_LIST: the master looter and current looter of a corpse.
+    struct LootList { uint64_t master = 0; uint64_t looter = 0; };
+    const LootList* getLootList(uint64_t corpse) const {
+        const auto it = lootLists_.find(corpse);
+        return it != lootLists_.end() ? &it->second : nullptr;
+    }
     const ItemRefundInfo* getItemRefundInfo(uint64_t itemGuid) const {
         auto it = itemRefundInfo_.find(itemGuid);
         return (it != itemRefundInfo_.end()) ? &it->second : nullptr;
@@ -4612,6 +4618,7 @@ private:
     // ---- Online item tracking ----
     std::unordered_map<uint64_t, OnlineItemInfo> onlineItems_;
     std::unordered_map<uint64_t, ItemRefundInfo> itemRefundInfo_;
+    std::unordered_map<uint64_t, LootList> lootLists_;
     std::set<uint64_t> itemRefundAsked_;
     std::unordered_map<uint32_t, ItemQueryResponseData> itemInfoCache_;
     std::unordered_set<uint32_t> pendingItemQueries_;

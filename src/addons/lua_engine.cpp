@@ -3204,55 +3204,84 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         }
     }
 
-    // Native NPC tooltips use white level text, independently of level difficulty.
+    // The level line, from the native GlobalStrings, as 2.4.3 draws it
+    // (measured, GM Island): "Level 60 Human Rogue (Player)", "Level 70
+    // Demon", "Level 55 Humanoid (Elite)" for rank 1 and rare elite rank 2,
+    // "Level ?? Demon (Boss)" for rank 3 (UnitLevel -1), "Level 54 Humanoid"
+    // for a rare (rank 4 adds nothing). A corpse puts CORPSE in the type's
+    // place and keeps the classification: "Level 55 Corpse (Elite)", "Level
+    // ?? Corpse (Boss)". White, whatever the level difficulty.
+    auto global = [L](const char* name) {
+        lua_getglobal(L, name);
+        assert(lua_isstring(L, -1));
+        std::string text = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        return text;
+    };
+    auto format = [](std::string pattern, std::initializer_list<std::string> args) {
+        for (const auto& arg : args) {
+            const size_t at = pattern.find("%s");
+            assert(at != std::string::npos);
+            pattern.replace(at, 2, arg);
+        }
+        assert(pattern.find("%s") == std::string::npos);
+        return pattern;
+    };
+    auto callUnitString = [L, &uidStr](const char* function) {
+        lua_getglobal(L, function);
+        lua_pushstring(L, uidStr.c_str());
+        lua_call(L, 1, 1);
+        std::string text = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        return text;
+    };
     if (entity) {
-        const uint32_t level =
-            entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_LEVEL));
-        if (level > 0) {
-            std::string levelLine = "Level " + std::to_string(level);
-            if (isCorpse) {
-                lua_getglobal(L, "CORPSE");
-                assert(lua_isstring(L, -1));
-                levelLine += std::string(" ") + lua_tostring(L, -1);
-                lua_pop(L, 1);
-            } else if (isPlayer) {
-                const uint32_t bytes0 =
-                    entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
-                const unsigned classId = (bytes0 >> 8) & 0xFFu;
-                if (const char* cls = wowee::addons::luaClassToken(classId)) {
-                    (void)cls;
-                    levelLine += " ";
-                    levelLine += wowee::addons::kLuaClasses[classId];
-                }
-            }
-            if (!isPlayer && !isCorpse) {
-                if (!isCompanion) {
-                    lua_getglobal(L, "UnitCreatureType");
-                    lua_pushstring(L, uidStr.c_str());
-                    lua_call(L, 1, 1);
-                    if (lua_isstring(L, -1)) {
-                        levelLine += std::string(" ") + lua_tostring(L, -1);
-                    }
-                    lua_pop(L, 1);
-                }
-                const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+        lua_getglobal(L, "UnitLevel");
+        lua_pushstring(L, uidStr.c_str());
+        lua_call(L, 1, 1);
+        const int level = static_cast<int>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        if (level != 0) {
+            const std::string levelText = level < 0 ? "??" : std::to_string(level);
+            std::string levelLine;
+            if (isPlayer) {
+                levelLine = format(global("TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE"),
+                                   {levelText, callUnitString("UnitRace"), callUnitString("UnitClass"), global("PLAYER")});
+            } else {
+                const std::string kind = isCorpse ? global("CORPSE")
+                                                  : (isCompanion ? std::string() : callUnitString("UnitCreatureType"));
                 const int rank = unit ? gh->getCreatureRank(unit->getEntry()) : 0;
-                const char* label = nullptr;
-                switch (rank) {
-                    case 1: label = "ELITE"; break;
-                    case 2: label = "ELITE"; break;
-                    case 3: label = "BOSS"; break;
-                    case 4: label = "ITEM_QUALITY3_DESC"; break;
-                    default: break;
-                }
-                if (label) {
-                    lua_getglobal(L, label);
-                    assert(lua_isstring(L, -1));
-                    levelLine += std::string(" (") + lua_tostring(L, -1) + ")";
-                    lua_pop(L, 1);
-                }
+                const std::string classification = (rank == 1 || rank == 2) ? global("ELITE")
+                                                 : rank == 3 ? global("BOSS") : std::string();
+                if (!kind.empty() && !classification.empty())
+                    levelLine = format(global("TOOLTIP_UNIT_LEVEL_CLASS_TYPE"), {levelText, kind, classification});
+                else if (!kind.empty())
+                    levelLine = format(global("TOOLTIP_UNIT_LEVEL_CLASS"), {levelText, kind});
+                else if (!classification.empty())
+                    levelLine = format(global("TOOLTIP_UNIT_LEVEL_TYPE"), {levelText, classification});
+                else
+                    levelLine = format(global("TOOLTIP_UNIT_LEVEL"), {levelText});
             }
             addLine(levelLine, 1.0f, 1.0f, 1.0f);
+        }
+    }
+
+    // Who may loot a corpse, from SMSG_LOOT_LIST, under the level line in
+    // white: "Master Looter: <master>" under master loot, then "Loot:
+    // <current looter>" - group loot, need before greed and round robin
+    // follow the packet's looter kill by kill. Free for all sends no list and
+    // shows neither. Measured on native with Edrike and Edrice grouped.
+    if (isCorpse) {
+        if (const auto* list = gh->getLootList(guid)) {
+            for (const auto& [who, label] : {std::pair{list->master, "MASTER_LOOTER"}, std::pair{list->looter, "LOOT"}}) {
+                if (!who) continue;
+                const std::string looterName = gh->lookupName(who);
+                if (looterName.empty()) {
+                    LOG_WARNING("Unit tooltip: no name for looter 0x", std::hex, who, std::dec);
+                    continue;
+                }
+                addLine(global(label) + ": " + looterName, 1.0f, 1.0f, 1.0f);
+            }
         }
     }
 

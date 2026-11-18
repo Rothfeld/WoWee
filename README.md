@@ -1148,6 +1148,23 @@ M2 floor rays query both local floor and wall triangle grids. A barrel placed
 on its side can support a player on triangles classified as walls before
 placement. Walkability is evaluated using transformed world-space normals.
 
+### Unit tooltip level and loot lines
+
+The level line is built from GlobalStrings as 2.4.3 draws it: players
+`TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE` ("Level 60 Human Rogue (Player)"),
+creatures `TOOLTIP_UNIT_LEVEL_CLASS[_TYPE]` with the creature type and ELITE
+for rank 1 and rare elite 2, BOSS for rank 3 ("Level 55 Humanoid (Elite)",
+"Level ?? Demon (Boss)"; UnitLevel answers -1 for rank 3), nothing for rare
+(rank 4: "Level 54 Humanoid"). A corpse puts CORPSE in the type's place and
+keeps the classification ("Level 55 Corpse (Elite)", "Level ?? Corpse
+(Boss)"). In a group, a corpse's tooltip adds "Master Looter: <name>" under
+master loot and "Loot: <name>" (LOOT, MASTER_LOOTER) from SMSG_LOOT_LIST
+(corpse guid, packed master, packed current looter). Group loot, need before
+greed and round robin name the packet's looter, alternating kill by kill;
+free for all sends no list and shows neither; alive tapped units show none.
+Measured on GM Island with Edrike and Edrice grouped:
+`_experiments/20261118T094616Z.group_loot_tooltip/` in the workspace root.
+
 ### Tooltip text layout
 
 ```sh

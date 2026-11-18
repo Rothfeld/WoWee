@@ -3323,8 +3323,20 @@ void GameHandler::registerRemainingOpcodes() {
         itemRefundInfo_[itemGuid] = info;
         fireAddonEvent("UPDATE_INVENTORY_ALERTS", {});
     };
-    // Consume silently - informational, no UI action needed
-    registerSkipHandler(Opcode::SMSG_LOOT_LIST);
+    // Who may loot a corpse under a group loot method: the corpse, the master
+    // looter (packed, 0 unless master loot) and the current looter (packed).
+    // CMaNGOS Loot::SendAllowedLooter sends it to every member with a share
+    // of the loot when the loot is made, and not for free for all.
+    dispatchTable_[Opcode::SMSG_LOOT_LIST] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(8 + 1 + 1)) { packet.skipAll(); return; }
+        const uint64_t corpse = packet.readUInt64();
+        const uint64_t master = packet.readPackedGuid();
+        const uint64_t looter = packet.hasRemaining(1) ? packet.readPackedGuid() : 0;
+        // Entries for corpses that have since left the world go with the next one.
+        std::erase_if(lootLists_, [this](const auto& entry) { return !getEntityManager().getEntity(entry.first); });
+        lootLists_[corpse] = {.master = master, .looter = looter};
+        LOG_INFO("SMSG_LOOT_LIST: corpse=0x", std::hex, corpse, " master=0x", master, " looter=0x", looter, std::dec);
+    };
     // Same format as LOCKOUT_ADDED; consume
     registerSkipHandler(Opcode::SMSG_CALENDAR_RAID_LOCKOUT_UPDATED);
     // Sent one line before SMSG_DESTROY_OBJECT and carrying the same guid, and
