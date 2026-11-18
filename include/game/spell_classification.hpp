@@ -268,6 +268,50 @@ inline uint32_t resolveHighestKnownRank(
     return best != 0 ? best : spellId;
 }
 
+/// What IsHarmfulSpell and IsHelpfulSpell answer, from the implicit targets
+/// (A and B) of a spell's three effects.
+///
+/// Measured on the 2.4.3 client over 80 spells covering every target value
+/// the learnable spells use (_experiments/20261117T2356Z.lua_api_stubs/):
+/// - Harmful when any effect aims at an enemy: Hunter's Mark (25, 6, 6),
+///   Eviscerate (6, 1), Arcane Missiles (1, 6) and Force of Nature (8, 16)
+///   are all harmful.
+/// - Otherwise helpful when the first effect with a target aims at the caster
+///   or a friend: Tree of Life (0, 1, 1) and Maypole (1, 25, 1) are helpful,
+///   Mind Vision (25, 1, 25), Revive Pet (47, 1) and Fishing (39, 0, 1) are
+///   neither.
+/// - Values outside both sets read neither: 0, 23, 25, 26, 32, 39, 41-44, 47,
+///   52 and 77 (Arcane Missile 7268 targets 77 and is neither).
+enum class SpellDisposition { Neither, Harmful, Helpful };
+
+inline bool isHostileImplicitTarget(uint32_t target) {
+    switch (target) {
+        case 6: case 15: case 16: case 24: case 28: case 53: return true;
+        default: return false;
+    }
+}
+
+inline bool isFriendlyImplicitTarget(uint32_t target) {
+    switch (target) {
+        case 1: case 5: case 20: case 21: case 27: case 29: case 30: case 31:
+        case 33: case 34: case 35: case 37: case 45: case 57: case 61: return true;
+        default: return false;
+    }
+}
+
+inline SpellDisposition spellDisposition(const uint32_t targetsA[3], const uint32_t targetsB[3]) {
+    for (int e = 0; e < 3; ++e) {
+        if (isHostileImplicitTarget(targetsA[e]) || isHostileImplicitTarget(targetsB[e]))
+            return SpellDisposition::Harmful;
+    }
+    for (int e = 0; e < 3; ++e) {
+        if (targetsA[e] == 0) continue;
+        return isFriendlyImplicitTarget(targetsA[e]) || isFriendlyImplicitTarget(targetsB[e])
+            ? SpellDisposition::Helpful : SpellDisposition::Neither;
+    }
+    return SpellDisposition::Neither;
+}
+
 } // namespace spellclass
 } // namespace game
 } // namespace wowee

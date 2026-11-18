@@ -8,6 +8,7 @@
 #include "addons/lua_engine.hpp"
 #include "core/logger.hpp"
 #include <set>
+#include <optional>
 #include <limits>
 
 namespace wowee::addons {
@@ -766,6 +767,47 @@ static int lua_CastSpell(lua_State* L) {
 /// where it would sit doing nothing. Spell.dbc's base attribute word carries
 /// it - bit 6 - beside the Ex word the client already read for
 /// interruptibility.
+/// The spell's disposition, or nullopt when its Spell.dbc row is unknown.
+static std::optional<game::spellclass::SpellDisposition> spellDispositionOf(
+        game::GameHandler& gh, uint32_t spellId) {
+    gh.getSpellName(spellId);
+    const auto found = gh.spellNameCacheRef().find(spellId);
+    if (found == gh.spellNameCacheRef().end()) return std::nullopt;
+    return game::spellclass::spellDisposition(found->second.implicitTargetsA,
+                                              found->second.implicitTargetsB);
+}
+
+/// IsHarmfulSpell / IsHelpfulSpell: (slot, bookType) or a known spell's name.
+///
+/// 2.4.3 answers 1 or nil, and no value at all for a name the player does not
+/// know. A bare spell id is not a form it takes: IsHarmfulSpell(133) answered
+/// nil with Fireball known.
+static int spellDispositionAnswer(lua_State* L, game::spellclass::SpellDisposition want) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    if (lua_isnumber(L, 1) && lua_isnoneornil(L, 2)) { lua_pushnil(L); return 1; }
+    const uint32_t id = spellIdForCall(L, gh);
+    if (id == 0) return 0;
+    const auto disposition = spellDispositionOf(*gh, id);
+    if (disposition == want) lua_pushnumber(L, 1);
+    else lua_pushnil(L);
+    return 1;
+}
+
+/// IsHarmfulItem / IsHelpfulItem: an item id, link or name. The item's
+/// on-use spell decides, classified as above; equip and chance-on-hit spells
+/// do not count (2.4.3: a Shortsword of Vengeance and Gnoll Casting Gloves are
+/// neither, a Minor Healthstone, whose use spell is its second, is helpful).
+static int itemDispositionAnswer(lua_State* L, game::spellclass::SpellDisposition want) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    const uint32_t spell = itemUseSpell(gh, itemIdForCall(L, 1, gh));
+    const auto disposition = spell ? spellDispositionOf(*gh, spell) : std::nullopt;
+    if (disposition == want) lua_pushnumber(L, 1);
+    else lua_pushnil(L);
+    return 1;
+}
+
 static int lua_IsPassiveSpell(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnil(L); return 1; }
@@ -1319,6 +1361,18 @@ void registerSpellLuaAPI(lua_State* L) {
                 {"SetMultiCastSpell", lua_SetMultiCastSpell},
                 {"CastSpell",         lua_CastSpell},
                 {"IsPassiveSpell",    lua_IsPassiveSpell},
+                {"IsHarmfulSpell", [](lua_State* L) -> int {
+            return spellDispositionAnswer(L, game::spellclass::SpellDisposition::Harmful);
+        }},
+                {"IsHelpfulSpell", [](lua_State* L) -> int {
+            return spellDispositionAnswer(L, game::spellclass::SpellDisposition::Helpful);
+        }},
+                {"IsHarmfulItem", [](lua_State* L) -> int {
+            return itemDispositionAnswer(L, game::spellclass::SpellDisposition::Harmful);
+        }},
+                {"IsHelpfulItem", [](lua_State* L) -> int {
+            return itemDispositionAnswer(L, game::spellclass::SpellDisposition::Helpful);
+        }},
                 // 1.12's name for the same question - renamed at 2.0, and
                 // spellbookframe.lua calls it twice from
                 // SpellButton_UpdateButton, which runs every time the book is

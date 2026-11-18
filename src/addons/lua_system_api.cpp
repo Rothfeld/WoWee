@@ -6372,10 +6372,6 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushboolean(L, !(svc && svc->isPlayerIndoors && svc->isPlayerIndoors()));
             return 1;
         }},
-                {"IsHarmfulItem",            lua_ReturnFalse},
-                {"IsHelpfulItem",            lua_ReturnFalse},
-                {"IsHarmfulSpell",           lua_ReturnFalse},
-                {"IsHelpfulSpell",           lua_ReturnFalse},
                 // Shown only while there is something to possess *and* a way
                 // out of it. The bar's second button is the escape - see
                 // GetPossessInfo below - so offering the bar without being

@@ -3834,22 +3834,8 @@ void registerInventoryLuaAPI(lua_State* L) {
                 {"GetItemSpell", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             if (!gh) return luaReturnNil(L);
-            // Either an item id or a name, as everywhere else an item is named.
-            uint32_t itemId = 0;
-            if (lua_isnumber(L, 1)) {
-                itemId = static_cast<uint32_t>(lua_tonumber(L, 1));
-            } else if (const char* s = lua_tostring(L, 1)) {
-                std::string str(s);
-                // An item link carries the id; a bare name has to be matched.
-                const auto pos = str.find("item:");
-                if (pos != std::string::npos) {
-                    itemId = static_cast<uint32_t>(std::strtoul(str.c_str() + pos + 5, nullptr, 10));
-                } else {
-                    for (const auto& [id, info] : gh->getItemInfoCache()) {
-                        if (info.name == str) { itemId = id; break; }
-                    }
-                }
-            }
+            // Either an item id, a link or a name, as everywhere else an item is named.
+            const uint32_t itemId = itemIdForCall(L, 1, gh);
             if (itemId == 0) return luaReturnNil(L);
             const auto* info = gh->getItemInfo(itemId);
             if (!info) return luaReturnNil(L);

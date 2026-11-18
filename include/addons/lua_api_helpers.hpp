@@ -861,6 +861,32 @@ inline uint32_t spellIdForCall(lua_State* L, game::GameHandler* gh) {
     return 0;
 }
 
+/// The item a call names: an item id, an item link ("item:N:...") or a name
+/// already in the item cache. Zero when none of them resolves.
+inline uint32_t itemIdForCall(lua_State* L, int idx, game::GameHandler* gh) {
+    if (!gh) return 0;
+    if (lua_isnumber(L, idx)) return static_cast<uint32_t>(lua_tonumber(L, idx));
+    const char* s = lua_tostring(L, idx);
+    if (!s) return 0;
+    const std::string str(s);
+    if (const auto pos = str.find("item:"); pos != std::string::npos)
+        return static_cast<uint32_t>(std::strtoul(str.c_str() + pos + 5, nullptr, 10));
+    for (const auto& [id, info] : gh->getItemInfoCache()) {
+        if (info.name == str) return id;
+    }
+    return 0;
+}
+
+/// The first on-use (trigger 0) spell of an item, or zero.
+inline uint32_t itemUseSpell(game::GameHandler* gh, uint32_t itemId) {
+    const auto* info = gh && itemId ? gh->getItemInfo(itemId) : nullptr;
+    if (!info) return 0;
+    for (const auto& sp : info->spells) {
+        if (sp.spellId != 0 && sp.spellTrigger == 0) return sp.spellId;
+    }
+    return 0;
+}
+
 inline uint64_t containerSlotGuid(game::GameHandler* gh, int bag, int slot) {
     if (!gh || slot < 1) return 0;
     if (bag == 0) return gh->getBackpackItemGuid(slot - 1);

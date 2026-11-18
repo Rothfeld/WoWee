@@ -384,3 +384,44 @@ TEST_CASE("a percent cost is a share of the pool, rounded down", "[spellclass][c
     CHECK(percentPowerCost(159, 5) == 7);
     CHECK(percentPowerCost(0, 9) == 0);
 }
+
+// IsHarmfulSpell / IsHelpfulSpell, against what the 2.4.3 client answered for
+// these Spell.dbc rows (implicit targets A and B of effects 0-2).
+TEST_CASE("Spell disposition follows the 2.4.3 client", "[spell_classification][disposition]") {
+    struct Row { const char* name; uint32_t a[3]; uint32_t b[3]; SpellDisposition want; };
+    using D = SpellDisposition;
+    const Row rows[] = {
+        {"Fireball",           {6, 6, 0},    {0, 0, 0},  D::Harmful},
+        {"Frost Nova",         {22, 22, 0},  {15, 15, 0}, D::Harmful},
+        {"Blizzard",           {28, 1, 0},   {0, 0, 0},  D::Harmful},
+        {"Eviscerate",         {6, 1, 0},    {0, 0, 0},  D::Harmful},
+        {"Hunter's Mark",      {25, 6, 6},   {0, 0, 0},  D::Harmful},
+        {"Arcane Missiles 31742", {1, 6, 0}, {0, 0, 0},  D::Harmful},
+        {"Force of Nature",    {8, 16, 0},   {0, 0, 0},  D::Harmful},
+        {"Shadowfiend",        {53, 1, 0},   {0, 0, 0},  D::Harmful},
+        {"Cone of Cold",       {24, 0, 0},   {0, 0, 0},  D::Harmful},
+        {"Hellfire Effect",    {18, 0, 0},   {16, 0, 0}, D::Harmful},
+        {"Arcane Intellect",   {21, 0, 0},   {0, 0, 0},  D::Helpful},
+        {"Battle Shout",       {20, 0, 0},   {0, 0, 0},  D::Helpful},
+        {"Holy Word: Fortitude", {22, 0, 0}, {30, 0, 0}, D::Helpful},
+        {"Bloodlust",          {22, 0, 0},   {33, 0, 0}, D::Helpful},
+        {"Tranquility 740",    {29, 1, 0},   {0, 0, 0},  D::Helpful},
+        {"Tree of Life",       {0, 1, 1},    {0, 0, 0},  D::Helpful},
+        {"Maypole",            {1, 25, 1},   {0, 0, 0},  D::Helpful},
+        {"Blink",              {1, 1, 1},    {55, 0, 0}, D::Helpful},
+        {"Mend Pet",           {5, 0, 0},    {0, 0, 0},  D::Helpful},
+        {"Seed of Corruption 43991", {31, 0, 0}, {0, 0, 0}, D::Helpful},
+        {"Dispel Magic",       {25, 0, 0},   {0, 0, 0},  D::Neither},
+        {"Mind Vision",        {25, 1, 25},  {0, 0, 0},  D::Neither},
+        {"Revive Pet",         {47, 1, 0},   {0, 0, 0},  D::Neither},
+        {"Fishing",            {39, 0, 1},   {0, 0, 0},  D::Neither},
+        {"Arcane Missile 7268", {77, 0, 0},  {0, 0, 0},  D::Neither},
+        {"Summon Imp",         {32, 0, 0},   {0, 0, 0},  D::Neither},
+        {"Searing Totem",      {44, 0, 0},   {0, 0, 0},  D::Neither},
+        {"Dodge",              {0, 0, 0},    {0, 0, 0},  D::Neither},
+    };
+    for (const auto& r : rows) {
+        INFO(r.name);
+        CHECK(spellDisposition(r.a, r.b) == r.want);
+    }
+}
