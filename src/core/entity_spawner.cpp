@@ -257,8 +257,16 @@ void EntitySpawner::syncCreatureVisualState() {
         // and object scale here so packet arrival order cannot freeze its size.
         const auto field = unit->getFields().find(game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X));
         if (field != unit->getFields().end()) {
-            characterRenderer->setInstanceScale(instanceId,
-                creatureRenderScale(*unit, unit->getDisplayId(), std::bit_cast<float>(field->second)));
+            // A changed OBJECT_FIELD_SCALE_X eases in; late family/level
+            // metadata only corrects the size.
+            const float rendered = creatureRenderScale(*unit, unit->getDisplayId(), std::bit_cast<float>(field->second));
+            const auto [seen, first] = creatureServerScaleBits_.try_emplace(guid, field->second);
+            if (!first && seen->second != field->second) {
+                seen->second = field->second;
+                characterRenderer->setInstanceTargetScale(instanceId, rendered);
+            } else if (!characterRenderer->isInstanceScaleTransitioning(instanceId)) {
+                characterRenderer->setInstanceScale(instanceId, rendered);
+            }
         }
 
         // CreatureDisplayInfo's model alpha (the Boar Spirit's display 4716
@@ -295,6 +303,7 @@ void EntitySpawner::shutdown() {
     creatureFlyingState_.clear();
     creatureActiveEmotes_.clear();
     creatureAppliedOpacity_.clear();
+    creatureServerScaleBits_.clear();
     creatureWeaponStates_.clear();
     creatureWeaponAttachments_.clear();
     creatureWeaponsAttached_.clear();
@@ -355,6 +364,7 @@ void EntitySpawner::resetAllState() {
     // suppresses the opacity call that would apply it, so a stealthed NPC came
     // back fully opaque after a relog. shutdown() already cleared this.
     creatureAppliedOpacity_.clear();
+    creatureServerScaleBits_.clear();
     creatureWeaponStates_.clear();
     creatureWeaponAttachments_.clear();
     creatureWeaponsAttached_.clear();

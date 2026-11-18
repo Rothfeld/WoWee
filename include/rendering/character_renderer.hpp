@@ -163,6 +163,16 @@ public:
     [[nodiscard]] uint32_t getInstanceDisplayId(uint32_t instanceId) const;
     [[nodiscard]] float getInstanceScale(uint32_t instanceId) const;
     void setInstanceScale(uint32_t instanceId, float scale);
+    /// Grow or shrink to scale over kScaleTransitionMs, linearly from the size
+    /// shown now (a new target restarts from there). Native 2.4.3 eases an
+    /// OBJECT_FIELD_SCALE_X change in over about 1.2 s, the same for growing
+    /// and shrinking and for steps of 0.25 (Furious Roar 42496), 0.5 and 1.0
+    /// (.modify scale) (_experiments/20261118T1540Z.zulaman_warbringer).
+    void setInstanceTargetScale(uint32_t instanceId, float scale);
+    static constexpr float kScaleTransitionMs = 1200.0f;
+    bool isInstanceScaleTransitioning(uint32_t instanceId) const {
+        return instances.at(instanceId).scaleTransitionMs >= 0.0f;
+    }
     void setInstanceOpacity(uint32_t instanceId, float opacity);
     void setInstanceCameraOpacity(uint32_t instanceId, float opacity);
     /// SpellVisualKit character procedures of the unit's auras: CharProc 1
@@ -390,6 +400,11 @@ private:
         glm::vec3 position;
         glm::vec3 rotation;
         float scale;
+        // setInstanceTargetScale: size being eased to, the size it started
+        // from and the milliseconds since (scaleTransitionMs < 0: none).
+        float targetScale = 0.0f;
+        float scaleFrom = 0.0f;
+        float scaleTransitionMs = -1.0f;
         bool visible = true;  // For first-person camera hiding
         // Drawn by another instance in its place (a morphed player's creature
         // model); kept updated but never drawn, its weapons and emitters neither.
@@ -420,6 +435,13 @@ private:
         float upperBodyAnimationTime = 0.0f;
         bool upperBodyAnimationLoop = true;
         std::vector<bool> upperBodyBones;
+        // The upper body's outgoing pose, faded out over the incoming
+        // sequence's authored blend time when a rider's swing starts or ends
+        // (-1 none; upperBodyBlendTime is the outgoing sequence's frozen time).
+        int upperBodyBlendSequence = -1;
+        float upperBodyBlendTime = 0.0f;
+        float upperBodyBlendElapsed = 0.0f;
+        float upperBodyBlendDuration = 0.0f;
         // Rides a mount (setInstanceRiding); a rider's one-shot above the
         // spine goes on to this held animation, 0 for none.
         bool riding = false;

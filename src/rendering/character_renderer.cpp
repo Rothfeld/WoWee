@@ -2464,6 +2464,16 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         // Advance global sequence timer (accumulates independently of animation wrapping)
         inst.globalSequenceTime += deltaTime * 1000.0f;
 
+        if (inst.scaleTransitionMs >= 0.0f) {
+            inst.scaleTransitionMs += deltaTime * 1000.0f;
+            const float u = std::min(1.0f, inst.scaleTransitionMs / kScaleTransitionMs);
+            inst.scale = inst.scaleFrom + (inst.targetScale - inst.scaleFrom) * u;
+            if (u >= 1.0f) inst.scaleTransitionMs = -1.0f;
+        }
+        if (inst.upperBodyBlendSequence >= 0) {
+            inst.upperBodyBlendElapsed += deltaTime * 1000.0f;
+            if (inst.upperBodyBlendElapsed >= inst.upperBodyBlendDuration) inst.upperBodyBlendSequence = -1;
+        }
         if (inst.upperBodySequenceIndex >= 0 && inst.currentAnimationId != anim::SIT_GROUND_DOWN) {
             const auto& upper = inst.cachedModel->data.sequences[inst.upperBodySequenceIndex];
             inst.upperBodyAnimationTime += deltaTime * 1000.0f;
@@ -2472,6 +2482,14 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             else if (inst.upperBodyAnimationTime >= upper.duration ||
                      !(isSeatedBaseAnimation(inst.currentAnimationId) ||
                        (inst.riding && inst.currentAnimationId == anim::MOUNT))) {
+                // Fade from the finished pose into the seat at the seat's
+                // authored blend time instead of cutting to it.
+                inst.upperBodyBlendSequence = inst.upperBodySequenceIndex;
+                inst.upperBodyBlendTime = std::min(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
+                inst.upperBodyBlendElapsed = 0.0f;
+                inst.upperBodyBlendDuration = inst.currentSequenceIndex >= 0
+                    ? static_cast<float>(inst.cachedModel->data.sequences[inst.currentSequenceIndex].blendTime) : 0.0f;
+                if (inst.upperBodyBlendDuration <= 0.0f) inst.upperBodyBlendSequence = -1;
                 inst.upperBodySequenceIndex = -1;
                 // A rider's swing or cast ends in the hold it interrupted
                 // (a channel, a precast); otherwise only the seat remains.
@@ -2669,6 +2687,11 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         instance.poseSheathFlags = 0;
         for (const uint32_t animation : {upperAnimation, instance.currentAnimationId}) {
             if (animation == 0 || animation == instance.gestureHoldAnimation) continue;
+            // A rider's seat (Mount 91, WeaponFlags 4) keeps its weapons by
+            // sheath state: native Amani'shi Warbringer (23580, sheath 1)
+            // holds both axes sitting on its bear between swings
+            // (_experiments/20261118T1540Z.zulaman_warbringer).
+            if (instance.riding && animation == anim::MOUNT) continue;
             const auto flags = animationWeaponFlags_.find(animation);
             if (flags != animationWeaponFlags_.end() && (flags->second & 0x14u)) {
                 instance.poseSheathAnimation = animation;
@@ -2914,6 +2937,7 @@ void CharacterRenderer::setInstanceRiding(uint32_t instanceId, bool riding) {
     if (instance.riding == riding) return;
     instance.riding = riding;
     if (!riding) {
+        instance.upperBodyBlendSequence = -1;
         instance.upperBodySequenceIndex = -1;
         instance.upperBodyAnimationTime = 0.0f;
         instance.upperBodyReturnAnim = 0;
@@ -2925,6 +2949,15 @@ void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t anim
     assert(found != instances.end());
     auto& instance = found->second;
     if (animationId == 0) {
+        // The cleared pose stays the blend source for what follows.
+        if (instance.upperBodySequenceIndex >= 0) {
+            instance.upperBodyBlendSequence = instance.upperBodySequenceIndex;
+            instance.upperBodyBlendTime = instance.upperBodyAnimationTime;
+            instance.upperBodyBlendElapsed = 0.0f;
+            instance.upperBodyBlendDuration = instance.currentSequenceIndex >= 0
+                ? static_cast<float>(instance.cachedModel->data.sequences[instance.currentSequenceIndex].blendTime) : 0.0f;
+            if (instance.upperBodyBlendDuration <= 0.0f) instance.upperBodyBlendSequence = -1;
+        }
         instance.upperBodySequenceIndex = -1;
         instance.upperBodyAnimationTime = 0.0f;
         return;
@@ -2936,6 +2969,20 @@ void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t anim
     const auto sequence = std::find_if(model.sequences.begin(), model.sequences.end(),
         [animationId](const auto& value) { return value.id == animationId && value.variationIndex == 0; });
     assert(sequence != model.sequences.end() && sequence->duration > 0);
+    // Fade in over the incoming sequence's blend time from what the upper
+    // body showed: the previous upper sequence, else the base sequence.
+    if (instance.upperBodySequenceIndex >= 0) {
+        instance.upperBodyBlendSequence = instance.upperBodySequenceIndex;
+        instance.upperBodyBlendTime = instance.upperBodyAnimationTime;
+    } else if (instance.upperBodyBlendSequence >= 0) {
+        // Just cleared (above): keep fading from that pose.
+    } else if (instance.currentSequenceIndex >= 0) {
+        instance.upperBodyBlendSequence = instance.currentSequenceIndex;
+        instance.upperBodyBlendTime = instance.animationTime;
+    }
+    instance.upperBodyBlendElapsed = 0.0f;
+    instance.upperBodyBlendDuration = static_cast<float>(sequence->blendTime);
+    if (instance.upperBodyBlendDuration <= 0.0f) instance.upperBodyBlendSequence = -1;
     instance.upperBodyAnimationLoop = loop;
     instance.upperBodySequenceIndex = static_cast<int>(sequence - model.sequences.begin());
     instance.upperBodyAnimationTime = 0.0f;
@@ -3038,7 +3085,14 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
 
         // Local transform includes pivot bracket: T(pivot)*T*R*S*T(-pivot)
         // At rest this is identity, so no separate bind pose is needed
-        glm::mat4 localTransform = getBoneTransform(bone, time, instance.globalSequenceTime,
+        const bool upperBlend = !gripping && arm < 0 && instance.upperBodyBlendSequence >= 0 &&
+            i < instance.upperBodyBones.size() && instance.upperBodyBones[i];
+        glm::mat4 localTransform = upperBlend
+            ? getBoneTransform(bone, time, instance.globalSequenceTime, sequence, gsd,
+                               instance.upperBodyBlendSequence, instance.upperBodyBlendTime,
+                               1.0f - glm::smoothstep(0.0f, instance.upperBodyBlendDuration,
+                                                      instance.upperBodyBlendElapsed))
+            : getBoneTransform(bone, time, instance.globalSequenceTime,
                                                     sequence, gsd,
             !gripping && sequence == instance.currentSequenceIndex ? instance.blendSequenceIndex : -1,
             instance.blendAnimationTime,
@@ -4569,10 +4623,22 @@ float CharacterRenderer::getInstanceScale(uint32_t instanceId) const {
 void CharacterRenderer::setInstanceScale(uint32_t instanceId, float scale) {
     assert(std::isfinite(scale) && scale > 0.0f);
     auto& instance = instances.at(instanceId);
+    instance.scaleTransitionMs = -1.0f;
     if (instance.scale != scale) {
         LOG_DEBUG("Creature scale update: instance=", instanceId, " from=", instance.scale, " to=", scale);
         instance.scale = scale;
     }
+}
+
+void CharacterRenderer::setInstanceTargetScale(uint32_t instanceId, float scale) {
+    assert(std::isfinite(scale) && scale > 0.0f);
+    auto& instance = instances.at(instanceId);
+    const float target = instance.scaleTransitionMs >= 0.0f ? instance.targetScale : instance.scale;
+    if (target == scale) return;
+    LOG_DEBUG("Creature scale transition: instance=", instanceId, " from=", instance.scale, " to=", scale);
+    instance.scaleFrom = instance.scale;
+    instance.targetScale = scale;
+    instance.scaleTransitionMs = 0.0f;
 }
 
 void CharacterRenderer::setInstanceCameraOpacity(uint32_t instanceId, float opacity) {
