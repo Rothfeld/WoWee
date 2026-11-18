@@ -1532,6 +1532,8 @@ void M2Renderer::recreatePipelines() {
     destroy(device, cutoutPipeline_);
     destroy(device, foliageCullOpaquePipeline_);
     destroy(device, foliageCullCutoutPipeline_);
+    destroy(device, cullAlphaPipeline_);
+    destroy(device, cullAdditivePipeline_);
     destroy(device, alphaTestPipeline_);
     destroy(device, alphaPipeline_);
     destroy(device, additivePipeline_);

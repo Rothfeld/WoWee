@@ -2006,11 +2006,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     if (m2UseAuthoredCull(
                             foliageCullOpaquePipeline_ || foliageCullCutoutPipeline_,
                             skyMode_, batch.hasAuthoredMaterial,
-                            windingPreserved, batch.materialFlags, batch.blendMode)) {
-                        if (desiredPipeline == opaquePipeline_ && foliageCullOpaquePipeline_)
-                            desiredPipeline = foliageCullOpaquePipeline_;
-                        else if (desiredPipeline == cutoutPipeline_ && foliageCullCutoutPipeline_)
-                            desiredPipeline = foliageCullCutoutPipeline_;
+                            windingPreserved, batch.materialFlags)) {
+                        desiredPipeline = culledPipeline(desiredPipeline);
                     }
                     if (desiredPipeline != currentPipeline) {
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
@@ -2268,6 +2265,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             }
             // An opaque layer of a faded instance: blended by its fade.
             if (instanceFaded && effectiveBlendMode <= 1) desiredPipeline = alphaPipeline_;
+            if (m2UseAuthoredCull(cullAlphaPipeline_ || cullAdditivePipeline_, skyMode_,
+                                  batch.hasAuthoredMaterial,
+                                  m2FoliageTransformPreservesWinding(e.model), batch.materialFlags)) {
+                desiredPipeline = culledPipeline(desiredPipeline);
+            }
             if (desiredPipeline != currentPipeline) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
                 currentPipeline = desiredPipeline;

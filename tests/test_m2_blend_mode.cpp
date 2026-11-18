@@ -26,20 +26,24 @@ using wowee::rendering::m2UseAuthoredCull;
 TEST_CASE("authored culling respects the material, transform and pass", "[m2]") {
     // The Storm Peaks snow trees in the Icecrown recording use flags=0,
     // blend 1 for their needles and blend 0 for their trunks.
-    CHECK(m2UseAuthoredCull(true, false, true, true, 0, 1));
-    CHECK(m2UseAuthoredCull(true, false, true, true, 0, 0));
-    CHECK(m2UseAuthoredCull(true, false, true, true, 0x01, 1));
-    CHECK_FALSE(m2UseAuthoredCull(false, false, true, true, 0, 1));
-    CHECK_FALSE(m2UseAuthoredCull(true, true, true, true, 0, 1));
-    CHECK_FALSE(m2UseAuthoredCull(true, false, false, true, 0, 1));
-    CHECK_FALSE(m2UseAuthoredCull(true, false, true, false, 0, 1));
+    CHECK(m2UseAuthoredCull(true, false, true, true, 0));
+    CHECK(m2UseAuthoredCull(true, false, true, true, 0x01));
+    CHECK_FALSE(m2UseAuthoredCull(false, false, true, true, 0));
+    CHECK_FALSE(m2UseAuthoredCull(true, true, true, true, 0));
+    CHECK_FALSE(m2UseAuthoredCull(true, false, false, true, 0));
+    CHECK_FALSE(m2UseAuthoredCull(true, false, true, false, 0));
     // Grizzly Hills and Silverpine have foliage materials with the two-sided
     // flag set; other material bits must not mask it.
-    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0x04, 1));
-    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0x05, 1));
-    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0, 2));
-    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0, 3));
-    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0, 256));
+    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0x04));
+    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0x05));
+}
+
+TEST_CASE("one-sided blended materials cull as well", "[m2]") {
+    // DR_Draenei_HoloRunes01 in The Eye: render flags 0x13, blend 4. The
+    // original does not draw its rune disc from below.
+    CHECK(m2UseAuthoredCull(true, false, true, true, 0x13));
+    // Sunwell_BossForceField: flags 0x15 carry 0x04 and stay two-sided.
+    CHECK_FALSE(m2UseAuthoredCull(true, false, true, true, 0x15));
 }
 
 TEST_CASE("Authored effect meshes retain their material draw pass", "[m2]") {

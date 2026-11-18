@@ -38,16 +38,16 @@ inline bool m2BatchIsTransparent(uint8_t blendMode, bool effectModel, bool autho
     return blendMode >= M2_BLEND_ALPHA || (effectModel && !authoredMaterial);
 }
 
-/// Back-face culling for solid/cutout meshes with an authored one-sided
-/// material. Do not guess when a material is missing, or when a draw group
-/// contains mirrored/degenerate transforms whose winding can differ. The sky
-/// and transparent effects keep their existing pipelines.
+/// Back-face culling for meshes with an authored one-sided material (render
+/// flags without 0x04), whatever their blend mode. Do not guess when a
+/// material is missing, or when a draw group contains mirrored/degenerate
+/// transforms whose winding can differ. The sky keeps its pipelines.
 inline bool m2UseAuthoredCull(bool enabled, bool sky,
                              bool hasAuthoredMaterial, bool windingPreserved,
-                             uint16_t materialFlags, uint16_t blendMode) {
+                             uint16_t materialFlags) {
     constexpr uint16_t kTwoSided = 0x04;
     return enabled && !sky && hasAuthoredMaterial && windingPreserved &&
-           !(materialFlags & kTwoSided) && blendMode <= M2_BLEND_ALPHA_KEY;
+           !(materialFlags & kTwoSided);
 }
 
 /// True when the mode adds to the framebuffer rather than covering it.

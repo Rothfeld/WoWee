@@ -898,6 +898,18 @@ private:
     // Opt-in one-sided foliage variants. Other materials retain their pipelines.
     VkPipeline foliageCullOpaquePipeline_ = VK_NULL_HANDLE;
     VkPipeline foliageCullCutoutPipeline_ = VK_NULL_HANDLE;
+    // The same for blended batches: one-sided alpha and additive materials.
+    VkPipeline cullAlphaPipeline_ = VK_NULL_HANDLE;
+    VkPipeline cullAdditivePipeline_ = VK_NULL_HANDLE;
+    /// The back-face-culling twin of a main-pass pipeline, or the pipeline
+    /// itself where there is none.
+    [[nodiscard]] VkPipeline culledPipeline(VkPipeline p) const {
+        if (p == opaquePipeline_ && foliageCullOpaquePipeline_) return foliageCullOpaquePipeline_;
+        if (p == cutoutPipeline_ && foliageCullCutoutPipeline_) return foliageCullCutoutPipeline_;
+        if (p == alphaPipeline_ && cullAlphaPipeline_) return cullAlphaPipeline_;
+        if (p == additivePipeline_ && cullAdditivePipeline_) return cullAdditivePipeline_;
+        return p;
+    }
     /// The ablation's clutter phase; see setSkipGroundDetail.
     bool skipGroundDetail_ = false;
     /// The ablation's far-doodad phase; see setDoodadDistanceCap.

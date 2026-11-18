@@ -357,6 +357,23 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                                      VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
     additivePipeline_ = buildM2Pipeline(PipelineBuilder::blendAdditive(), false,
                                         VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    // One-sided blended materials cull their back faces as well. The Eye's
+    // DR_Draenei_HoloRunes01 (render flags 0x13, blend 4: no 0x04) is a rune
+    // disc floating over Kael'thas's floor; drawn from below as well, it hung
+    // a magenta sheet over the room whenever the camera dipped under it,
+    // where the original shows nothing.
+    if (!skyMode_ && enableFoliageCull) {
+        cullAlphaPipeline_ = buildM2Pipeline(
+            PipelineBuilder::blendAlpha(), false, VK_PIPELINE_CREATE_DERIVATIVE_BIT,
+            opaquePipeline_, false, VK_CULL_MODE_BACK_BIT, kM2FoliageFrontFace);
+        cullAdditivePipeline_ = buildM2Pipeline(
+            PipelineBuilder::blendAdditive(), false, VK_PIPELINE_CREATE_DERIVATIVE_BIT,
+            opaquePipeline_, false, VK_CULL_MODE_BACK_BIT, kM2FoliageFrontFace);
+        if (!cullAlphaPipeline_ || !cullAdditivePipeline_) {
+            LOG_ERROR("M2: failed to build one-sided blended pipelines");
+            return false;
+        }
+    }
 
     // --- Build particle pipelines ---
     if (particleVert.isValid() && particleFrag.isValid()) {
@@ -1130,6 +1147,8 @@ void M2Renderer::shutdown() {
     destroyPipeline(cutoutPipeline_);
     destroyPipeline(foliageCullOpaquePipeline_);
     destroyPipeline(foliageCullCutoutPipeline_);
+    destroyPipeline(cullAlphaPipeline_);
+    destroyPipeline(cullAdditivePipeline_);
     destroyPipeline(alphaTestPipeline_);
     destroyPipeline(alphaPipeline_);
     destroyPipeline(additivePipeline_);
