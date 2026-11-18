@@ -2465,6 +2465,27 @@ and receives none, so costs and damage read unmodified. Evidence and
 probe addon: `_experiments/20261118T074449Z.actionbar_pair2` in the
 workspace.
 
+### TBC social panel
+
+FriendsFrame, measured against 2.4.3 on a private pair
+(`_experiments/20261118T200713Z.social_audit/` in the workspace;
+`build/bin/test_game_replay '[social]'`, `build/bin/test_guild_roster_layout`).
+Friends list online first, each half by name; ignores by name; the selection
+follows the player. FriendStatus 2 (away) is online: CMaNGOS assigns one status.
+Contacts arrive as guids and are name-queried, ignores too. SortWho keeps a
+chain of keys (most recent first; the same field reverses, another moves to the
+front with its direction; zone, level, name before any) and fires
+WHO_LIST_UPDATE; SortGuildRoster fires GUILD_ROSTER_UPDATE and the roster keeps
+the realm's order until sorted. The TBC guild roster has a gender byte after
+the class. The channel panel is Group / World / Custom headers with the group's
+own channel, built-in channels by their ChatChannels name and custom ones;
+every channel event carries the panel row, not the chat number. A city-only
+channel joined in a capital is named after AreaTable's "City" row. Gotchas:
+SetGuildRosterShowOffline and SetWhoToUI get 0 for off, which is true in Lua;
+GameTooltip:SetUnit answers nil on TBC, or UnitFrame_UpdateTooltip rebuilds the
+tooltip every 0.2 s and drops lines added after it; 2.4.3 has no /reload
+(`/script ReloadUI()`).
+
 ### TBC Lua answer conventions and protected functions
 
 On a TBC login `applyApiConventions` (src/addons/expansion_api_surface.cpp)
