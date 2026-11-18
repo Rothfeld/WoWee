@@ -33,7 +33,8 @@ TEST_CASE("Weapon swings and ready stances draw melee weapons at any sheath stat
     // Whirlwind 126 have 0x20. Leotheras the Blind keeps sheath state 0 all
     // fight and natively holds his glaives through them.
     CHECK(animationSheathState(0x20, 0) == 1);
-    CHECK(animationSheathState(0x20, 2) == 1);
+    // A drawn ranged weapon (bow shot) keeps the hand: the axe stays away.
+    CHECK(animationSheathState(0x20, 2) == 2);
     CHECK(animationSheathState(0x20, 1) == 1);
     // Stand/Run (0) leave the unit's own state; sheathing flags are handled
     // by gestureSheathesWeapons / the stand state.

@@ -1128,8 +1128,12 @@ Leotheras the Blind (21215) has sheath state 0 from creature_template_addon for
 his whole fight; native holds his glaives through every swing and Whirlwind,
 WoWee had them on his back. A Defias Thug set to sheath state 0 shows its sword
 at the hip until its first fight, then holds it through Stand and Walk for 50+ s
-after combat and through a server sheath change 1 -> 0. Unverified: what ends
-the drawn state other than re-creating the unit.
+after combat and through a server sheath change 1 -> 0. The rule lifts only
+sheath state 0: a drawn ranged weapon (state 2, a creature's ranged spell) stays
+the one in hand. Native and WoWee, pair 16: Defias Watchman (bow, sheath 1 and 0),
+Southsea Cannoneer (gun), Redridge Poacher (crossbow), Defias Smuggler (thrown)
+hold only the ranged weapon while shooting and the melee weapon in melee.
+Unverified: what ends the drawn state other than re-creating the unit.
 Evidence: `_experiments/20261118T1330Z.leotheras_glaives` in the workspace.
 
 ### Held weapon grips

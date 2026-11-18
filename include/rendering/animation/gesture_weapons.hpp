@@ -21,8 +21,11 @@ inline constexpr bool gestureWeaponPoseActive(uint32_t gestureAnimation,
 /// Defias Thug set to sheath state 0 shows its sword at the hip until its
 /// first fight, then holds it through Stand and Walk for at least 50 s after
 /// combat and through a server sheath state change 1 -> 0
-/// (_experiments/20261118T1330Z.leotheras_glaives).
+/// (_experiments/20261118T1330Z.leotheras_glaives). It replaces only the
+/// unarmed state 0: a drawn ranged weapon (state 2, e.g. a creature's bow
+/// shot, EntitySpawner::setCreatureRangedDrawn) stays the one in hand, as
+/// native shows an Illidari Heartseeker with only its bow during shots.
 inline constexpr uint8_t animationSheathState(uint32_t animationWeaponFlags, uint8_t sheathState) {
-    return (animationWeaponFlags & 0x20u) ? 1 : sheathState;
+    return (animationWeaponFlags & 0x20u) && sheathState == 0 ? 1 : sheathState;
 }
 } // namespace wowee::rendering
