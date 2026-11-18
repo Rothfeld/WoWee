@@ -3061,6 +3061,29 @@ TEST_CASE_METHOD(Integration, "Mining loot survives rejected duplicate open and 
     lua.setGameHandler(nullptr);
 }
 
+// Original 2.4.3 (pair 17): using Zul'Aman's Strange Gong 187359 channels
+// Zul'Aman Object Visual 45222; UnitChannelInfo("player") answers that name,
+// rank "" and text "Channeling" (GlobalStrings CHANNELING), and the bar reads
+// "Channeling". A cast keeps its own name as text.
+TEST_CASE_METHOD(Integration, "A channel's bar text is CHANNELING, not the spell name", "[channel-text]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.spellNameCacheLoadedRef() = true;
+    handler.spellNameCacheRef()[45222].name = "Zul'Aman Object Visual";
+    run("CHANNELING = 'Channeling'");
+    wowee::network::Packet start(wireOpcode(Opcode::MSG_CHANNEL_START));
+    start.writePackedGuid(replay::Session::kPlayerGuid);
+    start.writeUInt32(45222); start.writeUInt32(10000);
+    session.receive(start);
+    REQUIRE(handler.isChanneling());
+    truth("UnitChannelInfo('player') == \"Zul'Aman Object Visual\"");
+    truth("select(3, UnitChannelInfo('player')) == 'Channeling'");
+    truth("UnitCastingInfo('player') == nil");
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "TargetUnit resolves nearby names and exact commands", "[target-name]") {
     using namespace wowee::game;
     replay::Session session("tbc");

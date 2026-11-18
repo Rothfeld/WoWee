@@ -579,10 +579,23 @@ static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
     // where it is the object's opening or closing text - empty for most. The
     // original shows Opening at the Scarlet Monastery torch as name "Opening"
     // and text "", and at Rizzle's Guarded Plans as text "Examining".
+    //
+    // A channel is labelled with GlobalStrings CHANNELING ("Channeling"),
+    // which no FrameXML file reads: the client hands it over as `text`.
+    // Original 2.4.3 (pair 17, Strange Gong 187359 in Zul'Aman):
+    // UnitChannelInfo("player") answered name "Zul'Aman Object Visual",
+    // rank "", text "Channeling", and the bar read "Channeling".
     std::optional<std::string> caption;
-    if (uidStr == "player") caption = gh->getCastBarCaption();
-    if (caption) lua_pushstring(L, caption->c_str());           // text
-    else lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
+    if (uidStr == "player" && !wantChannel) caption = gh->getCastBarCaption();
+    if (wantChannel) {
+        lua_getglobal(L, "CHANNELING");
+        if (!lua_isstring(L, -1))
+            return luaL_error(L, "UnitChannelInfo: GlobalStrings CHANNELING is not loaded");
+    } else if (caption) {
+        lua_pushstring(L, caption->c_str());                    // text
+    } else {
+        lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
+    }
     if (!iconPath.empty()) lua_pushstring(L, iconPath.c_str());
     else lua_pushstring(L, "Interface\\Icons\\INV_Misc_QuestionMark");  // texture
     lua_pushnumber(L, startTimeMs);                              // startTime (ms)
