@@ -223,7 +223,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             const float variation = interpFloat(em.speedVariation, inst.animTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             speed *= 1.0f + distN(particleRng_) * variation;
-            const glm::mat3 rotMat(birthTransform);
+            const glm::mat3 rotMat = particleWorldVelocityBasis(em.flags, birthTransform);
             p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
 
             const float gravity = interpFloat(em.gravity, inst.animTime,

@@ -26,10 +26,15 @@ the current pose drew these floor lines as beads. Shattrath's game-object
 runes (DR_Draenei_HoloRunes02/03.m2, GENERIC) are in state READY without
 Close/Closed sequences; they keep looping Stand, since only stateful object
 types (doors, chests, buttons) show READY through the bind pose.
-Gravity uses the same birth-space basis as position and velocity. Its sampled
-magnitude remains an authored emitter track; transforming the direction once
-preserves placement scale and orientation for detached particles. A rotated,
-scaled ballistic regression compares all three attachment modes in world space.
+Detached particles (neither NoTrail nor ModelSpace) take their birth point
+from the scaled placement but move at their authored speed and gravity in
+yards, rotated only. The Sunwell gate barrier (GO 188118, scale 8.69, 0x409)
+otherwise threw its sparks 8.7x too fast as radial streaks past the doorway
+(native: an even fire wall; mean-image correlation 0.82 -> 0.89), and
+Netherspite's Void Zone (PortalofKathune.m2, display scale 0.1, 0x229) lifted
+its smoke a tenth as high. Attached particles live in the scaled bone or
+model frame: Brutallus' NoTrail flames (scale 6) rise with it in the original;
+moving them in yards left a flat band below his spikes.
 
 Opaque/cutout meshes retain authored blend mode and one-sided materials even
 when their model also contains particles. AshenvaleWisps has five back-facing

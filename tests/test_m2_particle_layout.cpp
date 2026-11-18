@@ -147,7 +147,7 @@ TEST_CASE("Births inside a step sit where the moving emitter was at that instant
     CHECK(particleBirthPosition(previous, current, local, 0.0f, 0.0f) == glm::vec3(0.25f, 1, 0));
 }
 
-TEST_CASE("Particle gravity retains the authored scaled and rotated basis", "[m2][particle]") {
+TEST_CASE("Attached particle motion retains the scaled and rotated basis", "[m2][particle]") {
     using namespace wowee::rendering;
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(90.0f),glm::vec3(0,1,0)),glm::vec3(2));
     const auto bone = glm::translate(glm::mat4(1),glm::vec3(1,2,3));
@@ -156,9 +156,10 @@ TEST_CASE("Particle gravity retains the authored scaled and rotated basis", "[m2
     const float gravity = 4;
     const float seconds = .5f;
     const auto expected = model * bone * (localPosition + localVelocity * seconds + glm::vec4(0,0,-.5f*gravity*seconds*seconds,0));
-    for (const uint32_t flags : {0x29u,0x89u,0x39u}) {
+    for (const uint32_t flags : {0x89u,0x39u}) {
         const auto birth = particleBirthTransform(flags,model,bone);
         const auto render = particleRenderTransform(flags,model,bone);
+        CHECK(particleWorldVelocityBasis(flags, birth) == glm::mat3(birth));
         const auto acceleration = particleGravityDirection(flags,model)*gravity;
         const auto simulated = birth*localPosition + birth*localVelocity*seconds + glm::vec4(acceleration*(.5f*seconds*seconds),0);
         const auto actual = render*simulated;
@@ -174,7 +175,7 @@ TEST_CASE("Detached particle gravity ignores the emitter bone's rotation", "[m2]
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(30.0f),glm::vec3(0,0,1)),glm::vec3(2));
     for (const uint32_t flags : {0x29u,0x89u}) {
         const auto down = particleGravityDirection(flags,model);
-        const auto expected = flags & 0x80u ? glm::vec3(0,0,-1) : glm::vec3(0,0,-2);
+        const glm::vec3 expected(0,0,-1);
         CHECK(down.x == Catch::Approx(expected.x).margin(.00001f));
         CHECK(down.y == Catch::Approx(expected.y).margin(.00001f));
         CHECK(down.z == Catch::Approx(expected.z).margin(.00001f));
@@ -484,4 +485,17 @@ TEST_CASE("A step track says nothing past its last key", "[m2][particle]") {
     CHECK(pastLastStepKey(rate, 0, 500.0f, 0.0f, {}));
     rate.interpolationType = 1;
     CHECK_FALSE(pastLastStepKey(rate, 0, 500.0f, 0.0f, {}));
+}
+
+TEST_CASE("Detached particles move in yards whatever the placement scale", "[m2][particle]") {
+    using namespace wowee::rendering;
+    // Netherspite's Void Zone: PortalofKathune.m2 at display scale 0.1, 0x229,
+    // gravity -1.39 lifts its smoke 1.56 yd in 1.5 s, not a tenth of that.
+    const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(40.0f),glm::vec3(0,0,1)),glm::vec3(0.1f));
+    const auto birth = particleBirthTransform(0x229u, model, glm::mat4(1));
+    const auto basis = particleWorldVelocityBasis(0x229u, birth);
+    CHECK(glm::length(basis * glm::vec3(0,0,1.1111f)) == Catch::Approx(1.1111f));
+    CHECK(glm::length(particleGravityDirection(0x229u, model)) == Catch::Approx(1.0f));
+    // Its birth point still takes the placement: a 25 yd area is 2.5 yd.
+    CHECK(glm::length(glm::vec3(birth * glm::vec4(25,0,0,1))) == Catch::Approx(2.5f));
 }

@@ -89,7 +89,23 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
     // bone is pitched. The model placement keeps its scale and orientation.
     // NoTrail particles are simulated in the bone's own frame.
     if (flags & (kParticleNoTrail | kParticleInModelSpace)) return {0, 0, -1};
-    return glm::mat3(model) * glm::vec3(0, 0, -1);
+    return glm::normalize(glm::mat3(model) * glm::vec3(0, 0, -1));
+}
+
+// Particles detached into world space (neither NoTrail nor ModelSpace) move
+// at their authored speed and gravity in yards, whatever the placement scale;
+// only their birth point is placed with it. Attached particles live in the
+// scaled bone or model frame. The Sunwell gate barrier (GO 188118,
+// SUNWELLRAID_GATE_04.m2, scale 8.69, 0x409) otherwise throws its sparks 8.7x
+// too fast, past the doorway, as radial streaks; Netherspite's Void Zone
+// (PortalofKathune.m2, display scale 0.1, 0x229) lifts its smoke a tenth of
+// the height. Brutallus' back flames (0x339, NoTrail, scale 6) do rise with
+// the model's scale in the original.
+inline glm::mat3 particleWorldVelocityBasis(uint32_t flags, const glm::mat4& birthTransform) {
+    glm::mat3 basis(birthTransform);
+    if (flags & (kParticleNoTrail | kParticleInModelSpace)) return basis;
+    for (int c = 0; c < 3; ++c) basis[c] = glm::normalize(basis[c]);
+    return basis;
 }
 
 struct ParticleEmission {
