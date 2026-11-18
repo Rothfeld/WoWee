@@ -1528,6 +1528,13 @@ void SocialHandler::setFriendNote(const std::string& playerName, const std::stri
     auto packet = SetContactNotesPacket::build(it->second, note);
     owner_.getSocket()->send(packet);
     LOG_INFO("Set friend note for: ", playerName);
+    // The realm stores the note and answers nothing (CMaNGOS
+    // HandleSetContactNotesOpcode); 2.4.3 shows it at once and fires
+    // FRIENDLIST_UPDATE (pair 11), where this kept the old note until the
+    // list was next requested.
+    for (auto& contact : owner_.contactsRef())
+        if (contact.guid == it->second) contact.note = note;
+    owner_.fireAddonEvent("FRIENDLIST_UPDATE", {});
 }
 
 void SocialHandler::addIgnore(const std::string& playerName) {
@@ -3496,8 +3503,17 @@ void SocialHandler::handleContactList(network::Packet& packet) {
         ContactEntry entry;
         entry.guid = guid; entry.flags = flags; entry.note = std::move(note);
         entry.status = status; entry.areaId = areaId; entry.level = level; entry.classId = classId;
+        // Ignored and muted players need their names as much as friends do:
+        // the packet carries guids only, and the ignore list showed a row of
+        // blanks (pair 11: native lists "Gearugsy", this listed "").
+        if (flags & 0x2) owner_.ignoreListGuidsRef().insert(guid);
         auto nit = owner_.getPlayerNameCache().find(guid);
-        if (nit != owner_.getPlayerNameCache().end()) entry.name = nit->second;
+        if (nit != owner_.getPlayerNameCache().end()) {
+            entry.name = nit->second;
+            if (flags & 0x2) owner_.ignoreCacheRef()[entry.name] = guid;
+        } else {
+            owner_.queryPlayerName(guid);
+        }
         owner_.contactsRef().push_back(std::move(entry));
     }
     if (owner_.addonEventCallbackRef()) {
@@ -3524,6 +3540,16 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
         if (it != owner_.getPlayerNameCache().end()) playerName = it->second;
     }
 
+    // Adding someone answers with their guid alone; until the name query comes
+    // back, the name is the one this client asked for. The entry is created
+    // below and kept the empty name it was given otherwise, and the friends
+    // list drew a nameless offline row (pair 11).
+    const bool adding = data.status == 6 || data.status == 7 || data.status == 0x0F;
+    if (playerName.empty() && adding) {
+        playerName = lastSocialRequestName_;
+        owner_.queryPlayerName(data.guid);
+    }
+
     // Only update friendsCache when we have a resolved name - inserting an empty
     // key creates a phantom entry that masks the real one when the name arrives.
     if (!playerName.empty()) {
@@ -3541,11 +3567,35 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
     enum : uint8_t {
         kDbError = 0, kListFull = 1, kOnline = 2, kOffline = 3, kNotFound = 4,
         kRemoved = 5, kAddedOnline = 6, kAddedOffline = 7, kAlready = 8,
-        kSelf = 9, kEnemy = 10,
+        kSelf = 9, kEnemy = 10, kIgnoreAdded = 0x0F, kIgnoreRemoved = 0x10,
     };
+    // Which list changed, for the event 2.4.3 fires before its chat line
+    // (pair 11: FRIENDLIST_UPDATE or IGNORELIST_UPDATE, then CHAT_MSG_SYSTEM).
+    const char* listEvent = "FRIENDLIST_UPDATE";
     if (data.status == kRemoved) {
-        if (cit != owner_.contactsRef().end())
-            owner_.contactsRef().erase(cit);
+        if (cit != owner_.contactsRef().end()) {
+            cit->flags &= ~0x1u;
+            if (cit->flags == 0) owner_.contactsRef().erase(cit);
+        }
+    } else if (data.status == kIgnoreAdded) {
+        listEvent = "IGNORELIST_UPDATE";
+        owner_.ignoreListGuidsRef().insert(data.guid);
+        if (!playerName.empty()) owner_.ignoreCacheRef()[playerName] = data.guid;
+        if (cit != owner_.contactsRef().end()) {
+            cit->flags |= 0x2;
+        } else {
+            ContactEntry entry;
+            entry.guid = data.guid; entry.name = playerName; entry.flags = 0x2;
+            owner_.contactsRef().push_back(std::move(entry));
+        }
+    } else if (data.status == kIgnoreRemoved) {
+        listEvent = "IGNORELIST_UPDATE";
+        owner_.ignoreListGuidsRef().erase(data.guid);
+        if (!playerName.empty()) owner_.ignoreCacheRef().erase(playerName);
+        if (cit != owner_.contactsRef().end()) {
+            cit->flags &= ~0x2u;
+            if (cit->flags == 0) owner_.contactsRef().erase(cit);
+        }
     } else if (data.status == kOnline || data.status == kOffline ||
                data.status == kAddedOnline || data.status == kAddedOffline) {
         const bool nowOnline =
@@ -3556,6 +3606,7 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
         const uint8_t flags = nowOnline ? data.chatFlag : 0;
         if (cit != owner_.contactsRef().end()) {
             if (!playerName.empty() && playerName != "Unknown") cit->name = playerName;
+            cit->flags |= 0x1;
             cit->status = flags;
             if (nowOnline) {
                 cit->areaId = data.areaId;
@@ -3573,6 +3624,7 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
             owner_.contactsRef().push_back(std::move(entry));
         }
     }
+    if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()(listEvent, {});
     // SocialMgr's FriendsResult, each the GlobalStrings line 2.4.3 prints in
     // chat (pair 6: "Player not found.", "You can't put yourself on your
     // friend list.", "You can't ignore yourself."). The name for an answer
@@ -3611,7 +3663,6 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
                                   : twice ? std::vector<std::string>{playerName, playerName}
                                           : std::vector<std::string>{playerName});
     }
-    if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("FRIENDLIST_UPDATE", {});
 }
 
 void SocialHandler::handleRandomRoll(network::Packet& packet) {

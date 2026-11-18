@@ -78,11 +78,12 @@ constexpr const char* kFlagAnswersTbc[] = {
     "CanEditGuildTabInfo", "CanEditMOTD", "CanEditOfficerNote", "CanEditPublicNote",
     "CanGrantLevel", "CanGuildBankRepair", "CanGuildDemote", "CanGuildInvite",
     "CanGuildPromote", "CanGuildRemove", "CanInspect", "CanJoinBattlefieldAsGroup",
-    "CanMerchantRepair", "CanSummonFriend", "CanViewOfficerNote",
+    "CanMerchantRepair", "CanSummonFriend", "CanViewOfficerNote", "GetFriendInfo",
     "CheckInteractDistance", "CursorCanGoInSlot", "CursorHasItem", "CursorHasSpell",
     "GetActionBarToggles", "GetAddOnInfo", "GetBattlefieldStatus",
     "GetChannelDisplayInfo", "GetContainerItemInfo", "GetCraftFilter", "GetFactionInfo",
-    "GetGuildRosterShowOffline", "GetInventoryItemBroken", "GetOptOutOfLoot",
+    "GetGuildRosterInfo", "GetGuildRosterShowOffline", "GuildControlGetRankFlags",
+    "GetInventoryItemBroken", "GetOptOutOfLoot",
     "GetQuestLogLeaderBoard", "GetQuestLogPushable", "GetQuestLogTitle",
     "GetSkillLineInfo", "GetSpellAutocast", "GetTrackingInfo",
     "GetTradeSkillInvSlotFilter", "GetTradeSkillSubClassFilter", "GetVideoCaps",
@@ -129,6 +130,9 @@ constexpr ResultCount kResultCountsTbc[] = {
     {"GetPVPLifetimeStats", 2}, {"GetLanguageByIndex", 1}, {"GetCorpseMapPosition", 2},
     {"GetDeathReleasePosition", 2}, {"GetQuestLogTitle", 8}, {"GetContainerItemInfo", 6},
     {"GetItemInfo", 10}, {"GetMapContinents", 3},
+    // Sixteen rank rights; the seventeenth, Create Guild Event, is 3.x's
+    // (pair 11: 1 x13, nil, 1, 1 for a Guild Master).
+    {"GuildControlGetRankFlags", 16},
 };
 
 /// Functions 2.4.3 refuses to run from insecure code - a /script line or any

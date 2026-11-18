@@ -292,46 +292,106 @@ static int lua_GetNumFriends(lua_State* L) {
     return 2;
 }
 
-// GetFriendInfo(index or name) → name, level, class, area, connected, status, note
+namespace {
+/// The friends list in 2.4.3's order: online friends first, then offline, each
+/// half by name (pair 11: Edricj, Edrick, Edrikb online, then Edricc, Edrik,
+/// Gearbefore, Gearoqqt - not the server's guid order). A name still being
+/// queried sorts last in its half.
+std::vector<const game::ContactEntry*> friendsView(game::GameHandler* gh) {
+    std::vector<const game::ContactEntry*> view;
+    if (!gh) return view;
+    for (const auto& c : gh->getContacts())
+        if (c.isFriend()) view.push_back(&c);
+    std::stable_sort(view.begin(), view.end(), [](const auto* a, const auto* b) {
+        if (a->isOnline() != b->isOnline()) return a->isOnline();
+        if (a->name.empty() != b->name.empty()) return b->name.empty();
+        return a->name < b->name;
+    });
+    return view;
+}
+
+/// The ignore list by name (pair 11: Gearoqqtr before Gearugsy).
+std::vector<const game::ContactEntry*> ignoresView(game::GameHandler* gh) {
+    std::vector<const game::ContactEntry*> view;
+    if (!gh) return view;
+    for (const auto& c : gh->getContacts())
+        if (c.isIgnored()) view.push_back(&c);
+    std::stable_sort(view.begin(), view.end(), [](const auto* a, const auto* b) {
+        if (a->name.empty() != b->name.empty()) return b->name.empty();
+        return a->name < b->name;
+    });
+    return view;
+}
+
+/// The selected friend and ignored player, held by guid: the selection stays
+/// on the same player when the order changes (native kept Edrick selected
+/// as he moved from row 1 to row 2), and is gone with them.
+uint64_t& selectedFriendGuid() { static uint64_t v = 0; return v; }
+uint64_t& selectedIgnoreGuid() { static uint64_t v = 0; return v; }
+
+int rowOf(const std::vector<const game::ContactEntry*>& view, uint64_t guid) {
+    for (size_t i = 0; i < view.size(); ++i)
+        if (guid != 0 && view[i]->guid == guid) return static_cast<int>(i) + 1;
+    return 0;
+}
+
+uint64_t guidAtRow(const std::vector<const game::ContactEntry*>& view, int row) {
+    return (row >= 1 && row <= static_cast<int>(view.size())) ? view[static_cast<size_t>(row) - 1]->guid : 0;
+}
+
+/// A friend named by row or by name, as GetFriendInfo, SetFriendNotes and
+/// RemoveFriend all accept (FriendsFrame_RemoveFriend passes the row).
+const game::ContactEntry* friendArg(lua_State* L, game::GameHandler* gh, int arg) {
+    const auto view = friendsView(gh);
+    if (lua_type(L, arg) == LUA_TNUMBER) {
+        const int row = static_cast<int>(lua_tonumber(L, arg));
+        return (row >= 1 && row <= static_cast<int>(view.size())) ? view[static_cast<size_t>(row) - 1] : nullptr;
+    }
+    const char* name = lua_tostring(L, arg);
+    if (!name) return nullptr;
+    for (const auto* c : view)
+        if (c->name == name) return c;
+    return nullptr;
+}
+}  // namespace
+
+// GetFriendInfo(index or name) → name, level, class, area, connected, status[, note]
 //
 // A name as well as a row, because both are passed. The friends list asks by
 // row; the right-click menu's Set Note stores the name in FriendsFrame.NotesID
-// and the note dialog reads it back through here - and an index-only reading
-// through luaL_checknumber raises on a name rather than answering it, which
-// took the dialog down as it opened.
+// and the note dialog reads it back through here.
+//
+// 2.4.3 (pair 11): an offline friend is name, 0, "Unknown", "Unknown", nil,
+// ""; the note is a seventh value only when there is one - FriendsList_Update
+// draws "(note)" whenever it is non-nil, so an empty string drew "()". A row
+// past the end answers the offline shape with no name.
 static int lua_GetFriendInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const bool byName = lua_isstring(L, 1) && !lua_isnumber(L, 1);
-    const std::string wanted = byName ? lua_tostring(L, 1) : std::string();
-    const int index = byName ? 0 : static_cast<int>(luaL_optnumber(L, 1, 0));
-    if (!gh || (!byName && index < 1)) {
-        return luaReturnNil(L);
+    const auto* c = gh ? friendArg(L, gh, 1) : nullptr;
+    if (!c || !c->isOnline()) {
+        if (c) lua_pushstring(L, c->name.c_str()); else lua_pushnil(L);
+        lua_pushnumber(L, 0);
+        lua_pushstring(L, "Unknown");
+        lua_pushstring(L, "Unknown");
+        lua_pushnil(L);
+        lua_pushstring(L, "");
+        if (!c || c->note.empty()) return 6;
+        lua_pushstring(L, c->note.c_str());
+        return 7;
     }
-    int found = 0;
-    for (const auto& c : gh->getContacts()) {
-        if (!c.isFriend()) continue;
-        if (byName ? (c.name == wanted) : (++found == index)) {
-            lua_pushstring(L, c.name.c_str());      // 1: name
-            lua_pushnumber(L, c.level);              // 2: level
-
-            lua_pushstring(L, c.classId < 12 ? kLuaClasses[c.classId] : "Unknown"); // 3: class
-            std::string area;
-            if (c.areaId != 0) area = gh->getWhoAreaName(c.areaId);
-            lua_pushstring(L, area.c_str());         // 4: area
-            lua_pushboolean(L, c.isOnline());        // 5: connected
-            // The bits, not the number: an away friend is online|away, which
-            // is 3, and comparing that for equality named them busy instead.
-            // friendsframe tests these against CHAT_FLAG_AFK and CHAT_FLAG_DND,
-            // which are these strings.
-            constexpr uint8_t kAway = 0x02, kBusy = 0x04;
-            lua_pushstring(L, (c.status & kAway) ? "<AFK>"
-                            : ((c.status & kBusy) ? "<DND>" : ""));  // 6: status
-            lua_pushstring(L, c.note.c_str());       // 7: note
-            return 7;
-        }
-    }
-    lua_pushnil(L);
-    return 1;
+    lua_pushstring(L, c->name.c_str());                          // 1: name
+    lua_pushnumber(L, c->level);                                  // 2: level
+    lua_pushstring(L, c->classId < 12 ? kLuaClasses[c->classId] : "Unknown"); // 3: class
+    lua_pushstring(L, c->areaId ? gh->getWhoAreaName(c->areaId).c_str() : "Unknown"); // 4: area
+    lua_pushboolean(L, 1);                                        // 5: connected
+    // friendsframe tests these against CHAT_FLAG_AFK and CHAT_FLAG_DND,
+    // which are these strings.
+    constexpr uint8_t kAway = 0x02, kBusy = 0x04;
+    lua_pushstring(L, (c->status & kAway) ? "<AFK>"
+                    : ((c->status & kBusy) ? "<DND>" : ""));     // 6: status
+    if (c->note.empty()) return 6;
+    lua_pushstring(L, c->note.c_str());                           // 7: note
+    return 7;
 }
 
 // --- Guild API ---
@@ -398,7 +458,10 @@ bool npcWithinInteractRange(game::GameHandler* gh, uint64_t npcGuid) {
 /// that position; the wire wants the team's own id, which is what every arena
 /// command is addressed by. The same mapping the roster request uses.
 bool& guildShowOffline() { static bool show = true; return show; }
-std::string& guildSortField() { static std::string field = "name"; return field; }
+// Empty until the first SortGuildRoster: 2.4.3 lists a new guild's roster in
+// the realm's order (pair 11: Gearbefore, Gearoqqt, Edrick, Edrikk - offline
+// members first, not by name).
+std::string& guildSortField() { static std::string field; return field; }
 bool& guildSortReverse() { static bool rev = false; return rev; }
 
 std::vector<const game::GuildRosterMember*> guildRosterView(game::GameHandler* gh) {
@@ -411,13 +474,16 @@ std::vector<const game::GuildRosterMember*> guildRosterView(game::GameHandler* g
         view.push_back(&m);
     }
     const std::string& by = guildSortField();
+    if (by.empty()) return view;
     // Ties break on name so a redraw cannot reorder equal rows under the
     // player's cursor - a level sort over a guild of forty otherwise shuffles
     // every row of the same level each time the roster arrives.
     auto less = [&](const game::GuildRosterMember* a, const game::GuildRosterMember* b) {
         if (by == "level")  { if (a->level != b->level) return a->level < b->level; }
         else if (by == "class")  { if (a->classId != b->classId) return a->classId < b->classId; }
-        else if (by == "rank")   { if (a->rankIndex != b->rankIndex) return a->rankIndex < b->rankIndex; }
+        // The lowest rank first: 2.4.3's first Rank click put the Initiates
+        // above the Guild Master (pair 11), and the second click reversed it.
+        else if (by == "rank")   { if (a->rankIndex != b->rankIndex) return a->rankIndex > b->rankIndex; }
         else if (by == "note")   { if (a->publicNote != b->publicNote) return a->publicNote < b->publicNote; }
         else if (by == "zone")   {
             const std::string za = a->online ? gh->getWhoAreaName(a->zoneId) : std::string();
@@ -436,36 +502,61 @@ std::vector<const game::GuildRosterMember*> guildRosterView(game::GameHandler* g
     return view;
 }
 
-/// The who results in the order the panel last asked for. Same story as the
-/// guild roster: the list arrives in the server's order, every column header
-/// calls SortWho with its field and nothing else, and FrameXML keeps no order
-/// of its own - so the headers and the sort dropdown were both inert.
-///
-/// "group" is one of the fields the headers send and there is nothing here to
-/// answer it with: SMSG_WHO carries no party for the players it lists. It
-/// falls through to the name, which is the same order the column had before.
-std::string& whoSortField() { static std::string field = "name"; return field; }
-bool& whoSortReverse() { static bool rev = false; return rev; }
+/// The who results in the order 2.4.3 keeps them (pair 11, measured with
+/// SortWho and re-queries): a chain of sort keys, most recent first, each with
+/// its own direction. SortWho(field) toggles the direction when the field
+/// already leads; otherwise it moves the field to the front keeping the
+/// direction it had (ascending if new). Every comparison walks the chain, so
+/// ties fall to the earlier keys, and a fresh answer from the server is drawn
+/// in the same order. Before any SortWho the chain is zone, level, name, all
+/// ascending: the first answer of a session listed Ironforge 40, 40, 70 and
+/// Stormwind by name. Zone, class and race compare by their names (Elwynn
+/// Forest before GM Island before Westfall, whatever the area ids).
+struct WhoSortKey { std::string field; bool descending = false; };
+std::vector<WhoSortKey>& whoSortChain() {
+    static std::vector<WhoSortKey> chain = {{"zone"}, {"level"}, {"name"}};
+    return chain;
+}
+
+void sortWhoBy(const std::string& field) {
+    auto& chain = whoSortChain();
+    if (!chain.empty() && chain.front().field == field) {
+        chain.front().descending = !chain.front().descending;
+        return;
+    }
+    WhoSortKey key{field};
+    for (auto it = chain.begin(); it != chain.end(); ++it) {
+        if (it->field != field) continue;
+        key = *it;
+        chain.erase(it);
+        break;
+    }
+    chain.insert(chain.begin(), key);
+}
 
 std::vector<const game::WhoEntry*> whoResultsView(game::GameHandler* gh) {
     std::vector<const game::WhoEntry*> view;
     if (!gh) return view;
     for (const auto& w : gh->getWhoResults()) view.push_back(&w);
-    const std::string& by = whoSortField();
-    auto less = [&](const game::WhoEntry* a, const game::WhoEntry* b) {
-        if (by == "level")      { if (a->level != b->level) return a->level < b->level; }
-        else if (by == "class") { if (a->classId != b->classId) return a->classId < b->classId; }
-        else if (by == "race")  { if (a->raceId != b->raceId) return a->raceId < b->raceId; }
-        else if (by == "guild") { if (a->guildName != b->guildName) return a->guildName < b->guildName; }
-        else if (by == "zone")  {
-            const std::string za = gh->getWhoAreaName(a->zoneId);
-            const std::string zb = gh->getWhoAreaName(b->zoneId);
-            if (za != zb) return za < zb;
-        }
-        return a->name < b->name;
+    // -1, 0, 1 for one key.
+    auto compare = [&](const game::WhoEntry* a, const game::WhoEntry* b, const std::string& by) -> int {
+        auto order = [](const auto& x, const auto& y) { return x < y ? -1 : (y < x ? 1 : 0); };
+        if (by == "name")  return order(a->name, b->name);
+        if (by == "level") return order(a->level, b->level);
+        if (by == "guild") return order(a->guildName, b->guildName);
+        if (by == "zone")  return order(gh->getWhoAreaName(a->zoneId), gh->getWhoAreaName(b->zoneId));
+        if (by == "class") return order(std::string(a->classId < 12 ? kLuaClasses[a->classId] : ""),
+                                        std::string(b->classId < 12 ? kLuaClasses[b->classId] : ""));
+        if (by == "race")  return order(std::string(a->raceId < 12 ? kLuaRaces[a->raceId] : ""),
+                                        std::string(b->raceId < 12 ? kLuaRaces[b->raceId] : ""));
+        return 0;
     };
-    std::stable_sort(view.begin(), view.end(), less);
-    if (whoSortReverse()) std::reverse(view.begin(), view.end());
+    std::stable_sort(view.begin(), view.end(), [&](const game::WhoEntry* a, const game::WhoEntry* b) {
+        for (const auto& key : whoSortChain()) {
+            if (const int c = compare(a, b, key.field); c != 0) return key.descending ? c > 0 : c < 0;
+        }
+        return false;
+    });
     return view;
 }
 
@@ -531,9 +622,15 @@ static int lua_GetNumGuildMembers(lua_State* L) {
 static int lua_GetGuildRosterInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     int index = static_cast<int>(luaL_checknumber(L, 1));
-    if (!gh || index < 1) { return luaReturnNil(L); }
     const auto view = guildRosterView(gh);
-    if (index > static_cast<int>(view.size())) { return luaReturnNil(L); }
+    // A row past the end, as 2.4.3 answers it (pair 11).
+    if (!gh || index < 1 || index > static_cast<int>(view.size())) {
+        lua_pushnil(L); lua_pushnil(L);
+        lua_pushnumber(L, 0); lua_pushnumber(L, 0);
+        for (int i = 0; i < 5; ++i) lua_pushnil(L);
+        lua_pushstring(L, "");
+        return 10;
+    }
     const auto& m = *view[static_cast<size_t>(index) - 1];
 
     lua_pushstring(L, m.name.c_str());                      // 1: name
@@ -543,13 +640,17 @@ static int lua_GetGuildRosterInfo(lua_State* L) {
     lua_pushnumber(L, m.rankIndex);                          // 3: rankIndex
     lua_pushnumber(L, m.level);                              // 4: level
     lua_pushstring(L, m.classId < 12 ? kLuaClasses[m.classId] : "Unknown"); // 5: class
-    std::string zone;
-    if (m.zoneId != 0 && m.online) zone = gh->getWhoAreaName(m.zoneId);
-    lua_pushstring(L, zone.c_str());                         // 6: zone
+    // The last zone of an offline member too, and nil without one: 2.4.3
+    // listed offline Gearoqqt in "Elwynn Forest" and Gearbefore, who has
+    // never been anywhere (zone 0), with no zone (pair 11).
+    if (m.zoneId != 0) lua_pushstring(L, gh->getWhoAreaName(m.zoneId).c_str());
+    else lua_pushnil(L);                                     // 6: zone
     lua_pushstring(L, m.publicNote.c_str());                 // 7: note
     lua_pushstring(L, m.officerNote.c_str());                // 8: officerNote
     lua_pushboolean(L, m.online);                            // 9: online
-    lua_pushnumber(L, 0);                                    // 10: status (0=online, 1=AFK, 2=DND)
+    // The away/busy tag, a string: "" with neither (pair 11). The TBC roster
+    // carries no flags for it.
+    lua_pushstring(L, "");                                   // 10: status
     // The uppercase token, not the id. This position is classFileName and it
     // is a key, not a number:
     //
@@ -585,29 +686,19 @@ static int lua_GetGuildRosterMOTD(lua_State* L) {
 
 // GetNumIgnores() → count
 static int lua_GetNumIgnores(lua_State* L) {
-    auto* gh = getGameHandler(L);
-    if (!gh) { return luaReturnZero(L); }
-    int count = 0;
-    for (const auto& c : gh->getContacts())
-        if (c.isIgnored()) count++;
-    lua_pushnumber(L, count);
+    lua_pushnumber(L, ignoresView(getGameHandler(L)).size());
     return 1;
 }
 
-// GetIgnoreName(index) → name
+// GetIgnoreName(index) → name; "Unknown" past the end, as 2.4.3 answers.
 static int lua_GetIgnoreName(lua_State* L) {
-    auto* gh = getGameHandler(L);
-    int index = static_cast<int>(luaL_checknumber(L, 1));
-    if (!gh || index < 1) { return luaReturnNil(L); }
-    int found = 0;
-    for (const auto& c : gh->getContacts()) {
-        if (!c.isIgnored()) continue;
-        if (++found == index) {
-            lua_pushstring(L, c.name.c_str());
-            return 1;
-        }
+    const auto view = ignoresView(getGameHandler(L));
+    const int index = static_cast<int>(luaL_checknumber(L, 1));
+    if (index < 1 || index > static_cast<int>(view.size())) {
+        lua_pushstring(L, "Unknown");
+        return 1;
     }
-    lua_pushnil(L);
+    lua_pushstring(L, view[static_cast<size_t>(index) - 1]->name.c_str());
     return 1;
 }
 
@@ -727,8 +818,6 @@ static int lua_GetAutoCompleteResults(lua_State* L) {
 
 /// Which row the friends and ignore lists have selected. The client has no
 /// opinion about either; they are what the player last clicked.
-static int& selectedFriend() { static int v = 0; return v; }
-static int& selectedIgnore() { static int v = 0; return v; }
 
 // SendSystemMessage(text) - put a line in the chat as the client itself would
 static int lua_SendSystemMessage(lua_State* L) {
@@ -1514,16 +1603,22 @@ void registerSocialLuaAPI(lua_State* L) {
             return 1;
         }},
                 {"SetGuildRosterShowOffline", [](lua_State* L) -> int {
-            guildShowOffline() = lua_toboolean(L, 1) != 0;
+            // 1 or 0 from SHOW_OFFLINE_GUILD_MEMBERS, and 0 is true in Lua:
+            // read as a boolean, clearing the tick kept the offline members
+            // listed (pair 11).
+            guildShowOffline() = lua_isnumber(L, 1) ? lua_tonumber(L, 1) != 0
+                                                    : lua_toboolean(L, 1) != 0;
             return 0;
         }},
                 // SortWho(field) - name, zone, guild, race, level, class or
                 // group, from a column header or the sort dropdown. Same
                 // contract as SortGuildRoster: the same field twice reverses.
                 {"SortWho", [](lua_State* L) -> int {
-            const std::string field = luaL_optstring(L, 1, "name");
-            if (field == whoSortField()) whoSortReverse() = !whoSortReverse();
-            else { whoSortField() = field; whoSortReverse() = false; }
+            sortWhoBy(luaL_optstring(L, 1, "name"));
+            // As with the guild roster: the headers and the dropdown call
+            // SortWho alone and the list redraws on WHO_LIST_UPDATE, which
+            // 2.4.3 fires inside the call (pair 11).
+            if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("WHO_LIST_UPDATE", {});
             return 0;
         }},
                 // Voice again: nothing can be muted, so nothing is added to the
@@ -1565,6 +1660,9 @@ void registerSocialLuaAPI(lua_State* L) {
             if (!gh || idx < 1) return luaReturnNil(L);
             const auto view = guildRosterView(gh);
             if (idx > static_cast<int>(view.size())) return luaReturnNil(L);
+            // Nothing for a member who is on: 2.4.3 answers no values for
+            // them and four for an offline one (pair 11).
+            if (view[static_cast<size_t>(idx) - 1]->online) return 0;
             // The roster reports it in days, fractionally.
             const float days = view[static_cast<size_t>(idx) - 1]->lastOnline;
             const int totalDays = static_cast<int>(days);
@@ -2250,6 +2348,11 @@ void registerSocialLuaAPI(lua_State* L) {
             const std::string field = luaL_optstring(L, 1, "name");
             if (field == guildSortField()) guildSortReverse() = !guildSortReverse();
             else { guildSortField() = field; guildSortReverse() = false; }
+            // The roster redraws on this event and on nothing else: the column
+            // headers call SortGuildRoster alone. 2.4.3 fires it inside the
+            // call (pair 11); without it a header click changed nothing on
+            // screen until the next roster arrived.
+            if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("GUILD_ROSTER_UPDATE", {});
             return 0;
         }},
                 // The three answers to a battlefield manager prompt. All were
@@ -2332,17 +2435,9 @@ void registerSocialLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             const char* note = lua_tostring(L, 2);
             if (!gh || !note) return 0;
-            std::string name;
-            if (lua_isstring(L, 1) && !lua_isnumber(L, 1)) {
-                name = lua_tostring(L, 1);
-            } else {
-                const int idx = static_cast<int>(luaL_optnumber(L, 1, 0));
-                int found = 0;
-                for (const auto& c : gh->getContacts()) {
-                    if (!c.isFriend()) continue;
-                    if (++found == idx) { name = c.name; break; }
-                }
-            }
+            const auto* c = friendArg(L, gh, 1);
+            const std::string name = c ? c->name
+                : (lua_type(L, 1) == LUA_TSTRING ? lua_tostring(L, 1) : "");
             if (!name.empty()) gh->setFriendNote(name, note);
             return 0;
         }},
@@ -2433,23 +2528,31 @@ void registerSocialLuaAPI(lua_State* L) {
             }
             return 0;
         }},
+                // A unit token or a name: the Add Friend and Ignore buttons
+                // call these with "target" when a player is targeted.
                 {"AddFriend", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const char* name = luaL_checkstring(L, 1);
+            luaL_checkstring(L, 1);
             const char* note = luaL_optstring(L, 2, "");
-            if (gh) gh->addFriend(name, note);
+            if (gh) gh->addFriend(partyRecipient(L, gh), note);
             return 0;
         }},
+                // By row as well as by name: FriendsFrame_RemoveFriend passes
+                // FriendsFrame.selectedFriend, a row, and it was read as the
+                // name "3" and answered "Player not found."
                 {"RemoveFriend", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const char* name = luaL_checkstring(L, 1);
-            if (gh) gh->removeFriend(name);
+            luaL_checkany(L, 1);
+            const auto* c = gh ? friendArg(L, gh, 1) : nullptr;
+            const std::string name = c ? c->name
+                : (lua_type(L, 1) == LUA_TSTRING ? lua_tostring(L, 1) : "");
+            if (gh && !name.empty()) gh->removeFriend(name);
             return 0;
         }},
                 {"AddIgnore", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const char* name = luaL_checkstring(L, 1);
-            if (gh) gh->addIgnore(name);
+            luaL_checkstring(L, 1);
+            if (gh) gh->addIgnore(partyRecipient(L, gh));
             return 0;
         }},
                 {"DelIgnore", [](lua_State* L) -> int {
@@ -2483,12 +2586,19 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"GetWhoInfo", [](lua_State* L) -> int {
             // GetWhoInfo(index) → name, guild, level, race, class, zone, classFileName
             auto* gh = getGameHandler(L);
-            int index = static_cast<int>(luaL_checknumber(L, 1));
-            if (!gh || index < 1) { return luaReturnNil(L); }
+            const int index = static_cast<int>(luaL_checknumber(L, 1));
             const auto view = whoResultsView(gh);
-            if (index > static_cast<int>(view.size())) { return luaReturnNil(L); }
+            // A row past the end is a blank one on 2.4.3 (pair 11).
+            if (!gh || index < 1 || index > static_cast<int>(view.size())) {
+                lua_pushstring(L, "");
+                lua_pushstring(L, "");
+                lua_pushnumber(L, 0);
+                lua_pushstring(L, "Unknown");
+                lua_pushstring(L, "Unknown");
+                lua_pushstring(L, "Unknown");
+                return 6;
+            }
             const auto& w = *view[static_cast<size_t>(index) - 1];
-
 
             const char* raceName = (w.raceId < 12) ? kLuaRaces[w.raceId] : "Unknown";
             const char* className = (w.classId < 12) ? kLuaClasses[w.classId] : "Unknown";
@@ -2497,7 +2607,10 @@ void registerSocialLuaAPI(lua_State* L) {
             lua_pushnumber(L, w.level);
             lua_pushstring(L, raceName);
             lua_pushstring(L, className);
-            lua_pushstring(L, ""); // zone name (would need area lookup)
+            // The zone column, which was always empty here: the area id is
+            // on every row and the realm's own name for it is what 2.4.3
+            // prints ("Stormwind City", "GM Island", pair 11).
+            lua_pushstring(L, gh->getWhoAreaName(w.zoneId).c_str());
             // The who list reads this exactly as the guild roster does, so it
             // gets the same answer from the same place. It used to keep a
             // private copy of the token table with a fallback of "WARRIOR",
@@ -2679,13 +2792,17 @@ void registerSocialLuaAPI(lua_State* L) {
         }},
                 {"SendSystemMessage",   lua_SendSystemMessage},
                 {"GetSelectedFriend", [](lua_State* L) -> int {
-            lua_pushnumber(L, selectedFriend()); return 1; }},
+            lua_pushnumber(L, rowOf(friendsView(getGameHandler(L)), selectedFriendGuid())); return 1; }},
                 {"SetSelectedFriend", [](lua_State* L) -> int {
-            selectedFriend() = static_cast<int>(luaL_optnumber(L, 1, 0)); return 0; }},
+            selectedFriendGuid() = guidAtRow(friendsView(getGameHandler(L)),
+                                             static_cast<int>(luaL_optnumber(L, 1, 0)));
+            return 0; }},
                 {"GetSelectedIgnore", [](lua_State* L) -> int {
-            lua_pushnumber(L, selectedIgnore()); return 1; }},
+            lua_pushnumber(L, rowOf(ignoresView(getGameHandler(L)), selectedIgnoreGuid())); return 1; }},
                 {"SetSelectedIgnore", [](lua_State* L) -> int {
-            selectedIgnore() = static_cast<int>(luaL_optnumber(L, 1, 0)); return 0; }},
+            selectedIgnoreGuid() = guidAtRow(ignoresView(getGameHandler(L)),
+                                             static_cast<int>(luaL_optnumber(L, 1, 0)));
+            return 0; }},
                 {"AddOrRemoveFriend",   lua_AddOrRemoveFriend},
                 {"AddOrDelIgnore",      lua_AddOrDelIgnore},
                 // DoReadyCheck() - what /readycheck does

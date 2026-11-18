@@ -3288,6 +3288,21 @@ void EntityController::handleNameQueryResponse(network::Packet& packet) {
             owner_.ignoreCacheRef()[data.name] = data.guid;
         }
 
+        // And the contact rows themselves, which SMSG_CONTACT_LIST delivers as
+        // guids. Without this a friend or ignored player whose name was not
+        // already known stayed a nameless row (pair 11: offline friends drew
+        // as " - Offline"). Each list redraws on its own event.
+        bool friendNamed = false, ignoreNamed = false;
+        for (auto& contact : owner_.contactsRef()) {
+            if (contact.guid != data.guid || contact.name == data.name) continue;
+            contact.name = data.name;
+            friendNamed |= contact.isFriend();
+            ignoreNamed |= contact.isIgnored();
+        }
+        if (owner_.getChatHandler()) owner_.getChatHandler()->onPlayerName(data.guid, data.name);
+        if (friendNamed) owner_.fireAddonEvent("FRIENDLIST_UPDATE", {});
+        if (ignoreNamed) owner_.fireAddonEvent("IGNORELIST_UPDATE", {});
+
         // Fire UNIT_NAME_UPDATE so nameplate/unit frame addons know the name is available
         if (owner_.addonEventCallbackRef()) {
             for (const auto& unitId : unitEventTokens(owner_, data.guid))

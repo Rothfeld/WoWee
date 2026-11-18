@@ -95,11 +95,11 @@ struct ContactEntry {
     std::string name;
     std::string note;
     uint32_t    flags    = 0;   // 0x1=friend, 0x2=ignore, 0x4=mute
-    /// AzerothCore's FriendStatus, and a bitmask rather than a number:
-    /// 0x01 online, 0x02 away, 0x04 do-not-disturb, 0x08 recruit-a-friend.
-    /// An away friend is 0x03 - online *and* away - which is why this cannot
-    /// be compared for equality. It used to be documented as 0/1/2/3 and read
-    /// that way, so an away friend was shown as busy.
+    /// The server's FriendStatus: 0 offline, 1 online, 2 away, 4 busy
+    /// (CMaNGOS SocialMgr::GetFriendInfo assigns one of them, so an away
+    /// friend is 2, not online|away). Any non-zero value is online: native
+    /// 2.4.3 lists a status-2 friend as connected with "<AFK>" (pair 11).
+    /// Read away and busy as bits; 0x08 is recruit-a-friend on later servers.
     uint8_t     status   = 0;
     uint32_t    areaId   = 0;
     uint32_t    level    = 0;
@@ -107,7 +107,7 @@ struct ContactEntry {
 
     [[nodiscard]] bool isFriend() const { return (flags & 0x1) != 0; }
     [[nodiscard]] bool isIgnored() const { return (flags & 0x2) != 0; }
-    [[nodiscard]] bool isOnline()  const { return (status & 0x01) != 0; }
+    [[nodiscard]] bool isOnline()  const { return status != 0; }
 };
 
 /**
