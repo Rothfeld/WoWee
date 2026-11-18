@@ -1055,7 +1055,26 @@ suppressed; bubbles use the client tooltip backdrop and tail assets.
 
 World quest markers use the client M2 materials, including each batch's authored opacity. `TalkToMeGrey.m2` has an opaque gradient base and a 40% alpha-additive highlight. Marker instances skip collision without being classified as spell effects; that classification overrides material blending.
 
-Cursor selection receives quest status separately from the overhead symbol. An unavailable quest can show a grey exclamation mark while keeping the NPC's ordinary cursor. Felix Whindlebolt uses the plain gauntlet in this state.
+Cursor selection receives quest status separately from the overhead symbol
+(`questGiverCursor` in `include/game/quest_giver_status.hpp`, units and quest
+giver objects alike). Build 8606: NONE and UNAVAILABLE (grey !) keep the
+giver's ordinary cursor (Felix Whindlebolt the plain gauntlet); available,
+taken-but-unfinished (grey ?), daily and out-levelled quests show `Quest`;
+ready to hand in `QuestTurnIn`, a repeatable ready again (REWARD_REP)
+`QuestRepeatable`. Out-levelled is TBC `DIALOG_STATUS_CHAT` (wire 2: every
+offered quest more than `Quests.LowLevelHideDiff` levels below): no mark, yet
+the Quest cursor - Haughty Modiste, Yeh'kinya and Wanted Poster 142122 to a
+level 70 character. Gotcha: `QuestGiverStatus::CHAT` (11) is this client's own
+value for it; reading it as NONE gave the vendor/gossip/gear cursor and let
+gossip-derived status overwrite it. Evidence:
+`_experiments/20261118T181000Z.pair16_quest_cursor/README.md`.
+
+Gossip and greeting lists mark a quest more than 5 levels below the player as
+trivial (grey icon, "(low level)"; `questIsTrivial` in
+`include/game/level_difficulty.hpp`): measured at levels 17/18, 43-46, 55/56
+and 63/64, below 17 unmeasured. Gotcha: this is not `GetQuestGreenRange`,
+which build 8606 answers as 4 below level 10, one more every ten levels and 8
+from 40 (quest log colours).
 
 ### Indoor selection and terrain holes
 
@@ -1663,7 +1682,7 @@ A usable game object's cursor, as build 8606 shows it
 (`include/game/game_object_cursor.hpp`): a `GO_FLAG_LOCKED` object is
 `UnableInteract` whatever the player knows or carries (Battered Footlocker
 179486 with Pick Lock, Coilskar Chest 184716 with its key); a quest giver
-object with a quest marker shows `Quest`/`QuestTurnIn`; lock slot 0 naming a
+object shows its status's `Quest`/`QuestTurnIn` (see quest marker section); lock slot 0 naming a
 LockType cursor shows it without any skill check (Peacebloom `GatherHerbs`
 without Herbalism); otherwise the type's cursor - the gear for chests, `Mail`
 for mailboxes, `Buy` for guild vaults. Out of reach adds `Unable`. Gotcha:
@@ -1672,7 +1691,7 @@ slot 1) is the gear. Native table: `_experiments/20261117T195204Z.pair0_go_curso
 
 A unit's cursor (`include/ui/world_cursor.hpp`), measured on spawned NPCs in
 build 8606: a lootable corpse shows `Pickup` (the bag; not `LootAll`); a living
-NPC its quest marker's cursor, then Innkeeper, the server icon (Directions for
+NPC its quest status's cursor, then Innkeeper, the server icon (Directions for
 guards), RepairNPC, Trainer, Pickup for vendors, Buy for bankers and
 auctioneers, Taxi, Speak for gossip and battlemasters; a stable master or a
 quest giver with nothing for the player the plain pointer. Beyond 5.5555 yards
