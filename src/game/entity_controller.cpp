@@ -1108,7 +1108,7 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
             }
         }
         // Power/maxpower range checks AFTER all specific fields
-        else if (key >= ufi.powerBase && key < ufi.powerBase + 7) {
+        else if (key >= ufi.powerBase && key < ufi.powerBase + ufi.powerCount()) {
             const auto powerType = static_cast<uint8_t>(key - ufi.powerBase);
             unit->setPowerByType(powerType, val);
             // Named per power rather than one event: FrameXML registers only
@@ -1119,7 +1119,7 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
                 "UNIT_HAPPINESS", "UNIT_RUNIC_POWER", "UNIT_RUNIC_POWER"
             };
             if (powerType < 7) emitForUnit(kPowerEvents[powerType]);
-        } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + 7) {
+        } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + ufi.powerCount()) {
             unit->setMaxPowerByType(static_cast<uint8_t>(key - ufi.maxPowerBase), val);
             // The maximum a bar is scaled against, which FrameXML redraws on.
             static const char* kMaxPowerEvents[7] = {
@@ -1471,11 +1471,11 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             }
         }
         // Power/maxpower range checks AFTER all specific fields
-        else if (key >= ufi.powerBase && key < ufi.powerBase + 7) {
+        else if (key >= ufi.powerBase && key < ufi.powerBase + ufi.powerCount()) {
             unit->setPowerByType(static_cast<uint8_t>(key - ufi.powerBase), val);
             result.powerChanged = true;
             result.powerTypeChanged = static_cast<int>(key - ufi.powerBase);
-        } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + 7) {
+        } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + ufi.powerCount()) {
             unit->setMaxPowerByType(static_cast<uint8_t>(key - ufi.maxPowerBase), val);
             result.powerChanged = true;
             result.maxPowerTypeChanged = static_cast<int>(key - ufi.maxPowerBase);

@@ -220,6 +220,12 @@ private:
     // Cached field indices resolved once per handler call to avoid repeated lookups.
     struct UnitFieldIndices {
         uint16_t health, maxHealth, powerBase, maxPowerBase;
+        /// How many power fields an expansion has: the words between POWER1
+        /// and MAXHEALTH, five before Wrath (mana, rage, focus, energy,
+        /// happiness) and seven in it. Assuming seven made TBC's MAXPOWER1,
+        /// which sits right after MAXHEALTH, read as a seventh current power,
+        /// so every mana user's maximum mana stayed 0.
+        [[nodiscard]] uint16_t powerCount() const { return static_cast<uint16_t>(maxHealth - powerBase); }
         uint16_t level, faction, flags, dynFlags, auraState;
         uint16_t displayId, mountDisplayId, npcFlags, npcEmoteState;
         /// How wide a unit is and how far it reaches, for edge-to-edge range.
