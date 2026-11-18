@@ -27,6 +27,22 @@ TEST_CASE("Gesture weapon policy respects NOSHEATHE and both animation layers", 
     CHECK_FALSE(gestureWeaponPoseActive(0, anim::STAND, 0));
 }
 
+TEST_CASE("Weapon swings and ready stances draw melee weapons at any sheath state", "[gesture-weapons]") {
+    using namespace wowee::rendering;
+    // TBC AnimationData.WeaponFlags: Attack1H 17, Ready1H 26, AttackOff 87 and
+    // Whirlwind 126 have 0x20. Leotheras the Blind keeps sheath state 0 all
+    // fight and natively holds his glaives through them.
+    CHECK(animationSheathState(0x20, 0) == 1);
+    CHECK(animationSheathState(0x20, 2) == 1);
+    CHECK(animationSheathState(0x20, 1) == 1);
+    // Stand/Run (0) leave the unit's own state; sheathing flags are handled
+    // by gestureSheathesWeapons / the stand state.
+    CHECK(animationSheathState(0, 0) == 0);
+    CHECK(animationSheathState(0, 2) == 2);
+    CHECK(animationSheathState(0x10, 0) == 0);
+    CHECK(animationSheathState(0x04, 1) == 1);
+}
+
 TEST_CASE("Emote procedures retain stand states and seated gesture eligibility", "[emote-stance]") {
     using namespace wowee::rendering;
     CHECK(emoteStandState(1, 3) == 3); // SLEEP and LIE share the authored sleep state.

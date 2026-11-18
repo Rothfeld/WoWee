@@ -397,6 +397,9 @@ private:
         // Playing animation whose WeaponFlags sheathe (0x04 / 0x10), 0 if none.
         uint32_t poseSheathAnimation = 0;
         uint32_t poseSheathFlags = 0;  // AnimationData WeaponFlags of poseSheathAnimation
+        // An animation with WeaponFlags 0x20 has drawn the melee weapons; they
+        // stay drawn for the life of the instance (animationSheathState).
+        bool weaponsDrawnByAnimation = false;
         uint8_t sheathState = 1;
         // The unit's stand state puts its weapons away (sit, sleep, kneel,
         // chairs): the AnimationData.WeaponFlags of its pose, see setStandState.

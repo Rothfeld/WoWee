@@ -1097,6 +1097,17 @@ SMSG_SPELL_START and on /wave and /cheer.
 Unverified: Loot (4) and instant casts on the local character.
 Evidence: `_experiments/20261117T233000Z.flag400_spokes` (bursts/edc_*, wzc_fix4).
 
+An animation with WeaponFlags 0x20 (Attack1H/2H/2HL, AttackOff, Ready1H/2H/2HL,
+Whirlwind, Special1H/2H, ...) draws the melee weapons at any sheath state, and
+they stay drawn for the life of the unit's model (`animationSheathState`).
+Leotheras the Blind (21215) has sheath state 0 from creature_template_addon for
+his whole fight; native holds his glaives through every swing and Whirlwind,
+WoWee had them on his back. A Defias Thug set to sheath state 0 shows its sword
+at the hip until its first fight, then holds it through Stand and Walk for 50+ s
+after combat and through a server sheath change 1 -> 0. Unverified: what ends
+the drawn state other than re-creating the unit.
+Evidence: `_experiments/20261118T1330Z.leotheras_glaives` in the workspace.
+
 ### Held weapon grips
 
 Palm attachments 1 and 2 apply the model's `HandsClosed` animation (15) at 1 ms

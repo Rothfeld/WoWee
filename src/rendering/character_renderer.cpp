@@ -2612,6 +2612,21 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                 break;
             }
         }
+        // Weapon swings, ready stances and Whirlwind (WeaponFlags 0x20) draw
+        // the melee weapons even at sheath state 0, and they stay drawn
+        // (animationSheathState).
+        if (instance.poseSheathAnimation == 0 && !instance.weaponsDrawnByAnimation) {
+            for (const uint32_t animation : {upperAnimation, instance.currentAnimationId}) {
+                const auto flags = animationWeaponFlags_.find(animation);
+                if (animation != 0 && flags != animationWeaponFlags_.end() &&
+                    animationSheathState(flags->second, instance.sheathState) != instance.sheathState) {
+                    LOG_INFO("Animation ", animation, " (weapon flags ", flags->second, ") draws the weapons of instance ",
+                             pair.first, " at sheath state ", int(instance.sheathState));
+                    instance.weaponsDrawnByAnimation = true;
+                    break;
+                }
+            }
+        }
 
         for (auto& wa : instance.weaponAttachments) {
             auto weapIt = instances.find(wa.weaponInstanceId);
@@ -5027,9 +5042,11 @@ bool CharacterRenderer::weaponSheathed(const CharacterInstance& instance, const 
     const bool poseSheathes = instance.poseSheathAnimation != 0 &&
         !(weapon.heldSheathState == kSheathStateRanged && instance.sheathState == kSheathStateRanged &&
           (instance.poseSheathFlags & 0x04u) == 0);
+    const uint8_t sheathState = instance.weaponsDrawnByAnimation ? animationSheathState(0x20u, instance.sheathState)
+                                                                 : instance.sheathState;
     return instance.gestureSheathAnimation != 0 || poseSheathes ||
         instance.standStateSheathes ||
-        instance.sheathState != static_cast<uint8_t>(weapon.heldSheathState);
+        sheathState != static_cast<uint8_t>(weapon.heldSheathState);
 }
 
 bool CharacterRenderer::intersectInstance(uint32_t instanceId, const glm::vec3& origin,
