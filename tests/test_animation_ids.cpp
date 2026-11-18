@@ -76,6 +76,20 @@ TEST_CASE("Readable books retain authored poses when template metadata arrives",
     }
 }
 
+TEST_CASE("A trap without state sequences keeps Stand running in READY", "[game-object-pose]") {
+    using wowee::core::gameObjectBindPoseShowsReady;
+    // Molten Core Circle traps (6, FlameCircle.m2) loop Stand in the original.
+    CHECK_FALSE(gameObjectBindPoseShowsReady(6u));
+    for (uint32_t type : {0u, 1u, 3u, 9u, 10u, 33u, 35u}) {
+        CAPTURE(type);
+        CHECK(gameObjectBindPoseShowsReady(type));
+    }
+    for (uint32_t type : {5u, 16u, 25u}) {
+        CAPTURE(type);
+        CHECK_FALSE(gameObjectBindPoseShowsReady(type));
+    }
+}
+
 TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creature-locomotion]") {
     using wowee::rendering::creatureMovingAnimation;
     CHECK(creatureMovingAnimation(false, false, false) == anim::RUN);

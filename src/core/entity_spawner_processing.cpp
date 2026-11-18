@@ -1906,6 +1906,12 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     // Unknown type: applyGameObjectAnimationPolicy has frozen the instance
     // and onGameObjectInfoReceived resolves it.
     if (goType != 0xFFFFFFFFu && !gameObjectPoseIsStateDriven(goType)) return;
+    // A trap keeps Stand running too (see gameObjectBindPoseShowsReady); its
+    // type froze it at spawn.
+    if (goType != 0xFFFFFFFFu && !gameObjectBindPoseShowsReady(goType)) {
+        m2->setInstanceAnimationFrozen(instanceId, false);
+        return;
+    }
     // No OPEN or CLOSE sequence of its own, but one animation that is the
     // opening: Undercity's lift doors are one bone and one sequence, id 0,
     // 3333ms. Held at its end the door stands open. Simply letting it run -
@@ -1956,6 +1962,18 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
         }
         LOG_DEBUG("GO animation policy resolved: entry=", entry,
                   " type=", info->type, " unfroze ", it->second.size(), " instance(s)");
+    } else if (info && !gameObjectBindPoseShowsReady(info->type)) {
+        // A trap whose state arrived before its type: one without state
+        // sequences was frozen at its bind pose by applyGameObjectState.
+        // Those with them already play their state and keep it.
+        for (uint32_t instanceId : it->second) {
+            bool stateSequences = false;
+            for (uint32_t id : {146u, 147u, 148u, 149u})
+                stateSequences = stateSequences || m2Renderer->hasAnimation(instanceId, id);
+            if (!stateSequences) m2Renderer->setInstanceAnimationFrozen(instanceId, false);
+        }
+        LOG_DEBUG("GO animation policy resolved: entry=", entry, " type=", info->type,
+                  " keeps Stand running without state sequences");
     }
     gameObjectPendingAnimPolicy_.erase(it);
 }

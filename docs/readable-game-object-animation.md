@@ -11,6 +11,13 @@ sequences follow server state and hold their final frame. They share this
 policy with doors, buttons, chests, traps, goobers, destructible buildings,
 and trapdoors. Animated scenery keeps its own continuous playback.
 
+Without state sequences (146-149) a door, button or chest shows READY through
+its bind pose. A trap keeps Stand running instead: the Molten Core rune rings
+(TRAP 178187-178193, `FlameCircle.m2`, Stand and Hold only) are READY, and the
+original client draws them as a ring of fire widening round the rune each
+second. Their type often arrives after their state; the template response then
+releases such traps (`gameObjectBindPoseShowsReady`).
+
 Both immediate and delayed template responses use
 `core/game_object_animation_policy.hpp`. Do not unfreeze a state-driven object
 when its template arrives: `setInstanceAnimationFrozen(false)` clears
