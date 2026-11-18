@@ -77,6 +77,19 @@ The tail texture's U axis runs along the tail, U = 0 at the particle: 333 of
 `SlimeBlob.blp` (64x16), a drop whose head is its left edge. With V along the
 tail the acid breath drew thin hard-edged lines instead of drops.
 
+Spline emitters (type 3, 120 TBC emitters): pre-264 `+0x1D4` count,
+`+0x1D8` offset of cubic Bezier points (knot, handle, handle, knot; always
+3k + 1, 4 to 37). Each birth takes a path parameter uniformly between the
+area length and width tracks (0 and 1 in 101 emitters), equal parameter per
+segment, and adds that path point to the emitter position. FlameCircle.m2
+(display 410: "Molten Core Circle" traps 178187-178193, linked trap of each
+Molten Core rune button) is four quarter circles of radius 2.78 whose width
+runs 0 -> 1 over each 1 s Stand. Read as a point, its 180 births/s stood in
+one white column at the rune centre; the original draws a ring of flames.
+SummonPet_Impact_Base slides a window [0, 0.17] -> [0.82, 1] along its path.
+Unverified: emission direction along the path (velocity stays the emitter's
+vertical cone) and Wrath (264+) spline offsets, which are not read.
+
 Geometry particles: a pre-264 emitter naming a model at `+0x18` (28 TBC
 emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull) draws that
 model's bind-pose triangles at each particle instead of a sprite: birth-pose

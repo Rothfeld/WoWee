@@ -422,3 +422,38 @@ TEST_CASE("Pinned particle tails end at the birth point", "[m2][particle]") {
     const glm::vec3 drop = particleTailVector(0x429, glm::vec3(0, 4.44f, 0), 0.1f, glm::vec3(0, -3.0f, 0));
     CHECK(drop.y == Catch::Approx(-0.444f));
 }
+
+TEST_CASE("Spline emitters read Bezier points and place births along them", "[m2][particle]") {
+    // FlameCircle.m2 (260) #0: 13 points, four quarter-circle Bezier segments
+    // of radius 2.778 with 1.533 handles.
+    constexpr uint32_t emitterOffset = 512;
+    constexpr float r = 2.778f, h = 1.533f;
+    const std::vector<glm::vec3> circle = {
+        {r, 0, 0}, {r, h, 0}, {h, r, 0}, {0, r, 0}, {-h, r, 0}, {-r, h, 0}, {-r, 0, 0},
+        {-r, -h, 0}, {-h, -r, 0}, {0, -r, 0}, {h, -r, 0}, {r, -h, 0}, {r, 0, 0}};
+    std::vector<uint8_t> bytes(emitterOffset + 504 + circle.size() * 12, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t offset, uint32_t value) { std::memcpy(bytes.data() + offset, &value, 4); };
+    put32(4, 260);
+    put32(0x13c, 1);
+    put32(0x140, emitterOffset);
+    put32(emitterOffset + 0x2a, 3);
+    put32(emitterOffset + 0x1d4, static_cast<uint32_t>(circle.size()));
+    put32(emitterOffset + 0x1d8, emitterOffset + 504);
+    std::memcpy(bytes.data() + emitterOffset + 504, circle.data(), circle.size() * 12);
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.particleEmitters.size() == 1);
+    CHECK(model.particleEmitters[0].emitterType == 3);
+    REQUIRE(model.particleEmitters[0].splinePoints == circle);
+
+    using wowee::rendering::splineEmissionPoint;
+    // Knots at every quarter; mid-segment on the circle within Bezier error.
+    CHECK(splineEmissionPoint(circle, 0.0f) == circle[0]);
+    CHECK(splineEmissionPoint(circle, 0.25f) == circle[3]);
+    CHECK(splineEmissionPoint(circle, 1.0f) == circle[12]);
+    for (const float t : {0.125f, 0.375f, 0.625f, 0.875f})
+        CHECK(glm::length(splineEmissionPoint(circle, t)) == Catch::Approx(r).epsilon(0.01));
+    // A 3k + 1 count is the format: two points cannot be a Bezier path.
+    put32(emitterOffset + 0x1d4, 2);
+    CHECK_FALSE(wowee::pipeline::M2Loader::load(bytes).isValid());
+}

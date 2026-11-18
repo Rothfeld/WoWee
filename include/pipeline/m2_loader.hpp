@@ -209,6 +209,12 @@ struct M2ParticleEmitter {
     /// Whirlwind_State_Base #0/#1 (0..8 about Z) turn their swirls; Cone of
     /// Cold pieces 0..-20.
     glm::vec3 tumbleMin{0.0f}, tumbleMax{0.0f};
+    /// Spline emitters (type 3), pre-264 +0x1D4 count, +0x1D8 offset: cubic
+    /// Bezier segments, knot / handle / handle / knot, sharing knots, so
+    /// 3k + 1 points (the 120 TBC spline emitters: 4 to 37; the other 15950
+    /// pre-264 emitters have none). FlameCircle.m2
+    /// is four quarter circles of radius 2.78 with handles 0.552 of it.
+    std::vector<glm::vec3> splinePoints;
     bool enabled = true;
     /// Animated on/off (pre-Wrath +0x1DC, byte, discrete). Off: no births;
     /// live particles finish. Empty track: always on.

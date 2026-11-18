@@ -1699,6 +1699,21 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                                     readValue<float>(m2Data, base + 0x1B0)};
                     em.geometryModel = readString(m2Data, readValue<uint32_t>(m2Data, base + 0x1C),
                                                   readValue<uint32_t>(m2Data, base + 0x18));
+                    {
+                        const uint32_t count = readValue<uint32_t>(m2Data, base + 0x1D4);
+                        const uint32_t offset = readValue<uint32_t>(m2Data, base + 0x1D8);
+                        if (count > 0 && ((count - 1) % 3 != 0 ||
+                                static_cast<size_t>(offset) + static_cast<size_t>(count) * 12 > m2Data.size())) {
+                            core::Logger::getInstance().error("Invalid M2 particle spline: ", count,
+                                                              " points at ", offset);
+                            return M2Model{};
+                        }
+                        em.splinePoints.reserve(count);
+                        for (uint32_t k = 0; k < count; ++k)
+                            em.splinePoints.emplace_back(readValue<float>(m2Data, offset + k * 12),
+                                                         readValue<float>(m2Data, offset + k * 12 + 4),
+                                                         readValue<float>(m2Data, offset + k * 12 + 8));
+                    }
                     // EnabledIn: a byte track (0/1, discrete) ending the
                     // emitter at +0x1DC. All 16070 pre-264 emitters in the TBC
                     // data read a well-formed 0/1 track here; 3487 switch off.
