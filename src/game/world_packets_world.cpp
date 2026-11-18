@@ -1708,8 +1708,9 @@ bool BattlefieldStatusPacket::parse(network::Packet& packet, BattlefieldStatusDa
             case 3:
                 if (!packet.hasRemaining(13)) return false;
                 data.mapId = packet.readUInt32();
-                data.inviteTimeoutMs = packet.readUInt32();
-                packet.readUInt32(); // Elapsed battleground time.
+                data.autoLeaveMs = packet.readUInt32();
+                data.inviteTimeoutMs = data.autoLeaveMs;
+                data.runTimeMs = packet.readUInt32();
                 packet.readUInt8(); // Arena team.
                 break;
             default:

@@ -176,6 +176,11 @@ struct BgQueueSlot {
     // When timeInQueueSec was last told. The server says it about once a
     // minute; the time waited counts on from here in between.
     std::chrono::steady_clock::time_point queueTimeReceivedAt{};
+    // Status 3 (TBC): time to removal and time since start, as of
+    // inProgressReceivedAt. Zero where the expansion's packet lacks them.
+    uint32_t autoLeaveMs = 0;
+    uint32_t runTimeMs = 0;
+    std::chrono::steady_clock::time_point inProgressReceivedAt{};
     std::string bgName;
 };
 

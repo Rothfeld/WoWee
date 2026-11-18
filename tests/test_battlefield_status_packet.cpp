@@ -129,6 +129,20 @@ TEST_CASE("SMSG_BATTLEFIELD_STATUS reads the status the server sent",
         CHECK(d.instanceId == 0);
     }
 
+    SECTION("TBC in progress carries time to removal and time since start") {
+        // CMaNGOS TBC STATUS_IN_PROGRESS: mapId, Time1 (auto leave), Time2
+        // (since start), uint8 arena team.
+        auto p = packetOf({0,0,0,0, 0,13,2,0,0,0,144,31,
+                           7,0,0,0, 0, 3,0,0,0,
+                           0xE9,0x01,0,0,  0xC0,0xD4,0x01,0,  0x10,0x27,0,0,  1});
+        BattlefieldStatusData d;
+        REQUIRE(BattlefieldStatusPacket::parse(p, d, false, false));
+        CHECK(d.statusId == 3u);
+        CHECK(d.mapId == 489u);
+        CHECK(d.autoLeaveMs == 120000u);
+        CHECK(d.runTimeMs == 10000u);
+    }
+
     SECTION("TBC zero identifier clears queue without status tail") {
         auto p = packetOf({1,0,0,0, 0,0,0,0,0,0,0,0});
         BattlefieldStatusData d;

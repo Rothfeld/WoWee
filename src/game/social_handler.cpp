@@ -3571,6 +3571,12 @@ void SocialHandler::handleBattlefieldStatus(network::Packet& packet) {
             bgQueues_[queueSlot].timeInQueueSec = timeInQueueSec;
             bgQueues_[queueSlot].queueTimeReceivedAt = std::chrono::steady_clock::now();
         }
+        // Only TBC's status carries the two times (see BattlefieldStatusData).
+        if (statusId == 3 && isPreWotlk() && !isClassicLikeExpansion()) {
+            bgQueues_[queueSlot].autoLeaveMs = status.autoLeaveMs;
+            bgQueues_[queueSlot].runTimeMs = status.runTimeMs;
+            bgQueues_[queueSlot].inProgressReceivedAt = std::chrono::steady_clock::now();
+        }
         if (statusId == 2 && !wasInvite) { bgQueues_[queueSlot].inviteTimeout = inviteTimeout; bgQueues_[queueSlot].inviteReceivedTime = std::chrono::steady_clock::now(); }
     } else {
         statusChanged = true;

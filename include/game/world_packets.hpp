@@ -2985,6 +2985,11 @@ struct BattlefieldStatusData {
     uint32_t timeInQueueMs = 0;    ///< status 1
     uint32_t mapId = 0;            ///< status 2 and 3
     uint32_t inviteTimeoutMs = 0;  ///< status 2 - how long the invitation lasts
+    /// Status 3 before Wrath (CMaNGOS TBC Time1/Time2): milliseconds until the
+    /// battleground removes its players (0 while it runs, 120000 once it has
+    /// ended) and milliseconds since it started.
+    uint32_t autoLeaveMs = 0;
+    uint32_t runTimeMs = 0;
 };
 
 /**

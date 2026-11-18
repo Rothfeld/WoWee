@@ -5517,6 +5517,22 @@ static std::vector<uint32_t>& taxiRouteShown() {
     return route;
 }
 
+/// The in-progress battleground's run time (true) or time to removal (false),
+/// in milliseconds as of now; 0 outside one.
+static double battlefieldInProgressMs(lua_State* L, bool runTime) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0.0;
+    for (const auto& q : gh->getBgQueues()) {
+        if (q.statusId != 3) continue;
+        if (q.inProgressReceivedAt == std::chrono::steady_clock::time_point{}) return 0.0;
+        const double since = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - q.inProgressReceivedAt).count();
+        if (runTime) return q.runTimeMs + since;
+        return q.autoLeaveMs == 0 ? 0.0 : std::max(0.0, q.autoLeaveMs - since);
+    }
+    return 0.0;
+}
+
 void registerSystemLuaAPI(lua_State* L) {
     // Before any binding is registered, so the first GetCVar of the run - which
     // happens while a panel is being built - sees what the player last set.
@@ -6114,8 +6130,19 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushboolean(L, leadsAParty ? 1 : 0);
             return 1;
         }},
-                {"GetBattlefieldInstanceExpiration", lua_ReturnZero},
-                {"GetBattlefieldInstanceRunTime",    lua_ReturnZero},
+                // Milliseconds until the battleground the player is in removes
+                // its players (zero while it runs) and since it started, both
+                // from the last in-progress status counted on to now. The
+                // minimap's leave countdown and the scoreboard's "Time
+                // Elapsed" read them.
+                {"GetBattlefieldInstanceExpiration", [](lua_State* L) -> int {
+            lua_pushnumber(L, battlefieldInProgressMs(L, false));
+            return 1;
+        }},
+                {"GetBattlefieldInstanceRunTime", [](lua_State* L) -> int {
+            lua_pushnumber(L, battlefieldInProgressMs(L, true));
+            return 1;
+        }},
                 // The aspect ratio the Mac options panel builds its recording
                 // resolution from: `"640x"..floor(640*ratio)`. Answering the
                 // window's own ratio is both truthful and what makes that read
