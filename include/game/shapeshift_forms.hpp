@@ -66,7 +66,8 @@ int currentShapeshiftFormIndex(GameHandler& owner);
 bool spellFormActive(GameHandler& owner, uint32_t spellId);
 
 /// A spell's icon as the bar and stance bar show it: its ActiveIconID while
-/// its form is on (Stealth: Spell_Nature_Invisibilty), else its icon.
+/// its own aura is on the player (Stealth: Spell_Nature_Invisibilty,
+/// Shadowmeld: Spell_Nature_WispSplode), else its icon.
 std::string actionSpellIcon(GameHandler& owner, uint32_t spellId);
 
 }  // namespace wowee::game

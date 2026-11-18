@@ -2282,6 +2282,20 @@ current. A cast also counts as current from `UNIT_SPELLCAST_SENT` until
 the server answers it. Default keys: Shift-1..6 page the main bar,
 Ctrl-1..0 are the bonus bar, Ctrl-F1..F10 the stance bar.
 
+Using a spell that has a Spell.dbc ActiveIconID while its own aura is on
+the player sends CMSG_CANCEL_AURA instead of a cast, from the action bar,
+stance bar, spellbook or /cast, before cooldown, power and usability
+refusals: Stealth, Shadowmeld, druid forms, Shadowform, Ghost Wolf, paladin
+auras, hunter aspects, summoned mounts. If the aura has no buff icon
+(AttributesEx 0x10000000: warrior stances) nothing is sent. Spells without an
+ActiveIconID cast again (Trueshot Aura, tracking, timed buffs) or refuse as
+not ready (Cold Blood). Duration, form and attribute 0x02000000 do not decide
+it. While the aura is up the button shows the ActiveIconID, and
+ACTIONBAR_SLOT_CHANGED <slot> fires as it lands and goes. `CancelShapeshiftForm`
+(/cancelform) cancels the aura holding the current form under the same
+buff-icon rule. Measured on pair 13 with a packet-logging proxy:
+`_experiments/20261118T205000Z.toggle_aura` in the workspace.
+
 Spell descriptions apply the damage modifier (SpellModOp 0) to direct
 damage effects only; a fractional result reads as "316 to 317%". Gotcha:
 CMaNGOS sends SMSG_SET_FLAT/PCT_SPELL_MODIFIER only while it applies

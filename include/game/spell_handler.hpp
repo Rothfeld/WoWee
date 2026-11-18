@@ -563,6 +563,10 @@ private:
     // announced once whichever of the many cast paths changed it.
     uint32_t announcedCastSpellId_ = 0;
     bool announcedAutoAttack_ = false;
+    /// Per action slot: whether it showed its spell's ActiveIconID when last
+    /// announced. A change fires ACTIONBAR_SLOT_CHANGED <slot>, as native
+    /// 2.4.3 does when Aspect of the Hawk's aura lands.
+    std::vector<bool> announcedActiveIcons_;
     // IsUsableAction of every bar slot as last announced; see updateTimers.
     std::vector<SpellUsability> announcedUsability_;
     std::unordered_set<uint32_t> cooldownEventPending_;

@@ -1422,10 +1422,12 @@ bool spellFormActive(GameHandler& owner, uint32_t spellId) {
 }
 
 std::string actionSpellIcon(GameHandler& owner, uint32_t spellId) {
-    if (spellFormActive(owner, spellId)) {
-        const auto* entry = owner.getSpellNameEntry(spellId);
-        if (entry->activeIconId != 0) return owner.getIconPath(entry->activeIconId);
-    }
+    // Any spell with an ActiveIconID, form or not: native 2.4.3 shows
+    // Spell_Nature_WispSplode on Shadowmeld, Aspect of the Hawk and Ghost
+    // Wolf buttons while their aura is up, Spell_Nature_Invisibilty on Stealth.
+    const auto* entry = owner.getSpellNameEntry(spellId);
+    if (entry && entry->activeIconId != 0 && owner.playerCarriesAura(spellId))
+        return owner.getIconPath(entry->activeIconId);
     return owner.getSpellIconPath(spellId);
 }
 
@@ -2771,6 +2773,25 @@ void SpellHandler::updateTimers(float dt) {
         announcedAutoAttack_ = swingNow;
         owner_.addonEventCallbackRef()("ACTIONBAR_UPDATE_STATE", {});
         if (castChanged) owner_.addonEventCallbackRef()("CURRENT_SPELL_CAST_CHANGED", {});
+    }
+    // A spell's button wears its ActiveIconID while the spell's aura is on
+    // the player (actionSpellIcon). The texture is only read again by
+    // ActionButton_Update, which ACTIONBAR_SLOT_CHANGED <slot> runs; native
+    // fires it for the slot as the aura lands and as it goes.
+    if (const auto& fire = owner_.addonEventCallbackRef()) {
+        const auto& bar = owner_.getActionBar();
+        announcedActiveIcons_.resize(bar.size(), false);
+        for (size_t i = 0; i < bar.size(); ++i) {
+            bool active = false;
+            if (bar[i].type == ActionBarSlot::SPELL && bar[i].id != 0) {
+                const auto* entry = owner_.getSpellNameEntry(bar[i].id);
+                active = entry && entry->activeIconId != 0 && owner_.playerCarriesAura(bar[i].id);
+            }
+            if (active != announcedActiveIcons_[i]) {
+                announcedActiveIcons_[i] = active;
+                fire("ACTIONBAR_SLOT_CHANGED", {std::to_string(i + 1)});
+            }
+        }
     }
     // ACTIONBAR_UPDATE_USABLE when, and only when, some slot's IsUsableAction
     // answer changed. Native 2.4.3 fires it as energy crosses a cost, on
