@@ -828,6 +828,12 @@ private:
 
     /// Groups to draw for one instance. False when every group is drawn:
     /// no portals, or the camera indoors without cullIndoors.
+    /// Unreachable groups (MOGP 0x80) not to draw, 1 per group; empty when none
+    /// is hidden. See the definition.
+    std::vector<uint8_t> hiddenUnreachableGroups(const WMOInstance& instance, const ModelData& model,
+                                                 const glm::vec3& camPos, const glm::vec3& viewerPos,
+                                                 const Frustum& frustum) const;
+
     bool portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
                              const glm::vec3& camPos, const glm::vec3& viewerPos,
                              const Frustum& frustum, const glm::mat4& viewProj, bool cullIndoors,

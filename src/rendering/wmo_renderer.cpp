@@ -1643,24 +1643,11 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
         const bool usePortalCulling = portalVisibleGroups(instance, model, camPos, portalViewerPos, frustum, viewProj,
                                                           doPortalCull, portalVisibleGroupSet_);
 
-        // Unreachable groups (MOGP 0x80) are stand-ins for parts of the
-        // building: Black Temple's 39, 40, 46 and 48 repeat the courtyard, the
-        // Den and the Chamber of Command, Stormwind's the cathedral. With the
-        // camera inside one of the building's reachable group boxes 8606 does
-        // not draw them: at the Grand Promenade stairs (782, 174) group 48's
-        // smooth copy of the steps covered the real ones in WoWee, and at the
-        // Den of Mortal Delights entrance (810.6, 466) group 46's floor hid
-        // the stairs below it.
-        const glm::vec3 localCam(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
-        const bool cameraInBuilding = std::any_of(model.groups.begin(), model.groups.end(),
-            [&](const auto& group) {
-                return !group.unreachable &&
-                       glm::all(glm::greaterThanEqual(localCam, group.boundingBoxMin)) &&
-                       glm::all(glm::lessThanEqual(localCam, group.boundingBoxMax));
-            });
+        const std::vector<uint8_t> hiddenUnreachable =
+            hiddenUnreachableGroups(instance, model, camPos, portalViewerPos, frustum);
 
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
-            if (cameraInBuilding && model.groups[gi].unreachable) continue;
+            if (!hiddenUnreachable.empty() && hiddenUnreachable[gi]) continue;
             if (usePortalCulling &&
                 portalVisibleGroupSet_.find(static_cast<uint32_t>(gi)) == portalVisibleGroupSet_.end()) {
                 result.portalCulled++;
@@ -2343,6 +2330,48 @@ bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelDa
     return true;
 }
 
+std::vector<uint8_t> WMORenderer::hiddenUnreachableGroups(const WMOInstance& instance, const ModelData& model,
+                                                          const glm::vec3& camPos, const glm::vec3& viewerPos,
+                                                          const Frustum& frustum) const {
+    // Unreachable groups (MOGP 0x80) have no portals of their own; other
+    // groups' portals look into them. With the camera inside one of the
+    // building's reachable group boxes, one is drawn only through an in-view
+    // portal of the camera's or the character's group that leads to it, and
+    // the doodads it lists only with it. Black Temple: group 2 (Illidan's
+    // summit) looks into 48, the courtyard group 8 into 39, hall11 (4) and
+    // others into 40; nothing leads into 46. Drawing them from everywhere put
+    // 48's smooth copy of the Grand Promenade steps over the real stairs
+    // (782, 174) and 46's floor and crystal over the Den entrance (810.6,
+    // 466); drawing none lost the spires seen from the summit (745, 330).
+    if (std::none_of(model.groups.begin(), model.groups.end(),
+                     [](const auto& group) { return group.unreachable; })) {
+        return {};
+    }
+    const glm::vec3 localCam(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
+    const bool cameraInBuilding = std::any_of(model.groups.begin(), model.groups.end(),
+        [&](const auto& group) {
+            return !group.unreachable &&
+                   glm::all(glm::greaterThanEqual(localCam, group.boundingBoxMin)) &&
+                   glm::all(glm::lessThanEqual(localCam, group.boundingBoxMax));
+        });
+    if (!cameraInBuilding) return {};
+    std::vector<uint8_t> hidden(model.groups.size(), 0);
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) hidden[gi] = model.groups[gi].unreachable ? 1 : 0;
+    const glm::vec3 localViewer(instance.invModelMatrix * glm::vec4(viewerPos, 1.0f));
+    for (const int seedGroup : {findContainingGroup(model, localCam), findContainingGroup(model, localViewer)}) {
+        if (seedGroup < 0 || static_cast<size_t>(seedGroup) >= model.groupPortalRefs.size()) continue;
+        const auto [start, count] = model.groupPortalRefs[seedGroup];
+        for (uint32_t r = start; r < static_cast<uint32_t>(start) + count && r < model.portalRefs.size(); ++r) {
+            const auto& ref = model.portalRefs[r];
+            if (ref.groupIndex < hidden.size() && hidden[ref.groupIndex] &&
+                isPortalVisible(model, ref.portalIndex, localCam, frustum, instance.modelMatrix)) {
+                hidden[ref.groupIndex] = 0;
+            }
+        }
+    }
+    return hidden;
+}
+
 void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* viewerPos) {
     Frustum frustum;
     const glm::mat4 viewProj = camera.getProjectionMatrix() * camera.getViewMatrix();
@@ -2356,9 +2385,13 @@ void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* vi
         const auto mdlIt = loadedModels.find(instance.modelId);
         if (mdlIt == loadedModels.end()) continue;
         drawn.clear();
-        if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, cullIndoors, drawn)) continue;
+        const auto hidden = hiddenUnreachableGroups(instance, mdlIt->second, camPos, viewer, frustum);
+        if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, cullIndoors, drawn)) {
+            if (hidden.empty()) continue;
+            for (size_t g = 0; g < mdlIt->second.groups.size(); ++g) drawn.insert(static_cast<uint32_t>(g));
+        }
         instance.drawnGroups.assign(mdlIt->second.groups.size(), 0);
-        for (uint32_t g : drawn) instance.drawnGroups[g] = 1;
+        for (uint32_t g : drawn) instance.drawnGroups[g] = hidden.empty() || !hidden[g];
     }
     // The units' walk always runs indoors too: The Eye's entrance hall shows
     // no Bloodwarder pack through its walls on native, 60 yards on in the
