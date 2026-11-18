@@ -2581,18 +2581,11 @@ void registerActionLuaAPI(lua_State* L) {
                 // and showed its level, which is why it looked like enemies
                 // specifically.
                 //
-                // No guess needed either. AzerothCore's Formulas.h gives the
-                // grey level exactly, and the green range is the distance from
-                // the player's level down to it.
+                // TBC answers build 8606's measured table (questGreenRange).
                 {"GetQuestGreenRange", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int lvl = gh ? static_cast<int>(gh->getPlayerLevel()) : 1;
-            int gray;
-            if (lvl <= 5)       gray = 0;
-            else if (lvl <= 39) gray = lvl - 5 - lvl / 10;
-            else if (lvl <= 59) gray = lvl - 1 - lvl / 5;
-            else                gray = lvl - 9;
-            lua_pushnumber(L, lvl - gray);
+            lua_pushnumber(L, questGreenRange(tbcInterface(L), lvl));
             return 1;
         }},
                 // Two latent raises on the escape-key path, bound as no-ops

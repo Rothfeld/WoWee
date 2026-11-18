@@ -15,6 +15,8 @@
 
 #include "game/quest_giver_status.hpp"
 #include "game/gossip_quest_status.hpp"
+#include "game/level_difficulty.hpp"
+#include <utility>
 #include <array>
 
 using wowee::game::QuestGiverStatus;
@@ -166,4 +168,27 @@ TEST_CASE("the quest cursor follows the status, not the mark", "[questgiver][cur
     // A grey ? over the giver, and still the Quest cursor.
     CHECK(std::string(questGiverCursor(QuestGiverStatus::INCOMPLETE)) == "Quest");
     CHECK(std::string(questGiverCursor(QuestGiverStatus::REWARD)) == "QuestTurnIn");
+}
+
+// GetQuestGreenRange as build 8606 answers it (native /script, pair 16), and
+// the "(low level)" the gossip and greeting lists show, which is not drawn
+// from it.
+TEST_CASE("TBC quest green range and trivial quests", "[questgiver][tbc]") {
+    using wowee::game::questGreenRange;
+    using wowee::game::questIsTrivial;
+    for (const auto& [level, range] : {std::pair{5, 4}, {6, 4}, {9, 4}, {10, 5}, {19, 5}, {20, 6},
+                                       {29, 6}, {30, 7}, {39, 7}, {40, 8}, {44, 8}, {45, 8},
+                                       {49, 8}, {50, 8}, {54, 8}, {55, 8}, {59, 8}, {60, 8}, {70, 8}}) {
+        INFO("level " << level);
+        CHECK(questGreenRange(true, level) == range);
+    }
+    // Gossip "(low level)": more than 5 levels below, whatever the green range.
+    CHECK_FALSE(questIsTrivial(true, 17, 12));  // Thundris Windweaver
+    CHECK(questIsTrivial(true, 18, 12));
+    CHECK_FALSE(questIsTrivial(true, 45, 40));  // Rigglefuzz
+    CHECK(questIsTrivial(true, 46, 40));
+    CHECK_FALSE(questIsTrivial(true, 63, 58));  // Smokey LaRue
+    CHECK(questIsTrivial(true, 64, 58));
+    CHECK(questIsTrivial(true, 55, 44));        // Yeh'kinya
+    CHECK_FALSE(questIsTrivial(true, 55, 0));
 }

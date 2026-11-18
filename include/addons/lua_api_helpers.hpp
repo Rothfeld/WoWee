@@ -7,9 +7,9 @@
 #include <chrono>
 #include <cstring>
 #include <cmath>
-#include <algorithm>
 
 #include "game/item_text.hpp"
+#include "game/level_difficulty.hpp"
 #include "addons/lua_services.hpp"
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
@@ -227,21 +227,13 @@ inline constexpr const char* kLuaRaces[] = {
     "Tauren","Gnome","Troll","","Blood Elf","Draenei"
 };
 
-/// Whether a quest of this level is grey to a player of that one.
-///
-/// The threshold is AzerothCore's Acore::XP::GetGrayLevel, which the server
-/// uses for the same judgement - `creatureOrQuestLevel <= GetGrayLevel(level)`.
-/// Written out rather than guessed at a "level - 8 or so", which is what the
-/// comment beside IsActiveQuestTrivial used to decline to do; the formula is
-/// three branches and it is the server's own.
-inline bool questIsTrivial(int playerLevel, int questLevel) {
-    if (questLevel <= 0 || playerLevel <= 0) return false;
-    int grey;
-    if (playerLevel <= 5)       grey = 0;
-    else if (playerLevel <= 39) grey = playerLevel - 5 - playerLevel / 10;
-    else if (playerLevel <= 59) grey = playerLevel - 1 - playerLevel / 5;
-    else                        grey = playerLevel - 9;
-    return questLevel <= grey;
+using game::questGreenRange;
+using game::questIsTrivial;
+
+/// The interface this Lua state loaded is TBC's (Interface 20xxx).
+inline bool tbcInterface(lua_State* L) {
+    const int v = interfaceVersion(L);
+    return v >= 20000 && v < 30000;
 }
 
 /// The five loot methods, indexed by the value the group list carries, and the

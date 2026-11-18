@@ -2551,9 +2551,9 @@ void registerSocialLuaAPI(lua_State* L) {
                 if (!gossipQuestIsAvailable(L, q.questIcon)) continue;
                 lua_pushstring(L, q.title.c_str());
                 lua_pushnumber(L, q.questLevel);
-                // Trivial greys the title out. Nothing here knows a quest's
-                // green range, and guessing it would grey quests that are not.
-                lua_pushboolean(L, 0);
+                // Trivial: GossipFrame greys the icon and writes the title
+                // with TRIVIAL_QUEST_DISPLAY, "(low level)".
+                lua_pushboolean(L, questIsTrivial(tbcInterface(L), static_cast<int>(gh->getPlayerLevel()), q.questLevel) ? 1 : 0);
                 n += 3;
                 if (interfaceVersion(L) >= 30000) {
                     lua_pushboolean(L, (q.questFlags & kQuestFlagsDaily) ? 1 : 0);
@@ -2578,7 +2578,7 @@ void registerSocialLuaAPI(lua_State* L) {
                 if (!gossipQuestIsActive(L, q.questIcon)) continue;
                 lua_pushstring(L, q.title.c_str());
                 lua_pushnumber(L, q.questLevel);
-                lua_pushboolean(L, 0);
+                lua_pushboolean(L, questIsTrivial(tbcInterface(L), static_cast<int>(gh->getPlayerLevel()), q.questLevel) ? 1 : 0);
                 n += 3;
                 if (interfaceVersion(L) >= 30000) {
                     lua_pushboolean(L, gossipQuestIsCompletable(L, q.questIcon) ? 1 : 0);
@@ -2631,7 +2631,17 @@ void registerSocialLuaAPI(lua_State* L) {
             const int index = static_cast<int>(luaL_checknumber(L, 1));
             const auto* q = gossipQuestAt(L, /*available=*/false, index);
             lua_pushboolean(L, (gh && q &&
-                questIsTrivial(static_cast<int>(gh->getPlayerLevel()), q->questLevel)) ? 1 : 0);
+                questIsTrivial(tbcInterface(L), static_cast<int>(gh->getPlayerLevel()), q->questLevel)) ? 1 : 0);
+            return 1;
+        }},
+                // The greeting panel's offered quests (questframe.lua
+                // QuestFrameGreetingPanel_OnShow), as IsActiveQuestTrivial.
+                {"IsAvailableQuestTrivial", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const int index = static_cast<int>(luaL_checknumber(L, 1));
+            const auto* q = gossipQuestAt(L, /*available=*/true, index);
+            lua_pushboolean(L, (gh && q &&
+                questIsTrivial(tbcInterface(L), static_cast<int>(gh->getPlayerLevel()), q->questLevel)) ? 1 : 0);
             return 1;
         }},
                 // isTrivial, isDaily, isRepeatable - which icon the greeting
@@ -2641,7 +2651,7 @@ void registerSocialLuaAPI(lua_State* L) {
             const auto* q = gossipQuestAt(L, /*available=*/true, index);
             auto* gh = getGameHandler(L);
             lua_pushboolean(L, (gh && q &&
-                questIsTrivial(static_cast<int>(gh->getPlayerLevel()), q->questLevel)) ? 1 : 0);
+                questIsTrivial(tbcInterface(L), static_cast<int>(gh->getPlayerLevel()), q->questLevel)) ? 1 : 0);
             lua_pushboolean(L, q && (q->questFlags & kQuestFlagsDaily) ? 1 : 0);
             lua_pushboolean(L, q && q->isRepeatable ? 1 : 0);
             return 3;
