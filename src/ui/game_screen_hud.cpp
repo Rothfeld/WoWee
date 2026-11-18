@@ -1794,16 +1794,16 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             }
             // A profession lock names its profession: LOCKED_WITH_SPELL
             // "Requires %s" when the player lacks it, LOCKED_WITH_SPELL_KNOWN
-            // when known; the lock's rank follows the name when it has one.
-            // Pure red when it cannot be opened, else the gathering
-            // difficulty colour. Original 2.4.3 (pair 0, real Peacebloom,
-            // Lock 29 rank 0): without Herbalism (255,0,0) "Requires
-            // Herbalism"; with Herbalism 1 the same line orange (255,128,64).
+            // when known; the line carries the profession name only, never
+            // the lock's rank. Pure red when it cannot be opened, else the
+            // gathering difficulty colour. Original 2.4.3 (pair 0, real
+            // Peacebloom, Lock 29 rank 0): without Herbalism (255,0,0)
+            // "Requires Herbalism"; with Herbalism 1 the same line orange
+            // (255,128,64). Dark Iron Deposit (rank 230), shared native
+            // client: no rank on the line either.
             if (const auto lock = gameHandler.gameObjectProfessionLock(info)) {
-                std::string need = lock->name;
-                if (lock->requiredRank) need += " " + std::to_string(lock->requiredRank);
                 std::string text = "'";
-                for (const unsigned char c : need) {
+                for (const unsigned char c : lock->name) {
                     text += '\\';
                     text += static_cast<char>('0' + c / 100);
                     text += static_cast<char>('0' + c / 10 % 10);
