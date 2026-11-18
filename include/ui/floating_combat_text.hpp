@@ -94,11 +94,14 @@ inline bool overlaps(const Box& a, const Box& b) {
 ///
 /// The newest text keeps its natural place. An older text that collides is
 /// lifted over the texts above it while the total lift stays within one row;
-/// otherwise it keeps its natural height and is set to the right of what it
-/// collides with. Measured cases: two simultaneous numbers stack; of three,
-/// the oldest goes beside the newest on the bottom row; a 0.3 s stream forms
-/// one column; in a 0.15 s stream the second number sits right of the third,
-/// slightly lower.
+/// otherwise it is set right of the first text it collides with at its
+/// natural height; if that place is taken it drops one row below its natural
+/// place; only then does it keep stepping right. Measured cases: two
+/// simultaneous numbers stack; of three, the oldest goes beside the newest on
+/// the bottom row; of four (1, 22, 333, 4 sent together, st-original frames
+/// 520-545), 4 stays, 333 rises a row, 22 sits right of 4 and 1 hangs a row
+/// below the name line; a 0.3 s stream forms one column; in a 0.15 s stream
+/// the second number sits right of the third, slightly lower.
 inline const Box* firstBlocker(const Box& box, const std::vector<Box>& placed, size_t count) {
     for (size_t j = 0; j < count; ++j)
         if (overlaps(box, placed[j])) return &placed[j];
@@ -120,11 +123,21 @@ inline void layout(std::vector<Box>& newestFirst) {
         if (!firstBlocker(box, newestFirst, i) &&
             box.naturalTop - box.top <= rowHeight(box) + 0.01f) continue;
         box.top = box.naturalTop;
+        const auto beside = [&](const Box& blocker) {
+            return blocker.x + 0.5f * (blocker.width + box.width) + 0.5f * (gap(blocker) + gap(box));
+        };
+        if (const Box* blocker = firstBlocker(box, newestFirst, i)) {
+            box.x = beside(*blocker);
+            if (!firstBlocker(box, newestFirst, i)) continue;
+        }
+        box.x = box.naturalX;
+        box.top = box.naturalTop + rowHeight(box);
+        if (!firstBlocker(box, newestFirst, i)) continue;
+        box.top = box.naturalTop;
         for (size_t step = 0; step < i; ++step) {
             const Box* blocker = firstBlocker(box, newestFirst, i);
             if (!blocker) break;
-            box.x = blocker->x + 0.5f * (blocker->width + box.width)
-                + 0.5f * (gap(*blocker) + gap(box));
+            box.x = beside(*blocker);
         }
     }
 }

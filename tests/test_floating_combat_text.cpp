@@ -56,3 +56,15 @@ TEST_CASE("fade and critical pulse follow the measured curve", "[fct]") {
     CHECK(critPulse(0.15f) == Catch::Approx(2.0f));
     CHECK(critPulse(0.3f) == Catch::Approx(1.0f));
 }
+
+TEST_CASE("of four simultaneous numbers the oldest drops a row below", "[fct]") {
+    // st-original frames 520-545: 4 stays, 333 rises, 22 beside 4, 1 below.
+    std::vector<Box> boxes{text(300, 14), text(300, 49), text(300, 31), text(300, 6)};
+    layout(boxes);
+    CHECK(boxes[0].top == Catch::Approx(300));
+    CHECK(boxes[1].top == Catch::Approx(244));
+    CHECK(boxes[2].top == Catch::Approx(300));
+    CHECK(boxes[2].x > 640 + 14);
+    CHECK(boxes[3].top == Catch::Approx(356));
+    CHECK(boxes[3].x == Catch::Approx(640));
+}
