@@ -1279,14 +1279,30 @@ static int lua_GetNumSkillLines(lua_State* L) {
 
 /// Open or close the heading at a drawn-row index. Shared by the two verbs,
 /// which differ only in the boolean and must resolve the index the same way.
+///
+/// Index 0 is every heading: SkillFrameCollapseAllButton calls
+/// CollapseSkillHeader(0) and ExpandSkillHeader(0) (2.4.3: 17 lines become
+/// the 5 headings and back). The frame redraws on SKILL_LINES_CHANGED, which
+/// 2.4.3 raises for these; without it a heading kept its old isExpanded and
+/// the next click could not open it again.
 static int skillHeaderSetCollapsed(lua_State* L, bool collapsed) {
     auto* gh = getGameHandler(L);
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
-    if (!gh || index < 1) return 0;
-    const auto rows = skillRows(gh);
-    if (index > static_cast<int>(rows.size())) return 0;
-    const auto& row = rows[static_cast<size_t>(index) - 1];
-    if (row.isHeader) gh->setSkillCategoryCollapsed(row.categoryId, collapsed);
+    if (!gh || index < 0) return 0;
+    if (index == 0) {
+        // Every heading there is, open ones included: collapsing takes the
+        // children out of the rows, so read the categories before changing any.
+        std::vector<uint32_t> categories;
+        for (const auto& [id, skill] : gh->getPlayerSkills()) categories.push_back(gh->getSkillCategory(id));
+        for (uint32_t category : categories) gh->setSkillCategoryCollapsed(category, collapsed);
+    } else {
+        const auto rows = skillRows(gh);
+        if (index > static_cast<int>(rows.size())) return 0;
+        const auto& row = rows[static_cast<size_t>(index) - 1];
+        if (!row.isHeader) return 0;
+        gh->setSkillCategoryCollapsed(row.categoryId, collapsed);
+    }
+    gh->fireAddonEvent("SKILL_LINES_CHANGED", {});
     return 0;
 }
 
