@@ -1005,6 +1005,10 @@ selection ordering and terrain-hole regression checks.
 
 Stand variants blend from their outgoing final pose using the incoming sequence's authored blend time. This also applies when the same variant repeats, either through random selection or its replay count. TBC `DwarfMale.m2` sequence 40 has different first and last spine poses; a direct wrap produces a visible snap.
 
+Every looping animation starts on a variation drawn by M2 frequency and redraws at a sequence end once that sequence's replay count is spent, Stand or not. DoomGuardOutland.m2 has two Walks: 0 (on its feet) and 33 (wings beating, feet off the ground, replay 3-5). Native Illidari Fearbringers (22954) in Black Temple switch between them along their patrol; their create block carries only FORWARD, WALK_MODE and SPLINE_ENABLED (0x08000101), and the spline flag 0x100 is the Runmode CMaNGOS adds to every monster move, so neither flying nor hover state is involved. `WOWEE_TBC_DATA_DIR=... build/bin/test_ready_stance_data`. Evidence: `_experiments/20261118T1350Z.akama_gait` in the workspace (bt1 native, bt2 WoWee).
+
+Walk or Run (rendering::splineGroundGaitWalks) compares the spline speed with the Walk stride at the display's own size: OBJECT_FIELD_SCALE_X enlarges the model but not the stride. Native Akama 21700 (display 20681 x1.3, Walk 2.5) ran at 6.94 yd/s at object scale 1, 2 and 3; Akama 22990 (same display, created at object scale 2) ran at 8.0; El Pollo Grande (display 589 x10) walked at 8.0. For Black Temple Akama 23089 (display 21112 x2.6, run speed 10) the rule gives Walk (stride 6.5, threshold 13); a native 21700 given display 21112 also walked at 10.4. The real Illidan event was not observed natively.
+
 ### NPC conversation facing
 
 Greeting callbacks play voice audio. Opening a gossip panel plays the emotes

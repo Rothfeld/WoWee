@@ -956,6 +956,17 @@ bool EntitySpawner::remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId
         return creatureWalkingState_.count(guid) > 0;
     auto* characters = renderer_->getCharacterRenderer();
     std::optional<float> stride = characters->locomotionStride(locomotionInstanceId, rendering::anim::WALK);
+    // The authored stride is taken at the display's own size; the server's
+    // OBJECT_FIELD_SCALE_X enlarges the model but not the stride. Native
+    // Akama (21700, display 20681 x1.3, Walk 2.5) ran at 6.94 yd/s at object
+    // scale 1, 2 and 3 alike, and Akama 22990 (the same display created at
+    // object scale 2) ran at 8.0; El Pollo Grande (display 589 x10) walked at
+    // 8.0 (_experiments/20261118T1350Z.akama_gait).
+    if (stride && locomotionInstanceId == getCreatureInstanceId(guid)) {
+        const auto unit = std::static_pointer_cast<game::Unit>(entity);
+        *stride *= creatureRenderScale(*unit, unit->getDisplayId(), 1.0f) /
+                   characters->getInstanceScale(locomotionInstanceId);
+    }
     // HumanFemale.m2 authors every sequence with moveSpeed 0, Walk included.
     // Native still walks such a unit (Phantom Guardsman display 16457,
     // Karazhan) and keeps the stride rule at the model's scale: display 16457

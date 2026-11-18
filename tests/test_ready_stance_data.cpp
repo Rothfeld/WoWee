@@ -8,11 +8,14 @@
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/sequence_variation.hpp"
 
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <random>
 
 using namespace wowee;
 
@@ -50,4 +53,35 @@ TEST_CASE("Bear.m2 has no ready stance and a second Stand variation", "[animatio
         stands += sequence.id == rendering::anim::STAND;
     }
     CHECK(stands == 2);  // plain Stand and the 3.8 s rearing fidget
+}
+
+TEST_CASE("DoomGuardOutland.m2 walks on two variations, Akama.m2 on one", "[animation][assets]") {
+    // Native Illidari Fearbringers (22954, Black Temple) switch between
+    // walking on their feet and beating their wings along a patrol.
+    const auto doomguard = pipeline::M2Loader::load(readData("creature/doomguardoutland/doomguardoutland.m2"));
+    std::mt19937 random(8606);
+    std::map<int, int> drawn;
+    for (int i = 0; i < 2000; ++i) {
+        const auto variation = rendering::drawSequenceVariation(doomguard.sequences, rendering::anim::WALK, random);
+        REQUIRE(variation);
+        ++drawn[variation->index];
+        const auto& sequence = doomguard.sequences[variation->index];
+        CHECK(sequence.id == rendering::anim::WALK);
+        CHECK(variation->repeats >= sequence.replayMin);
+        CHECK(variation->repeats <= sequence.replayMax);
+    }
+    REQUIRE(drawn.size() == 2);
+    CHECK(drawn.count(0) == 1);
+    CHECK(drawn.count(33) == 1);
+    CHECK(drawn[0] > 800);   // frequencies 16383 : 16383
+    CHECK(drawn[33] > 800);
+    CHECK(doomguard.sequences[33].replayMin == 3);
+    CHECK(doomguard.sequences[33].replayMax == 5);
+
+    const auto akama = pipeline::M2Loader::load(readData("creature/akama/akama.m2"));
+    const auto walk = rendering::drawSequenceVariation(akama.sequences, rendering::anim::WALK, random);
+    REQUIRE(walk);
+    CHECK(walk->index == 0);
+    CHECK(walk->repeats == 0);
+    CHECK_FALSE(rendering::drawSequenceVariation(akama.sequences, rendering::anim::FLY_IDLE, random));
 }

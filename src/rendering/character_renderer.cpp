@@ -35,6 +35,7 @@
 #include "rendering/shadow_params.hpp"
 #include "rendering/normal_map.hpp"
 #include "rendering/m2_track_sampler.hpp"
+#include "rendering/animation/sequence_variation.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "core/thread_pool.hpp"
 #include "rendering/vk_context.hpp"
@@ -2124,20 +2125,26 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     if (instance.currentSequenceIndex < 0 && firstMatch >= 0) {
         instance.currentSequenceIndex = firstMatch;
     }
-    // Stand starts on a variation drawn by frequency, as it continues at
-    // each loop boundary. The first-listed one is often the rare fidget:
-    // FelReaver (Void Reaver) lists Stand 5 (frequency 7281, an arm raised)
-    // before Stand 11 (25485); WoWee restarted 5 after every swing and the
-    // boss raised its arm constantly, which build 8606 does not show
-    // (_experiments/20261118T122247Z.eye_channel_beam, void reaver).
-    if (animationId == anim::STAND && loop && instance.currentSequenceIndex >= 0) {
-        std::vector<double> weights(model.sequences.size(), 0.0);
-        for (size_t i = 0; i < model.sequences.size(); ++i)
-            if (model.sequences[i].id == anim::STAND && model.sequences[i].duration > 0)
-                weights[i] = std::max<int>(0, model.sequences[i].frequency);
-        if (std::accumulate(weights.begin(), weights.end(), 0.0) > 0.0) {
-            static std::mt19937 standRandom(std::random_device{}());
-            instance.currentSequenceIndex = std::discrete_distribution<int>(weights.begin(), weights.end())(standRandom);
+    // A looping animation starts on a variation drawn by frequency, as it
+    // continues at each loop boundary once its replay count is spent. The
+    // first-listed one is often the rare fidget: FelReaver (Void Reaver)
+    // lists Stand 5 (frequency 7281, an arm raised) before Stand 11 (25485);
+    // WoWee restarted 5 after every swing and the boss raised its arm
+    // constantly, which build 8606 does not show
+    // (_experiments/20261118T122247Z.eye_channel_beam, void reaver). Walk
+    // has variations too: DoomGuardOutland.m2 Walk 0 (frequency 16383, on
+    // its feet) and Walk 33 (16383, replay 3-5, wings beating, feet off the
+    // ground). Native Illidari Fearbringers (22954) in Black Temple switch
+    // between the two along their patrol
+    // (_experiments/20261118T1350Z.akama_gait, bt1).
+    if (loop && instance.currentSequenceIndex >= 0) {
+        static std::mt19937 loopRandom(std::random_device{}());
+        if (const auto first = drawSequenceVariation(model.sequences, animationId, loopRandom)) {
+            if (animationId != anim::STAND && first->index != instance.currentSequenceIndex)
+                LOG_DEBUG("Loop variation: instance=", instanceId, " animation=", animationId,
+                          " sequence=", first->index, " repeats=", first->repeats);
+            instance.currentSequenceIndex = first->index;
+            instance.sequenceRepeatsRemaining = first->repeats;
         }
     }
 
@@ -2453,31 +2460,28 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                            inst.animationTime >= sequences[inst.currentSequenceIndex].duration) {
                         const int previous = inst.currentSequenceIndex;
                         inst.animationTime -= sequences[previous].duration;
-                        // Stand variations contain authored fidgets, not separate
-                        // emotes. Select only at complete sequence boundaries.
-                        if (inst.currentAnimationId != anim::STAND) continue;
+                        // Variations (Stand fidgets, DoomGuardOutland's two
+                        // Walks) change only at complete sequence boundaries.
                         if (inst.sequenceRepeatsRemaining > 0) {
                             --inst.sequenceRepeatsRemaining;
                         } else {
                             static std::mt19937 variationRandom(std::random_device{}());
-                            std::vector<double> weights(sequences.size(), 0.0);
-                            for (size_t i = 0; i < sequences.size(); ++i) {
-                                if (sequences[i].id == anim::STAND && sequences[i].duration > 0)
-                                    weights[i] = std::max<int>(0, sequences[i].frequency);
-                            }
-                            if (std::accumulate(weights.begin(), weights.end(), 0.0) > 0.0) {
-                                inst.currentSequenceIndex = std::discrete_distribution<int>(
-                                    weights.begin(), weights.end())(variationRandom);
-                                const auto& next = sequences[inst.currentSequenceIndex];
-                                assert(next.replayMin <= next.replayMax);
-                                inst.sequenceRepeatsRemaining = std::uniform_int_distribution<uint32_t>(
-                                    next.replayMin, next.replayMax)(variationRandom);
+                            if (const auto variation = drawSequenceVariation(
+                                    sequences, inst.currentAnimationId, variationRandom)) {
+                                if (inst.currentAnimationId != anim::STAND && variation->index != previous)
+                                    LOG_DEBUG("Loop variation: instance=", pair.first, " animation=",
+                                              inst.currentAnimationId, " sequence=", variation->index,
+                                              " repeats=", variation->repeats);
+                                inst.currentSequenceIndex = variation->index;
+                                inst.sequenceRepeatsRemaining = variation->repeats;
                             }
                         }
                         const auto& next = sequences[inst.currentSequenceIndex];
                         // Repeating a Stand variant also crosses a pose boundary.
                         // DwarfMale sequence 40 has different first/last spine poses.
-                        if (next.blendTime > 0) {
+                        // Other loops blend only into a different variation.
+                        if (next.blendTime > 0 &&
+                            (inst.currentAnimationId == anim::STAND || inst.currentSequenceIndex != previous)) {
                             inst.blendSequenceIndex = previous;
                             // The outgoing fidget ended here. Blending from its
                             // first frame creates a visible snap at the boundary.
