@@ -711,6 +711,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
 
     // Particle update (sequential - uses RNG, not thread-safe)
     // Only iterate instances that have particle emitters (pre-built list).
+    retiredInstanceIds_.clear();
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
         auto& instance = instances[idx];
@@ -719,7 +720,10 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         // Distance cull: only update particles within visible range
         glm::vec3 toCam = instance.position - cachedCamPos_;
         float distSq = glm::dot(toCam, toCam);
-        if (distSq > cachedMaxRenderDistSq_) continue;
+        if (distSq > cachedMaxRenderDistSq_) {
+            if (instance.retiring) retiredInstanceIds_.push_back(instance.id);
+            continue;
+        }
         if (!instance.cachedModel) continue;
         // Static skeletons still anchor attached particles. They never enter
         // the animated-bone work list, so initialize their bind transforms here.
@@ -727,11 +731,16 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
             computeBoneMatrices(*instance.cachedModel, instance, &cachedCamPos_);
         }
         updateParticles(instance, deltaTime);
+        if (instance.retiring) {
+            if (instance.particles.empty()) retiredInstanceIds_.push_back(instance.id);
+            continue;
+        }
         emitParticles(instance, *instance.cachedModel, deltaTime);
         if (!instance.cachedModel->ribbonEmitters.empty()) {
             updateRibbons(instance, *instance.cachedModel, deltaTime);
         }
     }
+    for (uint32_t id : retiredInstanceIds_) removeInstance(id);
 
 }
 
@@ -756,7 +765,7 @@ void M2Renderer::updateProjectedTextures(const ProjectedSurfaceQuery& surface) {
     uint32_t written = 0;
     for (const auto& instance : instances) {
         const M2ModelGPU* model = instance.cachedModel;
-        if (!model || !model->hasProjectedBatches) continue;
+        if (!model || !model->hasProjectedBatches || instance.retiring) continue;
         const bool animated = model->hasAnimation && !model->disableAnimation;
         if (animated && instance.boneMatrices.empty()) continue;
         for (size_t bi = 0; bi < model->batches.size(); ++bi) {
@@ -1046,7 +1055,8 @@ void M2Renderer::dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, c
 
             uint32_t flags = 0;
             if (inst.cachedIsValid)          flags |= 1u;
-            if (inst.cachedIsInvisibleTrap)   flags |= 4u;
+            // A retiring effect draws only its remaining particles.
+            if (inst.cachedIsInvisibleTrap || inst.retiring) flags |= 4u;
             // Bit 3: previouslyVisible - the shader runs the HiZ occlusion test
             // ONLY when this bit is set (an object with no depth in last frame's
             // pyramid can't be tested reliably). Hysteresis: keep it set unless
@@ -1303,7 +1313,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 distSq = glm::dot(toCam, toCam);
                 effectiveMaxDistSq = instanceMaxDistSq;
             } else {
-                if (!instance.cachedIsValid || instance.cachedIsInvisibleTrap) continue;
+                if (!instance.cachedIsValid || instance.cachedIsInvisibleTrap || instance.retiring) continue;
                 glm::vec3 toCam = instance.position - camPos;
                 distSq = glm::dot(toCam, toCam);
                 if (distSq > maxPossibleDistSq) continue;
@@ -2549,7 +2559,7 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
     for (uint32_t i = 0; i < instances.size(); ++i) {
         const auto& instance = instances[i];
         if (!instance.cachedIsValid ||
-            instance.cachedIsInvisibleTrap) continue;
+            instance.cachedIsInvisibleTrap || instance.retiring) continue;
         if (!instance.cachedModel) continue;
         const M2ModelGPU& model = *instance.cachedModel;
 

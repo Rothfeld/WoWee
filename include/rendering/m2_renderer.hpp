@@ -320,6 +320,10 @@ struct M2Instance {
     /// between zones. Below one the instance is drawn in the blended pass
     /// alone, every layer of it, since an opaque layer cannot fade otherwise.
     float fade = 1.0f;
+    /// Its effect has ended (retireInstance): the mesh and ribbons are gone,
+    /// no particle is born, and the particles alive finish their lives; the
+    /// instance is removed with the last of them.
+    bool retiring = false;
 
     // Particle emitter state
     std::vector<float> emitterAccumulators;  // fractional particle counter per emitter
@@ -704,6 +708,12 @@ public:
         return instanceIndexById.find(instanceId) != instanceIndexById.end();
     }
     void removeInstance(uint32_t instanceId);
+    /// End a spell effect as build 8606 does: its mesh and ribbons vanish at
+    /// once, its emitters stop, and the particles already out live out their
+    /// lifespans. Evocation 12051 interrupted: CycloneWater_State's cone and
+    /// the hand lightning are gone in the next frame, the smoke at the feet
+    /// stays and fades. Removed outright when it has no live particles.
+    void retireInstance(uint32_t instanceId);
     void removeInstances(const std::vector<uint32_t>& instanceIds);
     /// Mark an instance as a server game object so the adaptive doodad render
     /// distance can't cull it while the server still considers it visible.
@@ -1328,6 +1338,7 @@ private:
     size_t particleVertexCapacity_[kParticleFrames] = {MAX_M2_PARTICLE_VERTS, MAX_M2_PARTICLE_VERTS};
 
     // Animation update buffers (avoid per-frame allocation)
+    std::vector<uint32_t> retiredInstanceIds_;  // drained this update, removed after the particle loop
     std::vector<size_t> boneWorkIndices_;        // Reused each frame
     std::vector<std::future<void>> animFutures_; // Reused each frame
     bool spatialIndexDirty_ = false;

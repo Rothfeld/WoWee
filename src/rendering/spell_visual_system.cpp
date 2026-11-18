@@ -683,7 +683,7 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
                 it->duration = decay;
                 ++it;
             } else {
-                m2Renderer_->removeInstance(it->instanceId);
+                m2Renderer_->retireInstance(it->instanceId);
                 it = activeSpellVisuals_.erase(it);
             }
         } else ++it;
@@ -793,7 +793,7 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->isChannel && it->attachInstanceId == attachInstanceId) {
             if (!remainingMs) {
-                m2Renderer_->removeInstance(it->instanceId);
+                m2Renderer_->retireInstance(it->instanceId);
                 it = activeSpellVisuals_.erase(it);
                 continue;
             }
@@ -1202,7 +1202,7 @@ void SpellVisualSystem::stopPersistentArea(uint64_t key) {
     const auto it = persistentAreas_.find(key);
     if (it == persistentAreas_.end()) return;
     if (m2Renderer_)
-        for (uint32_t instanceId : it->second) m2Renderer_->removeInstance(instanceId);
+        for (uint32_t instanceId : it->second) m2Renderer_->retireInstance(instanceId);
     persistentAreas_.erase(it);
 }
 
@@ -1445,7 +1445,7 @@ void SpellVisualSystem::update(float deltaTime) {
         }
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
-            m2Renderer_->removeInstance(it->instanceId);
+            m2Renderer_->retireInstance(it->instanceId);
             it = activeSpellVisuals_.erase(it);
         } else {
             // Update position for bone-tracked effects - follow the CASTER's
@@ -1516,7 +1516,7 @@ void SpellVisualSystem::cancelAllPrecastVisuals() {
     if (!m2Renderer_) return;
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
         if (it->isPrecast) {
-            m2Renderer_->removeInstance(it->instanceId);
+            m2Renderer_->retireInstance(it->instanceId);
             it = activeSpellVisuals_.erase(it);
         } else {
             ++it;

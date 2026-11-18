@@ -341,6 +341,19 @@ void M2Renderer::setInstanceTransform(uint32_t instanceId, const glm::mat4& tran
     // No spatialIndexDirty_ = true - handled incrementally
 }
 
+void M2Renderer::retireInstance(uint32_t instanceId) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    auto& inst = instances[idxIt->second];
+    if (inst.particles.empty()) {
+        removeInstance(instanceId);
+        return;
+    }
+    inst.retiring = true;
+    inst.ribbonEdges.clear();
+    inst.ribbonEdgeAccumulators.clear();
+}
+
 void M2Renderer::removeInstance(uint32_t instanceId) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;

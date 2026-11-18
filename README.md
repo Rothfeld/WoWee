@@ -2077,6 +2077,24 @@ a thin purple bolt with dark edges; WoWee adds the texture and draws a broad
 pale band. Adding the inverted texture made it thin but pink-white, so that
 rule was not kept.
 
+When a kit effect ends - its one play or the stage length (cast time,
+channel, aura, DynamicObject), a Decay, or an interrupted precast - its mesh
+and ribbons go at once, its emitters stop, and the particles already out live
+out their lifespans (`M2Renderer::retireInstance`). Build 8606, Evocation
+12051 interrupted by moving after 3.6 s: CycloneWater_State's cone and the
+Lightning_PreCast_Low_Hand ribbons are gone the next frame, the smoke at the
+feet (emitter 4, 3 s life) stays and fades over about 0.8 s. Azurous's Frost
+Breath 16099 (cast kit 2610, FrostBreath.m2: Stand 2.33 s, mist rate 70,
+3 s life) thins out over about 1.9 s after its peak; WoWee cut it from full to
+nothing in one frame at 2.33 s and now thins it over about 2.3 s (same breath,
+paired capture). Aura removal without Decay is the same: `.unaura` of
+Blazerunner's Aura 13913 (CycloneWater_State) leaves the smoke for about
+0.8 s. Of the TBC kit
+models, 316 cast-kit, 136 impact-kit and 188 channel-kit uses are still
+emitting at the end of their Stand. Not compared: missile models at impact
+(still removed at once), the drain of a unit's effects when the unit leaves.
+Evidence: `_experiments/20261118T211000Z.azurous/` in the workspace.
+
 Every spell effect model is drawn at its `SpellVisualEffectName.Scale` (TBC
 field 4), on top of the unit/attachment scale. One file has rows at several
 sizes: `Shock_Missile` 1, 4 and 8 - Void Reaver's Arcane Orb (34172, visual
