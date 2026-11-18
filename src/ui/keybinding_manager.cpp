@@ -131,6 +131,19 @@ void KeybindingManager::initializeDefaults(Device device) {
         }
         return;
     }
+    if (dataKeyboardDefaults_) {
+        // The expansion's DefaultBindings.wtf decides; every client action
+        // keeps a row so GetBindingKey answers it, bound or not.
+        for (const auto& action : actions) bindings_[action.command] = {};
+        for (const auto& [key, command] : *dataKeyboardDefaults_) {
+            auto& slots = bindings_[command];
+            (slots[0].empty() ? slots[0] : slots[1]) = key;
+        }
+        // This client's own commands, on keys DefaultBindings.wtf leaves free.
+        bindings_["WOWEETOGGLERECORDING"] = {"SHIFT-PRINTSCREEN", ""};
+        bindings_["WOWEERESETCAMERA"] = {};
+        return;
+    }
     for (const auto& action : actions) bindings_[action.command] = {action.key, action.secondKey};
     const Bindings defaults = {
         {"MOVEFORWARD", {"W", "UP"}}, {"MOVEBACKWARD", {"S", "DOWN"}},
@@ -162,6 +175,25 @@ void KeybindingManager::initializeDefaults(Device device) {
     }
     bindings_["PREVIOUSACTIONPAGE"] = {"SHIFT-UP", "SHIFT-MOUSEWHEELUP"};
     bindings_["NEXTACTIONPAGE"] = {"SHIFT-DOWN", "SHIFT-MOUSEWHEELDOWN"};
+}
+void KeybindingManager::setKeyboardDefaults(std::vector<std::pair<std::string, std::string>> keyCommands) {
+    std::set<std::string> keys;
+    std::vector<std::pair<std::string, std::string>> accepted;
+    for (auto& [key, command] : keyCommands) {
+        std::string normalized = key;
+        if (!normalizeKey(normalized) || deviceForKey(normalized) != Device::KeyboardMouse ||
+            !validCommand(command)) {
+            LOG_WARNING("DefaultBindings.wtf: key ", key, " for ", command, " not usable here; skipped");
+            continue;
+        }
+        if (!keys.insert(normalized).second) {
+            LOG_WARNING("DefaultBindings.wtf: key ", normalized, " bound twice; first kept");
+            continue;
+        }
+        accepted.emplace_back(normalized, command);
+    }
+    dataKeyboardDefaults_ = std::move(accepted);
+    resetToDefaults(Device::KeyboardMouse);
 }
 void KeybindingManager::resetToDefaults() {
     resetToDefaults(Device::KeyboardMouse);
@@ -399,10 +431,24 @@ bool KeybindingManager::saveBindings(const std::string& path) const {
     if (ec) { LOG_WARNING("Could not create bindings directory: ", ec.message()); return false; }
     std::ofstream out(temp, std::ios::trunc);
     out << wowee::addons::bindingFileVersion << '\n';
+    // Only what differs from the defaults, as the original writes
+    // bindings-cache.wtf: a saved snapshot of every row would pin today's
+    // defaults forever, so a corrected default never reached anyone who had
+    // launched once.
+    auto defaults = *this;
+    defaults.resetToDefaults();
     for (const auto device : {Device::KeyboardMouse, Device::Controller}) {
         out << (device == Device::Controller ? "[Controller]\n" : "[KeyboardMouse]\n");
-        for (const auto& [command, slots] : bindings(device))
+        const auto& base = defaults.bindings(device);
+        for (const auto& [command, slots] : bindings(device)) {
+            const auto it = base.find(command);
+            const std::array<std::string, 2> none{};
+            if (slots == (it != base.end() ? it->second : none)) continue;
             out << command << '\t' << slots[0] << '\t' << slots[1] << '\n';
+        }
+        for (const auto& [command, slots] : base)
+            if (!bindings(device).contains(command) && (!slots[0].empty() || !slots[1].empty()))
+                out << command << "\t\t\n";
     }
     out.close();
     if (!out) { LOG_WARNING("Could not write bindings to ", temp.string()); return false; }

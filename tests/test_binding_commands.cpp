@@ -284,3 +284,30 @@ TEST_CASE_METHOD(Fixture, "Legacy native settings trim recognized rows and never
     CHECK(restarted.commandForKey("C") == "TOGGLECHARACTER0");
     CHECK(restarted.commandForKey("F9").empty());
 }
+
+TEST_CASE_METHOD(Fixture, "DefaultBindings.wtf replaces keyboard defaults and saves only changes", "[bindings][defaults-wtf]") {
+    // Lines of 2.4.3's WTF\DefaultBindings.wtf.
+    manager.setKeyboardDefaults({{"I", "TOGGLELFGPARENT"}, {"SHIFT-B", "OPENALLBAGS"},
+                                 {"R", "REPLY"}, {"F1", "TARGETSELF"}, {"ALT-Z", "TOGGLEUI"},
+                                 {"B", "TOGGLEBACKPACK"}, {"F12", "TOGGLEBACKPACK"},
+                                 {"NOT_A_KEY", "TOGGLEUI"}});
+    CHECK(manager.commandForKey("I") == "TOGGLELFGPARENT");
+    CHECK(manager.commandForKey("J").empty());
+    CHECK(manager.commandForKey("SHIFT-B") == "OPENALLBAGS");
+    CHECK(manager.commandForKey("R") == "REPLY");
+    CHECK(manager.commandForKey("ALT-Z") == "TOGGLEUI");
+    CHECK(manager.bindings().at("TOGGLEBACKPACK") == std::array<std::string, 2>{"B", "F12"});
+    CHECK(manager.bindings().at("WOWEERESETCAMERA") == std::array<std::string, 2>{});
+    // Unchanged defaults are not written, so a later default reaches the user.
+    const auto file = path("diff.cfg");
+    REQUIRE(manager.saveBindings(file.string()));
+    CHECK(contents(file).find("TOGGLELFGPARENT") == std::string::npos);
+    REQUIRE(manager.setBinding("J", "TOGGLELFGPARENT"));
+    REQUIRE(manager.saveBindings(file.string()));
+    CHECK(contents(file).find("TOGGLELFGPARENT") != std::string::npos);
+    manager.resetToDefaults();
+    CHECK(manager.commandForKey("J").empty());
+    REQUIRE(manager.loadBindings(file.string()));
+    CHECK(manager.commandForKey("J") == "TOGGLELFGPARENT");
+    CHECK(manager.commandForKey("R") == "REPLY");
+}

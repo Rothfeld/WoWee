@@ -17,10 +17,13 @@
 #include "ui/gamepad_controls.hpp"
 
 #include "core/config_paths.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "core/application.hpp"
 #include <algorithm>
 #include <optional>
 #include <cctype>
 #include <filesystem>
+#include <set>
 #include "game/current_action.hpp"
 #include "game/pet_action.hpp"
 #include <SDL3/SDL_keyboard.h>
@@ -1902,9 +1905,63 @@ namespace {
 // Constructing defaults needs no Lua; restoring saved user settings is separate.
 std::string bindingsFilePath() { return core::getConfigRoot() + "/bindings.cfg"; }
 
-void seedBindingDefaults() {
+int bindingCount(lua_State* L);
+std::string bindingAt(lua_State* L, int index);
+
+/// The expansion's WTF\\DefaultBindings.wtf, kept to commands this FrameXML's
+/// Bindings.xml declares and does not mark hidden or debug (the file also
+/// binds TOGGLEPORTALS to Ctrl-W and the mouse's TURNORACTION, which
+/// GetBinding never lists).
+/// False only while Bindings.xml has not loaded, so the caller asks again.
+bool applyDataDefaultBindings(lua_State* L) {
+    auto* assets = core::Application::getInstance().getAssetManager();
+    if (!assets) return false;  // not up yet; asked again on the next call
+    const auto data = assets->readFileOptional("WTF\\DefaultBindings.wtf");
+    if (data.empty()) {
+        LOG_WARNING("Key bindings: this expansion's data has no WTF\\DefaultBindings.wtf; built-in defaults kept");
+        return true;
+    }
+    std::set<std::string> declared;
+    lua_getglobal(L, "__WoweeBindingHidden");
+    const bool haveHidden = lua_istable(L, -1);
+    for (int i = 1, n = bindingCount(L); i <= n; ++i) {
+        std::string command = bindingAt(L, i);
+        if (haveHidden) {
+            lua_getfield(L, -1, command.c_str());
+            const bool hidden = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            if (hidden) continue;
+        }
+        declared.insert(std::move(command));
+    }
+    lua_pop(L, 1);
+    if (declared.empty()) return false;
+    std::vector<std::pair<std::string, std::string>> rows;
+    std::string text(data.begin(), data.end());
+    size_t start = 0;
+    while (start < text.size()) {
+        size_t end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(start, end - start);
+        start = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.starts_with("bind ")) continue;
+        const size_t space = line.find(' ', 5);
+        if (space == std::string::npos) continue;
+        std::string key = line.substr(5, space - 5);
+        std::string command = line.substr(space + 1);
+        if (!declared.contains(command)) continue;
+        rows.emplace_back(std::move(key), std::move(command));
+    }
+    LOG_INFO("Key bindings: ", rows.size(), " defaults from DefaultBindings.wtf");
+    wowee::ui::KeybindingManager::getInstance().setKeyboardDefaults(std::move(rows));
+    return true;
+}
+
+void seedBindingDefaults(lua_State* L) {
     static bool seeded = false;
     if (seeded) return;
+    if (!applyDataDefaultBindings(L)) return;  // Bindings.xml not loaded yet
     seeded = true;
     wowee::ui::KeybindingManager::getInstance().loadBindingsWithLegacy(
         bindingsFilePath(), wowee::ui::SettingsPanel::getSettingsPath());
@@ -1945,12 +2002,12 @@ static int pushBindingKeys(lua_State* L, const std::string& command, bool contro
 }
 
 static int lua_GetBindingKey(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     return pushBindingKeys(L, luaL_checkstring(L, 1), false);
 }
 
 static int lua_GetControllerBindingKey(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     return pushBindingKeys(L, luaL_checkstring(L, 1), true);
 }
 
@@ -1969,7 +2026,7 @@ static int lua_GetControllerBindingKey(lua_State* L) {
 // attempt to bind a key that was not already bound to something failed that
 // way - a controller button being the case where that is always true.
 static int lua_GetBindingAction(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     const std::string key = luaL_checkstring(L, 1);
     lua_pushstring(L, wowee::ui::KeybindingManager::getInstance().commandForKey(key).c_str());
     return 1;
@@ -1984,7 +2041,7 @@ static int lua_GetNumBindings(lua_State* L) {
 // GetBinding(index) → command, key1, key2. A header row is a command like
 // "HEADER_MOVEMENT" with no keys, which is how the UI tells the two apart.
 static int lua_GetBinding(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     const int index = static_cast<int>(luaL_checkinteger(L, 1));
     const std::string command = bindingAt(L, index);
     if (command.empty()) { lua_pushnil(L); return 1; }
@@ -1994,7 +2051,7 @@ static int lua_GetBinding(lua_State* L) {
 }
 
 static int lua_GetControllerBinding(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     const std::string command = bindingAt(L, static_cast<int>(luaL_checkinteger(L, 1)));
     if (command.empty()) { lua_pushnil(L); return 1; }
     lua_pushstring(L, command.c_str());
@@ -2004,7 +2061,7 @@ static int lua_GetControllerBinding(lua_State* L) {
 
 // Editor-only slot edits retain holes; ordinary SetBinding keeps its addon API.
 static int lua_SetBindingSlot(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     const std::string command = luaL_checkstring(L, 1);
     const int slot = static_cast<int>(luaL_checkinteger(L, 2)) - 1;
     const char* key = lua_isnoneornil(L, 3) ? "" : luaL_checkstring(L, 3);
@@ -2033,14 +2090,14 @@ static int lua_SetBindingSlot(lua_State* L) {
 }
 
 static int lua_ResetKeyboardBindings(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     wowee::ui::KeybindingManager::getInstance().resetToDefaults(false);
     if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("UPDATE_BINDINGS", {});
     return 0;
 }
 
 static int lua_ResetControllerBindings(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     wowee::ui::KeybindingManager::getInstance().resetToDefaults(true);
     if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("UPDATE_BINDINGS", {});
     return 0;
@@ -2049,7 +2106,7 @@ static int lua_ResetControllerBindings(lua_State* L) {
 // SetBinding(key, command) → true. A nil command clears whatever holds the key,
 // which is how the UI unbinds.
 static int lua_SetBinding(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     const std::string key = luaL_checkstring(L, 1);
     const char* command = lua_isnoneornil(L, 2) ? nullptr : luaL_checkstring(L, 2);
 
@@ -2067,7 +2124,7 @@ static int lua_SetBinding(lua_State* L) {
 
 // SaveBindings(which) → writes what is bound where, for the next run
 static int lua_SaveBindings(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     lua_pushboolean(L, wowee::ui::KeybindingManager::getInstance().saveBindings(bindingsFilePath()));
     return 1;
 }
@@ -2076,7 +2133,7 @@ static int lua_SaveBindings(lua_State* L) {
 // a previous run saved over them. The key binding panel's Default button
 // passes 0 and its Cancel passes the current set.
 static int lua_LoadBindings(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     auto& manager = wowee::ui::KeybindingManager::getInstance();
     const auto previous = manager;
     const bool defaultsOnly = luaL_optinteger(L, 1, 1) == 0;
@@ -2121,7 +2178,7 @@ static int lua_ClearOverrideBindings(lua_State* L) { (void)L; return 0; }
 // Frame methods: SetPoint, SetSize, SetWidth, SetHeight, GetWidth, GetHeight, GetCenter, SetAlpha, GetAlpha
 
 void registerActionLuaAPI(lua_State* L) {
-    seedBindingDefaults();
+    seedBindingDefaults(L);
     static const struct { const char* name; lua_CFunction func; } api[] = {
                 {"HasAction",           lua_HasAction},
                 // A macro's name, which only a macro has; ActionButton_Update
@@ -2421,7 +2478,7 @@ void registerActionLuaAPI(lua_State* L) {
                 {"GetBinding",          lua_GetBinding},
                 {"SetBinding",          lua_SetBinding},
                 {"GetBindingByKey", [](lua_State* L) -> int {
-            seedBindingDefaults();
+            seedBindingDefaults(L);
             const auto command = wowee::ui::KeybindingManager::getInstance().commandForKey(luaL_checkstring(L, 1));
             if (command.empty()) lua_pushnil(L);
             else lua_pushstring(L, command.c_str());

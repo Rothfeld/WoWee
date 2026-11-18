@@ -1584,6 +1584,7 @@ void emitBindings(Emitter& e, const XmlNode& root) {
     e.line("__WoweeModifiedClick = __WoweeModifiedClick or {}");
     e.line("__WoweeBindingScripts = __WoweeBindingScripts or {}");
     e.line("__WoweeBindingRunOnUp = __WoweeBindingRunOnUp or {}");
+    e.line("__WoweeBindingHidden = __WoweeBindingHidden or {}");
     for (const XmlNode& m : root.children) {
         if (m.name != "ModifiedClick") continue;
         const std::string action = m.attrOr("action", "");
@@ -1630,6 +1631,12 @@ void emitBindings(Emitter& e, const XmlNode& root) {
         e.line("__WoweeBindings[#__WoweeBindings+1] = \"" + name + "\"");
         if (b.attrBool("runOnUp")) {
             e.line("__WoweeBindingRunOnUp[\"" + name + "\"] = true");
+        }
+        // hidden/debug rows (TURNORACTION on BUTTON2, TOGGLEPORTALS on
+        // Ctrl-W): the original never lists them in GetBinding, and their
+        // DefaultBindings.wtf keys are not applied here.
+        if (b.attrBool("hidden") || b.attrBool("debug")) {
+            e.line("__WoweeBindingHidden[\"" + name + "\"] = true");
         }
         if (!b.text.empty()) {
             // keystate arrives as a parameter rather than a global. The bodies

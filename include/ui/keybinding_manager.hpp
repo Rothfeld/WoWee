@@ -5,6 +5,8 @@
 #include <map>
 #include <array>
 #include <set>
+#include <optional>
+#include <vector>
 #include <cstdint>
 #include <functional>
 #include <utility>
@@ -97,6 +99,15 @@ public:
     bool loadFromConfigFile(const std::string& filePath);
 
     /**
+     * The expansion's own default keys, the `bind KEY COMMAND` lines of
+     * WTF\\DefaultBindings.wtf (2.4.3: I opens Looking For Group, R replies,
+     * F1-F5 target self and party, Alt-Z hides the interface). Replaces the
+     * built-in keyboard defaults and resets the keyboard bindings to them;
+     * saved user bindings are applied afterwards by loadBindings.
+     */
+    void setKeyboardDefaults(std::vector<std::pair<std::string, std::string>> keyCommands);
+
+    /**
      * Get all actions for iteration.
      */
     static constexpr int getActionCount() { return static_cast<int>(Action::ACTION_COUNT); }
@@ -107,6 +118,7 @@ private:
     Bindings bindings_;
     Bindings controllerBindings_;
     std::set<std::string> migratedPaths_;
+    std::optional<std::vector<std::pair<std::string, std::string>>> dataKeyboardDefaults_;
     std::array<bool, ImGuiKey_NamedKey_COUNT> down_{};
     // Base physical key -> command, latched at down, unaffected by later edits/modifiers.
     std::map<std::string, std::string> heldBindings_;
@@ -119,6 +131,16 @@ private:
     bool keyActive(const std::string& key, bool pressed, bool repeat = false) const;
     void initializeDefaults(Device device);
 };
+
+/// Lua that runs a command's body from the loaded FrameXML's Bindings.xml
+/// (__WoweeBindingScripts), the way the original runs a bound key. Errors
+/// when the interface has no such binding, so a missing one is reported
+/// rather than doing nothing.
+inline std::string bindingScriptLua(const std::string& command) {
+    return "local f = __WoweeBindingScripts and __WoweeBindingScripts[\"" + command + "\"]\n"
+           "if not f then error(\"FrameXML has no binding " + command + "\") end\n"
+           "f(\"down\")";
+}
 
 /**
  * Is someone typing into the interface that ImGui does not draw?
