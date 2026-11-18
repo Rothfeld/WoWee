@@ -40,7 +40,8 @@ public:
     void leaveChannel(const std::string& channelName);
     /// Ask the server for a channel's members; the answer arrives as
     /// SMSG_CHANNEL_LIST and fires CHANNEL_ROSTER_UPDATE.
-    void requestChannelList(const std::string& channelName);
+    /// `print`: /chatlist asked, so the answer is printed as CHAT_MSG_CHANNEL_LIST.
+    void requestChannelList(const std::string& channelName, bool print = false);
     [[nodiscard]] std::string getChannelByIndex(int index) const;
     [[nodiscard]] int getChannelIndex(const std::string& channelName) const;
     [[nodiscard]] const std::vector<std::string>& getJoinedChannels() const { return joinedChannels_; }
@@ -163,6 +164,8 @@ private:
     uint64_t chatUidCounter_ = 0;  // monotonic uid for MessageChatData::uid
     std::vector<std::string> joinedChannels_;
     std::set<std::string> ownedChannels_;
+    /// Channels whose next SMSG_CHANNEL_LIST /chatlist asked to print.
+    std::set<std::string> printChannelLists_;
     /// Who sent the message a chat line id names, newest last.
     ///
     /// Every chat event carries a line id as its eleventh argument, and

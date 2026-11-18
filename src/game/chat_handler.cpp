@@ -998,8 +998,9 @@ void ChatHandler::joinChannel(const std::string& channelName, const std::string&
     LOG_INFO("Requesting to join channel: ", channelName);
 }
 
-void ChatHandler::requestChannelList(const std::string& channelName) {
+void ChatHandler::requestChannelList(const std::string& channelName, bool print) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    if (print) printChannelLists_.insert(channelName);
     // The channel name and nothing else. SMSG_CHANNEL_LIST was parsed all
     // along and nothing ever asked for one, so the roster only existed in
     // theory.
@@ -1030,6 +1031,81 @@ int ChatHandler::getChannelIndex(const std::string& channelName) const {
     return 0;
 }
 
+namespace {
+
+// The notice's name as FrameXML reads it: ChatFrame prints
+// format(CHAT_<name>_NOTICE, ...) for CHAT_MSG_CHANNEL_NOTICE(_USER).
+// nullptr: no line (JOINED/LEFT of others, MODE_CHANGE, voice in TBC).
+struct ChannelNotice { const char* name; bool user; };
+ChannelNotice channelNotice(ChannelNotifyType type) {
+    using T = ChannelNotifyType;
+    switch (type) {
+        case T::YOU_JOINED:            return {"YOU_JOINED", false};
+        case T::YOU_LEFT:              return {"YOU_LEFT", false};
+        case T::WRONG_PASSWORD:        return {"WRONG_PASSWORD", false};
+        case T::NOT_MEMBER:            return {"NOT_MEMBER", false};
+        case T::NOT_MODERATOR:         return {"NOT_MODERATOR", false};
+        case T::PASSWORD_CHANGED:      return {"PASSWORD_CHANGED", true};
+        case T::OWNER_CHANGED:         return {"OWNER_CHANGED", true};
+        case T::PLAYER_NOT_FOUND:      return {"PLAYER_NOT_FOUND", true};
+        case T::NOT_OWNER:             return {"NOT_OWNER", false};
+        case T::CHANNEL_OWNER:         return {"CHANNEL_OWNER", true};
+        case T::ANNOUNCEMENTS_ON:      return {"ANNOUNCEMENTS_ON", true};
+        case T::ANNOUNCEMENTS_OFF:     return {"ANNOUNCEMENTS_OFF", true};
+        case T::MODERATION_ON:         return {"MODERATION_ON", true};
+        case T::MODERATION_OFF:        return {"MODERATION_OFF", true};
+        case T::MUTED:                 return {"MUTED", false};
+        case T::PLAYER_KICKED:         return {"PLAYER_KICKED", true};
+        case T::BANNED:                return {"BANNED", false};
+        case T::PLAYER_BANNED:         return {"PLAYER_BANNED", true};
+        case T::PLAYER_UNBANNED:       return {"PLAYER_UNBANNED", true};
+        case T::PLAYER_NOT_BANNED:     return {"PLAYER_NOT_BANNED", true};
+        case T::PLAYER_ALREADY_MEMBER: return {"PLAYER_ALREADY_MEMBER", true};
+        case T::INVITE:                return {"INVITE", true};
+        case T::INVITE_WRONG_FACTION:  return {"INVITE_WRONG_FACTION", false};
+        case T::WRONG_FACTION:         return {"WRONG_FACTION", false};
+        case T::INVALID_NAME:          return {"INVALID_NAME", false};
+        case T::NOT_MODERATED:         return {"NOT_MODERATED", false};
+        case T::PLAYER_INVITED:        return {"PLAYER_INVITED", true};
+        case T::PLAYER_INVITE_BANNED:  return {"PLAYER_INVITE_BANNED", true};
+        case T::THROTTLED:             return {"THROTTLED", false};
+        case T::NOT_IN_AREA:           return {"NOT_IN_AREA", false};
+        case T::NOT_IN_LFG:            return {"NOT_IN_LFG", false};
+        default:                       return {nullptr, false};
+    }
+}
+
+} // namespace
+
+// Channel notices are the interface's to word, as in 2.4.3: the client fires
+// CHAT_MSG_CHANNEL_NOTICE (or _USER when a player is named) with the notice
+// name in arg1, "N. Channel" in arg4, the player in arg2 and a second one in
+// arg5, and ChatFrame formats CHAT_<name>_NOTICE - "Joined Channel: [1.
+// General - Elwynn Forest]" (pair 6, native at login). arg8 is the channel
+// number and arg9 the bare name, which ChatFrame matches against the
+// channels the frame shows.
+void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number) {
+    const ChannelNotice notice = channelNotice(data.notifyType);
+    if (!notice.name) {
+        LOG_DEBUG("Channel notify type ", static_cast<int>(data.notifyType), " for channel ", data.channelName);
+        return;
+    }
+    if (!owner_.addonEventCallbackRef()) return;
+    auto name = [this](uint64_t guid) { return guid ? knownPlayerName(guid) : std::string{}; };
+    std::string player = data.playerName.empty() ? name(data.senderGuid) : data.playerName;
+    std::string second = name(data.sourceGuid);
+    if (notice.user && player.empty())
+        LOG_WARNING("Channel notice ", notice.name, " on ", data.channelName, ": player name unknown (guid ",
+                    data.senderGuid, ")");
+    const size_t dash = data.channelName.find(" - ");
+    const std::string shortName = dash == std::string::npos ? data.channelName : data.channelName.substr(0, dash);
+    const std::string shown = number > 0 ? std::to_string(number) + ". " + data.channelName : data.channelName;
+    owner_.addonEventCallbackRef()(notice.user ? "CHAT_MSG_CHANNEL_NOTICE_USER" : "CHAT_MSG_CHANNEL_NOTICE", {
+        notice.name, player, "", shown, second, "", std::to_string(data.channelId),
+        std::to_string(number), shortName, "0", "0", "0x0000000000000000"
+    });
+}
+
 void ChatHandler::handleChannelNotify(network::Packet& packet) {
     ChannelNotifyData data;
     if (!ChannelNotifyParser::parse(packet, data)) {
@@ -1042,64 +1118,29 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
             if (std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
                 joinedChannels_.push_back(data.channelName);
             }
-            MessageChatData msg;
-            msg.type = ChatType::SYSTEM;
-            msg.message = "Joined channel: " + data.channelName;
-            addLocalChatMessage(msg);
             LOG_INFO("Joined channel: ", data.channelName);
+            fireChannelNotice(data, getChannelIndex(data.channelName));
             break;
         }
         case ChannelNotifyType::YOU_LEFT: {
+            // Numbered as it was, before it goes from the list.
+            const int number = getChannelIndex(data.channelName);
             ownedChannels_.erase(data.channelName);
             joinedChannels_.erase(
                 std::remove(joinedChannels_.begin(), joinedChannels_.end(), data.channelName),
                 joinedChannels_.end());
-            MessageChatData msg;
-            msg.type = ChatType::SYSTEM;
-            msg.message = "Left channel: " + data.channelName;
-            addLocalChatMessage(msg);
             LOG_INFO("Left channel: ", data.channelName);
+            fireChannelNotice(data, number);
             break;
         }
-        case ChannelNotifyType::PLAYER_ALREADY_MEMBER: {
+        case ChannelNotifyType::PLAYER_ALREADY_MEMBER:
             // Server confirms we're in this channel but our local list doesn't have it yet -
             // can happen after reconnect or if the join notification was missed.
             if (std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
                 joinedChannels_.push_back(data.channelName);
                 LOG_INFO("Already in channel: ", data.channelName);
             }
-            break;
-        }
-        case ChannelNotifyType::NOT_IN_AREA:
-            addSystemChatMessage("You must be in the area to join '" + data.channelName + "'.");
-            LOG_DEBUG("Cannot join channel ", data.channelName, " (not in area)");
-            break;
-        case ChannelNotifyType::WRONG_PASSWORD:
-            addSystemChatMessage("Wrong password for channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::NOT_MEMBER:
-            addSystemChatMessage("You are not in channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::NOT_MODERATOR:
-            addSystemChatMessage("You are not a moderator of '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::MUTED:
-            addSystemChatMessage("You are muted in channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::BANNED:
-            addSystemChatMessage("You are banned from channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::THROTTLED:
-            addSystemChatMessage("Channel '" + data.channelName + "' is throttled. Please wait.");
-            break;
-        case ChannelNotifyType::NOT_IN_LFG:
-            addSystemChatMessage("You must be in a LFG queue to join '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_KICKED:
-            addSystemChatMessage("A player was kicked from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PASSWORD_CHANGED:
-            addSystemChatMessage("Password for '" + data.channelName + "' changed.");
+            fireChannelNotice(data, getChannelIndex(data.channelName));
             break;
         case ChannelNotifyType::OWNER_CHANGED:
             // The guid beside the name is the new owner's -
@@ -1112,57 +1153,10 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
             } else {
                 ownedChannels_.erase(data.channelName);
             }
-            addSystemChatMessage("Owner of '" + data.channelName + "' changed.");
-            break;
-        case ChannelNotifyType::NOT_OWNER:
-            addSystemChatMessage("You are not the owner of '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::INVALID_NAME:
-            addSystemChatMessage("Invalid channel name '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_NOT_FOUND:
-            addSystemChatMessage("Player not found.");
-            break;
-        case ChannelNotifyType::ANNOUNCEMENTS_ON:
-            addSystemChatMessage("Channel '" + data.channelName + "': announcements enabled.");
-            break;
-        case ChannelNotifyType::ANNOUNCEMENTS_OFF:
-            addSystemChatMessage("Channel '" + data.channelName + "': announcements disabled.");
-            break;
-        case ChannelNotifyType::MODERATION_ON:
-            addSystemChatMessage("Channel '" + data.channelName + "' is now moderated.");
-            break;
-        case ChannelNotifyType::MODERATION_OFF:
-            addSystemChatMessage("Channel '" + data.channelName + "' is no longer moderated.");
-            break;
-        case ChannelNotifyType::PLAYER_BANNED:
-            addSystemChatMessage("A player was banned from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_UNBANNED:
-            addSystemChatMessage("A player was unbanned from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_NOT_BANNED:
-            addSystemChatMessage("That player is not banned from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::INVITE:
-            addSystemChatMessage("You have been invited to join channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::INVITE_WRONG_FACTION:
-        case ChannelNotifyType::WRONG_FACTION:
-            addSystemChatMessage("Wrong faction for channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::NOT_MODERATED:
-            addSystemChatMessage("Channel '" + data.channelName + "' is not moderated.");
-            break;
-        case ChannelNotifyType::PLAYER_INVITED:
-            addSystemChatMessage("Player invited to channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_INVITE_BANNED:
-            addSystemChatMessage("That player is banned from '" + data.channelName + "'.");
+            fireChannelNotice(data, getChannelIndex(data.channelName));
             break;
         default:
-            LOG_DEBUG("Channel notify type ", static_cast<int>(data.notifyType),
-                     " for channel ", data.channelName);
+            fireChannelNotice(data, getChannelIndex(data.channelName));
             break;
     }
 }
@@ -1373,7 +1367,6 @@ void ChatHandler::handleChannelList(network::Packet& packet) {
 
     std::vector<ChannelMember> roster;
     roster.reserve(memberCount);
-    addSystemChatMessage(chanName + " has " + std::to_string(memberCount) + " member(s):");
     for (uint32_t i = 0; i < memberCount; ++i) {
         if (!packet.hasRemaining(9)) break;
         ChannelMember m;
@@ -1391,12 +1384,23 @@ void ChatHandler::handleChannelList(network::Packet& packet) {
         if (m.name.empty()) m.name = owner_.lookupName(m.guid);
         if (m.name.empty()) m.name = "(unknown)";
 
-        std::string entry = "  " + m.name;
-        if (m.owner)     entry += " [Owner]";
-        if (m.moderator) entry += " [Moderator]";
-        if (m.muted)     entry += " [Muted]";
-        addSystemChatMessage(entry);
         roster.push_back(std::move(m));
+    }
+
+    // /chatlist: "[6. chantestx] *Edrikf" (pair 6), CHAT_CHANNEL_LIST_GET
+    // from ChatFrame with the members as the message, the owner starred.
+    // The moderator mark "@" is not observed (one-member channel).
+    if (printChannelLists_.erase(chanName) && owner_.addonEventCallbackRef()) {
+        std::string members;
+        for (const auto& m : roster) {
+            if (!members.empty()) members += ", ";
+            members += (m.owner ? "*" : m.moderator ? "@" : "") + m.name;
+        }
+        const int number = getChannelIndex(chanName);
+        const std::string shown = number > 0 ? std::to_string(number) + ". " + chanName : chanName;
+        owner_.addonEventCallbackRef()("CHAT_MSG_CHANNEL_LIST", {
+            members, "", "", shown, "", "", "0", std::to_string(number), chanName, "0", "0", "0x0000000000000000"
+        });
     }
 
     channelRosters_[chanName] = std::move(roster);

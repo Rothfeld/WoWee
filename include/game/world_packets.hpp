@@ -911,7 +911,16 @@ enum class ChannelNotifyType : uint8_t {
 struct ChannelNotifyData {
     ChannelNotifyType notifyType = ChannelNotifyType::YOU_JOINED;
     std::string channelName;
+    /// The player the notice is about (CMaNGOS Channel::Make*): the new owner,
+    /// the one who changed a setting, the one kicked or banned.
     uint64_t senderGuid = 0;
+    /// The second player of a kick, ban or unban: who did it.
+    uint64_t sourceGuid = 0;
+    /// A name sent as text (player not found, not banned, invited, owner).
+    std::string playerName;
+    /// YOU_JOINED/YOU_LEFT: the ChatChannels.dbc id, zero for a custom channel.
+    uint32_t channelId = 0;
+    uint8_t channelFlags = 0;
 
     [[nodiscard]] bool isValid() const { return !channelName.empty(); }
 };

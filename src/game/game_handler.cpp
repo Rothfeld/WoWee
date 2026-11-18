@@ -3385,8 +3385,8 @@ const std::vector<GuildBankLogEntry>& GameHandler::getGuildBankLog(uint8_t tab) 
     return socialHandler_ ? socialHandler_->getGuildBankLog(tab) : empty;
 }
 
-void GameHandler::requestChannelList(const std::string& channel) {
-    if (chatHandler_) chatHandler_->requestChannelList(channel);
+void GameHandler::requestChannelList(const std::string& channel, bool print) {
+    if (chatHandler_) chatHandler_->requestChannelList(channel, print);
 }
 
 const std::vector<ChannelMember>&

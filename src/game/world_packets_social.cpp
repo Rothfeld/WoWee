@@ -364,10 +364,31 @@ bool ChannelNotifyParser::parse(network::Packet& packet, ChannelNotifyData& data
     }
     data.notifyType = static_cast<ChannelNotifyType>(packet.readUInt8());
     data.channelName = packet.readString();
-    // Some notification types have additional fields (guid, etc.)
-    bytesLeft = packet.getRemainingSize();
-    if (bytesLeft >= 8) {
-        data.senderGuid = packet.readUInt64();
+    // The body depends on the notice (CMaNGOS Channel::Make*).
+    using T = ChannelNotifyType;
+    switch (data.notifyType) {
+        case T::YOU_JOINED:
+            if (packet.hasRemaining(5)) {
+                data.channelFlags = packet.readUInt8();
+                data.channelId = packet.readUInt32();
+            }
+            break;
+        case T::YOU_LEFT:
+            if (packet.hasRemaining(4)) data.channelId = packet.readUInt32();
+            break;
+        case T::PLAYER_KICKED: case T::PLAYER_BANNED: case T::PLAYER_UNBANNED:
+            if (packet.hasRemaining(16)) {
+                data.senderGuid = packet.readUInt64();
+                data.sourceGuid = packet.readUInt64();
+            }
+            break;
+        case T::PLAYER_NOT_FOUND: case T::PLAYER_NOT_BANNED: case T::PLAYER_INVITED:
+        case T::PLAYER_INVITE_BANNED: case T::CHANNEL_OWNER:
+            if (packet.hasData()) data.playerName = packet.readString();
+            break;
+        default:
+            if (packet.hasRemaining(8)) data.senderGuid = packet.readUInt64();
+            break;
     }
     return true;
 }

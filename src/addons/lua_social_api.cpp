@@ -1979,16 +1979,20 @@ void registerSocialLuaAPI(lua_State* L) {
                 // channel should show in. The frame binding is handled entirely
                 // in FrameXML, so only the join happens here.
                 //
-                // The first value says whether this is one of the automatic
-                // zone channels; nothing joined by name is, so it is nil rather
-                // than a zero that would read as true.
+                // The first value is the zone channel id, zero for a channel
+                // joined by name - and it must be a number: SlashCmdList JOIN
+                // prints CHAT_INVALID_NAME_NOTICE and stops when it is nil, so
+                // "/join chantestx" said "Invalid channel name", never put the
+                // channel in the frame's list, and its "Joined Channel" and
+                // "Left Channel" notices were dropped. 2.4.3 prints "Joined
+                // Channel: [6. chantestx]" (pair 6).
                 {"JoinPermanentChannel", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const char* name = luaL_optstring(L, 1, "");
             const char* pass = luaL_optstring(L, 2, "");
             if (!gh || !name || !*name) return luaReturnNil(L);
             gh->joinChannel(name, pass ? pass : "");
-            lua_pushnil(L);
+            lua_pushnumber(L, 0);
             lua_pushstring(L, name);
             return 2;
         }},
@@ -3534,29 +3538,24 @@ void registerSocialLuaAPI(lua_State* L) {
         }},
                 {"ChannelToggleAnnouncements", [](lua_State* L) -> int { (void)L; return 0; }},
                 {"DisplayChannelOwner",      [](lua_State* L) -> int { (void)L; return 0; }},
-                {"ListChannels", [](lua_State* L) -> int {
-                    // /chatlist. The client knows exactly this - which channels
-                    // it is in and what number each one has - and answered
-                    // nothing, so the command printed nothing and read as a
-                    // command that does not exist.
-                    //
-                    // Members are a separate question this client cannot answer,
-                    // which is why ListChannelByName is still inert: it lists who
-                    // is in one, and the server is never asked.
+                // /chatlist with a name: the server's member list, which the
+                // client prints as CHAT_MSG_CHANNEL_LIST ("[6. chantestx]
+                // *Edrikf", pair 6). Without one (ListChannels) 2.4.3 lists the
+                // joined channels; that answer is not yet built here.
+                {"ListChannels", [](lua_State* L) -> int { (void)L; return 0; }},
+                {"ListChannelByName", [](lua_State* L) -> int {
                     auto* gh = getGameHandler(L);
                     if (!gh) return 0;
-                    const auto& joined = gh->getJoinedChannels();
-                    if (joined.empty()) {
-                        gh->addSystemChatMessage("You are not in any channels.");
-                        return 0;
+                    std::string name = lua_isstring(L, 1) ? lua_tostring(L, 1) : "";
+                    if (lua_isnumber(L, 1)) {
+                        const int index = static_cast<int>(lua_tonumber(L, 1));
+                        const auto& joined = gh->getJoinedChannels();
+                        if (index < 1 || index > static_cast<int>(joined.size())) return 0;
+                        name = joined[static_cast<size_t>(index) - 1];
                     }
-                    for (size_t i = 0; i < joined.size(); ++i) {
-                        gh->addSystemChatMessage(
-                            std::to_string(i + 1) + ". " + joined[i]);
-                    }
+                    if (!name.empty()) gh->requestChannelList(name, true);
                     return 0;
                 }},
-                {"ListChannelByName",        [](lua_State* L) -> int { (void)L; return 0; }},
                 // SetChannelPassword(channel, password) - the same shape again,
                 // and the one place an empty second string is meant: sending
                 // no password is how a channel's password is taken off.

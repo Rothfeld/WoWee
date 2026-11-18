@@ -350,7 +350,7 @@ public:
     void sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid = 0);
     void joinChannel(const std::string& channelName, const std::string& password = "");
     void leaveChannel(const std::string& channelName);
-    void requestChannelList(const std::string& channelName);
+    void requestChannelList(const std::string& channelName, bool print = false);
     /// One guild bank tab's log; tab six is the money log.
     void requestGuildBankLog(uint8_t tab);
     const std::vector<GuildBankLogEntry>& getGuildBankLog(uint8_t tab) const;
