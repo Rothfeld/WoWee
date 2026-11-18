@@ -448,6 +448,46 @@ TEST_CASE_METHOD(Integration, "Sliders, status bars and scroll frames hold value
     truth("wheeled == 1");
 }
 
+TEST_CASE_METHOD(Integration, "$parent in an anchor deep inside unnamed frames names the template's frame",
+                 "[lua][framexml][anchor]") {
+    // PartyMemberFrameTemplate's shape: the dispellable-debuff ring sits in a
+    // Layer two unnamed frames deep and anchors CENTER to $parentPortrait,
+    // which on 2.4.3 is centred on the portrait.
+    ui::XmlNode root;
+    std::string error;
+    REQUIRE(ui::parseXml(R"xml(<Ui>
+        <Button name="RingTemplate" virtual="true">
+          <Size><AbsDimension x="128" y="53"/></Size>
+          <Layers><Layer level="BACKGROUND">
+            <Texture name="$parentPortrait">
+              <Size><AbsDimension x="37" y="37"/></Size>
+              <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="7" y="-6"/></Offset></Anchor></Anchors>
+            </Texture>
+          </Layer></Layers>
+          <Frames><Frame setAllPoints="true"><Frames><Frame setAllPoints="true"><Frames>
+            <Frame name="$parentBadge"><Size><AbsDimension x="8" y="8"/></Size>
+              <Anchors><Anchor point="TOPLEFT" relativeTo="$parentPortrait" relativePoint="BOTTOMRIGHT"/></Anchors>
+            </Frame>
+          </Frames><Layers><Layer level="ARTWORK">
+            <Texture name="$parentStatus">
+              <Size><AbsDimension x="36" y="36"/></Size>
+              <Anchors><Anchor point="CENTER" relativeTo="$parentPortrait"/></Anchors>
+            </Texture>
+          </Layer></Layers></Frame></Frames></Frame></Frames>
+        </Button>
+        <Button name="RingFrame1" inherits="RingTemplate" parent="UIParent">
+          <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="100" y="-100"/></Offset></Anchor></Anchors>
+        </Button>
+    </Ui>)xml", root, error));
+    run(ui::emitFrameXml(root).lua);
+    layout();
+    truth("select(2, RingFrame1Status:GetPoint(1)) == RingFrame1Portrait");
+    truth("math.abs(RingFrame1Status:GetLeft() - (RingFrame1Portrait:GetLeft() + 0.5)) < 0.01");
+    truth("math.abs(RingFrame1Status:GetTop() - (RingFrame1Portrait:GetTop() - 0.5)) < 0.01");
+    // A named frame in there gets its name, and its anchors, from the same frame.
+    truth("RingFrame1Badge ~= nil and select(2, RingFrame1Badge:GetPoint(1)) == RingFrame1Portrait");
+}
+
 // Build 8606 measurements: _experiments/20261117T202346.492175Z.camera_max_distance.
 TEST_CASE_METHOD(Integration, "Camera zoom follows the original's distance CVars", "[camera][zoom]") {
     rendering::Camera camera;

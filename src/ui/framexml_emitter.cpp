@@ -255,7 +255,7 @@ struct Emitter {
              ", " + quote(layerName) + ")");
 
         emitParentKey(node, var, parentVar);
-        emitRegionProperties(node, var, parentVar, parentName, isTexture);
+        emitRegionProperties(node, var, parentVar, parentName, isTexture, nameVar);
         return var;
     }
 
@@ -291,9 +291,12 @@ struct Emitter {
     /// already exists. Separate from creating one because a virtual Texture or
     /// FontString is exactly this and nothing else: a set of properties waiting
     /// for something to inherit them.
+    /// nameVar is the nearest named frame holding the region, which is what
+    /// its $parent means; empty when that is parentVar itself.
     void emitRegionProperties(const XmlNode& node, const std::string& var,
                               const std::string& parentVar,
-                              const std::string& parentName, bool isTexture) {
+                              const std::string& parentName, bool isTexture,
+                              const std::string& nameVar = std::string()) {
         // The template first, so anything the region states itself wins over
         // what it inherited - the order a frame's template follows.
         //
@@ -364,7 +367,7 @@ struct Emitter {
             line(var + setter + args + ")");
         }
         if (const XmlNode* anchors = node.child("Anchors"))
-            emitAnchors(*anchors, var, parentVar, parentName);
+            emitAnchors(*anchors, var, parentVar, parentName, nameVar);
         // A texture may animate itself. See emitAnimations: the achievement
         // banner's glow and shine are textures with an animIn of their own, and
         // losing them took the banner's whole fade-out with them.
@@ -593,7 +596,8 @@ struct Emitter {
 
     void emitAnchors(const XmlNode& anchors, const std::string& var,
                      const std::string& parentVar,
-                     const std::string& parentNameForAnchors = std::string()) {
+                     const std::string& parentNameForAnchors = std::string(),
+                     const std::string& nameVar = std::string()) {
         for (const XmlNode& a : anchors.children) {
             if (a.name != "Anchor") continue;
             const std::string point = a.attrOr("point", "CENTER");
@@ -609,7 +613,16 @@ struct Emitter {
                 // - the containing frame for a region, and the parent frame for
                 // a frame's own anchors. It used to say "self" regardless, which
                 // inside a template asked the wrong frame for its name.
-                relative = nameArg(*rt, parentNameForAnchors, parentVar);
+                //
+                // Named after the nearest named ancestor, the same frame a
+                // region's own $parent name is built from. PartyMemberFrameTemplate
+                // puts its Status ring in a Layer two unnamed frames deep and
+                // anchors it to $parentPortrait; asking the unnamed frame for
+                // its name gave nil, the ring anchored to that frame's centre
+                // instead of the portrait's, and the debuff ring drew over the
+                // health and mana bars.
+                relative = nameArg(*rt, parentNameForAnchors,
+                                   nameVar.empty() ? parentVar : nameVar);
                 if (relative == "nil") relative = parentVar;
             }
             const std::string relPoint = a.attrOr("relativePoint", point);
@@ -884,8 +897,13 @@ struct Emitter {
         // Baking the literal instead named every scroll bar after the template,
         // so the _G[self:GetName().."ScrollBar"] its own handlers look up never
         // existed - which is what took down most of FrameXML.
+        //
+        // From the nearest named ancestor, like a region's name, unless
+        // parent= says which frame this hangs off.
+        const std::string ownerVar =
+            (node.attr("parent") || nameVar.empty()) ? parentArg : nameVar;
         line(var + " = CreateFrame(" + frameTypeArg(node) + ", " +
-             nameArg(rawName, parentName, parentArg) + ", " + parentArg + ")");
+             nameArg(rawName, parentName, ownerVar) + ", " + parentArg + ")");
 
         // Identity before anything is built on top of it. FrameXML makes names
         // out of the id - a party member's pet frame opens its OnLoad with
@@ -915,7 +933,7 @@ struct Emitter {
         emitInherits(node, var);
         emitFrameBody(node, var, name.empty() ? parentName : name, parentArg,
                       parentName, /*fireOnLoad=*/true,
-                      rawName.empty() ? nameVar : std::string());
+                      rawName.empty() ? nameVar : std::string(), ownerVar);
         return var;
     }
 
@@ -926,7 +944,8 @@ struct Emitter {
                        const std::string& name, const std::string& parentVar,
                        const std::string& ownerName = std::string(),
                        bool fireOnLoad = true,
-                       const std::string& nameVar = std::string()) {
+                       const std::string& nameVar = std::string(),
+                       const std::string& ownerVar = std::string()) {
         // What $parent resolves to for anything declared inside this frame. An
         // unnamed frame is not the answer - WoW walks up to the nearest named
         // ancestor, and PartyMemberPetFrameTemplate buries its $parentName two
@@ -1392,7 +1411,8 @@ struct Emitter {
             const std::string* declaredParent = node.attr("parent");
             const std::string anchorOwner =
                 (declaredParent && !declaredParent->empty()) ? *declaredParent : ownerName;
-            emitAnchors(*anchors, var, parentVar, anchorOwner);
+            emitAnchors(*anchors, var, parentVar, anchorOwner,
+                        ownerVar == parentVar ? std::string() : ownerVar);
         }
         // A status bar's own art and colour. Thirty-three bars across FrameXML
         // declare a BarTexture and none of it was emitted, so every one of them
