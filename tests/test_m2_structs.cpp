@@ -354,13 +354,36 @@ TEST_CASE("child of a billboard bone stays on the far side from the camera", "[m
     const glm::mat4 inverse = glm::inverse(placement);
     for (const auto& cameraWorld : {glm::vec3(30, 20, 9), glm::vec3(10, 40, 7), glm::vec3(-5, 0, 2)}) {
         const glm::vec3 cameraModel(inverse * glm::vec4(cameraWorld, 1));
+        const glm::vec3 upModel = glm::normalize(glm::vec3(inverse * glm::vec4(0, 0, 1, 0)));
         const glm::mat4 bone = wowee::rendering::billboardBoneMatrix(
-            wowee::rendering::kM2BoneSphericalBillboard, pivot, glm::vec3(0), glm::vec3(1), glm::mat4(1), cameraModel);
+            wowee::rendering::kM2BoneSphericalBillboard, pivot, glm::vec3(0), glm::vec3(1), glm::mat4(1), cameraModel,
+            upModel);
         const glm::vec3 pivotWorld(placement * glm::vec4(pivot, 1));
         const glm::vec3 childWorld(placement * bone * glm::vec4(child, 1));
         const glm::vec3 toCamera = glm::normalize(cameraWorld - pivotWorld);
         CHECK(glm::dot(childWorld - pivotWorld, toCamera) == Catch::Approx(-0.433f * 2.6f).epsilon(0.02));
     }
+}
+
+TEST_CASE("billboard card of a tilted model stands upright in the world", "[m2][billboard-world-up]") {
+    // A weapon hangs at any angle (Thaladred's axe, Axe_2H_OutlandRaid_D_02_Red
+    // bones 1/2, 0x208): the card's +Z follows world up, not the model's +Z.
+    const glm::mat4 placement = glm::rotate(glm::rotate(glm::mat4(1), 1.2f, glm::vec3(1, 0, 0)),
+                                            0.7f, glm::vec3(0, 1, 0));
+    const glm::mat4 inverse = glm::inverse(placement);
+    const glm::vec3 cameraWorld(6, -4, 1.5f);
+    const glm::vec3 cameraModel(inverse * glm::vec4(cameraWorld, 1));
+    const glm::vec3 upModel = glm::normalize(glm::vec3(inverse * glm::vec4(0, 0, 1, 0)));
+    const glm::mat4 bone = wowee::rendering::billboardBoneMatrix(
+        wowee::rendering::kM2BoneSphericalBillboard, glm::vec3(0), glm::vec3(0), glm::vec3(1), glm::mat4(1),
+        cameraModel, upModel);
+    const glm::vec3 cardX = glm::normalize(glm::vec3(placement * bone * glm::vec4(1, 0, 0, 0)));
+    const glm::vec3 cardZ = glm::normalize(glm::vec3(placement * bone * glm::vec4(0, 0, 1, 0)));
+    const glm::vec3 toCamera = glm::normalize(cameraWorld);
+    CHECK(glm::dot(cardX, toCamera) == Catch::Approx(1).epsilon(1e-4));
+    // Upright: the card's up lies in the vertical plane through the view ray.
+    CHECK(glm::dot(cardZ, glm::normalize(glm::cross(toCamera, glm::vec3(0, 0, 1)))) == Catch::Approx(0).margin(1e-4));
+    CHECK(cardZ.z > 0.9f);
 }
 
 TEST_CASE("authored bone scale preserves hidden phases and mirrored axes", "[m2][bone-scale]") {

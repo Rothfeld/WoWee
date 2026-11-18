@@ -352,7 +352,8 @@ inline void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance,
                 ? instance.boneMatrices[bone.parentBone] : glm::mat4(1.0f);
             const glm::vec3 camModel =
                 glm::vec3(instance.invModelMatrix * glm::vec4(*cameraPosWorld, 1.0f));
-            instance.boneMatrices[i] = billboardBoneMatrix(bone.flags, bone.pivot, trans, scl, parent, camModel);
+            const glm::vec3 upModel = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(0, 0, 1, 0)));
+            instance.boneMatrices[i] = billboardBoneMatrix(bone.flags, bone.pivot, trans, scl, parent, camModel, upModel);
             continue;
         } else {
             local *= glm::toMat4(rot);

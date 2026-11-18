@@ -2889,11 +2889,12 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     // An attached item (helm, weapon) is placed by its wearer, so its
     // placement is final only after the wearer's bones: update() recomputes
     // such items once they are placed.
-    glm::vec3 cameraModel(0.0f);
+    glm::vec3 cameraModel(0.0f), worldUpModel(0.0f, 0.0f, 1.0f);
     if (instance.cachedModel->hasBillboardBones) {
-        const glm::mat4 modelMatrix = instance.hasOverrideModelMatrix
-            ? instance.overrideModelMatrix : getModelMatrix(instance);
-        cameraModel = glm::vec3(glm::inverse(modelMatrix) * glm::vec4(boneCameraPos_, 1.0f));
+        const glm::mat4 toModel = glm::inverse(instance.hasOverrideModelMatrix
+            ? instance.overrideModelMatrix : getModelMatrix(instance));
+        cameraModel = glm::vec3(toModel * glm::vec4(boneCameraPos_, 1.0f));
+        worldUpModel = glm::normalize(glm::vec3(toModel * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)));
     }
 
     const auto& grip = instance.cachedModel->handGrip;
@@ -2959,7 +2960,7 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
                                      gsd, glm::vec3(0.0f)),
                 m2_track::sampleVec3(bone.scale, sequence, time, instance.globalSequenceTime,
                                      gsd, glm::vec3(1.0f)),
-                parent, cameraModel);
+                parent, cameraModel, worldUpModel);
         } else {
             instance.boneMatrices[i] = parent * localTransform;
         }
