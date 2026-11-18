@@ -692,6 +692,9 @@ TEST_CASE_METHOD(Integration, "The real GameScreen idle and action path stays li
             const uint32_t spell = 10000 + page * 100 + i;
             const auto slot = ui::ActionBarPanel::actionSlotForPage(page, i);
             session.handler().setActionBarSlot(slot, wowee::game::ActionBarSlot::SPELL, spell);
+            // A Spell.dbc row: castSpell refuses an id with none
+            // (SpellPrerequisite::Unknown), and this fixture loads no DBCs.
+            session.handler().spellNameCacheRef()[spell].name = "Integration spell";
             REQUIRE(manager.setBinding("F10", command));
             manager.beginInputFrame(); event(SDL_SCANCODE_F10); event(SDL_SCANCODE_F10, false);
             const auto before = casts().size();
@@ -712,6 +715,8 @@ TEST_CASE_METHOD(Integration, "The real GameScreen idle and action path stays li
     screen.actionBarPanel().setMainActionBarPage(2);
     session.handler().setActionBarSlot(ui::ActionBarPanel::actionSlotForPage(2, 0), wowee::game::ActionBarSlot::SPELL, 22001);
     session.handler().setActionBarSlot(ui::ActionBarPanel::actionSlotForPage(6, 0), wowee::game::ActionBarSlot::SPELL, 26001);
+    session.handler().spellNameCacheRef()[22001].name = "Integration spell";
+    session.handler().spellNameCacheRef()[26001].name = "Integration spell";
     REQUIRE(manager.setBinding("F9", "ACTIONBUTTON1"));
     REQUIRE(manager.setBinding("F10", "MULTIACTIONBAR1BUTTON1"));
     manager.beginInputFrame();

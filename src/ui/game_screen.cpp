@@ -1574,7 +1574,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
     // World and FrameXML share the WoW gauntlet when no contextual cursor
     // was drawn. ImGui otherwise restores its desktop arrow each frame.
-    if (ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
+    // Without a window there is no pointer to dress: the headless GameScreen
+    // in test_input_integration has neither window nor assets.
+    if (services_.window && ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
         const auto texture = cursorTexture(services_.assetManager, services_.window,
                                            "Interface\\Cursor\\Point.blp");
         if (!texture) throw std::runtime_error("Missing default WoW cursor texture");
