@@ -86,9 +86,12 @@ public:
     /// rather than an image the widget renderer could draw, so the map moves to
     /// the frame rather than the frame receiving the map.
     void setScreenRect(float x, float y, float w, float h) {
-        rectX_ = x; rectY_ = y; rectW_ = w; rectH_ = h; haveRect_ = true;
+        rectX_ = x; rectY_ = y; rectW_ = w; rectH_ = h; haveRect_ = true; frameHidden_ = false;
     }
-    void clearScreenRect() { haveRect_ = false; }
+    /// The interface's Minimap frame is not on screen (UIParent hidden by
+    /// Alt-Z, or the frame hidden): draw nothing rather than this client's
+    /// own top-right map, which stayed up over a hidden interface.
+    void clearScreenRect() { haveRect_ = false; frameHidden_ = true; }
     /// Where the map is actually being drawn, when something placed it.
     ///
     /// The marker pass needs this: it used to assume the corner this client
@@ -167,6 +170,7 @@ private:
     bool squareShape = false;
     float opacity_ = 1.0f;
     bool  haveRect_ = false;
+    bool  frameHidden_ = false;
     float rectX_ = 0.0f, rectY_ = 0.0f, rectW_ = 0.0f, rectH_ = 0.0f;
 
     // Throttling

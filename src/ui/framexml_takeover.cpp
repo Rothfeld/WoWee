@@ -574,7 +574,10 @@ const Check kChecks[] = {
         // *suppression* row is marked lazy for the popups that arrive
         // later, which is a different question from whether the panel
         // itself exists.
-        {UiElement::DungeonFinder, "LFDParentFrame"},
+        // 2.4.3 has no LFD frame: its I key (TOGGLELFGPARENT) opens
+        // LFGParentFrame, and checking only the 3.3.5 name handed the
+        // element back on TBC, so the key route skipped it and I did nothing.
+        {UiElement::DungeonFinder, "LFDParentFrame|LFGParentFrame"},
         // Not lazy either: petitionframe.xml, guildregistrarframe.xml and
         // arenaregistrarframe.xml are all in framexml.toc. Only PetitionFrame
         // is named because the net asks about the top frame of a row and no
@@ -683,7 +686,15 @@ int frameXmlReleaseUnbuiltElements(
         std::string all(c.frames);
         const size_t sp = all.find(' ');
         const std::string top = all.substr(0, sp == std::string::npos ? all.size() : sp);
-        if (top.empty() || frameExists(top)) continue;
+        // "A|B": either name is the panel (the dungeon finder is
+        // LFDParentFrame in 3.3.5 and LFGParentFrame in 2.4.3).
+        bool built = top.empty();
+        for (size_t from = 0; !built && from <= top.size();) {
+            const size_t bar = std::min(top.find('|', from), top.size());
+            if (bar > from && frameExists(top.substr(from, bar - from))) built = true;
+            from = bar + 1;
+        }
+        if (built) continue;
 
         gReleased.fetch_or(releaseBit(c.element), std::memory_order_relaxed);
         ++released;

@@ -1388,11 +1388,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             }
 
             if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_INVENTORY)) {
-                // ToggleAllBags is a later addition and is not in this
-                // FrameXML, so this key did nothing at all once the bags were
-                // handed over. OpenAllBags is 3.3.5's own name for it, and it
-                // toggles rather than only opening.
-                gameHandler.runInterfaceCommand("OpenAllBags()");
+                // The binding's own FrameXML body (OpenAllBags in 2.4.3 and 3.3.5).
+                gameHandler.runInterfaceCommand(bindingScriptLua("OPENALLBAGS"));
             }
 
             if ((bindings.isCommandPressed("NAMEPLATES") || bindings.isCommandPressed("FRIENDNAMEPLATES"))) {
@@ -1428,17 +1425,17 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 // TOGGLEMINIMAP binding calls, and it hides the frame the
                 // markers sit on, which is what makes the two agree.
                 if (frameXmlOwns(UiElement::Minimap)) {
-                    gameHandler.runInterfaceCommand("ToggleMinimap()");
+                    gameHandler.runInterfaceCommand(bindingScriptLua("TOGGLEMINIMAP"));
                 }
             }
 
             if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_ACHIEVEMENTS)) {
-                gameHandler.runInterfaceCommand("ToggleAchievementFrame()");
+                gameHandler.runInterfaceCommand(bindingScriptLua("TOGGLEACHIEVEMENT"));
             }
             if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_SKILLS)) {
                 // The skills list is a tab of the character sheet in FrameXML
                 // rather than a window of its own.
-                gameHandler.runInterfaceCommand("ToggleCharacter(\"SkillFrame\")");
+                gameHandler.runInterfaceCommand(bindingScriptLua("TOGGLECHARACTER1"));
             }
 
             // H, which in WoW is TOGGLECHARACTER4: the Player vs Player panel,
@@ -1451,7 +1448,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // in every run, so keeping a second one on a key that belongs to
             // something else was two faults holding each other up.
             if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_PVP)) {
-                gameHandler.runInterfaceCommand("TogglePVPFrame()");
+                // 2.4.3 binds it to ToggleCharacter("PVPFrame"); TogglePVPFrame
+                // is 3.3.5's and does not exist there, so H did nothing.
+                gameHandler.runInterfaceCommand(bindingScriptLua("TOGGLECHARACTER4"));
             }
 
             if (bindings.isCommandPressed("SCREENSHOT")) takeScreenshot();

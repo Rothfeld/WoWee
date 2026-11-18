@@ -5560,10 +5560,7 @@ void Application::render() {
                     if (!ui::frameXmlOwns(r.element)) continue;
                     if (!K::getInstance().isActionPressed(r.action)) continue;
                     const std::string name = r.binding;
-                    if (!engine->executeString(
-                            "local f = __WoweeBindingScripts and __WoweeBindingScripts[\"" + name + "\"]\n"
-                            "if not f then error(\"FrameXML has no binding " + name + "\") end\n"
-                            "f(\"down\")", "binding " + name)) {
+                    if (!engine->executeString(ui::bindingScriptLua(name), "binding " + name)) {
                         LOG_ERROR("Key route: binding ", name, " did not run");
                     }
                 }

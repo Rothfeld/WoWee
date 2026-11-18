@@ -591,6 +591,7 @@ void Minimap::render(VkCommandBuffer cmd, const Camera& playerCamera,
                      const glm::vec3& centerWorldPos,
                      int screenWidth, int screenHeight,
                      float playerOrientation, bool hasPlayerOrientation) {
+    if (frameHidden_) return;
     if (!enabled || !hasCachedFrame || !displayPipeline) return;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, displayPipeline);
