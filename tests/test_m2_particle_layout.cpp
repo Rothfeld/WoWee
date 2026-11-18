@@ -506,4 +506,21 @@ TEST_CASE("Sprites turn by spin times age", "[m2][particle]") {
     // Christmas Tree (Medium) star: spin 0.5, a quarter turn 1.57 s in.
     CHECK(wowee::rendering::particleRotation(0.5f, 3.14159f) == Catch::Approx(1.5708f));
     CHECK(wowee::rendering::particleRotation(0.0f, 2.0f) == 0.0f);
+
+TEST_CASE("Twinkle size stays within the authored range", "[m2][particle]") {
+    using wowee::rendering::particleTwinkleScale;
+    // focusedcasting_state_chest: speed 10, scale 0.1 - 1.0.
+    float lo = 1.0f, hi = 0.0f;
+    for (uint32_t seed = 0; seed < 2000; ++seed) {
+        const float s = particleTwinkleScale(seed * 2654435761u, 0.05f, 10.0f, 0.1f, 1.0f);
+        CHECK(s >= 0.1f);
+        CHECK(s <= 1.0f);
+        lo = std::min(lo, s); hi = std::max(hi, s);
+    }
+    CHECK(lo < 0.15f);
+    CHECK(hi > 0.95f);
+    // Same particle, same twinkle period: same size.
+    CHECK(particleTwinkleScale(7, 0.01f, 10.0f, 0.1f, 1.0f) == particleTwinkleScale(7, 0.09f, 10.0f, 0.1f, 1.0f));
+    // A fixed range (most emitters author 1 / 1) leaves the size alone.
+    CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 1.0f, 1.0f) == 1.0f);
 }

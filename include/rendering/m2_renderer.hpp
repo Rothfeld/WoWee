@@ -256,6 +256,8 @@ struct M2Particle {
     glm::mat3 birthBasis{1.0f};
     /// Geometry particles: angular velocity (rad/s) from the emitter's tumble range.
     glm::vec3 tumbleRate{0.0f};
+    /// Per-particle seed for the emitter's twinkle (particleTwinkle).
+    uint32_t twinkleSeed = 0;
 };
 
 /**

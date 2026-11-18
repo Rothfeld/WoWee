@@ -199,6 +199,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.birthPosition = p.position;
             p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix);
             p.birthBasis = glm::mat3(birthTransform);
+            p.twinkleSeed = static_cast<uint32_t>(particleRng_());
             if (!em.geometryModel.empty()) {
                 for (int axis = 0; axis < 3; ++axis)
                     p.tumbleRate[axis] = glm::mix(em.tumbleMin[axis], em.tumbleMax[axis],
@@ -967,7 +968,9 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             // Authored lifecycle size for every model. GnomereganVent smoke
             // grows 2.78 -> 4.44 -> 8.33; a former 1.5 cap on models not named
             // like spell effects shrank it to thin puffs.
-            const float scale = interpFBlockFloat(em.particleScale, lifeRatio);
+            const float twinkle = particleTwinkleScale(p.twinkleSeed, p.life, em.twinkleSpeed,
+                                                       em.twinkleScaleMin, em.twinkleScaleMax);
+            const float scale = interpFBlockFloat(em.particleScale, lifeRatio) * twinkle;
 
             assert(vbWritten < particleVertexCapacity_[frame]);
             // A run per stretch of particles sharing a group. The group only

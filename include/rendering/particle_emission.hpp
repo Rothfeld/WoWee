@@ -36,6 +36,22 @@ inline float particleRotation(float spin, float ageSeconds) {
 // crystals. Water, smoke and steam vents mostly do not.
 inline constexpr uint32_t kParticleOwnColor = 0x1;
 
+// Twinkle size of a pre-264 emitter's particle (+0x180 speed, +0x188/+0x18C
+// scale min/max): a random factor between min and max, drawn again every
+// 1/speed seconds of the particle's age (once, for speed 0). Glowy (Red)
+// 22518 (focusedcasting_state_chest, scale range 0.1-1.0): the light the aura
+// adds around the unit fell from 6.2x native to 3.6x with it; Arcane Power
+// 12042 (0.9-1.2) stays within 6% of native. The twinkle percent (+0x184) is
+// not applied: Arcane Power's 0.6 changed nothing measurable.
+inline float particleTwinkleScale(uint32_t seed, float age, float speed,
+                                  float scaleMin, float scaleMax) {
+    if (scaleMin == scaleMax) return scaleMin;
+    const uint32_t period = speed > 0.0f ? static_cast<uint32_t>(age * speed) : 0u;
+    uint32_t h = seed ^ (period * 0x9E3779B9u);
+    h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
+    return scaleMin + (scaleMax - scaleMin) * (static_cast<float>(h >> 8) / 16777215.0f);
+}
+
 // A tail quad runs from the particle back along -velocity * tailLength.
 // Pinned tails (0x400) end at the particle's birth point at most. 2204 of
 // the 3522 TBC tail emitters are pinned, many authoring tailLength 10 s:
