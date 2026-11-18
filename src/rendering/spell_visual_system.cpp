@@ -133,7 +133,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // 21 at the left hand (2) and 22 at the right (1); dragonwhelp.m2
             // has only 21/22, on the wings, so 2/1 found nothing and a
             // Chromatic Whelp's Lightning Bolt cast effect fell to the floor.
-            static constexpr uint32_t attachments[] = {0, 0, 21, 22, 34, 18, kAttachBreath, 0, 0, 0};
+            // SpecialEffect0-2 attach to M2 Special1-3 (23-25): drake.m2 carries
+            // 23 at its head, where native starts Ebonroc's Flame Breath (kit
+            // 5851 SpecialEffect0, NefarianFlameBreath.m2); the unit position
+            // put it at his feet.
+            static constexpr uint32_t attachments[] = {23, 0, 21, 22, 34, 18, kAttachBreath, 24, 25, 0};
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
