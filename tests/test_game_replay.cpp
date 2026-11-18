@@ -949,3 +949,55 @@ TEST_CASE("a player whisper is shown whatever it starts with", "[chat][tbc]") {
         if (m.type == ChatType::WHISPER) shown.push_back(m.message);
     CHECK(shown == std::vector<std::string>{"oRAnge juice?", "AVR is fine", "GS_x", "\xC3\x84rger"});
 }
+
+namespace {
+// Group::SendUpdate, TBC: the player plus one remote member in subgroup 0.
+void joinGroup(Session& s, uint64_t memberGuid, bool raid) {
+    using wowee::game::Opcode;
+    using wowee::game::wireOpcode;
+    wowee::network::Packet roster(wireOpcode(Opcode::SMSG_GROUP_LIST));
+    roster.writeUInt8(raid ? 1 : 0); roster.writeUInt8(0);
+    roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt64(1);
+    roster.writeUInt32(1);
+    roster.writeString("Graulberto"); roster.writeUInt64(memberGuid);
+    roster.writeUInt8(1); roster.writeUInt8(0); roster.writeUInt8(0);
+    roster.writeUInt64(memberGuid);
+    s.receive(roster);
+    REQUIRE(s.handler().getPartyData().members.size() == 1);
+}
+}  // namespace
+
+TEST_CASE("an in-view group member dying refreshes their party frame, raid or not",
+          "[party][tbc][raid]") {
+    // Serpentshrine: the native character died in combat, in view, in a raid
+    // of two. The target frame said Dead; PartyMemberFrame1 kept full health
+    // and an old debuff, because the death came by UNIT_FIELD_HEALTH alone
+    // and UNIT_HEALTH went out only as "raid1" in a raid. PartyMemberFrame
+    // listens for "party1".
+    for (const bool raid : {false, true}) {
+        INFO((raid ? "raid" : "party"));
+        Session s("tbc");
+        constexpr uint64_t memberGuid = 3;
+        joinGroup(s, memberGuid, raid);
+        std::vector<std::pair<std::string, std::string>> events;
+        s.handler().setAddonEventCallback(
+            [&](const std::string& e, const std::vector<std::string>& args) {
+                events.emplace_back(e, args.empty() ? std::string() : args.front());
+            });
+        s.receive(UpdateObject().tbc().create(memberGuid, wowee::game::ObjectType::PLAYER,
+            {{UF::UNIT_FIELD_HEALTH, 8177932}, {UF::UNIT_FIELD_MAXHEALTH, 10000000}}));
+        events.clear();
+        // The killing blow: health alone, as the server sends it.
+        s.receive(UpdateObject().tbc().values(memberGuid, {{UF::UNIT_FIELD_HEALTH, 0}}));
+        const auto fired = [&](const char* event, const char* unit) {
+            return std::find(events.begin(), events.end(),
+                             std::make_pair(std::string(event), std::string(unit))) != events.end();
+        };
+        CHECK(fired("UNIT_HEALTH", "party1"));
+        if (raid) CHECK(fired("UNIT_HEALTH", "raid1"));
+        const auto& member = s.handler().getPartyData().members.front();
+        CHECK(member.curHealth == 0);
+        CHECK((member.onlineStatus & 0x04) != 0);
+    }
+}

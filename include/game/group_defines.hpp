@@ -148,6 +148,34 @@ inline int raidRosterIndex(const GroupListData& group, uint64_t playerGuid, uint
     return 0;
 }
 
+/// The group unit tokens `guid` answers to, as an event's unit argument:
+/// "raidN" in a raid, and "partyN" whenever it shares the player's party -
+/// in a raid that is the player's own subgroup, as resolveUnitGuid counts
+/// "party1". PartyMemberFrame listens for "partyN" alone, raid or not; firing
+/// only "raidN" in a raid left the party frame showing a member alive and
+/// carrying old debuffs after death (Serpentshrine, raid of two).
+inline std::vector<std::string> groupUnitTokens(const GroupListData& group, uint64_t playerGuid,
+                                                uint64_t guid) {
+    std::vector<std::string> tokens;
+    if (guid == 0 || guid == playerGuid) return tokens;
+    const bool raid = groupIsRaid(group.groupType);
+    if (raid) {
+        if (const int index = raidRosterIndex(group, playerGuid, guid))
+            tokens.push_back("raid" + std::to_string(index));
+    }
+    int found = 0;
+    for (const auto& m : group.members) {
+        if (m.guid == playerGuid) continue;
+        if (raid && m.subGroup != group.subGroup) continue;
+        ++found;
+        if (m.guid == guid) {
+            if (found <= 4) tokens.push_back("party" + std::to_string(found));
+            break;
+        }
+    }
+    return tokens;
+}
+
 /**
  * Party command types
  */

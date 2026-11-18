@@ -2668,27 +2668,11 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
               " flags=", updateFlags);
 
     if (owner_.addonEventCallbackRef()) {
-        std::string unitId;
-        if (groupIsRaid(partyData.groupType)) {
-            if (const int index = raidRosterIndex(partyData, owner_.getPlayerGuid(), memberGuid))
-                unitId = "raid" + std::to_string(index);
-        } else {
-            int found = 0;
-            for (const auto& m : partyData.members) {
-                if (m.guid == owner_.getPlayerGuid()) continue;
-                ++found;
-                if (m.guid == memberGuid) { unitId = "party" + std::to_string(found); break; }
-            }
-        }
-        if (!unitId.empty()) {
+        for (const auto& unitId : groupUnitTokens(partyData, owner_.getPlayerGuid(), memberGuid)) {
             if (updateFlags & (0x0001 | 0x0002 | 0x0004)) owner_.addonEventCallbackRef()("UNIT_HEALTH", {unitId});
             if (updateFlags & 0x0004) owner_.addonEventCallbackRef()("UNIT_MAXHEALTH", {unitId});
             if (updateFlags & (0x0010 | 0x0020)) owner_.addonEventCallbackRef()("UNIT_POWER", {unitId});
-            if (updateFlags & 0x0200) {
-                owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});
-                // The 1.12 name, which carries no unit.
-                if (unitId == "player") owner_.addonEventCallbackRef()("PLAYER_AURAS_CHANGED", {});
-            }
+            if (updateFlags & 0x0200) owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});
         }
         // Fired without arguments, as the retail client does - the interface
         // re-reads the whole roster rather than acting on one member. Not

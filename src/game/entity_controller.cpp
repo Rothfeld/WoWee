@@ -42,21 +42,8 @@ std::vector<std::string> unitEventTokens(const GameHandler& owner, uint64_t guid
     std::vector<std::string> tokens;
     const auto primary = owner.guidToUnitId(guid);
     if (!primary.empty()) tokens.push_back(primary);
-    const auto& party = owner.getPartyData();
-    if (groupIsRaid(party.groupType)) {
-        if (const int index = raidRosterIndex(party, owner.getPlayerGuid(), guid))
-            tokens.push_back("raid" + std::to_string(index));
-        return tokens;
-    }
-    size_t index = 0;
-    for (const auto& member : party.members) {
-        if (member.guid == owner.getPlayerGuid()) continue;
-        ++index;
-        if (member.guid == guid) {
-            tokens.push_back("party" + std::to_string(index));
-            break;
-        }
-    }
+    for (auto& token : groupUnitTokens(owner.getPartyData(), owner.getPlayerGuid(), guid))
+        tokens.push_back(std::move(token));
     return tokens;
 }
 
