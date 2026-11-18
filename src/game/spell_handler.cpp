@@ -3360,8 +3360,27 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             if (resolveUnitPosition(data.casterUnit, casterPos)) {
                 if (auto* renderer = owner_.services().renderer) {
                     if (auto* svs = renderer->getSpellVisualSystem()) {
-                        svs->playSpellVisual(visualId, casterPos, /*useImpactKit=*/false,
-                                             owner_.resolveUnitRenderInstance(data.casterUnit));
+                        // The cast kit's beam runs to every target the spell
+                        // went to, hit or missed (Forked Lightning 38145 missed
+                        // both players and drew to both), else to its
+                        // destination (Wrath of the Astromancer 42784).
+                        std::vector<rendering::SpellVisualSystem::ChainEnd> ends;
+                        auto addEnd = [&](uint64_t guid) {
+                            glm::vec3 position;
+                            if (guid == 0 || guid == data.casterUnit || !resolveUnitPosition(guid, position)) {
+                                LOG_DEBUG("SpellVisual: cast beam end 0x", std::hex, guid, std::dec,
+                                          " skipped (caster, none or position unknown)");
+                                return;
+                            }
+                            ends.push_back({owner_.resolveUnitRenderInstance(guid), position});
+                        };
+                        for (const auto& tgt : data.hitTargets) addEnd(tgt);
+                        for (const auto& miss : data.missTargets) addEnd(miss.targetGuid);
+                        if (ends.empty() && data.destination)
+                            ends.push_back({0, core::coords::canonicalToRender(
+                                core::coords::serverToCanonical(*data.destination))});
+                        svs->playCastKit(visualId, casterPos,
+                                         owner_.resolveUnitRenderInstance(data.casterUnit), ends);
                         svs->playInstantAreaKit(visualId, casterPos,
                                                 owner_.resolveUnitRenderInstance(data.casterUnit));
                     }

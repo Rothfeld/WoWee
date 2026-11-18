@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <glm/glm.hpp>
+#include "rendering/m2_renderer.hpp"
 
 namespace wowee {
 namespace pipeline { class AssetManager; }
@@ -35,6 +36,22 @@ public:
                          bool useImpactKit = false, uint32_t attachInstanceId = 0);
 
     void playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId);
+    /// One end of a cast kit's beam: a unit (its render instance, chest 34,
+    /// followed while the beam lasts) or, with instanceId 0, a fixed point.
+    struct ChainEnd {
+        uint32_t instanceId = 0;
+        glm::vec3 position{0.0f};
+    };
+    /// SMSG_SPELL_GO's CastKit: its effects at the caster, and, where the
+    /// kit's CharProc 0 names a SpellChainEffects row, a beam from the caster
+    /// to every end for as long as the kit plays (its longest effect model).
+    /// Build 8606, pair 12 (_experiments/20261118T124000Z.astromancer_glow
+    /// fork-*.jpg): Forked Lightning 38145 (CastKit 965, chain 95
+    /// ShockLightning, Lightning_Cast_Hand 1 s) from a Voidwalker to both
+    /// players it missed, lit 0.92-1.0 s. A kit without effect models (42784's
+    /// 8183) has no play length known here; its beam is not drawn.
+    void playCastKit(uint32_t visualId, const glm::vec3& casterPosition, uint32_t casterInstanceId,
+                     const std::vector<ChainEnd>& ends);
     // SpellVisual InstantAreaKit (TBC column 22), at the caster when the spell
     // goes. Original 2.4.3 (_experiments/20261117T165200Z.pair4_kits): Summon
     // Boar Spirit 8286 kit 9209 DarkRitual_PreCast_Base under the caster while
@@ -191,8 +208,9 @@ private:
     float effectScale(uint32_t effectNameId) const;
     uint32_t kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits, uint32_t visualId);
     // duration <= 0: the model's own animation length.
-    void spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
-                         float duration, bool isPrecast);
+    // Returns the longest lifetime given to an effect (0 when none spawned).
+    float spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
+                          float duration, bool isPrecast);
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     // scale: SpellVisualEffectName.Scale, the size the effect is drawn at.
     struct KitEffect { std::string path; uint32_t attachment; float scale = 1.0f; };
@@ -282,6 +300,21 @@ private:
     std::unordered_map<uint32_t, uint32_t> fieldChannels_;    // caster instance -> visual
     std::unordered_set<uint32_t> heldChannelKits_;            // instances whose kit we started
     float beamClock_ = 0.0f;
+    struct CastBeam {
+        uint32_t chainId = 0;
+        uint32_t casterInstanceId = 0;
+        glm::vec3 casterPosition{0.0f};
+        ChainEnd end;
+        float born = 0.0f, lifetime = 0.0f;
+        BeamState state;
+    };
+    std::vector<CastBeam> castBeams_;
+    BeamState newBeamState(uint32_t chainId);
+    glm::vec3 beamEnd(uint32_t instanceId, const glm::vec3& fallback);
+    // The chain effect's camera-facing strip from start to end at age t;
+    // nothing for a degenerate beam or a blend mode that is not drawn.
+    void appendBeamStrip(std::vector<M2Renderer::ChainStrip>& strips, uint32_t chainId, const glm::vec3& start,
+                         const glm::vec3& end, float t, const BeamState& state);
     // Model ID for a cast, impact or missile model, loading it on first use.
     // 0 when it cannot be loaded.
     uint32_t loadSpellModel(const std::string& modelPath);
