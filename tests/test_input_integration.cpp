@@ -1900,11 +1900,12 @@ TEST_CASE_METHOD(Integration, "Game objects hostile to the player cannot be used
     rune->setField(createdBy + 1, static_cast<uint32_t>(ownerGuid >> 32));
     CHECK(handler.gameObjectReactionToPlayer(*rune) == 5);
     CHECK(handler.canInteractWithGameObject(*rune));
-    // Unknown templates are a data error, not neutral.
+    // A template absent from FactionTemplate.dbc is neutral: native lets the
+    // player use Blackened Urn 194092 (faction 1924, not in 2.4.3's table).
     rune->setField(createdBy, 0);
     rune->setField(createdBy + 1, 0);
     rune->setField(faction, 999999);
-    CHECK_THROWS(handler.gameObjectReactionToPlayer(*rune));
+    CHECK(handler.gameObjectReactionToPlayer(*rune) == 4);
 }
 
 TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of player faction metadata", "[companion][tooltip]") {
@@ -2422,6 +2423,9 @@ TEST_CASE_METHOD(Integration, "Mining loot survives rejected duplicate open and 
     for (int i = 0; i < 24; ++i) query.writeUInt32(0);
     session.receive(query);
     handler.getSpellHandler()->addKnownSpell(2575);
+    // Gathering nodes are recognised from Lock.dbc/LockType.dbc (lock slot
+    // 0's skill), which this packet-only fixture has no asset manager for.
+    if (!handler.services().assetManager) SKIP("needs Lock.dbc: no asset manager in the replay fixture");
     handler.interactWithGameObject(guid);
     REQUIRE(session.sent().of(Opcode::CMSG_CAST_SPELL).size() == 1);
     CHECK_FALSE(handler.hasPendingGameObjectLootOpen(guid));
