@@ -425,9 +425,14 @@ const Check kChecks[] = {
                                   // are three different faults that look the
                                   // same on screen.
                                   "PlayerFrameHealthBarText PlayerFrameManaBarText"},
-        {UiElement::TargetFrame,  "TargetFrame TargetFrameTextureFrame TargetFramePortrait "
+        // 3.3.5 names the portrait and name TargetFramePortrait and
+        // TargetFrameTextureFrameName; 2.4.3's targetframe.xml names them
+        // TargetPortrait and TargetName. "A|B" is one region under either.
+        {UiElement::TargetFrame,  "TargetFrame TargetFrameTextureFrame "
+                                  "TargetFramePortrait|TargetPortrait "
                                   "TargetFrameHealthBar TargetFrameManaBar "
-                                  "TargetFrameTextureFrameName TargetFrameNameBackground"},
+                                  "TargetFrameTextureFrameName|TargetName "
+                                  "TargetFrameNameBackground"},
         // The pet's cast bar belongs with the pet frame rather than with
         // the player's cast bar: this client draws it inside
         // renderPetFrame, so it goes when that does.
@@ -639,7 +644,12 @@ void appendFrames(const char* frames, std::vector<std::string>& out) {
         const size_t sp = all.find(' ', at);
         const std::string one = all.substr(
             at, sp == std::string::npos ? std::string::npos : sp - at);
-        if (!one.empty()) out.push_back(one);
+        // Each name of an "A|B" region is a name somebody has considered.
+        for (size_t from = 0; from <= one.size();) {
+            const size_t bar = std::min(one.find('|', from), one.size());
+            if (bar > from) out.push_back(one.substr(from, bar - from));
+            from = bar + 1;
+        }
         if (sp == std::string::npos) break;
         at = sp + 1;
     }

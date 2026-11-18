@@ -1961,12 +1961,25 @@ void WidgetRenderer::reportWidgetDiagnostics(WidgetTree& tree,
 
             size_t index = 0;
             int quiet = 0;
-            for (const std::string& name : all) {
+            for (const std::string& entry : all) {
                 const bool candidate = (index++ >= firstCandidate);
                 if (askedFor && candidate && index == firstCandidate + 1) {
                     report("  -- not handed over yet, for readiness --");
                 }
-                const Widget* w = tree.findByName(name);
+                // "TargetFramePortrait|TargetPortrait": one region that each
+                // interface names its own way. The first that exists is the
+                // one reported; none existing is reported under all names.
+                std::string name = entry;
+                const Widget* w = nullptr;
+                for (size_t at = 0; at <= entry.size();) {
+                    const size_t bar = std::min(entry.find('|', at), entry.size());
+                    if (const Widget* found = tree.findByName(entry.substr(at, bar - at))) {
+                        w = found;
+                        name = entry.substr(at, bar - at);
+                        break;
+                    }
+                    at = bar + 1;
+                }
                 if (!w) {
                     // Distinguished so the line does not read as a failure: an
                     // aura button that does not exist yet is the normal state
