@@ -1689,28 +1689,29 @@ the dark quad at ManaFunnel_Impact_Chest's centre is its emitter 1
 shows a white core there. Channel kit effects of a channel
 known only from the fields are held until the fields clear.
 
-A CastKit's chain (83 TBC kits) is drawn at `SMSG_SPELL_GO` from the caster to
-every target in the packet, hit or missed, else to its destination, for as
-long as the kit plays (its longest effect model). Build 8606, a Voidwalker
-casting Lady Vashj's Forked Lightning 38145 (kit 965, chain 95
-ShockLightning, Lightning_Cast_Hand 1 s) at players it missed: lit 0.92-1.0 s,
-one bolt per missed player. Native's bolt is jagged and bows above the line
-(ArcHeight dword 26: 0.9 here, 5 on chain 260); drawn with the channel
-beam's noise and arc, not re-measured against native. Gotcha: a cast kit with no effect model has no known play
-length and its chain is not drawn: Wrath of the Astromancer 42784 (kit 8183,
-chain 260), which native shows for 0.24-0.32 s as a tall pink arc from the
-player to the spell's random destination. Chain Lightning 421 has no chain
-on its kits. Evidence: `_experiments/20261118T124000Z.astromancer_glow/`
-(fork*-pairs.jpg, w84*.jpg).
-(ArcHeight dword 26: 0.9 here, 5 on chain 260); here it is the straight
-channel strip. A kit with no effect model lasts the spell's duration: Spite
+A CastKit's chain is drawn at `SMSG_SPELL_GO` from the caster to every
+target in the packet, hit or missed, else to its destination, for as long as
+the kit plays (its longest effect model). Kits name the SpellChainEffects row
+with CharProc 0 (83 cast kits) or CharProc 12 (33 cast kits, all naming
+existing rows: Chain Lightning 421 kit 321 -> 1 Lightning, Chain Heal 1064
+kit 3169 -> 2 HealBeam, C'Thun's Eye Beam 26134/32950 kit 6480 -> 18
+SoulBeam). Build 8606, a Voidwalker casting Lady Vashj's Forked Lightning
+38145 (kit 965, chain 95 ShockLightning, Lightning_Cast_Hand 1 s) at players
+it missed: lit 0.92-1.0 s, one bolt per missed player. Native's bolt is
+jagged and bows above the line (ArcHeight dword 26: 0.9 here, 5 on chain
+260); drawn with the channel beam's noise and arc, not re-measured against
+native. Native Eye of C'Thun's Eye Beam (chain targets 60) is a green wave
+from the eye to the first player, then on to the second; WoWee drew nothing
+before reading CharProc 12 (`_experiments/20261118T1800Z.cthun_beams/`,
+hop2_*.jpg). A kit with no effect model lasts the spell's duration: Spite
 41376 (Essence of Anger, kit 7979, chain 220, 6 s aura) held its beams 6.1 s.
 Gotcha: with neither a model nor a duration the chain is not drawn: Wrath of
 the Astromancer 42784 (kit 8183, chain 260), which native shows for
 0.24-0.32 s as a tall pink arc from the player to the spell's random
-destination. Chain Lightning 421 has no chain on its kits. Evidence:
-`_experiments/20261118T124000Z.astromancer_glow/` (fork*-pairs.jpg,
-w84*.jpg, spite2.json).
+destination. Evidence: `_experiments/20261118T124000Z.astromancer_glow/`
+(fork*-pairs.jpg, w84*.jpg, spite2.json). Unverified: CharParamOne of
+CharProc 12 (1 on most kits, 3 on Chain Burn 24684) is not read; Eye Beam's
+lit time against native was not measured.
 
 Where each SpellVisual stage plays (build 8606, same experiment):
 

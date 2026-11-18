@@ -206,9 +206,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 if (procFields[k] >= fc || procParamFields[k] >= fc) continue;
                 const uint32_t procedure = kitDbc->getUInt32(i, procFields[k]);
                 const float param = kitDbc->getFloat(i, procParamFields[k]);
-                if (procedure == kCharProcChain && param != 0.0f) {
+                if ((procedure == kCharProcChain || procedure == kCharProcCastChain) && param != 0.0f) {
                     assert(std::isfinite(param) && param > 0.0f && param < 65536.0f);
-                    kitChainEffects_[kitId] = static_cast<uint32_t>(param);
+                    const bool first = kitChainEffects_.emplace(kitId, static_cast<uint32_t>(param)).second;
+                    assert(first && "one beam per kit");
+                    (void)first;
                 } else if (procedure == kCharProcColor) {
                     // 0xRRGGBB as a float: Ghost 0x8CB9FD, Frostbolt 0x3C3CFF.
                     assert(std::isfinite(param) && param >= 0.0f && param < 16777216.0f);

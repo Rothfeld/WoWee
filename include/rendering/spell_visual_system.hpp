@@ -271,6 +271,14 @@ private:
     /// and a parameter name an existing record; Green Beam's (33346) channel
     /// kit 6674 names 269 (SoulBeam.blp), Drain Life's kit 402 names 8.
     static constexpr uint32_t kCharProcChain = 0;
+    /// SpellVisualKit CharProc 12 names a SpellChainEffects.dbc row the same
+    /// way. All 34 TBC kits with it name existing rows, 33 of them cast kits:
+    /// Chain Lightning 421 (kit 321 -> 1 Lightning.blp), Chain Heal 1064
+    /// (3169 -> 2 HealBeam.blp), C'Thun's Eye Beam 26134 (6480 -> 18
+    /// SoulBeam.blp). Native build 8606 draws Eye Beam's green wave from the
+    /// Eye of C'Thun to the players it hits
+    /// (_experiments/20261118T1800Z.cthun_beams in the workspace root).
+    static constexpr uint32_t kCharProcCastChain = 12;
     static constexpr uint32_t kCharProcColor = 1;
     static constexpr uint32_t kCharProcOpacity = 14;
     /// SpellVisualKit CharProc 13: CharParamZero 0xRRGGBB tints the light on
