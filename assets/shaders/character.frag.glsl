@@ -74,6 +74,10 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float kitLightR;
     float kitLightG;
     float kitLightB;
+    // The batch's M2 colour, as m2.frag's tint.
+    float tintR;
+    float tintG;
+    float tintB;
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
@@ -314,6 +318,7 @@ void main() {
     // Clamped: Mod2x can double alpha past one.
     if (enablePOM == PREVIEW_SIMPLE_TEXTURE_MODE) {
         vec4 texColor = combineStages(samplePreviewTexture(uTexture, TexCoord), secondColor);
+        texColor.rgb *= vec3(tintR, tintG, tintB);
         texColor.a = min(texColor.a, 1.0);
         if (isMagentaKeyColor(texColor)) {
             discard;
@@ -371,6 +376,7 @@ void main() {
     }
 
     vec4 texColor = combineStages(textureGrad(uTexture, finalUV, uvDx, uvDy), secondColor);
+    texColor.rgb *= vec3(tintR, tintG, tintB);
     texColor.a = min(texColor.a, 1.0);
     // Repair dark DXT fringes on alpha-cut character textures such as hair.
     // Transparent edge texels can carry black/garbage RGB even when alpha is

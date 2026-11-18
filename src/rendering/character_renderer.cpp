@@ -256,6 +256,8 @@ struct CharMaterialUBO {
     float interiorLightR, interiorLightG, interiorLightB;
     int32_t interiorLit;
     float kitLightR, kitLightG, kitLightB;
+    // The batch's M2 colour (at rest), as m2.frag's tint.
+    float tintR, tintG, tintB;
 };
 
 // GPU vertex struct with tangent (expanded from M2Vertex for normal mapping)
@@ -3641,6 +3643,15 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 matData.kitLightR = instance.kitLight.r;
                 matData.kitLightG = instance.kitLight.g;
                 matData.kitLightB = instance.kitLight.b;
+                // The batch's authored colour multiplies its texture, as on
+                // world M2s: Al'ar's (Phoenix.mdx) GENERICGLOW64 cards carry
+                // dark red and purple (0.47,0,0) .. (1,0,0); drawn white they
+                // burned the bird white where the original is orange.
+                matData.tintR = matData.tintG = matData.tintB = 1.0f;
+                if (batch.colorIndex < gpuModel.data.colorRGB.size()) {
+                    const glm::vec3 tint = gpuModel.data.colorRGB[batch.colorIndex];
+                    matData.tintR = tint.r; matData.tintG = tint.g; matData.tintB = tint.b;
+                }
                 matData.interiorLit = instance.interiorLight ? 1 : 0;
                 if (instance.interiorLight) {
                     matData.interiorLightR = instance.interiorLight->r;
@@ -3817,6 +3828,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             }
 
             CharMaterialUBO matData{};
+            matData.tintR = matData.tintG = matData.tintB = 1.0f;
             matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
             matData.opacity = renderOpacity;
             matData.kitColorR = instance.kitColor.r;
