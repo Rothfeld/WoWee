@@ -986,6 +986,9 @@ std::vector<std::string> SpellHandler::spellcastArgs(const std::string& unitId,
     const std::string& rank = owner_.getSpellRank(spellId);
     // A name that is not cached yet would be empty, and an empty string is a
     // string - which is what the readers want. Nil would raise in strlower.
+    // 2.4.3 stops at the rank: UNIT_SPELLCAST_SUCCEEDED "player", "Sprint",
+    // "Rank 3", arg4 nil (pair 2).
+    if (isActiveExpansion("tbc")) return {unitId, name, rank};
     return {unitId, name, rank, std::to_string(spellId), std::to_string(spellId)};
 }
 
@@ -1910,7 +1913,13 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     if (owner_.addonEventCallbackRef()) {
         std::string targetName;
         if (target != 0) targetName = owner_.lookupName(target);
-        owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SENT", {"player", targetName, std::to_string(spellId)});
+        // 2.4.3: unit, spell name, rank, target name - "player", "Sprint",
+        // "Rank 3", "" for a cast at no one (pair 2).
+        if (isActiveExpansion("tbc"))
+            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SENT",
+                {"player", owner_.getSpellName(spellId), owner_.getSpellRank(spellId), targetName});
+        else
+            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SENT", {"player", targetName, std::to_string(spellId)});
     }
 
     // Optimistically start GCD immediately on cast. Nothing else announces this
