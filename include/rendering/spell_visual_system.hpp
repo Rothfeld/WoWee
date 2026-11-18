@@ -48,10 +48,12 @@ public:
     /// Build 8606, pair 12 (_experiments/20261118T124000Z.astromancer_glow
     /// fork-*.jpg): Forked Lightning 38145 (CastKit 965, chain 95
     /// ShockLightning, Lightning_Cast_Hand 1 s) from a Voidwalker to both
-    /// players it missed, lit 0.92-1.0 s. A kit without effect models (42784's
-    /// 8183) has no play length known here; its beam is not drawn.
+    /// players it missed, lit 0.92-1.0 s. A kit without effect models lasts
+    /// the spell's duration (spellSeconds): Essence of Anger's Spite 41376
+    /// (kit 7979, chain 220, 6 s aura) held its beams 6.1 s, until 41377
+    /// (spite2.json). With neither (42784's kit 8183) the beam is not drawn.
     void playCastKit(uint32_t visualId, const glm::vec3& casterPosition, uint32_t casterInstanceId,
-                     const std::vector<ChainEnd>& ends);
+                     const std::vector<ChainEnd>& ends, float spellSeconds);
     // SpellVisual InstantAreaKit (TBC column 22) plays at the SMSG_SPELL_GO
     // destination (TARGET_FLAG_DEST_LOCATION), unattached; a spell with no
     // destination plays none. Build 8606, pair 12
@@ -235,6 +237,12 @@ private:
     /// carries it on bone 82 in front of the face, bone +X forward.
     static constexpr uint32_t kAttachBreath = 17;
     static constexpr uint32_t kAttachSpellLeftHand = 21, kAttachSpellRightHand = 22;
+    // Slots whose effect is not drawn on a model lacking their attachment:
+    // spell hands 21/22 and breath 17 (others fall back to the unit position).
+    static constexpr bool slotSkippedWhenAbsent(uint32_t attachment) {
+        return attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand ||
+               attachment == kAttachBreath;
+    }
     /// SpellVisualKit CharProc 0: CharParamZero is a SpellChainEffects.dbc id,
     /// the beam drawn while the kit plays. All 284 TBC kits with procedure 0
     /// and a parameter name an existing record; Green Beam's (33346) channel

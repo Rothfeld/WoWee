@@ -394,9 +394,13 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         // Zombie, HUMSMerchant, HumanMaleNoble, Turtle, CryptFiend,
         // WarpStalker or Dryder, which lack 21/22 - not at their hands 1/2,
         // not at their feet (_experiments/20261118T114913Z.hand_effect_attachments).
-        if ((attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand) &&
+        // BreathEffect (17) likewise: Soul Scream 41545's FlameBreath_Blue on
+        // the Essence of Anger (WellofSoulsPain.m2, no 17) is not drawn by
+        // build 8606; at the unit's feet it was a blue fire on the ground
+        // (_experiments/20261118T124000Z.astromancer_glow scream-pairs.jpg).
+        if (slotSkippedWhenAbsent(attachment) &&
             (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, attachMat))) {
-            LOG_DEBUG("SpellVisual: kit=", kitId, " hand attachment ", attachment, " absent on instance ",
+            LOG_DEBUG("SpellVisual: kit=", kitId, " attachment ", attachment, " absent on instance ",
                       attachInstanceId, "; not shown: ", effect.path);
             continue;
         }
@@ -675,9 +679,9 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
         for (const auto& effect : effects->second) {
             const bool marker = isConcealmentDetectionMarker(effect.path);
             if ((marker && !observerConcealed) || (existing && !marker)) continue;
-            // A hand slot on a model without 21/22 is not shown (as spawnKitEffects).
+            // A hand or breath slot on a model without it is not shown (as spawnKitEffects).
             glm::mat4 handMat(1.0f);
-            if ((effect.attachment == kAttachSpellLeftHand || effect.attachment == kAttachSpellRightHand) &&
+            if (slotSkippedWhenAbsent(effect.attachment) &&
                 !characters->getAttachmentTransform(attachInstanceId, effect.attachment, handMat)) {
                 LOG_DEBUG("Aura visual: hand attachment ", effect.attachment, " absent on instance ",
                           attachInstanceId, "; not shown: ", effect.path);
@@ -937,19 +941,22 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
 }
 
 void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPosition,
-                                    uint32_t casterInstanceId, const std::vector<ChainEnd>& ends) {
+                                    uint32_t casterInstanceId, const std::vector<ChainEnd>& ends,
+                                    float spellSeconds) {
     if (!m2Renderer_ || visualId == 0) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     const auto kit = castKits_.find(visualId);
     if (kit == castKits_.end() || !kit->second) return;
-    const float plays = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, /*isPrecast=*/false);
+    const float models = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, /*isPrecast=*/false);
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
+    const bool hasModels = kitEffects_.count(kit->second) != 0;
+    const float plays = hasModels ? models : spellSeconds;
     if (plays <= 0.0f) {
         static std::unordered_set<uint32_t> said;
         if (said.insert(kit->second).second)
             LOG_WARNING("SpellVisual: cast kit ", kit->second, " draws chain ", chainId->second,
-                        " but plays no effect model to time it; beam not drawn");
+                        " but neither an effect model nor a spell duration times it; beam not drawn");
         return;
     }
     for (const auto& end : ends) {

@@ -3380,7 +3380,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                             ends.push_back({0, core::coords::canonicalToRender(
                                 core::coords::serverToCanonical(*data.destination))});
                         svs->playCastKit(visualId, casterPos,
-                                         owner_.resolveUnitRenderInstance(data.casterUnit), ends);
+                                         owner_.resolveUnitRenderInstance(data.casterUnit), ends,
+                                         std::max(0.0f, getSpellDuration(data.spellId)));
                         if (data.destination)
                             svs->playInstantAreaKit(visualId, core::coords::canonicalToRender(
                                 core::coords::serverToCanonical(*data.destination)));
