@@ -1468,6 +1468,18 @@ hostility for both duel participants, including reconnects where the opponent
 arrives before the local player. UnitCanAttack uses the live reaction rather
 than cached presentation state. Friendly target cycling excludes opponents.
 
+Each unit's hostility (`Unit::isHostile`: plate colour, name colour,
+UnitIsEnemy) is cached from the faction maps when it appears. World packets
+are applied as they arrive, so at login the units around the player - a party
+member beside them included - exist before the world loader builds the maps,
+and against no map every template counts as hostile. Building the maps
+(`GameHandler::registerFactionMapBuilder`) uses the player's live faction
+template (35 while a game master) and re-judges every existing unit.
+`test_input_integration '[faction]'` checks it. Gotcha: when the live template
+equals the race's (a non-GM player), nothing else re-judges those units; a
+party member's plate drew red and UnitReaction answered 2. Native shows a
+grouped player's plate blue.
+
 ## TBC interaction compatibility
 
 `build/bin/test_input_integration '[guard-gossip],[npc-attack],[mail-coin],[mail-stationery],[gm-mail]'`

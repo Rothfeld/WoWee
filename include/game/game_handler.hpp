@@ -1731,9 +1731,12 @@ public:
     /// template is not fixed by race: the server sets 35 for a game master
     /// (Player::SetGameMaster), and every reaction is relative to it.
     using PlayerFactionTemplateCallback = std::function<void(uint32_t factionTemplateId)>;
-    void setPlayerFactionTemplateCallback(PlayerFactionTemplateCallback cb) {
-        playerFactionTemplateCallback_ = std::move(cb);
-    }
+    /// Registers the builder and builds the maps now: for the player's own
+    /// UNIT_FIELD_FACTIONTEMPLATE when it has arrived, else for the race's
+    /// starting template. Every unit is re-judged against them - the ones the
+    /// server created before (a party member at login) were judged with no
+    /// maps, where an unknown template counts as hostile.
+    void registerFactionMapBuilder(PlayerFactionTemplateCallback cb, uint32_t startingTemplate);
     /// The template the faction maps were built for.
     void setAppliedPlayerFactionTemplate(uint32_t factionTemplateId) {
         appliedPlayerFactionTemplate_ = factionTemplateId;

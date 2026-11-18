@@ -3,6 +3,7 @@
 #include "game/reputation_standing.hpp"
 #include "game/spell_classification.hpp"
 
+#include <cassert>
 #include <set>
 
 #include "game/item_text.hpp"
@@ -3224,11 +3225,25 @@ bool GameHandler::canInteractWithGameObject(const GameObject& object) const {
     return gameObjectReactionToPlayer(object) >= 4;
 }
 
+void GameHandler::registerFactionMapBuilder(PlayerFactionTemplateCallback cb, uint32_t startingTemplate) {
+    assert(cb && startingTemplate != 0);
+    playerFactionTemplateCallback_ = std::move(cb);
+    uint32_t factionTemplateId = startingTemplate;
+    if (const auto player = getEntityManager().getEntity(getPlayerGuid())) {
+        if (const uint32_t live = player->getField(fieldIndex(UF::UNIT_FIELD_FACTIONTEMPLATE)))
+            factionTemplateId = live;
+    }
+    appliedPlayerFactionTemplate_ = 0;
+    notePlayerFactionTemplate(factionTemplateId);
+}
+
 void GameHandler::notePlayerFactionTemplate(uint32_t factionTemplateId) {
     if (factionTemplateId == 0 || factionTemplateId == appliedPlayerFactionTemplate_) return;
     if (!playerFactionTemplateCallback_) {
-        LOG_ERROR("Player faction template ", factionTemplateId,
-                  " arrived with no faction map builder registered");
+        // The world's packets arrive before the world loader builds the maps;
+        // it builds them from this field and re-judges every unit then.
+        LOG_INFO("Player faction template ", factionTemplateId,
+                 " arrived before the faction maps; they are built from it at world load");
         return;
     }
     LOG_INFO("Player faction template ", appliedPlayerFactionTemplate_, " -> ", factionTemplateId,

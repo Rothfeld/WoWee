@@ -1451,6 +1451,39 @@ TEST_CASE_METHOD(Integration, "TBC forced reactions override the faction templat
     CHECK_FALSE(handler.isHostileFaction(1959));
 }
 
+// World packets are applied as they arrive, so at login the party member
+// standing beside the player (Graulberto, dwarf, template 3) is created before
+// the world loader builds the faction maps. Judged then, an unknown template
+// counts as hostile and his plate drew red where native shows a friendly blue.
+// Building the maps re-judges every unit already there, against the player's
+// live template (35 for a game master) rather than the race's.
+TEST_CASE_METHOD(Integration, "Faction maps built after login re-judge the units already created", "[faction]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto self = std::make_shared<Player>(handler.getPlayerGuid());
+    auto partyMember = std::make_shared<Player>(3);
+    const auto factionField = fieldIndex(UF::UNIT_FIELD_FACTIONTEMPLATE);
+    self->setField(factionField, 35);
+    partyMember->setField(factionField, 3);
+    partyMember->setFactionTemplate(3);
+    handler.getEntityManager().addEntity(self->getGuid(), self);
+    handler.getEntityManager().addEntity(3, partyMember);
+    handler.notePlayerFactionTemplate(35);  // no builder yet: logged, nothing built
+    handler.refreshUnitHostility();         // what player creation does
+    CHECK(partyMember->isHostile());        // no maps: unknown template
+    std::vector<uint32_t> built;
+    handler.registerFactionMapBuilder([&](uint32_t playerTemplate) {
+        built.push_back(playerTemplate);
+        handler.setFactionHostileMap({{3, false}, {35, false}});
+        handler.setFactionFriendlyMap({{3, true}, {35, true}});
+        handler.setAppliedPlayerFactionTemplate(playerTemplate);
+    }, 3);
+    CHECK(built == std::vector<uint32_t>{35});
+    CHECK_FALSE(partyMember->isHostile());
+    CHECK(handler.unitReactionToPlayer(*partyMember) == 5);
+}
+
 // Spectral Blast 46648 is aimed at a place; its SpellVisual ImpactAreaKit
 // (kit 9254, the pink beams and shards native draws) plays there.
 TEST_CASE("TBC SMSG_SPELL_GO keeps the destination of a ground-aimed spell", "[spell]") {
