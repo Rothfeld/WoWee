@@ -213,6 +213,26 @@ TEST_CASE("Flat spherical emitters spread across their area and travel radially"
     CHECK(side.offset.z == 0);
 }
 
+TEST_CASE("Sphere emitters: elevation above the horizontal plane, no negative radius", "[m2][particle]") {
+    using wowee::rendering::sphericalParticleEmission;
+    // Shadow Nova (shadow_nova_area.m2 #0: vertical 0, horizontal pi,
+    // radius 9.72, 0x2209): every birth on the ground plane, moving outward.
+    for (const float azimuth : {-3.14159265f, -1.0f, 0.0f, 2.0f, 3.14159265f}) {
+        const auto nova = sphericalParticleEmission(9.722f, 9.722f, 0, azimuth, 0.5f, 0x2209);
+        CHECK(std::abs(nova.offset.z) < 1e-5f);
+        CHECK(glm::length(nova.offset) == Catch::Approx(9.722f));
+        CHECK(std::abs(nova.direction.z) < 1e-5f);
+        CHECK(glm::dot(nova.direction, nova.offset) > 0);
+    }
+    // Etherial.m2 Death #20 (radius -1.11 to -0.83): no offset, no velocity;
+    // its gravity alone draws the falling lines.
+    const auto death = sphericalParticleEmission(-1.111f, -0.833f, 0, 2.0f, 0.3f, 0x400);
+    CHECK(death.offset == glm::vec3(0));
+    CHECK(death.direction == glm::vec3(0));
+    // Etherial.m2 Death #21 (radius 0, 0x100): straight up.
+    CHECK(sphericalParticleEmission(0, 0, 3.0f, 0, 0.5f, 0x100).direction == glm::vec3(0, 0, 1));
+}
+
 TEST_CASE("Summoning portal emits a ring rather than filling its center", "[m2][particle]") {
     using wowee::rendering::sphericalParticleEmission;
     for (const float sample : {0.0f, 0.5f, 1.0f}) {

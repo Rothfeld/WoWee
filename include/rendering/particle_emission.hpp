@@ -144,13 +144,30 @@ struct ParticleEmission {
     glm::vec3 direction;
 };
 
+// Sphere emitter (type 2) birth point and travel direction.
+// The area length / width tracks are the minimum / maximum radius; a birth
+// takes a radius between them. The vertical range is an elevation above the
+// model's horizontal plane, the horizontal range an azimuth about +Z.
+// Particles travel away from the emitter centre (along the offset), or up +Z
+// with flag 0x100; at zero radius without 0x100 they have no velocity.
+// Native evidence (pair 23, _experiments/20261118T143000Z.sphere_emission):
+// - Shadow Nova 30852 (shadow_nova_area.m2 #0, vertical 0, horizontal pi,
+//   radius to 9.7, 0x2209, kit scale 1): a smoke band spreading flat over
+//   the ground round the caster. Elevation taken as tilt from +Z (eb6f678,
+//   reverted) made it one rising column.
+// - Meeting Stone Summoning Portal 179944 (Summon_Ritual.m2, vertical pi,
+//   horizontal 0): a ring standing in the model's YZ plane.
+// - A negative radius is no radius. Etherial.m2 Death #20 (radius -1.11 to
+//   -0.83, vertical 0, gravity 69) falls as thin lines under the rising
+//   wrappings in the original; taken at its magnitude it spread a ring of
+//   streaks 4 yd across that drew a white curtain at the Ethereal's waist.
+//   11 TBC sphere emitters author negative radii (Etherial/EtherialRobe
+//   Death, Illidan's glaive, shadow_nova_area's first 90 ms, IceNuke).
 inline ParticleEmission sphericalParticleEmission(float length, float width,
     float elevation, float azimuth, float radius, uint32_t flags) {
-    // Sphere tracks are minimum/maximum radius, not planar box dimensions.
-    // Zero horizontal spread leaves a ring in the model YZ plane (+X normal).
     const glm::vec3 direction(std::cos(elevation) * std::sin(azimuth),
                               std::cos(elevation) * std::cos(azimuth), std::sin(elevation));
-    const glm::vec3 offset = direction * glm::mix(length, width, radius);
+    const glm::vec3 offset = direction * std::fmax(glm::mix(length, width, radius), 0.0f);
     const float magnitude = glm::length(offset);
     return {offset, (flags & 0x100u) != 0 ? glm::vec3(0, 0, 1)
                     : magnitude > 0 ? offset / magnitude : glm::vec3(0)};
