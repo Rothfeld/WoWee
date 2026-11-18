@@ -19,6 +19,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_billboard.hpp"
 #include <glm/gtx/string_cast.hpp>
 #include "rendering/character_emitters.hpp"
@@ -316,13 +317,14 @@ void CharacterRenderer::buildMainPassPipelines(VkDevice device, VkRenderPass mai
     // --- Build pipelines ---
     auto buildCharPipeline = [&](VkPipelineColorBlendAttachmentState blendState,
                                   bool depthWrite, bool alphaToCoverage = false,
-                                  VkCompareOp depthCompare = VK_COMPARE_OP_LESS) -> VkPipeline {
+                                  VkCompareOp depthCompare = VK_COMPARE_OP_LESS,
+                                  VkCullModeFlags cullMode = VK_CULL_MODE_NONE) -> VkPipeline {
         auto builder = PipelineBuilder()
             .setShaders(charVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                         charFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
             .setVertexInput({charBinding}, charAttrs)
             .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-            .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .setRasterization(VK_POLYGON_MODE_FILL, cullMode, kM2FoliageFrontFace)
             .setDepthTest(true, depthWrite, depthCompare)
             .setDepthBias(0.0f, 0.0f)
             .setColorBlendAttachment(blendState)
@@ -363,6 +365,32 @@ void CharacterRenderer::buildMainPassPipelines(VkDevice device, VkRenderPass mai
                                              false, VK_COMPARE_OP_LESS_OR_EQUAL);
     fadeModPipeline_ = buildCharPipeline(mod, false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
     fadeMod2xPipeline_ = buildCharPipeline(mod2x, false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
+
+    // A material without the two-sided flag (0x04) shows its front faces
+    // only, as on world M2s (m2UseAuthoredCull). Drake.m2's wings (materials
+    // 0-2, flags 0) are single sheets: from below a drake the original draws
+    // no wing at all, where drawing both sides hung the membranes' undersides
+    // under Azurous. Chimera.m2's materials 2-3 carry 0x04 and keep both
+    // sides; native shows a Chillwind Chimaera's wings from below.
+    culledPipelines_.clear();
+    auto culled = [&](VkPipeline twoSided, VkPipelineColorBlendAttachmentState blendState, bool depthWrite,
+                      bool alphaToCoverage = false, VkCompareOp depthCompare = VK_COMPARE_OP_LESS) {
+        culledPipelines_[twoSided] = buildCharPipeline(blendState, depthWrite, alphaToCoverage, depthCompare,
+                                                       VK_CULL_MODE_BACK_BIT);
+    };
+    culled(opaquePipeline_, PipelineBuilder::blendDisabled(), true);
+    culled(alphaTestPipeline_, PipelineBuilder::blendDisabled(), true, true);
+    culled(alphaPipeline_, PipelineBuilder::blendAlpha(), false);
+    culled(additivePipeline_, PipelineBuilder::blendAdditive(), false);
+    culled(modPipeline_, mod, false);
+    culled(mod2xPipeline_, mod2x, false);
+    culled(translucentPipeline_, PipelineBuilder::blendAlpha(), true);
+    culled(cameraDepthPipeline_, depthOnly, true);
+    culled(cameraFadePipeline_, PipelineBuilder::blendAlpha(), false, false, VK_COMPARE_OP_EQUAL);
+    culled(fadeAlphaPipeline_, PipelineBuilder::blendAlpha(), false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
+    culled(fadeAdditivePipeline_, PipelineBuilder::blendAdditive(), false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
+    culled(fadeModPipeline_, mod, false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
+    culled(fadeMod2xPipeline_, mod2x, false, false, VK_COMPARE_OP_LESS_OR_EQUAL);
 
 }
 
@@ -605,6 +633,8 @@ void CharacterRenderer::shutdown() {
     destroyPipeline(fadeAdditivePipeline_);
     destroyPipeline(fadeModPipeline_);
     destroyPipeline(fadeMod2xPipeline_);
+    for (auto& [twoSided, culledPipeline] : culledPipelines_) destroyPipeline(culledPipeline);
+    culledPipelines_.clear();
 
     destroy(device, pipelineLayout_);
 
@@ -3475,6 +3505,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
         // Push model matrix
         vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &modelMat);
+        // A reflecting transform turns the winding round; such an instance
+        // keeps both sides rather than losing its front faces.
+        const bool windingPreserved = m2FoliageTransformPreservesWinding(modelMat);
 
         // Upload bone matrices to SSBO
         int numBones = std::min(static_cast<int>(instance.boneMatrices.size()), MAX_BONES);
@@ -3799,6 +3832,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     else if (desiredPipeline == mod2xPipeline_) desiredPipeline = fadeMod2xPipeline_;
                     else assert(!"fading instance batch without a fade pipeline");
                 }
+                if (!(materialFlags & 0x04) && windingPreserved)
+                    desiredPipeline = culledPipelines_.at(desiredPipeline);
                 if (desiredPipeline != currentPipeline) {
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
                     currentPipeline = desiredPipeline;
@@ -5622,6 +5657,8 @@ void CharacterRenderer::recreatePipelines() {
     destroy(device, fadeAdditivePipeline_);
     destroy(device, fadeModPipeline_);
     destroy(device, fadeMod2xPipeline_);
+    for (auto& [twoSided, culledPipeline] : culledPipelines_) destroy(device, culledPipeline);
+    culledPipelines_.clear();
 
     // --- Load shaders ---
     rendering::VkShaderModule charVert, charFrag;

@@ -903,6 +903,21 @@ memory checks and makes the server disconnect on a truncated response.
 
 ### Creature support and idle variations
 
+Creature, player and attached-item batches cull back faces unless their M2
+material has the two-sided flag 0x04, as world M2s do; an instance whose
+transform reflects keeps both sides. Two-sided materials are lit alike on
+both sides under TBC light (no normal flip for back faces). Drake.m2 (Azurous,
+display 6373; all three materials flags 0) builds each wing from two
+one-sided sheets: drawn two-sided, the far sheet's back showed through and,
+lit as a back face, painted the membranes dark brown where build 8606 shows
+them pink-beige from either side. Chimera.m2's wing materials (2-3) carry
+0x04: a Chillwind Chimaera's wings from below were dark grey in WoWee and
+are pale in the original. Drake.m2 has two Stand sequences (2 and 5, equal
+frequency); 5 is a wing beat, so a drake's wing pose differing between the
+clients from moment to moment is the variation draw, not skinning. Paired
+captures with the original character morphed to 6373 and 10810:
+`_experiments/20261118T211000Z.azurous/` in the workspace.
+
 Grounded creatures select the nearest reachable terrain, WMO or M2 floor.
 Terrain corrections do not require a previous corrected render position; static
 server spawn Z can differ from the ADT triangle. Structure corrections retain

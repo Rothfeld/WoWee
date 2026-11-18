@@ -637,6 +637,8 @@ private:
     VkPipeline fadeAdditivePipeline_ = VK_NULL_HANDLE;
     VkPipeline fadeModPipeline_ = VK_NULL_HANDLE;
     VkPipeline fadeMod2xPipeline_ = VK_NULL_HANDLE;
+    // Back-face culled twin of each pipeline above, for one-sided materials.
+    std::unordered_map<VkPipeline, VkPipeline> culledPipelines_;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
 
     // Descriptor set layouts

@@ -349,7 +349,11 @@ void main() {
     vec2 uvDy = dFdy(TexCoord);
 
     vec3 vertexNormal = safeNormalize(Normal, vec3(0.0, 0.0, 1.0));
-    if (!gl_FrontFacing) vertexNormal = -vertexNormal;
+    // TBC (legacy light, lightDir.w != 0) lights both sides of a two-sided
+    // material alike: a Chillwind Chimaera's wings (Chimera.m2 materials 2-3,
+    // flags 0x04) seen from below are as pale as from above in build 8606.
+    // Turning the normal round lit their undersides by the ambient alone.
+    if (!gl_FrontFacing && lightDir.w == 0.0) vertexNormal = -vertexNormal;
 
     vec2 finalUV = TexCoord;
 
