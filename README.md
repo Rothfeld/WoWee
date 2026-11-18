@@ -755,12 +755,21 @@ SYSMSG/UI_ERROR_MESSAGE/UI_INFO_MESSAGE into chat:
 | channels | CHAT_MSG_CHANNEL_NOTICE(_USER) for ChatFrame to word: "Joined Channel: [6. chantestx]" |
 | `/who` | WHO_LIST_FORMAT rows, WHO_NUM_RESULTS |
 | `/p` without a party | ERR_NOT_IN_GROUP in chat, nothing sent |
+| reputation | one FACTION_STANDING_INCREASED/DECREASED (CHAT_MSG_COMBAT_FACTION_CHANGE) for the packet's first faction, FACTION_STANDING_CHANGED in chat for any rank crossed |
+| login, zone change | "Joined Channel: [1. General - Elwynn Forest]" ... after the MOTD; "Changed Channel: [1. General - Stormwind City]" |
+| quests | "Quest accepted: X" in chat; "Tough Wolf Meat: 1/8", "Kobold Vermin slain: 1/10" on the info line; nothing on objectives done or abandon |
+| ready check | asker: READY_CHECK_START, then READY_CHECK_ALL_READY / RAID_MEMBER_NOT_READY + READY_CHECK_FINISHED / RAID_MEMBERS_AFK; members: ERR_RAID_LEADER_READY_CHECK_START_S |
 
 Gotchas: TBC SMSG_WHO has a gender byte before the zone. JoinPermanentChannel
 must answer zone channel 0, not nil, or SlashCmdList JOIN prints "Invalid
 channel name" and never lists the channel. The realm answers nothing to
 `/friend` of an unknown name; "Player not found." is `/removefriend`'s own.
-TBC item links have eight fields (no level). GM mail is from "Customer
+TBC item links have eight fields (no level). Zone channels are joined by
+ChatChannels.dbc id (flag 0x1, plus GuildRecruitment by CVar) and named from
+the pattern and the zone under the player; the realm moves them on zone change.
+Notices raised before FrameXML loads (the login roster, loot rules) are held
+and printed once it is up. The ready check's asker sends
+MSG_RAID_READY_CHECK_FINISHED (all answered or 30 s); the realm only relays it. GM mail is from "Customer
 Support" with stationery icon Mail_GMIcon (Stationery.dbc item icon).
 Evidence: `_experiments/20261118T074332Z.chatlines_native/` in the workspace.
 
