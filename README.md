@@ -778,6 +778,23 @@ ERR_MAIL_SENT on the info line; taking an item or money shows nothing. TBC
 MailFrame hears MAIL_FAILED, without an argument, after every mail result,
 successes included.
 
+### Keyring button
+
+```sh
+build/bin/test_game_replay '[keyring]'
+```
+
+`HasKey()` answers from PLAYER_FIELD_KEYRING_SLOT_1's 32 slots only; bank,
+bank bag, buyback and vanity pet slots beside them do not count. FrameXML
+sets the per-character `SHOW_KEYRING` to 1 the first time HasKey answers
+true (PLAYER_ENTERING_WORLD, VARIABLES_LOADED, BAG_UPDATE) and never back:
+on 2.4.3 a key added with `.additem 8444` and removed again leaves
+`KeyRingButton` shown and `SHOW_KEYRING = 1` saved. Gotcha: a quest key
+looted into the ring and used up seconds later (Executioner's Key on a Troll
+Cage) leaves no trace in `character_inventory`; the debug log line
+`Rebuilt online inventory: ... keyring=N` shows it. Evidence:
+`_experiments/20261118T194107.keyring_show/` in the workspace.
+
 ### Client notices
 
 The lines the client writes itself use the loaded GlobalStrings.lua through
