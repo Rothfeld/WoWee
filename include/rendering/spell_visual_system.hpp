@@ -271,7 +271,7 @@ private:
 
     std::vector<SpellVisualInstance> activeSpellVisuals_;
     void placeOnUnit(const SpellVisualInstance& visual, CharacterRenderer* characters,
-                     const glm::vec3& position);
+                     const glm::vec3& position, float scale);
     std::vector<PhysicalProjectile> physicalProjectiles_;
     std::vector<SpellMissile> spellMissiles_;
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path

@@ -46,6 +46,12 @@ constexpr const char* kAreaImpactModels[] = {
     "Spells\\Fel_RainOfFire_Impact_Base.m2",
     "Spells\\HellfireRaid_Dust_Impact_Base.m2",
 };
+
+// The size of a unit attachment's frame: the unit's model scale (object x
+// display x model scale) times the authored scale of the attachment's bone.
+float attachmentScale(const glm::mat4& attachment) {
+    return std::cbrt(std::abs(glm::determinant(glm::mat3(attachment))));
+}
 }  // namespace
 
 void SpellVisualSystem::initialize(M2Renderer* m2Renderer, Renderer* renderer) {
@@ -161,7 +167,12 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // 23 at its head, where native starts Ebonroc's Flame Breath (kit
             // 5851 SpecialEffect0, NefarianFlameBreath.m2); the unit position
             // put it at his feet.
-            static constexpr uint32_t attachments[] = {23, 0, 21, 22, 34, 18, kAttachBreath, 24, 25, 0};
+            // BaseEffect attaches to M2 attachment 19 (Base). Its bone carries
+            // an authored scale that the original applies to the effect:
+            // GnomeMale 0.5, HumanMale 1, Infernal 1.8, Dragon 5.5. Ice
+            // Block's cube (BaseEffect icebarrier_state) measured about 4 yd
+            // times that scale times the unit's own scale on each of them.
+            static constexpr uint32_t attachments[] = {23, 19, 21, 22, 34, 18, kAttachBreath, 24, 25, 0};
             for (size_t k = 0; k < numKitFields; ++k) {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
@@ -307,7 +318,7 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
 
 // Every effect a kit names, each at the attachment its SpellVisualKit slot
 // names: LeftHand 21, RightHand 22, Chest 34, Head 18 (overhead), Breath 17
-// (oriented), Base and Special slots at the unit's position.
+// (oriented), Base 19, Special 23-25; World at the unit's position.
 void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition,
                                         uint32_t attachInstanceId, float duration, bool isPrecast) {
     const auto effects = kitEffects_.find(kitId);
@@ -353,7 +364,8 @@ void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPo
         activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
             .isPrecast = isPrecast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
             .orientWithAttachment = breath});
-        if (!breath && attachInstanceId) placeOnUnit(activeSpellVisuals_.back(), characters, spawn);
+        if (!breath && attachInstanceId)
+            placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
                  " instanceId=", instanceId, " duration=", lifetime, "s model=", effect.path);
     }
@@ -531,6 +543,9 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         activeSpellVisuals_.push_back({.instanceId = instance, .elapsed = 0.0f,
             .duration = durationMs / 1000.0f, .isPrecast = false, .attachmentId = effect.attachment,
             .attachInstanceId = attachInstanceId, .isChannel = true, .orientWithAttachment = breath});
+        if (!breath)
+            placeOnUnit(activeSpellVisuals_.back(), characters, spawn,
+                        effect.attachment ? attachmentScale(transform) : 1.0f);
         LOG_INFO("Channel visual: kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
     }
 }
@@ -582,10 +597,20 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f);
             if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
             m2Renderer_->startInstanceStateEffect(instance);
+            // As spawnKitEffects: a model without the slot's attachment (40 of
+            // 769 TBC creature models lack Base 19, e.g. HumSCitizenMid) has
+            // the effect at its position, at the unit's own size.
+            uint32_t attachment = effect.attachment;
+            glm::mat4 attachMat(1.0f);
+            if (attachment && !characters->getAttachmentTransform(attachInstanceId, attachment, attachMat)) {
+                LOG_WARNING("Aura visual: attachment ", attachment, " unavailable on instance ", attachInstanceId,
+                            "; placed at unit position, model=", effect.path);
+                attachment = 0;
+            }
             activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
-                false, effect.attachment, attachInstanceId, false, visual, marker});
-            placeOnUnit(activeSpellVisuals_.back(), renderer_ ? renderer_->getCharacterRenderer() : nullptr,
-                        position);
+                false, attachment, attachInstanceId, false, visual, marker});
+            placeOnUnit(activeSpellVisuals_.back(), characters, attachment ? glm::vec3(attachMat[3]) : position,
+                        attachment ? attachmentScale(attachMat) : 1.0f);
             LOG_INFO("Aura visual: owner=", attachInstanceId, " visual=", visual,
                      " kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
         }
@@ -958,16 +983,27 @@ void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
 // the unit's yaw. Placed by position alone, every effect faced world +X, so an
 // asymmetric one (Scarlet Myrmidon's enrage, a breath cone) pointed sideways
 // for most headings.
+// An attached effect is as large as its attachment: the unit's model scale
+// times the attachment bone's authored scale (attachmentScale). Measured in
+// the original 2.4.3 with Ice Block on one creature morphed and scaled, cube
+// width / (unit scale x Base bone scale): Infernal at display scale 0.5, 1, 4
+// and `.modify scale 2` 3.9-4.1 yd, human 3.8, gnome 4.4, dragon 4.0,
+// Vaelastrasz (display 13992, 1.5) 4.1. His Corruption glow (chest bone 4.5,
+// base bone 5.5) is therefore several times a human's. Effects at the unit's
+// position (WorldEffect) keep 1: Entangling Roots measured equal on a gnome
+// and a human but much larger on a dragon; that rule is not established.
 void SpellVisualSystem::placeOnUnit(const SpellVisualInstance& visual, CharacterRenderer* characters,
-                                    const glm::vec3& position) {
+                                    const glm::vec3& position, float scale) {
+    assert(std::isfinite(scale) && scale > 0.0f);
     float yaw = 0.0f;
     if (!characters || !visual.attachInstanceId ||
         !characters->getInstanceYaw(visual.attachInstanceId, yaw)) {
         m2Renderer_->setInstancePosition(visual.instanceId, position);
         return;
     }
-    const glm::mat4 transform = glm::rotate(glm::translate(glm::mat4(1.0f), position), yaw,
-                                            glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::mat4 transform = glm::scale(
+        glm::rotate(glm::translate(glm::mat4(1.0f), position), yaw, glm::vec3(0.0f, 0.0f, 1.0f)),
+        glm::vec3(scale));
     m2Renderer_->setInstanceTransform(visual.instanceId, transform);
 }
 
@@ -1056,7 +1092,7 @@ void SpellVisualSystem::update(float deltaTime) {
                 it = activeSpellVisuals_.erase(it);
                 continue;
             }
-            if (!it->attachmentId) placeOnUnit(*it, charRenderer, position);
+            if (!it->attachmentId) placeOnUnit(*it, charRenderer, position, 1.0f);
         }
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
@@ -1070,7 +1106,7 @@ void SpellVisualSystem::update(float deltaTime) {
                 if (charRenderer->getAttachmentTransform(it->attachInstanceId, it->attachmentId, attachMat)) {
                     glm::vec3 bonePos = glm::vec3(attachMat[3]);
                     if (it->orientWithAttachment) m2Renderer_->setInstanceTransform(it->instanceId, attachMat);
-                    else placeOnUnit(*it, charRenderer, bonePos);
+                    else placeOnUnit(*it, charRenderer, bonePos, attachmentScale(attachMat));
                     static const bool traceAttachments = std::getenv("WOWEE_TRACE_AURA_ATTACHMENT") != nullptr;
                     if (traceAttachments && it->auraVisualId &&
                         std::floor(it->elapsed) != std::floor(it->elapsed - deltaTime)) {

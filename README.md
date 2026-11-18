@@ -1311,6 +1311,20 @@ included: Knockdown (5164/16790) and Backhand (6253) impact kit 348 throw the
 target down with Knockdown (121). The local player's kit animation plays once
 over its combat state and the stun the spell applies (`CombatFSM::triggerKitAnimation`).
 
+Kit effects on a unit (precast, cast, impact, aura and channel kits) are as
+large as their attachment: the unit's model scale (OBJECT_FIELD_SCALE_X x
+CreatureDisplayInfo x CreatureModelData scale) times the attachment bone's
+authored scale. BaseEffect is attachment 19 (Base), whose bone is 0.5 in
+GnomeMale, 1 in HumanMale, 1.8 in Infernal and 5.5 in Dragon; Dragon's Chest
+(34) bone is 4.5. Vaelastrasz's Corruption glow (23642, kit 6229,
+Shadow_Precast_Uber_Base, display 13992 at 1.5) is therefore several yards
+across. Measured with Ice Block's cube on a morphed and `.modify scale`d
+creature in the original: cube width / that scale is 3.8-4.4 yd for every
+model and scale. WorldEffect (Entangling Roots) stays at the unit's position,
+unscaled; native draws it equal on a gnome and a human but far larger on a
+dragon, a rule not yet established. Evidence:
+`_experiments/20261118T075132Z.fxscale_unit_size/` in the workspace root.
+
 Channel beams come from the channel's fields, not from `MSG_CHANNEL_START`:
 `UNIT_CHANNEL_SPELL` (TBC index 165) and `UNIT_FIELD_CHANNEL_OBJECT` (20/21)
 stay set for the whole channel, so a unit that was already channelling when it
