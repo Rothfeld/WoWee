@@ -503,20 +503,36 @@ static int lua_GetActionInfo(lua_State* L) {
     }
     const auto& action = *shown;
     switch (action.type) {
-        case game::ActionBarSlot::SPELL:
+        case game::ActionBarSlot::SPELL: {
+            // Native 2.4.3: "spell", the spell's spellbook slot, "spell"
+            // (Sinister Strike answered 39); 3.3.5 gives the spell id and,
+            // fourth, the id again (vehiclemenubar links it).
+            if (game::isActiveExpansion("tbc")) {
+                uint32_t bookSlot = 0, offset = 0;
+                for (const auto& tab : gh->getSpellBookTabs()) {
+                    const auto it = std::find(tab.spellIds.begin(), tab.spellIds.end(), action.id);
+                    if (it != tab.spellIds.end()) {
+                        bookSlot = offset + static_cast<uint32_t>(it - tab.spellIds.begin()) + 1;
+                        break;
+                    }
+                    offset += static_cast<uint32_t>(tab.spellIds.size());
+                }
+                lua_pushstring(L, "spell");
+                lua_pushnumber(L, bookSlot);
+                lua_pushstring(L, "spell");
+                return 3;
+            }
             lua_pushstring(L, "spell");
             lua_pushnumber(L, action.id);
             lua_pushstring(L, "spell");
-            // The fourth value, which for a spell action is the same id.
-            // vehiclemenubar reads it to build a link on a modified click -
-            // HandleModifiedItemClick(GetSpellLink(spellID)) - so without it
-            // shift-clicking a vehicle button linked nothing. Only spells have
-            // one; an item or a macro answers nil, as the real client does.
             lua_pushnumber(L, action.id);
             return 4;
+        }
         case game::ActionBarSlot::ITEM:
+            // Native 2.4.3: "item", id (Rough Arrow: item|2512).
             lua_pushstring(L, "item");
             lua_pushnumber(L, action.id);
+            if (game::isActiveExpansion("tbc")) return 2;
             lua_pushstring(L, "item");
             return 3;
         case game::ActionBarSlot::MACRO:
@@ -2108,10 +2124,31 @@ void registerActionLuaAPI(lua_State* L) {
                 // Whether the action has a range to be in or out of. Nothing
                 // here tracks that yet, and false is what "no range check"
                 // looks like - the button simply never dims for distance.
+                // Whether the action's spell has a range: SpellRange.dbc max
+                // above 0. Native 2.4.3: Sinister Strike, Distract, Slice
+                // and Dice, Linen Bandage (First Aid 15 yd) yes; Attack,
+                // Stealth, Sprint, Hearthstone, potions (self only) no; a
+                // macro answers for its spell or item.
                 {"ActionHasRange",      [](lua_State* L) -> int {
-                    lua_pushboolean(L, 0);
-                    return 1;
-                }},
+            auto* gh = getGameHandler(L);
+            const auto* shown = gh ? game::shownAction(*gh, static_cast<int>(luaL_optnumber(L, 1, 0)) - 1) : nullptr;
+            std::optional<game::ActionBarSlot> standIn;
+            if (shown && shown->type == game::ActionBarSlot::MACRO) {
+                standIn = macroStandIn(*gh, resolveMacroTarget(*gh, shown->id));
+                shown = standIn ? &*standIn : nullptr;
+            }
+            uint32_t spellId = 0;
+            if (shown && shown->type == game::ActionBarSlot::SPELL) {
+                spellId = shown->id;
+            } else if (shown && shown->type == game::ActionBarSlot::ITEM) {
+                if (const auto* info = gh->getItemInfo(shown->id); info && info->valid)
+                    for (const auto& spell : info->spells)
+                        if (spell.spellId != 0 && spell.spellTrigger == 0) { spellId = spell.spellId; break; }
+            }
+            const auto* entry = spellId ? gh->getSpellNameEntry(spellId) : nullptr;
+            lua_pushboolean(L, entry && entry->maxRange > 0.0f ? 1 : 0);
+            return 1;
+        }},
                 {"GetActionTexture",    lua_GetActionTexture},
                 {"IsCurrentAction",     lua_IsCurrentAction},
                 {"IsUsableAction",      lua_IsUsableAction},
