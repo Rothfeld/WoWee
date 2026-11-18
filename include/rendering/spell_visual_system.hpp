@@ -245,6 +245,18 @@ private:
         return attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand ||
                attachment == kAttachBreath;
     }
+    /// M2 Special1-3, SpellVisualKit SpecialEffect0-2. Dragons carry 23 at the
+    /// mouth (DragonOnyxia.m2 bone 130, drake.m2).
+    static constexpr uint32_t kAttachSpecial1 = 23, kAttachSpecial3 = 25;
+    // Slots whose effect takes the attachment bone's full orientation, every
+    // frame, and not only the unit's yaw: Breath 17 and Special 23-25. Build
+    // 8606, Onyxia's Flame Breath 18435 (cast kit 4450 SpecialEffect0,
+    // dragonflamebreath.m2): the fire first dives with her head to the ground
+    // ahead of her, then climbs as the SpellCastDirected head lifts.
+    static constexpr bool slotFollowsBone(uint32_t attachment) {
+        return attachment == kAttachBreath ||
+               (attachment >= kAttachSpecial1 && attachment <= kAttachSpecial3);
+    }
     /// SpellVisualKit CharProc 0: CharParamZero is a SpellChainEffects.dbc id,
     /// the beam drawn while the kit plays. All 284 TBC kits with procedure 0
     /// and a parameter name an existing record; Green Beam's (33346) channel

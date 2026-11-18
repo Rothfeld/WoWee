@@ -1731,6 +1731,24 @@ caster's own position as destination and play there; Volcanic Geyser 42052
 a model lacking that attachment are not drawn (Soul Scream 41545 on
 WellofSoulsPain.m2); other slots fall back to the unit position.
 
+Breath (17) and Special (23-25) slot effects take their attachment bone's
+full orientation every frame, so a breath follows the head through the cast
+animation; other slots turn with the unit's yaw only. Dragons breathe from
+SpecialEffect0 at 23 (the mouth): Onyxia's Flame Breath 18435 (cast kit 4450,
+dragonflamebreath.m2, SpellCastDirected 53) natively dips with the lowered
+head, runs level, then curls upward as the head lifts at the end; it is not
+aimed at the target, and from melee range it passes over the victim. With
+yaw only it was a level stream throughout. Ebonroc's drake (display 6377)
+casting Shadow Flame 22539 (kit 5851) breathes steeply down to the ground in
+both clients. Measured on a script-less creature morphed to the display with
+`.modify morph` and forced with `.cast target`, so no other cast animation
+interrupts 53. Evidence: `_experiments/20261118T1700Z.onyxia_breath/` in the
+workspace. Open: native draws the fire as about a dozen separate puffs, WoWee
+as a dense continuous stream; Onyxia's Wing Buffet 18500 started right
+after the breath replaced WoWee's breath animation with its precast 54 (wing
+spread, head down, the fire pointing at the ground); native showed no wing
+spread in that one capture (`.cast target` while her AI ran).
+
 Joints (fields 9-18): JointCount points evenly between the ends, each
 straying up to JointOffsetRadius yards, times MinorJointScale every
 JointsPerMinorJoint-th joint and MajorJointScale every (JointsPerMinorJoint x

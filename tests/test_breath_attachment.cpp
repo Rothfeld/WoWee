@@ -53,3 +53,29 @@ TEST_CASE("Dragon flame breath sprays along its model +X", "[spell-visual][asset
     CHECK(model.vertexBoxMin.x > -15.0f);
     CHECK(model.vertexBoxMax.y < model.vertexBoxMax.x);
 }
+
+// SpellVisualKit SpecialEffect0 sits on M2 attachment 23 (Special1), which
+// dragons carry at the mouth: Onyxia's Flame Breath 18435 (cast kit 4450,
+// dragonflamebreath.m2) and Ebonroc's Shadow Flame 22539 (kit 5851,
+// nefarianflamebreath.m2) come out there and turn with that bone.
+TEST_CASE("Dragon Special1 attachment sits at the mouth", "[spell-visual][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    for (const char* file : {"creature/dragon/dragononyxia.m2", "creature/drake/drake.m2"}) {
+        INFO(file);
+        const auto bytes = readBytes(std::filesystem::path(root) / file);
+        REQUIRE_FALSE(bytes.empty());
+        const auto model = wowee::pipeline::M2Loader::load(bytes);
+        REQUIRE(model.attachmentLookup.size() > 23);
+        const uint16_t index = model.attachmentLookup[23];
+        REQUIRE(index < model.attachments.size());
+        const auto& special = model.attachments[index];
+        CHECK(special.id == 23);
+        // Ahead of the body origin, above the ground, forward of the chest (34).
+        CHECK(special.position.x > 0.5f);
+        CHECK(special.position.z > 1.0f);
+        const uint16_t chest = model.attachmentLookup[34];
+        REQUIRE(chest < model.attachments.size());
+        CHECK(special.position.x > model.attachments[chest].position.x);
+    }
+}

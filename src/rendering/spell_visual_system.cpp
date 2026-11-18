@@ -382,8 +382,9 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
 }
 
 // Every effect a kit names, each at the attachment its SpellVisualKit slot
-// names: LeftHand 21, RightHand 22, Chest 34, Head 18 (overhead), Breath 17
-// (oriented), Base 19, Special 23-25; World at the unit's position.
+// names: LeftHand 21, RightHand 22, Chest 34, Head 18 (overhead), Breath 17,
+// Base 19, Special 23-25 (17 and 23-25 oriented by their bone); World at the
+// unit's position.
 float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition,
                                          uint32_t attachInstanceId, float duration, bool isPrecast) {
     const auto effects = kitEffects_.find(kitId);
@@ -418,7 +419,7 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
                         effect.path);
             attachment = 0;
         }
-        const bool breath = attachment == kAttachBreath;
+        const bool breath = slotFollowsBone(attachment);
         const glm::vec3 spawn = attachment ? glm::vec3(attachMat[3]) : worldPosition;
         const uint32_t instanceId = breath
             ? m2Renderer_->createInstanceWithMatrix(modelId, glm::scale(attachMat, glm::vec3(effect.scale)), spawn)
@@ -620,7 +621,7 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
             }
             spawn = glm::vec3(transform[3]);
         }
-        const bool breath = effect.attachment == kAttachBreath;
+        const bool breath = slotFollowsBone(effect.attachment);
         const uint32_t instance = breath
             ? m2Renderer_->createInstanceWithMatrix(model, glm::scale(transform, glm::vec3(effect.scale)), spawn)
             : m2Renderer_->createInstance(model, spawn, glm::vec3(0), effect.scale);
@@ -712,8 +713,12 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
                 false, attachment, attachInstanceId, false, visual, marker});
             activeSpellVisuals_.back().effectScale = effect.scale;
-            placeOnUnit(activeSpellVisuals_.back(), characters, attachment ? glm::vec3(attachMat[3]) : position,
-                        attachment ? attachmentScale(attachMat) : 1.0f);
+            activeSpellVisuals_.back().orientWithAttachment = slotFollowsBone(attachment);
+            if (activeSpellVisuals_.back().orientWithAttachment)
+                m2Renderer_->setInstanceTransform(instance, glm::scale(attachMat, glm::vec3(effect.scale)));
+            else
+                placeOnUnit(activeSpellVisuals_.back(), characters, attachment ? glm::vec3(attachMat[3]) : position,
+                            attachment ? attachmentScale(attachMat) : 1.0f);
             LOG_INFO("Aura visual: owner=", attachInstanceId, " visual=", visual,
                      " kit=", kit->second, " attachment=", effect.attachment, " model=", effect.path);
         }
