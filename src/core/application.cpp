@@ -3639,8 +3639,14 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // Grounded creatures need floor projection both between spline points
             // and after stopping. Stopping must not restore stale server Z. Use the floor nearest server Z so outdoor terrain
             // above a tunnel cannot move the model into/onto the WMO shell.
+            // LEVITATING disables gravity: CMaNGOS sets it from InhabitType air
+            // (Creature.cpp SetLevitate), and such a unit stays at its server
+            // height (Enslaved Druid of the Talon, 2852, 2 yd above the floor).
+            const auto retainedFlags = entitySpawner_->getRemoteMovementFlags().find(guid);
+            const bool levitating = retainedFlags != entitySpawner_->getRemoteMovementFlags().end() &&
+                (retainedFlags->second & static_cast<uint32_t>(game::MovementFlags::LEVITATING)) != 0;
             const bool groundCreature = !_creatureFlyingState.count(guid) &&
-                                        !_creatureSwimmingState.count(guid);
+                                        !_creatureSwimmingState.count(guid) && !levitating;
             const bool onTransport = gameHandler->transportAttachmentsRef().count(guid) != 0;
             if (!onTransport && _creatureSwimmingState.count(guid) &&
                 !_creatureFlyingState.count(guid) && renderer->getWaterRenderer()) {

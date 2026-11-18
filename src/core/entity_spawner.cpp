@@ -151,6 +151,7 @@ void EntitySpawner::shutdown() {
     remoteWasMovingBackward_.clear();
     remoteWasAirborne_.clear();
     hoverAirborne_.clear();
+    liftOffEmoted_.clear();
     creatureSwimmingState_.clear();
     creatureWalkingState_.clear();
     creatureFlyingState_.clear();
@@ -205,6 +206,7 @@ void EntitySpawner::resetAllState() {
     remoteWasMovingBackward_.clear();
     remoteWasAirborne_.clear();
     hoverAirborne_.clear();
+    liftOffEmoted_.clear();
     creatureSwimmingState_.clear();
     creatureWalkingState_.clear();
     creatureFlyingState_.clear();
@@ -1382,7 +1384,9 @@ if (deadCreatureGuids_.count(guid)) {
     } else if (charRenderer->hasAnimation(instanceId, rendering::anim::SPAWN)) {
         charRenderer->playAnimation(instanceId, rendering::anim::SPAWN, false);
     } else {
-        charRenderer->playAnimation(instanceId, rendering::anim::STAND, true);
+        // Already hovering when it came into view: Hover, not Stand.
+        charRenderer->playAnimation(instanceId, hoverAirborne_.contains(guid)
+            ? rendering::anim::FLY_IDLE : rendering::anim::STAND, true);
     }
 }
 charRenderer->startFadeIn(instanceId, rendering::kUnitFadeSeconds);

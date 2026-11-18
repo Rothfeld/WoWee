@@ -389,7 +389,11 @@ void AnimationCallbackHandler::setupCallbacks() {
         // named after, so starting to swim no longer says anything about
         // whether the creature is also flying.
         auto& retainedFlags = entitySpawner_.getRemoteMovementFlags()[guid];
+        const uint32_t previousFlags = retainedFlags;
         retainedFlags = (retainedFlags & ~mask) | (moveFlags & mask);
+        if (retainedFlags != previousFlags)
+            LOG_DEBUG("Unit move flags: guid=0x", std::hex, guid, " 0x", previousFlags,
+                      " -> 0x", retainedFlags, std::dec);
         const auto apply = [&](game::MovementFlags flag, auto& state) {
             const uint32_t bit = static_cast<uint32_t>(flag);
             if ((mask & bit) == 0) return;
@@ -401,19 +405,16 @@ void AnimationCallbackHandler::setupCallbacks() {
         apply(game::MovementFlags::FLYING,   entitySpawner_.getCreatureFlyingState());
         const uint32_t hoverBit = static_cast<uint32_t>(game::MovementFlags::HOVER);
         if (mask & hoverBit) {
-            // Set while LiftOff plays, it goes on to Hover; cleared, the unit
-            // stands at once (no Land). updateRemoteUnitState swaps the idle.
-            bool airborne = false;
-            if (moveFlags & hoverBit) {
-                auto* cr = renderer_.getCharacterRenderer();
-                const uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
-                uint32_t current = 0; float time = 0.0f, duration = 0.0f;
-                airborne = cr && instanceId != 0 &&
-                           cr->getAnimationState(instanceId, current, time, duration) &&
-                           current == rendering::anim::LIFT_OFF;
-            }
-            if (airborne || (moveFlags & hoverBit) == 0)
-                entitySpawner_.setHoverAirborne(guid, airborne);
+            // Set after LiftOff, it goes on to Hover; cleared, the unit stands
+            // at once (no Land). updateRemoteUnitState swaps the idle. A
+            // creature that comes into view already hovering (its create
+            // block, the only full-mask update a creature gets) hovers too.
+            auto entity = gameHandler_.getEntityManager().getEntity(guid);
+            const bool createdHovering = mask == ~0u && (previousFlags & hoverBit) == 0 &&
+                                         entity && entity->getType() == game::ObjectType::UNIT;
+            const bool airborne = (moveFlags & hoverBit) &&
+                                  (entitySpawner_.lastEmoteLiftOff(guid) || createdHovering);
+            entitySpawner_.setHoverAirborne(guid, airborne);
         }
     });
 
@@ -446,7 +447,9 @@ void AnimationCallbackHandler::setupCallbacks() {
             const auto flags = entitySpawner_.getRemoteMovementFlags().find(guid);
             const bool hovering = flags != entitySpawner_.getRemoteMovementFlags().end() &&
                                   (flags->second & hoverBit) != 0;
-            entitySpawner_.setHoverAirborne(guid, emoteAnim == rendering::anim::LIFT_OFF && hovering);
+            const bool liftOff = emoteAnim == rendering::anim::LIFT_OFF;
+            entitySpawner_.setLastEmoteLiftOff(guid, liftOff);
+            entitySpawner_.setHoverAirborne(guid, liftOff && hovering);
         }
         // Look up creature instance first, then online players
         uint32_t emoteInstanceId = entitySpawner_.getCreatureInstanceId(guid);

@@ -1234,6 +1234,7 @@ void EntitySpawner::despawnPlayer(uint64_t guid) {
     remoteWasMovingBackward_.erase(guid);
     remoteWasAirborne_.erase(guid);
     hoverAirborne_.erase(guid);
+    liftOffEmoted_.erase(guid);
 }
 
 // ---------------------------------------------------------------------------

@@ -2004,6 +2004,20 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
                 destCanonical.x, destCanonical.y, destCanonical.z,
                 data.duration);
         }
+
+        // TBC MoveSplineFlag::Flying (0x200), "flying animation": CMaNGOS
+        // MoveSplineInit sets it on every spline of a unit with FLYING, HOVER,
+        // CAN_FLY or LEVITATING. SetLevitate sends no opcode in TBC, so this is
+        // the only word of Felmyst's air phase that reaches the client. Native
+        // flies such a unit (Fly 135, at the spline's height) even with only
+        // levitation set: _experiments/20261118T085229Z.sapphiron_liftoff f_run6.
+        if (isActiveExpansion("tbc") && data.guid != owner_.getPlayerGuid() &&
+            owner_.unitMoveFlagsCallbackRef()) {
+            constexpr uint32_t kSplineFlying = 0x200u;
+            const uint32_t flying = static_cast<uint32_t>(MovementFlags::FLYING);
+            owner_.unitMoveFlagsCallbackRef()(data.guid,
+                (data.splineFlags & kSplineFlying) ? flying : 0u, flying);
+        }
     } else if (data.moveType == 1) {
         glm::vec3 posCanonical = core::coords::serverToCanonical(
             glm::vec3(data.x, data.y, data.z));
