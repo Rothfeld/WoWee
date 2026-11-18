@@ -211,7 +211,22 @@ struct Emitter {
                 continue;
             }
             std::string body = s.text;
-            if (body.find_first_not_of(" \t\r\n") == std::string::npos) continue;
+            // An element with nothing in it still replaces what the template
+            // gave. FauxScrollFrameTemplate is the case: it inherits
+            // UIPanelScrollFrameTemplate and declares an empty
+            // <OnScrollRangeChanged> precisely so ScrollFrame_OnScrollRangeChanged
+            // does not run - that function sets the bar to the frame's real
+            // scroll range and enables the down arrow, where a faux list's bar
+            // is set by FauxScrollFrame_Update from its row count. Skipped, every
+            // faux list ran it; on 2.4.3 MangAdmin's never-updated continent
+            // list keeps both arrows disabled, and here the down arrow lit up.
+            // `function=""` names nothing and stays skipped.
+            if (body.find_first_not_of(" \t\r\n") == std::string::npos) {
+                if (!s.attr("function")) {
+                    line(var + ":SetScript(" + quote(s.name) + ", function() end)");
+                }
+                continue;
+            }
             // Each handler's arguments have names, and the body uses them
             // directly without declaring them: an OnUpdate says `elapsed`, an
             // OnClick says `button`. Passing them positionally as arg1..argN

@@ -915,6 +915,18 @@ TEST_CASE("An empty function attribute is not emitted as a handler name",
     REQUIRE(has(r.lua, "SetScript(\"OnShow\", RealHandler)"));
 }
 
+TEST_CASE("An empty script element replaces the inherited handler", "[framexml][emit][faux]") {
+    // FauxScrollFrameTemplate's empty <OnScrollRangeChanged> is there to stop
+    // UIPanelScrollFrameTemplate's ScrollFrame_OnScrollRangeChanged from
+    // running on a faux list; build 8606 keeps such a list's arrows disabled.
+    XmlNode root = parseOrFail(
+        "<Ui><ScrollFrame name=\"F\" virtual=\"true\"><Scripts>"
+        "<OnScrollRangeChanged>\n\t\t\t</OnScrollRangeChanged>"
+        "</Scripts></ScrollFrame></Ui>");
+    const EmitResult r = emitFrameXml(root);
+    REQUIRE(has(r.lua, "SetScript(\"OnScrollRangeChanged\", function() end)"));
+}
+
 TEST_CASE("$parent follows the parent attribute, not the file structure",
           "[framexml][emit]") {
     // A frame written at the top level with parent="Something" belongs to that
