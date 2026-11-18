@@ -43,33 +43,36 @@ bool LootSparkles::ensureModel(M2Renderer* m2, pipeline::AssetManager* assets) {
 }
 
 void LootSparkles::update(M2Renderer* m2, pipeline::AssetManager* assets,
-                          const std::vector<Corpse>& corpses) {
+                          const std::vector<Spot>& spots) {
     if (m2 != m2_) {
         // A different renderer holds none of the instances kept here.
         instances_.clear();
         m2_ = m2;
     }
     if (!m2) return;
-    if (corpses.empty() && instances_.empty()) return;
+    if (spots.empty() && instances_.empty()) return;
     if (!ensureModel(m2, assets)) return;
 
-    std::unordered_set<uint64_t> lootable;
-    lootable.reserve(corpses.size());
-    for (const auto& [guid, position] : corpses) {
-        lootable.insert(guid);
-        auto it = instances_.find(guid);
-        if (it != instances_.end() && m2->hasInstance(it->second)) {
-            // Kept on the body: a corpse can still be settling into place.
-            m2->setInstancePosition(it->second, position);
+    std::unordered_set<uint64_t> live;
+    live.reserve(spots.size());
+    for (const auto& spot : spots) {
+        live.insert(spot.guid);
+        auto it = instances_.find(spot.guid);
+        if (it != instances_.end() && m2->hasInstance(it->second.id) && it->second.scale == spot.scale) {
+            // Kept in place: a corpse can still be settling into place.
+            m2->setInstancePosition(it->second.id, spot.position);
             continue;
         }
-        const uint32_t id = m2->createInstance(MODEL_ID, position, glm::vec3(0.0f), 1.0f);
-        if (id != 0) instances_[guid] = id;
+        // New, or rescaled (an object whose model changed): placed afresh.
+        if (it != instances_.end() && m2->hasInstance(it->second.id)) m2->removeInstance(it->second.id);
+        const uint32_t id = m2->createInstance(MODEL_ID, spot.position, glm::vec3(0.0f), spot.scale);
+        if (id != 0) instances_[spot.guid] = {id, spot.scale};
+        else instances_.erase(spot.guid);
     }
 
     for (auto it = instances_.begin(); it != instances_.end();) {
-        if (lootable.count(it->first) == 0) {
-            m2->removeInstance(it->second);
+        if (live.count(it->first) == 0) {
+            m2->removeInstance(it->second.id);
             it = instances_.erase(it);
         } else {
             ++it;

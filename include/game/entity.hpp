@@ -64,6 +64,19 @@ inline constexpr uint32_t UNIT_DYNFLAG_TAPPED_BY_PLAYER = 0x00000008;  ///< WotL
 inline constexpr uint32_t UNIT_DYNFLAG_DEAD             = 0x00000020;
 inline constexpr uint32_t UNIT_DYNFLAG_TAPPED_BY_ALL_THREAT_LIST = 0x00000080;  ///< WotLK
 
+// GAMEOBJECT_DYN_FLAGS low half, per player (CMaNGOS SharedDefines.h
+// GameObjectDynamicLowFlags, written by Object::BuildValuesUpdate).
+inline constexpr uint32_t GO_DYNFLAG_LO_ACTIVATE = 0x01;
+inline constexpr uint32_t GO_DYNFLAG_LO_SPARKLE  = 0x08;
+
+/// The object glitters for this player: CMaNGOS sets SPARKLE (with ACTIVATE)
+/// on a chest, goober, generic or spell focus a quest of the player's needs,
+/// on every such object for a game master, and clears it again once no quest
+/// needs it. WotLK keeps path progress in the high half.
+inline constexpr bool gameObjectSparkles(uint32_t dynamicField) {
+    return (dynamicField & GO_DYNFLAG_LO_SPARKLE) != 0;
+}
+
 /// UnitIsTapped: someone holds the tap. Pre-WotLK servers only send TAPPED
 /// to viewers who do not hold it.
 inline constexpr bool unitIsTapped(uint32_t dynamicFlags) {

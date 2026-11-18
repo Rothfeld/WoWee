@@ -117,6 +117,11 @@ struct M2ModelGPU {
     glm::vec3 boundMin;
     glm::vec3 boundMax;
     float boundRadius = 0.0f;
+    /// The M2 header's bounding (collision) box as authored; boundMin/boundMax
+    /// above hold the tight render bounds instead. All zero when the model has
+    /// no collision (Bush_Sansam.m2).
+    glm::vec3 headerBoxMin{0.0f};
+    glm::vec3 headerBoxMax{0.0f};
     bool collisionSteppedFountain = false;
     bool collisionSteppedLowPlatform = false;
     bool collisionPlanter = false;
@@ -625,6 +630,11 @@ public:
     /// used for cursor picking and selection circles. Returns false for an
     /// unknown instance or a degenerate (zero-radius) model.
     bool getInstanceBounds(uint32_t instanceId, glm::vec3& outCenter, float& outRadius) const;
+    /// World position of an instance's model origin.
+    bool getInstancePosition(uint32_t instanceId, glm::vec3& outPosition) const;
+    /// Height of the M2 header bounding box of an instance's model, times the
+    /// instance scale.
+    bool getInstanceCollisionBoxHeight(uint32_t instanceId, float& outHeight) const;
 
     /// The world-space box of an instance's collision geometry.
     ///

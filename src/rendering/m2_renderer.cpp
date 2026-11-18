@@ -1703,6 +1703,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         }
     }
     gpuModel.boundRadius = model.boundRadius;
+    gpuModel.headerBoxMin = model.boundMin;
+    gpuModel.headerBoxMax = model.boundMax;
     // Fallback when the M2 header reports 0. Measured from the model origin,
     // like the header value it stands in for: the sphere this feeds is centred
     // there, not on the box. See pipeline/model_bounds.hpp.

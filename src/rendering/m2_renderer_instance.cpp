@@ -235,6 +235,22 @@ float M2Renderer::getInstanceAnimDuration(uint32_t instanceId) const {
     return seqs[seqIdx].duration; // in milliseconds
 }
 
+bool M2Renderer::getInstancePosition(uint32_t instanceId, glm::vec3& outPosition) const {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return false;
+    outPosition = instances[idxIt->second].position;
+    return true;
+}
+
+bool M2Renderer::getInstanceCollisionBoxHeight(uint32_t instanceId, float& outHeight) const {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return false;
+    const auto& inst = instances[idxIt->second];
+    const auto& model = *inst.cachedModel;
+    outHeight = (model.headerBoxMax.z - model.headerBoxMin.z) * glm::length(glm::vec3(inst.modelMatrix[2]));
+    return true;
+}
+
 bool M2Renderer::getInstanceBounds(uint32_t instanceId, glm::vec3& outCenter, float& outRadius) const {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return false;

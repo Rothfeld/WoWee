@@ -661,6 +661,24 @@ Flag 0x400 is not rendered; drawing those particles pinned at their birth
 point or stretched from it did not match the original client.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
 
+### Quest object sparkle
+
+A game object whose `GAMEOBJECT_DYN_FLAGS` carry SPARKLE (0x08) glitters with
+the corpse loot model, `Particles\LootFX.m2` (SpellVisualEffectName 14,
+"HARDCODED Loot Art"). CMaNGOS sends the bit per player, with ACTIVATE, on a
+chest, goober, generic or spell focus a quest of that player needs, and on all
+of them to a game master; it clears the bit when the quest is removed,
+completed or the chest is looted. Zeppelin Debris (quest 10161) shows none
+before `.quest add 10161`, sparkles after it, and stops after `.quest remove`.
+The effect sits at the object's model origin, scaled by the height of the
+model's M2 header bounding box times the object scale, never below 1:
+RuinedSteamTankGear01 (0.55) and Bush_Sansam (no box) at 1, GnomeBigGear 3.78,
+AllianceVeteranBanner02 5.79. Gotcha: the scale is fitted to build 8606
+captures, not read from the client; a scaled Fel Iron Deposit (box 2.05)
+looked nearer 1.5 natively. Particle trails of LootFX's flare emitter still
+read stronger than the original's.
+Evidence: `_experiments/20261117T2300Z.go_sparkle/` in the workspace.
+
 ### Cast failure text
 
 `build/bin/test_tbc_cast_results` checks the result-to-GlobalStrings names.

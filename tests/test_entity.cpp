@@ -2,6 +2,7 @@
 #include <catch_amalgamated.hpp>
 #include "game/entity.hpp"
 #include "game/remote_jump.hpp"
+#include "rendering/loot_sparkles.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include <algorithm>
 #include <memory>
@@ -474,4 +475,21 @@ TEST_CASE("Linear patrols follow corners without cutting across obstacles", "[en
     entity.updateMovement(2);
     CHECK(entity.getX() == Catch::Approx(10));
     CHECK(entity.getY() == Catch::Approx(10));
+}
+
+TEST_CASE("Quest game objects sparkle by their SPARKLE bit, scaled by collision height", "[entity][sparkle]") {
+    // CMaNGOS Object::BuildValuesUpdate: ACTIVATE|SPARKLE for a needed chest,
+    // goober, generic or spell focus; ACTIVATE alone for a quest giver; zero
+    // once nothing needs it.
+    CHECK(gameObjectSparkles(GO_DYNFLAG_LO_ACTIVATE | GO_DYNFLAG_LO_SPARKLE));
+    CHECK_FALSE(gameObjectSparkles(GO_DYNFLAG_LO_ACTIVATE));
+    CHECK_FALSE(gameObjectSparkles(0));
+    // WotLK path progress in the high half does not count.
+    CHECK_FALSE(gameObjectSparkles(0xFFFF0000u));
+
+    using wowee::rendering::LootSparkles;
+    CHECK(LootSparkles::objectScale(0.0f) == 1.0f);    // Bush_Sansam.m2, no box
+    CHECK(LootSparkles::objectScale(0.55f) == 1.0f);   // RuinedSteamTankGear01.m2
+    CHECK(LootSparkles::objectScale(3.78f) == 3.78f);  // GnomeBigGear.m2
+    CHECK(LootSparkles::objectScale(5.79f) == 5.79f);  // AllianceVeteranBanner02.m2
 }

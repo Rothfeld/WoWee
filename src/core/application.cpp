@@ -6137,18 +6137,39 @@ void Application::loadQuestMarkerModels() {
 void Application::updateLootSparkles() {
     auto* sparkles = renderer ? renderer->getLootSparkles() : nullptr;
     if (!sparkles || !gameHandler) return;
-    // Dead and marked lootable - the flag the server sends only to a player
-    // allowed to loot the body, so a corpse tapped by someone else stays dull.
-    std::vector<rendering::LootSparkles::Corpse> corpses;
+    auto* m2 = renderer->getM2Renderer();
+    const uint16_t goDynamic = game::fieldIndex(game::UF::GAMEOBJECT_DYNAMIC);
+    std::vector<rendering::LootSparkles::Spot> spots;
     for (const auto& [guid, entity] : gameHandler->getEntityManager().getEntities()) {
-        if (!entity || entity->getType() != game::ObjectType::UNIT) continue;
+        if (!entity) continue;
+        if (entity->getType() == game::ObjectType::GAMEOBJECT) {
+            // At the model origin, as the original places it: over
+            // GnomeBigGear (origin at the hub, half buried) the stars rise
+            // from its rim, not from above its box.
+            if (goDynamic == 0xFFFF)
+                throw std::runtime_error("update_fields.json lacks GAMEOBJECT_DYNAMIC; deploy current expansion metadata");
+            if (!game::gameObjectSparkles(entity->getField(goDynamic)) || !m2 || !entitySpawner_) continue;
+            const auto& objects = entitySpawner_->getGameObjectInstances();
+            const auto it = objects.find(guid);
+            if (it == objects.end() || it->second.isWmo) continue;
+            rendering::LootSparkles::Spot spot{.guid = guid};
+            float boxHeight = 0.0f;
+            if (!m2->getInstancePosition(it->second.instanceId, spot.position) ||
+                !m2->getInstanceCollisionBoxHeight(it->second.instanceId, boxHeight)) continue;
+            spot.scale = rendering::LootSparkles::objectScale(boxHeight);
+            spots.push_back(spot);
+            continue;
+        }
+        if (entity->getType() != game::ObjectType::UNIT) continue;
+        // Dead and marked lootable - the flag the server sends only to a player
+        // allowed to loot the body, so a corpse tapped by someone else stays dull.
         const auto* unit = static_cast<const game::Unit*>(entity.get());
         if (unit->getHealth() != 0) continue;
         if ((unit->getDynamicFlags() & game::UNIT_DYNFLAG_LOOTABLE) == 0) continue;
-        glm::vec3 position;
-        if (getRenderPositionForGuid(guid, position)) corpses.emplace_back(guid, position);
+        rendering::LootSparkles::Spot spot{.guid = guid};
+        if (getRenderPositionForGuid(guid, spot.position)) spots.push_back(spot);
     }
-    sparkles->update(renderer->getM2Renderer(), assetManager.get(), corpses);
+    sparkles->update(m2, assetManager.get(), spots);
 }
 
 void Application::updateQuestMarkers() {
