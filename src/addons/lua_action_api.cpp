@@ -1,4 +1,5 @@
 #include "game/spell_prerequisites.hpp"
+#include "game/shapeshift_forms.hpp"
 // lua_action_api.cpp - Action bar, cursor/pickup, keyboard input, key bindings, and pet actions Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/item_text.hpp"
@@ -188,7 +189,9 @@ static int lua_GetActionTexture(lua_State* L) {
     }
     const auto& action = *shown;
     if (action.type == game::ActionBarSlot::SPELL) {
-        std::string icon = gh->getSpellIconPath(action.id);
+        // The active icon while the spell's form is on: Stealth shows
+        // Spell_Nature_Invisibilty while stealthed.
+        std::string icon = game::actionSpellIcon(*gh, action.id);
         if (!icon.empty()) {
             lua_pushstring(L, icon.c_str());
             return 1;
@@ -216,7 +219,8 @@ static int lua_IsCurrentAction(lua_State* L) {
     if (const auto* shown = gh ? game::shownAction(*gh, slot) : nullptr;
         shown && shown->type == game::ActionBarSlot::SPELL) {
         current = game::isCurrentSpellAction(shown->id, gh->getActiveActionSpellId(),
-                                             gh->hasAutoAttackIntent());
+                                             gh->hasAutoAttackIntent()) ||
+                  game::spellFormActive(*gh, shown->id);
     }
     lua_pushboolean(L, current);
     return 1;

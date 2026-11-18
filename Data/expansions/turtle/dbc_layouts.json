@@ -240,6 +240,7 @@
     "EffectMiscValue2": 108,
     "ID": 0,
     "IconID": 117,
+    "ActiveIconID": 118,
     "ManaCost": 32,
     "Name": 120,
     "PowerType": 31,

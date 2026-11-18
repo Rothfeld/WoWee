@@ -1429,8 +1429,7 @@ void registerSpellLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             int index = static_cast<int>(luaL_checknumber(L, 1));
             if (!gh || index < 1) return 0;
-            uint8_t classId = gh->getPlayerClass();
-            const auto forms = game::knownShapeshiftForms(classId, gh->getKnownSpells());
+            const auto forms = game::playerShapeshiftForms(*gh);
             if (static_cast<size_t>(index) > forms.size()) return 0;
             gh->castSpell(forms[static_cast<size_t>(index) - 1].spellId, 0);
             return 0;
@@ -1451,21 +1450,21 @@ void registerSpellLuaAPI(lua_State* L) {
                 // framexml_lua_override_check exists to catch exactly that.
                 {"GetShapeshiftForm", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushnumber(L, gh ? gh->getShapeshiftFormId() : 0);
+            // The place of the form on the stance bar, as 2.4.3 answers it:
+            // 1 in Stealth, whose form id is 30.
+            lua_pushnumber(L, gh ? game::currentShapeshiftFormIndex(*gh) : 0);
             return 1;
         }},
                 {"GetNumShapeshiftForms", [](lua_State* L) -> int {
             // Return count based on player class
             auto* gh = getGameHandler(L);
             if (!gh) { return luaReturnZero(L); }
-            uint8_t classId = gh->getPlayerClass();
             // Only the forms this character has actually learned, from the
-            // one table GetShapeshiftFormInfo and CastShapeshiftForm also read.
+            // one list GetShapeshiftFormInfo and CastShapeshiftForm also read.
             // The bar walks 1..this and asks the other two about each index, so
             // a count taken from a different list describes one form and casts
             // another.
-            lua_pushnumber(L, static_cast<double>(
-                game::knownShapeshiftForms(classId, gh->getKnownSpells()).size()));
+            lua_pushnumber(L, static_cast<double>(game::playerShapeshiftForms(*gh).size()));
             return 1;
         }},
     };

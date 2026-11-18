@@ -2646,20 +2646,19 @@ void registerUnitLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             int index = static_cast<int>(luaL_checknumber(L, 1));
             if (!gh || index < 1) { return luaReturnNil(L); }
-            uint8_t classId = gh->getPlayerClass();
-            uint8_t currentForm = gh->getShapeshiftFormId();
-
-            // The one table CastShapeshiftForm and GetNumShapeshiftForms
-            // also read, filtered the same way. The bar walks
-            // 1..GetNumShapeshiftForms() and asks about each index, so all
-            // three have to be looking at the same list in the same order.
-            const auto forms = game::knownShapeshiftForms(classId, gh->getKnownSpells());
+            // The one list CastShapeshiftForm and GetNumShapeshiftForms
+            // also read. The bar walks 1..GetNumShapeshiftForms() and asks
+            // about each index, so all three have to be looking at the same
+            // list in the same order. Native 2.4.3 in Stealth:
+            // Spell_Nature_Invisibilty (the active icon), "Stealth", 1, 1;
+            // out of it Ability_Stealth, "Stealth", nil, 1.
+            const auto forms = game::playerShapeshiftForms(*gh);
             if (static_cast<size_t>(index) > forms.size()) { return luaReturnNil(L); }
             const auto& fi = forms[static_cast<size_t>(index) - 1];
-            lua_pushstring(L, fi.icon);                          // icon
-            lua_pushstring(L, fi.name);                          // name
-            lua_pushboolean(L, currentForm == fi.formId ? 1 : 0); // isActive
-            lua_pushboolean(L, 1);                               // isCastable
+            lua_pushstring(L, game::actionSpellIcon(*gh, fi.spellId).c_str());
+            lua_pushstring(L, gh->getSpellName(fi.spellId).c_str());
+            if (gh->getShapeshiftFormId() == fi.formId) lua_pushnumber(L, 1); else lua_pushnil(L);
+            lua_pushnumber(L, 1);                                // isCastable
             return 4;
         }},
                 {"UnitIsPVP", [](lua_State* L) -> int {

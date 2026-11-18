@@ -1,6 +1,7 @@
 #include "game/spell_handler.hpp"
 #include "game/cast_result_text.hpp"
 #include "game/spell_prerequisites.hpp"
+#include "game/shapeshift_forms.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "game/protocol_constants.hpp"
 #include "game/current_action.hpp"
@@ -1324,6 +1325,46 @@ bool isConsumableAction(GameHandler& owner, const ActionBarSlot& slot) {
 SpellUsability spellUsability(GameHandler& owner, uint32_t spellId) {
     if (!owner.getKnownSpells().count(spellId)) return {};
     return castableNow(owner, spellId);
+}
+
+std::vector<ShapeshiftForm> playerShapeshiftForms(GameHandler& owner) {
+    owner.loadSpellNameCache();
+    const auto& cache = owner.spellNameCacheRef();
+    std::vector<ShapeshiftForm> out;
+    for (ShapeshiftForm form : allShapeshiftForms(owner.getPlayerClass())) {
+        uint32_t best = 0;
+        for (const uint32_t spellId : owner.getKnownSpells()) {
+            const auto it = cache.find(spellId);
+            if (it != cache.end() && it->second.shapeshiftForm == form.formId && spellId > best)
+                best = spellId;
+        }
+        if (best == 0) continue;
+        form.spellId = best;
+        out.push_back(form);
+    }
+    return out;
+}
+
+int currentShapeshiftFormIndex(GameHandler& owner) {
+    const uint8_t current = owner.getShapeshiftFormId();
+    if (current == 0) return 0;
+    const auto forms = playerShapeshiftForms(owner);
+    for (size_t i = 0; i < forms.size(); ++i)
+        if (forms[i].formId == current) return static_cast<int>(i) + 1;
+    return 0;
+}
+
+bool spellFormActive(GameHandler& owner, uint32_t spellId) {
+    const auto* entry = owner.getSpellNameEntry(spellId);
+    return entry && entry->shapeshiftForm != 0 && entry->shapeshiftForm == owner.getShapeshiftFormId();
+}
+
+std::string actionSpellIcon(GameHandler& owner, uint32_t spellId) {
+    if (spellFormActive(owner, spellId)) {
+        const auto* entry = owner.getSpellNameEntry(spellId);
+        if (entry->activeIconId != 0) return owner.getIconPath(entry->activeIconId);
+    }
+    return owner.getSpellIconPath(spellId);
 }
 
 const ActionBarSlot* shownAction(GameHandler& owner, int slot) {
@@ -4346,6 +4387,13 @@ void SpellHandler::loadSpellNameCache() const {
     const uint32_t startRecoveryTimeField = column("StartRecoveryTime");
     const uint32_t totemFields[2] = {column("Totem0"), column("Totem1")};
     const uint32_t totemCategoryFields[2] = {column("TotemCategory0"), column("TotemCategory1")};
+    const uint32_t activeIconField = column("ActiveIconID");
+    const uint32_t miscFields[3] = {column("EffectMiscValue0"), column("EffectMiscValue1"),
+                                    column("EffectMiscValue2")};
+    if (activeIconField == 0xFFFFFFFFu || miscFields[0] == 0xFFFFFFFFu)
+        LOG_ERROR("dbc_layouts.json lacks Spell.ActiveIconID or EffectMiscValue0-2: "
+                  "no shapeshift forms or active stance icons. Deploy the current "
+                  "expansion metadata into the data directory.");
     const uint32_t targetAFields[3] = {implicitTargetAField, column("EffectImplicitTargetA1"),
                                        column("EffectImplicitTargetA2")};
     const uint32_t targetBFields[3] = {column("EffectImplicitTargetB0"), column("EffectImplicitTargetB1"),
@@ -4464,6 +4512,11 @@ void SpellHandler::loadSpellNameCache() const {
                 entry.totems[t] = read(i, totemFields[t]);
                 entry.totemCategories[t] = read(i, totemCategoryFields[t]);
             }
+            entry.activeIconId = read(i, activeIconField);
+            constexpr uint32_t kAuraModShapeshift = 36;
+            for (int e = 0; e < 3; ++e)
+                if (entry.effectAuraIds[e] == kAuraModShapeshift)
+                    entry.shapeshiftForm = static_cast<uint8_t>(read(i, miscFields[e]));
             for (int e = 0; e < 3; ++e) {
                 entry.implicitTargetsA[e] = read(i, targetAFields[e]);
                 entry.implicitTargetsB[e] = read(i, targetBFields[e]);

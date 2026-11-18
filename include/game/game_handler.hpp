@@ -4137,6 +4137,12 @@ public:
         /// StartRecoveryTime long.
         uint32_t startRecoveryCategory = 0;
         uint32_t startRecoveryMs = 0;
+        /// ActiveIconID: the SpellIcon.dbc icon while the spell's form is
+        /// on (Stealth: Spell_Nature_Invisibilty). 0 for none.
+        uint32_t activeIconId = 0;
+        /// The form an APPLY_AURA MOD_SHAPESHIFT (36) effect puts the caster
+        /// in, from its EffectMiscValue (Stealth 30, Cat Form 1); 0 for none.
+        uint8_t shapeshiftForm = 0;
     };
     /// The cached Spell.dbc row, or null.
     const SpellNameEntry* getSpellNameEntry(uint32_t spellId) const {

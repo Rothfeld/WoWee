@@ -290,6 +290,7 @@
     "EffectRealPointsPerLevel2": 79,
     "ID": 0,
     "IconID": 133,
+    "ActiveIconID": 134,
     "ManaCost": 42,
     "ManaCostPercentage": 204,
     "MaxLevel": 37,

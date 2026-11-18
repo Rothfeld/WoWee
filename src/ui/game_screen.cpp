@@ -1463,8 +1463,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 if (!bindings.isCommandPressed(shapeshiftCommands[i])) continue;
                 // One snapshot per frame with a press, even if several forms fire.
                 if (!formsLoaded) {
-                    forms = game::knownShapeshiftForms(
-                        gameHandler.getPlayerClass(), gameHandler.getKnownSpells());
+                    forms = game::playerShapeshiftForms(gameHandler);
                     formsLoaded = true;
                 }
                 if (i < forms.size()) gameHandler.castSpell(forms[i].spellId);

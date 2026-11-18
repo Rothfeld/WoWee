@@ -1,9 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace wowee::game {
+
+class GameHandler;
 
 /// One stance, form or presence a class can take.
 ///
@@ -47,5 +50,23 @@ std::vector<ShapeshiftForm> knownShapeshiftForms(uint8_t classId, const KnownSpe
     }
     return out;
 }
+
+/// The player's forms in bar order, each with the known spell that takes it:
+/// a known spell whose MOD_SHAPESHIFT effect names the form, the highest id
+/// of several (Stealth Rank 4, 1787 - the ranks before it are superseded and
+/// no longer known). Native 2.4.3 rogue: GetNumShapeshiftForms 1, Stealth.
+std::vector<ShapeshiftForm> playerShapeshiftForms(GameHandler& owner);
+
+/// GetShapeshiftForm: the 1-based place of the current form in
+/// playerShapeshiftForms, 0 in none. Native 2.4.3 in Stealth answers 1.
+int currentShapeshiftFormIndex(GameHandler& owner);
+
+/// Whether the spell's form is the one the player is in: native 2.4.3 marks
+/// Stealth current (IsCurrentAction 1, checked button) while stealthed.
+bool spellFormActive(GameHandler& owner, uint32_t spellId);
+
+/// A spell's icon as the bar and stance bar show it: its ActiveIconID while
+/// its form is on (Stealth: Spell_Nature_Invisibilty), else its icon.
+std::string actionSpellIcon(GameHandler& owner, uint32_t spellId);
 
 }  // namespace wowee::game
