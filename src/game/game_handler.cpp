@@ -2983,6 +2983,16 @@ bool GameHandler::isDuelOpponent(const Unit& unit) const {
 bool GameHandler::canPlayerAttackUnit(const Unit& unit) const {
     if (unit.getGuid() == getPlayerGuid() ||
         (unit.getUnitFlags() & (UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_IMMUNE_TO_PC))) return false;
+    // The immunity cross-check of CGUnit_C::CanAttack (CMaNGOS Relations.cpp)
+    // runs the other way too: a player immune to NPCs attacks no creature, one
+    // immune to players no player or pet. A game master (.gm on sets both)
+    // gets the plain pointer over the Talbuk Thorngrazer and Warmaul Brute in
+    // the original 2.4.3, not the sword (pair 8).
+    if (const auto self = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(getPlayerGuid()))) {
+        const bool targetPlayerControlled = (unit.getUnitFlags() & UNIT_FLAG_PLAYER_CONTROLLED) != 0;
+        if (self->getUnitFlags() & (targetPlayerControlled ? UNIT_FLAG_IMMUNE_TO_PC : UNIT_FLAG_IMMUNE_TO_NPC))
+            return false;
+    }
     if (isDuelOpponent(unit)) return true;
     return !isFriendlyFaction(unit.getFactionTemplate()) && unitReactionToPlayer(unit) <= 4;
 }
