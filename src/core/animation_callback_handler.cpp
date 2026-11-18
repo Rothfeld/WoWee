@@ -379,7 +379,10 @@ void AnimationCallbackHandler::setupCallbacks() {
     gameHandler_.setPlayerHealthCallback([this](uint32_t health, uint32_t maxHealth) {
         auto* ac = renderer_.getAnimationController();
         if (!ac) return;
-        bool lowHp = (maxHealth > 0) && (health > 0) && (health * 5 <= maxHealth);
+        // 64-bit: health * 5 wraps in 32 bits above 858993459 HP (GM
+        // characters with .modify hp 1000000000 played StandWound at full health).
+        bool lowHp = (maxHealth > 0) && (health > 0) &&
+                     (static_cast<uint64_t>(health) * 5 <= maxHealth);
         ac->setLowHealth(lowHp);
     });
 
