@@ -9016,7 +9016,12 @@ void LuaEngine::registerCoreAPI() {
         // tooltip - not by hiding one already up. Shown for the last item
         // hovered and cleared for this one, it stayed on screen as an empty
         // box beside the cursor. Every success path calls Show() at the end.
+        // Keeping the owner SetOwner just gave it: Hide forgets an owner, and
+        // GameTooltip_ShowCompareItem calls SetOwner(GameTooltip) right before
+        // this - native ShoppingTooltip1:GetOwner() answers GameTooltip.
+        "    local owner = rawget(self, '__owner')\n"
         "    self:Hide()\n"
+        "    rawset(self, '__owner', owner)\n"
         "    if not link then return __cmpNo('no link given') end\n"
         // What the tooltip believes it is showing, said once per item. The
         // comparison is only ever as right as this: GameTooltip_ShowCompareItem
