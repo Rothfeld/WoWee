@@ -104,6 +104,10 @@ public:
     void noteGroundCastSpell(uint32_t spellId) { lastGroundCastSpellId_ = spellId; }
     void cancelCast();
     void cancelAura(uint32_t spellId);
+    /// CancelShapeshiftForm and /cancelform: cancels the aura holding the
+    /// current form (Cat Form, Shadowform, Stealth); a stance, whose aura has
+    /// no buff icon, stays and nothing is sent, as in native 2.4.3.
+    void cancelShapeshiftForm();
 
     // Known spells
     [[nodiscard]] const std::unordered_set<uint32_t>& getKnownSpells() const { return knownSpells_; }

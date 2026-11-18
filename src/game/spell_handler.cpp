@@ -50,6 +50,9 @@ static float mergeCooldownSeconds(float current, float incoming) {
 }
 
 namespace {
+// Spell.dbc AttributesEx bit 28: the aura shows no buff icon (warrior
+// stances, tracking). Native 2.4.3 never sends CMSG_CANCEL_AURA for one.
+constexpr uint32_t kAttrExNoAuraIcon = 0x10000000u;
 constexpr uint8_t kSpellFailedNotReady = 67;
 constexpr uint8_t kSpellFailedAlreadyOpen = 8;
 constexpr uint8_t kSpellFailedChestInUse = 25;
@@ -1463,6 +1466,28 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
 
     spellId = resolveHighestKnownRank(spellId);
+
+    // Using a spell that has an ActiveIconID while its own aura is on the
+    // player ends that aura instead of casting it again. Native 2.4.3 sends
+    // CMSG_CANCEL_AURA from the action bar, stance bar, spellbook and /cast
+    // alike, ahead of its cooldown, power and usability refusals: Stealth,
+    // Prowl, Shadowmeld, the druid forms, Shadowform, Ghost Wolf, paladin
+    // auras, hunter aspects and summoned mounts all have one. Spells without
+    // one cast again even with an endless aura up (Trueshot Aura, tracking)
+    // or refuse as not ready (Cold Blood, Presence of Mind). An aura that has
+    // no buff icon (AttributesEx 0x10000000, the warrior stances) cannot be
+    // cancelled, and pressing its spell again sends nothing.
+    if (const auto* entry = owner_.getSpellNameEntry(spellId);
+        entry && entry->activeIconId != 0 && owner_.playerCarriesAura(spellId)) {
+        if (entry->attrEx & kAttrExNoAuraIcon) {
+            LOG_INFO("Spell ", spellId, " already active and its aura cannot be cancelled: nothing sent");
+            return;
+        }
+        LOG_INFO("Spell ", spellId, " already active: cancelling its aura");
+        cancelAura(spellId);
+        return;
+    }
+
     const auto prerequisite = spellPrerequisite(owner_, spellId,
         targetGuid != 0 ? targetGuid : owner_.getTargetGuid());
     switch (prerequisite) {
@@ -2070,10 +2095,29 @@ void SpellHandler::cancelCraftQueue() {
     craftQueueRemaining_ = 0;
 }
 
+void SpellHandler::cancelShapeshiftForm() {
+    const uint8_t form = owner_.getShapeshiftFormId();
+    if (form == 0) return;
+    for (const auto& aura : owner_.getPlayerAuras()) {
+        if (aura.isEmpty()) continue;
+        const auto* entry = owner_.getSpellNameEntry(aura.spellId);
+        if (!entry || entry->shapeshiftForm != form) continue;
+        if (entry->attrEx & kAttrExNoAuraIcon) {
+            LOG_INFO("Cancel form: form ", static_cast<int>(form), " aura ", aura.spellId,
+                     " cannot be cancelled: nothing sent");
+            return;
+        }
+        cancelAura(aura.spellId);
+        return;
+    }
+    LOG_WARNING("Cancel form: no aura on the player holds form ", static_cast<int>(form));
+}
+
 void SpellHandler::cancelAura(uint32_t spellId) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = CancelAuraPacket::build(spellId);
     owner_.getSocket()->send(packet);
+    LOG_DEBUG("CMSG_CANCEL_AURA: spellId=", spellId);
 }
 
 float SpellHandler::getSpellCooldown(uint32_t spellId) const {

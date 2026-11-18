@@ -98,13 +98,7 @@ public:
 class CancelFormCommand : public IChatCommand {
 public:
     ChatCommandResult execute(ChatCommandContext& ctx) override {
-        for (const auto& aura : ctx.gameHandler.getPlayerAuras()) {
-            if (aura.spellId == 0) continue;
-            if (aura.flags & 0x20) {
-                ctx.gameHandler.cancelAura(aura.spellId);
-                break;
-            }
-        }
+        ctx.gameHandler.cancelShapeshiftForm();
         return {};
     }
     [[nodiscard]] std::vector<std::string> aliases() const override { return {"cancelform", "cancelshapeshift"}; }

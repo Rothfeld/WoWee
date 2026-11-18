@@ -1503,12 +1503,9 @@ void registerSpellLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"CancelShapeshiftForm", [](lua_State* L) -> int {
-            // Cancel current form - cast spell 0 or cancel aura
-            auto* gh = getGameHandler(L);
-            if (gh && gh->getShapeshiftFormId() != 0) {
-                // Cancelling a form is done by re-casting the same form spell
-                // For simplicity, just note that the server will handle it
-            }
+            // /cancelform. Native 2.4.3: CMSG_CANCEL_AURA for Cat Form or
+            // Shadowform, nothing in Battle Stance.
+            if (auto* gh = getGameHandler(L)) gh->cancelShapeshiftForm();
             return 0;
         }},
                 // GetShapeshiftFormCooldown is defined in the bootstrap, over

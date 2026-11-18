@@ -1093,6 +1093,7 @@ public:
     void castSpell(uint32_t spellId, uint64_t targetGuid = 0);
     void cancelCast();
     void cancelAura(uint32_t spellId);
+    void cancelShapeshiftForm();
     void dismissPet();
     void renamePet(const std::string& newName);
     bool hasPet() const { return petGuid_ != 0; }

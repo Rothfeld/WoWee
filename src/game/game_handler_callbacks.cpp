@@ -2674,6 +2674,10 @@ void GameHandler::cancelAura(uint32_t spellId) {
     if (spellHandler_) spellHandler_->cancelAura(spellId);
 }
 
+void GameHandler::cancelShapeshiftForm() {
+    if (spellHandler_) spellHandler_->cancelShapeshiftForm();
+}
+
 uint32_t GameHandler::getTempEnchantRemainingMs(uint32_t slot) const {
     return inventoryHandler_ ? inventoryHandler_->getTempEnchantRemainingMs(slot) : 0u;
 }
