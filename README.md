@@ -1989,6 +1989,15 @@ defaults erase saved filters. Gotcha: native return counts matter (a
 collapsed header answers three values, GetTrainerSelectionIndex nothing when
 none); measured shapes are in
 `_experiments/20261117T203052Z.trainer_skill_headers/README.md`.
+GetNumTrainerServices counts only the shown rows, but every index API answers
+past it with the trainer's other rows (headers too): at Pikkle with only
+"available" showing and nothing to learn, the count is 0, row 2 is
+"Journeyman Miner" and GetTrainerSelectionIndex is 2. Blizzard_TrainerUI then
+selects row 2; answering nil there made it call CollapseTrainerSkillLine(2),
+whose "Bad skill line" error stopped ClassTrainerFrame_Update before it set
+the title, greeting, portrait and "All" button. The original orders those
+extra rows by its earlier filtering; WoWee keeps list order
+(`_experiments/20261118T191500Z.trainer_empty_list/` in the workspace).
 Recipe item previews follow the spellTrigger=6 taught spell to its crafted item
 and reagents rather than displaying the generic Learning spell.
 

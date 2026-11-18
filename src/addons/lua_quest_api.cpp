@@ -2201,11 +2201,29 @@ static std::string trainerServiceHeader(lua_State* L, game::GameHandler* gh,
     return gh->getSkillLineName(line->second);
 }
 
-/// The rows the panel shows: headers, and the services the filters, the
-/// search and collapsed headers leave.
-static std::vector<TrainerRow> shownTrainerServices(lua_State* L, game::GameHandler* gh) {
-    std::vector<TrainerRow> shown;
-    if (!gh) return shown;
+/// The trainer's rows as 2.4.3 indexes them: the shown rows first (headers,
+/// and the services the filters, the search and collapsed headers leave),
+/// then every other row of the trainer, headers included.
+///
+/// GetNumTrainerServices counts only the shown rows, but every index API
+/// answers past that count with the rest of the trainer's rows. Measured at
+/// Pikkle (Gadgetzan mining) with only "available" showing and nothing to
+/// learn: count 0, row 1 "Development Skills" header, row 2 "Journeyman
+/// Miner" unavailable, through row 15, row 16 nothing; SelectTrainerService(3)
+/// selects 3 and CollapseTrainerSkillLine(1) folds that header
+/// (_experiments/20261118T191500Z.trainer_empty_list). Blizzard_TrainerUI
+/// relies on it: with nothing shown it selects GetTrainerSelectionIndex() (2)
+/// and calls CollapseTrainerSkillLine on it unless that row is a service.
+/// The original's order of the rows past the count depends on earlier
+/// filtering; here they keep the list's own order.
+struct TrainerRows {
+    std::vector<TrainerRow> rows;
+    size_t shown = 0;
+};
+
+static TrainerRows trainerServiceRows(lua_State* L, game::GameHandler* gh) {
+    TrainerRows result;
+    if (!gh) return result;
     // Each trainer list opens with every header expanded.
     static uint32_t listSeen = 0;
     if (listSeen != gh->getTrainerSpells().serial) {
@@ -2216,17 +2234,21 @@ static std::vector<TrainerRow> shownTrainerServices(lua_State* L, game::GameHand
     gh->loadSkillLineDbc();
     gh->loadSkillLineAbilityDbc();
     const std::string& search = trainerSearch();
-    std::vector<TrainerRow> services;
+    struct Service {
+        TrainerRow row;
+        bool passes = false;   // through the type filters and the search
+    };
+    std::vector<Service> services;
     for (const auto& sp : gh->getTrainerSpells().spells) {
         const char* category = trainerServiceCategory(gh, sp);
-        if (!trainerCategoryShowing(category)) continue;
-        if (!search.empty() &&
-            foldedForSearch(gh->getSpellName(sp.spellId)).find(search) == std::string::npos) {
-            continue;
-        }
-        services.push_back({&sp, trainerServiceHeader(L, gh, sp), category});
+        const bool passes = trainerCategoryShowing(category) &&
+            (search.empty() ||
+             foldedForSearch(gh->getSpellName(sp.spellId)).find(search) != std::string::npos);
+        services.push_back({{&sp, trainerServiceHeader(L, gh, sp), category}, passes});
     }
-    std::stable_sort(services.begin(), services.end(), [gh](const TrainerRow& a, const TrainerRow& b) {
+    std::stable_sort(services.begin(), services.end(), [gh](const Service& sa, const Service& sb) {
+        const TrainerRow& a = sa.row;
+        const TrainerRow& b = sb.row;
         if (a.header != b.header) {
             // Services without a header after every group.
             if (a.header.empty() != b.header.empty()) return b.header.empty();
@@ -2239,21 +2261,33 @@ static std::vector<TrainerRow> shownTrainerServices(lua_State* L, game::GameHand
         if (an != bn) return an < bn;
         return a.spell->spellId < b.spell->spellId;
     });
+    std::set<std::string> headersShown;
+    for (const auto& s : services)
+        if (s.passes && !s.row.header.empty()) headersShown.insert(s.row.header);
+    // The whole list, each row marked shown or not.
     const auto& collapsed = collapsedTrainerHeaders();
+    std::vector<std::pair<TrainerRow, bool>> all;
     for (size_t i = 0; i < services.size(); ++i) {
-        const std::string& header = services[i].header;
-        if (!header.empty() && (i == 0 || services[i - 1].header != header))
-            shown.push_back({nullptr, header, nullptr});
-        if (header.empty() || !collapsed.contains(header)) shown.push_back(services[i]);
+        const std::string& header = services[i].row.header;
+        if (!header.empty() && (i == 0 || services[i - 1].row.header != header))
+            all.push_back({{nullptr, header, nullptr}, headersShown.contains(header)});
+        all.push_back({services[i].row,
+                       services[i].passes && (header.empty() || !collapsed.contains(header))});
     }
-    return shown;
+    for (const auto& [row, shown] : all)
+        if (shown) result.rows.push_back(row);
+    result.shown = result.rows.size();
+    for (const auto& [row, shown] : all)
+        if (!shown) result.rows.push_back(row);
+    return result;
 }
 
-/// The nth shown service, counting from one; null for a header or no row.
+/// The nth row's service, counting from one, past the shown count too; null
+/// for a header or no row.
 static const game::TrainerSpell* shownTrainerService(lua_State* L, game::GameHandler* gh, int index) {
-    const auto shown = shownTrainerServices(L, gh);
-    if (index < 1 || index > static_cast<int>(shown.size())) return nullptr;
-    return shown[index - 1].spell;
+    const auto rows = trainerServiceRows(L, gh).rows;
+    if (index < 1 || index > static_cast<int>(rows.size())) return nullptr;
+    return rows[index - 1].spell;
 }
 
 /// The selected row, counting from one; 0 for none.
@@ -2261,14 +2295,14 @@ static const game::TrainerSpell* shownTrainerService(lua_State* L, game::GameHan
 /// Measured on the original: every rebuild of the list (filter set, header
 /// collapsed or expanded, a learned spell changing a state) selects the first
 /// available service; with none available, row 2 when it is a service (the
-/// first row under the first header); otherwise nothing. An empty list keeps
-/// the old index. SelectTrainerService takes any service row, a header or an
-/// index outside the list clears it.
+/// first row under the first header, past the shown count when nothing is
+/// shown); otherwise nothing. SelectTrainerService takes any service row,
+/// shown or not; a header or an index outside the rows clears it.
 struct TrainerSelection {
     int index = 0;
     uint32_t list = 0;                                   // TrainerListData::serial
-
-    std::vector<std::pair<uint32_t, std::string>> rows;  // the list it was made against
+    size_t shown = 0;                                    // and its shown count
+    std::vector<std::pair<uint32_t, std::string>> rows;  // the rows it was made against
 };
 
 static TrainerSelection& trainerSelection() {
@@ -2284,12 +2318,13 @@ static std::vector<std::pair<uint32_t, std::string>> trainerRowSignature(const s
     return signature;
 }
 
-static void resetTrainerSelection(game::GameHandler* gh, const std::vector<TrainerRow>& rows) {
+static void resetTrainerSelection(game::GameHandler* gh, const TrainerRows& list) {
     auto& selection = trainerSelection();
+    const auto& rows = list.rows;
     selection.list = gh ? gh->getTrainerSpells().serial : 0;
+    selection.shown = list.shown;
     selection.rows = trainerRowSignature(rows);
-    if (rows.empty()) return;
-    for (size_t i = 0; i < rows.size(); ++i) {
+    for (size_t i = 0; i < list.shown; ++i) {
         if (rows[i].spell && std::string_view(rows[i].category) == "available") {
             selection.index = static_cast<int>(i + 1);
             return;
@@ -2302,20 +2337,20 @@ static void resetTrainerSelection(game::GameHandler* gh, const std::vector<Train
 /// changed since it was made (a new trainer, a learned spell, a skill).
 static int currentTrainerSelection(lua_State* L, game::GameHandler* gh) {
     auto& selection = trainerSelection();
-    const auto rows = shownTrainerServices(L, gh);
+    const auto list = trainerServiceRows(L, gh);
     if (!gh || selection.list != gh->getTrainerSpells().serial ||
-        selection.rows != trainerRowSignature(rows)) {
-        resetTrainerSelection(gh, rows);
+        selection.shown != list.shown || selection.rows != trainerRowSignature(list.rows)) {
+        resetTrainerSelection(gh, list);
     }
     return selection.index;
 }
 
-/// Expand or collapse the header at a row, or every header for 0. Anything
-/// else raises the original's "Bad skill line in <function>" error.
+/// Expand or collapse the header at a row (shown or not), or every header for
+/// 0. Anything else raises the original's "Bad skill line in <function>" error.
 static int setTrainerHeaderCollapsed(lua_State* L, bool collapsed, const char* function) {
     auto* gh = getGameHandler(L);
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
-    const auto rows = shownTrainerServices(L, gh);
+    const auto rows = trainerServiceRows(L, gh).rows;
     if (index == 0) {
         if (collapsed) {
             for (const auto& sp : gh ? gh->getTrainerSpells().spells : std::vector<game::TrainerSpell>{}) {
@@ -2332,7 +2367,7 @@ static int setTrainerHeaderCollapsed(lua_State* L, bool collapsed, const char* f
     } else {
         return luaL_error(L, "Bad skill line in %s", function);
     }
-    resetTrainerSelection(gh, shownTrainerServices(L, gh));
+    resetTrainerSelection(gh, trainerServiceRows(L, gh));
     if (gh) gh->fireAddonEvent("TRAINER_UPDATE", {});
     return 0;
 }
@@ -4128,14 +4163,14 @@ void registerQuestLuaAPI(lua_State* L) {
                 // gives nil, 0, 1 for no requirement.
                 {"GetNumTrainerServices", [](lua_State* L) -> int {
             lua_pushnumber(L, static_cast<double>(
-                shownTrainerServices(L, getGameHandler(L)).size()));
+                trainerServiceRows(L, getGameHandler(L)).shown));
             return 1;
         }},
                 // GetTrainerServiceInfo(i) -> name, rank, category[, expanded]
                 {"GetTrainerServiceInfo", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int i = static_cast<int>(luaL_optnumber(L, 1, 0));
-            const auto rows = shownTrainerServices(L, gh);
+            const auto rows = trainerServiceRows(L, gh).rows;
             if (i < 1 || i > static_cast<int>(rows.size())) {
                 lua_pushnil(L); lua_pushnil(L); lua_pushnil(L);
                 lua_pushnumber(L, 1);
@@ -4293,7 +4328,7 @@ void registerQuestLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             const int i = static_cast<int>(luaL_optnumber(L, 1, 0));
             currentTrainerSelection(L, gh);
-            const auto rows = shownTrainerServices(L, gh);
+            const auto rows = trainerServiceRows(L, gh).rows;
             trainerSelection().index =
                 i >= 1 && i <= static_cast<int>(rows.size()) && rows[i - 1].spell ? i : 0;
             return 0;
@@ -4315,7 +4350,7 @@ void registerQuestLuaAPI(lua_State* L) {
                                                  : (lua_toboolean(L, 2) != 0);
             trainerFilters()[which] = show;
             auto* gh = getGameHandler(L);
-            resetTrainerSelection(gh, shownTrainerServices(L, gh));
+            resetTrainerSelection(gh, trainerServiceRows(L, gh));
             if (gh) gh->fireAddonEvent("TRAINER_UPDATE", {});
             return 0;
         }},

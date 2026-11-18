@@ -2510,6 +2510,68 @@ TEST_CASE_METHOD(Integration, "Profession trainer recipe headers preserve servic
     lua.setGameHandler(nullptr);
 }
 
+// Native 2.4.3 at Pikkle (Gadgetzan mining) with only "available" showing and
+// nothing to learn: _experiments/20261118T191500Z.trainer_empty_list
+// (native-F.txt). The count is 0 but the rows past it are the trainer's.
+TEST_CASE_METHOD(Integration, "Trainer rows past the shown count are the rest of the list", "[trainer]") {
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    handler.spellNameCacheLoadedRef() = true;
+    handler.spellNameCacheRef()[2575].name = "Mining";
+    handler.spellNameCacheRef()[2575].rank = "Apprentice";
+    handler.spellNameCacheRef()[2582].name = "Journeyman Miner";
+    handler.spellNameCacheRef()[3304].name = "Smelt Tin";
+    handler.spellNameCacheRef()[2659].name = "Smelt Bronze";
+    for (const uint32_t spell : {2575u, 3304u, 2659u}) handler.spellToSkillLineRef()[spell] = 186;
+    handler.playerSkillsRef()[186].value = 1;
+    lua.setGameHandler(&handler);
+    run("TRADESKILL_SERVICE_LEARN = 'Recipes'; TRADESKILL_SERVICE_STEP = 'Development Skills'");
+    run("SetTrainerServiceTypeFilter('available', 1); SetTrainerServiceTypeFilter('unavailable', 0); SetTrainerServiceTypeFilter('used', 0)");
+    wowee::network::Packet list(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_TRAINER_LIST));
+    list.writeUInt64(8128);
+    list.writeUInt32(2);
+    const struct { uint32_t id; uint8_t state; uint32_t skill; } services[] = {
+        {2582, 1, 50}, {2659, 1, 65}, {3304, 1, 65}, {2575, 2, 0},
+    };
+    list.writeUInt32(4);
+    for (const auto& sv : services) {
+        list.writeUInt32(sv.id); list.writeUInt8(sv.state); list.writeUInt32(10);
+        list.writeUInt32(0); list.writeUInt32(0); list.writeUInt8(0);
+        list.writeUInt32(sv.skill ? 186 : 0); list.writeUInt32(sv.skill);
+        for (int i = 0; i < 3; ++i) list.writeUInt32(0);
+    }
+    list.writeString("You have not lived until you have dug deep into the earth.");
+    session.receive(list);
+    handler.getSpellHandler()->addKnownSpell(2575);
+
+    truth("GetNumTrainerServices() == 0");
+    truth("GetTrainerSelectionIndex() == 2");
+    truth("GetTrainerServiceInfo(1) == 'Development Skills' and select(3, GetTrainerServiceInfo(1)) == 'header'");
+    truth("GetTrainerServiceInfo(2) == 'Journeyman Miner' and select(3, GetTrainerServiceInfo(2)) == 'unavailable'");
+    truth("GetTrainerServiceInfo(3) == 'Recipes'");
+    truth("GetTrainerServiceInfo(4) == 'Mining' and select(3, GetTrainerServiceInfo(4)) == 'used'");
+    truth("GetTrainerServiceCost(2) == 10");
+    truth("select('#', GetTrainerServiceInfo(7)) == 4 and GetTrainerServiceInfo(7) == nil");
+    // Blizzard_TrainerUI's ClassTrainer_SelectFirstLearnableSkill with
+    // nothing shown: the selected row is a service, so no header is folded.
+    truth("select(3, GetTrainerServiceInfo(GetTrainerSelectionIndex())) == 'unavailable'");
+    run("SelectTrainerService(5)");
+    truth("GetTrainerSelectionIndex() == 5");
+    run("SelectTrainerService(3)");
+    truth("select('#', GetTrainerSelectionIndex()) == 0");
+    run("CollapseTrainerSkillLine(1)");
+    truth("GetNumTrainerServices() == 0 and select('#', GetTrainerServiceInfo(1)) == 3");
+    run("ExpandTrainerSkillLine(0)");
+
+    // Shown rows come first, the rest after them.
+    run("SetTrainerServiceTypeFilter('used', 1)");
+    truth("GetNumTrainerServices() == 2");
+    truth("GetTrainerServiceInfo(1) == 'Recipes' and GetTrainerServiceInfo(2) == 'Mining'");
+    truth("GetTrainerServiceInfo(3) == 'Development Skills' and GetTrainerServiceInfo(4) == 'Journeyman Miner'");
+    truth("GetTrainerSelectionIndex() == 2");
+    lua.setGameHandler(nullptr);
+}
+
 // Native 2.4.3 answers, measured at Fenthwick on the original client:
 // _experiments/20261117T203052Z.trainer_skill_headers (native-1.txt, native-3.txt).
 TEST_CASE_METHOD(Integration, "Class trainer services sit under skill line headers", "[trainer]") {
