@@ -415,6 +415,13 @@ private:
     // until this exact transport instance's deck floor exists, instead of letting gravity
     // fold into the attachment and drop the rider through the hull.
     bool deckFloorPending_ = false;
+    /// The possessed unit this client is moving, and where the player's own
+    /// body stands meanwhile (render position, character yaw in degrees).
+    uint64_t possessedBody_ = 0;
+    glm::vec4 heldPlayerBody_{0.0f};
+    /// Keeps the camera on the possessed unit through Mind Control and Control
+    /// Piece; see updatePossession.
+    void updatePossession();
 
     bool wasAutoAttacking_ = false;
     /// Whether the player was swimming last frame, so weapons are put away

@@ -4293,3 +4293,17 @@ const std::string& GameHandler::getSkillLineName(uint32_t skillLineId) const {
 
 } // namespace game
 } // namespace wowee
+
+namespace wowee { namespace game {
+uint64_t GameHandler::getClientControlledUnit() const {
+    if (!movementHandler_) return 0;
+    const uint64_t guid = movementHandler_->clientControlledUnit();
+    return guid != 0 && guid == getPossessedGuid() ? guid : 0;
+}
+void GameHandler::sendSetActiveMover(uint64_t guid) {
+    if (!socket || guid == 0) return;
+    auto packet = SetActiveMoverPacket::build(guid);
+    socket->send(packet);
+    LOG_INFO("Sent CMSG_SET_ACTIVE_MOVER 0x", std::hex, guid, std::dec);
+}
+} }

@@ -3009,18 +3009,8 @@ void Application::applyServerMovementState(float deltaTime) {
     bool landingClampActive = !onTaxi && worldEntryCallbacks_ && worldEntryCallbacks_->getTaxiLandingClampTimer() > 0.0f &&
                               worldEntryCallbacks_->getWorldEntryMovementGraceTimer() <= 0.0f &&
                               !gameHandler->isMounted();
-    // Possession: build 8606 looks from the unit PLAYER_FARSIGHT names (the
-    // server's Camera::SetView) and the player's own character stays put.
-    // Walking the possessed unit is not implemented; its actions are on bonus
-    // bar five.
-    const uint64_t farsight = gameHandler ? gameHandler->getFarsightGuid() : 0;
-    std::optional<glm::vec3> viewTarget;
-    if (farsight != 0 && farsight != gameHandler->getPlayerGuid()) {
-        glm::vec3 viewPos;
-        if (getRenderPositionForGuid(farsight, viewPos)) viewTarget = viewPos;
-    }
-    renderer->getCameraController()->setViewTarget(viewTarget);
-    const bool possessing = gameHandler && gameHandler->getPossessedGuid() != 0;
+    updatePossession();
+    const bool possessing = gameHandler && gameHandler->getPossessedGuid() != 0 && possessedBody_ == 0;
     if (possessing) renderer->getCameraController()->clearMovementInputs();
     renderer->getCameraController()->setExternalFollow(
         externallyDrivenMotion || landingClampActive || hearthFreeze ||
@@ -4256,7 +4246,7 @@ void Application::syncChannelVisuals() {
             return true;
         }
         if (instance && characters && characters->getInstancePosition(instance, out)) return true;
-        if (entity.getGuid() == self) { out = renderer->getCharacterPosition(); return true; }
+        if (entity.getGuid() == self) { out = possessedBody_ ? glm::vec3(heldPlayerBody_) : renderer->getCharacterPosition(); return true; }
         out = core::coords::canonicalToRender(glm::vec3(entity.getX(), entity.getY(), entity.getZ()));
         // An undrawn helper model's chest, placed as CharacterRenderer would
         // place the model: facing + 90 degrees about Z, object scale.
@@ -6620,6 +6610,80 @@ void Application::setupTestTransport() {
     LOG_INFO("To disembark:");
     LOG_INFO("  /transport leave");
     LOG_INFO("========================================");
+}
+
+
+// Possession (Unit::TakePossessOf): the camera looks from the unit
+// PLAYER_FARSIGHT names, and when the server hands that unit's movement to
+// this client (SMSG_CLIENT_CONTROL_UPDATE allow=1) the movement keys, physics
+// and MSG_MOVE_* packets drive it - CMaNGOS applies them to the player's
+// mover - while the player's own body stays where it stood.
+//
+// Build 8606, Mind Control on a Privateer (pair 7,
+// _experiments/20261118T074350Z.plates_fct mcface.py): at possession start the
+// camera keeps its angle to the body's facing (player facing 143, unit -13.4:
+// camera yaw 143 -> -13.4 and 75.5 -> -80.9); at release it keeps its world
+// yaw (30.5 -> 30.5).
+void Application::updatePossession() {
+    if (!renderer || !renderer->getCameraController() || !gameHandler) return;
+    auto* cc = renderer->getCameraController();
+    const uint64_t controlled = gameHandler->getClientControlledUnit();
+    if (controlled != possessedBody_) {
+        if (possessedBody_ != 0) {
+            // Release: back into the player's body, camera yaw unchanged.
+            const glm::vec3 body(heldPlayerBody_);
+            renderer->getCharacterPosition() = body;
+            cc->teleportTo(body);
+            cc->clearMovementInputs();
+            cc->setFacingYaw(heldPlayerBody_.w);
+            renderer->setCharacterYaw(heldPlayerBody_.w);
+            renderer->setPlayerBodyHeld(std::nullopt);
+            const glm::vec3 canonical = core::coords::renderToCanonical(body);
+            gameHandler->setPosition(canonical.x, canonical.y, canonical.z);
+            gameHandler->setOrientation(core::coords::characterYawDegToCanonical(heldPlayerBody_.w));
+            gameHandler->sendSetActiveMover(gameHandler->getPlayerGuid());
+            LOG_INFO("Possession: control of 0x", std::hex, possessedBody_, std::dec, " returned");
+            possessedBody_ = 0;
+        }
+        if (controlled != 0) {
+            const auto unit = gameHandler->getEntityManager().getEntity(controlled);
+            glm::vec3 unitRender;
+            if (unit && getRenderPositionForGuid(controlled, unitRender)) {
+                heldPlayerBody_ = glm::vec4(renderer->getCharacterPosition(), renderer->getCharacterYaw());
+                const float unitYaw = core::coords::canonicalToCharacterYawDeg(unit->getOrientation());
+                cc->clearMovementInputs();
+                cc->addCameraYaw(unitYaw - heldPlayerBody_.w);
+                cc->setFacingYaw(unitYaw);
+                renderer->setCharacterYaw(unitYaw);
+                renderer->getCharacterPosition() = unitRender;
+                cc->teleportTo(unitRender);
+                renderer->setPlayerBodyHeld(heldPlayerBody_);
+                gameHandler->setPosition(unit->getX(), unit->getY(), unit->getZ());
+                gameHandler->setOrientation(unit->getOrientation());
+                gameHandler->sendSetActiveMover(controlled);
+                possessedBody_ = controlled;
+                LOG_INFO("Possession: moving 0x", std::hex, controlled, std::dec);
+            }
+        }
+    }
+    if (possessedBody_ != 0) {
+        cc->setViewTarget(std::nullopt);
+        // The unit is drawn where this client moves it; the server sends its
+        // controller no movement for it.
+        if (auto unit = gameHandler->getEntityManager().getEntity(possessedBody_)) {
+            const glm::vec3 canonical = core::coords::renderToCanonical(renderer->getCharacterPosition());
+            unit->setPosition(canonical.x, canonical.y, canonical.z,
+                              core::coords::characterYawDegToCanonical(renderer->getCharacterYaw()));
+        }
+        return;
+    }
+    const uint64_t farsight = gameHandler->getFarsightGuid();
+    std::optional<glm::vec3> viewTarget;
+    if (farsight != 0 && farsight != gameHandler->getPlayerGuid()) {
+        glm::vec3 viewPos;
+        if (getRenderPositionForGuid(farsight, viewPos)) viewTarget = viewPos;
+    }
+    cc->setViewTarget(viewTarget);
 }
 
 } // namespace core

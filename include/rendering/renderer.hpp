@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 
 #include <chrono>
 #include <functional>
@@ -193,6 +194,9 @@ public:
     uint32_t getCharacterInstanceId() const { return characterInstanceId; }
     float getCharacterYaw() const { return characterYaw; }
     void setCharacterYaw(float yawDeg) { characterYaw = yawDeg; }
+    /// While the player moves a possessed unit, characterPosition and
+    /// characterYaw are that unit's; the player's own model stays here.
+    void setPlayerBodyHeld(std::optional<glm::vec4> positionAndYawDeg) { playerBodyHeld_ = positionAndYawDeg; }
 
     // Screenshot capture - copies swapchain image to PNG file
     bool captureScreenshot(const std::string& outputPath);
@@ -660,6 +664,7 @@ private:
     glm::vec3 sealedClearColor_{0.0f};
     double lastWMORenderMs = 0.0;
     double lastM2RenderMs = 0.0;
+    std::optional<glm::vec4> playerBodyHeld_;
 };
 
 } // namespace rendering

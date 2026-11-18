@@ -2751,6 +2751,9 @@ public:
     uint32_t getLastContactListMask() const { return lastContactListMask_; }
     uint32_t getLastContactListCount() const { return lastContactListCount_; }
     bool isServerMovementAllowed() const;
+    /// The possessed unit this client moves, or 0 (see MovementHandler).
+    uint64_t getClientControlledUnit() const;
+    void sendSetActiveMover(uint64_t guid);
 
     // Quest giver status (! and ? markers)
     QuestGiverStatus getQuestGiverStatus(uint64_t guid) const;

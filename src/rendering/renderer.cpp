@@ -2231,8 +2231,14 @@ void Renderer::update(float deltaTime) {
         while (torsoYawDeltaDeg < -180.0f) torsoYawDeltaDeg += 360.0f;
         characterRenderer->setInstanceTorsoYaw(characterInstanceId, glm::radians(torsoYawDeltaDeg));
 
+        if (playerBodyHeld_) {
+            characterRenderer->setInstancePosition(characterInstanceId, glm::vec3(*playerBodyHeld_));
+            characterRenderer->setInstanceRotation(characterInstanceId,
+                glm::vec3(0.0f, 0.0f, glm::radians(playerBodyHeld_->w)));
+            characterRenderer->setInstanceTorsoYaw(characterInstanceId, 0.0f);
+        }
         // Update animation based on movement state (delegated to AnimationController §4.2)
-        if (animationController_) {
+        if (animationController_ && !playerBodyHeld_) {
             animationController_->updateMeleeTimers(deltaTime);
             animationController_->setDeltaTime(deltaTime);
             animationController_->updateCharacterAnimation();

@@ -413,6 +413,14 @@ void MovementHandler::handleClientControlUpdate(network::Packet& packet) {
         return;
     }
     bool allowMovement = (packet.readUInt8() != 0);
+    LOG_INFO("SMSG_CLIENT_CONTROL_UPDATE guid=0x", std::hex, controlGuid, std::dec, " allow=", allowMovement ? 1 : 0);
+    if (controlGuid != 0 && controlGuid != owner_.getPlayerGuid()) {
+        // Unit::TakePossessOf grants the possessed unit to the charmer's
+        // client (Player::UpdateClientControl), and takes it back on release.
+        if (allowMovement) clientControlledUnit_ = controlGuid;
+        else if (clientControlledUnit_ == controlGuid) clientControlledUnit_ = 0;
+        return;
+    }
     if (controlGuid == 0 || controlGuid == owner_.getPlayerGuid()) {
         bool changed = (serverMovementAllowed_ != allowMovement);
         serverMovementAllowed_ = allowMovement;

@@ -185,6 +185,9 @@ public:
     float& timeSinceLastMoveHeartbeatRef() { return timeSinceLastMoveHeartbeat_; }
     [[nodiscard]] float getMoveHeartbeatInterval() const { return moveHeartbeatInterval_; }
     [[nodiscard]] bool isServerMovementAllowed() const { return serverMovementAllowed_; }
+    /// A unit other than the player whose movement this client was handed
+    /// (SMSG_CLIENT_CONTROL_UPDATE allow=1), or 0.
+    [[nodiscard]] uint64_t clientControlledUnit() const { return clientControlledUnit_; }
     /// Whether the player is in the air on a flying mount, as the movement
     /// code worked it out - which sets and clears FLYING, the flag the server
     /// reads flight from. Only while flight is allowed: a FLYING the server
@@ -314,6 +317,7 @@ private:
     std::chrono::steady_clock::time_point movementClockStart_ = std::chrono::steady_clock::now();
     uint32_t lastMovementTimestampMs_ = 0;
     bool serverMovementAllowed_ = true;
+    uint64_t clientControlledUnit_ = 0;
     uint32_t monsterMovePacketsThisTick_ = 0;
     uint32_t monsterMovePacketsDroppedThisTick_ = 0;
 
