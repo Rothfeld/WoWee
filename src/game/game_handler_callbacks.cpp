@@ -3821,6 +3821,10 @@ bool GameHandler::equipWouldBindFromBag(int bagIndex, int slotIndex) const {
     return inventoryHandler_ && inventoryHandler_->equipWouldBindFromBag(bagIndex, slotIndex);
 }
 
+bool GameHandler::equipFromWireToSlot(uint8_t srcBag, uint8_t srcSlot, uint8_t destSlot) {
+    return inventoryHandler_ && inventoryHandler_->equipFromWireToSlot(srcBag, srcSlot, destSlot);
+}
+
 void GameHandler::equipPendingItem() {
     if (inventoryHandler_) inventoryHandler_->equipPendingItem();
 }

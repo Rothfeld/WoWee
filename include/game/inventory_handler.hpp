@@ -201,6 +201,12 @@ public:
     void equipItemToSlot(uint64_t itemGuid, uint8_t equipSlot);
     void autoEquipItemBySlot(int backpackIndex, bool confirmed = false);
     void autoEquipItemInBag(int bagIndex, int slotIndex, bool confirmed = false);
+    /// Equip the item at wire position (srcBag, srcSlot) into equipment slot
+    /// destSlot (0-based) - a drop onto a paperdoll slot, EquipCursorItem,
+    /// EquipItemByName with a slot. An item it would bind is held back and
+    /// EQUIP_BIND_CONFIRM fired instead, with "0" as native 2.4.3 sends it
+    /// for all three; answers true then.
+    bool equipFromWireToSlot(uint8_t srcBag, uint8_t srcSlot, uint8_t destSlot, bool confirmed = false);
 
     /// Whether equipping what is in a slot would bind it - ItemDef carries
     /// the rule; these two just find the item.
@@ -216,6 +222,9 @@ public:
         int     bag     = 0;
         int     slot    = 0;
         uint8_t wireSlot = 0;   ///< what the event carried, for the reply
+        /// equipFromWireToSlot's request: a source and an equipment slot.
+        bool    toSlot = false;
+        uint8_t srcBag = 0, srcSlot = 0, destSlot = 0;
     };
     // ---- Looting, and the prompt before something binds ----
     //

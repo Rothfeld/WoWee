@@ -1529,8 +1529,9 @@ static int lua_PickupInventoryItem(lua_State* L) {
     uint8_t srcBag = 0, srcSlot = 0;
     if (cursorWireSlot(srcBag, srcSlot)) {
         const auto held = cursorItemSlot();
-        gh->swapContainerItems(srcBag, srcSlot, 0xFF,
-                               static_cast<uint8_t>(slot - 1));
+        // An item this would bind stays on the cursor while EQUIP_BIND asks,
+        // as native 2.4.3 keeps it; EquipPendingItem finishes the drop.
+        if (gh->equipFromWireToSlot(srcBag, srcSlot, static_cast<uint8_t>(slot - 1))) return 0;
         clearCursorItem(L);
         // The slot it was picked up from is no longer held: without this the
         // bag button stayed greyed after the drop, and for good when the
@@ -1597,10 +1598,40 @@ static int lua_DeleteCursorItem(lua_State* L) {
     return 0;
 }
 
+// EquipCursorItem(slot) - the held item into that equipment slot, as a drop
+// on the paperdoll does. It was missing: FrameXML does not call it, but
+// macros and addons do, and native 2.4.3 answers it with EQUIP_BIND for an
+// item it would bind.
+static int lua_EquipCursorItem(lua_State* L) {
+    if (s_cursorType != CursorType::ITEM || s_cursorId == 0) return 0;
+    const int slot = static_cast<int>(luaL_checknumber(L, 1));
+    if (slot < 1 || slot > 19) return 0;
+    return lua_PickupInventoryItem(L);
+}
+
 // AutoEquipCursorItem() - equip item from cursor
 static int lua_AutoEquipCursorItem(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (gh && s_cursorType == CursorType::ITEM && s_cursorId != 0) {
+    // From the bag slot it was lifted from, through the bind check: native
+    // 2.4.3 answers AUTOEQUIP_BIND_CONFIRM for a ring it would bind and keeps
+    // the ring on the cursor while it asks (EquipPendingItem clears it).
+    uint8_t bag = 0, slot = 0;
+    if (gh && cursorWireSlot(bag, slot)) {
+        constexpr uint8_t kBackpackBag = 0xFF;
+        const int backpackIndex = slot - game::Inventory::NUM_EQUIP_SLOTS;
+        const int bagIndex = bag - game::Inventory::FIRST_BAG_EQUIP_SLOT;
+        if (bag == kBackpackBag && backpackIndex >= 0) {
+            const bool asks = gh->equipWouldBindFromBackpack(backpackIndex);
+            gh->autoEquipItemBySlot(backpackIndex);
+            if (asks) return 0;
+        } else if (bagIndex >= 0 && bagIndex < game::Inventory::NUM_BAG_SLOTS) {
+            const bool asks = gh->equipWouldBindFromBag(bagIndex, slot);
+            gh->autoEquipItemInBag(bagIndex, slot);
+            if (asks) return 0;
+        } else {
+            gh->useItemById(s_cursorId);
+        }
+    } else if (gh && s_cursorType == CursorType::ITEM && s_cursorId != 0) {
         gh->useItemById(s_cursorId);
     }
     clearCursorItem(L);
@@ -2185,6 +2216,7 @@ void registerActionLuaAPI(lua_State* L) {
                 {"CursorHasSpell",      lua_CursorHasSpell},
                 {"DeleteCursorItem",    lua_DeleteCursorItem},
                 {"AutoEquipCursorItem", lua_AutoEquipCursorItem},
+                {"EquipCursorItem",     lua_EquipCursorItem},
                 {"IsModifiedClick",     lua_IsModifiedClick},
                 {"GetModifiedClick",    lua_GetModifiedClick},
                 {"SetModifiedClick",    lua_SetModifiedClick},

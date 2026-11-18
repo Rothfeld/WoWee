@@ -1897,10 +1897,30 @@ void InventoryHandler::autoEquipItemInBag(int bagIndex, int slotIndex, bool conf
     }
 }
 
+bool InventoryHandler::equipFromWireToSlot(uint8_t srcBag, uint8_t srcSlot, uint8_t destSlot, bool confirmed) {
+    constexpr uint8_t kBackpackBag = 0xFF;
+    bool binds = false;
+    if (srcBag == kBackpackBag && srcSlot >= Inventory::NUM_EQUIP_SLOTS)
+        binds = equipWouldBindFromBackpack(srcSlot - Inventory::NUM_EQUIP_SLOTS);
+    else if (srcBag >= Inventory::FIRST_BAG_EQUIP_SLOT &&
+             srcBag < Inventory::FIRST_BAG_EQUIP_SLOT + Inventory::NUM_BAG_SLOTS)
+        binds = equipWouldBindFromBag(srcBag - Inventory::FIRST_BAG_EQUIP_SLOT, srcSlot);
+    if (!confirmed && binds) {
+        pendingEquip_ = PendingEquip{.active = true, .toSlot = true,
+                                     .srcBag = srcBag, .srcSlot = srcSlot, .destSlot = destSlot};
+        if (owner_.addonEventCallbackRef())
+            owner_.addonEventCallbackRef()("EQUIP_BIND_CONFIRM", {"0"});
+        return true;
+    }
+    swapContainerItems(srcBag, srcSlot, kBackpackBag, destSlot);
+    return false;
+}
+
 void InventoryHandler::equipPendingItem() {
     const PendingEquip pending = pendingEquip_;
     pendingEquip_ = PendingEquip{};
     if (!pending.active) return;
+    if (pending.toSlot) { equipFromWireToSlot(pending.srcBag, pending.srcSlot, pending.destSlot, true); return; }
     if (pending.fromBag) autoEquipItemInBag(pending.bag, pending.slot, true);
     else                 autoEquipItemBySlot(pending.slot, true);
 }

@@ -1763,13 +1763,28 @@ static int lua_EquipItemByName(lua_State* L) {
     // Zero is "no slot named", not slot zero - the interface's own numbering
     // starts at one, so there is no ambiguity to resolve.
     if (wantSlot >= 1 && wantSlot <= game::Inventory::NUM_EQUIP_SLOTS) {
-        const uint64_t guid = gh->resolveOnlineItemGuid(itemId);
-        if (guid != 0) {
-            gh->equipItemToSlot(guid, static_cast<uint8_t>(wantSlot - 1));
-            return 0;
+        // Through the bind check: native 2.4.3 EquipItemByName(ring, 11)
+        // raises EQUIP_BIND for a ring it would bind.
+        const auto& carried = gh->getInventory();
+        for (int i = 0; i < carried.getBackpackSize(); ++i) {
+            const auto& sl = carried.getBackpackSlot(i);
+            if (!sl.empty() && sl.item.itemId == itemId) {
+                gh->equipFromWireToSlot(0xFF, static_cast<uint8_t>(game::Inventory::NUM_EQUIP_SLOTS + i),
+                                        static_cast<uint8_t>(wantSlot - 1));
+                return 0;
+            }
         }
-        // No guid for it - fall through and let the server choose, which is
-        // better than doing nothing at all.
+        for (int bag = 0; bag < game::Inventory::NUM_BAG_SLOTS; ++bag) {
+            for (int i = 0; i < carried.getBagSize(bag); ++i) {
+                const auto& sl = carried.getBagSlot(bag, i);
+                if (!sl.empty() && sl.item.itemId == itemId) {
+                    gh->equipFromWireToSlot(static_cast<uint8_t>(game::Inventory::FIRST_BAG_EQUIP_SLOT + bag),
+                                            static_cast<uint8_t>(i), static_cast<uint8_t>(wantSlot - 1));
+                    return 0;
+                }
+            }
+        }
+        // Not carried (worn already): fall through to the server's choice.
     }
     const auto& inv = gh->getInventory();
     for (int i = 0; i < inv.getBackpackSize(); ++i) {
@@ -4094,6 +4109,10 @@ void registerInventoryLuaAPI(lua_State* L) {
         }},
                 {"EquipPendingItem", [](lua_State* L) -> int {
             if (auto* gh = getGameHandler(L)) gh->equipPendingItem();
+            // A drop held for the prompt left the item on the cursor; it is
+            // equipped now.
+            lua_getglobal(L, "ClearCursor");
+            if (lua_isfunction(L, -1)) lua_call(L, 0, 0); else lua_pop(L, 1);
             return 0;
         }},
                 {"CancelPendingEquip", [](lua_State* L) -> int {

@@ -3304,6 +3304,8 @@ public:
     bool equipWouldBindFromBackpack(int backpackIndex) const;
     bool equipWouldBindFromBag(int bagIndex, int slotIndex) const;
     void equipPendingItem();
+    /// See InventoryHandler::equipFromWireToSlot.
+    bool equipFromWireToSlot(uint8_t srcBag, uint8_t srcSlot, uint8_t destSlot);
     void cancelPendingEquip();
     void useItemBySlot(int backpackIndex, bool confirmed = false,
                        uint64_t unitTarget = 0);
