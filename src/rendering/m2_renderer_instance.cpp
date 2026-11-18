@@ -1281,14 +1281,15 @@ bool M2Renderer::constrainFloorSnap(const glm::vec3& from, float requestedZ,
 }
 
 glm::vec3 M2Renderer::stepBody(const glm::vec3& from, const glm::vec3& to,
-                               float radius, float height, float maxStepUp) const {
+                               float radius, float height, float maxStepUp,
+                               glm::vec3* landingFace) const {
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     thread_local std::vector<movement::BodyTriangle> triangles;
     triangles.clear();
     appendBodyCollisionTriangles(glm::min(from, to) - glm::vec3(radius, radius, 0.0f),
                                  glm::max(from, to) + glm::vec3(radius, radius, height + maxStepUp),
                                  triangles);
-    return movement::stepBodyAcross(from, to, radius, height, triangles, maxStepUp);
+    return movement::stepBodyAcross(from, to, radius, height, triangles, maxStepUp, landingFace);
 }
 
 bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,

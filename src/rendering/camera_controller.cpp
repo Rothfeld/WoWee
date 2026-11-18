@@ -372,12 +372,25 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
             // Exodar table's 74-degree sides and on hammer handles before
             // falling or walking on. Ground-follow then decides whether that
             // face supports standing. Ledger #12.
-            if (horizontalContact && grounded && !swimming && !isFlightAirborne()) {
+            //
+            // A step that ends on a face too steep to stand on leaves the body
+            // there at rest, and the next frame it steps again - onto walkable
+            // ground or not at all. Alcaz Island dock (redridgedocks03): the
+            // deck meets the beam in front of the boardwalk with a 0.4-yard
+            // riser of 57-66 degree faces. 8606 at 20 and at 60 fps walks
+            // over it without losing speed, one frame on the riser
+            // (-2697.70, -4694.68, 9.67) and the next on the beam; it does not
+            // climb the Exodar table's 74-degree pedestal at 20 fps, where the
+            // second step would end on the pedestal side again.
+            if (horizontalContact && (grounded || stepFromRest_) && !swimming && !isFlightAirborne()) {
+                glm::vec3 landingFace(0.0f, 0.0f, 1.0f);
                 const glm::vec3 stepped = m2Renderer->stepBody(stepPos, horizontal,
-                    collisionRadius_, collisionHeight_, movement::kMaxStepUp);
+                    collisionRadius_, collisionHeight_, movement::kMaxStepUp, &landingFace);
                 const glm::vec2 intent(horizontal - stepPos);
                 bool farther = glm::dot(glm::vec2(stepped - stepPos), intent) >
                     glm::dot(glm::vec2(horizontalAdjusted - stepPos), intent) + 1e-6f;
+                const bool fromRest = !grounded;
+                if (fromRest && !movement::isWalkableNormal(landingFace.z)) farther = false;
                 // The step's raised path must also clear building geometry.
                 if (farther && wmoRenderer) {
                     const glm::vec3 raised(stepPos.x, stepPos.y, std::max(stepPos.z, stepped.z));
@@ -394,7 +407,15 @@ glm::vec3 CameraController::sweepAgainstWalls(const glm::vec3& from, const glm::
                         " ordinary=", horizontalAdjusted.x, ",", horizontalAdjusted.y, ",", horizontalAdjusted.z,
                         " selected=", farther);
                 }
-                if (farther) horizontalAdjusted = stepped;
+                if (farther) {
+                    horizontalAdjusted = stepped;
+                    stepFinishedThisFrame_ = true;
+                    if (fromRest) {
+                        grounded = true;
+                        verticalVelocity = 0.0f;
+                        stepFromRest_ = false;
+                    }
+                }
             }
             candidate = horizontalAdjusted + glm::vec3(0.0f, 0.0f, candidate.z - stepPos.z);
             glm::vec3 adjusted;
@@ -453,6 +474,8 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                                                   glm::vec3& prevTargetPos) {
     // Move the follow target (character position) instead of the camera
     prevTargetPos = *followTarget;
+    stepFromRest_ = stepFinishedThisFrame_ && !grounded && verticalVelocity <= 0.0f;
+    stepFinishedThisFrame_ = false;
     glm::vec3 targetPos = *followTarget;
     if (swimming || flightAirborne_ || externalFollow_) preserveAirborneMomentum_ = false;
     if (!externalFollow_) {

@@ -64,6 +64,17 @@ held inside the deck, sunk to the chest between the boards; native 2.4.3
 rests in that fold at z 9.43. Evidence:
 `_experiments/20261118T205414.plank_gaps` in the parent workspace.
 
+A grounded step that ends on a face too steep to stand on leaves the body
+there, falling from rest. The next frame it may step once more, and keeps
+that step only if it lands on a walkable face (`stepFromRest_`). The Alcaz
+Island riser above (faces of 57 and 66 degrees, 0.4 yards high): 8606 at 20
+and at 60 fps walks over it without losing speed, one frame on the riser
+(-2697.70, -4694.68, 9.67) and the next on the beam (-4694.26, 9.83).
+Without the second step WoWee stood on the riser, slid back and never
+crossed. The Exodar table pedestal (74 degrees) is unchanged: there the
+second step lands on the pedestal side again and is refused, and WoWee
+peaks 0.45-0.56 yards as capped native did (0.51-0.65).
+
 M2 support probes use the moving body's radius and lower beveled envelope.
 Each offset sample carries its height above the sole; subtract that height from
 the mesh hit to obtain supported sole height. A prop touching the body's side

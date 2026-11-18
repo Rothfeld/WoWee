@@ -745,8 +745,10 @@ public:
                             float& supportZ, float& supportNormalZ) const;
     // Where a grounded body ends after stepping up by at most maxStepUp,
     // across to `to` and back down onto authored M2 collision faces.
+    // `landingFace` as movement::stepBodyAcross.
     [[nodiscard]] glm::vec3 stepBody(const glm::vec3& from, const glm::vec3& to,
-                                     float radius, float height, float maxStepUp) const;
+                                     float radius, float height, float maxStepUp,
+                                     glm::vec3* landingFace = nullptr) const;
 
     /// Every doodad the floor query would consider here, and what each one
     /// contributes. The WMO side has had debugDumpGroupsAtPosition for this

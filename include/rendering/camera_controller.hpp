@@ -757,6 +757,11 @@ private:
     // Gravity / grounding
     float verticalVelocity = 0.0f;
     bool grounded = false;
+    // A grounded step this frame left the body on a face that cannot hold
+    // it (stepFinishedThisFrame_), so the next frame it may step once more
+    // from that rest, onto walkable ground only (stepFromRest_).
+    bool stepFinishedThisFrame_ = false;
+    bool stepFromRest_ = false;
     glm::vec3 airborneHorizontalVelocity_{0.0f};
     bool preserveAirborneMomentum_ = false;
     static constexpr float STAND_EYE_HEIGHT = 1.2f;  // Standing eye height

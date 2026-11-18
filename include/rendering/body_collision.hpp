@@ -36,6 +36,9 @@ inline constexpr float kContactSkin = 0.0014f;
 struct BodyContact {
     float time;
     glm::vec3 normal;
+    // The touched triangle's own unit normal, facing up. `normal` is the
+    // separating direction, which at an edge is not the face's.
+    glm::vec3 face;
 };
 
 inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
@@ -93,7 +96,9 @@ inline std::optional<BodyContact> sweepBodyTriangle(const glm::vec3& from,
     // the deck. A departing body entered long ago and is still let go.
     if (enter > 1.0f || leave < 0.0f) return std::nullopt;
     if (enter < -1e-5f && -enter * enterSpeed > kContactSkin) return std::nullopt;
-    return BodyContact{std::max(0.0f,enter),normal};
+    glm::vec3 face = glm::normalize(triangleNormal);
+    if (face.z < 0.0f) face = -face;
+    return BodyContact{std::max(0.0f,enter),normal,face};
 }
 
 inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
@@ -139,8 +144,12 @@ inline bool moveBody(const glm::vec3& from, const glm::vec3& to,
 // handles. Whether that face can support standing is the caller's floor
 // decision. A descent that meets nothing ends at the original sole height,
 // on the ground the walker already stood on.
+//
+// `landingFace`, when given, receives the up-facing normal of the face the
+// descent rests on; nothing is written when it rests on no face.
 inline glm::vec3 stepBodyAcross(const glm::vec3& from, const glm::vec3& to,
-        float radius, float height, std::span<const BodyTriangle> triangles, float maxStepUp) {
+        float radius, float height, std::span<const BodyTriangle> triangles, float maxStepUp,
+        glm::vec3* landingFace = nullptr) {
     assert(std::abs(to.z - from.z) < 1e-6f);
     assert(std::isfinite(maxStepUp) && maxStepUp > 0.0f);
     const auto firstContact = [&](const glm::vec3& start, const glm::vec3& delta) {
@@ -158,6 +167,7 @@ inline glm::vec3 stepBodyAcross(const glm::vec3& from, const glm::vec3& to,
     moveBody(from + up, to + up, radius, height, triangles, across, false);
     const glm::vec3 down(0.0f, 0.0f, from.z - across.z);
     const auto support = firstContact(across, down);
+    if (support && landingFace) *landingFace = support->face;
     return across + down * (support ? support->time : 1.0f);
 }
 
