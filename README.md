@@ -1009,6 +1009,21 @@ blending. Blending while writing depth in one pass leaves previously drawn
 backfaces visible through the front. The color pass tests equal depth; transparent
 cards retain their authored blending and depth behavior.
 
+Every whole-model fade (camera, stealth/invisibility/ghost kit, display alpha,
+spawn and despawn fades) uses that path, per instance, in the back-to-front
+blended stream: prepass, then colour. Running the prepass with the solid
+geometry cut opaque units behind a stealthed one out of the picture (the sand
+showed where 2.4.3 shows the other rogue through the faded body). A faded
+model's blended material layers test LESS_OR_EQUAL without layer depth bias and
+composite over its faded base, so items with stacked layers stay denser than
+the body: under Stealth (opacity 0.3) 2.4.3 draws the body at about 0.33 and the
+sheathed Warglaive of Azzinoth at about 0.56 (opaque base plus its alpha layer).
+The fade comes only from the aura's SpellVisualKit CharProc 14 (Stealth, Prowl,
+Vanish, Shadowmeld: kit 312, 0.3; Invisibility: kit 3450, 0.5) times the
+CreatureDisplayInfo alpha. UNIT_VIS_FLAG_CREEP does not fade a unit: a creature
+under Stealth 31621 (CREEP, no kit) stays opaque in 2.4.3. Evidence:
+`_experiments/20261118T201300Z.stealth_alpha/` in the workspace.
+
 ## TBC scene integration
 
 `GetGamma()`/`SetGamma(v)` use build 8606's scale: the offset of the `gamma`
