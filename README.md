@@ -1740,6 +1740,32 @@ equals the race's (a non-GM player), nothing else re-judges those units; a
 party member's plate drew red and UnitReaction answered 2. Native shows a
 grouped player's plate blue.
 
+### Teleports and map transfers
+
+Native 2.4.3, measured on a private pair with `.go xyz`, `.tele`, `.appear`
+and `.summon`: a short hop on the same map moves the player at once. A far
+teleport on the same map (GM Island to Gadgetzan) shows no loading screen;
+the old frame stays on screen until the destination is loaded, then the
+loaded destination appears. A map change shows the loading screen. Native
+sends MSG_MOVE_WORLDPORT_ACK only when its load is nearly done: the server
+cannot find it for the whole loading screen, and a summon during that time
+answers "(offline)".
+
+WoWee re-centres terrain streaming on the destination of a same-map teleport
+(`TerrainManager::streamFrom`, nearest tile first). It does not hold the old
+frame: for about a second after a far hop the character can stand in a
+partly streamed world. The worldport acknowledgement waits for the
+destination terrain (start of warmup), and a world entry that arrives while a
+load runs is deferred to the end of that load.
+
+Gotcha: with `WOWEE_VIEW_SYNC` set, a camera "hold" request pins the camera,
+and terrain streams around the camera, not the character. A request file
+written before the client started is ignored; one written while it runs
+holds until a `release`. A held camera looks like "the world stayed behind
+after a teleport": the minimap and tooltips follow the character, the view
+does not, and the own model is out of sight.
+Evidence: `_experiments/20261118T210500Z.teleport_world/` in the workspace.
+
 ## TBC interaction compatibility
 
 `build/bin/test_input_integration '[guard-gossip],[npc-attack],[mail-coin],[mail-stationery],[gm-mail]'`
