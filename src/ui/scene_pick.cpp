@@ -126,7 +126,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             auto* renderer = app.getRenderer();
             if (!spawner || !renderer || !renderer->getCharacterRenderer()) continue;
             if (!renderer->getCharacterRenderer()->intersectInstance(
-                    spawner->characterInstanceIdForGuid(guid), ray.origin, ray.direction, hitT)) {
+                    spawner->drawnInstanceIdForGuid(guid), ray.origin, ray.direction, hitT)) {
                 if (params.trace) LOG_DEBUG("Scene pick unit volume miss guid=", guid);
                 continue;
             }

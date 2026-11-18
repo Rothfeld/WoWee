@@ -134,6 +134,9 @@ public:
     /// The instance at the unit's own position: its mount's when riding (the
     /// rider sits raised in the saddle), else its character instance.
     uint32_t groundInstanceIdForGuid(uint64_t guid) const;
+    /// The instance drawn for the unit: a morphed player's creature model,
+    /// else its character instance. Mouse picking tests this one.
+    uint32_t drawnInstanceIdForGuid(uint64_t guid) const;
     bool getRenderFootZForGuid(uint64_t guid, float& outFootZ) const;
     bool getRenderPositionForGuid(uint64_t guid, glm::vec3& outPos) const;
 

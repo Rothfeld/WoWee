@@ -1869,7 +1869,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     if (auto* characters = appRenderer->getCharacterRenderer()) {
         auto* spawner = core::Application::getInstance().getEntitySpawner();
         characters->setHoveredInstance(spawner && mouseoverGuid
-            ? spawner->characterInstanceIdForGuid(mouseoverGuid) : 0);
+            ? spawner->drawnInstanceIdForGuid(mouseoverGuid) : 0);
     }
 }
 

@@ -307,7 +307,14 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
         table[op] = [this, rooted](network::Packet& packet) {
             if (!packet.hasRemaining(1)) return;
             const uint64_t guid = packet.readPackedGuid();
-            if (guid != owner_.getPlayerGuid()) return;
+            constexpr uint32_t kRoot = static_cast<uint32_t>(MovementFlags::ROOT);
+            if (guid != owner_.getPlayerGuid()) {
+                // Another unit: kept with its other spline-synthesised flags
+                // (unitMoveFlagsCallback), as a create block's flags are.
+                if (guid != 0 && owner_.unitMoveFlagsCallbackRef())
+                    owner_.unitMoveFlagsCallbackRef()(guid, rooted ? kRoot : 0u, kRoot);
+                return;
+            }
             LOG_INFO(rooted ? "SMSG_SPLINE_MOVE_ROOT" : "SMSG_SPLINE_MOVE_UNROOT", " for the player");
             if (rooted) movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ROOT);
             else movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ROOT);

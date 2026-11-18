@@ -1240,7 +1240,9 @@ While the server moves the character, CMaNGOS sends root changes as
 `SMSG_FORCE_MOVE_(UN)ROOT`. Big Bad Wolf (Karazhan) stuns with Wide Swipe
 30761 and fears with Terrifying Howl 30752; a stun ending during the fear
 arrives as a spline unroot. Ignored, it left the character rooted after the
-fear (39 s on pair 5) and standing still while the fear moved it.
+fear (39 s on pair 5) and standing still while the fear moved it. For other
+units the ROOT bit is retained with their other spline-synthesised flags;
+nothing draws differently from it yet.
 
 ### Morphed players
 
@@ -1253,8 +1255,12 @@ but is not drawn; a creature instance with the display's appearance
 (CreatureDisplayInfoExtra clothing and helmet) copies its transform,
 animation and first-person visibility each frame. Gotcha: the field is new
 in `update_fields.json`; an installed data tree without it draws no morph.
-Not done: weapons in the creature's hands, mounted morphs, hover/click on the
-creature instance (picking still uses the hidden character).
+Mouse hover, click and the hover highlight test the creature model, not the
+hidden character: hovering Red Riding Hood's body shows the tooltip, the air
+where the character's head would be does not. Measured side by side with the
+original: a morphed player draws no weapons, also with weapons drawn (Z); a
+morphed rider sits on the mount as the creature. Not established: where the
+original puts a morphed player's name.
 
 ### Projected ground textures
 

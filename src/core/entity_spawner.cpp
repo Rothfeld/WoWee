@@ -1136,6 +1136,12 @@ uint32_t EntitySpawner::characterInstanceIdForGuid(uint64_t guid) const {
     return 0;
 }
 
+uint32_t EntitySpawner::drawnInstanceIdForGuid(uint64_t guid) const {
+    if (const auto morph = playerMorphs_.find(guid); morph != playerMorphs_.end() && morph->second.instanceId)
+        return morph->second.instanceId;
+    return characterInstanceIdForGuid(guid);
+}
+
 uint32_t EntitySpawner::groundInstanceIdForGuid(uint64_t guid) const {
     if (gameHandler_ && guid == gameHandler_->getPlayerGuid() && mountInstanceId_ != 0) return mountInstanceId_;
     if (const auto mount = remotePlayerMounts_.find(guid); mount != remotePlayerMounts_.end())
@@ -1179,7 +1185,7 @@ bool EntitySpawner::getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, 
     }
 
     if (!renderer_->getCharacterRenderer()) return false;
-    const uint32_t instanceId = characterInstanceIdForGuid(guid);
+    const uint32_t instanceId = drawnInstanceIdForGuid(guid);
     if (instanceId == 0) return false;
 
     return renderer_->getCharacterRenderer()->getInstanceBounds(instanceId, outCenter, outRadius);
