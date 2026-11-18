@@ -6,6 +6,9 @@
 #include "rendering/camera.hpp"
 #include "core/coordinates.hpp"
 #include "core/window.hpp"
+#include "core/application.hpp"
+#include "core/entity_spawner.hpp"
+#include "rendering/character_renderer.hpp"
 #include <imgui.h>
 #include "ui/chat/chat_utils.hpp"
 #include "ui/sight_cache.hpp"
@@ -69,9 +72,26 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         auto entity = gameHandler.getEntityManager().getEntity(bubble.senderGuid);
         if (!entity) continue;
 
-        // Convert canonical → render coordinates, offset up by 2.5 units for bubble above head
-        glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ() + 2.5f);
-        glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
+        // The frame's bottom edge sits on the speaker's name attachment and
+        // its tail hangs below. Build 8606, one unit saying and yelling under
+        // several displays (pair 7, _experiments/20261118T074350Z.plates_fct
+        // bubble.py): box bottom at 2.25 yd for a human (attachment 2.21), 8.69
+        // for the Mountain Giant (8.59), tail tip 0.2-0.3 yd lower; a yell is
+        // placed the same way.
+        glm::vec3 renderPos;
+        {
+            auto& app = core::Application::getInstance();
+            auto* spawner = app.getEntitySpawner();
+            auto* characters = renderer->getCharacterRenderer();
+            const uint32_t instanceId = bubble.senderGuid == gameHandler.getPlayerGuid()
+                ? renderer->getCharacterInstanceId()
+                : (spawner ? spawner->characterInstanceIdForGuid(bubble.senderGuid) : 0);
+            const bool mounted = entity->isUnit() &&
+                static_cast<const game::Unit&>(*entity).getMountDisplayId() != 0;
+            if (!characters || instanceId == 0 ||
+                !characters->getInstanceNamePosition(instanceId, mounted, renderPos))
+                continue;  // The model has not spawned yet.
+        }
 
         // Not through a wall. A bubble carries a name as well as a line, so
         // one drawn over the building someone is standing behind says they are
@@ -124,6 +144,7 @@ void ChatBubbleManager::render(game::GameHandler& gameHandler, const UIServices&
         // The point is where the speaker's head is, and the bubble sits above
         // it, centred - which is what the window's pivot of (0.5, 1) did.
         const ImVec2 topLeft(screenX - size.x * 0.5f, screenY - size.y);
+        // The tail is drawn below this point (see the tail quad).
 
         static const auto background = uploadUiTextureFromBlp(services.assetManager,
             "Interface/Tooltips/ChatBubble-Background.blp", window);
