@@ -58,4 +58,18 @@ inline constexpr float remoteMountScale(float riderScale, float mountDisplayScal
     return riderScale * mountDisplayScale * mountModelScale;
 }
 
+// What a dismount does to the rider's render instance. A map change clears the
+// character renderer before the spawner forgets its units, so the spawner can
+// hold a rider id whose instance is gone: nothing is left to unseat (touching
+// it crashed). A rider that died keeps its corpse pose (CMaNGOS unmounts on
+// death); a living one leaves the seat for its idle.
+struct RiderDismount {
+    bool unseat = false;
+    bool playIdle = false;
+};
+inline constexpr RiderDismount riderDismount(bool riderInstanceExists, bool riderDead) {
+    if (!riderInstanceExists) return {};
+    return {.unseat = true, .playIdle = !riderDead};
+}
+
 } // namespace wowee::rendering

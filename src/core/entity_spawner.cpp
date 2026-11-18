@@ -1,6 +1,7 @@
 #include "core/weapon_attachment.hpp"
 #include "core/entity_spawner.hpp"
 #include "rendering/character_scale.hpp"
+#include "rendering/animation/rider_pose.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/unit_fade.hpp"
 #include "rendering/m2_model_classifier.hpp"
@@ -426,15 +427,17 @@ void EntitySpawner::removeRemotePlayerMount(uint64_t guid) {
         if (auto* cr = renderer_->getCharacterRenderer()) {
             if (it->second.instanceId != 0) cr->removeInstance(it->second.instanceId);
             const auto riderInstance = characterInstanceIdForGuid(guid);
-            if (riderInstance) {
-                cr->setInstanceRiding(riderInstance, false);
-                // CMaNGOS unmounts a creature as it dies (Creature::SetDeathState
-                // JUST_DIED): the field clears with the death, and the corpse
-                // keeps lying where the rider fell, as in the original
-                // (Wind Reaver .die: mount gone, rider dead on the ground).
-                if (!cr->isInstanceDead(riderInstance))
-                    cr->playAnimation(riderInstance, remoteIdleAnimation(guid), true);
-            }
+            // WorldLoader::loadOnlineWorldTerrain clears the character renderer
+            // and only then resetAllState() despawns the units it tracked, so the
+            // rider id can be stale here (SIGSEGV in setInstanceRiding, inlined,
+            // teleporting Goldshire -> Nagrand). CMaNGOS unmounts a creature as it
+            // dies (Creature::SetDeathState JUST_DIED); the corpse keeps lying
+            // where the rider fell, as natively (Wind Reaver .die).
+            const auto dismount = rendering::riderDismount(
+                riderInstance != 0 && cr->hasInstance(riderInstance),
+                riderInstance != 0 && cr->isInstanceDead(riderInstance));
+            if (dismount.unseat) cr->setInstanceRiding(riderInstance, false);
+            if (dismount.playIdle) cr->playAnimation(riderInstance, remoteIdleAnimation(guid), true);
         }
     }
     remotePlayerMounts_.erase(it);

@@ -233,6 +233,9 @@ public:
     // Native 2.4.3 keeps a corpse lying through emotes and spell cast/kit
     // animations aimed at it (_experiments/20261118T1320Z.death_over_emote).
     [[nodiscard]] bool isInstanceDead(uint32_t instanceId) const;
+    /// Whether the instance still exists; clear() on a map change removes every
+    /// instance while EntitySpawner still holds their ids.
+    [[nodiscard]] bool hasInstance(uint32_t instanceId) const { return instances.count(instanceId) != 0; }
     /// Ground covered per second at authored rate: |moveSpeed| of the
     /// animation's primary sequence times the instance scale. nullopt when the
     /// model has no such sequence or it authors no movement.

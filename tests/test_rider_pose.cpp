@@ -59,3 +59,19 @@ TEST_CASE("A character is drawn at its race display's scale", "[rider][character
     CHECK(rendering::remoteMountScale(rendering::characterRenderScale(1.0f, 1.35f, 1.0f), 1.0f, 1.0f)
           == Catch::Approx(1.35f));
 }
+
+TEST_CASE("A dismount after a map change leaves the cleared rider alone", "[rider][teardown]") {
+    // WorldLoader clears the character renderer, then resetAllState() despawns
+    // the units: a mounted unit's rider instance no longer exists.
+    const auto cleared = rendering::riderDismount(false, false);
+    CHECK_FALSE(cleared.unseat);
+    CHECK_FALSE(cleared.playIdle);
+    // A creature unmounted by its death keeps its corpse pose.
+    const auto dead = rendering::riderDismount(true, true);
+    CHECK(dead.unseat);
+    CHECK_FALSE(dead.playIdle);
+    // A living rider leaves the seat for its idle.
+    const auto alive = rendering::riderDismount(true, false);
+    CHECK(alive.unseat);
+    CHECK(alive.playIdle);
+}
