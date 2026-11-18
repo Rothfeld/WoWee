@@ -5009,15 +5009,16 @@ void SocialHandler::handleSetFactionStanding(network::Packet& packet) {
         owner_.factionStandingsRef()[factionId] = standing;
         int32_t delta = standing - oldStanding;
         if (delta != 0) {
-            std::string name = owner_.getFactionName(factionId);
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "Reputation with %s %s by %d.",
-                          name.c_str(), delta > 0 ? "increased" : "decreased", std::abs(delta));
-            owner_.addSystemChatMessage(buf);
+            // One CHAT_MSG_COMBAT_FACTION_CHANGE line per change, from the
+            // interface's own pattern. It was also printed as a system line,
+            // so every change showed twice, once in the system colour.
+            const std::string line = owner_.globalLine(
+                delta > 0 ? "FACTION_STANDING_INCREASED" : "FACTION_STANDING_DECREASED",
+                {owner_.getFactionName(factionId), std::to_string(std::abs(delta))});
             owner_.watchedFactionIdRef() = factionId;
             // These events fire unconditionally on any rep change (not gated by callback).
             owner_.fireAddonEvent("UPDATE_FACTION", {});
-            owner_.addLocalChatLine(ChatType::COMBAT_FACTION_CHANGE, std::string(buf));
+            if (!line.empty()) owner_.addLocalChatLine(ChatType::COMBAT_FACTION_CHANGE, line);
         }
     }
 }
