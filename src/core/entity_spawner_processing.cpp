@@ -1690,9 +1690,11 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
         glm::vec3 pos(0.0f);
         cr->getInstancePosition(riderInstance, pos);
         // The rider's drawn scale carries over to its mount (rider_pose.hpp).
-        const float riderScale = cr->getInstanceScale(riderInstance);
+        const uint32_t drawnRider = drawnInstanceIdForGuid(guid);
+        const float riderScale = cr->getInstanceScale(drawnRider ? drawnRider : riderInstance);
         const float mountScale = rendering::remoteMountScale(
             riderScale, creatureDisplayScale(displayId), creatureModelScale(displayId));
+        const float seatHeight = riderHeight;
         riderHeight *= riderScale;
         uint32_t mountInstance = cr->createInstance(modelId, pos, glm::vec3(0.0f), mountScale);
         if (mountInstance != 0) {
@@ -1714,7 +1716,8 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
             cr->setInstanceRiding(riderInstance, true);
             cr->playAnimation(riderInstance, rendering::anim::MOUNT, true);
             remotePlayerMounts_[guid] = {.displayId = displayId, .modelId = modelId,
-                                         .instanceId = mountInstance, .riderHeight = riderHeight};
+                                         .instanceId = mountInstance, .riderHeight = riderHeight,
+                                         .seatHeight = seatHeight, .riderScale = riderScale};
             LOG_INFO("Remote player mounted: guid=0x", std::hex, guid, std::dec,
                      " displayId=", displayId, " riderHeight=", riderHeight,
                      " scale=", mountScale, " (rider ", riderScale, ")",
@@ -1723,6 +1726,24 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
         pendingRemotePlayerMounts_.erase(it);
         return;
     }
+}
+
+void EntitySpawner::refreshRemoteMountScale(uint64_t guid) {
+    const auto mount = remotePlayerMounts_.find(guid);
+    if (mount == remotePlayerMounts_.end() || !renderer_) return;
+    auto* cr = renderer_->getCharacterRenderer();
+    const uint32_t rider = drawnInstanceIdForGuid(guid);
+    if (!cr || !rider) return;
+    const float riderScale = cr->getInstanceScale(rider);
+    auto& state = mount->second;
+    if (riderScale == state.riderScale) return;
+    // A player morphed while mounted rides at the creature's size, as the
+    // original grew a player's horse and gryphon under .modify morph 21546.
+    state.riderScale = riderScale;
+    state.riderHeight = state.seatHeight * riderScale;
+    cr->setInstanceScale(state.instanceId, rendering::remoteMountScale(
+        riderScale, creatureDisplayScale(state.displayId), creatureModelScale(state.displayId)));
+    LOG_INFO("Remote mount rescaled: guid=0x", std::hex, guid, std::dec, " rider scale ", riderScale);
 }
 
 void EntitySpawner::erasePendingGuidIfUnqueued(uint64_t guid) {

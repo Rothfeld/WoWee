@@ -1700,7 +1700,15 @@ A mount is drawn at its own display and model scale times its rider's drawn
 scale, and the seat (MountMain) rises with it. In the original the Dragonmaw
 Wind Reaver (rider display 21546, authored at 2.0) sits on a nether drake
 twice a player's; `.npc setmodel 1139` (1.0) on the same unit shrinks the
-drake to player size. A rider stays seated: its idle, locomotion and melee
+drake to player size. Players follow the same rule: a mounted player morphed
+to display 21546 (`.modify morph`) rides a horse and a gryphon twice the
+size, and `.modify scale 1.5` grows the horse with the rider, natively. A
+morphed rider's mount follows the morph's creature
+(`EntitySpawner::refreshRemoteMountScale`). Not done: WoWee draws players at
+scale 1 whatever OBJECT_FIELD_SCALE_X or their race display's scale, so their
+mounts stay at 1 too; ChrRaces field 7 (orc 1.1, night elf 1.2, tauren 0.75,
+gnome 0.8), probably a per-race mount scale, is not checked against the
+original. A rider stays seated: its idle, locomotion and melee
 stances are Mount (91), and its swings, casts, cast holds and wounds play
 from SpineLow up over it (`setInstanceRiding`, `rendering/animation/rider_pose.hpp`).
 Natively the Wind Reaver's legs stayed in the seat through every swing and
@@ -1711,8 +1719,8 @@ comes into view mid-way along a Flying spline (0x200 in its create block, as
 Dragonmaw Sky Stalkers on their HOVER paths) flies, as SMSG_MONSTER_MOVE
 already made it. `build/bin/test_rider_pose` covers these rules. Evidence:
 `_experiments/20261118T150000Z.npc_mount` in the workspace. Not established:
-the mount's own animation while its rider fights (natively the drake left its
-idle for a ground stance), and the Wyrmcaller's orange cast beam.
+the Wyrmcaller's orange cast beam. In combat both clients' drakes stand on
+four legs, compared by eye only.
 
 TBC MCLQ freshwater preserves per-vertex depth and authored surface height
 through both individual and merged terrain meshes. Liquid IDs use the same

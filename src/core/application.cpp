@@ -3657,6 +3657,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             // using getLatest (== moveEnd while isMoving_) avoids the
             // visible forward-drift followed by a backward snap.
             charRenderer->setLocomotionSpeed(instanceId, entity->getLocomotionSpeed());
+            entitySpawner_->refreshRemoteMountScale(guid);
             const auto* creatureMount = entitySpawner_->getRemotePlayerMount(guid);
             const bool inOverrun = entity->isEntityMoving() && !entity->isActivelyMoving();
             glm::vec3 canonical(
@@ -4010,6 +4011,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 posIt != _pCreatureRenderPosCache.end()
                     ? std::optional<glm::vec3>(posIt->second)
                     : std::nullopt;
+            entitySpawner_->refreshRemoteMountScale(guid);
             const auto* remoteMount = entitySpawner_->getRemotePlayerMount(guid);
             if (remoteMount) charRenderer->setLocomotionSpeed(remoteMount->instanceId, entity->getLocomotionSpeed());
             std::optional<glm::vec3> previousMountPos = previousRenderPos;

@@ -218,8 +218,13 @@ public:
         uint32_t modelId = 0;
         uint32_t instanceId = 0;
         float riderHeight = 0.0f;
+        float seatHeight = 0.0f;   // MountMain height at rider scale 1
+        float riderScale = 1.0f;   // drawn rider scale the mount follows
     };
     void setRemotePlayerMountDisplayId(uint64_t guid, uint32_t displayId);
+    /// Rescale a unit's mount and seat to its drawn rider - the morph's
+    /// creature for a morphed player (rider_pose.hpp remoteMountScale).
+    void refreshRemoteMountScale(uint64_t guid);
     const RemotePlayerMount* getRemotePlayerMount(uint64_t guid) const {
         auto it = remotePlayerMounts_.find(guid);
         return it != remotePlayerMounts_.end() ? &it->second : nullptr;
