@@ -604,8 +604,19 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     }
     if (!localPlayer) {
         owner_.getSpellHandler()->mirrorAurasByGuid(entity->getGuid(), rebuilt);
-        if (entity->getGuid() == owner_.getTargetGuid()) pendingEvents_.emit("UNIT_AURA", {"target"});
-        if (entity->getGuid() == owner_.getFocusGuid()) pendingEvents_.emit("UNIT_AURA", {"focus"});
+        // Every token the unit answers to, party and raid slots included.
+        // CMaNGOS sends SMSG_PARTY_MEMBER_STATS only to members who cannot see
+        // the player (Group::UpdatePlayerOutOfRange); a member in view changes
+        // auras through these fields alone. Firing only target and focus left
+        // PartyMemberFrame's RefreshBuffs unasked, so a fight's debuffs
+        // stayed on the party frame after they were gone (pair 8: Hunter's
+        // Mark kept showing curse; UnitDebuff("party1") already answered
+        // right).
+        for (const auto& token : unitEventTokens(owner_, entity->getGuid()))
+            pendingEvents_.emit("UNIT_AURA", {token});
+        // guidToUnitId names target first; a focus that is also the target.
+        if (entity->getGuid() == owner_.getFocusGuid() && entity->getGuid() == owner_.getTargetGuid())
+            pendingEvents_.emit("UNIT_AURA", {"focus"});
         return;
     }
     // COMBAT_TEXT_UPDATE SPELL_AURA_START / SPELL_AURA_END, _HARMFUL for the
