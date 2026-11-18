@@ -2543,7 +2543,6 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     owner_.otherPlayerVisibleDirtyRef().clear();
     otherPlayerMoveTimeMs_.clear();
     if (owner_.getSpellHandler()) owner_.getSpellHandler()->clearUnitCastStates();
-    owner_.unitAurasCacheRef().clear();
     owner_.clearCombatText();
     owner_.getEntityManager().clear();
     owner_.clearTaxiNodeStatuses();

@@ -3970,7 +3970,6 @@ public:
     auto& gmTicketTextRef() { return gmTicketText_; }
     auto& bookPagesRef() { return bookPages_; }
     auto& activeTotemSlotsRef() { return activeTotemSlots_; }
-    auto& unitAurasCacheRef() { return unitAurasCache_; }
     auto& lastInteractedGoGuidRef() { return lastInteractedGoGuid_; }
     auto& pendingGameObjectInteractGuidRef() { return pendingGameObjectInteractGuid_; }
 
@@ -4769,7 +4768,6 @@ public:
 private:
     std::vector<AuraSlot> playerAuras;
     std::vector<AuraSlot> targetAuras;
-    std::unordered_map<uint64_t, std::vector<AuraSlot>> unitAurasCache_; // per-unit aura cache
     uint64_t petGuid_ = 0;
     uint32_t petActionSlots_[10] = {};   // SMSG_PET_SPELLS action bar (10 slots)
     uint8_t  petCommand_ = 1;            // 0=stay,1=follow,2=attack,3=dismiss
