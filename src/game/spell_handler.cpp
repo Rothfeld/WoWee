@@ -1876,6 +1876,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     LOG_DEBUG("CMSG_CAST_SPELL: spellId=", spellId, " target=0x", std::hex, target, std::dec,
               " castCount=", static_cast<int>(castCount_), " packetSize=", packet.getSize());
     owner_.getSocket()->send(packet);
+    pendingCastSpellId_ = spellId;
     LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
 
     // Spell.dbc explicitly marks abilities that enable melee autoattack.
@@ -2858,6 +2859,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     bool ok = owner_.getPacketParsers() ? owner_.getPacketParsers()->parseCastFailed(packet, data)
                                     : CastFailedParser::parse(packet, data);
     if (!ok) return;
+    pendingCastSpellId_ = 0;
 
     if (spellclass::isFishingCast(data.spellId)) {
         const auto& movement = owner_.movementInfoRef();
@@ -2974,6 +2976,8 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
               " target=0x", std::hex, data.targetGuid, std::dec);
 
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
+    if (data.casterUnit == owner_.getPlayerGuid() && data.spellId == pendingCastSpellId_)
+        pendingCastSpellId_ = 0;
 
     // Track cast bar for any non-player caster
     if (data.casterUnit != owner_.getPlayerGuid() && data.castTime > 0 && !rangedWeaponAttack) {
@@ -3085,6 +3089,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
     if (data.casterUnit == owner_.getPlayerGuid()) {
         if (data.spellId == nextSwingSpellId_) nextSwingSpellId_ = 0;
+        if (data.spellId == pendingCastSpellId_) pendingCastSpellId_ = 0;
         owner_.loadSpellNameCache();
         spellclass::RestChannelKind restKind = spellclass::RestChannelKind::NONE;
         auto spellNameIt = owner_.spellNameCacheRef().find(data.spellId);
@@ -5129,6 +5134,7 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
                                                    castResultMiscArg, castResultMiscArg2)) {
         LOG_DEBUG("SMSG_CAST_RESULT: spellId=", castResultSpellId, " result=", static_cast<int>(castResult));
         if (castResult != 0) {
+            pendingCastSpellId_ = 0;
             if (spellclass::isFishingCast(castResultSpellId)) {
                 const auto& movement = owner_.movementInfoRef();
                 LOG_WARNING("Fishing cast failed: spell=", castResultSpellId,

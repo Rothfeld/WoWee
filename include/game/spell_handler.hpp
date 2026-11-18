@@ -124,9 +124,11 @@ public:
     [[nodiscard]] uint32_t getAutoRepeatSpellId() const { return autoRepeatSpellId_; }
     void clearAutoRepeat() { autoRepeatSpellId_ = 0; }
     [[nodiscard]] bool isGameObjectInteractionCasting() const;
-    // The cast or channel in progress, else the ability queued for the next swing.
+    // The cast or channel in progress, else a cast sent and not yet answered,
+    // else the ability queued for the next swing.
     [[nodiscard]] uint32_t getActiveActionSpellId() const {
         if (casting_) return currentCastSpellId_;
+        if (pendingCastSpellId_) return pendingCastSpellId_;
         return restorationActive_ ? restorationSpellId_ : nextSwingSpellId_;
     }
     [[nodiscard]] uint32_t getCurrentCastSpellId() const {
@@ -533,6 +535,11 @@ private:
     uint8_t autoRepeatCastCount_ = 0;
     // An on-next-swing ability between its SMSG_SPELL_START and the swing.
     uint32_t nextSwingSpellId_ = 0;
+    /// The spell of the last CMSG_CAST_SPELL until the server answers it
+    /// (SMSG_SPELL_START, SMSG_SPELL_GO, a cast failure). Native 2.4.3 marks
+    /// an instant Sinister Strike current from UNIT_SPELLCAST_SENT to
+    /// UNIT_SPELLCAST_SUCCEEDED, about 60 ms, not for its cooldown.
+    uint32_t pendingCastSpellId_ = 0;
     uint8_t nextSwingCastCount_ = 0;
     // What the action buttons were last told, so a cast or swing changing is
     // announced once whichever of the many cast paths changed it.
