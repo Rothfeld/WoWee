@@ -85,6 +85,11 @@ public:
     void fireChatEvent(const MessageChatData& msg);
     void toggleAfk(const std::string& message);
     void toggleDnd(const std::string& message);
+    /// PLAYER_FLAGS AFK (0x02) and DND (0x04) of the local player; prints the
+    /// original's away lines when `announce` (an update, not the create block).
+    void onAwayFlags(bool afk, bool dnd, bool announce);
+    /// CHAT_MSG_CHANNEL_NOTICE(_USER) for one SMSG_CHANNEL_NOTIFY.
+    void fireChannelNotice(const ChannelNotifyData& data, int number);
     void replyToLastWhisper(const std::string& message);
 
     // ---- Methods moved from GameHandler ----
@@ -176,9 +181,6 @@ private:
     std::string chatLogPath_;
     std::ofstream chatLogStream_;
 
-    // Track senders we've already auto-replied to (AFK/DND) this session
-    // to prevent infinite reply loops. Cleared when AFK/DND is toggled off.
-    std::unordered_set<std::string> afkAutoRepliedSenders_;
 };
 
 } // namespace game

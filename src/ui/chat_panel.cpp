@@ -191,23 +191,8 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler) {
         LOG_INFO("GM command: '", input, "' - sending as SAY to server");
         gameHandler.sendChatMessage(game::ChatType::SAY, input, "");
 
-        std::string dotCmd = input;
-        size_t sp = dotCmd.find(' ');
-        std::string cmdPart = (sp != std::string::npos)
-            ? dotCmd.substr(1, sp - 1) : dotCmd.substr(1);
-        for (char& c : cmdPart) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
-        std::string feedback;
-        for (const auto& entry : kGmCommands) {
-            if (entry.name == cmdPart) {
-                feedback = "Sent: " + input + "  (" + std::string(entry.help) + ")";
-                break;
-            }
-        }
-        if (feedback.empty())
-            feedback = "Sent: " + input
-                + "  (requires GM access - server console: account set gmlevel <user> 3 -1)";
-        gameHandler.addLocalChatMessage(chat_utils::makeSystemMessage(feedback));
+        // Nothing printed here: the realm answers the command itself, as it
+        // does the original client's.
         chatInputBuffer_[0] = '\0';
         return;
     }

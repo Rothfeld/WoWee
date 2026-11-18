@@ -321,24 +321,26 @@ void ChatHandler::sendChatMessage(ChatType type, const std::string& message, con
         return;
     }
 
-    // Auto Clear AFK, which the panel offers and nothing read: the flag was
-    // only ever cleared by typing /afk a second time, so a player who came
-    // back and started talking stayed away as far as everyone else could see,
-    // still auto-replying to whispers.
-    //
-    // Sending a message is the signal used here. It is not the only one WoW
-    // takes - moving clears it too - but it is the one that matters, because
-    // it is the one where the player is visibly present and being answered
-    // for by a machine.
-    if (owner_.afkStatusRef() &&
+    // Auto Clear AFK: speaking while away clears the flag first, as 2.4.3
+    // does ("/afk" then "/say hello" printed "You are no longer AFK." before
+    // the line, pair 6). The realm only clears it on request - an empty
+    // CHAT_MSG_AFK - and the line itself comes from PLAYER_FLAGS
+    // (onAwayFlags).
+    const bool away = type == ChatType::AFK || type == ChatType::DND;
+    if (!away && owner_.afkStatusRef() &&
         addons::storedCVarValue("autoClearAFK", "1") != "0") {
-        toggleAfk("");
+        sendChatMessage(ChatType::AFK, "", "");
     }
 
-    if (message.empty()) {
+    // An empty AFK or DND is the request to clear it, the way SlashCmdList
+    // CHAT_AFK sends a bare "/afk".
+    if (message.empty() && !away) {
         LOG_WARNING("Cannot send empty chat message");
         return;
     }
+    // The text the "You are now AFK: %s" line shows once the flag arrives.
+    if (type == ChatType::AFK) owner_.afkMessageRef() = message;
+    if (type == ChatType::DND) owner_.dndMessageRef() = message;
 
     // A corpse cannot speak in public. Build 8606 refuses say, yell and emote
     // with ERR_CHAT_WHILE_DEAD and sends nothing; whisper, party, guild and
@@ -690,16 +692,9 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
         if (!data.senderName.empty())
             owner_.lastWhisperSenderRef() = data.senderName;
 
-        if (!data.senderName.empty()) {
-            // Only auto-reply once per sender per AFK/DND session to prevent loops
-            if (owner_.afkStatusRef() && afkAutoRepliedSenders_.insert(data.senderName).second) {
-                std::string reply = owner_.afkMessageRef().empty() ? "Away from Keyboard" : owner_.afkMessageRef();
-                sendChatMessage(ChatType::WHISPER, "<AFK> " + reply, data.senderName);
-            } else if (owner_.dndStatusRef() && afkAutoRepliedSenders_.insert(data.senderName).second) {
-                std::string reply = owner_.dndMessageRef().empty() ? "Do Not Disturb" : owner_.dndMessageRef();
-                sendChatMessage(ChatType::WHISPER, "<DND> " + reply, data.senderName);
-            }
-        }
+        // No reply from here while away: the realm answers a whisper to an
+        // AFK or DND player itself (Player::Whisper sends autoReplyMsg back as
+        // CHAT_MSG_AFK/DND), so a client reply was a second, invented one.
     }
 
     // The Social panel's two filters, before anything shows this line: the
@@ -1283,51 +1278,44 @@ void ChatHandler::addSystemChatMessage(const std::string& message) {
 }
 
 void ChatHandler::toggleAfk(const std::string& message) {
-    owner_.afkStatusRef() = !owner_.afkStatusRef();
-    owner_.afkMessageRef() = message;
-
-    if (owner_.afkStatusRef()) {
-        if (message.empty()) {
-            addSystemChatMessage("You are now AFK.");
-        } else {
-            addSystemChatMessage("You are now AFK: " + message);
-        }
-        // If DND was active, turn it off
-        if (owner_.dndStatusRef()) {
-            owner_.dndStatusRef() = false;
-            owner_.dndMessageRef().clear();
-        }
-    } else {
-        addSystemChatMessage("You are no longer AFK.");
-        owner_.afkMessageRef().clear();
-        afkAutoRepliedSenders_.clear();
-    }
-
-    LOG_INFO("AFK status: ", owner_.afkStatusRef(), ", message: ", message);
+    sendChatMessage(ChatType::AFK, message, "");
 }
 
 void ChatHandler::toggleDnd(const std::string& message) {
-    owner_.dndStatusRef() = !owner_.dndStatusRef();
-    owner_.dndMessageRef() = message;
+    sendChatMessage(ChatType::DND, message, "");
+}
 
-    if (owner_.dndStatusRef()) {
-        if (message.empty()) {
-            addSystemChatMessage("You are now DND (Do Not Disturb).");
-        } else {
-            addSystemChatMessage("You are now DND: " + message);
-        }
-        // If AFK was active, turn it off
-        if (owner_.afkStatusRef()) {
-            owner_.afkStatusRef() = false;
-            owner_.afkMessageRef().clear();
-        }
-    } else {
-        addSystemChatMessage("You are no longer DND.");
-        owner_.dndMessageRef().clear();
-        afkAutoRepliedSenders_.clear();
+// The away lines follow PLAYER_FLAGS, as 2.4.3's do (pair 6, Edrikf):
+//   /afk          "You are now AFK: Away from Keyboard"   MARKED_AFK_MESSAGE
+//   /afk again    "You are no longer AFK."                CLEARED_AFK
+//   /dnd          "You are now DND: Do not Disturb."      MARKED_DND
+//   /dnd again    "You are no longer marked DND."         CLEARED_DND
+//   AFK -> /dnd   "You are no longer AFK." then "You are now DND: ..."
+//   DND -> /afk   "You are now AFK: ..." only - no CLEARED_DND
+//   /afk x while AFK with a message: the realm only replaces the reply text,
+//   the flags do not move and nothing is printed.
+// Without a message of its own the line names DEFAULT_AFK_MESSAGE or
+// DEFAULT_DND_MESSAGE, the text the realm answers whispers with.
+void ChatHandler::onAwayFlags(bool afk, bool dnd, bool announce) {
+    const bool wasAfk = owner_.afkStatusRef();
+    const bool wasDnd = owner_.dndStatusRef();
+    owner_.afkStatusRef() = afk;
+    owner_.dndStatusRef() = dnd;
+    if (!announce) return;
+    if (afk && !wasAfk) {
+        const std::string& text = owner_.afkMessageRef();
+        owner_.systemGlobal("MARKED_AFK_MESSAGE",
+                            {text.empty() ? owner_.globalString("DEFAULT_AFK_MESSAGE") : text});
+    } else if (!afk && wasAfk) {
+        owner_.systemGlobal("CLEARED_AFK");
     }
-
-    LOG_INFO("DND status: ", owner_.dndStatusRef(), ", message: ", message);
+    if (dnd && !wasDnd) {
+        const std::string& text = owner_.dndMessageRef();
+        owner_.systemGlobal("MARKED_DND",
+                            {text.empty() ? owner_.globalString("DEFAULT_DND_MESSAGE") : text});
+    } else if (!dnd && wasDnd && !afk) {
+        owner_.systemGlobal("CLEARED_DND");
+    }
 }
 
 void ChatHandler::replyToLastWhisper(const std::string& message) {

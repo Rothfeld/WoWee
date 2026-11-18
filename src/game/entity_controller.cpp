@@ -1626,6 +1626,9 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
               owner_.isRestingRef() = nowResting;
               pendingEvents_.emit("PLAYER_UPDATE_RESTING", {});
           }
+          // Away and busy: the original prints its AFK/DND lines when these
+          // move, not when the command is typed.
+          owner_.onAwayFlags((val & 0x02u) != 0, (val & 0x04u) != 0, !isCreate);
           // The helm and cloak switches, which the realm keeps and this client
           // never read back. Both are set by CMSG_SHOWING_HELM/CLOAK and come
           // home in PLAYER_FLAGS, so the realm had them right the whole time -

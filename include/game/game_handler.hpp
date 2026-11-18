@@ -948,6 +948,8 @@ public:
     // AFK/DND status
     void toggleAfk(const std::string& message = "");
     void toggleDnd(const std::string& message = "");
+    /// Local PLAYER_FLAGS away bits; see ChatHandler::onAwayFlags.
+    void onAwayFlags(bool afk, bool dnd, bool announce);
     bool isAfk() const { return afkStatus_; }
     bool isDnd() const { return dndStatus_; }
     void replyToLastWhisper(const std::string& message);

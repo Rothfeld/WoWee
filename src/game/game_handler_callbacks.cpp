@@ -1180,7 +1180,10 @@ void GameHandler::handleNotification(network::Packet& packet) {
     std::string message = packet.readString();
     if (!message.empty()) {
         LOG_INFO("Server notification: ", message);
-        addSystemChatMessage(message);
+        // The red line above the middle of the screen and nothing in chat:
+        // 2.4.3 shows ".gm on"'s "GM mode is ON" as UI_ERROR_MESSAGE only
+        // (pair 6 event spy).
+        addUIError(message);
     }
 }
 
@@ -1958,6 +1961,10 @@ void GameHandler::forfeitDuel() {
 
 void GameHandler::toggleAfk(const std::string& message) {
     if (chatHandler_) chatHandler_->toggleAfk(message);
+}
+
+void GameHandler::onAwayFlags(bool afk, bool dnd, bool announce) {
+    if (chatHandler_) chatHandler_->onAwayFlags(afk, dnd, announce);
 }
 
 void GameHandler::toggleDnd(const std::string& message) {
