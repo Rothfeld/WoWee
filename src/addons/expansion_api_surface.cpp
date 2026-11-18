@@ -168,10 +168,18 @@ constexpr const char* kFlagMethodsTbc[] = {
     "IsProtected", "IsResizable", "IsShown", "IsToplevel", "IsUserPlaced", "IsVisible",
 };
 
+/// Widget methods that answer nil on 2.4.3 where this client answers a
+/// value (pair 11: GameTooltip:SetUnit("player") is nil, so is SetHyperlink). UnitFrame_UpdateTooltip keeps itself as the owner's UpdateTooltip
+/// only `if GameTooltip:SetUnit(...)`, so on 2.4.3 a unit frame's tooltip is
+/// built once; answering true re-ran it every 0.2 s and wiped what the
+/// caller added after it - the raid panel's drag hint vanished a frame after
+/// it appeared.
+constexpr const char* kNilMethodsTbc[] = {"SetUnit", "SetHyperlink"};
+
 constexpr const char* kInsecureRoots = "wowee_insecure_roots";
 constexpr const char* kInsecureChunks = "wowee_insecure_chunks";
 
-enum ShapeBits : int { kFlags = 1, kProtect = 2 };
+enum ShapeBits : int { kFlags = 1, kProtect = 2, kNil = 4 };
 
 /// Who made the running code insecure, innermost first: the AddOn whose file
 /// defined a function on the stack, or a /script chunk. Empty when every Lua
@@ -258,6 +266,11 @@ int shapedCall(lua_State* L) {
     lua_insert(L, 1);
     lua_call(L, nargs, LUA_MULTRET);
     int n = lua_gettop(L);
+    if (bits & kNil) {
+        lua_settop(L, 0);
+        lua_pushnil(L);
+        return 1;
+    }
     if (most >= 0 && n > most) { lua_settop(L, most); n = most; }
     if (bits & kFlags) {
         for (int i = 1; i <= n; ++i) {
@@ -337,6 +350,19 @@ void applyApiConventions(lua_State* L, std::string_view expansionId) {
                 continue;
             }
             lua_pushinteger(L, kFlags);
+            lua_pushinteger(L, -1);
+            lua_pushinteger(L, 0);
+            lua_pushcclosure(L, shapedCall, 4);
+            lua_setfield(L, -2, name);
+        }
+        for (const char* name : kNilMethodsTbc) {
+            lua_pushstring(L, name);
+            lua_rawget(L, -2);
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                continue;
+            }
+            lua_pushinteger(L, kNil);
             lua_pushinteger(L, -1);
             lua_pushinteger(L, 0);
             lua_pushcclosure(L, shapedCall, 4);

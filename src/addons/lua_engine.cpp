@@ -3196,7 +3196,9 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     if (isPlayer) {
         if (const uint32_t guildId = gh->getEntityGuildId(guid); guildId != 0) {
             const std::string& guildName = gh->lookupGuildName(guildId);
-            if (!guildName.empty()) addLine("<" + guildName + ">", 0.25f, 1.0f, 0.25f);
+            // The bare name in white: "Social Audit" under Edrick on 2.4.3,
+            // world and raid-frame tooltips alike (pair 11, a guildmate).
+            if (!guildName.empty()) addLine(guildName, 1.0f, 1.0f, 1.0f);
         }
     } else if (const auto title = unit ? game::summonTitle(gh->getCreatureType(unit->getEntry()),
                                                          game::unitCreatedByGuid(*entity),
