@@ -58,9 +58,6 @@ struct M2ModelGPU {
         VkTexture* texture = nullptr;  // from cache, NOT owned
         VkTexture* texture2 = nullptr;
         int16_t textureUnit2 = 0;
-        // Texture stage modes from the model's combiner combos at the batch's
-        // shader id (global flag 0x08); 1/1 (modulate) without combos.
-        int32_t combiner0 = 1, combiner1 = 1;
         uint16_t textureAnimIndex2 = 0xFFFF;
         VkDescriptorSet materialSet = VK_NULL_HANDLE;  // set 1
         ::VkBuffer materialUBO = VK_NULL_HANDLE;
@@ -432,8 +429,6 @@ struct M2MaterialUBO {
     /// upper edge is not where the fire stops.
     int32_t fireCard;
     int32_t textureCount;
-    int32_t combiner0;
-    int32_t combiner1;
 };
 
 // M2 params UBO - matches M2Params in m2.vert.glsl (set 1, binding 1)

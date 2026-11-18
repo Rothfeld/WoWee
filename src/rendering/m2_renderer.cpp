@@ -2202,15 +2202,6 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                     bgpu.textureUnit2 = model.textureCoordLookup[batch.textureUnit + 1];
                 }
             }
-            // Stage modes, as character M2s take them (character.frag
-            // combineStages): BE_DemonEnergyCollector01's crystals (shader 2,
-            // combos 1/3) add the environment map to the green crystal; both
-            // stages modulating drew them nearly black.
-            if (!model.textureCombinerCombos.empty() && !(batch.shader & 0x8000)) {
-                assert(size_t(batch.shader) + batch.textureCount <= model.textureCombinerCombos.size());
-                bgpu.combiner0 = model.textureCombinerCombos[batch.shader];
-                if (batch.textureCount == 2) bgpu.combiner1 = model.textureCombinerCombos[batch.shader + 1];
-            }
 
             // Start at full opacity; hide only if texture failed to load.
             bgpu.batchOpacity = (texFailed && !groundDetailModel) ? 0.0f : 1.0f;
@@ -2464,8 +2455,6 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             mat.specularIntensity = 0.5f;
             mat.emissiveBoost = bgpu.preserveGlowMesh ? 2.4f : 1.0f;
             mat.textureCount = bgpu.texture2 ? 2 : 1;
-            mat.combiner0 = bgpu.combiner0;
-            mat.combiner1 = bgpu.combiner1;
             memcpy(matAllocInfo.pMappedData, &mat, sizeof(mat));
             bgpu.materialUBOMapped = matAllocInfo.pMappedData;
 

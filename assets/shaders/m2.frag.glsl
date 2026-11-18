@@ -44,10 +44,6 @@ layout(set = 1, binding = 2) uniform M2Material {
     int volumetricBeam;
     int fireCard;
     int textureCount;
-    // Texture stage combiners (M2 combiner combos: 0 Opaque, 1 Mod, 2 Decal,
-    // 3 Add, 4 Mod2x), as character.frag combineStages.
-    int combiner0;
-    int combiner1;
 };
 
 layout(set = 0, binding = 1) uniform sampler2DShadow uShadowMap;
@@ -178,19 +174,7 @@ vec3 normalizedNormal(vec3 value) {
 
 void main() {
     vec4 texColor = hasTexture != 0 ? texture(uTexture, TexCoord) : vec4(1.0);
-    if (textureCount == 2) {
-        vec4 t1 = texture(uTexture2, TexCoord2);
-        if (combiner1 == 0) {
-            texColor.rgb *= t1.rgb;
-        } else if (combiner1 == 3) {
-            texColor.rgb += t1.rgb * t1.a;
-        } else if (combiner1 == 4) {
-            texColor.rgb *= t1.rgb * 2.0;
-            texColor.a *= t1.a * 2.0;
-        } else {
-            texColor *= t1;
-        }
-    }
+    if (textureCount == 2) texColor *= texture(uTexture2, TexCoord2);
     // The batch's authored colour. A glow card is painted white and coloured
     // here - Orgrimmar's bonfire carries (1.0, 0.329, 0.0) - so without it
     // every fire in the world burns white.
