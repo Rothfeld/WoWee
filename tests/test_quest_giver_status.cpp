@@ -167,7 +167,9 @@ TEST_CASE("the quest cursor follows the status, not the mark", "[questgiver][cur
     CHECK(std::string(questGiverCursor(QuestGiverStatus::AVAILABLE)) == "Quest");
     // A grey ? over the giver, and still the Quest cursor.
     CHECK(std::string(questGiverCursor(QuestGiverStatus::INCOMPLETE)) == "Quest");
+    CHECK(std::string(questGiverCursor(QuestGiverStatus::AVAILABLE_REP)) == "Quest");
     CHECK(std::string(questGiverCursor(QuestGiverStatus::REWARD)) == "QuestTurnIn");
+    CHECK(std::string(questGiverCursor(QuestGiverStatus::REWARD_REP)) == "QuestRepeatable");
 }
 
 // GetQuestGreenRange as build 8606 answers it (native /script, pair 16), and

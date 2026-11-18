@@ -101,7 +101,13 @@ inline QuestGiverMarker questGiverMarker(QuestGiverStatus status) {
 ///   - available, also out-levelled (CHAT: no mark at level 70 for level
 ///     45 quests): Quest;
 ///   - taken and not finished (grey ?): Quest as well;
-///   - ready to hand in: QuestTurnIn.
+///   - a daily on offer (AVAILABLE_REP, Vindicator Xayann 24965): Quest;
+///   - ready to hand in: QuestTurnIn, also a daily (Sky Sergeant Vanderlip
+///     23120);
+///   - a repeatable ready to hand in again (REWARD_REP, Arygos 15380):
+///     QuestRepeatable.
+/// REWARD2, LOW_LEVEL_AVAILABLE_REP and LOW_LEVEL_REWARD_REP are not in the
+/// measurement; they follow their siblings.
 inline const char* questGiverCursor(QuestGiverStatus status) {
     switch (status) {
         case QuestGiverStatus::NONE:
@@ -109,9 +115,10 @@ inline const char* questGiverCursor(QuestGiverStatus status) {
             return nullptr;
         case QuestGiverStatus::REWARD:
         case QuestGiverStatus::REWARD2:
+            return "QuestTurnIn";
         case QuestGiverStatus::REWARD_REP:
         case QuestGiverStatus::LOW_LEVEL_REWARD_REP:
-            return "QuestTurnIn";
+            return "QuestRepeatable";
         case QuestGiverStatus::CHAT:
         case QuestGiverStatus::LOW_LEVEL_AVAILABLE:
         case QuestGiverStatus::LOW_LEVEL_AVAILABLE_REP:
