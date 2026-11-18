@@ -3389,8 +3389,22 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             if (data.destination) {
                 if (auto* renderer = owner_.services().renderer) {
                     if (auto* svs = renderer->getSpellVisualSystem()) {
-                        svs->playImpactAreaKit(visualId, core::coords::canonicalToRender(
-                            core::coords::serverToCanonical(*data.destination)));
+                        const glm::vec3 destination = core::coords::canonicalToRender(
+                            core::coords::serverToCanonical(*data.destination));
+                        // A spell aimed at a ground point with a missile flies
+                        // it there and plays the area impact on landing:
+                        // Supremus' volcanoes (Volcanic Geyser 40118, visual
+                        // 9466, Fireball_Blue_Missile_High, speed 10) spew blue
+                        // fireballs to random points in the original. Without
+                        // the missile only the landing puff was drawn.
+                        const float speed = resolveSpellMissileSpeed(data.spellId);
+                        glm::vec3 start;
+                        const bool flies = data.hitTargets.empty() && svs->hasSpellMissile(visualId) &&
+                            std::isfinite(speed) && speed >= 1.0f && speed <= 200.0f &&
+                            resolveUnitPosition(data.casterUnit, start) &&
+                            svs->playSpellMissile(visualId, start, destination, speed, 0.0f,
+                                                  /*impactAtEnd=*/false, /*areaImpactAtEnd=*/true);
+                        if (!flies) svs->playImpactAreaKit(visualId, destination);
                     }
                 }
             }

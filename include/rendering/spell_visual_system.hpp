@@ -140,8 +140,10 @@ public:
     // at or past the landing time draws no flight. With impactAtEnd the impact
     // kit plays at the landing instead of when the server reports the hit.
     // False when nothing was scheduled.
+    // areaImpactAtEnd: a missile to a ground point plays the visual's
+    // ImpactAreaKit where it lands instead of the impact kit.
     bool playSpellMissile(uint32_t visualId, const glm::vec3& start, const glm::vec3& end,
-                          float speed, float launchDelay, bool impactAtEnd);
+                          float speed, float launchDelay, bool impactAtEnd, bool areaImpactAtEnd = false);
 
     // Launch a physical weapon projectile (arrow, bullet, or thrown item)
     // without invoking the spell visual pipeline.
@@ -202,6 +204,7 @@ private:
         float duration = 0.0f;       // landing, seconds after scheduling
         bool impactAtEnd = false;
         float scale = 1.0f;          // SpellVisualEffectName.Scale of the missile model
+        bool areaImpactAtEnd = false;
     };
 
     void loadSpellVisualDbc();

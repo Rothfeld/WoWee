@@ -1036,7 +1036,7 @@ std::optional<SpellVisualSystem::MissileAttachments> SpellVisualSystem::missileA
 
 bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& start,
                                          const glm::vec3& end, float speed, float launchDelay,
-                                         bool impactAtEnd) {
+                                         bool impactAtEnd, bool areaImpactAtEnd) {
     if (!m2Renderer_ || !hasSpellMissile(visualId)) return false;
     if (!cachedAssetManager_) return false;
     if (!std::isfinite(speed) || speed <= 0.0f) return false;
@@ -1057,7 +1057,8 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     const float duration = std::clamp(distance / speed, 0.05f, SPELL_MISSILE_MAX_DURATION);
     spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
                               .end = end, .elapsed = 0.0f, .launchAt = launchDelay, .duration = duration,
-                              .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId)});
+                              .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId),
+                              .areaImpactAtEnd = areaImpactAtEnd});
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
              " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay, "s");
     return true;
@@ -1205,11 +1206,13 @@ void SpellVisualSystem::update(float deltaTime) {
     // Collected first: the impact spawns into activeSpellVisuals_, and a
     // missile's arrival is the moment its impact kit belongs to.
     std::vector<std::pair<uint32_t, glm::vec3>> arrivals;
+    std::vector<std::pair<uint32_t, glm::vec3>> areaArrivals;
     for (auto it = spellMissiles_.begin(); it != spellMissiles_.end(); ) {
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
             if (it->instanceId) m2Renderer_->removeInstance(it->instanceId);
             if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
+            if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
             it = spellMissiles_.erase(it);
             continue;
         }
@@ -1222,6 +1225,7 @@ void SpellVisualSystem::update(float deltaTime) {
             if (!it->instanceId) {
                 LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);
                 if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
+            if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
                 it = spellMissiles_.erase(it);
                 continue;
             }
@@ -1232,6 +1236,8 @@ void SpellVisualSystem::update(float deltaTime) {
     }
     for (const auto& [visualId, pos] : arrivals)
         playSpellVisual(visualId, pos, /*useImpactKit=*/true);
+    for (const auto& [visualId, pos] : areaArrivals)
+        playImpactAreaKit(visualId, pos);
 
     // Get character bone tracking context (once per frame)
     CharacterRenderer* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
