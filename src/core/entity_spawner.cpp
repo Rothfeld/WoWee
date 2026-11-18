@@ -2390,6 +2390,7 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
         LOG_WARNING("Failed to create creature instance for guid 0x", std::hex, guid, std::dec);
         return;
     }
+    LOG_DEBUG("Creature instance ", instanceId, " for guid 0x", std::hex, guid, std::dec, " display ", displayId);
 
     // CreatureDisplayInfoExtra identifies the character-style NPCs whose
     // character geosets and composite textures still need the legacy rules.

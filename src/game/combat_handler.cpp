@@ -728,6 +728,8 @@ constexpr uint32_t VICTIMSTATE_DODGE = 2, VICTIMSTATE_PARRY = 3, VICTIMSTATE_BLO
 void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     AttackerStateUpdateData data;
     if (!owner_.getPacketParsers()->parseAttackerStateUpdate(packet, data)) return;
+    LOG_DEBUG("Melee swing attacker=0x", std::hex, data.attackerGuid, " victim=0x", data.targetGuid,
+              " hitInfo=0x", data.hitInfo, std::dec, " victimState=", data.victimState);
 
     bool isPlayerAttacker = (data.attackerGuid == owner_.getPlayerGuid());
     bool isPlayerTarget = (data.targetGuid == owner_.getPlayerGuid());
@@ -746,8 +748,18 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0);
         }
     }
+    // A swing puts its attacker in melee, as SMSG_ATTACKSTART does. The
+    // server sends ATTACKSTART once, when the attack begins; a unit already
+    // fighting when it came into view has only its swings. Build 8606 holds
+    // such a unit in Stand until its first swing and in its ready stance
+    // from then on (_experiments/20261118T091949Z.creature_swing_anim, reenter).
+    if (auto attacker = owner_.getEntityManager().getEntity(data.attackerGuid);
+        attacker && attacker->isUnit() && data.targetGuid != 0) {
+        std::static_pointer_cast<Unit>(attacker)->setMeleeVictimGuid(data.targetGuid);
+    }
+    constexpr uint32_t HITINFO_LEFTSWING = 0x4;  // CMaNGOS Unit.h HitInfo
     if (!isPlayerAttacker && owner_.npcSwingCallbackRef()) {
-        owner_.npcSwingCallbackRef()(data.attackerGuid);
+        owner_.npcSwingCallbackRef()(data.attackerGuid, (data.hitInfo & HITINFO_LEFTSWING) != 0);
     }
     // Observers must see the same victim reaction as the combatants. Miss,
     // evade and immunity do not wound; dodge/parry/block are explicit outcomes.

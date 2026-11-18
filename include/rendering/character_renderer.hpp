@@ -102,6 +102,10 @@ public:
     // own completion and select the next animation without an intermediate pose.
     void playAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true,
                        uint32_t oneShotReturnAnim = 0, bool holdFinalPose = false);
+    /// The one-shot just started plays within `maxMs`: an authored sequence
+    /// longer than that runs faster to end in time, a shorter one keeps its
+    /// own speed. Lasts until the next playAnimation.
+    void fitOneShotDuration(uint32_t instanceId, float maxMs);
     /// A running one-shot that would resume `from` resumes `to` instead.
     void retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to);
     /// Play other animations on each arm alone, until the next playAnimation.
@@ -376,6 +380,7 @@ private:
         float blendElapsed = 0.0f;
         float blendDuration = 0.0f;
         float playbackRate = 1.0f;
+        float oneShotMaxDurationMs = 0.0f; // fitOneShotDuration; 0 = authored speed
         // CreatureModelData row this instance is drawn from; it names the
         // footprint mask and size. 0 = not a unit model, no prints.
         uint32_t creatureModelDataId = 0;

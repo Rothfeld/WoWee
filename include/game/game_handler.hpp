@@ -1472,8 +1472,9 @@ public:
         std::function<void(uint64_t guid, uint32_t moveFlags, uint32_t mask)>;
     void setUnitMoveFlagsCallback(UnitMoveFlagsCallback cb) { unitMoveFlagsCallback_ = std::move(cb); }
 
-    // NPC swing callback (plays attack animation on NPC)
-    using NpcSwingCallback = std::function<void(uint64_t guid)>;
+    // NPC swing callback (plays attack animation on NPC). offHand: the swing
+    // carried HITINFO_LEFTSWING (CMaNGOS OFF_ATTACK).
+    using NpcSwingCallback = std::function<void(uint64_t guid, bool offHand)>;
     void setNpcSwingCallback(NpcSwingCallback cb) { npcSwingCallback_ = std::move(cb); }
 
     // Hit reaction callback - triggers victim animation (dodge, block, wound, crit wound)

@@ -2096,6 +2096,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     instance.animationTime = 0.0f;
     instance.animationLoop = loop;
     instance.sequenceRepeatsRemaining = 0;
+    instance.oneShotMaxDurationMs = 0.0f;
 
     // Prefer variationIndex==0 (primary animation); fall back to first match
     int firstMatch = -1;
@@ -2223,6 +2224,13 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             instance.blendElapsed = 0.0f;
         }
     }
+    static const bool kUnitAnimationTrace = core::envFlagEnabled("WOWEE_UNIT_ANIMATION_TRACE");
+    if (kUnitAnimationTrace) {
+        LOG_INFO("Unit animation instance=", instanceId, " request=", animationId,
+                 " id=", instance.currentAnimationId, " sequence=", instance.currentSequenceIndex,
+                 " loop=", instance.animationLoop, " return=", instance.oneShotReturnAnim,
+                 " from=", previousId);
+    }
     if (core::envFlagEnabled("WOWEE_SWIM_ANIMATION_TRACE") &&
         ((previousId >= anim::SWIM_IDLE && previousId <= anim::SWIM_BACKWARDS) ||
          (animationId >= anim::SWIM_IDLE && animationId <= anim::SWIM_BACKWARDS))) {
@@ -2231,6 +2239,13 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                  " blendMs=", instance.blendSequenceIndex >= 0 ? instance.blendDuration : 0.0f);
     }
 
+}
+
+void CharacterRenderer::fitOneShotDuration(uint32_t instanceId, float maxMs) {
+    assert(maxMs > 0.0f);
+    auto& instance = instances.at(instanceId);
+    assert(!instance.animationLoop);
+    instance.oneShotMaxDurationMs = maxMs;
 }
 
 void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to) {
@@ -2355,6 +2370,9 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                 assert(inst.scale > 0.0f);
                 playbackRate = inst.locomotionSpeed / (std::abs(seq.movingSpeed) * inst.scale);
             }
+            if (!inst.animationLoop && inst.oneShotMaxDurationMs > 0.0f &&
+                static_cast<float>(seq.duration) > inst.oneShotMaxDurationMs)
+                playbackRate = static_cast<float>(seq.duration) / inst.oneShotMaxDurationMs;
             inst.playbackRate = playbackRate;
             inst.animationTime += deltaTime * 1000.0f * playbackRate;
             if (inst.blendSequenceIndex >= 0) {

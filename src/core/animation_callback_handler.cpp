@@ -268,8 +268,13 @@ void AnimationCallbackHandler::setupCallbacks() {
 
     // NPC/player swing: the attack of the unit's main-hand weapon class
     // (EntitySpawner::meleeWeaponAnimations), resuming the unit's idle - its
-    // ready stance while it is meleeing.
-    gameHandler_.setNpcSwingCallback([this](uint64_t guid) {
+    // ready stance while it is meleeing. Build 8606 starts the swing when the
+    // packet arrives and finishes it within the hand's attack time
+    // (UNIT_FIELD_BASEATTACKTIME, off hand +1): a human-model creature with
+    // 1000 ms AttackUnarmed punched and recovered inside 500 ms swings, and at
+    // 3000 ms kept the authored speed and then held its ready stance
+    // (_experiments/20261118T091949Z.creature_swing_anim, s500 / h3000c).
+    gameHandler_.setNpcSwingCallback([this](uint64_t guid, bool offHand) {
         auto* cr = renderer_.getCharacterRenderer();
         if (!cr) return;
         uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
@@ -279,6 +284,11 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (!unit) return;
         const uint32_t attack = entitySpawner_.meleeWeaponAnimations(*unit).attack;
         cr->playAnimation(instanceId, attack, false, entitySpawner_.remoteResumeAnimation(guid));
+        const uint16_t attackTimeField = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
+        assert(attackTimeField != 0xFFFF);
+        const uint32_t attackTimeMs = unit->getField(attackTimeField + (offHand ? 1 : 0));
+        if (attackTimeMs > 0) cr->fitOneShotDuration(instanceId, static_cast<float>(attackTimeMs));
+        else LOG_WARNING("Swing of 0x", std::hex, guid, std::dec, " without an attack time; authored speed");
     });
 
     // Victim reaction from SMSG_ATTACKERSTATEUPDATE, one rule for the local
@@ -461,7 +471,7 @@ void AnimationCallbackHandler::setupCallbacks() {
                 // resume it instead (Westfall woodworkers hammer through these).
                 if (isState) activeEmotes.erase(guid);
                 auto retained = activeEmotes.find(guid);
-                uint32_t resumeAnim = rendering::anim::STAND;
+                uint32_t resumeAnim = entitySpawner_.remoteResumeAnimation(guid);
                 if (retained != activeEmotes.end() &&
                     cr->hasAnimation(emoteInstanceId, retained->second)) {
                     resumeAnim = retained->second;
@@ -474,9 +484,10 @@ void AnimationCallbackHandler::setupCallbacks() {
                 activeEmotes[guid] = emoteAnim;
                 cr->playAnimation(emoteInstanceId, emoteAnim, true);
             } else {
-                // One-shot: play once, then resume the retained state loop (or Stand).
+                // One-shot: play once, then resume the retained state loop, else
+                // the unit's idle - its ready stance while it is meleeing.
                 auto retained = activeEmotes.find(guid);
-                uint32_t resumeAnim = 0;
+                uint32_t resumeAnim = entitySpawner_.remoteResumeAnimation(guid);
                 if (retained != activeEmotes.end() &&
                     cr->hasAnimation(emoteInstanceId, retained->second)) {
                     resumeAnim = retained->second;

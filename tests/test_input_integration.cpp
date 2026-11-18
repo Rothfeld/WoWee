@@ -1892,7 +1892,7 @@ TEST_CASE("Observed TBC melee dispatches visuals without local combat UI", "[rem
     using HR = wowee::game::GameHandler::HitReaction;
     std::vector<uint64_t> swings;
     std::vector<std::pair<uint64_t, HR>> reactions;
-    handler.setNpcSwingCallback([&](uint64_t guid) { swings.push_back(guid); });
+    handler.setNpcSwingCallback([&](uint64_t guid, bool) { swings.push_back(guid); });
     handler.setHitReactionCallback([&](uint64_t, uint64_t guid, HR reaction) { reactions.emplace_back(guid, reaction); });
     // CMaNGOS TBC SendAttackStateUpdate: packed participants, one damage
     // component, victim state, unknown, spell ID, blocked amount.
@@ -1914,6 +1914,31 @@ TEST_CASE("Observed TBC melee dispatches visuals without local combat UI", "[rem
     CHECK(reactions[3] == std::pair<uint64_t, HR>{4, HR::BLOCK});
     CHECK(handler.getCombatText().empty());
     CHECK(handler.getTargetGuid() == 0);
+}
+
+TEST_CASE("A creature swing holds its melee stance without SMSG_ATTACKSTART", "[remote-combat]") {
+    // CMaNGOS sends ATTACKSTART once, when the attack begins. A creature
+    // already fighting when it came into view has only its swings; build 8606
+    // holds its ready stance from the first one. The off-hand swing is flagged.
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto creature = std::make_shared<wowee::game::Unit>(3);
+    handler.getEntityManager().addEntity(3, creature);
+    std::vector<bool> offHands;
+    handler.setNpcSwingCallback([&](uint64_t, bool offHand) { offHands.push_back(offHand); });
+    REQUIRE(creature->getMeleeVictimGuid() == 0);
+    for (uint32_t hitInfo : {0x2u, 0x4u}) {
+        wowee::network::Packet packet(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_ATTACKERSTATEUPDATE));
+        packet.writeUInt32(hitInfo);
+        packet.writePackedGuid(3); packet.writePackedGuid(4);
+        packet.writeUInt32(7); packet.writeUInt8(1);
+        packet.writeUInt32(1); packet.writeFloat(7); packet.writeUInt32(7);
+        packet.writeUInt32(0); packet.writeUInt32(0);
+        packet.writeUInt32(1); packet.writeUInt32(0); packet.writeUInt32(0); packet.writeUInt32(0);
+        session.receive(packet);
+    }
+    CHECK(creature->getMeleeVictimGuid() == 4);
+    CHECK(offHands == std::vector<bool>{false, true});
 }
 
 TEST_CASE("Attack start preserves both participants movement facing", "[remote-facing]") {
