@@ -53,11 +53,17 @@ TEST_CASE("A zero TexCoordScale beam stands still", "[chain]") {
     CHECK(repeats(20.0f, 0.0f, 1.5f) == Catch::Approx(1.5f));
 }
 
-TEST_CASE("Combo names further rows by its entries' first byte", "[chain]") {
+TEST_CASE("Combo names further rows, with ID bits 7 and 8 in the entry's last byte", "[chain]") {
     // Chain 215 (Sunshatter, Black Temple door channel).
-    const std::string combo("S\x01\x01\x13Q\x01\x01\x03Q\x01\x01\x13Q\x01\x01\x13Q\x01\x01\x13"
-                            "Y\x01\x01\x03Y\x01\x01\x03Y\x01\x01\x03", 32);
-    CHECK(chainComboStrands(combo) == std::vector<uint32_t>{83, 81, 81, 81, 81, 89, 89, 89});
+    const std::string sunshatter("S\x01\x01\x13Q\x01\x01\x03Q\x01\x01\x13Q\x01\x01\x13Q\x01\x01\x13"
+                                 "Y\x01\x01\x03Y\x01\x01\x03Y\x01\x01\x03", 32);
+    CHECK(chainComboStrands(sunshatter) == std::vector<uint32_t>{211, 209, 209, 209, 209, 217, 217, 217});
+    // Chain 237 (Blades of Azzinoth's Tear of Azzinoth Summon Channel).
+    CHECK(chainComboStrands(std::string("o\x01\x01\x03o\x01\x01\x13", 8)) == std::vector<uint32_t>{239, 239});
+    // Chain 302: bit 8.
+    CHECK(chainComboStrands(std::string("-\x01\x011", 4)) == std::vector<uint32_t>{301});
+    // Chain 48: below 128.
+    CHECK(chainComboStrands(std::string("1\x01\x01\x01", 4)) == std::vector<uint32_t>{49});
     CHECK(chainComboStrands("").empty());
 }
 

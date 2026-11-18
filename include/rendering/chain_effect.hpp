@@ -29,16 +29,24 @@ inline float chainTexCoord(float s, float length, float texCoordScale, float tex
     return mirror * textureLength * (s / length - texCoordScale * t);
 }
 
-/// The extra strands a row's Combo string names: 4-byte entries whose first
-/// byte is another SpellChainEffects ID (the other three bytes are not
-/// interpreted). Sunshatter 45215 / the Black Temple door channel 41269
-/// (chain 215, combo "S..." "Q..." x4 "Y..." x3) natively draws thin red
-/// strands (81, WhiteBeam 255,0,0, width 0.15) and a blue lightning strand
-/// (83, DrainManaLightning 0,0,255) beside its green-yellow bolt; 89 has no row.
+/// The further rows a row's Combo string names, drawn whole between the
+/// same ends. Each entry is 4 bytes: ID bits 0-6 in the first, ID bit 7 as
+/// 0x02 and ID bit 8 as 0x20 of the fourth; bytes 2-3 are always 0x01 and
+/// the fourth's 0x10 is not interpreted. Read so, 214 of the 245 TBC entries
+/// name rows that exist, nearly all just after their parent (48 -> 49,
+/// 215 -> 209/211/217, 237 -> 239, 302 -> 301); the rest name IDs the
+/// file lacks (52 -> 53). Native Tear of Azzinoth Summon Channel 39857 (237:
+/// "o..\x03", "o..\x13", 239 twice) draws three green waves; Sunshatter
+/// 45215 (215) a blue bolt (209), a broad purple-white wave (211) and thin
+/// purple bolts (217) beside its green one.
 inline std::vector<uint32_t> chainComboStrands(std::string_view combo) {
     assert(combo.size() % 4 == 0);
     std::vector<uint32_t> ids;
-    for (size_t i = 0; i < combo.size(); i += 4) ids.push_back(static_cast<uint8_t>(combo[i]));
+    for (size_t i = 0; i < combo.size(); i += 4) {
+        const auto low = static_cast<uint8_t>(combo[i]);
+        const auto high = static_cast<uint8_t>(combo[i + 3]);
+        ids.push_back(low | ((high & 0x02u) << 6) | ((high & 0x20u) << 3));
+    }
     return ids;
 }
 

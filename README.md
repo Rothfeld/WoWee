@@ -1566,20 +1566,29 @@ positive (ManaBeam -2: 2 repeats, 4.0 Hz at 8 yd, 28 yd and at Hydross;
 WhiteBeam 1.66: 2 repeats, 3.33 Hz). Interior vertices stray up to NoiseScale x
 length across the beam, redrawn every MinDurBetweenJoints when that is set.
 The beam bows ArcHeight yards at its middle (half a sine), in the plane of
-Min/MaxArcAngle plus spin. Combo is 4-byte entries whose first byte is another
-row drawn along the same path with its own look: Sunshatter 45215 / the Black
-Temple door channel 41269 (chain 215) adds thin red 81 strands and a blue 83
-bolt to its green one. Blend 2 is drawn additive (81's WhiteBeam.blp has no
-alpha; native shows no dark border). Gotcha: `.cast 41269` (script target
+Min/MaxArcAngle plus spin. Combo is 4-byte entries naming further rows, ID
+bits 0-6 in the first byte, bit 7 as 0x02 and bit 8 as 0x20 of the fourth
+(214 of 245 TBC entries then name existing rows, nearly all just after their
+parent); each named row is drawn whole, with its own shape and look, between
+the same ends. Tear of Azzinoth Summon Channel 39857 (237 -> 239 twice): three
+interweaving green waves, as native. Sunshatter 45215 / the Black Temple door
+channel 41269 (215 -> 211, 209 x4, 217 x3): green bolt, blue bolt, broad
+pink-white wave and thin purple bolts, all seen natively; native's come and go
+(pulse), here they are always on. Gotcha: `.cast 41269` (script target
 23412) on a tempspawned trigger outside Black Temple coincided with a world
 server crash; use `.cast 45215` (same chain, dummy aura) on any unit.
-Not implemented: joints (JointCount etc.), flicker, pulse (native's blue 83
-strand comes and goes), the Combo bytes 1-3, blend 6, chains on impact kits.
+Not implemented: joints (JointCount etc.), flicker, pulse, the Combo fourth
+byte's 0x10, blend 6, chains on impact kits.
 Unverified: the arc's shape, noise motion on rows without MinDurBetweenJoints
-(native ManaBeam's kinks move; here they stay). Open: Hydross Beam Helper
-(InvisibleStalker, display scale 3) beams start about 6 yd above the spawn
-here and about 6 yd below it natively, so WoWee's Hydross beams are longer and
-scroll faster in yards per second. Channel kit effects of a channel
+(native ManaBeam's kinks move; here they stay). Open: native draws the Hydross
+Beam Helpers (InvisibleStalker, display scale 3) about 11 yd below their server
+position (.gps z 38.81, floor 38.75): nameplate ~3 yd and beam start ~5-6 yd
+below it, a beam aimed at the helper ends there too; WoWee draws the unit at
+the server z, so its beams start ~6 yd above and are ~25% longer. The idle and
+channel (124) poses put the chest at +1.8 (x3), so the pose is not it. Open:
+the dark quad at ManaFunnel_Impact_Chest's centre is its emitter 1
+(Gradient64FlipA tail, flags 0x429, blend 2, colour keys all 0,0,0); native
+shows a white core there. Channel kit effects of a channel
 known only from the fields are held until the fields clear.
 
 A CastKit's chain (83 TBC kits) is drawn at `SMSG_SPELL_GO` from the caster to
