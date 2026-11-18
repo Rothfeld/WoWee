@@ -2355,13 +2355,22 @@ void WMORenderer::getVisibleGroupsFromOutside(const ModelData& model,
         return glm::all(glm::greaterThanEqual(p, g.boundingBoxMin)) &&
                glm::all(glm::lessThanEqual(p, g.boundingBoxMax));
     };
+    // The room a point stands in is the one whose surface is first below it,
+    // among rooms whose box holds it. A box alone is not enough: Sunwell
+    // Plateau's Witch's Sanctum (sunwell.wmo group 4) reaches 4 yards above
+    // the M'uru shrine floor (group 44) laid over its ceiling, so standing at
+    // M'uru seeded the sanctum and drew its chandelier (MODD 936,
+    // BE_Chandelier01 at scale 5.09) up through the shrine floor as a gold
+    // dish; native shows the bare glowing floor there.
+    const glm::vec3 localDown = glm::normalize(glm::vec3(glm::inverse(modelMatrix) * glm::vec4(0, 0, -1, 0)));
+    const int cameraRoom = groupBeneath(model, cameraLocalPos, localDown);
+    const int viewerRoom = groupBeneath(model, viewerLocalPos, localDown);
     for (size_t gi = 0; gi < model.groups.size(); ++gi) {
         const auto& g = model.groups[gi];
         const bool interiorOnly = (g.groupFlags & WMO_GROUP_FLAG_INDOOR) && !(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR);
-        // Every exterior group, and any room whose box holds the camera or the
-        // character: group membership here is by box, not by the BSP, so a
-        // room that might be occupied stays drawn.
-        if (!interiorOnly || contains(g, cameraLocalPos) || contains(g, viewerLocalPos)) seed(gi);
+        const bool occupied = (contains(g, cameraLocalPos) && cameraRoom == static_cast<int>(gi)) ||
+                              (contains(g, viewerLocalPos) && viewerRoom == static_cast<int>(gi));
+        if (!interiorOnly || occupied) seed(gi);
     }
     // Rooms are entered only through a portal that is in view and whose
     // front - the owning group's MOPR side - faces the camera. Without this an
@@ -2851,6 +2860,27 @@ static bool trianglesAlongRay(const Group& group, const glm::vec3& localOrigin,
                               std::max(enter.x, exit.x) + 1.0f,
                               std::max(enter.y, exit.y) + 1.0f, out);
     return true;
+}
+
+int WMORenderer::groupBeneath(const ModelData& model, const glm::vec3& localPos,
+                              const glm::vec3& localDown) const {
+    int best = -1;
+    float bestDistance = std::numeric_limits<float>::max();
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        const auto& group = model.groups[gi];
+        if (!trianglesAlongRay(group, localPos, localDown, tl_triScratch)) continue;
+        const auto& indices = group.collisionIndices;
+        const auto& vertices = group.collisionVertices;
+        for (uint32_t triangle : tl_triScratch) {
+            const float distance = rayTriangleIntersect(localPos, localDown,
+                vertices[indices[triangle]], vertices[indices[triangle + 1]],
+                vertices[indices[triangle + 2]]);
+            if (distance <= 0.0f || distance >= bestDistance) continue;
+            bestDistance = distance;
+            best = static_cast<int>(gi);
+        }
+    }
+    return best;
 }
 
 static bool rayIntersectsAABB(const glm::vec3& origin, const glm::vec3& dir,

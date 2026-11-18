@@ -794,8 +794,13 @@ private:
                              const Frustum& frustum, bool cullIndoors,
                              std::unordered_set<uint32_t>& out) const;
 
-    /// Camera outside every room: exterior groups, rooms whose box holds the
-    /// camera or character, and rooms reached through in-view portals whose
+    /// The group owning the first surface straight below `localPos` (the room
+    /// a point stands in), or -1 when nothing of the model lies below it.
+    int groupBeneath(const ModelData& model, const glm::vec3& localPos,
+                     const glm::vec3& localDown) const;
+
+    /// Camera outside every room: exterior groups, the room the camera or
+    /// character stands in, and rooms reached through in-view portals whose
     /// MOPR side faces the camera.
     void getVisibleGroupsFromOutside(const ModelData& model,
                                      const glm::vec3& cameraLocalPos,
