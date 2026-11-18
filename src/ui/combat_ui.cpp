@@ -415,6 +415,7 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         std::vector<fct::Box> boxes;
         for (size_t i = end; i-- > begin;) boxes.push_back(worldTexts[i].box);
         fct::layout(boxes);
+        for (auto& box : boxes) fct::clampToTop(box, uiScale);
         for (size_t i = begin; i < end; ++i) worldTexts[i].box = boxes[end - 1 - i];
         begin = end;
     }

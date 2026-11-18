@@ -42,6 +42,14 @@ constexpr float kFadeInEnd = 0.15f;
 /// opaque: the measured ramp reads 0.015..0.1 and then jumps to 1.
 constexpr float kFadeInPeak = 0.1f;
 constexpr float kFadeOutStart = 0.76f;
+
+/// A number never climbs above this line: the baseline of a "1" dealt to an
+/// Outland Mtn. Giant whose name was at the top of the screen rose until its
+/// ink spanned 58..79 px at 720 lines and then stayed there until it faded
+/// (pair 7, _experiments/20261118T074350Z.plates_fct gf1). 79 px is 84.3
+/// units of the 768-unit UI.
+constexpr float kTopBaseline = 79.0f * 768.0f / 720.0f;
+
 constexpr float kCritFadeOutStart = 1.0f;
 
 inline float alpha(float age, bool crit) {
@@ -140,6 +148,11 @@ inline void layout(std::vector<Box>& newestFirst) {
             box.x = beside(*blocker);
         }
     }
+}
+
+/// Applied after the layout, in pixels: `uiScale` is pixels per UI unit.
+inline void clampToTop(Box& box, float uiScale) {
+    box.top = std::max(box.top, kTopBaseline * uiScale - box.fontPx);
 }
 
 } // namespace fct
