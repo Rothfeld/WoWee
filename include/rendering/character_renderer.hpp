@@ -517,6 +517,7 @@ private:
                                int sequenceIndex, const std::vector<uint32_t>& globalSeqDurations,
                                int blendSequence = -1, float blendTime = 0.0f, float blendWeight = 0.0f);
     [[nodiscard]] glm::mat4 getModelMatrix(const CharacterInstance& instance) const;
+    glm::vec3 billboardCameraPos_{0.0f};  // update()'s camera, for billboard bones
     void destroyModelGPU(M2ModelGPU& gpuModel, bool defer = false);
     void destroyInstanceBones(CharacterInstance& inst, bool defer = false);
 
