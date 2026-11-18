@@ -1625,6 +1625,15 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
 
         result.model = &model;   // cache so the draw-list loop doesn't redo the hash lookup
 
+        if (sealedInterior_) {
+            if (instance.id != sealedInterior_->instanceId) {
+                result.model = nullptr;
+                return;
+            }
+            result.visibleGroups = sealedInterior_->groups;
+            return;
+        }
+
         // Portal-based visibility - reuse member scratch buffer (avoid per-frame alloc)
         portalVisibleGroupSet_.clear();
         const bool usePortalCulling = portalVisibleGroups(instance, model, camPos, portalViewerPos, frustum,
@@ -4108,6 +4117,43 @@ std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& posit
         }
     }
     return light;
+}
+
+std::optional<WMORenderer::SealedInterior> WMORenderer::findSealedInterior(const glm::vec3& position) const {
+    const auto location = getInteriorLocation(position);
+    if (!location) return std::nullopt;
+    const auto instance = std::find_if(instances.begin(), instances.end(),
+        [&](const auto& value) { return value.id == location->instanceId; });
+    assert(instance != instances.end());
+    const auto& model = loadedModels.at(instance->modelId);
+    constexpr uint32_t kOutdoor = 0x8;
+    std::vector<uint32_t> reached{location->groupIndex};
+    std::vector<bool> seen(model.groups.size(), false);
+    seen[location->groupIndex] = true;
+    for (size_t next = 0; next < reached.size(); ++next) {
+        const uint32_t group = reached[next];
+        if (model.groups[group].groupFlags & kOutdoor) return std::nullopt;
+        if (group >= model.groupPortalRefs.size()) continue;
+        const auto [start, count] = model.groupPortalRefs[group];
+        for (uint32_t r = start; r < static_cast<uint32_t>(start) + count && r < model.portalRefs.size(); ++r) {
+            const uint32_t other = model.portalRefs[r].groupIndex;
+            if (other < seen.size() && !seen[other]) {
+                seen[other] = true;
+                reached.push_back(other);
+            }
+        }
+    }
+    SealedInterior sealed;
+    sealed.instanceId = instance->id;
+    sealed.groups = reached;
+    sealed.worldMin = glm::vec3(std::numeric_limits<float>::max());
+    sealed.worldMax = glm::vec3(std::numeric_limits<float>::lowest());
+    for (uint32_t group : reached) {
+        assert(group < instance->worldGroupBounds.size());
+        sealed.worldMin = glm::min(sealed.worldMin, instance->worldGroupBounds[group].first);
+        sealed.worldMax = glm::max(sealed.worldMax, instance->worldGroupBounds[group].second);
+    }
+    return sealed;
 }
 
 std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(const glm::vec3& position, bool indoorOnly) const {

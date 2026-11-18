@@ -1235,8 +1235,17 @@ SMSG_SET_FORCED_REACTIONS 960 -> 1 (hostile), 14 -> 4 (friendly), which
 override template and standing (CMaNGOS Unit::GetReactionTo). Gotcha: a level
 40 test character dies to Sathrovarr within seconds once the reaction is
 forced; entering map 580 needs `.gm on` (level 70 + raid otherwise).
-Native draws nothing of the plateau above the realm and a blue-purple sky;
-WoWee still draws the plateau's models above and its own sky (open).
+A camera in an interior group from which no portal path reaches an exterior
+group (WMORenderer::findSealedInterior) sees only those groups: terrain,
+grass, sky and every model or unit outside their box are not drawn, and the
+background is the WMO fog colour. Native shows (59,28,107) there; MFOG 0 is
+(56,27,98). Ironforge, Undercity, the Deadmines and Blackrock Depths reach an
+exterior group and are unaffected (checked at their teleport points). Units in
+the realm stay brighter than native's dark tint (open; MOHD ambient is
+(9,34,22)). Spectral Blast 46648's SpellVisual 10441 plays ImpactAreaKit 9254
+(Shadow_Fissure_Base, pink beams and shards) at the SMSG_SPELL_GO destination
+besides PersistentAreaKit 9566 on its DynamicObject; TBC column 23 is
+ImpactAreaKit.
 
 ### Tab targeting
 

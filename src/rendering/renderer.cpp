@@ -1389,9 +1389,14 @@ void Renderer::beginFrame() {
 
     // Clear values must match attachment count: 2 (no MSAA), 3 (MSAA), or 4 (MSAA+depth resolve)
     VkClearValue clearValues[4]{};
-    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    // In a sealed interior no sky is drawn and native shows the WMO fog colour
+    // behind everything (Spectral Realm: (59,28,107) on screen against MFOG
+    // 0's (56,27,98)). Last frame's decision: the pass begins before this
+    // frame's world is culled.
+    const glm::vec3 clear = lastFrameSealedInterior_ ? sealedClearColor_ : glm::vec3(0.0f);
+    clearValues[0].color = {{clear.r, clear.g, clear.b, 1.0f}};
     clearValues[1].depthStencil = {.depth = 1.0f, .stencil = 0};
-    clearValues[2].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clearValues[2].color = {{clear.r, clear.g, clear.b, 1.0f}};
     clearValues[3].depthStencil = {.depth = 1.0f, .stencil = 0};
     bool msaaOn = (vkCtx->getMsaaSamples() > VK_SAMPLE_COUNT_1_BIT);
     if (msaaOn) {
@@ -3091,9 +3096,29 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     const bool skipWMO = envSkipWMO || ablated(AblationPass::WMO);
     const bool skipChars = envSkipChars || ablated(AblationPass::Characters);
     const bool skipM2 = envSkipM2 || ablated(AblationPass::M2);
-    const bool skipTerrain = envSkipTerrain || ablated(AblationPass::Terrain);
-    const bool skipSky = envSkipSky || ablated(AblationPass::Sky);
-    const bool skipGrass = ablated(AblationPass::Grass);
+    // Inside a room no portal path leads out of, nothing outside it is seen
+    // (WMORenderer::findSealedInterior): no terrain, grass, sky or exterior
+    // model. Water is left alone: interior pools are drawn by the same pass.
+    const auto sealedInterior = (wmoRenderer && camera)
+        ? wmoRenderer->findSealedInterior(camera->getPosition())
+        : std::optional<WMORenderer::SealedInterior>{};
+    if (wmoRenderer) wmoRenderer->setSealedInterior(sealedInterior);
+    {
+        const auto region = sealedInterior
+            ? std::optional(std::pair(sealedInterior->worldMin, sealedInterior->worldMax))
+            : std::nullopt;
+        if (m2Renderer) m2Renderer->setVisibleRegion(region);
+        if (characterRenderer) characterRenderer->setVisibleRegion(region);
+    }
+    if (sealedInterior.has_value() != lastFrameSealedInterior_) {
+        lastFrameSealedInterior_ = sealedInterior.has_value();
+        LOG_INFO("Sealed interior ", lastFrameSealedInterior_ ? "entered" : "left",
+                 lastFrameSealedInterior_ ? ": exterior terrain, water and models not drawn" : "");
+    }
+    const bool skipTerrain = envSkipTerrain || ablated(AblationPass::Terrain) || sealedInterior;
+    if (sealedInterior) sealedClearColor_ = glm::vec3(currentFrameData.fogColor);
+    const bool skipSky = envSkipSky || ablated(AblationPass::Sky) || sealedInterior;
+    const bool skipGrass = ablated(AblationPass::Grass) || sealedInterior;
     // One ordered blended stream for scenery and creatures. Independent
     // character/M2 secondaries cannot composite overlapping transparent meshes.
     const auto recordWorldModels = [&](VkCommandBuffer solid, VkCommandBuffer blended) {

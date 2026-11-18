@@ -43,6 +43,10 @@ public:
     // Frost_Nova_state under the casting Ward Keeper, not its target.
     void playInstantAreaKit(uint32_t visualId, const glm::vec3& casterPosition,
                             uint32_t casterInstanceId);
+    /// SpellVisual ImpactAreaKit at the spell's destination. Spectral Blast
+    /// 46648 (visual 10441, kit 9254 Shadow_Fissure_Base): the pink beams and
+    /// dark shards native draws where the Spectral Rift opens.
+    void playImpactAreaKit(uint32_t visualId, const glm::vec3& destination);
     /// One SpellVisualEffectName.dbc model at a unit's M2 attachment, e.g. a
     /// UnitBlood.dbc combat blood spurt at ChestBloodFront (15).
     void playEffectAtAttachment(uint32_t effectNameId, uint32_t attachInstanceId, uint32_t attachment);
@@ -195,6 +199,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> castKits_;
     std::unordered_map<uint32_t, uint32_t> impactKits_;
     std::unordered_map<uint32_t, uint32_t> instantAreaKits_;
+    std::unordered_map<uint32_t, uint32_t> impactAreaKits_;
     std::unordered_map<uint32_t, uint32_t> persistentAreaKits_;
     std::unordered_map<uint64_t, std::vector<uint32_t>> persistentAreas_;  // key -> M2 instances
     /// M2 attachment 17, named Breath. SpellVisualKit's BreathEffect slot is

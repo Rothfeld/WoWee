@@ -16,6 +16,8 @@
 #include <map>
 #include <unordered_map>
 #include <chrono>
+#include <optional>
+#include <glm/glm.hpp>
 
 namespace wowee {
 namespace game {
@@ -2387,6 +2389,8 @@ struct SpellGoData {
     uint8_t missCount = 0;
     std::vector<SpellGoMissEntry> missTargets;
     uint64_t targetGuid = 0;  ///< Primary target GUID from SpellCastTargets (0 = none/AoE)
+    /// SpellCastTargets destination (TARGET_FLAG_DEST_LOCATION), server coordinates.
+    std::optional<glm::vec3> destination;
 
     [[nodiscard]] bool isValid() const { return spellId != 0; }
 };

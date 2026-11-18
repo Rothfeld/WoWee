@@ -94,6 +94,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     // 2.4.3 data (MissileModel 7, InstantAreaKit 22 holds summon/portal kits).
     const uint32_t svInstantAreaKitField = svLayout ? svLayout->field("InstantAreaKit") : 0xFFFFFFFFu;
     const uint32_t svPersistentAreaKitField = svLayout ? svLayout->field("PersistentAreaKit") : 0xFFFFFFFFu;
+    const uint32_t svImpactAreaKitField = svLayout ? svLayout->field("ImpactAreaKit") : 0xFFFFFFFFu;
     const uint32_t svMissileAttachmentField = svLayout ? svLayout->field("MissileAttachment") : 0xFFFFFFFFu;
     const uint32_t svMissileDestinationField =
         svLayout ? svLayout->field("MissileDestinationAttachment") : 0xFFFFFFFFu;
@@ -251,6 +252,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         if (svCastKitField < svFc) castKits_[vid] = svDbc->getUInt32(i, svCastKitField);
         if (svImpactKitField < svFc) impactKits_[vid] = svDbc->getUInt32(i, svImpactKitField);
         if (svInstantAreaKitField < svFc) instantAreaKits_[vid] = svDbc->getUInt32(i, svInstantAreaKitField);
+        if (svImpactAreaKitField < svFc) impactAreaKits_[vid] = svDbc->getUInt32(i, svImpactAreaKitField);
         if (svPersistentAreaKitField < svFc)
             persistentAreaKits_[vid] = svDbc->getUInt32(i, svPersistentAreaKitField);
         const uint32_t stateField = (*svLayout)["StateKit"];
@@ -801,6 +803,16 @@ void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& c
               " at caster instance ", casterInstanceId);
     // Unit slots attach to the caster; Base/World slots stand where it stood.
     spawnKitEffects(kit->second, casterPosition, casterInstanceId, /*duration=*/-1.0f,
+                    /*isPrecast=*/false);
+}
+
+void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& destination) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto kit = impactAreaKits_.find(visualId);
+    if (kit == impactAreaKits_.end() || !kit->second) return;
+    LOG_INFO("SpellVisual: impact area kit ", kit->second, " of visual ", visualId, " at (",
+             destination.x, ",", destination.y, ",", destination.z, ")");
+    spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
                     /*isPrecast=*/false);
 }
 

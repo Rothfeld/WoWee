@@ -448,6 +448,7 @@
     "ID": 0,
     "ImpactKit": 3,
     "InstantAreaKit": 22,
+    "ImpactAreaKit": 23,
     "PersistentAreaKit": 24,
     "MissileModel": 7,
     "MissileDestinationAttachment": 9,

@@ -75,6 +75,9 @@ struct WeaponAttachment {
  */
 class CharacterRenderer {
 public:
+    /// Draw only units standing inside this box (a sealed interior, see
+    /// WMORenderer::findSealedInterior); every unit when empty.
+    void setVisibleRegion(std::optional<std::pair<glm::vec3, glm::vec3>> region) { visibleRegion_ = region; }
     CharacterRenderer();
     ~CharacterRenderer();
 
@@ -317,6 +320,7 @@ public:
     void setPredecodedBLPCache(std::unordered_map<std::string, pipeline::BLPImage>* cache) { predecodedBLPCache_ = cache; }
 
 private:
+    std::optional<std::pair<glm::vec3, glm::vec3>> visibleRegion_;
     std::unordered_map<std::string, pipeline::BLPImage>* predecodedBLPCache_ = nullptr;
     // GPU representation of M2 model
     struct M2ModelGPU {

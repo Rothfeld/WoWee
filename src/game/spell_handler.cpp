@@ -3313,6 +3313,14 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                     }
                 }
             }
+            if (data.destination) {
+                if (auto* renderer = owner_.services().renderer) {
+                    if (auto* svs = renderer->getSpellVisualSystem()) {
+                        svs->playImpactAreaKit(visualId, core::coords::canonicalToRender(
+                            core::coords::serverToCanonical(*data.destination)));
+                    }
+                }
+            }
             // The missile, where the spell has one, and the impact at each hit
             // target - played by the missile when it lands, or straight away
             // for a spell that does not fly.

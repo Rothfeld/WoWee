@@ -3144,6 +3144,11 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
             // Frustum cull: skip if outside view frustum
             if (!frustum.intersectsSphere(cullCentre, cullRadius)) continue;
+            // Outside the sealed interior the camera is in (Kalecgos 128
+            // yards above the Spectral Realm): native does not draw it.
+            if (visibleRegion_ &&
+                (glm::any(glm::lessThan(instance.position, visibleRegion_->first)) ||
+                 glm::any(glm::greaterThan(instance.position, visibleRegion_->second)))) continue;
         }
 
         if (!instance.cachedModel) continue;

@@ -1275,6 +1275,29 @@ TEST_CASE_METHOD(Integration, "TBC forced reactions override the faction templat
     CHECK_FALSE(handler.isHostileFaction(1959));
 }
 
+// Spectral Blast 46648 is aimed at a place; its SpellVisual ImpactAreaKit
+// (kit 9254, the pink beams and shards native draws) plays there.
+TEST_CASE("TBC SMSG_SPELL_GO keeps the destination of a ground-aimed spell", "[spell]") {
+    using namespace wowee::game;
+    TbcPacketParsers parsers;
+    wowee::network::Packet packet(wireOpcode(Opcode::SMSG_SPELL_GO));
+    packet.writePackedGuid(0x17);
+    packet.writePackedGuid(0x17);
+    packet.writeUInt32(46648);
+    packet.writeUInt16(0x100);
+    packet.writeUInt32(12345);
+    packet.writeUInt8(0);    // hits
+    packet.writeUInt8(0);    // misses
+    packet.writeUInt32(0x40); // TARGET_FLAG_DEST_LOCATION
+    for (float v : {-9617.06f, -288.949f, 57.3053f}) packet.writeFloat(v);
+    SpellGoData data;
+    REQUIRE(parsers.parseSpellGo(packet, data));
+    REQUIRE(data.destination.has_value());
+    CHECK(data.destination->x == Catch::Approx(-9617.06f));
+    CHECK(data.destination->y == Catch::Approx(-288.949f));
+    CHECK(data.destination->z == Catch::Approx(57.3053f));
+}
+
 TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local axes", "[transport]") {
     using namespace wowee::game;
     replay::Session session("tbc");

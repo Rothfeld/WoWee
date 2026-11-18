@@ -410,6 +410,21 @@ public:
      */
     bool isInsideInteriorWMO(float glX, float glY, float glZ) const;
     std::optional<WMOFogSample> getFog(const glm::vec3& position, bool underwater) const;
+    /// A camera inside an interior group from which no portal path reaches an
+    /// exterior group sees nothing outside those groups: native draws no
+    /// terrain, water or exterior model there. Kalecgos's Spectral Realm is
+    /// such a room (sunwell_046.wmo, indoor, no portals) 128 yards under the
+    /// Sunwell Plateau; Ironforge, Undercity and caves all reach an exterior
+    /// group and are unaffected.
+    struct SealedInterior {
+        uint32_t instanceId = 0;
+        std::vector<uint32_t> groups;        // reachable through portals
+        glm::vec3 worldMin{0.0f}, worldMax{0.0f};
+    };
+    [[nodiscard]] std::optional<SealedInterior> findSealedInterior(const glm::vec3& position) const;
+    /// What the next render draws of the WMOs: only these groups of this
+    /// instance while set.
+    void setSealedInterior(std::optional<SealedInterior> sealed) { sealedInterior_ = std::move(sealed); }
 
     /// Light of a unit or game object standing at `position`, or nothing when
     /// it stands outdoors. The closest WMO surface below its feet decides:
@@ -995,6 +1010,7 @@ private:
     std::vector<size_t> visibleInstances_;      // reused per frame
     std::vector<InstanceDrawList> drawLists_;    // reused per frame
     std::unordered_set<uint32_t> portalVisibleGroupSet_; // reused per frame (portal culling scratch)
+    std::optional<SealedInterior> sealedInterior_;
 
     // Collision query profiling - atomic because getFloorHeight is dispatched
     // on async threads from camera_controller while the main thread reads these.

@@ -937,7 +937,8 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
 // past ALL target payload fields so subsequent fields (e.g. those parsed by the
 // caller after spell targets) are not corrupted.
 // ---------------------------------------------------------------------------
-static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTargetGuid = nullptr) {
+static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTargetGuid = nullptr,
+                                    std::optional<glm::vec3>* destination = nullptr) {
     if (!packet.hasRemaining(4)) return false;
 
     constexpr uint32_t TARGET_FLAG_UNIT            = 0x00000002;
@@ -977,7 +978,12 @@ static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTa
     }
 
     if (!skipFloats3(TARGET_FLAG_SOURCE_LOCATION)) return false;
-    if (!skipFloats3(TARGET_FLAG_DEST_LOCATION))   return false;
+    if (targetFlags & TARGET_FLAG_DEST_LOCATION) {
+        if (!packet.hasRemaining(12)) return false;
+        glm::vec3 dest;
+        dest.x = packet.readFloat(); dest.y = packet.readFloat(); dest.z = packet.readFloat();
+        if (destination) *destination = dest;
+    }
 
     if (targetFlags & TARGET_FLAG_STRING) {
         const auto& raw = packet.getData();
@@ -1146,7 +1152,7 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
 
     // SpellCastTargets follows the miss list - consume all target bytes so that
     // any subsequent fields are not misaligned for ground-targeted AoE spells.
-    skipTbcSpellCastTargets(packet, &data.targetGuid);
+    skipTbcSpellCastTargets(packet, &data.targetGuid, &data.destination);
 
     LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
               " misses=", static_cast<int>(data.missCount));

@@ -784,6 +784,13 @@ public:
 
     void setSuppressBakedStars(bool suppress) { suppressBakedStars_ = suppress; }
     void setInsideInterior(bool inside) { insideInterior = inside; }
+    /// Draw only instances standing inside this box (a sealed interior, see
+    /// WMORenderer::findSealedInterior); every instance when empty.
+    void setVisibleRegion(std::optional<std::pair<glm::vec3, glm::vec3>> region) { visibleRegion_ = region; }
+    [[nodiscard]] bool outsideVisibleRegion(const glm::vec3& position) const {
+        return visibleRegion_ && (glm::any(glm::lessThan(position, visibleRegion_->first)) ||
+                                  glm::any(glm::greaterThan(position, visibleRegion_->second)));
+    }
 
     /// Drop the ground clutter from this pass, for the ablation's clutter
     /// phase. Clutter is drawn by the thousand and shares this renderer with
@@ -853,6 +860,7 @@ private:
                                       std::vector<movement::BodyTriangle>& triangles) const;
     bool initialized_ = false;
     bool insideInterior = false;
+    std::optional<std::pair<glm::vec3, glm::vec3>> visibleRegion_;
     pipeline::AssetManager* assetManager = nullptr;
 
     // Vulkan context
