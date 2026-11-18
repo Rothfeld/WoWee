@@ -4332,7 +4332,7 @@ std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(co
             result = InteriorLocation{model.rootId, instance.nameSet, group.groupId,
                 static_cast<uint32_t>(groupIndex), instance.id, model.sourcePath,
                 local, group.boundingBoxMin, group.boundingBoxMax, instance.modelMatrix,
-                position.z - distance};
+                position.z - distance, group.groupFlags};
         }
     }
     if (indoorOnly && !resultIndoor) return std::nullopt;

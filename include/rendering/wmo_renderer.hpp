@@ -446,6 +446,7 @@ public:
         glm::vec3 localPosition, boundsMin, boundsMax;
         glm::mat4 transform;
         float surfaceHeight = 0.0f;
+        uint32_t groupFlags = 0;  // MOGP flags of the group
     };
     // Area names also apply to outdoor groups, resolved from geometry below feet.
     std::optional<InteriorLocation> getInteriorLocation(const glm::vec3& position, bool indoorOnly = true) const;

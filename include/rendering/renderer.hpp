@@ -177,6 +177,8 @@ public:
     /// AreaTable flag 0x400 of the area the character stands in (IsFlyableArea).
     bool isInFlyableArea() const;
     bool isPlayerIndoors() const { return playerIndoors_; }
+    /// IsIndoors() and [indoors]: an interior group without MOGP 0x8000.
+    bool isPlayerIndoorRules() const { return playerIndoorRules_; }
     VkContext* getVkContext() const { return vkCtx; }
     VkDescriptorSetLayout getPerFrameSetLayout() const { return perFrameSetLayout; }
     /// What a per-frame set allocated elsewhere binds at binding 2: a fog
@@ -452,7 +454,8 @@ private:
     // Post-process pipeline - owns all FSR/FXAA/FSR2 state (extracted §4.3)
     std::unique_ptr<PostProcessPipeline> postProcessPipeline_;
 
-    bool playerIndoors_ = false;  // Cached WMO inside state for macro conditionals
+    bool playerIndoors_ = false;  // Cached WMO inside state (interior minimap scale)
+    bool playerIndoorRules_ = false;  // IsIndoors() / [indoors]
     bool deferredWorldInitEnabled_ = true;
     bool deferredWorldInitPending_ = false;
     uint8_t deferredWorldInitStage_ = 0;

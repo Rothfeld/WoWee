@@ -44,7 +44,7 @@ bool GameStateAdapter::isInRaid() const {
 }
 
 bool GameStateAdapter::isIndoors() const {
-    return renderer_ && renderer_->isPlayerIndoors();
+    return renderer_ && renderer_->isPlayerIndoorRules();
 }
 
 // --- Numeric ---

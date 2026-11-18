@@ -2100,6 +2100,12 @@ void Renderer::update(float deltaTime) {
     // A named WMO can span outdoor stairs and indoor rooms. Crossing its
     // lighting boundary does not change the displayed zone or repeat its title.
     playerIndoors_ = playerInterior.has_value();
+    // IsIndoors() in 8606 is nil in interior groups that carry MOGP 0x8000:
+    // all of Undercity (0xaa05, 0xba05) and the Great Forge (0xba05), where
+    // mounts are allowed; 1 in the Lion's Pride Inn kitchen (0x2805), the
+    // Vault of Ironforge (0x2a05), the Molten Span (0x3a05) and the
+    // Deadmines (0x2a05). CMaNGOS Map::IsOutdoorWMO tests the same bit.
+    playerIndoorRules_ = playerInterior && (playerInterior->groupFlags & 0x8000u) == 0;
     // Publish one event after all area sources agree. World entry and UI
     // reload invalidate this snapshot so Lua never starts with an empty cache
     // while the renderer believes the current zone was already announced.

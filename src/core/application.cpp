@@ -891,7 +891,7 @@ bool Application::initialize() {
             if (uim && gh) uim->getGameScreen().windowManager().barberApplySelection(*gh);
         };
         luaSvc.isPlayerIndoors = [r = renderer.get()]() -> bool {
-            return r && r->isPlayerIndoors();
+            return r && r->isPlayerIndoorRules();
         };
         luaSvc.getFullscreen = [uim = uiManager.get()]() -> bool {
             return uim ? uim->getGameScreen().getFullscreen() : false;
