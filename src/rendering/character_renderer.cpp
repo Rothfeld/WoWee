@@ -2114,6 +2114,22 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     if (instance.currentSequenceIndex < 0 && firstMatch >= 0) {
         instance.currentSequenceIndex = firstMatch;
     }
+    // Stand starts on a variation drawn by frequency, as it continues at
+    // each loop boundary. The first-listed one is often the rare fidget:
+    // FelReaver (Void Reaver) lists Stand 5 (frequency 7281, an arm raised)
+    // before Stand 11 (25485); WoWee restarted 5 after every swing and the
+    // boss raised its arm constantly, which build 8606 does not show
+    // (_experiments/20261118T122247Z.eye_channel_beam, void reaver).
+    if (animationId == anim::STAND && loop && instance.currentSequenceIndex >= 0) {
+        std::vector<double> weights(model.sequences.size(), 0.0);
+        for (size_t i = 0; i < model.sequences.size(); ++i)
+            if (model.sequences[i].id == anim::STAND && model.sequences[i].duration > 0)
+                weights[i] = std::max<int>(0, model.sequences[i].frequency);
+        if (std::accumulate(weights.begin(), weights.end(), 0.0) > 0.0) {
+            static std::mt19937 standRandom(std::random_device{}());
+            instance.currentSequenceIndex = std::discrete_distribution<int>(weights.begin(), weights.end())(standRandom);
+        }
+    }
 
     if (instance.currentSequenceIndex < 0 &&
         (animationId == anim::LOOT_HOLD || animationId == anim::LOOT_UP)) {

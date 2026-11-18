@@ -295,6 +295,8 @@ void AnimationCallbackHandler::setupCallbacks() {
         const uint16_t attackTimeField = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
         assert(attackTimeField != 0xFFFF);
         const uint32_t attackTimeMs = unit->getField(attackTimeField + (offHand ? 1 : 0));
+        LOG_DEBUG("Swing 0x", std::hex, guid, std::dec, offHand ? " off" : " main", " animation ", attack,
+                  " attack time ", attackTimeMs, " ms");
         if (attackTimeMs > 0) cr->fitOneShotDuration(instanceId, static_cast<float>(attackTimeMs));
         else LOG_WARNING("Swing of 0x", std::hex, guid, std::dec, " without an attack time; authored speed");
     });
