@@ -993,6 +993,8 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
         noticesInterfaceReady_ = false;
         heldNotices_.clear();
         if (socialHandler_) socialHandler_->onWorldEntry();
+        // Quests already in the log at login were not just accepted.
+        if (questHandler_) questHandler_->questSlotsSeen_ = false;
 
         // Auto-query guild info on login.
         const Character* activeChar = getActiveCharacter();

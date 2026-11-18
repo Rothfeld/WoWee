@@ -350,6 +350,14 @@ private:
     std::string sharedQuestTitle_;
     std::string sharedQuestSharerName_;
     uint64_t    sharedQuestSharerGuid_    = 0;
+public:
+    /// Quest ids in the log slots at the last update; a new one is an accept.
+    std::unordered_set<uint32_t> seenSlotQuests_;
+    bool questSlotsSeen_ = false;
+private:
+    /// Accepted quests whose "Quest accepted: X" waits for the title.
+    std::unordered_set<uint32_t> pendingAcceptedLines_;
+    void announceAcceptedIfTitled(uint32_t questId);
 };
 
 } // namespace game

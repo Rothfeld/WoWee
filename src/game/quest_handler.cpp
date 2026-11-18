@@ -589,12 +589,28 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
     // ---- SMSG_QUESTGIVER_QUEST_DETAILS ----
     table[Opcode::SMSG_QUESTGIVER_QUEST_DETAILS] = [this](network::Packet& packet) { handleQuestDetails(packet); };
 
+    // ---- MSG_QUEST_PUSH_RESULT ----
+    // The sharer's answer per member, QuestShareMessages (CMaNGOS QuestDef.h),
+    // each named for its ERR_QUEST_PUSH_* line with the member's name.
+    table[Opcode::MSG_QUEST_PUSH_RESULT] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(9)) return;
+        const uint64_t guid = packet.readUInt64();
+        const uint8_t msg = packet.readUInt8();
+        static constexpr const char* kLines[] = {
+            "ERR_QUEST_PUSH_SUCCESS_S", "ERR_QUEST_PUSH_INVALID_S", "ERR_QUEST_PUSH_ACCEPTED_S",
+            "ERR_QUEST_PUSH_DECLINED_S", "ERR_QUEST_PUSH_TOO_FAR_S", "ERR_QUEST_PUSH_BUSY_S",
+            "ERR_QUEST_PUSH_LOG_FULL_S", "ERR_QUEST_PUSH_ONQUEST_S", "ERR_QUEST_PUSH_ALREADY_DONE_S"};
+        const std::string& name = owner_.lookupName(guid);
+        if (msg >= std::size(kLines) || name.empty()) {
+            LOG_WARNING("MSG_QUEST_PUSH_RESULT: result ", int(msg), " for ", guid, " not shown");
+            return;
+        }
+        owner_.systemGlobal(kLines[msg], {name});
+    };
+
     // ---- SMSG_QUESTLOG_FULL ----
     table[Opcode::SMSG_QUESTLOG_FULL] = [this](network::Packet& /*packet*/) {
-        const std::string msg = "Your quest log is full (" +
-            std::to_string(maxQuestLogSlots()) + " quests). Abandon a quest to make room.";
-        owner_.addUIError(msg);
-        owner_.addSystemChatMessage(msg);
+        owner_.systemGlobal("ERR_QUEST_LOG_FULL");
         // Roll back the optimistic local entries the server refused; without
         // this the local log drifts past the server cap with phantom quests.
         bool removed = false;
@@ -654,8 +670,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             std::string questTitle;
             for (const auto& q : questLog_)
                 if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
-            owner_.addSystemChatMessage(questTitle.empty() ? std::string("Quest failed!")
-                                                           : ('"' + questTitle + "\" failed!"));
+            if (!questTitle.empty()) owner_.systemGlobal("ERR_QUEST_FAILED_S", {questTitle});
             // Same omission as the complete handler had: a line of chat is not
             // a redraw, and a failed quest goes on looking fine in the log.
             announceQuestLogChanged(questId);
@@ -669,8 +684,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             std::string questTitle;
             for (const auto& q : questLog_)
                 if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
-            owner_.addSystemChatMessage(questTitle.empty() ? std::string("Quest timed out!")
-                                                           : ('"' + questTitle + "\" has timed out."));
+            if (!questTitle.empty()) owner_.systemGlobal("ERR_QUEST_FAILED_S", {questTitle});
             announceQuestLogChanged(questId);
         }
     };
@@ -684,21 +698,12 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             std::string questTitle;
             for (const auto& q : questLog_)
                 if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
-            const char* reasonStr = nullptr;
-            switch (reason) {
-                case 1: reasonStr = "failed conditions"; break;
-                case 2: reasonStr = "inventory full"; break;
-                case 3: reasonStr = "too far away"; break;
-                case 4: reasonStr = "another quest is blocking"; break;
-                case 5: reasonStr = "wrong time of day"; break;
-                case 6: reasonStr = "wrong race"; break;
-                case 7: reasonStr = "wrong class"; break;
-            }
-            std::string msg = questTitle.empty() ? "Quest" : ('"' + questTitle + '"');
-            msg += " failed";
-            if (reasonStr) msg += std::string(": ") + reasonStr;
-            msg += '.';
-            owner_.addSystemChatMessage(msg);
+            // QuestFailedReasons (CMaNGOS QuestDef.h): inventory full and
+            // duplicate item have their own _S lines, the rest the plain one.
+            if (questTitle.empty()) { LOG_WARNING("Quest ", questId, " failed (", reason, "): no title"); return; }
+            if (reason == 4) owner_.systemGlobal("ERR_QUEST_FAILED_BAG_FULL_S", {questTitle});
+            else if (reason == 17) owner_.systemGlobal("ERR_QUEST_FAILED_MAX_COUNT_S", {questTitle});
+            else owner_.systemGlobal("ERR_QUEST_FAILED_S", {questTitle});
         }
     };
 
@@ -742,10 +747,25 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                     clearPendingQuestAccept(questId);
                 }
             }
-            // Only show error to user for real errors (not informational messages)
-            if (failReason != 13 && failReason != 18) {  // Don't spam "already on/completed"
-                owner_.addSystemChatMessage(std::string("Quest unavailable: ") + reasonStr);
+            // QuestFailedReasons, each the line its comment in CMaNGOS
+            // QuestDef.h quotes.
+            const char* line = nullptr;
+            switch (failReason) {
+                case 1:  line = "ERR_QUEST_FAILED_LOW_LEVEL"; break;
+                case 4:  line = "ERR_INV_FULL"; break;
+                case 6:  line = "ERR_QUEST_FAILED_WRONG_RACE"; break;
+                case 7:  line = "ERR_QUEST_ALREADY_DONE"; break;
+                case 12: line = "ERR_QUEST_ONLY_ONE_TIMED"; break;
+                case 13: case 18: line = "ERR_QUEST_ALREADY_ON"; break;
+                case 16: line = "ERR_QUEST_FAILED_EXPANSION"; break;
+                case 21: line = "ERR_QUEST_FAILED_MISSING_ITEMS"; break;
+                case 23: line = "ERR_QUEST_FAILED_NOT_ENOUGH_MONEY"; break;
+                case 26: line = "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I"; break;
+                case 27: line = "ERR_QUEST_FAILED_CAIS"; break;
+                default: line = "ERR_QUEST_NEED_PREREQS"; break;
             }
+            if (failReason == 26) owner_.systemGlobal(line, {"10"});
+            else owner_.systemGlobal(line);
         }
     };
 
@@ -764,7 +784,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                     // The turn-in's line in chat, which every one of the
                     // supported clients writes there and nowhere else.
                     if (!it->title.empty()) {
-                        owner_.addSystemChatMessage(it->title + " completed.");
+                        owner_.systemGlobal("ERR_QUEST_COMPLETE_S", {it->title});
                     }
                     // Play quest-complete sound
                     if (auto* ac = owner_.services().audioCoordinator) {
@@ -806,6 +826,11 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             LOG_INFO("Quest kill update: questId=", questId, " entry=", entry,
                      " count=", count, "/", reqCount);
 
+            // ERR_QUEST_ADD_KILL_SII / _FOUND_SII on the yellow info line,
+            // from the packet alone: ".quest complete 7" showed "Kobold
+            // Vermin slain: 1/10" ... "10/10" (pair 6) whether or not the
+            // quest had reached this client's log yet.
+            bool shown = false;
             for (auto& quest : questLog_) {
                 if (quest.questId == questId) {
                     if (reqCount == 0) {
@@ -837,10 +862,9 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                     } else if (const auto* go = owner_.getCachedGameObjectInfo(entry)) {
                         creatureName = go->name;
                     }
-                    // ERR_QUEST_ADD_KILL_SII and ERR_QUEST_ADD_FOUND_SII, in the
-                    // middle of the screen where the game shows them.
                     owner_.addUIInfoMessage(
                         questObjectiveLine(creatureName, isObject, count, reqCount));
+                    shown = true;
 
                     if (owner_.addonEventCallbackRef()) {
                         // The log INDEX, not the quest id. QuestLog_OnEvent
@@ -863,6 +887,12 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                     break;
                 }
             }
+            if (!shown && reqCount > 0) {
+                std::string name;
+                if (!isObject) name = owner_.getCachedCreatureName(entry);
+                else if (const auto* go = owner_.getCachedGameObjectInfo(entry)) name = go->name;
+                owner_.addUIInfoMessage(questObjectiveLine(name, isObject, std::min(count, reqCount), reqCount));
+            }
         } else if (rem >= 4) {
             // Swapped mapping fallback: treat as QUESTUPDATE_COMPLETE packet.
             uint32_t questId = packet.readUInt32();
@@ -871,7 +901,6 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             for (auto& quest : questLog_) {
                 if (quest.questId == questId) {
                     quest.complete = true;
-                    owner_.addSystemChatMessage("Quest Complete: " + quest.title);
                     break;
                 }
             }
@@ -930,7 +959,19 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                     maybeCompletedObjective = true;
                 }
             }
-            owner_.addSystemChatMessage("Quest item: " + buildItemLink(itemId, questItemQuality, itemLabel) + " (" + std::to_string(count) + ")");
+            // ERR_QUEST_ADD_ITEM_SII on the yellow info line, the item's
+            // count against what the quest needs: "Tough Wolf Meat: 1/8", then
+            // "8/8" after seven more (pair 6). Was "Quest item: [..] (1)" in
+            // chat, the count added.
+            (void)questItemQuality;
+            for (const auto& quest : questLog_) {
+                const auto have = quest.itemCounts.find(itemId);
+                const auto need = quest.requiredItemCounts.find(itemId);
+                if (have == quest.itemCounts.end() || need == quest.requiredItemCounts.end()) continue;
+                owner_.infoGlobal("ERR_QUEST_ADD_ITEM_SII", {itemLabel, std::to_string(have->second),
+                                                            std::to_string(need->second)});
+                break;
+            }
 
             if (owner_.addonEventCallbackRef() && updatedAny) {
                 // Once per quest this item counts towards, each named by its
@@ -973,8 +1014,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             for (auto& quest : questLog_) {
                 if (quest.questId == questId) {
                     quest.killCounts[entry] = {count, reqCount};
-                    owner_.addSystemChatMessage(quest.title + ": " + std::to_string(count) +
-                                                 "/" + std::to_string(reqCount));
+                    // No chat line: the ADD_KILL info line is the progress.
                     announceQuestLogChanged(questId);
                     break;
                 }
@@ -992,7 +1032,6 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             for (auto& quest : questLog_) {
                 if (quest.questId == questId) {
                     quest.complete = true;
-                    owner_.addSystemChatMessage("Quest Complete: " + quest.title);
                     LOG_INFO("Marked quest ", questId, " as complete");
                     announceQuestLogChanged(questId);
                     break;
@@ -1029,10 +1068,8 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
         }
 
         bool removed = false;
-        std::string removedTitle;
         for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
             if (it->questId == questId) {
-                removedTitle = it->title;
                 questLog_.erase(it);
                 removed = true;
                 break;
@@ -1056,11 +1093,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
         }
         if (removed) {
             owner_.setQuestTracked(questId, false);
-            if (!removedTitle.empty()) {
-                owner_.addSystemChatMessage("Quest removed: " + removedTitle);
-            } else {
-                owner_.addSystemChatMessage("Quest removed (ID " + std::to_string(questId) + ").");
-            }
+                // No line: abandoning prints nothing on 2.4.3 (pair 6).
             if (owner_.addonEventCallbackRef()) {
                 owner_.addonEventCallbackRef()("QUEST_LOG_UPDATE", {});
                 owner_.addonEventCallbackRef()("UNIT_QUEST_LOG_CHANGED", {"player"});
@@ -1159,6 +1192,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             if (shouldReplaceTitle && !parsed.title.empty()) {
                 q.title = parsed.title;
             }
+            announceAcceptedIfTitled(questId);
             if (!parsed.objectives.empty() &&
                 (q.objectives.empty() || q.objectives.size() < 16)) {
                 q.objectives = parsed.objectives;
@@ -1450,10 +1484,7 @@ void QuestHandler::acceptQuest() {
     // with a clearer message and no optimistic local entry to roll back.
     const int maxSlots = maxQuestLogSlots();
     if (static_cast<int>(questLog_.size()) >= maxSlots) {
-        const std::string msg = "Your quest log is full (" + std::to_string(maxSlots) +
-                                " quests). Abandon a quest to make room.";
-        owner_.addUIError(msg);
-        owner_.addSystemChatMessage(msg);
+        owner_.systemGlobal("ERR_QUEST_LOG_FULL");
         if (auto* ac = owner_.services().audioCoordinator)
             if (auto* sfx = ac->getUiSoundManager()) sfx->playError();
         return;
@@ -1533,7 +1564,7 @@ void QuestHandler::closeGossip() {
 void QuestHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     if (itemGuid == 0 || questId == 0) {
-        owner_.raiseUiError("Cannot start quest right now.");
+        LOG_WARNING("Quest item offer without item or quest");
         return;
     }
     // Send CMSG_QUESTGIVER_QUERY_QUEST with the item GUID as the "questgiver."
@@ -1667,24 +1698,17 @@ void QuestHandler::abandonQuest(uint32_t questId) {
 
 void QuestHandler::shareQuestWithParty(uint32_t questId) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) {
-        owner_.raiseUiError("Cannot share quest: not in world.");
+        LOG_WARNING("Quest share outside the world");
         return;
     }
     if (!owner_.isInGroup()) {
-        owner_.raiseUiError("You must be in a group to share a quest.");
+        owner_.systemGlobal("ERR_NOT_IN_GROUP");
         return;
     }
     network::Packet pkt(wireOpcode(Opcode::CMSG_PUSHQUESTTOPARTY));
     pkt.writeUInt32(questId);
     owner_.getSocket()->send(pkt);
-    // Local feedback: find quest title
-    for (const auto& q : questLog_) {
-        if (q.questId == questId && !q.title.empty()) {
-            owner_.addSystemChatMessage("Sharing quest: " + q.title);
-            return;
-        }
-    }
-    owner_.addSystemChatMessage("Quest shared.");
+    // The realm answers per member (MSG_QUEST_PUSH_RESULT).
 }
 
 void QuestHandler::acceptSharedQuest() {
@@ -1695,7 +1719,6 @@ void QuestHandler::acceptSharedQuest() {
     owner_.getSocket()->send(pkt);
     // Auto-track the accepted shared quest, same as a normal accept.
     owner_.setQuestTracked(sharedQuestId_, true);
-    owner_.addSystemChatMessage("Accepted: " + sharedQuestTitle_);
 }
 
 void QuestHandler::declineSharedQuest() {
@@ -1857,6 +1880,17 @@ int QuestHandler::findQuestLogSlotIndexFromServer(uint32_t questId) const {
     return -1;
 }
 
+void QuestHandler::announceAcceptedIfTitled(uint32_t questId) {
+    if (pendingAcceptedLines_.count(questId) == 0) return;
+    for (const auto& q : questLog_) {
+        if (q.questId != questId) continue;
+        if (q.title.empty() || isPlaceholderQuestTitle(q.title)) return;
+        pendingAcceptedLines_.erase(questId);
+        owner_.systemGlobal("ERR_QUEST_ACCEPTED_S", {q.title});
+        return;
+    }
+}
+
 void QuestHandler::addQuestToLocalLogIfMissing(uint32_t questId, const std::string& title, const std::string& objectives) {
     if (questId == 0 || hasQuestInLog(questId)) return;
     QuestLogEntry entry;
@@ -1987,6 +2021,11 @@ void QuestHandler::applyQuestStateFromFields(const FlatFieldMap& fields) {
     const uint8_t qStride = owner_.getPacketParsers() ? owner_.getPacketParsers()->questLogStride() : 5;
     if (qStride < 2) return;
 
+    std::unordered_set<uint32_t> nowSlotQuests;
+    struct SlotsSeen {
+        QuestHandler& self; std::unordered_set<uint32_t>& now;
+        ~SlotsSeen() { self.seenSlotQuests_ = std::move(now); self.questSlotsSeen_ = true; }
+    } slotsSeen{*this, nowSlotQuests};
     for (uint16_t slot = 0; slot < 25; ++slot) {
         const uint16_t idField    = ufQuestStart + slot * qStride;
         const uint16_t stateField = idField + 1;
@@ -1994,6 +2033,20 @@ void QuestHandler::applyQuestStateFromFields(const FlatFieldMap& fields) {
         if (idIt == fields.end()) continue;
         uint32_t questId = idIt->second;
         if (questId == 0) continue;
+
+        // A quest that appears in a slot after login is a quest accepted -
+        // from a giver, a shared quest or ".quest add" - and 2.4.3 prints
+        // "Quest accepted: Wolves Across the Border" (ERR_QUEST_ACCEPTED_S)
+        // for it (pair 6). Printed once the title is known.
+        if (questSlotsSeen_ && seenSlotQuests_.count(questId) == 0) {
+            if (!hasQuestInLog(questId)) {
+                addQuestToLocalLogIfMissing(questId, "", "");
+                requestQuestQuery(questId, false);
+            }
+            pendingAcceptedLines_.insert(questId);
+            announceAcceptedIfTitled(questId);
+        }
+        nowSlotQuests.insert(questId);
 
         // Add quest to local log only if we have a pending accept for it
         if (!hasQuestInLog(questId) && pendingQuestAcceptTimeouts_.count(questId) != 0) {
@@ -2648,8 +2701,7 @@ void QuestHandler::handleQuestConfirmAccept(network::Packet& packet) {
     }
 
     pendingSharedQuest_ = true;
-    owner_.addSystemChatMessage(sharedQuestSharerName_ + " has shared the quest \"" +
-                                sharedQuestTitle_ + "\" with you.");
+        // No chat line: the QUEST_ACCEPT popup asks.
     // Who and what, in that order: uiparent.lua hands both straight to
     // StaticPopup_Show, whose text is "%s is starting %s". It picks between
     // two popups on whether the log is full, and answers the yes with
