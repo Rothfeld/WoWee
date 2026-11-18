@@ -687,6 +687,13 @@ private:
     uint32_t    readyCheckReadyCount_    = 0;
     uint32_t    readyCheckNotReadyCount_ = 0;
     std::string readyCheckInitiator_;
+    /// This player asked for the check: the summary lines are theirs.
+    bool readyCheckMine_ = false;
+    bool readyCheckFinishSent_ = false;
+    std::chrono::steady_clock::time_point readyCheckStartedAt_{};
+public:
+    void updateReadyCheck();
+private:
     std::vector<ReadyCheckResult> readyCheckResults_;
 
     // Instance

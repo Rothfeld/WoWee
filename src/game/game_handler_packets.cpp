@@ -2336,24 +2336,20 @@ void GameHandler::registerRemainingOpcodes() {
         }
         instanceBootDeadline_ = std::chrono::steady_clock::now() +
                                 std::chrono::milliseconds(timerMs);
-        const std::string msg = "You are not in this instance's group. You will be "
-                                "teleported out in " + std::to_string(timerMs / 1000) +
-                                " seconds.";
-        addUIError(msg);
-        addSystemChatMessage(msg);
+        // UIParent's INSTANCE_BOOT popup counts down (INSTANCE_BOOT_TIMER);
+        // no line of its own.
         fireAddonEvent("INSTANCE_BOOT_START", {});
     };
     dispatchTable_[Opcode::SMSG_RAID_READY_CHECK_ERROR] = [this](network::Packet& packet) {
         if (packet.hasRemaining(1)) {
             uint8_t err = packet.readUInt8();
-            if (err == 0) { addUIError("Ready check failed: not in a group."); addSystemChatMessage("Ready check failed: not in a group."); }
-            else if (err == 1) { addUIError("Ready check failed: in instance."); addSystemChatMessage("Ready check failed: in instance."); }
-            else { addUIError("Ready check failed."); addSystemChatMessage("Ready check failed."); }
+            // WotLK-only opcode; no TBC GlobalStrings line to name.
+            LOG_WARNING("SMSG_RAID_READY_CHECK_ERROR ", int(err));
         }
     };
     dispatchTable_[Opcode::SMSG_RESET_FAILED_NOTIFY] = [this](network::Packet& packet) {
-        addUIError("Cannot reset instance: another player is still inside.");
-        raiseUiError("Cannot reset instance: another player is still inside.");
+        // RESET_FAILED_NOTIFY, the line for the one still inside.
+        systemGlobal("RESET_FAILED_NOTIFY");
         packet.skipAll();
     };
     // uint32 splitType + uint32 deferTime + string realmName

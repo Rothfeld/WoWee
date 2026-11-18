@@ -592,8 +592,12 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         readyCheckNotReadyCount_ = 0;
         readyCheckInitiator_.clear();
         readyCheckResults_.clear();
+        readyCheckMine_ = false;
+        readyCheckFinishSent_ = false;
+        readyCheckStartedAt_ = std::chrono::steady_clock::now();
         if (packet.hasRemaining(8)) {
             uint64_t initiatorGuid = packet.readUInt64();
+            readyCheckMine_ = initiatorGuid == owner_.getPlayerGuid();
             auto entity = owner_.getEntityManager().getEntity(initiatorGuid);
             if (auto* unit = dynamic_cast<Unit*>(entity.get()))
                 readyCheckInitiator_ = unit->getName();
@@ -603,9 +607,11 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
                 if (member.guid == partyData.leaderGuid) { readyCheckInitiator_ = member.name; break; }
             }
         }
-        owner_.addSystemChatMessage(readyCheckInitiator_.empty()
-            ? "Ready check initiated!"
-            : readyCheckInitiator_ + " initiated a ready check!");
+        // 2.4.3 (pair 6): the one who asked sees "Starting ready check...",
+        // the others "Edricf has initiated a ready check.".
+        if (readyCheckMine_) owner_.systemGlobal("READY_CHECK_START");
+        else if (!readyCheckInitiator_.empty())
+            owner_.systemGlobal("ERR_RAID_LEADER_READY_CHECK_START_S", {readyCheckInitiator_});
         if (owner_.addonEventCallbackRef())
             owner_.addonEventCallbackRef()("READY_CHECK", {readyCheckInitiator_, "30"});
     };
@@ -630,9 +636,8 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
                 if (r.name == rname) { r.ready = (isReady != 0); found = true; break; }
             }
             if (!found) readyCheckResults_.push_back({ .name = rname, .ready = isReady != 0 });
-            char rbuf[128];
-            std::snprintf(rbuf, sizeof(rbuf), "%s is %s.", rname.c_str(), isReady ? "Ready" : "Not Ready");
-            owner_.addSystemChatMessage(rbuf);
+            // Answers are reported once the check finishes, to the one who
+            // asked (MSG_RAID_READY_CHECK_FINISHED).
         }
         if (owner_.addonEventCallbackRef()) {
             char guidBuf[32];
@@ -641,10 +646,34 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         }
     };
     table[Opcode::MSG_RAID_READY_CHECK_FINISHED] = [this](network::Packet& /*packet*/) {
-        char fbuf[128];
-        std::snprintf(fbuf, sizeof(fbuf), "Ready check complete: %u ready, %u not ready.",
-                     readyCheckReadyCount_, readyCheckNotReadyCount_);
-        owner_.addSystemChatMessage(fbuf);
+        // The asker's summary (pair 6): everyone ready, "Everyone is Ready";
+        // someone said no, "Edricf is not ready" each, then "Ready check
+        // finished"; someone did not answer, "The following players are
+        // AFK: Edricf". Members print nothing here.
+        if (readyCheckMine_) {
+            std::string afk;
+            std::vector<std::string> notReady;
+            for (const auto& m : partyData.members) {
+                if (m.guid == owner_.getPlayerGuid() || m.name.empty()) continue;
+                const auto r = std::find_if(readyCheckResults_.begin(), readyCheckResults_.end(),
+                    [&](const ReadyCheckResult& x) { return x.name == m.name; });
+                if (r == readyCheckResults_.end()) {
+                    if (!afk.empty()) afk += owner_.globalString("PLAYER_LIST_DELIMITER");
+                    afk += m.name;
+                } else if (!r->ready) {
+                    notReady.push_back(m.name);
+                }
+            }
+            if (!afk.empty()) {
+                owner_.systemGlobal("RAID_MEMBERS_AFK", {afk});
+            } else if (!notReady.empty()) {
+                for (const auto& n : notReady) owner_.systemGlobal("RAID_MEMBER_NOT_READY", {n});
+                owner_.systemGlobal("READY_CHECK_FINISHED");
+            } else {
+                owner_.systemGlobal("READY_CHECK_ALL_READY");
+            }
+        }
+        readyCheckMine_ = false;
         pendingReadyCheck_ = false;
         readyCheckReadyCount_ = 0;
         readyCheckNotReadyCount_ = 0;
@@ -5087,6 +5116,23 @@ void SocialHandler::handleGroupSetLeader(network::Packet& packet) {
     if (groupIsRaid(pd.groupType)) raidLeaderChangedPending_ = true;
     else owner_.fireAddonEvent("PARTY_LEADER_CHANGED", {});
     owner_.fireAddonEvent("GROUP_ROSTER_UPDATE", {});
+}
+
+// The one who asked for a ready check ends it: 2.4.3 sends
+// MSG_RAID_READY_CHECK_FINISHED once every member has answered or thirty
+// seconds have passed (the realm only relays it, CMaNGOS
+// HandleRaidReadyCheckFinishedOpcode), and the summary lines follow the relay.
+void SocialHandler::updateReadyCheck() {
+    if (!readyCheckMine_ || readyCheckFinishSent_ || !pendingReadyCheck_) return;
+    size_t others = 0;
+    for (const auto& m : partyData.members) if (m.guid != owner_.getPlayerGuid()) ++others;
+    const bool allAnswered = readyCheckResults_.size() >= others;
+    const bool timedOut = std::chrono::steady_clock::now() - readyCheckStartedAt_ >= std::chrono::seconds(30);
+    if (!allAnswered && !timedOut) return;
+    if (!owner_.getSocket()) return;
+    network::Packet pkt(wireOpcode(Opcode::MSG_RAID_READY_CHECK_FINISHED));
+    owner_.getSocket()->send(pkt);
+    readyCheckFinishSent_ = true;
 }
 
 void SocialHandler::flushDeferredRaidEvents() {
