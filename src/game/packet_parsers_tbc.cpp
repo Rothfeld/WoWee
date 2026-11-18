@@ -2,6 +2,7 @@
 #include "game/tbc_cast_results.hpp"
 #include "game/spline_packet.hpp"
 #include "core/logger.hpp"
+#include <glm/gtx/string_cast.hpp>
 
 namespace wowee {
 namespace game {
@@ -938,7 +939,9 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
 // caller after spell targets) are not corrupted.
 // ---------------------------------------------------------------------------
 static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTargetGuid = nullptr,
-                                    std::optional<glm::vec3>* destination = nullptr) {
+                                    std::optional<glm::vec3>* destination = nullptr,
+                                    std::optional<glm::vec3>* source = nullptr,
+                                    uint32_t* flagsOut = nullptr) {
     if (!packet.hasRemaining(4)) return false;
 
     constexpr uint32_t TARGET_FLAG_UNIT            = 0x00000002;
@@ -953,17 +956,12 @@ static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTa
     constexpr uint32_t TARGET_FLAG_UNIT_MINIPET    = 0x00010000;
 
     const uint32_t targetFlags = packet.readUInt32();
+    if (flagsOut) *flagsOut = targetFlags;
 
     auto readPackedGuid = [&](bool capture) -> bool {
         if (!packet.hasFullPackedGuid()) return false;
         uint64_t g = packet.readPackedGuid();
         if (capture && primaryTargetGuid && *primaryTargetGuid == 0) *primaryTargetGuid = g;
-        return true;
-    };
-    auto skipFloats3 = [&](uint32_t flag) -> bool {
-        if (!(targetFlags & flag)) return true;
-        if (!packet.hasRemaining(12)) return false;
-        (void)packet.readFloat(); (void)packet.readFloat(); (void)packet.readFloat();
         return true;
     };
 
@@ -977,7 +975,12 @@ static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTa
         return false;
     }
 
-    if (!skipFloats3(TARGET_FLAG_SOURCE_LOCATION)) return false;
+    if (targetFlags & TARGET_FLAG_SOURCE_LOCATION) {
+        if (!packet.hasRemaining(12)) return false;
+        glm::vec3 src;
+        src.x = packet.readFloat(); src.y = packet.readFloat(); src.z = packet.readFloat();
+        if (source) *source = src;
+    }
     if (targetFlags & TARGET_FLAG_DEST_LOCATION) {
         if (!packet.hasRemaining(12)) return false;
         glm::vec3 dest;
@@ -1152,7 +1155,7 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
 
     // SpellCastTargets follows the miss list - consume all target bytes so that
     // any subsequent fields are not misaligned for ground-targeted AoE spells.
-    skipTbcSpellCastTargets(packet, &data.targetGuid, &data.destination);
+    skipTbcSpellCastTargets(packet, &data.targetGuid, &data.destination, &data.source, &data.targetFlags);
 
     // CMaNGOS Spell::WriteAmmoToPacket: display id, inventory type.
     constexpr uint32_t kCastFlagAmmo = 0x20;
@@ -1163,6 +1166,10 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
 
     LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
               " misses=", static_cast<int>(data.missCount));
+    LOG_DEBUG("[TBC] Spell go targets: spell=", data.spellId, " flags=0x", std::hex, data.targetFlags, std::dec,
+              " target=0x", std::hex, data.targetGuid, std::dec,
+              " src=", data.source ? glm::to_string(*data.source) : std::string("none"),
+              " dest=", data.destination ? glm::to_string(*data.destination) : std::string("none"));
     return true;
 }
 

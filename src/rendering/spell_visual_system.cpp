@@ -961,15 +961,13 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
              " end(s) for ", plays, " s");
 }
 
-void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& casterPosition,
-                                           uint32_t casterInstanceId) {
+void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& destination) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     const auto kit = instantAreaKits_.find(visualId);
     if (kit == instantAreaKits_.end() || !kit->second) return;
-    LOG_DEBUG("SpellVisual: instant area kit ", kit->second, " of visual ", visualId,
-              " at caster instance ", casterInstanceId);
-    // Unit slots attach to the caster; Base/World slots stand where it stood.
-    spawnKitEffects(kit->second, casterPosition, casterInstanceId, /*duration=*/-1.0f,
+    LOG_INFO("SpellVisual: instant area kit ", kit->second, " of visual ", visualId, " at (",
+             destination.x, ",", destination.y, ",", destination.z, ")");
+    spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
                     /*isPrecast=*/false);
 }
 

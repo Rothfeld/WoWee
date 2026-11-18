@@ -3381,8 +3381,9 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                                 core::coords::serverToCanonical(*data.destination))});
                         svs->playCastKit(visualId, casterPos,
                                          owner_.resolveUnitRenderInstance(data.casterUnit), ends);
-                        svs->playInstantAreaKit(visualId, casterPos,
-                                                owner_.resolveUnitRenderInstance(data.casterUnit));
+                        if (data.destination)
+                            svs->playInstantAreaKit(visualId, core::coords::canonicalToRender(
+                                core::coords::serverToCanonical(*data.destination)));
                     }
                 }
             }

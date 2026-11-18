@@ -52,14 +52,15 @@ public:
     /// 8183) has no play length known here; its beam is not drawn.
     void playCastKit(uint32_t visualId, const glm::vec3& casterPosition, uint32_t casterInstanceId,
                      const std::vector<ChainEnd>& ends);
-    // SpellVisual InstantAreaKit (TBC column 22), at the caster when the spell
-    // goes. Original 2.4.3 (_experiments/20261117T165200Z.pair4_kits): Summon
-    // Boar Spirit 8286 kit 9209 DarkRitual_PreCast_Base under the caster while
-    // the spirit appears yards away; Summon Skeleton 261 kit 9161
-    // CallLightning_Impact at the caster; Quillboar Channeling 7083 kit 9191
-    // Frost_Nova_state under the casting Ward Keeper, not its target.
-    void playInstantAreaKit(uint32_t visualId, const glm::vec3& casterPosition,
-                            uint32_t casterInstanceId);
+    // SpellVisual InstantAreaKit (TBC column 22) plays at the SMSG_SPELL_GO
+    // destination (TARGET_FLAG_DEST_LOCATION), unattached; a spell with no
+    // destination plays none. Build 8606, pair 12
+    // (_experiments/20261118T124000Z.astromancer_glow): Bonechewer Behemoth's
+    // Meteor 41276 (dest = its target player) drops Meteor_Impact_Base on the
+    // player; Smoke Bomb 7964 and Summon Burning Exile 4929 (dest = the
+    // caster's own position) at the caster; Volcanic Geyser 42052 (source
+    // location only) shows none (_experiments/20261118T141843Z.supremus_ground).
+    void playInstantAreaKit(uint32_t visualId, const glm::vec3& destination);
     /// SpellVisual ImpactAreaKit at the spell's destination. Spectral Blast
     /// 46648 (visual 10441, kit 9254 Shadow_Fissure_Base): the pink beams and
     /// dark shards native draws where the Spectral Rift opens.
