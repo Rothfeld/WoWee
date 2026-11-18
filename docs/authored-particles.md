@@ -134,3 +134,24 @@ turning at an angular velocity drawn from the tumble range (`+0x19C` min xyz,
 red swirls rising round the unit in the original; as sprites they were a wall
 of red squares. Unverified: texture source (emitter vs. geometry model's own),
 multi-axis tumble order, and overall brightness (WoWee swirls look denser).
+
+Sphere emitters (type 2): radius uniform between the area length and width
+tracks, elevation `U(-v, v)` above the model's horizontal plane, azimuth
+`U(-h, h)` about +Z; particles travel along the offset (outward), or up +Z
+with flag 0x100. Shadow Nova 30852 (`shadow_nova_area.m2` #0, vertical 0)
+spreads a flat smoke band in the original; tilting from +Z instead made it
+a rising column. A negative radius is no radius: Etherial.m2 Death #20
+(-1.11 to -0.83, gravity 69) falls as thin lines in the original, not a
+4 yd ring of streaks. Track 10 (`+0x130`, "zSource" on wowdev, loaded as
+`deceleration`) is still unused: making particles travel away from
+`(0, 0, zSource)` showed no difference on the Ethereal death.
+
+Not an emission problem: the green columns over Illidari Defiler corpses
+in Black Temple are the state kit of Fiery Aura 39839
+(`Fel_Immolate_State_Base.mdx`, from `creature_template_addon`; death
+persistent, AttributesEx3 0x100000). The original draws nothing for that
+aura on a live Defiler, on its corpse, or with `.aura 39839` on a player,
+while Immolate 348 (`Immolate_State_Base.mdx`, identical emitters) draws.
+The rule that hides it is not known; Spell Attributes 0x100 and
+AttributesEx 0x10000000 alone do not hide state kits (2895, 8909, 6606
+show in the original).
