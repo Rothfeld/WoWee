@@ -3072,6 +3072,18 @@ public:
     [[nodiscard]] std::string globalString(const char* name) const {
         return globalStringLookup_ ? globalStringLookup_(name) : std::string{};
     }
+    /// GlobalStrings line `name` filled with `args` as Lua's format fills it
+    /// (formatGlobalString). Empty, and logged, when the interface has no such
+    /// line or the arguments do not fit it.
+    [[nodiscard]] std::string globalLine(const char* name, const std::vector<std::string>& args = {}) const;
+    /// The original's own notices, by the GlobalStrings name it prints. Each
+    /// goes where 2.4.3 puts that line: systemGlobal the chat log
+    /// (CHAT_MSG_SYSTEM, yellow), errorGlobal the red line above the middle of
+    /// the screen (UI_ERROR_MESSAGE), infoGlobal the yellow one
+    /// (UI_INFO_MESSAGE). Nothing is shown when the line is missing.
+    void systemGlobal(const char* name, const std::vector<std::string>& args = {});
+    void errorGlobal(const char* name, const std::vector<std::string>& args = {});
+    void infoGlobal(const char* name, const std::vector<std::string>& args = {});
 
     // UI error frame: prominent on-screen error messages (spell can't be cast, etc.)
     using UIErrorCallback = std::function<void(const std::string& msg)>;

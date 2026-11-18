@@ -1,4 +1,5 @@
 #include "game/game_handler.hpp"
+#include "game/cast_result_text.hpp"
 #include "game/reputation_standing.hpp"
 #include "game/spell_classification.hpp"
 
@@ -1070,6 +1071,29 @@ void GameHandler::addSystemChatMessage(const std::string& message) {
 }
 void GameHandler::addLocalChatLine(game::ChatType type, const std::string& message) {
     if (chatHandler_) chatHandler_->addLocalChatLine(type, message);
+}
+
+std::string GameHandler::globalLine(const char* name, const std::vector<std::string>& args) const {
+    const std::string pattern = globalString(name);
+    if (pattern.empty()) {
+        LOG_ERROR("GlobalStrings has no ", name);
+        return {};
+    }
+    std::string line = formatGlobalString(pattern, args);
+    if (line.empty()) LOG_ERROR("GlobalStrings ", name, " \"", pattern, "\" does not take ", args.size(), " argument(s)");
+    return line;
+}
+
+void GameHandler::systemGlobal(const char* name, const std::vector<std::string>& args) {
+    if (std::string line = globalLine(name, args); !line.empty()) addSystemChatMessage(line);
+}
+
+void GameHandler::errorGlobal(const char* name, const std::vector<std::string>& args) {
+    if (std::string line = globalLine(name, args); !line.empty()) addUIError(line);
+}
+
+void GameHandler::infoGlobal(const char* name, const std::vector<std::string>& args) {
+    if (std::string line = globalLine(name, args); !line.empty()) addUIInfoMessage(line);
 }
 
 void GameHandler::raiseUiError(const std::string& message) {

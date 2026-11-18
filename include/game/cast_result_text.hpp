@@ -252,27 +252,40 @@ inline const char* noPowerGlobalName(uint8_t powerType) {
 
 /// Lua string.format over a GlobalStrings pattern, for the %s/%d conversions
 /// those patterns use. Arguments are already text; each conversion takes the
-/// next one. "%%" is a literal percent. Empty when the count does not match
-/// or the pattern uses another conversion.
+/// next one, a positional one ("%2$s", as in DUEL_WINNER_RETREAT and
+/// CHAT_INVITE_NOTICE) the numbered one. "%%" is a literal percent. Empty
+/// when the count does not match or the pattern uses another conversion.
 inline std::string formatGlobalString(std::string_view pattern,
                                       const std::vector<std::string>& args) {
     std::string out;
-    auto next = args.begin();
+    size_t next = 0;
+    std::vector<bool> used(args.size(), false);
     for (size_t i = 0; i < pattern.size(); ++i) {
         if (pattern[i] != '%' || i + 1 == pattern.size()) {
             out += pattern[i];
             continue;
         }
-        const char conversion = pattern[++i];
+        char conversion = pattern[++i];
         if (conversion == '%') {
             out += '%';
             continue;
         }
+        size_t index = next;
+        if (conversion >= '1' && conversion <= '9' && i + 2 < pattern.size() && pattern[i + 1] == '$') {
+            index = static_cast<size_t>(conversion - '1');
+            i += 2;
+            conversion = pattern[i];
+        } else {
+            ++next;
+        }
         if (conversion != 's' && conversion != 'd') return {};
-        if (next == args.end()) return {};
-        out += *next++;
+        if (index >= args.size()) return {};
+        used[index] = true;
+        out += args[index];
     }
-    return next == args.end() ? out : std::string{};
+    for (const bool u : used)
+        if (!u) return {};
+    return out;
 }
 
 /// True when the pattern still needs arguments.

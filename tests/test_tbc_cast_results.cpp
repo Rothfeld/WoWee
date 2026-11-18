@@ -53,6 +53,11 @@ TEST_CASE("GlobalStrings patterns fill like Lua format", "[spells]") {
     CHECK(formatGlobalString("100%% %s", {"done"}) == "100% done");
     CHECK(formatGlobalString("Requires %s", {}).empty());
     CHECK(formatGlobalString("Requires %s", {"a", "b"}).empty());
+    CHECK(formatGlobalString("%2$s has fled from %1$s in a duel", {"Edric", "Edrik"}) ==
+          "Edrik has fled from Edric in a duel");
+    CHECK(formatGlobalString("%2$s has invited you to join the channel '%1$s'.", {"foo", "Edrik"}) ==
+          "Edrik has invited you to join the channel 'foo'.");
+    CHECK(formatGlobalString("%1$s and %1$s", {"a", "b"}).empty());
     CHECK(globalStringHasConversions("Missing reagent: %s"));
     CHECK_FALSE(globalStringHasConversions("You can't do that yet"));
     CHECK_FALSE(globalStringHasConversions("100%% sure"));
