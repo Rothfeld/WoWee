@@ -610,6 +610,14 @@ bool Application::initialize() {
             if (renderer && renderer->getCameraController())
                 renderer->getCameraController()->setDistanceMoveSpeed(yardsPerSecond);
         };
+        luaSvc.setCameraYawMoveSpeed = [this](float speed) {
+            if (renderer && renderer->getCameraController())
+                renderer->getCameraController()->setYawMoveSpeed(speed);
+        };
+        luaSvc.setCameraPitchMoveSpeed = [this](float speed) {
+            if (renderer && renderer->getCameraController())
+                renderer->getCameraController()->setPitchMoveSpeed(speed);
+        };
         luaSvc.setGroundDetailDistance = [this](float yards) {
             if (!renderer) return;
             if (auto* m2 = renderer->getM2Renderer()) m2->setGroundDetailDistance(yards);

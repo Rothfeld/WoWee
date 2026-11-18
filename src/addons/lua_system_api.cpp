@@ -544,6 +544,34 @@ static std::string cvarStorePath() {
 /// box is ticked, the box writes equipmentManager, and the paperdoll reads that
 /// on VARIABLES_LOADED - so it came back off on every login, and so did every
 /// other option the player had set.
+/// The format of cvars.cfg, kept in the file as wowee_cvarsversion.
+///
+/// 1: cameraYawMoveSpeed, cameraPitchMoveSpeed and mouseSpeed hold build
+///    8606's values. Before it, all three were written in this client's own
+///    0.05-1 mouse sensitivity (default 0.2; the hidden Mouse panel slider
+///    also wrote 90 and 45 at load), and taken as they are now 0.2 would turn
+///    the camera 0.00025 degrees a pixel. They are dropped back to the
+///    original's defaults, 180, 90 and 1.
+static constexpr int kCVarStoreVersion = 1;
+static constexpr const char* kCVarStoreVersionKey = "wowee_cvarsversion";
+
+bool migrateStoredCVarRows(std::unordered_map<std::string, std::string>& rows) {
+    const auto found = rows.find(kCVarStoreVersionKey);
+    const int version = found == rows.end() ? 0 : std::atoi(found->second.c_str());
+    if (version >= kCVarStoreVersion) return false;
+    for (const char* key : {"camerayawmovespeed", "camerapitchmovespeed", "mousespeed"}) {
+        if (auto it = rows.find(key); it != rows.end()) {
+            LOG_INFO("CVars: dropping ", key, "=", it->second,
+                     " written in this client's old mouse sensitivity units");
+            rows.erase(it);
+        }
+    }
+    rows[kCVarStoreVersionKey] = std::to_string(kCVarStoreVersion);
+    return true;
+}
+
+static void saveStoredCVars();
+
 static void loadStoredCVars() {
     std::ifstream in(cvarStorePath());
     if (!in.is_open()) return;
@@ -558,6 +586,7 @@ static void loadStoredCVars() {
         ++loaded;
     }
     LOG_INFO("CVars: loaded ", loaded, " from ", cvarStorePath());
+    if (migrateStoredCVarRows(cvarStore()) && loaded > 0) saveStoredCVars();
 }
 
 /// Write them back. Called on every change rather than at shutdown: the file is
@@ -921,8 +950,11 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // Off, as it ships: a zone track stops at its end and the next one starts
     // when the zone asks for it.
     else if (n == "sound_zonemusicnodelay") lua_pushstring(L, "0");
-    // Mouse Look Speed as build 8606 ships it.
+    // Mouse-look speeds and the cursor speed as build 8606's GetCVar answers
+    // them with none set (GetCVarDefault there: "180.0", "90.0", "1.0").
     else if (n == "camerayawmovespeed") lua_pushstring(L, "180");
+    else if (n == "camerapitchmovespeed") lua_pushstring(L, "90");
+    else if (n == "mousespeed") lua_pushstring(L, "1");
     // Not joined unless asked for, as it ships.
     else if (n == "guildrecruitmentchannel") lua_pushstring(L, "0");
 
@@ -1558,6 +1590,20 @@ static std::string cvarLabelFor(const std::string& name) {
 ///
 /// CVAR_UPDATE is deliberately left behind in lua_SetCVar: that event says
 /// somebody changed a setting, which is not what restoring one is.
+/// Whether build 8606's SetCVar keeps a value for cameraYawMoveSpeed or
+/// cameraPitchMoveSpeed. Measured there for both: 0.1, 1, 360, "1e2" and
+/// "200x" are kept (as written); 0.0999, 0, -1, 360.001, "abc", "" and " 5"
+/// leave the previous value. A number at the very start of the text, within
+/// 0.1 to 360.
+static bool mouseLookSpeedAccepted(const std::string& value) {
+    if (value.empty() || std::isspace(static_cast<unsigned char>(value[0]))) return false;
+    char* end = nullptr;
+    const double number = std::strtod(value.c_str(), &end);
+    return end != value.c_str() &&
+           number >= rendering::CameraController::kMoveSpeedMin &&
+           number <= rendering::CameraController::kMoveSpeedMax;
+}
+
 static void applyCVarSideEffects(lua_State* L, const std::string& key,
                                  const std::string& value) {
     if (key == "ffxdeath") {
@@ -1663,13 +1709,22 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
             svc->setClientSetting("camerastiffness", value);
         }
     }
-    // Mouse Look Speed. Build 8606 turns the camera cameraYawMoveSpeed/800
-    // degrees per pixel of mouse-look (default 180: 0.225; ledger 127c). The
-    // camera turns mouseSensitivity * 1.125 degrees per pixel, so the setting
-    // is the CVar over 900, in the CVar's own range.
-    if (key == "camerayawmovespeed") {
-        if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
-            svc->setClientSetting("mousespeed", ui::settingNumberText(std::atof(value.c_str()) / 900.0));
+    // Mouse-look: build 8606 turns cameraYawMoveSpeed/800 degrees of yaw and
+    // cameraPitchMoveSpeed/600 of pitch per pixel. The CVars go to the camera
+    // as they are. A stored value SetCVar would have refused (a hand-edited
+    // file) is refused here too and the camera keeps what it has. mouseSpeed
+    // has no side effect: in the original it is the cursor's speed (measured:
+    // neither the camera nor this desktop's cursor changes with it), and this
+    // client's cursor is the system's.
+    if (key == "camerayawmovespeed" || key == "camerapitchmovespeed") {
+        if (!mouseLookSpeedAccepted(value)) {
+            LOG_WARNING("CVar ", key, "=", value, ": outside 0.1-360, not applied");
+        } else if (auto* svc = getLuaServices(L)) {
+            const float speed = static_cast<float>(std::atof(value.c_str()));
+            if (key == "camerayawmovespeed" && svc->setCameraYawMoveSpeed)
+                svc->setCameraYawMoveSpeed(speed);
+            if (key == "camerapitchmovespeed" && svc->setCameraPitchMoveSpeed)
+                svc->setCameraPitchMoveSpeed(speed);
         }
     }
     // Loop Music. The checkbox says Loop Music and the CVar behind it says
@@ -1901,6 +1956,11 @@ static int lua_SetCVar(lua_State* L) {
             LOG_WARNING("SetCVar(", name, ", ", value, "): out of range, kept");
             return 0;
         }
+    }
+    if ((key == "camerayawmovespeed" || key == "camerapitchmovespeed") &&
+        !mouseLookSpeedAccepted(value)) {
+        LOG_WARNING("SetCVar(", name, ", ", value, "): outside 0.1-360, kept");
+        return 0;
     }
     const auto existing = cvarStore().find(key);
     const bool changed = (existing == cvarStore().end() || existing->second != value);

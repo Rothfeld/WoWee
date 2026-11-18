@@ -256,7 +256,6 @@ constexpr FieldBinding kFieldBindings[] = {
     {.key = "lightshafts",    .asInt   = &SettingsPanel::pendingVolumetricFog},
     {.key = "raytracedlighting", .asInt = &SettingsPanel::pendingRtLighting},
     {.key = "mistdensity",    .asFloat = &SettingsPanel::pendingVolumetricDensity},
-    {.key = "mousespeed",     .asFloat = &SettingsPanel::pendingMouseSensitivity},
     {.key = "minimapclock",   .asBool  = &SettingsPanel::pendingShowMinimapClock},
     {.key = "friendlyplates", .asBool  = &SettingsPanel::showFriendlyNameplates_},
     {.key = "enemyplates",    .asBool  = &SettingsPanel::showEnemyNameplates_},
@@ -537,8 +536,6 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
         if (camera) camera->setFov(pendingFov);
     } else if (key == "camerashake") {
         if (cameraController) cameraController->setShakeScale(pendingCameraShake);
-    } else if (key == "mousespeed") {
-        if (cameraController) cameraController->setMouseSensitivity(pendingMouseSensitivity);
     } else if (key == "camerastiffness") {
         if (cameraController) cameraController->setCameraSmoothSpeed(pendingCameraStiffness);
     } else if (key == "cameramaxdistance") {

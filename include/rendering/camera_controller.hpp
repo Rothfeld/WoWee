@@ -26,8 +26,21 @@ public:
     void releaseMouseCapture();
 
     void setMovementSpeed(float speed) { movementSpeed = speed; }
-    void setMouseSensitivity(float sensitivity) { mouseSensitivity = sensitivity; }
-    [[nodiscard]] float getMouseSensitivity() const { return mouseSensitivity; }
+    /// cameraYawMoveSpeed and cameraPitchMoveSpeed. Build 8606 turns the view
+    /// by speed/800 degrees of yaw and speed/600 of pitch per pixel of mouse
+    /// movement, whatever the window size (1280x720 and 800x600 measured
+    /// equal); mouseSpeed does not enter. SetCVar has already refused what the
+    /// original refuses.
+    void setYawMoveSpeed(float speed) { yawMoveSpeed_ = speed; }
+    void setPitchMoveSpeed(float speed) { pitchMoveSpeed_ = speed; }
+    [[nodiscard]] float yawDegreesPerPixel() const { return yawMoveSpeed_ / kYawMoveSpeedPerDegree; }
+    [[nodiscard]] float pitchDegreesPerPixel() const { return pitchMoveSpeed_ / kPitchMoveSpeedPerDegree; }
+    /// GetCVar's answers with nothing set, and the range SetCVar accepts for
+    /// both (0.0999 and 360.001 are refused, 0.1 and 360 kept).
+    static constexpr float kDefaultYawMoveSpeed = 180.0f;
+    static constexpr float kDefaultPitchMoveSpeed = 90.0f;
+    static constexpr double kMoveSpeedMin = 0.1;  // double: "0.1" parses to it exactly
+    static constexpr double kMoveSpeedMax = 360.0;
     void setInvertMouse(bool invert) { invertMouse = invert; }
     [[nodiscard]] bool isInvertMouse() const { return invertMouse; }
     /// How far back the camera may be pulled: the original client's
@@ -105,9 +118,12 @@ public:
     /// SDL reports only the first finger as a mouse, so with a thumb on the
     /// movement stick a second finger dragging to look produces nothing at all.
     /// The touch controls read that finger themselves and hand the movement
-    /// here, in the same pixels and through the same sensitivity and limits a
+    /// here, in the same pixels and through the same look speeds and limits a
     /// mouse drag goes through.
     void applyLookDelta(float dxPixels, float dyPixels);
+    /// Turns the view by angles rather than pixels: a controller stick, whose
+    /// rate is its own setting in degrees a second.
+    void applyLookDegrees(float yawDegrees, float pitchDegrees);
 
     /// While a finger is steering, the character faces where the view does -
     /// what holding the right mouse button means on a desktop.
@@ -528,9 +544,10 @@ private:
     float slowMultiplier = 0.3f;
 
     // Mouse settings
-    float mouseSensitivity = 0.2f;
-    static constexpr float kMouseYawScale = 1.125f;
-    static constexpr float kMousePitchScale = 0.75f;
+    float yawMoveSpeed_ = kDefaultYawMoveSpeed;
+    float pitchMoveSpeed_ = kDefaultPitchMoveSpeed;
+    static constexpr float kYawMoveSpeedPerDegree = 800.0f;
+    static constexpr float kPitchMoveSpeedPerDegree = 600.0f;
     bool invertMouse = false;
     bool mouseButtonDown = false;
     glm::vec2 mouseCapturePosition_{0.0f};

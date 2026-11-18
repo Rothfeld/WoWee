@@ -7,13 +7,13 @@
  * Options needs the same list to build its own panels out of, and an addon that
  * asks what this client can be told needs it too. Three readers, one list.
  *
- * Only the settings with no Blizzard equivalent belong here. The six a Blizzard
- * panel already has a working control for - view distance, mouse speed, the
- * minimap clock, friendly nameplates, ground clutter and the sound effects
- * volume - are bound to their CVar instead, in kClientCVars, so that FrameXML's
- * own control drives them rather than a second one appearing beside it. Those
- * six are named on the root panel, so that a player looking for one is told
- * where it is rather than concluding it is missing.
+ * Only the settings with no Blizzard equivalent belong here. The five a Blizzard
+ * panel already has a working control for - view distance, the minimap clock,
+ * friendly nameplates, ground clutter and the sound effects volume - are bound
+ * to their CVar instead, in kClientCVars, so that FrameXML's own control drives
+ * them rather than a second one appearing beside it. Those five are named on
+ * the root panel, so that a player looking for one is told where it is rather
+ * than concluding it is missing.
  *
  * Everything else this client can be told is here, in the order it should be
  * read: a category is one panel, and a section is one heading on it.

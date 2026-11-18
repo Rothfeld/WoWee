@@ -92,7 +92,6 @@ public:
     bool pendingCharacterSpeech = true;
 
     // ---- Pending camera / controls ----
-    float pendingMouseSensitivity = 0.2f;
     bool pendingInvertMouse = false;
     bool pendingGamepadEnabled = true;
     float pendingGamepadLookSpeed = 180.0f;   // degrees a second at full stick

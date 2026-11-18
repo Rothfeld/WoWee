@@ -3,6 +3,9 @@
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #pragma once
 
+#include <string>
+#include <unordered_map>
+
 struct lua_State;
 
 namespace wowee::addons {
@@ -58,6 +61,11 @@ void noteClientSettingChanged(const std::string& settingKey, const std::string& 
 /// reason its own file says: a value that survives only a clean exit is not one
 /// a player can rely on, and this client is exited every way there is.
 void setStoredCVar(const std::string& key, const std::string& value);
+
+/// Bring cvars.cfg's rows, keys lower case, to the current format, recorded
+/// in the rows as wowee_cvarsversion. Returns whether anything changed. Run on
+/// the store as it is loaded; see kCVarStoreVersion.
+bool migrateStoredCVarRows(std::unordered_map<std::string, std::string>& rows);
 void registerActionLuaAPI(lua_State* L);
 
 /// Whether this client performs a binding command itself, without the

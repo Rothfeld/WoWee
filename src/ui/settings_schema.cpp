@@ -10,7 +10,7 @@ namespace {
 // Every setting this client has.
 //
 // Including the ones FrameXML's own Video, Sound and Interface panels used to
-// drive through kClientCVars alone - mouse speed, the minimap clock, friendly
+// drive through kClientCVars alone - the minimap clock, friendly
 // nameplates, ground clutter, the sound effects volume, and the rows of the
 // game's Effects page. Until 2026-09-05 those were left out of here on the
 // grounds that a Blizzard control had them, which drew the client's pages and
@@ -322,10 +322,15 @@ constexpr SettingDesc kSchema[] = {
      "snapping straight to it.", "", 0},
     {"idleorbit", "Idle orbit", SettingKind::Bool, 0, 0, 0, "Camera", "",
      "Slowly circle the camera around you while you stand still.", "", 0},
-    {"mousespeed", "Mouse sensitivity", SettingKind::Float, 0.05f, 1.0f, 0.05f, "Camera", "Mouse",
-     "How far the view turns for a given movement of the mouse. The game's\n"
-     "own panel offered this twice, as sensitivity and as look speed, and\n"
-     "both wrote this one value.", "", 0.2f},
+    // The game's own Mouse Look Speed slider (UIOptionsPanels: 90 to 270 by
+    // 10), on the CVar it wrote, and writing cameraPitchMoveSpeed at half of it
+    // as that slider's SetValue did. Build 8606 turns the view by
+    // cameraYawMoveSpeed/800 degrees of yaw and cameraPitchMoveSpeed/600 of
+    // pitch per pixel. Its Mouse Sensitivity slider wrote mouseSpeed, the
+    // cursor's speed; this client's cursor is the system's, so it has no row.
+    {"mouselookspeed", "Mouse Look Speed", SettingKind::Float, 90, 270, 10, "Camera", "Mouse",
+     "Adjust the speed at which you turn the camera when using mouse look.", "", 180,
+     "", "cvar:cameraYawMoveSpeed", "", "SetCVar(\"cameraPitchMoveSpeed\", v / 2)"},
     {"invertmouse", "Invert mouse look", SettingKind::Bool, 0, 0, 0, "Camera", "",
      "Push the mouse forward to look up, as in a flight sim.", "", 0},
     {"gamepad", "Use a controller", SettingKind::Bool, 0, 0, 0, "Camera", "Controller",

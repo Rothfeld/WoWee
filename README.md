@@ -1329,7 +1329,15 @@ only the view; pitching below that orbit pitch moves it again (native Elwynn:
 orbit held at 5.5 deg, view to 42; Terrace wall: slid along the ray to orbit
 -1, held at +2 with the camera 1.65 yd above the feet). Mouse-look turns
 cameraYawMoveSpeed/800 deg of yaw and cameraPitchMoveSpeed/600 of pitch per
-pixel (180 and 90: 0.225 and 0.15 at 1280x720; mouseSpeed has no effect).
+pixel (defaults 180 and 90: 0.225 and 0.15, equal at 1280x720 and 800x600).
+SetCVar keeps 0.1 to 360 for either (a leading number, "200x" is 200) and
+keeps the old value otherwise. Interface -> WoWee -> Camera -> Mouse Look Speed
+is the game's own slider: 90 to 270 by 10, writing cameraPitchMoveSpeed at
+half. mouseSpeed (Mouse Sensitivity, 0.5 to 1.5) is the cursor's speed in the
+original; it changes neither mouse-look nor, on Wine, the cursor, and this
+client reads it nowhere. Gotcha: cvars.cfg without `wowee_cvarsversion=1` was
+written when all three held this client's own 0.05-1 sensitivity; loading it
+drops them to the defaults. settings.cfg `mouse_sensitivity` is ignored.
 
 ### Following another character
 

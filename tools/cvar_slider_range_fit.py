@@ -41,12 +41,11 @@ nearly black picture, which is this same fault in a control that is not bound
 through kClientCVars. The overrides are read too, or this would compare against
 numbers the client never uses.
 
-It also checks that two sliders over one value offer the same range. One
-setting has two: Mouse Sensitivity and Mouse Look Speed both write this client's
-mouse sensitivity. Fixing the first with a scale while the second passed its
-number through left them disagreeing - one read 1.0 where the other read 0.2,
-and moving either put the other somewhere it could not show. That was a fix for
-this file's own first finding, and it is the reason the check is here.
+It also checks that two sliders over one value offer the same range. Mouse
+Sensitivity and Mouse Look Speed were once both bound to one mouse setting of
+this client's; one read 1.0 where the other read 0.2. Neither is bound now:
+mouse-look reads cameraYawMoveSpeed and cameraPitchMoveSpeed as build 8606
+does, and mouseSpeed is the cursor's.
 
 Canaried two ways: taking the scale off a binding reports that slider's ends
 landing outside what the setting holds, and scaling one of a shared pair without

@@ -2846,6 +2846,120 @@ TEST_CASE_METHOD(Integration, "Death effect CVar controls compositor independent
     lua.setLuaServices({});
 }
 
+// Build 8606, measured (pair 4, _experiments/20261118T1516.native_mouselook):
+// a drag turns cameraYawMoveSpeed/800 degrees of yaw and cameraPitchMoveSpeed/600
+// of pitch per pixel, the same at 1280x720 and 800x600; mouseSpeed changes
+// neither the turn nor the cursor.
+TEST_CASE_METHOD(Integration, "Mouse-look turns by the move-speed CVars per pixel", "[camera][mouselook]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    controller.setIdleOrbitEnabled(false);
+    controller.setFollowTarget(nullptr);
+    CHECK(controller.yawDegreesPerPixel() == Catch::Approx(0.225f));
+    CHECK(controller.pitchDegreesPerPixel() == Catch::Approx(0.15f));
+
+    controller.setDefaultSpawn(glm::vec3(0), 100, -30);
+    controller.resetAngles();
+    controller.applyLookDelta(100, 0);
+    CHECK(controller.getYaw() == Catch::Approx(100 - 22.5f));
+    controller.applyLookDelta(0, 100);  // mouse down looks down
+    CHECK(controller.getPitch() == Catch::Approx(-30 - 15.0f));
+
+    // The Mouse Look Speed slider's top: 270, and half of it for pitch.
+    controller.setYawMoveSpeed(270);
+    controller.setPitchMoveSpeed(135);
+    CHECK(controller.yawDegreesPerPixel() == Catch::Approx(0.3375f));
+    CHECK(controller.pitchDegreesPerPixel() == Catch::Approx(0.225f));
+    // The two are separate CVars: 40 and 300 measured 0.05 and 0.5.
+    controller.setYawMoveSpeed(40);
+    controller.setPitchMoveSpeed(300);
+    CHECK(controller.yawDegreesPerPixel() == Catch::Approx(0.05f));
+    CHECK(controller.pitchDegreesPerPixel() == Catch::Approx(0.5f));
+
+    // A controller stick turns in degrees, whatever the mouse is set to.
+    controller.resetAngles();
+    controller.applyLookDegrees(10, 5);
+    CHECK(controller.getYaw() == Catch::Approx(90));
+    CHECK(controller.getPitch() == Catch::Approx(-35));
+}
+
+TEST_CASE_METHOD(Integration, "Mouse-look CVars reach the camera with build 8606's defaults and range", "[camera][mouselook]") {
+    std::vector<float> yaw, pitch;
+    std::vector<std::string> settings;
+    addons::LuaServices services;
+    services.setCameraYawMoveSpeed = [&](float v) { yaw.push_back(v); };
+    services.setCameraPitchMoveSpeed = [&](float v) { pitch.push_back(v); };
+    services.setClientSetting = [&](const std::string& key, const std::string&) { settings.push_back(key); };
+    lua.setLuaServices(services);
+    run("SetCVar('cameraYawMoveSpeed', 180) SetCVar('cameraPitchMoveSpeed', 90) SetCVar('mouseSpeed', 1)");
+    truth("GetCVarDefault('cameraYawMoveSpeed') == '180'");
+    truth("GetCVarDefault('cameraPitchMoveSpeed') == '90'");
+    truth("GetCVarDefault('mouseSpeed') == '1'");
+    // No redefined slider range: 2.4.3 has no GetCVarMin, and the panel's own
+    // table (90 to 270, 0.5 to 1.5) is the range.
+    truth("GetCVarMin('cameraYawMoveSpeed') == nil and GetCVarMax('mouseSpeed') == nil");
+    yaw.clear(); pitch.clear(); settings.clear();
+
+    run("SetCVar('cameraYawMoveSpeed', 270)");
+    REQUIRE(yaw.size() == 1);
+    CHECK(yaw.back() == Catch::Approx(270));
+    truth("GetCVar('cameraYawMoveSpeed') == '270'");
+    run("SetCVar('cameraPitchMoveSpeed', '135')");
+    REQUIRE(pitch.size() == 1);
+    CHECK(pitch.back() == Catch::Approx(135));
+
+    // Kept as written: 0.1, 360, "1e2", "200x" (as 200).
+    run("SetCVar('cameraYawMoveSpeed', 0.1)");
+    CHECK(yaw.back() == Catch::Approx(0.1f));
+    run("SetCVar('cameraYawMoveSpeed', 360)");
+    CHECK(yaw.back() == Catch::Approx(360));
+    run("SetCVar('cameraYawMoveSpeed', '1e2')");
+    CHECK(yaw.back() == Catch::Approx(100));
+    run("SetCVar('cameraYawMoveSpeed', '200x')");
+    CHECK(yaw.back() == Catch::Approx(200));
+    truth("GetCVar('cameraYawMoveSpeed') == '200x'");
+    // Refused, the previous value kept: 0.0999, 0, -1, 360.001, "abc", "", " 5".
+    const auto applied = yaw.size();
+    for (const char* bad : {"0.0999", "0", "-1", "360.001", "'abc'", "''", "' 5'"}) {
+        run(std::string("SetCVar('cameraYawMoveSpeed', ") + bad + ")");
+        run(std::string("SetCVar('cameraPitchMoveSpeed', ") + bad + ")");
+    }
+    CHECK(yaw.size() == applied);
+    CHECK(pitch.size() == 1);
+    truth("GetCVar('cameraYawMoveSpeed') == '200x'");
+    truth("GetCVar('cameraPitchMoveSpeed') == '135'");
+
+    // mouseSpeed takes anything and turns nothing.
+    run("SetCVar('mouseSpeed', 1.5) SetCVar('mouseSpeed', -1)");
+    truth("GetCVar('mouseSpeed') == '-1'");
+    CHECK(yaw.size() == applied);
+    CHECK(pitch.size() == 1);
+    CHECK(settings.empty());
+
+    run("SetCVar('cameraYawMoveSpeed', 180) SetCVar('cameraPitchMoveSpeed', 90) SetCVar('mouseSpeed', 1)");
+    lua.setLuaServices({});
+}
+
+TEST_CASE("Stored mouse-look CVars from this client's old sensitivity scale are dropped", "[camera][mouselook]") {
+    // A cvars.cfg from before the format was recorded: all three in the old
+    // 0.05-1 sensitivity, as found in the shared and pair configs.
+    std::unordered_map<std::string, std::string> rows{
+        {"camerayawmovespeed", "0.2"}, {"camerapitchmovespeed", "0.1"},
+        {"mousespeed", "1"}, {"farclip", "1900"}};
+    CHECK(addons::migrateStoredCVarRows(rows));
+    CHECK_FALSE(rows.contains("camerayawmovespeed"));
+    CHECK_FALSE(rows.contains("camerapitchmovespeed"));
+    CHECK_FALSE(rows.contains("mousespeed"));
+    CHECK(rows.at("farclip") == "1900");
+    CHECK(rows.at("wowee_cvarsversion") == "1");
+    // Once recorded, the player's own values stay.
+    rows["camerayawmovespeed"] = "90";
+    rows["camerapitchmovespeed"] = "45";
+    CHECK_FALSE(addons::migrateStoredCVarRows(rows));
+    CHECK(rows.at("camerayawmovespeed") == "90");
+    CHECK(rows.at("camerapitchmovespeed") == "45");
+}
+
 TEST_CASE_METHOD(Integration, "TBC remote aura fields survive target selection and update", "[remote-aura]") {
     using namespace wowee::game;
     replay::Session session("tbc");

@@ -3479,13 +3479,13 @@ void CameraController::processMouseMotion(const SDL_MouseMotionEvent& event) {
     // Directly update stored yaw/pitch (no lossy forward-vector derivation).
     // Build 8606 turns cameraYawMoveSpeed/800 degrees of yaw and
     // cameraPitchMoveSpeed/600 of pitch per pixel (defaults 180 and 90:
-    // 0.225 and 0.15 at 1280x720; mouseSpeed has no effect). The yaw rate is
-    // 1.125x the sensitivity setting (0.2 by default), the pitch rate 0.75x.
-    yaw -= event.xrel * mouseSensitivity * kMouseYawScale;
+    // 0.225 and 0.15, at 1280x720 and at 800x600 alike; mouseSpeed has no
+    // effect).
+    yaw -= event.xrel * yawDegreesPerPixel();
     // SDL yrel > 0 = mouse moved DOWN. In WoW, mouse-down = look down = pitch decreases.
     // invertMouse flips to flight-sim style (mouse-down = look up).
     float invert = invertMouse ? 1.0f : -1.0f;
-    pitch += event.yrel * mouseSensitivity * kMousePitchScale * invert;
+    pitch += event.yrel * pitchDegreesPerPixel() * invert;
 
     // WoW-style pitch limits: can look almost straight down, limited upward
     pitch = glm::clamp(pitch, MIN_PITCH, MAX_PITCH);
@@ -3868,11 +3868,15 @@ bool CameraController::groundNotStreamedYet(float x, float y) const {
 }
 
 void CameraController::applyLookDelta(float dxPixels, float dyPixels) {
+    applyLookDegrees(dxPixels * yawDegreesPerPixel(), dyPixels * pitchDegreesPerPixel());
+}
+
+void CameraController::applyLookDegrees(float yawDegrees, float pitchDegrees) {
     if (!enabled || !camera || introActive) return;
 
-    yaw -= dxPixels * mouseSensitivity;
+    yaw -= yawDegrees;
     const float invert = invertMouse ? 1.0f : -1.0f;
-    pitch += dyPixels * mouseSensitivity * invert;
+    pitch += pitchDegrees * invert;
     pitch = glm::clamp(pitch, MIN_PITCH, MAX_PITCH);
     camera->setRotation(yaw, pitch);
 }

@@ -1855,7 +1855,6 @@ void GameScreen::saveSettings() {
     out << "amd_fsr3_framegen=" << (settingsPanel_.pendingAMDFramegen ? 1 : 0) << "\n";
 
     // Controls
-    out << "mouse_sensitivity=" << settingsPanel_.pendingMouseSensitivity << "\n";
     out << "invert_mouse=" << (settingsPanel_.pendingInvertMouse ? 1 : 0) << "\n";
     out << "camera_stiffness=" << settingsPanel_.pendingCameraStiffness << "\n";
     out << "camera_distance_max_factor=" << settingsPanel_.pendingCameraDistanceMaxFactor << "\n";
@@ -2119,7 +2118,11 @@ void GameScreen::loadSettings() {
             else if (key == "fsr2_mv_scale_y") settingsPanel_.pendingFSR2MotionVecScaleY = std::clamp(std::stof(val), -2.0f, 2.0f);
             else if (key == "amd_fsr3_framegen") settingsPanel_.pendingAMDFramegen = (std::stoi(val) != 0);
             // Controls
-            else if (key == "mouse_sensitivity") settingsPanel_.pendingMouseSensitivity = std::clamp(std::stof(val), 0.05f, 1.0f);
+            // mouse_sensitivity was this client's own mouse-look rate, kept
+            // beside the original's cameraYawMoveSpeed/cameraPitchMoveSpeed and
+            // fed from mouseSpeed. Those CVars are the setting now; an old
+            // value is dropped here and gone from the file at the next save.
+            else if (key == "mouse_sensitivity") LOG_INFO("Settings: ignoring retired mouse_sensitivity=", val);
             else if (key == "invert_mouse") settingsPanel_.pendingInvertMouse = (std::stoi(val) != 0);
             else if (key == "camera_stiffness") settingsPanel_.pendingCameraStiffness = std::clamp(std::stof(val), 5.0f, 100.0f);
             else if (key == "camera_distance_max_factor") settingsPanel_.pendingCameraDistanceMaxFactor = std::clamp(std::stof(val), 1.0f, 2.0f);

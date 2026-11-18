@@ -1260,10 +1260,11 @@ local kRemoved = {
     -- it matches the same line pasted over and over, not the words in it.
     "InterfaceOptionsSocialPanelProfanityFilter",
 
-    -- Three that the schema now offers, so the game's own copies would be a
-    -- second control for one value: mouse sensitivity - which that panel
-    -- offered twice over, as sensitivity and as look speed, both writing the
-    -- same setting - the minimap clock, and friendly nameplates.
+    -- Mouse Look Speed, the minimap clock and friendly nameplates are rows
+    -- in the schema, on the same CVars, so the game's own copies would be a
+    -- second control for one value. Mouse Sensitivity writes mouseSpeed, the
+    -- cursor's speed; this client's cursor is the system's, and nothing here
+    -- reads it.
     "InterfaceOptionsMousePanelMouseSensitivitySlider",
     "InterfaceOptionsMousePanelMouseLookSpeedSlider",
     "InterfaceOptionsDisplayPanelShowClock",
