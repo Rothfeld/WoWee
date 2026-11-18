@@ -31,6 +31,7 @@
 #include "rendering/camera_controller.hpp"
 #include "addons/lua_engine.hpp"
 #include "addons/expansion_api_surface.hpp"
+#include "pipeline/asset_manager.hpp"
 #include "game/world_state_ui.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -1307,6 +1308,8 @@ const ClientCVarBinding* findClientCVar(const std::string& lowerName) {
     return nullptr;
 }
 
+static std::string installedClientLocale(lua_State* L);
+
 static int lua_GetCVar(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     // Folded to lower case, because the client's CVar names are not
@@ -1321,7 +1324,14 @@ static int lua_GetCVar(lua_State* L) {
     // Enemy nameplates and the minimap's rotation used to be here too - the V
     // key and the minimap's menu turn them without SetCVar - and are rows
     // bound in kClientCVars now, which answers from the row the same way.
-    if (n == "realmname") {
+    if (n == "locale" && game::isActiveExpansion("tbc")) {
+        // Measured: "enGB" on an enGB install, while GetLocale() says enUS.
+        const std::string loc = installedClientLocale(L);
+        if (!loc.empty()) {
+            lua_pushstring(L, loc.c_str());
+            return 1;
+        }
+    } else if (n == "realmname") {
         // The realm chosen on the realm list. Written by the login screen in
         // the original client; MangAdmin's header reads it.
         auto* gh = getGameHandler(L);
@@ -2011,6 +2021,62 @@ static int lua_GetLocale(lua_State* L) {
         ? svc->expansionRegistry->getActive() : nullptr;
     lua_pushstring(L, profile ? profile->locale.c_str() : "enUS");
     return 1;
+}
+
+/// The extracted data's directory, or empty before the asset manager exists.
+static std::filesystem::path installedDataPath(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    auto* am = gh ? gh->services().assetManager : nullptr;
+    return am ? std::filesystem::path(am->getDataPath()) : std::filesystem::path();
+}
+
+/// "engb" -> "enGB": the client's spelling of a locale directory name, or
+/// empty when the name is not a locale (four letters).
+static std::string localeSpelling(const std::string& name) {
+    if (name.size() != 4) return {};
+    std::string out = name;
+    for (size_t i = 0; i < 4; ++i) {
+        const auto c = static_cast<unsigned char>(out[i]);
+        if (!std::isalpha(c)) return {};
+        out[i] = static_cast<char>(i < 2 ? std::tolower(c) : std::toupper(c));
+    }
+    return out;
+}
+
+// GetExistingLocales() -> every locale the installation holds. 2.4.3 lists
+// the locale directories under Data (here enGB and ruRU); the extracted data
+// keeps them as data/<locale>, so the answer is read from there.
+static int lua_GetExistingLocales(lua_State* L) {
+    const auto dataDir = installedDataPath(L) / "data";
+    std::vector<std::string> locales;
+    std::error_code ec;
+    if (std::filesystem::is_directory(dataDir, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(dataDir, ec)) {
+            if (!entry.is_directory(ec)) continue;
+            if (auto loc = localeSpelling(entry.path().filename().string()); !loc.empty())
+                locales.push_back(loc);
+        }
+    }
+    std::sort(locales.begin(), locales.end());
+    for (const auto& loc : locales) lua_pushstring(L, loc.c_str());
+    return static_cast<int>(locales.size());
+}
+
+/// The locale the installed client data is for, from its component file
+/// (component.wow-engb.txt names <component name="wow-enGB" .../>): what
+/// 2.4.3's "locale" CVar holds (enGB), while GetLocale answers enUS.
+static std::string installedClientLocale(lua_State* L) {
+    const auto dir = installedDataPath(L);
+    std::error_code ec;
+    if (dir.empty() || !std::filesystem::is_directory(dir, ec)) return {};
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        std::string name = entry.path().filename().string();
+        toLowerInPlace(name);
+        constexpr std::string_view prefix = "component.wow-";
+        if (name.rfind(prefix, 0) != 0 || name.size() != prefix.size() + 8) continue;
+        return localeSpelling(name.substr(prefix.size(), 4));
+    }
+    return {};
 }
 
 static int lua_GetBuildInfo(lua_State* L) {
@@ -6400,12 +6466,10 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"ResetChatWindows",             lua_ResetChatWindows},
                 {"SetChatColorNameByClass",      lua_SetChatColorNameByClass},
                 {"GetChatColorNameByClass",      lua_GetChatColorNameByClass},
-                // The locales installed. 2.4.3 lists every locale directory
-                // under Data (enGB and ruRU on this install); this client's
-                // extracted data carries one, the one GetLocale answers, so
-                // the Languages panel - registered only for more than one -
-                // stays away as there is nothing to switch to.
-                {"GetExistingLocales", lua_GetLocale},
+                // The locales installed, read from the extracted data's
+                // data/<locale> directories (see lua_GetExistingLocales). The
+                // Languages panel registers only for more than one.
+                {"GetExistingLocales", lua_GetExistingLocales},
                 // Read from the real keyboard: a shift-click means something
                 // different from a click, and FrameXML asks on every press.
                 {"IsShiftKeyDown",           lua_IsShiftKeyDown},
