@@ -5,6 +5,7 @@
 #include "ui/simple_html.hpp"
 #include "ui/link_hit.hpp"
 #include "ui/text_wrap.hpp"
+#include "ui/native_text_metrics.hpp"
 #include "ui/tooltip_layout.hpp"
 #include <deque>
 #include <set>
@@ -691,13 +692,13 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                                      bool nonSpaceWrap, const char* justifyH,
                                      bool forceColor, WidgetTree* linkSink,
                                      uint32_t linkOwner, float gradientStart, float gradientLength,
-                                     float continuationIndent) {
+                                     float continuationIndent, float lineHeightPx) {
     const auto lines = wrapText(parseMarkup(text), wrapWidth, nonSpaceWrap,
                                 [&](const std::string& piece) {
                                     return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
                                                                piece.c_str()).x;
                                 }, continuationIndent);
-    const float lineH = size * 1.2f;
+    const float lineH = lineHeightPx > 0.0f ? lineHeightPx : size * 1.2f;
     // ImGui's glyph origin includes the face's ascender padding. Our layout
     // uses an em-height line box, so center capital ink in that box. A fixed
     // reference glyph keeps the baseline stable across ascenders/descenders
@@ -2839,12 +2840,17 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 const float pad = w->textInsetLeft * s;
                 const float wrapW = multi
                     ? std::max(1.0f, (x1 - x0) - pad - w->textInsetRight * s) : 0.0f;
+                // A multi-line box steps one line per rasterized font height,
+                // as native 2.4.3 does: MacroFrameText (FRIZQT 10) is 9.6
+                // units a line at 1280x720 - ten lines 96 - where size * 1.2
+                // made it 12.
+                const float linePx = multi ? static_cast<float>(nativePixelHeight(w->fontHeight, ws)) : 0.0f;
                 if (multi && font) {
                     const auto lines = wrapText(parseMarkup(w->editText), wrapW, false,
                         [&](const std::string& piece) {
                             return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
                         });
-                    w->editContentH = static_cast<float>(lines.size()) * size * 1.2f / s;
+                    w->editContentH = static_cast<float>(lines.size()) * linePx / ws;
                 }
                 if (!w->editText.empty()) {
                     // The shadow first, under the words, as a font string's
@@ -2860,7 +2866,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                               ty - w->shadowY * s),
                                        packColor(sc, w->effAlpha * w->shadowColor[3]),
                                        w->effAlpha, w->editText, wrapW, false,
-                                       nullptr, true);
+                                       nullptr, true, nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
                     }
                     // Through the markup parser like everything else. An edit
                     // box holds what the player typed, which used to mean plain
@@ -2870,7 +2876,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // Links are only clickable at all as of this branch, so
                     // this became reachable at the same moment.
                     drawMarkupText(dl, font, size, ImVec2(x0 + pad, ty), col,
-                                   w->effAlpha, w->editText, wrapW);
+                                   w->effAlpha, w->editText, wrapW, false, nullptr, false,
+                                   nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
                 }
                 if (w->editFocused) {
                     // Measured against what is drawn, not what is held. The
@@ -2889,7 +2896,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                             });
                         for (const auto& run : lines.back())
                             caret += font->CalcTextSizeA(size, FLT_MAX, 0.0f, run.text.c_str()).x;
-                        caretY = ty + static_cast<float>(lines.size() - 1) * size * 1.2f;
+                        caretY = ty + static_cast<float>(lines.size() - 1) * linePx;
                     } else if (font) {
                         const std::string upTo = strippedText(rawUpTo);
                         caret = font->CalcTextSizeA(size, FLT_MAX, 0.0f, upTo.c_str()).x;
