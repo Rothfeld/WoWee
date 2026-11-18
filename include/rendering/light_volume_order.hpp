@@ -5,7 +5,7 @@
 /// Light.dbc's volumes overlap, and a volume whose inner radius contains the
 /// player weighs exactly 1.0 - not nearly, exactly, because that branch
 /// assigns the constant. On the shipped maps 166 points sit inside two such
-/// volumes and 23 inside three, and only the top two are blended.
+/// volumes and 23 inside three.
 ///
 /// So weight alone does not order them. Left to std::sort - which is unstable,
 /// and whose treatment of equal elements depends on the length and contents of
@@ -38,24 +38,46 @@ inline bool lightVolumeOrderedBefore(float weightA, float outerRadiusA, uint32_t
     return idA < idB;
 }
 
-/// Share of the map's default Light row (Light.dbc position 0,0,0 and radius
-/// 0, e.g. Light 1 on map 0) at a point, given the falloff weights of the
-/// positioned lights blended there. The weights are rescaled in place.
+/// Weight of a positioned Light row at a point: 1 inside its inner radius,
+/// falling linearly to 0 at its outer radius, over the 3D distance from the
+/// player. Measured against build 8606 across Light 653's falloff (Forge Camp:
+/// Mageddon, inner 81.4, outer 127.9 yd): the original's share of Light 653
+/// was 0.87, 0.69, 0.38, 0.20 at player distances 86.7, 95.1, 109.6, 118.3 yd,
+/// where this gives 0.89, 0.71, 0.39, 0.21 and a smoothstep 0.96, 0.79, 0.34,
+/// 0.11. Distance from the camera, or in the horizontal plane, fits worse.
+inline float lightVolumeFalloff(float distance, float innerRadius, float outerRadius) {
+    if (distance <= innerRadius) return 1.0f;
+    if (distance >= outerRadius) return 0.0f;
+    return 1.0f - (distance - innerRadius) / (outerRadius - innerRadius);
+}
+
+/// Shares of the positioned Light rows covering a point and of the map's
+/// default row (Light.dbc position 0,0,0 and radius 0, e.g. Light 1 on map 0).
+/// `weights` holds each row's falloff weight, most specific (smallest outer
+/// radius) first, and is rewritten in place with its share; the default
+/// row's share is returned.
 ///
-/// The default row is the light of everywhere no positioned light covers,
-/// so it takes whatever the positioned lights leave: one light at 0.3 in its
-/// falloff gives the default 0.7. Overlapping lights that together exceed 1
-/// are normalized and leave the default nothing. Without a default row the
-/// positioned lights are normalized to 1 as before.
-inline float distributeLightWeights(std::vector<float>& weights, bool mapHasDefault) {
-    float total = 0.0f;
-    for (float w : weights) total += w;
-    if (total <= 0.0f) return mapHasDefault ? 1.0f : 0.0f;
-    if (total >= 1.0f || !mapHasDefault) {
-        for (float& w : weights) w /= total;
-        return 0.0f;
+/// Each row is laid over everything wider than itself by its weight, so the
+/// innermost row takes over entirely inside its inner radius. In Forge Camp:
+/// Mageddon, Light 653 (inner 81 yd) inside Light 520 (Hellfire, inner
+/// 1779 yd) lights the camp alone in the original; matched captures of the
+/// terrain agree within 3% with 653 alone and are 0.65-1.35x off per channel
+/// with the two averaged. A row in its falloff leaves the rest of its share to
+/// what lies under it: Light 653 at 0.4 gives Light 520 0.6, and one light at
+/// 0.3 over the default row gives the default 0.7. Without a default row the
+/// shares are normalized to sum to 1.
+inline float layerLightWeights(std::vector<float>& weights, bool mapHasDefault) {
+    float remaining = 1.0f;
+    for (float& w : weights) {
+        const float own = w;
+        w = own * remaining;
+        remaining *= 1.0f - own;
     }
-    return 1.0f - total;
+    if (mapHasDefault) return remaining;
+    const float covered = 1.0f - remaining;
+    if (covered > 0.0f)
+        for (float& w : weights) w /= covered;
+    return 0.0f;
 }
 
 }  // namespace wowee::rendering

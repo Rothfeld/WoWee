@@ -23,9 +23,6 @@ namespace rendering {
 // 24 hours × 60 minutes × 2 = 2880 half-minute ticks per day cycle.
 constexpr uint16_t kHalfMinutesPerDay = 2880;
 
-// Maximum volumes to blend (top 2-4)
-constexpr size_t MAX_BLEND_VOLUMES = 2;
-
 LightingManager::LightingManager() {
     // Set fallback lighting (Elwynn Forest-ish outdoor daytime)
     fallbackParams_.ambientColor = glm::vec3(0.5f, 0.5f, 0.6f);
@@ -374,9 +371,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     {
         std::vector<std::pair<std::string, float>> target;
         {
-            std::vector<WeightedVolume> blend(
-                activeVolumes_.begin(),
-                activeVolumes_.begin() + std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES));
+            std::vector<WeightedVolume> blend = activeVolumes_;
             if (defaultVolume && defaultVolumeWeight_ > 0.0f)
                 blend.push_back({.volume = defaultVolume, .weight = defaultVolumeWeight_});
             for (const auto& wv : blend) {
@@ -442,12 +437,9 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
         newParams.glow = 0.0f;
         glm::vec3 blendedDir(0.0f);  // Accumulate weighted directions
 
-        // The first MAX_BLEND_VOLUMES only: the list is the whole
-        // neighbourhood now, and those are the ones whose weights were
-        // normalized to sum to one.
-        std::vector<WeightedVolume> blend(
-            activeVolumes_.begin(),
-            activeVolumes_.begin() + std::min(activeVolumes_.size(), MAX_BLEND_VOLUMES));
+        // Every row with a share (layerLightWeights); the shares and the
+        // default row's sum to one.
+        std::vector<WeightedVolume> blend = activeVolumes_;
         if (defaultVolume && defaultVolumeWeight_ > 0.0f)
             blend.push_back({.volume = defaultVolume, .weight = defaultVolumeWeight_});
         for (const auto& wv : blend) {
@@ -660,17 +652,8 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(
         glm::vec3 toPlayer = playerPos - volume.position;
         float distSq = glm::dot(toPlayer, toPlayer);
 
-        float weight = 0.0f;
-        if (distSq <= volume.innerRadius * volume.innerRadius) {
-            // Inside inner radius: full weight
-            weight = 1.0f;
-        } else if (distSq < volume.outerRadius * volume.outerRadius) {
-            // Between inner and outer: fade out with smoothstep (sqrt needed for interpolation)
-            float dist = std::sqrt(distSq);
-            float t = (dist - volume.innerRadius) / (volume.outerRadius - volume.innerRadius);
-            t = glm::clamp(t, 0.0f, 1.0f);
-            weight = 1.0f - (t * t * (3.0f - 2.0f * t));  // Smoothstep
-        }
+        const float weight =
+            lightVolumeFalloff(std::sqrt(distSq), volume.innerRadius, volume.outerRadius);
 
         if (weight > 0.0f) {
             weighted.push_back({.volume = &volume, .weight = weight});
@@ -681,32 +664,27 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(
         return {};
     }
 
-    // Keep the top N by weight, ordered by something that cannot change under
-    // the player's feet - see light_volume_order.hpp for why weight alone is
-    // not an order here and what the flicker looked like.
-    const auto moreSpecific = [](const WeightedVolume& a, const WeightedVolume& b) {
+    // Each row is laid over the wider ones under it (layerLightWeights), so
+    // they are taken most specific first: smallest outer radius, then id.
+    std::sort(weighted.begin(), weighted.end(), [](const WeightedVolume& a, const WeightedVolume& b) {
+        if (a.volume->outerRadius != b.volume->outerRadius)
+            return a.volume->outerRadius < b.volume->outerRadius;
+        return a.volume->lightId < b.volume->lightId;
+    });
+    std::vector<float> shares;
+    shares.reserve(weighted.size());
+    for (const auto& wv : weighted) shares.push_back(wv.weight);
+    defaultWeight = layerLightWeights(shares, mapHasDefault);
+    for (size_t i = 0; i < weighted.size(); ++i) weighted[i].weight = shares[i];
+    std::erase_if(weighted, [](const WeightedVolume& wv) { return wv.weight <= 0.0f; });
+
+    // Largest share first, for the skybox and the diagnostics below - see
+    // light_volume_order.hpp for why weight alone is not an order here and
+    // what the flicker looked like.
+    std::stable_sort(weighted.begin(), weighted.end(), [](const WeightedVolume& a, const WeightedVolume& b) {
         return lightVolumeOrderedBefore(a.weight, a.volume->outerRadius, a.volume->lightId,
                                         b.weight, b.volume->outerRadius, b.volume->lightId);
-    };
-    // Sorted in full rather than truncated here. Only the first
-    // MAX_BLEND_VOLUMES are blended, but the skybox is chosen over the whole
-    // list: a volume that names a sky and sits third on weight still says
-    // which sky is overhead, and cutting the list here meant it dropped out
-    // and back in as the player walked.
-    std::sort(weighted.begin(), weighted.end(), moreSpecific);
-
-    // Share the blend between the ones that will be blended and the map's
-    // default row (distributeLightWeights). They used to be normalized to
-    // sum to 1 on their own, so a light at 0.2 in its falloff lit the point
-    // as fully as at its centre and the default row was never used at all.
-    // The rest keep the weight they were given; nothing reads it but the
-    // skybox walk, which only asks whether they are in range at all.
-    const size_t blended = std::min(weighted.size(), MAX_BLEND_VOLUMES);
-    std::vector<float> shares;
-    shares.reserve(blended);
-    for (size_t i = 0; i < blended; ++i) shares.push_back(weighted[i].weight);
-    defaultWeight = distributeLightWeights(shares, mapHasDefault);
-    for (size_t i = 0; i < blended; ++i) weighted[i].weight = shares[i];
+    });
 
     // Which volumes this map turned out to have around the player, once.
     //

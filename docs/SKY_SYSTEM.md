@@ -347,6 +347,18 @@ if (intensity <= 0.01f) {
 
 **Result:** Cloudy/foggy nights have fewer visible stars (realistic behavior)
 
+## Light.dbc volume blending
+
+A positioned Light row weighs 1 inside its inner radius and falls linearly to 0
+at its outer radius, over the 3D distance from the player. Rows are laid over
+the wider rows under them, most specific (smallest outer radius) first: each
+takes its weight and leaves the rest to what lies beneath, down to the map's
+default row (position 0,0,0, radius 0). Inside Forge Camp: Mageddon, Light 653
+(inner 81 yd, params 558) lights the camp alone although Hellfire's Light 520
+also covers it fully; at 109.6 yd from 653's centre the original gives 653 a
+share of 0.38 (linear 0.39). Evidence and fitting scripts:
+`_experiments/20261118T074500Z.light3_volumes_interior_kits` in the parent workspace.
+
 ---
 
 ## M2 Skybox System

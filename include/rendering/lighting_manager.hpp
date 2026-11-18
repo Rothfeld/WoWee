@@ -328,7 +328,7 @@ private:
     LightingParams currentParams_;
     std::vector<WeightedVolume> activeVolumes_;
     /// Weight of the map's default Light row at the player (see
-    /// distributeLightWeights); 0 where positioned lights cover the point.
+    /// layerLightWeights); 0 where positioned lights cover the point.
     float defaultVolumeWeight_ = 0.0f;
     std::map<uint32_t, LightVolume> defaultVolumeByMap_;
     uint32_t loggedNoLightMapId_ = 0xFFFFFFFFu;

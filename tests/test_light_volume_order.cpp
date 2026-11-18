@@ -106,26 +106,46 @@ TEST_CASE("the chosen pair does not depend on what else is in the list",
     }
 }
 
-TEST_CASE("The map's default Light row fills what positioned lights leave", "[light-blend]") {
-    using wowee::rendering::distributeLightWeights;
+TEST_CASE("Light rows lie over the wider rows under them", "[light-blend]") {
+    using wowee::rendering::layerLightWeights;
     // One light at 0.3 in its falloff: the default row takes 0.7.
     std::vector<float> one{0.3f};
-    CHECK(distributeLightWeights(one, true) == Catch::Approx(0.7f));
+    CHECK(layerLightWeights(one, true) == Catch::Approx(0.7f));
     CHECK(one[0] == Catch::Approx(0.3f));
     // Inside a light's inner radius: the default takes nothing (Dun Morogh,
     // Light 22 at 348 yd of its 737 yd inner radius).
     std::vector<float> full{1.0f};
-    CHECK(distributeLightWeights(full, true) == Catch::Approx(0.0f));
-    // Two overlapping falloffs over 1 are normalized (Rut'theran dock,
-    // Lights 269 and 200).
+    CHECK(layerLightWeights(full, true) == Catch::Approx(0.0f));
+    // Forge Camp: Mageddon, inside Light 653 (inner 81 yd) and Light 520
+    // (Hellfire, inner 1779 yd): 653 alone, as in the original.
+    std::vector<float> camp{1.0f, 1.0f};
+    CHECK(layerLightWeights(camp, true) == Catch::Approx(0.0f));
+    CHECK(camp[0] == Catch::Approx(1.0f));
+    CHECK(camp[1] == Catch::Approx(0.0f));
+    // Light 653 at 0.4 in its falloff: Light 520 takes the other 0.6.
+    std::vector<float> edge{0.4f, 1.0f};
+    CHECK(layerLightWeights(edge, true) == Catch::Approx(0.0f));
+    CHECK(edge[0] == Catch::Approx(0.4f));
+    CHECK(edge[1] == Catch::Approx(0.6f));
+    // Two falloffs and the default row share what each leaves.
     std::vector<float> two{0.9f, 0.9f};
-    CHECK(distributeLightWeights(two, true) == Catch::Approx(0.0f));
-    CHECK(two[0] + two[1] == Catch::Approx(1.0f));
+    CHECK(layerLightWeights(two, true) == Catch::Approx(0.01f));
+    CHECK(two[0] == Catch::Approx(0.9f));
+    CHECK(two[1] == Catch::Approx(0.09f));
     // Nothing positioned: all default.
     std::vector<float> none;
-    CHECK(distributeLightWeights(none, true) == Catch::Approx(1.0f));
+    CHECK(layerLightWeights(none, true) == Catch::Approx(1.0f));
     // A map without a default row keeps its lights normalized to 1.
     std::vector<float> noDefault{0.3f};
-    CHECK(distributeLightWeights(noDefault, false) == Catch::Approx(0.0f));
+    CHECK(layerLightWeights(noDefault, false) == Catch::Approx(0.0f));
     CHECK(noDefault[0] == Catch::Approx(1.0f));
+}
+
+TEST_CASE("Light row weight falls linearly across its falloff", "[light-blend]") {
+    using wowee::rendering::lightVolumeFalloff;
+    // Light 653: inner 81.4, outer 127.9 yd.
+    CHECK(lightVolumeFalloff(60.0f, 81.4f, 127.9f) == 1.0f);
+    CHECK(lightVolumeFalloff(95.1f, 81.4f, 127.9f) == Catch::Approx(0.705f).margin(0.005f));
+    CHECK(lightVolumeFalloff(118.3f, 81.4f, 127.9f) == Catch::Approx(0.206f).margin(0.005f));
+    CHECK(lightVolumeFalloff(140.0f, 81.4f, 127.9f) == 0.0f);
 }
