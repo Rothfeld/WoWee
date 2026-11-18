@@ -4344,6 +4344,16 @@ void Application::syncChannelVisuals() {
             if (const auto targetEntity = gameHandler->getEntityManager().getEntity(target))
                 channel.hasTarget = endpoint(*targetEntity, channel.end);
         }
+        channel.spellId = spellId;
+        // A jumping channel's further targets, after the channel object.
+        if (channel.hasTarget) {
+            for (const uint64_t hop : visuals->channelTargets(guid, spellId)) {
+                if (hop == target || hop == guid) continue;
+                const auto hopEntity = gameHandler->getEntityManager().getEntity(hop);
+                glm::vec3 at;
+                if (hopEntity && endpoint(*hopEntity, at)) channel.hops.push_back(at);
+            }
+        }
         channels.push_back(channel);
     }
     // A unit already channelling when it came into view (no SMSG_SPELL_START

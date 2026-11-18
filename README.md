@@ -2010,13 +2010,32 @@ in the plane of world up turned about the beam by Min/MaxWaveAngle (plus
 spin), and colour/alpha/blend come from the record's bytes. The TBC record is
 173 bytes: dwords 0-38, then Alpha, Red, Green, Blue, BlendMode bytes at +156.
 After it: Combo (string offset) +161, RenderLayer +165, TextureLength (float)
-+169. Rules in `include/rendering/chain_effect.hpp`, measured on paired
-captures of one server beam (`_experiments/20261118T1328Z.hydross_beam_scroll/`):
-the texture repeats TextureLength times over the beam at any length and its
-pattern moves TexCoordScale beam lengths a second, toward the target when
-positive (ManaBeam -2: 2 repeats, 4.0 Hz at 8 yd, 28 yd and at Hydross;
-WhiteBeam 1.66: 2 repeats, 3.33 Hz). Interior vertices stray up to NoiseScale x
++169, not read. Rules in `include/rendering/chain_effect.hpp`, measured on paired
+captures of one server beam (`_experiments/20261118T1328Z.hydross_beam_scroll/`,
+`_experiments/20261118T221857Z.chain_rate/`): one copy of the texture spans the
+beam at any length and moves TexCoordScale beam lengths a second, toward the
+target when positive. The chain textures hold two waves, so a point sees
+2 x |TexCoordScale| crests a second: native ManaBeam (chain 4, -2) at 24 yd and
+SoulBeam (chain 30, Archimonde's Drain World Tree 39140, +2) show brightness
+periods of the whole beam at 2.0 Hz and half the beam at 4.0 Hz; WhiteBeam
+(1.66) crests 3.34 Hz. Drawing TextureLength (2.0 on 317 of 320 rows) copies
+doubled the crests and their rate: Hydross's beams, Archimonde's soul beam and
+the SSC lightning looked "animated way too quickly". Gotcha: on a loaded
+machine WoWee rendered 6-9 fps, and an 8 Hz crest rate aliases to about 4 Hz in
+a kymograph; compare spatial periods against the beam's pixel length, not
+temporal peaks alone. RopeBeam rows 473/510/511 (TextureLength 1.5) are not
+measured. Interior vertices stray up to NoiseScale x
 length across the beam, redrawn every MinDurBetweenJoints when that is set.
+Native bends of a beam between still units stay put (chain 4 at 24 yd: the
+bends averaged over 0.5 s change 0.3-1.0 px from one half second to the next
+over 5 s). When the units move and the segment count changes, the offsets are
+read at the same fractions of the beam; drawing new ones every time made
+High Priestess Jeklik's Mind Flay (chain 4) a jagged rod jumping every frame.
+A channel spell with EffectChainTarget above 1 runs on from its target through
+its other SMSG_SPELL_GO targets (hits, then misses) in packet order: native Jeklik's Mind Flay
+23953 (chain targets 5) cast at one of two rooted, stunned Bloodwarder Vindicators (both
+listed as misses) runs caster -> first -> second (`mindflay_hop_native.jpg`); the channel fields name
+only the first.
 The beam bows ArcHeight yards at its middle (half a sine), in the plane of
 Min/MaxArcAngle plus spin. Combo is 4-byte entries naming further rows, ID
 bits 0-6 in the first byte, bit 7 as 0x02 and bit 8 as 0x20 of the fourth
@@ -2029,10 +2048,13 @@ pink-white wave and thin purple bolts, all seen natively; native's come and go
 (pulse), here they are always on. Gotcha: `.cast 41269` (script target
 23412) on a tempspawned trigger outside Black Temple coincided with a world
 server crash; use `.cast 45215` (same chain, dummy aura) on any unit.
-Not implemented: joints (JointCount etc.), flicker, pulse, the Combo fourth
-byte's 0x10, blend 6, chains on impact kits.
-Unverified: the arc's shape, noise motion on rows without MinDurBetweenJoints
-(native ManaBeam's kinks move; here they stay). Open: native draws the Hydross
+Not implemented: pulse, the Combo fourth byte's 0x10, blend 6, chains on
+impact kits. Pulse, natively (Open Portal 46801, chain 411: PulseSpeed 100,
+PulseOnLength 2.5, PulseFadeLength 15): a strand turning on is lit first at
+the caster and its lit part reaches the target in about 0.15-0.2 s
+(`openportal_pulse_native_seq.jpg`); WoWee turns whole strands on and off.
+Unverified: the arc's shape; a native beam just started (chain 4) is more
+jagged in its first 0.1-0.2 s than after (rms bend 4.6 px, then 2-3 px). Open: native draws the Hydross
 Beam Helpers (InvisibleStalker, display scale 3) about 11 yd below their server
 position (.gps z 38.81, floor 38.75): nameplate ~3 yd and beam start ~5-6 yd
 below it, a beam aimed at the helper ends there too; WoWee draws the unit at
@@ -2137,7 +2159,11 @@ bundle, after: 1.65 strands, 0.7-1.7 yd (strands wider than native's). The
 same rows are Akil'zon's Electrical Storm 43648 (279) and Electrical Arc
 43653 (278), not cast natively here. Unverified: radius in yards vs a
 fraction of length (only one length measured), whether joints move or jump,
-pulse (PulseSpeed/OnLength/FadeLength). Hex Lord Malacrass: Siphon Soul 43501
+pulse (PulseSpeed/OnLength/FadeLength). Public format docs name fields 16-18
+JointSmoothness, MinDurationBetweenJointJumps, MaxDurationBetweenJointJumps;
+WoWee reads 18 as the major joints' speed (0.72 on 278/279/411) and ignores
+16; not checked against native. Natively a lit chain 411 strand keeps nearly
+the same shape over 50-80 ms frames. Hex Lord Malacrass: Siphon Soul 43501
 is chain 272 (flicker 0.48-0.66 / 0.26-0.55, joint radius 0) plus 273 from
 Combo, so it now breaks up; its beam end height and Spirit Bolts 43383 (aura
 23 triggering 43382, AoE enemies within 28 yd at the caster, missile 3435)

@@ -99,7 +99,18 @@ public:
         bool hasTarget = false;
         glm::vec3 start{0.0f};
         glm::vec3 end{0.0f};
+        uint32_t spellId = 0;
+        // Further targets a jumping channel's beam runs on to: end -> hops[0] -> hops[1] ...
+        std::vector<glm::vec3> hops;
     };
+    /// A jumping channel's targets (EffectChainTarget above 1) from its
+    /// SMSG_SPELL_GO, hit then missed, in packet order. Native High Priestess Jeklik's Mind
+    /// Flay 23953 (chain targets 5, ChannelKit 430 -> chain 4) runs from her
+    /// to the first player and on to the second; the channel fields name
+    /// only the first.
+    void setChannelTargets(uint64_t casterGuid, uint32_t spellId, std::vector<uint64_t> targets);
+    /// The targets set for this caster's channel of `spellId`, else none.
+    std::vector<uint64_t> channelTargets(uint64_t casterGuid, uint32_t spellId) const;
     /// Every unit channelling now, once a frame. A channel that began before
     /// its caster came into view (no MSG_CHANNEL_START) gets its ChannelKit
     /// effects here, held until the fields clear; one with a target draws the
@@ -332,10 +343,10 @@ private:
     std::unordered_map<uint32_t, UnitAuraVisuals> unitAuraVisuals_;
     /// SpellChainEffects.dbc, TBC 2.4.3 173-byte records: dwords 0-38, then
     /// bytes Alpha, Red, Green, Blue, BlendMode at +156, Combo string +161,
-    /// RenderLayer +165, TextureLength float +169.
+    /// RenderLayer +165, TextureLength float +169 (not read).
     struct ChainEffect {
         std::string texture;
-        float avgSegLen = 0, width = 0, noiseScale = 0, texCoordScale = 0, textureLength = 0;
+        float avgSegLen = 0, width = 0, noiseScale = 0, texCoordScale = 0;
         float minDurBetweenJoints = 0;
         ChainJoints joints;
         float jointMoveSpeed = 0, majorJointMoveSpeed = 0;
@@ -370,6 +381,12 @@ private:
         std::vector<StrandState> strands;
     };
     std::unordered_map<uint64_t, BeamState> beams_;           // caster guid
+    std::unordered_map<uint64_t, std::vector<BeamState>> hopBeams_;  // caster guid, one per hop
+    struct ChannelTargets {
+        uint32_t spellId = 0;
+        std::vector<uint64_t> targets;
+    };
+    std::unordered_map<uint64_t, ChannelTargets> channelTargets_;  // caster guid
     std::unordered_map<uint32_t, uint32_t> fieldChannels_;    // caster instance -> visual
     std::unordered_set<uint32_t> heldChannelKits_;            // instances whose kit we started
     float beamClock_ = 0.0f;

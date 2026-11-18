@@ -17,17 +17,21 @@ namespace wowee::rendering {
 /// Texture coordinate along a beam, s yards from the caster on a beam
 /// `length` yards long, t seconds after the beam appeared.
 ///
-/// The texture repeats TextureLength times over the whole beam, whatever its
-/// length, and its pattern travels |TexCoordScale| beam lengths a second,
-/// toward the target when TexCoordScale is positive; a negative scale also
-/// mirrors the texture. Native, ManaBeam (-2, TextureLength 2) at 8 and 28 yd
-/// and at Hydross: 2 repeats, 4.0 Hz, toward the caster; WhiteBeam (1.66,
-/// TextureLength 2) at 28 yd: 2.1 repeats, 3.34 Hz, toward the target. A
-/// repeat count of |TexCoordScale| drew WhiteBeam with 1.66 repeats at 2.76 Hz.
-inline float chainTexCoord(float s, float length, float texCoordScale, float textureLength, float t) {
+/// One copy of the texture spans the whole beam, whatever its length, and it
+/// travels |TexCoordScale| beam lengths a second, toward the target when
+/// TexCoordScale is positive; a negative scale also mirrors the texture.
+/// The chain textures (SoulBeam, ManaBeam, WhiteBeam) hold two waves, so a
+/// point on the beam sees 2 x |TexCoordScale| crests a second. Native
+/// (_experiments/20261118T221857Z.chain_rate): ManaBeam (chain 4, -2) at
+/// 24 yd and SoulBeam (chain 30, Archimonde's Drain World Tree, +2): the
+/// brightness along the beam has its longest period at the beam's length,
+/// moving 2 lengths/s (2.0 Hz), and its strongest crests at half the length
+/// (4.0 Hz); WhiteBeam (1.66) crests 3.34 Hz. Two copies (TextureLength,
+/// 2.0 on 317 of the 320 rows) drew twice the waves crossing twice as fast.
+inline float chainTexCoord(float s, float length, float texCoordScale, float t) {
     assert(length > 0.0f);
     const float mirror = texCoordScale < 0.0f ? -1.0f : 1.0f;
-    return mirror * textureLength * (s / length - texCoordScale * t);
+    return mirror * (s / length - texCoordScale * t);
 }
 
 /// The further rows a row's Combo string names, drawn whole between the
@@ -87,6 +91,21 @@ T chainJointOffsetAt(const std::vector<T>& offsets, float f) {
     const T before = (k == 0 || k > n) ? T(0) : offsets[k - 1];
     const T after = k >= n ? T(0) : offsets[k];
     return before * (1.0f - a) + after * a;
+}
+
+/// `offsets` (one per beam vertex, ends included) read at the fractions of a
+/// beam of `count` vertices: the same shape over a new segment count.
+template <typename T>
+std::vector<T> chainResample(const std::vector<T>& offsets, size_t count) {
+    assert(offsets.size() >= 2 && count >= 2);
+    std::vector<T> out(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float x = static_cast<float>(i) / static_cast<float>(count - 1) * static_cast<float>(offsets.size() - 1);
+        const size_t k = std::min(static_cast<size_t>(x), offsets.size() - 2);
+        const float a = x - static_cast<float>(k);
+        out[i] = offsets[k] * (1.0f - a) + offsets[k + 1] * a;
+    }
+    return out;
 }
 
 }  // namespace wowee::rendering

@@ -3461,11 +3461,24 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         // in the packet's hit order, as native Mother Shahraz's
                         // Sinister Beam 40859 (chain targets 10); others fan out
                         // from the caster.
-                        bool chained = false;
+                        bool chained = false, channelled = false;
                         owner_.loadSpellNameCache();
                         if (const auto spell = owner_.spellNameCacheRef().find(data.spellId);
-                            spell != owner_.spellNameCacheRef().end())
+                            spell != owner_.spellNameCacheRef().end()) {
                             for (uint32_t jumps : spell->second.effectChainTargets) chained |= jumps > 1;
+                            // SPELL_ATTR_EX_IS_CHANNELED (0x4) / IS_SELF_CHANNELED (0x40)
+                            channelled = (spell->second.attrEx & 0x44u) != 0;
+                        }
+                        // A jumping channel's beam runs on through its other
+                        // targets, hit or missed, in packet order: Jeklik's
+                        // Mind Flay 23953 at two stunned Bloodwarder
+                        // Vindicators (SMSG_SPELL_GO: 0 hits, 2 misses) ran
+                        // on to the second natively.
+                        if (chained && channelled) {
+                            std::vector<uint64_t> targets = data.hitTargets;
+                            for (const auto& miss : data.missTargets) targets.push_back(miss.targetGuid);
+                            svs->setChannelTargets(data.casterUnit, data.spellId, std::move(targets));
+                        }
                         svs->playCastKit(visualId, casterPos,
                                          owner_.resolveUnitRenderInstance(data.casterUnit), ends, chained,
                                          std::max(0.0f, getSpellDuration(data.spellId)));

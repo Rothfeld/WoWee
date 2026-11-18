@@ -12,48 +12,50 @@ using wowee::rendering::chainTexCoord;
 using wowee::rendering::ChainJoints;
 using wowee::rendering::chainJointOffsetAt;
 using wowee::rendering::chainJointRadius;
+using wowee::rendering::chainResample;
 
 namespace {
-// Repeats of the texture over a beam at time t.
-float repeats(float length, float scale, float textureLength) {
-    return std::abs(chainTexCoord(length, length, scale, textureLength, 0.0f) -
-                    chainTexCoord(0.0f, length, scale, textureLength, 0.0f));
+// Copies of the texture over a beam at time t.
+float repeats(float length, float scale) {
+    return std::abs(chainTexCoord(length, length, scale, 0.0f) - chainTexCoord(0.0f, length, scale, 0.0f));
 }
-// Texture cycles a second passing a fixed point (the temporal frequency).
-float hertz(float scale, float textureLength) {
-    return std::abs(chainTexCoord(3.0f, 10.0f, scale, textureLength, 1.0f) -
-                    chainTexCoord(3.0f, 10.0f, scale, textureLength, 0.0f));
+// Texture copies a second passing a fixed point (the temporal frequency).
+float hertz(float scale) {
+    return std::abs(chainTexCoord(3.0f, 10.0f, scale, 1.0f) - chainTexCoord(3.0f, 10.0f, scale, 0.0f));
 }
 // Beam lengths a second the pattern moves, + toward the target.
-float travel(float length, float scale, float textureLength) {
+float travel(float length, float scale) {
     const float s0 = 0.3f * length;
-    const float u = chainTexCoord(s0, length, scale, textureLength, 0.0f);
+    const float u = chainTexCoord(s0, length, scale, 0.0f);
     // where the same u is one second later
-    const float du_ds = chainTexCoord(1.0f, length, scale, textureLength, 1.0f) -
-                        chainTexCoord(0.0f, length, scale, textureLength, 1.0f);
-    const float s1 = s0 + (u - chainTexCoord(s0, length, scale, textureLength, 1.0f)) / du_ds;
+    const float du_ds = chainTexCoord(1.0f, length, scale, 1.0f) - chainTexCoord(0.0f, length, scale, 1.0f);
+    const float s1 = s0 + (u - chainTexCoord(s0, length, scale, 1.0f)) / du_ds;
     return (s1 - s0) / length;
 }
 }  // namespace
 
-TEST_CASE("ManaBeam (-2) repeats twice and runs 4 Hz toward the caster at any length", "[chain]") {
-    for (float length : {8.0f, 28.0f, 47.0f}) {
-        CHECK(repeats(length, -2.0f, 2.0f) == Catch::Approx(2.0f));
-        CHECK(travel(length, -2.0f, 2.0f) == Catch::Approx(-2.0f));
+TEST_CASE("ManaBeam (-2): one copy over the beam, 2 lengths/s toward the caster at any length", "[chain]") {
+    // Native chain 4 at 24 yd (_experiments/20261118T221857Z.chain_rate):
+    // longest period = beam length at 2.0 Hz, two-wave crests at 4.0 Hz.
+    for (float length : {8.0f, 24.0f, 47.0f}) {
+        CHECK(repeats(length, -2.0f) == Catch::Approx(1.0f));
+        CHECK(travel(length, -2.0f) == Catch::Approx(-2.0f));
     }
-    CHECK(hertz(-2.0f, 2.0f) == Catch::Approx(4.0f));
+    CHECK(hertz(-2.0f) == Catch::Approx(2.0f));
 }
 
-TEST_CASE("WhiteBeam (1.66) repeats TextureLength times, not TexCoordScale", "[chain]") {
-    // Native at 28 yd: 2.1 repeats, 3.34 Hz, 1.59 lengths/s toward the target.
-    CHECK(repeats(28.0f, 1.66f, 2.0f) == Catch::Approx(2.0f));
-    CHECK(hertz(1.66f, 2.0f) == Catch::Approx(3.32f));
-    CHECK(travel(28.0f, 1.66f, 2.0f) == Catch::Approx(1.66f));
+TEST_CASE("SoulBeam chain 30 (+2) and WhiteBeam (1.66) run toward the target", "[chain]") {
+    // Chain 30 native: 2.0 Hz, 2 lengths/s toward the target. WhiteBeam at
+    // 28 yd: crests (two per copy) 3.34 Hz, 1.59 lengths/s.
+    CHECK(repeats(25.0f, 2.0f) == Catch::Approx(1.0f));
+    CHECK(travel(25.0f, 2.0f) == Catch::Approx(2.0f));
+    CHECK(2.0f * hertz(1.66f) == Catch::Approx(3.32f));
+    CHECK(travel(28.0f, 1.66f) == Catch::Approx(1.66f));
 }
 
 TEST_CASE("A zero TexCoordScale beam stands still", "[chain]") {
-    CHECK(hertz(0.0f, 1.5f) == Catch::Approx(0.0f));
-    CHECK(repeats(20.0f, 0.0f, 1.5f) == Catch::Approx(1.5f));
+    CHECK(hertz(0.0f) == Catch::Approx(0.0f));
+    CHECK(repeats(20.0f, 0.0f) == Catch::Approx(1.0f));
 }
 
 TEST_CASE("Combo names further rows, with ID bits 7 and 8 in the entry's last byte", "[chain]") {
@@ -95,4 +97,15 @@ TEST_CASE("Joint offsets are joined by straight lines and vanish at the ends", "
     CHECK(chainJointOffsetAt(offsets, 0.75f) == Catch::Approx(0.5f));
     CHECK(chainJointOffsetAt(offsets, 1.0f) == Catch::Approx(0.0f));
     CHECK(chainJointOffsetAt(std::vector<float>{}, 0.5f) == 0.0f);
+}
+
+TEST_CASE("A new segment count keeps the beam's bends where they were", "[chain]") {
+    // Ends 0, one bend of 1 at the middle of 4 segments.
+    const std::vector<float> offsets{0.0f, 0.5f, 1.0f, 0.5f, 0.0f};
+    const auto more = chainResample(offsets, 9);
+    CHECK(more.front() == 0.0f);
+    CHECK(more.back() == 0.0f);
+    CHECK(more[4] == Catch::Approx(1.0f));
+    CHECK(more[2] == Catch::Approx(0.5f));
+    CHECK(chainResample(offsets, 5) == offsets);
 }

@@ -350,11 +350,12 @@ void SpellVisualSystem::loadChainEffects() {
         effect.color = glm::vec3(record[157], record[158], record[159]) / 255.0f;
         effect.blendMode = record[160];
         // After BlendMode: Combo (string offset) at +161, RenderLayer +165,
-        // TextureLength (float) +169.
+        // TextureLength (float) +169. TextureLength (2.0 on 317 of 320 rows)
+        // is not read: native draws one texture copy over the beam
+        // (chainTexCoord).
         uint32_t combo = 0;
         std::memcpy(&combo, record + 161, sizeof(combo));
         if (combo) effect.strands = chainComboStrands(dbc->getStringViewByOffset(combo));
-        std::memcpy(&effect.textureLength, record + 169, sizeof(float));
         chainEffects_[dbc->getUInt32(i, 0)] = std::move(effect);
     }
     // Combo entries naming a row the file does not have (215 names 89) draw nothing.
@@ -894,11 +895,19 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
             if (!strand.flickerOn) continue;
         }
         const bool redraw = effect.minDurBetweenJoints > 0.0f && beamClock_ >= strand.nextJoints;
-        // A changed segment count (the units moved) redraws the offsets.
-        if (strand.to.size() != static_cast<size_t>(segments + 1)) {
+        // A new beam draws its offsets. When the units move and the segment
+        // count changes, the same offsets are read at the same fractions of
+        // the beam: drawing new ones made a beam between moving units
+        // (High Priestess Jeklik's Mind Flay, chain 4) a jagged rod jumping
+        // every frame, while native's bends at fixed ends stay put for
+        // seconds (chain 4 at 24 yd, _experiments/20261118T221857Z.chain_rate).
+        if (strand.to.empty()) {
             drawNoise(strand.from);
             drawNoise(strand.to);
             strand.nextJoints = beamClock_ + effect.minDurBetweenJoints;
+        } else if (strand.to.size() != static_cast<size_t>(segments + 1)) {
+            strand.from = chainResample(strand.from, segments + 1);
+            strand.to = chainResample(strand.to, segments + 1);
         } else if (redraw) {
             // Every MinDurBetweenJoints the vertices head for new offsets
             // (Sunshatter, 0.08 s: native's kinks drift and are gone within a
@@ -975,7 +984,7 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
                                 chainJointOffsetAt(strand.joints, s / length);
             strip.spine.push_back(start + dir * s + across * wave + bow * std::sin(glm::pi<float>() * s / length) +
                                   up * o.x + side * o.y);
-            strip.u.push_back(chainTexCoord(s, length, effect.texCoordScale, effect.textureLength, t));
+            strip.u.push_back(chainTexCoord(s, length, effect.texCoordScale, t));
         }
         strips.push_back(std::move(strip));
     }
@@ -1041,6 +1050,15 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
         }
         appendBeamStrip(strips, channel.start, channel.end, beamClock_ - state->second.age,
                         state->second);
+        // A jumping channel runs on from its target to each further one.
+        auto& hops = hopBeams_[channel.casterGuid];
+        while (hops.size() < channel.hops.size()) hops.push_back(newBeamState(chain));
+        hops.resize(channel.hops.size());
+        glm::vec3 from = channel.end;
+        for (size_t i = 0; i < channel.hops.size(); ++i) {
+            appendBeamStrip(strips, from, channel.hops[i], beamClock_ - hops[i].age, hops[i]);
+            from = channel.hops[i];
+        }
     }
     // Cast kit beams, for as long as their kit plays.
     std::erase_if(castBeams_, [&](const CastBeam& beam) { return beamClock_ - beam.born >= beam.lifetime; });
@@ -1049,7 +1067,25 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
                         beamEnd(beam.end.instanceId, beam.end.position), beamClock_ - beam.born, beam.state);
     }
     std::erase_if(beams_, [&](const auto& entry) { return !live.count(entry.first); });
+    std::erase_if(hopBeams_, [&](const auto& entry) { return !live.count(entry.first); });
+    // Targets stay until the caster channels something else or they are
+    // replaced: SMSG_SPELL_GO can arrive before the channel fields.
+    for (const auto& channel : channels) {
+        const auto targets = channelTargets_.find(channel.casterGuid);
+        if (targets != channelTargets_.end() && targets->second.spellId != channel.spellId)
+            channelTargets_.erase(targets);
+    }
     m2Renderer_->setChainStrips(std::move(strips));
+}
+
+void SpellVisualSystem::setChannelTargets(uint64_t casterGuid, uint32_t spellId, std::vector<uint64_t> targets) {
+    channelTargets_[casterGuid] = {spellId, std::move(targets)};
+}
+
+std::vector<uint64_t> SpellVisualSystem::channelTargets(uint64_t casterGuid, uint32_t spellId) const {
+    const auto found = channelTargets_.find(casterGuid);
+    if (found == channelTargets_.end() || found->second.spellId != spellId) return {};
+    return found->second.targets;
 }
 
 void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPosition,
@@ -1544,6 +1580,8 @@ void SpellVisualSystem::cancelAllPrecastVisuals() {
 void SpellVisualSystem::reset() {
     unitAuraVisuals_.clear();
     beams_.clear();
+    hopBeams_.clear();
+    channelTargets_.clear();
     castBeams_.clear();
     fieldChannels_.clear();
     heldChannelKits_.clear();
