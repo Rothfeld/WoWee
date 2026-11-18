@@ -68,6 +68,10 @@ public:
     void despawnCreatureFromServer(uint64_t guid);
     void despawnPlayer(uint64_t guid);
     void despawnGameObject(uint64_t guid);
+    /// The server removed this object (destroy or out of range): a model
+    /// fades out over rendering::kGameObjectFadeSeconds; transports, WMOs and
+    /// objects not yet drawn go at once.
+    void despawnGameObjectFromServer(uint64_t guid);
 
     // Re-evaluate the animation policy for spawned game objects of this entry.
     // Called when a GAMEOBJECT_QUERY_RESPONSE finally supplies the type that the
@@ -769,6 +773,11 @@ private:
     std::unordered_map<uint64_t, uint8_t> gameObjectPendingState_;
     /// Last GOState applied per spawned game object, for rules that need its type later.
     std::unordered_map<uint64_t, uint8_t> gameObjectAppliedState_;
+    /// Removed objects' M2 instances still fading out, with their start time.
+    struct FadingGameObject { uint32_t instanceId; std::chrono::steady_clock::time_point start; };
+    std::vector<FadingGameObject> fadingGameObjects_;
+    void processFadingGameObjects();
+    void removeFadingGameObjects();
     struct PendingTransportMove {
         float x = 0.0f, y = 0.0f, z = 0.0f, orientation = 0.0f;
     };

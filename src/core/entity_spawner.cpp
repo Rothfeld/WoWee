@@ -84,6 +84,7 @@ void EntitySpawner::update() {
     processGameObjectSpawnQueue();
     processPendingTransportRegistrations();
     processPendingTransportDoodads();
+    processFadingGameObjects();
     processPendingMount();
     processPendingRemotePlayerMounts();
     syncCreatureVisualState();
@@ -255,6 +256,7 @@ void EntitySpawner::shutdown() {
     remotePlayerMounts_.clear();
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();
+    fadingGameObjects_.clear();
 }
 
 void EntitySpawner::resetAllState() {
@@ -284,6 +286,7 @@ void EntitySpawner::resetAllState() {
     remotePlayerMounts_.clear();
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();
+    fadingGameObjects_.clear();
 
     // Clear animation state maps
     creatureWasMoving_.clear();
@@ -488,6 +491,7 @@ void EntitySpawner::despawnAllGameObjects() {
     guids.reserve(gameObjectInstances_.size());
     for (const auto& [g, _] : gameObjectInstances_) guids.push_back(g);
     for (auto g : guids) despawnGameObject(g);
+    removeFadingGameObjects();
 }
 
 // --- Methods extracted from Application (with comments preserved) ---

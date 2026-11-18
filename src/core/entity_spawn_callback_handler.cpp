@@ -95,7 +95,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
 
     // GameObject despawn callback (online mode) - remove static models
     gameHandler_.setGameObjectDespawnCallback([this](uint64_t guid) {
-        entitySpawner_.despawnGameObject(guid);
+        entitySpawner_.despawnGameObjectFromServer(guid);
     });
 
     // GameObject metadata arrival - settles the animation policy for models that
