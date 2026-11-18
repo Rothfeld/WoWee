@@ -1199,6 +1199,20 @@ for mailboxes, `Buy` for guild vaults. Out of reach adds `Unable`. Gotcha:
 only lock slot 0 counts - Alliance Strongbox 4095 (Lock 23, Lockpicking in
 slot 1) is the gear. Native table: `_experiments/20261117T195204Z.pair0_go_cursors`.
 
+A unit's cursor (`include/ui/world_cursor.hpp`), measured on spawned NPCs in
+build 8606: a lootable corpse shows `Pickup` (the bag; not `LootAll`); a living
+NPC its quest marker's cursor, then Innkeeper, the server icon (Directions for
+guards), RepairNPC, Trainer, Pickup for vendors, Buy for bankers and
+auctioneers, Taxi, Speak for gossip and battlemasters; a stable master or a
+quest giver with nothing for the player the plain pointer. Beyond 5.5555 yards
+(3D, from the unit's position, whatever its size) the service cursor is the
+`Unable` one. A game master (`.gm on`: the server makes the player immune to
+NPCs) gets the plain pointer over attackable creatures, as in the original.
+Gotcha: the corpse loot range is different and not modelled - the original's
+bag turns `UnablePickup` at about 6.7 yards for a Clefthoof, 7.0 for a Warmaul
+Brute and 11.6 for Gruul; table in
+`_experiments/20261117T235000Z.pair8_unit_cursor_cavein/README.md`.
+
 Readable game objects (type 9), including the Valley of Heroes monument
 plaques, use `Interface\\Cursor\\Inspect.blp`. Out-of-range readable objects
 use `UnableInspect.blp` through the shared interaction-range check.

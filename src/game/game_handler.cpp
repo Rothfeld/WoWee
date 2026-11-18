@@ -730,6 +730,15 @@ bool GameHandler::isWithinInteractRange(uint64_t guid) const {
     return dx * dx + dy * dy + dz * dz <= range * range;
 }
 
+bool GameHandler::unitWithinInteractionReach(const Unit& unit) const {
+    // 5.5555553 is CMaNGOS's interaction distance for text objects; the
+    // original's unit threshold measured between 5.550 and 5.556.
+    constexpr float kInteractionReach = 5.5555553f;
+    const glm::vec3 offset(unit.getX() - movementInfo.x, unit.getY() - movementInfo.y,
+                           unit.getZ() - movementInfo.z);
+    return glm::dot(offset, offset) <= kInteractionReach * kInteractionReach;
+}
+
 void GameHandler::update(float deltaTime) {
     // The char-create callback used to be deferred to here, out of the packet
     // handler and so out of any render pass. It is not any more: the

@@ -1081,13 +1081,13 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     const auto info = creatureInfo.find(unit->getEntry());
     const std::string_view iconName = info != creatureInfo.end() ? std::string_view(info->second.iconName) : std::string_view{};
     const auto harvesting = ui::corpseHarvestPresentation(gameHandler, *unit);
-    const char* path = ui::unitCursorPath(
+    const std::string path = ui::unitCursorPath(
         !game::isUnitCorpseState(unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags()),
         unit->getDynamicFlags(), gameHandler.unitReactionToPlayer(*unit),
         unit->getNpcFlags(), questStatus, iconName, gameHandler.canPlayerAttackUnit(*unit), unit->getUnitFlags(),
         harvesting && harvesting->difficulty != game::HarvestDifficulty::Unavailable,
-        harvesting && harvesting->knowsProfession);
-    const auto texture = cursorTexture(services_.assetManager, services_.window, path);
+        harvesting && harvesting->knowsProfession, gameHandler.unitWithinInteractionReach(*unit));
+    const auto texture = cursorTexture(services_.assetManager, services_.window, path.c_str());
     if (!texture) return false;
     selectCursorTexture(texture);
     return true;

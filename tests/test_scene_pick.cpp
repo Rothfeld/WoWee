@@ -68,7 +68,7 @@ TEST_CASE("World cursors distinguish unit actions and corpse priority") {
     using namespace wowee::game;
     CHECK(std::string(unitCursorPath(true, 0, 2, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::AVAILABLE)) == "Interface\\Cursor\\Attack.blp");
     CHECK(std::string(unitCursorPath(true, 0, 4, 0, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Attack.blp");
-    CHECK(std::string(unitCursorPath(false, UNIT_DYNFLAG_LOOTABLE, 2, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::AVAILABLE)) == "Interface\\Cursor\\LootAll.blp");
+    CHECK(std::string(unitCursorPath(false, UNIT_DYNFLAG_LOOTABLE, 2, NPC_FLAG_ANY_VENDOR, QuestGiverStatus::AVAILABLE)) == "Interface\\Cursor\\Pickup.blp");
     CHECK(std::string(unitCursorPath(false, 0, 2, 0, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Point.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_AUCTIONEER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_BANKER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
@@ -148,7 +148,7 @@ TEST_CASE("Skinnable corpse retains loot priority", "[gather-cursor]") {
     CHECK(std::string(unitCursorPath(false, 0, 2, 0,
         QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE, false, false)) == "Interface\\Cursor\\Point.blp");
     CHECK(std::string(unitCursorPath(false, UNIT_DYNFLAG_LOOTABLE, 2, 0,
-        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE)) == "Interface\\Cursor\\LootAll.blp");
+        QuestGiverStatus::NONE, {}, true, UNIT_FLAG_SKINNABLE)) == "Interface\\Cursor\\Pickup.blp");
 }
 
 TEST_CASE("Corpse gathering requires profession rank and compatible carried tool", "[gather-cursor]") {
@@ -171,6 +171,24 @@ TEST_CASE("Corpse gathering requires profession rank and compatible carried tool
     CHECK(compatibleGatheringTool(1, 3, 1, 1));
     CHECK_FALSE(compatibleGatheringTool(21, 1, 1, 1));
     CHECK_FALSE(compatibleGatheringTool(1, 2, 1, 1));
+}
+
+TEST_CASE("Service cursors turn Unable beyond interaction reach", "[npc-cursor]") {
+    using namespace wowee::game;
+    using wowee::ui::unitCursorPath;
+    const auto far = [](bool alive, uint32_t dyn, int reaction, uint32_t flags, QuestGiverStatus status,
+                        std::string_view icon = {}, bool attackable = true) {
+        return unitCursorPath(alive, dyn, reaction, flags, status, icon, attackable, 0, false, false, false);
+    };
+    CHECK(far(true, 0, 5, NPC_FLAG_BANKER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE) == "Interface\\Cursor\\UnableBuy.blp");
+    CHECK(far(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::NONE) == "Interface\\Cursor\\UnableSpeak.blp");
+    CHECK(far(true, 0, 5, NPC_FLAG_INNKEEPER | NPC_FLAG_QUESTGIVER, QuestGiverStatus::LOW_LEVEL_AVAILABLE) ==
+          "Interface\\Cursor\\UnableQuest.blp");
+    CHECK(far(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::NONE, "Directions", false) ==
+          "Interface\\Cursor\\UnableDirections.blp");
+    // The sword and the plain pointer have no out-of-reach look here.
+    CHECK(far(true, 0, 2, 0, QuestGiverStatus::NONE) == "Interface\\Cursor\\Attack.blp");
+    CHECK(far(true, 0, 5, 0x400000, QuestGiverStatus::NONE) == "Interface\\Cursor\\Point.blp");
 }
 
 TEST_CASE("Innkeeper vendor and battlemaster cursors retain service priority", "[npc-cursor]") {

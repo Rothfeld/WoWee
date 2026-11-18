@@ -2184,6 +2184,12 @@ public:
     bool isLootWindowOpen() const;
     /// Within the range the server allows for loot / npc interaction.
     bool isWithinInteractRange(uint64_t guid) const;
+    /// Whether the player stands close enough to use a living unit's service
+    /// (gossip, vendor, quest, ...): within 5.5555553 yards of the unit's
+    /// position in 3D, whatever the unit's size. Original 2.4.3 hover cursor
+    /// (pair 8): Newton Burnside (combat reach 1.5) and Ironbark the Redeemed
+    /// (7.5) both Usable at 5.550 yards and Unable at 5.556.
+    bool unitWithinInteractionReach(const Unit& unit) const;
     const LootResponseData& getCurrentLoot() const;
     /// ItemSet.dbc row for an item's set id; null when unknown.
     const ItemSetInfo* getItemSetInfo(uint32_t setId) const;
