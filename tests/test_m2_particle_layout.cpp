@@ -470,3 +470,18 @@ TEST_CASE("Spline births spread over a held width and follow an animated one", "
     CHECK(particleTrackVaries(swept, 0));
     CHECK(splineBirthParameter(0.0f, 0.4f, true, 0.9f) == Catch::Approx(0.4f));
 }
+
+TEST_CASE("A step track says nothing past its last key", "[m2][particle]") {
+    // Holy Ground (consecration_impact_base.m2): rate 0 at 0 ms, 200 at 67 ms,
+    // no interpolation, 12.4 s Stand; the original emits no particles.
+    wowee::pipeline::M2AnimationTrack rate;
+    rate.interpolationType = 0;
+    rate.sequences.resize(1);
+    rate.sequences[0].timestamps = {0, 67};
+    rate.sequences[0].floatValues = {0.0f, 200.0f};
+    using wowee::rendering::m2_track::pastLastStepKey;
+    CHECK_FALSE(pastLastStepKey(rate, 0, 30.0f, 0.0f, {}));
+    CHECK(pastLastStepKey(rate, 0, 500.0f, 0.0f, {}));
+    rate.interpolationType = 1;
+    CHECK_FALSE(pastLastStepKey(rate, 0, 500.0f, 0.0f, {}));
+}
