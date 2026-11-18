@@ -475,9 +475,13 @@ void main() {
     if (unlit == 0) result += localLightContribution(FragPos, norm, texColor.rgb);
     result *= vec3(kitColorR, kitColorG, kitColorB);
 
-    // Unit hover adds neutral illumination while preserving texture detail.
-    // Apply before fog so highlighted units retain their distance attenuation.
-    result += texColor.rgb * (0.3 * hoverHighlight);
+    // Unit hover doubles the shaded colour. Measured on 2.4.3 (pointer on vs
+    // off another player, same frame otherwise): skin, vest and the attached
+    // shoulder pads all came out 2.0-2.2x brighter in every channel, dark and
+    // lit texels alike, so it is a multiply and not an added glow. The local
+    // player is not highlighted. Before fog, as the distance haze still
+    // applies to a highlighted unit.
+    result *= 1.0 + hoverHighlight;
 
     float dist = length(viewPos.xyz - FragPos);
     if (blendMode == 5 || blendMode == 6) {
