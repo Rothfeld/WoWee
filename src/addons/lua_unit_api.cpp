@@ -2430,28 +2430,36 @@ static int lua_UnitIsEnemy(lua_State* L) {
 
 static int lua_UnitCreatureType(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh) { lua_pushstring(L, "Unknown"); return 1; }
+    // No unit answers nil on native (no target: "T=[nil]").
+    if (!gh) return luaReturnNil(L);
     const char* uid = luaL_optstring(L, 1, "target");
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
-    if (guid == 0) { lua_pushstring(L, "Unknown"); return 1; }
+    if (guid == 0) return luaReturnNil(L);
     auto entity = gh->getEntityManager().getEntity(guid);
-    if (!entity) { lua_pushstring(L, "Unknown"); return 1; }
+    if (!entity) return luaReturnNil(L);
     // Player units are always "Humanoid"
     if (entity->getType() == game::ObjectType::PLAYER) {
         lua_pushstring(L, "Humanoid");
         return 1;
     }
     auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
-    if (!unit) { lua_pushstring(L, "Unknown"); return 1; }
+    if (!unit) return luaReturnNil(L);
+    // CreatureType.dbc rows 1-13. A creature without a type (0: Furbolg,
+    // Rankist) answers nil on native.
     uint32_t ct = gh->getCreatureType(unit->getEntry());
     static constexpr const char* kTypes[] = {
-        "Unknown", "Beast", "Dragonkin", "Demon", "Elemental",
+        nullptr, "Beast", "Dragonkin", "Demon", "Elemental",
         "Giant", "Undead", "Humanoid", "Critter", "Mechanical",
         "Not specified", "Totem", "Non-combat Pet", "Gas Cloud"
     };
-    lua_pushstring(L, (ct < 14) ? kTypes[ct] : "Unknown");
+    if (ct >= std::size(kTypes)) {
+        LOG_ERROR("UnitCreatureType: creature ", unit->getEntry(), " has type ", ct, " outside CreatureType.dbc");
+        return luaReturnNil(L);
+    }
+    if (!kTypes[ct]) return luaReturnNil(L);
+    lua_pushstring(L, kTypes[ct]);
     return 1;
 }
 

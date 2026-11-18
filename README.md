@@ -1545,7 +1545,17 @@ Unfriendly no type; Wastewander Bandit "Level 41 Humanoid", neutral wildlife
 "Level 9 Beast", Bloodsail at Hated "Level ?? Humanoid". `UnitCreatureType`
 still answers Humanoid for all of them; the rule is in the tooltip. Corpses
 keep CORPSE either way. Evidence:
-`_experiments/20261118T195000Z.unit_creature_type/`. In a group, a corpse's tooltip adds "Master Looter: <name>" under
+`_experiments/20261118T195000Z.unit_creature_type/`. Type 10
+(CREATURE_TYPE_NOT_SPECIFIED, "Not specified") is never in the level line,
+though `UnitCreatureType` answers "Not specified": Hakkar "Level ?? (Boss)",
+Green Sludge and Hakkari Minion "Level 46". A creature of type 0 (Furbolg,
+Rankist) answers nil and has no type either. CreatureType.dbc's last column
+does not mark this (1 for Critter, Non-combat Pet, Gas Cloud; 0 for Not
+specified). All other types are named for non-friends: "Level 1 Critter",
+"Level 11 Mechanical", "Level 69 Totem", "Level 60 Gas Cloud", and wild
+Non-combat Pets "Level 1 Non-combat Pet" (Cockroach, Orcish Orphan); an own
+companion is a friend ("Level 1"). Evidence:
+`_experiments/20261118T225800Z.type_not_specified/`. In a group, a corpse's tooltip adds "Master Looter: <name>" under
 master loot and "Loot: <name>" (LOOT, MASTER_LOOTER) from SMSG_LOOT_LIST
 (corpse guid, packed master, packed current looter). Group loot, need before
 greed and round robin name the packet's looter, alternating kill by kill;

@@ -3286,9 +3286,17 @@ int lua_Tooltip_SetUnit(lua_State* L) {
                 // Katrina Turner, "Level 65 (Elite)" for Daelyshia. Measured
                 // on native, the API's UnitCreatureType answering Humanoid for
                 // all of them; a corpse names itself whatever it was.
+                // Type 10 (CREATURE_TYPE_NOT_SPECIFIED, "Not specified" in
+                // CreatureType.dbc) is never named: Hakkar reads "Level ??
+                // (Boss)", Green Sludge "Level 46", while UnitCreatureType
+                // answers "Not specified". Every other type is named, wild
+                // Non-combat Pets included ("Level 1 Non-combat Pet" for a
+                // Cockroach); an own companion is a friend ("Level 1").
+                constexpr uint32_t kCreatureTypeNotSpecified = 10;
+                const bool typeNamed = unit && !gh->playerIsFriendOf(*unit) &&
+                                       gh->getCreatureType(unit->getEntry()) != kCreatureTypeNotSpecified;
                 const std::string kind = isCorpse ? global("CORPSE")
-                                       : (isCompanion || (unit && gh->playerIsFriendOf(*unit)))
-                                             ? std::string() : callUnitString("UnitCreatureType");
+                                       : typeNamed ? callUnitString("UnitCreatureType") : std::string();
                 const int rank = unit ? gh->getCreatureRank(unit->getEntry()) : 0;
                 const std::string classification = (rank == 1 || rank == 2) ? global("ELITE")
                                                  : rank == 3 ? global("BOSS") : std::string();

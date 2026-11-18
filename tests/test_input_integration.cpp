@@ -2756,6 +2756,11 @@ TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of pl
     pet->setField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_LO), ownerGuid);
     pet->setField(fieldIndex(UF::UNIT_FIELD_CREATEDBY_HI), 0);
     pet->setField(fieldIndex(UF::UNIT_FIELD_FLAGS), UNIT_FLAG_PLAYER_CONTROLLED);
+    // A companion takes its owner's faction template (Human, 1): the player is
+    // its friend, so its level line names no type (native Bombay: "Level 1").
+    handler.setFactionFriendlyMap({{1, true}});
+    handler.setFactionHostileMap({{1, false}});
+    pet->setFactionTemplate(1);
     handler.getEntityManager().addEntity(petGuid, pet);
     // CMaNGOS QueryHandler::HandleCreatureQueryOpcode, TBC response layout.
     wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
@@ -3676,6 +3681,79 @@ TEST_CASE_METHOD(Integration, "Unit tooltip names the creature type only for non
         unit->setHealth(0);
         run("assert(typeTip:SetUnit('target'))");
         CHECK(tip->tooltipLines[1].left == std::string("Level ") + std::to_string(c.level) + " Corpse");
+    }
+    lua.setGameHandler(nullptr);
+}
+
+// Original 2.4.3 (pair 5, Zul'Gurub and GM Island), all not friends of the
+// player: type 10 "Not specified" never reaches the level line though
+// UnitCreatureType answers it - Hakkar "Level ?? (Boss)", Green Sludge
+// "Level 46". A creature of type 0 (Rankist) answers nil and reads "Level 6".
+// Critter, Mechanical, Totem, Non-combat Pet and Gas Cloud are named: a wild
+// Cockroach reads "Level 1 Non-combat Pet".
+TEST_CASE_METHOD(Integration, "Unit tooltip never names creature type Not specified", "[unit-tooltip]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.setFactionFriendlyMap({{28, false}, {14, false}, {188, false}, {31, false}, {1813, false}, {190, false}});
+    handler.setFactionHostileMap({{28, true}, {14, true}, {188, false}, {31, false}, {1813, true}, {190, false}});
+    run(R"lua(
+        TOOLTIP_UNIT_LEVEL = 'Level %s'
+        TOOLTIP_UNIT_LEVEL_CLASS = 'Level %s %s'
+        TOOLTIP_UNIT_LEVEL_CLASS_TYPE = 'Level %s %s (%s)'
+        TOOLTIP_UNIT_LEVEL_TYPE = 'Level %s (%s)'
+        TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE = 'Level %s %s %s (%s)'
+        ELITE = 'Elite'
+        BOSS = 'Boss'
+        PLAYER = 'Player'
+        CORPSE = 'Corpse'
+        kindTip = CreateFrame('GameTooltip', 'KindTip', UIParent)
+    )lua");
+    struct Case { uint32_t entry; const char* name; uint32_t creatureType; uint32_t rank; uint32_t level;
+                  uint32_t factionTemplate; const char* line; const char* api; };
+    const Case cases[] = {
+        {14834, "Hakkar", 10, 3, 63, 28, "Level ?? (Boss)", "'Not specified'"},
+        {2655, "Green Sludge", 10, 0, 46, 14, "Level 46", "'Not specified'"},
+        {71, "Rankist", 0, 0, 6, 14, "Level 6", "nil"},
+        {721, "Rabbit", 8, 0, 1, 31, "Level 1 Critter", "'Critter'"},
+        {36, "Harvest Golem", 9, 0, 11, 14, "Level 11 Mechanical", "'Mechanical'"},
+        {21420, "Corrupt Water Totem", 11, 0, 69, 1813, "Level 69 Totem", "'Totem'"},
+        {7395, "Cockroach", 12, 0, 1, 188, "Level 1 Non-combat Pet", "'Non-combat Pet'"},
+        {17378, "Swamp Gas", 13, 0, 60, 190, "Level 60 Gas Cloud", "'Gas Cloud'"},
+    };
+    uint64_t guid = 0xf130000000200000ull;
+    for (const auto& c : cases) {
+        auto unit = std::make_shared<Unit>(++guid);
+        unit->setName(c.name);
+        unit->setEntry(c.entry);
+        unit->setLevel(c.level);
+        unit->setHealth(100);
+        unit->setMaxHealth(100);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), c.level);
+        unit->setFactionTemplate(c.factionTemplate);
+        unit->setHostile(handler.isHostileFactionPublic(c.factionTemplate));
+        handler.getEntityManager().addEntity(guid, unit);
+        wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
+        info.writeUInt32(c.entry);
+        info.writeString(c.name);
+        for (int i = 0; i < 5; ++i) info.writeString("");
+        info.writeUInt32(0);
+        info.writeUInt32(c.creatureType);
+        info.writeUInt32(0);
+        info.writeUInt32(c.rank);
+        for (int i = 0; i < 6; ++i) info.writeUInt32(0);
+        info.writeFloat(1); info.writeFloat(1); info.writeUInt8(0);
+        session.receive(info);
+        handler.setTarget(guid);
+        INFO(c.name);
+        truth("not UnitIsFriend('player', 'target')");
+        truth(std::string("UnitCreatureType('target') == ") + c.api);
+        run("assert(kindTip:SetUnit('target'))");
+        const auto* tip = lua.widgets().findByName("KindTip");
+        REQUIRE(tip);
+        REQUIRE(tip->tooltipLines.size() >= 2);
+        CHECK(tip->tooltipLines[1].left == c.line);
     }
     lua.setGameHandler(nullptr);
 }
