@@ -921,8 +921,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // Off, as it ships: a zone track stops at its end and the next one starts
     // when the zone asks for it.
     else if (n == "sound_zonemusicnodelay") lua_pushstring(L, "0");
-    // The mouse speed this client starts at.
-    else if (n == "camerayawmovespeed") lua_pushstring(L, "0.2");
+    // Mouse Look Speed as build 8606 ships it.
+    else if (n == "camerayawmovespeed") lua_pushstring(L, "180");
     // Not joined unless asked for, as it ships.
     else if (n == "guildrecruitmentchannel") lua_pushstring(L, "0");
 
@@ -1663,17 +1663,13 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
             svc->setClientSetting("camerastiffness", value);
         }
     }
-    // Mouse Look Speed. Named cameraYawMoveSpeed, which is what it turns, but
-    // the control is the mouse slider on the Mouse panel - and this client has
-    // that setting already, so it goes there rather than to the camera, one
-    // value with two controls.
-    //
-    // The range is redefined below to the one the client's own slider uses,
-    // for the same reason farclip's is: passing a number through unchanged
-    // beats converting between two scales that were never the same.
+    // Mouse Look Speed. Build 8606 turns the camera cameraYawMoveSpeed/800
+    // degrees per pixel of mouse-look (default 180: 0.225; ledger 127c). The
+    // camera turns mouseSensitivity * 1.125 degrees per pixel, so the setting
+    // is the CVar over 900, in the CVar's own range.
     if (key == "camerayawmovespeed") {
         if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
-            svc->setClientSetting("mousespeed", value);
+            svc->setClientSetting("mousespeed", ui::settingNumberText(std::atof(value.c_str()) / 900.0));
         }
     }
     // Loop Music. The checkbox says Loop Music and the CVar behind it says
@@ -5353,8 +5349,6 @@ constexpr CVarRange kCVarRanges[] = {
     // 4. The page that slider was on is retired, but this is the range any
     // control over the CVar is drawn with.
     {"texturefilteringmode", 0.0f, 4.0f},
-    // Mouse Look Speed, over the range this client's own mouse slider uses.
-    {"camerayawmovespeed", 0.05f, 1.0f},
     // Camera Following Speed. Not the shipped range: see the note in
     // applyCVarSideEffects - these are the bounds the camera itself clamps to,
     // so every position on the slider is a speed this client can actually run.
