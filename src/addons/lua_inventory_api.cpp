@@ -402,6 +402,23 @@ static int lua_GetMerchantItemCostInfo(lua_State* L) {
     return 3;
 }
 
+// _GetMerchantItemArenaRating(index) → required, met
+//
+// The personal and team arena rating a vendor slot's extended cost asks for,
+// and whether the player has it; nil when it asks for none. Native 2.4.3 adds
+// "Requires personal and team arena rating of 2200" (ITEM_REQ_ARENA_RATING) to
+// a merchant item's tooltip after its other requirements, red when unmet -
+// Brutal Gladiator's Leather Spaulders at Big Zokk Torquewrench. The rating is
+// the vendor's, not the item's: the same item from a link has no such line.
+static int lua_GetMerchantItemArenaRating(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const auto* cost = merchantCost(L, static_cast<int>(luaL_optnumber(L, 1, 0)));
+    if (!gh || !cost || cost->requiredArenaRating == 0) return luaReturnNil(L);
+    lua_pushnumber(L, cost->requiredArenaRating);
+    lua_pushboolean(L, gh->getArenaRatingForPurchases() >= cost->requiredArenaRating);
+    return 2;
+}
+
 // GetMerchantItemCostItem(index, i) → itemTexture, itemValue, itemLink
 //
 // The i-th thing a vendor wants for a slot besides coin. Counts only the filled
@@ -465,29 +482,15 @@ static int lua_GetMerchantItemInfo(lua_State* L) {
     lua_pushnumber(L, vi.buyPrice);                     // price (copper)
     lua_pushnumber(L, vi.stackCount > 0 ? vi.stackCount : 1); // stackCount
     lua_pushnumber(L, vi.maxCount == -1 ? -1 : vi.maxCount);  // numAvailable (-1=unlimited)
-    // FrameXML tints unavailable equipment red using this value, independent
-    // of whether the player has enough money to buy it.
-    bool usable = info && info->valid;
-    if (usable) {
-        const auto classId = gh->getPlayerClass();
-        const auto raceId = gh->getPlayerRace();
-        usable = info->requiredLevel <= gh->getPlayerLevel();
-        if (info->allowableClass != 0 && info->allowableClass != 0xffffffffu)
-            usable = usable && classId > 0 && classId <= 32 && (info->allowableClass & (1u << (classId - 1)));
-        if (info->allowableRace != 0 && info->allowableRace != 0xffffffffu)
-            usable = usable && raceId > 0 && raceId <= 32 && (info->allowableRace & (1u << (raceId - 1)));
-        if (info->itemClass == 2 /* weapon */)
-            usable = usable && info->subClass < 32 && gh->canUseWeaponSubclass(info->subClass);
-        if (info->itemClass == 4 /* armor */ && info->subClass != 0)
-            usable = usable && info->subClass < 32 && gh->canUseArmorSubclass(info->subClass);
-        if (info->requiredSkill != 0) {
-            const auto skill = gh->getPlayerSkills().find(info->requiredSkill);
-            usable = usable && skill != gh->getPlayerSkills().end() && skill->second.value >= info->requiredSkillRank;
-        }
-        if (info->requiredReputationFaction != 0)
-            usable = usable && game::reputationStandingFor(gh->getFactionStanding(info->requiredReputationFaction)).id - 1 >=
-                static_cast<int>(info->requiredReputationRank);
-    }
+    // FrameXML draws the row red when this is false. Native 2.4.3 answers it
+    // from the item's own requirements and the arena rating its extended cost
+    // asks for; see GameHandler::itemRequirementsMet for what is and is not
+    // part of it. An item whose template has not arrived answers on the rating
+    // alone: Big Zokk's other-class gloves on pages not yet shown were usable
+    // until their page was, while his rated pieces were red from the start.
+    bool usable = !info || !info->valid || gh->itemRequirementsMet(*info).all();
+    if (const auto* cost = vi.extendedCost ? gh->getExtendedCost(vi.extendedCost) : nullptr)
+        usable = usable && cost->requiredArenaRating <= gh->getArenaRatingForPurchases();
     lua_pushboolean(L, usable);                         // isUsable
     // The extended cost - tokens, honour, arena points - which merchantframe
     // reads as `if ( extendedCost and (price <= 0) )` to decide whether to
@@ -2225,17 +2228,19 @@ static int lua_GetItemTooltipData(lua_State* L) {
         lua_rawseti(L, -2, static_cast<int>(i) + 1);
     }
     lua_setfield(L, -2, "damages");
-    // Requirements the tooltip draws red when the player falls short.
-    const uint32_t classBit = gh->getPlayerClass() ? (1u << (gh->getPlayerClass() - 1)) : 0u;
-    const uint32_t raceBit = gh->getPlayerRace() ? (1u << (gh->getPlayerRace() - 1)) : 0u;
-    lua_pushboolean(L, info->allowableClass == 0 || (info->allowableClass & classBit) != 0);
+    // Requirements the tooltip draws red when the player falls short - the
+    // same answers a merchant row is red for.
+    const auto met = gh->itemRequirementsMet(*info);
+    lua_pushboolean(L, met.classes);
     lua_setfield(L, -2, "classesMet");
-    lua_pushboolean(L, info->allowableRace == 0 || (info->allowableRace & raceBit) != 0);
+    lua_pushboolean(L, met.races);
     lua_setfield(L, -2, "racesMet");
+    lua_pushboolean(L, met.level);
+    lua_setfield(L, -2, "requiredLevelMet");
     if (info->requiredSpell != 0) {
         lua_pushstring(L, gh->getSpellName(info->requiredSpell).c_str());
         lua_setfield(L, -2, "requiredSpellName");
-        lua_pushboolean(L, gh->getKnownSpells().count(info->requiredSpell) != 0);
+        lua_pushboolean(L, met.spell);
         lua_setfield(L, -2, "requiredSpellMet");
     }
     // Bind type
@@ -2270,9 +2275,7 @@ static int lua_GetItemTooltipData(lua_State* L) {
         lua_setfield(L, -2, "requiredSkillName");
         lua_pushnumber(L, info->requiredSkillRank);
         lua_setfield(L, -2, "requiredSkillRank");
-        const auto skill = gh->getPlayerSkills().find(info->requiredSkill);
-        lua_pushboolean(L, skill != gh->getPlayerSkills().end() &&
-            skill->second.effectiveValue() >= info->requiredSkillRank);
+        lua_pushboolean(L, met.skill);
         lua_setfield(L, -2, "requiredSkillMet");
     }
     // Whether the player has the proficiency for the item's subclass: the
@@ -2280,10 +2283,7 @@ static int lua_GetItemTooltipData(lua_State* L) {
     // Weapons and armour both: SMSG_SET_PROFICIENCY carries one mask for each
     // (Spell.dbc proficiency spells: Shield 9116 sets armour bit 6, Libram
     // 27762 bit 7). Other item classes have no proficiency.
-    bool proficient = true;
-    if (info->itemClass == 2) proficient = gh->canUseWeaponSubclass(info->subClass);
-    else if (info->itemClass == 4) proficient = gh->canUseArmorSubclass(info->subClass);
-    lua_pushboolean(L, proficient);
+    lua_pushboolean(L, met.proficiency);
     lua_setfield(L, -2, "subclassProficiencyMet");
     // Recipe items encode the taught spell separately from the Learning use
     // spell. Its created item and reagents form the embedded recipe preview.
@@ -2338,9 +2338,7 @@ static int lua_GetItemTooltipData(lua_State* L) {
             lua_setfield(L, -2, "requiredFaction");
             lua_pushstring(L, game::reputationRankName(info->requiredReputationRank));
             lua_setfield(L, -2, "requiredStanding");
-            const auto& standing = game::reputationStandingFor(
-                gh->getFactionStanding(info->requiredReputationFaction));
-            lua_pushboolean(L, standing.id - 1 >= static_cast<int>(info->requiredReputationRank));
+            lua_pushboolean(L, met.reputation);
             lua_setfield(L, -2, "requiredStandingMet");
         }
     }
@@ -3871,6 +3869,7 @@ void registerInventoryLuaAPI(lua_State* L) {
                 {"IsDressableItem",   lua_IsDressableItem},
                 {"GetItemQualityColor", lua_GetItemQualityColor},
                 {"_GetItemTooltipData", lua_GetItemTooltipData},
+                {"_GetMerchantItemArenaRating", lua_GetMerchantItemArenaRating},
                 {"_GetContainerItemInstance", lua_GetContainerItemInstance},
                 {"_GetInventoryItemInstance", lua_GetInventoryItemInstance},
                 // GetItemSpell(item) → spellName, spellRank

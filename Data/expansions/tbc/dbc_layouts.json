@@ -198,6 +198,22 @@
     "TextureTorsoLower": 19,
     "TextureTorsoUpper": 18
   },
+  "ItemExtendedCost": {
+    "ArenaPoints": 2,
+    "HonorPoints": 1,
+    "ID": 0,
+    "ItemCount0": 8,
+    "ItemCount1": 9,
+    "ItemCount2": 10,
+    "ItemCount3": 11,
+    "ItemCount4": 12,
+    "ItemId0": 3,
+    "ItemId1": 4,
+    "ItemId2": 5,
+    "ItemId3": 6,
+    "ItemId4": 7,
+    "RequiredArenaRating": 13
+  },
   "ItemSet": {
     "ID": 0,
     "Item0": 18,

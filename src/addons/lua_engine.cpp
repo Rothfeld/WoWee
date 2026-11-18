@@ -9160,10 +9160,18 @@ void LuaEngine::registerCoreAPI() {
         "    local link = GetLootRollItemLink and GetLootRollItemLink(rollId)\n"
         "    if link then return self:SetHyperlink(link) end\n"
         "end\n"
+        // The merchant slot is kept for the length of the build so the item
+        // tooltip can add what the vendor asks of the buyer: the arena rating
+        // of its extended cost, which the item itself does not carry.
         "function __WoweeFrameMT:SetMerchantItem(index)\n"
         "    self:ClearLines()\n"
         "    local link = GetMerchantItemLink and GetMerchantItemLink(index)\n"
-        "    if link then return self:SetHyperlink(link) end\n"
+        "    if link then\n"
+        "        rawset(self, '__merchantIndex', index)\n"
+        "        local filled = self:SetHyperlink(link)\n"
+        "        rawset(self, '__merchantIndex', nil)\n"
+        "        return filled\n"
+        "    end\n"
         "    local name = GetMerchantItemInfo(index)\n"
         "    if name then self:SetText(name, 1, 1, 1) end\n"
         "end\n"
@@ -9481,7 +9489,7 @@ void LuaEngine::registerCoreAPI() {
         "    if data.classes then self:AddLine(format(ITEM_CLASSES_ALLOWED, data.classes), met(data.classesMet)) end\n"
         "    if data.races then self:AddLine(format(ITEM_RACES_ALLOWED, data.races), met(data.racesMet)) end\n"
         "    if data.requiredLevel and data.requiredLevel > 1 then\n"
-        "        self:AddLine(format(ITEM_MIN_LEVEL, data.requiredLevel), met(UnitLevel('player') >= data.requiredLevel))\n"
+        "        self:AddLine(format(ITEM_MIN_LEVEL, data.requiredLevel), met(data.requiredLevelMet))\n"
         "    end\n"
         "    if data.requiredSkillName then\n"
         "        if data.requiredSkillRank > 0 then\n"
@@ -9493,6 +9501,14 @@ void LuaEngine::registerCoreAPI() {
         "    if data.requiredSpellName then self:AddLine(format(ITEM_REQ_SKILL, data.requiredSpellName), met(data.requiredSpellMet)) end\n"
         "    if data.requiredFaction then\n"
         "        self:AddLine(format(ITEM_REQ_REPUTATION, data.requiredFaction, data.requiredStanding), met(data.requiredStandingMet))\n"
+        "    end\n"
+        // Native 2.4.3 at Big Zokk Torquewrench: "Requires personal and team
+        // arena rating of 2200" right after "Requires Level 70", red without
+        // the rating; for a merchant slot only.
+        "    local merchantIndex = not embedded and rawget(self, '__merchantIndex')\n"
+        "    if merchantIndex then\n"
+        "        local rating, ratingMet = _GetMerchantItemArenaRating(merchantIndex)\n"
+        "        if rating then self:AddLine(format(ITEM_REQ_ARENA_RATING, rating), met(ratingMet)) end\n"
         "    end\n"
         "    -- Equip ratings in template order, then the item's spells.\n"
         "    local ratings = {[12]='DEFENSE_SKILL_RATING', [13]='DODGE_RATING', [14]='PARRY_RATING', [15]='BLOCK_RATING',\n"

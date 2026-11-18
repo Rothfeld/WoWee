@@ -60,6 +60,7 @@ namespace wowee::game {
 
 namespace wowee {
 namespace network { class WorldSocket; class Packet; }
+namespace pipeline { class DBCFile; struct DBCFieldMap; }
 namespace audio { enum class PlayerErrorSpeech : uint8_t; }
 
 namespace game {
@@ -2886,6 +2887,9 @@ public:
         uint32_t arenaPoints = 0;
         uint32_t itemId[5] = {};
         uint32_t itemCount[5] = {};
+        /// The personal and team arena rating a buyer needs (2.4.3
+        /// m_requiredArenaRating). Zero when there is none.
+        uint32_t requiredArenaRating = 0;
     };
     /// Null when the id is unknown or the DBC is not there.
     ///
@@ -2893,6 +2897,37 @@ public:
     /// original interface asks for the same thing through
     /// GetMerchantItemCostItem and cannot reach into this client's UI.
     const ExtendedCostEntry* getExtendedCost(uint32_t extendedCostId) const;
+    /// Every row of ItemExtendedCost.dbc, read through the expansion's layout.
+    static std::unordered_map<uint32_t, ExtendedCostEntry> readExtendedCosts(
+        const pipeline::DBCFile& dbc, const pipeline::DBCFieldMap& layout);
+
+    /// Which of an item template's own requirements the player meets. The
+    /// tooltip draws each unmet one red, and a merchant row is red when any is
+    /// unmet (native 2.4.3 GetMerchantItemInfo's isUsable, measured at Big
+    /// Zokk Torquewrench, Karaaz, Lieutenant Tristia and a Cloth Armor Vendor):
+    /// class, race, level, skill and rank, required spell, reputation, and the
+    /// weapon or armour proficiency. Not money, honor, arena points or tokens,
+    /// not a unique item already carried, not a recipe already known.
+    struct ItemRequirementsMet {
+        bool classes = true;
+        bool races = true;
+        bool level = true;
+        bool skill = true;
+        bool spell = true;
+        bool reputation = true;
+        bool proficiency = true;
+        [[nodiscard]] bool all() const {
+            return classes && races && level && skill && spell && reputation && proficiency;
+        }
+    };
+    ItemRequirementsMet itemRequirementsMet(const ItemQueryResponseData& info) const;
+
+    /// The arena rating vendor purchases are measured against: over the
+    /// player's arena teams, the best of the lower of personal and team
+    /// rating (CMaNGOS Player::GetMaxPersonalArenaRatingRequirement; 2.4.3
+    /// ITEM_REQ_ARENA_RATING "Requires personal and team arena rating of %d").
+    /// Zero without a team.
+    uint32_t getArenaRatingForPurchases() const;
 
     /// The rectangle a whole continent's map covers, in server coordinates.
     ///
@@ -3864,6 +3899,8 @@ public:
     auto& visibleItemLayoutVerifiedRef() { return visibleItemLayoutVerified_; }
     auto& visibleItemStrideRef() { return visibleItemStride_; }
     auto& itemInfoCacheRef() { return itemInfoCache_; }
+    auto& extendedCostCacheRef() { return extendedCostCache_; }
+    auto& extendedCostCacheLoadedRef() { return extendedCostCacheLoaded_; }
     auto& lastEquipDisplayIdsRef() { return lastEquipDisplayIds_; }
     auto& onlineEquipDirtyRef() { return onlineEquipDirty_; }
     auto& onlineItemsRef() { return onlineItems_; }

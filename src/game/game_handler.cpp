@@ -4812,35 +4812,133 @@ GameHandler::getContinentBounds(uint32_t mapId) const {
     return continentBoundsCache_.emplace(mapId, bounds).first->second;
 }
 
+std::unordered_map<uint32_t, GameHandler::ExtendedCostEntry>
+GameHandler::readExtendedCosts(const pipeline::DBCFile& dbc, const pipeline::DBCFieldMap& l) {
+    const uint32_t idCol = l["ID"], honorCol = l["HonorPoints"], arenaCol = l["ArenaPoints"];
+    const uint32_t ratingCol = l["RequiredArenaRating"];
+    uint32_t itemCol[5], countCol[5];
+    for (int j = 0; j < 5; ++j) {
+        itemCol[j] = l["ItemId" + std::to_string(j)];
+        countCol[j] = l["ItemCount" + std::to_string(j)];
+    }
+    std::unordered_map<uint32_t, ExtendedCostEntry> out;
+    for (uint32_t i = 0; i < dbc.getRecordCount(); ++i) {
+        const uint32_t id = dbc.getUInt32(i, idCol);
+        if (id == 0) continue;
+        ExtendedCostEntry e;
+        e.honorPoints = dbc.getUInt32(i, honorCol);
+        e.arenaPoints = dbc.getUInt32(i, arenaCol);
+        for (int j = 0; j < 5; ++j) {
+            e.itemId[j]    = dbc.getUInt32(i, itemCol[j]);
+            e.itemCount[j] = dbc.getUInt32(i, countCol[j]);
+        }
+        e.requiredArenaRating = dbc.getUInt32(i, ratingCol);
+        out[id] = e;
+    }
+    return out;
+}
+
 const GameHandler::ExtendedCostEntry*
 GameHandler::getExtendedCost(uint32_t extendedCostId) const {
     if (!extendedCostCacheLoaded_) {
         extendedCostCacheLoaded_ = true;
         auto* am = services_.assetManager;
-        if (am && am->isInitialized()) {
-            if (auto dbc = am->loadDBC("ItemExtendedCost.dbc"); dbc && dbc->isLoaded()) {
-                // WotLK layout: 0=ID, 1=honorPoints, 2=arenaPoints,
-                // 3=arenaSlotRestrictions, 4-8=itemId[5], 9-13=itemCount[5],
-                // 14=reqRating, 15=purchaseGroup
-                for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
-                    const uint32_t id = dbc->getUInt32(i, 0);
-                    if (id == 0) continue;
-                    ExtendedCostEntry e;
-                    e.honorPoints = dbc->getUInt32(i, 1);
-                    e.arenaPoints = dbc->getUInt32(i, 2);
-                    for (int j = 0; j < 5; ++j) {
-                        e.itemId[j]    = dbc->getUInt32(i, 4 + j);
-                        e.itemCount[j] = dbc->getUInt32(i, 9 + j);
-                    }
-                    extendedCostCache_[id] = e;
-                }
-                LOG_INFO("ItemExtendedCost.dbc: loaded ", extendedCostCache_.size(),
-                         " entries");
-            }
+        // The columns move between expansions: 2.4.3 has 14 (honor, arena
+        // points, five items, five counts, the personal arena rating), 3.3.5
+        // puts an arena slot after the points and a purchase group at the end.
+        // Reading the 3.3.5 offsets on the 2.4.3 file drops the first token and
+        // reads the first count as an item id - Lieutenant Tristia's Vindicator
+        // bracers asked for 9199 honor and none of their 20 Warsong Gulch marks.
+        const auto* layout = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("ItemExtendedCost") : nullptr;
+        auto dbc = am && am->isInitialized() ? am->loadDBC("ItemExtendedCost.dbc") : nullptr;
+        if (!layout) {
+            LOG_ERROR("ItemExtendedCost.dbc: dbc_layouts.json has no ItemExtendedCost "
+                      "layout; vendor token, honor, arena point and arena rating costs "
+                      "are unknown. Copy dbc_layouts.json from Data/expansions.");
+        } else if (dbc && dbc->isLoaded()) {
+            extendedCostCache_ = readExtendedCosts(*dbc, *layout);
+            LOG_INFO("ItemExtendedCost.dbc: loaded ", extendedCostCache_.size(),
+                     " entries");
         }
     }
     auto it = extendedCostCache_.find(extendedCostId);
     return it == extendedCostCache_.end() ? nullptr : &it->second;
+}
+
+GameHandler::ItemRequirementsMet
+GameHandler::itemRequirementsMet(const ItemQueryResponseData& info) const {
+    ItemRequirementsMet met;
+    const uint32_t classId = getPlayerClass();
+    const uint32_t raceId = getPlayerRace();
+    const uint32_t classBit = classId >= 1 && classId <= 32 ? 1u << (classId - 1) : 0u;
+    const uint32_t raceBit = raceId >= 1 && raceId <= 32 ? 1u << (raceId - 1) : 0u;
+    met.classes = info.allowableClass == 0 || (info.allowableClass & classBit) != 0;
+    met.races = info.allowableRace == 0 || (info.allowableRace & raceBit) != 0;
+    met.level = info.requiredLevel <= getPlayerLevel();
+    if (info.requiredSkill != 0) {
+        // The skill with its bonuses, as CMaNGOS Player::CanUseItem compares
+        // GetSkillValue (base plus temporary and permanent bonus).
+        const auto skill = getPlayerSkills().find(info.requiredSkill);
+        met.skill = skill != getPlayerSkills().end() &&
+                    skill->second.effectiveValue() >= info.requiredSkillRank;
+    }
+    if (info.requiredSpell != 0) {
+        // Spellfire Robe asks for Spellfire Tailoring (26797): red on a
+        // merchant, "Requires Spellfire Tailoring" red in its tooltip.
+        met.spell = getKnownSpells().count(info.requiredSpell) != 0;
+    }
+    if (info.requiredReputationFaction != 0) {
+        met.reputation = reputationStandingFor(getFactionStanding(info.requiredReputationFaction)).id - 1 >=
+                         static_cast<int>(info.requiredReputationRank);
+    }
+    // Weapons and armour other than Miscellaneous (rings, trinkets, things
+    // held in the off hand) need their proficiency. A rogue without Guns sees
+    // Karaaz's Consortium Blaster red.
+    if (info.itemClass == 2) met.proficiency = canUseWeaponSubclass(info.subClass);
+    else if (info.itemClass == 4 && info.subClass != 0) met.proficiency = canUseArmorSubclass(info.subClass);
+    return met;
+}
+
+uint32_t GameHandler::getArenaRatingForPurchases() const {
+    // Three teams (2v2, 3v3, 5v5), six fields each in 2.4.3: team id, member
+    // flag, games this week, games this season, wins this season and the
+    // personal rating (CMaNGOS Player.h ArenaTeamInfoType).
+    constexpr uint16_t kSlots = 3, kFieldsPerSlot = 6, kPersonalRating = 5;
+    const uint16_t base = fieldIndex(UF::PLAYER_FIELD_ARENA_TEAM_INFO_1_1);
+    const auto player = getEntityManager().getEntity(playerGuid);
+    if (!player) return 0;
+    if (base == 0xFFFF) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            LOG_WARNING("update_fields.json has no PLAYER_FIELD_ARENA_TEAM_INFO_1_1; "
+                        "the player's arena rating is unknown and every vendor arena "
+                        "rating requirement reads as unmet");
+        }
+        return 0;
+    }
+    uint32_t best = 0;
+    for (uint16_t slot = 0; slot < kSlots; ++slot) {
+        const uint32_t teamId = player->getField(base + slot * kFieldsPerSlot);
+        if (teamId == 0) continue;
+        const uint32_t personal = player->getField(base + slot * kFieldsPerSlot + kPersonalRating);
+        const auto& teams = getArenaTeamStats();
+        const auto team = std::find_if(teams.begin(), teams.end(),
+            [teamId](const ArenaTeamStats& t) { return t.teamId == teamId; });
+        if (team == teams.end()) {
+            // SMSG_ARENA_TEAM_STATS for this team has not arrived, so its
+            // rating, the other half of the requirement, is not known. Said
+            // once per team: every merchant row asks.
+            static std::unordered_set<uint32_t> said;
+            if (said.insert(teamId).second)
+                LOG_WARNING("Arena team ", teamId, " has no SMSG_ARENA_TEAM_STATS; its rating "
+                            "does not count toward vendor arena rating requirements");
+            continue;
+        }
+        best = std::max(best, std::min(personal, team->rating));
+    }
+    return best;
 }
 
 const std::string& GameHandler::getQuestGreeting() const {

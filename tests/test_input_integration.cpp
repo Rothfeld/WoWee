@@ -7,6 +7,8 @@
 #include "input_test_support.hpp"
 #include "game_replay.hpp"
 #include "game/packet_parsers.hpp"
+#include "pipeline/dbc_loader.hpp"
+#include "pipeline/dbc_layout.hpp"
 #include "game/transport_manager.hpp"
 #include "ui/game_screen.hpp"
 #include "ui/framexml_takeover.hpp"
@@ -20,6 +22,7 @@
 #include "ui/gamepad_controls.hpp"
 #include "ui/framexml_emitter.hpp"
 #include "ui/xml_parser.hpp"
+#include <array>
 #include <cmath>
 #include <memory>
 #include <set>
@@ -1685,6 +1688,187 @@ TEST_CASE_METHOD(Integration, "Charter query, rename and close share petition st
     CHECK(handler.getPetitionInfo().guildName == "Renamed Guild");
     handler.clearPetitionSignaturesUI();
     CHECK_FALSE(handler.hasPetitionSignaturesUI());
+}
+
+namespace {
+// One SMSG_LIST_INVENTORY row in the TBC layout (CMaNGOS ItemHandler.cpp
+// SendListInventory): slot, item, display, count, price, durability, stack,
+// extended cost.
+void writeVendorRow(wowee::network::Packet& packet, uint32_t slot, uint32_t item, uint32_t extendedCost) {
+    for (uint32_t value : {slot, item, 0u, 0xffffffffu, 0u, 0u, 1u, extendedCost}) packet.writeUInt32(value);
+}
+}  // namespace
+
+TEST_CASE("TBC ItemExtendedCost columns come from the expansion's layout", "[merchant]") {
+    // Two rows of build 8606's ItemExtendedCost.dbc (14 fields, CMaNGOS fmt
+    // "niiiiiiiiiiiii"): Lieutenant Tristia's Guardian's bracers (2401) and the
+    // Vindicator's bands (129). Read with 3.3.5's offsets they lost the
+    // Warsong Gulch and Alterac Valley marks and gave a count as an item id.
+    const std::vector<std::array<uint32_t, 14>> rows = {
+        {2401, 11794, 0, 20558, 0, 0, 0, 0, 20, 0, 0, 0, 0, 1575},
+        {129, 11934, 0, 20560, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0},
+    };
+    std::vector<uint8_t> bytes = {'W', 'D', 'B', 'C'};
+    auto put = [&bytes](uint32_t v) {
+        for (int i = 0; i < 4; ++i) bytes.push_back(static_cast<uint8_t>(v >> (8 * i)));
+    };
+    put(static_cast<uint32_t>(rows.size())); put(14); put(14 * 4); put(1);
+    for (const auto& row : rows) for (uint32_t v : row) put(v);
+    bytes.push_back(0);
+    wowee::pipeline::DBCFile dbc;
+    REQUIRE(dbc.load(bytes));
+    wowee::pipeline::DBCLayout layouts;
+    REQUIRE(layouts.loadFromJson(std::string(WOWEE_SOURCE_DIR) + "/Data/expansions/tbc/dbc_layouts.json"));
+    const auto* layout = layouts.getLayout("ItemExtendedCost");
+    REQUIRE(layout);
+    const auto costs = wowee::game::GameHandler::readExtendedCosts(dbc, *layout);
+    REQUIRE(costs.size() == 2);
+    const auto& bracers = costs.at(2401);
+    CHECK(bracers.honorPoints == 11794);
+    CHECK(bracers.arenaPoints == 0);
+    CHECK(bracers.itemId[0] == 20558);
+    CHECK(bracers.itemCount[0] == 20);
+    CHECK(bracers.itemId[4] == 0);
+    CHECK(bracers.requiredArenaRating == 1575);
+    const auto& band = costs.at(129);
+    CHECK(band.itemId[0] == 20560);
+    CHECK(band.itemCount[0] == 10);
+    CHECK(band.requiredArenaRating == 0);
+}
+
+TEST_CASE_METHOD(Integration, "Merchant rows are red for a vendor arena rating the player lacks", "[merchant]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    session.receive(replay::UpdateObject().tbc().create(replay::Session::kPlayerGuid, ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_LEVEL, 70}}, true));
+    handler.serverPlayerLevelRef() = 70;
+    // Big Zokk Torquewrench's costs: 2342 is 1125 arena points with no rating,
+    // 2359 is 1500 points at 2200. Tristia's 2401 is honor and marks at 1575.
+    handler.extendedCostCacheLoadedRef() = true;
+    auto& costs = handler.extendedCostCacheRef();
+    costs[2342].arenaPoints = 1125;
+    costs[2359].arenaPoints = 1500;
+    costs[2359].requiredArenaRating = 2200;
+    costs[2401].honorPoints = 11794;
+    costs[2401].itemId[0] = 20558;
+    costs[2401].itemCount[0] = 20;
+    costs[2401].requiredArenaRating = 1575;
+    for (uint32_t id : {35032u, 35035u, 35171u}) {
+        auto& info = handler.itemInfoCacheRef()[id];
+        info.valid = true;
+        info.name = "Item " + std::to_string(id);
+        info.itemClass = 15;
+        info.requiredLevel = 70;
+    }
+    wowee::network::Packet inventory(wireOpcode(Opcode::SMSG_LIST_INVENTORY));
+    inventory.writeUInt64(123);
+    inventory.writeUInt8(5);
+    writeVendorRow(inventory, 1, 35032, 2342);
+    writeVendorRow(inventory, 2, 35035, 2359);
+    writeVendorRow(inventory, 3, 35171, 2401);
+    // Items whose template has not arrived: the rating alone decides.
+    writeVendorRow(inventory, 4, 35999, 2342);
+    writeVendorRow(inventory, 5, 35998, 2359);
+    session.receive(inventory);
+
+    // No team: no rating. Points, honor and marks the player lacks do not
+    // make a row red, the rating does.
+    CHECK(handler.getArenaRatingForPurchases() == 0);
+    truth("select(6, GetMerchantItemInfo(1)) == true");
+    truth("select(6, GetMerchantItemInfo(2)) == false");
+    truth("select(6, GetMerchantItemInfo(3)) == false");
+    truth("select(6, GetMerchantItemInfo(4)) == true");
+    truth("select(6, GetMerchantItemInfo(5)) == false");
+    truth("select(7, GetMerchantItemInfo(3)) == 2401");
+    truth("select(1, GetMerchantItemCostInfo(3)) == 11794 and select(3, GetMerchantItemCostInfo(3)) == 1");
+    truth("select(2, GetMerchantItemCostItem(3, 1)) == 20");
+    truth("select(1, _GetMerchantItemArenaRating(2)) == 2200 and select(2, _GetMerchantItemArenaRating(2)) == false");
+    truth("_GetMerchantItemArenaRating(1) == nil");
+
+    // A 2v2 team (slot 0): id 77, personal rating 2300, team rating 2250 -
+    // the lower of the two counts.
+    const auto player = handler.getEntityManager().getEntity(replay::Session::kPlayerGuid);
+    REQUIRE(player);
+    const uint16_t teamInfo = fieldIndex(UF::PLAYER_FIELD_ARENA_TEAM_INFO_1_1);
+    REQUIRE(teamInfo == 1544);
+    player->setField(teamInfo, 77);
+    player->setField(teamInfo + 5, 2300);
+    CHECK(handler.getArenaRatingForPurchases() == 0);  // the team's own rating is not known yet
+    auto teamStats = [&](uint32_t rating) {
+        wowee::network::Packet stats(wireOpcode(Opcode::SMSG_ARENA_TEAM_STATS));
+        for (uint32_t v : {77u, rating, 0u, 0u, 0u, 0u, 0u}) stats.writeUInt32(v);
+        session.receive(stats);
+    };
+    teamStats(2250);
+    CHECK(handler.getArenaRatingForPurchases() == 2250);
+    truth("select(6, GetMerchantItemInfo(2)) == true");
+    truth("select(2, _GetMerchantItemArenaRating(2)) == true");
+    teamStats(2100);
+    CHECK(handler.getArenaRatingForPurchases() == 2100);
+    truth("select(6, GetMerchantItemInfo(2)) == false");
+    truth("select(6, GetMerchantItemInfo(3)) == true");
+
+    // The tooltip line, from GlobalStrings.lua, which is extracted client data
+    // outside this repository, e.g.
+    //   WOWEE_TBC_GLOBALSTRINGS=/workspace/azerothcore/client/wowee-data/expansions/tbc/interface/framexml/globalstrings.lua
+    const char* globalStrings = std::getenv("WOWEE_TBC_GLOBALSTRINGS");
+    if (!globalStrings) SKIP("WOWEE_TBC_GLOBALSTRINGS not set");
+    std::ifstream globalStringsFile(globalStrings);
+    REQUIRE(globalStringsFile.good());
+    std::stringstream globalStringsText;
+    globalStringsText << globalStringsFile.rdbuf();
+    run(globalStringsText.str());
+    run("merchantTip = CreateFrame('GameTooltip', 'MerchantTip', UIParent); assert(merchantTip:SetMerchantItem(2))");
+    const auto* tip = lua.widgets().findByName("MerchantTip");
+    REQUIRE(tip);
+    auto ratingLine = [&]() -> const wowee::ui::Widget::TooltipLine* {
+        for (const auto& line : tip->tooltipLines)
+            if (line.left == "Requires personal and team arena rating of 2200") return &line;
+        return nullptr;
+    };
+    REQUIRE(ratingLine());
+    CHECK(ratingLine()->lc[0] == 1.0f);   // RED_FONT_COLOR (1, 0.125, 0.125)
+    CHECK(ratingLine()->lc[1] < 0.2f);
+    // The same item from a link: the rating is the vendor's, not the item's.
+    run("assert(merchantTip:SetHyperlink(GetMerchantItemLink(2)))");
+    CHECK(ratingLine() == nullptr);
+    run("assert(merchantTip:SetMerchantItem(1))");
+    for (const auto& line : tip->tooltipLines) CHECK(line.left.find("arena rating") == std::string::npos);
+    lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration, "Merchant rows are red for a required spell the player lacks", "[merchant]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.serverPlayerLevelRef() = 70;
+    // Spellfire Robe (21848): cloth, level 70, Spellfire Tailoring (26797).
+    auto& robe = handler.itemInfoCacheRef()[21848];
+    robe.valid = true;
+    robe.name = "Spellfire Robe";
+    robe.itemClass = 4;
+    robe.subClass = 1;
+    robe.requiredLevel = 70;
+    robe.requiredSpell = 26797;
+    wowee::network::Packet proficiency(wireOpcode(Opcode::SMSG_SET_PROFICIENCY));
+    proficiency.writeUInt8(4);
+    proficiency.writeUInt32(1u << 1);
+    session.receive(proficiency);
+    wowee::network::Packet inventory(wireOpcode(Opcode::SMSG_LIST_INVENTORY));
+    inventory.writeUInt64(123);
+    inventory.writeUInt8(1);
+    writeVendorRow(inventory, 1, 21848, 0);
+    session.receive(inventory);
+    truth("select(6, GetMerchantItemInfo(1)) == false");
+    wowee::network::Packet learned(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+    learned.writeUInt32(26797);
+    session.receive(learned);
+    REQUIRE(handler.getKnownSpells().count(26797));
+    truth("select(6, GetMerchantItemInfo(1)) == true");
+    lua.setGameHandler(nullptr);
 }
 
 TEST_CASE_METHOD(Integration, "TBC purchases encode quantity without vendor slot", "[merchant]") {

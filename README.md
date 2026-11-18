@@ -1293,9 +1293,49 @@ chest's loot after a corpse was not observed).
 
 ### Merchant refresh and item usability
 
-Merchant items report level, class/race, equipment proficiency, skill, and
-reputation eligibility to FrameXML. Its red icons and row backgrounds indicate
-unusable items; lack of money does not make otherwise usable items red.
+`build/bin/test_input_integration '[merchant]'`
+
+A merchant row is red when `GetMerchantItemInfo`'s sixth value, isUsable, is
+false. One rule (`GameHandler::itemRequirementsMet` plus the vendor's arena
+rating) answers it and colours the item tooltip's requirement lines. Measured
+on native 2.4.3 with a level 70 human rogue (pair 4):
+
+| Requirement | Row red when unmet | Tooltip line, red when unmet | Example |
+|---|---|---|---|
+| Class mask | yes | `Classes: Priest` | Big Zokk Torquewrench: Brutal Gladiator's Satin Gloves |
+| Race mask | yes | `Races: ...` | not measured |
+| Required level | yes | `Requires Level 70` | not measured at a lower level |
+| Skill and rank | yes | `Requires Jewelcrafting (360)` | Karaaz: Design: Crimson Sun |
+| Required spell | yes | `Requires Spellfire Tailoring` | Cloth Armor Vendor (26301, spawned): Spellfire Robe |
+| Reputation | yes | `Requires The Consortium - Exalted` | Karaaz: neutral red, exalted not |
+| Weapon/armour proficiency | yes | subclass (`Gun`) | Karaaz: Consortium Blaster without Guns |
+| Vendor arena rating (ItemExtendedCost) | yes | `Requires personal and team arena rating of 2200`, merchant tooltip only | Big Zokk: Brutal Gladiator's Leather Spaulders |
+| Money, honor, arena points, tokens | no | - | Tristia's Vindicator's bracers with 0 honor and no marks |
+| Unique item already carried | no | - | Karaaz: second Consortium Tabard |
+| Recipe already known | no | `Already known` (its colour not measured) | Karaaz: Pattern: Fel Leather Gloves |
+
+An item whose template has not arrived answers on the arena rating alone, as
+native does: Big Zokk's gloves for other classes read usable until their page
+was shown, his rated items were red from the start. The arena rating is the
+best, over the player's arena teams, of the lower of personal rating
+(`PLAYER_FIELD_ARENA_TEAM_INFO_1_1`, slot field 5) and team rating
+(`SMSG_ARENA_TEAM_STATS`); without a team it is zero. Buying a rated item
+anyway draws `ERR_CANT_EQUIP_RATING` from the server's inventory result 80,
+lacking points `ERR_NOT_ENOUGH_ARENA_POINTS` (70); a purchase prints no chat
+line of its own beyond the item push. `.modify arena 5000` gives points for a
+test. Honor rank requirements are not shown or checked: no 2.4.3 vendor sells
+such an item. Evidence: `_experiments/20261118T1910Z.merchant_usable/` in the
+workspace.
+
+Gotchas: ItemExtendedCost.dbc has 14 columns in 2.4.3 and 16 in 3.3.5 (arena
+slot after the points, purchase group at the end); both are layouts in
+`dbc_layouts.json`, which an installed data tree needs refreshed, and
+`PLAYER_FIELD_ARENA_TEAM_INFO_1_1` (1544) is new in the TBC
+`update_fields.json`. Without the layout a token vendor shows coin and honor
+only and nothing is red for rating. Pair characters are game masters: CMaNGOS
+gives a GM faction template 35, so this client's `UnitFactionGroup("player")`
+answers nil there and the honor icon is not drawn, while native answers
+Alliance.
 
 Selecting gossip sends one selection packet. NPC-text updates cannot select the
 same pending option again, and vendor selection does not send an additional

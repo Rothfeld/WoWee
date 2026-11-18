@@ -127,6 +127,10 @@ enum class UF : uint16_t {
     // Player PvP currency (TBC/WotLK only - Classic uses the old weekly honor system)
     PLAYER_FIELD_HONOR_CURRENCY,     // Accumulated honor points (uint32)
     PLAYER_FIELD_ARENA_CURRENCY,     // Accumulated arena points (uint32)
+    // The first of the player's arena team slots: per team (2v2, 3v3, 5v5) its
+    // id, member flag, week and season games, season wins and personal rating.
+    // TBC only here (CMaNGOS UpdateFields.h UNIT_END + 0x051E, size 18).
+    PLAYER_FIELD_ARENA_TEAM_INFO_1_1,
 
     // The player's active non-combat companion, as a 64-bit guid (low word at
     // this index, high word at the next). WotLK only - no earlier expansion
