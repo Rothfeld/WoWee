@@ -125,6 +125,13 @@ public:
     /// every other animation above the spine over it; Death and Dead still
     /// take the whole body.
     void setInstanceRiding(uint32_t instanceId, bool riding);
+    /// Seat the rider on the mount's MountMain (attachment 0, which the
+    /// mount's model must author): every update() after the bones are posed
+    /// places and turns the rider by the mount's attachment
+    /// (rider_pose.hpp riderSeatPose), overriding its position and rotation.
+    /// 0 unseats. Removing the mount unseats its riders.
+    void setInstanceSeat(uint32_t riderInstanceId, uint32_t mountInstanceId);
+    [[nodiscard]] uint32_t instanceSeat(uint32_t riderInstanceId) const;
 
     void update(float deltaTime, const glm::vec3& cameraPos = glm::vec3(0.0f));
 
@@ -449,6 +456,8 @@ private:
         // Rides a mount (setInstanceRiding); a rider's one-shot above the
         // spine goes on to this held animation, 0 for none.
         bool riding = false;
+        // Mount instance whose MountMain places this rider (setInstanceSeat), 0 none.
+        uint32_t seatMountId = 0;
         uint32_t upperBodyReturnAnim = 0;
         int blendSequenceIndex = -1;
         float blendAnimationTime = 0.0f;

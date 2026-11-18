@@ -209,6 +209,8 @@ void EntitySpawner::syncPlayerMorphs() {
         cr->setInstanceCameraOpacity(morph.instanceId, cameraOpacity);
         cr->setInstancePosition(morph.instanceId, position);
         cr->setInstanceRotation(morph.instanceId, rotation);
+        // A seated character's creature sits in the same seat.
+        cr->setInstanceSeat(morph.instanceId, cr->instanceSeat(playerInstance));
         uint32_t animation = 0;
         float timeMs = 0.0f, durationMs = 0.0f;
         if (cr->getAnimationState(playerInstance, animation, timeMs, durationMs) && animation != morph.animation) {

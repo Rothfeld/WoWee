@@ -642,9 +642,6 @@ void AnimationController::setMounted(uint32_t mountInstId, uint32_t mountDisplay
 
     mountInstanceId_ = mountInstId;
     mountHeightOffset_ = heightOffset;
-    mountSeatAttachmentId_ = -1;
-    smoothedMountSeatPos_ = renderer_->getCharacterPosition();
-    mountSeatSmoothingInit_ = false;
     mountPitch_ = 0.0f;
 
     if (cameraController) {
@@ -881,9 +878,9 @@ void AnimationController::clearMount() {
     mountHeightOffset_ = 0.0f;
     mountPitch_ = 0.0f;
     mountRoll_ = 0.0f;
-    mountSeatAttachmentId_ = -1;
-    smoothedMountSeatPos_ = glm::vec3(0.0f);
-    mountSeatSmoothingInit_ = false;
+    if (auto* characterRenderer = renderer_->getCharacterRenderer();
+        characterRenderer && characterRenderer->hasInstance(renderer_->getCharacterInstanceId()))
+        characterRenderer->setInstanceSeat(renderer_->getCharacterInstanceId(), 0);
 
     // Clear MountFSM via CharacterAnimator
     characterAnimator_.clearMountFSM();
@@ -927,11 +924,6 @@ void AnimationController::updateMeleeTimers(float deltaTime) {
 
 // ── Mount positioning helper ─────────────────────────────────────────────────
 
-// A seat that shifts more than this between frames is being carried, not
-// jittering: standing still on solid ground moves it by a fraction of this,
-// while a ferry at speed moves it by several times as much in a single frame.
-static constexpr float kSeatCarriedStepSq = 0.05f * 0.05f;
-
 void AnimationController::applyMountPositioning(float mountBob, float mountRoll, float characterYaw) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
@@ -946,114 +938,26 @@ void AnimationController::applyMountPositioning(float mountBob, float mountRoll,
         characterRenderer->setInstanceRotation(mountInstanceId_, glm::vec3(mountPitch_, mountRoll, mountYawRad));
     }
 
-    // Use mount's attachment point for proper bone-driven rider positioning.
-    if (taxiFlight_) {
-        glm::mat4 mountSeatTransform(1.0f);
-        bool haveSeat = false;
-        static constexpr uint32_t kTaxiSeatAttachmentId = 0;
-        if (mountSeatAttachmentId_ == -1) {
-            mountSeatAttachmentId_ = static_cast<int>(kTaxiSeatAttachmentId);
-        }
-        if (mountSeatAttachmentId_ >= 0) {
-            haveSeat = characterRenderer->getAttachmentTransform(
-                mountInstanceId_, static_cast<uint32_t>(mountSeatAttachmentId_), mountSeatTransform);
-        }
-        // A failed lookup is "not yet", not "never". The seat is read off the
-        // mount's model, and a mount summoned before its M2 has finished
-        // loading answers no on the first frame or two - latching that closed
-        // left the rider on the guessed height for the whole ride.
-        if (haveSeat) {
-            glm::vec3 targetRiderPos = glm::vec3(mountSeatTransform[3]) + glm::vec3(0.0f, 0.0f, 0.02f);
-            mountSeatSmoothingInit_ = false;
-            smoothedMountSeatPos_ = targetRiderPos;
-            characterRenderer->setInstancePosition(characterInstanceId, targetRiderPos);
-        } else {
-            mountSeatSmoothingInit_ = false;
-            const glm::vec3& characterPosition = renderer_->getCharacterPosition();
-            glm::vec3 playerPos = characterPosition + glm::vec3(0.0f, 0.0f, mountHeightOffset_ + 0.10f);
-            characterRenderer->setInstancePosition(characterInstanceId, playerPos);
-        }
-
-        float riderPitch = mountPitch_ * 0.35f;
-        float riderRoll = mountRoll * 0.35f;
-        characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(riderPitch, riderRoll, mountYawRad));
+    // The rider sits on the mount's MountMain as the mount's pose carries
+    // it, as every other rider does (CharacterRenderer::setInstanceSeat,
+    // rider_pose.hpp riderSeatPose). A mount whose M2 is still loading
+    // answers no for a frame or two; it is asked again every frame.
+    if (mountInstanceId_ > 0 && characterRenderer->hasAttachmentPoint(mountInstanceId_, 0)) {
+        if (characterRenderer->instanceSeat(characterInstanceId) != mountInstanceId_)
+            characterRenderer->setInstanceSeat(characterInstanceId, mountInstanceId_);
         return;
     }
 
-    // Ground mounts: try a seat attachment first.
+    // No seat on the model: over the mount's origin at the estimated height.
     const glm::vec3& characterPosition = renderer_->getCharacterPosition();
-    bool moving = renderer_->getCameraController() && renderer_->getCameraController()->isMoving();
-
-    glm::mat4 mountSeatTransform;
-    bool haveSeat = false;
-    if (mountSeatAttachmentId_ >= 0) {
-        haveSeat = characterRenderer->getAttachmentTransform(
-            mountInstanceId_, static_cast<uint32_t>(mountSeatAttachmentId_), mountSeatTransform);
-    } else if (mountSeatAttachmentId_ == -1) {
-        static constexpr uint32_t kSeatAttachments[] = {0, 5, 6, 7, 8};
-        for (uint32_t attId : kSeatAttachments) {
-            if (characterRenderer->getAttachmentTransform(mountInstanceId_, attId, mountSeatTransform)) {
-                mountSeatAttachmentId_ = static_cast<int>(attId);
-                haveSeat = true;
-                break;
-            }
-        }
-        // Left at -1 on failure, so the next frame probes again - see the note
-        // in the taxi branch above.
-    }
-
-    if (haveSeat) {
-        glm::vec3 mountSeatPos = glm::vec3(mountSeatTransform[3]);
-        glm::vec3 seatOffset = glm::vec3(0.0f, 0.0f, taxiFlight_ ? 0.04f : 0.08f);
-        glm::vec3 targetRiderPos = mountSeatPos + seatOffset;
-
-        // The smoothing below is for a rider sitting still, where it damps the
-        // jitter of a bone-driven seat. `moving` only reports movement *input*,
-        // though, and a player standing on a boat presses nothing while the world
-        // carries them at the ship's speed. The filter then trailed the rider
-        // behind the seat by its own time constant - about two yards at ferry
-        // speed, swinging out to one side as the hull turned. Reported as the
-        // character riding behind the direction of travel, alongside its mount.
-        //
-        // So ask whether the seat is actually moving in the world rather than
-        // whether the player asked for it to. This covers anything that carries a
-        // rider - ships, elevators, a moving platform - without naming any of them.
-        const glm::vec3 seatStep = targetRiderPos - lastMountSeatTarget_;
-        const bool seatCarried = mountSeatSmoothingInit_ &&
-                                 glm::dot(seatStep, seatStep) > kSeatCarriedStepSq;
-        lastMountSeatTarget_ = targetRiderPos;
-
-        if (moving || seatCarried) {
-            mountSeatSmoothingInit_ = false;
-            smoothedMountSeatPos_ = targetRiderPos;
-        } else if (!mountSeatSmoothingInit_) {
-            smoothedMountSeatPos_ = targetRiderPos;
-            mountSeatSmoothingInit_ = true;
-        } else {
-            float smoothHz = taxiFlight_ ? 10.0f : 14.0f;
-            float alpha = 1.0f - std::exp(-smoothHz * std::max(lastDeltaTime_, 0.001f));
-            smoothedMountSeatPos_ = glm::mix(smoothedMountSeatPos_, targetRiderPos, alpha);
-        }
-
-        characterRenderer->setInstancePosition(characterInstanceId, smoothedMountSeatPos_);
-
-        float yawRad = glm::radians(characterYaw);
-        float riderPitch = mountPitch_ * 0.35f;
-        float riderRoll = mountRoll * 0.35f;
-        characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(riderPitch, riderRoll, yawRad));
-    } else {
-        mountSeatSmoothingInit_ = false;
-        float yawRad = glm::radians(characterYaw);
-        glm::mat4 mountRotation = glm::mat4(1.0f);
-        mountRotation = glm::rotate(mountRotation, yawRad, glm::vec3(0.0f, 0.0f, 1.0f));
-        mountRotation = glm::rotate(mountRotation, mountRoll, glm::vec3(1.0f, 0.0f, 0.0f));
-        mountRotation = glm::rotate(mountRotation, mountPitch_, glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::vec3 localOffset(0.0f, 0.0f, mountHeightOffset_ + mountBob);
-        glm::vec3 worldOffset = glm::vec3(mountRotation * glm::vec4(localOffset, 0.0f));
-        glm::vec3 playerPos = characterPosition + worldOffset;
-        characterRenderer->setInstancePosition(characterInstanceId, playerPos);
-        characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(mountPitch_, mountRoll, yawRad));
-    }
+    glm::mat4 mountRotation = glm::mat4(1.0f);
+    mountRotation = glm::rotate(mountRotation, mountYawRad, glm::vec3(0.0f, 0.0f, 1.0f));
+    mountRotation = glm::rotate(mountRotation, mountRoll, glm::vec3(1.0f, 0.0f, 0.0f));
+    mountRotation = glm::rotate(mountRotation, mountPitch_, glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::vec3 localOffset(0.0f, 0.0f, mountHeightOffset_ + mountBob);
+    glm::vec3 worldOffset = glm::vec3(mountRotation * glm::vec4(localOffset, 0.0f));
+    characterRenderer->setInstancePosition(characterInstanceId, characterPosition + worldOffset);
+    characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(mountPitch_, mountRoll, mountYawRad));
 }
 
 // ── Mounted animation update (uses MountFSM) ────────────────────────────────

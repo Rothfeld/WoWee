@@ -9,6 +9,8 @@
 #include "rendering/animation/rider_pose.hpp"
 #include "rendering/character_scale.hpp"
 
+#include <glm/gtc/matrix_transform.hpp>
+
 using namespace wowee;
 namespace anim = wowee::rendering::anim;
 
@@ -34,6 +36,44 @@ TEST_CASE("A mount is drawn at its own scale times its rider's", "[rider]") {
     CHECK(rendering::remoteMountScale(1.0f, 1.0f, 1.0f) == Catch::Approx(1.0f));
     // A mount display with its own scale keeps it (panther 9991, 1.5).
     CHECK(rendering::remoteMountScale(1.0f, 1.5f, 1.0f) == Catch::Approx(1.5f));
+}
+
+TEST_CASE("A rider sits on its mount's MountMain as the mount's pose carries it", "[rider]") {
+    // White tiger 6080 (RidingFrostSabre, display 1.5) under Tyrande (2.0):
+    // drawn at 3.0, facing 30 degrees. Its Stand pose carries MountMain to
+    // (-0.663, 0.039, 1.026), pitched about 6 degrees nose down.
+    const float yaw = glm::radians(30.0f), pitch = glm::radians(-6.4f), roll = glm::radians(1.5f);
+    const glm::vec3 mountAt(100.0f, 200.0f, 10.0f);
+    glm::mat4 mount = glm::translate(glm::mat4(1.0f), mountAt);
+    mount = glm::rotate(mount, yaw, glm::vec3(0, 0, 1));
+    mount = glm::scale(mount, glm::vec3(3.0f));
+    glm::mat4 bone = glm::rotate(glm::mat4(1.0f), pitch, glm::vec3(1, 0, 0));
+    bone = glm::rotate(bone, roll, glm::vec3(0, 1, 0));
+    const glm::vec3 offset(-0.663f, 0.039f, 1.026f);
+    const glm::mat4 seat = mount * glm::translate(glm::mat4(1.0f), offset) * bone;
+
+    const auto pose = rendering::riderSeatPose(seat);
+    const glm::vec3 expected = mountAt + glm::vec3(glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0, 0, 1)) *
+                                                   glm::vec4(offset * 3.0f, 0.0f));
+    CHECK(pose.position.x == Catch::Approx(expected.x).margin(1e-4));
+    CHECK(pose.position.y == Catch::Approx(expected.y).margin(1e-4));
+    CHECK(pose.position.z == Catch::Approx(expected.z).margin(1e-4));
+    // The mount's scale stays with the mount: the rotation alone, as
+    // CharacterRenderer's yaw * pitch * roll.
+    CHECK(pose.rotation.x == Catch::Approx(pitch).margin(1e-5));
+    CHECK(pose.rotation.y == Catch::Approx(roll).margin(1e-5));
+    CHECK(pose.rotation.z == Catch::Approx(yaw).margin(1e-5));
+}
+
+TEST_CASE("A level seat turns the rider with its mount only", "[rider]") {
+    // Riding horse 2410: MountMain (0.213, 0, 1.866) on an unanimated bone.
+    const glm::mat4 seat = glm::translate(glm::rotate(glm::mat4(1.0f), glm::radians(-120.0f), glm::vec3(0, 0, 1)),
+                                          glm::vec3(0.213f, 0.0f, 1.866f));
+    const auto pose = rendering::riderSeatPose(seat);
+    CHECK(pose.position.z == Catch::Approx(1.866f));
+    CHECK(pose.rotation.x == Catch::Approx(0.0f).margin(1e-6));
+    CHECK(pose.rotation.y == Catch::Approx(0.0f).margin(1e-6));
+    CHECK(pose.rotation.z == Catch::Approx(glm::radians(-120.0f)).margin(1e-5));
 }
 
 TEST_CASE("A unit in view mid-way along a Flying spline flies", "[rider][spline]") {

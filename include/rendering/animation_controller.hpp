@@ -257,13 +257,6 @@ private:
     float mountHeightOffset_ = 0.0f;
     float mountPitch_ = 0.0f;
     float mountRoll_ = 0.0f;       // External roll for taxi flights (lean roll computed by MountFSM)
-    int mountSeatAttachmentId_ = -1;
-    glm::vec3 smoothedMountSeatPos_ = glm::vec3(0.0f);
-    bool mountSeatSmoothingInit_ = false;
-    // Last frame's seat target, so the smoothing can tell a rider standing still
-    // from one being carried. Pressing no movement keys is not the same as not
-    // moving through the world, and on a boat the difference is the whole bug.
-    glm::vec3 lastMountSeatTarget_ = glm::vec3(0.0f);
     bool taxiFlight_ = false;
     bool m2TransportRiding_ = false;
 

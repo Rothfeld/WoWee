@@ -1729,6 +1729,9 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
             }
             cr->playAnimation(mountInstance, mountAnim, true);
             cr->setInstanceRiding(riderInstance, true);
+            // Without a MountMain the rider stays at the estimated height
+            // above the mount's origin (warned in loadRemoteMountModel).
+            if (cr->hasAttachmentPoint(mountInstance, 0)) cr->setInstanceSeat(riderInstance, mountInstance);
             cr->playAnimation(riderInstance, rendering::anim::MOUNT, true);
             remotePlayerMounts_[guid] = {.displayId = displayId, .modelId = modelId,
                                          .instanceId = mountInstance, .riderHeight = riderHeight,

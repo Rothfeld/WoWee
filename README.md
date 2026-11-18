@@ -2226,6 +2226,21 @@ it shares, not its own skeleton. Not fitted: tauren male (native 1.83 on foot,
 rule 1.49), and the scaled races mounted (tauren and gnome 0.12-0.48 higher
 natively). The pivot setting moves it in proportion; the default is the
 original's. Evidence: `_experiments/20261118T160000Z.player_scale` (fit.py).
+A rider sits where its mount's pose carries the mount's MountMain (M2
+attachment 0): the attachment's animated bone times its offset, in the
+mount's position, facing and scale, and turned with that bone
+(`CharacterRenderer::setInstanceSeat`, `riderSeatPose` in
+`rendering/animation/rider_pose.hpp`). Every rider takes it: creatures,
+other players, the local player and a morph's creature. Only a mount model
+without attachment 0 falls back to its height over the mount's origin.
+The bind-pose height alone is not the seat: the riding tiger's Stand pose
+carries MountMain from (-0.28, 0, 1.24) to (-0.66, 0.04, 1.03), and Tyrande
+Whisperwind (17948, 2.0, on tiger 6080 at 1.5) sat 2 yards forward, over
+the shoulders, and 0.6 yards high, where natively she sits on the saddle.
+The kodo (-1.98 forward), mechanostrider, wyverns, nether drakes and the
+nether ray move theirs as well; the horse and ram barely. Gotcha: the camera
+pivot keeps the bind-pose height (`cameraSeat`), which is what was fitted
+to the original. Evidence: `_experiments/20261118T221740.rider_seat`.
 A rider stays seated: its idle, locomotion and melee
 stances are Mount (91), and its swings, casts, cast holds and wounds play
 from SpineLow up over it (`setInstanceRiding`, `rendering/animation/rider_pose.hpp`).

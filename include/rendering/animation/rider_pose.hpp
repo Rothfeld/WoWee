@@ -2,6 +2,10 @@
 
 #include "rendering/animation/animation_ids.hpp"
 
+#include <glm/glm.hpp>
+
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace wowee::rendering {
@@ -56,6 +60,35 @@ inline constexpr bool riderKeepsSeat(uint32_t animation) {
 inline constexpr float remoteMountScale(float riderScale, float mountDisplayScale,
                                         float mountModelScale) {
     return riderScale * mountDisplayScale * mountModelScale;
+}
+
+// Where a rider is drawn: its origin on the mount's MountMain (M2 attachment
+// 0) as the mount's current pose carries it - the attachment's bone matrix
+// times its offset, in the mount's world transform (mount position, facing
+// and scale) - and turned with that bone. The rider's own scale is its own.
+// Original (2.4.3.8606), Tyrande Whisperwind 17948 (display 17873, 2.0) on
+// white tiger 6080 (RidingFrostSabre, 1.5): the tiger's Stand pose carries
+// MountMain from its bind position (-0.28, 0, 1.24) to (-0.66, 0.04, 1.03),
+// tilted 6 degrees, and she sits there, on the saddle behind the shoulders
+// (_experiments/20261118T221740.rider_seat in the workspace).
+//
+// `rotation` is CharacterRenderer's Euler triple: x pitch, y roll, z yaw,
+// composed as yaw(Z) * pitch(X) * roll(Y).
+struct RiderSeatPose {
+    glm::vec3 position{0.0f};
+    glm::vec3 rotation{0.0f};
+};
+inline RiderSeatPose riderSeatPose(const glm::mat4& mountAttachment) {
+    const glm::vec3 x = glm::normalize(glm::vec3(mountAttachment[0]));
+    const glm::vec3 y = glm::normalize(glm::vec3(mountAttachment[1]));
+    const glm::vec3 z = glm::normalize(glm::vec3(mountAttachment[2]));
+    // R = Rz(yaw) Rx(pitch) Ry(roll): R21 = sin(pitch), R20 = -cos(pitch)
+    // sin(roll), R22 = cos(pitch) cos(roll), R01 = -sin(yaw) cos(pitch),
+    // R11 = cos(yaw) cos(pitch); glm indexes [column][row].
+    return {.position = glm::vec3(mountAttachment[3]),
+            .rotation = glm::vec3(std::asin(std::clamp(y.z, -1.0f, 1.0f)),
+                                  std::atan2(-x.z, z.z),
+                                  std::atan2(-y.x, y.y))};
 }
 
 // What a dismount does to the rider's render instance. A map change clears the

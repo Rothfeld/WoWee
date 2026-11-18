@@ -2675,6 +2675,20 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         }
     }
 
+    // Riders onto their mounts' seats as this frame posed them, before
+    // anything attached to a rider (weapons, helm) is placed from it.
+    for (auto& [id, rider] : instances) {
+        if (!rider.seatMountId) continue;
+        glm::mat4 seat(1.0f);
+        const bool found = getAttachmentTransform(rider.seatMountId, 0, seat);
+        assert(found);
+        (void)found;
+        const auto pose = riderSeatPose(seat);
+        rider.position = rider.moveStart = rider.moveEnd = pose.position;
+        rider.isMoving = false;
+        rider.rotation = pose.rotation;
+    }
+
     // Update weapon attachment transforms (after all bone matrices are computed)
     loadAnimationData();
     for (auto& pair : instances) {
@@ -2974,6 +2988,18 @@ void CharacterRenderer::setInstanceRiding(uint32_t instanceId, bool riding) {
         instance.upperBodyAnimationTime = 0.0f;
         instance.upperBodyReturnAnim = 0;
     }
+}
+
+void CharacterRenderer::setInstanceSeat(uint32_t riderInstanceId, uint32_t mountInstanceId) {
+    auto found = instances.find(riderInstanceId);
+    assert(found != instances.end());
+    assert(mountInstanceId == 0 || hasAttachmentPoint(mountInstanceId, 0));
+    found->second.seatMountId = mountInstanceId;
+}
+
+uint32_t CharacterRenderer::instanceSeat(uint32_t riderInstanceId) const {
+    const auto found = instances.find(riderInstanceId);
+    return found == instances.end() ? 0 : found->second.seatMountId;
 }
 
 void CharacterRenderer::setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId, bool loop) {
@@ -4865,6 +4891,9 @@ void CharacterRenderer::removeInstance(uint32_t instanceId) {
     destroyInstanceBones(it->second, /*defer=*/true);
 
     instances.erase(it);
+    for (auto& [id, rider] : instances) {
+        if (rider.seatMountId == instanceId) rider.seatMountId = 0;
+    }
 }
 
 bool CharacterRenderer::getAnimationState(uint32_t instanceId, uint32_t& animationId,
