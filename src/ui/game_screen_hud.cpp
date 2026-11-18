@@ -9,6 +9,7 @@
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
 #include "ui/nameplate_stacking.hpp"
+#include <unordered_map>
 #include "game/summon_title.hpp"
 #include "game/game_object_lock.hpp"
 #include "game/level_difficulty.hpp"
@@ -1029,6 +1030,18 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                   });
     }
 
+    // Build 8606 spreads plates as a whole (ui::legacyPlateLayout), so the
+    // first pass only collects where each plate would be drawn alone.
+    const bool spreadLegacyPlates = legacyPlates && !allowPlateOverlap;
+    static thread_local std::unordered_map<uint64_t, ui::LegacyPlate> spreadPlates;
+    static thread_local std::vector<ui::LegacyPlate*> spreadOrder;
+    spreadPlates.clear();
+    for (int pass = spreadLegacyPlates ? 0 : 1; pass < 2; ++pass) {
+    if (pass == 1 && !spreadPlates.empty()) {
+        spreadOrder.clear();
+        for (auto& [plateGuid, plate] : spreadPlates) spreadOrder.push_back(&plate);
+        ui::legacyPlateLayout(spreadOrder, plateArtScale);
+    }
     for (const auto& entityPtr : nameplateEntities) {
         if (!entityPtr) continue;
         const uint64_t guid = entityPtr->getGuid();
@@ -1071,6 +1084,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         const auto labelVisibility = unitLabelVisibility(gameHandler, guid, unitPosition, renderPos, *camera);
         const bool showPlate = labelVisibility.plate;
+        if (pass == 0 && !showPlate) continue;
 
         // Build 8606 draws the raid atlas on a one-yard camera-facing quad,
         // bottom anchored to the name attachment when no nameplate is visible.
@@ -1139,6 +1153,14 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (showPlate && legacyPlates) {
             sx = ui::legacyPlateCenterX(sx, screenW, plateArtScale);
             sy = ui::legacyPlateBarTop(sy + 19.0f * plateArtScale, plateArtScale);
+            if (pass == 0) {
+                spreadPlates[guid] = {.naturalX = sx, .naturalTop = sy, .depth = clipPos.w};
+                continue;
+            }
+            if (const auto spread = spreadPlates.find(guid); spread != spreadPlates.end()) {
+                sx = spread->second.x;
+                sy = ui::legacyPlateBarTop(spread->second.top, plateArtScale);
+            }
         }
 
         // Fade out in the last 5 units of cull range
@@ -1211,10 +1233,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // plate occupies is its bar plus the name line above it; the bound is
         // generous rather than exact, because a plate that clears by a pixel
         // still reads as two bars touching.
-        if (showPlate && !allowPlateOverlap) {
+        if (showPlate && !allowPlateOverlap && !legacyPlates) {
             const float topExtent = barH + 24.0f;
             sy = ui::plateTopClearOf(placedPlates, barX, barX + barW, sy, barH, topExtent);
-            if (legacyPlates) sy = ui::legacyPlateBarTop(sy, plateArtScale);
             placedPlates.push_back({.x0 = barX, .y0 = sy - topExtent, .x1 = barX + barW, .y1 = sy + barH});
         }
 
@@ -1722,6 +1743,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 mouseoverGuid = guid;
             }
         }
+    }
     }
 
     if (frameXmlOwnsMouse() || ImGui::GetIO().WantCaptureMouse) mouseoverGuid = 0;

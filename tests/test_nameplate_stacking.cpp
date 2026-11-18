@@ -141,3 +141,52 @@ TEST_CASE("Hovering an NPC does not reveal a name its setting hides") {
     CHECK(unitWorldNameShown(false, false, false, true));   // UnitNameNPC=1
     CHECK(unitWorldNameShown(true, false, false, false));   // own character
 }
+
+namespace {
+// Build 8606 plates read back with GetPoint on pair 7
+// (_experiments/20261118T074350Z.plates_fct), in UI units on the 768-unit
+// screen: x centre, frame top measured upward, anchor depth.
+struct Measured { float x, topUp, depth, observedX, observedTopUp; };
+
+void checkSpread(const std::vector<Measured>& measured) {
+    const float artScale = 156.651184f / 128.0f;
+    std::vector<LegacyPlate> plates;
+    for (const auto& m : measured)
+        plates.push_back({.naturalX = m.x, .naturalTop = 768.0f - m.topUp, .depth = m.depth});
+    std::vector<LegacyPlate*> order;
+    for (auto& p : plates) order.push_back(&p);
+    legacyPlateLayout(order, artScale);
+    for (size_t i = 0; i < measured.size(); ++i) {
+        CHECK(plates[i].x == Catch::Approx(measured[i].observedX).margin(1.0f));
+        CHECK(768.0f - plates[i].top == Catch::Approx(measured[i].observedTopUp).margin(1.0f));
+    }
+}
+}  // namespace
+
+TEST_CASE("Build 8606 lifts the nearer of two stacked plates one frame height", "[nameplates][spread]") {
+    // g2 59: Warrior 10 (nearer) above-left of Warrior 1.
+    checkSpread({{704.88f, 663.94f, 7.90f, 704.88f, 663.94f},
+                 {678.32f, 682.36f, 5.61f, 678.32f, 663.94f + 39.162796f}});
+}
+
+TEST_CASE("Build 8606 sets nearly level plates side by side", "[nameplates][spread]") {
+    // g1 95: the right plate moves right to one frame width.
+    checkSpread({{612.65f, 672.95f, 7.74f, 612.65f, 672.95f},
+                 {694.74f, 680.48f, 5.55f, 612.65f + 156.651184f, 680.48f}});
+    // w1 23: the right plate is the far one; it is the one that moves.
+    checkSpread({{735.99f, 673.79f, 7.77f, 672.82f + 156.651184f, 673.79f},
+                 {672.82f, 680.31f, 5.55f, 672.82f, 680.31f}});
+}
+
+TEST_CASE("Build 8606 spreads four plates into rows", "[nameplates][spread]") {
+    // t1 0: Warrior 15 above Warrior 20, Warrior 1 above Warrior 15.
+    checkSpread({{333.68f, 430.06f, 10.29f, 333.58f, 449.80f},
+                 {546.80f, 452.25f, 11.12f, 546.81f, 452.08f},
+                 {359.55f, 391.54f, 12.38f, 359.52f, 410.64f},
+                 {501.42f, 371.57f, 13.12f, 501.41f, 371.48f}});
+    // cal 5: only the nearest plate moves.
+    checkSpread({{856.08f, 483.72f, 11.31f, 856.10f, 483.24f},
+                 {1048.85f, 467.43f, 9.66f, 1048.93f, 480.43f},
+                 {961.12f, 441.35f, 12.66f, 961.10f, 441.27f},
+                 {1095.32f, 384.67f, 11.52f, 1095.31f, 384.58f}});
+}

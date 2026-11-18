@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -73,6 +74,93 @@ inline float plateTopClearOf(const std::vector<PlateBox>& placed,
         if (!lifted) break;
     }
     return y;
+}
+
+/// One build 8606 nameplate frame being spread: `x` is its horizontal centre
+/// and `top` its top edge in screen pixels (y down), `depth` the anchor's
+/// distance along the view axis. `naturalX`/`naturalTop` are where it would
+/// be drawn alone.
+struct LegacyPlate {
+    float naturalX = 0.0f;
+    float naturalTop = 0.0f;
+    float depth = 0.0f;
+    float x = 0.0f;
+    float top = 0.0f;
+};
+
+/// Build 8606 spreads overlapping plates instead of drawing one over another
+/// (pair 7, _experiments/20261118T074350Z.plates_fct: GetPoint of every
+/// WorldFrame plate read back against projected anchors to 0.1 UI unit).
+///
+/// Measured:
+/// - two frames collide when their centres are less than a frame width
+///   (128 art units) apart horizontally and a frame height (32) vertically;
+/// - a moved plate always lands exactly one frame height above or below, or
+///   exactly one frame width beside, the plate it collided with;
+/// - plates nearly level (tops within the half bar, 10.39 UI units at 768
+///   lines, `kLegacyPlateRowTolerance` art units) are set side by side, the
+///   right one moving right;
+/// - otherwise the nearer plate moves vertically to the nearest free slot
+///   above or below the plates in its column; far plates keep their place
+///   (two units: the nearer always moved; four units: 18 of 29 views match
+///   exactly with far-first placement).
+///
+/// Not matched (see the experiment README): at close range build 8606 also
+/// sets plates side by side when the left one is up to ~0.49*dx - 7 units
+/// higher, and at 14 yd it stacked nearly level plates; the rule behind
+/// those two was not found.
+constexpr float kLegacyPlateRowTolerance = 10.39f * 128.0f / 156.651184f;
+
+inline void legacyPlateLayout(std::vector<LegacyPlate*>& plates, float artScale) {
+    const float w = 128.0f * artScale;
+    const float h = 32.0f * artScale;
+    const float row = kLegacyPlateRowTolerance * artScale;
+    std::stable_sort(plates.begin(), plates.end(),
+                     [](const LegacyPlate* a, const LegacyPlate* b) { return a->depth > b->depth; });
+    // A plate set exactly a frame away does not collide; the margin keeps
+    // float rounding of top +- h from reading as an overlap.
+    const auto collides = [&](float x, float top, const LegacyPlate* q) {
+        return std::abs(x - q->x) < w - 0.01f && std::abs(top - q->top) < h - 0.01f;
+    };
+    for (size_t i = 0; i < plates.size(); ++i) {
+        LegacyPlate& p = *plates[i];
+        p.x = p.naturalX;
+        p.top = p.naturalTop;
+        // Each pass either clears the plate or moves one plate a whole frame
+        // width right; the bound only guards a degenerate projection.
+        for (size_t pass = 0; pass <= plates.size(); ++pass) {
+            LegacyPlate* hit = nullptr;
+            for (size_t j = 0; j < i; ++j) {
+                if (!collides(p.x, p.top, plates[j])) continue;
+                if (!hit || std::abs(plates[j]->top - p.top) < std::abs(hit->top - p.top)) hit = plates[j];
+            }
+            if (!hit) break;
+            if (std::abs(hit->top - p.top) < row) {
+                if (p.x >= hit->x) p.x = hit->x + w;
+                else hit->x = p.x + w;
+                continue;
+            }
+            float best = p.top;
+            float bestMove = -1.0f;
+            for (size_t j = 0; j < i; ++j) {
+                const LegacyPlate* q = plates[j];
+                if (std::abs(p.x - q->x) >= w - 0.01f) continue;
+                for (const float candidate : {q->top - h, q->top + h}) {
+                    bool free = true;
+                    for (size_t k = 0; k < i && free; ++k) free = !collides(p.x, candidate, plates[k]);
+                    const float move = std::abs(candidate - p.naturalTop);
+                    // Equal distances prefer the slot above (smaller top).
+                    if (free && (bestMove < 0.0f || move < bestMove - 0.01f ||
+                                 (std::abs(move - bestMove) <= 0.01f && candidate < best))) {
+                        best = candidate;
+                        bestMove = move;
+                    }
+                }
+            }
+            p.top = best;
+            break;
+        }
+    }
 }
 
 /// A drawn plate's click box (name line, bar and their margin) and its unit.
