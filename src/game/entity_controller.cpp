@@ -2233,6 +2233,10 @@ void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<En
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     bool unitInitiallyDead = applyUnitFieldsOnCreate(block, unit, ufi);
     queryPetNameIfNamed(block, *unit);
+    // A creature's auras are its UNIT_FIELD_AURA* fields before WotLK, as a
+    // player's are; only players were read, so no creature target ever showed
+    // a buff or debuff (Lady Vashj's Magic Barrier, pair 8: UnitBuff nil).
+    syncPreWotlkAurasFromFields(entity);
 
     // Hostility
     unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(unit->getFactionTemplate()));
@@ -2554,6 +2558,7 @@ void EntityController::onValuesUpdateUnit(const UpdateBlock& block, std::shared_
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
+    syncPreWotlkAurasFromFields(entity);
     handleDisplayIdChange(block, entity, unit, result);
     queryPetNameIfNamed(block, *unit);
 

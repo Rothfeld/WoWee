@@ -1001,3 +1001,23 @@ TEST_CASE("an in-view group member dying refreshes their party frame, raid or no
         CHECK((member.onlineStatus & 0x04) != 0);
     }
 }
+
+TEST_CASE("a TBC creature's aura fields give it auras", "[replay][tbc][aura]") {
+    // Lady Vashj's Magic Barrier (38112), applied by the shield generators,
+    // is in her UNIT_FIELD_AURA slot 0 and nowhere else: TBC has no
+    // SMSG_AURA_UPDATE. Only players' aura fields were read, so no creature
+    // target showed a buff or a debuff.
+    Session s("tbc");
+    constexpr uint64_t vashj = 0xF1300052DC5945C1ull;
+    s.receive(UpdateObject().tbc().create(vashj, wowee::game::ObjectType::UNIT,
+        {{UF::OBJECT_FIELD_ENTRY, 21212}, {UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_MAXHEALTH, 100}}));
+    s.receive(UpdateObject().tbc().values(vashj, {{UF::UNIT_FIELD_AURAS, 38112}}));
+    const auto* auras = s.handler().getUnitAuras(vashj);
+    REQUIRE(auras);
+    REQUIRE(!auras->empty());
+    CHECK(auras->front().spellId == 38112u);
+    CHECK((auras->front().flags & 0x80) == 0);   // slot 0: a buff
+    // Removal is the slot going back to zero.
+    s.receive(UpdateObject().tbc().values(vashj, {{UF::UNIT_FIELD_AURAS, 0}}));
+    CHECK(s.handler().getUnitAuras(vashj)->front().isEmpty());
+}
