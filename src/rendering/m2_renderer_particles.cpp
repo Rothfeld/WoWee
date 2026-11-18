@@ -899,9 +899,11 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         float widestParticle = 0.0f;
         const float placementScale = particlePlacementScale(inst.modelMatrix);
         // A doodad in an interior WMO group is lit by its MODD colour, and
-        // its particles take the same colour: BFD_WaterFalls01 splash
-        // (authored 190,218,220) shows the blue of its placement (84,125,223)
-        // in the original client.
+        // particles of emitters without kParticleOwnColor take the same
+        // colour: BFD_WaterFalls01 splash (flags 0x420, authored 190,218,220)
+        // shows the blue of its placement (84,125,223) in the original client.
+        // Flames keep theirs: UBRS Torch.m2 (0x21, MODD 255,153,73) burns
+        // yellow-white, and BFD candle01 (0x39, MODD 113,147,204) white.
         const glm::vec3 placementLight = (inst.indoorLighting & 2u)
             ? glm::vec3((inst.indoorLighting >> 8) & 255u, (inst.indoorLighting >> 16) & 255u,
                         (inst.indoorLighting >> 24) & 255u) / 255.0f
@@ -948,7 +950,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
 
             const auto& em = *cachedEm;
             float lifeRatio = p.life / std::max(p.maxLife, 0.001f);
-            glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio) * placementLight;
+            glm::vec3 color = interpFBlockVec3(em.particleColor, lifeRatio);
+            if (!(em.flags & kParticleOwnColor)) color *= placementLight;
             // Scaled by the instance fade, as its mesh is: an owner fading
             // out (a creature's death, a hidden player) takes its particles
             // with it.

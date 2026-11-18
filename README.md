@@ -658,8 +658,10 @@ dark cloud when drawn over the wisp glow. Pre-264 emitter `+0x194` is drag,
 speed times `exp(-drag * t)`; `BFD_WallLight03.m2` #0 (drag 5.5, 4 s life)
 otherwise rises as a column to the ceiling.
 Particles of a doodad in an interior WMO group take its MODD placement colour,
-as its mesh does: `BFD_WaterFalls01.m2` splash (authored 190,218,220) is blue
-under placement (84,125,223) and `BFD_WaterFalls10.m2` teal under (43,91,100).
+as its mesh does, unless the emitter has flag 0x1: `BFD_WaterFalls01.m2` splash
+(0x420, authored 190,218,220) is blue under placement (84,125,223) and
+`BFD_WaterFalls10.m2` teal under (43,91,100), while `Torch.m2` (0x21) and
+`Candle01.m2` (0x39) flames keep their authored yellow-white.
 Flag 0x1000 (XYQuad) sprites lie flat in the model XY plane:
 `WaterElemental.m2` #16/#21 are the ground rings under an Aqua Guardian.
 Flag 0x400 pins a tail to its birth point: the tail runs back along

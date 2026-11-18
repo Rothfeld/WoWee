@@ -14,6 +14,11 @@ inline constexpr uint32_t kParticleInModelSpace = 0x80;
 // #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001).
 inline constexpr uint32_t kParticleXYQuad = 0x1000;
 inline constexpr uint32_t kParticlePinned = 0x400;
+// Emitters with flag 0x1 keep their authored colour inside a WMO interior;
+// the others take the doodad's MODD placement colour. 689 of the 781 emitter
+// kinds placed in TBC interiors carry it: torches, candles, braziers, glowing
+// crystals. Water, smoke and steam vents mostly do not.
+inline constexpr uint32_t kParticleOwnColor = 0x1;
 
 // A tail quad runs from the particle back along -velocity * tailLength.
 // Pinned tails (0x400) end at the particle's birth point at most. 2204 of
