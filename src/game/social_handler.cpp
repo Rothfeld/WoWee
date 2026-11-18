@@ -1,3 +1,5 @@
+#include "game/cast_result_text.hpp"
+#include <strings.h>
 #include "game/group_defines.hpp"
 #include "core/local_time.hpp"
 #include "game/item_text.hpp"
@@ -567,15 +569,15 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         partyData.members.clear();
         partyData.memberCount = 0;
         partyData.leaderGuid = 0;
-        owner_.addUIError("Your party has been disbanded.");
-        owner_.addSystemChatMessage("Your party has been disbanded.");
+        owner_.systemGlobal("ERR_GROUP_DISBANDED");
         if (owner_.addonEventCallbackRef()) {
             owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});
             owner_.addonEventCallbackRef()("PARTY_MEMBERS_CHANGED", {});
         }
     };
+    // No line: TBC's GlobalStrings has none for a withdrawn invitation.
     table[Opcode::SMSG_GROUP_CANCEL] = [this](network::Packet& /*packet*/) {
-        owner_.addSystemChatMessage("Group invite cancelled.");
+        pendingGroupInvite = false;
     };
     table[Opcode::SMSG_GROUP_UNINVITE] = [this](network::Packet& packet) { handleGroupUninvite(packet); };
     table[Opcode::SMSG_PARTY_COMMAND_RESULT] = [this](network::Packet& packet) { handlePartyCommandResult(packet); };
@@ -1900,6 +1902,12 @@ void SocialHandler::handleDuelWinner(network::Packet& packet) {
 
 void SocialHandler::inviteToGroup(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    // Refused before sending, on the error line only (pair 6).
+    if (const auto* self = owner_.getActiveCharacter();
+        self && strcasecmp(self->name.c_str(), playerName.c_str()) == 0) {
+        owner_.errorGlobal("ERR_INVITE_SELF");
+        return;
+    }
     LOG_WARNING(">>> Sending CMSG_GROUP_INVITE to '", playerName, "'");
     auto packet = GroupInvitePacket::build(playerName);
     owner_.getSocket()->send(packet);
@@ -1909,6 +1917,7 @@ void SocialHandler::acceptGroupInvite() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     LOG_WARNING(">>> Sending CMSG_GROUP_ACCEPT");
     pendingGroupInvite = false;
+    acceptedGroupInvite_ = true;
     auto packet = GroupAcceptPacket::build();
     owner_.getSocket()->send(packet);
 }
@@ -1997,6 +2006,7 @@ void SocialHandler::leaveGroup() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = GroupDisbandPacket::build();
     owner_.getSocket()->send(packet);
+    leftGroupByRequest_ = isInGroup();
     // A raid is left when the server's empty roster arrives; handleGroupList
     // fires what native fires then (measured as the leaver).
     if (groupIsRaid(partyData.groupType)) return;
@@ -2009,16 +2019,10 @@ void SocialHandler::leaveGroup() {
 
 void SocialHandler::convertToRaid() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (!isInGroup()) {
-        owner_.raiseUiError("You are not in a group.");
-        return;
-    }
-    if (partyData.leaderGuid != owner_.getPlayerGuid()) {
-        owner_.raiseUiError("You must be the party leader to convert to raid.");
-        return;
-    }
-    if (groupIsRaid(partyData.groupType)) {
-        owner_.raiseUiError("You are already in a raid group.");
+    // Refused without a word, as 2.4.3 does when ungrouped, not the leader,
+    // or already a raid (pair 6).
+    if (!isInGroup() || partyData.leaderGuid != owner_.getPlayerGuid() ||
+        groupIsRaid(partyData.groupType)) {
         return;
     }
     auto packet = GroupRaidConvertPacket::build();
@@ -2062,10 +2066,10 @@ void SocialHandler::promoteToLeader(uint64_t guid) {
 
 void SocialHandler::uninvitePlayer(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name to uninvite."); return; }
+    if (playerName.empty()) return;
     auto packet = GroupUninvitePacket::build(playerName);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Removed " + playerName + " from the group.");
+    // The roster that follows prints "X leaves the party.".
 }
 
 // CMSG_LOOT_METHOD carries all three settings together, so changing one means
@@ -2251,17 +2255,15 @@ void SocialHandler::handleGroupInvite(network::Packet& packet) {
     // pending that the server would never honour. Answering it is a refusal,
     // not an offer.
     if (!data.canAccept) {
-        owner_.addSystemChatMessage(
-            "|Hplayer:" + data.inviterName + "|h[" + data.inviterName +
-            "]|h invited you to a group, but you could not accept because you "
-            "are already in a group.");
+        owner_.systemGlobal("ERR_INVITED_ALREADY_IN_GROUP_SS", {data.inviterName, data.inviterName});
         return;
     }
 
     pendingGroupInvite = true;
     pendingInviterName = data.inviterName;
-    owner_.addSystemChatMessage(data.inviterName + " has invited you to a group.");
-    owner_.addUIError(data.inviterName + " has invited you to join a group.");
+    // "[Edricf] has invited you to join a group." in chat, nothing on the
+    // error line (pair 6).
+    owner_.systemGlobal("ERR_INVITED_TO_GROUP_SS", {data.inviterName, data.inviterName});
     if (auto* ac = owner_.services().audioCoordinator)
         if (auto* sfx = ac->getUiSoundManager()) sfx->playQuestActivate();
     if (owner_.addonEventCallbackRef())
@@ -2271,7 +2273,7 @@ void SocialHandler::handleGroupInvite(network::Packet& packet) {
 void SocialHandler::handleGroupDecline(network::Packet& packet) {
     GroupDeclineData data;
     if (!GroupDeclineResponseParser::parse(packet, data)) return;
-    owner_.addSystemChatMessage(data.playerName + " has declined your group invitation.");
+    owner_.systemGlobal("ERR_DECLINE_GROUP_S", {data.playerName});
 }
 
 void SocialHandler::handleGroupList(network::Packet& packet) {
@@ -2285,6 +2287,7 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     const bool wasRaid = wasInGroup && groupIsRaid(partyData.groupType);
     GroupListData next;
     if (!GroupListParser::parse(packet, next, hasRoles, hasBattleGroupFlag)) return;
+    const auto previousMembers = partyData.members;
     for (auto& member : next.members) {
         const auto previous = std::find_if(partyData.members.begin(), partyData.members.end(),
             [&](const auto& old) { return old.guid == member.guid; });
@@ -2319,17 +2322,50 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     }
 
     const bool nowInGroup = !partyData.isEmpty();
+    const bool nowRaid = nowInGroup && groupIsRaid(partyData.groupType);
+    // Arrivals and departures as 2.4.3 prints them from the roster (pair 6,
+    // _experiments/20261118T074332Z.chatlines_native):
+    //   inviter: "Edricf joins the party." when the invitee accepts; the one
+    //     who accepted prints no joins line.
+    //   the one left behind - the other left, or was removed, or removed us
+    //     from a group of two (the realm disbands it with an empty roster):
+    //     "Edricf leaves the party."
+    //   the one who left prints "You leave the group." from the party result
+    //     (handlePartyCommandResult) and no line per member.
+    //   party -> raid: "You have joined a raid group."; leaving a raid: "You
+    //     have left the raid group." after "You leave the group."
+    // In a raid a member arriving or going is ERR_RAID_MEMBER_ADDED_S /
+    // ERR_RAID_MEMBER_REMOVED_S (not observed: two characters only).
+    const bool quietDepartures = leftGroupByRequest_ || (!nowInGroup && removedFromGroup_);
+    if (wasInGroup) {
+        for (const auto& old : previousMembers) {
+            if (old.guid == owner_.getPlayerGuid() || old.name.empty()) continue;
+            const bool stays = std::any_of(partyData.members.begin(), partyData.members.end(),
+                [&](const auto& m) { return m.guid == old.guid; });
+            if (!stays && !quietDepartures)
+                owner_.systemGlobal(wasRaid ? "ERR_RAID_MEMBER_REMOVED_S" : "ERR_LEFT_GROUP_S", {old.name});
+        }
+    }
+    if (nowInGroup && !(acceptedGroupInvite_ && !wasInGroup)) {
+        for (const auto& m : partyData.members) {
+            if (m.guid == owner_.getPlayerGuid() || m.name.empty()) continue;
+            const bool known = std::any_of(previousMembers.begin(), previousMembers.end(),
+                [&](const auto& old) { return old.guid == m.guid; });
+            if (!known)
+                owner_.systemGlobal(nowRaid ? "ERR_RAID_MEMBER_ADDED_S" : "ERR_JOINED_GROUP_S", {m.name});
+        }
+    }
+    if (nowRaid && !wasRaid) owner_.systemGlobal("ERR_RAID_YOU_JOINED");
+    if (wasRaid && !nowRaid) owner_.systemGlobal("ERR_RAID_YOU_LEFT");
+    if (nowInGroup) acceptedGroupInvite_ = false;
+    if (!nowInGroup) {
+        leftGroupByRequest_ = false;
+        removedFromGroup_ = false;
+    }
     if (!nowInGroup && wasInGroup) {
-        owner_.addSystemChatMessage("You are no longer in a group.");
         LOG_INFO("Left group");
     } else if (nowInGroup && !wasInGroup) {
-        std::string members;
-        for (const auto& m : partyData.members) {
-            if (!members.empty()) members += ", ";
-            members += m.name.empty() ? "?" : m.name;
-        }
-        owner_.addSystemChatMessage("You joined a group with: " + members);
-        LOG_INFO("Joined group with ", partyData.memberCount, " members: ", members);
+        LOG_INFO("Joined group with ", partyData.memberCount, " members");
         // The roster does not carry existing raid targets. Request the
         // authoritative icon list on join/reconnect before rendering marks.
         if (owner_.getSocket()) {
@@ -2429,39 +2465,49 @@ void SocialHandler::handleGroupUninvite(network::Packet& packet) {
         owner_.addonEventCallbackRef()("PARTY_MEMBERS_CHANGED", {});
         owner_.addonEventCallbackRef()("RAID_ROSTER_UPDATE", {});
     }
-    owner_.addUIError("You have been removed from the group.");
-    owner_.addSystemChatMessage("You have been removed from the group.");
+    // The empty roster follows; it names nobody as leaving.
+    removedFromGroup_ = true;
+    owner_.systemGlobal("ERR_UNINVITE_YOU");
 }
 
+// The realm's PartyResult values are the GlobalStrings names of the lines
+// 2.4.3 prints, all in chat (pair 6: "Cannot find player 'Nobodyxyz'.",
+// "You aren't in a party.", "Edricf is not in your instance."). Success
+// prints for an invitation that went out ("You have invited Edricf to join
+// your group.") and for leaving ("You leave the group.": the realm names the
+// leaver); the empty-named success that answers a raid conversion prints
+// nothing.
 void SocialHandler::handlePartyCommandResult(network::Packet& packet) {
     PartyCommandResultData data;
     if (!PartyCommandResultParser::parse(packet, data)) return;
-    if (data.result != PartyResult::OK) {
-        const char* errText = nullptr;
-        switch (data.result) {
-            case PartyResult::BAD_PLAYER_NAME:       errText = "No player named \"%s\" is currently online."; break;
-            case PartyResult::TARGET_NOT_IN_GROUP:   errText = "%s is not in your group."; break;
-            case PartyResult::TARGET_NOT_IN_INSTANCE:errText = "%s is not in your instance."; break;
-            case PartyResult::GROUP_FULL:            errText = "Your party is full."; break;
-            case PartyResult::ALREADY_IN_GROUP:      errText = "%s is already in a group."; break;
-            case PartyResult::NOT_IN_GROUP:          errText = "You are not in a group."; break;
-            case PartyResult::NOT_LEADER:            errText = "You are not the group leader."; break;
-            case PartyResult::PLAYER_WRONG_FACTION:  errText = "%s is the wrong faction for this group."; break;
-            case PartyResult::IGNORING_YOU:          errText = "%s is ignoring you."; break;
-            case PartyResult::LFG_PENDING:           errText = "You cannot do that while in a LFG queue."; break;
-            case PartyResult::INVITE_RESTRICTED:     errText = "Target is not accepting group invites."; break;
-            default:                                 errText = "Party command failed."; break;
-        }
-        char buf[256];
-        if (!data.name.empty() && errText && std::strstr(errText, "%s"))
-            std::snprintf(buf, sizeof(buf), errText, data.name.c_str());
-        else if (errText)
-            std::snprintf(buf, sizeof(buf), "%s", errText);
-        else
-            std::snprintf(buf, sizeof(buf), "Party command failed (error %u).", static_cast<uint32_t>(data.result));
-        owner_.addUIError(buf);
-        owner_.addSystemChatMessage(buf);
+    if (data.result == PartyResult::OK) {
+        if (data.name.empty()) return;
+        if (data.command == PartyCommand::INVITE) owner_.systemGlobal("ERR_INVITE_PLAYER_S", {data.name});
+        else if (data.command == PartyCommand::LEAVE) owner_.systemGlobal("ERR_LEFT_GROUP_YOU");
+        return;
     }
+    const char* name = nullptr;
+    switch (data.result) {
+        case PartyResult::BAD_PLAYER_NAME:        name = "ERR_BAD_PLAYER_NAME_S"; break;
+        case PartyResult::TARGET_NOT_IN_GROUP:    name = "ERR_TARGET_NOT_IN_GROUP_S"; break;
+        case PartyResult::TARGET_NOT_IN_INSTANCE: name = "ERR_TARGET_NOT_IN_INSTANCE_S"; break;
+        case PartyResult::GROUP_FULL:             name = "ERR_GROUP_FULL"; break;
+        case PartyResult::ALREADY_IN_GROUP:       name = "ERR_ALREADY_IN_GROUP_S"; break;
+        case PartyResult::NOT_IN_GROUP:           name = "ERR_NOT_IN_GROUP"; break;
+        case PartyResult::NOT_LEADER:             name = "ERR_NOT_LEADER"; break;
+        case PartyResult::PLAYER_WRONG_FACTION:   name = "ERR_PLAYER_WRONG_FACTION"; break;
+        case PartyResult::IGNORING_YOU:           name = "ERR_IGNORING_YOU_S"; break;
+        case PartyResult::LFG_PENDING:            name = "ERR_LFG_PENDING"; break;
+        case PartyResult::INVITE_RESTRICTED:      name = "ERR_INVITE_RESTRICTED"; break;
+        default: break;
+    }
+    if (!name) {
+        LOG_ERROR("SMSG_PARTY_COMMAND_RESULT: unknown result ", static_cast<uint32_t>(data.result));
+        return;
+    }
+    const std::string pattern = owner_.globalString(name);
+    owner_.systemGlobal(name, globalStringHasConversions(pattern) ? std::vector<std::string>{data.name}
+                                                                  : std::vector<std::string>{});
 }
 
 void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull) {
@@ -4984,8 +5030,10 @@ void SocialHandler::handleGroupSetLeader(network::Packet& packet) {
             if (m.name == leaderName) { pd.leaderGuid = m.guid; break; }
         }
     }
-    if (!leaderName.empty())
-        owner_.addSystemChatMessage(leaderName + " is now the group leader.");
+    if (!leaderName.empty()) {
+        if (character && character->name == leaderName) owner_.systemGlobal("ERR_NEW_LEADER_YOU");
+        else owner_.systemGlobal("ERR_NEW_LEADER_S", {leaderName});
+    }
     // In a raid the roster that follows carries the change; native fires one
     // PARTY_LEADER_CHANGED for both (see handleGroupList).
     if (groupIsRaid(pd.groupType)) raidLeaderChangedPending_ = true;

@@ -667,6 +667,14 @@ private:
     bool raidLeaderChangedPending_ = false;
     bool raidMembersChangedPending_ = false;
     bool pendingGroupInvite = false;
+    /// The name of the last friend/ignore request, for the answer's line.
+    std::string lastSocialRequestName_;
+    /// The roster after accepting an invitation names nobody as joining.
+    bool acceptedGroupInvite_ = false;
+    /// The player asked to leave: the empty roster names nobody as leaving.
+    bool leftGroupByRequest_ = false;
+    /// SMSG_GROUP_UNINVITE arrived: the same for the roster after it.
+    bool removedFromGroup_ = false;
     std::string pendingInviterName;
 
     // Ready check
