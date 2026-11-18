@@ -1654,6 +1654,34 @@ chain 260), which native shows for 0.24-0.32 s as a tall pink arc from the
 player to the spell's random destination. Chain Lightning 421 has no chain
 on its kits. Evidence: `_experiments/20261118T124000Z.astromancer_glow/`
 (fork*-pairs.jpg, w84*.jpg).
+(ArcHeight dword 26: 0.9 here, 5 on chain 260); here it is the straight
+channel strip. A kit with no effect model lasts the spell's duration: Spite
+41376 (Essence of Anger, kit 7979, chain 220, 6 s aura) held its beams 6.1 s.
+Gotcha: with neither a model nor a duration the chain is not drawn: Wrath of
+the Astromancer 42784 (kit 8183, chain 260), which native shows for
+0.24-0.32 s as a tall pink arc from the player to the spell's random
+destination. Chain Lightning 421 has no chain on its kits. Evidence:
+`_experiments/20261118T124000Z.astromancer_glow/` (fork*-pairs.jpg,
+w84*.jpg, spite2.json).
+
+Where each SpellVisual stage plays (build 8606, same experiment):
+
+| Stage | Placed at |
+|---|---|
+| PrecastKit, CastKit, ChannelKit | caster, slots at its attachments |
+| ImpactKit | each hit target (missile: when it lands) |
+| StateKit | the aura's owner |
+| InstantAreaKit (col 22) | `SMSG_SPELL_GO` destination (TARGET_FLAG_DEST_LOCATION), unattached; none without one |
+| ImpactAreaKit (col 23) | the destination |
+| PersistentAreaKit (col 24) | the DynamicObject |
+
+InstantAreaKit examples: Bonechewer Behemoth's Meteor 41276 (flags 0x42,
+dest = its victim) drops Meteor_Impact_Base on the player, not the caster;
+Smoke Bomb 7964 (0x60) and Summon Burning Exile 4929 (0x40) carry the
+caster's own position as destination and play there; Volcanic Geyser 42052
+(0x20, source only) plays none. Spell-hand (21/22) and breath (17) slots on
+a model lacking that attachment are not drawn (Soul Scream 41545 on
+WellofSoulsPain.m2); other slots fall back to the unit position.
 
 Every spell effect model is drawn at its `SpellVisualEffectName.Scale` (TBC
 field 4), on top of the unit/attachment scale. One file has rows at several
