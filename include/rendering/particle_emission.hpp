@@ -116,9 +116,14 @@ struct ParticleEmission {
 inline ParticleEmission sphericalParticleEmission(float length, float width,
     float elevation, float azimuth, float radius, uint32_t flags) {
     // Sphere tracks are minimum/maximum radius, not planar box dimensions.
-    // Zero horizontal spread leaves a ring in the model YZ plane (+X normal).
-    const glm::vec3 direction(std::cos(elevation) * std::sin(azimuth),
-                              std::cos(elevation) * std::cos(azimuth), std::sin(elevation));
+    // The vertical range tilts away from +Z and the horizontal range turns
+    // about it. Zero horizontal spread leaves a ring in the model YZ plane
+    // (+X normal): Summon_Ritual.m2's rings. Zero vertical spread sends every
+    // particle up +Z whatever the horizontal range: Etherial.m2's Death
+    // emitters #17-#21 (vertical 0, horizontal pi) rise as one narrow column
+    // in the original, where a horizontal ring spread them 3 yd wide.
+    const glm::vec3 direction(std::sin(elevation) * std::sin(azimuth),
+                              std::sin(elevation) * std::cos(azimuth), std::cos(elevation));
     const glm::vec3 offset = direction * glm::mix(length, width, radius);
     const float magnitude = glm::length(offset);
     return {offset, (flags & 0x100u) != 0 ? glm::vec3(0, 0, 1)
