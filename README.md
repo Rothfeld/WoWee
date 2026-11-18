@@ -1490,6 +1490,30 @@ them in. Local `GetAlpha()` values remain unchanged.
 `test_input_integration '[quest-text]'` checks markup-aware completion and reset.
 `test_widget_tree '[alpha]'` checks inherited opacity and draw visibility.
 
+### Quest log rows and selection
+
+```sh
+build/bin/test_quest_rewards '[quest_rewards]'
+```
+
+TBC quest queries are read field by field (`QuestQueryResponseParser::parseTbc`).
+The quest log rows live in `QuestHandler::questLogRows()`: headers by name
+(QuestSorts among zones), quests by level then title, as 2.4.3 orders them.
+The selection is a quest, not a row. `CollapseQuestHeader(i)` with anything
+but a visible header row folds every header; QUEST_LOG_UPDATE follows after the
+script (`GameHandler::queueAddonEvent`).
+
+Gotchas:
+
+- Every quest-log index is a row index, headers counted. Never subscript
+  `getQuestLog()` with one; go through `questAtLogRow` / `questLogIndexOf`.
+- Quests under collapsed headers answer at indexes past
+  GetNumQuestLogEntries (watch frame, selection). 2.4.3 reorders those hidden
+  rows between updates; here they keep header order.
+- Watches persist across relog here (character config); 2.4.3 clears them.
+
+Evidence: `_experiments/20261118T2010Z.questlog_audit/` in the workspace root.
+
 ### Scroll lists, sliders and template anchors
 
 ```sh
