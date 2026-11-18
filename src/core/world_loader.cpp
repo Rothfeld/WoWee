@@ -507,8 +507,8 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                                 if (!m2Renderer->loadModel(m2Model, doodadModelId)) continue;
                                 uint32_t doodadInstId = m2Renderer->createInstanceWithMatrix(doodadModelId, worldMatrix, worldPos);
                                 if (doodadInstId) {
-                                    if (auto rooms = pipeline::wmoDoodadRooms(wmoModel, doodadIdx); !rooms.empty())
-                                        m2Renderer->setInstanceWmoRooms(doodadInstId, instanceId, std::move(rooms));
+                                    m2Renderer->addInstanceWmoDoodad(doodadInstId, instanceId,
+                                                                     pipeline::wmoDoodadRooms(wmoModel, doodadIdx));
                                     for (const auto& group : wmoModel.groups) {
                                         if (pipeline::wmoUsesLocalLighting(group.flags) && std::find(group.doodadRefs.begin(),
                                                 group.doodadRefs.end(), doodadIdx) != group.doodadRefs.end()) {

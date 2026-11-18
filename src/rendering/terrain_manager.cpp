@@ -1249,16 +1249,15 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                 if (wmoDoodadInstId) {
                     if (doodad.indoorLighting)
                         m2Renderer->setInstanceIndoorLighting(wmoDoodadInstId, *doodad.indoorLighting);
-                    if (!doodad.rooms.empty()) {
-                        // Doodads are prepared once per uniqueId, by the tile that
-                        // placed the building first, so it is placed by now.
-                        const auto building = placedWmoIds.find(doodad.wmoUniqueId);
-                        if (building == placedWmoIds.end()) {
+                    // Doodads are prepared once per uniqueId, by the tile that
+                    // placed the building first, so it is placed by now.
+                    const auto building = placedWmoIds.find(doodad.wmoUniqueId);
+                    if (building == placedWmoIds.end()) {
+                        if (!doodad.rooms.empty())
                             LOG_ERROR("WMO doodad ", doodad.modelId, " of uniqueId ", doodad.wmoUniqueId,
                                       " has no placed building; drawn without its rooms");
-                        } else {
-                            m2Renderer->setInstanceWmoRooms(wmoDoodadInstId, building->second, doodad.rooms);
-                        }
+                    } else {
+                        m2Renderer->addInstanceWmoDoodad(wmoDoodadInstId, building->second, doodad.rooms);
                     }
                     ft.m2InstanceIds.push_back(wmoDoodadInstId);
                 }

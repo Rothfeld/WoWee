@@ -270,6 +270,9 @@ struct M2Instance {
     // of WMO instance wmoRoomInstance is drawn. Empty for everything else.
     uint32_t wmoRoomInstance = 0;
     std::vector<uint16_t> wmoRooms;
+    // Some WMO doodad (MODD entry) has been placed as this instance; see
+    // rendering::addWmoDoodad.
+    bool wmoDoodadPlaced = false;
     uint32_t indoorLighting = 0; // packed MODD RGB in bits 8..31, bit 1 enables
     // Game objects: where and how long ago their interior light was asked.
     glm::vec3 interiorLightQueriedAt{std::numeric_limits<float>::max()};
@@ -629,8 +632,11 @@ public:
 
     /// Light an instance while it is being pressed on. 0 clears it.
     void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color);
-    /// Tie a WMO doodad to the rooms that list it (pipeline::wmoDoodadRooms).
-    void setInstanceWmoRooms(uint32_t instanceId, uint32_t wmoInstanceId, std::vector<uint16_t> rooms);
+    /// Record a WMO doodad (MODD entry) placed as this instance, with the
+    /// rooms that list it (pipeline::wmoDoodadRooms; empty: drawn with the
+    /// building). An instance standing for several entries is drawn while any
+    /// of them would be.
+    void addInstanceWmoDoodad(uint32_t instanceId, uint32_t wmoInstanceId, const std::vector<uint16_t>& rooms);
     /// Answers whether any of the given groups of a WMO instance is drawn this frame.
     using WmoRoomQuery = std::function<bool(uint32_t wmoInstanceId, const std::vector<uint16_t>& groups)>;
     void setWmoRoomQuery(WmoRoomQuery query) { wmoRoomDrawn_ = std::move(query); }

@@ -2,6 +2,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_renderer_internal.h"
 #include "rendering/m2_model_classifier.hpp"
+#include "rendering/wmo_doodad_rooms.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_buffer.hpp"
 #include "rendering/vk_texture.hpp"
@@ -81,13 +82,23 @@ void M2Renderer::setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3&
     instances[index->second].indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
 }
 
-void M2Renderer::setInstanceWmoRooms(uint32_t instanceId, uint32_t wmoInstanceId,
-                                     std::vector<uint16_t> rooms) {
+void M2Renderer::addInstanceWmoDoodad(uint32_t instanceId, uint32_t wmoInstanceId,
+                                      const std::vector<uint16_t>& rooms) {
     const auto index = instanceIndexById.find(instanceId);
     assert(index != instanceIndexById.end());
-    assert(wmoInstanceId != 0 && !rooms.empty());
-    instances[index->second].wmoRoomInstance = wmoInstanceId;
-    instances[index->second].wmoRooms = std::move(rooms);
+    assert(wmoInstanceId != 0);
+    M2Instance& instance = instances[index->second];
+    const bool otherBuilding = instance.wmoDoodadPlaced && instance.wmoRoomInstance != 0 &&
+                               instance.wmoRoomInstance != wmoInstanceId;
+    WmoDoodadRooms merged = addWmoDoodad(
+        WmoDoodadRooms{instance.wmoDoodadPlaced, instance.wmoRoomInstance, std::move(instance.wmoRooms)},
+        wmoInstanceId, rooms);
+    if (otherBuilding)
+        LOG_WARNING("M2 instance ", instanceId, " is a doodad of WMO instances ", instance.wmoRoomInstance,
+                    " and ", wmoInstanceId, "; drawn without rooms");
+    instance.wmoDoodadPlaced = merged.placed;
+    instance.wmoRoomInstance = merged.wmoInstance;
+    instance.wmoRooms = std::move(merged.rooms);
 }
 
 void M2Renderer::setInstanceHighlight(uint32_t instanceId, float amount) {
