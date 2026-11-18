@@ -959,6 +959,19 @@ Kobold.m2): there is no fallback point. Native observation, build 8606, on
 GnomeFemale, HumanMale, HumanMaleCaster and Kobold models:
 `_experiments/20261117T190000Z.sheath_attachments` in the workspace.
 
+While a unit plays an animation whose AnimationData.WeaponFlags has 0x04 or
+0x10 its weapons show sheathed, whatever its sheath state: spell casts
+(ReadySpell*, SpellCast*, ChannelCast*, SpellPrecast 4), swimming and Mount
+(4), emotes, SitGround and Kneel (16). NOSHEATHE emotes (Emotes.dbc flag 4,
+e.g. 70 ONESHOT_WAVE_NOSHEATHE) keep them drawn. Such an animation starting
+on the local character also sends `CMSG_SETSHEATHED 0`, so the weapons stay
+away afterwards. Native, pair 1: a remote player at sheath state 1 and a
+Scarlet Wizard (staff) show their weapons on the back through Guile of the
+Raptor (4153) precast; the native client sends 0 about 0.1 s after its own
+SMSG_SPELL_START and on /wave and /cheer.
+Unverified: Loot (4) and instant casts on the local character.
+Evidence: `_experiments/20261117T233000Z.flag400_spokes` (bursts/edc_*, wzc_fix4).
+
 ### Held weapon grips
 
 Palm attachments 1 and 2 apply the model's `HandsClosed` animation (15) at 1 ms

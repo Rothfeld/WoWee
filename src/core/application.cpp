@@ -4308,6 +4308,26 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
         wasSwimmingForSheath_ = swimmingNow;
     }
 
+    // An animation whose AnimationData.WeaponFlags sheathe (0x04 / 0x10)
+    // starting on the local character puts its weapons away: the original
+    // sends CMSG_SETSHEATHED 0 about 0.1 s after SMSG_SPELL_START of Guile of
+    // the Raptor (4153, ReadySpellOmni) and on /wave and /cheer, and the
+    // weapons stay sheathed afterwards (pair 1, the other client's view of
+    // UNIT_FIELD_BYTES_2). Once per animation start: an auto-attack drawing
+    // the weapons during the animation is not undone.
+    {
+        auto* cr = renderer ? renderer->getCharacterRenderer() : nullptr;
+        const uint32_t instanceId = renderer ? renderer->getCharacterInstanceId() : 0;
+        const uint32_t sheathing = cr && instanceId ? cr->weaponSheathingAnimation(instanceId) : 0;
+        if (sheathing != 0 && sheathing != lastWeaponSheathingAnimation_ && appearanceComposer_ &&
+            !appearanceComposer_->isWeaponsSheathed()) {
+            LOG_INFO("Animation ", sheathing, " sheathes the local character's weapons");
+            appearanceComposer_->setWeaponsSheathed(true);
+            appearanceComposer_->loadEquippedWeapons();
+        }
+        lastWeaponSheathingAnimation_ = sheathing;
+    }
+
     // Toggle weapon sheathe state with Z (ignored while UI captures keyboard).
     inGameStep = "weapon-toggle input";
     updateCheckpoint = "in_game: weapon-toggle input";

@@ -2454,6 +2454,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
     }
 
     // Update weapon attachment transforms (after all bone matrices are computed)
+    loadAnimationData();
     for (auto& pair : instances) {
         auto& instance = pair.second;
         if (instance.weaponAttachments.empty()) continue;
@@ -2468,6 +2469,24 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         if (!gestureWeaponPoseActive(instance.gestureSheathAnimation,
                 instance.currentAnimationId, upperAnimation))
             instance.gestureSheathAnimation = 0;
+        if (!gestureWeaponPoseActive(instance.gestureHoldAnimation,
+                instance.currentAnimationId, upperAnimation))
+            instance.gestureHoldAnimation = 0;
+        // Original, pair 1: a remote player at sheath state 1 shows its
+        // weapons on its back while it plays ReadySpellOmni (52) and a
+        // Scarlet Wizard's staff is not drawn from Fire Shield's precast (52)
+        // until SpellCastOmni (54) has finished; both have WeaponFlags 4, as
+        // do the other cast, swim, mount, sleep and chair animations, and
+        // emotes, SitGround and Kneel have 16.
+        instance.poseSheathAnimation = 0;
+        for (const uint32_t animation : {upperAnimation, instance.currentAnimationId}) {
+            if (animation == 0 || animation == instance.gestureHoldAnimation) continue;
+            const auto flags = animationWeaponFlags_.find(animation);
+            if (flags != animationWeaponFlags_.end() && (flags->second & 0x14u)) {
+                instance.poseSheathAnimation = animation;
+                break;
+            }
+        }
 
         for (auto& wa : instance.weaponAttachments) {
             auto weapIt = instances.find(wa.weaponInstanceId);
@@ -4701,7 +4720,13 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
 }
 
 void CharacterRenderer::setGestureWeaponPose(uint32_t instanceId, uint32_t animationId, bool sheathe) {
-    instances.at(instanceId).gestureSheathAnimation = sheathe ? animationId : 0;
+    auto& instance = instances.at(instanceId);
+    instance.gestureSheathAnimation = sheathe ? animationId : 0;
+    instance.gestureHoldAnimation = sheathe ? 0 : animationId;
+}
+
+uint32_t CharacterRenderer::weaponSheathingAnimation(uint32_t instanceId) const {
+    return instances.at(instanceId).poseSheathAnimation;
 }
 
 void CharacterRenderer::setSheathState(uint32_t instanceId, uint8_t sheathState) {
@@ -4736,7 +4761,8 @@ void CharacterRenderer::setStandState(uint32_t instanceId, uint8_t standState) {
 
 bool CharacterRenderer::weaponSheathed(const CharacterInstance& instance, const WeaponAttachment& weapon) {
     if (weapon.heldSheathState < 0) return false;
-    return instance.gestureSheathAnimation != 0 || instance.standStateSheathes ||
+    return instance.gestureSheathAnimation != 0 || instance.poseSheathAnimation != 0 ||
+        instance.standStateSheathes ||
         instance.sheathState != static_cast<uint8_t>(weapon.heldSheathState);
 }
 

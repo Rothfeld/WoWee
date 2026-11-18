@@ -216,7 +216,14 @@ public:
                       const glm::mat4& localTransform = glm::mat4(1.0f),
                       int8_t heldSheathState = -1,
                       uint32_t sheathAttachmentId = UINT32_MAX);
+    /** A gesture's animation: `sheathe` false keeps the weapons drawn through
+     *  it (NOSHEATHE emotes share animations with sheathing ones). */
     void setGestureWeaponPose(uint32_t instanceId, uint32_t animationId, bool sheathe);
+    /** The animation playing on the body or upper body whose
+     *  AnimationData.WeaponFlags has 0x04 or 0x10 (spell casts, emotes,
+     *  sitting, swimming, mounted), 0 if none: the weapons show sheathed
+     *  while it plays. */
+    uint32_t weaponSheathingAnimation(uint32_t instanceId) const;
     /** Unit sheath state (0 unarmed, 1 melee, 2 ranged) placing its attached weapons. */
     void setSheathState(uint32_t instanceId, uint8_t sheathState);
     /** Unit stand state (UNIT_FIELD_BYTES_1 byte 0): a pose whose animation's
@@ -336,6 +343,9 @@ private:
         // Animation state
         uint32_t currentAnimationId = 0;
         uint32_t gestureSheathAnimation = 0;
+        uint32_t gestureHoldAnimation = 0;
+        // Playing animation whose WeaponFlags sheathe (0x04 / 0x10), 0 if none.
+        uint32_t poseSheathAnimation = 0;
         uint8_t sheathState = 1;
         // The unit's stand state puts its weapons away (sit, sleep, kneel,
         // chairs): the AnimationData.WeaponFlags of its pose, see setStandState.

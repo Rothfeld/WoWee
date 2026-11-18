@@ -414,6 +414,7 @@ private:
     /// Whether the player was swimming last frame, so weapons are put away
     /// once on entering the water rather than every frame in it.
     bool wasSwimmingForSheath_ = false;
+    uint32_t lastWeaponSheathingAnimation_ = 0;
 
     // Quest marker billboard sprites (above NPCs)
     void loadQuestMarkerModels();  // Now loads BLP textures
