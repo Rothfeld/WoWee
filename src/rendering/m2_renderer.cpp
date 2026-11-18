@@ -2155,6 +2155,22 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                 if (batch.textureAnimIndex != 0xFFFF)
                     bgpu.textureAnimIndex2 = batch.textureAnimIndex + 1;
             }
+            // Stage modes as the character renderer reads them: the model's
+            // combiner combos at the batch's shader id. Sunwell's fire barrier
+            // (spells/sunwell_fire_barrier_ext.m2) is Mod then Mod2x; without
+            // the doubling the wall burned at half brightness.
+            // Shader ids with bit 0x8000 (0xFFFE, 0xFFFD: Tempest Keep crystals,
+            // the Caverns of Time hourglass) name special shaders whose rule is
+            // not established; those batches keep modulating both stages.
+            if (!model.textureCombinerCombos.empty() && (batch.shader & 0x8000)) {
+                LOG_DEBUG("M2 '", model.name, "' batch shader ", batch.shader,
+                          " is a special shader id; stages modulate");
+            } else if (!model.textureCombinerCombos.empty()) {
+                assert(size_t(batch.shader) + batch.textureCount <= model.textureCombinerCombos.size());
+                bgpu.combiner0 = model.textureCombinerCombos[batch.shader];
+                bgpu.combiner1 = batch.textureCount == 2
+                    ? model.textureCombinerCombos[batch.shader + 1] : 1;
+            }
             const auto tcls = classifyBatchTexture(batchTexKeyLower);
             bgpu.starLayer = tcls.starPointLayer;
             const bool modelLanternFamily = gpuModel.isLanternLike;
@@ -2455,6 +2471,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             mat.specularIntensity = 0.5f;
             mat.emissiveBoost = bgpu.preserveGlowMesh ? 2.4f : 1.0f;
             mat.textureCount = bgpu.texture2 ? 2 : 1;
+            mat.combiner0 = bgpu.combiner0;
+            mat.combiner1 = bgpu.combiner1;
             memcpy(matAllocInfo.pMappedData, &mat, sizeof(mat));
             bgpu.materialUBOMapped = matAllocInfo.pMappedData;
 

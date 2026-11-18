@@ -59,6 +59,11 @@ struct M2ModelGPU {
         VkTexture* texture2 = nullptr;
         int16_t textureUnit2 = 0;
         uint16_t textureAnimIndex2 = 0xFFFF;
+        // Texture stage modes from the model's combiner combos (global flag
+        // 0x08) at the batch's shader id: 0 Opaque, 1 Mod, 2 Decal, 3 Add,
+        // 4 Mod2x. Models without combos modulate both stages.
+        int32_t combiner0 = 1;
+        int32_t combiner1 = 1;
         VkDescriptorSet materialSet = VK_NULL_HANDLE;  // set 1
         ::VkBuffer materialUBO = VK_NULL_HANDLE;
         VmaAllocation materialUBOAlloc = VK_NULL_HANDLE;
@@ -429,6 +434,8 @@ struct M2MaterialUBO {
     /// upper edge is not where the fire stops.
     int32_t fireCard;
     int32_t textureCount;
+    int32_t combiner0;
+    int32_t combiner1;
 };
 
 // M2 params UBO - matches M2Params in m2.vert.glsl (set 1, binding 1)

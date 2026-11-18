@@ -14,5 +14,16 @@ transform combo without any transform tracks; this represents identity mapping.
 The second texture contains their purple pattern. Native and WoWee captures at
 map 530, (-4099.21, -11522.9, -135.623) verify the resulting pillar surface.
 
-Texture-stage support here applies to M2 doodads. It does not add a general
-implementation of every M2 shader combiner or UV rotation/scaling track.
+Models with global flag 0x08 name each stage's mode in their combiner combos,
+read at the batch's shader id (0 Opaque, 1 Mod, 2 Decal, 3 Add, 4 Mod2x), the
+same rule as the character renderer: an Opaque first stage drops texture alpha;
+a second stage multiplies (Opaque/Mod/Decal), adds weighted by its alpha (Add)
+or doubles both colour and alpha (Mod2x). Sunwell Plateau's fire barrier
+around the Brutallus arena (GameObject 188075,
+`spells/sunwell_fire_barrier_ext.m2`) is Mod then Mod2x over
+`FIREWALL COPY 3.BLP` and `T_VFX_BORDER6/7.BLP`; plain modulation burned it at
+half brightness, dark brown against native's yellow-orange. Paired captures:
+`_experiments/20261118T093139Z.brutallus_fire_wall` in the workspace. Shader ids
+with bit 0x8000 (0xFFFE, 0xFFFD: Tempest Keep crystals, the Caverns of Time
+hourglass) keep modulating both stages; their rule is not established. UV
+rotation/scaling tracks are not implemented.
