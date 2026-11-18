@@ -3325,6 +3325,8 @@ void InventoryHandler::handleMailListResult(network::Packet& packet) {
         for (const auto& att : mail.attachments) {
             if (att.itemId != 0) owner_.ensureItemInfo(att.itemId);
         }
+        // The letterhead's icon is its item's.
+        if (const uint32_t item = owner_.getStationeryItemId(mail.stationeryId)) owner_.ensureItemInfo(item);
     }
 }
 
@@ -4582,6 +4584,12 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
             AuctionMailSubject auction;
             if (mail.messageType == 2 && parseAuctionMailSubject(mail.subject, auction) &&
                 auction.itemEntry == data.entry) {
+                resolvedAuctionSubject = true;
+                break;
+            }
+            // ...or an inbox icon: the first attachment's or the letterhead's.
+            if ((!mail.attachments.empty() && mail.attachments[0].itemId == data.entry) ||
+                owner_.getStationeryItemId(mail.stationeryId) == data.entry) {
                 resolvedAuctionSubject = true;
                 break;
             }

@@ -1004,6 +1004,12 @@ public:
     /// Who a piece of mail is from, resolved from its GUID or entry depending on
     /// the mail type. Resolved on demand so a late name query still shows.
     std::string getMailSenderName(const MailMessage& mail) const;
+    /// The item Stationery.dbc names for a letterhead (column 1), 0 if none.
+    uint32_t getStationeryItemId(uint32_t stationeryId) const;
+    /// GetInboxHeaderInfo's stationeryIcon: the icon of the stationery's item
+    /// (pair 6: Mail_GMIcon for GM mail, INV_Misc_Note_01 for ordinary
+    /// letters). Empty while that item's data is still being asked for.
+    std::string getMailStationeryIcon(const MailMessage& mail);
     void queryCreatureInfo(uint32_t entry, uint64_t guid) override;
     /// A creature template entry turned into something that can be drawn, by
     /// asking the server if it has not already.

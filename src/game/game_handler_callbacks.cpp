@@ -2167,8 +2167,42 @@ const std::vector<std::string>& GameHandler::getJoinedChannels() const {
 //
 // Resolved on demand rather than stored, so a name that arrives after the inbox
 // was parsed shows up on the next frame instead of staying blank.
+uint32_t GameHandler::getStationeryItemId(uint32_t stationeryId) const {
+    // Stationery.dbc: ID, ItemID, Texture, Flags - the same four columns in
+    // every expansion's file. Six rows; read once.
+    static std::unordered_map<uint32_t, uint32_t> items;
+    static bool loaded = false;
+    if (!loaded) {
+        auto* am = services_.assetManager;
+        if (!am || !am->isInitialized()) return 0;
+        loaded = true;
+        auto dbc = am->loadDBC("Stationery.dbc");
+        if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() < 2) {
+            LOG_ERROR("Stationery.dbc missing or unreadable");
+            return 0;
+        }
+        for (uint32_t i = 0; i < dbc->getRecordCount(); ++i)
+            items[dbc->getUInt32(i, 0)] = dbc->getUInt32(i, 1);
+    }
+    const auto it = items.find(stationeryId);
+    return it != items.end() ? it->second : 0;
+}
+
+std::string GameHandler::getMailStationeryIcon(const MailMessage& mail) {
+    const uint32_t item = getStationeryItemId(mail.stationeryId);
+    if (item == 0) {
+        LOG_WARNING("Mail ", mail.messageId, ": stationery ", mail.stationeryId, " has no item");
+        return {};
+    }
+    ensureItemInfo(item);
+    const auto* info = getItemInfo(item);
+    return info ? getItemIconPath(info->displayInfoId) : std::string{};
+}
+
 std::string GameHandler::getMailSenderName(const MailMessage& mail) const {
-    if (isGmStationery(mail.stationeryId)) return "Blizzard Support";
+    // The original names GM mail "Customer Support" (pair 6, letters sent
+    // with ".send mail"); "Blizzard Support" was this client's own.
+    if (isGmStationery(mail.stationeryId)) return "Customer Support";
     switch (mail.messageType) {
         case 0: {  // from another player
             // The name-query response backfills senderName, and Reply uses that

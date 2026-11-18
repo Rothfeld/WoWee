@@ -5129,8 +5129,24 @@ void registerInventoryLuaAPI(lua_State* L) {
             const auto& inbox = gh->getMailInbox();
             if (index > static_cast<int>(inbox.size())) { return luaReturnNil(L); }
             const auto& mail = inbox[index - 1];
-            lua_pushstring(L, "Interface\\Icons\\INV_Letter_15"); // packageIcon
-            lua_pushstring(L, "Interface\\Icons\\INV_Letter_15"); // stationeryIcon
+            // packageIcon: the first attachment's own icon, nil without one;
+            // stationeryIcon: the letterhead's item icon. 2.4.3 answered
+            // "INV_Misc_Food_06" / "Mail_GMIcon" for a GM letter carrying
+            // Darnassian Bleu and nil / "INV_Misc_Note_01" for a plain one
+            // (pair 6); this answered INV_Letter_15 twice for everything.
+            {
+                const game::ItemQueryResponseData* first = nullptr;
+                if (!mail.attachments.empty() && mail.attachments[0].itemId != 0) {
+                    gh->ensureItemInfo(mail.attachments[0].itemId);
+                    first = gh->getItemInfo(mail.attachments[0].itemId);
+                }
+                const std::string package = first ? gh->getItemIconPath(first->displayInfoId) : std::string{};
+                if (package.empty()) lua_pushnil(L);
+                else lua_pushstring(L, package.c_str());
+                const std::string stationery = gh->getMailStationeryIcon(mail);
+                if (stationery.empty()) lua_pushnil(L);
+                else lua_pushstring(L, stationery.c_str());
+            }
             // Through getMailSenderName, which is what turns a player's guid
             // into a name once the query comes back, and names the auction
             // house, a creature or an object for the other message types. The
