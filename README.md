@@ -844,7 +844,15 @@ made observers see speeds from 3.9 to 8.2 yards/s at 17 fps and far worse during
 frame hitches. A direction released in the air keeps its flag with
 PENDING_STOP 0x4000 / PENDING_STRAFE_STOP 0x8000 until FALL_LAND (native STOP
 0x5001, FALL_LAND 0x0). FALL_LAND carries the whole fall time and later packets
-keep it, as native does. `stream_stats.py` in
+keep it, as native does. FALL_LAND is stamped at the touchdown substep and
+place within the frame. A running jump keeps its takeoff velocity to the
+landing whether keys are held or released. After a standing jump (packet
+horizontal speed 0) the first direction pressed in the air drifts the
+character at 2.50 yards/s that way until landing, held or released; later
+keys leave it (native, run and walk mode). Walk/run toggles send
+MSG_MOVE_SET_WALK_MODE / SET_RUN_MODE (flag 0x100) when they happen, moving or
+not. Keyboard turning starts from the character's facing, not the camera yaw,
+and no SET_FACING follows STOP_TURN. `stream_stats.py` in
 `_experiments/20261118T0800.movesend/` prints rates from a debug log.
 
 Water-jump packets use the ballistic clock, excluding time spent swimming.

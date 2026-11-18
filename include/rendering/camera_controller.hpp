@@ -143,6 +143,11 @@ public:
     [[nodiscard]] bool shouldHidePlayer() const { return playerCameraOpacity_ <= 0.0f; }
     [[nodiscard]] bool isGrounded() const { return grounded; }
     [[nodiscard]] float getAirborneSeconds() const { return airborneSeconds_; }
+    /// Seconds into the last frame's physics at which the character touched
+    /// ground after being airborne, and where (render coordinates); empty
+    /// when the frame had no touchdown.
+    [[nodiscard]] std::optional<float> getTouchdownSeconds() const { return touchdownSeconds_; }
+    [[nodiscard]] const glm::vec3& getTouchdownPosition() const { return touchdownPosition_; }
     [[nodiscard]] const glm::vec3& getAirborneHorizontalVelocity() const { return airborneHorizontalVelocity_; }
     [[nodiscard]] bool isJumping() const { return !grounded && verticalVelocity > 0.0f; }
     // A swimming character is not grounded and is not rising, but it is not
@@ -764,6 +769,7 @@ private:
     bool ignoreSlopeLimit_ = false;
     float maxDistanceFactor_ = 1.0f;
     bool walking_ = false; // Persistent TOGGLERUN state; held Ctrl is a temporary override.
+    bool sentWalking_ = false; // Walk mode last reported with SET_WALK_MODE / SET_RUN_MODE.
     bool runPace = false;
     bool autoRunning = false;
 
@@ -790,6 +796,8 @@ private:
     /// range plays as a landing, so a mounted player crossing a field looked to
     /// everyone else like one landing over and over.
     float airborneSeconds_ = 0.0f;
+    std::optional<float> touchdownSeconds_;
+    glm::vec3 touchdownPosition_{0.0f};
     bool wasAscending_ = false;   // Space held while flyingActive_
     bool wasDescending_ = false;  // X held while flyingActive_
     /// True while the tile under a position has not finished streaming, which

@@ -683,6 +683,15 @@ void MovementHandler::sendMovement(Opcode opcode) {
         }
     }
 
+    // Native: the first direction pressed in the air after a standing jump
+    // starts a 2.5 yards/s drift that way (packet horizontalSpeed 2.5,
+    // angle of that direction); later directions leave it.
+    const bool startsDirection =
+        opcode == Opcode::MSG_MOVE_START_FORWARD || opcode == Opcode::MSG_MOVE_START_BACKWARD ||
+        opcode == Opcode::MSG_MOVE_START_STRAFE_LEFT || opcode == Opcode::MSG_MOVE_START_STRAFE_RIGHT;
+    const bool startsAirDrift = startsDirection && movementInfo.hasFlag(MovementFlags::FALLING) &&
+                                movementInfo.jumpXYSpeed == 0.0f;
+
     // Update movement flags based on opcode
     switch (opcode) {
         // In the air a released direction stays set with a pending stop until
@@ -738,15 +747,23 @@ void MovementHandler::sendMovement(Opcode opcode) {
                 const float travelAngle = facingRad + (length > 0.0f ? std::atan2(left, forward) : 0.0f);
                 movementInfo.jumpCosAngle = std::cos(travelAngle);
                 movementInfo.jumpSinAngle = std::sin(travelAngle);
-                const float speed = movementInfo.hasFlag(MovementFlags::SWIMMING)
+                const bool fromWater = movementInfo.hasFlag(MovementFlags::SWIMMING);
+                const float speed = fromWater
                     ? (forward < 0.0f ? serverSwimBackSpeed_ : serverSwimSpeed_)
                     : movementInfo.hasFlag(MovementFlags::WALKING) ? serverWalkSpeed_ :
                     (forward < 0.0f ? serverRunBackSpeed_ : serverRunSpeed_);
-                // Native retains the movement-mode speed even for a stationary
-                // jump. Directional flags determine whether it travels in XY.
-                movementInfo.jumpXYSpeed = speed;
+                // A stationary water jump keeps the movement-mode speed; a
+                // stationary jump from ground says 0 (native: horizontalSpeed
+                // 0, facing angle). Directional flags decide travel in XY.
+                movementInfo.jumpXYSpeed = (fromWater || length > 0.0f) ? speed : 0.0f;
             }
             movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::SWIMMING);
+            break;
+        case Opcode::MSG_MOVE_SET_WALK_MODE:
+            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::WALKING);
+            break;
+        case Opcode::MSG_MOVE_SET_RUN_MODE:
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::WALKING);
             break;
         case Opcode::MSG_MOVE_START_TURN_LEFT:
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::TURN_LEFT);
@@ -827,6 +844,19 @@ void MovementHandler::sendMovement(Opcode opcode) {
             break;
         default:
             break;
+    }
+
+    if (startsAirDrift) {
+        constexpr float kAirborneDriftSpeed = 2.5f;
+        const float facingRad = core::coords::canonicalToServerYaw(movementInfo.orientation);
+        const float forward = opcode == Opcode::MSG_MOVE_START_FORWARD ? 1.0f
+                            : opcode == Opcode::MSG_MOVE_START_BACKWARD ? -1.0f : 0.0f;
+        const float left = opcode == Opcode::MSG_MOVE_START_STRAFE_LEFT ? 1.0f
+                         : opcode == Opcode::MSG_MOVE_START_STRAFE_RIGHT ? -1.0f : 0.0f;
+        const float travelAngle = facingRad + std::atan2(left, forward);
+        movementInfo.jumpCosAngle = std::cos(travelAngle);
+        movementInfo.jumpSinAngle = std::sin(travelAngle);
+        movementInfo.jumpXYSpeed = kAirborneDriftSpeed;
     }
 
     // Fire PLAYER_STARTED/STOPPED_MOVING on movement state transitions
@@ -1011,6 +1041,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
         : MovementPacket::build(opcode, wireInfo, owner_.getPlayerGuid());
     owner_.getSocket()->send(packet);
     lastSentPos_ = glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z);
+    lastSentOrientation_ = movementInfo.orientation;
     hasSentMovement_ = true;
     if (movementHeldReason_) {
         LOG_WARNING("Movement: sending again (was held while ", movementHeldReason_, ")");

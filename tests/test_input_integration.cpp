@@ -1218,6 +1218,29 @@ TEST_CASE_METHOD(Integration, "TBC movement packets carry the instant of their p
     sample(t0 + 6000, 13.755f);
     handler.sendMovement(Opcode::MSG_MOVE_START_BACKWARD);
     CHECK(readSentMovement(session.sent().of(Opcode::MSG_MOVE_START_BACKWARD).front()).fallTime == 825);
+    handler.sendMovement(Opcode::MSG_MOVE_STOP);
+
+    // Standing jump: horizontal speed 0, then the first direction in the
+    // air drifts at 2.5 yards/s; a later direction leaves it (native).
+    const auto jumpSpeed = [](wowee::network::Packet packet) {
+        packet.readUInt32(); packet.readUInt8(); packet.readUInt32();
+        for (int i = 0; i < 4; ++i) packet.readFloat();
+        packet.readUInt32();
+        packet.readFloat();
+        const float c = packet.readFloat();
+        const float sn = packet.readFloat();
+        return glm::vec3(c, sn, packet.readFloat());
+    };
+    sample(t0 + 7000, 13.755f);
+    handler.sendMovement(Opcode::MSG_MOVE_JUMP);
+    CHECK(jumpSpeed(session.sent().of(Opcode::MSG_MOVE_JUMP).back()).z == 0.0f);
+    sample(t0 + 7300, 13.755f);
+    handler.sendMovement(Opcode::MSG_MOVE_START_STRAFE_RIGHT);
+    const glm::vec3 drift = jumpSpeed(session.sent().of(Opcode::MSG_MOVE_START_STRAFE_RIGHT).back());
+    CHECK(drift.z == 2.5f);
+    handler.sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+    const glm::vec3 later = jumpSpeed(session.sent().of(Opcode::MSG_MOVE_START_FORWARD).back());
+    CHECK(later == drift);
 }
 
 TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local axes", "[transport]") {

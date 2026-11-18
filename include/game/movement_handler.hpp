@@ -238,6 +238,11 @@ public:
     /// Whether this frame's heartbeats come from sendDueHeartbeats rather
     /// than the timer in GameHandler::update.
     [[nodiscard]] bool samplesHeartbeats() const;
+    /// Facing (canonical) in the last movement packet sent, any opcode.
+    [[nodiscard]] std::optional<float> lastSentOrientation() const {
+        if (!hasSentMovement_) return std::nullopt;
+        return lastSentOrientation_;
+    }
     void setFalling(bool falling) { isFalling_ = falling; }
     void setFallStartMs(uint32_t ms) { fallStartMs_ = ms; }
 
@@ -376,6 +381,7 @@ private:
     uint64_t lastHeartbeatTransportGuid_ = 0;
     uint32_t lastNonHeartbeatMoveSendTimeMs_ = 0;
     glm::vec3 lastSentPos_{0.0f};
+    float lastSentOrientation_ = 0.0f;
     bool hasSentMovement_ = false;
     /// Why movement is being held back from the server, said once per stretch
     /// of it. See sendMovement.

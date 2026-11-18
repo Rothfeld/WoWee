@@ -38,6 +38,8 @@ namespace rendering {
 namespace {
 
 constexpr float kMaxPhysicsDelta = 1.0f / 30.0f;
+// Measured native 2.4.3 drift after a standing jump; see moveFollowedCharacter.
+constexpr float kAirborneDriftSpeed = 2.5f;
 
 /// WoW's own key bone id for the head, as the M2 skeleton names it.
 constexpr int32_t kKeyBoneHead = 6;
@@ -894,6 +896,14 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                 : f.speed;
             airborneHorizontalVelocity_ = f.movement * takeoffSpeed;
             preserveAirborneMomentum_ = moveLenSq > 1e-6f;
+        } else if (!preserveAirborneMomentum_ && moveLenSq > 1e-6f && !knockbackActive_) {
+            // Airborne without momentum (a standing jump): the first direction
+            // pressed drifts the character at a fixed speed in that direction
+            // until landing, held or released, and later keys do not change
+            // it. Native: 2.50 yards/s forward, backward or sideways, in run
+            // and walk mode alike (horizontalSpeed 2.5 in its packets).
+            airborneHorizontalVelocity_ = f.movement * kAirborneDriftSpeed;
+            preserveAirborneMomentum_ = true;
         }
         const glm::vec3 horizontalVelocity =
             (!grounded || startWaterJump) && preserveAirborneMomentum_ && !knockbackActive_
@@ -2517,10 +2527,20 @@ void CameraController::updateThirdPersonCamera(float deltaTime, FrameInput& f) {
     f.physicsDeltaTime = deltaTime / steps;
     glm::vec3 targetPos(0.0f);
     const bool jumpPressed = f.nowJump;
+    // Touchdown within the frame: the landing packet reports that instant
+    // and place, not the end of the frame (the character runs on or stops
+    // after it).
+    touchdownSeconds_.reset();
+    bool airborneBeforeStep = !grounded;
     for (int step = 0; step < steps; ++step) {
         f.nowJump = jumpPressed && step == 0;
         targetPos = moveFollowedCharacter(f.physicsDeltaTime, f, prevTargetPos);
         groundFollowedCharacter(f.physicsDeltaTime, f, targetPos, prevTargetPos);
+        if (airborneBeforeStep && grounded && !touchdownSeconds_) {
+            touchdownSeconds_ = f.physicsDeltaTime * static_cast<float>(step + 1);
+            touchdownPosition_ = *followTarget;
+        }
+        airborneBeforeStep = !grounded;
     }
     f.nowJump = jumpPressed;
     // Landing: flying down onto real ground, or skimming it, without climbing.
@@ -3008,14 +3028,16 @@ void CameraController::update(float deltaTime) {
                                        && !std::isnan(turnRateOverride_))
                                          ? glm::degrees(turnRateOverride_)
                                          : WOW_TURN_SPEED;
-    if (nowTurnLeft && !nowTurnRight) {
-        yaw += activeTurnSpeedDeg * deltaTime;
-    } else if (nowTurnRight && !nowTurnLeft) {
-        yaw -= activeTurnSpeedDeg * deltaTime;
-    }
+    // The character turns from its own facing and the camera turns with it.
+    // Facing and camera yaw differ after a server-set facing (teleport) or a
+    // camera orbit; copying the camera yaw snapped the character to it on
+    // the first turning frame.
+    const float turnDeltaDeg = (nowTurnLeft == nowTurnRight) ? 0.0f
+        : (nowTurnLeft ? activeTurnSpeedDeg : -activeTurnSpeedDeg) * deltaTime;
     if (nowTurnLeft || nowTurnRight) {
+        yaw += turnDeltaDeg;
+        facingYaw += turnDeltaDeg;
         camera->setRotation(yaw, pitch);
-        facingYaw = yaw;
     }
 
     // Tick down gravity suspension timer (used after world entry to prevent
@@ -3223,6 +3245,14 @@ void CameraController::update(float deltaTime) {
 
     // --- Edge-detection: send movement opcodes on state transitions ---
     if (movementCallback) {
+        // Walk/run mode goes out when it changes, moving or not (native
+        // MSG_MOVE_SET_WALK_MODE 0x100 / MSG_MOVE_SET_RUN_MODE), before a
+        // start in the same frame so that start already carries it.
+        if (walking != sentWalking_) {
+            sentWalking_ = walking;
+            movementCallback(static_cast<uint32_t>(walking ? game::Opcode::MSG_MOVE_SET_WALK_MODE
+                                                           : game::Opcode::MSG_MOVE_SET_RUN_MODE));
+        }
         // Forward/backward
         if (nowForward && !wasMovingForward) {
             movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_FORWARD));

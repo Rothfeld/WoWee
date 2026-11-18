@@ -390,7 +390,6 @@ private:
     static inline const std::vector<pipeline::SkinLayer> emptySkinLayers_;
 
     float facingSendCooldown_ = 0.0f;        // Rate-limits MSG_MOVE_SET_FACING
-    float lastSentCanonicalYaw_ = 1000.0f;   // Sentinel - triggers first send
     bool idleYawned_ = false;
 
     // M2 transport riding: last frame's locked (canonical) render position, used to

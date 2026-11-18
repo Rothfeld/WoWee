@@ -2407,12 +2407,22 @@ void Application::setState(AppState newState) {
                             opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_START_SWIM)) {
                             // Physics has landed on ground or water; regular
                             // position sync still contains the airborne frame.
-                            const auto position = core::coords::renderToCanonical(renderer->getCharacterPosition());
-                            gameHandler->setPosition(position.x, position.y, position.z);
-                            // That state is this frame's, integrated to the
-                            // instant this frame began.
+                            // That state is this frame's: the physics runs
+                            // from the instant last frame began to the instant
+                            // this one began. A touchdown inside it is reported
+                            // at its own instant and place.
                             auto* movement = gameHandler->getMovementHandler();
-                            movement->recordPhysicsSample(movement->frameStartMs());
+                            const auto* camera = renderer->getCameraController();
+                            const auto touchdown = camera->getTouchdownSeconds();
+                            const bool atTouchdown =
+                                opcode == static_cast<uint32_t>(game::Opcode::MSG_MOVE_FALL_LAND) && touchdown;
+                            const auto position = core::coords::renderToCanonical(
+                                atTouchdown ? camera->getTouchdownPosition() : renderer->getCharacterPosition());
+                            gameHandler->setPosition(position.x, position.y, position.z);
+                            movement->recordPhysicsSample(atTouchdown
+                                ? movement->previousFrameStartMs() +
+                                      static_cast<uint32_t>(std::lround(*touchdown * 1000.0f))
+                                : movement->frameStartMs());
                         }
                         gameHandler->sendMovement(static_cast<game::Opcode>(opcode));
                     }
@@ -2744,7 +2754,6 @@ void Application::performLogoutToLogin() {
     if (worldLoader_) worldLoader_->resetLoadedMap();
     if (worldEntryCallbacks_) worldEntryCallbacks_->resetState();
     facingSendCooldown_ = 0.0f;
-    lastSentCanonicalYaw_ = 1000.0f;
     idleYawned_ = false;
 
     // --- Charge state ---
@@ -3469,11 +3478,15 @@ void Application::applyServerMovementState(float deltaTime) {
             static_cast<uint32_t>(game::MovementFlags::TURN_LEFT) |
             static_cast<uint32_t>(game::MovementFlags::TURN_RIGHT);
         bool keyboardTurning = (mi.flags & kTurnFlags) != 0;
+        // Measured against the facing in the last movement packet of any
+        // opcode: STOP_TURN already carries the final facing, and native
+        // sends no SET_FACING after it.
         if (!keyboardTurning && facingSendCooldown_ <= 0.0f) {
-            float yawDiff = core::coords::normalizeAngleRad(canonicalYaw - lastSentCanonicalYaw_);
+            const auto sentYaw = gameHandler->getMovementHandler()->lastSentOrientation();
+            const float yawDiff = sentYaw ? core::coords::normalizeAngleRad(canonicalYaw - *sentYaw)
+                                          : core::coords::PI;
             if (std::abs(yawDiff) > glm::radians(3.0f)) {
                 gameHandler->sendMovement(game::Opcode::MSG_MOVE_SET_FACING);
-                lastSentCanonicalYaw_ = canonicalYaw;
                 facingSendCooldown_ = 0.1f;  // max 10 Hz
             }
         }
