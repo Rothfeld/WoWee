@@ -1985,11 +1985,11 @@ int bindingCount(lua_State* L);
 std::string bindingAt(lua_State* L, int index);
 
 /// The expansion's WTF\\DefaultBindings.wtf, kept to commands this FrameXML's
-/// Bindings.xml declares and does not mark hidden or debug (the file also
-/// binds TOGGLEPORTALS to Ctrl-W and the mouse's TURNORACTION, which
-/// GetBinding never lists).
+/// Bindings.xml declares, hidden and debug ones included.
 /// False only while Bindings.xml has not loaded, so the caller asks again.
 bool applyDataDefaultBindings(lua_State* L) {
+    // No Application in the unit tests: the built-in defaults stand there.
+    if (!core::Application::hasInstance()) return true;
     auto* assets = core::Application::getInstance().getAssetManager();
     if (!assets) return false;  // not up yet; asked again on the next call
     const auto data = assets->readFileOptional("WTF\\DefaultBindings.wtf");
@@ -1998,17 +1998,16 @@ bool applyDataDefaultBindings(lua_State* L) {
         return true;
     }
     std::set<std::string> declared;
+    for (int i = 1, n = bindingCount(L); i <= n; ++i) declared.insert(bindingAt(L, i));
+    // Hidden and debug commands are bound as well (TURNORACTION, TOGGLESTATS);
+    // only the listing leaves them out.
     lua_getglobal(L, "__WoweeBindingHidden");
-    const bool haveHidden = lua_istable(L, -1);
-    for (int i = 1, n = bindingCount(L); i <= n; ++i) {
-        std::string command = bindingAt(L, i);
-        if (haveHidden) {
-            lua_getfield(L, -1, command.c_str());
-            const bool hidden = lua_toboolean(L, -1) != 0;
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            if (lua_type(L, -2) == LUA_TSTRING) declared.insert(lua_tostring(L, -2));
             lua_pop(L, 1);
-            if (hidden) continue;
         }
-        declared.insert(std::move(command));
     }
     lua_pop(L, 1);
     if (declared.empty()) return false;

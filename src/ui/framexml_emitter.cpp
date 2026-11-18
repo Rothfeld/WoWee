@@ -1623,19 +1623,21 @@ void emitBindings(Emitter& e, const XmlNode& root) {
         // one, as a row of its own above the command that carries it. The list
         // shows it through BINDING_HEADER_*, and everything after it belongs to
         // it until the next.
+        // hidden/debug rows (TURNORACTION on BUTTON2, TOGGLESTATS on Ctrl-Y)
+        // are bound - native GetBindingKey("TURNORACTION") answers BUTTON2 -
+        // but GetNumBindings/GetBinding never list them: 2.4.3 counts 226
+        // rows, thirteen fewer than Bindings.xml declares.
+        const bool unlisted = b.attrBool("hidden") || b.attrBool("debug");
         if (const std::string* h = b.attr("header")) {
-            if (!h->empty()) {
+            if (!h->empty() && !unlisted) {
                 e.line("__WoweeBindings[#__WoweeBindings+1] = \"HEADER_" + *h + "\"");
             }
         }
-        e.line("__WoweeBindings[#__WoweeBindings+1] = \"" + name + "\"");
+        if (!unlisted) e.line("__WoweeBindings[#__WoweeBindings+1] = \"" + name + "\"");
         if (b.attrBool("runOnUp")) {
             e.line("__WoweeBindingRunOnUp[\"" + name + "\"] = true");
         }
-        // hidden/debug rows (TURNORACTION on BUTTON2, TOGGLEPORTALS on
-        // Ctrl-W): the original never lists them in GetBinding, and their
-        // DefaultBindings.wtf keys are not applied here.
-        if (b.attrBool("hidden") || b.attrBool("debug")) {
+        if (unlisted) {
             e.line("__WoweeBindingHidden[\"" + name + "\"] = true");
         }
         if (!b.text.empty()) {

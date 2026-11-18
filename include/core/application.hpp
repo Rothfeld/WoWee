@@ -128,6 +128,8 @@ public:
 
     // Singleton access
     static Application& getInstance() { return *instance; }
+    /// Whether an Application exists (it does not in the unit tests).
+    static bool hasInstance() { return instance != nullptr; }
 
 
 

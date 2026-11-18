@@ -3148,3 +3148,22 @@ TEST_CASE("Panel emotes run in order, each after the previous animation", "[npc-
     emotes.advance(0.002f, still, play);
     CHECK(started.back() == 5);
 }
+
+TEST_CASE_METHOD(Integration, "Hidden and debug bindings are not listed", "[input][lua][bindings]") {
+    // 2.4.3 GetNumBindings counts 226: Bindings.xml without its thirteen
+    // hidden/debug rows (TURNORACTION, TOGGLESTATS ...), which stay bound.
+    ui::XmlNode root;
+    std::string error;
+    REQUIRE(ui::parseXml("<Bindings><Binding name='JUMP'>JumpOrAscendStart();</Binding>"
+                         "<Binding name='TURNORACTION' runOnUp='true' hidden='true'>TurnOrActionStart();</Binding>"
+                         "<Binding name='TOGGLESTATS' hidden='true' debug='true'>ToggleStats();</Binding></Bindings>",
+                         root, error));
+    run(ui::emitFrameXml(root).lua);
+    run(R"lua(
+        local listed = {}
+        for i = 1, GetNumBindings() do listed[(GetBinding(i))] = true end
+        assert(listed.JUMP and not listed.TURNORACTION and not listed.TOGGLESTATS)
+        assert(__WoweeBindingHidden.TURNORACTION and __WoweeBindingHidden.TOGGLESTATS)
+        assert(type(__WoweeBindingScripts.TURNORACTION) == 'function')
+    )lua");
+}

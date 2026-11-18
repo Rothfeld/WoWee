@@ -11285,6 +11285,18 @@ bool LuaEngine::dispatchBindingInput(const std::string& key, bool shift, bool ct
     if (editBoxHasFocus() || ImGui::GetIO().WantTextInput) return false;
     const std::string command = bindingCommandForKey(ui::KeybindingManager::modifiedKey(key, shift, ctrl, alt));
     if (command.empty() || clientActsOnBinding(command)) return false;
+    // Hidden and debug commands (TURNORACTION on BUTTON2, TOGGLESTATS on
+    // Ctrl-Y) are bound as native binds them, but this client drives the
+    // mouse itself and has no debug displays, so their scripts do not run.
+    lua_getglobal(L_, "__WoweeBindingHidden");
+    if (lua_istable(L_, -1)) {
+        lua_getfield(L_, -1, command.c_str());
+        const bool hidden = lua_toboolean(L_, -1) != 0;
+        lua_pop(L_, 2);
+        if (hidden) return false;
+    } else {
+        lua_pop(L_, 1);
+    }
     int releaseScript = LUA_NOREF;
     if (bindingRunsOnUp(command)) {
         lua_getglobal(L_, "__WoweeBindingScripts");
