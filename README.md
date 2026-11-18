@@ -1795,10 +1795,17 @@ CreatureModelData scale times OBJECT_FIELD_SCALE_X
 gnomes (1563, 1.15) stand and ride larger, their horse and gryphon by the same
 factor; the local player's own mount follows its display and the character's
 scale now too. ChrRaces float column 7 (night elf 1.2, gnome 0.8, tauren 0.75)
-changes nothing visible on a horse natively. Native camera pivot, measured on
-the look ray over the feet at 13.8 yd: human 1.86, tauren 1.83, gnome 0.88,
-on a horse 2.71 / 3.00 / 2.53; WoWee's head-bone pivot gives 1.60 / 2.22 / 0.75,
-not changed here. Evidence: `_experiments/20261118T160000Z.player_scale`.
+changes nothing visible on a horse natively. The third-person camera pivots
+over the feet at the followed model's CreatureModelData CollisionHeight less
+0.167, and mounted at the seat (MountMain at the mount display's scale, not the
+rider's) plus half of it less 0.167 (`CameraController::nativePivotHeight`).
+Fitted on the original's camera, pair 22 in Nagrand, within 0.01 for human
+male and female, blood elf, night elf, draenei and dwarf, on foot, on a horse
+and on a gryphon; a blood elf pivots exactly as a human, whose CollisionHeight
+it shares, not its own skeleton. Not fitted: tauren male (native 1.83 on foot,
+rule 1.49), and the scaled races mounted (tauren and gnome 0.12-0.48 higher
+natively). The pivot setting moves it in proportion; the default is the
+original's. Evidence: `_experiments/20261118T160000Z.player_scale` (fit.py).
 A rider stays seated: its idle, locomotion and melee
 stances are Mount (91), and its swings, casts, cast holds and wounds play
 from SpineLow up over it (`setInstanceRiding`, `rendering/animation/rider_pose.hpp`).

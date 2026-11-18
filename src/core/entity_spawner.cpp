@@ -1,6 +1,7 @@
 #include "core/weapon_attachment.hpp"
 #include "core/entity_spawner.hpp"
 #include "rendering/character_scale.hpp"
+#include "rendering/camera_controller.hpp"
 #include "rendering/unit_fade.hpp"
 #include "rendering/m2_model_classifier.hpp"
 #include "core/appearance_composer.hpp"
@@ -147,6 +148,15 @@ void EntitySpawner::syncPlayerMorphs() {
         // .modify scale 1.5 grows character and horse alike
         // (_experiments/20261118T160000Z.player_scale).
         const float objectScale = unitObjectScale(*unit);
+        if (guid == gameHandler_->getPlayerGuid()) {
+            // The camera pivots on the model the player is drawn as, a
+            // morph's or a form's included (CameraController::nativePivotHeight).
+            const auto shown = displayDataMap_.find(display);
+            const auto height = shown != displayDataMap_.end()
+                ? modelIdToCollisionHeight_.find(shown->second.modelId) : modelIdToCollisionHeight_.end();
+            if (auto* camera = renderer_->getCameraController())
+                camera->setFollowedCollisionHeight(height != modelIdToCollisionHeight_.end() ? height->second : 0.0f);
+        }
         if (native != 0) {
             const float characterScale = rendering::characterRenderScale(
                 objectScale, creatureDisplayScale(native), creatureModelScale(native));

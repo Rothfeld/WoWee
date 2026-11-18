@@ -209,6 +209,14 @@ void CameraController::startIntroPan(float durationSec, float orbitDegrees) {
     introEndDistance = currentDistance;
     thirdPerson = true;
 }
+void CameraController::setFollowedCollisionHeight(float height) {
+    if (height == followedCollisionHeight_) return;
+    followedCollisionHeight_ = height;
+    LOG_INFO("Camera pivot: followed CollisionHeight ", height, ", pivot ",
+             height > 0.0f ? nativePivotHeight(pivotHeight_, height, false) : 0.0f, " on foot, ",
+             height > 0.0f ? nativePivotHeight(pivotHeight_, height, true) : 0.0f, " above a seat");
+}
+
 float CameraController::raymarchTerrainCameraLimit(const glm::vec3& pivot, const glm::vec3& camDir,
                                                    float maxDist) const {
     if (!terrainManager || maxDist <= MIN_DISTANCE) return maxDist;
@@ -2480,7 +2488,15 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // shapeshift. Kept if it ever fails to measure, so a frame that could
         // not answer does not snap the camera.
         float height = 0.0f;
+        // Measured on the model as authored: the original's pivot does not
+        // grow with the character's display scale. Pair 22, pivot over the
+        // feet: tauren male (display 59 at 1.35) 1.83, human 1.86, gnome
+        // (1563 at 1.15) 0.88 - a gnome's or tauren's camera stays where a
+        // scale-1 model of the same race puts it
+        // (_experiments/20261118T160000Z.player_scale).
+        const float drawnScale = std::max(0.001f, characterRenderer->getInstanceScale(playerInstanceId));
         if (characterRenderer->getInstanceHeight(playerInstanceId, height) && height > 0.01f) {
+            height /= drawnScale;
             // The head bone, which is what the pivot is placed against. A
             // skeleton that does not name one leaves this zero and falls back
             // to the height.
@@ -2497,6 +2513,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             const bool measuredHead =
                 characterRenderer->getInstanceKeyBonePivotZ(playerInstanceId, kKeyBoneHead, headZ)
                 && headZ > 0.01f;
+            if (measuredHead) headZ /= drawnScale;
             if (!measuredHead) headZ = followedHeadZ_;
             if (std::abs(height - followedHeight_) > 0.01f ||
                 std::abs(headZ - followedHeadZ_) > 0.01f) {

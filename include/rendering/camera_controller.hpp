@@ -672,12 +672,37 @@ public:
         return std::clamp(kMinCamClearance - clearance, 0.0f, kMaxLift);
     }
 
+    /// The original's pivot over the feet, from the followed model's
+    /// CreatureModelData CollisionHeight H: H - 0.167 on foot and
+    /// H / 2 - 0.167 above the mount's seat. Build 8606, pair 22, Nagrand,
+    /// camera 13.81 yd out at 9.1 degrees: human male 1.864 (H 2.031), blood
+    /// elf male the same (same H, other model), human female 1.746, night elf
+    /// male 2.271, draenei male 2.374, dwarf male 1.431; on a horse (seat
+    /// 1.866) 2.715 / 2.656 / 2.918 / 2.970 / 2.503, on a gryphon (1.568) 0.298
+    /// lower for every race. Within 0.01 for all of those. Gnome male 0.877
+    /// and tauren female 1.958 fit on foot; tauren male (H 1.653, display
+    /// 1.35) does not: 1.827 on foot, 3.004 on a horse; scaled races ride
+    /// 0.12-0.48 higher than this. Evidence:
+    /// _experiments/20261118T160000Z.player_scale (fit.py). The setting
+    /// moves the pivot in proportion, the default being the original's.
+    [[nodiscard]] static float nativePivotHeight(float setting, float collisionHeight, bool mounted) {
+        const float body = mounted ? collisionHeight * 0.5f : collisionHeight;
+        return std::max(0.2f, (body - kNativePivotDrop) * (setting / PIVOT_HEIGHT_DEFAULT));
+    }
+    /// CollisionHeight of the followed model (its current display), 0 when
+    /// unknown; the head-bone rule then stands in.
+    void setFollowedCollisionHeight(float height);
+
     /// The pivot for whoever is being followed right now.
     [[nodiscard]] float followedPivotHeight() const {
+        if (followedCollisionHeight_ > 0.0f)
+            return nativePivotHeight(pivotHeight_, followedCollisionHeight_, mounted_);
         return pivotHeightFor(pivotHeight_, followedHeight_, followedHeadZ_);
     }
 private:
     static constexpr float PIVOT_HEIGHT_DEFAULT = 1.6f;
+    static constexpr float kNativePivotDrop = 0.167f;  // measured, see nativePivotHeight
+    float followedCollisionHeight_ = 0.0f;
     /// The height PIVOT_HEIGHT_DEFAULT was chosen against, so the default puts
     /// the pivot exactly where it always did for a character of that size and
     /// only moves it for the ones it was wrong for.

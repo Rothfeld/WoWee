@@ -1559,8 +1559,14 @@ void EntitySpawner::processPendingMount() {
         }
     }
 
+    // The rider sits on the drawn seat; the camera rises by the seat as the
+    // mount display authors it, whatever the rider's scale: natively a horse
+    // lifts the pivot 0.30 more than a gryphon for every race, tauren and
+    // gnome included (MountMain 1.866 against 1.568).
+    const float cameraSeat = heightOffset * (mountScale / std::max(0.001f, riderScale));
     heightOffset *= mountScale;
     if (auto* ac = renderer_->getAnimationController()) ac->setMounted(instanceId, mountDisplayId, heightOffset, m2Path);
+    if (auto* camera = renderer_->getCameraController()) camera->setMountHeightOffset(cameraSeat);
 
     // For taxi mounts, start with flying animation; for ground mounts, start with stand
     bool isTaxi = gameHandler_ && gameHandler_->isOnTaxiFlight();

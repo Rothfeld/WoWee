@@ -192,3 +192,17 @@ TEST_CASE("looking up puts the camera near the ground, and lifts it") {
     CHECK(CameraController::terrainPivotLift(pivotZ, -0.4f, 1.0f, 0.0f)
           == Catch::Approx(0.0f).margin(0.001f));
 }
+
+TEST_CASE("Pivot follows CreatureModelData CollisionHeight as build 8606 does", "[camera][pivot]") {
+    // Native pivots over the feet, pair 22 (_experiments/20261118T160000Z.player_scale):
+    // human male H 2.031 -> 1.864, dwarf male 1.607 -> 1.431, draenei male 2.541 -> 2.374.
+    CHECK_THAT(CameraController::nativePivotHeight(1.6f, 2.031f, false), WithinAbs(1.864, 0.01));
+    CHECK_THAT(CameraController::nativePivotHeight(1.6f, 1.607f, false), WithinAbs(1.431, 0.01));
+    CHECK_THAT(CameraController::nativePivotHeight(1.6f, 2.541f, false), WithinAbs(2.374, 0.01));
+    // Mounted the pivot is the seat plus half of H less the same 0.167:
+    // human on a horse (MountMain 1.866) 2.715, on a gryphon (1.568) 2.416.
+    CHECK_THAT(1.866f + CameraController::nativePivotHeight(1.6f, 2.031f, true), WithinAbs(2.715, 0.01));
+    CHECK_THAT(1.568f + CameraController::nativePivotHeight(1.6f, 2.031f, true), WithinAbs(2.416, 0.01));
+    // The setting moves it in proportion; the default is the original's.
+    CHECK_THAT(CameraController::nativePivotHeight(0.8f, 2.031f, false), WithinAbs(1.864 / 2, 0.01));
+}
