@@ -110,6 +110,12 @@ shows only its lava cracks in the original; holding 200/s drew a saturated
 10 yd disc of DUST1_A. All 429 pre-264 rate ranges that end before their
 sequence are type 0; linear ones always run to the end.
 
+Spin (pre-264 `+0x198`, 8191 of 16070 TBC emitters) turns a sprite by
+spin x age radians. Christmas Tree (Medium), GO 178557: spin 0.5, 3 s life,
+alpha peak at 0.6 of life; SPARKLE.BLP is an X, and the original shows the
+star as a + (rays near 0/90 degrees in 3 s mean images); unturned, WoWee drew
+a fixed X. Turning direction is not established.
+
 Geometry particles: a pre-264 emitter naming a model at `+0x18` (28 TBC
 emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull) draws that
 model's bind-pose triangles at each particle instead of a sprite: birth-pose

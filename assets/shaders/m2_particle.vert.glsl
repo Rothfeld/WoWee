@@ -33,6 +33,7 @@ layout(location = 1) in vec4 aColor;
 layout(location = 2) in float aSize;
 layout(location = 3) in float aTile;
 layout(location = 4) in vec3 aTail;
+layout(location = 5) in float aRotation;
 
 layout(location = 0) out vec4 vColor;
 layout(location = 1) out float vTile;
@@ -76,7 +77,10 @@ void main() {
         // head is at its left edge.
         vUV = vUV.yx;
     } else {
-        viewPos4.xy += (vUV * 2.0 - 1.0) * aSize;
+        // Spin: the sprite turns by spin * age (aRotation, radians).
+        vec2 corner = (vUV * 2.0 - 1.0) * aSize;
+        float c = cos(aRotation), s = sin(aRotation);
+        viewPos4.xy += vec2(c * corner.x - s * corner.y, s * corner.x + c * corner.y);
     }
     vColor = aColor;
     vTile = aTile;

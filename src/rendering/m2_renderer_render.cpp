@@ -2323,6 +2323,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             *dst++ = 0.0f;  // tail displacement (none)
             *dst++ = 0.0f;
             *dst++ = 0.0f;
+            *dst++ = 0.0f;  // rotation
         }
 
         VkDeviceSize offset = 0;

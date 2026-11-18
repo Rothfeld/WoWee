@@ -1,6 +1,7 @@
 #include <atomic>
 #include "rendering/placement_transform.hpp"
 #include "rendering/m2_renderer.hpp"
+#include "rendering/particle_emission.hpp"
 #include "rendering/rt_bvh.hpp"
 #include "rendering/rt_scene.hpp"
 #include "core/env_flag.hpp"
@@ -361,7 +362,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
     if (particleVert.isValid() && particleFrag.isValid()) {
         VkVertexInputBindingDescription pBind{};
         pBind.binding = 0;
-        pBind.stride = 12 * sizeof(float); // pos3 + color4 + size1 + tile1 + tail3
+        pBind.stride = kParticleVertexFloats * sizeof(float);
         pBind.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
         std::vector<VkVertexInputAttributeDescription> pAttrs = {
@@ -370,6 +371,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
             {.location = 2, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 7 * sizeof(float)},          // size
             {.location = 3, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 8 * sizeof(float)},          // tile
             {.location = 4, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 9 * sizeof(float)}, // tail displacement
+            {.location = 5, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 12 * sizeof(float)},         // rotation
         };
 
         auto buildParticlePipeline = [&](VkPipelineColorBlendAttachmentState blend) -> VkPipeline {
@@ -961,14 +963,14 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         static_assert(kParticleFrames == MAX_FRAMES_IN_FLIGHT);
         for (uint32_t f = 0; f < kParticleFrames; ++f) {
             particleVertexCapacity_[f] = MAX_M2_PARTICLE_VERTS;
-            bci.size = MAX_M2_PARTICLE_VERTS * 12 * sizeof(float);
+            bci.size = MAX_M2_PARTICLE_VERTS * kParticleVertexFloats * sizeof(float);
             vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &m2ParticleVB_[f], &m2ParticleVBAlloc_[f], &allocInfo);
             m2ParticleVBMapped_[f] = allocInfo.pMappedData;
         }
 
         // Dedicated glow sprite buffer (separate from particle VB to avoid data race)
-        // Same 12-float layout as the particle pipeline that draws it.
-        bci.size = MAX_GLOW_SPRITES * 12 * sizeof(float);
+        // Same layout as the particle pipeline that draws it.
+        bci.size = MAX_GLOW_SPRITES * kParticleVertexFloats * sizeof(float);
         for (uint32_t f = 0; f < kParticleFrames; ++f) {
             vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &glowVB_[f], &glowVBAlloc_[f], &allocInfo);
             glowVBMapped_[f] = allocInfo.pMappedData;

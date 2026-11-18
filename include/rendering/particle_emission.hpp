@@ -3,6 +3,7 @@
 #include <functional>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include <glm/glm.hpp>
@@ -15,6 +16,20 @@ inline constexpr uint32_t kParticleInModelSpace = 0x80;
 // #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001).
 inline constexpr uint32_t kParticleXYQuad = 0x1000;
 inline constexpr uint32_t kParticlePinned = 0x400;
+// Particle vertex: position 3, colour 4, half width 1, cell 1, tail or
+// XYQuad axis 3, rotation 1 (radians).
+inline constexpr size_t kParticleVertexFloats = 13;
+
+// Pre-264 emitter +0x198 is a spin rate in radians per second: a sprite
+// turns by spin * age. Christmas Tree (Medium), GO 178557 (spin 0.5, 3 s life,
+// SPARKLE.BLP drawn as an X) shows the star mostly as a + in the original,
+// most of a quarter turn by the sprite's brightest age; unrotated every sprite
+// stood as the same X. 8191 of 16070 TBC emitters set it. Turning direction
+// is counter-clockwise on screen for positive spin; not checked against
+// the original.
+inline float particleRotation(float spin, float ageSeconds) {
+    return spin * ageSeconds;
+}
 // Emitters with flag 0x1 keep their authored colour inside a WMO interior;
 // the others take the doodad's MODD placement colour. 689 of the 781 emitter
 // kinds placed in TBC interiors carry it: torches, candles, braziers, glowing

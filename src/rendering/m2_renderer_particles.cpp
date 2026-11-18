@@ -825,7 +825,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
     if (requiredVertices > particleVertexCapacity_[frame]) {
         const size_t capacity = std::max(requiredVertices, particleVertexCapacity_[frame] * 2);
         VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        info.size = capacity * 12 * sizeof(float);
+        info.size = capacity * kParticleVertexFloats * sizeof(float);
         info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         VmaAllocationCreateInfo allocationInfo{};
         allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
@@ -986,7 +986,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             const unsigned sprites = em.headOrTail == 2 ? 2 : 1;
             for (unsigned sprite = 0; sprite < sprites; ++sprite) {
                 assert(vbWritten < particleVertexCapacity_[frame]);
-                float* vd = vbBase + static_cast<size_t>(vbWritten) * 12;
+                float* vd = vbBase + static_cast<size_t>(vbWritten) * kParticleVertexFloats;
                 vd[0] = worldPosition.x;
                 vd[1] = worldPosition.y;
                 vd[2] = worldPosition.z;
@@ -1008,6 +1008,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[9] = displacement.x;
                 vd[10] = displacement.y;
                 vd[11] = displacement.z;
+                vd[12] = particleRotation(em.spin, p.life);
                 ++vbWritten;
                 ++particleRuns_.back().count;
             }

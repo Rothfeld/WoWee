@@ -501,3 +501,9 @@ TEST_CASE("Detached particles move in yards whatever the placement scale", "[m2]
     // Its birth point still takes the placement: a 25 yd area is 2.5 yd.
     CHECK(glm::length(glm::vec3(birth * glm::vec4(25,0,0,1))) == Catch::Approx(2.5f));
 }
+
+TEST_CASE("Sprites turn by spin times age", "[m2][particle]") {
+    // Christmas Tree (Medium) star: spin 0.5, a quarter turn 1.57 s in.
+    CHECK(wowee::rendering::particleRotation(0.5f, 3.14159f) == Catch::Approx(1.5708f));
+    CHECK(wowee::rendering::particleRotation(0.0f, 2.0f) == 0.0f);
+}
