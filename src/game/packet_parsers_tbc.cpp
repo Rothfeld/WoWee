@@ -1381,15 +1381,18 @@ bool TbcPacketParsers::parseGameObjectQueryResponse(network::Packet& packet, Gam
 
 // ============================================================================
 // TBC 2.4.3 guild roster parser
-// Same rank structure as WotLK (variable rankCount + goldLimit + bank tabs),
-// but NO gender byte per member (WotLK added it).
+// Same shape as WotLK: variable rankCount + goldLimit + bank tabs, and a
+// gender byte per member after the class ("new 2.4.0" in CMaNGOS-TBC
+// Guild::Roster).
 // ============================================================================
 
 bool TbcPacketParsers::parseGuildRoster(network::Packet& packet, GuildRosterData& data) {
-    // TBC's roster is WotLK's without the gender byte. It was ninety-nine
-    // lines saying so, and the copy dropped the bank tab rights it had just
-    // read - see parseGuildRosterBody.
-    return parseGuildRosterBody(packet, data, {/*rankCount=*/.rankCount=true, /*gender=*/.gender=false});
+    // Read without the gender byte, every member's zone took the gender as
+    // its low byte and the rest shifted: online members had no zone, offline
+    // ones a public note of ";" and a last-online of minus six million years,
+    // and from the second member on the online flag was misread (pair 11,
+    // where 2.4.3 listed Stormwind City, Elwynn Forest and "< an hour").
+    return parseGuildRosterBody(packet, data, {/*rankCount=*/.rankCount=true, /*gender=*/.gender=true});
 }
 
 // ============================================================================

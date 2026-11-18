@@ -7,9 +7,10 @@
 //   ranks    Classic has a fixed ten, each a bare uint32 of rights. TBC and
 //            WotLK send a rank count, and each rank carries rights, a gold
 //            withdrawal limit, and six pairs of bank tab rights.
-//   gender   WotLK writes a uint8 between classId and areaId. Neither of the
-//            earlier two does, and reading one where there is none shifts the
-//            zone, the last-online time and both notes.
+//   gender   TBC and WotLK write a uint8 between classId and areaId (CMaNGOS-TBC
+//            Guild::Roster: "new 2.4.0"); Classic does not. Reading one where
+//            there is none, or skipping one that is there, shifts the zone,
+//            the last-online time and both notes.
 //   bounds   TBC and WotLK check every read against what is left. Classic
 //            checks nothing at all.
 //
@@ -68,7 +69,7 @@ struct Layout {
 };
 
 constexpr Layout kClassic{false, false};
-constexpr Layout kTbc{true, false};
+constexpr Layout kTbc{true, true};
 constexpr Layout kWotlk{true, true};
 
 /// One member, as the server writes it.
@@ -176,11 +177,10 @@ TEST_CASE("the rank block carries the gold limit and both bank tab arrays",
     }
 }
 
-TEST_CASE("TBC has no gender byte", "[guild][wire]") {
-    // The one field that separates the TBC layout from the WotLK one. Reading
-    // a byte that is not there does not fail: it shifts the zone, the
-    // last-online float and both notes by one, and every member comes out in
-    // the wrong zone with somebody else's note.
+TEST_CASE("TBC has the gender byte", "[guild][wire]") {
+    // 2.4.3 reads the byte CMaNGOS-TBC writes after the class. Skipping it
+    // does not fail: the zone takes the gender as its low byte, the rest
+    // shifts, and an offline member's public note came out as ";" (pair 11).
     auto bytes = buildRoster(kTbc);
     auto packet = makePacket(bytes);
     GuildRosterData data;
@@ -191,16 +191,20 @@ TEST_CASE("TBC has no gender byte", "[guild][wire]") {
     CHECK(data.members[0].name == "Aerin");
     CHECK(data.members[0].level == 80);
     CHECK(data.members[0].classId == 5);
+    CHECK(data.members[0].gender == 1);
     CHECK(data.members[0].zoneId == 1519);
     CHECK(data.members[0].publicNote == "note one");
+    CHECK_FALSE(data.members[1].online);
     CHECK(data.members[1].zoneId == 12);
+    CHECK(data.members[1].lastOnline == 3.5f);
+    CHECK(data.members[1].publicNote == "note two");
     CHECK(data.members[1].officerNote == "officer two");
 
-    SECTION("and the WotLK reader on the same bytes gets the zone wrong") {
+    SECTION("and bytes without the gender byte do not read as the TBC layout") {
         // The assertion that the byte matters. Not an error - a wrong answer.
-        auto again = makePacket(bytes);
+        auto without = makePacket(buildRoster(Layout{true, false}));
         GuildRosterData wrong;
-        REQUIRE(GuildRosterParser::parse(again, wrong));
+        REQUIRE(parsers.parseGuildRoster(without, wrong));
         REQUIRE_FALSE(wrong.members.empty());
         CHECK(wrong.members[0].zoneId != 1519);
     }
