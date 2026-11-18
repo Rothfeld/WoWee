@@ -173,7 +173,17 @@ void EntitySpawner::syncPlayerMorphs() {
         float timeMs = 0.0f, durationMs = 0.0f;
         if (cr->getAnimationState(playerInstance, animation, timeMs, durationMs) && animation != morph.animation) {
             morph.animation = animation;
-            cr->playAnimation(morph.instanceId, cr->hasAnimation(morph.instanceId, animation) ? animation : 0u, true);
+            // A corpse keeps its death pose on the new model: Death once while
+            // the fall is still playing, Dead after (removeCreatureForNewDisplay).
+            uint32_t play = animation;
+            bool loop = true;
+            if (animation == rendering::anim::DEATH) {
+                if (timeMs >= durationMs) play = rendering::anim::DEAD;
+                else loop = false;
+            }
+            cr->playAnimation(morph.instanceId,
+                              cr->hasAnimation(morph.instanceId, play) || rendering::anim::isCorpsePose(play) ? play : 0u,
+                              loop);
         }
     }
 }
@@ -455,6 +465,7 @@ void EntitySpawner::clearAllQueues() {
     creatureSpawnRetryDeadlines_.clear();
     creaturePermanentFailureGuids_.clear();
     deadCreatureGuids_.clear();
+    dyingCreatureGuids_.clear();
     pendingPlayerSpawns_.clear();
     pendingPlayerSpawnGuids_.clear();
     pendingOnlinePlayerEquipment_.clear();
@@ -1454,14 +1465,43 @@ EntitySpawner::getCreatureSkinPaths(uint32_t displayId,
 // have told us it was dead, or working, or eating, before the spawn came off the
 // queue - so the pose is chosen from what is already known about it, and only a
 // creature with nothing known plays a birth animation. Fades it in either way.
+// Native 2.4.3, Akama (21700) under Shape of the Bear (42377) killed with
+// .die: the aura goes with the death, the bear turns back into Akama and that
+// model plays the whole of Death, then lies. A corpse given another display
+// later (.npc setmodel 21631) shows the new model lying at once
+// (_experiments/20261118T1620Z.corpse_display_change, n1 and n2). WoWee
+// rebuilt both standing. Nalorakk (23576) dying in bear form is the first.
+void EntitySpawner::removeCreatureForNewDisplay(uint64_t guid) {
+    uint32_t retainedEmote = 0;
+    if (const auto emote = creatureActiveEmotes_.find(guid); emote != creatureActiveEmotes_.end())
+        retainedEmote = emote->second;
+    const bool corpse = deadCreatureGuids_.count(guid) != 0;
+    bool dying = false;
+    if (const auto instance = creatureInstances_.find(guid); corpse && instance != creatureInstances_.end()) {
+        uint32_t animation = 0;
+        float time = 0.0f, duration = 0.0f;
+        dying = renderer_->getCharacterRenderer()->getAnimationState(instance->second, animation, time, duration) &&
+                animation == rendering::anim::DEATH && time < duration;
+    }
+    despawnCreature(guid);
+    if (retainedEmote != 0) creatureActiveEmotes_[guid] = retainedEmote;
+    if (corpse) markCreatureDead(guid);
+    if (dying) dyingCreatureGuids_.insert(guid);
+    LOG_DEBUG("Display change of 0x", std::hex, guid, std::dec, corpse ? (dying ? " (dying)" : " (corpse)") : "");
+}
+
 void EntitySpawner::playCreatureSpawnPose(uint64_t guid, uint32_t instanceId) {
     auto* charRenderer = renderer_->getCharacterRenderer();
     if (!charRenderer) return;
 // Spawn in the correct pose. A creature the server marked dead before the
 // queued spawn was processed is a corpse on arrival: Dead (6), not a replay
-// of Death.
+// of Death - unless its previous model was still falling
+// (removeCreatureForNewDisplay), which goes on as Death on the new one.
 if (deadCreatureGuids_.count(guid)) {
-    charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
+    if (dyingCreatureGuids_.erase(guid))
+        charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
+    else
+        charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
 } else {
     // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
     uint32_t npcEmote = 0;

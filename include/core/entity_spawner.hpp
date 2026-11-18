@@ -252,8 +252,12 @@ public:
 
     // Dead creature tracking (spawn in corpse/death pose)
     void markCreatureDead(uint64_t guid) { deadCreatureGuids_.insert(guid); }
-    void unmarkCreatureDead(uint64_t guid) { deadCreatureGuids_.erase(guid); }
-    void clearDeadCreatureGuids() { deadCreatureGuids_.clear(); }
+    void unmarkCreatureDead(uint64_t guid) { deadCreatureGuids_.erase(guid); dyingCreatureGuids_.erase(guid); }
+    void clearDeadCreatureGuids() { deadCreatureGuids_.clear(); dyingCreatureGuids_.clear(); }
+    /// Removes a creature's render instance so a new display can be queued in
+    /// its place, keeping what the unit is doing: its emote state and, for a
+    /// corpse, its death pose (Death if it was still falling, else Dead).
+    void removeCreatureForNewDisplay(uint64_t guid);
 
     // Mount state management
     void clearMountState();
@@ -616,6 +620,9 @@ private:
     void processAsyncCreatureResults(bool unlimited = false);
     static constexpr int MAX_ASYNC_CREATURE_LOADS = 4;
     std::unordered_set<uint64_t> deadCreatureGuids_;
+    // Corpses whose model was replaced while Death was still playing; the new
+    // model plays Death from its start (removeCreatureForNewDisplay).
+    std::unordered_set<uint64_t> dyingCreatureGuids_;
 
     // --- NPC equipment attachment models (helm, shoulders) ---
     // Equipment is shared across NPCs, so a crowd wearing the same gear would

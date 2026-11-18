@@ -35,13 +35,7 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
             const auto& displayIds = entitySpawner_.getCreatureDisplayIds();
             auto it = displayIds.find(guid);
             if (it != displayIds.end() && it->second == displayId) return;
-            uint32_t retainedEmote = 0;
-            auto& activeEmotes = entitySpawner_.getCreatureActiveEmotes();
-            if (auto emoteIt = activeEmotes.find(guid); emoteIt != activeEmotes.end()) {
-                retainedEmote = emoteIt->second;
-            }
-            entitySpawner_.despawnCreature(guid);
-            if (retainedEmote != 0) activeEmotes[guid] = retainedEmote;
+            entitySpawner_.removeCreatureForNewDisplay(guid);
         }
         entitySpawner_.queueCreatureSpawn(guid, displayId, x, y, z, orientation, scale);
     });

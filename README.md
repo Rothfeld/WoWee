@@ -1080,6 +1080,8 @@ units. `build/bin/test_game_replay '[death][emote]'`. Evidence:
 `_experiments/20261118T1320Z.death_over_emote` in the workspace. Unverified
 against native: swing/hit/channel-field packets aimed at a corpse.
 
+A display change keeps the death pose too. Native Akama (21700) under Shape of the Bear (42377) killed with `.die` loses the aura with its life: the bear becomes Akama, and that model plays the whole of Death, then lies. A corpse given another display later (`.npc setmodel`) shows the new model lying at once. `EntitySpawner::removeCreatureForNewDisplay` keeps a corpse marked dead through the rebuild: Death on the new model while the old one was still falling, else Dead. A morphed player's creature model follows the same rule. Nalorakk (23576) dying in bear form is the reported case. Evidence: `_experiments/20261118T1620Z.corpse_display_change` in the workspace.
+
 ### Sheathed weapons
 
 The unit sheath state (`UNIT_FIELD_BYTES_2` byte 0: 0 unarmed, 1 melee,
