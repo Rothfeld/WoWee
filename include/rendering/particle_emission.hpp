@@ -75,10 +75,13 @@ inline glm::vec3 particleBirthPosition(const glm::mat4& previous, const glm::mat
                     glm::vec3(previous * glm::vec4(local, 1.0f)), back);
 }
 
-inline glm::vec3 particleGravityDirection(const glm::mat4& birthTransform) {
-    // Preserve authored acceleration scale and orientation with position and
-    // velocity when a particle is detached into model/world space.
-    return glm::mat3(birthTransform) * glm::vec3(0, 0, -1);
+inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model) {
+    // Gravity pulls along the model's -Z, never the emitter bone's: the
+    // Core Hound's drool falls straight down on the original while its head
+    // bone is pitched. The model placement keeps its scale and orientation.
+    // NoTrail particles are simulated in the bone's own frame.
+    if (flags & (kParticleNoTrail | kParticleInModelSpace)) return {0, 0, -1};
+    return glm::mat3(model) * glm::vec3(0, 0, -1);
 }
 
 struct ParticleEmission {

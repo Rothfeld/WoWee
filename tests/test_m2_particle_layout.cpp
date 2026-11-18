@@ -159,12 +159,25 @@ TEST_CASE("Particle gravity retains the authored scaled and rotated basis", "[m2
     for (const uint32_t flags : {0x29u,0x89u,0x39u}) {
         const auto birth = particleBirthTransform(flags,model,bone);
         const auto render = particleRenderTransform(flags,model,bone);
-        const auto acceleration = particleGravityDirection(birth)*gravity;
+        const auto acceleration = particleGravityDirection(flags,model)*gravity;
         const auto simulated = birth*localPosition + birth*localVelocity*seconds + glm::vec4(acceleration*(.5f*seconds*seconds),0);
         const auto actual = render*simulated;
         CHECK(actual.x == Catch::Approx(expected.x).margin(.00001f));
         CHECK(actual.y == Catch::Approx(expected.y).margin(.00001f));
         CHECK(actual.z == Catch::Approx(expected.z).margin(.00001f));
+    }
+}
+
+TEST_CASE("Detached particle gravity ignores the emitter bone's rotation", "[m2][particle]") {
+    using namespace wowee::rendering;
+    // Core Hound drool: the head bone is pitched, the drops fall straight down.
+    const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(30.0f),glm::vec3(0,0,1)),glm::vec3(2));
+    for (const uint32_t flags : {0x29u,0x89u}) {
+        const auto down = particleGravityDirection(flags,model);
+        const auto expected = flags & 0x80u ? glm::vec3(0,0,-1) : glm::vec3(0,0,-2);
+        CHECK(down.x == Catch::Approx(expected.x).margin(.00001f));
+        CHECK(down.y == Catch::Approx(expected.y).margin(.00001f));
+        CHECK(down.z == Catch::Approx(expected.z).margin(.00001f));
     }
 }
 

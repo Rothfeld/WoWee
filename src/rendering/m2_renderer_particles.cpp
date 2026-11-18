@@ -185,7 +185,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
                                                          localPos, p.life, dt));
             p.birthPosition = p.position;
-            p.gravityDirection = particleGravityDirection(birthTransform);
+            p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix);
             p.birthBasis = glm::mat3(birthTransform);
             if (!em.geometryModel.empty()) {
                 for (int axis = 0; axis < 3; ++axis)
