@@ -45,7 +45,7 @@ inline pipeline::M2Model emitterOnlyModel(const pipeline::M2Model& model) {
 
 /// A ParticleColor.dbc row: ARGB start[3], mid[3], end[3]; slot k serves
 /// emitters with colour index 11 + k. Rows 355/356 carry real alpha
-/// (0x00 -> 0x3c -> 0x00) as an emitter's own colour words do.
+/// (0x00 -> 0x3c -> 0x00); it multiplies the emitter's own.
 using ParticleColorRow = std::array<uint32_t, 9>;
 
 /// The emitter-only model recoloured by its display's ParticleColor row.
@@ -60,7 +60,13 @@ inline void applyParticleColors(pipeline::M2Model& model, const ParticleColorRow
         assert(k < 3);
         assert(emitter.particleColor.vec3Values.size() == 3 && emitter.particleAlpha.floatValues.size() == 3);
         emitter.particleColor.vec3Values = {rgb(row[k]), rgb(row[3 + k]), rgb(row[6 + k])};
-        emitter.particleAlpha.floatValues = {alpha(row[k]), alpha(row[3 + k]), alpha(row[6 + k])};
+        // The row's alpha multiplies the emitter's own: the water elemental's
+        // own colour words are the row's RGB with their own alpha (#10
+        // 0x4b3c8ca3 against row 290's 0xff3c8ca3), and the original draws
+        // its mist that faint. Replacing the alpha by the row's 0xff made the
+        // Tainted Water Elemental (display 11172, row 295) a white band.
+        auto& own = emitter.particleAlpha.floatValues;
+        own = {own[0] * alpha(row[k]), own[1] * alpha(row[3 + k]), own[2] * alpha(row[6 + k])};
     }
 }
 
