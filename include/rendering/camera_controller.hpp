@@ -501,6 +501,9 @@ private:
         {0.0f, 0.0f}, {0.0f, 0.0f}, {5.55f, -10.0f}, {5.55f, -20.0f}, {13.88f, -30.0f}, {13.88f, -10.0f}};
     // Native cameraView is 1 (view 2) in a fresh session.
     int currentView_ = 2;
+    // Orbit pitch held while the camera rests on the floor (see
+    // updateOrbitCamera); the view pitch keeps turning.
+    std::optional<float> floorContactPitch_;
     float yaw = 180.0f;
     float pitch = -30.0f;
     float facingYaw = 180.0f;  // Character-facing yaw (can differ from camera yaw)

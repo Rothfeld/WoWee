@@ -1213,6 +1213,21 @@ them in. Local `GetAlpha()` values remain unchanged.
 `test_input_integration '[quest-text]'` checks markup-aware completion and reset.
 `test_widget_tree '[alpha]'` checks inherited opacity and draw visibility.
 
+### Camera views, zoom floor and contact
+
+SetView(1-5) as build 8606: 0 yd/0 deg (first person), 5.55/-10, 5.55/-20,
+13.88/-30, 13.88/-10, camera put back behind the character. NextView (End)
+and PrevView (Home) step 1-5 without wrapping; SaveView keeps the current
+distance and pitch; ResetView of the current view applies it. SETVIEW,
+SAVEVIEW and RESETVIEW are unbound by default. Zoom runs to 0 yd. The camera
+stops 0.111 yd short of the surface its ray hits, along the ray, at any
+incidence (Shattrath Terrace wall, offline raycast of native camera rays).
+Ground contact: once the camera rests on the floor (terrain, or a building
+surface at about feet height below the pivot), pitching up further keeps the
+camera in place and turns only the view; pitching below that orbit pitch moves
+it again (native Goldshire and Elwynn: orbit held at 5.5 deg, view to 42 deg).
+Gotcha: native turns 0.15 deg per pixel of mouse-look, WoWee 0.2 (not changed).
+
 ### Following another character
 
 `/follow Graulberto` resolves a nearby character by name without changing the

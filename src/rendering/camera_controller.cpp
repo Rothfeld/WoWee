@@ -2216,6 +2216,16 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
     // Camera direction from yaw/pitch (already computed as forward3D)
     glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
+    // Ground contact (build 8606, Goldshire terrain and Shattrath's WMO
+    // floor): once the camera rests on the floor, pitching up further keeps
+    // the camera where it is and turns only the view; pitching back down
+    // below that orbit pitch moves the camera again.
+    if (floorContactPitch_ && pitch <= *floorContactPitch_) floorContactPitch_.reset();
+    const float orbitPitch = floorContactPitch_ ? *floorContactPitch_ : pitch;
+    if (floorContactPitch_) {
+        const float ry = glm::radians(yaw), rp = glm::radians(orbitPitch);
+        camDir = -glm::vec3(std::cos(ry) * std::cos(rp), std::sin(ry) * std::cos(rp), std::sin(rp));
+    }
 
     // Throttle the active-group refresh: only recheck every 10 frames or when
     // position changes >2 units.
@@ -2275,6 +2285,15 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         const float applied = easedCollisionLimit(
             rawLimit < currentDistance ? std::optional<float>(rawLimit) : std::nullopt, deltaTime);
         collisionDistance = std::min(collisionDistance, applied);
+        // The camera stopped by the floor under the character: what it hit
+        // lies at about the feet's height, below the pivot.
+        // Terrain is always floor here; a building surface counts when it
+        // lies at about the feet's height.
+        if (!floorContactPitch_ && rawLimit < currentDistance - 0.01f && camDir.z < 0.0f) {
+            const bool terrainStopped = smoothedTerrainDist_ >= 0.0f && smoothedTerrainDist_ <= rawLimit + 0.01f;
+            const float hitZ = (pivot + camDir * (rawLimit + CAMERA_WALL_STANDOFF)).z;
+            if (terrainStopped || hitZ <= targetPos.z + 0.5f) floorContactPitch_ = orbitPitch;
+        }
     } else {
         smoothedCollisionDist_ = -1.0f;   // Reset when no collision sources available
         collisionEaseTime_ = kCollisionEaseSeconds;
