@@ -905,6 +905,17 @@ bool Application::initialize() {
             // between one frame and the next - the manifest is a hash map and
             // is not.
             std::sort(icons.begin(), icons.end());
+            // 2.4.3 offers 780: the question mark first (index 1, the icon a
+            // macro shows its spell's icon through), then every Ability_* and
+            // Spell_* icon in name order; no INV_* icons.
+            if (game::isActiveExpansion("tbc")) {
+                std::vector<std::string> tbc{"Interface\\Icons\\INV_Misc_QuestionMark"};
+                for (const auto& icon : icons) {
+                    const std::string base = icon.substr(std::string("Interface\\Icons\\").size());
+                    if (base.rfind("ability_", 0) == 0 || base.rfind("spell_", 0) == 0) tbc.push_back(icon);
+                }
+                icons = std::move(tbc);
+            }
             LOG_INFO("Icon picker: ", icons.size(), " icons from the manifest");
             return icons;
         };

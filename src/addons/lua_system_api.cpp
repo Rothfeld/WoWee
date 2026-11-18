@@ -1,5 +1,6 @@
 // lua_system_api.cpp - System, time, sound, locale, map, addons, instances, and utilities Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
+#include "addons/macro_target.hpp"
 #include "game/damage_meter.hpp"
 #include "game/tracking_services.hpp"
 #include "game/game_utils.hpp"
@@ -6508,8 +6509,19 @@ void registerSystemLuaAPI(lua_State* L) {
             if (!gh || slot < 0) { lua_pushboolean(L, 0); return 1; }
             const auto& bar = gh->getActionBar();
             bool consumable = false;
-            if (slot < static_cast<int>(bar.size()))
-                consumable = game::isConsumableAction(*gh, bar[slot]);
+            if (slot < static_cast<int>(bar.size())) {
+                game::ActionBarSlot action = bar[slot];
+                // A macro answers for its spell or item: native "/cast
+                // Vanish" is consumable (Flash Powder).
+                if (action.type == game::ActionBarSlot::MACRO) {
+                    const MacroTarget target = resolveMacroTarget(*gh, action.id);
+                    action.type = target.kind == MacroTarget::Kind::Spell ? game::ActionBarSlot::SPELL
+                                : target.kind == MacroTarget::Kind::Item  ? game::ActionBarSlot::ITEM
+                                                                          : game::ActionBarSlot::EMPTY;
+                    action.id = target.id;
+                }
+                consumable = game::isConsumableAction(*gh, action);
+            }
             lua_pushboolean(L, consumable);
             return 1;
         }},

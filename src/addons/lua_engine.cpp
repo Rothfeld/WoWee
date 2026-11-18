@@ -1,5 +1,6 @@
 #include "addons/lua_engine.hpp"
 #include "game/spell_prerequisites.hpp"
+#include "addons/macro_target.hpp"
 #include "game/summon_title.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
@@ -2484,9 +2485,24 @@ int lua_Tooltip_SetAction(lua_State* L) {
         lua_pushboolean(L, fillSpellTooltip(L, w, gh, action.id, /*rankOnTitle=*/true) ? 1 : 0);
         return 1;
     }
-    // A macro is the third kind a slot can hold and it has no tooltip of its
-    // own - WoW shows the macro's name from the button rather than from here.
-    lua_pushboolean(L, 0);
+    // A macro: its spell's or item's tooltip with #showtooltip, else its
+    // name alone. Native 2.4.3: "#showtooltip\n/cast Eviscerate" shows
+    // Eviscerate's tooltip, "/cast Sinister Strike" the line "APa".
+    const auto target = wowee::addons::resolveMacroTarget(*gh, action.id);
+    if (target.showTooltip && target.kind == wowee::addons::MacroTarget::Kind::Spell) {
+        lua_pushboolean(L, fillSpellTooltip(L, w, gh, target.id, /*rankOnTitle=*/true) ? 1 : 0);
+        return 1;
+    }
+    if (target.showTooltip && target.kind == wowee::addons::MacroTarget::Kind::Item) {
+        lua_pushboolean(L, fillItemTooltipById(L, gh, target.id) ? 1 : 0);
+        return 1;
+    }
+    w->isTooltip = true;
+    w->tooltipUnit.clear();
+    w->tooltipLines.clear();
+    pushTooltipLine(w, gh->getMacroName(action.id), kWhite, {}, kWhite, false);
+    w->shown = true;
+    lua_pushboolean(L, 1);
     return 1;
 }
 
@@ -9548,6 +9564,14 @@ void LuaEngine::registerCoreAPI() {
         "    elseif actionType == 'item' and id and id > 0 then\n"
         "        _WoweePopulateItemTooltip(self, id)\n"
         "        return self:NumLines() > 0\n"
+        // A macro: its spell's or item's tooltip with #showtooltip, else its
+        // name alone (native 2.4.3: "/cast Sinister Strike" shows "APa").
+        "    elseif actionType == 'macro' and id then\n"
+        "        local kind, target = WoweeMacroActionTooltip(slot)\n"
+        "        if kind == 'spell' then self:SetSpellByID(target, true) return self:NumLines() > 0 end\n"
+        "        if kind == 'item' then _WoweePopulateItemTooltip(self, target) return self:NumLines() > 0 end\n"
+        "        local name = GetMacroInfo(id)\n"
+        "        if name then self:SetText(name, 1, 1, 1) return true end\n"
         "    end\n"
         "    return false\n"
         "end\n"
@@ -9923,7 +9947,6 @@ void LuaEngine::registerCoreAPI() {
         "function GetCurrentBindingSet() return 1 end\n"
         // Macro functions
         "function GetMacroBody(id) return nil end\n"
-        "function GetMacroIndexByName(name) return 0 end\n"
         // Stance bar
         // Pet action bar
         "NUM_PET_ACTION_SLOTS = 10\n"

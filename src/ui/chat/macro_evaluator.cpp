@@ -117,8 +117,9 @@ bool MacroEvaluator::evalCondition(const std::string& raw, uint64_t& tgt) const 
     if (c == "nocasting") return !gameState_.isCasting();
 
     // --- Stealthed ---
-    if (c == "stealthed")   return gameState_.isStealthed();
-    if (c == "nostealthed") return !gameState_.isStealthed();
+    // 2.4.3 spells it [stealth]/[nostealth]; [stealthed] is later.
+    if (c == "stealthed" || c == "stealth")     return gameState_.isStealthed();
+    if (c == "nostealthed" || c == "nostealth") return !gameState_.isStealthed();
 
     // --- Pet ---
     if (c == "pet")   return gameState_.hasPet();
