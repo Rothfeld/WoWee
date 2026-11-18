@@ -1584,8 +1584,8 @@ if (deadCreatureGuids_.count(guid)) {
     } else if (charRenderer->hasAnimation(instanceId, rendering::anim::SPAWN)) {
         charRenderer->playAnimation(instanceId, rendering::anim::SPAWN, false);
     } else {
-        // Already hovering when it came into view: Hover, not Stand.
-        charRenderer->playAnimation(instanceId, hoverAirborne_.contains(guid)
+        // Already hovering or levitating when it came into view: Hover, not Stand.
+        charRenderer->playAnimation(instanceId, remoteIdlesInHover(guid)
             ? rendering::anim::FLY_IDLE : rendering::anim::STAND, true);
     }
 }

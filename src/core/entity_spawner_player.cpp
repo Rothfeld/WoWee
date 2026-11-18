@@ -921,13 +921,23 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     // An aura's state animation, e.g. Whirlwind (126) under Rend's Whirlwind.
     if (const uint32_t aura = remoteAuraStateAnimation(guid); aura != rendering::SpellVisualSystem::kNoAnimation)
         return aura;
-    if (hoverAirborne_.contains(guid)) return rendering::anim::FLY_IDLE;
+    if (remoteIdlesInHover(guid)) return rendering::anim::FLY_IDLE;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     // A unit meleeing holds its ready stance between swings; the original
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
     if (unit && unit->getMeleeVictimGuid() != 0 && unit->getHealth() > 0) return meleeReadyAnimation(*unit);
     if (auto it = creatureActiveEmotes_.find(guid); it != creatureActiveEmotes_.end()) return it->second;
     return unit ? rendering::AnimationController::getEmoteAnimByEmotesId(unit->getNpcEmoteState()) : 0;
+}
+
+bool EntitySpawner::remoteIdlesInHover(uint64_t guid) const {
+    if (hoverAirborne_.contains(guid)) return true;
+    const auto flags = remoteMovementFlags_.find(guid);
+    if (flags == remoteMovementFlags_.end() ||
+        (flags->second & static_cast<uint32_t>(game::MovementFlags::LEVITATING)) == 0) return false;
+    // Players carry their own flags in every MSG_MOVE; only creatures were observed.
+    const auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    return entity && entity->getType() == game::ObjectType::UNIT;
 }
 
 uint32_t EntitySpawner::remoteAuraStateAnimation(uint64_t guid) const {

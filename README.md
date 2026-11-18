@@ -2274,6 +2274,20 @@ already made it. `build/bin/test_rider_pose` covers these rules. Evidence:
 the Wyrmcaller's orange cast beam. In combat both clients' drakes stand on
 four legs, compared by eye only.
 
+A creature whose movement flags carry LEVITATING (0x400) idles in Hover (193)
+whatever its height above the ground; CMaNGOS sets the flag from InhabitType
+air (`Creature.cpp`, SetLevitate), and in TBC it reaches the client only in
+the create block. Native 2.4.3 hovers a levitating Frost Wyrm (17907,
+FrostWurm.m2) spawned on flat ground, stands the same creature re-created
+after `.debug flight 1 0`, keeps it in Hover through Frost Breath
+(DragonSpitHover 183), back in Hover after a Talk emote, in combat and after
+a follow move. A model without Hover falls back to Stand through
+AnimationData (Gargoyle 17906; Drake.m2, Blackrock Drake 8964, looks the same
+in both). This differs from the hover flag, which hovers only after LiftOff
+or when the unit is created with it, and drops to Stand after an emote
+(Sapphiron). `remoteIdlesInHover` decides it. Evidence:
+`_experiments/20261118T220958Z.wyrm_fly` in the workspace.
+
 TBC MCLQ freshwater preserves per-vertex depth and authored surface height
 through both individual and merged terrain meshes. Liquid IDs use the same
 1=water, 2=ocean, 3=magma, 4=slime convention as the renderer. Legacy terrain

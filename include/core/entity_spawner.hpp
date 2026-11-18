@@ -296,6 +296,13 @@ public:
     /// model has no such attachment.
     std::optional<glm::vec3> helperModelAttachment(uint32_t displayId, uint32_t attachmentId);
     uint32_t remoteIdleAnimation(uint64_t guid) const;
+    /// A creature idles in Hover (193) while its movement flags carry
+    /// LEVITATING (CMaNGOS: InhabitType air, Creature.cpp SetLevitate) or
+    /// while hoverAirborne_ holds it. Native 2.4.3 hovers a levitating Frost
+    /// Wyrm (17907) standing on flat ground and stands the same creature
+    /// re-created without the flag, so the flag decides, not the height
+    /// (_experiments/20261118T220958Z.wyrm_fly).
+    bool remoteIdlesInHover(uint64_t guid) const;
     /// Precast/channel kit animation a remote unit holds while casting; it is
     /// the unit's idle until cleared (0), so a movement update that stops the
     /// unit resumes the cast pose instead of Stand.
