@@ -287,5 +287,32 @@ inline std::vector<uint16_t> wmoDoodadRooms(const WMOModel& model, uint32_t dood
     return rooms;
 }
 
+/// Groups that exist only to be seen through portals: interior-only (MOGP
+/// 0x2000 without 0x8), with no portals of their own (MOGP portalCount 0),
+/// and named as the far side of some other group's MOPR entry. Nothing leads
+/// out of them, so no portal walk ever starts in one; they are drawn when a
+/// walk from the viewer's room reaches them, and not otherwise.
+///
+/// Black Temple (blacktemple.wmo) carries three such backdrops of its own
+/// surroundings, one per vantage point: BossFacade (group 39, seen from the
+/// courtyard "test", group 8), LowerBalconyFacade (40), BossSummit_facade (48,
+/// seen only from Illidan's summit "boss", group 2, through MOPR 5-8). They
+/// repeat the courtyard's walls, pillars and statues vertex for vertex - 5179
+/// of group 48's 15865 vertices lie exactly on group 8's - so drawing one from
+/// the courtyard puts two copies of the same pillar in one depth range.
+inline std::vector<uint8_t> wmoPortalOnlyGroups(const WMOModel& model) {
+    std::vector<uint8_t> entered(model.groups.size(), 0);
+    for (const auto& ref : model.portalRefs) {
+        if (ref.groupIndex < entered.size()) entered[ref.groupIndex] = 1;
+    }
+    std::vector<uint8_t> portalOnly(model.groups.size(), 0);
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        const auto& group = model.groups[gi];
+        const bool interiorOnly = (group.flags & 0x2000u) && !(group.flags & 0x8u);
+        portalOnly[gi] = interiorOnly && group.portalCount == 0 && entered[gi];
+    }
+    return portalOnly;
+}
+
 } // namespace pipeline
 } // namespace wowee

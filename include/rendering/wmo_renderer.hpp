@@ -11,6 +11,7 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <glm/glm.hpp>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <unordered_map>
@@ -703,6 +704,9 @@ private:
         std::vector<PortalRef> portalRefs;
         // For each group: which portal refs belong to it (start index, count)
         std::vector<std::pair<uint16_t, uint16_t>> groupPortalRefs;
+        // pipeline::wmoPortalOnlyGroups: backdrops drawn only when a portal
+        // walk reaches them, whatever WOWEE_WMO_CULL says.
+        std::vector<uint8_t> portalOnlyGroups;
 
         // Set once the textures and materials below have been populated, so a
         // resumed load skips straight to the groups it has left.
@@ -817,12 +821,19 @@ private:
                                      const glm::mat4& modelMatrix,
                                      std::unordered_set<uint32_t>& outVisibleGroups) const;
 
-    /// Groups to draw for one instance. False when every group is drawn:
-    /// no portals, or the camera indoors without cullIndoors.
-    bool portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
-                             const glm::vec3& camPos, const glm::vec3& viewerPos,
-                             const Frustum& frustum, const glm::mat4& viewProj, bool cullIndoors,
-                             std::unordered_set<uint32_t>& out) const;
+    /// What portalVisibleGroups decided.
+    enum class PortalWalk : uint8_t {
+        None,       // every group is drawn: no portals, or nothing to decide
+        Rooms,      // `out` is the portal walk's answer for every group
+        Backdrops,  // camera indoors without cullIndoors: every group except
+                    // the portal-only backdrops the walk did not reach
+    };
+
+    /// Groups to draw for one instance, in `out` unless None.
+    PortalWalk portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
+                                   const glm::vec3& camPos, const glm::vec3& viewerPos,
+                                   const Frustum& frustum, const glm::mat4& viewProj, bool cullIndoors,
+                                   std::unordered_set<uint32_t>& out) const;
 
     /// The group owning the first surface straight below `localPos` (the room
     /// a point stands in), or -1 when nothing of the model lies below it.
@@ -841,6 +852,18 @@ private:
                                      const glm::mat4& viewProj,
                                      const glm::mat4& modelMatrix,
                                      std::unordered_set<uint32_t>& outVisibleGroups) const;
+
+    /// The walk itself: exterior groups and `rooms` (-1 for none) are seen
+    /// whole; from them, rooms reached through in-view portals whose MOPR side
+    /// faces the camera, each clipped to the screen rectangle of every portal
+    /// on the way.
+    void walkPortalsFrom(const ModelData& model,
+                         const glm::vec3& cameraLocalPos,
+                         const std::array<int, 2>& rooms,
+                         const Frustum& frustum,
+                         const glm::mat4& viewProj,
+                         const glm::mat4& modelMatrix,
+                         std::unordered_set<uint32_t>& outVisibleGroups) const;
 
     /**
      * Test if a portal polygon is visible from a position through a frustum

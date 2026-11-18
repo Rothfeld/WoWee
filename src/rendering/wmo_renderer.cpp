@@ -930,6 +930,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     for (size_t gi = 0; gi < model.groups.size(); gi++) {
         modelData.groupPortalRefs[gi] = {model.groups[gi].portalStart, model.groups[gi].portalCount};
     }
+    modelData.portalOnlyGroups = pipeline::wmoPortalOnlyGroups(model);
 
     if (!modelData.portals.empty()) {
         core::Logger::getInstance().debug("WMO portals: ", modelData.portals.size(),
@@ -1638,7 +1639,7 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
         // Portal-based visibility - reuse member scratch buffer (avoid per-frame alloc)
         portalVisibleGroupSet_.clear();
         const bool usePortalCulling = portalVisibleGroups(instance, model, camPos, portalViewerPos, frustum, viewProj,
-                                                          doPortalCull, portalVisibleGroupSet_);
+                                                          doPortalCull, portalVisibleGroupSet_) != PortalWalk::None;
 
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
             if (usePortalCulling &&
@@ -2261,11 +2262,11 @@ bool WMORenderer::isPortalVisible(const ModelData& model, uint16_t portalIndex,
     return frustum.intersectsAABB(worldMin, worldMax);
 }
 
-bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
+WMORenderer::PortalWalk WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
                                       const glm::vec3& camPos, const glm::vec3& viewerPos,
                                       const Frustum& frustum, const glm::mat4& viewProj, bool cullIndoors,
                                       std::unordered_set<uint32_t>& out) const {
-    if (!portalCulling || model.portals.empty() || model.portalRefs.empty()) return false;
+    if (!portalCulling || model.portals.empty() || model.portalRefs.empty()) return PortalWalk::None;
     const glm::vec3 localRealCam = glm::vec3(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
     const glm::vec3 localViewer = glm::vec3(instance.invModelMatrix * glm::vec4(viewerPos, 1.0f));
     // Indoors only when the camera's best-fit group is interior-only and
@@ -2289,8 +2290,26 @@ bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelDa
             }
         }
     }
+    if (cameraIndoors && !cullIndoors) {
+        // Every room draws without WOWEE_WMO_CULL, except the backdrops
+        // (pipeline::wmoPortalOnlyGroups): rooms with no way out that only a
+        // portal looks into. They decide nothing about the rooms around the
+        // camera, but drawn from the wrong room they double its walls: Black
+        // Temple's BossSummit_facade, seen only from Illidan's summit, drawn
+        // from the courtyard below put a second copy of the courtyard's
+        // pillars and golden statues over the first, in fine z-fighting
+        // stripes, where the original shows them plain.
+        const auto& portalOnly = model.portalOnlyGroups;
+        if (std::find(portalOnly.begin(), portalOnly.end(), uint8_t{1}) == portalOnly.end())
+            return PortalWalk::None;
+        walkPortalsFrom(model, localRealCam, {camGroup, findContainingGroup(model, localViewer)},
+                        frustum, viewProj, instance.modelMatrix, out);
+        for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+            if (gi >= portalOnly.size() || !portalOnly[gi]) out.insert(static_cast<uint32_t>(gi));
+        }
+        return PortalWalk::Backdrops;
+    }
     if (cameraIndoors) {
-        if (!cullIndoors) return false;
         // Both viewpoints seed the walk. The frustum belongs to the camera,
         // so its group is the principled start - but at a doorway or in a
         // hallway the camera and the character stand in different groups,
@@ -2307,7 +2326,7 @@ bool WMORenderer::portalVisibleGroups(const WMOInstance& instance, const ModelDa
     } else {
         getVisibleGroupsFromOutside(model, localRealCam, localViewer, frustum, viewProj, instance.modelMatrix, out);
     }
-    return true;
+    return PortalWalk::Rooms;
 }
 
 void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* viewerPos) {
@@ -2318,28 +2337,33 @@ void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* vi
     const glm::vec3 viewer = viewerPos ? *viewerPos : camPos;
     const bool cullIndoors = portalCulling && cullingEnabled_;
     std::unordered_set<uint32_t> drawn;
-    for (auto& instance : instances) {
+    std::vector<PortalWalk> walks(instances.size(), PortalWalk::None);
+    for (size_t i = 0; i < instances.size(); ++i) {
+        auto& instance = instances[i];
         instance.drawnGroups.clear();
         const auto mdlIt = loadedModels.find(instance.modelId);
         if (mdlIt == loadedModels.end()) continue;
         drawn.clear();
-        if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, cullIndoors, drawn)) continue;
+        walks[i] = portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, cullIndoors, drawn);
+        if (walks[i] == PortalWalk::None) continue;
         instance.drawnGroups.assign(mdlIt->second.groups.size(), 0);
         for (uint32_t g : drawn) instance.drawnGroups[g] = 1;
     }
     // The units' walk always runs indoors too: The Eye's entrance hall shows
     // no Bloodwarder pack through its walls on native, 60 yards on in the
     // next hall, while WoWee drew them over the wall.
-    for (auto& instance : instances) {
+    for (size_t i = 0; i < instances.size(); ++i) {
+        auto& instance = instances[i];
         instance.unitVisibleGroups.clear();
-        if (!instance.drawnGroups.empty()) {  // the same walk already ran
+        if (walks[i] == PortalWalk::Rooms) {  // the same walk already ran
             instance.unitVisibleGroups = instance.drawnGroups;
             continue;
         }
         const auto mdlIt = loadedModels.find(instance.modelId);
         if (mdlIt == loadedModels.end()) continue;
         drawn.clear();
-        if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, true, drawn)) continue;
+        if (portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, viewProj, true, drawn) ==
+            PortalWalk::None) continue;
         instance.unitVisibleGroups.assign(mdlIt->second.groups.size(), 0);
         for (uint32_t g : drawn) instance.unitVisibleGroups[g] = 1;
     }
@@ -2398,6 +2422,32 @@ void WMORenderer::getVisibleGroupsFromOutside(const ModelData& model,
                                                const glm::mat4& viewProj,
                                                const glm::mat4& modelMatrix,
                                                std::unordered_set<uint32_t>& outVisibleGroups) const {
+    auto contains = [](const auto& g, const glm::vec3& p) {
+        return glm::all(glm::greaterThanEqual(p, g.boundingBoxMin)) &&
+               glm::all(glm::lessThanEqual(p, g.boundingBoxMax));
+    };
+    // The room a point stands in is the one whose surface is first below it,
+    // among rooms whose box holds it. A box alone is not enough: Sunwell
+    // Plateau's Witch's Sanctum (sunwell.wmo group 4) reaches 4 yards above
+    // the M'uru shrine floor (group 44) laid over its ceiling, so standing at
+    // M'uru seeded the sanctum and drew its chandelier (MODD 936,
+    // BE_Chandelier01 at scale 5.09) up through the shrine floor as a gold
+    // dish; native shows the bare glowing floor there.
+    const glm::vec3 localDown = glm::normalize(glm::vec3(glm::inverse(modelMatrix) * glm::vec4(0, 0, -1, 0)));
+    int cameraRoom = groupBeneath(model, cameraLocalPos, localDown);
+    int viewerRoom = groupBeneath(model, viewerLocalPos, localDown);
+    if (cameraRoom >= 0 && !contains(model.groups[static_cast<size_t>(cameraRoom)], cameraLocalPos)) cameraRoom = -1;
+    if (viewerRoom >= 0 && !contains(model.groups[static_cast<size_t>(viewerRoom)], viewerLocalPos)) viewerRoom = -1;
+    walkPortalsFrom(model, cameraLocalPos, {cameraRoom, viewerRoom}, frustum, viewProj, modelMatrix, outVisibleGroups);
+}
+
+void WMORenderer::walkPortalsFrom(const ModelData& model,
+                                  const glm::vec3& cameraLocalPos,
+                                  const std::array<int, 2>& rooms,
+                                  const Frustum& frustum,
+                                  const glm::mat4& viewProj,
+                                  const glm::mat4& modelMatrix,
+                                  std::unordered_set<uint32_t>& outVisibleGroups) const {
     constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
     constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
     // Screen rectangle (NDC x0,y0,x1,y1) each reached group is seen through.
@@ -2428,25 +2478,10 @@ void WMORenderer::getVisibleGroupsFromOutside(const ModelData& model,
         }
         return r;
     };
-    auto contains = [](const auto& g, const glm::vec3& p) {
-        return glm::all(glm::greaterThanEqual(p, g.boundingBoxMin)) &&
-               glm::all(glm::lessThanEqual(p, g.boundingBoxMax));
-    };
-    // The room a point stands in is the one whose surface is first below it,
-    // among rooms whose box holds it. A box alone is not enough: Sunwell
-    // Plateau's Witch's Sanctum (sunwell.wmo group 4) reaches 4 yards above
-    // the M'uru shrine floor (group 44) laid over its ceiling, so standing at
-    // M'uru seeded the sanctum and drew its chandelier (MODD 936,
-    // BE_Chandelier01 at scale 5.09) up through the shrine floor as a gold
-    // dish; native shows the bare glowing floor there.
-    const glm::vec3 localDown = glm::normalize(glm::vec3(glm::inverse(modelMatrix) * glm::vec4(0, 0, -1, 0)));
-    const int cameraRoom = groupBeneath(model, cameraLocalPos, localDown);
-    const int viewerRoom = groupBeneath(model, viewerLocalPos, localDown);
     for (size_t gi = 0; gi < model.groups.size(); ++gi) {
         const auto& g = model.groups[gi];
         const bool interiorOnly = (g.groupFlags & WMO_GROUP_FLAG_INDOOR) && !(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR);
-        const bool occupied = (contains(g, cameraLocalPos) && cameraRoom == static_cast<int>(gi)) ||
-                              (contains(g, viewerLocalPos) && viewerRoom == static_cast<int>(gi));
+        const bool occupied = rooms[0] == static_cast<int>(gi) || rooms[1] == static_cast<int>(gi);
         if (!interiorOnly || occupied) seed(gi, fullScreen);
     }
     // Rooms are entered only through a portal that is in view and whose
