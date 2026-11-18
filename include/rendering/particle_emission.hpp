@@ -12,6 +12,20 @@
 namespace wowee::rendering {
 inline constexpr uint32_t kParticleNoTrail = 0x10;
 inline constexpr uint32_t kParticleInModelSpace = 0x80;
+// Pre-264 flag 0x4000 also keeps trailing particles in the placed model's
+// frame (285 of 16070 TBC emitters). Zul'jin's claws
+// (Hand_1H_ZulAman_D_01Right.m2, 0x4429/0x4629, also item 33975 on a
+// player) keep their frost wisps on the claw in the original while the
+// wielder jumps or swings; in world space they left a trail of wisps and a
+// column behind every jump. Pain Suppression (33206, PainSuppression_State,
+// 0x4029) stays round a running player in the original. Emitters without
+// it trail in world space there as here: Frostguard's Shaman_Frost item
+// visual (0x209/0x9) and Widow's Remorse's own smoke (0x22d) are left
+// behind at the top of a jump. Unobserved: whether 0x4000 particles also
+// follow an animated emitter bone, as NoTrail ones do (177 of these emitters
+// sit on animated bones: hunter shot missiles, hanging braziers).
+inline constexpr uint32_t kParticleFollowsModel = 0x4000;
+inline constexpr uint32_t kParticleModelFrame = kParticleInModelSpace | kParticleFollowsModel;
 // Sprites lie flat in the model's XY plane (ground rings: WaterElemental
 // #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001).
 inline constexpr uint32_t kParticleXYQuad = 0x1000;
@@ -79,18 +93,19 @@ inline float particleSpriteHalfWidth(float authoredScale, float placementScale) 
 }
 
 // NoTrail particles remain attached to the animated emitter. Other particles
-// retain its birth pose, either in model space or in world space. Bit 0x20 is
+// retain its birth pose, either in model space (0x80 or 0x4000) or in world
+// space. Bit 0x20 is
 // UnLit; it does not select a simulation coordinate system.
 inline glm::mat4 particleRenderTransform(uint32_t flags, const glm::mat4& model,
                                          const glm::mat4& bone) {
     if (flags & kParticleNoTrail) return model * bone;
-    return flags & kParticleInModelSpace ? model : glm::mat4(1.0f);
+    return flags & kParticleModelFrame ? model : glm::mat4(1.0f);
 }
 
 inline glm::mat4 particleBirthTransform(uint32_t flags,
                                        const glm::mat4& model, const glm::mat4& bone) {
     if (flags & kParticleNoTrail) return glm::mat4(1.0f);
-    return flags & kParticleInModelSpace ? bone : model * bone;
+    return flags & kParticleModelFrame ? bone : model * bone;
 }
 
 // Drag (emitter +0x194, pre-264 layout) scales speed by exp(-drag * t).
@@ -119,7 +134,7 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
     // Core Hound's drool falls straight down on the original while its head
     // bone is pitched. The model placement keeps its scale and orientation.
     // NoTrail particles are simulated in the bone's own frame.
-    if (flags & (kParticleNoTrail | kParticleInModelSpace)) return {0, 0, -1};
+    if (flags & (kParticleNoTrail | kParticleModelFrame)) return {0, 0, -1};
     return glm::normalize(glm::mat3(model) * glm::vec3(0, 0, -1));
 }
 
@@ -134,7 +149,7 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
 // the model's scale in the original.
 inline glm::mat3 particleWorldVelocityBasis(uint32_t flags, const glm::mat4& birthTransform) {
     glm::mat3 basis(birthTransform);
-    if (flags & (kParticleNoTrail | kParticleInModelSpace)) return basis;
+    if (flags & (kParticleNoTrail | kParticleModelFrame)) return basis;
     for (int c = 0; c < 3; ++c) basis[c] = glm::normalize(basis[c]);
     return basis;
 }
