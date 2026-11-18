@@ -3054,6 +3054,16 @@ void GameHandler::interactWithNpc(uint64_t guid) {
                           " has no NPC flags; no gossip hello sent");
                 return;
             }
+            // Native 2.4.3 opens nothing beyond the same 3D centre distance
+            // that greys the service cursor, whatever either unit's combat
+            // reach, bounding radius or scale. The server would answer much
+            // farther out (5 yd plus both combat reaches: about 19.5 yd for
+            // Vaelastrasz), so the client has to be the one that refuses.
+            if (!unitWithinInteractionReach(*unit)) {
+                LOG_DEBUG("interactWithNpc: 0x", std::hex, guid, std::dec,
+                          " beyond interaction reach; no hello sent");
+                return;
+            }
             if (unit->getNpcFlags() & NPC_FLAG_BATTLEMASTER) {
                 network::Packet packet(wireOpcode(Opcode::CMSG_BATTLEMASTER_HELLO));
                 packet.writeUInt64(guid);
