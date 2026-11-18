@@ -1483,6 +1483,13 @@ public:
     using NpcGreetingCallback = std::function<void(uint64_t guid, const glm::vec3& position)>;
     void setNpcGreetingCallback(NpcGreetingCallback cb) { npcGreetingCallback_ = std::move(cb); }
 
+    // Panel emotes: the (delay ms, Emotes.dbc id) pairs a gossip text
+    // (SMSG_NPC_TEXT_UPDATE) or quest greeting (SMSG_QUESTGIVER_QUEST_LIST)
+    // carries. Native 2.4.3 plays them on the NPC each time the panel opens.
+    using NpcPanelEmotesCallback = std::function<void(uint64_t guid,
+        const std::vector<std::pair<uint32_t, uint32_t>>& delayEmotes)>;
+    void setNpcPanelEmotesCallback(NpcPanelEmotesCallback cb) { npcPanelEmotesCallback_ = std::move(cb); }
+
     using NpcFarewellCallback = std::function<void(uint64_t guid, const glm::vec3& position)>;
     void setNpcFarewellCallback(NpcFarewellCallback cb) { npcFarewellCallback_ = std::move(cb); }
 
@@ -3937,6 +3944,7 @@ public:
     auto& npcDeathCallbackRef() { return npcDeathCallback_; }
     auto& npcFarewellCallbackRef() { return npcFarewellCallback_; }
     auto& npcGreetingCallbackRef() { return npcGreetingCallback_; }
+    auto& npcPanelEmotesCallbackRef() { return npcPanelEmotesCallback_; }
     auto& npcRespawnCallbackRef() { return npcRespawnCallback_; }
     auto& npcSwingCallbackRef() { return npcSwingCallback_; }
     auto& npcVendorCallbackRef() { return npcVendorCallback_; }
@@ -5221,6 +5229,7 @@ private:
     StealthStateCallback stealthStateCallback_;
     PlayerHealthCallback playerHealthCallback_;
     NpcGreetingCallback npcGreetingCallback_;
+    NpcPanelEmotesCallback npcPanelEmotesCallback_;
     NpcFarewellCallback npcFarewellCallback_;
     NpcVendorCallback npcVendorCallback_;
     ChargeCallback chargeCallback_;

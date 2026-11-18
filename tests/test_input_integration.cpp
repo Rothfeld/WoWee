@@ -2,6 +2,7 @@
 #include <fstream>
 #include <cstdlib>
 #include "core/npc_interaction_facing.hpp"
+#include "core/npc_panel_emotes.hpp"
 #include "core/coordinates.hpp"
 #include "input_test_support.hpp"
 #include "game_replay.hpp"
@@ -2923,4 +2924,95 @@ TEST_CASE_METHOD(Integration, "An action swapped onto the cursor can be placed o
     truth("not CursorHasSpell()");
     CHECK(handler.getActionBar()[4].isEmpty());
     lua.setGameHandler(nullptr);
+}
+
+namespace {
+wowee::network::Packet npcTextUpdate(uint32_t textId, std::vector<std::pair<uint32_t, uint32_t>> emotes) {
+    wowee::network::Packet text(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_NPC_TEXT_UPDATE));
+    text.writeUInt32(textId);
+    for (int option = 0; option < 8; ++option) {
+        text.writeFloat(option == 0 ? 1.0f : 0.0f);
+        text.writeString(option == 0 ? "Ach, it's hard enough keeping order around here" : "");
+        text.writeString(option == 0 ? "Ach, it's hard enough keeping order around here" : "");
+        text.writeUInt32(0); // language
+        for (int e = 0; e < 3; ++e) {
+            text.writeUInt32(option == 0 ? emotes[e].first : 0);
+            text.writeUInt32(option == 0 ? emotes[e].second : 0);
+        }
+    }
+    return text;
+}
+
+wowee::network::Packet gossipWithText(uint64_t npc, uint32_t textId) {
+    wowee::network::Packet gossip(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_GOSSIP_MESSAGE));
+    gossip.writeUInt64(npc);
+    gossip.writeUInt32(11611); // menu
+    gossip.writeUInt32(textId);
+    gossip.writeUInt32(0); // options
+    gossip.writeUInt32(0); // quests
+    return gossip;
+}
+} // namespace
+
+TEST_CASE_METHOD(Integration, "Gossip and quest greeting panels hand their emotes to the NPC", "[npc-panel-emote]") {
+    // Marshal Dughan (240): npc_text 16211 = (5 ms, ONESHOT_EXCLAMATION).
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    std::vector<std::pair<uint64_t, std::vector<std::pair<uint32_t, uint32_t>>>> played;
+    handler.setNpcPanelEmotesCallback([&](uint64_t guid, const std::vector<std::pair<uint32_t, uint32_t>>& e) {
+        played.emplace_back(guid, e);
+    });
+    const std::vector<std::pair<uint32_t, uint32_t>> dughan{{5, 5}, {0, 0}, {0, 0}};
+    // First visit: the text arrives after the gossip message.
+    session.receive(gossipWithText(240, 16211));
+    CHECK(played.empty());
+    session.receive(npcTextUpdate(16211, dughan));
+    REQUIRE(played.size() == 1);
+    CHECK(played[0].first == 240);
+    CHECK(played[0].second == dughan);
+    // Repeat visit with cached text: native plays again.
+    handler.closeGossip();
+    session.receive(gossipWithText(240, 16211));
+    REQUIRE(played.size() == 2);
+    CHECK(played[1].second == dughan);
+    // Quest greeting (Gryan Stoutmantle 234: EmoteDelay 0, EmoteId 1 talk).
+    wowee::network::Packet list(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_QUESTGIVER_QUEST_LIST));
+    list.writeUInt64(234);
+    list.writeString("A foul corruption has crept into Westfall.");
+    list.writeUInt32(0);
+    list.writeUInt32(1);
+    list.writeUInt8(0);
+    session.receive(list);
+    REQUIRE(played.size() == 3);
+    CHECK(played[2].first == 234);
+    CHECK(played[2].second == std::vector<std::pair<uint32_t, uint32_t>>{{0, 1}});
+}
+
+TEST_CASE("Panel emotes run in order, each after the previous animation", "[npc-panel-emote]") {
+    wowee::core::NpcPanelEmotes emotes;
+    std::vector<uint32_t> started;
+    bool playing = false;
+    auto still = [&](uint64_t, uint32_t) { return playing; };
+    auto play = [&](uint64_t, uint32_t emote) { started.push_back(emote); playing = true; };
+    // Mizli Crankwheel: (0, TALK), (3, EXCLAMATION).
+    emotes.start(7, {{0, 1}, {3, 5}, {0, 0}});
+    emotes.advance(0.0f, still, play);
+    REQUIRE(started == std::vector<uint32_t>{1});
+    emotes.advance(1.0f, still, play); // talk still running
+    CHECK(started.size() == 1);
+    playing = false;
+    emotes.advance(0.002f, still, play); // talk ended; 3 ms delay not yet over
+    CHECK(started.size() == 1);
+    emotes.advance(0.002f, still, play);
+    CHECK(started == std::vector<uint32_t>{1, 5});
+    CHECK_FALSE(emotes.pending(7));
+    // All-zero emotes (and ONESHOT_NONE entries) play nothing.
+    emotes.start(8, {{5, 0}, {0, 0}, {0, 0}});
+    CHECK_FALSE(emotes.pending(8));
+    // Dughan's 5 ms delay.
+    emotes.start(9, {{5, 5}, {0, 0}, {0, 0}});
+    emotes.advance(0.004f, still, play);
+    CHECK(started.size() == 2);
+    emotes.advance(0.002f, still, play);
+    CHECK(started.back() == 5);
 }

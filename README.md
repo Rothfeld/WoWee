@@ -960,8 +960,17 @@ Stand variants blend from their outgoing final pose using the incoming sequence'
 
 ### NPC conversation facing
 
-Greeting callbacks play voice audio. Body emotes come from server animation
-messages. Local conversation turns play the authored directional `ShuffleLeft`
+Greeting callbacks play voice audio. Opening a gossip panel plays the emotes
+of its npc_text option (SMSG_NPC_TEXT_UPDATE: three delay ms / Emotes.dbc id
+pairs); a quest greeting (SMSG_QUESTGIVER_QUEST_LIST) plays its one emote. Native
+does this on every open, cached text or not: Marshal Dughan exclaims (npc_text
+16211, emote 5), Challe and Gryan Stoutmantle talk (emote 1); an all-zero text
+(Gilbarta Grandhammer) and a vendor-only NPC (Brother Danil) play nothing. Each
+later emote waits for the previous animation to end, then its delay. Gotcha:
+native started Mizli Crankwheel's second emote (delay 3) about 0.6 s after her
+talk ended; that gap is not modelled. Quest detail and reward emotes are not
+played. `build/bin/test_input_integration '[npc-panel-emote]'`. Other body
+emotes come from server animation messages. Local conversation turns play the authored directional `ShuffleLeft`
 or `ShuffleRight` once, then return to idle; repeated gossip does not restart
 the shuffle. Combat, locomotion, and server emotes keep their animation.
 While an NPC service or quest panel is open, its stationary living NPC turns
@@ -972,7 +981,9 @@ Dughan (240) sitting, in chair states, sleeping, dead, kneeling, submerged and
 stunned, and turned him while pacified, in combat, confused, fleeing, possessed,
 rooted or with an emote state. Vaelastrasz the Corrupt (13020) lies in stand
 state 7 when first talked to and does not turn; standing, the same dragon
-model turns. Measurements: `_experiments/20261118T075345Z.npc_interaction_turn`
+model turns. The same rule (game::unitTurnsInPlace) gates turning toward
+UNIT_FIELD_TARGET: native Dughan targeting the player turned while standing,
+not while sitting or stunned. Measurements: `_experiments/20261118T075345Z.npc_interaction_turn`
 in the workspace.
 Facing settles over 50 ms, matching native frame captures. The foot shuffle
 finishes at its authored duration (500 ms for DwarfMale). Repeated clicks do not
@@ -1239,7 +1250,12 @@ guards), RepairNPC, Trainer, Pickup for vendors, Buy for bankers and
 auctioneers, Taxi, Speak for gossip and battlemasters; a stable master or a
 quest giver with nothing for the player the plain pointer. Beyond 5.5555 yards
 (3D, from the unit's position, whatever its size) the service cursor is the
-`Unable` one. A game master (`.gm on`: the server makes the player immune to
+`Unable` one, and right-clicking sends no gossip hello: native opened no
+panel there for Marshal Dughan or Vaelastrasz (3D 5.536 yd opened, 5.562 did
+not) whatever either unit's UNIT_FIELD_COMBATREACH, UNIT_FIELD_BOUNDINGRADIUS
+or the player's scale, while CMaNGOS would answer out to 5 yd plus both combat
+reaches (about 19.5 yd for Vaelastrasz). `build/bin/test_game_replay '[gossip]'`.
+A game master (`.gm on`: the server makes the player immune to
 NPCs) gets the plain pointer over attackable creatures, as in the original.
 Gotcha: the corpse loot range is different and not modelled - the original's
 bag turns `UnablePickup` at about 6.7 yards for a Clefthoof, 7.0 for a Warmaul

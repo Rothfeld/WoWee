@@ -2162,6 +2162,11 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
             owner_.npcGreetingCallbackRef()(currentGossip_.npcGuid, npcPos);
         }
     }
+
+    // Native plays the gossip text's emotes (Marshal Dughan: exclamation)
+    // every time the panel opens, cached text or not.
+    if (const auto it = npcTextEmotes_.find(currentGossip_.titleTextId); it != npcTextEmotes_.end())
+        playPanelEmotes(currentGossip_.npcGuid, it->second);
 }
 
 void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
@@ -2176,9 +2181,10 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
     // GetGreetingText had nothing to answer with and the greeting panel was
     // blank over a list that was otherwise correct.
     questGreeting_ = normalizeWowTextTokens(packet.readString());
+    uint32_t greetingDelay = 0, greetingEmote = 0;
     if (packet.hasRemaining(8)) {
-        (void)packet.readUInt32(); // emoteDelay / unk
-        (void)packet.readUInt32(); // emote / unk
+        greetingDelay = packet.readUInt32(); // questgiver_greeting.EmoteDelay
+        greetingEmote = packet.readUInt32(); // questgiver_greeting.EmoteId
     }
 
     // questCount is uint8 in all WoW versions for SMSG_QUESTGIVER_QUEST_LIST.
@@ -2226,6 +2232,8 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
 
     LOG_INFO("Questgiver quest list: npc=0x", std::hex, currentGossip_.npcGuid, std::dec,
              " quests=", currentGossip_.quests.size());
+    // Native plays the greeting emote on open (Gryan Stoutmantle: talk).
+    playPanelEmotes(currentGossip_.npcGuid, {{greetingDelay, greetingEmote}});
 }
 
 // Shared quest-icon classification for gossip windows. Derives NPC quest status
@@ -2332,6 +2340,7 @@ void QuestHandler::handleGossipComplete(network::Packet& packet) {
 void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
     uint32_t textId = packet.readUInt32();
+    bool newlyCached = false;
     // 8 text entries: each has probability(4) + text0 + text1 + lang(4) + 6 emote fields(24)
     for (int i = 0; i < 8; ++i) {
         if (!packet.hasRemaining(4)) break;
@@ -2340,12 +2349,22 @@ void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
         std::string text0 = packet.readString();
         if (!packet.hasData()) break;
         std::string text1 = packet.readString();
-        if (!packet.hasRemaining(28)) break; // lang(4) + 6×emote(4) = 28
-        packet.setReadPos(packet.getReadPos() + 28);
+        if (!packet.hasRemaining(28)) break; // lang(4) + 3 x (delay(4) + emote(4)) = 28
+        (void)packet.readUInt32(); // language
+        std::vector<std::pair<uint32_t, uint32_t>> delayEmotes;
+        for (int e = 0; e < 3; ++e) {
+            const uint32_t delay = packet.readUInt32();
+            const uint32_t emote = packet.readUInt32();
+            delayEmotes.emplace_back(delay, emote);
+        }
         if (!text0.empty() && !npcTextCache_.count(textId)) {
             npcTextCache_[textId] = std::move(text0);
+            npcTextEmotes_[textId] = std::move(delayEmotes);
+            newlyCached = true;
         } else if (!text1.empty() && !npcTextCache_.count(textId)) {
             npcTextCache_[textId] = std::move(text1);
+            npcTextEmotes_[textId] = std::move(delayEmotes);
+            newlyCached = true;
         }
     }
     LOG_DEBUG("NPC text update: id=", textId,
@@ -2363,6 +2382,16 @@ void QuestHandler::handleNpcTextUpdate(network::Packet& packet) {
         npcTextCache_.count(textId) && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GOSSIP_SHOW", {});
     }
+    // First visit: the gossip message arrived before its text, so its emotes
+    // start now. Later visits start them from handleGossipMessage.
+    if (newlyCached && gossipWindowOpen_ && currentGossip_.titleTextId == textId)
+        playPanelEmotes(currentGossip_.npcGuid, npcTextEmotes_[textId]);
+}
+
+void QuestHandler::playPanelEmotes(uint64_t npcGuid,
+                                   const std::vector<std::pair<uint32_t, uint32_t>>& delayEmotes) {
+    if (npcGuid == 0 || !owner_.npcPanelEmotesCallbackRef()) return;
+    owner_.npcPanelEmotesCallbackRef()(npcGuid, delayEmotes);
 }
 
 const std::string& QuestHandler::getNpcText(uint32_t textId) const {

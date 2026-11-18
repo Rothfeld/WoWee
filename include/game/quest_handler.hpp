@@ -340,6 +340,9 @@ private:
 
     // NPC gossip text cache (textId → body text)
     std::unordered_map<uint32_t, std::string> npcTextCache_;
+    // (delay ms, Emotes.dbc id) of the cached option, textId -> 3 pairs.
+    std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>> npcTextEmotes_;
+    void playPanelEmotes(uint64_t npcGuid, const std::vector<std::pair<uint32_t, uint32_t>>& delayEmotes);
 
     // Shared quest state
     bool        pendingSharedQuest_       = false;

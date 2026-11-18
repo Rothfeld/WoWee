@@ -3573,6 +3573,23 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         std::erase_if(npcInteractionFacing_, [&](const auto& entry) {
             return !_creatureInstances.contains(entry.first);
         });
+        npcPanelEmotes_.advance(deltaTime,
+            [&](uint64_t guid, uint32_t emoteId) {
+                const auto found = _creatureInstances.find(guid);
+                if (found == _creatureInstances.end()) return false;
+                uint32_t current = 0; float time = 0.0f, duration = 0.0f;
+                return charRenderer->getAnimationState(found->second, current, time, duration) &&
+                       current == rendering::AnimationController::getEmoteAnimByEmotesId(emoteId);
+            },
+            [&](uint64_t guid, uint32_t emoteId) {
+                const uint32_t anim = rendering::AnimationController::getEmoteAnimByEmotesId(emoteId);
+                if (anim == 0) {
+                    LOG_WARNING("Panel emote ", emoteId, " has no Emotes.dbc animation");
+                    return;
+                }
+                if (auto& play = gameHandler->emoteAnimCallbackRef())
+                    play(guid, anim, /*isState=*/false, emoteId);
+            });
         for (const auto& [guid, instanceId] : _creatureInstances) {
             auto entity = gameHandler->getEntityManager().getEntity(guid);
             if (!entity || entity->getType() != game::ObjectType::UNIT) continue;
@@ -5865,6 +5882,10 @@ void Application::setupUICallbacks() {
     npcInteractionCallbacks_ = std::make_unique<NPCInteractionCallbackHandler>(
         *entitySpawner_, *gameHandler, audioCoordinator_.get());
     npcInteractionCallbacks_->setupCallbacks();
+    gameHandler->setNpcPanelEmotesCallback(
+        [this](uint64_t guid, const std::vector<std::pair<uint32_t, uint32_t>>& delayEmotes) {
+            npcPanelEmotes_.start(guid, delayEmotes);
+        });
 
     // ── Audio: music, sound effects, level-up, achievement, LFG ──
     audioCallbacks_ = std::make_unique<AudioCallbackHandler>(
