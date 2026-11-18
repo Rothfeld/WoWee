@@ -282,6 +282,7 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (instanceId == 0) return;
         const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
         if (!unit) return;
+        entitySpawner_.setCreatureRangedDrawn(guid, false);
         const uint32_t attack = entitySpawner_.meleeWeaponAnimations(*unit).attack;
         cr->playAnimation(instanceId, attack, false, entitySpawner_.remoteResumeAnimation(guid));
         const uint16_t attackTimeField = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
@@ -595,6 +596,35 @@ void AnimationCallbackHandler::setupCallbacks() {
         assert(visuals);
         const uint32_t visual = spell->second.spellVisualId;
         constexpr uint32_t none = rendering::SpellVisualSystem::kNoAnimation;
+
+        // A creature's spell that needs a bow, gun or crossbow (Spell.dbc
+        // EquippedItemClass 2 with one of those subclasses: Shoot 29575,
+        // Multi-Shot 29576) is shot with the creature's ranged weapon, drawn
+        // in hand from the cast's start until its next melee swing. Build
+        // 8606 Spectral Sentry: sword in hand until the first Shoot, then
+        // the crossbow between and through every shot.
+        constexpr uint32_t kBowGunCrossbow = (1u << game::WEAPON_SUBCLASS_BOW) |
+            (1u << game::WEAPON_SUBCLASS_GUN) | (1u << game::WEAPON_SUBCLASS_CROSSBOW);
+        if (!isLocalPlayer && entitySpawner_.getCreatureInstanceId(guid) == instanceId &&
+            spell->second.equippedItemClass == static_cast<int32_t>(game::ITEM_CLASS_WEAPON) &&
+            (spell->second.equippedItemSubClassMask & kBowGunCrossbow) != 0) {
+            const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
+            const auto ranged = unit ? entitySpawner_.rangedWeaponAnimations(*unit) : std::nullopt;
+            if (ranged && (phase == game::SpellAnimPhase::PRECAST || phase == game::SpellAnimPhase::CAST)) {
+                entitySpawner_.setCreatureRangedDrawn(guid, true);
+                castOneShots_.erase(guid);
+                if (phase == game::SpellAnimPhase::PRECAST) {
+                    hold(spellId, ranged->aim, false);
+                    cr->playAnimation(instanceId, ranged->aim, true);
+                } else {
+                    release();
+                    cr->playAnimation(instanceId, ranged->shot, false, idle());
+                }
+                LOG_DEBUG("Ranged cast animation guid=0x", std::hex, guid, std::dec, " spell=", spellId,
+                          " phase=", static_cast<int>(phase));
+                return;
+            }
+        }
 
         switch (phase) {
         case game::SpellAnimPhase::PRECAST: {

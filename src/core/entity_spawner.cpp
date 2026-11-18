@@ -506,7 +506,8 @@ bool EntitySpawner::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t inst
     const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
     assert(slots != 0xFFFF);
     const bool displayIds = info != 0xFFFF;
-    const uint8_t sheathState = unit->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
+    const uint8_t sheathState = creatureRangedDrawn_.count(guid)
+        ? 2 : unit->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF;
     auto itemDisplayDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
     if (!itemDisplayDbc) return false;
     auto itemDbc = displayIds ? nullptr : assetManager_->loadDBC("Item.dbc");

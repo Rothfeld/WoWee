@@ -1154,6 +1154,13 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
     // any subsequent fields are not misaligned for ground-targeted AoE spells.
     skipTbcSpellCastTargets(packet, &data.targetGuid, &data.destination);
 
+    // CMaNGOS Spell::WriteAmmoToPacket: display id, inventory type.
+    constexpr uint32_t kCastFlagAmmo = 0x20;
+    if ((data.castFlags & kCastFlagAmmo) && rem() >= 8) {
+        data.ammoDisplayId = packet.readUInt32();
+        data.ammoInventoryType = packet.readUInt32();
+    }
+
     LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
               " misses=", static_cast<int>(data.missCount));
     return true;

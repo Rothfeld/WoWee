@@ -2545,11 +2545,13 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         // do the other cast, swim, mount, sleep and chair animations, and
         // emotes, SitGround and Kneel have 16.
         instance.poseSheathAnimation = 0;
+        instance.poseSheathFlags = 0;
         for (const uint32_t animation : {upperAnimation, instance.currentAnimationId}) {
             if (animation == 0 || animation == instance.gestureHoldAnimation) continue;
             const auto flags = animationWeaponFlags_.find(animation);
             if (flags != animationWeaponFlags_.end() && (flags->second & 0x14u)) {
                 instance.poseSheathAnimation = animation;
+                instance.poseSheathFlags = flags->second;
                 break;
             }
         }
@@ -4875,7 +4877,14 @@ void CharacterRenderer::setStandState(uint32_t instanceId, uint8_t standState) {
 
 bool CharacterRenderer::weaponSheathed(const CharacterInstance& instance, const WeaponAttachment& weapon) {
     if (weapon.heldSheathState < 0) return false;
-    return instance.gestureSheathAnimation != 0 || instance.poseSheathAnimation != 0 ||
+    // A drawn ranged weapon stays in hand through the 0x10 shots: build 8606
+    // Spectral Sentry keeps its crossbow at the shoulder through AttackRifle
+    // (49, WeaponFlags 16) (_experiments/20261118T091949Z.creature_swing_anim).
+    constexpr int8_t kSheathStateRanged = 2;
+    const bool poseSheathes = instance.poseSheathAnimation != 0 &&
+        !(weapon.heldSheathState == kSheathStateRanged && instance.sheathState == kSheathStateRanged &&
+          (instance.poseSheathFlags & 0x04u) == 0);
+    return instance.gestureSheathAnimation != 0 || poseSheathes ||
         instance.standStateSheathes ||
         instance.sheathState != static_cast<uint8_t>(weapon.heldSheathState);
 }

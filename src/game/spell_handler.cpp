@@ -771,6 +771,62 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     return svs->playSpellMissile(visualId, start, end, speed, launchDelay, impactAtEnd);
 }
 
+void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
+    auto* renderer = owner_.services().renderer;
+    auto* assets = owner_.services().assetManager;
+    auto* visuals = renderer ? renderer->getSpellVisualSystem() : nullptr;
+    auto* characters = renderer ? renderer->getCharacterRenderer() : nullptr;
+    if (!visuals || !characters || !assets) return;
+    const float speed = resolveSpellMissileSpeed(data.spellId);
+    if (!std::isfinite(speed) || speed < 1.0f) {
+        LOG_WARNING("Ammo projectile: spell ", data.spellId, " has no Speed; not drawn");
+        return;
+    }
+    auto displays = assets->loadDBC("ItemDisplayInfo.dbc");
+    const auto* layout = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
+    assert(displays && displays->isLoaded() && layout);
+    const int32_t row = displays->findRecordById(data.ammoDisplayId);
+    if (row < 0) {
+        LOG_WARNING("Ammo projectile: display ", data.ammoDisplayId, " missing from ItemDisplayInfo");
+        return;
+    }
+    // CMaNGOS Spell::WriteAmmoToPacket: arrows 5996 / bullets 5998 for a
+    // creature's bow/crossbow/gun (ammo, inventory type 24) - their flight
+    // model (ArrowFlight_01, BulletFlight_01) is the right model under Ammo;
+    // a thrown weapon (25) flies as its own weapon model, spinning.
+    constexpr uint32_t kInvTypeThrown = 25;
+    const bool thrown = data.ammoInventoryType == kInvTypeThrown;
+    const std::string directory = thrown ? "Item\\ObjectComponents\\Weapon\\" : "Item\\ObjectComponents\\Ammo\\";
+    std::string model = displays->getString(static_cast<uint32_t>(row), (*layout)[thrown ? "LeftModel" : "RightModel"]);
+    const std::string texture = displays->getString(static_cast<uint32_t>(row),
+                                                    (*layout)[thrown ? "LeftModelTexture" : "RightModelTexture"]);
+    if (model.empty()) {
+        LOG_WARNING("Ammo projectile: display ", data.ammoDisplayId, " has no model");
+        return;
+    }
+    model = model.substr(0, model.rfind('.')) + ".m2";
+    std::vector<uint64_t> targets;
+    for (const uint64_t hit : data.hitTargets) targets.push_back(hit);
+    for (const auto& miss : data.missTargets) targets.push_back(miss.targetGuid);
+    if (targets.empty() && data.targetGuid != 0) targets.push_back(data.targetGuid);
+    static constexpr uint32_t kAttachRightHand = 1, kAttachChestFront = 15;
+    for (const uint64_t target : targets) {
+        glm::vec3 start, end;
+        if (target == data.casterUnit || !resolveUnitPosition(data.casterUnit, start) ||
+            !resolveUnitPosition(target, end)) continue;
+        glm::mat4 transform(1.0f);
+        const uint32_t casterInstance = owner_.resolveUnitRenderInstance(data.casterUnit);
+        if (casterInstance && characters->getAttachmentTransform(casterInstance, kAttachRightHand, transform))
+            start = glm::vec3(transform[3]);
+        const uint32_t targetInstance = owner_.resolveUnitRenderInstance(target);
+        if (targetInstance && characters->getAttachmentTransform(targetInstance, kAttachChestFront, transform))
+            end = glm::vec3(transform[3]);
+        LOG_DEBUG("Ammo projectile: spell ", data.spellId, " ", directory, model, " speed ", speed);
+        visuals->playPhysicalProjectile(directory + model, texture.empty() ? "" : directory + texture + ".blp",
+                                        start, end, glm::length(end - start) / speed, thrown);
+    }
+}
+
 bool SpellHandler::resolveUnitPosition(uint64_t guid, glm::vec3& outPos) {
     auto* renderer = owner_.services().renderer;
     if (!renderer) return false;
@@ -3095,6 +3151,9 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     SpellGoData data;
     if (!owner_.getPacketParsers()->parseSpellGo(packet, data)) return;
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
+    // Build 8606 draws a Spectral Sentry's Shoot bolt flying to its target
+    // (_experiments/20261118T091949Z.creature_swing_anim, arrow).
+    if (data.casterUnit != owner_.getPlayerGuid() && data.ammoDisplayId != 0) launchAmmoProjectile(data);
 
     if (data.casterUnit == owner_.getPlayerGuid()) {
         if (data.spellId == nextSwingSpellId_) nextSwingSpellId_ = 0;

@@ -157,6 +157,7 @@ inline std::vector<EquipSlot> comparableEquipSlots(uint8_t inventoryType) {
 inline constexpr uint32_t ITEM_CLASS_WEAPON = 2;
 enum WeaponSubclass : uint32_t {
     WEAPON_SUBCLASS_BOW = 2,
+    WEAPON_SUBCLASS_GUN = 3,
     WEAPON_SUBCLASS_POLEARM = 6,
     WEAPON_SUBCLASS_STAFF = 10,
     WEAPON_SUBCLASS_FIST = 13,

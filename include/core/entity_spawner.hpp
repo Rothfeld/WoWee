@@ -303,6 +303,14 @@ public:
     /// Ready stance and swing of a unit's main-hand weapon class.
     struct MeleeWeaponAnimations { uint32_t ready; uint32_t attack; };
     MeleeWeaponAnimations meleeWeaponAnimations(const game::Unit& unit) const;
+    /// Aim hold and shot of a creature's ranged weapon (UNIT_VIRTUAL_ITEM
+    /// slot 2) for a spell that needs one; nullopt when the creature carries
+    /// no bow, gun or crossbow.
+    struct RangedWeaponAnimations { uint32_t aim; uint32_t shot; };
+    std::optional<RangedWeaponAnimations> rangedWeaponAnimations(const game::Unit& unit) const;
+    /// A creature that shot holds its ranged weapon (sheath state 2) until
+    /// its next melee swing, whatever its UNIT_FIELD_BYTES_2 sheath says.
+    void setCreatureRangedDrawn(uint64_t guid, bool drawn);
     /// SpellVisualEffectName ID of the combat blood spurt a melee hit raises on
     /// a unit of this display: CreatureModelData.BloodID -> UnitBloodLevels
     /// (by violence level) -> UnitBlood CombatBloodSpurtFront/Back[small, large].
@@ -553,6 +561,7 @@ private:
     uint32_t stealthSyncFrameCounter_ = 0;  // throttles syncCreatureVisualState()
     std::unordered_map<uint64_t, std::array<uint32_t, 10>> creatureWeaponStates_;
     std::unordered_map<uint64_t, std::vector<uint32_t>> creatureWeaponAttachments_;
+    std::unordered_set<uint64_t> creatureRangedDrawn_;
     std::unordered_set<uint64_t> creatureWeaponsAttached_;
     std::unordered_map<uint64_t, uint8_t> creatureWeaponAttachAttempts_;
     std::unordered_map<uint32_t, bool> modelIdIsWolfLike_;

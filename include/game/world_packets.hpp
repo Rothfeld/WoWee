@@ -2391,6 +2391,10 @@ struct SpellGoData {
     uint64_t targetGuid = 0;  ///< Primary target GUID from SpellCastTargets (0 = none/AoE)
     /// SpellCastTargets destination (TARGET_FLAG_DEST_LOCATION), server coordinates.
     std::optional<glm::vec3> destination;
+    /// CAST_FLAG_AMMO (0x20) projectile: ItemDisplayInfo of the missile and its
+    /// inventory type (24 ammo, 25 thrown); 0 when the flag is absent.
+    uint32_t ammoDisplayId = 0;
+    uint32_t ammoInventoryType = 0;
 
     [[nodiscard]] bool isValid() const { return spellId != 0; }
 };

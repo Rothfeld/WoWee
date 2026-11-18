@@ -381,6 +381,7 @@ private:
         uint32_t gestureHoldAnimation = 0;
         // Playing animation whose WeaponFlags sheathe (0x04 / 0x10), 0 if none.
         uint32_t poseSheathAnimation = 0;
+        uint32_t poseSheathFlags = 0;  // AnimationData WeaponFlags of poseSheathAnimation
         uint8_t sheathState = 1;
         // The unit's stand state puts its weapons away (sit, sleep, kneel,
         // chairs): the AnimationData.WeaponFlags of its pose, see setStandState.

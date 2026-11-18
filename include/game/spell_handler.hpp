@@ -485,6 +485,10 @@ private:
     // Play the impact visual effect at the target's position.
     void triggerImpactVisual(uint32_t spellId, uint64_t targetGuid);
     void launchRangedWeaponProjectile(uint32_t spellId, uint64_t targetGuid);
+    /// Another unit's SMSG_SPELL_GO with CAST_FLAG_AMMO: the packet's ammo
+    /// display flies from the caster's right hand to each target at the
+    /// spell's Speed.
+    void launchAmmoProjectile(const SpellGoData& data);
     void refreshRestorationFromPlayerAuras();
     void stopRestorationPresentation();
 

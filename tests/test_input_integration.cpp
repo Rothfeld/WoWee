@@ -1964,6 +1964,25 @@ TEST_CASE("A creature swing holds its melee stance without SMSG_ATTACKSTART", "[
     CHECK(offHands == std::vector<bool>{false, true});
 }
 
+TEST_CASE("TBC spell go carries a creature's ammo display", "[remote-combat]") {
+    // CMaNGOS Spell::SendSpellGo/WriteAmmoToPacket: CAST_FLAG_AMMO (0x20)
+    // appends the ammo display (5996 arrow for a creature's crossbow) and its
+    // inventory type (24) after the cast targets.
+    auto parsers = wowee::game::createPacketParsers("tbc");
+    wowee::network::Packet go(0);
+    go.writePackedGuid(3); go.writePackedGuid(3);
+    go.writeUInt32(29575); go.writeUInt16(0x120); go.writeUInt32(1000);
+    go.writeUInt8(1); go.writeUInt64(4); go.writeUInt8(0);
+    go.writeUInt32(0x2); go.writePackedGuid(4);  // TARGET_FLAG_UNIT
+    go.writeUInt32(5996); go.writeUInt32(24);
+    wowee::game::SpellGoData data;
+    REQUIRE(parsers->parseSpellGo(go, data));
+    CHECK(data.spellId == 29575);
+    CHECK(data.hitTargets == std::vector<uint64_t>{4});
+    CHECK(data.ammoDisplayId == 5996);
+    CHECK(data.ammoInventoryType == 24);
+}
+
 TEST_CASE("Attack start preserves both participants movement facing", "[remote-facing]") {
     replay::Session session("tbc");
     auto& handler = session.handler();

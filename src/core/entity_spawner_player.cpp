@@ -1030,6 +1030,53 @@ EntitySpawner::MeleeWeaponAnimations EntitySpawner::meleeWeaponAnimations(const 
     return {A::READY_2H, A::ATTACK_2H};
 }
 
+std::optional<EntitySpawner::RangedWeaponAnimations>
+EntitySpawner::rangedWeaponAnimations(const game::Unit& unit) const {
+    const uint16_t slots = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+    const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
+    assert(slots != 0xFFFF);
+    constexpr uint16_t kRangedSlot = 2;
+    if (unit.getField(slots + kRangedSlot) == 0) return std::nullopt;
+    uint32_t itemClass = 0, subClass = 0;
+    if (info != 0xFFFF) {
+        // Pre-Wrath: first word byte 0 class, byte 1 subclass (Creature::SetVirtualItem).
+        itemClass = unit.getField(info + kRangedSlot * 2) & 0xFF;
+        subClass = (unit.getField(info + kRangedSlot * 2) >> 8) & 0xFF;
+    } else if (auto itemDbc = assetManager_->loadDBC("Item.dbc")) {
+        const int32_t record = itemDbc->findRecordById(unit.getField(slots + kRangedSlot));
+        if (record < 0) return std::nullopt;
+        itemClass = itemDbc->getUInt32(record, 1);
+        subClass = itemDbc->getUInt32(record, 2);
+    }
+    if (itemClass != game::ITEM_CLASS_WEAPON) return std::nullopt;
+    namespace A = rendering::anim;
+    // Build 8606, Spectral Sentry (Monster - Crossbow, subclass 18) casting
+    // Shoot (29575, 500 ms, no SpellVisual): the crossbow comes level to the
+    // shoulder at SMSG_SPELL_START and stays there through the cast (HoldRifle
+    // 110; ReadyRifle 48 holds it at the waist), kicks up at SMSG_SPELL_GO and
+    // is lowered a second later (AttackRifle 49, 1000 ms)
+    // (_experiments/20261118T091949Z.creature_swing_anim, fix110). Guns share
+    // the rifle pair; bows take their own (HoldBow 109, AttackBow 46) - neither
+    // observed yet.
+    switch (subClass) {
+        case game::WEAPON_SUBCLASS_CROSSBOW:
+        case game::WEAPON_SUBCLASS_GUN: return RangedWeaponAnimations{A::HOLD_RIFLE, A::ATTACK_RIFLE};
+        case game::WEAPON_SUBCLASS_BOW: return RangedWeaponAnimations{A::HOLD_BOW, A::ATTACK_BOW};
+        default: return std::nullopt;
+    }
+}
+
+void EntitySpawner::setCreatureRangedDrawn(uint64_t guid, bool drawn) {
+    if (drawn == (creatureRangedDrawn_.count(guid) > 0)) return;
+    if (drawn) creatureRangedDrawn_.insert(guid);
+    else creatureRangedDrawn_.erase(guid);
+    const uint32_t instanceId = getCreatureInstanceId(guid);
+    const auto entity = gameHandler_->getEntityManager().getEntity(guid);
+    if (instanceId == 0 || !entity) return;
+    renderer_->getCharacterRenderer()->setSheathState(instanceId,
+        drawn ? 2 : entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
+}
+
 uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
     return meleeWeaponAnimations(unit).ready;
 }
