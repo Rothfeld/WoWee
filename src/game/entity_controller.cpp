@@ -1179,6 +1179,17 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                     owner_.stopAutoAttack();
                 }
                 if (owner_.getCombatHandler()) owner_.getCombatHandler()->removeHostileAttacker(block.guid);
+                // The target dying drops it. Native 2.4.3 (pair 8): a targeted
+                // Vhel'kur killed with .die - lootable or not - and a targeted
+                // player killed the same way both leave the target frame at
+                // once; a corpse can still be selected afterwards, and shows
+                // "Dead". Only the moment of death clears it, so health
+                // arriving at 0 in a create block (a corpse coming into view)
+                // does not pass through here.
+                if (oldHealth > 0 && block.guid == owner_.getTargetGuid() &&
+                    block.guid != owner_.getPlayerGuid()) {
+                    owner_.clearTarget();
+                }
                 if (block.guid == owner_.getPlayerGuid()) {
                     markPlayerDead("health=0");
                     owner_.stopAutoAttack();
