@@ -2645,9 +2645,9 @@ static std::string auraDispelName(game::GameHandler* gh, uint32_t spellId) {
 /// (SetPlayerBuff) and the target/party/pet frames (SetUnitBuff/Debuff):
 /// the name in gold with the dispel category at its right in the same gold,
 /// the spell's Tooltip text in white, then the time left in gold from
-/// SPELL_TIME_REMAINING_*. Buffs and debuffs are drawn alike; stacks are not
-/// mentioned (Sunder Armor at three stacks shows none). A permanent aura has
-/// no time line.
+/// SPELL_TIME_REMAINING_*. Buffs and debuffs are drawn alike; stacks get no
+/// line of their own but scale the description (Sunder Armor at three stacks:
+/// "Armor decreased by 1560", 3 x 520). A permanent aura has no time line.
 static void fillAuraTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
                             const game::AuraSlot& aura) {
     w->isTooltip = true;
@@ -2676,7 +2676,8 @@ static void fillAuraTooltip(lua_State* L, wowee::ui::Widget* w, game::GameHandle
         const auto field = layout->tryField("Tooltip");
         if (row >= 0 && field < dbc->getFieldCount()) {
             const auto description = dbc->getString(row, field);
-            if (!description.empty()) addLine(gh->formatSpellDescription(aura.spellId, description), false, true);
+            if (!description.empty()) addLine(gh->formatSpellDescription(aura.spellId, description,
+                                                                   std::max<uint32_t>(aura.charges, 1)), false, true);
         }
     }
     if (aura.durationMs > 0) {

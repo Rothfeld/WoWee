@@ -4129,9 +4129,11 @@ const SpellDescriptionRecord* GameHandler::spellDescriptionRecord(uint32_t spell
 }
 
 std::string GameHandler::formatSpellDescription(uint32_t selfSpellId,
-                                                const std::string& raw) const {
+                                                const std::string& raw,
+                                                uint32_t auraStacks) const {
     if (raw.empty()) return raw;
     SpellDescriptionEnvironment env;
+    env.auraStacks = auraStacks;
     env.spell = [this](uint32_t id) { return spellDescriptionRecord(id); };
     env.casterLevel = getPlayerLevel();
     env.knowsSpell = [this](uint32_t id) { return isSpellKnownToClient(id); };

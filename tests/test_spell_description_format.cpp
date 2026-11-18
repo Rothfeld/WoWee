@@ -142,3 +142,15 @@ TEST_CASE("Durations use the largest whole unit", "[spell-description]") {
     CHECK(formatSpellDescriptionDuration(3600000) == "1 hour");
     CHECK(formatSpellDescriptionDuration(1500) == "1.5 sec");
 }
+
+TEST_CASE("An aura tooltip states its stacked amount", "[spell-description]") {
+    // Native pair 8: Sunder Armor 25225 ($s1 = 520) at three stacks reads
+    // "Armor decreased by 1560." (_experiments/20261118T0807.aura_tooltip_dispel).
+    Fixture f;
+    f.spells[25225] = effect(-521);
+    CHECK(formatSpellDescriptionText(25225, "Armor decreased by $s1.", f.env) ==
+          "Armor decreased by 520.");
+    f.env.auraStacks = 3;
+    CHECK(formatSpellDescriptionText(25225, "Armor decreased by $s1.", f.env) ==
+          "Armor decreased by 1560.");
+}

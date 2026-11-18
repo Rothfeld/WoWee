@@ -84,6 +84,10 @@ struct SpellDescriptionEnvironment {
     std::function<bool(uint32_t)> knowsSpell;
     /// Caster level for EffectRealPointsPerLevel.
     uint32_t casterLevel = 0;
+    /// Applications of the aura being described: an aura tooltip states the
+    /// stacked amount. Native Sunder Armor 25225 at three stacks reads "Armor
+    /// decreased by 1560" for $s1 = 520. Applies to the spell's own $s only.
+    uint32_t auraStacks = 1;
     bool female = false;
     std::string homeName;
     /// Each token left unresolved, with its text.

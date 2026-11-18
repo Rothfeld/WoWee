@@ -3481,7 +3481,8 @@ public:
     /// spell_description_format.hpp). `selfSpellId` supplies the spell for
     /// tokens without an id, like $s1. Unresolved tokens stay as written and
     /// are logged.
-    std::string formatSpellDescription(uint32_t selfSpellId, const std::string& raw) const;
+    std::string formatSpellDescription(uint32_t selfSpellId, const std::string& raw,
+                                       uint32_t auraStacks = 1) const;
     /// The Spell.dbc columns description tokens read, cached per spell; null
     /// when the spell or the layout columns are missing.
     const SpellDescriptionRecord* spellDescriptionRecord(uint32_t spellId) const;

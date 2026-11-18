@@ -535,6 +535,9 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
 
     const uint16_t ufAuras     = fieldIndex(UF::UNIT_FIELD_AURAS);
     const uint16_t ufAuraFlags = fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
+    // One byte per slot, the stack count minus one (CMaNGOS
+    // SpellAuraHolder::UpdateAuraApplication). Absent is zero: one stack.
+    const uint16_t ufAuraApps  = fieldIndex(UF::UNIT_FIELD_AURAAPPLICATIONS);
     if (ufAuras == 0xFFFF) return;
 
     const int positiveSlots = isActiveExpansion("tbc") ? 40 : 32;
@@ -566,6 +569,11 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
                     aFlag = static_cast<uint8_t>((fit->second >> ((slot % 4) * 8)) & 0xFF);
             }
             a.flags = (aFlag & ~0x80u) | (slot >= positiveSlots ? 0x80u : 0u);
+            if (ufAuraApps != 0xFFFF) {
+                auto ait = allFields.find(static_cast<uint16_t>(ufAuraApps + slot / 4));
+                const uint32_t packed = ait != allFields.end() ? ait->second : 0u;
+                a.charges = static_cast<uint8_t>(((packed >> ((slot % 4) * 8)) & 0xFF) + 1);
+            }
             a.durationMs = -1;
             a.maxDurationMs = -1;
             if (static_cast<size_t>(slot) < previousAuras.size() &&

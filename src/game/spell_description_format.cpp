@@ -90,7 +90,8 @@ bool Formatter::letterValue(uint32_t id, char code, int index, bool signedValue,
     switch (code) {
         case 's': case 'S': {
             const EffectRange e = effectRange(*r, index, env_.casterLevel);
-            double lo = magnitude(e.min), hi = magnitude(e.max);
+            const double stacks = id == self_ ? env_.auraStacks : 1.0;
+            double lo = magnitude(e.min) * stacks, hi = magnitude(e.max) * stacks;
             if (lo > hi) std::swap(lo, hi);
             out = maximum ? hi : lo;
             if (textOut) {
