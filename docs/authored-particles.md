@@ -80,7 +80,11 @@ tail the acid breath drew thin hard-edged lines instead of drops.
 Spline emitters (type 3, 120 TBC emitters): pre-264 `+0x1D4` count,
 `+0x1D8` offset of cubic Bezier points (knot, handle, handle, knot; always
 3k + 1, 4 to 37), equal parameter per segment, added to the emitter position.
-A birth stands at the path parameter given by the area width track now.
+Width held at one value: a birth takes a path parameter uniformly between the
+length and width tracks. Shadowmoon_Rune2.m2 (length 0, width 1; the Witch's
+Sanctum floor ring in Sunwell, Ground Rune 183036) draws its #0 streaks as a
+fence all round the ring in the original; standing at the path end they made
+one purple column. Width animated: a birth stands at its current value.
 FlameCircle.m2 (display 410: "Molten Core Circle" traps 178187-178193, linked
 trap of each Molten Core rune button) is four quarter circles of radius 2.78
 whose width runs 0 -> 1 over each 1 s Stand. Native top-down 30 fps capture
@@ -88,9 +92,9 @@ shows a flame front running round the ring once a second, the brightest arc
 about 0.6 s behind it (alpha peak at 0.6 of the 1 s life), in the direction
 of increasing path parameter. Births spread uniformly between the length and
 width tracks keep the ring brightest at its start instead; that was rejected.
-Unobserved: what the length track does (0 in FlameCircle; SummonPet windows
-key it about 0.1-0.17 behind the width), and whether the 101 emitters with
-constant length 0 / width 1 really emit at their path end. Velocity stays the
+Unobserved: emitters whose observations would separate this from a flag rule
+(animated width with flag 0x8: ArcaneSpirit/BurningSpirit_Impact, SummonPet;
+held width without 0x8: ValentineFirework). Velocity stays the
 emitter's vertical cone; native FlameCircle flames rise straight up.
 Wrath (264+) spline offsets are not read.
 

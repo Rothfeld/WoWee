@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <functional>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -108,14 +109,30 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
                     : magnitude > 0 ? offset / magnitude : glm::vec3(0)};
 }
 
+/// Whether a float track takes more than one value in this sequence.
+inline bool particleTrackVaries(const pipeline::M2AnimationTrack& track, int sequence) {
+    if (track.sequences.empty()) return false;
+    const size_t index = track.globalSequence >= 0 ? 0u : static_cast<size_t>(sequence);
+    if (index >= track.sequences.size()) return false;
+    const auto& values = track.sequences[index].floatValues;
+    return std::adjacent_find(values.begin(), values.end(), std::not_equal_to<>()) != values.end();
+}
+
+/// Path parameter of a spline birth, from the area length / width tracks.
+/// Width held at one value: births spread uniformly between length and
+/// width. Shadowmoon_Rune2 (constant 0 / 1; Witch's Sanctum, Ground Rune
+/// 183036) draws its #0 streaks as a fence all round its ring in the
+/// original; at the path end they stood in one purple column.
+/// Width animated: births stand at its current value. FlameCircle.m2 (0 -> 1
+/// over each 1 s Stand, length 0) is a flame front running round the Molten
+/// Core rune once a second; spread over [0, width] the ring stayed brightest
+/// at its start, which the original does not show.
+inline float splineBirthParameter(float length, float width, bool widthVaries, float random01) {
+    return widthVaries ? width : glm::mix(length, width, random01);
+}
+
 /// A point on a spline emitter's path at `t` in [0, 1], equal parameter per
-/// cubic Bezier segment (knot, handle, handle, knot; 3k + 1 points). A birth
-/// stands at the area width track's current value. FlameCircle.m2 runs it
-/// 0 -> 1 over each 1 s Stand: in the original client the Molten Core rune
-/// ring is a flame front running round once a second, its brightest arc
-/// about 0.6 s behind the front (alpha peaks at 0.6 of the 1 s life). Births
-/// spread uniformly between the length and width tracks instead kept the
-/// ring brightest at its start. What the length track does is unobserved.
+/// cubic Bezier segment (knot, handle, handle, knot; 3k + 1 points).
 inline glm::vec3 splineEmissionPoint(const std::vector<glm::vec3>& points, float t) {
     assert(points.size() >= 4 && (points.size() - 1) % 3 == 0);
     assert(t >= 0.0f && t <= 1.0f);

@@ -457,3 +457,16 @@ TEST_CASE("Spline emitters read Bezier points and place births along them", "[m2
     put32(emitterOffset + 0x1d4, 2);
     CHECK_FALSE(wowee::pipeline::M2Loader::load(bytes).isValid());
 }
+
+TEST_CASE("Spline births spread over a held width and follow an animated one", "[m2][particle]") {
+    using namespace wowee::rendering;
+    wowee::pipeline::M2AnimationTrack held, swept;
+    held.sequences.resize(1); held.sequences[0].floatValues = {1.0f};
+    swept.sequences.resize(1); swept.sequences[0].floatValues = {0.0f, 1.0f};
+    // Shadowmoon_Rune2 #0 (length 0, width 1 held): a fence round the ring.
+    CHECK_FALSE(particleTrackVaries(held, 0));
+    CHECK(splineBirthParameter(0.0f, 1.0f, false, 0.25f) == Catch::Approx(0.25f));
+    // FlameCircle (width 0 -> 1 over Stand): the front at the width.
+    CHECK(particleTrackVaries(swept, 0));
+    CHECK(splineBirthParameter(0.0f, 0.4f, true, 0.9f) == Catch::Approx(0.4f));
+}
