@@ -3066,16 +3066,25 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             if (distSq > renderRadiusSq) continue;
 
             // Compute per-instance bounding radius from model data when available.
+            // The rendered-vertex box and radius from the M2 header, the
+            // sphere centred on the box centre (turned with the unit), not on
+            // its feet: DragonNefarian.m2's box centre sits 13.6 yd up and 5 yd
+            // back, so a feet-centred sphere culled his corpse (scale 2) while
+            // a wing filled the screen beside the camera.
             float cullRadius = kDefaultCharacterCullRadius;
+            glm::vec3 cullCentre = instance.position;
             auto mIt = models.find(instance.modelId);
-            if (mIt != models.end()) {
-                float modelR = mIt->second.data.boundRadius;
-                if (modelR > 0.01f)
-                    cullRadius = std::max(kDefaultCharacterCullRadius, modelR * std::max(0.001f, instance.scale));
+            if (mIt != models.end() && mIt->second.data.vertexRadius > 0.01f) {
+                const auto& data = mIt->second.data;
+                const float scale = std::max(0.001f, instance.scale);
+                const glm::vec3 local = (data.vertexBoxMin + data.vertexBoxMax) * 0.5f * scale;
+                const float c = std::cos(instance.rotation.z), sn = std::sin(instance.rotation.z);
+                cullCentre += glm::vec3(local.x * c - local.y * sn, local.x * sn + local.y * c, local.z);
+                cullRadius = std::max(kDefaultCharacterCullRadius, data.vertexRadius * scale);
             }
 
             // Frustum cull: skip if outside view frustum
-            if (!frustum.intersectsSphere(instance.position, cullRadius)) continue;
+            if (!frustum.intersectsSphere(cullCentre, cullRadius)) continue;
         }
 
         if (!instance.cachedModel) continue;
