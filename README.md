@@ -941,6 +941,14 @@ or `ShuffleRight` once, then return to idle; repeated gossip does not restart
 the shuffle. Combat, locomotion, and server emotes keep their animation.
 While an NPC service or quest panel is open, its stationary living NPC turns
 toward the local player. Closing the panel returns it to the server heading.
+Only an NPC in stand state 0 (UNIT_FIELD_BYTES_1 byte 0) without
+UNIT_FLAG_STUNNED (0x40000) turns. Native 2.4.3 kept the heading of Marshal
+Dughan (240) sitting, in chair states, sleeping, dead, kneeling, submerged and
+stunned, and turned him while pacified, in combat, confused, fleeing, possessed,
+rooted or with an emote state. Vaelastrasz the Corrupt (13020) lies in stand
+state 7 when first talked to and does not turn; standing, the same dragon
+model turns. Measurements: `_experiments/20261118T075345Z.npc_interaction_turn`
+in the workspace.
 Facing settles over 50 ms, matching native frame captures. The foot shuffle
 finishes at its authored duration (500 ms for DwarfMale). Repeated clicks do not
 restart either interval.

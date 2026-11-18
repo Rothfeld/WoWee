@@ -1,11 +1,23 @@
 #pragma once
 
 #include "core/coordinates.hpp"
+#include "game/protocol_constants.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 
 namespace wowee::core {
+
+// Native 2.4.3 turns a conversation partner toward the player only while its
+// stand state (UNIT_FIELD_BYTES_1 byte 0) is 0 (standing) and it is not
+// UNIT_FLAG_STUNNED. Measured: stand states 1-9 (sit, chairs, sleep, dead,
+// kneel, submerged) and the stun flag keep the server heading; emote state,
+// pacified, combat, confused, fleeing, possessed, control-lost, root aura,
+// unit flags 0x8040 and a dragon model still turn. Vaelastrasz (13020) lies
+// in stand state 7 until his speech, so he does not turn.
+inline bool npcTurnsToConversationPartner(uint8_t standState, uint32_t unitFlags) {
+    return standState == 0 && (unitFlags & game::UNIT_FLAG_STUNNED) == 0;
+}
 
 // Native conversation turns settle in about 50 ms. The interval belongs to
 // the heading change, not to each frame or repeated gossip response.

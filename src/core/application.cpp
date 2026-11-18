@@ -3746,13 +3746,17 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             entitySpawner_->updateRemoteUnitState(guid, instanceId,
                 entity->isActivelyMoving(), creatureMount != nullptr);
 
-            // Native turns the local conversation partner toward this player.
+            // Native turns the local conversation partner toward this player
+            // unless it is not standing or is stunned.
             // This is presentation only: other clients and patrol splines retain
             // the authoritative heading. Closing the panel turns it back.
             std::optional<float> interactionYaw;
             const auto* unit = static_cast<const game::Unit*>(entity.get());
+            const auto standState = static_cast<uint8_t>(
+                entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
             if (guid == interactionGuid && havePlayerPos && unit->getHealth() > 0 &&
-                !entity->isActivelyMoving()) {
+                !entity->isActivelyMoving() &&
+                npcTurnsToConversationPartner(standState, unit->getUnitFlags())) {
                 const glm::vec2 delta(playerPos.x - canonical.x, playerPos.y - canonical.y);
                 if (glm::dot(delta, delta) > 0.0001f)
                     interactionYaw = std::atan2(-delta.y, delta.x);

@@ -1380,6 +1380,18 @@ TEST_CASE("Conversation shuffle starts only on directional heading changes", "[n
     CHECK(facing.turnDirection == 0); // tiny facing corrections need no step
 }
 
+TEST_CASE("Only standing, unstunned conversation partners turn", "[npc-facing]") {
+    using wowee::core::npcTurnsToConversationPartner;
+    // Native 2.4.3 on GM Island: Marshal Dughan (240) and Vaelastrasz (13020).
+    CHECK(npcTurnsToConversationPartner(0, 0x1200));
+    CHECK(npcTurnsToConversationPartner(0, 0x8040)); // Vaelastrasz unit flags
+    for (uint8_t state = 1; state <= 9; ++state)
+        CHECK_FALSE(npcTurnsToConversationPartner(state, 0x8040)); // sit/chairs/sleep/dead/kneel/submerged
+    CHECK_FALSE(npcTurnsToConversationPartner(0, 0x00040000 | 0x1200)); // stunned
+    CHECK(npcTurnsToConversationPartner(0, 0x00020000 | 0x00080000 | 0x00400000 | 0x00800000 |
+                                           0x01000000 | 0x00000004 | 0x1200)); // pacified, combat, confused, fleeing, possessed, control lost
+}
+
 TEST_CASE_METHOD(Integration, "WMO building names and room names have distinct zone APIs", "[zone-text]") {
     std::string building = "Anvilmar";
     std::string room;
