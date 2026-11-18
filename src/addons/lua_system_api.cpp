@@ -4909,7 +4909,7 @@ static int lua_RunMacro(lua_State* L) {
     if (!svc || !svc->runMacroText || !gh) return 0;
     uint32_t macroId = 0;
     if (lua_isnumber(L, 1)) {
-        macroId = static_cast<uint32_t>(lua_tonumber(L, 1));
+        macroId = gh->macroIdForIndex(static_cast<uint32_t>(lua_tonumber(L, 1)));
     } else if (const char* name = lua_tostring(L, 1)) {
         // By name, which is how a macro written into another macro names it.
         for (uint32_t id : gh->getMacroIds()) {

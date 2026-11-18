@@ -1327,6 +1327,59 @@ void GameHandler::setMacroMeta(uint32_t macroId, const std::string& name,
     saveCharacterConfig();
 }
 
+uint32_t GameHandler::macroAccountSlots() const { return isActiveExpansion("tbc") ? 18u : 36u; }
+
+namespace {
+// One half, in the order the interface lists it: by name, then id.
+std::vector<uint32_t> macroHalf(const std::unordered_map<uint32_t, std::string>& texts,
+                                const GameHandler& gh, bool character) {
+    std::vector<uint32_t> ids;
+    for (const auto& [id, text] : texts) {
+        (void)text;
+        if (((id & GameHandler::kCharacterMacroFlag) != 0) == character) ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end(), [&](uint32_t a, uint32_t b) {
+        const auto& na = gh.getMacroName(a);
+        const auto& nb = gh.getMacroName(b);
+        return na != nb ? na < nb : a < b;
+    });
+    return ids;
+}
+}  // namespace
+
+uint32_t GameHandler::macroIdForIndex(uint32_t index) const {
+    if (index == 0) return 0;
+    const uint32_t accountSlots = macroAccountSlots();
+    const bool character = index > accountSlots;
+    const uint32_t place = character ? index - accountSlots : index;
+    const auto half = macroHalf(macros_, *this, character);
+    return place <= half.size() ? half[place - 1] : 0;
+}
+
+uint32_t GameHandler::macroIndexForId(uint32_t macroId) const {
+    const bool character = (macroId & kCharacterMacroFlag) != 0;
+    const auto half = macroHalf(macros_, *this, character);
+    const auto it = std::find(half.begin(), half.end(), macroId);
+    if (it == half.end()) return 0;
+    return static_cast<uint32_t>(it - half.begin()) + 1 + (character ? macroAccountSlots() : 0u);
+}
+
+uint32_t GameHandler::createMacro(bool character, const std::string& name, const std::string& icon,
+                                  const std::string& body) {
+    const auto half = macroHalf(macros_, *this, character);
+    if (half.size() >= (character ? macroCharacterSlots() : macroAccountSlots())) return 0;
+    // The next number in the half: native 2.4.3 numbered APa..MZ 5..17 in
+    // the order they were made and kept 5 for APa after it was renamed.
+    uint32_t next = 1;
+    for (const uint32_t id : half) next = std::max(next, (id & 0x00FFFFFFu) + 1);
+    const uint32_t id = (character ? kCharacterMacroFlag : 0u) | next;
+    macros_[id] = body;
+    if (!name.empty()) macroNames_[id] = name;
+    if (!icon.empty()) macroIcons_[id] = icon;
+    saveCharacterConfig();
+    return id;
+}
+
 std::vector<uint32_t> GameHandler::getMacroIds() const {
     std::vector<uint32_t> ids;
     ids.reserve(macros_.size());
@@ -1565,10 +1618,36 @@ void GameHandler::loadCharacterConfig() {
         }
     }
 
+    // Configs written before macros had identities keyed them by index:
+    // 1..accountSlots the account half, above that the character half (19-36
+    // on TBC, 37-54 when written by the 3.3.5 rules). Those become character
+    // macros with the same number; legacyMacroIds_ maps buttons that still
+    // name the old index.
+    legacyMacroIds_.clear();
+    {
+        std::vector<uint32_t> legacy;
+        for (const auto& [id, text] : macros_) {
+            (void)text;
+            if (!(id & kCharacterMacroFlag) && id > macroAccountSlots()) legacy.push_back(id);
+        }
+        for (const uint32_t old : legacy) {
+            const uint32_t id = kCharacterMacroFlag | old;
+            macros_[id] = std::move(macros_[old]);
+            macros_.erase(old);
+            if (auto it = macroNames_.find(old); it != macroNames_.end()) { macroNames_[id] = it->second; macroNames_.erase(it); }
+            if (auto it = macroIcons_.find(old); it != macroIcons_.end()) { macroIcons_[id] = it->second; macroIcons_.erase(it); }
+            legacyMacroIds_[old] = id;
+            LOG_INFO("Macro ", old, " (", getMacroName(id), ") is character macro 0x", std::hex, id, std::dec);
+        }
+    }
+
     if (hasSlots) {
         for (int i = 0; i < ACTION_BAR_SLOTS; i++) {
             actionBar[i].type = static_cast<ActionBarSlot::Type>(types[i]);
             actionBar[i].id = ids[i];
+            if (actionBar[i].type == ActionBarSlot::MACRO)
+                if (const auto it = legacyMacroIds_.find(ids[i]); it != legacyMacroIds_.end())
+                    actionBar[i].id = it->second;
         }
         LOG_INFO("Character config loaded from ", path);
     }

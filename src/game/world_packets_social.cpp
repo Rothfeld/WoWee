@@ -655,7 +655,7 @@ network::Packet SetActionButtonPacket::build(uint8_t button, uint8_t type, uint3
         // Map ActionBarSlot::Type (0=EMPTY,1=SPELL,2=ITEM,3=MACRO) → classic type byte
         uint8_t classicType = 0; // 0 = spell
         if (type == 2 /* ITEM */)  classicType = 1;
-        if (type == 3 /* MACRO */) classicType = 64;
+        if (type == 3 /* MACRO */) classicType = (id & 0x01000000u) ? 65 : 64;
         packet.writeUInt16(static_cast<uint16_t>(id));
         packet.writeUInt8(classicType);
         packet.writeUInt8(0); // misc
@@ -665,7 +665,8 @@ network::Packet SetActionButtonPacket::build(uint8_t button, uint8_t type, uint3
         // TBC/WotLK: type in bits 24–31, id in bits 0–23; packed=0 clears slot
         uint8_t packedType = 0x00; // spell
         if (type == 2 /* ITEM */)  packedType = 0x80;
-        if (type == 3 /* MACRO */) packedType = 0x40;
+        // A character macro (id 0x01000000 | n) is type 0x41, action n.
+        if (type == 3 /* MACRO */) packedType = (id & 0x01000000u) ? 0x41 : 0x40;
         uint32_t packed = (id == 0) ? 0 : (static_cast<uint32_t>(packedType) << 24) | (id & 0x00FFFFFF);
         packet.writeUInt32(packed);
         LOG_DEBUG("Built CMSG_SET_ACTION_BUTTON (TBC/WotLK): button=", static_cast<int>(button),

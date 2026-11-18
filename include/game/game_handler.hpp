@@ -1324,6 +1324,24 @@ public:
     /// icon, nil, nil, perCharacter) - and writes the body later.
     void setMacroText(uint32_t macroId, const std::string& text);
     bool hasMacro(uint32_t macroId) const { return macros_.count(macroId) != 0; }
+
+    /// A macro's id is its identity, kept across renames: account macros
+    /// 1, 2, ...; character macros 0x01000000 | n, as 2.4.3 writes them in
+    /// macros-cache.txt (MACRO 16777221 "ZZa") and the server stores them
+    /// (character_action type 0x41, action n). The interface's index is the
+    /// macro's place in its half sorted by name: account 1..macroAccountSlots(),
+    /// character after that. Native 2.4.3: renaming APa (index 19) to ZZa
+    /// moved it to index 35, and the button holding it still shows ZZa.
+    static constexpr uint32_t kCharacterMacroFlag = 0x01000000u;
+    /// 18 per half on 2.4.3 (MAX_MACROS), 36 account on 3.3.5.
+    uint32_t macroAccountSlots() const;
+    uint32_t macroCharacterSlots() const { return 18u; }
+    uint32_t macroIdForIndex(uint32_t index) const;
+    /// 0 when no such macro.
+    uint32_t macroIndexForId(uint32_t macroId) const;
+    /// A new macro in the account or character half; 0 when the half is full.
+    uint32_t createMacro(bool character, const std::string& name, const std::string& icon,
+                         const std::string& body);
     /// Removes the macro's text, name and icon.
     void deleteMacro(uint32_t macroId);
     /// A macro's name and icon, which the text alone never carried. Stored
@@ -4725,6 +4743,15 @@ private:
     std::unordered_map<uint32_t, std::string> macros_;  // client-side macro text (persisted in char config)
     std::unordered_map<uint32_t, std::string> macroNames_;
     std::unordered_map<uint32_t, std::string> macroIcons_;
+    /// Old index-keyed macro id -> its character macro id, from loading a
+    /// config written before macro identities; see loadCharacterConfig.
+    std::unordered_map<uint32_t, uint32_t> legacyMacroIds_;
+public:
+    uint32_t legacyMacroId(uint32_t old) const {
+        const auto it = legacyMacroIds_.find(old);
+        return it == legacyMacroIds_.end() ? 0u : it->second;
+    }
+private:
     std::vector<AuraSlot> playerAuras;
     std::vector<AuraSlot> targetAuras;
     std::unordered_map<uint64_t, std::vector<AuraSlot>> unitAurasCache_; // per-unit aura cache

@@ -1359,8 +1359,9 @@ void GameHandler::registerCoreOpcodes() {
             /*uint8_t mode =*/ packet.readUInt8();
             rem--;
         }
+        std::vector<int> resendMacroButtons;
         for (int i = 0; i < serverBarSlots; ++i) {
-            if (rem < 4) return;
+            if (rem < 4) break;
             uint32_t packed = packet.readUInt32();
             rem -= 4;
             if (i >= ACTION_BAR_SLOTS) continue;
@@ -1384,11 +1385,22 @@ void GameHandler::registerCoreOpcodes() {
                 case 0x00: slot.type = ActionBarSlot::SPELL; slot.id = id; break;
                 case 0x01: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // Classic item
                 case 0x80: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // TBC/WotLK item
-                case 0x40: slot.type = ActionBarSlot::MACRO; slot.id = id; break;  // macro (all expansions)
+                // A macro by its identity: 0x40 an account macro, 0x41 a
+                // character one (native 2.4.3 stores ZZa as type 0x41,
+                // action 5). An id from before identities is mapped on.
+                case 0x40:
+                    slot.type = ActionBarSlot::MACRO;
+                    slot.id = !hasMacro(id) && legacyMacroId(id) ? legacyMacroId(id) : id;
+                    if (slot.id != id) resendMacroButtons.push_back(i);
+                    break;
+                case 0x41: slot.type = ActionBarSlot::MACRO; slot.id = kCharacterMacroFlag | id; break;
                 default:   continue;  // unknown - leave as-is
             }
             actionBar[i] = slot;
         }
+        // Store the migrated macro buttons under their identity.
+        for (const int i : resendMacroButtons)
+            setActionBarSlot(i, ActionBarSlot::MACRO, actionBar[i].id);
         // Apply any pending cooldowns from spellHandler's cooldowns to newly populated slots.
         // SMSG_SPELL_COOLDOWN often arrives before SMSG_ACTION_BUTTONS during login,
         // so the per-slot cooldownRemaining would be 0 without this sync.

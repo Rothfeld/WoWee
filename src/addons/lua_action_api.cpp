@@ -206,12 +206,6 @@ std::string macroTexture(game::GameHandler& gh, uint32_t macroId) {
     return kQuestionMark;
 }
 
-/// Macro ids: account macros 1..accountLast, character macros up to
-/// characterLast. 2.4.3 has 18 of each (Blizzard_MacroUI MAX_MACROS = 18,
-/// character macros from 19: native CreateMacro(..., 1, 1) answered 19);
-/// 3.3.5 36 and 18.
-static uint32_t macroAccountLast() { return game::isActiveExpansion("tbc") ? 18u : 36u; }
-static uint32_t macroCharacterLast() { return game::isActiveExpansion("tbc") ? 36u : 54u; }
 
 /// GetMacroIconInfo(index) as a path, empty past the end.
 static std::string macroIconByIndex(lua_State* L, int index) {
@@ -526,8 +520,11 @@ static int lua_GetActionInfo(lua_State* L) {
             lua_pushstring(L, "item");
             return 3;
         case game::ActionBarSlot::MACRO:
+            // The macro's index, its place in the sorted list now: native
+            // ZZa (renamed from APa) answered macro|35.
             lua_pushstring(L, "macro");
-            lua_pushnumber(L, action.id);
+            lua_pushnumber(L, gh->macroIndexForId(action.id));
+            if (game::isActiveExpansion("tbc")) return 2;
             lua_pushstring(L, "macro");
             return 3;
         default:
@@ -747,7 +744,7 @@ static int lua_GetCursorInfo(lua_State* L) {
             return 2;
         case CursorType::MACRO:
             lua_pushstring(L, "macro");
-            lua_pushnumber(L, s_cursorId);
+            lua_pushnumber(L, getGameHandler(L) ? getGameHandler(L)->macroIndexForId(s_cursorId) : 0);
             return 2;
         case CursorType::MONEY:
             // containerframe.lua branches on this exact string to decide that
@@ -2164,27 +2161,25 @@ void registerActionLuaAPI(lua_State* L) {
                 // missing, so GetNumMacros answered zero and the panel opened
                 // empty over a full set.
                 //
-                // WoW splits the ids: 1-36 are account-wide, 37 and up belong
-                // to the character. That split is what GetNumMacros reports and
-                // what CreateMacro's perCharacter flag chooses between.
+                // Every verb here takes an index - the macro's place in its
+                // half, sorted by name - and the client stores macros by
+                // identity; see GameHandler::macroIdForIndex.
                 {"GetNumMacros",        [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             int global = 0, perChar = 0;
             if (gh) {
-                const uint32_t accountLast = macroAccountLast();
                 for (uint32_t id : gh->getMacroIds()) {
-                    if (id <= accountLast) ++global;
-                    else if (id <= macroCharacterLast()) ++perChar;
+                    if (id & game::GameHandler::kCharacterMacroFlag) ++perChar; else ++global;
                 }
             }
             lua_pushnumber(L, global);
             lua_pushnumber(L, perChar);
             return 2;
         }},
-                // GetMacroInfo(id) → name, icon, body
+                // GetMacroInfo(index) → name, icon, body
                 {"GetMacroInfo",        [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
+            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
             if (!gh || id == 0 || !gh->hasMacro(id)) {
                 return luaReturnNil(L);
             }
@@ -2203,7 +2198,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // "#showtooltip Kick\n/say x" answers "Kick", "Rank 5".
                 {"GetMacroSpell",       [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
+            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
             if (!gh || id == 0 || !gh->hasMacro(id)) return luaReturnNil(L);
             const MacroTarget target = resolveMacroTarget(*gh, id);
             if (target.kind != MacroTarget::Kind::Spell) return luaReturnNil(L);
@@ -2215,7 +2210,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // Bandage" answers the bandage and its link.
                 {"GetMacroItem",        [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
+            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
             if (!gh || id == 0 || !gh->hasMacro(id)) return luaReturnNil(L);
             const MacroTarget target = resolveMacroTarget(*gh, id);
             const auto* info = target.kind == MacroTarget::Kind::Item ? gh->getItemInfo(target.id) : nullptr;
@@ -2223,6 +2218,19 @@ void registerActionLuaAPI(lua_State* L) {
             lua_pushstring(L, info->name.c_str());
             lua_pushstring(L, game::buildItemLink(target.id, info->quality, info->name).c_str());
             return 2;
+        }},
+                // WoweeActionInfo(slot) -> "spell"|"item"|"macro", the spell
+                // id, item id or macro index; for the client's own SetAction.
+                {"WoweeActionInfo", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const auto* shown = gh ? game::shownAction(*gh, static_cast<int>(luaL_optnumber(L, 1, 0)) - 1) : nullptr;
+            if (!shown) return 0;
+            switch (shown->type) {
+                case game::ActionBarSlot::SPELL: lua_pushstring(L, "spell"); lua_pushnumber(L, shown->id); return 2;
+                case game::ActionBarSlot::ITEM:  lua_pushstring(L, "item");  lua_pushnumber(L, shown->id); return 2;
+                case game::ActionBarSlot::MACRO: lua_pushstring(L, "macro"); lua_pushnumber(L, gh->macroIndexForId(shown->id)); return 2;
+                default: return 0;
+            }
         }},
                 // WoweeMacroActionTooltip(slot) -> "spell"|"item", id for a
                 // macro button with #showtooltip; nothing otherwise.
@@ -2246,7 +2254,7 @@ void registerActionLuaAPI(lua_State* L) {
             uint32_t found = 0;
             if (gh && name && *name) {
                 for (uint32_t id : gh->getMacroIds()) {
-                    if (id <= macroCharacterLast() && gh->getMacroName(id) == name) { found = id; break; }
+                    if (gh->getMacroName(id) == name) { found = gh->macroIndexForId(id); break; }
                 }
             }
             lua_pushnumber(L, found);
@@ -2266,25 +2274,19 @@ void registerActionLuaAPI(lua_State* L) {
             const bool perChar = lua_toboolean(L, tbc ? 5 : 4) != 0;
             std::string icon = luaL_optstring(L, 2, "");
             if (lua_isnumber(L, 2)) icon = macroIconByIndex(L, static_cast<int>(lua_tonumber(L, 2)));
-            // The first free id in the half that was asked for, 18 each;
-            // refusing past that is what stops a full list growing ids the
-            // interface will not show.
-            const uint32_t first = perChar ? macroAccountLast() + 1 : 1u;
-            const uint32_t last  = perChar ? macroCharacterLast() : macroAccountLast();
-            uint32_t id = 0;
-            for (uint32_t candidate = first; candidate <= last; ++candidate) {
-                if (!gh->hasMacro(candidate)) { id = candidate; break; }
-            }
+            // Refused once the half holds its 18 (36 account on 3.3.5).
+            const uint32_t id = gh->createMacro(perChar, name, icon, body);
             if (id == 0) return luaReturnNil(L);
-            gh->setMacroText(id, body);
-            gh->setMacroMeta(id, name, icon);
-            lua_pushnumber(L, id);
+            // The index it sorts to: native CreateMacro("MZ", ...) answered
+            // 31, between APl and UPev.
+            lua_pushnumber(L, gh->macroIndexForId(id));
             return 1;
         }},
-                // EditMacro(id, name, icon, body) → id
+                // EditMacro(index, name, icon, body) → the index it sorts to
+                // afterwards: native renaming APa (19) to ZZa answered 35.
                 {"EditMacro",           [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
+            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
             if (!gh || id == 0) return luaReturnNil(L);
             const char* name = luaL_optstring(L, 2, nullptr);
             const char* body = luaL_optstring(L, 4, nullptr);
@@ -2298,47 +2300,16 @@ void registerActionLuaAPI(lua_State* L) {
             if (body) gh->setMacroText(id, body);
             gh->setMacroMeta(id, name ? name : gh->getMacroName(id),
                                  icon ? icon : gh->getMacroIcon(id));
-            lua_pushnumber(L, id);
+            lua_pushnumber(L, gh->macroIndexForId(id));
             return 1;
         }},
-                // DeleteMacro(index) - and the rest of the half shifts down.
-                //
-                // Every macro verb here takes what WoW calls an index and what
-                // this client stores as an id, and the two are the same number
-                // only while the slots are dense. CreateMacro fills the first
-                // free slot, so they start dense; this emptied one and left a
-                // hole, and from then on the two disagreed.
-                //
-                // What that costs: with macros in slots 1, 2 and 3, deleting
-                // the second leaves 1 and 3. GetNumMacros counts two, so the
-                // macro frame asks for slots 1 and 2 - one macro, one blank
-                // row, and the macro in slot 3 invisible and unreachable.
-                //
-                // Compacting is also what WoW does. Deleting a macro there
-                // shifts the ones after it down, which is why a macro on an
-                // action bar can move when an earlier one is deleted; matching
-                // that is more faithful than keeping a hole, and it is the
-                // assumption getMacroIds already documents.
+                // DeleteMacro(index). The macros after it move up an index
+                // because indexes are places in the sorted list; buttons
+                // hold identities and keep their macros.
                 {"DeleteMacro",         [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
-            if (!gh || id == 0) return 0;
-            // Which half this slot belongs to; the two do not shift into
-            // each other.
-            const uint32_t first = (id > macroAccountLast()) ? macroAccountLast() + 1 : 1u;
-            const uint32_t last  = (id > macroAccountLast()) ? macroCharacterLast() : macroAccountLast();
-            if (id < first || id > last) return 0;
-            for (uint32_t slot = id; slot < last; ++slot) {
-                if (!gh->hasMacro(slot + 1)) {
-                    gh->deleteMacro(slot);
-                    break;
-                }
-                gh->setMacroText(slot, gh->getMacroText(slot + 1));
-                gh->setMacroMeta(slot, gh->getMacroName(slot + 1),
-                                       gh->getMacroIcon(slot + 1));
-            }
-            // The last slot in the half is never written by the loop above.
-            gh->deleteMacro(last);
+            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
+            if (id != 0) gh->deleteMacro(id);
             return 0;
         }},
                 // Saved as each change is made, so this has nothing to do.
@@ -2349,7 +2320,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // was simply never something the cursor could hold.
                 {"PickupMacro",         [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
+            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
             if (!gh || id == 0 || !gh->hasMacro(id)) return 0;
             setCursorType(L, CursorType::MACRO);
             s_cursorId = id;

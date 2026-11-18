@@ -9578,7 +9578,9 @@ void LuaEngine::registerCoreAPI() {
         "function __WoweeFrameMT:SetAction(slot)\n"
         "    self:ClearLines()\n"
         "    if not slot then return false end\n"
-        "    local actionType, id = GetActionInfo(slot)\n"
+        // WoweeActionInfo answers type and spell/item/macro id whatever
+        // GetActionInfo says (2.4.3 gives a spell's book slot there).
+        "    local actionType, id = WoweeActionInfo(slot)\n"
         "    if actionType == 'spell' and id and id > 0 then\n"
         "        self:SetSpellByID(id, true)\n"
         "        return self:NumLines() > 0\n"
