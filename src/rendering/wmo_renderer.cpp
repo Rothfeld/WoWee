@@ -2007,7 +2007,13 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     for (const auto& v : group.vertices) {
         resources.collisionVertices.push_back(v.position);
     }
-    if ((group.flags & 0x4) && pipeline::wmoUsesLocalLighting(group.flags)) {
+    // Units and game objects take the floor MOCV only in groups without
+    // their own lights (MOGP 0x200). Tempest Keep's hall01 (tk_raid group 2,
+    // 0x2a05, MOCV red 0.6-0.9/0.3-0.5/0.3-0.6) lights the original's units
+    // as outdoors: skin and Warglaive glow neutral and bright, where the MOCV
+    // made them dark red. Shattrath's Terrace of Light (0xb805) has no lights
+    // and is MOCV-lit (93d00be).
+    if ((group.flags & 0x4) && (group.flags & 0x200) == 0 && pipeline::wmoUsesLocalLighting(group.flags)) {
         resources.collisionColors.reserve(group.vertices.size());
         for (const auto& v : group.vertices) resources.collisionColors.emplace_back(v.color);
     }

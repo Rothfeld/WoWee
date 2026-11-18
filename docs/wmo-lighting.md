@@ -49,6 +49,12 @@ group 1, MOGP 0xb805) are purple there, not the green of outdoor Light 458; a
 unit beside one measures 0.9x the MOCV (178,153,231) under it. Not modelled:
 native lit sides of units reach about 1.8x MOCV, and game objects are about
 0.45x MOCV natively (WoWee about 1.3x brighter, as for interior doodads).
+Groups with their own lights (MOGP 0x200) do not light units this way: units
+there keep the outdoor light. Tempest Keep's hall01 (tk_raid group 2, 0x2a05,
+MOCV red 0.6-0.9/0.3-0.5/0.3-0.6): native skin 134/93/75, WoWee with the MOCV
+78/26/22, without 121/97/82; the Warglaive of Azzinoth's additive glow green
+214 native, 151 then 175. Two groups support the rule (this and Shattrath's
+0xb805), no more. Evidence: `../_experiments/20261118T121312Z.glaive_glow/`.
 
 Native unit light in an interior is not the floor MOCV times a gain (open; WoWee
 still uses the MOCV). Measured on Shattrath's Terrace of Light (group 1,
