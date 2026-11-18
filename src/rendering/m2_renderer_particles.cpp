@@ -906,7 +906,11 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         // which model it is. This does.
         float highestParticleZ = -std::numeric_limits<float>::max();
         float widestParticle = 0.0f;
-        const float placementScale = particlePlacementScale(inst.modelMatrix);
+        // Sprite sizes: an externally posed instance's owner says what scale
+        // its emitters are drawn at (an item visual on a weapon: its own);
+        // the rest are sized by their placement, as doodads and objects are.
+        const float placementScale = inst.externalPose ? inst.externalParticleScale
+                                                       : particlePlacementScale(inst.modelMatrix);
         // A doodad in an interior WMO group is lit by its MODD colour, and
         // particles of emitters without kParticleOwnColor take the same
         // colour: BFD_WaterFalls01 splash (flags 0x420, authored 190,218,220)

@@ -371,6 +371,8 @@ void M2Renderer::setExternalPose(uint32_t instanceId, const ExternalPose& pose) 
     inst.globalSequenceTime = pose.globalSequenceTimeMs;
     inst.fade = pose.fade;
     inst.externalClockHeld = pose.clockHeld;
+    assert(pose.particleScale > 0.0f && "ExternalPose::particleScale must be set by the owner");
+    inst.externalParticleScale = pose.particleScale;
 }
 
 void M2Renderer::updateExternalPoseEffects(float deltaTime) {

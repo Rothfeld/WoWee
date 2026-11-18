@@ -22,6 +22,7 @@
 #include "rendering/m2_billboard.hpp"
 #include <glm/gtx/string_cast.hpp>
 #include "rendering/character_emitters.hpp"
+#include "rendering/particle_emission.hpp"
 #include "rendering/unit_fade.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/visual_mesh_pick.hpp"
@@ -2830,6 +2831,16 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
         pose.fade = fade;
         pose.clockHeld = !model.sequences.empty() && characterEmitterClockHeld(
             instance.animationLoop, model.sequences[sequence].duration, instance.animationTime);
+        // An item visual (ItemVisuals.dbc model on a weapon attachment) keeps
+        // its own particle size: the weapon, the attachment bone's authored
+        // scale and the wielder's scale move its particles but do not grow
+        // them. Bonechewer Blade Fury (23235, display scale 2 x model 1.3,
+        // Axe_1H_OutlandRaid_D_06 attachment bones 1.8) wears Fear_State_Head:
+        // native wisps are the authored size, 4.68x smaller than the chain's
+        // scale made them; a player's .modify scale 2 leaves the wisps on its
+        // dagger as they were.
+        pose.particleScale = instance.isEffectModel ? instance.scale
+                                                    : particlePlacementScale(modelMatrix);
         m2Renderer.setExternalPose(companion->second.m2InstanceId, pose);
     }
 }

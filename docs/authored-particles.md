@@ -69,6 +69,15 @@ plumes into a point.
 Particle sizes are the authored lifecycle scale times placement scale, with no
 caps: GnomereganVent smoke grows 2.78 -> 4.44 -> 8.33. An all-zero lifecycle
 alpha is authored (14 TBC emitters) and draws nothing.
+An item visual (ItemVisuals.dbc model on a weapon's attachment 0-4) is the
+exception: its particles are drawn at the authored size, whatever the scale of
+the weapon, of the weapon's attachment bone (Axe_1H_OutlandRaid_D_06 1.8,
+Knife_1H_Hunting_B_02 1.39) and of the unit wielding it. That chain still
+places them. Bonechewer Blade Fury (23235: display 2 x model 1.3) carries
+Fear_State_Head on both axes; at the chain's 4.68 its purple wisps merged into
+one bright cloud every 2.6 s (its enabled track is on 3333-3600 and 3800-4100 ms),
+native draws thin separate wisps. A player's `.modify scale 2` leaves the
+wisps on its dagger unchanged in the original client.
 
 Head/tail selector: pre-264 byte `+0x2C` (0 head, 1 tail, 2 both; 12548 / 3124 /
 398 TBC emitters). `+0x2D` is zero in all 16070 TBC emitters; reading it drew

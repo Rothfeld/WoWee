@@ -390,6 +390,9 @@ struct M2Instance {
     /// corpse at the end of Death): its animation clock has stopped, so no
     /// particles are born. Those alive finish their lives.
     bool externalClockHeld = false;
+    /// Sprite size scale of an externally posed instance's particles, from
+    /// its owner (ExternalPose::particleScale); its model matrix places them.
+    float externalParticleScale = 1.0f;
 
     void recomputeCachedCullFactors();
 
@@ -500,6 +503,11 @@ public:
         float globalSequenceTimeMs = 0.0f;
         float fade = 1.0f;
         bool clockHeld = false;
+        /// Multiplies the authored particle sizes: the emitter model's own
+        /// scale. An item visual hung on a weapon is drawn at its own scale
+        /// whatever the scale of the weapon, its attachment bone or the unit
+        /// carrying it, which only place it (CharacterRenderer::syncEmitters).
+        float particleScale = 0.0f;
     };
     /// An instance of an emitter model whose pose its owner supplies.
     uint32_t createExternalPoseInstance(uint32_t modelId, const glm::mat4& modelMatrix);
