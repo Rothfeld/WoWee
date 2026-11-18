@@ -2651,11 +2651,10 @@ void SocialHandler::handleGuildInfo(network::Packet& packet) {
                          (guildInfoData_.numMembers != data.numMembers) ||
                          (guildInfoData_.numAccounts != data.numAccounts);
     guildInfoData_ = data;
-    if (changed) {
-        owner_.addSystemChatMessage("Guild: " + data.guildName + " (" +
-                             std::to_string(data.numMembers) + " members, " +
-                             std::to_string(data.numAccounts) + " accounts)");
-    }
+    // No line from here: /ginfo's answer is GuildInfoFrame's (TBC
+    // GlobalStrings GUILD_INFO_TEMPLATE is the panel's), and the old
+    // "Guild: X (N members, M accounts)" was this client's own words.
+    (void)changed;
 }
 
 void SocialHandler::handleGuildRoster(network::Packet& packet) {
@@ -2750,7 +2749,6 @@ void SocialHandler::handleGuildQueryResponse(network::Packet& packet) {
         guildRankNames_.clear();
         for (const auto& rankName : data.rankNames) guildRankNames_.push_back(rankName);
         if (wasUnknown && !guildName_.empty()) {
-            owner_.addSystemChatMessage("Guild: <" + guildName_ + ">");
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYER_GUILD_UPDATE", {});
         }
     }
@@ -2971,7 +2969,9 @@ void SocialHandler::handleGuildInvite(network::Packet& packet) {
     pendingGuildInvite_ = true;
     pendingGuildInviterName_ = data.inviterName;
     pendingGuildInviteGuildName_ = data.guildName;
-    owner_.addSystemChatMessage(data.inviterName + " has invited you to join " + data.guildName + ".");
+    // The party invitation's guild twin, ERR_INVITED_TO_GUILD_SSS, in chat
+    // beside UIParent's popup (not observed natively).
+    owner_.systemGlobal("ERR_INVITED_TO_GUILD_SSS", {data.inviterName, data.inviterName, data.guildName});
     if (owner_.addonEventCallbackRef())
         owner_.addonEventCallbackRef()("GUILD_INVITE_REQUEST", {data.inviterName, data.guildName});
 }
@@ -2985,15 +2985,17 @@ void SocialHandler::handleGuildCommandResult(network::Packet& packet) {
         // without altering anything the panels read.
         bool membershipChanged = false;
         switch (data.command) {
+            // Typecommand (CMaNGOS Guild.h): GUILD_CREATE_S 0, GUILD_INVITE_S 1,
+            // GUILD_QUIT_S 3 - each its GlobalStrings line with the name.
             case 0:
-                owner_.addSystemChatMessage("Guild created.");
+                owner_.systemGlobal("ERR_GUILD_CREATE_S", {data.name});
                 membershipChanged = true;
                 break;
             case 1:
-                if (!data.name.empty()) owner_.addSystemChatMessage("You have invited " + data.name + " to the guild.");
+                owner_.systemGlobal("ERR_GUILD_INVITE_S", {data.name});
                 break;
-            case 2:
-                owner_.addSystemChatMessage("You have left the guild.");
+            case 3:
+                owner_.systemGlobal("ERR_GUILD_QUIT_S", {data.name});
                 guildName_.clear(); guildRankNames_.clear();
                 guildRoster_ = GuildRosterData{}; hasGuildRoster_ = false;
                 membershipChanged = true;
@@ -3015,31 +3017,38 @@ void SocialHandler::handleGuildCommandResult(network::Packet& packet) {
         }
         return;
     }
-    const char* errStr = nullptr;
+    // CommandErrors (CMaNGOS Guild.h) are named for their GlobalStrings
+    // lines; the _S ones take the name the result carries.
+    const char* name = nullptr;
     switch (data.errorCode) {
-        case 2:  errStr = "You are not in a guild."; break;
-        case 4:  errStr = "No player named \"%s\" is online."; break;
-        case 11: errStr = "\"%s\" is already in a guild."; break;
-        case 13: errStr = "You are already in a guild."; break;
-        case 14: errStr = "\"%s\" has already been invited to a guild."; break;
-        case 16: case 17: errStr = "You are not the guild leader."; break;
-        case 22: errStr = "That player is ignoring you."; break;
+        case 0x01: name = "ERR_GUILD_INTERNAL"; break;
+        case 0x02: name = "ERR_ALREADY_IN_GUILD"; break;
+        case 0x03: name = "ERR_ALREADY_IN_GUILD_S"; break;
+        case 0x04: name = "ERR_INVITED_TO_GUILD"; break;
+        case 0x05: name = "ERR_ALREADY_INVITED_TO_GUILD_S"; break;
+        case 0x07: name = "ERR_GUILD_NAME_EXISTS_S"; break;
+        case 0x08: name = "ERR_GUILD_PERMISSIONS"; break;
+        case 0x09: name = "ERR_GUILD_PLAYER_NOT_IN_GUILD"; break;
+        case 0x0A: name = "ERR_GUILD_PLAYER_NOT_IN_GUILD_S"; break;
+        case 0x0B: name = "ERR_GUILD_PLAYER_NOT_FOUND_S"; break;
+        case 0x0C: name = "ERR_GUILD_NOT_ALLIED"; break;
+        case 0x0D: name = "ERR_GUILD_RANK_TOO_HIGH_S"; break;
+        case 0x0E: name = "ERR_GUILD_RANK_TOO_LOW_S"; break;
+        case 0x11: name = "ERR_GUILD_RANKS_LOCKED"; break;
+        case 0x12: name = "ERR_GUILD_RANK_IN_USE"; break;
+        case 0x13: name = "ERR_IGNORING_YOU_S"; break;
+        case 0x18: name = "ERR_GUILD_WITHDRAW_LIMIT"; break;
+        case 0x19: name = "ERR_GUILD_NOT_ENOUGH_MONEY"; break;
+        case 0x1B: name = "ERR_GUILD_BANK_FULL"; break;
         default: break;
     }
-    std::string errorMsg;
-    if (errStr) {
-        std::string fmt = errStr;
-        auto pos = fmt.find("%s");
-        if (pos != std::string::npos && !data.name.empty()) fmt.replace(pos, 2, data.name);
-        else if (pos != std::string::npos) fmt.replace(pos, 2, "that player");
-        errorMsg = fmt;
-    } else {
-        errorMsg = "Guild command failed";
-        if (!data.name.empty()) errorMsg += " for " + data.name;
-        errorMsg += " (error " + std::to_string(data.errorCode) + ")";
+    if (!name) {
+        LOG_WARNING("SMSG_GUILD_COMMAND_RESULT: no line for error ", data.errorCode, " (", data.name, ")");
+        return;
     }
-    owner_.addUIError(errorMsg);
-    owner_.addSystemChatMessage(errorMsg);
+    const std::string pattern = owner_.globalString(name);
+    owner_.systemGlobal(name, globalStringHasConversions(pattern) ? std::vector<std::string>{data.name}
+                                                                  : std::vector<std::string>{});
 }
 
 void SocialHandler::handlePetitionShowlist(network::Packet& packet) {
@@ -3178,18 +3187,22 @@ void SocialHandler::handlePetitionSignResults(network::Packet& packet) {
     uint64_t playerGuid = packet.readUInt64();
     uint32_t result     = packet.readUInt32();
     switch (result) {
+        // PetitionSigns (CMaNGOS Guild.h) -> ERR_PETITION_* lines.
         case 0:
-            owner_.addSystemChatMessage("Petition signed successfully.");
+            if (playerGuid == owner_.getPlayerGuid()) owner_.systemGlobal("ERR_PETITION_SIGNED");
+            else if (const std::string& who = owner_.lookupName(playerGuid); !who.empty())
+                owner_.systemGlobal("ERR_PETITION_SIGNED_S", {who});
             if (petitionInfo_.petitionGuid == petGuid) {
                 petitionInfo_.signatureCount++;
                 PetitionSignature sig; sig.playerGuid = playerGuid;
                 petitionInfo_.signatures.push_back(sig);
             }
             break;
-        case 1: owner_.raiseUiError("You have already signed that petition."); break;
-        case 2: owner_.raiseUiError("You are already in a guild."); break;
-        case 3: owner_.raiseUiError("You cannot sign your own petition."); break;
-        default: owner_.addSystemChatMessage("Cannot sign petition (error " + std::to_string(result) + ")."); break;
+        case 1: owner_.systemGlobal("ERR_PETITION_ALREADY_SIGNED"); break;
+        case 2: owner_.systemGlobal("ERR_PETITION_IN_GUILD"); break;
+        case 3: owner_.systemGlobal("ERR_PETITION_CREATOR"); break;
+        case 4: owner_.systemGlobal("ERR_PETITION_NOT_SAME_SERVER"); break;
+        default: LOG_WARNING("SMSG_PETITION_SIGN_RESULTS: unknown result ", result); break;
     }
 }
 
@@ -3197,11 +3210,12 @@ void SocialHandler::handleTurnInPetitionResults(network::Packet& packet) {
     uint32_t result = 0;
     if (!TurnInPetitionResultsParser::parse(packet, result)) return;
     switch (result) {
-        case 0: owner_.addSystemChatMessage("Guild created successfully!"); break;
-        case 1: owner_.addSystemChatMessage("Guild creation failed: already in a guild."); break;
-        case 2: owner_.addSystemChatMessage("Guild creation failed: not enough signatures."); break;
-        case 3: owner_.addSystemChatMessage("Guild creation failed: name already taken."); break;
-        default: owner_.addSystemChatMessage("Guild creation failed (error " + std::to_string(result) + ")."); break;
+        // PetitionTurns (CMaNGOS Guild.h). Success prints nothing here: the
+        // guild's own creation result names it.
+        case 0: break;
+        case 2: owner_.systemGlobal("ERR_PETITION_IN_GUILD"); break;
+        case 4: owner_.systemGlobal("ERR_PETITION_NOT_ENOUGH_SIGNATURES"); break;
+        default: LOG_WARNING("SMSG_TURN_IN_PETITION_RESULTS: unknown result ", result); break;
     }
 }
 
