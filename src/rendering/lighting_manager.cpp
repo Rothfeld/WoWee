@@ -22,6 +22,8 @@ namespace rendering {
 // WoW's Light.dbc stores time-of-day as half-minutes (0..2879).
 // 24 hours × 60 minutes × 2 = 2880 half-minute ticks per day cycle.
 constexpr uint16_t kHalfMinutesPerDay = 2880;
+// Map whose default row (Light 1) lights maps that have no light of their own.
+constexpr uint32_t kGlobalDefaultLightMap = 0;
 
 LightingManager::LightingManager() {
     // Set fallback lighting (Elwynn Forest-ish outdoor daytime)
@@ -342,6 +344,26 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
     const auto defaultIt = defaultVolumeByMap_.find(mapId);
     const LightVolume* defaultVolume =
         defaultIt != defaultVolumeByMap_.end() ? &defaultIt->second : nullptr;
+    // Where the map has no default row and no positioned row reaches the
+    // player, 2.4.3 lights with Light 1, the default row of map 0. Hyjal
+    // (534) has no Light row at all: native shows it at night at 21:47 with
+    // Light 1's night sky (sky top (21,28,52) against params 12's
+    // (24,30,54)) and river colour, where WoWee showed its built-in day.
+    // The other maps without rows are WMO interiors and the two Outland
+    // arenas. Evidence: _experiments/20261118T214906Z.hyjal_sky/.
+    if (!defaultVolume && activeVolumes_.empty()) {
+        const auto globalIt = defaultVolumeByMap_.find(kGlobalDefaultLightMap);
+        if (globalIt != defaultVolumeByMap_.end()) {
+            defaultVolume = &globalIt->second;
+            defaultVolumeWeight_ = 1.0f;
+            if (mapId != loggedNoLightMapId_) {
+                loggedNoLightMapId_ = mapId;
+                LOG_INFO("Light.dbc has no light for map ", mapId,
+                         " at the player and no default row; using Light ",
+                         defaultVolume->lightId, " (map ", kGlobalDefaultLightMap, " default)");
+            }
+        }
+    }
 
     // Smoothing by real time. This assumed sixty frames a second, so on a
     // display running at a hundred and twenty every blend below ran twice as
@@ -487,13 +509,13 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId, uint32_
             newParams.directionalDir = glm::vec3(0.3f, -0.7f, 0.6f);
         }
     } else {
-        // No positioned light and no default row on this map (instances
-        // such as map 33 carry neither). Said once per map, because the
-        // colours below are WoWee's own and not authored.
+        // Light.dbc has no default row for map 0 either, which the 2.4.3
+        // file always has: it failed to load. Said once per map, because
+        // the colours below are WoWee's own and not authored.
         if (mapId != loggedNoLightMapId_) {
             loggedNoLightMapId_ = mapId;
             LOG_WARNING("Light.dbc has no light for map ", mapId,
-                        " at the player and no default row; using built-in lighting");
+                        " and no map ", kGlobalDefaultLightMap, " default row; using built-in lighting");
         }
         newParams = fallbackParams_;
 

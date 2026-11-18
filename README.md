@@ -48,6 +48,13 @@ WMO groups, so only indoor groups switch it off; 239 LightIntBand and 41
 LightFloatBand rows store a key out of time order (storm LightParams 8 among
 them) and are sorted at load. Measurements and which constants are fitted:
 `_experiments/20261118T171000Z.aq20_sandstorm/` in the workspace.
+A map with no Light.dbc light at the player and no default row of its own is
+lit by Light 1, map 0's default row, on the world clock. Hyjal (534) has no
+Light row at all; native shows it at night at 21:47, with Light 1's sky top
+and green river water (params 12), while Kalimdor's default (params 192, via
+Map.dbc's continent column) has navy river water. Other maps without rows are
+WMO interiors (Gruul, Magtheridon, Coilfang, MC, BRD, ...) and the Outland
+arenas. Evidence: `_experiments/20261118T214906Z.hyjal_sky/` in the workspace.
 Matrix-created WMO doodad particles use authored placement scale for sprite
 width. See [authored particle motion](docs/authored-particles.md).
 An M2 with emitters and no vertices is a whole model (`M2Model::hasRenderableContent`);
