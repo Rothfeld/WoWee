@@ -3543,9 +3543,23 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"DisplayChannelOwner",      [](lua_State* L) -> int { (void)L; return 0; }},
                 // /chatlist with a name: the server's member list, which the
                 // client prints as CHAT_MSG_CHANNEL_LIST ("[6. chantestx]
-                // *Edrikf", pair 6). Without one (ListChannels) 2.4.3 lists the
-                // joined channels; that answer is not yet built here.
-                {"ListChannels", [](lua_State* L) -> int { (void)L; return 0; }},
+                // *Edrikf", pair 6). Without one, the joined channels in one
+                // CHAT_MSG_CHANNEL_LIST line with no channel, which ChatFrame
+                // prints as it comes: "[1. General - Stormwind City] [2.
+                // Trade - Stormwind City] ... [5. LookingForGroup]" (pair 6).
+                {"ListChannels", [](lua_State* L) -> int {
+                    auto* gh = getGameHandler(L);
+                    if (!gh) return 0;
+                    const auto& joined = gh->getJoinedChannels();
+                    std::string line;
+                    for (size_t i = 0; i < joined.size(); ++i) {
+                        if (!line.empty()) line += ' ';
+                        line += "[" + std::to_string(i + 1) + ". " + joined[i] + "]";
+                    }
+                    gh->fireAddonEvent("CHAT_MSG_CHANNEL_LIST",
+                        {line, "", "", "", "", "", "0", "0", "", "0", "0", "0x0000000000000000"});
+                    return 0;
+                }},
                 {"ListChannelByName", [](lua_State* L) -> int {
                     auto* gh = getGameHandler(L);
                     if (!gh) return 0;

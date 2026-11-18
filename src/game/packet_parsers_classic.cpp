@@ -1119,7 +1119,8 @@ bool ClassicPacketParsers::parseMessageChat(network::Packet& packet, MessageChat
 // Classic format: just string channelName + string password (no channelId/hasVoice/joinedByZone)
 // ============================================================================
 
-network::Packet ClassicPacketParsers::buildJoinChannel(const std::string& channelName, const std::string& password) {
+network::Packet ClassicPacketParsers::buildJoinChannel(const std::string& channelName, const std::string& password,
+                                                       uint32_t /*channelId*/) {
     network::Packet packet(wireOpcode(Opcode::CMSG_JOIN_CHANNEL));
     packet.writeString(channelName);
     packet.writeString(password);

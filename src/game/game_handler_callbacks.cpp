@@ -1963,6 +1963,10 @@ void GameHandler::toggleAfk(const std::string& message) {
     if (chatHandler_) chatHandler_->toggleAfk(message);
 }
 
+void GameHandler::onInterfaceReady(uint32_t liveZoneId) {
+    if (chatHandler_) chatHandler_->onInterfaceReady(liveZoneId);
+}
+
 void GameHandler::onAwayFlags(bool afk, bool dnd, bool announce) {
     if (chatHandler_) chatHandler_->onAwayFlags(afk, dnd, announce);
 }

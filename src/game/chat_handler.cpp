@@ -1,4 +1,7 @@
 #include "game/chat_handler.hpp"
+#include "game/cast_result_text.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_loader.hpp"
 
 #include <set>
 #include "addons/lua_api_registrations.hpp"
@@ -938,7 +941,7 @@ void ChatHandler::flushNoticesAwaitingName(uint64_t guid, bool expired) {
             ++it;
         }
     }
-    for (const auto& n : ready) fireChannelNotice(n.data, n.number, true);
+    for (const auto& n : ready) fireChannelNotice(n.data, n.number, true, false);
 }
 
 void ChatHandler::expireChatAwaitingName() {
@@ -1013,10 +1016,10 @@ void ChatHandler::handleTextEmote(network::Packet& packet) {
     LOG_INFO("TEXT_EMOTE from ", senderName, " (emoteId=", data.textEmoteId, ")");
 }
 
-void ChatHandler::joinChannel(const std::string& channelName, const std::string& password) {
+void ChatHandler::joinChannel(const std::string& channelName, const std::string& password, uint32_t channelId) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = owner_.getPacketParsers()
-        ? owner_.getPacketParsers()->buildJoinChannel(channelName, password)
+        ? owner_.getPacketParsers()->buildJoinChannel(channelName, password, channelId)
         : JoinChannelPacket::build(channelName, password);
     owner_.getSocket()->send(packet);
     LOG_INFO("Requesting to join channel: ", channelName);
@@ -1108,8 +1111,9 @@ ChannelNotice channelNotice(ChannelNotifyType type) {
 // General - Elwynn Forest]" (pair 6, native at login). arg8 is the channel
 // number and arg9 the bare name, which ChatFrame matches against the
 // channels the frame shows.
-void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number, bool waited) {
-    const ChannelNotice notice = channelNotice(data.notifyType);
+void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number, bool waited, bool changed) {
+    ChannelNotice notice = channelNotice(data.notifyType);
+    if (changed) notice.name = "YOU_CHANGED";
     if (!notice.name) {
         LOG_DEBUG("Channel notify type ", static_cast<int>(data.notifyType), " for channel ", data.channelName);
         return;
@@ -1150,17 +1154,36 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
 
     switch (data.notifyType) {
         case ChannelNotifyType::YOU_JOINED: {
-            if (std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
+            // A built-in channel with the id of one already held is the zone
+            // moving it: it takes the old one's number and the original says
+            // "Changed Channel: [1. General - Stormwind City]" (pair 6); the
+            // realm sends nothing for the one it replaces.
+            bool changed = false;
+            if (data.channelId != 0) {
+                for (auto& name : joinedChannels_) {
+                    const auto it = joinedChannelIds_.find(name);
+                    if (it == joinedChannelIds_.end() || it->second != data.channelId || name == data.channelName)
+                        continue;
+                    ownedChannels_.erase(name);
+                    joinedChannelIds_.erase(it);
+                    name = data.channelName;
+                    changed = true;
+                    break;
+                }
+            }
+            if (!changed && std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
                 joinedChannels_.push_back(data.channelName);
             }
-            LOG_INFO("Joined channel: ", data.channelName);
-            fireChannelNotice(data, getChannelIndex(data.channelName));
+            joinedChannelIds_[data.channelName] = data.channelId;
+            LOG_INFO(changed ? "Changed channel: " : "Joined channel: ", data.channelName);
+            fireChannelNotice(data, getChannelIndex(data.channelName), false, changed);
             break;
         }
         case ChannelNotifyType::YOU_LEFT: {
             // Numbered as it was, before it goes from the list.
             const int number = getChannelIndex(data.channelName);
             ownedChannels_.erase(data.channelName);
+            joinedChannelIds_.erase(data.channelName);
             joinedChannels_.erase(
                 std::remove(joinedChannels_.begin(), joinedChannels_.end(), data.channelName),
                 joinedChannels_.end());
@@ -1197,24 +1220,76 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
 }
 
 void ChatHandler::autoJoinDefaultChannels() {
-    LOG_INFO("autoJoinDefaultChannels: general=", chatAutoJoin.general,
-             " trade=", chatAutoJoin.trade, " localDefense=", chatAutoJoin.localDefense,
-             " lfg=", chatAutoJoin.lfg, " local=", chatAutoJoin.local);
-    if (chatAutoJoin.general) joinChannel("General");
-    if (chatAutoJoin.trade) joinChannel("Trade");
-    if (chatAutoJoin.localDefense) joinChannel("LocalDefense");
-    if (chatAutoJoin.lfg) joinChannel("LookingForGroup");
-    if (chatAutoJoin.local) joinChannel("Local");
+    // The built-in channels are named after the zone ("General - Elwynn
+    // Forest"), which SMSG_INIT_WORLD_STATES names after world entry; they
+    // are joined from there (joinZoneChannels).
+    zoneChannelsPending_ = true;
+    zoneChannelsInterfaceReady_ = false;
+}
 
-    // Guild Recruitment. Unlike the five above it has no switch of this
-    // client's own - the interface's checkbox is its only control - so the
-    // CVar is read here rather than mirrored into a client setting first.
-    //
-    // At world entry, like the rest of this function: the other five are
-    // applied here too, so a channel joined by ticking a box arrives on the
-    // next login, and this behaves the same way rather than differently.
-    if (addons::storedCVarValue("guildRecruitmentChannel", "0") != "0") {
-        joinChannel("GuildRecruitment");
+// After the interface loads, as 2.4.3's "Joined Channel" lines follow the
+// login message of the day; before it they reach no chat frame.
+void ChatHandler::onInterfaceReady(uint32_t liveZoneId) {
+    zoneChannelsInterfaceReady_ = true;
+    zoneChannelsLiveZone_ = liveZoneId;
+    tryJoinZoneChannels();
+}
+
+// SMSG_INIT_WORLD_STATES can come before or after world entry's request;
+// the zone it names is kept either way.
+void ChatHandler::joinZoneChannels(uint32_t zoneId) {
+    (void)zoneId;  // the same value GameHandler keeps; read there
+    tryJoinZoneChannels();
+}
+
+// 2.4.3 at login (pair 6, Goldshire): "Joined Channel: [1. General - Elwynn
+// Forest]", "[2. Trade - Elwynn Forest]", "[3. LocalDefense - Elwynn
+// Forest]", "[4. GuildRecruitment - Elwynn Forest]", "[5. LookingForGroup]";
+// at a Blackwing Lair login "General - Blackwing Lair". ChatChannels.dbc
+// supplies the rows: the id the realm keys a built-in channel on, flag 0x1
+// for the ones joined at login (WorldDefense, without it, was not joined),
+// and the name pattern, "%s" being the zone's AreaTable name. Guild
+// Recruitment has no 0x1 and follows the interface's guildRecruitmentChannel
+// CVar, which the original's default set joins. The realm moves zone
+// channels on a zone change itself (Player::UpdateLocalChannels).
+void ChatHandler::tryJoinZoneChannels() {
+    // The zone under the player, as the client's own map data has it; the
+    // realm's SMSG_INIT_WORLD_STATES zone when that is not known yet. A quick
+    // reconnect to a session still in the world gets no INIT_WORLD_STATES.
+    const uint32_t zoneId = zoneChannelsLiveZone_ ? zoneChannelsLiveZone_ : owner_.getWorldStateZoneId();
+    LOG_INFO("Zone channels: pending=", zoneChannelsPending_, " zone=", zoneId,
+             " interface=", zoneChannelsInterfaceReady_);
+    if (!zoneChannelsPending_ || zoneId == 0 || !zoneChannelsInterfaceReady_) return;
+    zoneChannelsPending_ = false;
+    auto* am = owner_.services().assetManager;
+    auto dbc = am ? am->loadDBC("ChatChannels.dbc") : nullptr;
+    if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() < 4) {
+        LOG_ERROR("ChatChannels.dbc missing or unreadable: no channels joined");
+        return;
+    }
+    const std::string zoneName = owner_.getAreaName(owner_.getAreaZoneId(zoneId));
+    LOG_INFO("Joining built-in channels for zone ", zoneId, " '", zoneName, "'");
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        const uint32_t id = dbc->getUInt32(i, 0);
+        const uint32_t flags = dbc->getUInt32(i, 1);
+        const std::string pattern = dbc->getString(i, 3);
+        bool wanted = (flags & 0x1u) != 0;
+        switch (id) {
+            case 1:  wanted = wanted && chatAutoJoin.general; break;
+            case 2:  wanted = wanted && chatAutoJoin.trade; break;
+            case 22: wanted = wanted && chatAutoJoin.localDefense; break;
+            case 26: wanted = wanted && chatAutoJoin.lfg; break;
+            case 25: wanted = addons::storedCVarValue("guildRecruitmentChannel", "1") != "0"; break;
+            default: break;
+        }
+        if (!wanted || pattern.empty()) continue;
+        const bool zoned = pattern.find("%s") != std::string::npos;
+        if (zoned && zoneName.empty()) {
+            LOG_ERROR("No name for zone ", zoneId, ": channel ", pattern, " not joined");
+            continue;
+        }
+        const std::string name = zoned ? formatGlobalString(pattern, {zoneName}) : pattern;
+        joinChannel(name, "", id);
     }
 }
 

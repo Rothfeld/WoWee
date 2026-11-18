@@ -1291,6 +1291,7 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
         addonManager_->fireEvent("PLAYER_LOGIN");
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+        if (gameHandler_) gameHandler_->onInterfaceReady(renderer_ ? renderer_->getCurrentZoneId() : 0u);
         // The next-mail-time answer arrives before FrameXML exists, so
         // MiniMapMailFrame missed it; it asks HasNewMail on this event.
         addonManager_->fireEvent("UPDATE_PENDING_MAIL");

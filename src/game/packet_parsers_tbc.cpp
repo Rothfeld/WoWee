@@ -1335,9 +1335,12 @@ uint8_t TbcPacketParsers::readQuestGiverStatus(network::Packet& packet) {
 // metadata and joins channels named e.g. "l" instead of "General".
 // ============================================================================
 
-network::Packet TbcPacketParsers::buildJoinChannel(const std::string& channelName, const std::string& password) {
+network::Packet TbcPacketParsers::buildJoinChannel(const std::string& channelName, const std::string& password,
+                                                   uint32_t channelId) {
     network::Packet packet(wireOpcode(Opcode::CMSG_JOIN_CHANNEL));
-    packet.writeUInt32(0);  // channelId (unused)
+    // ChatChannels.dbc id: the realm makes a built-in (zone) channel of it
+    // (ChannelMgr::GetJoinChannel); 0 is a custom channel of that name.
+    packet.writeUInt32(channelId);
     packet.writeUInt8(0);   // hasVoice
     packet.writeUInt8(0);   // joinedByZone
     packet.writeString(channelName);

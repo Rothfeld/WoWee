@@ -305,7 +305,11 @@ public:
     // --- Channels ---
 
     /** Build CMSG_JOIN_CHANNEL */
-    virtual network::Packet buildJoinChannel(const std::string& channelName, const std::string& password) {
+    /// `channelId`: the ChatChannels.dbc id of a built-in channel, 0 for a
+    /// channel joined by name (TBC and later carry it).
+    virtual network::Packet buildJoinChannel(const std::string& channelName, const std::string& password,
+                                             uint32_t channelId = 0) {
+        (void)channelId;
         return JoinChannelPacket::build(channelName, password);
     }
 
@@ -454,7 +458,8 @@ public:
     // (iconName + castBarCaption); WotLK has 3 (adds unk1)
     bool parseGameObjectQueryResponse(network::Packet& packet, GameObjectQueryResponseData& data) override;
     // TBC 2.4.3 CMSG_JOIN_CHANNEL: name+password only (WotLK prepends channelId+hasVoice+joinedByZone)
-    network::Packet buildJoinChannel(const std::string& channelName, const std::string& password) override;
+    network::Packet buildJoinChannel(const std::string& channelName, const std::string& password,
+                                     uint32_t channelId = 0) override;
     // TBC 2.4.3 CMSG_LEAVE_CHANNEL: name only (WotLK prepends channelId)
     network::Packet buildLeaveChannel(const std::string& channelName) override;
 };
@@ -500,7 +505,8 @@ public:
     bool parseGossipMessage(network::Packet& packet, GossipMessageData& data) override;
     bool parseGuildRoster(network::Packet& packet, GuildRosterData& data) override;
     bool parseGuildQueryResponse(network::Packet& packet, GuildQueryResponseData& data) override;
-    network::Packet buildJoinChannel(const std::string& channelName, const std::string& password) override;
+    network::Packet buildJoinChannel(const std::string& channelName, const std::string& password,
+                                     uint32_t channelId = 0) override;
     network::Packet buildLeaveChannel(const std::string& channelName) override;
     network::Packet buildSendMail(uint64_t mailboxGuid, const std::string& recipient,
                                    const std::string& subject, const std::string& body,

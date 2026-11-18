@@ -14,6 +14,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -36,7 +37,7 @@ public:
     void sendChatMessage(ChatType type, const std::string& message, const std::string& target = "");
     void sendAddonMessage(ChatType type, const std::string& message, const std::string& target = "");
     void sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid = 0);
-    void joinChannel(const std::string& channelName, const std::string& password = "");
+    void joinChannel(const std::string& channelName, const std::string& password = "", uint32_t channelId = 0);
     void leaveChannel(const std::string& channelName);
     /// Ask the server for a channel's members; the answer arrives as
     /// SMSG_CHANNEL_LIST and fires CHANNEL_ROSTER_UPDATE.
@@ -68,6 +69,10 @@ public:
         return (it != channelRosters_.end()) ? it->second : empty;
     }
     void autoJoinDefaultChannels();
+    /// The zone is known: join the built-in channels requested at world entry.
+    void joinZoneChannels(uint32_t zoneId);
+    /// The interface has loaded (PLAYER_ENTERING_WORLD fired).
+    void onInterfaceReady(uint32_t liveZoneId);
     void addLocalChatMessage(const MessageChatData& msg);
 
     /// Put a line of a given kind into chat, locally.
@@ -90,7 +95,7 @@ public:
     /// original's away lines when `announce` (an update, not the create block).
     void onAwayFlags(bool afk, bool dnd, bool announce);
     /// CHAT_MSG_CHANNEL_NOTICE(_USER) for one SMSG_CHANNEL_NOTIFY.
-    void fireChannelNotice(const ChannelNotifyData& data, int number, bool waited = false);
+    void fireChannelNotice(const ChannelNotifyData& data, int number, bool waited = false, bool changed = false);
     /// Fire the held notices about `guid`, or every expired one.
     void flushNoticesAwaitingName(uint64_t guid, bool expired);
     void replyToLastWhisper(const std::string& message);
@@ -174,6 +179,17 @@ private:
     size_t maxChatHistory_ = 100;
     uint64_t chatUidCounter_ = 0;  // monotonic uid for MessageChatData::uid
     std::vector<std::string> joinedChannels_;
+    /// ChatChannels.dbc id of each joined channel by name (YOU_JOINED), 0 for
+    /// a custom one: a zone change replaces a channel with the same id in place.
+    std::map<std::string, uint32_t> joinedChannelIds_;
+    /// World entry asked for the built-in channels; they are joined once the
+    /// zone is known (SMSG_INIT_WORLD_STATES), named after it.
+    bool zoneChannelsPending_ = false;
+    /// Whether the interface is up to print their "Joined Channel" lines;
+    /// the zone is GameHandler's (SMSG_INIT_WORLD_STATES).
+    bool zoneChannelsInterfaceReady_ = false;
+    uint32_t zoneChannelsLiveZone_ = 0;
+    void tryJoinZoneChannels();
     std::set<std::string> ownedChannels_;
     /// Channels whose next SMSG_CHANNEL_LIST /chatlist asked to print.
     std::set<std::string> printChannelLists_;

@@ -950,6 +950,10 @@ public:
     void toggleDnd(const std::string& message = "");
     /// Local PLAYER_FLAGS away bits; see ChatHandler::onAwayFlags.
     void onAwayFlags(bool afk, bool dnd, bool announce);
+    /// FrameXML is loaded and in the world: the login channels may join.
+    /// `liveZoneId` is the zone under the player from the client's own map
+    /// data (0 when not known yet).
+    void onInterfaceReady(uint32_t liveZoneId);
     bool isAfk() const { return afkStatus_; }
     bool isDnd() const { return dndStatus_; }
     void replyToLastWhisper(const std::string& message);

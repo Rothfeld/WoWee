@@ -1294,6 +1294,7 @@ void GameHandler::registerCoreOpcodes() {
         // Zone and subzone events come from the player's position (Renderer).
         worldStateMapId_ = packet.readUInt32();
         worldStateZoneId_ = packet.readUInt32();
+        if (chatHandler_) chatHandler_->joinZoneChannels(worldStateZoneId_);
         // TBC added areaId in 2.1.0; WotLK kept it. Classic/Turtle use the shorter format.
         size_t remaining = packet.getRemainingSize();
         bool hasAreaId = isActiveExpansion("tbc") || isActiveExpansion("wotlk");
