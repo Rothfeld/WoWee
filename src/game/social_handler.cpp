@@ -2587,26 +2587,55 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
     if (updateFlags & 0x0200) {
         if (remaining() >= 8) {
             uint64_t auraMask = packet.readUInt64();
-            std::vector<AuraSlot> newAuras;
-            for (int i = 0; i < 64; ++i) {
-                if (auraMask & (uint64_t(1) << i)) {
+            const bool tbc = isActiveExpansion("tbc");
+            // Into the cache UnitBuff/UnitDebuff read (SpellHandler's). These
+            // were written to a GameHandler map nothing reads, so a party
+            // member out of view showed no auras from this packet at all, and
+            // one who had been in view kept whatever the update fields last
+            // said - the debuffs of a fight stayed on the party frame.
+            const bool cacheable = memberGuid != 0 && memberGuid != owner_.getPlayerGuid() &&
+                                   owner_.getSpellHandler() != nullptr;
+            if (isWotLK) {
+                std::vector<AuraSlot> newAuras;
+                for (int i = 0; i < 64; ++i) {
+                    if (!(auraMask & (uint64_t(1) << i))) continue;
+                    if (remaining() < 5) break;
                     AuraSlot a;
                     a.level = static_cast<uint8_t>(i);
-                    if (isWotLK) {
-                        if (remaining() < 5) break;
-                        a.spellId = packet.readUInt32();
-                        a.flags   = packet.readUInt8();
-                    } else {
-                        if (remaining() < 2) break;
-                        a.spellId = packet.readUInt16();
-                        uint8_t dt = owner_.getSpellDispelType(a.spellId);
-                        if (dt > 0) a.flags = 0x80;
-                    }
+                    a.spellId = packet.readUInt32();
+                    a.flags   = packet.readUInt8();
                     if (a.spellId != 0) newAuras.push_back(a);
                 }
-            }
-            if (memberGuid != 0 && memberGuid != owner_.getPlayerGuid() && memberGuid != owner_.getTargetGuid()) {
-                owner_.unitAurasCacheRef()[memberGuid] = std::move(newAuras);
+                if (cacheable) owner_.getSpellHandler()->mirrorAurasByGuid(memberGuid, newAuras);
+            } else {
+                // CMaNGOS BuildPartyMemberStatsChangedPacket: the mask names
+                // the slots that changed since the last update, each followed
+                // by its UNIT_FIELD_AURA spell (uint16, 0 = the aura is gone)
+                // and, in TBC, its UNIT_FIELD_AURAFLAGS byte. Only the _FULL
+                // packet lists every aura. Reading it as a replacement list
+                // and without the TBC flag byte dropped the other auras on
+                // each change, misread every slot after the first, and could
+                // not express a removal at all - a party member's debuffs
+                // stayed on the frame after the fight.
+                const int positiveSlots = tbc ? 40 : 32;
+                std::vector<AuraSlot> slots;
+                if (!isFull) {
+                    if (const auto* known = owner_.getUnitAuras(memberGuid)) slots = *known;
+                }
+                slots.resize(64);
+                for (int i = 0; i < 64; ++i) {
+                    if (!(auraMask & (uint64_t(1) << i))) continue;
+                    if (remaining() < (tbc ? 3u : 2u)) break;
+                    const uint32_t spellId = packet.readUInt16();
+                    const uint8_t auraFlags = tbc ? packet.readUInt8() : 0;
+                    AuraSlot& slot = slots[static_cast<size_t>(i)];
+                    if (spellId == 0) { slot = AuraSlot{}; continue; }
+                    if (slot.spellId != spellId) slot = AuraSlot{};
+                    slot.spellId = spellId;
+                    slot.level = static_cast<uint8_t>(i);
+                    slot.flags = static_cast<uint8_t>((auraFlags & ~0x80u) | (i >= positiveSlots ? 0x80u : 0u));
+                }
+                if (cacheable) owner_.getSpellHandler()->mirrorAurasByGuid(memberGuid, slots);
             }
         }
     }
@@ -2625,6 +2654,7 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             for (int i = 0; i < 64; ++i) {
                 if (petAuraMask & (uint64_t(1) << i)) {
                     if (isWotLK) { if (remaining() < 5) break; packet.readUInt32(); packet.readUInt8(); }
+                    else if (isActiveExpansion("tbc")) { if (remaining() < 3) break; packet.readUInt16(); packet.readUInt8(); }
                     else { if (remaining() < 2) break; packet.readUInt16(); }
                 }
             }
