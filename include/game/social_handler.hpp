@@ -669,8 +669,13 @@ private:
     bool pendingGroupInvite = false;
     /// The name of the last friend/ignore request, for the answer's line.
     std::string lastSocialRequestName_;
-    /// The roster after accepting an invitation names nobody as joining.
+    /// The roster after accepting an invitation, or the first one after
+    /// entering the world, names nobody as joining (pair 6: a login inside a
+    /// raid printed no "X has joined the raid group." lines).
     bool acceptedGroupInvite_ = false;
+public:
+    void onWorldEntry() { acceptedGroupInvite_ = true; }
+private:
     /// The player asked to leave: the empty roster names nobody as leaving.
     bool leftGroupByRequest_ = false;
     /// SMSG_GROUP_UNINVITE arrived: the same for the roster after it.

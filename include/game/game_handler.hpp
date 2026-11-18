@@ -3115,12 +3115,22 @@ public:
     /// (formatGlobalString). Empty, and logged, when the interface has no such
     /// line or the arguments do not fit it.
     [[nodiscard]] std::string globalLine(const char* name, const std::vector<std::string>& args = {}) const;
+    /// An argument that is itself a GlobalStrings name ("ITEM_QUALITY2_DESC"),
+    /// looked up when the line is printed - which for a held notice is after
+    /// the interface has loaded.
+    static std::string globalArg(const std::string& name) { return "\x01" + name; }
     /// The original's own notices, by the GlobalStrings name it prints. Each
     /// goes where 2.4.3 puts that line: systemGlobal the chat log
     /// (CHAT_MSG_SYSTEM, yellow), errorGlobal the red line above the middle of
     /// the screen (UI_ERROR_MESSAGE), infoGlobal the yellow one
     /// (UI_INFO_MESSAGE). Nothing is shown when the line is missing.
     void systemGlobal(const char* name, const std::vector<std::string>& args = {});
+    /// Notices raised between world entry and the interface loading (the
+    /// login group roster, loot rules): held and printed once it is up, as
+    /// 2.4.3 prints them above the login message of the day.
+    struct HeldNotice { int kind; std::string name; std::vector<std::string> args; };
+    std::vector<HeldNotice> heldNotices_;
+    bool noticesInterfaceReady_ = true;
     void errorGlobal(const char* name, const std::vector<std::string>& args = {});
     void infoGlobal(const char* name, const std::vector<std::string>& args = {});
 

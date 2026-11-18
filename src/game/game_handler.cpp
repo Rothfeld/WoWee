@@ -1079,20 +1079,26 @@ std::string GameHandler::globalLine(const char* name, const std::vector<std::str
         LOG_ERROR("GlobalStrings has no ", name);
         return {};
     }
-    std::string line = formatGlobalString(pattern, args);
+    std::vector<std::string> resolved = args;
+    for (auto& a : resolved)
+        if (!a.empty() && a[0] == '\x01') a = globalString(a.c_str() + 1);
+    std::string line = formatGlobalString(pattern, resolved);
     if (line.empty()) LOG_ERROR("GlobalStrings ", name, " \"", pattern, "\" does not take ", args.size(), " argument(s)");
     return line;
 }
 
 void GameHandler::systemGlobal(const char* name, const std::vector<std::string>& args) {
+    if (!noticesInterfaceReady_) { heldNotices_.push_back({0, name, args}); return; }
     if (std::string line = globalLine(name, args); !line.empty()) addSystemChatMessage(line);
 }
 
 void GameHandler::errorGlobal(const char* name, const std::vector<std::string>& args) {
+    if (!noticesInterfaceReady_) { heldNotices_.push_back({1, name, args}); return; }
     if (std::string line = globalLine(name, args); !line.empty()) addUIError(line);
 }
 
 void GameHandler::infoGlobal(const char* name, const std::vector<std::string>& args) {
+    if (!noticesInterfaceReady_) { heldNotices_.push_back({2, name, args}); return; }
     if (std::string line = globalLine(name, args); !line.empty()) addUIInfoMessage(line);
 }
 

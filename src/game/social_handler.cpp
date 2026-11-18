@@ -2336,9 +2336,7 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
                 owner_.systemGlobal(nowRaid ? "ERR_RAID_MEMBER_ADDED_S" : "ERR_JOINED_GROUP_S", {m.name});
         }
     }
-    if (nowRaid && !wasRaid) owner_.systemGlobal("ERR_RAID_YOU_JOINED");
-    if (wasRaid && !nowRaid) owner_.systemGlobal("ERR_RAID_YOU_LEFT");
-    if (nowInGroup) acceptedGroupInvite_ = false;
+    if (nowInGroup || !wasInGroup) acceptedGroupInvite_ = false;
     if (!nowInGroup) {
         leftGroupByRequest_ = false;
         removedFromGroup_ = false;
@@ -2367,10 +2365,11 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
         const bool masterChanged = partyData.lootMethod == 2 &&
             (methodChanged || partyData.looterGuid != prevLooter);
         if (methodChanged) {
-            // ERR_SET_LOOT_NBG alone says "set to".
-            const char* prefix = partyData.lootMethod == 4 ? "Looting set to " : "Looting changed to ";
-            if (partyData.lootMethod < 5)
-                owner_.addSystemChatMessage(std::string(prefix) + lootMethodName(partyData.lootMethod) + ".");
+            // LootMethod 0..4: free for all, round robin, master, group, need
+            // before greed.
+            static constexpr const char* kMethodLines[] = {"ERR_SET_LOOT_FREEFORALL", "ERR_SET_LOOT_ROUNDROBIN",
+                "ERR_SET_LOOT_MASTER", "ERR_SET_LOOT_GROUP", "ERR_SET_LOOT_NBG"};
+            if (partyData.lootMethod < 5) owner_.systemGlobal(kMethodLines[partyData.lootMethod]);
             else LOG_WARNING("Invalid loot method: ", unsigned(partyData.lootMethod));
         }
         if (masterChanged) {
@@ -2382,19 +2381,22 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
                     if (member.guid == partyData.looterGuid) name = member.name;
             }
             if (name.empty()) LOG_WARNING("Loot master name missing for GUID ", partyData.looterGuid);
-            else owner_.addSystemChatMessage(name + " is now the loot master.");
+            else owner_.systemGlobal("ERR_NEW_LOOT_MASTER_S", {name});
         }
         if (thresholdChanged) {
-            static constexpr const char* qualities[] = {
-                "Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Artifact"
-            };
-            if (partyData.lootThreshold < std::size(qualities))
-                owner_.addSystemChatMessage(std::string("Loot threshold set to ") + qualities[partyData.lootThreshold] + ".");
+            if (partyData.lootThreshold < 7)
+                owner_.systemGlobal("ERR_SET_LOOT_THRESHOLD_S",
+                    {GameHandler::globalArg("ITEM_QUALITY" + std::to_string(partyData.lootThreshold) + "_DESC")});
             else LOG_WARNING("Invalid loot threshold: ", unsigned(partyData.lootThreshold));
         }
         if (methodChanged || thresholdChanged || masterChanged)
             owner_.fireAddonEvent("PARTY_LOOT_METHOD_CHANGED", {});
     }
+    // After the loot rules: a login inside a raid printed "Looting changed to
+    // Group Loot.", "Loot threshold set to Uncommon.", "You have joined a raid
+    // group." in that order (pair 6).
+    if (nowRaid && !wasRaid) owner_.systemGlobal("ERR_RAID_YOU_JOINED");
+    if (wasRaid && !nowRaid) owner_.systemGlobal("ERR_RAID_YOU_LEFT");
     // GetRaidRosterInfo answers class and fileName for members out of sight
     // from the name cache, as native does for a member it has never seen
     // (the name query response is the only packet carrying a class).

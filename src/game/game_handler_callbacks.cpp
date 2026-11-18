@@ -989,6 +989,10 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
 
         // Auto-join default chat channels only on first world entry.
         autoJoinDefaultChannels();
+        // The interface loads after this; notices wait for it.
+        noticesInterfaceReady_ = false;
+        heldNotices_.clear();
+        if (socialHandler_) socialHandler_->onWorldEntry();
 
         // Auto-query guild info on login.
         const Character* activeChar = getActiveCharacter();
@@ -1964,6 +1968,14 @@ void GameHandler::toggleAfk(const std::string& message) {
 }
 
 void GameHandler::onInterfaceReady(uint32_t liveZoneId) {
+    noticesInterfaceReady_ = true;
+    auto held = std::move(heldNotices_);
+    heldNotices_.clear();
+    for (const auto& n : held) {
+        if (n.kind == 0) systemGlobal(n.name.c_str(), n.args);
+        else if (n.kind == 1) errorGlobal(n.name.c_str(), n.args);
+        else infoGlobal(n.name.c_str(), n.args);
+    }
     if (chatHandler_) chatHandler_->onInterfaceReady(liveZoneId);
 }
 
