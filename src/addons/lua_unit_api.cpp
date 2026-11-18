@@ -610,7 +610,11 @@ static int lua_UnitDistanceSquared(lua_State* L) {
 }
 
 // CheckInteractDistance(unit, distIndex) → boolean
-// distIndex: 1=inspect(28yd), 2=trade(11yd), 3=duel(10yd), 4=follow(28yd)
+// distIndex: 1 inspect and 4 follow 30 yards, 2 trade 11.11, 3 duel 10: 3D,
+// centre to centre, whatever either unit's combat reach. Native 2.4.3 at a
+// boar with reach 0.5, 5 and 23.4, player reach 1.5 and 3: 1 and 4 in at
+// 29.978, out at 30.008; 2 in at 11.093, out at 11.113; 3 in at 9.991, out
+// at 10.011 (_experiments/20261118T170000Z.melee_range_pair2).
 static int lua_CheckInteractDistance(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnFalse(L); }
@@ -627,12 +631,11 @@ static int lua_CheckInteractDistance(lua_State* L) {
     float dy = playerEnt->getY() - targetEnt->getY();
     float dz = playerEnt->getZ() - targetEnt->getZ();
     float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
-    float maxDist = 28.0f; // default: follow/inspect range
+    float maxDist = 30.0f; // 1 inspect, 4 follow
     switch (distIdx) {
-        case 1: maxDist = 28.0f; break; // inspect
         case 2: maxDist = 11.11f; break; // trade
-        case 3: maxDist = 9.9f; break; // duel
-        case 4: maxDist = 28.0f; break; // follow
+        case 3: maxDist = 10.0f; break; // duel
+        default: break;
     }
     lua_pushboolean(L, dist <= maxDist);
     return 1;
