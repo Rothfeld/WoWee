@@ -1274,6 +1274,36 @@ them in. Local `GetAlpha()` values remain unchanged.
 `test_input_integration '[quest-text]'` checks markup-aware completion and reset.
 `test_widget_tree '[alpha]'` checks inherited opacity and draw visibility.
 
+### Scroll lists, sliders and template anchors
+
+```sh
+build/bin/test_input_integration '[faux],[anchor]'
+```
+
+Values are held as build 8606 holds them. `ScrollFrame:SetVerticalScroll` is not
+clamped to the scroll range and fires OnVerticalScroll once per change. Slider
+and StatusBar `SetValue`/`SetMinMaxValues` clamp to the range; a slider snaps to
+its step counted from the minimum (round half up), the last whole step being the
+maximum: 0..50 by 16 holds 0, 16, 32, 50. A new slider spans 0..0. The wheel goes
+to the topmost wheel-enabled frame under the cursor, passing over frames that only
+take the mouse (a FauxScrollFrame's rows are siblings laid over it).
+
+Gotchas:
+
+- An empty script element (`<OnScrollRangeChanged></OnScrollRangeChanged>` in
+  FauxScrollFrameTemplate) replaces the inherited handler; it is emitted as an
+  empty function.
+- `$parent` in a name or an anchor's `relativeTo` means the nearest named
+  ancestor. PartyMemberFrameTemplate anchors its debuff ring to
+  `$parentPortrait` from two unnamed frames down.
+- The wheel glides a scroll bar through several `SetValue` calls where 2.4.3
+  jumps half the bar in one; handlers that redraw before reading the new offset
+  (MangAdmin's teleport lists) lag by a fraction of a page here and by a whole
+  wheel step there.
+
+Measured with `/script` probes on the 2.4.3 client:
+`_experiments/20261118T140302.014047Z.faux_scroll_api/` in the workspace root.
+
 ### Camera views, zoom floor and contact
 
 SetView(1-5) as build 8606: 0 yd/0 deg (first person), 5.55/-10, 5.55/-20,
