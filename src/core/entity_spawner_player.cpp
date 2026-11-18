@@ -1670,11 +1670,6 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             // are often generic and caused herb/grass gameobjects to be treated
             // as solid props.
             model.name = modelPath;
-            if (model.vertices.empty()) {
-                LOG_WARNING("Failed to parse gameobject M2: ", modelPath);
-                gameObjectDisplayIdFailedCache_.insert(displayId);
-                return;
-            }
 
             std::string skinPath = pipeline::skinPathForM2(modelPath);
             auto skinData = assetManager_->readFile(skinPath);
@@ -1682,6 +1677,14 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
                 pipeline::M2Loader::loadSkin(skinData, model);
             } else if (skinData.empty() && model.version >= 264) {
                 LOG_WARNING("GO skin file MISSING for WotLK M2 (no indices/batches): ", skinPath);
+            }
+            // Emitters alone are a whole model: Blaze 181832 (display 4452,
+            // StratholmeFireSmokeEmberM.m2) is three emitters and no
+            // vertices, and is Magtheridon's fire on the floor.
+            if (!model.hasRenderableContent()) {
+                LOG_WARNING("Gameobject M2 has nothing to draw: ", modelPath);
+                gameObjectDisplayIdFailedCache_.insert(displayId);
+                return;
             }
 
             LOG_DEBUG("GO model: ", modelPath, " v=", model.version,

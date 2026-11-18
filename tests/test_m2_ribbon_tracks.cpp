@@ -145,3 +145,25 @@ TEST_CASE("a TBC missile ribbon parses from the legacy record", "[m2][ribbon][as
     REQUIRE_FALSE(ribbon.visibilityTrack.sequences.empty());
     CHECK(ribbon.visibilityTrack.sequences[0].floatValues[0] == 1.0f);
 }
+
+// Emitters alone are a model worth placing. Blaze 181832 (display 4452) is
+// StratholmeFireSmokeEmberM.m2: no vertices, three emitters (smoke, lava
+// lumps, flames). Rejected as empty, Magtheridon's floor fires were absent.
+TEST_CASE("a particle-only M2 has renderable content", "[m2][particle][assets]") {
+    M2Model empty;
+    CHECK_FALSE(empty.hasRenderableContent());
+    empty.ribbonEmitters.resize(1);
+    CHECK(empty.hasRenderableContent());
+
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+    std::ifstream in(std::string(root) +
+        "/world/lordaeron/stratholme/passivedoodads/fx/stratholmefiresmokeemberm.m2", std::ios::binary);
+    const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+    REQUIRE_FALSE(data.empty());
+    const M2Model model = M2Loader::load(data);
+    CHECK(model.vertices.empty());
+    CHECK_FALSE(model.isValid());
+    CHECK(model.particleEmitters.size() == 3);
+    CHECK(model.hasRenderableContent());
+}

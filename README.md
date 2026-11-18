@@ -50,6 +50,14 @@ them) and are sorted at load. Measurements and which constants are fitted:
 `_experiments/20261118T171000Z.aq20_sandstorm/` in the workspace.
 Matrix-created WMO doodad particles use authored placement scale for sprite
 width. See [authored particle motion](docs/authored-particles.md).
+An M2 with emitters and no vertices is a whole model (`M2Model::hasRenderableContent`);
+`isValid()` (triangles) is only for collision and picking. 463 TBC models are
+emitters only, 62 of them placed by ADTs, WMOs or game objects: Blaze 181832
+(`StratholmeFireSmokeEmberM.m2`, Magtheridon's floor fires), Roaring Flame
+182260 (`LowPolyFire.m2`, 110 burning houses at Hyjal's Alliance Base),
+`Hellfire_FireWall_01.m2`, `blacksmith_smoke.m2`. Game objects, ADT and WMO
+doodads and transport doodads all take them; they were dropped as invalid.
+Evidence: `_experiments/20261118T213500Z.mag_fires/` in the workspace.
 Ground clutter uses expansion-specific DBC layouts. Vanilla/TBC
 `GroundEffectTexture.dbc` has seven columns: ID, four doodad IDs, density,
 terrain type. Its doodad slots have equal weights; `0xffffffff` means empty.

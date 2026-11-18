@@ -361,6 +361,16 @@ struct M2Model {
     [[nodiscard]] bool isValid() const {
         return !vertices.empty() && !indices.empty();
     }
+
+    // Geometry or emitters: whether placing the model draws anything. 463 TBC
+    // M2s have no vertices and only particle or ribbon emitters, and 62 of
+    // them are placed: Blaze 181832 (StratholmeFireSmokeEmberM.m2, the
+    // fires in Magtheridon's Lair), Hellfire_FireWall_01.m2 on 35 Hellfire
+    // Peninsula tiles, blacksmith_smoke.m2, AshTreeSmoke01.m2. isValid()
+    // stays the test for code that needs triangles (collision, picking).
+    [[nodiscard]] bool hasRenderableContent() const {
+        return isValid() || !particleEmitters.empty() || !ribbonEmitters.empty();
+    }
 };
 
 class M2Loader {
