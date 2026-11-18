@@ -3470,6 +3470,78 @@ TEST_CASE_METHOD(Integration, "Moonkin tooltip keeps creature type on unwrapped 
     lua.setGameHandler(nullptr);
 }
 
+// Original 2.4.3 (pair 7, GM Island and Gadgetzan): the creature type is in
+// the level line only when UnitIsFriend("player", unit) is false. A Gadgetzan
+// Bruiser (template 475, Gadgetzan at Neutral) reads "Level 67" and
+// UnitIsFriend true; neutral wildlife (template 7) "Level 9 Beast"; a
+// Wastewander Bandit (template 16) "Level 41 Humanoid". UnitCreatureType
+// answers the type for all three.
+TEST_CASE_METHOD(Integration, "Unit tooltip names the creature type only for non-friends", "[unit-tooltip]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    // Built by buildFactionHostilityMap: a faction with a standing the player
+    // is not at war with is friendly, whatever the standing.
+    handler.setFactionFriendlyMap({{475, true}, {7, false}, {16, false}});
+    handler.setFactionHostileMap({{475, false}, {7, false}, {16, true}});
+    run(R"lua(
+        TOOLTIP_UNIT_LEVEL = 'Level %s'
+        TOOLTIP_UNIT_LEVEL_CLASS = 'Level %s %s'
+        TOOLTIP_UNIT_LEVEL_CLASS_TYPE = 'Level %s %s (%s)'
+        TOOLTIP_UNIT_LEVEL_TYPE = 'Level %s (%s)'
+        TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE = 'Level %s %s %s (%s)'
+        ELITE = 'Elite'
+        BOSS = 'Boss'
+        PLAYER = 'Player'
+        CORPSE = 'Corpse'
+        typeTip = CreateFrame('GameTooltip', 'TypeTip', UIParent)
+    )lua");
+    struct Case { uint32_t entry; const char* name; uint32_t creatureType; uint32_t level; uint32_t factionTemplate;
+                  const char* line; bool friendOf; };
+    const Case cases[] = {
+        {9460, "Gadgetzan Bruiser", 7, 67, 475, "Level 67", true},
+        {330, "Princess", 1, 9, 7, "Level 9 Beast", false},
+        {5618, "Wastewander Bandit", 7, 41, 16, "Level 41 Humanoid", false},
+    };
+    uint64_t guid = 0xf130000000100000ull;
+    for (const auto& c : cases) {
+        auto unit = std::make_shared<Unit>(++guid);
+        unit->setName(c.name);
+        unit->setEntry(c.entry);
+        unit->setLevel(c.level);
+        unit->setHealth(100);
+        unit->setMaxHealth(100);
+        unit->setField(fieldIndex(UF::UNIT_FIELD_LEVEL), c.level);
+        unit->setFactionTemplate(c.factionTemplate);
+        unit->setHostile(handler.isHostileFactionPublic(c.factionTemplate));
+        handler.getEntityManager().addEntity(guid, unit);
+        wowee::network::Packet info(wireOpcode(Opcode::SMSG_CREATURE_QUERY_RESPONSE));
+        info.writeUInt32(c.entry);
+        info.writeString(c.name);
+        for (int i = 0; i < 5; ++i) info.writeString("");
+        info.writeUInt32(0);
+        info.writeUInt32(c.creatureType);
+        for (int i = 0; i < 8; ++i) info.writeUInt32(0);
+        info.writeFloat(1); info.writeFloat(1); info.writeUInt8(0);
+        session.receive(info);
+        handler.setTarget(guid);
+        INFO(c.name);
+        run("assert(typeTip:SetUnit('target'))");
+        const auto* tip = lua.widgets().findByName("TypeTip");
+        REQUIRE(tip);
+        REQUIRE(tip->tooltipLines.size() >= 2);
+        CHECK(tip->tooltipLines[1].left == c.line);
+        truth(std::string(c.friendOf ? "" : "not ") + "UnitIsFriend('player', 'target')");
+        truth(std::string("UnitCreatureType('target') == '") + (c.creatureType == 1 ? "Beast" : "Humanoid") + "'");
+        // A corpse names itself whatever it was: "Level 35 Corpse" for Quinn.
+        unit->setHealth(0);
+        run("assert(typeTip:SetUnit('target'))");
+        CHECK(tip->tooltipLines[1].left == std::string("Level ") + std::to_string(c.level) + " Corpse");
+    }
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "Party roster identity and map coordinates survive reconnect", "[party-reconnect]") {
     using namespace wowee::game;
     replay::Session session("tbc");

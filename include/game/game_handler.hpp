@@ -1813,6 +1813,13 @@ public:
     /// so take neither cursor nor click; an enemy city's mailbox likewise.
     [[nodiscard]] bool canInteractWithGameObject(const GameObject& object) const;
     [[nodiscard]] bool canPlayerAttackUnit(const Unit& unit) const;
+    /// UnitIsFriend("player", unit): the player's reaction to the unit is
+    /// better than neutral (CMaNGOS Relations.cpp Unit::IsFriend, player
+    /// first). For a creature whose faction carries a standing that is any
+    /// standing short of at war: build 8606 answers true for a Gadgetzan
+    /// Bruiser at Neutral and for Kurenai at Unfriendly, nil for neutral
+    /// wildlife and for Bloodsail Buccaneers at Hated.
+    [[nodiscard]] bool playerIsFriendOf(const Unit& unit) const;
 
     // Creature move callback (online mode - triggered by SMSG_MONSTER_MOVE)
     // Parameters: guid, x, y, z (canonical), duration_ms (0 = instant)

@@ -2299,7 +2299,7 @@ static game::Unit* unitAskedAbout(lua_State* L) {
 static int lua_UnitIsFriend(lua_State* L) {
     auto* gh = getGameHandler(L);
     auto* unit = unitAskedAbout(L);
-    lua_pushboolean(L, gh && unit && isFriendlyUnit(gh, *unit));
+    lua_pushboolean(L, gh && unit && gh->playerIsFriendOf(*unit));
     return 1;
 }
 

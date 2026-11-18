@@ -3257,8 +3257,17 @@ int lua_Tooltip_SetUnit(lua_State* L) {
                 levelLine = format(global("TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE"),
                                    {levelText, callUnitString("UnitRace"), callUnitString("UnitClass"), global("PLAYER")});
             } else {
+                // The creature type only for a unit the player is not a friend
+                // of (UnitIsFriend): "Level 41 Humanoid" for a Wastewander
+                // Bandit, "Level 9 Beast" for neutral wildlife, "Level ??
+                // Humanoid" for Bloodsail at Hated - but "Level 67" for a
+                // Gadgetzan Bruiser at Neutral, "Level 70" for a friendly
+                // Katrina Turner, "Level 65 (Elite)" for Daelyshia. Measured
+                // on native, the API's UnitCreatureType answering Humanoid for
+                // all of them; a corpse names itself whatever it was.
                 const std::string kind = isCorpse ? global("CORPSE")
-                                                  : (isCompanion ? std::string() : callUnitString("UnitCreatureType"));
+                                       : (isCompanion || (unit && gh->playerIsFriendOf(*unit)))
+                                             ? std::string() : callUnitString("UnitCreatureType");
                 const int rank = unit ? gh->getCreatureRank(unit->getEntry()) : 0;
                 const std::string classification = (rank == 1 || rank == 2) ? global("ELITE")
                                                  : rank == 3 ? global("BOSS") : std::string();

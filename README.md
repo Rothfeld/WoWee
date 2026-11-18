@@ -1419,7 +1419,16 @@ for rank 1 and rare elite 2, BOSS for rank 3 ("Level 55 Humanoid (Elite)",
 "Level ?? Demon (Boss)"; UnitLevel answers -1 for rank 3), nothing for rare
 (rank 4: "Level 54 Humanoid"). A corpse puts CORPSE in the type's place and
 keeps the classification ("Level 55 Corpse (Elite)", "Level ?? Corpse
-(Boss)"). In a group, a corpse's tooltip adds "Master Looter: <name>" under
+(Boss)"). The creature type appears only when the player is not a friend
+of the unit (`UnitIsFriend("player", unit)`, player's reaction better than
+neutral): a faction with a standing counts as a friend at any standing short
+of at war. Native: Gadgetzan Bruiser and Quinn at Neutral show "Level 67" /
+"Level 35", Katrina Turner (friendly template) "Level 70", Kurenai at
+Unfriendly no type; Wastewander Bandit "Level 41 Humanoid", neutral wildlife
+"Level 9 Beast", Bloodsail at Hated "Level ?? Humanoid". `UnitCreatureType`
+still answers Humanoid for all of them; the rule is in the tooltip. Corpses
+keep CORPSE either way. Evidence:
+`_experiments/20261118T195000Z.unit_creature_type/`. In a group, a corpse's tooltip adds "Master Looter: <name>" under
 master loot and "Loot: <name>" (LOOT, MASTER_LOOTER) from SMSG_LOOT_LIST
 (corpse guid, packed master, packed current looter). Group loot, need before
 greed and round robin name the packet's looter, alternating kill by kill;

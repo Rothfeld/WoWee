@@ -3197,6 +3197,17 @@ bool GameHandler::canPlayerAttackUnit(const Unit& unit) const {
     return !isFriendlyFaction(unit.getFactionTemplate()) && unitReactionToPlayer(unit) <= 4;
 }
 
+bool GameHandler::playerIsFriendOf(const Unit& unit) const {
+    if (unit.getGuid() == getPlayerGuid()) return true;
+    if (isDuelOpponent(unit)) return false;
+    // Players and their pets: the reaction they hold towards the player.
+    if (unit.getUnitFlags() & UNIT_FLAG_PLAYER_CONTROLLED)
+        return !unit.isHostile() && unitReactionToPlayer(unit) >= 5;
+    // A creature: forced reaction, else not at war with its faction's
+    // standing, else the template rule - isFriendlyFaction in that order.
+    return isFriendlyFaction(unit.getFactionTemplate());
+}
+
 std::optional<int> GameHandler::forcedReactionRank(uint32_t factionTemplateId) const {
     if (!combatHandler_) return std::nullopt;
     const auto& forced = combatHandler_->getForcedReactions();
