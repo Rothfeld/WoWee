@@ -339,6 +339,20 @@ wowee_test_link_glm(test_lua_handler_globals)
 add_test(NAME lua_handler_globals COMMAND test_lua_handler_globals)
 register_test_target(test_lua_handler_globals)
 
+# ── test_expansion_api_surface ──────────────────────────────
+# Functions the expansion's own client lacks read nil there (2.4.3 measured).
+add_executable(test_expansion_api_surface
+    test_expansion_api_surface.cpp
+    ${CMAKE_SOURCE_DIR}/src/addons/expansion_api_surface.cpp
+)
+target_include_directories(test_expansion_api_surface PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_expansion_api_surface SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/extern/lua-5.1.5/src)
+target_link_libraries(test_expansion_api_surface PRIVATE catch2_main lua51)
+wowee_test_link_glm(test_expansion_api_surface)
+add_test(NAME expansion_api_surface COMMAND test_expansion_api_surface)
+register_test_target(test_expansion_api_surface)
+
 # ── test_lua_generic_for ────────────────────────────────────
 # `for k, v in t do` over a plain table - the Lua 5.0 form 1.12's FrameXML is
 # written in. It raised on the vendored 5.1, and raising while a file is read

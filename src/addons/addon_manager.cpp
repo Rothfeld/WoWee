@@ -3,6 +3,8 @@
 #include "addons/lua_handler_globals.hpp"
 #include "addons/addon_lua_snippets.hpp"
 #include "addons/lua_api_registrations.hpp"
+#include "addons/expansion_api_surface.hpp"
+#include "game/expansion_profile.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -351,6 +353,12 @@ void AddonManager::loadAllAddons() {
     // no-op turns every one of those tests into "already loaded" - the panel is
     // never asked for and the branch runs against a stand-in.
     luaEngine_.declareDeferredGlobals(deferredAddonGlobals());
+
+    // The expansion's own API surface, before any OnLoad tests it: a WotLK
+    // function the 2.4.3 client lacks must read nil on a TBC login.
+    const auto* profile = luaServices_.expansionRegistry
+        ? luaServices_.expansionRegistry->getActive() : nullptr;
+    if (profile) removeApiAbsentFrom(luaEngine_.getState(), profile->id);
 
     const char* wantFrameXml = std::getenv("WOWEE_LOAD_FRAMEXML");
     const bool loadIt = wantFrameXml ? (std::string(wantFrameXml) != "0") : true;
