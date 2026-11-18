@@ -1123,7 +1123,11 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (showPlate && legacyPlates) renderPos.z += 2.0f / 3.0f;
         // World names occupy a raised text line above the model's name attachment.
         // Dimensions calibrated against build 8606 at matching camera poses.
-        else if (!showPlate) renderPos.z += 0.25f;
+        float nameScale = 1.0f;
+        if (!showPlate) {
+            nameScale = ui::unitNameScale(renderPos.z - unitPosition.z);
+            renderPos.z += 0.25f * nameScale;
+        }
 
 
         // World names use the scene depth per text pixel below. Rejecting the
@@ -1588,7 +1592,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             snprintf(labelBuf, sizeof(labelBuf), "%s", unitName.c_str());
         }
         // Plain world names scale with perspective; nameplates remain screen UI.
-        const glm::vec4 textTop = viewProj * glm::vec4(renderPos + glm::vec3(0, 0, 0.20f), 1.0f);
+        const glm::vec4 textTop = viewProj * glm::vec4(renderPos + glm::vec3(0, 0, 0.20f * nameScale), 1.0f);
         const float nameFontSize = showPlate ? (legacyPlates ? 12.8f * plateArtScale : ImGui::GetFontSize())
             : std::clamp(std::abs(textTop.y / textTop.w - ndc.y) * screenH * 0.5f, 1.0f, 40.0f);
         ImFont* nameFont = ImGui::GetFont();

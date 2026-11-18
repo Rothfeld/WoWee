@@ -23,6 +23,19 @@ inline bool unitWorldNameShown(bool own, bool plate, bool target, bool categoryS
     return own || plate || target || categorySetting;
 }
 
+/// Size of a plain world name relative to an ordinary one, from the height of
+/// the unit's name attachment over its feet (model scale included).
+///
+/// Build 8606, one unit morphed through 16 models and scaled 1.7..2.0
+/// (pair 7, _experiments/20261118T074350Z.plates_fct namesize.json): names
+/// keep the ordinary size up to an attachment height of 3.98 yd (Battle
+/// Guard 3.89, Flesh Golem 3.79, human x1.8) and from 4.09 yd on (Crypt
+/// Fiend 4.17, human x1.85) grow in proportion to it, 0.3796 per yard
+/// (Mountain Giant 8.59 yd: 3.27x). The line under the name grows with it.
+inline float unitNameScale(float attachmentHeight) {
+    return attachmentHeight > 4.0f ? 0.3796f * attachmentHeight : 1.0f;
+}
+
 inline float legacyPlateCenterX(float x, float viewportWidth, float artScale) {
     const float halfWidth = 64.0f * artScale;
     return std::clamp(x, halfWidth, std::max(halfWidth, viewportWidth - halfWidth));

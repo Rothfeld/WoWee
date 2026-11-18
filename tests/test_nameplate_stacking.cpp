@@ -190,3 +190,10 @@ TEST_CASE("Build 8606 spreads four plates into rows", "[nameplates][spread]") {
                  {961.12f, 441.35f, 12.66f, 961.10f, 441.27f},
                  {1095.32f, 384.67f, 11.52f, 1095.31f, 384.58f}});
 }
+
+TEST_CASE("Build 8606 grows plain names over tall name attachments", "[names]") {
+    CHECK(unitNameScale(2.21f) == 1.0f);               // human
+    CHECK(unitNameScale(3.98f) == 1.0f);               // human x1.8
+    CHECK(unitNameScale(4.09f) == Catch::Approx(1.55f).margin(0.03f));  // human x1.85: 1.565
+    CHECK(unitNameScale(8.59f) == Catch::Approx(3.27f).margin(0.03f));  // Mountain Giant: 3.265
+}
