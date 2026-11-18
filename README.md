@@ -1402,10 +1402,16 @@ SMSG_SET_FORCED_REACTIONS 960 -> 1 (hostile), 14 -> 4 (friendly), which
 override template and standing (CMaNGOS Unit::GetReactionTo). Gotcha: a level
 40 test character dies to Sathrovarr within seconds once the reaction is
 forced; entering map 580 needs `.gm on` (level 70 + raid otherwise).
-The group a point is in is the one whose surface lies nearest below it;
-the point is indoors when that group is indoor (0x2000) and its box
-contains the point. Group boxes overlap: Black Temple's indoor Den of Mortal
-Delights box covers the outdoor Supremus ramp.
+The group a point is in is the one whose surface lies nearest below it,
+among the group boxes the vertical through the point crosses; the point is
+indoors when that group is indoor (0x2000) and the point lies inside some
+group box of the building. Group boxes overlap: Black Temple's indoor Den of
+Mortal Delights box covers the outdoor Supremus ramp, the Lion's Pride Inn
+kitchen box its porch and roof. IsIndoors() and [indoors] additionally need
+the group to lack MOGP 0x8000 (Undercity, the Great Forge: nil in 8606).
+Native WMO movement collision looked one-sided in Black Temple and
+Undercity (walls passed from behind, ceilings fallen through from above);
+WoWee's is two-sided.
 A camera in an interior group from which no portal path reaches an exterior
 group (WMORenderer::findSealedInterior) sees only those groups: terrain,
 grass, sky and every model or unit outside their box are not drawn, and the
