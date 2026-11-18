@@ -2,6 +2,7 @@
 #include "core/entity_spawner.hpp"
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
+#include "game/game_object_interaction.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
@@ -98,21 +99,30 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         entitySpawner_.onGameObjectInfoReceived(entry);
     });
 
-    // GameObject custom animation callback (e.g. chest opening)
+    // SMSG_GAMEOBJECT_CUSTOM_ANIM names custom animation N (0-3), which is
+    // AnimationData Custom0-Custom3 (153-156), not animation id N: CMaNGOS
+    // sends it for GameObjectActions ANIMATE_CUSTOM_0-3 (SPELL_EFFECT_
+    // ACTIVATE_OBJECT). Zul'Aman's Strange Gong (G_GongTroll01, Stand 0 and
+    // Custom0 153) swings on each use natively (Zul'Aman Object Visual 45222,
+    // misc 1 = Custom0); playing animation 0 left it still.
     gameHandler_.setGameObjectCustomAnimCallback([this](uint64_t guid, uint32_t animId) {
         auto& goInstances = entitySpawner_.getGameObjectInstances();
         auto it = goInstances.find(guid);
         if (it == goInstances.end()) return;
         auto& info = it->second;
-        if (!info.isWmo) {
-            if (auto* m2r = renderer_.getM2Renderer()) {
-                // Play the custom animation as a one-shot if model supports it
-                if (m2r->hasAnimation(info.instanceId, animId))
-                    m2r->setInstanceAnimation(info.instanceId, animId, false);
-                else
-                    m2r->setInstanceAnimationFrozen(info.instanceId, false);
-            }
+        if (info.isWmo) return;
+        auto* m2r = renderer_.getM2Renderer();
+        if (!m2r) return;
+        const auto sequence = game::gameObjectCustomAnimation(animId);
+        if (!sequence) {
+            LOG_WARNING("GO custom animation ", animId, " outside Custom0-3: guid=0x", std::hex, guid);
+            return;
         }
+        if (!m2r->hasAnimation(info.instanceId, *sequence)) {
+            LOG_DEBUG("GO custom animation ", *sequence, " absent from model: guid=0x", std::hex, guid);
+            return;
+        }
+        m2r->setInstanceAnimation(info.instanceId, *sequence, false);
     });
 
     // GameObject state change callback: a door, a chest, a destructible is a

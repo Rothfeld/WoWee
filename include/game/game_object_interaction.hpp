@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 
 namespace wowee::game {
@@ -136,6 +137,14 @@ inline GameObjectAffordance gameObjectAffordance(uint32_t type, uint32_t data0, 
     if (!available) return {};
     const auto& rule = gameObjectTypeRule(type);
     return {rule.use, objectNameTooltip(type, data0, data1), rule.cursor};
+}
+
+/// The model animation SMSG_GAMEOBJECT_CUSTOM_ANIM's index (0-3) plays:
+/// AnimationData Custom0-Custom3, ids 153-156. nullopt outside 0-3.
+inline std::optional<uint32_t> gameObjectCustomAnimation(uint32_t index) {
+    constexpr uint32_t kCustom0 = 153;
+    if (index > 3) return std::nullopt;
+    return kCustom0 + index;
 }
 
 } // namespace wowee::game

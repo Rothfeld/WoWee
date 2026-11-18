@@ -171,6 +171,15 @@ TEST_CASE("a door reaches as far as its Stand bounds grown by 5 yards", "[go-rea
     CHECK(withinGrownBox({0, 7.5f, -1.34f}, standMin, standMax, kScale, kReach));
 }
 
+TEST_CASE("a game object custom animation index names Custom0-Custom3", "[go-anim]") {
+    // Strange Gong 187359 (G_GongTroll01: Stand 0, Custom0 153) gets index 0
+    // from Zul'Aman Object Visual 45222 (ACTIVATE_OBJECT misc 1 = ANIMATE_CUSTOM_0).
+    using wowee::game::gameObjectCustomAnimation;
+    CHECK(gameObjectCustomAnimation(0) == std::optional<uint32_t>{153});
+    CHECK(gameObjectCustomAnimation(3) == std::optional<uint32_t>{156});
+    CHECK_FALSE(gameObjectCustomAnimation(4).has_value());
+}
+
 TEST_CASE("NPC cursor honors server cursor and attack permission") {
     using namespace wowee::game;
     using wowee::ui::unitCursorPath;
