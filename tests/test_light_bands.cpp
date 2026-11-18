@@ -87,6 +87,39 @@ TEST_CASE("the float file's six channels map the same way", "[light]") {
     CHECK(lightBandSlot(7, LIGHT_FLOAT_CHANNELS).channel == 0);
 }
 
+TEST_CASE("band keys are put in time order", "[light]") {
+    // LightParams 8 channel 0 (sunlight) as stored in 2.4.3: 06:00, 12:00,
+    // then 00:00 last. Sorted, it reads like the clear set 394's same band.
+    wowee::rendering::ColorBand band;
+    band.numKeyframes = 3;
+    const uint16_t times[] = {720, 1440, 0};
+    const glm::vec3 colours[] = {glm::vec3(0x4b, 0x46, 0x3f), glm::vec3(0xff, 0x80, 0x33),
+                                 glm::vec3(0x38, 0x6d, 0x75)};
+    for (int k = 0; k < 3; ++k) {
+        band.times[k] = times[k];
+        band.colors[k] = colours[k];
+    }
+    wowee::rendering::sortBandKeys(band, band.colors);
+    CHECK(band.times[0] == 0);
+    CHECK(band.times[1] == 720);
+    CHECK(band.times[2] == 1440);
+    CHECK(band.colors[0] == colours[2]);
+    CHECK(band.colors[1] == colours[0]);
+    CHECK(band.colors[2] == colours[1]);
+
+    wowee::rendering::FloatBand fog;
+    fog.numKeyframes = 3;
+    const float ends[] = {15000.0f, 15001.0f, 15002.0f};
+    for (int k = 0; k < 3; ++k) {
+        fog.times[k] = times[k];
+        fog.values[k] = ends[k];
+    }
+    wowee::rendering::sortBandKeys(fog, fog.values);
+    CHECK(fog.values[0] == 15002.0f);
+    CHECK(fog.values[1] == 15000.0f);
+    CHECK(fog.values[2] == 15001.0f);
+}
+
 TEST_CASE("zero is not a band", "[light]") {
     // The ids are one-based, so a zero is a missing value rather than the
     // first row. Treating it as a row is how LightParams 0 got written to.

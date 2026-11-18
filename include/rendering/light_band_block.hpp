@@ -17,6 +17,8 @@
 /// ids running to 16506, which is 850 rows of 18 and 917 x 18; LightFloatBand
 /// has 5100 rows and ids to 5502, which is 850 x 6 and 917 x 6.
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 
 namespace wowee::rendering {
@@ -45,6 +47,32 @@ inline LightBandSlot lightBandSlot(uint32_t blockIndex, uint32_t channelsPerRow)
     out.channel = zeroBased % channelsPerRow;
     out.valid = true;
     return out;
+}
+
+/// Put a band's keys in ascending time order, values alongside.
+///
+/// Sampling assumes ascending times. 239 LightIntBand and 41 LightFloatBand
+/// rows in 2.4.3 list a key out of order: LightParams 8, the storm set of
+/// Ruins of Ahn'Qiraj's default light, has its 00:00 key last (720, 1440, 0),
+/// and read in file order that band held the 06:00 colour all afternoon.
+/// 2.4.3 draws that storm with the ground colours of the clear set 394, whose
+/// keys are the same values in ascending order.
+template <typename Band, typename Value>
+void sortBandKeys(Band& band, Value (&values)[16]) {
+    std::array<uint8_t, 16> order{};
+    for (uint8_t k = 0; k < band.numKeyframes; ++k) order[k] = k;
+    std::stable_sort(order.begin(), order.begin() + band.numKeyframes,
+                     [&](uint8_t a, uint8_t b) { return band.times[a] < band.times[b]; });
+    uint16_t times[16];
+    Value sorted[16];
+    for (uint8_t k = 0; k < band.numKeyframes; ++k) {
+        times[k] = band.times[order[k]];
+        sorted[k] = values[order[k]];
+    }
+    for (uint8_t k = 0; k < band.numKeyframes; ++k) {
+        band.times[k] = times[k];
+        values[k] = sorted[k];
+    }
 }
 
 }  // namespace wowee::rendering

@@ -245,6 +245,7 @@ bool LightingManager::loadLightBandDbcs(pipeline::AssetManager* assetManager) {
                     uint32_t colorBGRA = dbc->getUInt32(i, valueBase + k);
                     band.colors[k] = dbcColorToVec3(colorBGRA);
                 }
+                sortBandKeys(band, band.colors);
             }
         }
     }
@@ -289,6 +290,7 @@ bool LightingManager::loadLightBandDbcs(pipeline::AssetManager* assetManager) {
                 for (uint8_t k = 0; k < band.numKeyframes && k < 16; ++k) {
                     band.values[k] = dbc->getFloat(i, valueBase + k);
                 }
+                sortBandKeys(band, band.values);
             }
         }
     }
