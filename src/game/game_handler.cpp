@@ -863,7 +863,12 @@ void GameHandler::update(float deltaTime) {
         // No heartbeat while the server holds the character: its own spline
         // is the position, and CMaNGOS relocates the player from any
         // movement packet that arrives between two splines.
-        if (movementHandler_ && movementHandler_->isServerMovementAllowed() &&
+        // Ordinary movement heartbeats go out from the physics samples (see
+        // MovementHandler::beginFrame); this timer covers taxi flights, the
+        // auto-attack cadences and a client without local physics.
+        const bool sampledHeartbeats = movementHandler_ && movementHandler_->samplesHeartbeats() &&
+                                       !classicLikeCombatSync;
+        if (movementHandler_ && !sampledHeartbeats && movementHandler_->isServerMovementAllowed() &&
             movementHandler_->timeSinceLastMoveHeartbeatRef() >= heartbeatInterval) {
             sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
             movementHandler_->timeSinceLastMoveHeartbeatRef() = 0.0f;

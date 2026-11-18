@@ -1124,6 +1124,102 @@ TEST_CASE_METHOD(Integration, "Transport clocks include socket and decompression
     }
 }
 
+namespace {
+struct SentMovement {
+    uint32_t flags = 0;
+    uint32_t time = 0;
+    glm::vec3 server{0.0f};
+    uint32_t fallTime = 0;
+};
+
+SentMovement readSentMovement(wowee::network::Packet packet) {
+    SentMovement out;
+    out.flags = packet.readUInt32();
+    packet.readUInt8();
+    out.time = packet.readUInt32();
+    out.server.x = packet.readFloat();
+    out.server.y = packet.readFloat();
+    out.server.z = packet.readFloat();
+    packet.readFloat();
+    out.fallTime = packet.readUInt32();
+    return out;
+}
+}  // namespace
+
+// Native 2.4.3 (pair 4, 2026-11-18): heartbeats exactly 500 ms after the
+// previous movement packet, 3.50 yards apart at run speed 7, none while
+// standing or only turning; STOP in the air keeps FORWARD with PENDING_STOP
+// (0x5001), FALL_LAND carries the whole fall and clears it (0x0, 825 ms).
+TEST_CASE_METHOD(Integration, "TBC movement packets carry the instant of their physics position", "[movement]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    auto* movement = handler.getMovementHandler();
+    REQUIRE(movement);
+    const auto canonicalAt = [](float serverX) {
+        return wowee::core::coords::serverToCanonical(glm::vec3(serverX, 100.0f, 50.0f));
+    };
+    const auto sample = [&](uint32_t timeMs, float serverX) {
+        movement->beginFrame();
+        const glm::vec3 c = canonicalAt(serverX);
+        handler.setPosition(c.x, c.y, c.z);
+        movement->recordPhysicsSample(timeMs);
+        movement->sendDueHeartbeats();
+    };
+    // Physics times far ahead of the real movement clock of this test.
+    constexpr uint32_t t0 = 1000000;
+    sample(t0, 0.0f);
+    handler.sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+    sample(t0 + 450, 3.15f);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).empty());
+    sample(t0 + 600, 4.2f);
+    sample(t0 + 1040, 7.28f);
+    auto start = session.sent().of(Opcode::MSG_MOVE_START_FORWARD);
+    REQUIRE(start.size() == 1);
+    CHECK(readSentMovement(start.front()).time == t0);
+    auto beats = session.sent().of(Opcode::MSG_MOVE_HEARTBEAT);
+    REQUIRE(beats.size() == 2);
+    const auto first = readSentMovement(beats[0]);
+    const auto second = readSentMovement(beats[1]);
+    CHECK(first.time == t0 + 500);
+    CHECK(second.time == t0 + 1000);
+    CHECK(first.server.x == Catch::Approx(3.5f).margin(1e-3));
+    CHECK(second.server.x == Catch::Approx(7.0f).margin(1e-3));
+    CHECK(first.flags == 0x1);
+
+    handler.sendMovement(Opcode::MSG_MOVE_STOP);
+    for (uint32_t t = t0 + 1100; t < t0 + 3000; t += 100) sample(t, 7.28f);
+    CHECK(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).size() == 2);
+
+    // Running jump, W released in the air, landing.
+    sample(t0 + 4000, 7.28f);
+    handler.sendMovement(Opcode::MSG_MOVE_START_FORWARD);
+    sample(t0 + 4100, 7.98f);
+    handler.sendMovement(Opcode::MSG_MOVE_JUMP);
+    sample(t0 + 4500, 10.78f);
+    sample(t0 + 4700, 12.18f);
+    handler.sendMovement(Opcode::MSG_MOVE_STOP);
+    sample(t0 + 4925, 13.755f);
+    handler.sendMovement(Opcode::MSG_MOVE_FALL_LAND);
+    const auto jump = readSentMovement(session.sent().of(Opcode::MSG_MOVE_JUMP).front());
+    CHECK(jump.time == t0 + 4100);
+    CHECK(jump.fallTime == 0);
+    const auto airStop = readSentMovement(session.sent().of(Opcode::MSG_MOVE_STOP).back());
+    CHECK(airStop.flags == 0x5001);
+    CHECK(airStop.time == t0 + 4700);
+    CHECK(airStop.fallTime == 600);
+    const auto airBeat = readSentMovement(session.sent().of(Opcode::MSG_MOVE_HEARTBEAT).back());
+    CHECK(airBeat.time == t0 + 4600);
+    CHECK(airBeat.fallTime == 500);
+    CHECK(airBeat.server.x == Catch::Approx(11.48f).margin(1e-3));
+    const auto land = readSentMovement(session.sent().of(Opcode::MSG_MOVE_FALL_LAND).front());
+    CHECK(land.flags == 0x0);
+    CHECK(land.fallTime == 825);
+    sample(t0 + 6000, 13.755f);
+    handler.sendMovement(Opcode::MSG_MOVE_START_BACKWARD);
+    CHECK(readSentMovement(session.sent().of(Opcode::MSG_MOVE_START_BACKWARD).front()).fallTime == 825);
+}
+
 TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local axes", "[transport]") {
     using namespace wowee::game;
     replay::Session session("tbc");

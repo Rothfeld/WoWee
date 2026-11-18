@@ -6,6 +6,7 @@
 #include "network/packet.hpp"
 #include <glm/glm.hpp>
 #include <chrono>
+#include <optional>
 #include <deque>
 #include <functional>
 #include <set>
@@ -202,7 +203,41 @@ public:
     uint32_t& monsterMovePacketsDroppedThisTickRef() { return monsterMovePacketsDroppedThisTick_; }
 
     // Movement clock / fall state setters (formerly accessed via friend)
-    void resetMovementClock() { movementClockStart_ = std::chrono::steady_clock::now(); lastMovementTimestampMs_ = 0; }
+    void resetMovementClock() {
+        movementClockStart_ = std::chrono::steady_clock::now();
+        lastMovementTimestampMs_ = 0;
+        lastPacketTimeMs_ = 0;
+        sample_.reset();
+        previousSample_.reset();
+    }
+
+    // --- Packet clock of the local physics ---
+    //
+    // A movement packet says where the player is at the instant in its time
+    // field. Other clients extrapolate from it at the speed the flags imply,
+    // so a position from one instant stamped with another reads as a speed
+    // change, and every heartbeat corrects it: at a few frames per second the
+    // character jerks back and forth. Native stamps every packet with the
+    // instant its position belongs to and sends heartbeats exactly 500 ms
+    // after the previous movement packet, positions consistent to the
+    // millisecond (7.00 yards per 500 ms running).
+    //
+    // A frame integrates physics over the time since the previous frame
+    // began, so the state the frame produces belongs to the instant that
+    // frame began. beginFrame takes that instant from the same moment the
+    // frame delta is taken.
+    void beginFrame();
+    [[nodiscard]] uint32_t frameStartMs() const { return frameStartMs_; }
+    [[nodiscard]] uint32_t previousFrameStartMs() const { return previousFrameStartMs_; }
+    /// movementInfo's position and orientation are the physics state at timeMs.
+    void recordPhysicsSample(uint32_t timeMs);
+    /// Heartbeats due since the last movement packet, each at its due instant
+    /// with the position the physics passed through then. None while
+    /// standing or only turning: native sends none then.
+    void sendDueHeartbeats();
+    /// Whether this frame's heartbeats come from sendDueHeartbeats rather
+    /// than the timer in GameHandler::update.
+    [[nodiscard]] bool samplesHeartbeats() const;
     void setFalling(bool falling) { isFalling_ = falling; }
     void setFallStartMs(uint32_t ms) { fallStartMs_ = ms; }
 
@@ -280,6 +315,29 @@ private:
     // Fall/jump tracking
     bool isFalling_ = false;
     uint32_t fallStartMs_ = 0;
+
+    // Physics samples for packet timestamps; see beginFrame.
+    struct PhysicsSample {
+        uint32_t timeMs = 0;
+        uint64_t frame = 0;
+        float x = 0.0f, y = 0.0f, z = 0.0f, orientation = 0.0f;
+    };
+    [[nodiscard]] uint32_t movementClockNowMs() const;
+    /// The sample movementInfo currently holds, or null when its position
+    /// was written by something other than the physics this frame or last.
+    [[nodiscard]] const PhysicsSample* currentPhysicsSample() const;
+    uint32_t reserveMovementTimestampMs(uint32_t atMs);
+    /// A landing (or water) ends the fall: directions released in the air stop.
+    void applyPendingStops();
+    std::optional<PhysicsSample> sample_;
+    std::optional<PhysicsSample> previousSample_;
+    uint64_t frameIndex_ = 0;
+    uint32_t frameStartMs_ = 0;
+    uint32_t previousFrameStartMs_ = 0;
+    /// Time field of the last movement packet sent, any opcode.
+    uint32_t lastPacketTimeMs_ = 0;
+    /// Time for the packet being sent, set by sendDueHeartbeats.
+    std::optional<uint32_t> packetTimeMs_;
 
     // Heartbeat timing
     int heartbeatLogCount_ = 0;  // periodic position audit counter

@@ -438,6 +438,118 @@ uint32_t MovementHandler::nextMovementTimestampMs() {
     return candidate;
 }
 
+uint32_t MovementHandler::movementClockNowMs() const {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - movementClockStart_).count();
+    return static_cast<uint32_t>(elapsed) + 1U;
+}
+
+uint32_t MovementHandler::reserveMovementTimestampMs(uint32_t atMs) {
+    const uint32_t candidate = std::max(atMs, lastMovementTimestampMs_ + 1U);
+    lastMovementTimestampMs_ = candidate;
+    return candidate;
+}
+
+void MovementHandler::beginFrame() {
+    ++frameIndex_;
+    previousFrameStartMs_ = frameStartMs_;
+    frameStartMs_ = movementClockNowMs();
+}
+
+void MovementHandler::recordPhysicsSample(uint32_t timeMs) {
+    PhysicsSample sample;
+    sample.timeMs = timeMs;
+    sample.frame = frameIndex_;
+    sample.x = movementInfo.x;
+    sample.y = movementInfo.y;
+    sample.z = movementInfo.z;
+    sample.orientation = movementInfo.orientation;
+    // A second sample of the same instant (a landing reported within the
+    // frame) replaces the current one; interpolation needs distinct times.
+    if (sample_ && sample_->timeMs < timeMs) previousSample_ = sample_;
+    else if (sample_ && sample_->timeMs > timeMs) previousSample_.reset();
+    sample_ = sample;
+}
+
+const MovementHandler::PhysicsSample* MovementHandler::currentPhysicsSample() const {
+    if (!sample_ || sample_->frame + 1 < frameIndex_) return nullptr;
+    if (sample_->x != movementInfo.x || sample_->y != movementInfo.y ||
+        sample_->z != movementInfo.z || sample_->orientation != movementInfo.orientation) {
+        return nullptr;
+    }
+    return &*sample_;
+}
+
+bool MovementHandler::samplesHeartbeats() const {
+    return sample_ && sample_->frame + 1 >= frameIndex_ &&
+           !onTaxiFlight_ && !taxiMountActive_ && !taxiActivatePending_ && !taxiClientActive_;
+}
+
+void MovementHandler::applyPendingStops() {
+    if (movementInfo.hasFlag(MovementFlags::PENDING_STOP)) {
+        movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
+                                static_cast<uint32_t>(MovementFlags::BACKWARD) |
+                                static_cast<uint32_t>(MovementFlags::PENDING_STOP));
+    }
+    if (movementInfo.hasFlag(MovementFlags::PENDING_STRAFE_STOP)) {
+        movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+                                static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+                                static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP));
+    }
+}
+
+void MovementHandler::sendDueHeartbeats() {
+    if (!samplesHeartbeats() || !serverMovementAllowed_ || lastPacketTimeMs_ == 0) return;
+    // Auto-attack keeps its own cadence in GameHandler::update.
+    if (owner_.hasAutoAttackIntent() && isPreWotlk()) return;
+    constexpr uint32_t kMoving =
+        static_cast<uint32_t>(MovementFlags::FORWARD) |
+        static_cast<uint32_t>(MovementFlags::BACKWARD) |
+        static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+        static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+        static_cast<uint32_t>(MovementFlags::FALLING) |
+        static_cast<uint32_t>(MovementFlags::FALLINGFAR) |
+        static_cast<uint32_t>(MovementFlags::ASCENDING) |
+        static_cast<uint32_t>(MovementFlags::DESCENDING);
+    if ((movementInfo.flags & kMoving) == 0) return;
+    const uint32_t intervalMs = static_cast<uint32_t>(std::lround(moveHeartbeatInterval_ * 1000.0f));
+    assert(intervalMs > 0);
+    const PhysicsSample current = *sample_;
+    while (lastPacketTimeMs_ + intervalMs <= current.timeMs) {
+        const uint32_t dueMs = lastPacketTimeMs_ + intervalMs;
+        PhysicsSample at = current;
+        at.timeMs = dueMs;
+        if (previousSample_ && dueMs > previousSample_->timeMs) {
+            const PhysicsSample& prev = *previousSample_;
+            const float t = static_cast<float>(dueMs - prev.timeMs) /
+                            static_cast<float>(current.timeMs - prev.timeMs);
+            at.x = prev.x + (current.x - prev.x) * t;
+            at.y = prev.y + (current.y - prev.y) * t;
+            at.z = prev.z + (current.z - prev.z) * t;
+            at.orientation = core::coords::normalizeAngleRad(
+                prev.orientation + core::coords::normalizeAngleRad(current.orientation - prev.orientation) * t);
+        } else {
+            // Heartbeats were not running when this one fell due (the
+            // samples resumed after a gap): one heartbeat at the current
+            // sample, which is a state the physics was in.
+            at = current;
+        }
+        movementInfo.x = at.x;
+        movementInfo.y = at.y;
+        movementInfo.z = at.z;
+        movementInfo.orientation = at.orientation;
+        const uint32_t before = lastPacketTimeMs_;
+        packetTimeMs_ = at.timeMs;
+        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+        packetTimeMs_.reset();
+        if (lastPacketTimeMs_ == before) break;  // held back; said by sendMovement
+    }
+    movementInfo.x = current.x;
+    movementInfo.y = current.y;
+    movementInfo.z = current.z;
+    movementInfo.orientation = current.orientation;
+}
+
 bool MovementHandler::restoreWorldTransferFallbackIfNearOrigin(const char* context) {
     if (!worldTransferFallbackValid_ || owner_.getCurrentMapId() != worldTransferFallbackMapId_) {
         return false;
@@ -527,8 +639,14 @@ void MovementHandler::sendMovement(Opcode opcode) {
         return;
     }
 
-    // Always send a strictly increasing non-zero client movement clock value.
-    const uint32_t movementTime = nextMovementTimestampMs();
+    // Strictly increasing, non-zero, and the instant the position belongs to
+    // (see beginFrame). A position not written by the physics is the
+    // player's position now.
+    const PhysicsSample* sample = currentPhysicsSample();
+    const uint32_t movementTime =
+        packetTimeMs_ ? reserveMovementTimestampMs(*packetTimeMs_)
+        : sample ? reserveMovementTimestampMs(sample->timeMs)
+                 : nextMovementTimestampMs();
     movementInfo.time = movementTime;
 
     if (opcode == Opcode::MSG_MOVE_SET_FACING &&
@@ -567,25 +685,42 @@ void MovementHandler::sendMovement(Opcode opcode) {
 
     // Update movement flags based on opcode
     switch (opcode) {
+        // In the air a released direction stays set with a pending stop until
+        // the landing (native: STOP 0x5001, STOP_STRAFE 0xb008, FALL_LAND 0x0);
+        // pressing it again in the air clears the pending stop (START 0x1001).
         case Opcode::MSG_MOVE_START_FORWARD:
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STOP);
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FORWARD);
             break;
         case Opcode::MSG_MOVE_START_BACKWARD:
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STOP);
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::BACKWARD);
             break;
         case Opcode::MSG_MOVE_STOP:
-            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
-                                    static_cast<uint32_t>(MovementFlags::BACKWARD));
+            if (movementInfo.hasFlag(MovementFlags::FALLING)) {
+                movementInfo.flags |= static_cast<uint32_t>(MovementFlags::PENDING_STOP);
+            } else {
+                movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
+                                        static_cast<uint32_t>(MovementFlags::BACKWARD) |
+                                        static_cast<uint32_t>(MovementFlags::PENDING_STOP));
+            }
             break;
         case Opcode::MSG_MOVE_START_STRAFE_LEFT:
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP);
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::STRAFE_LEFT);
             break;
         case Opcode::MSG_MOVE_START_STRAFE_RIGHT:
+            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP);
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
             break;
         case Opcode::MSG_MOVE_STOP_STRAFE:
-            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-                                    static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT));
+            if (movementInfo.hasFlag(MovementFlags::FALLING)) {
+                movementInfo.flags |= static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP);
+            } else {
+                movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+                                        static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+                                        static_cast<uint32_t>(MovementFlags::PENDING_STRAFE_STOP));
+            }
             break;
         case Opcode::MSG_MOVE_JUMP:
             movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FALLING);
@@ -624,10 +759,15 @@ void MovementHandler::sendMovement(Opcode opcode) {
                                     static_cast<uint32_t>(MovementFlags::TURN_RIGHT));
             break;
         case Opcode::MSG_MOVE_FALL_LAND:
+            // The landing carries the whole fall (native: 825 ms for a
+            // standing jump) and later packets keep it until the next fall.
+            if (movementInfo.hasFlag(MovementFlags::FALLING) && movementInfo.time >= fallStartMs_) {
+                movementInfo.fallTime = movementInfo.time - fallStartMs_;
+            }
             movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::FALLING);
+            applyPendingStops();
             isFalling_ = false;
             fallStartMs_ = 0;
-            movementInfo.fallTime = 0;
             movementInfo.jumpVelocity = 0.0f;
             movementInfo.jumpSinAngle = 0.0f;
             movementInfo.jumpCosAngle = 0.0f;
@@ -662,6 +802,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
             // sent on touching ground and a swimmer never touches it, so a
             // jump into a lake left FALLING set with fallTime still climbing.
             movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::FALLING);
+            applyPendingStops();
             isFalling_ = false;
             fallStartMs_ = 0;
             movementInfo.fallTime = 0;
@@ -702,13 +843,15 @@ void MovementHandler::sendMovement(Opcode opcode) {
         lastFacingSentOrientation_ = movementInfo.orientation;
     }
 
-    // Airborne fallTime is sampled with position by Application. Using send
-    // time here gives native clients a velocity belonging to a different point
-    // on the arc, so each heartbeat snaps their prediction.
-    if (!movementInfo.hasFlag(MovementFlags::FALLING)) {
+    // fallTime is the time since takeoff at the packet's instant, which is
+    // the instant of its position, so the arc observers extrapolate passes
+    // through it. Outside a fall native keeps the last fall's value.
+    if (movementInfo.hasFlag(MovementFlags::FALLING)) {
+        assert(movementInfo.time >= fallStartMs_);
+        movementInfo.fallTime = movementInfo.time - fallStartMs_;
+    } else {
         isFalling_ = false;
         fallStartMs_ = 0;
-        movementInfo.fallTime = 0;
     }
 
     if (onTaxiFlight_ || taxiMountActive_ || taxiActivatePending_ || taxiClientActive_) {
@@ -874,6 +1017,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
         movementHeldReason_ = nullptr;
     }
 
+    lastPacketTimeMs_ = movementInfo.time;
     if (opcode == Opcode::MSG_MOVE_HEARTBEAT) {
         lastHeartbeatSendTimeMs_ = movementInfo.time;
         lastHeartbeatX_ = movementInfo.x;
@@ -1381,7 +1525,9 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
 
     LOG_DEBUG("Remote movement packet: guid=", moverGuid, " opcode=", wireOp,
               " time=", info.time, " flags=", info.flags, " duration=", durationMs,
-              " stop=", isStopOpcode, " position=", canonical.x, ",", canonical.y, ",", canonical.z);
+              " stop=", isStopOpcode, " position=", canonical.x, ",", canonical.y, ",", canonical.z,
+              " server=(", info.x, ",", info.y, ",", info.z, ") facing=", info.orientation,
+              " fallTime=", info.fallTime);
     const float entityDuration = isStopOpcode ? 0.0f : (durationMs / 1000.0f);
     const uint32_t nonGroundFlags = static_cast<uint32_t>(MovementFlags::FALLING) |
         static_cast<uint32_t>(MovementFlags::FALLINGFAR) |

@@ -832,6 +832,21 @@ Use established movement or obstacle contact before jump input; simultaneous
 start/jump events produced different native outcomes across runs. A blocked
 jump alone is insufficient evidence: compare valid climbs and landings too.
 
+Outgoing movement packets are stamped with the instant their position belongs
+to: a frame's physics integrates up to the instant that frame began
+(MovementHandler::beginFrame), so the state synced in the next frame carries
+the previous frame's start time. Heartbeats go out exactly 500 ms after the
+previous movement packet of any opcode, with the position interpolated between
+the two physics samples around that instant; none while standing or only
+turning. Measured on native 2.4.3: 7.00 yards per 500 ms running, 4.50
+backpedalling, no idle or turn-in-place heartbeats. Stamping send time instead
+made observers see speeds from 3.9 to 8.2 yards/s at 17 fps and far worse during
+frame hitches. A direction released in the air keeps its flag with
+PENDING_STOP 0x4000 / PENDING_STRAFE_STOP 0x8000 until FALL_LAND (native STOP
+0x5001, FALL_LAND 0x0). FALL_LAND carries the whole fall time and later packets
+keep it, as native does. `stream_stats.py` in
+`_experiments/20261118T0800.movesend/` prints rates from a debug log.
+
 Water-jump packets use the ballistic clock, excluding time spent swimming.
 Takeoff resets that clock; heartbeat position and fallTime describe the same
 completed physics sample. START_SWIM reports the current water-contact position

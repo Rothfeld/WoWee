@@ -399,11 +399,13 @@ enum class MovementFlags : uint32_t {
     ROOT                = 0x00000800,
     FALLING             = 0x00001000,
     FALLINGFAR          = 0x00002000,
-    // 0x00004000 and 0x00008000 are PENDING_STOP and PENDING_STRAFE_STOP,
-    // which the server sets during ordinary movement. Water walking and slow
-    // fall sat on those two, so a client under either told the server in every
-    // packet that it was in a pending stop, and never saw the state it had
-    // actually been put into.
+    // Water walking and slow fall once sat on these two, so a client under
+    // either told the server in every packet that it was in a pending stop.
+    // Native sets them when a direction key is released in the air: the
+    // direction flag stays until landing (MSG_MOVE_STOP 0x5001, then
+    // FALL_LAND 0x0; MSG_MOVE_STOP_STRAFE 0xb008).
+    PENDING_STOP        = 0x00004000,
+    PENDING_STRAFE_STOP = 0x00008000,
     SWIMMING            = 0x00200000,
     ASCENDING           = 0x00400000,
     DESCENDING          = 0x00800000,

@@ -1511,6 +1511,11 @@ void Application::run() {
         // time here so low rendering rates do not slow movement relative to
         // the server clock.
         const float deltaTime = FramePacer::toSeconds(deltaNs, std::numeric_limits<float>::max());
+        // The instant this frame's physics integrates up to; movement packets
+        // are stamped with it (MovementHandler::beginFrame).
+        if (gameHandler && gameHandler->getMovementHandler()) {
+            gameHandler->getMovementHandler()->beginFrame();
+        }
 
         if (renderer && renderer->getCameraController() && ImGui::GetIO().WantCaptureMouse) {
             renderer->getCameraController()->releaseMouseCapture();
@@ -2404,6 +2409,10 @@ void Application::setState(AppState newState) {
                             // position sync still contains the airborne frame.
                             const auto position = core::coords::renderToCanonical(renderer->getCharacterPosition());
                             gameHandler->setPosition(position.x, position.y, position.z);
+                            // That state is this frame's, integrated to the
+                            // instant this frame began.
+                            auto* movement = gameHandler->getMovementHandler();
+                            movement->recordPhysicsSample(movement->frameStartMs());
                         }
                         gameHandler->sendMovement(static_cast<game::Opcode>(opcode));
                     }
@@ -3442,6 +3451,12 @@ void Application::applyServerMovementState(float deltaTime) {
         // equivalent canonical yaw is radians(180 - yawDeg).
         float canonicalYaw = core::coords::characterYawDegToCanonical(yawDeg);
         gameHandler->setOrientation(canonicalYaw);
+        // Last frame's physics produced this state, integrated up to the
+        // instant last frame began. Heartbeats fall due by that clock.
+        if (auto* movement = gameHandler->getMovementHandler()) {
+            movement->recordPhysicsSample(movement->previousFrameStartMs());
+            movement->sendDueHeartbeats();
+        }
 
         // Send MSG_MOVE_SET_FACING when the player changes facing direction
         // (e.g. via mouse-look). Without this, the server predicts movement in
@@ -4230,21 +4245,14 @@ void Application::updateInGame(float deltaTime, const char*& updateCheckpoint) {
                     info.jumpCosAngle = speed > 0.0f ? velocity.x / speed : 0.0f;
                     info.jumpSinAngle = speed > 0.0f ? velocity.y / speed : 0.0f;
                     movement->setFalling(true);
+                    // The camera's state is last frame's (see beginFrame).
+                    const uint32_t airborneMs = static_cast<uint32_t>(
+                        std::lround(camera->getAirborneSeconds() * 1000.0f));
+                    assert(movement->previousFrameStartMs() >= airborneMs);
+                    movement->setFallStartMs(movement->previousFrameStartMs() - airborneMs);
                     LOG_DEBUG("Walk-off fall: elapsed=", camera->getAirborneSeconds(),
                               " horizontalSpeed=", speed);
                 }
-            }
-            // Heartbeats run before the regular render/game position sync.
-            // During local flight, use the last completed physics sample;
-            // otherwise fallTime advances with a position one frame older.
-            if (renderer && !gameHandler->isOnTransport() &&
-                gameHandler->getMovementInfo().hasFlag(game::MovementFlags::FALLING)) {
-                const auto position = core::coords::renderToCanonical(renderer->getCharacterPosition());
-                gameHandler->setPosition(position.x, position.y, position.z);
-                auto* camera = renderer->getCameraController();
-                assert(camera);
-                gameHandler->getMovementHandler()->getMovementInfoMut().fallTime =
-                    static_cast<uint32_t>(std::lround(camera->getAirborneSeconds() * 1000.0f));
             }
             gameHandler->update(deltaTime);
         }
