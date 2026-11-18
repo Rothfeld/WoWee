@@ -109,6 +109,9 @@ public:
     /// longer than that runs faster to end in time, a shorter one keeps its
     /// own speed. Lasts until the next playAnimation.
     void fitOneShotDuration(uint32_t instanceId, float maxMs);
+    /// Replace the sequence just started by one of the model's variations of
+    /// the same animation, drawn by their M2 frequency weights.
+    void pickWeightedVariation(uint32_t instanceId);
     /// A running one-shot that would resume `from` resumes `to` instead.
     void retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to);
     /// Play other animations on each arm alone, until the next playAnimation.

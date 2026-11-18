@@ -283,8 +283,15 @@ void AnimationCallbackHandler::setupCallbacks() {
         const auto unit = std::dynamic_pointer_cast<game::Unit>(gameHandler_.getEntityManager().getEntity(guid));
         if (!unit) return;
         entitySpawner_.setCreatureRangedDrawn(guid, false);
-        const uint32_t attack = entitySpawner_.meleeWeaponAnimations(*unit).attack;
+        // Off-hand swings play the off-hand attack; each swing draws one of
+        // the model's variations by frequency. Brutallus (two AttackUnarmed
+        // and two AttackOff sequences, frequency 16383 each): native main-hand
+        // swings matched both AttackUnarmed variations, off-hand swings both
+        // AttackOff ones, never the other hand's (classify.py, mainA/offC).
+        const uint32_t attack = offHand ? entitySpawner_.offHandAttackAnimation(*unit)
+                                        : entitySpawner_.meleeWeaponAnimations(*unit).attack;
         cr->playAnimation(instanceId, attack, false, entitySpawner_.remoteResumeAnimation(guid));
+        cr->pickWeightedVariation(instanceId);
         const uint16_t attackTimeField = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
         assert(attackTimeField != 0xFFFF);
         const uint32_t attackTimeMs = unit->getField(attackTimeField + (offHand ? 1 : 0));

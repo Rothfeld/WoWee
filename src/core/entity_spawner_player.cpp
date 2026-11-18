@@ -1077,6 +1077,43 @@ void EntitySpawner::setCreatureRangedDrawn(uint64_t guid, bool drawn) {
         drawn ? 2 : entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_2)) & 0xFF);
 }
 
+uint32_t EntitySpawner::offHandAttackAnimation(const game::Unit& unit) const {
+    namespace A = rendering::anim;
+    uint32_t itemClass = 0, subClass = 0;
+    if (unit.getType() == game::ObjectType::PLAYER) {
+        const auto* equipment = gameHandler_->getOtherPlayerVisibleEquipment(unit.getGuid());
+        if (equipment && (*equipment)[16] != 0) {
+            if (const auto* item = gameHandler_->getItemInfo((*equipment)[16])) {
+                itemClass = item->itemClass;
+                subClass = item->subClass;
+            }
+        }
+    } else {
+        const uint16_t slots = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_SLOT_ID);
+        const uint16_t info = game::fieldIndex(game::UF::UNIT_VIRTUAL_ITEM_INFO);
+        assert(slots != 0xFFFF);
+        constexpr uint16_t kOffHandSlot = 1;
+        if (unit.getField(slots + kOffHandSlot) != 0) {
+            if (info != 0xFFFF) {
+                itemClass = unit.getField(info + kOffHandSlot * 2) & 0xFF;
+                subClass = (unit.getField(info + kOffHandSlot * 2) >> 8) & 0xFF;
+            } else if (auto itemDbc = assetManager_->loadDBC("Item.dbc")) {
+                const int32_t record = itemDbc->findRecordById(unit.getField(slots + kOffHandSlot));
+                if (record >= 0) {
+                    itemClass = itemDbc->getUInt32(record, 1);
+                    subClass = itemDbc->getUInt32(record, 2);
+                }
+            }
+        }
+    }
+    // Build 8606, unarmed dual-wielding Brutallus: off-hand swings play
+    // AttackOff (87), main-hand swings AttackUnarmed (16); weapon off hands
+    // follow the local player's choice (combat_fsm) and were not observed.
+    if (itemClass != game::ITEM_CLASS_WEAPON) return A::ATTACK_UNARMED_OFF;
+    if (subClass == game::WEAPON_SUBCLASS_DAGGER) return A::ATTACK_OFF_PIERCE;
+    return A::ATTACK_OFF;
+}
+
 uint32_t EntitySpawner::meleeReadyAnimation(const game::Unit& unit) const {
     return meleeWeaponAnimations(unit).ready;
 }

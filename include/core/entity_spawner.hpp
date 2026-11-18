@@ -303,6 +303,10 @@ public:
     /// Ready stance and swing of a unit's main-hand weapon class.
     struct MeleeWeaponAnimations { uint32_t ready; uint32_t attack; };
     MeleeWeaponAnimations meleeWeaponAnimations(const game::Unit& unit) const;
+    /// Swing of a unit's off hand (HITINFO_LEFTSWING), from its off-hand
+    /// virtual item: AttackUnarmedOff without a weapon (AnimationData falls it
+    /// back to AttackOff), AttackOffPierce for a dagger, else AttackOff.
+    uint32_t offHandAttackAnimation(const game::Unit& unit) const;
     /// Aim hold and shot of a creature's ranged weapon (UNIT_VIRTUAL_ITEM
     /// slot 2) for a spell that needs one; nullopt when the creature carries
     /// no bow, gun or crossbow.

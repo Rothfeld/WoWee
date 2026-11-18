@@ -2250,6 +2250,20 @@ void CharacterRenderer::fitOneShotDuration(uint32_t instanceId, float maxMs) {
     instance.oneShotMaxDurationMs = maxMs;
 }
 
+void CharacterRenderer::pickWeightedVariation(uint32_t instanceId) {
+    auto& instance = instances.at(instanceId);
+    if (instance.currentSequenceIndex < 0) return;
+    const auto& sequences = models.at(instance.modelId).data.sequences;
+    const uint16_t id = sequences[instance.currentSequenceIndex].id;
+    std::vector<double> weights(sequences.size(), 0.0);
+    for (size_t i = 0; i < sequences.size(); ++i)
+        if (sequences[i].id == id && sequences[i].duration > 0)
+            weights[i] = std::max<int>(0, sequences[i].frequency);
+    if (std::accumulate(weights.begin(), weights.end(), 0.0) <= 0.0) return;
+    static std::mt19937 variationRandom(std::random_device{}());
+    instance.currentSequenceIndex = std::discrete_distribution<int>(weights.begin(), weights.end())(variationRandom);
+}
+
 void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to) {
     auto& instance = instances.at(instanceId);
     if (instance.animationLoop || instance.holdFinalPose) return;
