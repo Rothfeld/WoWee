@@ -647,14 +647,6 @@ void GameHandler::registerCoreOpcodes() {
     dispatchTable_[Opcode::SMSG_FEIGN_DEATH_RESISTED] = [this](network::Packet& /*packet*/) {
         errorGlobal("ERR_FEIGN_DEATH_RESISTED");
     };
-    dispatchTable_[Opcode::SMSG_CHANNEL_MEMBER_COUNT] = [](network::Packet& packet) {
-        std::string chanName = packet.readString();
-        if (packet.hasRemaining(5)) {
-            /*uint8_t flags =*/ packet.readUInt8();
-            uint32_t count = packet.readUInt32();
-            LOG_DEBUG("SMSG_CHANNEL_MEMBER_COUNT: channel=", chanName, " members=", count);
-        }
-    };
     for (auto op : { Opcode::SMSG_GAMETIME_SET, Opcode::SMSG_GAMETIME_UPDATE }) {
         dispatchTable_[op] = [this](network::Packet& packet) {
             if (packet.hasRemaining(4)) {

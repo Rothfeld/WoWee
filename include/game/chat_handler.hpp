@@ -11,6 +11,7 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -68,6 +69,44 @@ public:
         auto it = channelRosters_.find(channel);
         return (it != channelRosters_.end()) ? it->second : empty;
     }
+    /// One row of the channel panel as 2.4.3 lays it out (pair 11): the
+    /// Group, World and Custom headers, each followed by its channels unless
+    /// collapsed. World holds the built-in channels (a ChatChannels.dbc id),
+    /// Custom the rest; this client joins no group (voice) channels.
+    struct ChannelDisplayRow {
+        std::string label;        ///< header word, or the channel's short name
+        bool header = false;
+        bool collapsed = false;   ///< headers only
+        int children = 0;         ///< headers only: channels under it
+        std::string channel;      ///< channel rows only: the joined name
+        int number = 0;           ///< channel rows only: its chat number
+        const char* category = nullptr;  ///< channel rows only
+    };
+    [[nodiscard]] std::vector<ChannelDisplayRow> channelDisplayRows() const;
+    /// The row a joined channel is on, 0 when it is not shown (or collapsed).
+    [[nodiscard]] int channelDisplayIndex(const std::string& channelName) const;
+    /// Expand or collapse the header on a display row; other rows are ignored.
+    void setChannelHeaderCollapsed(int displayIndex, bool collapsed);
+    /// The joined channel a name addresses: the full name, or the short one
+    /// the panel shows for a built-in channel ("General" for "General -
+    /// Stormwind City"). Empty when none.
+    [[nodiscard]] std::string resolveChannelName(const std::string& name) const;
+    /// Members the realm last counted (SMSG_CHANNEL_MEMBER_COUNT or a
+    /// roster), or nullopt before either arrived.
+    [[nodiscard]] std::optional<uint32_t> channelMemberCount(const std::string& channelName) const;
+    /// CMSG_GET_CHANNEL_MEMBER_COUNT for every joined channel.
+    void requestChannelMemberCounts();
+    /// CMSG_CHANNEL_DISPLAY_LIST: the roster the panel shows on a click.
+    void requestChannelDisplayList(const std::string& channelName);
+    /// The roster the panel shows for a row's channel: the realm's list for
+    /// a joined channel, the group itself for the Group row (named by
+    /// kGroupChannel), sorted by name with the leader as owner and moderator
+    /// (pair 11: "Edrick", then "Edrikk" 1, 1 in a raid Edrikk led).
+    [[nodiscard]] std::vector<ChannelMember> channelPanelRoster(const std::string& channel) const;
+    /// What a Group row's `channel` holds: no realm channel can be named so.
+    static constexpr const char* kGroupChannel = "\x01group";
+    /// A name query answered: fill in channel roster rows waiting on it.
+    void onPlayerName(uint64_t guid, const std::string& name);
     void autoJoinDefaultChannels();
     /// The zone is known: join the built-in channels requested at world entry.
     void joinZoneChannels(uint32_t zoneId);
@@ -191,6 +230,13 @@ private:
     uint32_t zoneChannelsLiveZone_ = 0;
     void tryJoinZoneChannels();
     std::set<std::string> ownedChannels_;
+    /// Collapsed panel headers by label ("World", "Custom").
+    std::set<std::string> collapsedChannelHeaders_;
+    std::map<std::string, uint32_t> channelMemberCounts_;
+    /// ChatChannels.dbc short name by id ("General"), loaded on first use.
+    mutable std::map<uint32_t, std::string> builtinChannelNames_;
+    std::string builtinChannelName(uint32_t id) const;
+    void handleChannelMemberCount(network::Packet& packet);
     /// Channels whose next SMSG_CHANNEL_LIST /chatlist asked to print.
     std::set<std::string> printChannelLists_;
     /// Who sent the message a chat line id names, newest last.

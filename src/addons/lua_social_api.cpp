@@ -6,6 +6,7 @@
 #include "game/gossip_quest_status.hpp"
 #include <vector>
 #include "addons/lua_api_helpers.hpp"
+#include "game/chat_handler.hpp"
 #include "game/reputation_standing.hpp"
 #include "game/stationery.hpp"
 #include <cassert>
@@ -3153,7 +3154,6 @@ void registerSocialLuaAPI(lua_State* L) {
         }},
                 {"CanChangePlayerDifficulty", [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
                 {"IsSilenced",                [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
-                {"IsDisplayChannelModerator", [](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; }},
                 // The party menu passes a unit token; /promote and the raid
                 // menu can pass a name. Resolve both against the party roster.
                 {"PromoteToLeader", [](lua_State* L) -> int {
@@ -3765,9 +3765,13 @@ void registerSocialLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"LeaveChannelByName", [](lua_State* L) -> int {
+            // The panel's Leave passes the name it shows, "General" for
+            // "General - Stormwind City" (ChannelListDropDown.channelName).
             auto* gh = getGameHandler(L);
             const char* name = luaL_checkstring(L, 1);
-            if (gh) gh->leaveChannel(name);
+            if (!gh) return 0;
+            const std::string joined = gh->getChatHandler() ? gh->getChatHandler()->resolveChannelName(name) : "";
+            gh->leaveChannel(joined.empty() ? std::string(name) : joined);
             return 0;
         }},
                 // GetChannelName(indexOrName) → id, name, instanceID

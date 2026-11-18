@@ -28,6 +28,7 @@
 #include "imgui.h"
 #include "addons/lua_api_helpers.hpp"
 #include "addons/chat_window_background.hpp"
+#include "game/chat_handler.hpp"
 #include "ui/display_modes.hpp"
 #include "ui/widget_tree.hpp"
 #include "rendering/camera_controller.hpp"
@@ -3025,7 +3026,22 @@ static int lua_ReturnNothing(lua_State*) { return 0; }
 
 /// Which channel the channel-list panel has highlighted. Panel state with no
 /// counterpart in the game, kept here so the getter and setter agree.
-static int& selectedDisplayChannel() { static int selected = 0; return selected; }
+/// The channel panel's selection, by joined name so it follows the row when
+/// headers open and close; empty is none, which 2.4.3 answers as nil.
+static std::string& selectedDisplayChannel() { static std::string selected; return selected; }
+
+/// The channel panel's rows, empty without a chat handler.
+static std::vector<game::ChatHandler::ChannelDisplayRow> channelRows(game::GameHandler* gh) {
+    auto* chat = gh ? gh->getChatHandler() : nullptr;
+    return chat ? chat->channelDisplayRows() : std::vector<game::ChatHandler::ChannelDisplayRow>{};
+}
+
+/// The joined channel on a display row, empty for a header or out of range.
+static std::string channelOnRow(game::GameHandler* gh, int row) {
+    const auto rows = channelRows(gh);
+    if (row < 1 || row > static_cast<int>(rows.size())) return {};
+    return rows[static_cast<size_t>(row) - 1].channel;
+}
 
 /// Which of the four extra action bars are switched on: bottom-left,
 /// bottom-right, right and the second right, in that order.
@@ -6765,9 +6781,15 @@ void registerSystemLuaAPI(lua_State* L) {
                 // channels the player had joined - GetChannelList reports them
                 // from the same vector. A stub saying empty is how a working
                 // panel shows nothing.
+                // Rows of the channel panel, headers included (pair 11: 8 for
+                // Group, World, four world channels, Custom and one custom).
+                // ChannelList_Update starts here, and this is where 2.4.3's
+                // member counts are asked for: CHANNEL_COUNT_UPDATE for every
+                // channel follows each redraw of the panel.
                 {"GetNumDisplayChannels", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushnumber(L, gh ? static_cast<double>(gh->getJoinedChannels().size()) : 0.0);
+            if (auto* chat = gh ? gh->getChatHandler() : nullptr) chat->requestChannelMemberCounts();
+            lua_pushnumber(L, static_cast<double>(channelRows(gh).size()));
             return 1;
         }},
                 {"GetNumMapOverlays",        lua_GetNumMapOverlays},
@@ -6973,32 +6995,39 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetSelectedSkill", [](lua_State* L) -> int {
             lua_pushnumber(L, selectedSkill()); return 1; }},
                 {"DungeonUsesTerrainMap",    lua_ReturnFalse},
-                // GetChannelDisplayInfo(i) → name, header, collapsed,
+                // GetChannelDisplayInfo(row) → name, header, collapsed,
                 //   channelNumber, count, active, category, voiceEnabled,
                 //   voiceActive
                 //
-                // header is FALSE, not "". An empty string is true in Lua, so
-                // returning one marks every channel as a category header:
-                // channelframe.lua does `if ( self.header )` and would draw
-                // each row as a heading, then call ExpandChannelHeader on it.
+                // Nine values on 2.4.3 (pair 11). A header: its word, 1, 1 if
+                // collapsed, nil, the number of channels under it (nil with
+                // none). A channel: its short name ("General"), nil, nil, its
+                // chat number, the member count, 1, its category. Voice is
+                // nil: this client has none.
                 {"GetChannelDisplayInfo", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
-            if (!gh || index < 1) { lua_pushnil(L); return 1; }
-            const auto& joined = gh->getJoinedChannels();
-            if (index > static_cast<int>(joined.size())) { lua_pushnil(L); return 1; }
-            lua_pushstring(L, joined[static_cast<size_t>(index) - 1].c_str());
-            lua_pushboolean(L, 0);      // header - flat list, no categories
-            lua_pushboolean(L, 0);      // collapsed
-            lua_pushnumber(L, index);   // channelNumber
-            // The roster arrives with SMSG_CHANNEL_LIST, which the panel asks
-            // for by calling GetNumChannelMembers on the row it is drawing.
-            lua_pushnumber(L, static_cast<lua_Number>(
-                gh->getChannelRoster(joined[static_cast<size_t>(index) - 1]).size()));
-            lua_pushboolean(L, 1);      // active
-            lua_pushstring(L, "CHANNEL_CATEGORY_CUSTOM");
-            lua_pushboolean(L, 0);      // voiceEnabled
-            lua_pushboolean(L, 0);      // voiceActive
+            const auto rows = channelRows(gh);
+            if (index < 1 || index > static_cast<int>(rows.size())) return 0;
+            const auto& row = rows[static_cast<size_t>(index) - 1];
+            lua_pushstring(L, row.label.c_str());
+            if (row.header) {
+                lua_pushnumber(L, 1);
+                if (row.collapsed) lua_pushnumber(L, 1); else lua_pushnil(L);
+                lua_pushnil(L);
+                if (row.children > 0) lua_pushnumber(L, row.children); else lua_pushnil(L);
+                lua_pushnil(L); lua_pushnil(L);
+            } else {
+                lua_pushnil(L);
+                lua_pushnil(L);
+                // The group's own channel has no chat number: "Raid (2)".
+                if (row.number > 0) lua_pushnumber(L, row.number); else lua_pushnil(L);
+                const auto count = gh->getChatHandler()->channelMemberCount(row.channel);
+                if (count) lua_pushnumber(L, *count); else lua_pushnil(L);
+                lua_pushnumber(L, 1);
+                lua_pushstring(L, row.category);
+            }
+            lua_pushnil(L); lua_pushnil(L);
             return 9;
         }},
                 // Whether the unit frames should draw their threat
@@ -7132,7 +7161,9 @@ void registerSystemLuaAPI(lua_State* L) {
                 // reads it, so it lives here and round-trips. Answering nil
                 // for the getter meant the highlight never moved.
                 {"GetSelectedDisplayChannel", [](lua_State* L) -> int {
-            lua_pushnumber(L, selectedDisplayChannel());
+            auto* chat = getGameHandler(L) ? getGameHandler(L)->getChatHandler() : nullptr;
+            const int row = chat ? chat->channelDisplayIndex(selectedDisplayChannel()) : 0;
+            if (row > 0) lua_pushnumber(L, row); else lua_pushnil(L);
             return 1;
         }},
                 // Whether the player owns the channel that panel has selected.
@@ -7147,22 +7178,48 @@ void registerSystemLuaAPI(lua_State* L) {
                 // one-based one, the same GetChannelDisplayInfo reads.
                 {"IsDisplayChannelOwner", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const int sel = selectedDisplayChannel();
-            if (!gh || sel < 1) { lua_pushboolean(L, 0); return 1; }
-            const auto& joined = gh->getJoinedChannels();
-            if (sel > static_cast<int>(joined.size())) { lua_pushboolean(L, 0); return 1; }
-            lua_pushboolean(L, gh->ownsChatChannel(joined[static_cast<size_t>(sel) - 1]) ? 1 : 0);
+            const std::string& sel = selectedDisplayChannel();
+            lua_pushboolean(L, gh && !sel.empty() && gh->ownsChatChannel(sel) ? 1 : 0);
+            return 1;
+        }},
+                // Whether the player moderates the selected channel, by the
+                // roster's moderator mark (pair 11: the owner of a custom
+                // channel is listed owner and moderator both).
+                {"IsDisplayChannelModerator", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const std::string& sel = selectedDisplayChannel();
+            bool moderator = false;
+            if (gh && !sel.empty())
+                for (const auto& m : gh->getChatHandler()->channelPanelRoster(sel))
+                    if (m.guid == gh->getPlayerGuid()) moderator = m.moderator || m.owner;
+            lua_pushboolean(L, moderator ? 1 : 0);
             return 1;
         }},
                 {"SetSelectedDisplayChannel", [](lua_State* L) -> int {
-            selectedDisplayChannel() = static_cast<int>(luaL_optnumber(L, 1, 0));
+            selectedDisplayChannel() = channelOnRow(getGameHandler(L),
+                                                    static_cast<int>(luaL_optnumber(L, 1, 0)));
             return 0;
         }},
-                // No categories exist to open or close - see the header note
-                // on GetChannelDisplayInfo - but the row click handler calls
-                // one of these on whatever it was given.
-                {"ExpandChannelHeader",      lua_ReturnNothing},
-                {"CollapseChannelHeader",    lua_ReturnNothing},
+                // A header's channels hidden or shown: collapsed World is one
+                // row, "World", 1, 1, nil, 4 (pair 11). Neither redraws the
+                // list itself; 2.4.3 fires CHANNEL_UI_UPDATE, which the panel
+                // redraws on.
+                {"ExpandChannelHeader", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (auto* chat = gh ? gh->getChatHandler() : nullptr) {
+                chat->setChannelHeaderCollapsed(static_cast<int>(luaL_optnumber(L, 1, 0)), false);
+                gh->fireAddonEvent("CHANNEL_UI_UPDATE", {});
+            }
+            return 0;
+        }},
+                {"CollapseChannelHeader", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (auto* chat = gh ? gh->getChatHandler() : nullptr) {
+                chat->setChannelHeaderCollapsed(static_cast<int>(luaL_optnumber(L, 1, 0)), true);
+                gh->fireAddonEvent("CHANNEL_UI_UPDATE", {});
+            }
+            return 0;
+        }},
                 // Who is in a channel. The server sends a roster only on
                 // request and this client never asks, so there is nobody to
                 // report; the count above is zero for the same reason.
@@ -7172,13 +7229,11 @@ void registerSystemLuaAPI(lua_State* L) {
                 // the only thing that asks the server for a roster at all.
                 {"GetNumChannelMembers", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const int channel = static_cast<int>(luaL_optnumber(L, 1, 0));
-            if (!gh || channel < 1) { lua_pushnumber(L, 0); return 1; }
-            const auto& joined = gh->getJoinedChannels();
-            if (channel > static_cast<int>(joined.size())) { lua_pushnumber(L, 0); return 1; }
-            const auto& name = joined[static_cast<size_t>(channel) - 1];
-            gh->requestChannelList(name);
-            lua_pushnumber(L, static_cast<lua_Number>(gh->getChannelRoster(name).size()));
+            const std::string name = channelOnRow(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
+            if (name.empty()) { lua_pushnumber(L, 0); return 1; }
+            if (name != game::ChatHandler::kGroupChannel)
+                gh->getChatHandler()->requestChannelDisplayList(name);
+            lua_pushnumber(L, static_cast<lua_Number>(gh->getChatHandler()->channelPanelRoster(name).size()));
             return 1;
         }},
                 // GetChannelRosterInfo(channelIndex, rosterIndex) →
@@ -7189,21 +7244,22 @@ void registerSystemLuaAPI(lua_State* L) {
                 // empty. The last two are about voice chat, which this client
                 // has none of.
                 {"GetChannelRosterInfo", [](lua_State* L) -> int {
+            // By panel row (pair 11: GetChannelRosterInfo(8, 2) is "Edrikk",
+            // 1, 1, nil, nil, nil for the owner of the custom channel on row
+            // 8). Nothing for a row or member that is not there.
             auto* gh = getGameHandler(L);
-            const int channel = static_cast<int>(luaL_optnumber(L, 1, 0));
+            const std::string name = channelOnRow(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
             const int member = static_cast<int>(luaL_optnumber(L, 2, 0));
-            if (!gh || channel < 1 || member < 1) { return luaReturnNil(L); }
-            const auto& joined = gh->getJoinedChannels();
-            if (channel > static_cast<int>(joined.size())) { return luaReturnNil(L); }
-            const auto& roster = gh->getChannelRoster(joined[static_cast<size_t>(channel) - 1]);
-            if (member > static_cast<int>(roster.size())) { return luaReturnNil(L); }
+            if (name.empty() || member < 1) return 0;
+            const auto roster = gh->getChatHandler()->channelPanelRoster(name);
+            if (member > static_cast<int>(roster.size())) return 0;
             const auto& m = roster[static_cast<size_t>(member) - 1];
-            lua_pushstring(L, m.name.c_str());          // 1: name
-            lua_pushboolean(L, m.owner ? 1 : 0);        // 2: owner
-            lua_pushboolean(L, m.moderator ? 1 : 0);    // 3: moderator
-            lua_pushboolean(L, m.muted ? 1 : 0);        // 4: muted
-            lua_pushboolean(L, 0);                      // 5: active (voice)
-            lua_pushboolean(L, 0);                      // 6: enabled (voice)
+            lua_pushstring(L, m.name.c_str());                     // 1: name
+            if (m.owner) lua_pushnumber(L, 1); else lua_pushnil(L);      // 2: owner
+            if (m.moderator) lua_pushnumber(L, 1); else lua_pushnil(L);  // 3: moderator
+            if (m.muted) lua_pushnumber(L, 1); else lua_pushnil(L);      // 4: muted
+            lua_pushnil(L);                                         // 5: active (voice)
+            lua_pushnil(L);                                         // 6: enabled (voice)
             return 6;
         }},
                 {"GetWintergraspWaitTime",   lua_ReturnNil},

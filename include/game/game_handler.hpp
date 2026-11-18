@@ -4404,6 +4404,15 @@ public:
     /// arena are flags of the area itself - The Stair of Destiny (3539) is a
     /// sanctuary inside contested Hellfire Peninsula, cyan in native - while
     /// the faction team comes from the zone.
+    /// Whether AreaTable marks this zone a capital (AREA_FLAG_CAPITAL 0x100:
+    /// Stormwind City, Ironforge, Shattrath City and the other cities).
+    bool isCapitalZone(uint32_t zoneId) const {
+        (void)getAreaName(zoneId);
+        auto it = areaPvpCache_.find(zoneId);
+        constexpr uint32_t kAreaFlagCapital = 0x00000100;
+        return it != areaPvpCache_.end() && (it->second.flags & kAreaFlagCapital) != 0;
+    }
+
     std::pair<std::string, std::string> getZonePvpInfo(uint32_t zoneId, uint32_t areaId = 0) const {
         (void)getAreaName(zoneId);
         auto it = areaPvpCache_.find(zoneId);

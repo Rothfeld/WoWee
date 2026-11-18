@@ -2735,6 +2735,16 @@ void SocialHandler::handleGuildRoster(network::Packet& packet) {
         // the id is on the player now that the server has moved them.
         if (const uint32_t id = ownGuildId()) queryGuildInfo(id);
     }
+    // A guild member is not in GuildRecruitment: 2.4.3 left it the moment
+    // its character joined a guild ("Left Channel: [4. GuildRecruitment -
+    // City]", pair 11).
+    if (newlyIn) {
+        std::vector<std::string> recruiting;
+        for (const auto& name : owner_.getJoinedChannels())
+            if (name == "GuildRecruitment" || name.starts_with("GuildRecruitment - "))
+                recruiting.push_back(name);
+        for (const auto& name : recruiting) owner_.leaveChannel(name);
+    }
     if (newlyIn && owner_.addonEventCallbackRef()) {
         // What the social window listens for to rebuild its guild tab. Without
         // it the frame has a roster and no idea it is meant to draw one.

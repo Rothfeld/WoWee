@@ -1,4 +1,6 @@
+#include <cassert>
 #include "game/chat_handler.hpp"
+#include "game/group_defines.hpp"
 #include "game/cast_result_text.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
@@ -308,6 +310,7 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_CHANNEL_LIST] = [this](network::Packet& p) { handleChannelList(p); };
+    table[Opcode::SMSG_CHANNEL_MEMBER_COUNT] = [this](network::Packet& p) { handleChannelMemberCount(p); };
     // Add and update carry the same fields and mean the same thing to a
     // roster that keys on the guid.
     table[Opcode::SMSG_USERLIST_ADD] = [this](network::Packet& p) { handleUserlistAdd(p); };
@@ -773,7 +776,11 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
         // printed with its id in front of it - guild chat in Common came out
         // as "[7] Name: hello". Universal is the id the file does not carry
         // and the word the test above looks for.
-        const std::string lang = owner_.getLanguageName(static_cast<uint32_t>(data.language));
+        // A system line carries no language: 2.4.3 hands CHAT_MSG_SYSTEM an
+        // empty arg3 ("Edrick added to friends.", "DB table ... reloaded.",
+        // pair 11), where the packet's language is Universal.
+        const std::string lang = data.type == ChatType::SYSTEM
+            ? std::string() : owner_.getLanguageName(static_cast<uint32_t>(data.language));
         char guidBuf[32];
         snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)data.senderGuid);
         // arg8 is the channel's number and arg9 its name without the zone
@@ -1058,6 +1065,169 @@ int ChatHandler::getChannelIndex(const std::string& channelName) const {
     return 0;
 }
 
+std::string ChatHandler::builtinChannelName(uint32_t id) const {
+    if (id == 0) return {};
+    if (builtinChannelNames_.empty()) {
+        auto* am = owner_.services().assetManager;
+        auto dbc = am ? am->loadDBC("ChatChannels.dbc") : nullptr;
+        assert(dbc && dbc->isLoaded() && "ChatChannels.dbc unreadable");
+        // ID, flags, faction group, the pattern in 16 locales plus a mask
+        // (column 3 on), then the name in the same shape: column 20.
+        constexpr uint32_t kNameColumn = 3 + 17;
+        for (uint32_t i = 0; i < dbc->getRecordCount(); ++i)
+            builtinChannelNames_[dbc->getUInt32(i, 0)] = dbc->getString(i, kNameColumn);
+    }
+    const auto it = builtinChannelNames_.find(id);
+    return it == builtinChannelNames_.end() ? std::string() : it->second;
+}
+
+std::vector<ChatHandler::ChannelDisplayRow> ChatHandler::channelDisplayRows() const {
+    // Measured on 2.4.3 in Stormwind with five channels joined (pair 11):
+    // Group, World, 1. General, 2. Trade, 3. LocalDefense, 4. LookingForGroup,
+    // Custom, 5. socialaudit - each half in chat number order, the built-in
+    // ones by their ChatChannels name without the zone.
+    std::vector<ChannelDisplayRow> world, custom;
+    for (size_t i = 0; i < joinedChannels_.size(); ++i) {
+        const std::string& name = joinedChannels_[i];
+        const auto id = joinedChannelIds_.find(name);
+        const uint32_t dbcId = id == joinedChannelIds_.end() ? 0 : id->second;
+        ChannelDisplayRow row;
+        row.channel = name;
+        row.number = static_cast<int>(i) + 1;
+        if (dbcId != 0) {
+            row.label = builtinChannelName(dbcId);
+            row.category = "CHANNEL_CATEGORY_WORLD";
+            world.push_back(std::move(row));
+        } else {
+            row.label = name;
+            row.category = "CHANNEL_CATEGORY_CUSTOM";
+            custom.push_back(std::move(row));
+        }
+    }
+    std::vector<ChannelDisplayRow> rows;
+    auto section = [&](const char* label, std::vector<ChannelDisplayRow>& children) {
+        ChannelDisplayRow header;
+        header.label = label;
+        header.header = true;
+        header.collapsed = collapsedChannelHeaders_.count(label) != 0;
+        header.children = static_cast<int>(children.size());
+        rows.push_back(header);
+        if (header.collapsed) return;
+        for (auto& c : children) rows.push_back(std::move(c));
+    };
+    // In a group its own channel sits under Group: "Raid (2)" in a raid of
+    // two, with no chat number (pair 11), "Party" in a party.
+    std::vector<ChannelDisplayRow> group;
+    const auto& party = owner_.getPartyData();
+    if (!party.members.empty()) {
+        ChannelDisplayRow row;
+        row.label = groupIsRaid(party.groupType) ? "Raid" : "Party";
+        row.channel = kGroupChannel;
+        row.category = "CHANNEL_CATEGORY_GROUP";
+        group.push_back(std::move(row));
+    }
+    section("Group", group);
+    section("World", world);
+    section("Custom", custom);
+    return rows;
+}
+
+int ChatHandler::channelDisplayIndex(const std::string& channelName) const {
+    const auto rows = channelDisplayRows();
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (!rows[i].header && rows[i].channel == channelName) return static_cast<int>(i) + 1;
+    return 0;
+}
+
+void ChatHandler::setChannelHeaderCollapsed(int displayIndex, bool collapsed) {
+    const auto rows = channelDisplayRows();
+    if (displayIndex < 1 || displayIndex > static_cast<int>(rows.size())) return;
+    const auto& row = rows[static_cast<size_t>(displayIndex) - 1];
+    if (!row.header) return;
+    if (collapsed) collapsedChannelHeaders_.insert(row.label);
+    else collapsedChannelHeaders_.erase(row.label);
+}
+
+std::string ChatHandler::resolveChannelName(const std::string& name) const {
+    for (const auto& joined : joinedChannels_)
+        if (joined == name) return joined;
+    for (const auto& [joined, id] : joinedChannelIds_)
+        if (id != 0 && builtinChannelName(id) == name) return joined;
+    return {};
+}
+
+std::vector<ChannelMember> ChatHandler::channelPanelRoster(const std::string& channel) const {
+    if (channel != kGroupChannel) return getChannelRoster(channel);
+    std::vector<ChannelMember> roster;
+    const auto& party = owner_.getPartyData();
+    if (party.members.empty()) return roster;
+    auto add = [&](uint64_t guid, const std::string& name) {
+        ChannelMember m;
+        m.guid = guid;
+        m.name = name;
+        m.owner = m.moderator = guid == party.leaderGuid;
+        roster.push_back(std::move(m));
+    };
+    if (const auto* self = owner_.getActiveCharacter()) add(owner_.getPlayerGuid(), self->name);
+    for (const auto& member : party.members) add(member.guid, member.name);
+    std::stable_sort(roster.begin(), roster.end(),
+                     [](const ChannelMember& a, const ChannelMember& b) { return a.name < b.name; });
+    return roster;
+}
+
+std::optional<uint32_t> ChatHandler::channelMemberCount(const std::string& channelName) const {
+    if (channelName == kGroupChannel)
+        return static_cast<uint32_t>(channelPanelRoster(channelName).size());
+    const auto it = channelMemberCounts_.find(channelName);
+    if (it == channelMemberCounts_.end()) return std::nullopt;
+    return it->second;
+}
+
+void ChatHandler::requestChannelMemberCounts() {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    for (const auto& name : joinedChannels_) {
+        network::Packet packet(wireOpcode(Opcode::CMSG_GET_CHANNEL_MEMBER_COUNT));
+        packet.writeString(name);
+        owner_.getSocket()->send(packet);
+    }
+}
+
+void ChatHandler::requestChannelDisplayList(const std::string& channelName) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    network::Packet packet(wireOpcode(Opcode::CMSG_CHANNEL_DISPLAY_LIST));
+    packet.writeString(channelName);
+    owner_.getSocket()->send(packet);
+}
+
+void ChatHandler::onPlayerName(uint64_t guid, const std::string& name) {
+    for (auto& [channel, roster] : channelRosters_) {
+        bool named = false;
+        for (auto& m : roster) {
+            if (m.guid != guid || m.name == name) continue;
+            m.name = name;
+            named = true;
+        }
+        if (!named) continue;
+        std::stable_sort(roster.begin(), roster.end(),
+                         [](const ChannelMember& a, const ChannelMember& b) { return a.name < b.name; });
+        if (const int row = channelDisplayIndex(channel); row > 0)
+            owner_.fireAddonEvent("CHANNEL_ROSTER_UPDATE", {std::to_string(row), std::to_string(roster.size())});
+    }
+}
+
+/// SMSG_CHANNEL_MEMBER_COUNT: name, flags, count (CMaNGOS
+/// HandleGetChannelMemberCountOpcode). 2.4.3 fires CHANNEL_COUNT_UPDATE with
+/// the channel's panel row and the count (pair 11: 6, 27 for LookingForGroup).
+void ChatHandler::handleChannelMemberCount(network::Packet& packet) {
+    const std::string name = packet.readString();
+    if (!packet.hasRemaining(5)) return;
+    packet.readUInt8();   // the channel's flags
+    const uint32_t count = packet.readUInt32();
+    channelMemberCounts_[name] = count;
+    if (const int row = channelDisplayIndex(name); row > 0)
+        owner_.fireAddonEvent("CHANNEL_COUNT_UPDATE", {std::to_string(row), std::to_string(count)});
+}
+
 namespace {
 
 // The notice's name as FrameXML reads it: ChatFrame prints
@@ -1177,6 +1347,8 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
             joinedChannelIds_[data.channelName] = data.channelId;
             LOG_INFO(changed ? "Changed channel: " : "Joined channel: ", data.channelName);
             fireChannelNotice(data, getChannelIndex(data.channelName), false, changed);
+            // The channel panel's rows moved; it redraws on this.
+            owner_.fireAddonEvent("CHANNEL_UI_UPDATE", {});
             break;
         }
         case ChannelNotifyType::YOU_LEFT: {
@@ -1189,6 +1361,7 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
                 joinedChannels_.end());
             LOG_INFO("Left channel: ", data.channelName);
             fireChannelNotice(data, number);
+            owner_.fireAddonEvent("CHANNEL_UI_UPDATE", {});
             break;
         }
         case ChannelNotifyType::PLAYER_ALREADY_MEMBER:
@@ -1279,7 +1452,10 @@ void ChatHandler::tryJoinZoneChannels() {
             case 2:  wanted = wanted && chatAutoJoin.trade; break;
             case 22: wanted = wanted && chatAutoJoin.localDefense; break;
             case 26: wanted = wanted && chatAutoJoin.lfg; break;
-            case 25: wanted = addons::storedCVarValue("guildRecruitmentChannel", "1") != "0"; break;
+            // Not for a guild member (ChatChannels flag 0x20000): 2.4.3 in a
+            // guild joins no GuildRecruitment at login (pair 11).
+            case 25: wanted = addons::storedCVarValue("guildRecruitmentChannel", "1") != "0" &&
+                              !owner_.isInGuild(); break;
             default: break;
         }
         if (!wanted || pattern.empty()) continue;
@@ -1288,7 +1464,19 @@ void ChatHandler::tryJoinZoneChannels() {
             LOG_ERROR("No name for zone ", zoneId, ": channel ", pattern, " not joined");
             continue;
         }
-        const std::string name = zoned ? formatGlobalString(pattern, {zoneName}) : pattern;
+        // A city-only channel (ChatChannels flag 0x20: Trade, GuildRecruitment)
+        // joined in a capital is named after AreaTable's "City" row (3459):
+        // 2.4.3 in Stormwind joins "[2. Trade - City]" beside "[1. General -
+        // Stormwind City]" (pair 11), and in Goldshire "Trade - Elwynn
+        // Forest" (pair 6).
+        constexpr uint32_t kChannelCityOnly = 0x20;
+        constexpr uint32_t kAreaCity = 3459;
+        std::string place = zoneName;
+        if ((flags & kChannelCityOnly) && owner_.isCapitalZone(owner_.getAreaZoneId(zoneId))) {
+            place = owner_.getAreaName(kAreaCity);
+            assert(!place.empty() && "AreaTable has no City row");
+        }
+        const std::string name = zoned ? formatGlobalString(pattern, {place}) : pattern;
         joinChannel(name, "", id);
     }
 }
@@ -1331,7 +1519,11 @@ void ChatHandler::fireChatEvent(const MessageChatData& msg) {
     std::string eventName = "CHAT_MSG_";
     eventName += getChatTypeString(msg.type);
     const Character* ac = owner_.getActiveCharacter();
-    std::string senderName = msg.senderName.empty()
+    // The client's own notices are nobody's: 2.4.3's CHAT_MSG_SYSTEM has an
+    // empty arg2 and arg3 for "Edrikk added to friends." (pair 11), where
+    // this sent the player's name and "Universal".
+    const bool system = msg.type == ChatType::SYSTEM;
+    std::string senderName = system ? std::string{} : msg.senderName.empty()
         ? (ac ? ac->name : std::string{}) : msg.senderName;
     char guidBuf[32];
     snprintf(guidBuf, sizeof(guidBuf), "0x%016llX",
@@ -1362,7 +1554,7 @@ void ChatHandler::fireChatEvent(const MessageChatData& msg) {
             : senderName;
     owner_.addonEventCallbackRef()(eventName, {
         msg.message, shownName,
-        owner_.getLanguageName(static_cast<uint32_t>(msg.language)),
+        system ? std::string() : owner_.getLanguageName(static_cast<uint32_t>(msg.language)),
         msg.channelName, msg.receiverName, "", "0", std::to_string(channelIndex),
         msg.channelName, "0", "0", guidBuf
     });
@@ -1489,7 +1681,10 @@ void ChatHandler::handleChannelList(network::Packet& packet) {
             if (player && !player->getName().empty()) m.name = player->getName();
         }
         if (m.name.empty()) m.name = owner_.lookupName(m.guid);
-        if (m.name.empty()) m.name = "(unknown)";
+        // Asked for rather than shown as "(unknown)": 2.4.3 lists every
+        // member of LookingForGroup by name (pair 11). The answer fills the
+        // row in (onPlayerName).
+        if (m.name.empty()) owner_.queryPlayerName(m.guid);
 
         roster.push_back(std::move(m));
     }
@@ -1510,6 +1705,11 @@ void ChatHandler::handleChannelList(network::Packet& packet) {
         });
     }
 
+    // By name: 2.4.3's roster lists Edrick before Edrikk whatever order the
+    // realm sent (pair 11).
+    std::stable_sort(roster.begin(), roster.end(),
+                     [](const ChannelMember& a, const ChannelMember& b) { return a.name < b.name; });
+    channelMemberCounts_[chanName] = static_cast<uint32_t>(roster.size());
     channelRosters_[chanName] = std::move(roster);
     // Both, because the panel redraws its member list on the first and its
     // member count on the second, and it registers for each separately.
@@ -1520,12 +1720,14 @@ void ChatHandler::handleChannelList(network::Packet& packet) {
     // called elsewhere with GetSelectedDisplayChannel(), which is an index. A
     // name built "ChannelButtonGeneral", which is nothing, so neither the
     // roster nor the count ever redrew.
-    const int displayIndex = getChannelIndex(chanName);
+    // The panel row, which is not the chat number: General is row 3 under
+    // the Group and World headers (pair 11: CHANNEL_ROSTER_UPDATE 3, 2).
+    const int displayIndex = channelDisplayIndex(chanName);
     if (displayIndex > 0) {
         const std::string idx = std::to_string(displayIndex);
-        owner_.fireAddonEvent("CHANNEL_ROSTER_UPDATE", {idx});
-        owner_.fireAddonEvent("CHANNEL_COUNT_UPDATE",
-                              {idx, std::to_string(channelRosters_[chanName].size())});
+        const std::string count = std::to_string(channelRosters_[chanName].size());
+        owner_.fireAddonEvent("CHANNEL_COUNT_UPDATE", {idx, count});
+        owner_.fireAddonEvent("CHANNEL_ROSTER_UPDATE", {idx, count});
     }
 }
 
@@ -1561,7 +1763,7 @@ void ChatHandler::applyUserlistChange(const std::string& chanName, uint64_t guid
             ChannelMember m;
             m.guid = guid;
             m.name = owner_.lookupName(guid);
-            if (m.name.empty()) m.name = "(unknown)";
+            if (m.name.empty()) owner_.queryPlayerName(guid);
             roster.push_back(std::move(m));
             it = roster.end() - 1;
         }
@@ -1572,12 +1774,15 @@ void ChatHandler::applyUserlistChange(const std::string& chanName, uint64_t guid
 
     // By display index, for the reason spelled out in handleChannelList: both
     // of these take a position in the channel list, not a name.
-    const int displayIndex = getChannelIndex(chanName);
+    std::stable_sort(roster.begin(), roster.end(),
+                     [](const ChannelMember& a, const ChannelMember& b) { return a.name < b.name; });
+    channelMemberCounts_[chanName] = static_cast<uint32_t>(roster.size());
+    const int displayIndex = channelDisplayIndex(chanName);
     if (displayIndex > 0) {
         const std::string idx = std::to_string(displayIndex);
-        owner_.fireAddonEvent("CHANNEL_ROSTER_UPDATE", {idx});
-        owner_.fireAddonEvent("CHANNEL_COUNT_UPDATE",
-                              {idx, std::to_string(roster.size())});
+        const std::string count = std::to_string(roster.size());
+        owner_.fireAddonEvent("CHANNEL_COUNT_UPDATE", {idx, count});
+        owner_.fireAddonEvent("CHANNEL_ROSTER_UPDATE", {idx, count});
     }
 }
 
