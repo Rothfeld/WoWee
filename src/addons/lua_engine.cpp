@@ -9473,13 +9473,20 @@ void LuaEngine::registerCoreAPI() {
         "            local label = labels[sp.trigger]\n"
         "            if label and sp.description and sp.description ~= '' then\n"
         "                local text = label..' '..sp.description\n"
-        "                if (sp.trigger == 0 or sp.trigger == 5) and sp.cooldownMs > 0 then\n"
+        // Native 2.4.3 names the item's own spell cooldown when it is over
+        // 10 seconds: "(15 Secs Cooldown)" (Curative Animal Salve, 15000),
+        // "(5 Mins Cooldown)" (Cold Basilisk Eye); nothing for 10000 (Skull
+        // Key), 1500 (Mechanical Squirrel Box) or a category cooldown alone
+        // (healing potions, Hearthstone). The |4 plural is resolved here, as
+        // native writes "Mins", not the escape.
+        "                if (sp.trigger == 0 or sp.trigger == 5) and sp.cooldownMs > 10000 then\n"
         "                    local s = math.floor(sp.cooldownMs / 1000)\n"
-        "                    local t\n"
-        "                    if s >= 86400 then t = format(DAYS_ABBR, math.floor(s / 86400))\n"
-        "                    elseif s >= 3600 then t = format(HOURS_ABBR, math.floor(s / 3600))\n"
-        "                    elseif s >= 60 then t = format(MINUTES_ABBR, math.floor(s / 60))\n"
-        "                    else t = format(SECONDS_ABBR, s) end\n"
+        "                    local n, pattern\n"
+        "                    if s >= 86400 then n, pattern = math.floor(s / 86400), DAYS_ABBR\n"
+        "                    elseif s >= 3600 then n, pattern = math.floor(s / 3600), HOURS_ABBR\n"
+        "                    elseif s >= 60 then n, pattern = math.floor(s / 60), MINUTES_ABBR\n"
+        "                    else n, pattern = s, SECONDS_ABBR end\n"
+        "                    local t = string.gsub(format(pattern, n), '|4([^:]*):([^;]*);', n == 1 and '%1' or '%2')\n"
         "                    text = text..' '..format(ITEM_COOLDOWN_TOTAL, t)\n"
         "                end\n"
         "                self:AddLine(text, 0, 1, 0, 1)\n"
