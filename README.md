@@ -734,6 +734,19 @@ ERR_MAIL_SENT on the info line; taking an item or money shows nothing. TBC
 MailFrame hears MAIL_FAILED, without an argument, after every mail result,
 successes included.
 
+### Group loot rolls
+
+At most four rolls are announced (START_LOOT_ROLL); TBC FrameXML has four
+GroupLootFrames and drops any announcement beyond them. Every roll that ends,
+by the player's choice inside RollOnLoot or by the server's result, raises
+CANCEL_LOOT_ROLL and then announces the oldest waiting roll whose item is
+cached, with the packet's full countdown. Roll ids count from 0 per session.
+Gotcha: the announced count is unsigned and also drops for rolls that were
+still waiting, as in the original client. Once the server times out waiting
+rolls it wraps, and no further roll is announced that session. The original
+client measured the same on three later boss drops. Evidence:
+`_experiments/20261118T002549Z.loot_roll_queue_pair7` in the workspace root.
+
 ### TBC combat feedback
 
 Outgoing melee damage uses white numbers; ability damage uses yellow numbers.

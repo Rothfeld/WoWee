@@ -354,13 +354,15 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         // only announcement. It waits for the item: GroupLootFrame_OnShow reads
         // name, icon and quality once, so a window opened before the item query
         // answered stayed blank with an invented "Item #N" name.
+        // It also waits for a free place among the four rolls the interface
+        // may hold at once - see announceQueuedLootRolls.
         const int rollId = roll.rollId;
         owner_.ensureItemInfo(itemId);
-        const auto* info = owner_.getItemInfo(itemId);
-        if (info && info->valid) {
-            announceLootRoll(rollId);
-        } else {
-            LOG_DEBUG("Loot roll ", rollId, " for item ", itemId, " waits for its item query");
+        announceQueuedLootRolls();
+        const LootRollEntry* queued = findLootRoll(objectGuid, lootSlot);
+        if (queued && !queued->announced) {
+            LOG_DEBUG("Loot roll ", rollId, " for item ", itemId, " waits (",
+                      lootRollsAnnounced_, " announced)");
         }
     };
 
@@ -1246,6 +1248,9 @@ void InventoryHandler::handleLootRemoved(network::Packet& packet) {
 LootRollEntry& InventoryHandler::beginLootRoll(uint64_t objectGuid, uint32_t slot) {
     for (auto& roll : lootRolls_) {
         if (roll.objectGuid == objectGuid && roll.slot == slot) {
+            // Announced again below, so it stops counting as announced.
+            // Unmeasured natively: CMaNGOS starts a roll once per slot.
+            if (roll.announced) --lootRollsAnnounced_;
             const int keptId = roll.rollId;
             roll = LootRollEntry{};
             roll.rollId = keptId;
@@ -1271,43 +1276,71 @@ LootRollEntry* InventoryHandler::findLootRoll(uint64_t objectGuid, uint32_t slot
     return nullptr;
 }
 
-/// Raise START_LOOT_ROLL for a roll whose item is cached.
-void InventoryHandler::announceLootRoll(int rollId) {
-    LootRollEntry* roll = nullptr;
-    for (auto& r : lootRolls_) {
-        if (r.rollId == rollId) roll = &r;
-    }
-    assert(roll && !roll->announced);
-    const auto* info = owner_.getItemInfo(roll->itemId);
-    assert(info && info->valid);
-    roll->announced = true;
-    LOG_DEBUG("START_LOOT_ROLL ", rollId, " item ", roll->itemId, " '", info->name,
-              "' countdown ", roll->rollCountdownMs, "ms");
-    if (owner_.addonEventCallbackRef()) {
-        // The countdown the packet carried: GroupLootFrame_OpenNewFrame sizes
-        // the timer bar from it. GetLootRollTimeLeft counts from packet arrival,
-        // so a roll that waited for its item shows the time actually left.
-        owner_.addonEventCallbackRef()("START_LOOT_ROLL",
-                                       {std::to_string(rollId),
-                                        std::to_string(roll->rollCountdownMs)});
+/// Raise START_LOOT_ROLL for waiting rolls, oldest first, while fewer than
+/// four are announced.
+///
+/// The original client (build 8606, measured with an event logger on an
+/// eleven-item Lord Kazzak drop) announces at most four rolls; the rest wait.
+/// FrameXML has four GroupLootFrames and GroupLootFrame_OpenNewFrame drops an
+/// announcement when all four are shown, so announcing all eleven at once left
+/// rolls five to eleven without a window. Every roll that ends - the player's
+/// own choice (inside RollOnLoot) or the server's result, announced or still
+/// waiting - raises CANCEL_LOOT_ROLL, takes one from the count, and the oldest
+/// waiting roll is announced in its place, with the packet's full countdown as
+/// rollTime; GetLootRollTimeLeft gives what is actually left.
+///
+/// The count is unsigned and drops for waiting rolls too, as natively: when
+/// the server times out waiting rolls the count passes zero and wraps, and the
+/// original client then announced no further roll that session (three more
+/// boss drops, no START_LOOT_ROLL). A roll whose item is not cached waits for
+/// the item query as well, so GroupLootFrame_OnShow reads it complete.
+void InventoryHandler::announceQueuedLootRolls() {
+    constexpr uint32_t kAnnouncedLimit = 4;
+    while (lootRollsAnnounced_ < kAnnouncedLimit) {
+        LootRollEntry* next = nullptr;
+        for (auto& roll : lootRolls_) {
+            if (roll.announced || roll.ending) continue;
+            const auto* info = owner_.getItemInfo(roll.itemId);
+            if (info && info->valid) { next = &roll; break; }
+        }
+        if (!next) return;
+        next->announced = true;
+        ++lootRollsAnnounced_;
+        const int rollId = next->rollId;
+        const uint32_t countdownMs = next->rollCountdownMs;
+        LOG_DEBUG("START_LOOT_ROLL ", rollId, " item ", next->itemId, " countdown ",
+                  countdownMs, "ms, ", lootRollsAnnounced_, " announced");
+        // The event can run RollOnLoot, which ends a roll and re-enters here;
+        // nothing of lootRolls_ is held across it.
+        if (owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("START_LOOT_ROLL",
+                                           {std::to_string(rollId),
+                                            std::to_string(countdownMs)});
+        }
     }
 }
 
 /// Close one roll and take its window down with it.
 void InventoryHandler::endLootRoll(uint64_t objectGuid, uint32_t slot) {
-    for (auto it = lootRolls_.begin(); it != lootRolls_.end(); ++it) {
-        if (it->objectGuid != objectGuid || it->slot != slot) continue;
-        const int rollId = it->rollId;
-        lootRolls_.erase(it);
-        // Named, so the window that closes is the one this roll opened. It was
-        // the slot plus one here as well, which closed a different roll's
-        // window whenever two were up.
-        if (owner_.addonEventCallbackRef()) {
-            owner_.addonEventCallbackRef()("CANCEL_LOOT_ROLL",
-                                           {std::to_string(rollId)});
-        }
-        return;
+    LootRollEntry* roll = findLootRoll(objectGuid, slot);
+    if (!roll || roll->ending) return;
+    roll->ending = true;
+    const int rollId = roll->rollId;
+    // Named, so the window that closes is the one this roll opened. It was
+    // the slot plus one here as well, which closed a different roll's window
+    // whenever two were up. Raised before the roll is dropped: natively
+    // GetLootRollItemInfo and GetLootRollTimeLeft still answer for it inside
+    // CANCEL_LOOT_ROLL (measured).
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("CANCEL_LOOT_ROLL", {std::to_string(rollId)});
     }
+    for (auto it = lootRolls_.begin(); it != lootRolls_.end(); ++it) {
+        if (it->rollId == rollId) { lootRolls_.erase(it); break; }
+    }
+    // Waiting or announced alike, and wrapping below zero; see
+    // announceQueuedLootRolls.
+    --lootRollsAnnounced_;
+    announceQueuedLootRolls();
 }
 
 void InventoryHandler::sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t rollType) {
@@ -4471,12 +4504,8 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
             owner_.addonEventCallbackRef()("GET_ITEM_INFO_RECEIVED",
                                            {std::to_string(data.entry)});
         }
-        // Loot rolls held back for this item open now.
-        std::vector<int> waitingRolls;
-        for (const auto& roll : lootRolls_) {
-            if (!roll.announced && roll.itemId == data.entry) waitingRolls.push_back(roll.rollId);
-        }
-        for (const int rollId : waitingRolls) announceLootRoll(rollId);
+        // Loot rolls held back for this item open now, if there is room.
+        announceQueuedLootRolls();
 
         // An action can reference a depleted item absent from all inventory
         // objects. Its metadata query still needs to refresh the original icon.

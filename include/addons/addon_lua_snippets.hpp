@@ -1900,7 +1900,7 @@ end
 /// item query answered has no name or icon. GET_ITEM_INFO_RECEIVED is the
 /// client's own event for that. Loot roll windows need no refill: the client
 /// raises START_LOOT_ROLL only once the rolled item is cached
-/// (InventoryHandler::announceLootRoll), so GroupLootFrame_OnShow reads it
+/// (InventoryHandler::announceQueuedLootRolls), so GroupLootFrame_OnShow reads it
 /// complete.
 inline constexpr const char* kLootRollRefreshLua = R"LUA(
 local watcher = CreateFrame("Frame")

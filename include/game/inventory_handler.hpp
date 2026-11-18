@@ -585,14 +585,14 @@ private:
     void handleLootRoll(network::Packet& packet);
     void handleLootRollWon(network::Packet& packet);
 
+    void announceQueuedLootRolls();
+    LootRollEntry& beginLootRoll(uint64_t objectGuid, uint32_t slot);
+    LootRollEntry* findLootRoll(uint64_t objectGuid, uint32_t slot);
     /// Tell the interface a roll is over, by the id it was opened with.
     ///
     /// The roll window hides itself on this and nothing else, so without it a
     /// resolved roll stays on screen over a bar that has run down, offering
     /// buttons the server has already stopped listening for.
-    void announceLootRoll(int rollId);
-    LootRollEntry& beginLootRoll(uint64_t objectGuid, uint32_t slot);
-    LootRollEntry* findLootRoll(uint64_t objectGuid, uint32_t slot);
     void endLootRoll(uint64_t objectGuid, uint32_t slot);
 
     /// A CHAT_MSG_LOOT line that names an item and possibly players.
@@ -703,7 +703,11 @@ private:
     std::vector<LootRollEntry> lootRolls_;
     /// Never reused within a session, so a window that outlives its roll finds
     /// nothing rather than somebody else's item.
-    int           nextLootRollId_ = 1;
+    /// From zero, as the original client numbers them.
+    int           nextLootRollId_ = 0;
+    /// START_LOOT_ROLLs raised less rolls ended, unsigned - see
+    /// announceQueuedLootRolls.
+    uint32_t      lootRollsAnnounced_ = 0;
     struct LocalLootState {
         LootResponseData data;
         bool moneyTaken = false;

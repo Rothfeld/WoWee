@@ -496,9 +496,12 @@ struct LootRollEntry {
     uint64_t objectGuid    = 0;
     uint32_t slot          = 0;
     uint32_t itemId        = 0;
-    /// START_LOOT_ROLL raised. Held back until the item is cached: the roll
-    /// window reads name, icon and quality once, in its OnShow.
+    /// START_LOOT_ROLL raised. Held back until the item is cached (the roll
+    /// window reads name, icon and quality once, in its OnShow) and while four
+    /// rolls are announced; see InventoryHandler::announceQueuedLootRolls.
     bool     announced     = false;
+    /// CANCEL_LOOT_ROLL is being raised; the roll is dropped right after.
+    bool     ending        = false;
     uint32_t rollCountdownMs = 60000;
     uint8_t  voteMask      = 0xFF;
     std::chrono::steady_clock::time_point rollStartedAt{};

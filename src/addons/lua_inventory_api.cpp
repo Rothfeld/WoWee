@@ -3458,11 +3458,10 @@ static int lua_CloseLoot(lua_State* L) {
 // buttons the server will accept, and sendLootRoll addresses the reply by the
 // object and slot the roll came from.
 //
-// One roll at a time is all this client keeps, which is the same limit its own
-// window has. The roll id is the loot slot plus one - stable for the length of
-// the roll, never zero, and checked rather than trusted, so a frame left over
-// from a previous roll is told there is nothing there and hides itself instead
-// of answering about the wrong item.
+// The roll id is the client's own count from zero, never reused in a session,
+// and checked rather than trusted, so a frame left over from a previous roll is
+// told there is nothing there and hides itself instead of answering about the
+// wrong item.
 namespace {
 
 /// The roll a Lua roll id refers to, or null if that roll has closed.
@@ -3495,11 +3494,10 @@ static int lua_GetLootRollItemInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const auto* roll = rollFor(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
     if (!roll) { return luaReturnNil(L); }
-    // A roll reaches the interface (START_LOOT_ROLL) only once its item is
-    // cached; see InventoryHandler::announceLootRoll.
-    if (!roll->announced) { return luaReturnNil(L); }
+    // Answered for a roll still waiting to be announced too, as the original
+    // client does (measured); nil only while its item query is outstanding.
     const auto* info = gh->getItemInfo(roll->itemId);
-    assert(info && info->valid);
+    if (!info || !info->valid) { return luaReturnNil(L); }
     lua_pushstring(L, gh->getItemIconPath(info->displayInfoId).c_str());
     lua_pushstring(L, info->name.c_str());
     // The roll packet does not carry a stack size. One is right for nearly
@@ -3507,7 +3505,8 @@ static int lua_GetLootRollItemInfo(lua_State* L) {
     // print a number in the corner at all.
     lua_pushnumber(L, 1);
     lua_pushnumber(L, info->quality);
-    lua_pushboolean(L, info->bindType == 1 ? 1 : 0);  // bind on pickup
+    // Bind on pickup: 1 or nil, as the original client answers (measured).
+    if (info->bindType == 1) lua_pushnumber(L, 1); else lua_pushnil(L);
     lua_pushboolean(L, (roll->voteMask & kRollNeed) ? 1 : 0);
     lua_pushboolean(L, (roll->voteMask & kRollGreed) ? 1 : 0);
     lua_pushboolean(L, (roll->voteMask & kRollDisenchant) ? 1 : 0);
@@ -3521,9 +3520,9 @@ static int lua_GetLootRollItemInfo(lua_State* L) {
 static int lua_GetLootRollItemLink(lua_State* L) {
     auto* gh = getGameHandler(L);
     const auto* roll = rollFor(gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
-    if (!roll || !roll->announced) { return luaReturnNil(L); }
+    if (!roll) { return luaReturnNil(L); }
     const auto* info = gh->getItemInfo(roll->itemId);
-    assert(info && info->valid);
+    if (!info || !info->valid) { return luaReturnNil(L); }
     lua_pushstring(L, game::buildItemLink(roll->itemId, info->quality,
                                           info->name).c_str());
     return 1;
