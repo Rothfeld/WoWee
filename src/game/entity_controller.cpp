@@ -1,4 +1,5 @@
 #include "game/entity_controller.hpp"
+#include "game/social_handler.hpp"
 #include "game/corpse_fields.hpp"
 #include "core/env_flag.hpp"
 #include "game/game_handler.hpp"
@@ -2272,6 +2273,7 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     bool unitInitiallyDead = applyUnitFieldsOnCreate(block, unit, ufi);
+    mirrorGroupMemberState(*entity);
 
     // Self-player post-unit-field handling
     if (block.guid == owner_.getPlayerGuid()) {
@@ -2562,6 +2564,29 @@ void EntityController::onValuesUpdateUnit(const UpdateBlock& block, std::shared_
 
 }
 
+// A group member in view changes health and death state through its own
+// fields: CMaNGOS sends SMSG_PARTY_MEMBER_STATS only to members who cannot see
+// the player (Group::UpdatePlayerOutOfRange) and drops the accumulated flags
+// either way. Kept in the roster too, so the party frame does not fall back to
+// the last party packet - full health from before the fight - when the
+// member walks out of view dead. Status bits as CMaNGOS GetGroupMemberStatus:
+// GHOST (0x08) from PLAYER_FLAGS_GHOST, else DEAD (0x04) at zero health.
+void EntityController::mirrorGroupMemberState(const Entity& entity) {
+    if (entity.getGuid() == owner_.getPlayerGuid() || !owner_.getSocialHandler()) return;
+    auto& party = owner_.getSocialHandler()->mutablePartyData();
+    for (auto& member : party.members) {
+        if (member.guid != entity.getGuid()) continue;
+        const auto& unit = static_cast<const Unit&>(entity);
+        member.curHealth = unit.getHealth();
+        if (unit.getMaxHealth() != 0) member.maxHealth = unit.getMaxHealth();
+        const bool ghost = (entity.getField(fieldIndex(UF::PLAYER_FLAGS)) & 0x10u) != 0;
+        member.onlineStatus = static_cast<uint16_t>(member.onlineStatus & ~(0x04u | 0x08u));
+        if (ghost) member.onlineStatus |= 0x08u;
+        else if (unit.getHealth() == 0) member.onlineStatus |= 0x04u;
+        return;
+    }
+}
+
 void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
     // Other player visible items
     if (block.guid != owner_.getPlayerGuid()) {
@@ -2572,6 +2597,7 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
+    mirrorGroupMemberState(*entity);
     if (block.guid == owner_.getPlayerGuid()) {
         if (const auto ft = block.fields.find(ufi.faction); ft != block.fields.end())
             owner_.notePlayerFactionTemplate(ft->second);

@@ -233,7 +233,8 @@ static int lua_UnitIsDead(lua_State* L) {
         toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
-        lua_pushboolean(L, pm ? (pm->curHealth == 0 && pm->maxHealth > 0) : 0);
+        // MEMBER_STATUS_DEAD (CMaNGOS GroupMemberStatus); a ghost is not dead.
+        lua_pushboolean(L, pm ? (pm->onlineStatus & 0x04) != 0 : 0);
     }
     return 1;
 }
@@ -320,6 +321,9 @@ static int lua_UnitIsGhost(lua_State* L) {
                 // (which is UNIT_FLAG_IMMUNE_TO_PC - would flag immune NPCs as ghosts).
                 uint32_t pf = entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS));
                 ghost = (pf & 0x00000010) != 0;
+            } else if (const auto* pm = findPartyMember(gh, guid)) {
+                // Out of view: MEMBER_STATUS_GHOST from the party stats.
+                ghost = (pm->onlineStatus & 0x08) != 0;
             }
         }
         lua_pushboolean(L, ghost);
@@ -337,6 +341,15 @@ static int lua_UnitIsDeadOrGhost(lua_State* L) {
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
         if (uidStr == "player") dead = gh->isPlayerGhost() || gh->isPlayerDead();
+        else if (!unit) {
+            // Out of view: MEMBER_STATUS_DEAD or _GHOST from the party stats.
+            if (const auto* pm = findPartyMember(gh, resolveUnitGuid(gh, uidStr)))
+                dead = (pm->onlineStatus & (0x04 | 0x08)) != 0;
+        } else {
+            // A released player keeps health 1 as a ghost.
+            dead = (unit->getField(game::fieldIndex(game::UF::PLAYER_FLAGS)) & 0x10u) != 0 &&
+                   unit->getType() == game::ObjectType::PLAYER;
+        }
     }
     lua_pushboolean(L, dead);
     return 1;

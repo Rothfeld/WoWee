@@ -3737,6 +3737,7 @@ public:
     CombatHandler* getCombatHandler() { return combatHandler_.get(); }
     MovementHandler* getMovementHandler() { return movementHandler_.get(); }
     SpellHandler* getSpellHandler() { return spellHandler_.get(); }
+    SocialHandler* getSocialHandler() { return socialHandler_.get(); }
     QuestHandler* getQuestHandler() { return questHandler_.get(); }
 
     // ── Mutable Accessors for Members with Existing Const Getters ────
