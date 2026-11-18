@@ -2532,11 +2532,25 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
     deferredWorldInitCooldown_ = 0.12f;
 }
 
-void Renderer::setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color) {
+void Renderer::setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color,
+                                  uint32_t characterInstance) {
+    selectionInstance_ = characterInstance;
     if (overlaySystem_) overlaySystem_->setSelectionCircle(pos, radius, color);
 }
 
+// The UI sets the selection after the world is recorded, so its position is
+// a frame old by then; a running unit's ring trailed behind it. The ring
+// takes the target's position from the same instance the model is drawn at
+// this frame.
+void Renderer::refreshSelectionCirclePosition() {
+    if (!selectionInstance_ || !overlaySystem_ || !characterRenderer) return;
+    glm::vec3 position;
+    if (characterRenderer->getInstancePosition(selectionInstance_, position))
+        overlaySystem_->setSelectionCirclePosition(position);
+}
+
 void Renderer::clearSelectionCircle() {
+    selectionInstance_ = 0;
     if (overlaySystem_) overlaySystem_->clearSelectionCircle();
 }
 
@@ -3277,6 +3291,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             VkCommandBuffer cmd = beginSecondary(SEC_SELECTION);
             setSecondaryViewportScissor(cmd);
             if (overlaySystem_) {
+                refreshSelectionCirclePosition();
                 overlaySystem_->renderSelectionCircle(view, projection, cmd,
                     terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
                     wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
@@ -3467,6 +3482,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         }
 
         if (overlaySystem_) {
+            refreshSelectionCirclePosition();
             overlaySystem_->renderSelectionCircle(view, projection, currentCmd,
                 terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
                 wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},

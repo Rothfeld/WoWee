@@ -131,6 +131,9 @@ public:
     float getPlayerSwimmingDepth() const;
     float getUnitSwimmingDepth(uint64_t guid, uint32_t instanceId) const;
     uint32_t characterInstanceIdForGuid(uint64_t guid) const;
+    /// The instance at the unit's own position: its mount's when riding (the
+    /// rider sits raised in the saddle), else its character instance.
+    uint32_t groundInstanceIdForGuid(uint64_t guid) const;
     bool getRenderFootZForGuid(uint64_t guid, float& outFootZ) const;
     bool getRenderPositionForGuid(uint64_t guid, glm::vec3& outPos) const;
 

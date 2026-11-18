@@ -1045,6 +1045,13 @@ uint32_t EntitySpawner::characterInstanceIdForGuid(uint64_t guid) const {
     return 0;
 }
 
+uint32_t EntitySpawner::groundInstanceIdForGuid(uint64_t guid) const {
+    if (gameHandler_ && guid == gameHandler_->getPlayerGuid() && mountInstanceId_ != 0) return mountInstanceId_;
+    if (const auto mount = remotePlayerMounts_.find(guid); mount != remotePlayerMounts_.end())
+        return mount->second.instanceId;
+    return characterInstanceIdForGuid(guid);
+}
+
 float EntitySpawner::getPlayerSwimmingDepth() const {
     return getUnitSwimmingDepth(gameHandler_->getPlayerGuid(), renderer_->getCharacterInstanceId());
 }

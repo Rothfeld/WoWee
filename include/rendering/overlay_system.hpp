@@ -34,7 +34,9 @@ public:
     void loadSelectionTexture(pipeline::AssetManager& assets);
 
     // Selection circle
+    /// pos is the unit's position (not its feet); radius its selection radius.
     void setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color);
+    void setSelectionCirclePosition(const glm::vec3& pos);
     void clearSelectionCircle();
     void renderSelectionCircle(const glm::mat4& view, const glm::mat4& projection,
                                VkCommandBuffer cmd,
@@ -87,7 +89,11 @@ private:
     float selCircleRadius_ = 1.5f;
     bool selCircleVisible_ = false;
 
-    std::array<float, 81 * 5> selCircleVertices_{};
+    // Grid of the ground-conforming ring. At 8 cells a 6 yd ring on a
+    // rounded hill (GM Island) cut through the terrain between vertices 1.6
+    // yd apart and showed as scattered shards; 24 keeps them under 0.6 yd.
+    static constexpr int kSelectionCells = 24;
+    std::array<float, (kSelectionCells + 1) * (kSelectionCells + 1) * 5> selCircleVertices_{};
     glm::vec3 selCircleMeshPos_{0.0f};
     glm::vec2 selCircleMeshRight_{0.0f};
     float selCircleMeshRadius_ = 0.0f;

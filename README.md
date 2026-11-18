@@ -1047,6 +1047,23 @@ The animation and keybone convention also appears in
 [WoW Model Viewer](https://github.com/wowmodelviewer/wowmodelviewer/blob/develop/Source/games/wow/WoWModel.cpp).
 `test_hand_grip` checks finger mapping and hierarchy validation.
 
+### Selection circle on the ground
+
+The ring is where a sphere of the selection radius (`core/unit_size.hpp`)
+around the unit's position meets the ground under it, projected straight down
+onto terrain, WMO and M2 floors so it wraps slopes. A unit h yards above the
+ground gets a ring of radius sqrt(r^2 - h^2) and none once h reaches r: a
+flying or jumping unit leaves it on the ground, shrinking. A rider's ring is
+centred on the mount. The renderer reads the target's instance position when
+it records the ring, the frame its model is drawn; the UI sets the target
+after the world is recorded, so the ring used to trail a running unit by a
+frame. No ring under the local player, even self-targeted. Measured in the
+original on the GM Island hilltop with tempspawned flying creatures:
+`_experiments/20261118T084140Z.selection_circle_ground/` in the workspace
+root. Not established: native also fades the ring as h grows (Infernal 7950,
+r 6.45: ring intensity about 0.6 at 2 yd, 0.2 at 3, 0.08 at 4 of that at 0);
+WoWee draws it at full strength until it vanishes.
+
 ### Chair clicks and object picking
 
 Right-clicking a chair sends the normal game-object use request. Camera drags

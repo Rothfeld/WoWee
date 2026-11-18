@@ -54,6 +54,10 @@ void OverlaySystem::setSelectionCircle(const glm::vec3& pos, float radius, const
     selCircleVisible_ = true;
 }
 
+void OverlaySystem::setSelectionCirclePosition(const glm::vec3& pos) {
+    selCirclePos_ = pos;
+}
+
 void OverlaySystem::clearSelectionCircle() {
     selCircleVisible_ = false;
 }
@@ -121,11 +125,11 @@ void OverlaySystem::initSelectionCircle() {
     if (!selCirclePipelineLayout_)
         selCirclePipelineLayout_ = createPipelineLayout(device, {selCircleSetLayout_}, {pcRange});
 
-    // Ground-conforming 8x8 grid; each frame owns its mutable vertices.
+    // Ground-conforming grid; each frame owns its mutable vertices.
     VkVertexInputBindingDescription vertBind{0, 20, VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription position{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
     VkVertexInputAttributeDescription uv{1, 0, VK_FORMAT_R32G32_SFLOAT, 12};
-    constexpr int cells = 8;
+    constexpr int cells = kSelectionCells;
     if (selCircleIdxBuf_ == VK_NULL_HANDLE) {
         std::vector<uint16_t> indices;
         for (int y = 0; y < cells; ++y) {
@@ -179,9 +183,37 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
     initSelectionCircle();
     if (selCirclePipeline_ == VK_NULL_HANDLE || cmd == VK_NULL_HANDLE) return;
 
-    // Fit the decal to nearby floors. A gap stays at target foot height rather
-    // than projecting down onto an unrelated floor below a bridge.
-    constexpr int cells = 8;
+    // The ring is where a sphere of the selection radius around the unit's
+    // position meets the ground below it, projected straight down onto
+    // terrain, WMO and M2 floors so it wraps slopes. Measured in the original
+    // 2.4.3 (GM Island hilltop, a flying creature tempspawned at known
+    // heights h over the ground): the ring stays on the ground at every
+    // height, its width is 2 * sqrt(r^2 - h^2) (Infernal display 7950, r 6.45:
+    // 12.3/12.3/11.7/9.9 yd at h 0/2/3/4 against 12.9/12.3/11.4/10.1), and it
+    // is gone once h reaches r (human r 0.84 by 1 yd, Infernal 7029 r 2.52 by
+    // 2.5-3.5 yd). It drew at the unit's feet before, flying along with it.
+    const glm::vec3 center = selCirclePos_;
+    const float sphere = selCircleRadius_;
+    // Surfaces inside the sphere's vertical extent; the ground is the one
+    // nearest the unit's height.
+    auto surfaceNear = [&](float x, float y, float target) {
+        std::optional<float> best;
+        auto consider = [&](std::optional<float> h) {
+            if (h && *h >= center.z - sphere && *h <= center.z + sphere &&
+                (!best || std::abs(*h - target) < std::abs(*best - target))) best = h;
+        };
+        if (terrainHeight) consider(terrainHeight(x, y));
+        if (wmoHeight) consider(wmoHeight(x, y, center.z + sphere));
+        if (m2Height) consider(m2Height(x, y, center.z + sphere));
+        return best;
+    };
+    const std::optional<float> ground = surfaceNear(center.x, center.y, center.z);
+    if (!ground) return;
+    const float height = std::abs(center.z - *ground);
+    if (height >= sphere) return;
+    const float radius = std::sqrt(sphere * sphere - height * height);
+
+    constexpr int cells = kSelectionCells;
     auto& vertices = selCircleVertices_;
     glm::vec2 right(view[0][0], view[1][0]);
     right = glm::normalize(right);
@@ -196,21 +228,17 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
             for (int x = 0; x <= cells; ++x) {
                 const float u = float(x) / cells;
                 const float v = float(y) / cells;
-                const glm::vec2 xy = glm::vec2(selCirclePos_) + selCircleRadius_ *
+                const glm::vec2 xy = glm::vec2(center) + radius *
                     ((2.0f * u - 1.0f) * right + (1.0f - 2.0f * v) * forward);
-                const float baseZ = selCirclePos_.z;
-                std::optional<float> surface;
-                auto consider = [&](std::optional<float> h) {
-                    if (h && *h >= baseZ - 1.25f && *h <= baseZ + 0.85f &&
-                        (!surface || std::abs(*h - baseZ) < std::abs(*surface - baseZ))) surface = h;
-                };
-                if (terrainHeight) consider(terrainHeight(xy.x, xy.y));
-                if (wmoHeight) consider(wmoHeight(xy.x, xy.y, baseZ + 3.0f));
-                if (m2Height) consider(m2Height(xy.x, xy.y, baseZ + 2.0f));
+                // Each vertex on the surface nearest the ground under the
+                // unit: a slope keeps the ring on it, a floor above or below
+                // (bridge, roof) does not take it over. Over a gap the ring
+                // stays at the ground's height.
+                const float z = surfaceNear(xy.x, xy.y, *ground).value_or(*ground);
                 const size_t offset = (y * (cells + 1) + x) * 5;
                 vertices[offset] = xy.x;
                 vertices[offset + 1] = xy.y;
-                vertices[offset + 2] = surface.value_or(baseZ) + 0.025f;
+                vertices[offset + 2] = z + 0.025f;
                 vertices[offset + 3] = u;
                 vertices[offset + 4] = v;
             }

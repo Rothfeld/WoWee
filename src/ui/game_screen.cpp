@@ -35,6 +35,7 @@
 #include "rendering/minimap.hpp"
 #include "rendering/world_map.hpp"
 #include "rendering/character_renderer.hpp"
+#include "core/entity_spawner.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/camera_controller.hpp"
 #include "audio/audio_coordinator.hpp"
@@ -906,6 +907,10 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                 // unit and a player and under nothing else - a door, a mailbox,
                 // a bank vault is used rather than selected, and a ring on the
                 // floor around one reads as a creature being fought.
+                // None under the local player: native 2.4.3 targeting itself
+                // (Edrike on the GM Island hilltop, standing on the ground)
+                // draws no ring, while another player there gets one.
+                if (target->getGuid() == gameHandler.getPlayerGuid()) showSelectionCircle = false;
                 if (showSelectionCircle && knownSize) {
                     if (gameHandler.hasAutoAttackIntent() &&
                         gameHandler.getAutoAttackTargetGuid() == target->getGuid()) {
@@ -915,7 +920,17 @@ void GameScreen::render(game::GameHandler& gameHandler) {
                             static_cast<float>(ImGui::GetTime() * 6.283185307179586));
                         circleColor = glm::vec3(1.0f, 0.5f + 0.5f * pulse, 0.5f);
                     }
-                    renderer->setSelectionCircle(targetGLPos, circleRadius, circleColor);
+                    // Centred on the unit's own position (the mount's when
+                    // riding), not its feet: the ring is where the selection
+                    // sphere meets the ground (OverlaySystem). The renderer
+                    // re-reads the instance when it records the ring.
+                    auto* spawner = core::Application::getInstance().getEntitySpawner();
+                    const uint32_t groundInstance = spawner ? spawner->groundInstanceIdForGuid(target->getGuid()) : 0;
+                    glm::vec3 circleCenter = core::coords::canonicalToRender(
+                        glm::vec3(target->getX(), target->getY(), target->getZ()));
+                    if (groundInstance && renderer->getCharacterRenderer())
+                        renderer->getCharacterRenderer()->getInstancePosition(groundInstance, circleCenter);
+                    renderer->setSelectionCircle(circleCenter, circleRadius, circleColor, groundInstance);
                 } else {
                     renderer->clearSelectionCircle();
                 }

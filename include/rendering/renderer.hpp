@@ -223,8 +223,12 @@ public:
     SwimEffects* getSwimEffects() const { return swimEffects.get(); }
 
     // Selection circle for targeted entity
-    void setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color);
+    /// characterInstance: the target's CharacterRenderer instance, whose
+    /// position at recording time centres the ring (0: pos is used).
+    void setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color,
+                            uint32_t characterInstance = 0);
     void clearSelectionCircle();
+    void refreshSelectionCirclePosition();
 
     // CPU timing stats (milliseconds, last frame).
     double getLastUpdateMs() const { return lastUpdateMs; }
@@ -467,6 +471,7 @@ private:
 
     // Selection circle + overlay rendering (owned by OverlaySystem)
     std::unique_ptr<OverlaySystem> overlaySystem_;
+    uint32_t selectionInstance_ = 0;
 
 
 
