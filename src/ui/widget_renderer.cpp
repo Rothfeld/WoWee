@@ -2808,8 +2808,14 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 // frame, so a box with art above its text does not sit high.
                 const float boxTop = y0 + w->textInsetTop * s;
                 const float boxBottom = y1 - w->textInsetBottom * s;
-                const float ty = boxTop + ((boxBottom - boxTop) - size) * 0.5f;
+                // A multi-line box (the macro body, the mail body) writes from
+                // its top-left corner down, wrapping at its width, as native
+                // 2.4.3 does; a single line sits centred between the insets.
+                const bool multi = w->editMultiLine;
+                const float ty = multi ? boxTop : boxTop + ((boxBottom - boxTop) - size) * 0.5f;
                 const float pad = w->textInsetLeft * s;
+                const float wrapW = multi
+                    ? std::max(1.0f, (x1 - x0) - pad - w->textInsetRight * s) : 0.0f;
                 if (!w->editText.empty()) {
                     // The shadow first, under the words, as a font string's
                     // is. ChatFontNormal declares one and every edit box in
@@ -2823,7 +2829,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                                        ImVec2(x0 + pad + w->shadowX * s,
                                               ty - w->shadowY * s),
                                        packColor(sc, w->effAlpha * w->shadowColor[3]),
-                                       w->effAlpha, w->editText, 0.0f, false,
+                                       w->effAlpha, w->editText, wrapW, false,
                                        nullptr, true);
                     }
                     // Through the markup parser like everything else. An edit
@@ -2834,20 +2840,32 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // Links are only clickable at all as of this branch, so
                     // this became reachable at the same moment.
                     drawMarkupText(dl, font, size, ImVec2(x0 + pad, ty), col,
-                                   w->effAlpha, w->editText);
+                                   w->effAlpha, w->editText, wrapW);
                 }
                 if (w->editFocused) {
                     // Measured against what is drawn, not what is held. The
                     // caret sits after the text to its left, and to the left of
                     // a link is its display name - measuring the raw string
                     // would put the caret an escape sequence too far right.
-                    const std::string upTo = strippedText(w->editText.substr(
-                        0, std::min(w->cursorPos, w->editText.size())));
-                    const float caret = font
-                        ? font->CalcTextSizeA(size, FLT_MAX, 0.0f, upTo.c_str()).x
-                        : 0.0f;
+                    const std::string rawUpTo = w->editText.substr(
+                        0, std::min(w->cursorPos, w->editText.size()));
+                    float caret = 0.0f, caretY = ty;
+                    if (font && multi) {
+                        // The end of the text before the caret, laid out the
+                        // way the box draws it: its last line, that line's width.
+                        const auto lines = wrapText(parseMarkup(rawUpTo), wrapW, false,
+                            [&](const std::string& piece) {
+                                return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
+                            });
+                        for (const auto& run : lines.back())
+                            caret += font->CalcTextSizeA(size, FLT_MAX, 0.0f, run.text.c_str()).x;
+                        caretY = ty + static_cast<float>(lines.size() - 1) * size * 1.2f;
+                    } else if (font) {
+                        const std::string upTo = strippedText(rawUpTo);
+                        caret = font->CalcTextSizeA(size, FLT_MAX, 0.0f, upTo.c_str()).x;
+                    }
                     const float cx = x0 + pad + caret;
-                    dl->AddLine(ImVec2(cx, ty), ImVec2(cx, ty + size), col);
+                    dl->AddLine(ImVec2(cx, caretY), ImVec2(cx, caretY + size), col);
                 }
             }
             continue;
