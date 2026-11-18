@@ -161,6 +161,22 @@ inline void legacyPlateLayout(std::vector<LegacyPlate*>& plates, float artScale)
             break;
         }
     }
+    // Pushing a placed plate right can put it onto a third one; level
+    // neighbours are pushed on until the row is clear.
+    for (size_t pass = 0; pass < plates.size(); ++pass) {
+        bool moved = false;
+        for (size_t i = 0; i < plates.size(); ++i) {
+            for (size_t j = i + 1; j < plates.size(); ++j) {
+                LegacyPlate& a = *plates[i];
+                LegacyPlate& b = *plates[j];
+                if (!collides(a.x, a.top, &b) || std::abs(a.top - b.top) >= row) continue;
+                if (a.x <= b.x) b.x = a.x + w;
+                else a.x = b.x + w;
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
 }
 
 /// A drawn plate's click box (name line, bar and their margin) and its unit.
