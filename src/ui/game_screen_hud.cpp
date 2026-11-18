@@ -1081,6 +1081,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                                                    : spawner->characterInstanceIdForGuid(guid);
         if (!characters->getInstanceNamePosition(instanceId, unit->getMountDisplayId() != 0, renderPos))
             continue; // The model has not spawned yet.
+        // Nor over a unit hidden in a room the camera does not see.
+        if (characters->isInstanceRoomHidden(instanceId)) continue;
 
         const auto labelVisibility = unitLabelVisibility(gameHandler, guid, unitPosition, renderPos, *camera);
         const bool showPlate = labelVisibility.plate;

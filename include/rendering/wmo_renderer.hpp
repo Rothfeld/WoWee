@@ -302,6 +302,11 @@ public:
     void updateRoomVisibility(const Camera& camera, const glm::vec3* viewerPos);
     /// Whether any of these groups of an instance was drawn (updateRoomVisibility).
     bool anyGroupDrawn(uint32_t instanceId, const std::vector<uint16_t>& groups) const;
+    /// Whether a point stands in an interior-only room (MOGP 0x2000 without
+    /// 0x8) of a WMO that this frame's room visibility does not draw: the
+    /// room whose box holds it and whose surface is first below it, as the
+    /// outside walk seeds rooms. Units there are not drawn.
+    [[nodiscard]] bool roomHides(const glm::vec3& point);
     void setPortalCulling(bool enabled) { portalCulling = enabled; }
     bool isPortalCullingEnabled() const { return portalCulling; }
 
@@ -731,6 +736,10 @@ private:
         std::vector<std::pair<glm::vec3, glm::vec3>> worldGroupBounds;
         // updateRoomVisibility's answer for this frame; empty means every group.
         std::vector<uint8_t> drawnGroups;
+        // Groups the camera sees through portals this frame, indoors as well
+        // as out, whether or not WOWEE_WMO_CULL culls drawing: the units
+        // standing in the others are not drawn (roomHides). Empty: no walk.
+        std::vector<uint8_t> unitVisibleGroups;
 
         // Doodad tracking: M2 instances that are children of this WMO
         struct DoodadInfo {

@@ -200,6 +200,10 @@ public:
     void setInstanceReplaced(uint32_t instanceId, bool replaced);
     /// The instance's own visibility (first-person, taxi) and camera opacity.
     bool isInstanceDrawnVisible(uint32_t instanceId, float& cameraOpacity) const;
+    /// A unit in a WMO room that is not drawn this frame is not drawn either,
+    /// with its weapons, effects and emitters (WMORenderer::roomHides).
+    void setInstanceRoomHidden(uint32_t instanceId, bool hidden);
+    [[nodiscard]] bool isInstanceRoomHidden(uint32_t instanceId) const;
     void removeInstance(uint32_t instanceId);
     bool getAnimationState(uint32_t instanceId, uint32_t& animationId, float& animationTimeMs, float& animationDurationMs) const;
     /// Footfall ($FSD) event times in ms for the sequence the instance is
@@ -376,6 +380,8 @@ private:
         // Drawn by another instance in its place (a morphed player's creature
         // model); kept updated but never drawn, its weapons and emitters neither.
         bool replaced = false;
+        // Standing in a WMO room the camera does not see (setInstanceRoomHidden).
+        bool roomHidden = false;
         float torsoYawOverrideRad = 0.0f;
 
         // Animation state

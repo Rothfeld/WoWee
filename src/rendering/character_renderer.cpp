@@ -2538,7 +2538,22 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
     for (auto& pair : instances) {
         auto& instance = pair.second;
         if (instance.weaponAttachments.empty()) continue;
-        if (glm::distance2(instance.position, cameraPos) > animUpdateRadiusSq) continue;
+        if (glm::distance2(instance.position, cameraPos) > animUpdateRadiusSq) {
+            // Not placed this frame, so not drawn: the attachment keeps its
+            // last matrix, the identity for one never placed, and drew at the
+            // world origin. The Eye's entrance hall stands on the origin, and
+            // the polearms and shoulders of Bloodwarders 190 yards off hung
+            // there as a spiked mass (_experiments/20261118T113900Z.eye_gate).
+            // The unit itself is beyond the same radius and not drawn.
+            for (const auto& wa : instance.weaponAttachments) {
+                auto weapIt = instances.find(wa.weaponInstanceId);
+                if (weapIt == instances.end()) continue;
+                weapIt->second.visible = false;
+                for (const auto& effect : wa.effects)
+                    instances.at(effect.effectInstanceId).visible = false;
+            }
+            continue;
+        }
 
         glm::mat4 charModelMat = instance.hasOverrideModelMatrix
             ? instance.overrideModelMatrix
@@ -2577,8 +2592,11 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             const bool sheathed = weaponSheathed(instance, wa);
             const bool hiddenHoldable = sheathed && wa.sheathAttachmentId == UINT32_MAX;
             weapIt->second.visible = instance.visible && !instance.replaced && !hiddenHoldable;
-            for (const auto& effect : wa.effects)
+            weapIt->second.roomHidden = instance.roomHidden;
+            for (const auto& effect : wa.effects) {
                 instances.at(effect.effectInstanceId).visible = weapIt->second.visible;
+                instances.at(effect.effectInstanceId).roomHidden = instance.roomHidden;
+            }
             if (hiddenHoldable) continue;
 
             // Get the bone matrix for the attachment bone
@@ -2639,7 +2657,7 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
     }
 
     for (const auto& [id, instance] : instances) {
-        const float fade = characterEmitterFade(instance.visible && !instance.replaced, instance.opacity,
+        const float fade = characterEmitterFade(instance.visible && !instance.replaced && !instance.roomHidden, instance.opacity,
                                                 instance.cameraOpacity);
         if (fade <= 0.0f) continue;
         const auto modelIt = models.find(instance.modelId);
@@ -3011,7 +3029,7 @@ std::vector<std::pair<float, uint32_t>> CharacterRenderer::drawOrder(const Camer
     order.reserve(instances.size());
     const auto& view = camera.getViewMatrix();
     for (const auto& [id, instance] : instances) {
-        if (!instance.visible || instance.replaced) continue;
+        if (!instance.visible || instance.replaced || instance.roomHidden) continue;
         const glm::vec3 position = instance.hasOverrideModelMatrix
             ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
         order.emplace_back((view * glm::vec4(position, 1.0f)).z, id);
@@ -3137,7 +3155,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         if (pass == -1 && !surfaceFade) continue;
 
         // Skip invisible instances (e.g., player in first-person mode)
-        if (!instance.visible || instance.replaced) continue;
+        if (!instance.visible || instance.replaced || instance.roomHidden) continue;
 
         // Character instance culling: test both distance and frustum visibility
         if (!instance.hasOverrideModelMatrix && !instance.isSceneModel) {
@@ -3933,7 +3951,7 @@ void CharacterRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& light
     VkDescriptorSet currentTexSet = VK_NULL_HANDLE;
     for (auto& pair : instances) {
         auto& inst = pair.second;
-        if (!inst.visible || inst.replaced) continue;
+        if (!inst.visible || inst.replaced || inst.roomHidden) continue;
 
         // Distance cull against shadow frustum
         glm::vec3 diff = inst.position - shadowCenter;
@@ -4463,6 +4481,19 @@ void CharacterRenderer::clearTextureSlotOverride(uint32_t instanceId, uint16_t t
     if (it != instances.end()) {
         it->second.textureSlotOverrides.erase(textureSlot);
     }
+}
+
+void CharacterRenderer::setInstanceRoomHidden(uint32_t instanceId, bool hidden) {
+    auto& instance = instances.at(instanceId);
+    if (instance.roomHidden != hidden)
+        LOG_DEBUG("Room hidden: instance=", instanceId, " hidden=", hidden, " at (", instance.position.x, ",",
+                  instance.position.y, ",", instance.position.z, ")");
+    instance.roomHidden = hidden;
+}
+
+bool CharacterRenderer::isInstanceRoomHidden(uint32_t instanceId) const {
+    const auto it = instances.find(instanceId);
+    return it != instances.end() && it->second.roomHidden;
 }
 
 void CharacterRenderer::setInstanceVisible(uint32_t instanceId, bool visible) {

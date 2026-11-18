@@ -3805,6 +3805,16 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     }
                 }
             }
+            // A unit standing in a WMO room the camera does not see is not
+            // drawn, as native leaves the creatures of Karazhan's upper
+            // floors out of the Master's Terrace sky (roomHides).
+            if (auto* wmo = renderer->getWMORenderer()) {
+                glm::vec3 center; float radius = 0.0f;
+                const bool hidden = charRenderer->getInstanceBounds(instanceId, center, radius) &&
+                                    wmo->roomHides(center);
+                charRenderer->setInstanceRoomHidden(instanceId, hidden);
+                if (creatureMount) charRenderer->setInstanceRoomHidden(creatureMount->instanceId, hidden);
+            }
             entitySpawner_->updateRemoteUnitState(guid, instanceId,
                 entity->isActivelyMoving(), creatureMount != nullptr);
 
@@ -4130,6 +4140,16 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 }
             }
 
+            // A unit standing in a WMO room the camera does not see is not
+            // drawn, as native leaves the creatures of Karazhan's upper
+            // floors out of the Master's Terrace sky (roomHides).
+            if (auto* wmo = renderer->getWMORenderer()) {
+                glm::vec3 center; float radius = 0.0f;
+                const bool hidden = charRenderer->getInstanceBounds(instanceId, center, radius) &&
+                                    wmo->roomHides(center);
+                charRenderer->setInstanceRoomHidden(instanceId, hidden);
+                if (remoteMount) charRenderer->setInstanceRoomHidden(remoteMount->instanceId, hidden);
+            }
             entitySpawner_->updateRemoteUnitState(guid, instanceId,
                 entity->isActivelyMoving(), remoteMount != nullptr);
 

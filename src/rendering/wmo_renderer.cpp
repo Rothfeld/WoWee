@@ -2319,6 +2319,22 @@ void WMORenderer::updateRoomVisibility(const Camera& camera, const glm::vec3* vi
         instance.drawnGroups.assign(mdlIt->second.groups.size(), 0);
         for (uint32_t g : drawn) instance.drawnGroups[g] = 1;
     }
+    // The units' walk always runs indoors too: The Eye's entrance hall shows
+    // no Bloodwarder pack through its walls on native, 60 yards on in the
+    // next hall, while WoWee drew them over the wall.
+    for (auto& instance : instances) {
+        instance.unitVisibleGroups.clear();
+        if (!instance.drawnGroups.empty()) {  // the same walk already ran
+            instance.unitVisibleGroups = instance.drawnGroups;
+            continue;
+        }
+        const auto mdlIt = loadedModels.find(instance.modelId);
+        if (mdlIt == loadedModels.end()) continue;
+        drawn.clear();
+        if (!portalVisibleGroups(instance, mdlIt->second, camPos, viewer, frustum, true, drawn)) continue;
+        instance.unitVisibleGroups.assign(mdlIt->second.groups.size(), 0);
+        for (uint32_t g : drawn) instance.unitVisibleGroups[g] = 1;
+    }
 }
 
 bool WMORenderer::anyGroupDrawn(uint32_t instanceId, const std::vector<uint16_t>& groups) const {
@@ -2339,6 +2355,30 @@ bool WMORenderer::anyGroupDrawn(uint32_t instanceId, const std::vector<uint16_t>
     for (uint16_t g : groups) {
         assert(g < drawnGroups.size());
         if (drawnGroups[g]) return true;
+    }
+    return false;
+}
+
+bool WMORenderer::roomHides(const glm::vec3& point) {
+    constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
+    constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
+    gatherCandidates(point - glm::vec3(0.5f), point + glm::vec3(0.5f), tl_candidateScratch);
+    for (size_t index : tl_candidateScratch) {
+        const auto& instance = instances[index];
+        if (instance.unitVisibleGroups.empty()) continue;  // no portal walk this frame
+        const auto modelIt = loadedModels.find(instance.modelId);
+        if (modelIt == loadedModels.end()) continue;
+        const ModelData& model = modelIt->second;
+        const glm::vec3 local(instance.invModelMatrix * glm::vec4(point, 1.0f));
+        const glm::vec3 localDown = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(0, 0, -1, 0)));
+        const int room = groupBeneath(model, local, localDown);
+        if (room < 0) continue;
+        const auto& group = model.groups[static_cast<size_t>(room)];
+        if (!(group.groupFlags & WMO_GROUP_FLAG_INDOOR) || (group.groupFlags & WMO_GROUP_FLAG_OUTDOOR)) continue;
+        if (glm::any(glm::lessThan(local, group.boundingBoxMin)) ||
+            glm::any(glm::greaterThan(local, group.boundingBoxMax))) continue;
+        assert(static_cast<size_t>(room) < instance.unitVisibleGroups.size());
+        if (!instance.unitVisibleGroups[static_cast<size_t>(room)]) return true;
     }
     return false;
 }

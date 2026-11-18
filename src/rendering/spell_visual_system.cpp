@@ -1128,6 +1128,9 @@ void SpellVisualSystem::update(float deltaTime) {
     CharacterRenderer* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
+        // Effects on a unit hidden in an unseen WMO room are hidden with it.
+        if (it->attachInstanceId && charRenderer)
+            m2Renderer_->setInstanceFade(it->instanceId, charRenderer->isInstanceRoomHidden(it->attachInstanceId) ? 0.0f : 1.0f);
         if (it->auraVisualId) {
             glm::vec3 position;
             if (!charRenderer || !charRenderer->getInstancePosition(it->attachInstanceId, position)) {

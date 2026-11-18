@@ -125,6 +125,8 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             auto* spawner = app.getEntitySpawner();
             auto* renderer = app.getRenderer();
             if (!spawner || !renderer || !renderer->getCharacterRenderer()) continue;
+            // A unit not drawn because its room is not seen cannot be pointed at.
+            if (renderer->getCharacterRenderer()->isInstanceRoomHidden(spawner->characterInstanceIdForGuid(guid))) continue;
             if (!renderer->getCharacterRenderer()->intersectInstance(
                     spawner->drawnInstanceIdForGuid(guid), ray.origin, ray.direction, hitT)) {
                 if (params.trace) LOG_DEBUG("Scene pick unit volume miss guid=", guid);

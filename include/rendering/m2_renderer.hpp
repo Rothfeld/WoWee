@@ -787,6 +787,13 @@ public:
     /// Draw only instances standing inside this box (a sealed interior, see
     /// WMORenderer::findSealedInterior); every instance when empty.
     void setVisibleRegion(std::optional<std::pair<glm::vec3, glm::vec3>> region) { visibleRegion_ = region; }
+    /// A WMO room doodad whose room is not drawn this frame: not its mesh,
+    /// particles or ribbons (Karazhan's upper-floor braziers showed their
+    /// flames in the Master's Terrace sky).
+    [[nodiscard]] bool roomCulled(const M2Instance& instance) const {
+        return instance.wmoRoomInstance != 0 && wmoRoomDrawn_ &&
+               !wmoRoomDrawn_(instance.wmoRoomInstance, instance.wmoRooms);
+    }
     [[nodiscard]] bool outsideVisibleRegion(const glm::vec3& position) const {
         return visibleRegion_ && (glm::any(glm::lessThan(position, visibleRegion_->first)) ||
                                   glm::any(glm::greaterThan(position, visibleRegion_->second)));
