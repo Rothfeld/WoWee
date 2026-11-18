@@ -1247,6 +1247,16 @@ uint32_t WidgetTree::hitTestFor(float x, float y, bool forWheel) const {
     return best ? best->id : 0;
 }
 
+bool WidgetTree::isHeldDown(uint32_t id) const {
+    for (uint32_t at = pressedId_; at != 0; ) {
+        if (at == id) return true;
+        const Widget* a = get(at);
+        if (!a) break;
+        at = a->parent;
+    }
+    return false;
+}
+
 bool WidgetTree::buttonArtVisible(const Widget& w) const {
     if (w.buttonArt == ButtonArt::None) return true;
 
@@ -1264,13 +1274,7 @@ bool WidgetTree::buttonArtVisible(const Widget& w) const {
         if (!a) break;
         at = a->parent;
     }
-    bool pressed = false;
-    for (uint32_t at = pressedId_; at != 0; ) {
-        if (at == owner->id) { pressed = true; break; }
-        const Widget* a = get(at);
-        if (!a) break;
-        at = a->parent;
-    }
+    bool pressed = isHeldDown(owner->id);
 
     // A state asked for outright wins over what the cursor is doing.
     switch (owner->forcedState) {

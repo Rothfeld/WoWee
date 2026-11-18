@@ -1030,6 +1030,9 @@ public:
     /// button is down. The tree already chooses the pushed texture from this;
     /// the label moves with it.
     [[nodiscard]] uint32_t pressedWidget() const { return pressedId_; }
+    /// Whether the held frame is this one or one of its own regions/children,
+    /// which is what pushes a button.
+    [[nodiscard]] bool isHeldDown(uint32_t id) const;
     /// Which frame the cursor is over, for anything that draws differently
     /// under it - a button's label lightens in WoW, and that is a font object
     /// the template names rather than a colour the renderer invents.

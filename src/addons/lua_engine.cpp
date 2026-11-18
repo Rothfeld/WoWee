@@ -1534,12 +1534,22 @@ int lua_Button_SetButtonState(lua_State* L) {
     else                          w->forcedState = F::Normal;
     return 0;
 }
+/// The state the button is drawn in: DISABLED when it cannot be clicked,
+/// PUSHED while the mouse holds it down or the interface forces it, else
+/// NORMAL. Model_OnUpdate turns the character model for as long as a rotate
+/// button answers PUSHED, and the tabs read DISABLED for the selected one, so
+/// answering from the forced state alone stopped both.
 int lua_Button_GetButtonState(lua_State* L) {
     const auto* w = widgetOf(L, 1);
     using F = wowee::ui::Widget::Forced;
-    const F f = w ? w->forcedState : F::None;
-    lua_pushstring(L, f == F::Pushed ? "PUSHED"
-                    : f == F::Disabled ? "DISABLED" : "NORMAL");
+    const char* state = "NORMAL";
+    if (w) {
+        const auto* tree = wowee::addons::getWidgetTree(L);
+        if (!w->enabled || w->forcedState == F::Disabled) state = "DISABLED";
+        else if (w->forcedState == F::Pushed) state = "PUSHED";
+        else if (w->forcedState == F::None && tree && tree->isHeldDown(w->id)) state = "PUSHED";
+    }
+    lua_pushstring(L, state);
     return 1;
 }
 int lua_Button_LockHighlight(lua_State* L) {
@@ -1766,6 +1776,11 @@ int lua_MessageFrame_SetInsertMode(lua_State* L) {
 
 // ── Tooltips ───────────────────────────────────────────────────────────────
 //
+// The colour a tooltip line takes when the call names none: SetText, AddLine
+// and both sides of AddDoubleLine all answer GetTextColor() 1, 0.82, 0 in
+// 2.4.3, although the GameTooltipText font objects themselves are white.
+constexpr float kTooltipDefaultColour[3] = {1.0f, 210.0f / 255.0f, 0.0f};
+//
 // AddLine was a name in the method list and nothing else, so every tooltip in
 // the interface was empty: the frame was shown, positioned and sized, and had
 // nothing in it.
@@ -1783,15 +1798,17 @@ int lua_Tooltip_AddLine(lua_State* L) {
     // session. Nothing said so on screen; a raise inside a handler is
     // swallowed.
     //
-    // White rather than black, because that is what the line is meant to be -
-    // SetMoneyFrameColor is called with "white" two lines further down.
-    auto colour = [L](int arg) {
+    // The default is the same gold SetText uses. 2.4.3 answers
+    // GetTextColor() 1, 0.82, 0 for AddLine("x") and for
+    // AddLine(x, nil, nil, nil, 1), the form PVPFrame's honor and arena
+    // tooltips use; white made their prose read as a title.
+    auto colour = [L](int arg, float fallback) {
         return lua_isnumber(L, arg) ? static_cast<float>(lua_tonumber(L, arg))
-                                    : 1.0f;
+                                    : fallback;
     };
-    line.lc[0] = colour(3);
-    line.lc[1] = colour(4);
-    line.lc[2] = colour(5);
+    line.lc[0] = colour(3, kTooltipDefaultColour[0]);
+    line.lc[1] = colour(4, kTooltipDefaultColour[1]);
+    line.lc[2] = colour(5, kTooltipDefaultColour[2]);
     line.lc[3] = 1.0f;
     line.rc[0] = line.rc[1] = line.rc[2] = line.rc[3] = 1.0f;
     // AddLine(text, r, g, b, wrapText). The sixth argument was read off the
@@ -1935,17 +1952,19 @@ int lua_Tooltip_AddDoubleLine(lua_State* L) {
     // Six colours, same rule as AddLine: anything that is not a number means
     // the default. Six arguments is six chances for the interface to pass one
     // of them as something else, and the whole tooltip is lost to a raise.
-    auto colour = [L](int arg) {
+    // Both sides default to the same gold as AddLine (2.4.3 answers
+    // 1, 0.82, 0 for each side of AddDoubleLine("a", "b")).
+    auto colour = [L](int arg, float fallback) {
         return lua_isnumber(L, arg) ? static_cast<float>(lua_tonumber(L, arg))
-                                    : 1.0f;
+                                    : fallback;
     };
-    line.lc[0] = colour(4);
-    line.lc[1] = colour(5);
-    line.lc[2] = colour(6);
+    line.lc[0] = colour(4, kTooltipDefaultColour[0]);
+    line.lc[1] = colour(5, kTooltipDefaultColour[1]);
+    line.lc[2] = colour(6, kTooltipDefaultColour[2]);
     line.lc[3] = 1.0f;
-    line.rc[0] = colour(7);
-    line.rc[1] = colour(8);
-    line.rc[2] = colour(9);
+    line.rc[0] = colour(7, kTooltipDefaultColour[0]);
+    line.rc[1] = colour(8, kTooltipDefaultColour[1]);
+    line.rc[2] = colour(9, kTooltipDefaultColour[2]);
     line.rc[3] = 1.0f;
     w->isTooltip = true;
     w->tooltipLines.push_back(std::move(line));
@@ -2074,9 +2093,9 @@ int lua_Tooltip_SetText(lua_State* L) {
         lua_pushboolean(L, 1);
         return 1;
     }
-    line.lc[0] = static_cast<float>(luaL_optnumber(L, 3, 1.0));
-    line.lc[1] = static_cast<float>(luaL_optnumber(L, 4, 210.0 / 255.0));
-    line.lc[2] = static_cast<float>(luaL_optnumber(L, 5, 0.0));
+    line.lc[0] = static_cast<float>(luaL_optnumber(L, 3, kTooltipDefaultColour[0]));
+    line.lc[1] = static_cast<float>(luaL_optnumber(L, 4, kTooltipDefaultColour[1]));
+    line.lc[2] = static_cast<float>(luaL_optnumber(L, 5, kTooltipDefaultColour[2]));
     line.lc[3] = 1.0f;
     line.rc[0] = line.rc[1] = line.rc[2] = line.rc[3] = 1.0f;
     // SetText(text, r, g, b, a, textWrap) - the seventh here, since alpha sits
@@ -6304,6 +6323,12 @@ int lua_StatusBar_SetStatusBarColor(lua_State* L) {
     }
     return 0;
 }
+int lua_StatusBar_GetStatusBarColor(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    for (float c : w->barColor) lua_pushnumber(L, c);
+    return 4;
+}
 /// __WoweeLinkBarFill(bar, region): make region the bar's fill. It takes the
 /// bar's current colour; from then on its colour, gradient and SetTexture
 /// drive the fill.
@@ -7386,6 +7411,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetValue",              lua_StatusBar_GetValue},
         {"SetStatusBarTexture",   lua_StatusBar_SetStatusBarTexture},
         {"SetStatusBarColor",     lua_StatusBar_SetStatusBarColor},
+        {"GetStatusBarColor",     lua_StatusBar_GetStatusBarColor},
         {"SetOrientation",        lua_StatusBar_SetOrientation},
         {"SetValueStep",          lua_Slider_SetValueStep},
         {"GetValueStep",          lua_Slider_GetValueStep},
@@ -8011,10 +8037,12 @@ void LuaEngine::registerCoreAPI() {
         // text is *set* rather than entered, which is how the chat box learns
         // that something put a channel prefix in it. Declared on the chat edit
         // box and dispatched by nothing until now.
+        // __WoweeEditSetText fires OnTextSet itself, once, through the
+        // handler dispatch that sets `this`. A second direct call here ran
+        // the handler again with whatever `this` was left over, and
+        // ChatEdit_OnTextSet then parsed some other frame's text.
         "    if self.__isEditBox then\n"
         "        __WoweeEditSetText(self, text)\n"
-        "        local h = self.__scripts and self.__scripts.OnTextSet\n"
-        "        if h then h(self) end\n"
         "        return\n"
         "    end\n"
         // A tooltip's SetText is its first line, not a font string's text.
