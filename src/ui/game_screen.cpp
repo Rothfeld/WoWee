@@ -1863,6 +1863,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             }
         }
 
+        // The unit this click is on, if any. Only that unit is acted on below.
+        uint64_t clickedUnit = plateUnit;
+
         // If no target or right-clicking in world, try to pick one under cursor
         if (plateUnit == 0) {
             auto* renderer = services_.renderer;
@@ -1951,8 +1954,18 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         return;
                     }
                     gameHandler.setTarget(closestGuid);
+                    clickedUnit = closestGuid;
                 }
             }
+        }
+        // A right-click on nothing does nothing. It used to fall back to the
+        // current target, so a click that missed corpse B looted the selected
+        // corpse A again, and one beside a selected enemy attacked it.
+        // Original 2.4.3, right-click on bare ground: no packet with a corpse
+        // or a living hostile selected. A touch tap is already on its target.
+        if (!tapInteract &&
+            (clickedUnit == 0 || gameHandler.getTargetGuid() != clickedUnit)) {
+            return;
         }
         if (gameHandler.hasTarget()) {
             auto target = gameHandler.getTarget();
