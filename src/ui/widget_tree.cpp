@@ -1414,8 +1414,8 @@ void WidgetTree::collectDrawOrder() {
                   // mangadmin_panel_compare, order4-order7). MangAdmin's lists
                   // depend on it: a black 0.7 scroll frame dims its white rows.
                   // Measured for colour alpha only; image alpha is not covered.
-                  const bool clearA = a->kind == WidgetKind::Texture && a->color[3] < 1.0f;
-                  const bool clearB = b->kind == WidgetKind::Texture && b->color[3] < 1.0f;
+                  const bool clearA = a->kind == WidgetKind::Texture && a->colorAlpha() < 1.0f;
+                  const bool clearB = b->kind == WidgetKind::Texture && b->colorAlpha() < 1.0f;
                   if (clearA != clearB) return !clearA;
                   // Text is painted after textures within the same layer.
                   // MirrorTimer declares its label before its border, but the

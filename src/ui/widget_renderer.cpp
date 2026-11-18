@@ -2945,7 +2945,14 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // painted every undecided region in the default white, which for a
             // full-width backdrop is a white slab across the screen.
             if (w->solidColor) {
-                const auto c = cornerColors(*w, w->effAlpha);
+                // The solid colour is the texture; the vertex colour or
+                // gradient tints it, as it tints an image.
+                auto c = cornerColors(*w, w->effAlpha);
+                for (auto& corner : c) {
+                    const ImVec4 v = ImGui::ColorConvertU32ToFloat4(corner);
+                    corner = ImGui::ColorConvertFloat4ToU32(ImVec4(v.x * w->solidTexel[0], v.y * w->solidTexel[1],
+                                                                   v.z * w->solidTexel[2], v.w * w->solidTexel[3]));
+                }
                 dl->AddRectFilledMultiColor(ImVec2(x0, y0), ImVec2(x1, y1), c[0], c[1], c[2], c[3]);
                 continue;
             }

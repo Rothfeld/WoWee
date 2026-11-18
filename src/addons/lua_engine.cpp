@@ -4533,10 +4533,10 @@ int lua_Texture_SetTexture(lua_State* L) {
         // Clamped to 0..1 as build 8606 stores them: SetTexture(33,164,210)
         // reads back as 1,1,1 and draws white.
         auto unit = [](double v) { return static_cast<float>(std::clamp(v, 0.0, 1.0)); };
-        w->color[0] = unit(lua_tonumber(L, 2));
-        w->color[1] = unit(luaL_optnumber(L, 3, 0.0));
-        w->color[2] = unit(luaL_optnumber(L, 4, 0.0));
-        w->color[3] = unit(luaL_optnumber(L, 5, 1.0));
+        w->solidTexel[0] = unit(lua_tonumber(L, 2));
+        w->solidTexel[1] = unit(luaL_optnumber(L, 3, 0.0));
+        w->solidTexel[2] = unit(luaL_optnumber(L, 4, 0.0));
+        w->solidTexel[3] = unit(luaL_optnumber(L, 5, 1.0));
     } else {
         w->solidColor = false;
         w->texturePath = luaL_optstring(L, 2, "");

@@ -258,6 +258,15 @@ struct Widget {
     float gradientMin[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float gradientMax[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool solidColor = false;    ///< SetTexture(r,g,b[,a]) rather than a file.
+    /// The colour SetTexture(r,g,b,a) or an XML <Color> gives a solid
+    /// texture. It is the texture's own texels, not its vertex colour:
+    /// build 8606 answers GetVertexColor() 1,1,1,1 after SetTexture(1,0,0,0.5)
+    /// and draws SetVertexColor on top of it, so the skills tab's
+    /// <Color a="0.2"/> bar background tinted (0,0,0.75,0.5) shows at alpha 0.1.
+    float solidTexel[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    /// The colour's own alpha times the solid texel's, which is what decides
+    /// whether a colour texture is see-through.
+    [[nodiscard]] float colorAlpha() const { return color[3] * (solidColor ? solidTexel[3] : 1.0f); }
     /// A unit's face, claimed by SetPortraitTexture.
     ///
     /// The interface's own portraits are circular images with transparent
