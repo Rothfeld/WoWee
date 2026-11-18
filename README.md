@@ -1444,3 +1444,19 @@ StartRecoveryTime (1 s for rogue abilities; Stealth, Vanish and Attack
 none). Spell buttons count their reagent (Vanish shows Flash Powder).
 Evidence and probe addon: `_experiments/20261117T214218Z.usable_action_pair2`
 in the workspace.
+
+### TBC Lua answer conventions and protected functions
+
+On a TBC login `applyApiConventions` (src/addons/expansion_api_surface.cpp)
+wraps measured globals and widget methods: 1/nil instead of true/false
+(UnitExists, IsShown, ...), 2.4.3 result counts (UnitClass 2, UnitPowerType 1,
+GetQuestLogTitle 8, ...), and refusal of 33 protected functions (TargetUnit,
+CastSpellByName, UseAction, ...) from insecure code with
+MACRO_ACTION_FORBIDDEN / ADDON_ACTION_FORBIDDEN. Insecure means a Lua frame on
+the stack from a RunScript or /run chunk or from a file of an AddOn whose name
+starts with neither Blizzard_ nor Wowee. Gotcha: compare answers by truth, not
+with `== true`/`== false`; FrameXML compares `IsShown() ~= UnitExists(...)`,
+so a function and a widget method must answer in the same kind. Combat-only
+restrictions (ADDON_ACTION_BLOCKED) and data taint are not modelled.
+Evidence and probe addon: `_experiments/20261118T010104Z.lua_conventions`
+in the workspace.
