@@ -357,11 +357,16 @@ bool EntityController::extractPlayerAppearance(const FlatFieldMap& fields,
     outAppearanceBytes = 0;
     outFacial = 0;
 
+    // A field the table names is known even when the map lacks it: update
+    // blocks carry only non-zero values, so an absent PLAYER_BYTES is skin,
+    // face, hair style and hair colour all zero. Treating that as "unknown"
+    // sent a bald default-faced character into the scan below, which took the
+    // first small field it met (30 for Edrich) as the appearance and drew the
+    // target portrait with a skin that does not exist - plain white.
     auto readField = [&](uint16_t idx, uint32_t& out) -> bool {
         if (idx == 0xFFFF) return false;
         auto it = fields.find(idx);
-        if (it == fields.end()) return false;
-        out = it->second;
+        out = it == fields.end() ? 0u : it->second;
         return true;
     };
 
@@ -419,7 +424,8 @@ bool EntityController::extractPlayerAppearance(const FlatFieldMap& fields,
         }
     }
 
-    if (!haveBytes0 || !havePbytes) return false;
+    // Race zero is no race: UNIT_FIELD_BYTES_0 has not arrived yet.
+    if (!haveBytes0 || !havePbytes || (bytes0 & 0xFF) == 0) return false;
 
     outRace = static_cast<uint8_t>(bytes0 & 0xFF);
     outGender = static_cast<uint8_t>((bytes0 >> 16) & 0xFF);
