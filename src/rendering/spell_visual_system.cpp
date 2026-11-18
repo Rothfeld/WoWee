@@ -638,7 +638,14 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
             ? m2Renderer_->createInstanceWithMatrix(model, glm::scale(transform, glm::vec3(effect.scale)), spawn)
             : m2Renderer_->createInstance(model, spawn, glm::vec3(0), effect.scale);
         if (!instance) { LOG_ERROR("Channel effect instance failed: ", effect.path); continue; }
-        m2Renderer_->restartInstanceAnimation(instance);
+        // A channel effect plays Stand once, then loops Hold, as a state
+        // effect does (27 of 65 TBC ChannelKit models author both). Dark
+        // Channeling 21157 on Magister Kalendris (Shadow_Snare_High_base:
+        // Stand 3 s with the black streaks of #0 on; Hold 4 s with #0 off and
+        // the dark rings of #1 fading out and back in) shows a green glow
+        // with faint rings in the original; looping Stand drew a burst of
+        // black spikes round him.
+        m2Renderer_->startInstanceStateEffect(instance);
         activeSpellVisuals_.push_back({.instanceId = instance, .elapsed = 0.0f,
             .duration = durationMs / 1000.0f, .isPrecast = false, .attachmentId = effect.attachment,
             .attachInstanceId = attachInstanceId, .isChannel = true, .orientWithAttachment = breath,

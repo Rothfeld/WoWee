@@ -172,3 +172,13 @@ The model has no bone animation, so WoWee's clock looped Stand and never
 reached Hold: the flames never went out. On the Defiler (Satyr, display
 scale 2, Base bone scale 1.45) WoWee's flames still spread wider round the
 body than the original's.
+
+Channel effects take the same Stand-then-Hold course (27 of 65 TBC ChannelKit
+models author both, e.g. Food_HealEffect_Base, Lifetap_State_Chest).
+Magister Kalendris (Dire Maul, Dark Channeling 21157,
+`Shadow_Snare_High_base.m2`) emits #0's black streaks only in Stand (enabled
+track 1/0) and fades #1's dark rings out and back in over each 4 s Hold
+(rate 25 -> 0 -> 0 -> 25). The original shows a green glow with faint rings
+coming and going; looping Stand drew a steady burst of black spikes.
+Still different: WoWee's #1 rings (tail emitter, `Shockwave_Invert.blp`)
+read as sharp radial spikes where the original shows soft ring arcs.
