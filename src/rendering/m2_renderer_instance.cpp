@@ -1467,6 +1467,11 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
     for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
         if (instance.id == excludedInstanceId) continue;
+        // An open door (GO state 0) stops nothing, the camera included: in
+        // Zul'Aman the open fire door (186859, ZulAman_FireDoor.m2) at
+        // (120.3, 732.0) let 8606's camera reach 15 yd from (120, 722) where
+        // WoWee's was held at 8.45; with the door shut 8606 stops at 8.45.
+        if (instance.skipCollision) continue;
         if (collisionFocus.excludes(instance.worldBoundsMin,
                                     instance.worldBoundsMax)) {
             continue;
