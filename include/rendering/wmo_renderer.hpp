@@ -815,7 +815,7 @@ private:
     /// no portals, or the camera indoors without cullIndoors.
     bool portalVisibleGroups(const WMOInstance& instance, const ModelData& model,
                              const glm::vec3& camPos, const glm::vec3& viewerPos,
-                             const Frustum& frustum, bool cullIndoors,
+                             const Frustum& frustum, const glm::mat4& viewProj, bool cullIndoors,
                              std::unordered_set<uint32_t>& out) const;
 
     /// The group owning the first surface straight below `localPos` (the room
@@ -825,11 +825,14 @@ private:
 
     /// Camera outside every room: exterior groups, the room the camera or
     /// character stands in, and rooms reached through in-view portals whose
-    /// MOPR side faces the camera.
+    /// MOPR side faces the camera. A room reached through a chain of portals
+    /// is seen only through all of them: each portal must overlap, on screen,
+    /// the rectangle of the portals before it.
     void getVisibleGroupsFromOutside(const ModelData& model,
                                      const glm::vec3& cameraLocalPos,
                                      const glm::vec3& viewerLocalPos,
                                      const Frustum& frustum,
+                                     const glm::mat4& viewProj,
                                      const glm::mat4& modelMatrix,
                                      std::unordered_set<uint32_t>& outVisibleGroups) const;
 
