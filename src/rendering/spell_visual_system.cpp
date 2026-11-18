@@ -1110,6 +1110,13 @@ void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& de
                     /*isPrecast=*/false);
 }
 
+void SpellVisualSystem::scheduleImpactAreaKit(uint32_t visualId, const glm::vec3& destination, float delay) {
+    assert(std::isfinite(delay) && delay >= 0.0f);
+    pendingAreaImpacts_.push_back({.visualId = visualId, .destination = destination, .remaining = delay});
+    LOG_INFO("SpellVisual: impact area of visual ", visualId, " lands in ", delay, "s at (",
+             destination.x, ",", destination.y, ",", destination.z, ")");
+}
+
 void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worldPosition,
                                             uint32_t attachInstanceId) {
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
@@ -1237,11 +1244,11 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     // does. The original keeps that landing however late the missile leaves the
     // hand: Fireball 133 at 16.5 and 32 yards, Frostbolt 116 at 16.4, Shadow Bolt
     // 686 at 31.8 all reached the target within 0.03 s of SPELL_GO + distance /
-    // speed, after leaving 0.17-0.31 s late. A missile still in the air after a
-    // few seconds has lost its target to a teleport or a corpse run; the damage
-    // landed long ago, so it is put down rather than left crossing the map.
+    // speed, after leaving 0.17-0.31 s late. Long flights are not cut short:
+    // Hyjal's Infernal 32148 (speed 20) from a relay 116 yd up falls for about
+    // 6 s in the original.
     const float distance = glm::length(end - start);
-    const float duration = std::clamp(distance / speed, 0.05f, SPELL_MISSILE_MAX_DURATION);
+    const float duration = distance / speed;
     spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
                               .end = end, .elapsed = 0.0f, .launchAt = launchDelay, .duration = duration,
                               .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId),
@@ -1387,6 +1394,16 @@ void SpellVisualSystem::update(float deltaTime) {
             return !characters->getInstancePosition(entry.first, position);
         });
     }
+    for (auto it = pendingAreaImpacts_.begin(); it != pendingAreaImpacts_.end(); ) {
+        it->remaining -= deltaTime;
+        if (it->remaining > 0.0f) {
+            ++it;
+            continue;
+        }
+        const PendingAreaImpact landed = *it;
+        it = pendingAreaImpacts_.erase(it);
+        playImpactAreaKit(landed.visualId, landed.destination);
+    }
     if (activeSpellVisuals_.empty() && physicalProjectiles_.empty() && spellMissiles_.empty())
         return;
 
@@ -1412,7 +1429,7 @@ void SpellVisualSystem::update(float deltaTime) {
             if (!it->instanceId) {
                 LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);
                 if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
-            if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
+                if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
                 it = spellMissiles_.erase(it);
                 continue;
             }
@@ -1541,6 +1558,7 @@ void SpellVisualSystem::reset() {
         if (m2Renderer_ && missile.instanceId) m2Renderer_->removeInstance(missile.instanceId);
     }
     spellMissiles_.clear();
+    pendingAreaImpacts_.clear();
     if (renderer_ && renderer_->getCharacterRenderer()) {
         for (const auto& projectile : physicalProjectiles_)
             renderer_->getCharacterRenderer()->removeInstance(projectile.instanceId);

@@ -3487,20 +3487,32 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                     if (auto* svs = renderer->getSpellVisualSystem()) {
                         const glm::vec3 destination = core::coords::canonicalToRender(
                             core::coords::serverToCanonical(*data.destination));
-                        // A spell aimed at a ground point with a missile flies
-                        // it there and plays the area impact on landing:
-                        // Supremus' volcanoes (Volcanic Geyser 40118, visual
-                        // 9466, Fireball_Blue_Missile_High, speed 10) spew blue
-                        // fireballs to random points in the original. Without
-                        // the missile only the landing puff was drawn.
+                        // A missile spell's area impact plays where and when its
+                        // missile reaches the destination. Aimed at a ground
+                        // point only, the missile flies there: Supremus'
+                        // volcanoes (Volcanic Geyser 40118, visual 9466,
+                        // Fireball_Blue_Missile_High, speed 10) spew blue
+                        // fireballs to random points in the original. One that
+                        // also hit units flies to them (below) and the area
+                        // impact waits for the landing: Hyjal's Infernal 32148
+                        // (visual 7920, two hits) drops its infernal_impact
+                        // column (ImpactAreaKit 9322) only as the Infernal_Ball
+                        // lands, about 6 s after SPELL_GO in the original;
+                        // played at SPELL_GO it was over long before.
                         const float speed = resolveSpellMissileSpeed(data.spellId);
                         glm::vec3 start;
-                        const bool flies = data.hitTargets.empty() && svs->hasSpellMissile(visualId) &&
+                        const bool missile = svs->hasSpellMissile(visualId) &&
                             std::isfinite(speed) && speed >= 1.0f && speed <= 200.0f &&
-                            resolveUnitPosition(data.casterUnit, start) &&
-                            svs->playSpellMissile(visualId, start, destination, speed, 0.0f,
-                                                  /*impactAtEnd=*/false, /*areaImpactAtEnd=*/true);
-                        if (!flies) svs->playImpactAreaKit(visualId, destination);
+                            resolveUnitPosition(data.casterUnit, start);
+                        if (!missile) {
+                            svs->playImpactAreaKit(visualId, destination);
+                        } else if (!data.hitTargets.empty()) {
+                            svs->scheduleImpactAreaKit(visualId, destination,
+                                                       glm::length(destination - start) / speed);
+                        } else if (!svs->playSpellMissile(visualId, start, destination, speed, 0.0f,
+                                                          /*impactAtEnd=*/false, /*areaImpactAtEnd=*/true)) {
+                            svs->playImpactAreaKit(visualId, destination);
+                        }
                     }
                 }
             }

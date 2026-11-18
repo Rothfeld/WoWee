@@ -2075,7 +2075,7 @@ Where each SpellVisual stage plays (build 8606, same experiment):
 | ImpactKit | each hit target (missile: when it lands) |
 | StateKit | the aura's owner |
 | InstantAreaKit (col 22) | `SMSG_SPELL_GO` destination (TARGET_FLAG_DEST_LOCATION), unattached; none without one |
-| ImpactAreaKit (col 23) | the destination |
+| ImpactAreaKit (col 23) | the destination (missile spell: when the missile gets there) |
 | PersistentAreaKit (col 24) | the DynamicObject |
 
 InstantAreaKit examples: Bonechewer Behemoth's Meteor 41276 (flags 0x42,
@@ -2085,6 +2085,25 @@ caster's own position as destination and play there; Volcanic Geyser 42052
 (0x20, source only) plays none. Spell-hand (21/22) and breath (17) slots on
 a model lacking that attachment are not drawn (Soul Scream 41545 on
 WellofSoulsPain.m2); other slots fall back to the unit position.
+
+A missile spell's ImpactAreaKit waits for the missile to reach the
+destination, SPELL_GO + distance / Spell.dbc Speed, also when the spell hit
+units (those get their own missiles). Missiles fly the full distance / speed;
+there is no cap. Hyjal's Giant Infernals arrive by Infernal 32148 (cast by an
+Infernal Relay 18242 at an Infernal Target 21075, visual 7920: Infernal_Ball
+missile, speed 20, no ImpactKit, ImpactAreaKit 9322 infernal_impact at
+effect scale 2: the green column, shards and burning ground). The server's
+TRIGGER_MISSILE then casts 32150 (damage, stun) and 32151 (summons 17908).
+Native 2.4.3 (pair 13, relay 116 yd away, `.cast back 32148`): the ball falls
+for about 6 s and the column rises where it lands, nothing at SPELL_GO. WoWee
+played the kit at SPELL_GO (the spell hit two units) and cut the ball's
+flight at 4 s, so on a 187 yd Hyjal relay the column was gone 9 s before the
+infernal arrived. Same rule: Infernal Rain 32785/33814, Hellfire's Infernal
+33240/35431 (kit 9320, scale 5), engineering grenades (Iron Grenade 4068,
+Bomb_ExplosionA). Open: native's area impact starts about 0.4 s after the
+missile lands (infernal and Iron Grenade alike), WoWee's at the landing; the
+native ball's particles linger after it lands, WoWee removes them with the
+ball. Evidence: `_experiments/20261118T221323.261150Z.infernal_landing/`.
 
 Breath (17) and Special (23-25) slot effects take their attachment bone's
 full orientation every frame, so a breath follows the head through the cast
