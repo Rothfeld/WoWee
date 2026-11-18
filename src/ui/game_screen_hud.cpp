@@ -1274,6 +1274,22 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             drawList->AddImage((ImTextureID)(uintptr_t)plateBorder,
                 ImVec2(artX, artY), ImVec2(artX + 128.0f * plateArtScale, artY + 32.0f * plateArtScale));
             const uint32_t level = unit->getLevel();
+            // A boss (creature rank 3) shows UI-TargetingFrame-Skull in the
+            // level slot and no number; a level 70 Rogue 40 seen by a level
+            // 40 still shows a red 70, and an elite (Myzrael) only its
+            // number (pair 7, _experiments/20261118T074350Z.plates_fct).
+            // The skull region spans 134.41..150.07 by 20.21..35.87 UI units
+            // of the 156.65x39.16 frame, read back with GetLeft/GetTop.
+            if (creatureRank == 3) {
+                static VkDescriptorSet skull = VK_NULL_HANDLE;
+                if (!skull) skull = uploadUiTextureFromBlp(services_.assetManager,
+                    "Interface/TargetingFrame/UI-TargetingFrame-Skull.blp", services_.window);
+                if (!skull) throw std::runtime_error("Missing nameplate boss skull");
+                const float uiUnit = plateArtScale * 128.0f / 156.651184f;
+                drawList->AddImage((ImTextureID)(uintptr_t)skull,
+                    ImVec2(artX + 134.41f * uiUnit, artY + 20.21f * uiUnit),
+                    ImVec2(artX + 150.07f * uiUnit, artY + 35.87f * uiUnit));
+            } else {
             ImU32 levelColor;
             switch (game::creatureLevelDifficulty(gameHandler.getPlayerLevel(), level)) {
                 case game::LevelDifficulty::Red: levelColor = IM_COL32(255, 25, 25, 255); break;
@@ -1288,6 +1304,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             const ImVec2 position(artX + 116.0f * plateArtScale - size.x * .5f, sy + (barH - size.y) * .5f);
             drawList->AddText(ImGui::GetFont(), fontSize, ImVec2(position.x + 1, position.y + 1), IM_COL32(0,0,0,255), levelText.c_str());
             drawList->AddText(ImGui::GetFont(), fontSize, position, levelColor, levelText.c_str());
+            }
         } else {
         drawList->AddRectFilled(ImVec2(barX,                 sy), ImVec2(barX + barW,               sy + barH), bgColor,    2.0f);
         // For corpses, don't fill health bar (just show grey background)
