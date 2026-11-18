@@ -190,6 +190,9 @@ private:
     /// follows the entity, which reads as a ring sliding off a still NPC.
     void syncRenderInstancesToEntities(float deltaTime);
     void syncChannelVisuals();
+    // Units whose channel animation syncChannelVisuals started from their
+    // fields (no SMSG_SPELL_START seen), with that animation.
+    std::unordered_map<uint64_t, uint32_t> fieldChannelAnimations_;
     void render();
     void performLogoutToLogin();
     void processDeferredLogoutToLogin();

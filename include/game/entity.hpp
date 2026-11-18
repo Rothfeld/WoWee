@@ -794,7 +794,16 @@ inline std::optional<float> creatureTargetFacing(const Entity& entity,
         static_cast<const Unit&>(entity).getHealth() == 0) return std::nullopt;
     if (!unitTurnsInPlace(static_cast<uint8_t>(entity.getField(fieldIndex(UF::UNIT_FIELD_BYTES_1))),
                           static_cast<const Unit&>(entity).getUnitFlags())) return std::nullopt;
-    const auto target = entities.getEntity(unitTargetGuid(entity));
+    // A channel's object first: build 8606 shows a Tempest-Smith channelling
+    // Golem Repair (34946) facing its Crystalcore Sentinel when the observer
+    // comes into view mid-channel, its spawn heading and UNIT_FIELD_TARGET
+    // notwithstanding (_experiments/20261118T122247Z.eye_channel_beam, f2).
+    const uint64_t channelObject =
+        static_cast<uint64_t>(entity.getField(fieldIndex(UF::UNIT_FIELD_CHANNEL_OBJECT_LO))) |
+        (static_cast<uint64_t>(entity.getField(fieldIndex(UF::UNIT_FIELD_CHANNEL_OBJECT_HI))) << 32);
+    const bool channelling = channelObject != 0 && channelObject != entity.getGuid() &&
+                             entity.getField(fieldIndex(UF::UNIT_CHANNEL_SPELL)) != 0;
+    const auto target = entities.getEntity(channelling ? channelObject : unitTargetGuid(entity));
     if (!target) return std::nullopt;
     const float dx = target->getX() - entity.getX();
     const float dy = target->getY() - entity.getY();

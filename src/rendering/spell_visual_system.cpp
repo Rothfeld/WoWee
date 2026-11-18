@@ -831,7 +831,11 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
             // (Green Beam -2: SoulBeam.blp twice, reversed). Repeating it
             // every TextureLength (2) yards showed the texture's own ripple
             // as a zigzag the original does not have.
-            strip.u.push_back(effect.texCoordScale * s / length);
+            // The pattern travels TexCoordScale beam lengths per second, toward
+            // the target when positive: build 8606 ManaBeam (chain 4, -2) ran
+            // 2 lengths/s toward the caster, WhiteBeam (chain 23, 1.66) 1.67
+            // toward the target (_experiments/20261118T122247Z.eye_channel_beam).
+            strip.u.push_back(effect.texCoordScale * (s / length - effect.texCoordScale * t));
         }
         strips.push_back(std::move(strip));
     }

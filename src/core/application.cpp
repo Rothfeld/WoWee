@@ -4296,6 +4296,35 @@ void Application::syncChannelVisuals() {
         }
         channels.push_back(channel);
     }
+    // A unit already channelling when it came into view (no SMSG_SPELL_START
+    // here) holds its ChannelKit animation as well: build 8606 Tempest-Smith
+    // channelling Golem Repair, seen after re-entering view, keeps its arm out
+    // toward the Sentinel (_experiments/20261118T122247Z.eye_channel_beam, f2).
+    if (entitySpawner_ && characters) {
+        std::unordered_set<uint64_t> still;
+        for (const auto& channel : channels) {
+            if (channel.casterGuid == self || !channel.casterInstanceId) continue;
+            const uint32_t animation = visuals->channelAnimation(channel.visualId);
+            if (animation == rendering::SpellVisualSystem::kNoAnimation) continue;
+            still.insert(channel.casterGuid);
+            const uint32_t held = entitySpawner_->remoteCastHold(channel.casterGuid);
+            if (held == animation) continue;
+            if (held != 0 && !fieldChannelAnimations_.contains(channel.casterGuid)) continue;  // a cast's own hold
+            entitySpawner_->setRemoteCastHold(channel.casterGuid, animation);
+            fieldChannelAnimations_[channel.casterGuid] = animation;
+            characters->playAnimation(channel.casterInstanceId, animation, true);
+            LOG_DEBUG("Channel field animation ", animation, " on 0x", std::hex, channel.casterGuid, std::dec);
+        }
+        for (auto it = fieldChannelAnimations_.begin(); it != fieldChannelAnimations_.end();) {
+            if (still.contains(it->first)) { ++it; continue; }
+            if (entitySpawner_->remoteCastHold(it->first) == it->second) {
+                entitySpawner_->setRemoteCastHold(it->first, 0);
+                if (const uint32_t instance = instanceOf(it->first))
+                    characters->playAnimation(instance, entitySpawner_->remoteIdleAnimation(it->first), true);
+            }
+            it = fieldChannelAnimations_.erase(it);
+        }
+    }
     visuals->syncChannels(channels);
 }
 

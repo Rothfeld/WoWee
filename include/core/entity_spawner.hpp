@@ -286,6 +286,10 @@ public:
     /// the unit's idle until cleared (0), so a movement update that stops the
     /// unit resumes the cast pose instead of Stand.
     void setRemoteCastHold(uint64_t guid, uint32_t animationId);
+    [[nodiscard]] uint32_t remoteCastHold(uint64_t guid) const {
+        const auto hold = remoteCastHolds_.find(guid);
+        return hold == remoteCastHolds_.end() ? 0 : hold->second;
+    }
     /// What a remote unit's one-shot (swing, hit reaction) resumes: its
     /// locomotion while it is on a move, else remoteIdleAnimation.
     uint32_t remoteResumeAnimation(uint64_t guid) const;
