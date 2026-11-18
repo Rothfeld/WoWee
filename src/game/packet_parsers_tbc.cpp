@@ -1,6 +1,7 @@
 #include "game/packet_parsers.hpp"
 #include "game/tbc_cast_results.hpp"
 #include "game/spline_packet.hpp"
+#include "game/quest_giver_status.hpp"
 #include "core/logger.hpp"
 #include <glm/gtx/string_cast.hpp>
 
@@ -1321,11 +1322,14 @@ uint8_t TbcPacketParsers::readQuestGiverStatus(network::Packet& packet) {
     // SendQuestGiverStatus, Player::SendQuestGiverStatusMultiple). Reading a
     // uint32 swallowed three bytes of the next NPC's guid in the multiple
     // packet. Values are QuestDef.h DIALOG_STATUS_*, mapped to WotLK's.
+    // CHAT keeps its own value: it draws no mark but gives the Quest cursor
+    // (Haughty Modiste, Wanted Poster 142122 at level 70; pair 16), and
+    // reading it as NONE left the vendor's Pickup or the object's gear.
     const uint8_t tbcStatus = packet.readUInt8();
     switch (tbcStatus) {
         case 0: return 0;   // NONE
         case 1: return 1;   // UNAVAILABLE
-        case 2: return 0;   // CHAT → NONE (no marker)
+        case 2: return static_cast<uint8_t>(QuestGiverStatus::CHAT);
         case 3: return 5;   // INCOMPLETE → WotLK INCOMPLETE
         case 4: return 6;   // REWARD_REP → WotLK REWARD_REP
         case 5: return 7;   // AVAILABLE_REP → WotLK AVAILABLE_REP

@@ -1120,10 +1120,7 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
         facts.typeCursor = rule.cursor;
         constexpr uint32_t kGameObjectTypeQuestGiver = 2;
         if (info->type == kGameObjectTypeQuestGiver) {
-            const auto status = gameHandler.getQuestGiverStatus(guid);
-            const char* symbol = status == game::QuestGiverStatus::UNAVAILABLE
-                ? nullptr : game::questGiverMarker(status).symbol;
-            if (symbol) facts.questCursor = symbol[0] == '!' ? "Quest" : "QuestTurnIn";
+            facts.questCursor = game::questGiverCursor(gameHandler.getQuestGiverStatus(guid));
         }
         const uint32_t lockId = game::gameObjectLockId(info);
         if (lockId != 0) {

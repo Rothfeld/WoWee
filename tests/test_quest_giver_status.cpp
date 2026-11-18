@@ -101,9 +101,11 @@ TEST_CASE("status 9 is the one that keeps off the minimap", "[questgiver]") {
 
 TEST_CASE("a status the server never sends draws nothing", "[questgiver]") {
     // DIALOG_STATUS_SCRIPTED_NO_STATUS is 0x1000 and does not fit a uint8, so
-    // the wire cannot carry it; anything above 10 is a value this client does
-    // not know and must not guess at.
-    CHECK(questGiverMarker(wire(11)).symbol == nullptr);
+    // the wire cannot carry it; anything above 11 (CHAT, this client's own
+    // value for TBC's status 2) is a value it does not know and must not
+    // guess at.
+    CHECK(questGiverMarker(wire(12)).symbol == nullptr);
+    CHECK(wowee::game::questGiverCursor(wire(12)) == nullptr);
     CHECK(questGiverMarker(wire(255)).symbol == nullptr);
 }
 
@@ -146,4 +148,22 @@ TEST_CASE("unavailable quests show a grey world exclamation without a minimap do
     CHECK(std::string(marker.symbol) == "!");
     CHECK(marker.dim);
     CHECK_FALSE(marker.onMinimap);
+}
+
+TEST_CASE("an out-levelled TBC quest giver has no mark but the Quest cursor", "[questgiver][tbc]") {
+    // Haughty Modiste, Yeh'kinya and Wanted Poster 142122 to a level 70
+    // character in build 8606 (pair 16): their level 44-46 quests come as
+    // DIALOG_STATUS_CHAT.
+    CHECK(questGiverMarker(QuestGiverStatus::CHAT).symbol == nullptr);
+    CHECK(std::string(wowee::game::questGiverCursor(QuestGiverStatus::CHAT)) == "Quest");
+}
+
+TEST_CASE("the quest cursor follows the status, not the mark", "[questgiver][cursor]") {
+    using wowee::game::questGiverCursor;
+    CHECK(questGiverCursor(QuestGiverStatus::NONE) == nullptr);
+    CHECK(questGiverCursor(QuestGiverStatus::UNAVAILABLE) == nullptr);  // grey !
+    CHECK(std::string(questGiverCursor(QuestGiverStatus::AVAILABLE)) == "Quest");
+    // A grey ? over the giver, and still the Quest cursor.
+    CHECK(std::string(questGiverCursor(QuestGiverStatus::INCOMPLETE)) == "Quest");
+    CHECK(std::string(questGiverCursor(QuestGiverStatus::REWARD)) == "QuestTurnIn");
 }

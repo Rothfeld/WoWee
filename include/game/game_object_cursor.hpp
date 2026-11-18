@@ -9,8 +9,8 @@ namespace wowee::game {
 struct GameObjectCursorFacts {
     /// Interface\Cursor name from the type table (game_object_interaction.hpp).
     const char* typeCursor = nullptr;
-    /// "Quest" or "QuestTurnIn" for a quest giver object whose status has a
-    /// marker; nullptr otherwise.
+    /// questGiverCursor of a quest giver object's status ("Quest",
+    /// "QuestTurnIn"); nullptr otherwise.
     const char* questCursor = nullptr;
     /// LockType CursorName of lock slot 0 ("PickLock", "GatherHerbs",
     /// "Mine"); empty when there is no lock or that slot names none.
@@ -26,8 +26,10 @@ struct GameObjectCursorFacts {
 ///     knows or carries: Battered Footlocker 179486 (Lockpicking) also with
 ///     Pick Lock at skill 200, Coilskar Chest 184716 also with its key in
 ///     the backpack, Dire Maul's Door 177198 (Crescent Key first);
-///   - a quest giver object with a quest marker shows that marker's cursor:
-///     Wanted Poster 186426 Quest, Skull Pile 185913 (no quest) the gear;
+///   - a quest giver object whose status names a cursor shows it
+///     (questGiverCursor): Wanted Poster 186426 Quest, also Wanted Poster
+///     142122 with only out-levelled quests and no mark (pair 16); Skull
+///     Pile 185913 (no quest) the gear;
 ///   - a lock whose first slot names a cursor shows it whatever the
 ///     player's skill: Peacebloom 1618 GatherHerbs without Herbalism, Tin
 ///     Vein 1732 Mine at Mining 1 of 65. Only slot 0 counts: Alliance

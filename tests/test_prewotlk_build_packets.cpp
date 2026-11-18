@@ -22,6 +22,7 @@
 
 #include "core/application.hpp"
 #include "game/packet_parsers.hpp"
+#include "game/quest_giver_status.hpp"
 #include "game/world_packets.hpp"
 
 // The packet layer reaches the Application singleton; nothing under test does,
@@ -205,4 +206,14 @@ TEST_CASE("TBC quest giver status is one byte and maps to WotLK numbering", "[qu
     CHECK(packet.getReadPos() == 1);
     packet.setReadPos(2);
     CHECK(parsers.readQuestGiverStatus(packet) == 9);   // REWARD2: no minimap dot
+}
+
+// DIALOG_STATUS_CHAT (2): only out-levelled quests. No mark, but the Quest
+// cursor, so it must not read as NONE.
+TEST_CASE("TBC quest giver status CHAT keeps its own value", "[questgiver]") {
+    std::vector<uint8_t> bytes = {2};
+    wowee::network::Packet packet(0, bytes);
+    wowee::game::TbcPacketParsers parsers;
+    CHECK(static_cast<wowee::game::QuestGiverStatus>(parsers.readQuestGiverStatus(packet)) ==
+          wowee::game::QuestGiverStatus::CHAT);
 }

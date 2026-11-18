@@ -84,6 +84,13 @@ TEST_CASE("World cursors distinguish unit actions and corpse priority") {
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_BANKER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Buy.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::UNAVAILABLE)) == "Interface\\Cursor\\Speak.blp");
     CHECK(std::string(unitCursorPath(true, 0, 5, 0, QuestGiverStatus::NONE)) == "Interface\\Cursor\\Point.blp");
+    // Build 8606, pair 16: Haughty Modiste (quest giver + vendor) and
+    // Yeh'kinya (quest giver + gossip) to a level 70 character whose quests
+    // they offer are out-levelled (CHAT), or taken and unfinished.
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_QUESTGIVER | NPC_FLAG_VENDOR, QuestGiverStatus::CHAT)) == "Interface\\Cursor\\Quest.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_QUESTGIVER | NPC_FLAG_GOSSIP, QuestGiverStatus::CHAT)) == "Interface\\Cursor\\Quest.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_QUESTGIVER | NPC_FLAG_VENDOR, QuestGiverStatus::INCOMPLETE)) == "Interface\\Cursor\\Quest.blp");
+    CHECK(std::string(unitCursorPath(true, 0, 5, NPC_FLAG_QUESTGIVER | NPC_FLAG_VENDOR, QuestGiverStatus::UNAVAILABLE)) == "Interface\\Cursor\\Pickup.blp");
 }
 
 TEST_CASE("Terrain holes do not create invisible vertical selection walls") {
@@ -259,7 +266,7 @@ TEST_CASE("Service cursors turn Unable beyond interaction reach", "[npc-cursor]"
     };
     CHECK(far(true, 0, 5, NPC_FLAG_BANKER | NPC_FLAG_GOSSIP, QuestGiverStatus::NONE) == "Interface\\Cursor\\UnableBuy.blp");
     CHECK(far(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::NONE) == "Interface\\Cursor\\UnableSpeak.blp");
-    CHECK(far(true, 0, 5, NPC_FLAG_INNKEEPER | NPC_FLAG_QUESTGIVER, QuestGiverStatus::LOW_LEVEL_AVAILABLE) ==
+    CHECK(far(true, 0, 5, NPC_FLAG_INNKEEPER | NPC_FLAG_QUESTGIVER, QuestGiverStatus::CHAT) ==
           "Interface\\Cursor\\UnableQuest.blp");
     CHECK(far(true, 0, 5, NPC_FLAG_GOSSIP, QuestGiverStatus::NONE, "Directions", false) ==
           "Interface\\Cursor\\UnableDirections.blp");

@@ -34,9 +34,7 @@ inline std::string unitCursorPath(bool alive, uint32_t dynamicFlags, int reactio
     const auto service = [&](std::string_view name) {
         return cursor(std::string(serviceInReach ? "" : "Unable") + std::string(name));
     };
-    const char* questSymbol = questStatus == game::QuestGiverStatus::UNAVAILABLE
-        ? nullptr : game::questGiverMarker(questStatus).symbol;
-    if (questSymbol) return service(questSymbol[0] == '!' ? "Quest" : "QuestTurnIn");
+    if (const char* questCursor = game::questGiverCursor(questStatus)) return service(questCursor);
     if (npcFlags & game::NPC_FLAG_INNKEEPER) return service("Innkeeper");
     if (iconName == "Directions") return service("Directions");
     if (iconName == "Buy") return service("Buy");
