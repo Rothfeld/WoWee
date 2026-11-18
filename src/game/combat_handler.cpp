@@ -112,7 +112,7 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_ATTACKSWING_NOTINRANGE] = [this](network::Packet& /*packet*/) {
         autoAttackOutOfRange_ = true;
         if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            owner_.raiseUiError("You are too far away!");
+            owner_.errorGlobal("ERR_BADATTACKPOS");
             autoAttackRangeWarnCooldown_ = 1.25f;
         }
     };
@@ -128,21 +128,21 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
         // The real client says so and leaves the heading alone - the swing
         // simply does not land until the player turns back.
         if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            owner_.raiseUiError("You are facing the wrong way!");
+            owner_.errorGlobal("ERR_BADATTACKFACING");
             autoAttackRangeWarnCooldown_ = 1.25f;
         }
     };
     table[Opcode::SMSG_ATTACKSWING_NOTSTANDING] = [this](network::Packet& /*packet*/) {
         autoAttackOutOfRange_ = false;
         if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            owner_.raiseUiError("You need to stand up to fight.");
+            owner_.errorGlobal("ERR_CANTATTACK_NOTSTANDING");
             autoAttackRangeWarnCooldown_ = 1.25f;
         }
     };
     table[Opcode::SMSG_ATTACKSWING_CANT_ATTACK] = [this](network::Packet& /*packet*/) {
         stopAutoAttack();
         if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            owner_.raiseUiError("You can't attack that.");
+            owner_.errorGlobal("ERR_INVALID_ATTACK_TARGET");
             autoAttackRangeWarnCooldown_ = 1.25f;
         }
     };
@@ -1185,31 +1185,28 @@ void CombatHandler::handleResistLog(network::Packet& packet) {
 // ============================================================
 
 void CombatHandler::handlePetTameFailure(network::Packet& packet) {
-    static const char* reasons[] = {
-        "Invalid creature", "Too many pets", "Already tamed",
-        "Wrong faction", "Level too low", "Creature not tameable",
-        "Can't control", "Can't command"
-    };
+    // PetTameFailureReason (CMaNGOS SharedDefines.h) values are the
+    // GlobalStrings PETTAME_* names (not observed natively).
+    static constexpr const char* kReasons[] = {nullptr,
+        "PETTAME_INVALIDCREATURE", "PETTAME_TOOMANY", "PETTAME_CREATUREALREADYOWNED",
+        "PETTAME_NOTTAMEABLE", "PETTAME_ANOTHERSUMMONACTIVE", "PETTAME_UNITSCANTTAME",
+        "PETTAME_NOPETAVAILABLE", "PETTAME_INTERNALERROR", "PETTAME_TOOHIGHLEVEL",
+        "PETTAME_DEAD", "PETTAME_NOTDEAD", "PETTAME_UNKNOWNERROR"};
     if (packet.hasRemaining(1)) {
-        uint8_t reason = packet.readUInt8();
-        const char* msg = (reason < 8) ? reasons[reason] : "Unknown reason";
-        std::string s = std::string("Failed to tame: ") + msg;
-        owner_.addUIError(s);
-        owner_.addSystemChatMessage(s);
+        const uint8_t reason = packet.readUInt8();
+        if (reason > 0 && reason < std::size(kReasons)) owner_.errorGlobal(kReasons[reason]);
+        else LOG_WARNING("SMSG_PET_TAME_FAILURE: unknown reason ", int(reason));
     }
 }
 
 void CombatHandler::handlePetActionFeedback(network::Packet& packet) {
-    static const char* kPetFeedback[] = {
-        nullptr,
-        "Your pet is dead.", "Your pet has nothing to attack.",
-        "Your pet cannot attack that target.", "That target is too far away.",
-        "Your pet cannot find a path to the target.",
-        "Your pet cannot attack an immune target.",
-    };
+    // ActionFeedback (CMaNGOS Pet.h): 1 pet dead is ERR_PET_SPELL_DEAD;
+    // TBC GlobalStrings has no line for 2-4 (nothing to attack, can't attack
+    // target, no path), so they print nothing (not observed natively).
     if (!packet.hasRemaining(1)) return;
-    uint8_t msg = packet.readUInt8();
-    if (msg > 0 && msg < 7 && kPetFeedback[msg]) owner_.addSystemChatMessage(kPetFeedback[msg]);
+    const uint8_t msg = packet.readUInt8();
+    if (msg == 1) owner_.errorGlobal("ERR_PET_SPELL_DEAD");
+    else LOG_DEBUG("SMSG_PET_ACTION_FEEDBACK ", int(msg));
     packet.skipAll();
 }
 
@@ -1244,7 +1241,9 @@ void CombatHandler::handlePetBroken(network::Packet& packet) {
     owner_.petSpellListRef().clear();
     owner_.petAutocastSpellsRef().clear();
     memset(owner_.petActionSlotsRef(), 0, sizeof(owner_.petActionSlotsRef()));
-    owner_.addSystemChatMessage("Your pet has died.");
+    // Sent when the pet abandons its owner (CMaNGOS Pet loyalty):
+    // ERR_PET_BROKEN, "Your pet has run away" (not observed natively).
+    owner_.systemGlobal("ERR_PET_BROKEN");
     // The same pair SMSG_PET_SPELLS fires, because the same two things have to
     // be redrawn - the pet frame and the pet action bar. Losing the pet
     // outright announced nothing while *learning one spell* announced
@@ -1261,7 +1260,8 @@ void CombatHandler::handlePetLearnedSpell(network::Packet& packet) {
         uint32_t spellId = packet.readUInt32();
         owner_.petSpellListRef().push_back(spellId);
         const std::string& sname = owner_.getSpellName(spellId);
-        owner_.addSystemChatMessage("Your pet has learned " + (sname.empty() ? "a new ability." : sname + "."));
+        // No line: TBC GlobalStrings has none for a pet learning a spell.
+        (void)sname;
         LOG_DEBUG("SMSG_PET_LEARNED_SPELL: spellId=", spellId);
         owner_.fireAddonEvent("PET_BAR_UPDATE", {});
     }
@@ -1314,11 +1314,8 @@ void CombatHandler::handlePetMode(network::Packet& packet) {
 void CombatHandler::handleResurrectFailed(network::Packet& packet) {
     if (packet.hasRemaining(4)) {
         uint32_t reason = packet.readUInt32();
-        const char* msg = (reason == 1) ? "The target cannot be resurrected right now."
-                        : (reason == 2) ? "Cannot resurrect in this area."
-                        : "Resurrection failed.";
-        owner_.addUIError(msg);
-        owner_.addSystemChatMessage(msg);
+        // TBC GlobalStrings has no resurrection-failed line; nothing printed.
+        LOG_WARNING("SMSG_RESURRECT_FAILED: reason ", reason);
     }
 }
 

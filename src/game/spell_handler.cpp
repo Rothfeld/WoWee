@@ -1718,7 +1718,6 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     constexpr uint32_t kSpellTargetFlagItem = 0x10;
     if ((getSpellTargetFlags(spellId) & kSpellTargetFlagItem) != 0) {
         if (owner_.isAwaitingItemTarget()) {
-            owner_.addSystemChatMessage("Choose an item first.");
             return;
         }
         owner_.beginSpellItemTargeting(spellId, getSpellName(spellId));
@@ -2203,7 +2202,6 @@ void SpellHandler::confirmTalentWipe() {
     owner_.getSocket()->send(pkt);
 
     LOG_INFO("confirmTalentWipe: sent confirm for npc=0x", std::hex, talentWipeNpcGuid_, std::dec);
-    owner_.addSystemChatMessage("Talent reset confirmed. The server will update your talents.");
     talentWipeNpcGuid_ = 0;
     talentWipeCost_ = 0;
 }
@@ -2228,9 +2226,6 @@ void SpellHandler::confirmPetUnlearn() {
     network::Packet pkt(wireOpcode(Opcode::CMSG_PET_UNLEARN_TALENTS));
     owner_.getSocket()->send(pkt);
     LOG_INFO("confirmPetUnlearn: sent CMSG_PET_UNLEARN_TALENTS");
-    owner_.addSystemChatMessage(
-        "Pet talent reset requested. This server resets pet talents at the "
-        "next login rather than on request.");
     petUnlearnCost_ = 0;
 }
 
@@ -3799,9 +3794,6 @@ void SpellHandler::handleUnlearnSpells(network::Packet& packet) {
     }
     if (barChanged) owner_.saveCharacterConfig();
 
-    if (spellCount > 0) {
-        owner_.addSystemChatMessage("Unlearned " + std::to_string(spellCount) + " spells");
-    }
 }
 
 void SpellHandler::handleTalentsInfo(network::Packet& packet) {
@@ -3863,10 +3855,6 @@ void SpellHandler::handleTalentsInfo(network::Packet& packet) {
 
     if (!talentsInitialized_) {
         talentsInitialized_ = true;
-        if (unspentTalents > 0) {
-            owner_.addSystemChatMessage("You have " + std::to_string(unspentTalents)
-                + " unspent talent point" + (unspentTalents != 1 ? "s" : "") + ".");
-        }
     }
 }
 
@@ -5559,7 +5547,8 @@ void SpellHandler::handleDispelFailed(network::Packet& packet) {
             std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", dispelSpellId);
         else
             std::snprintf(buf, sizeof(buf), "Dispel failed!");
-        owner_.addSystemChatMessage(buf);
+        // Combat-log material, not a chat line in 2.4.3 (no GlobalStrings line).
+        LOG_DEBUG("Not printed: ", buf);
     }
 }
 
@@ -5844,7 +5833,8 @@ void SpellHandler::handleSpellDispelLog(network::Packet& packet) {
                     std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
                                   displaySpellNames.c_str(), passiveVerb);
             }
-            owner_.addSystemChatMessage(buf);
+            // Combat-log material, not a chat line in 2.4.3 (no GlobalStrings line).
+            LOG_DEBUG("Not printed: ", buf);
         }
         // Preserve stolen auras as spellsteal events so the log wording stays accurate.
         if (!loggedIds.empty()) {
@@ -5900,7 +5890,8 @@ void SpellHandler::handleSpellStealLog(network::Packet& packet) {
             else
                 std::snprintf(buf, sizeof(buf), "%s %s stolen.", stealDisplayNames.c_str(),
                               loggedIds.size() == 1 ? "was" : "were");
-            owner_.addSystemChatMessage(buf);
+            // Combat-log material, not a chat line in 2.4.3 (no GlobalStrings line).
+            LOG_DEBUG("Not printed: ", buf);
         }
         // Some servers emit both SPELLDISPELLOG(isStolen=1) and SPELLSTEALLOG
         // for the same aura. Keep the first event and suppress the duplicate.
@@ -5961,8 +5952,6 @@ void SpellHandler::handleSpellInstaKillLog(network::Packet& packet) {
         owner_.addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, true, 0, ikCaster, ikVictim);
     } else if (ikVictim == owner_.getPlayerGuid()) {
         owner_.addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, false, 0, ikCaster, ikVictim);
-        owner_.addUIError("You were killed by an instant-kill effect.");
-        owner_.addSystemChatMessage("You were killed by an instant-kill effect.");
     }
     LOG_DEBUG("SMSG_SPELLINSTAKILLLOG: caster=0x", std::hex, ikCaster,
               " victim=0x", ikVictim, std::dec, " spell=", ikSpell);
@@ -6080,7 +6069,8 @@ void SpellHandler::parseEffectCreateItem(network::Packet& packet, uint32_t effec
         std::string msg = spellName.empty()
             ? ("You create: " + itemName + ".")
             : ("You create " + itemName + " using " + spellName + ".");
-        owner_.addSystemChatMessage(msg);
+        // Combat-log material, not a chat line in 2.4.3 (no GlobalStrings line).
+        LOG_DEBUG("Not printed: ", msg);
         LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", spellId,
                   " item=", itemEntry, " name=", itemName);
     }
@@ -6121,8 +6111,8 @@ void SpellHandler::parseEffectFeedPet(network::Packet& packet, uint32_t effectLo
         std::string itemName = (info && !info->name.empty())
             ? info->name : ("item #" + std::to_string(feedItem));
         uint32_t feedQuality = info ? info->quality : 1u;
-        owner_.addSystemChatMessage("You feed your pet " +
-                                     buildItemLink(feedItem, feedQuality, itemName) + ".");
+        // No chat line: TBC GlobalStrings has none for feeding a pet.
+        (void)feedQuality;
         LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
     }
 }
@@ -6262,12 +6252,14 @@ void SpellHandler::handleItemEnchantTimeUpdate(network::Packet& packet) {
             const char* slotName = (enchSlot < 3) ? owner_.kTempEnchantSlotNames[enchSlot] : "weapon";
             char buf[80];
             std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 1 minute!", slotName);
-            owner_.addSystemChatMessage(buf);
+            // Combat-log material, not a chat line in 2.4.3 (no GlobalStrings line).
+            LOG_DEBUG("Not printed: ", buf);
         } else if (durationSec <= 300 && durationSec > 295) {
             const char* slotName = (enchSlot < 3) ? owner_.kTempEnchantSlotNames[enchSlot] : "weapon";
             char buf[80];
             std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 5 minutes.", slotName);
-            owner_.addSystemChatMessage(buf);
+            // Combat-log material, not a chat line in 2.4.3 (no GlobalStrings line).
+            LOG_DEBUG("Not printed: ", buf);
         }
     }
     LOG_DEBUG("SMSG_ITEM_ENCHANT_TIME_UPDATE: slot=", enchSlot, " dur=", durationSec, "s");
@@ -6407,7 +6399,7 @@ void SpellHandler::requestStabledPetList() {
 void SpellHandler::stablePet(uint8_t slot) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || owner_.stableMasterGuidRef() == 0) return;
     if (owner_.petGuidRef() == 0) {
-        owner_.raiseUiError("You do not have an active pet to stable.");
+        owner_.errorGlobal("ERR_NO_PET");
         return;
     }
     auto pkt = StablePetPacket::build(owner_.stableMasterGuidRef(), slot);
