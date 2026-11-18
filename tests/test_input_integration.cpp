@@ -2083,6 +2083,14 @@ TEST_CASE_METHOD(Integration, "Untrained corpse tooltip exposes red skinning req
     run(R"lua(
         UNIT_SKINNABLE_LEATHER = 'Skinnable'
         CORPSE = 'Corpse'
+        TOOLTIP_UNIT_LEVEL = 'Level %s'
+        TOOLTIP_UNIT_LEVEL_CLASS = 'Level %s %s'
+        TOOLTIP_UNIT_LEVEL_CLASS_TYPE = 'Level %s %s (%s)'
+        TOOLTIP_UNIT_LEVEL_TYPE = 'Level %s (%s)'
+        TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE = 'Level %s %s %s (%s)'
+        ELITE = 'Elite'
+        BOSS = 'Boss'
+        PLAYER = 'Player'
         skinTip = CreateFrame('GameTooltip', 'SkinTip', UIParent)
         assert(skinTip:SetUnit('target'))
         assert(select(2, skinTip:GetUnit()) == 'target')
@@ -2213,6 +2221,14 @@ TEST_CASE_METHOD(Integration, "Companion tooltips show their owner instead of pl
     handler.setTarget(petGuid);
     run(R"lua(
         UNITNAME_TITLE_COMPANION = "%s's Companion"
+        TOOLTIP_UNIT_LEVEL = 'Level %s'
+        TOOLTIP_UNIT_LEVEL_CLASS = 'Level %s %s'
+        TOOLTIP_UNIT_LEVEL_CLASS_TYPE = 'Level %s %s (%s)'
+        TOOLTIP_UNIT_LEVEL_TYPE = 'Level %s (%s)'
+        TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE = 'Level %s %s %s (%s)'
+        ELITE = 'Elite'
+        BOSS = 'Boss'
+        PLAYER = 'Player'
         companionTip = CreateFrame("GameTooltip", "CompanionTip", UIParent)
         assert(companionTip:SetUnit("target"))
         assert(UnitPlayerControlled("target"))
@@ -2795,6 +2811,16 @@ TEST_CASE_METHOD(Integration, "Moonkin tooltip keeps creature type on unwrapped 
     info.writeFloat(1); info.writeFloat(1); info.writeUInt8(0);
     session.receive(info);
     handler.setTarget(guid);
+    run(R"lua(
+        TOOLTIP_UNIT_LEVEL = 'Level %s'
+        TOOLTIP_UNIT_LEVEL_CLASS = 'Level %s %s'
+        TOOLTIP_UNIT_LEVEL_CLASS_TYPE = 'Level %s %s (%s)'
+        TOOLTIP_UNIT_LEVEL_TYPE = 'Level %s (%s)'
+        TOOLTIP_UNIT_LEVEL_RACE_CLASS_TYPE = 'Level %s %s %s (%s)'
+        ELITE = 'Elite'
+        BOSS = 'Boss'
+        PLAYER = 'Player'
+    )lua");
     run("moonkinTip = CreateFrame('GameTooltip', 'MoonkinTip', UIParent); assert(moonkinTip:SetUnit('target'))");
     const auto* tip = lua.widgets().findByName("MoonkinTip");
     REQUIRE(tip);

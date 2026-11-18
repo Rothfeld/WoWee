@@ -3211,9 +3211,14 @@ int lua_Tooltip_SetUnit(lua_State* L) {
     // for a rare (rank 4 adds nothing). A corpse puts CORPSE in the type's
     // place and keeps the classification: "Level 55 Corpse (Elite)", "Level
     // ?? Corpse (Boss)". White, whatever the level difficulty.
+    // FrameXML's GlobalStrings.lua defines these; a client without it has no
+    // tooltip to build, and says which string it lacked.
     auto global = [L](const char* name) {
         lua_getglobal(L, name);
-        assert(lua_isstring(L, -1));
+        if (!lua_isstring(L, -1)) {
+            lua_pop(L, 1);
+            luaL_error(L, "GameTooltip:SetUnit needs GlobalString %s (GlobalStrings.lua not loaded)", name);
+        }
         std::string text = lua_tostring(L, -1);
         lua_pop(L, 1);
         return text;
