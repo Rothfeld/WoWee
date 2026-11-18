@@ -677,6 +677,10 @@ void WidgetTree::scrollContentExtent(uint32_t childId, float& outW, float& outH)
 
     outW = maxX - minX;
     outH = maxY - minY;
+    // A multi-line edit box is as tall as its text, which can be less than
+    // its declared size.
+    if (child->isEditBox && child->editMultiLine && child->editContentH >= 0.0f)
+        outH = child->editContentH;
 }
 
 void WidgetTree::noteScreenSize(float pixelW, float pixelH) {

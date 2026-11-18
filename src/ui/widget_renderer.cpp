@@ -2829,6 +2829,13 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 const float pad = w->textInsetLeft * s;
                 const float wrapW = multi
                     ? std::max(1.0f, (x1 - x0) - pad - w->textInsetRight * s) : 0.0f;
+                if (multi && font) {
+                    const auto lines = wrapText(parseMarkup(w->editText), wrapW, false,
+                        [&](const std::string& piece) {
+                            return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
+                        });
+                    w->editContentH = static_cast<float>(lines.size()) * size * 1.2f / s;
+                }
                 if (!w->editText.empty()) {
                     // The shadow first, under the words, as a font string's
                     // is. ChatFontNormal declares one and every edit box in

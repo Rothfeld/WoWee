@@ -325,7 +325,10 @@ struct Widget {
     /// The range last reported to the interface. A scroll bar sizes and
     /// enables itself from OnScrollRangeChanged, so the change has to be
     /// noticed and announced rather than merely being true.
-    float reportedRangeX = -1.0f, reportedRangeY = -1.0f;
+    // Zero, as the scroll frame starts: OnScrollRangeChanged fires on a
+    // change only. Native 2.4.3 leaves the macro body's thumb and its
+    // disabled arrows showing while the range stays 0.
+    float reportedRangeX = 0.0f, reportedRangeY = 0.0f;
 
     bool  isEditBox = false;
     /// Whether this box takes the keyboard the moment it appears.
@@ -371,6 +374,11 @@ struct Widget {
     bool  editFocused = false;
     bool  editNumeric = false;
     bool  editMultiLine = false;
+    /// A multi-line box's text height as last drawn, interface units, one
+    /// line when empty; -1 before the first draw. Its scroll frame's range
+    /// is this minus the frame's height (native 2.4.3 MacroFrameText: 9.6
+    /// tall empty, 96 with ten lines, range 11 in its 85 frame).
+    mutable float editContentH = -1.0f;
     int   editMaxLetters = 0;   ///< Zero is no limit, which is WoW's default.
     /// Whether the markup that draws nothing counts against that limit. WoW's
     /// default is no, and four boxes in the interface ask for yes - the macro
