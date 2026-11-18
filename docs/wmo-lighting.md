@@ -50,6 +50,40 @@ unit beside one measures 0.9x the MOCV (178,153,231) under it. Not modelled:
 native lit sides of units reach about 1.8x MOCV, and game objects are about
 0.45x MOCV natively (WoWee about 1.3x brighter, as for interior doodads).
 
+Native unit light in an interior is not the floor MOCV times a gain (open; WoWee
+still uses the MOCV). Measured on Shattrath's Terrace of Light (group 1,
+0xb805) by fitting native/texel = A + D*max(N.l,0) per pixel, l the TBC sun
+direction, texel and normal from debug-shader renders at the held native camera:
+
+| unit at (-1834, y) | floor MOCV | A (ambient) | D (sun) |
+|---|---|---|---|
+| y 5486 | (52,61,105) | 0.32/0.40/0.59 | 0.02/0.01/0.10 |
+| y 5492 | (70,74,123) | 0.36/0.40/0.70 | 0.20/0.23/0.28 |
+| y 5498 | (149,132,205) | 0.42/0.39/0.62 | 0.20/0.15/0.12 |
+| y 5504 | (188,159,239) | 0.42/0.36/0.54 | 0.39/0.34/0.41 |
+| (-1831, 5500), two facings | (170,148,225) | 0.46/0.39/0.63 | 0.44/0.34/0.25 |
+
+- The ambient stays near (0.38,0.39,0.6) while the MOCV under the feet triples;
+  it is not the floor MOCV, its alpha (0 along the ramp), a group boundary (all
+  points in groups 0/1/2, one floor) or a higher sample point (flat floor).
+- A sun term appears and grows toward the brazier end of the room; it is warm,
+  like the map-wide Light row (374, params 379) diffuse, not the local Light 458.
+  The Spectral Realm's map-wide row 1400 uses the same params, which fits
+  Sathrovarr's warm lit side there.
+- What a unit's camera sees decides which side shows (lit or ambient); native
+  does not switch light by camera position (36-step orbit, fixed unit).
+- The authored M2/MOLT lights are not the source: shattrathcity.wmo has no
+  MOLT, its group 1 doodads and the naaru carry no M2 lights.
+- Fits explain only 0.0-0.3 of the variance (one spot is unusable); raw native
+  pixel tracks along the ramp agree on the trend: hair 1.4/1.09/0.9x while MOCV
+  rises 3.6/2.6/2.3x.
+
+Not done: a second building to confirm the sun colour source, and a creature
+next to the player in one frame (in the Spectral Realm native creatures look
+sun-lit while the native player looks MOCV-dark). Evidence:
+`../_experiments/20261118T1050.interior_unit_light`, `..1120.camera_light_selection`,
+`..1130.mocv_sample`, `..1140.ramp_fit`, `..1110.m2_unit_lights`.
+
 TBC uses authored textures, vertex colors and environment lighting without
 the extra point lights synthesized from fixture names, glow meshes or lava.
 Those synthetic lights are not authored light records.
