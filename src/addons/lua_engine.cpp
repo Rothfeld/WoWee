@@ -7211,6 +7211,10 @@ void LuaEngine::registerCoreAPI() {
         {"SetTalent",       lua_Tooltip_SetTalent},
         {"SetAuctionItem",  lua_Tooltip_SetAuctionItem},
         {"_WoweeAppendItemEnchants", lua_Tooltip_AppendItemEnchants},
+        // OnTooltipSetItem from the Lua item setters, which the C builders
+        // fire themselves; GameTooltip's handler is where Shift shows the
+        // comparison tooltips.
+        {"_WoweeFireTooltipSetItem", [](lua_State* L) -> int { fireTooltipSetItem(L); return 0; }},
         {"_WoweeAppendEquippedEnchants", lua_Tooltip_AppendEquippedEnchants},
         {"SetTradeSkillItem", lua_Tooltip_SetTradeSkillItem},
         {"SetUnit",         lua_Tooltip_SetUnit},
@@ -9050,7 +9054,11 @@ void LuaEngine::registerCoreAPI() {
         // own terms: wearing one copy and hovering another, index 1 is the copy
         // worn and index 2 the other ring, and dropping the first leaves the
         // player comparing against one hand only.
-        "    if not _WoweePopulateItemTooltip(self, wornId) then return __cmpNo('no tooltip could be built for the worn item') end\n"
+        // Native 2.4.3: the first line is CURRENTLY_EQUIPPED in grey
+        // (0.5, 0.5, 0.5) at the template's small font, the worn item's
+        // name second, with the worn copy's own durability.
+        "    self:SetText(CURRENTLY_EQUIPPED, 0.5, 0.5, 0.5)\n"
+        "    if not _WoweePopulateItemTooltip(self, wornId, true, _GetInventoryItemInstance(slot)) then return __cmpNo('no tooltip could be built for the worn item') end\n"
         // What is on the worn item, which its id could not carry.
         "    if self._WoweeAppendEquippedEnchants then\n"
         "        self:_WoweeAppendEquippedEnchants(slot)\n"
@@ -9535,6 +9543,9 @@ void LuaEngine::registerCoreAPI() {
         "    end\n"
         "    _WoweePopulateItemTooltip(self, tonumber(id), nil, _GetContainerItemInstance(bag, slot))\n"
         "    self:_WoweeAppendItemEnchants(bag, slot)\n"
+        // Native 2.4.3: Shift held over a bag item shows the worn item beside
+        // it, through GameTooltip's OnTooltipSetItem; nothing fired it here.
+        "    self:_WoweeFireTooltipSetItem()\n"
         "end\n"
         // The spellbook's tooltip. SpellButton_OnEnter calls this and nothing
         // answered it, so hovering any spell in the book showed nothing -
@@ -9620,13 +9631,14 @@ void LuaEngine::registerCoreAPI() {
         "        return self:NumLines() > 0\n"
         "    elseif actionType == 'item' and id and id > 0 then\n"
         "        _WoweePopulateItemTooltip(self, id)\n"
+        "        self:_WoweeFireTooltipSetItem()\n"
         "        return self:NumLines() > 0\n"
         // A macro: its spell's or item's tooltip with #showtooltip, else its
         // name alone (native 2.4.3: "/cast Sinister Strike" shows "APa").
         "    elseif actionType == 'macro' and id then\n"
         "        local kind, target = WoweeMacroActionTooltip(slot)\n"
         "        if kind == 'spell' then self:SetSpellByID(target, true) return self:NumLines() > 0 end\n"
-        "        if kind == 'item' then _WoweePopulateItemTooltip(self, target) return self:NumLines() > 0 end\n"
+        "        if kind == 'item' then _WoweePopulateItemTooltip(self, target) self:_WoweeFireTooltipSetItem() return self:NumLines() > 0 end\n"
         "        local name = GetMacroInfo(id)\n"
         "        if name then self:SetText(name, 1, 1, 1) return true end\n"
         "    end\n"

@@ -514,8 +514,18 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
     if (w->objectType != "GameTooltip") return;
 
     const float ppu = tree.uiScale() * (w->effScale > 0.0f ? w->effScale : 1.0f);
+    // A line past the ones the template declares takes the font of the last
+    // declared one, as 2.4.3 makes it: ShoppingTooltip declares TextLeft1-4
+    // (GameFontNormalSmall, GameFontNormal, GameFontHighlightSmall,
+    // GameTooltipTextSmall) and native draws its lines 5 and on at 10, not
+    // at GameTooltipText's 12.
+    const Widget* lastDeclared = nullptr;
     for (size_t i = 0; i < w->tooltipLines.size(); ++i) {
         const auto* region = tree.findByName(w->name + "TextLeft" + std::to_string(i + 1));
+        // A stand-in Frame made for anchoring has no font of its own.
+        if (region && region->kind != WidgetKind::FontString) region = nullptr;
+        if (region) lastDeclared = region;
+        else region = lastDeclared;
         auto& line = w->tooltipLines[i];
         // TextLeft1 inherits GameTooltipHeaderText (14), the rest GameTooltipText (12).
         line.fontHeight = region ? interfaceFontSize(region->fontHeight, ppu) : (i == 0 ? 14.0f : 12.0f);

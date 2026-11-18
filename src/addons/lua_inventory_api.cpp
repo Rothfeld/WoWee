@@ -2480,6 +2480,24 @@ static int lua_GetContainerItemInstance(lua_State* L) {
     return 1;
 }
 
+// _GetInventoryItemInstance(slot) - the same for a worn item (inventory slot
+// id, 1-19 equipment): the comparison tooltip shows the worn item's own
+// durability, native 2.4.3 "Durability 5 / 16" for the worn Worn Dagger.
+static int lua_GetInventoryItemInstance(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const int slot = static_cast<int>(luaL_optnumber(L, 1, 0));
+    const game::ItemSlot* s = gh && slot >= 1 ? inventorySlotItem(gh->getInventory(), slot) : nullptr;
+    if (!s || s->empty()) { lua_pushnil(L); return 1; }
+    lua_newtable(L);
+    lua_pushboolean(L, s->item.soulbound ? 1 : 0);
+    lua_setfield(L, -2, "soulbound");
+    lua_pushnumber(L, s->item.curDurability);
+    lua_setfield(L, -2, "durability");
+    lua_pushnumber(L, s->item.maxDurability);
+    lua_setfield(L, -2, "maxDurability");
+    return 1;
+}
+
 // --- Locale/Build/Realm info ---
 
 
@@ -3829,6 +3847,7 @@ void registerInventoryLuaAPI(lua_State* L) {
                 {"GetItemQualityColor", lua_GetItemQualityColor},
                 {"_GetItemTooltipData", lua_GetItemTooltipData},
                 {"_GetContainerItemInstance", lua_GetContainerItemInstance},
+                {"_GetInventoryItemInstance", lua_GetInventoryItemInstance},
                 // GetItemSpell(item) → spellName, spellRank
                 //
                 // The "Use:" spell on an item, which is what /use and the chat
