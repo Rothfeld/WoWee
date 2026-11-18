@@ -3341,6 +3341,18 @@ public:
     // Item-targeted item use: sharpening stones, weightstones and weapon oils enchant
     // another item, so using one arms a targeting cursor instead of casting immediately.
     bool isAwaitingItemTarget() const;
+    /// A spell the player's pet or possessed unit casts at a place
+    /// (Spell.dbc Targets & TARGET_FLAG_DEST_LOCATION): the next world click
+    /// picks the spot (build 8606 draws its circle under the cursor).
+    void beginPetGroundTarget(uint32_t spellId) { pendingPetGroundSpell_ = spellId; }
+    bool isAwaitingGroundTarget() const { return pendingPetGroundSpell_ != 0; }
+    void cancelGroundTarget() { pendingPetGroundSpell_ = 0; }
+    /// CMSG_PET_CAST_SPELL: pet guid, spell, SpellCastTargets with the
+    /// destination (uint32 mask 0x40, float x, y, z), as
+    /// WorldSession::HandlePetCastSpellOpcode reads it.
+    /// Canonical coordinates in; sent in server order.
+    void castPetSpellAtGround(float x, float y, float z);
+    uint32_t pendingPetGroundSpell_ = 0;
     /// True while a used item is waiting for the player to click a unit.
     bool isAwaitingUnitTarget() const;
     uint32_t getPendingUnitTargetSourceItemId() const;

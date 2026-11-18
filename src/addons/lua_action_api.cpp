@@ -746,6 +746,16 @@ static int lua_UseAction(lua_State* L) {
     }
     if (uint32_t packed; possessSlot(gh, static_cast<int>(luaL_checknumber(L, 1)), packed)) {
         if (packed == 0) return 0;
+        if (const uint32_t spell = possessSpell(packed)) {
+            gh->getSpellName(spell);
+            const auto it = gh->spellNameCacheRef().find(spell);
+            if (it != gh->spellNameCacheRef().end() && (it->second.targetFlags & 0x40u)) {
+                // A chess piece's Move: build 8606 puts a circle under the
+                // cursor and the next world click casts it there.
+                gh->beginPetGroundTarget(spell);
+                return 0;
+            }
+        }
         uint64_t target = gh->hasTarget() ? gh->getTargetGuid() : 0;
         if (const char* unit = lua_tostring(L, 2); unit && *unit) {
             std::string uid(unit);

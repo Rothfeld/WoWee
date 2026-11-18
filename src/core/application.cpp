@@ -6683,6 +6683,16 @@ void Application::updatePossession() {
         glm::vec3 viewPos;
         if (getRenderPositionForGuid(farsight, viewPos)) viewTarget = viewPos;
     }
+    // Looking from a unit the player does not move (a chess piece): the
+    // camera turns with the view the same way, keeping its angle to the
+    // body's facing (build 8606 Control Piece shows the piece from behind).
+    if (viewTarget && farsight != viewedUnit_) {
+        if (const auto unit = gameHandler->getEntityManager().getEntity(farsight))
+            cc->addCameraYaw(core::coords::canonicalToCharacterYawDeg(unit->getOrientation()) -
+                             renderer->getCharacterYaw());
+    }
+    // Release keeps the camera's world yaw (Mind Control: 30.5 -> 30.5).
+    viewedUnit_ = viewTarget ? farsight : 0;
     cc->setViewTarget(viewTarget);
 }
 

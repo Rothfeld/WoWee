@@ -418,6 +418,7 @@ private:
     /// The possessed unit this client is moving, and where the player's own
     /// body stands meanwhile (render position, character yaw in degrees).
     uint64_t possessedBody_ = 0;
+    uint64_t viewedUnit_ = 0;
     glm::vec4 heldPlayerBody_{0.0f};
     /// Keeps the camera on the possessed unit through Mind Control and Control
     /// Piece; see updatePossession.

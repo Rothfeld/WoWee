@@ -1657,6 +1657,33 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
                 rendering::Ray ray = camera->screenToWorldRay(leftClickPressPos_.x, leftClickPressPos_.y, screenW, screenH);
 
+                // Placing a pet or possessed unit's ground spell: the click
+                // names a spot on the floor under the cursor, not a unit.
+                if (gameHandler.isAwaitingGroundTarget()) {
+                    auto* terrain = renderer->getTerrainManager();
+                    auto* wmo = renderer->getWMORenderer();
+                    for (float t = 0.5f; t < 200.0f; t += 0.1f) {
+                        const glm::vec3 p = ray.origin + ray.direction * t;
+                        std::optional<float> floor;
+                        if (wmo) floor = wmo->getFloorHeight(p.x, p.y, p.z + 0.5f);
+                        if (terrain) {
+                            const auto h = terrain->getHeightAt(p.x, p.y);
+                            if (h && *h <= p.z + 0.5f && (!floor || *h > *floor)) floor = h;
+                        }
+                        if (floor && p.z <= *floor + 0.05f) {
+                            const glm::vec3 canonical = core::coords::renderToCanonical(
+                                glm::vec3(p.x, p.y, *floor));
+                            gameHandler.castPetSpellAtGround(canonical.x, canonical.y, canonical.z);
+                            break;
+                        }
+                    }
+                    if (gameHandler.isAwaitingGroundTarget()) {
+                        LOG_WARNING("Ground target: no floor under the cursor");
+                        gameHandler.cancelGroundTarget();
+                    }
+                    return;
+                }
+
                 // Use the same authoritative position and forgiving click volume
                 // as right-click for a hooked bobber. Its tiny, partly submerged
                 // render bounds must not let a click fall through to a character.
