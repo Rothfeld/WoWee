@@ -4172,8 +4172,15 @@ std::optional<WMOFogSample> WMORenderer::getFog(const glm::vec3& position, bool 
         [&](const auto& value) { return value.id == location->instanceId; });
     assert(instance != instances.end());
     const auto& model = loadedModels.at(instance->modelId);
-    return sampleWMOFog(model.fogs, model.groups[location->groupIndex].fogIndices,
-                        location->localPosition, underwater);
+    const auto& group = model.groups[location->groupIndex];
+    // An indoor group with MOGP 0x40 is lit as outdoors, and fogged as
+    // outdoors too: Light.dbc's fog, not MFOG. Black Temple's courtyard
+    // (blacktemple.wmo group 8, 0x43a41, open to the sky) took MFOG record 0,
+    // a teal (35,190,152) sphere around the sewers 600 yards away, and the
+    // facades and far walls past its 417-yard end drew as flat teal shapes;
+    // the original fogs them into Light 592's dark green (LightParams 604).
+    if (!pipeline::wmoUsesLocalLighting(group.groupFlags)) return std::nullopt;
+    return sampleWMOFog(model.fogs, group.fogIndices, location->localPosition, underwater);
 }
 
 std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& position) const {

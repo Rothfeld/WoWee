@@ -9,6 +9,9 @@ four records at header offset48. Offset52 is the liquid type.
 
 WMORenderer retains the records and group references. The camera's containing
 indoor group selects candidate volumes, using the instance inverse transform.
+A containing group with MOGP 0x40 (exterior lit) takes Light.dbc fog instead:
+Black Temple's open courtyard (blacktemple.wmo group 8, 0x43a41) shows the
+map's dark green Light 592 fog natively, not its teal MFOG record 0.
 Record zero supplies default WMO fog. Referenced local spheres contribute between
 their inner and outer radii; duplicate references do not multiply their weight.
 The infinite-radius flag bypasses the distance test. The shared frame UBO receives
