@@ -922,6 +922,7 @@ void GameHandler::update(float deltaTime) {
 
         // Tick logout countdown
         if (socialHandler_) socialHandler_->updateLogoutCountdown(deltaTime);
+        if (socialHandler_) socialHandler_->flushDeferredRaidEvents();
 
         updateTaxiAndMountState(deltaTime);
 
@@ -3181,6 +3182,7 @@ void GameHandler::loadAreaNameCache() const {
             uint32_t areaId = areaDbc->getUInt32(i, 0);
             if (areaId == 0) continue;
             areaMapCache_[areaId] = areaDbc->getUInt32(i, 1);
+            areaParentCache_[areaId] = areaDbc->getUInt32(i, 2);  // ParentAreaNum
             std::string name = areaDbc->getString(i, 11);
             if (!name.empty()) {
                 areaNameCache_[areaId] = std::move(name);
@@ -3217,6 +3219,20 @@ void GameHandler::loadAreaNameCache() const {
     }
 
     LOG_INFO("Area name cache: loaded ", areaNameCache_.size(), " entries");
+}
+
+uint32_t GameHandler::getAreaZoneId(uint32_t areaId) const {
+    loadAreaNameCache();
+    uint32_t current = areaId;
+    // AreaTable nests one level in TBC data (Mirage Raceway 2240 -> Thousand
+    // Needles 400); walk until a row without a parent. Bounded against a cycle.
+    for (int depth = 0; depth < 8; ++depth) {
+        const auto found = areaParentCache_.find(current);
+        if (found == areaParentCache_.end() || found->second == 0 || found->second == current) return current;
+        current = found->second;
+    }
+    LOG_ERROR("AreaTable parent chain too deep from area ", areaId);
+    return current;
 }
 
 std::optional<uint32_t> GameHandler::getAreaMapId(uint32_t areaId) const {

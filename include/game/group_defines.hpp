@@ -118,6 +118,36 @@ struct GroupListData {
     [[nodiscard]] bool isEmpty() const { return memberCount == 0; }
 };
 
+/// The raid roster as build 8606 numbers it: raid1..raidN-1 are the other
+/// members in the order SMSG_GROUP_LIST lists them, and the player is always
+/// last, raidN.
+///
+/// Measured on a pair (_experiments/20261118T000639Z.raid_roster): with the
+/// server's slots Edrikc, Edricc, Aedricc, Edrikc's client numbers Edricc,
+/// Aedricc, Edrikc - neither name nor guid order, and the player moves to the
+/// end when someone joins. Subgroup moves and leader changes do not reorder.
+/// The list never contains the player; it is skipped here anyway so a
+/// malformed packet cannot number them twice. Empty when not in a raid.
+inline std::vector<uint64_t> raidRosterGuids(const GroupListData& group, uint64_t playerGuid) {
+    std::vector<uint64_t> guids;
+    if (!groupIsRaid(group.groupType) || group.isEmpty()) return guids;
+    guids.reserve(group.members.size() + 1);
+    for (const auto& member : group.members)
+        if (member.guid != playerGuid) guids.push_back(member.guid);
+    guids.push_back(playerGuid);
+    return guids;
+}
+
+/// One-based raid index of `guid` in raidRosterGuids order, 0 when it is not
+/// in the raid.
+inline int raidRosterIndex(const GroupListData& group, uint64_t playerGuid, uint64_t guid) {
+    if (guid == 0) return 0;
+    const auto guids = raidRosterGuids(group, playerGuid);
+    for (size_t i = 0; i < guids.size(); ++i)
+        if (guids[i] == guid) return static_cast<int>(i) + 1;
+    return 0;
+}
+
 /**
  * Party command types
  */

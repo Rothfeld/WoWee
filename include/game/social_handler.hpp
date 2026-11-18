@@ -235,6 +235,17 @@ public:
         hasGuildRoster_ = false;
         guildQueryData_ = GuildQueryResponseData{};
     }
+    /// Forget the last character's group, as a character enters the world.
+    ///
+    /// The server sends SMSG_GROUP_LIST only to a character that is in a
+    /// group, so logging out of a raid member and into an ungrouped character
+    /// kept the old roster: Aedricc, never grouped, came in with Edrikc's raid
+    /// on its party frame (_experiments/20261118T000639Z.raid_roster).
+    void clearGroupForCharacterSwitch() {
+        partyData = GroupListData{};
+        raidLeaderChangedPending_ = false;
+        raidMembersChangedPending_ = false;
+    }
     [[nodiscard]] const std::vector<std::string>& getGuildRankNames() const { return guildRankNames_; }
     /// The rights bitmask of the player's own guild rank, or 0 when it is not
     /// known. The roster carries one per rank and the member row names which
@@ -429,6 +440,9 @@ public:
 
     // Utility methods for delegation from GameHandler
     void updateLogoutCountdown(float deltaTime);
+    /// Fire the raid's PARTY_LEADER_CHANGED / PARTY_MEMBERS_CHANGED once for
+    /// all rosters handled this frame. Called every frame.
+    void flushDeferredRaidEvents();
     void resetTransferState();
     GroupListData& mutablePartyData() { return partyData; }
     InspectResult& mutableInspectResult() { return inspectResult_; }
@@ -650,6 +664,8 @@ private:
 
     // Group
     GroupListData partyData;
+    bool raidLeaderChangedPending_ = false;
+    bool raidMembersChangedPending_ = false;
     bool pendingGroupInvite = false;
     std::string pendingInviterName;
 

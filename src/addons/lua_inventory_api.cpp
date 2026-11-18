@@ -3667,7 +3667,10 @@ static int lua_GetLootMethod(lua_State* L) {
         lua_pushnil(L);
     } else if (pd.looterGuid == gh->getPlayerGuid()) {
         lua_pushnumber(L, 0);
-        lua_pushnil(L);
+        // Third: the raid index (game::raidRosterGuids order), nil in a party.
+        if (const int raidIndex = game::raidRosterIndex(pd, gh->getPlayerGuid(), pd.looterGuid))
+            lua_pushnumber(L, raidIndex);
+        else lua_pushnil(L);
     } else {
         int partyIndex = -1;
         for (size_t i = 0; i < pd.members.size(); ++i) {
@@ -3678,9 +3681,11 @@ static int lua_GetLootMethod(lua_State* L) {
         }
         if (partyIndex > 0) lua_pushnumber(L, partyIndex);
         else                lua_pushnil(L);
-        // The raid index is a different numbering and this client does not
-        // keep one, so it says so rather than reusing the party position.
-        lua_pushnil(L);
+        // The raid index is a different numbering (game::raidRosterGuids:
+        // the others in roster order, the player last); nil in a party.
+        if (const int raidIndex = game::raidRosterIndex(pd, gh->getPlayerGuid(), pd.looterGuid))
+            lua_pushnumber(L, raidIndex);
+        else lua_pushnil(L);
     }
     return 3;
 }

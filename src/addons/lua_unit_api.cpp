@@ -13,8 +13,14 @@ static int lua_UnitName(lua_State* L) {
     // No game object branch here either, for the reason in UnitExists: a name
     // is the one answer about an object that would have been right, and giving
     // it while UnitExists says no is a unit that half exists.
+    // Second return is the realm. Build 8606 answers nil for a unit it can
+    // see and "" for a group member it cannot (UnitName("raid1") and
+    // UnitName("party1") of a member in another zone return "Edricc", "" -
+    // _experiments/20261118T000639Z.raid_roster/measurements.log).
     if (unit && !unit->getName().empty()) {
         lua_pushstring(L, unit->getName().c_str());
+        lua_pushnil(L);
+        return 2;
     } else {
         // Fallback: party member name for out-of-range members
         auto* gh = getGameHandler(L);
@@ -26,6 +32,8 @@ static int lua_UnitName(lua_State* L) {
             ? gh->getEntityManager().getEntity(guid) : nullptr;
         if (pm && !pm->name.empty()) {
             lua_pushstring(L, pm->name.c_str());
+            lua_pushstring(L, "");
+            return 2;
         } else if (object && object->getType() == game::ObjectType::GAMEOBJECT) {
             // The object whose gossip or quest window is open. GossipFrame
             // titles itself UnitName("npc"); on Rizzle's Unguarded Plans the
@@ -234,11 +242,15 @@ static int lua_UnitClass(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* gh = getGameHandler(L);
     auto* unit = resolveUnit(L, uid);
-    if (unit && gh) {
+    std::string uidStr(uid);
+    toLowerInPlace(uidStr);
+    // A group member out of sight has no entity but still a class: native
+    // answers "Rogue", "ROGUE" for raid1 in another zone, from the name query
+    // cache (the only packet that carries a class).
+    const bool groupMember = gh && !unit && findPartyMember(gh, resolveUnitGuid(gh, uidStr));
+    if ((unit || groupMember) && gh) {
 
         uint8_t classId = 0;
-        std::string uidStr(uid);
-        toLowerInPlace(uidStr);
         if (uidStr == "player") {
             classId = gh->getPlayerClass();
         } else {
@@ -646,9 +658,12 @@ static int lua_IsRaidLeader(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnFalse(L); }
     const auto& group = gh->getPartyData();
-    lua_pushboolean(L, group.leaderGuid != 0 &&
-                       group.leaderGuid == gh->getPlayerGuid() ? 1 : 0);
-    return 1;
+    // 1 or nil, as native answers (measured as raid leader and as member).
+    if (group.leaderGuid != 0 && group.leaderGuid == gh->getPlayerGuid()) {
+        lua_pushnumber(L, 1);
+        return 1;
+    }
+    return luaReturnNil(L);
 }
 
 // UnitIsVisible(unit) → boolean (entity exists in the client's entity manager)
@@ -2064,75 +2079,134 @@ static int lua_GetPartyMember(lua_State* L) {
     return 1;
 }
 
+/// UnitInParty(unit) → 1 or nil.
+///
+/// In a raid the party is the player's own subgroup: native answers nil for
+/// raid1 in another group and 1 once both are in the same one
+/// (_experiments/20261118T000639Z.raid_roster/measurements.log, "pf").
 static int lua_UnitInParty(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* gh = getGameHandler(L);
-    if (!gh) { return luaReturnFalse(L); }
+    if (!gh || !gh->isInGroup()) { return luaReturnNil(L); }
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
-    if (uidStr == "player") {
-        lua_pushboolean(L, gh->isInGroup());
-    } else {
-        uint64_t guid = resolveUnitGuid(gh, uidStr);
-        if (guid == 0) { return luaReturnFalse(L); }
-        const auto& pd = gh->getPartyData();
-        bool found = false;
-        for (const auto& m : pd.members) {
-            if (m.guid == guid) { found = true; break; }
-        }
-        lua_pushboolean(L, found);
+    const uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) { return luaReturnNil(L); }
+    const auto& pd = gh->getPartyData();
+    if (guid == gh->getPlayerGuid()) { lua_pushnumber(L, 1); return 1; }
+    const bool raid = game::groupIsRaid(pd.groupType);
+    for (const auto& m : pd.members) {
+        if (m.guid != guid) continue;
+        if (raid && m.subGroup != pd.subGroup) break;
+        lua_pushnumber(L, 1);
+        return 1;
     }
-    return 1;
+    return luaReturnNil(L);
 }
 
+/// UnitInRaid(unit) → the unit's zero-based raid index, or nil.
+///
+/// Not a boolean: native answers 0 for raid1 and 1 for raid2, and "player"
+/// answers its own index (the last one).
 static int lua_UnitInRaid(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* gh = getGameHandler(L);
-    if (!gh) { return luaReturnFalse(L); }
+    if (!gh) { return luaReturnNil(L); }
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
-    const auto& pd = gh->getPartyData();
-    if (!game::groupIsRaid(pd.groupType)) { return luaReturnFalse(L); }
-    if (uidStr == "player") {
-        lua_pushboolean(L, 1);
-        return 1;
-    }
-    uint64_t guid = resolveUnitGuid(gh, uidStr);
-    bool found = false;
-    for (const auto& m : pd.members) {
-        if (m.guid == guid) { found = true; break; }
-    }
-    lua_pushboolean(L, found);
+    const int index = game::raidRosterIndex(gh->getPartyData(), gh->getPlayerGuid(),
+                                            resolveUnitGuid(gh, uidStr));
+    if (index == 0) { return luaReturnNil(L); }
+    lua_pushnumber(L, index - 1);
     return 1;
 }
 
-// GetRaidRosterInfo(index) → name, rank, subgroup, level, class, fileName, zone, online, isDead, role, isML
+/// GetRaidRosterInfo(index) → name, rank, subgroup, level, class, fileName,
+/// zone, online, isDead, role, isML.
+///
+/// Build 8606, measured on a pair (_experiments/20261118T000639Z.raid_roster):
+///   Edricc,0,1,40,Rogue,ROGUE,Thousand Needles,1,nil,nil,nil   in sight
+///   Edricc,2,1,40,Rogue,ROGUE,Goldshire,1,nil,nil,nil          another zone
+///   Edricc,0,1,0,Rogue,ROGUE,Offline,nil,nil,nil,nil           offline
+///   Aedricc,0,1,40,Rogue,ROGUE,Elwynn Forest,1,1,nil,nil       dead
+/// Index order is raidRosterGuids: the others in roster order, the player
+/// last. Rank 2 leader, 1 assistant. Flags are 1 or nil, never false.
+/// Zone: the player's own zone text; a member out of sight names the area
+/// SMSG_PARTY_MEMBER_STATS reports (a subzone such as Goldshire or Theramore
+/// Isle); a member in sight names that area's zone (the server reported
+/// Mirage Raceway, native showed Thousand Needles). Class comes from the
+/// name cache for members never seen. Role is "MAINTANK"/"MAINASSIST" from
+/// the roster flags (GROUP_MAIN_TANK 0x04, GROUP_MAIN_ASSISTANT 0x02).
 static int lua_GetRaidRosterInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
-    int index = static_cast<int>(luaL_checknumber(L, 1));
-    if (!gh || index < 1) { return luaReturnNil(L); }
+    const int index = static_cast<int>(luaL_checknumber(L, 1));
+    if (!gh) { return luaReturnNil(L); }
     const auto& pd = gh->getPartyData();
-    if (index > static_cast<int>(pd.members.size())) { return luaReturnNil(L); }
-    const auto& m = pd.members[index - 1];
-    lua_pushstring(L, m.name.c_str());       // name
-    lua_pushnumber(L, m.guid == pd.leaderGuid ? 2 : (m.flags & 0x01 ? 1 : 0)); // rank (0=member, 1=assist, 2=leader)
-    lua_pushnumber(L, m.subGroup + 1);       // subgroup (1-indexed)
-    lua_pushnumber(L, m.level);              // level
-    // Class: resolve from entity if available
-    std::string className = "Unknown";
-    auto entity = gh->getEntityManager().getEntity(m.guid);
-    if (entity) {
-        uint32_t bytes0 = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
-        uint8_t classId = static_cast<uint8_t>((bytes0 >> 8) & 0xFF);
-        if (classId > 0 && classId < 12) className = kLuaClasses[classId];
+    const uint64_t self = gh->getPlayerGuid();
+    const auto guids = game::raidRosterGuids(pd, self);
+    if (index < 1 || index > static_cast<int>(guids.size())) { return luaReturnNil(L); }
+    const uint64_t guid = guids[static_cast<size_t>(index) - 1];
+    constexpr uint8_t kAssistant = 0x01, kMainAssist = 0x02, kMainTank = 0x04;
+    constexpr uint16_t kStatusDead = 0x0004;
+
+    std::string name, zone;
+    uint8_t flags = 0, subGroup = 0, classId = 0;
+    uint32_t level = 0;
+    bool online = false, dead = false;
+    if (guid == self) {
+        const auto* character = gh->getActiveCharacter();
+        assert(character && "raid roster without an active character");
+        name = character->name;
+        flags = pd.flags;
+        subGroup = pd.subGroup;
+        level = gh->getPlayerLevel();
+        classId = gh->getPlayerClass();
+        online = true;
+        dead = gh->isPlayerDead() && !gh->isPlayerGhost();
+        lua_getglobal(L, "GetRealZoneText");
+        lua_call(L, 0, 1);
+        if (const char* text = lua_tostring(L, -1)) zone = text;
+        lua_pop(L, 1);
+    } else {
+        const auto* m = findPartyMember(gh, guid);
+        assert(m);
+        name = m->name;
+        flags = m->flags;
+        subGroup = m->subGroup;
+        online = m->isOnline != 0;
+        auto entity = gh->getEntityManager().getEntity(guid);
+        if (entity) {
+            const uint32_t bytes0 = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+            classId = static_cast<uint8_t>((bytes0 >> 8) & 0xFF);
+        }
+        if (!luaClassToken(classId)) classId = gh->lookupPlayerClass(guid);
+        if (online) {
+            level = m->level;
+            dead = (m->onlineStatus & kStatusDead) != 0;
+            if (m->zoneId != 0)
+                zone = gh->getAreaName(entity ? gh->getAreaZoneId(m->zoneId) : m->zoneId);
+        } else {
+            zone = "Offline";  // PLAYER_OFFLINE
+        }
     }
-    lua_pushstring(L, className.c_str());    // class (localized)
-    lua_pushstring(L, className.c_str());    // fileName
-    lua_pushstring(L, "");                   // zone
-    lua_pushboolean(L, m.isOnline);          // online
-    lua_pushboolean(L, m.curHealth == 0);    // isDead
-    lua_pushstring(L, "NONE");               // role
-    lua_pushboolean(L, pd.looterGuid == m.guid ? 1 : 0); // isML
+    lua_pushstring(L, name.c_str());
+    lua_pushnumber(L, guid == pd.leaderGuid ? 2 : ((flags & kAssistant) ? 1 : 0));
+    lua_pushnumber(L, subGroup + 1);
+    lua_pushnumber(L, level);
+    if (const char* token = luaClassToken(classId)) {
+        lua_pushstring(L, kLuaClasses[classId]);
+        lua_pushstring(L, token);
+    } else {
+        lua_pushnil(L);
+        lua_pushnil(L);
+    }
+    if (zone.empty()) lua_pushnil(L); else lua_pushstring(L, zone.c_str());
+    if (online) lua_pushnumber(L, 1); else lua_pushnil(L);
+    if (dead) lua_pushnumber(L, 1); else lua_pushnil(L);
+    if (flags & kMainTank) lua_pushstring(L, "MAINTANK");
+    else if (flags & kMainAssist) lua_pushstring(L, "MAINASSIST");
+    else lua_pushnil(L);
+    if (pd.lootMethod == 2 && pd.looterGuid == guid) lua_pushnumber(L, 1); else lua_pushnil(L);
     return 11;
 }
 

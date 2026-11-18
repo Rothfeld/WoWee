@@ -452,9 +452,10 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
         int idx = 0;
         try { idx = std::stoi(uid.substr(4)); } catch (...) { return 0; }
         if (idx < 1 || idx > 40) return 0;
-        const auto& pd = gh->getPartyData();
-        if (idx <= static_cast<int>(pd.members.size()))
-            return pd.members[idx - 1].guid;
+        // The player is the last raid index, after the other members in
+        // roster order (game::raidRosterGuids).
+        const auto guids = game::raidRosterGuids(gh->getPartyData(), gh->getPlayerGuid());
+        if (idx <= static_cast<int>(guids.size())) return guids[idx - 1];
         return 0;
     }
     return 0;

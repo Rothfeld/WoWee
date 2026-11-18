@@ -4141,6 +4141,10 @@ public:
     static constexpr size_t PLAYER_EXPLORED_ZONES_COUNT = 128;
     std::string getAreaName(uint32_t areaId) const;
     std::optional<uint32_t> getAreaMapId(uint32_t areaId) const;
+    /// The zone an area belongs to: the AreaTable row reached by following
+    /// ParentAreaNum to the top (Goldshire 87 -> Elwynn Forest 12). An area
+    /// without a parent, or one not in the table, is its own zone.
+    uint32_t getAreaZoneId(uint32_t areaId) const;
 
     /// What GetZonePVPInfo answers for a zone: one of "sanctuary", "arena",
     /// "friendly", "hostile", "contested", or empty for a zone with no PvP
@@ -5066,6 +5070,7 @@ private:
     // Area name cache (lazy-loaded from WorldMapArea.dbc; maps AreaTable ID → display name)
     mutable std::unordered_map<uint32_t, std::string> areaNameCache_;
     mutable std::unordered_map<uint32_t, uint32_t> areaMapCache_;
+    mutable std::unordered_map<uint32_t, uint32_t> areaParentCache_;
     /// AreaTable.dbc field 4 (flags) and field 28 (team), filled alongside the
     /// names. Field numbers and the constants below are read off AzerothCore's
     /// DBCStructure.h and DBCEnums.h rather than guessed.

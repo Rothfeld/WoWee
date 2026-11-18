@@ -6594,17 +6594,17 @@ void registerSystemLuaAPI(lua_State* L) {
                 // with IsPartyLeader beside it, whether the chat frame offers
                 // to send a raid warning at all.
                 {"IsRaidOfficer", [](lua_State* L) -> int {
+            // The roster lists the others only; the player's own flags are
+            // the header byte, so searching the members always answered no.
+            // Native answers 1 for the raid leader and for an assistant, nil
+            // for a plain member (_experiments/20261118T000639Z.raid_roster).
             auto* gh = getGameHandler(L);
-            if (!gh) { lua_pushboolean(L, 0); return 1; }
-            const uint64_t self = gh->getPlayerGuid();
+            if (!gh) { lua_pushnil(L); return 1; }
+            const auto& pd = gh->getPartyData();
             constexpr uint8_t kMemberFlagAssistant = 0x01;
-            for (const auto& mem : gh->getPartyData().members) {
-                if (mem.guid == self) {
-                    lua_pushboolean(L, (mem.flags & kMemberFlagAssistant) ? 1 : 0);
-                    return 1;
-                }
-            }
-            lua_pushboolean(L, 0);
+            const bool officer = game::groupIsRaid(pd.groupType) &&
+                (pd.leaderGuid == gh->getPlayerGuid() || (pd.flags & kMemberFlagAssistant));
+            if (officer) lua_pushnumber(L, 1); else lua_pushnil(L);
             return 1;
         }},
                 {"IsReferAFriendLinked",     lua_ReturnNil},

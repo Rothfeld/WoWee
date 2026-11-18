@@ -8,9 +8,27 @@
 #include "addons/lua_api_helpers.hpp"
 #include "game/reputation_standing.hpp"
 #include "game/stationery.hpp"
+#include <cassert>
 #include "rendering/animation_controller.hpp"
 
 namespace wowee::addons {
+
+/// The name of whoever holds a raid index (game::raidRosterGuids order, the
+/// player last), or "" for an index nobody holds. CMSG_GROUP_CHANGE_SUB_GROUP
+/// and the swap name their members.
+static std::string raidIndexName(game::GameHandler* gh, int index) {
+    const auto guids = game::raidRosterGuids(gh->getPartyData(), gh->getPlayerGuid());
+    if (index < 1 || index > static_cast<int>(guids.size())) return {};
+    const uint64_t guid = guids[static_cast<size_t>(index) - 1];
+    if (guid == gh->getPlayerGuid()) {
+        const auto* character = gh->getActiveCharacter();
+        assert(character && "raid index of the player without an active character");
+        return character->name;
+    }
+    const auto* member = findPartyMember(gh, guid);
+    assert(member);
+    return member->name;
+}
 
 // Social APIs accept either a unit token or a literal player name. Resolve
 // tokens before constructing name-based party packets, including remote members.
@@ -810,11 +828,20 @@ static void setGroupAssistantByName(lua_State* L, bool apply) {
     auto* gh = getGameHandler(L);
     const char* who = luaL_optstring(L, 1, "");
     if (!gh || !who || !*who) return;
+    // A unit token as well: native PromoteToAssistant("raid1") and
+    // DemoteAssistant("raid1") change the assistant flag of that member.
+    std::string token(who);
+    toLowerInPlace(token);
+    if (const uint64_t guid = resolveUnitGuid(gh, token); findPartyMember(gh, guid)) {
+        gh->setGroupAssistant(guid, apply);
+        return;
+    }
     for (const auto& m : gh->getPartyData().members) {
         if (m.name != who) continue;
         gh->setGroupAssistant(m.guid, apply);
         return;
     }
+    LOG_WARNING(apply ? "PromoteToAssistant" : "DemoteAssistant", ": not a group member: ", who);
 }
 
 
@@ -2037,6 +2064,12 @@ void registerSocialLuaAPI(lua_State* L) {
             toLowerInPlace(uid);
             const uint64_t guid = resolveUnitGuid(gh, uid);
             if (guid == 0) return luaReturnFalse(L);
+            // The player is not in the member list; their flags are the
+            // roster header's.
+            if (guid == gh->getPlayerGuid() && gh->isInGroup()) {
+                lua_pushboolean(L, (gh->getPartyData().flags & 0x01) ? 1 : 0);
+                return 1;
+            }
             for (const auto& mem : gh->getPartyData().members) {
                 if (mem.guid == guid) { lua_pushboolean(L, (mem.flags & 0x01) ? 1 : 0); return 1; }
             }
@@ -2087,8 +2120,9 @@ void registerSocialLuaAPI(lua_State* L) {
             const char* unit = luaL_optstring(L, 2, "");
             toLowerInPlace(what);
             if (!gh || !unit || !*unit) return luaReturnFalse(L);
-            const uint8_t bit = (what == "maintank") ? 0x02
-                              : (what == "mainassist") ? 0x04 : 0x00;
+            // CMaNGOS TBC Group.h: GROUP_MAIN_ASSISTANT 0x02, GROUP_MAIN_TANK 0x04.
+            const uint8_t bit = (what == "maintank") ? 0x04
+                              : (what == "mainassist") ? 0x02 : 0x00;
             if (bit == 0) return luaReturnFalse(L);
             std::string uid(unit);
             toLowerInPlace(uid);
@@ -2142,10 +2176,8 @@ void registerSocialLuaAPI(lua_State* L) {
             const int idx   = static_cast<int>(luaL_optnumber(L, 1, 0));
             const int group = static_cast<int>(luaL_optnumber(L, 2, 0));
             if (!gh || idx < 1) return 0;
-            const auto& members = gh->getPartyData().members;
-            if (idx > static_cast<int>(members.size())) return 0;
-            gh->setRaidSubgroup(members[static_cast<size_t>(idx) - 1].name,
-                                static_cast<uint8_t>(group));
+            const std::string name = raidIndexName(gh, idx);
+            if (!name.empty()) gh->setRaidSubgroup(name, static_cast<uint8_t>(group));
             return 0;
         }},
                 {"SwapRaidSubgroup", [](lua_State* L) -> int {
@@ -2153,17 +2185,23 @@ void registerSocialLuaAPI(lua_State* L) {
             const int a = static_cast<int>(luaL_optnumber(L, 1, 0));
             const int b = static_cast<int>(luaL_optnumber(L, 2, 0));
             if (!gh || a < 1 || b < 1) return 0;
-            const auto& members = gh->getPartyData().members;
-            const int n = static_cast<int>(members.size());
-            if (a > n || b > n) return 0;
-            gh->swapRaidSubgroup(members[static_cast<size_t>(a) - 1].name,
-                                 members[static_cast<size_t>(b) - 1].name);
+            const std::string first = raidIndexName(gh, a), second = raidIndexName(gh, b);
+            if (!first.empty() && !second.empty()) gh->swapRaidSubgroup(first, second);
             return 0;
         }},
-                // Which row the raid roster has highlighted. Purely local -
-                // the raid UI reads it back through its own frames, and
-                // nothing is sent for it.
-                {"SetRaidRosterSelection", [](lua_State* L) -> int { (void)L; return 0; }},
+                // Which row the raid roster has highlighted. Purely local,
+                // nothing is sent; native reads it back through
+                // GetRaidRosterSelection (Set(1) then Get() answers 1).
+                {"SetRaidRosterSelection", [](lua_State* L) -> int {
+            lua_pushinteger(L, luaL_checkinteger(L, 1));
+            lua_setfield(L, LUA_REGISTRYINDEX, "wowee.raidRosterSelection");
+            return 0;
+        }},
+                {"GetRaidRosterSelection", [](lua_State* L) -> int {
+            lua_getfield(L, LUA_REGISTRYINDEX, "wowee.raidRosterSelection");
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); lua_pushinteger(L, 0); }
+            return 1;
+        }},
                 // Voice chat again: there is none, so nobody is muted or
                 // silenced and asking to mute them does nothing.
                 {"IsMuted",             luaReturnFalse},

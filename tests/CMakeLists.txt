@@ -2701,6 +2701,13 @@ wowee_add_test(test_party_wire_codes
     SOURCES test_party_wire_codes.cpp
             ${TEST_COMMON_SOURCES})
 
+# ── test_raid_roster_order ───────────────────────────────────
+# raid1..raidN: the others in SMSG_GROUP_LIST order, the player last, as
+# build 8606 numbers them. Indexing the member list alone left the player out.
+wowee_add_test(test_raid_roster_order
+    SOURCES test_raid_roster_order.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_stationery ──────────────────────────────────────────
 # The letterhead a letter is written on. Answering nil for it drew the mail
 # body's dark brown font on an empty black frame.

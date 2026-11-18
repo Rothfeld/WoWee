@@ -42,13 +42,17 @@ std::vector<std::string> unitEventTokens(const GameHandler& owner, uint64_t guid
     const auto primary = owner.guidToUnitId(guid);
     if (!primary.empty()) tokens.push_back(primary);
     const auto& party = owner.getPartyData();
-    const bool raid = groupIsRaid(party.groupType);
+    if (groupIsRaid(party.groupType)) {
+        if (const int index = raidRosterIndex(party, owner.getPlayerGuid(), guid))
+            tokens.push_back("raid" + std::to_string(index));
+        return tokens;
+    }
     size_t index = 0;
     for (const auto& member : party.members) {
-        if (!raid && member.guid == owner.getPlayerGuid()) continue;
+        if (member.guid == owner.getPlayerGuid()) continue;
         ++index;
         if (member.guid == guid) {
-            tokens.push_back(std::string(raid ? "raid" : "party") + std::to_string(index));
+            tokens.push_back("party" + std::to_string(index));
             break;
         }
     }

@@ -1997,6 +1997,9 @@ void SocialHandler::leaveGroup() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = GroupDisbandPacket::build();
     owner_.getSocket()->send(packet);
+    // A raid is left when the server's empty roster arrives; handleGroupList
+    // fires what native fires then (measured as the leaver).
+    if (groupIsRaid(partyData.groupType)) return;
     partyData = GroupListData{};
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});
@@ -2279,6 +2282,7 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     const uint64_t prevLooter = partyData.looterGuid;
     const uint64_t previousLeader = partyData.leaderGuid;
     const bool wasInGroup = !partyData.isEmpty();
+    const bool wasRaid = wasInGroup && groupIsRaid(partyData.groupType);
     GroupListData next;
     if (!GroupListParser::parse(packet, next, hasRoles, hasBattleGroupFlag)) return;
     for (auto& member : next.members) {
@@ -2374,7 +2378,37 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
         if (methodChanged || thresholdChanged || masterChanged)
             owner_.fireAddonEvent("PARTY_LOOT_METHOD_CHANGED", {});
     }
-    if (owner_.addonEventCallbackRef()) {
+    // GetRaidRosterInfo answers class and fileName for members out of sight
+    // from the name cache, as native does for a member it has never seen
+    // (the name query response is the only packet carrying a class).
+    for (const auto& m : partyData.members)
+        if (m.guid != owner_.getPlayerGuid()) owner_.queryPlayerName(m.guid);
+    if (owner_.addonEventCallbackRef() && wasRaid && !nowInGroup) {
+        // Leaving a raid, whether the player left or the raid disbanded
+        // around them: native fires RAID_ROSTER_UPDATE, RAID_TARGET_UPDATE,
+        // PARTY_MEMBERS_CHANGED and no leader event, both as the one who
+        // left and as the one left behind. The marks belonged to the group.
+        owner_.addonEventCallbackRef()("RAID_ROSTER_UPDATE", {});
+        raidTargetGuids_.fill(0);
+        owner_.addonEventCallbackRef()("RAID_TARGET_UPDATE", {});
+        raidMembersChangedPending_ = true;
+        owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});
+    } else if (owner_.addonEventCallbackRef() && groupIsRaid(partyData.groupType)) {
+        // Native, for every raid roster (convert, join, leave, subgroup move,
+        // assist, leader change, a member coming online): RAID_ROSTER_UPDATE,
+        // then PARTY_LEADER_CHANGED and PARTY_MEMBERS_CHANGED, the leader
+        // event even when the leader is unchanged. A swap (two rosters) gave
+        // RAID_ROSTER_UPDATE twice and the other two once, and a promotion
+        // (SMSG_GROUP_SET_LEADER then a roster) gave one leader event, so the
+        // two party events are fired once per frame from
+        // flushDeferredRaidEvents
+        // (_experiments/20261118T000639Z.raid_roster/measurements.log).
+        owner_.addonEventCallbackRef()("RAID_ROSTER_UPDATE", {});
+        raidLeaderChangedPending_ = true;
+        raidMembersChangedPending_ = true;
+        owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});
+        owner_.addonEventCallbackRef()("PLAYER_ROLES_ASSIGNED", {});
+    } else if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});
         owner_.addonEventCallbackRef()("PARTY_MEMBERS_CHANGED", {});
         if (partyData.leaderGuid != previousLeader)
@@ -2384,8 +2418,6 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
         // on this event and nothing else, so the roles were parsed, readable,
         // and never shown.
         owner_.addonEventCallbackRef()("PLAYER_ROLES_ASSIGNED", {});
-        if (groupIsRaid(partyData.groupType))
-            owner_.addonEventCallbackRef()("RAID_ROSTER_UPDATE", {});
     }
 }
 
@@ -2541,9 +2573,8 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
     if (owner_.addonEventCallbackRef()) {
         std::string unitId;
         if (groupIsRaid(partyData.groupType)) {
-            for (size_t i = 0; i < partyData.members.size(); ++i) {
-                if (partyData.members[i].guid == memberGuid) { unitId = "raid" + std::to_string(i + 1); break; }
-            }
+            if (const int index = raidRosterIndex(partyData, owner_.getPlayerGuid(), memberGuid))
+                unitId = "raid" + std::to_string(index);
         } else {
             int found = 0;
             for (const auto& m : partyData.members) {
@@ -4955,8 +4986,18 @@ void SocialHandler::handleGroupSetLeader(network::Packet& packet) {
     }
     if (!leaderName.empty())
         owner_.addSystemChatMessage(leaderName + " is now the group leader.");
-    owner_.fireAddonEvent("PARTY_LEADER_CHANGED", {});
+    // In a raid the roster that follows carries the change; native fires one
+    // PARTY_LEADER_CHANGED for both (see handleGroupList).
+    if (groupIsRaid(pd.groupType)) raidLeaderChangedPending_ = true;
+    else owner_.fireAddonEvent("PARTY_LEADER_CHANGED", {});
     owner_.fireAddonEvent("GROUP_ROSTER_UPDATE", {});
+}
+
+void SocialHandler::flushDeferredRaidEvents() {
+    if (raidLeaderChangedPending_) owner_.fireAddonEvent("PARTY_LEADER_CHANGED", {});
+    if (raidMembersChangedPending_) owner_.fireAddonEvent("PARTY_MEMBERS_CHANGED", {});
+    raidLeaderChangedPending_ = false;
+    raidMembersChangedPending_ = false;
 }
 
 // ============================================================
