@@ -8049,10 +8049,23 @@ void registerSystemLuaAPI(lua_State* L) {
             // GetSavedInstanceInfo(index) → name, id, reset, difficulty, locked, extended, instanceIDMostSig, isRaid, maxPlayers
             auto* gh = getGameHandler(L);
             int index = static_cast<int>(luaL_checknumber(L, 1));
-            if (!gh || index < 1) { return luaReturnNil(L); }
-            const auto& lockouts = gh->getInstanceLockouts();
-            if (index > static_cast<int>(lockouts.size())) { return luaReturnNil(L); }
-            const auto& l = lockouts[index - 1];
+            const bool tbc = interfaceVersion(L) >= 20000 && interfaceVersion(L) < 30000;
+            const auto* lockouts = gh ? &gh->getInstanceLockouts() : nullptr;
+            if (!lockouts || index < 1 || index > static_cast<int>(lockouts->size())) {
+                // 2.4.3 past the end: nil, 0 (pair 11).
+                if (!tbc) return luaReturnNil(L);
+                lua_pushnil(L); lua_pushnumber(L, 0);
+                return 2;
+            }
+            const auto& l = (*lockouts)[static_cast<size_t>(index) - 1];
+            // 2.4.3's three: name, the saved instance's id, seconds until it
+            // resets - what RaidInfoFrame_Update prints.
+            if (tbc) {
+                lua_pushstring(L, gh->getMapName(l.mapId).c_str());
+                lua_pushnumber(L, l.instanceId);
+                lua_pushnumber(L, static_cast<double>(l.resetTime - static_cast<uint64_t>(time(nullptr))));
+                return 3;
+            }
             // The real name, out of Map.dbc, which the client already reads for
             // its own loading screens. The number was a placeholder and it
             // reached the Raid Info panel as the instance's name.

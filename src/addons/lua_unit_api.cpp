@@ -2213,13 +2213,16 @@ static int lua_GetPartyMember(lua_State* L) {
 static int lua_UnitInParty(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* gh = getGameHandler(L);
-    if (!gh || !gh->isInGroup()) { return luaReturnNil(L); }
+    if (!gh) { return luaReturnNil(L); }
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
     const uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { return luaReturnNil(L); }
-    const auto& pd = gh->getPartyData();
+    // The player is always in their own party: 2.4.3 answers 1 for
+    // UnitInParty("player") alone as well as grouped (pair 11).
     if (guid == gh->getPlayerGuid()) { lua_pushnumber(L, 1); return 1; }
+    if (!gh->isInGroup()) { return luaReturnNil(L); }
+    const auto& pd = gh->getPartyData();
     const bool raid = game::groupIsRaid(pd.groupType);
     for (const auto& m : pd.members) {
         if (m.guid != guid) continue;
@@ -2270,7 +2273,12 @@ static int lua_GetRaidRosterInfo(lua_State* L) {
     const auto& pd = gh->getPartyData();
     const uint64_t self = gh->getPlayerGuid();
     const auto guids = game::raidRosterGuids(pd, self);
-    if (index < 1 || index > static_cast<int>(guids.size())) { return luaReturnNil(L); }
+    // A row nobody holds, in or out of a raid: nil, 0, 1, 1 on 2.4.3
+    // (pair 11).
+    if (index < 1 || index > static_cast<int>(guids.size())) {
+        lua_pushnil(L); lua_pushnumber(L, 0); lua_pushnumber(L, 1); lua_pushnumber(L, 1);
+        return 4;
+    }
     const uint64_t guid = guids[static_cast<size_t>(index) - 1];
     constexpr uint8_t kAssistant = 0x01, kMainAssist = 0x02, kMainTank = 0x04;
     constexpr uint16_t kStatusDead = 0x0004;

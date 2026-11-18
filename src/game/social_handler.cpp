@@ -3973,15 +3973,34 @@ void SocialHandler::handleRaidInstanceInfo(network::Packet& packet) {
     uint32_t count = packet.readUInt32();
     instanceLockouts_.clear();
     instanceLockouts_.reserve(count);
-    const size_t kEntrySize = useTbcFormat ? 13 : 18;
+    // TBC: map, seconds until reset, instance id, position - sixteen bytes
+    // (CMaNGOS-TBC Player::SendRaidInfo). The earlier reading of a
+    // difficulty, an absolute reset time and a lock byte took thirteen, so
+    // every lockout after the first was read from the wrong offset.
+    const size_t kEntrySize = isTbc ? 16 : (useTbcFormat ? 13 : 18);
+    const uint64_t now = static_cast<uint64_t>(time(nullptr));
     for (uint32_t i = 0; i < count; ++i) {
         if (packet.getRemainingSize() < kEntrySize) break;
         InstanceLockout lo;
-        lo.mapId = packet.readUInt32(); lo.difficulty = packet.readUInt32();
+        lo.mapId = packet.readUInt32();
+        if (isTbc) {
+            lo.resetTime = now + packet.readUInt32();
+            lo.instanceId = packet.readUInt32();
+            packet.readUInt32();   // its position in the list
+            lo.locked = true;
+            instanceLockouts_.push_back(lo);
+            continue;
+        }
+        lo.difficulty = packet.readUInt32();
         if (useTbcFormat) { lo.resetTime = packet.readUInt32(); lo.locked = packet.readUInt8() != 0; lo.extended = false; }
         else { lo.resetTime = packet.readUInt64(); lo.locked = packet.readUInt8() != 0; lo.extended = packet.readUInt8() != 0; }
         instanceLockouts_.push_back(lo);
     }
+    // The Raid tab's Raid Info button and list redraw on this and nothing
+    // else (RaidFrame_OnEvent), and the answer to RequestRaidInfo is the
+    // second one it counts: native's button is disabled with no saves, this
+    // client's stayed enabled because the event never came (pair 11).
+    owner_.fireAddonEvent("UPDATE_INSTANCE_INFO", {});
 }
 
 void SocialHandler::handleInstanceDifficulty(network::Packet& packet) {

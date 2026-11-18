@@ -431,6 +431,8 @@ enum class LfgTypeId : uint32_t {
 
 struct InstanceLockout {
     uint32_t mapId       = 0;
+    /// The saved instance's own id, which the TBC Raid Info panel prints.
+    uint32_t instanceId  = 0;
     uint32_t difficulty  = 0;
     uint64_t resetTime   = 0;
     bool     locked      = false;
