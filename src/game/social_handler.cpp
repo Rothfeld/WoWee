@@ -657,9 +657,8 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_DUEL_COMPLETE] = [this](network::Packet& packet) { handleDuelComplete(packet); };
     table[Opcode::SMSG_DUEL_WINNER] = [this](network::Packet& packet) { handleDuelWinner(packet); };
     table[Opcode::SMSG_DUEL_OUTOFBOUNDS] = [this](network::Packet& /*packet*/) {
-        owner_.addUIError("You are out of the duel area!");
-        owner_.raiseUiError("You are out of the duel area!");
-        // The interface runs the ten-second countdown to a forfeit off this
+        // No line of its own: UIParent shows the DUEL_OUTOFBOUNDS countdown
+        // popup. The interface runs the ten-second countdown to a forfeit off this
         // pair; the message alone says it once and never counts.
         if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("DUEL_OUTOFBOUNDS", {});
     };
@@ -690,13 +689,9 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
                 return std::static_pointer_cast<game::Unit>(ent)->getName();
             return {};
         };
-        std::string killerName = nameFor(killerGuid);
-        std::string victimName = nameFor(victimGuid);
-        if (!killerName.empty() && !victimName.empty()) {
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "%s killed %s.", killerName.c_str(), victimName.c_str());
-            owner_.addSystemChatMessage(buf);
-        }
+        // Combat log material, never a system chat line: TBC GlobalStrings
+        // has no "%s killed %s." line.
+        LOG_DEBUG("SMSG_PARTYKILLLOG: ", nameFor(killerGuid), " killed ", nameFor(victimGuid));
     };
 
     // ---- Guild ----
@@ -1810,7 +1805,6 @@ void SocialHandler::acceptDuel() {
     pendingDuelRequest_ = false;
     auto pkt = DuelAcceptPacket::build(duelArbiterGuid_);
     owner_.getSocket()->send(pkt);
-    owner_.addSystemChatMessage("You accept the duel.");
 }
 
 void SocialHandler::forfeitDuel() {
@@ -1818,7 +1812,6 @@ void SocialHandler::forfeitDuel() {
     pendingDuelRequest_ = false;
     auto packet = DuelCancelPacket::build(duelArbiterGuid_);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("You have forfeited the duel.");
 }
 
 void SocialHandler::proposeDuel(uint64_t targetGuid) {
@@ -1828,7 +1821,6 @@ void SocialHandler::proposeDuel(uint64_t targetGuid) {
     assert(parsers && "Duel requests require the active expansion packet parsers");
     auto packet = parsers->buildCastSpell(7266, targetGuid, 1);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("You have challenged your target to a duel.");
 }
 
 void SocialHandler::reportPlayer(uint64_t targetGuid, const std::string& reason) {
@@ -1853,8 +1845,10 @@ void SocialHandler::handleDuelRequested(network::Packet& packet) {
     duelChallengerGuid_ = packet.readUInt64();
     // The server sends this to both players. The one who issued the challenge
     // keeps the flag, to be able to call it off, and is not asked to accept it.
+    // "You have requested a duel." is the challenger's line (pair 6).
     if (duelChallengerGuid_ == owner_.getPlayerGuid()) {
         pendingDuelRequest_ = false;
+        owner_.systemGlobal("ERR_DUEL_REQUESTED");
         return;
     }
     duelChallengerName_.clear();
@@ -1871,7 +1865,6 @@ void SocialHandler::handleDuelRequested(network::Packet& packet) {
         duelChallengerName_ = tmp;
     }
     pendingDuelRequest_ = true;
-    owner_.addSystemChatMessage(duelChallengerName_ + " challenges you to a duel!");
     if (auto* ac = owner_.services().audioCoordinator)
         if (auto* sfx = ac->getUiSoundManager()) sfx->playTargetSelect();
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("DUEL_REQUESTED", {duelChallengerName_});
@@ -1881,7 +1874,9 @@ void SocialHandler::handleDuelComplete(network::Packet& packet) {
     if (!packet.hasRemaining(1)) return;
     uint8_t started = packet.readUInt8();
     pendingDuelRequest_ = false;
-    if (!started) owner_.addSystemChatMessage("The duel was cancelled.");
+    // Declined or withdrawn: "Duel cancelled." on the yellow info line, for
+    // both duellists (pair 6).
+    if (!started) owner_.infoGlobal("ERR_DUEL_CANCELLED");
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("DUEL_FINISHED", {});
 }
 
@@ -1890,10 +1885,8 @@ void SocialHandler::handleDuelWinner(network::Packet& packet) {
     uint8_t duelType = packet.readUInt8();
     std::string winner = packet.readString();
     std::string loser  = packet.readString();
-    std::string msg = (duelType == 1)
-        ? loser + " has fled from the duel. " + winner + " wins!"
-        : winner + " has defeated " + loser + " in a duel!";
-    owner_.addSystemChatMessage(msg);
+    // "Edricf has defeated Edrikf in a duel" (pair 6); %1$s winner, %2$s loser.
+    owner_.systemGlobal(duelType == 1 ? "DUEL_WINNER_RETREAT" : "DUEL_WINNER_KNOCKOUT", {winner, loser});
 }
 
 // ============================================================

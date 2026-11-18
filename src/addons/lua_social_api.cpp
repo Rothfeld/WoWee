@@ -3697,7 +3697,8 @@ void registerSocialLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             const char* unit = luaL_optstring(L, 1, "target");
             if (!gh || !unit) return 0;
-            std::string uid(unit);
+            // SecureCmdList DUEL passes the bare "/duel" through as "".
+            std::string uid(*unit ? unit : "target");
             toLowerInPlace(uid);
             if (const uint64_t guid = resolveUnitGuid(gh, uid)) gh->proposeDuel(guid);
             return 0;
