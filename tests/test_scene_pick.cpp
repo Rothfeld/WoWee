@@ -171,6 +171,30 @@ TEST_CASE("a door reaches as far as its Stand bounds grown by 5 yards", "[go-rea
     CHECK(withinGrownBox({0, 7.5f, -1.34f}, standMin, standMax, kScale, kReach));
 }
 
+TEST_CASE("a game object's frame has its left side on its left", "[go-reach]") {
+    // Server frame (x, y) = canonical (y, x); server yaw s = canonical yaw + pi/2.
+    // A point to the object's server-left, (-sin s, cos s), is local +Y.
+    using wowee::game::gameObjectLocalOffset;
+    for (const float s : {0.75f, -1.57952f, 3.14159f}) {
+        const float c = s - 1.5707963f;
+        const glm::vec3 serverLeft{-std::sin(s) * 5, std::cos(s) * 5, 0};
+        const glm::vec3 serverFront{std::cos(s) * 3, std::sin(s) * 3, 0};
+        const auto left = gameObjectLocalOffset({serverLeft.y, serverLeft.x, 0}, c);
+        const auto front = gameObjectLocalOffset({serverFront.y, serverFront.x, 0}, c);
+        CHECK(left.x == Catch::Approx(0).margin(1e-4));
+        CHECK(left.y == Catch::Approx(5).margin(1e-4));
+        CHECK(front.x == Catch::Approx(3).margin(1e-4));
+        CHECK(front.y == Catch::Approx(0).margin(1e-4));
+    }
+    // Zul'Aman's Wooden Door 186306 (server yaw -1.57952, size 0.935587, Stand
+    // bounds y -11.996..0.496) runs along its -Y side: a player before its
+    // middle is inside its reach.
+    const glm::vec3 offsetServer{117.6f - 123.256f, 911.0f - 914.421f, 0};
+    const auto local = gameObjectLocalOffset({offsetServer.y, offsetServer.x, 0}, -1.57952f - 1.5707963f);
+    CHECK(wowee::game::withinGrownBox(local, {-0.821f, -11.996f, 0.013f}, {0.345f, 0.496f, 9.001f},
+                                      0.935587f, 5.0f));
+}
+
 TEST_CASE("a game object custom animation index names Custom0-Custom3", "[go-anim]") {
     // Strange Gong 187359 (G_GongTroll01: Stand 0, Custom0 153) gets index 0
     // from Zul'Aman Object Visual 45222 (ACTIVATE_OBJECT misc 1 = ANIMATE_CUSTOM_0).

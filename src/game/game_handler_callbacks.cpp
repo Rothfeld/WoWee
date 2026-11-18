@@ -264,10 +264,7 @@ std::optional<bool> withinGameObjectReach(pipeline::AssetManager* assets,
     }
     // Into the model's frame: +X along its facing, +Y to its left. Canonical
     // yaw c faces (cos c, -sin c) in (north, west).
-    const float c = go.getOrientation();
-    const glm::vec3 local(offset.x * std::cos(c) - offset.y * std::sin(c),
-                          offset.x * std::sin(c) + offset.y * std::cos(c),
-                          offset.z);
+    const glm::vec3 local = gameObjectLocalOffset(offset, go.getOrientation());
     constexpr uint32_t kGoTypeDoor = 0;
     if (info->type == kGoTypeDoor) {
         // Stand bounds per display, loaded once.
@@ -3425,6 +3422,34 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                 LOG_INFO("GO click ignored, type not usable: guid=0x", std::hex, guid,
                          std::dec, " entry=", goEntry, " type=", goType, " (",
                          gameObjectTypeRule(goType).name, ") name='", goName, "'");
+                return;
+            }
+        }
+        // A GO_FLAG_LOCKED door the player has no key or opening for says so
+        // from any distance: original 2.4.3 (pair 17, Zul'Aman's Wooden Door
+        // 186306, flags 0x22, Lock 1745) answered "The door is locked." from
+        // 3.4 to 24 yards; WoWee said it was too far away.
+        if (goInfo && goType == 0 && gameObjectLockId(goInfo) != 0 &&
+            (entity->getField(fieldIndex(UF::GAMEOBJECT_FLAGS)) & 0x2u)) {
+            const uint16_t levelField = fieldIndex(UF::GAMEOBJECT_LEVEL);
+            const LockOpenPlan plan = planGameObjectOpen(
+                services_.assetManager, goInfo, spellHandler_->getKnownSpells(), getPlayerLevel(),
+                levelField != 0xFFFF ? entity->getField(levelField) : 0, true);
+            const auto locks = services_.assetManager->loadDBC("Lock.dbc");
+            assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
+            const int32_t row = locks->findRecordById(gameObjectLockId(goInfo));
+            assert(row >= 0 && "game object lock absent from Lock.dbc");
+            const Inventory& inv = getInventory();
+            bool keyHeld = false;
+            for (const uint32_t key : lockKeyItems(readLockRecord(*locks, static_cast<uint32_t>(row)), true)) {
+                keyHeld = keyHeld || inv.countItem(key) > 0;
+                for (int i = 0; i < inv.getKeyringSize() && !keyHeld; ++i)
+                    keyHeld = inv.getKeyringSlot(i).item.itemId == key;
+            }
+            if (plan.method != LockOpenMethod::CastSpell && !keyHeld) {
+                errorGlobal("ERR_DOOR_LOCKED");
+                LOG_INFO("GO locked door refused before reach: entry=", goEntry,
+                         " guid=0x", std::hex, guid, std::dec);
                 return;
             }
         }
