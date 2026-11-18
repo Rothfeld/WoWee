@@ -5297,11 +5297,16 @@ void InventoryHandler::rebuildOnlineInventory() {
     // Only mark equipment dirty if equipped item displayInfoIds actually changed.
     // Enchants count too: applying a sharpening stone leaves the displayInfoId alone
     // but changes the visual effect hanging off the weapon.
+    // So does an equipped item breaking or being repaired: the original stops
+    // drawing a weapon the moment it breaks (core/broken_weapon_visibility.hpp).
     std::array<uint32_t, 19> currentEquipDisplayIds{};
     std::array<uint64_t, 19> currentEquipEnchantIds{};
+    uint32_t currentEquipBroken = 0;
     for (int i = 0; i < 19; i++) {
         const auto& slot = owner_.inventoryRef().getEquipSlot(static_cast<EquipSlot>(i));
         if (!slot.empty()) currentEquipDisplayIds[i] = slot.item.displayInfoId;
+        if (!slot.empty() && slot.item.maxDurability > 0 && slot.item.curDurability == 0)
+            currentEquipBroken |= 1u << i;
 
         uint64_t guid = owner_.equipSlotGuidsRef()[i];
         if (guid != 0) {
@@ -5310,6 +5315,9 @@ void InventoryHandler::rebuildOnlineInventory() {
                 (static_cast<uint64_t>(permEnchantId) << 32) | tempEnchantId;
         }
     }
+    const bool brokenChanged = currentEquipBroken != lastEquipBroken_;
+    lastEquipBroken_ = currentEquipBroken;
+    if (brokenChanged) owner_.onlineEquipDirtyRef() = true;
     if (currentEquipDisplayIds != owner_.lastEquipDisplayIdsRef() ||
         currentEquipEnchantIds != lastEquipEnchantIds_) {
         owner_.lastEquipDisplayIdsRef() = currentEquipDisplayIds;

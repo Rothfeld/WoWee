@@ -21,7 +21,8 @@ UnitPortrait::~UnitPortrait() = default;
 
 void UnitPortrait::update(game::GameHandler& gameHandler,
                           pipeline::AssetManager* assets,
-                          rendering::Renderer* renderer, float deltaTime) {
+                          rendering::Renderer* renderer, float deltaTime,
+                          uint32_t hiddenSlots) {
     if (!assets || !renderer) return;
 
     // The character list is where a player's appearance is described; the unit
@@ -62,6 +63,7 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         if (gameHandler.getOtherPlayerEquipment(self->guid, displayIds, invTypes)) {
             for (size_t slot = 0; slot < displayIds.size(); ++slot) {
                 if (displayIds[slot] == 0) continue;
+                if (hiddenSlots & (1u << slot)) continue;
                 worn.push_back({.displayModel = displayIds[slot],
                                 .inventoryType = invTypes[slot],
                                 .enchantment = 0u});

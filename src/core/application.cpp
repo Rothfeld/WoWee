@@ -5026,7 +5026,9 @@ void Application::render() {
                         paperdollFacing_ = doll->modelFacing;
                     }
                     paperdollModel_.update(*gameHandler, assetManager.get(),
-                                           renderer.get(), io.DeltaTime);
+                                           renderer.get(), io.DeltaTime,
+                                           appearanceComposer_
+                                               ? appearanceComposer_->hiddenBrokenWeaponSlots() : 0u);
                     doll->externalTexture = paperdollModel_.textureId();
                 } else if (doll) {
                     doll->externalTexture = 0;
@@ -5277,7 +5279,9 @@ void Application::render() {
                         uint8_t race = 0, gender = 0, facial = 0;
                         uint32_t appearance = 0;
                         if (guid == gameHandler->getPlayerGuid()) {
-                            slot->update(*gameHandler, assetManager.get(), renderer.get(), io.DeltaTime);
+                            slot->update(*gameHandler, assetManager.get(), renderer.get(), io.DeltaTime,
+                                         appearanceComposer_
+                                             ? appearanceComposer_->hiddenBrokenWeaponSlots() : 0u);
                             shown = slot->textureId() != 0;
                         } else if (gameHandler->getPlayerAppearance(guid, race, gender, appearance, facial)) {
                             std::vector<game::EquipmentItem> worn;

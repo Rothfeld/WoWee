@@ -1156,6 +1156,11 @@ wowee_add_test(test_breath_attachment
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(breath_attachment PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_broken_weapon_visibility ────────────────────────────
+# The local player's weapons the original stops drawing when they break.
+wowee_add_test(test_broken_weapon_visibility
+    SOURCES test_broken_weapon_visibility.cpp)
+
 # ── test_footfall_events ─────────────────────────────────────
 # Per-foot footfall events that place footprints.
 wowee_add_test(test_footfall_events

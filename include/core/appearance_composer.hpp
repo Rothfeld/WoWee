@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "core/broken_weapon_visibility.hpp"
 #include "core/geoset_rules.hpp"
 #include "game/character.hpp"
 #include "game/inventory.hpp"
@@ -67,6 +68,11 @@ public:
     // Equipment weapon loading (reads inventory, attaches weapon M2 models)
     void loadEquippedWeapons();
 
+    /// Equipment slots (bit = EquipSlot) whose weapon the original stopped
+    /// drawing when it broke; the character frame's figure leaves them out
+    /// too. See BrokenWeaponVisibility.
+    [[nodiscard]] uint32_t hiddenBrokenWeaponSlots() const;
+
     // Weapon sheathe state
     // Weapon sheath state (0 unarmed, 1 melee, 2 ranged), sent to the server.
     void setSheathState(uint8_t sheathState);
@@ -130,6 +136,7 @@ private:
     bool showingMiningPick_ = false;
     uint32_t miningPickInstanceId_ = 0;
     bool showingFishingPole_ = false;
+    BrokenWeaponVisibility brokenWeapons_;
 };
 
 } // namespace core

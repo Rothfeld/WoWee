@@ -40,8 +40,11 @@ public:
     /// Builds the offscreen view on first use and keeps it in step with the
     /// player's appearance and equipment afterwards. Safe to call every frame;
     /// it reloads the model only when something about it actually changed.
+    /// `hiddenSlots` (bit = EquipSlot) are left off the figure: the weapons
+    /// the world model stopped drawing when they broke.
     void update(game::GameHandler& gameHandler, pipeline::AssetManager* assets,
-                rendering::Renderer* renderer, float deltaTime);
+                rendering::Renderer* renderer, float deltaTime,
+                uint32_t hiddenSlots = 0);
 
     /// Answers whether there is actually a model to show. A load can fail -
     /// a race this client has no model path for, an M2 the install is missing

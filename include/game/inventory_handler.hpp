@@ -675,6 +675,7 @@ private:
     // Per-equip-slot (permanentEnchant << 32 | temporaryEnchant), so an enchant
     // change marks equipment dirty even though the displayInfoId is unchanged.
     std::array<uint64_t, 19> lastEquipEnchantIds_{};
+    uint32_t lastEquipBroken_ = 0;  // bit = equipment slot at durability 0
 
     // ---- Item text state ----
     bool        itemTextOpen_   = false;

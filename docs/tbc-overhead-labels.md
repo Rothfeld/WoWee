@@ -63,6 +63,15 @@ player equipment. Changes to slot metadata or sheath state rebuild attachments.
 Non-humanoid creature models can carry weapons when their M2 defines the required
 attachment; CreatureDisplayInfoExtra is not a prerequisite.
 
+Broken weapons (`include/core/broken_weapon_visibility.hpp`): the original stops
+drawing the local player's weapon when its ITEM_FIELD_DURABILITY drops to 0,
+and draws it again on repair, any sheath change, re-equip or a new player model
+(login, map change). Hidden too is a weapon held in the same hand in the current
+sheath state (off hand vs bow, left hand). A weapon already broken at login is
+drawn. Armour never hides; other players' broken weapons stay drawn (their item
+objects never reach the client). The character frame's figure follows the world
+model. Evidence: `_experiments/20261118T124909.broken_items/` in the workspace.
+
 NPC corner tooltips use GameTooltip:SetUnit and the default FrameXML anchor.
 The engine supplies trade title, level, faction, PvP flag, and a named child
 health StatusBar. Non-unit tooltip setters clear the unit identity so item and

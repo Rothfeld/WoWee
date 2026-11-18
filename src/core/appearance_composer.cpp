@@ -364,6 +364,29 @@ void AppearanceComposer::loadEquippedWeapons() {
 
     auto& inventory = gameHandler_->getInventory();
 
+    // Which weapons the original stopped drawing when they broke.
+    {
+        BrokenWeaponVisibility::Snapshot snapshot{};
+        for (int i = 0; i < BrokenWeaponVisibility::kSlots; ++i) {
+            const auto slot = static_cast<game::EquipSlot>(
+                static_cast<int>(game::EquipSlot::MAIN_HAND) + i);
+            const auto& equipped = inventory.getEquipSlot(slot);
+            if (equipped.empty()) continue;
+            snapshot[i] = {
+                .itemGuid = gameHandler_->getEquipSlotGuid(static_cast<int>(slot)),
+                .broken = equipped.item.maxDurability > 0 && equipped.item.curDurability == 0,
+                .heldPoint = heldAttachment(slot, equipped.item.inventoryType),
+                .heldSheathState = heldSheathState(slot)};
+        }
+        brokenWeapons_.observe(snapshot, charInstanceId, sheathState_);
+    }
+    const auto brokenHidden = [this](game::EquipSlot slot) {
+        const bool hidden = brokenWeapons_.hidden(
+            static_cast<int>(slot) - static_cast<int>(game::EquipSlot::MAIN_HAND));
+        if (hidden) LOG_INFO("loadEquippedWeapons: slot ", int(slot), " not drawn since it broke");
+        return hidden;
+    };
+
     loadEquippedHelm(inventory);
 
     // Load ItemDisplayInfo.dbc
@@ -380,6 +403,7 @@ void AppearanceComposer::loadEquippedWeapons() {
     for (const auto slot : {game::EquipSlot::MAIN_HAND, game::EquipSlot::OFF_HAND}) {
         const auto& equipSlot = inventory.getEquipSlot(slot);
         if (equipSlot.empty() || equipSlot.item.displayInfoId == 0) continue;
+        if (brokenHidden(slot)) continue;
         const auto* info = gameHandler_->getItemInfo(equipSlot.item.itemId);
         if (!info) {
             LOG_WARNING("loadEquippedWeapons: item ", equipSlot.item.itemId, " not queried yet");
@@ -450,7 +474,7 @@ void AppearanceComposer::loadEquippedWeapons() {
     // In hand only in the ranged sheath state; otherwise at its sheath point.
     const auto& rangedSlot = inventory.getEquipSlot(game::EquipSlot::RANGED);
     const auto* rangedInfo = rangedSlot.empty() ? nullptr : gameHandler_->getItemInfo(rangedSlot.item.itemId);
-    if (rangedInfo && rangedSlot.item.displayInfoId != 0) {
+    if (rangedInfo && rangedSlot.item.displayInfoId != 0 && !brokenHidden(game::EquipSlot::RANGED)) {
         uint32_t displayInfoId = rangedSlot.item.displayInfoId;
         int32_t recIdx = displayInfoDbc->findRecordById(displayInfoId);
         if (recIdx >= 0) {
@@ -495,6 +519,15 @@ void AppearanceComposer::loadEquippedWeapons() {
             }
         }
     }
+}
+
+uint32_t AppearanceComposer::hiddenBrokenWeaponSlots() const {
+    uint32_t slots = 0;
+    for (int i = 0; i < BrokenWeaponVisibility::kSlots; ++i) {
+        if (brokenWeapons_.hidden(i))
+            slots |= 1u << (static_cast<int>(game::EquipSlot::MAIN_HAND) + i);
+    }
+    return slots;
 }
 
 void AppearanceComposer::showMiningPick(bool show) {
@@ -667,6 +700,8 @@ void AppearanceComposer::setSheathState(uint8_t sheathState) {
     if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())
         renderer_->getCharacterRenderer()->setSheathState(renderer_->getCharacterInstanceId(), sheathState);
     if (gameHandler_) gameHandler_->sendSetSheathed(sheathState);
+    // A sheath change draws the weapons that broke again.
+    if (brokenWeapons_.any()) loadEquippedWeapons();
 }
 
 void AppearanceComposer::syncServerSheathState(uint8_t serverSheathState) {
@@ -682,6 +717,7 @@ void AppearanceComposer::syncServerSheathState(uint8_t serverSheathState) {
         renderer_->getAnimationController()->setRangedWeaponActive(showingRanged_);
     if (renderer_ && renderer_->getCharacterRenderer() && renderer_->getCharacterInstanceId())
         renderer_->getCharacterRenderer()->setSheathState(renderer_->getCharacterInstanceId(), sheathState_);
+    if (brokenWeapons_.any()) loadEquippedWeapons();
 }
 
 void AppearanceComposer::toggleWeaponsSheathed() {
