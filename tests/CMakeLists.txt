@@ -1338,6 +1338,11 @@ register_test_target(test_blp_alpha_silhouette)
 wowee_add_test(test_unit_size
     SOURCES test_unit_size.cpp)
 
+# ── test_rider_pose ──────────────────────────────────────────
+# Mounted units: rider seat poses, mount scale, create-block Flying splines.
+wowee_add_test(test_rider_pose
+    SOURCES test_rider_pose.cpp)
+
 # ── test_frustum ─────────────────────────────────────────────
 wowee_add_test(test_frustum
     SOURCES test_frustum.cpp

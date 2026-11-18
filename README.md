@@ -1696,6 +1696,24 @@ and animate locomotion on the mount while keeping the rider in the mount pose.
 Despawn removes both instances. Mounted nameplates use attachment 29 on the
 posed rider. General Marcus Jonathan uses mount display 2410.
 
+A mount is drawn at its own display and model scale times its rider's drawn
+scale, and the seat (MountMain) rises with it. In the original the Dragonmaw
+Wind Reaver (rider display 21546, authored at 2.0) sits on a nether drake
+twice a player's; `.npc setmodel 1139` (1.0) on the same unit shrinks the
+drake to player size. A rider stays seated: its idle, locomotion and melee
+stances are Mount (91), and its swings, casts, cast holds and wounds play
+from SpineLow up over it (`setInstanceRiding`, `rendering/animation/rider_pose.hpp`).
+Natively the Wind Reaver's legs stayed in the seat through every swing and
+cast. A display change rebuilds the rider and puts the mount back. A dying
+creature loses its mount in the same update (CMaNGOS unmounts on death); the
+rider keeps its death pose and lies on the ground, as natively. A unit that
+comes into view mid-way along a Flying spline (0x200 in its create block, as
+Dragonmaw Sky Stalkers on their HOVER paths) flies, as SMSG_MONSTER_MOVE
+already made it. `build/bin/test_rider_pose` covers these rules. Evidence:
+`_experiments/20261118T150000Z.npc_mount` in the workspace. Not established:
+the mount's own animation while its rider fights (natively the drake left its
+idle for a ground stance), and the Wyrmcaller's orange cast beam.
+
 TBC MCLQ freshwater preserves per-vertex depth and authored surface height
 through both individual and merged terrain meshes. Liquid IDs use the same
 1=water, 2=ocean, 3=magma, 4=slime convention as the renderer. Legacy terrain

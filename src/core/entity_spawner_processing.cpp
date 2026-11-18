@@ -20,6 +20,7 @@
 #include "pipeline/wmo_loader.hpp"
 #include "pipeline/wmo_group_path.hpp"
 #include "rendering/animation/animation_ids.hpp"
+#include "rendering/animation/rider_pose.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -1688,7 +1689,11 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
 
         glm::vec3 pos(0.0f);
         cr->getInstancePosition(riderInstance, pos);
-        const float mountScale = creatureDisplayScale(displayId) * creatureModelScale(displayId);
+        // The rider's drawn scale carries over to its mount (rider_pose.hpp).
+        const float riderScale = cr->getInstanceScale(riderInstance);
+        const float mountScale = rendering::remoteMountScale(
+            riderScale, creatureDisplayScale(displayId), creatureModelScale(displayId));
+        riderHeight *= riderScale;
         uint32_t mountInstance = cr->createInstance(modelId, pos, glm::vec3(0.0f), mountScale);
         if (mountInstance != 0) {
             cr->setInstanceCreatureMaterialRules(mountInstance, true);
@@ -1706,11 +1711,13 @@ void EntitySpawner::processPendingRemotePlayerMounts() {
                 mountAnim = moving ? rendering::anim::RUN : rendering::anim::STAND;
             }
             cr->playAnimation(mountInstance, mountAnim, true);
+            cr->setInstanceRiding(riderInstance, true);
             cr->playAnimation(riderInstance, rendering::anim::MOUNT, true);
             remotePlayerMounts_[guid] = {.displayId = displayId, .modelId = modelId,
                                          .instanceId = mountInstance, .riderHeight = riderHeight};
             LOG_INFO("Remote player mounted: guid=0x", std::hex, guid, std::dec,
                      " displayId=", displayId, " riderHeight=", riderHeight,
+                     " scale=", mountScale, " (rider ", riderScale, ")",
                      " model=", modelPath);
         }
         pendingRemotePlayerMounts_.erase(it);

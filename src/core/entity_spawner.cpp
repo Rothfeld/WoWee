@@ -368,7 +368,13 @@ void EntitySpawner::removeRemotePlayerMount(uint64_t guid) {
             if (it->second.instanceId != 0) cr->removeInstance(it->second.instanceId);
             const auto riderInstance = characterInstanceIdForGuid(guid);
             if (riderInstance) {
-                cr->playAnimation(riderInstance, rendering::anim::STAND, true);
+                cr->setInstanceRiding(riderInstance, false);
+                // CMaNGOS unmounts a creature as it dies (Creature::SetDeathState
+                // JUST_DIED): the field clears with the death, and the corpse
+                // keeps lying where the rider fell, as in the original
+                // (Wind Reaver .die: mount gone, rider dead on the ground).
+                if (!cr->isInstanceDead(riderInstance))
+                    cr->playAnimation(riderInstance, remoteIdleAnimation(guid), true);
             }
         }
     }
@@ -2603,6 +2609,10 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     creatureModelIds_[guid] = modelId;
     creatureDisplayIds_[guid] = displayId;
     creatureRenderPosCache_[guid] = renderPos;
+    // A display change rebuilds the rider and drops its mount with the old
+    // instance; the retained mount field puts it back (.npc setmodel on a
+    // mounted Wind Reaver left it on foot).
+    if (unit.getMountDisplayId() != 0) setRemotePlayerMountDisplayId(guid, unit.getMountDisplayId());
     if (weaponsAttachedNow) {
         creatureWeaponsAttached_.insert(guid);
         creatureWeaponAttachAttempts_.erase(guid);

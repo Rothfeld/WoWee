@@ -1,6 +1,7 @@
 #include "game/entity_controller.hpp"
 #include "game/social_handler.hpp"
 #include "game/corpse_fields.hpp"
+#include "game/spline_flight.hpp"
 #include "core/env_flag.hpp"
 #include "game/game_handler.hpp"
 #include "game/protocol_constants.hpp"
@@ -63,6 +64,16 @@ void restoreMovementSpline(const UpdateBlock& block, Entity& entity) {
     LOG_DEBUG("Restored movement spline: guid=0x", std::hex, block.guid, std::dec,
               " elapsed=", block.splineElapsedMs, " duration=", block.splineDurationMs,
               " nodes=", path.size(), " position=(", entity.getX(), ",", entity.getY(), ",", entity.getZ(), ")");
+}
+
+// The block's movement flags, flying while it follows a TBC Flying spline
+// (spline_flight.hpp).
+uint32_t unitCreateMoveFlags(const UpdateBlock& block) {
+    if (!isActiveExpansion("tbc")) return block.moveFlags;
+    return createBlockUnitMoveFlags(block.moveFlags, block.splineFlags,
+                                    static_cast<uint32_t>(block.splinePath.size()),
+                                    block.splineDurationMs,
+                                    static_cast<uint32_t>(MovementFlags::FLYING));
 }
 
 int updateObjectBlocksBudgetPerUpdate(WorldState state) {
@@ -2249,9 +2260,10 @@ void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<En
     }
     if (unit->getDisplayId() != 0) {
         dispatchEntitySpawn(block.guid, block.objectType, entity, unit, unitInitiallyDead);
-        if (block.hasMovement && block.moveFlags != 0 && owner_.unitMoveFlagsCallbackRef() &&
+        const uint32_t moveFlags = unitCreateMoveFlags(block);
+        if (block.hasMovement && moveFlags != 0 && owner_.unitMoveFlagsCallbackRef() &&
             block.guid != owner_.getPlayerGuid()) {
-            owner_.unitMoveFlagsCallbackRef()(block.guid, block.moveFlags, ~0u);
+            owner_.unitMoveFlagsCallbackRef()(block.guid, moveFlags, ~0u);
         }
     }
 }
@@ -2320,9 +2332,10 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
     // Spawn dispatch
     if (unit->getDisplayId() != 0) {
         dispatchEntitySpawn(block.guid, block.objectType, entity, unit, unitInitiallyDead);
-        if (block.hasMovement && block.moveFlags != 0 && owner_.unitMoveFlagsCallbackRef() &&
+        const uint32_t moveFlags = unitCreateMoveFlags(block);
+        if (block.hasMovement && moveFlags != 0 && owner_.unitMoveFlagsCallbackRef() &&
             block.guid != owner_.getPlayerGuid()) {
-            owner_.unitMoveFlagsCallbackRef()(block.guid, block.moveFlags, ~0u);
+            owner_.unitMoveFlagsCallbackRef()(block.guid, moveFlags, ~0u);
         }
     }
 

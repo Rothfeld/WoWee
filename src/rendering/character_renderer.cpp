@@ -1,5 +1,6 @@
 #include <cassert>
 #include "rendering/animation/stand_pose.hpp"
+#include "rendering/animation/rider_pose.hpp"
 /**
  * CharacterRenderer - GPU rendering of M2 character models with skeletal animation (Vulkan)
  *
@@ -76,6 +77,8 @@
 
 namespace wowee {
 namespace rendering {
+
+constexpr int32_t kKeyBoneSpineLow = 4;  // M2 key bone of the upper-body layer
 
 namespace {
 
@@ -2088,6 +2091,52 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
 
     auto& instance = it->second;
     auto& model = models[instance.modelId].data;
+
+    // A rider keeps its seat (rider_pose.hpp): seat poses are Mount, the
+    // rest plays from SpineLow up. A model without the requested animation
+    // shows its AnimationData fallback there; one that falls back to a seat
+    // pose leaves the rider seated.
+    if (instance.riding && (animationId == anim::DEATH || animationId == anim::DEAD)) {
+        instance.upperBodySequenceIndex = -1;
+        instance.upperBodyReturnAnim = 0;
+    } else if (instance.riding) {
+        const auto riderSequence = [&](uint32_t wanted) -> uint32_t {
+            for (int hop = 0; hop < 16; ++hop) {
+                if (riderKeepsSeat(wanted)) return 0;
+                for (const auto& sequence : model.sequences)
+                    if (sequence.id == wanted && sequence.variationIndex == 0 && sequence.duration > 0)
+                        return wanted;
+                const auto next = animationFallback(wanted);
+                if (!next || *next == wanted) return 0;
+                wanted = *next;
+            }
+            return 0;
+        };
+        const bool hasSpine = std::any_of(model.bones.begin(), model.bones.end(),
+            [](const auto& bone) { return bone.keyBoneId == kKeyBoneSpineLow; });
+        if (hasSpine) {
+            if (riderKeepsSeat(animationId)) {
+                // Mount itself is the per-frame seat repair and the mount's
+                // locomotion changes; it leaves a cast or swing running.
+                if (animationId != anim::MOUNT) {
+                    instance.upperBodySequenceIndex = -1;
+                    instance.upperBodyReturnAnim = 0;
+                }
+                if (instance.currentAnimationId == anim::MOUNT && instance.currentSequenceIndex >= 0) return;
+                animationId = anim::MOUNT;
+                loop = true;
+            } else {
+                const uint32_t upper = riderSequence(animationId);
+                if (upper == 0) return;
+                const uint32_t held = loop ? 0 : riderSequence(oneShotReturnAnim);
+                setUpperBodyAnimation(instanceId, 0);
+                setUpperBodyAnimation(instanceId, upper, loop);
+                instance.upperBodyReturnAnim = held;
+                return;
+            }
+        }
+    }
+
     instance.oneShotReturnAnim = loop ? 0 : oneShotReturnAnim;
     instance.holdFinalPose = holdFinalPose;
 
@@ -2419,8 +2468,18 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             inst.upperBodyAnimationTime += deltaTime * 1000.0f;
             if (inst.upperBodyAnimationLoop)
                 inst.upperBodyAnimationTime = std::fmod(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
-            else if (inst.upperBodyAnimationTime >= upper.duration || !isSeatedBaseAnimation(inst.currentAnimationId))
+            else if (inst.upperBodyAnimationTime >= upper.duration ||
+                     !(isSeatedBaseAnimation(inst.currentAnimationId) ||
+                       (inst.riding && inst.currentAnimationId == anim::MOUNT))) {
                 inst.upperBodySequenceIndex = -1;
+                // A rider's swing or cast ends in the hold it interrupted
+                // (a channel, a precast); otherwise only the seat remains.
+                if (inst.riding && inst.currentAnimationId == anim::MOUNT && inst.upperBodyReturnAnim != 0) {
+                    const uint32_t held = inst.upperBodyReturnAnim;
+                    inst.upperBodyReturnAnim = 0;
+                    setUpperBodyAnimation(pair.first, held, true);
+                }
+            }
         }
 
         // Always advance animation time (cheap)
@@ -2806,7 +2865,6 @@ uint32_t CharacterRenderer::displayParticleColorId(uint32_t displayId) {
 
 constexpr int32_t kKeyBoneShoulderL = 2;
 constexpr int32_t kKeyBoneShoulderR = 3;
-constexpr int32_t kKeyBoneSpineLow = 4;
 
 void CharacterRenderer::setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim) {
     auto it = instances.find(instanceId);
@@ -2835,6 +2893,19 @@ void CharacterRenderer::setArmAnimations(uint32_t instanceId, uint32_t leftArmAn
                             : bone.keyBoneId == kKeyBoneShoulderR ? 1
                             : bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < i
                                 ? instance.boneArm[bone.parentBone] : -1;
+    }
+}
+
+void CharacterRenderer::setInstanceRiding(uint32_t instanceId, bool riding) {
+    auto found = instances.find(instanceId);
+    assert(found != instances.end());
+    auto& instance = found->second;
+    if (instance.riding == riding) return;
+    instance.riding = riding;
+    if (!riding) {
+        instance.upperBodySequenceIndex = -1;
+        instance.upperBodyAnimationTime = 0.0f;
+        instance.upperBodyReturnAnim = 0;
     }
 }
 

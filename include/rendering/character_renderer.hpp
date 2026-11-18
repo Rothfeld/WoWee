@@ -119,6 +119,11 @@ public:
     void setArmAnimations(uint32_t instanceId, uint32_t leftArmAnim, uint32_t rightArmAnim);
     // Loop an animation on SpineLow and its descendants; zero removes the layer.
     void setUpperBodyAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true);
+    /// The instance rides a mount. While it does, playAnimation shows the
+    /// seat poses (rider_pose.hpp riderKeepsSeat) as Mount (91) and plays
+    /// every other animation above the spine over it; Death and Dead still
+    /// take the whole body.
+    void setInstanceRiding(uint32_t instanceId, bool riding);
 
     void update(float deltaTime, const glm::vec3& cameraPos = glm::vec3(0.0f));
 
@@ -412,6 +417,10 @@ private:
         float upperBodyAnimationTime = 0.0f;
         bool upperBodyAnimationLoop = true;
         std::vector<bool> upperBodyBones;
+        // Rides a mount (setInstanceRiding); a rider's one-shot above the
+        // spine goes on to this held animation, 0 for none.
+        bool riding = false;
+        uint32_t upperBodyReturnAnim = 0;
         int blendSequenceIndex = -1;
         float blendAnimationTime = 0.0f;
         bool blendAnimationLoop = true;
