@@ -150,6 +150,13 @@ inline void layout(std::vector<Box>& newestFirst) {
     }
 }
 
+/// A number whose anchor would be born above that top line starts this far
+/// below the point of the unit's vertical axis that projects onto the line
+/// instead (Outland Mtn. Giant at 3-8 yd, ten camera pitches: 1.63-1.73 yd,
+/// first visible frame, same convention as the ordinary anchor; pair 7
+/// fcttrack.py). Below the line the anchor is unchanged.
+constexpr float kOffTopDrop = 1.67f;
+
 /// Applied after the layout, in pixels: `uiScale` is pixels per UI unit.
 inline void clampToTop(Box& box, float uiScale) {
     box.top = std::max(box.top, kTopBaseline * uiScale - box.fontPx);

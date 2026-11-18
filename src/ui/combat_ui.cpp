@@ -365,6 +365,18 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
             glm::vec3 anchor;
             if (nameAnchorFor(entry.dstGuid, anchor)) {
                 anchor.z += fct::kNameLineOffset;
+                {
+                    // Height on this vertical line that projects onto the top line.
+                    const glm::vec4 a = viewProj * glm::vec4(anchor.x, anchor.y, 0.0f, 1.0f);
+                    const glm::vec4 b = viewProj[2];
+                    const float lineNdc = 2.0f * fct::kTopBaseline * uiScale / screenH - 1.0f;
+                    const float denominator = b.y - lineNdc * b.w;
+                    const glm::vec4 birth = viewProj * glm::vec4(anchor, 1.0f);
+                    if (std::abs(denominator) > 1e-6f && birth.w > 0.01f &&
+                        (birth.y / birth.w * 0.5f + 0.5f) * screenH < fct::kTopBaseline * uiScale) {
+                        anchor.z = (lineNdc * a.w - a.y) / denominator - fct::kOffTopDrop;
+                    }
+                }
                 if (!isCrit) anchor.z += fct::kRiseYardsPerSecond * entry.age;
                 const glm::vec4 clipPos = viewProj * glm::vec4(anchor, 1.0f);
                 if (clipPos.w > 0.01f) {
