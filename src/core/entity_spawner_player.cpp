@@ -1695,8 +1695,15 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             gameObjectDisplayIdModelCache_[displayId] = modelId;
         }
 
+        // Every server game object gets its own instance. Position dedup would
+        // hand a second object of the same display at the same spot the first
+        // one's instance, with the first one's scale: Impaling Spine 39837
+        // summons Naj'entus Spine 185584 (size 6) and its trap 185601 (size 1,
+        // same display 7362) on the impaled player; when the trap arrived
+        // first only a size-1 spine at the feet was drawn, and despawning
+        // either object removed both.
         uint32_t instanceId = m2Renderer->createInstance(modelId, renderPos,
-            glm::vec3(0.0f, 0.0f, renderYawM2go), scale);
+            glm::vec3(0.0f, 0.0f, renderYawM2go), scale, /*allowPositionDedup=*/false);
         if (instanceId == 0) {
             LOG_WARNING("Failed to create gameobject instance for guid 0x", std::hex, guid, std::dec);
             return;
