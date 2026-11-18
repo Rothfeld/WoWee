@@ -71,9 +71,9 @@ void M2Instance::recomputeCachedCullFactors() {
             for (int y = 0; y < 2; ++y) {
                 for (int z = 0; z < 2; ++z) {
                     const glm::vec3 local(
-                        x ? cachedModel->boundMax.x : cachedModel->boundMin.x,
-                        y ? cachedModel->boundMax.y : cachedModel->boundMin.y,
-                        z ? cachedModel->boundMax.z : cachedModel->boundMin.z);
+                        x ? cachedModel->cullMax.x : cachedModel->cullMin.x,
+                        y ? cachedModel->cullMax.y : cachedModel->cullMin.y,
+                        z ? cachedModel->cullMax.z : cachedModel->cullMin.z);
                     const glm::vec3 world = glm::vec3(modelMatrix * glm::vec4(local, 1.0f));
                     visualMin = glm::min(visualMin, world);
                     visualMax = glm::max(visualMax, world);
@@ -1734,6 +1734,20 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             (bone.flags & (m2_internal::kM2BoneSphericalBillboard | m2_internal::kM2BoneCylindricalBillboardZ))) {
             gpuModel.hasAnimation = true;
             break;
+        }
+    }
+    // Bones can carry the vertices far from where the bind pose has them.
+    // HellfireRaid_Dust_Impact_Base (Cave In's rocks) binds its 28 rocks in
+    // a one-yard cluster 13 yards up and drops them over 17 yards around; a
+    // sphere round the cluster culled the rocks the moment it left the view,
+    // so they were seen only while hanging in the sky. Its Stand sequence's
+    // authored bounds span the fall.
+    gpuModel.cullMin = tightMin;
+    gpuModel.cullMax = tightMax;
+    if (gpuModel.hasAnimation && !cls.disableAnimation) {
+        for (const auto& sequence : model.sequences) {
+            gpuModel.cullMin = glm::min(gpuModel.cullMin, sequence.boundMin);
+            gpuModel.cullMax = glm::max(gpuModel.cullMax, sequence.boundMax);
         }
     }
 

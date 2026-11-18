@@ -122,6 +122,10 @@ struct M2ModelGPU {
     /// no collision (Bush_Sansam.m2).
     glm::vec3 headerBoxMin{0.0f};
     glm::vec3 headerBoxMax{0.0f};
+    /// What the render cull sphere encloses: the bind-pose vertex bounds,
+    /// and for an animated model every sequence's authored bounds as well.
+    glm::vec3 cullMin{0.0f};
+    glm::vec3 cullMax{0.0f};
     bool collisionSteppedFountain = false;
     bool collisionSteppedLowPlatform = false;
     bool collisionPlanter = false;
