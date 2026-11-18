@@ -25,7 +25,7 @@ constexpr bool gameObjectPoseIsStateDriven(uint32_t type) {
 // Whether a stateful object without state sequences shows READY through its
 // bind pose. A trap does not: the Molten Core rune rings (TRAP 178187-178193,
 // FlameCircle.m2, Stand and Hold only) are READY and the original client
-// keeps their Stand running, a ring of fire widening round the rune each
+// keeps their Stand running, a flame front running round the rune once a
 // second. Frozen at time zero every flame stood at one point of the ring.
 constexpr bool gameObjectBindPoseShowsReady(uint32_t type) {
     return type != 6u && gameObjectPoseIsStateDriven(type);

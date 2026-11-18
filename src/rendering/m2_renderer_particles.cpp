@@ -179,12 +179,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 sphereDirection = emission.direction;
             }
             if (em.emitterType == 3 && !em.splinePoints.empty()) {
-                const float start = interpFloat(em.emissionAreaLength, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                const float end = interpFloat(em.emissionAreaWidth, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                localPos += splineEmissionPoint(em.splinePoints,
-                    glm::mix(start, end, (distN(particleRng_) + 1.0f) * 0.5f));
+                localPos += splineEmissionPoint(em.splinePoints, interpFloat(em.emissionAreaWidth,
+                    inst.animTime, inst.globalSequenceTime, inst.currentSequenceIndex,
+                    gpu.globalSequenceDurations));
             }
             // Born p.life ago: where the emitter was then, between its pose at
             // the previous step and now. Placing every birth of a frame at the

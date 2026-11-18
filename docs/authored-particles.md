@@ -79,16 +79,20 @@ tail the acid breath drew thin hard-edged lines instead of drops.
 
 Spline emitters (type 3, 120 TBC emitters): pre-264 `+0x1D4` count,
 `+0x1D8` offset of cubic Bezier points (knot, handle, handle, knot; always
-3k + 1, 4 to 37). Each birth takes a path parameter uniformly between the
-area length and width tracks (0 and 1 in 101 emitters), equal parameter per
-segment, and adds that path point to the emitter position. FlameCircle.m2
-(display 410: "Molten Core Circle" traps 178187-178193, linked trap of each
-Molten Core rune button) is four quarter circles of radius 2.78 whose width
-runs 0 -> 1 over each 1 s Stand. Read as a point, its 180 births/s stood in
-one white column at the rune centre; the original draws a ring of flames.
-SummonPet_Impact_Base slides a window [0, 0.17] -> [0.82, 1] along its path.
-Unverified: emission direction along the path (velocity stays the emitter's
-vertical cone) and Wrath (264+) spline offsets, which are not read.
+3k + 1, 4 to 37), equal parameter per segment, added to the emitter position.
+A birth stands at the path parameter given by the area width track now.
+FlameCircle.m2 (display 410: "Molten Core Circle" traps 178187-178193, linked
+trap of each Molten Core rune button) is four quarter circles of radius 2.78
+whose width runs 0 -> 1 over each 1 s Stand. Native top-down 30 fps capture
+shows a flame front running round the ring once a second, the brightest arc
+about 0.6 s behind it (alpha peak at 0.6 of the 1 s life), in the direction
+of increasing path parameter. Births spread uniformly between the length and
+width tracks keep the ring brightest at its start instead; that was rejected.
+Unobserved: what the length track does (0 in FlameCircle; SummonPet windows
+key it about 0.1-0.17 behind the width), and whether the 101 emitters with
+constant length 0 / width 1 really emit at their path end. Velocity stays the
+emitter's vertical cone; native FlameCircle flames rise straight up.
+Wrath (264+) spline offsets are not read.
 
 Geometry particles: a pre-264 emitter naming a model at `+0x18` (28 TBC
 emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull) draws that

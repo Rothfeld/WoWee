@@ -109,13 +109,13 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
 }
 
 /// A point on a spline emitter's path at `t` in [0, 1], equal parameter per
-/// cubic Bezier segment (knot, handle, handle, knot; 3k + 1 points). Births
-/// take `t` between the area length and width tracks, as a sphere takes its
-/// radius between them: 0 and 1 in 101 of the 120 TBC spline emitters.
-/// FlameCircle.m2 widens [0, 0] -> [0, 1] over each 1 s Stand, a ring of
-/// fire round the Molten Core runes; SummonPet_Impact_Base #0 slides a
-/// window [0, 0.17] -> [0.82, 1] -> [0.9, 1] along its path. Without it every
-/// birth stood at the emitter and the rune rings drew one white column.
+/// cubic Bezier segment (knot, handle, handle, knot; 3k + 1 points). A birth
+/// stands at the area width track's current value. FlameCircle.m2 runs it
+/// 0 -> 1 over each 1 s Stand: in the original client the Molten Core rune
+/// ring is a flame front running round once a second, its brightest arc
+/// about 0.6 s behind the front (alpha peaks at 0.6 of the 1 s life). Births
+/// spread uniformly between the length and width tracks instead kept the
+/// ring brightest at its start. What the length track does is unobserved.
 inline glm::vec3 splineEmissionPoint(const std::vector<glm::vec3>& points, float t) {
     assert(points.size() >= 4 && (points.size() - 1) % 3 == 0);
     assert(t >= 0.0f && t <= 1.0f);

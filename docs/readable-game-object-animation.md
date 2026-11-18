@@ -14,7 +14,7 @@ and trapdoors. Animated scenery keeps its own continuous playback.
 Without state sequences (146-149) a door, button or chest shows READY through
 its bind pose. A trap keeps Stand running instead: the Molten Core rune rings
 (TRAP 178187-178193, `FlameCircle.m2`, Stand and Hold only) are READY, and the
-original client draws them as a ring of fire widening round the rune each
+original client draws them as a flame front running round the rune once a
 second. Their type often arrives after their state; the template response then
 releases such traps (`gameObjectBindPoseShowsReady`).
 
