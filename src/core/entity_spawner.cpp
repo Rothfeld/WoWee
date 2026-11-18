@@ -1,5 +1,6 @@
 #include "core/weapon_attachment.hpp"
 #include "core/entity_spawner.hpp"
+#include "rendering/character_scale.hpp"
 #include "rendering/unit_fade.hpp"
 #include "rendering/m2_model_classifier.hpp"
 #include "core/appearance_composer.hpp"
@@ -97,6 +98,16 @@ void EntitySpawner::update() {
 // original, local player and other players alike, and back when the aura
 // ends. The character instance keeps its position, facing, animation and
 // attachments; the creature instance is drawn in its place and follows it.
+namespace {
+// OBJECT_FIELD_SCALE_X; 1 when the server has not sent it.
+float unitObjectScale(const game::Unit& unit) {
+    const auto field = unit.getFields().find(game::fieldIndex(game::UF::OBJECT_FIELD_SCALE_X));
+    if (field == unit.getFields().end()) return 1.0f;
+    const float scale = std::bit_cast<float>(field->second);
+    return scale > 0.0f ? scale : 1.0f;
+}
+} // namespace
+
 void EntitySpawner::syncPlayerMorphs() {
     if (!renderer_ || !gameHandler_) return;
     auto* cr = renderer_->getCharacterRenderer();
@@ -129,6 +140,22 @@ void EntitySpawner::syncPlayerMorphs() {
         const uint32_t display = unit->getDisplayId();
         const uint32_t native = unit->getField(nativeField);
         const bool morphed = native != 0 && display != 0 && display != native;
+        // A character is drawn at its race display's CreatureDisplayInfo and
+        // CreatureModelData scale times OBJECT_FIELD_SCALE_X, as a creature
+        // is: build 8606 draws a tauren male (display 59, 1.35) and a gnome
+        // (1563, 1.15) larger than a scale-1 model, its horse with it, and
+        // .modify scale 1.5 grows character and horse alike
+        // (_experiments/20261118T160000Z.player_scale).
+        const float objectScale = unitObjectScale(*unit);
+        if (native != 0) {
+            const float characterScale = rendering::characterRenderScale(
+                objectScale, creatureDisplayScale(native), creatureModelScale(native));
+            if (cr->getInstanceScale(playerInstance) != characterScale) {
+                cr->setInstanceScale(playerInstance, characterScale);
+                LOG_INFO("Player scale: guid=0x", std::hex, guid, std::dec, " display ", native,
+                         " scale ", characterScale);
+            }
+        }
         auto found = playerMorphs_.find(guid);
         if (found != playerMorphs_.end() &&
             (!morphed || found->second.displayId != display || found->second.playerInstanceId != playerInstance)) {
@@ -148,8 +175,8 @@ void EntitySpawner::syncPlayerMorphs() {
                 playerMorphs_[guid] = {.displayId = display, .instanceId = 0, .playerInstanceId = playerInstance};
                 continue;
             }
-            const float scale = creatureDisplayScale(display) * creatureModelScale(display) *
-                                cr->getInstanceScale(playerInstance);
+            const float scale = rendering::characterRenderScale(
+                objectScale, creatureDisplayScale(display), creatureModelScale(display));
             const uint32_t instance = cr->createInstance(modelId, position, rotation, scale);
             if (!instance) continue;
             cr->setInstanceCreatureModel(instance, display, creatureModelDataIdForDisplay(display));
@@ -161,6 +188,8 @@ void EntitySpawner::syncPlayerMorphs() {
         }
         auto& morph = found->second;
         if (!morph.instanceId) continue;
+        cr->setInstanceScale(morph.instanceId, rendering::characterRenderScale(
+            objectScale, creatureDisplayScale(display), creatureModelScale(display)));
         cr->setInstanceReplaced(playerInstance, true);
         // First-person hiding and camera fade belong to the character; the
         // creature drawn for it follows them.

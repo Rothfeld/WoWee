@@ -1788,11 +1788,18 @@ drake to player size. Players follow the same rule: a mounted player morphed
 to display 21546 (`.modify morph`) rides a horse and a gryphon twice the
 size, and `.modify scale 1.5` grows the horse with the rider, natively. A
 morphed rider's mount follows the morph's creature
-(`EntitySpawner::refreshRemoteMountScale`). Not done: WoWee draws players at
-scale 1 whatever OBJECT_FIELD_SCALE_X or their race display's scale, so their
-mounts stay at 1 too; ChrRaces field 7 (orc 1.1, night elf 1.2, tauren 0.75,
-gnome 0.8), probably a per-race mount scale, is not checked against the
-original. A rider stays seated: its idle, locomotion and melee
+(`EntitySpawner::refreshRemoteMountScale`). A character, local or other, is
+drawn at its native display's CreatureDisplayInfo scale times its
+CreatureModelData scale times OBJECT_FIELD_SCALE_X
+(`rendering/character_scale.hpp`): native tauren males (display 59, 1.35) and
+gnomes (1563, 1.15) stand and ride larger, their horse and gryphon by the same
+factor; the local player's own mount follows its display and the character's
+scale now too. ChrRaces float column 7 (night elf 1.2, gnome 0.8, tauren 0.75)
+changes nothing visible on a horse natively. Native camera pivot, measured on
+the look ray over the feet at 13.8 yd: human 1.86, tauren 1.83, gnome 0.88,
+on a horse 2.71 / 3.00 / 2.53; WoWee's head-bone pivot gives 1.60 / 2.22 / 0.75,
+not changed here. Evidence: `_experiments/20261118T160000Z.player_scale`.
+A rider stays seated: its idle, locomotion and melee
 stances are Mount (91), and its swings, casts, cast holds and wounds play
 from SpineLow up over it (`setInstanceRiding`, `rendering/animation/rider_pose.hpp`).
 Natively the Wind Reaver's legs stayed in the seat through every swing and

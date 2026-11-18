@@ -7,6 +7,7 @@
 #include "game/spline_flight.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/rider_pose.hpp"
+#include "rendering/character_scale.hpp"
 
 using namespace wowee;
 namespace anim = wowee::rendering::anim;
@@ -45,4 +46,16 @@ TEST_CASE("A unit in view mid-way along a Flying spline flies", "[rider][spline]
     // A finished spline (Done, 0x1) or none at all is not followed.
     CHECK(game::createBlockUnitMoveFlags(kHover, 0x201u, 3, 12000, kFlying) == kHover);
     CHECK(game::createBlockUnitMoveFlags(0u, 0x200u, 0, 0, kFlying) == 0u);
+}
+
+TEST_CASE("A character is drawn at its race display's scale", "[rider][character]") {
+    // Tauren male display 59 (1.35, model 1.0), gnome male 1563 (1.15),
+    // tauren female 60 (1.0, CreatureModelData 60 at 1.25), .modify scale 1.5.
+    CHECK(rendering::characterRenderScale(1.0f, 1.35f, 1.0f) == Catch::Approx(1.35f));
+    CHECK(rendering::characterRenderScale(1.0f, 1.15f, 1.0f) == Catch::Approx(1.15f));
+    CHECK(rendering::characterRenderScale(1.0f, 1.0f, 1.25f) == Catch::Approx(1.25f));
+    CHECK(rendering::characterRenderScale(1.5f, 1.0f, 1.0f) == Catch::Approx(1.5f));
+    // Its horse (display 2404 at 1.0) follows: a tauren rides a 1.35 horse.
+    CHECK(rendering::remoteMountScale(rendering::characterRenderScale(1.0f, 1.35f, 1.0f), 1.0f, 1.0f)
+          == Catch::Approx(1.35f));
 }

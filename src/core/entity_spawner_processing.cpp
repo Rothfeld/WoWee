@@ -1491,8 +1491,15 @@ void EntitySpawner::processPendingMount() {
     // Create mount instance at player position
     glm::vec3 mountPos = renderer_->getCharacterPosition();
     float yawRad = glm::radians(renderer_->getCharacterYaw());
+    // Own display scale times the rider's drawn scale, as for every other
+    // rider (rendering/animation/rider_pose.hpp): the original grows a
+    // tauren's or gnome's horse with the character.
+    const uint32_t riderInstance = drawnInstanceIdForGuid(gameHandler_ ? gameHandler_->getPlayerGuid() : 0);
+    const float riderScale = riderInstance ? charRenderer->getInstanceScale(riderInstance) : 1.0f;
+    const float mountScale = rendering::remoteMountScale(
+        riderScale, creatureDisplayScale(mountDisplayId), creatureModelScale(mountDisplayId));
     uint32_t instanceId = charRenderer->createInstance(modelId, mountPos,
-        glm::vec3(0.0f, 0.0f, yawRad), 1.0f);
+        glm::vec3(0.0f, 0.0f, yawRad), mountScale);
 
     if (instanceId == 0) {
         LOG_WARNING("Failed to create mount instance");
@@ -1552,6 +1559,7 @@ void EntitySpawner::processPendingMount() {
         }
     }
 
+    heightOffset *= mountScale;
     if (auto* ac = renderer_->getAnimationController()) ac->setMounted(instanceId, mountDisplayId, heightOffset, m2Path);
 
     // For taxi mounts, start with flying animation; for ground mounts, start with stand
@@ -1571,7 +1579,8 @@ void EntitySpawner::processPendingMount() {
     }
     charRenderer->playAnimation(instanceId, startAnim, true);
 
-    LOG_INFO("processPendingMount: DONE displayId=", mountDisplayId, " model=", m2Path, " heightOffset=", heightOffset);
+    LOG_INFO("processPendingMount: DONE displayId=", mountDisplayId, " model=", m2Path, " heightOffset=", heightOffset,
+             " scale=", mountScale);
 }
 
 bool EntitySpawner::loadRemoteMountModel(uint32_t displayId, uint32_t& modelId,
