@@ -1251,6 +1251,29 @@ Mouse-look release restores the pointer to its press position. SDL's accumulated
 relative movement remains available to click-versus-drag detection; it does not
 change the visible cursor's restoration point.
 
+### Switching loot
+
+`build/bin/test_game_replay '[loot]'`
+
+Original 2.4.3 releases an open corpse loot itself; CMaNGOS answers a client
+release of a corpse with nothing and does not release corpse A when corpse B
+is looted. Measured wire order (pair 4, through a header-decrypting relay):
+right-click B with A open sends `CMSG_LOOT_RELEASE` A, `CMSG_SET_SELECTION` 0,
+`CMSG_SET_SELECTION` B, `CMSG_LOOT` B; F1 the same with the player's guid; the
+close button, Escape or an auto-loot that empties A sends the release and
+`SET_SELECTION` 0; a left click on empty ground sends the release and two
+`SET_SELECTION` 0. Releasing loot drops the target only when the target is the
+looted unit: a clam opened with a corpse or the player selected keeps it, and
+selecting another unit leaves the clam's loot open. A second right-click on
+the open corpse sends nothing, and a right-click on bare ground does nothing
+with a corpse or a living enemy selected. Gotcha: LootFrame rebuilds its
+buttons only in OnShow, so a `LOOT_OPENED` while it is shown keeps the old
+corpse's buttons. `SMSG_LOOT_RELEASE_RESPONSE` names its loot; one for another
+guid leaves the open window alone. Using a game object with corpse loot open
+releases it first (native released it before a refused chest use; `.gobject
+add` chests and veins answer "That is already being used" natively, so a
+chest's loot after a corpse was not observed).
+
 ### Merchant refresh and item usability
 
 Merchant items report level, class/race, equipment proficiency, skill, and

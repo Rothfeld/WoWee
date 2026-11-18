@@ -3298,6 +3298,12 @@ void GameHandler::interactWithGameObject(uint64_t guid) {
         addUIError("You can't do that while flying.");
         return;
     }
+    // Using an object gives up the loot on screen. Original 2.4.3 with a
+    // corpse's loot open: a right-click on a chest sent CMSG_LOOT_RELEASE for
+    // the corpse (and CMSG_SET_SELECTION 0, the corpse being the target)
+    // before anything for the chest. Kept open, the chest's loot would arrive
+    // on a frame that is still showing and never rebuilds for it.
+    if (isLootWindowOpen() && getCurrentLoot().lootGuid != guid) closeLoot();
     // Always clear melee intent before GO interactions.
     stopAutoAttack();
     // And get off the mount. Opening a chest, gathering a node or using very

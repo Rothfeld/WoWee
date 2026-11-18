@@ -171,6 +171,9 @@ public:
         return found;
     }
 
+    // Everything sent, oldest first.
+    [[nodiscard]] const std::vector<wowee::network::Packet>& all() const { return sent_; }
+
 private:
     std::vector<wowee::network::Packet> sent_;
 };

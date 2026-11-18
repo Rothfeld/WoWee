@@ -1386,6 +1386,15 @@ void CombatHandler::setTarget(uint64_t guid) {
         }
     }
 
+    // Selecting something else gives up the corpse being looted. Original
+    // 2.4.3 with corpse A's loot open: a right-click on corpse B sends
+    // CMSG_LOOT_RELEASE A, CMSG_SET_SELECTION 0 (the release dropping A as
+    // target, see closeLoot), CMSG_SET_SELECTION B, CMSG_LOOT B; F1 the same
+    // with the player's guid. CMaNGOS does not release A when B is looted and
+    // answers neither, so the client must, and B's window opens on a frame
+    // that has closed: LootFrame only rebuilds its buttons in OnShow.
+    releaseLootOfTarget();
+
     // Stop Auto Attack On Target Change, which the panel offers and nothing
     // read. Changing target left the swing running - correct for the setting's
     // default, and the only behaviour available whatever it said.
@@ -1440,7 +1449,19 @@ void CombatHandler::setTarget(uint64_t guid) {
     }
 }
 
+void CombatHandler::releaseLootOfTarget() {
+    const uint64_t current = owner_.getTargetGuid();
+    if (current != 0 && owner_.isLootWindowOpen() &&
+        owner_.getCurrentLoot().lootGuid == current) {
+        owner_.closeLoot();
+    }
+}
+
 void CombatHandler::clearTarget() {
+    // Deselecting the looted corpse (a click on empty ground) closes its loot
+    // too. Original: CMSG_LOOT_RELEASE, then CMSG_SET_SELECTION 0 twice - the
+    // release's own and the deselect's.
+    releaseLootOfTarget();
     stopAutoAttack();
     if (owner_.isInWorld()) {
         auto packet = SetSelectionPacket::build(0);

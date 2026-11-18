@@ -991,6 +991,12 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
 void InventoryHandler::lootTarget(uint64_t targetGuid) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    // Its window is already open: the original sends nothing for a second
+    // right-click on the corpse being looted.
+    if (lootWindowOpen_ && currentLoot_.lootGuid == targetGuid) {
+        LOG_DEBUG("Loot of 0x", std::hex, targetGuid, std::dec, " is already open");
+        return;
+    }
     if (lootRequestGuid_ != targetGuid) prepareLoot(targetGuid, false);
     localLootState_[targetGuid].itemAutoLootSent = false;
     currentLoot_.items.clear();
@@ -1081,6 +1087,12 @@ void InventoryHandler::closeLoot() {
     lootWindowOpen_ = false;
     if (owner_.lootWindowCallbackRef()) owner_.lootWindowCallbackRef()(false);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("LOOT_CLOSED", {});
+    // The looted unit stops being the target. The original follows every
+    // CMSG_LOOT_RELEASE of the selected corpse with CMSG_SET_SELECTION 0 -
+    // close button, Escape, auto-loot emptying it, switching corpses - and
+    // keeps the target when the loot was something else (a clam opened with
+    // a corpse or itself selected).
+    if (lootGuid != 0 && owner_.getTargetGuid() == lootGuid) owner_.clearTarget();
     // Do NOT locally despawn a gather node on loot-close. Node lifetime is
     // server-authoritative: a mineral vein / herb can still hold charges for another
     // gatherer, and the server sends SMSG_DESTROY_OBJECT when it is truly depleted.
@@ -1182,9 +1194,21 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
 }
 
 void InventoryHandler::handleLootReleaseResponse(network::Packet& packet) {
-    (void)packet;
-    const uint64_t lootGuid = currentLoot_.lootGuid;
+    // guid + uint8 1 (CMaNGOS Loot::SendReleaseFor). It names the loot the
+    // server let go of, which need not be the one on screen: a loot released
+    // by switching to another corpse can be answered after that corpse's
+    // window opened.
+    if (!packet.hasRemaining(8)) {
+        LOG_WARNING("SMSG_LOOT_RELEASE_RESPONSE without a guid");
+        return;
+    }
+    const uint64_t lootGuid = packet.readUInt64();
     localLootState_.erase(lootGuid);
+    if (!lootWindowOpen_ || lootGuid != currentLoot_.lootGuid) {
+        LOG_INFO("SMSG_LOOT_RELEASE_RESPONSE for 0x", std::hex, lootGuid,
+                 " while 0x", currentLoot_.lootGuid, std::dec, " is open: kept");
+        return;
+    }
     lootWindowOpen_ = false;
     if (owner_.lootWindowCallbackRef()) owner_.lootWindowCallbackRef()(false);
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("LOOT_CLOSED", {});

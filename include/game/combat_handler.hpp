@@ -144,6 +144,10 @@ public:
     void removeCombatTextForGuid(uint64_t guid);
 
 private:
+    /// Closes the loot window when it shows the current target, before the
+    /// target changes (see setTarget).
+    void releaseLootOfTarget();
+
     // Last target-cycling press (steady-clock ms); a pause longer than
     // kTabCycleResetMs restarts the cycle at the nearest unit.
     uint64_t lastTabTargetMs_ = 0;
