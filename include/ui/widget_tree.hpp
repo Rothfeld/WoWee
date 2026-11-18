@@ -422,6 +422,10 @@ struct Widget {
     /// for a slider that never declared one.
     uint32_t thumbRegion = 0;
     float barMin = 0.0f, barMax = 1.0f, barValue = 0.0f;
+    /// Whether a SetValue (or a drag) has ever moved the value. Until then a
+    /// new range or step leaves it where it is, as 2.4.3 does: a fresh slider
+    /// given 90..270 still reads 0 and runs no OnValueChanged. See barSettle.
+    bool barValueSet = false;
     std::string barTexture;
     float barColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     /// The fill as a region (GetStatusBarTexture). Its vertex colour and

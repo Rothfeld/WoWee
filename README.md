@@ -1288,7 +1288,10 @@ Values are held as build 8606 holds them. `ScrollFrame:SetVerticalScroll` is not
 clamped to the scroll range and fires OnVerticalScroll once per change. Slider
 and StatusBar `SetValue`/`SetMinMaxValues` clamp to the range; a slider snaps to
 its step counted from the minimum (round half up), the last whole step being the
-maximum: 0..50 by 16 holds 0, 16, 32, 50. A new slider spans 0..0. The wheel goes
+maximum: 0..50 by 16 holds 0, 16, 32, 50. A new slider spans 0..0. A bar whose value
+SetValue has never moved keeps it through `SetMinMaxValues`/`SetValueStep`, with
+no OnValueChanged: a fresh slider given 90..270 reads 0. The options panels set
+the range before `SetValue(GetCVar(...))`, and their OnValueChanged writes the CVar. The wheel goes
 to the topmost wheel-enabled frame under the cursor, passing over frames that only
 take the mouse (a FauxScrollFrame's rows are siblings laid over it).
 

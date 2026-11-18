@@ -5708,11 +5708,19 @@ static void storeBarValue(lua_State* L, wowee::ui::Widget* w, float value) {
 /// 0..5 reads 5 and has run its handler, and a slider at 32 by 16 given 0..40
 /// reads 40. ScrollFrame_OnScrollRangeChanged leans on it, shrinking the bar
 /// under a list that got shorter.
+///
+/// Only once SetValue has moved the value. A bar nothing has set yet keeps its
+/// 0 and runs nothing: on 2.4.3 a fresh slider given 90..270 reads 0 with no
+/// OnValueChanged, and one set to 5 and back to 0 is pulled to 90. The options
+/// panels depend on it - BlizzardOptionsPanel_OnLoad gives Mouse Look Speed
+/// 90..270 before SetValue(GetCVar(...)), and that slider's OnValueChanged
+/// writes cameraYawMoveSpeed and cameraPitchMoveSpeed. Pulled to 90 here,
+/// every start rewrote the saved 180/90 as 90/45.
 int lua_StatusBar_SetMinMaxValues(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         w->barMin = static_cast<float>(luaL_optnumber(L, 2, 0.0));
         w->barMax = static_cast<float>(luaL_optnumber(L, 3, 1.0));
-        storeBarValue(L, w, w->barSettle(w->barValue));
+        if (w->barValueSet) storeBarValue(L, w, w->barSettle(w->barValue));
     }
     return 0;
 }
@@ -5742,6 +5750,7 @@ int lua_StatusBar_SetValue(lua_State* L) {
     // bar was last touched, and only corrected itself when the cursor crossed
     // the bar and OnEnter refreshed the text by another route. Killing a mob
     // moved the fill and left the percentage stale.
+    if (value != w->barValue) w->barValueSet = true;
     storeBarValue(L, w, value);
     return 0;
 }
@@ -6183,7 +6192,9 @@ int lua_Cooldown_Clear(lua_State* L) {
 int lua_Slider_SetValueStep(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         w->sliderStep = static_cast<float>(luaL_optnumber(L, 2, 0.0));
-        storeBarValue(L, w, w->barSettle(w->barValue));
+        // Not before a first SetValue, as with a new range (2.4.3: a fresh
+        // slider given step 16 and then 90..270 still reads 0).
+        if (w->barValueSet) storeBarValue(L, w, w->barSettle(w->barValue));
     }
     return 0;
 }
@@ -12421,6 +12432,7 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                 const float value = w->barSettle(w->barMin + f * span);
                 if (value != w->barValue) {
                     w->barValue = value;
+                    w->barValueSet = true;
                     // With the value, because that is the argument the handler
                     // names and uses: UIPanelScrollBarTemplate's body is
                     // self:GetParent():SetVerticalScroll(value), and a nil

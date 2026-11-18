@@ -386,6 +386,25 @@ TEST_CASE_METHOD(Integration, "Sliders, status bars and scroll frames hold value
     run("s:SetValueStep(0); s:SetMinMaxValues(0, 100); s:SetValue(33); changed = 0; s:SetValueStep(16)");
     truth("s:GetValue() == 32 and changed == 1");
 
+    // Until SetValue first moves it, a new range or step leaves the value
+    // alone and says nothing. BlizzardOptionsPanel_OnLoad gives Mouse Look
+    // Speed 90..270 before SetValue(GetCVar(...)); its OnValueChanged writes
+    // the CVar, so a clamp here rewrote the saved 180 as 90 at every start.
+    run(R"lua(
+        look = CreateFrame('Slider', nil, UIParent)
+        written = {}
+        look:SetScript('OnValueChanged', function(self, value) written[#written + 1] = value end)
+        look:SetValueStep(10); look:SetMinMaxValues(90, 270)
+        fresh = look:GetValue()
+        look:SetValue(180)
+        back = CreateFrame('Slider', nil, UIParent)
+        back:SetMinMaxValues(0, 10); back:SetValue(5); back:SetValue(0); back:SetMinMaxValues(90, 270)
+        same = CreateFrame('Slider', nil, UIParent)
+        same:SetValue(0); same:SetMinMaxValues(90, 270)
+    )lua");
+    truth("fresh == 0 and #written == 1 and written[1] == 180 and look:GetValue() == 180");
+    truth("back:GetValue() == 90 and same:GetValue() == 0");
+
     // A status bar is clamped too, on SetValue and on a new range.
     run(R"lua(
         bar = CreateFrame('StatusBar', nil, UIParent)
@@ -395,6 +414,8 @@ TEST_CASE_METHOD(Integration, "Sliders, status bars and scroll frames hold value
         bar:SetScript('OnValueChanged', function() barChanged = barChanged + 1 end)
         bar:SetMinMaxValues(0, 5)
     )lua");
+    run("fresh = CreateFrame('StatusBar', nil, UIParent); fresh:SetMinMaxValues(90, 270)");
+    truth("fresh:GetValue() == 0");
     truth("high == 10 and low == 0 and bar:GetValue() == 5 and barChanged == 1");
 
     // A scroll frame keeps the offset it is given, past its range either way.
