@@ -166,6 +166,16 @@ static int lua_UnitLevel(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
     if (unit) {
+        // A world boss (creature rank 3) answers -1, which the target frame
+        // draws as the skull and the tooltip as "Level ??" - native shows
+        // Chromaggus (rank 3, level 63) that way to a level-255 GM, so it is
+        // the rank and not the level gap.
+        auto* gh = getGameHandler(L);
+        if (gh && unit->getType() == game::ObjectType::UNIT &&
+            gh->getCreatureRank(unit->getEntry()) == 3) {
+            lua_pushnumber(L, -1);
+            return 1;
+        }
         lua_pushnumber(L, unit->getLevel());
     } else {
         auto* gh = getGameHandler(L);
