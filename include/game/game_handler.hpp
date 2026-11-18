@@ -2878,6 +2878,13 @@ public:
     // Title system - earned title bits and the currently displayed title
     const std::unordered_set<uint32_t>& getKnownTitleBits() const { return knownTitleBits_; }
     int32_t getChosenTitleBit() const { return chosenTitleBit_; }
+    /// One past the highest title bit CharTitles.dbc names: the range
+    /// GetNumTitles reports (41 in 2.4.3, whose last bit is Vengeful
+    /// Gladiator's 40).
+    uint32_t getTitleBitCount() const;
+    /// The title's own text with the name placeholder taken out, as
+    /// GetTitleName answers it: "Private " and " Champion of the Naaru".
+    std::string getTitleNameWithoutName(uint32_t bit) const;
     /// Returns the formatted title string for a given bit (replaces %s with player name), or empty.
     std::string getFormattedTitle(uint32_t bit) const;
     /// A title by its CharTitles.dbc id (what a quest reward carries), formatted
@@ -5236,7 +5243,9 @@ private:
     // Set of title bit-indices known to the player (from SMSG_TITLE_EARNED).
     std::unordered_set<uint32_t> knownTitleBits_;
     // Currently selected title bit, or -1 for no title. Updated from PLAYER_CHOSEN_TITLE.
-    int32_t chosenTitleBit_ = -1;
+    /// PLAYER_CHOSEN_TITLE: 0 is no title, and an object that wears none
+    /// never sends the field at all.
+    int32_t chosenTitleBit_ = 0;
 
     // Achievement caches (lazy-loaded from Achievement.dbc on first earned event)
     std::unordered_map<uint32_t, std::string> achievementNameCache_;

@@ -6206,11 +6206,11 @@ void registerSystemLuaAPI(lua_State* L) {
                 // above will fill themselves in when it does.
                 // GetNumTitles() - how many title *bits* there are to ask
                 // about, not how many are owned. paperdollframe.lua walks
-                // 1..GetNumTitles() calling IsTitleKnown on each, so this is
-                // the size of the space: KNOWN_TITLES_SIZE * 64 in
-                // AzerothCore's Player.h, three uint64 fields.
+                // 1..GetNumTitles() calling IsTitleKnown on each. 2.4.3
+                // answers 41: one past the highest bit CharTitles.dbc names.
                 {"GetNumTitles", [](lua_State* L) -> int {
-            lua_pushnumber(L, 192); return 1;
+            auto* gh = getGameHandler(L);
+            lua_pushnumber(L, gh ? gh->getTitleBitCount() : 0); return 1;
         }},
                 {"GetNumCompanions", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
@@ -7771,7 +7771,9 @@ void registerSystemLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             int bit = static_cast<int>(luaL_checknumber(L, 1));
             if (!gh || bit < 0) { return luaReturnNil(L); }
-            std::string title = gh->getFormattedTitle(static_cast<uint32_t>(bit));
+            // The title alone, not the player's name in it: the dropdown and
+            // UnitPVPName put the name in themselves.
+            std::string title = gh->getTitleNameWithoutName(static_cast<uint32_t>(bit));
             if (title.empty()) { return luaReturnNil(L); }
             lua_pushstring(L, title.c_str());
             return 1;

@@ -2519,6 +2519,29 @@ std::string GameHandler::getFormattedTitle(uint32_t bit) const {
     return formatTitleString(it->second);
 }
 
+uint32_t GameHandler::getTitleBitCount() const {
+    loadTitleNameCache();
+    uint32_t highest = 0;
+    for (const auto& [bit, name] : titleNameCache_) highest = std::max(highest, bit);
+    return titleNameCache_.empty() ? 0 : highest + 1;
+}
+
+std::string GameHandler::getTitleNameWithoutName(uint32_t bit) const {
+    loadTitleNameCache();
+    auto it = titleNameCache_.find(bit);
+    if (it == titleNameCache_.end()) return {};
+    // 2.4.3 drops the placeholder and a comma right after it:
+    // "%s, Hand of A'dal" reads " Hand of A'dal", "%s of the Shattered Sun"
+    // reads " of the Shattered Sun".
+    std::string text = it->second;
+    const auto at = text.find("%s");
+    if (at != std::string::npos) {
+        const size_t length = (at + 2 < text.size() && text[at + 2] == ',') ? 3 : 2;
+        text.erase(at, length);
+    }
+    return text;
+}
+
 std::string GameHandler::getFormattedTitleById(uint32_t id) const {
     loadTitleNameCache();
     auto it = titleFormatById_.find(id);
@@ -2668,7 +2691,8 @@ void GameHandler::sendSetTitle(int32_t bit) {
     if (!isInWorld()) return;
     auto packet = SetTitlePacket::build(bit);
     socket->send(packet);
-    chosenTitleBit_ = bit;
+    // The server stores anything below zero as zero, "no title".
+    chosenTitleBit_ = std::max(bit, 0);
     LOG_INFO("sendSetTitle: bit=", bit);
 }
 
