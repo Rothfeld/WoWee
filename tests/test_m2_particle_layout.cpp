@@ -524,6 +524,7 @@ TEST_CASE("Sprites turn by spin times age", "[m2][particle]") {
     // Christmas Tree (Medium) star: spin 0.5, a quarter turn 1.57 s in.
     CHECK(wowee::rendering::particleRotation(0.5f, 3.14159f) == Catch::Approx(1.5708f));
     CHECK(wowee::rendering::particleRotation(0.0f, 2.0f) == 0.0f);
+}
 
 TEST_CASE("Twinkle size stays within the authored range", "[m2][particle]") {
     using wowee::rendering::particleTwinkleScale;
