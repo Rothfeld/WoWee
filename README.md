@@ -1918,8 +1918,11 @@ MCLQ (ADT) texture repeats every 256/3 s,t units and drifts +0.025/s along s;
 MLIQ (WMO) repeats every 256 units and drifts +0.1/s along t. Vertex colour is
 white on terrain and MOMT color2 for interior WMO groups (0x959595: Blackrock
 Mountain lava measured 0.585 of its texels). Outland terrain magma (all of it in
-Shadowmoon Valley) draws `XTextures/lavagreen`; no TBC table names that set, so
-the map selects it. Native's extra red brightness on lava is full-screen glow
+Shadowmoon Valley) draws `XTextures/lavagreen`. No TBC data selects that set:
+LiquidType.dbc has four fields (ID, name, type, spell) and no textures, and
+AreaTable.dbc's LiquidType overrides (fields 29-32: water, ocean, magma, slime)
+are used only by Naxxramas slime 21, Hyjal Summit water 61 and Serpentshrine
+water 41; the magma override is 0 in all 1643 rows. So the map selects it. Native's extra red brightness on lava is full-screen glow
 (`ffxGlow`); with it off native lava equals its texels. Gotcha: magma s,t wrap
 by multiples of 256 inside visible quads, which is seamless only at the 256/3
 repeat. Evidence and fitting scripts (`uvfit.py`, `wmofit.py`, `burst.py`):
