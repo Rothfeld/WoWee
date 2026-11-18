@@ -146,12 +146,22 @@ void KeybindingManager::initializeDefaults(Device device) {
         {"WOWEERESETCAMERA", {"R", ""}},
     };
     bindings_.insert(defaults.begin(), defaults.end());
+    // The action bar keys as native 2.4.3 defaults them (GetBinding over
+    // every command on a character without bindings-cache.wtf): Shift-1..6
+    // page the main bar, Shift-Up/Down and Shift-wheel step it, Ctrl-1..0
+    // are the bonus (pet) bar, Ctrl-F1..F10 the stance bar; the multi-bars
+    // have no default keys.
     for (int i = 1; i <= 12; ++i) {
         const std::string key = i < 10 ? std::to_string(i) : i == 10 ? "0" : i == 11 ? "-" : "=";
         bindings_["ACTIONBUTTON" + std::to_string(i)] = {key, ""};
-        bindings_["MULTIACTIONBAR1BUTTON" + std::to_string(i)] = {"SHIFT-" + key, ""};
-        if (i <= 8) bindings_["SHAPESHIFTBUTTON" + std::to_string(i)] = {"CTRL-" + key, ""};
+        if (i <= 10) {
+            bindings_["BONUSACTIONBUTTON" + std::to_string(i)] = {"CTRL-" + key, ""};
+            bindings_["SHAPESHIFTBUTTON" + std::to_string(i)] = {"CTRL-F" + std::to_string(i), ""};
+        }
+        if (i <= 6) bindings_["ACTIONPAGE" + std::to_string(i)] = {"SHIFT-" + key, ""};
     }
+    bindings_["PREVIOUSACTIONPAGE"] = {"SHIFT-UP", "SHIFT-MOUSEWHEELUP"};
+    bindings_["NEXTACTIONPAGE"] = {"SHIFT-DOWN", "SHIFT-MOUSEWHEELDOWN"};
 }
 void KeybindingManager::resetToDefaults() {
     resetToDefaults(Device::KeyboardMouse);
