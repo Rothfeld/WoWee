@@ -1064,6 +1064,14 @@ model turns. The same rule (game::unitTurnsInPlace) gates turning toward
 UNIT_FIELD_TARGET: native Dughan targeting the player turned while standing,
 not while sitting or stunned. Measurements: `_experiments/20261118T075345Z.npc_interaction_turn`
 in the workspace.
+A unit attacking the player is not turned toward it otherwise: standing, it
+faces UNIT_FIELD_TARGET; with that cleared it keeps the facing of its last
+SMSG_MONSTER_MOVE. During Dark Glare the Eye of C'Thun clears its target and
+the server turns it pi/35 a second with facing-only splines (boss_cthun.cpp,
+Rotate 360 26009/26136); its CthuneEyeAttack beam (Dark Glare 26029 cast kit,
+left hand) sweeps round with it natively. WoWee held every attacker toward
+the player each frame, so the beam stayed pointed where the sweep began
+(`_experiments/20261118T1800Z.cthun_beams/`, sheet_darkglare_before.jpg, sheet_darkglare_after.jpg).
 Facing settles over 50 ms, matching native frame captures. The foot shuffle
 finishes at its authored duration (500 ms for DwarfMale). Repeated clicks do not
 restart either interval.

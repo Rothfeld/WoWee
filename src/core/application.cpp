@@ -3926,6 +3926,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         " actual=", actual.x, ",", actual.y, ",", actual.z,
                         " rotation=", groundRotation.x, ",", groundRotation.y, ",", groundRotation.z,
                         " grounded=", groundCreature, " transport=", onTransport,
+                        " orientation=", entity->getOrientation(), " facing=", facing,
+                        " target=0x", std::hex, game::unitTargetGuid(*entity), std::dec,
                         " scale=", charRenderer->getInstanceScale(instanceId));
                 }
             }

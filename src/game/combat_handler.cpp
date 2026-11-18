@@ -951,17 +951,12 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
     // Do not cancel or resend attacks based on a guessed melee radius.
     // CMaNGOS keeps melee intent while out of range and reports swing errors.
 
-    // Keep active melee attackers visually facing the player as positions change.
-    if (!hostileAttackers_.empty()) {
-        for (uint64_t attackerGuid : hostileAttackers_) {
-            auto attacker = owner_.getEntityManager().getEntity(attackerGuid);
-            if (!attacker) continue;
-            float dx = owner_.movementInfoRef().x - attacker->getX();
-            float dy = owner_.movementInfoRef().y - attacker->getY();
-            if (std::abs(dx) < 0.01f && std::abs(dy) < 0.01f) continue;
-            attacker->setOrientation(std::atan2(-dy, dx));
-        }
-    }
+    // An attacker's facing is not turned toward this player here: a standing
+    // unit faces its UNIT_FIELD_TARGET (creatureTargetFacing), a moving one
+    // its spline. Build 8606 turns the Eye of C'Thun with the server's facing
+    // splines during Dark Glare, while it is still on this player's attacker
+    // list but has cleared its target
+    // (_experiments/20261118T1800Z.cthun_beams in the workspace root).
 }
 
 // ============================================================

@@ -598,7 +598,8 @@ bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData
 
     LOG_DEBUG("[TBC] MonsterMove: guid=0x", std::hex, data.guid, std::dec,
               " type=", static_cast<int>(data.moveType), " flags=0x", std::hex, data.splineFlags, std::dec, " dur=", data.duration, "ms",
-              " dest=(", data.destX, ",", data.destY, ",", data.destZ, ")");
+              " dest=(", data.destX, ",", data.destY, ",", data.destZ, ")",
+              data.moveType == 4 ? " facing=" : "", data.moveType == 4 ? std::to_string(data.facingAngle) : "");
     return true;
 }
 
