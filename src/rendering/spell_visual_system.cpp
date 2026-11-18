@@ -5,6 +5,7 @@
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/chain_effect.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/placement_transform.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -314,7 +315,14 @@ void SpellVisualSystem::loadChainEffects() {
         ChainEffect effect;
         effect.avgSegLen = dbc->getFloat(i, 1);
         effect.width = dbc->getFloat(i, 2);
+        effect.noiseScale = dbc->getFloat(i, 3);
         effect.texCoordScale = dbc->getFloat(i, 4);
+        effect.minDurBetweenJoints = dbc->getFloat(i, 17);
+        effect.arcHeight = dbc->getFloat(i, 26);
+        effect.minArcAngle = dbc->getFloat(i, 27);
+        effect.maxArcAngle = dbc->getFloat(i, 28);
+        effect.minArcSpin = dbc->getFloat(i, 29);
+        effect.maxArcSpin = dbc->getFloat(i, 30);
         effect.texture = dbc->getString(i, 7);
         effect.waveHeight = dbc->getFloat(i, 19);
         effect.waveFreq = dbc->getFloat(i, 20);
@@ -326,7 +334,21 @@ void SpellVisualSystem::loadChainEffects() {
         effect.alpha = record[156] / 255.0f;
         effect.color = glm::vec3(record[157], record[158], record[159]) / 255.0f;
         effect.blendMode = record[160];
+        // After BlendMode: Combo (string offset) at +161, RenderLayer +165,
+        // TextureLength (float) +169.
+        uint32_t combo = 0;
+        std::memcpy(&combo, record + 161, sizeof(combo));
+        if (combo) effect.strands = chainComboStrands(dbc->getStringViewByOffset(combo));
+        std::memcpy(&effect.textureLength, record + 169, sizeof(float));
         chainEffects_[dbc->getUInt32(i, 0)] = std::move(effect);
+    }
+    // Combo entries naming a row the file does not have (215 names 89) draw nothing.
+    for (auto& [id, effect] : chainEffects_) {
+        std::erase_if(effect.strands, [&, id = id](uint32_t strand) {
+            const bool missing = !chainEffects_.count(strand);
+            if (missing) LOG_DEBUG("SpellVisual: chain effect ", id, " combo names missing row ", strand);
+            return missing;
+        });
     }
     LOG_INFO("SpellVisual: loaded ", chainEffects_.size(), " chain effects, ", kitChainEffects_.size(),
              " kits draw one");
@@ -753,6 +775,10 @@ SpellVisualSystem::BeamState SpellVisualSystem::newBeamState(uint32_t chainId) {
         std::min(effect.minWaveAngle, effect.maxWaveAngle), std::max(effect.minWaveAngle, effect.maxWaveAngle))(random);
     state.waveSpin = std::uniform_real_distribution<float>(
         std::min(effect.minWaveSpin, effect.maxWaveSpin), std::max(effect.minWaveSpin, effect.maxWaveSpin))(random);
+    state.arcAngle = std::uniform_real_distribution<float>(
+        std::min(effect.minArcAngle, effect.maxArcAngle), std::max(effect.minArcAngle, effect.maxArcAngle))(random);
+    state.arcSpin = std::uniform_real_distribution<float>(
+        std::min(effect.minArcSpin, effect.maxArcSpin), std::max(effect.minArcSpin, effect.maxArcSpin))(random);
     return state;
 }
 
@@ -768,7 +794,8 @@ glm::vec3 SpellVisualSystem::beamEnd(uint32_t instanceId, const glm::vec3& fallb
 
 void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& strips, uint32_t chainId,
                                         const glm::vec3& start, const glm::vec3& end, float t,
-                                        const BeamState& state) {
+                                        BeamState& state) {
+    static thread_local std::mt19937 random{std::random_device{}()};
     const auto found = chainEffects_.find(chainId);
     assert(found != chainEffects_.end());
     const ChainEffect& effect = found->second;
@@ -782,38 +809,82 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
     const glm::vec3 axis = end - start;
     const float length = glm::length(axis);
     if (length < 1e-3f) return;
+    const int segments = std::max(1, static_cast<int>(std::ceil(length / std::max(effect.avgSegLen, 0.05f))));
+    // The row itself, then its Combo strands. Each strand follows the row's
+    // path (segments, noise, arc, wave) with offsets of its own and is drawn
+    // with its own row's texture, width, colour, blend and scroll: native
+    // Sunshatter 45215's red strands (81, NoiseScale 0) are as jagged as its
+    // bolt (215, 0.019) and its blue strand (83) jagged beside it.
+    std::vector<const ChainEffect*> looks{&effect};
+    for (uint32_t id : effect.strands) looks.push_back(&chainEffects_.at(id));
+    auto drawNoise = [&](std::vector<glm::vec2>& out) {
+        // Uniform in the disc across the beam; the ends stay on their units.
+        std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+        out.assign(segments + 1, glm::vec2(0.0f));
+        for (int i = 1; i < segments; ++i) {
+            const float r = std::sqrt(unit(random)), a = glm::two_pi<float>() * unit(random);
+            out[i] = glm::vec2(std::cos(a), std::sin(a)) * r;
+        }
+    };
+    // A changed segment count (the units moved) redraws the offsets.
+    if (state.strands.size() != looks.size() || state.strands.front().to.size() != static_cast<size_t>(segments + 1)) {
+        state.strands.assign(looks.size(), {});
+        for (auto& strand : state.strands) { drawNoise(strand.from); drawNoise(strand.to); }
+        state.nextJoints = beamClock_ + effect.minDurBetweenJoints;
+    } else if (effect.minDurBetweenJoints > 0.0f && beamClock_ >= state.nextJoints) {
+        // Every MinDurBetweenJoints the vertices head for new offsets
+        // (Sunshatter, 0.08 s: native's kinks drift and are gone within a
+        // few tenths of a second). Rows with 0 keep theirs.
+        for (auto& strand : state.strands) { strand.from = strand.to; drawNoise(strand.to); }
+        state.nextJoints = beamClock_ + effect.minDurBetweenJoints;
+    }
+    const float toward = effect.minDurBetweenJoints > 0.0f
+        ? std::clamp(1.0f - (state.nextJoints - beamClock_) / effect.minDurBetweenJoints, 0.0f, 1.0f) : 1.0f;
     const glm::vec3 dir = axis / length;
-    // The wave's plane: world up made perpendicular to the beam, turned
-    // about the beam by the wave angle (and its spin over time).
+    // The wave's and arc's planes: world up made perpendicular to the beam,
+    // turned about the beam by their angle (and its spin over time).
     glm::vec3 up = glm::vec3(0, 0, 1) - dir * dir.z;
     if (glm::length(up) < 1e-4f) up = glm::vec3(1, 0, 0) - dir * dir.x;
     up = glm::normalize(up);
-    const float angle = state.waveAngle + state.waveSpin * t;
-    const glm::vec3 across = glm::normalize(up * std::cos(angle) + glm::cross(dir, up) * std::sin(angle));
-    const int segments = std::max(1, static_cast<int>(std::ceil(length / std::max(effect.avgSegLen, 0.05f))));
-    M2Renderer::ChainStrip strip;
-    strip.texturePath = effect.texture;
-    strip.additive = effect.blendMode != 2;
-    strip.color = effect.color;
-    strip.alpha = effect.alpha;
-    // Width is half the strip: Green Beam (0.25) measured 6.5 px across
-    // in the original against 3.1 px drawn 0.25 wide (close0 capture).
-    strip.halfWidth = effect.width;
-    for (int i = 0; i <= segments; ++i) {
-        const float s = length * static_cast<float>(i) / static_cast<float>(segments);
-        const float wave = effect.waveHeight * std::sin(effect.waveFreq * s - effect.waveSpeed * t);
-        strip.spine.push_back(start + dir * s + across * wave);
-        // TexCoordScale repeats of the texture over the whole beam
-        // (Green Beam -2: SoulBeam.blp twice, reversed). Repeating it
-        // every TextureLength (2) yards showed the texture's own ripple
-        // as a zigzag the original does not have.
-        // The pattern travels TexCoordScale beam lengths per second, toward
-        // the target when positive: build 8606 ManaBeam (chain 4, -2) ran
-        // 2 lengths/s toward the caster, WhiteBeam (chain 23, 1.66) 1.67
-        // toward the target (_experiments/20261118T122247Z.eye_channel_beam).
-        strip.u.push_back(effect.texCoordScale * (s / length - effect.texCoordScale * t));
+    const glm::vec3 side = glm::cross(dir, up);
+    auto turned = [&](float angle) { return glm::normalize(up * std::cos(angle) + side * std::sin(angle)); };
+    const glm::vec3 across = turned(state.waveAngle + state.waveSpin * t);
+    // ArcHeight yards at the middle, half a sine from end to end: native
+    // Sunshatter (1.1) bows about a yard above the line at 24 yd.
+    const glm::vec3 bow = turned(state.arcAngle + state.arcSpin * t) * effect.arcHeight;
+    const float noise = chainNoiseRadius(effect.noiseScale, length);
+    for (size_t k = 0; k < looks.size(); ++k) {
+        const ChainEffect& look = *looks[k];
+        if (look.blendMode != 2 && look.blendMode != 3 && look.blendMode != 4) {
+            static std::unordered_set<const ChainEffect*> said;
+            if (said.insert(&look).second)
+                LOG_WARNING("SpellVisual: a strand of chain effect ", chainId, " has blend mode ",
+                            int(look.blendMode), " and is not drawn (only 2, 3 and 4 are implemented)");
+            continue;
+        }
+        M2Renderer::ChainStrip strip;
+        strip.texturePath = look.texture;
+        // Blend 2 adds as well: Sunshatter's red strands (81, WhiteBeam.blp,
+        // which has no alpha channel) show natively as pink lines on a grey
+        // sky, no dark border; drawn alpha-blended they were opaque black-red
+        // bands.
+        strip.additive = true;
+        strip.color = look.color;
+        strip.alpha = look.alpha;
+        // Width is half the strip: Green Beam (0.25) measured 6.5 px across
+        // in the original against 3.1 px drawn 0.25 wide (close0 capture).
+        strip.halfWidth = look.width;
+        const StrandNoise& offsets = state.strands[k];
+        for (int i = 0; i <= segments; ++i) {
+            const float s = length * static_cast<float>(i) / static_cast<float>(segments);
+            const float wave = effect.waveHeight * std::sin(effect.waveFreq * s - effect.waveSpeed * t);
+            const glm::vec2 o = glm::mix(offsets.from[i], offsets.to[i], toward) * noise;
+            strip.spine.push_back(start + dir * s + across * wave + bow * std::sin(glm::pi<float>() * s / length) +
+                                  up * o.x + side * o.y);
+            strip.u.push_back(chainTexCoord(s, length, look.texCoordScale, look.textureLength, t));
+        }
+        strips.push_back(std::move(strip));
     }
-    strips.push_back(std::move(strip));
 }
 
 void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
@@ -868,7 +939,7 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
     }
     // Cast kit beams, for as long as their kit plays.
     std::erase_if(castBeams_, [&](const CastBeam& beam) { return beamClock_ - beam.born >= beam.lifetime; });
-    for (const auto& beam : castBeams_) {
+    for (auto& beam : castBeams_) {
         appendBeamStrip(strips, beam.chainId, beamEnd(beam.casterInstanceId, beam.casterPosition),
                         beamEnd(beam.end.instanceId, beam.end.position), beamClock_ - beam.born, beam.state);
     }

@@ -2460,6 +2460,19 @@ target_link_libraries(test_m2_blend_mode PRIVATE catch2_main)
 add_test(NAME m2_blend_mode COMMAND test_m2_blend_mode)
 register_test_target(test_m2_blend_mode)
 
+# ── test_chain_effect ────────────────────────────────────────
+# SpellChainEffects beam rules: texture repeats and scroll, Combo strands,
+# noise radius, as measured against build 8606.
+add_executable(test_chain_effect
+    test_chain_effect.cpp
+    ${TEST_COMMON_SOURCES})
+target_include_directories(test_chain_effect PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_chain_effect SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_chain_effect PRIVATE catch2_main)
+add_test(NAME chain_effect COMMAND test_chain_effect)
+register_test_target(test_chain_effect)
+
 # ── test_m2_glow_card ────────────────────────────────────────
 # What the renderer does with a glow-card batch. Three decisions the two
 # render passes each made for themselves, in expressions identical down to

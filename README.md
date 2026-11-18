@@ -1552,13 +1552,34 @@ camera-facing strip from caster to target, both at attachment 34 (Chest);
 WoWee does not draw helper models (InvisibleStalker.mdx), so their bind-pose
 chest is read from the model file. Measured against the original at Mageddon
 (`_experiments/20261117T230336Z.channel_beam_fel_sigil/`): Width is half the
-strip, TexCoordScale is texture repeats over the whole beam, the wave is
+strip, the wave is
 `WaveHeight * sin(WaveFreq * s - WaveSpeed * t)` with s yards from the caster,
 in the plane of world up turned about the beam by Min/MaxWaveAngle (plus
 spin), and colour/alpha/blend come from the record's bytes. The TBC record is
 173 bytes: dwords 0-38, then Alpha, Red, Green, Blue, BlendMode bytes at +156.
-Not implemented: joints, noise, arcs, flicker, pulse, Combo rows, blend 6,
-chains on impact kits. Channel kit effects of a channel
+After it: Combo (string offset) +161, RenderLayer +165, TextureLength (float)
++169. Rules in `include/rendering/chain_effect.hpp`, measured on paired
+captures of one server beam (`_experiments/20261118T1328Z.hydross_beam_scroll/`):
+the texture repeats TextureLength times over the beam at any length and its
+pattern moves TexCoordScale beam lengths a second, toward the target when
+positive (ManaBeam -2: 2 repeats, 4.0 Hz at 8 yd, 28 yd and at Hydross;
+WhiteBeam 1.66: 2 repeats, 3.33 Hz). Interior vertices stray up to NoiseScale x
+length across the beam, redrawn every MinDurBetweenJoints when that is set.
+The beam bows ArcHeight yards at its middle (half a sine), in the plane of
+Min/MaxArcAngle plus spin. Combo is 4-byte entries whose first byte is another
+row drawn along the same path with its own look: Sunshatter 45215 / the Black
+Temple door channel 41269 (chain 215) adds thin red 81 strands and a blue 83
+bolt to its green one. Blend 2 is drawn additive (81's WhiteBeam.blp has no
+alpha; native shows no dark border). Gotcha: `.cast 41269` (script target
+23412) on a tempspawned trigger outside Black Temple coincided with a world
+server crash; use `.cast 45215` (same chain, dummy aura) on any unit.
+Not implemented: joints (JointCount etc.), flicker, pulse (native's blue 83
+strand comes and goes), the Combo bytes 1-3, blend 6, chains on impact kits.
+Unverified: the arc's shape, noise motion on rows without MinDurBetweenJoints
+(native ManaBeam's kinks move; here they stay). Open: Hydross Beam Helper
+(InvisibleStalker, display scale 3) beams start about 6 yd above the spawn
+here and about 6 yd below it natively, so WoWee's Hydross beams are longer and
+scroll faster in yards per second. Channel kit effects of a channel
 known only from the fields are held until the fields clear.
 
 A CastKit's chain (83 TBC kits) is drawn at `SMSG_SPELL_GO` from the caster to
@@ -1567,8 +1588,8 @@ long as the kit plays (its longest effect model). Build 8606, a Voidwalker
 casting Lady Vashj's Forked Lightning 38145 (kit 965, chain 95
 ShockLightning, Lightning_Cast_Hand 1 s) at players it missed: lit 0.92-1.0 s,
 one bolt per missed player. Native's bolt is jagged and bows above the line
-(ArcHeight dword 26: 0.9 here, 5 on chain 260); here it is the straight
-channel strip. Gotcha: a cast kit with no effect model has no known play
+(ArcHeight dword 26: 0.9 here, 5 on chain 260); drawn with the channel
+beam's noise and arc, not re-measured against native. Gotcha: a cast kit with no effect model has no known play
 length and its chain is not drawn: Wrath of the Astromancer 42784 (kit 8183,
 chain 260), which native shows for 0.24-0.32 s as a tall pink arc from the
 player to the spell's random destination. Chain Lightning 421 has no chain

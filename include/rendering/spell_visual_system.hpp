@@ -288,7 +288,10 @@ private:
     /// RenderLayer +165, TextureLength float +169.
     struct ChainEffect {
         std::string texture;
-        float avgSegLen = 0, width = 0, texCoordScale = 0;
+        float avgSegLen = 0, width = 0, noiseScale = 0, texCoordScale = 0, textureLength = 0;
+        float minDurBetweenJoints = 0;
+        float arcHeight = 0, minArcAngle = 0, maxArcAngle = 0, minArcSpin = 0, maxArcSpin = 0;
+        std::vector<uint32_t> strands;  // Combo: further rows drawn along this one's path
         float waveHeight = 0, waveFreq = 0, waveSpeed = 0;
         float minWaveAngle = 0, maxWaveAngle = 0, minWaveSpin = 0, maxWaveSpin = 0;
         glm::vec3 color{1.0f};
@@ -298,7 +301,14 @@ private:
     std::unordered_map<uint32_t, ChainEffect> chainEffects_;
     std::unordered_map<uint32_t, uint32_t> kitChainEffects_;  // kit -> chain effect id
     void loadChainEffects();
-    struct BeamState { float age = 0, waveAngle = 0, waveSpin = 0; };
+    // One strand's interior vertex offsets, in noise radii across the beam
+    // (world-up-in-plane, side): drawn from `from` toward `to` over a joint
+    // interval, then redrawn.
+    struct StrandNoise { std::vector<glm::vec2> from, to; };
+    struct BeamState {
+        float age = 0, waveAngle = 0, waveSpin = 0, arcAngle = 0, arcSpin = 0, nextJoints = 0;
+        std::vector<StrandNoise> strands;
+    };
     std::unordered_map<uint64_t, BeamState> beams_;           // caster guid
     std::unordered_map<uint32_t, uint32_t> fieldChannels_;    // caster instance -> visual
     std::unordered_set<uint32_t> heldChannelKits_;            // instances whose kit we started
@@ -314,10 +324,11 @@ private:
     std::vector<CastBeam> castBeams_;
     BeamState newBeamState(uint32_t chainId);
     glm::vec3 beamEnd(uint32_t instanceId, const glm::vec3& fallback);
-    // The chain effect's camera-facing strip from start to end at age t;
-    // nothing for a degenerate beam or a blend mode that is not drawn.
+    // The chain effect's camera-facing strips (the row and its Combo
+    // strands) from start to end at age t; nothing for a degenerate beam or
+    // a blend mode that is not drawn. Advances the state's vertex noise.
     void appendBeamStrip(std::vector<M2Renderer::ChainStrip>& strips, uint32_t chainId, const glm::vec3& start,
-                         const glm::vec3& end, float t, const BeamState& state);
+                         const glm::vec3& end, float t, BeamState& state);
     // Model ID for a cast, impact or missile model, loading it on first use.
     // 0 when it cannot be loaded.
     uint32_t loadSpellModel(const std::string& modelPath);
