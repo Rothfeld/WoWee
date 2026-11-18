@@ -921,6 +921,7 @@ uint32_t EntitySpawner::remoteIdleAnimation(uint64_t guid) const {
     // An aura's state animation, e.g. Whirlwind (126) under Rend's Whirlwind.
     if (const uint32_t aura = remoteAuraStateAnimation(guid); aura != rendering::SpellVisualSystem::kNoAnimation)
         return aura;
+    if (hoverAirborne_.contains(guid)) return rendering::anim::FLY_IDLE;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
     // A unit meleeing holds its ready stance between swings; the original
     // never rolls Stand fidgets then (Ice Claw Bear, combat_observations).
@@ -1232,6 +1233,7 @@ void EntitySpawner::despawnPlayer(uint64_t guid) {
     remoteMovementFlags_.erase(guid);
     remoteWasMovingBackward_.erase(guid);
     remoteWasAirborne_.erase(guid);
+    hoverAirborne_.erase(guid);
 }
 
 // ---------------------------------------------------------------------------

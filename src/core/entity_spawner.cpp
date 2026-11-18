@@ -150,6 +150,7 @@ void EntitySpawner::shutdown() {
     remoteMovementFlags_.clear();
     remoteWasMovingBackward_.clear();
     remoteWasAirborne_.clear();
+    hoverAirborne_.clear();
     creatureSwimmingState_.clear();
     creatureWalkingState_.clear();
     creatureFlyingState_.clear();
@@ -203,6 +204,7 @@ void EntitySpawner::resetAllState() {
     remoteMovementFlags_.clear();
     remoteWasMovingBackward_.clear();
     remoteWasAirborne_.clear();
+    hoverAirborne_.clear();
     creatureSwimmingState_.clear();
     creatureWalkingState_.clear();
     creatureFlyingState_.clear();

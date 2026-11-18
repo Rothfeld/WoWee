@@ -318,6 +318,15 @@ public:
     std::unordered_map<uint64_t, bool>& getCreatureWalkingState() { return creatureWalkingState_; }
     std::unordered_map<uint64_t, bool>& getCreatureFlyingState() { return creatureFlyingState_; }
     std::unordered_map<uint64_t, uint32_t>& getCreatureActiveEmotes() { return creatureActiveEmotes_; }
+    /// A hovering unit whose LiftOff ran idles in Hover until it lands.
+    /// Native (_experiments/20261118T085229Z.sapphiron_liftoff): LiftOff with
+    /// the hover flag set goes on to Hover; without it, back to Stand. The
+    /// flag alone changes nothing. A spell animation returns to Hover; an
+    /// emote (Talk, Land) or clearing the flag returns to Stand.
+    void setHoverAirborne(uint64_t guid, bool airborne) {
+        if (airborne) hoverAirborne_.insert(guid);
+        else          hoverAirborne_.erase(guid);
+    }
     std::unordered_map<uint32_t, bool>& getModelIdIsWolfLike() { return modelIdIsWolfLike_; }
 
     // Player instance accessors (for movement sync in Application::update)
@@ -523,6 +532,9 @@ private:
     // temporarily overrides them, then the idle transition restores this loop.
     std::unordered_map<uint64_t, uint32_t> creatureActiveEmotes_;
     std::unordered_map<uint64_t, uint32_t> remoteCastHolds_;
+    // Units holding Hover (193) as their idle: LiftOff (192) met the hover
+    // movement flag. See setHoverAirborne.
+    std::unordered_set<uint64_t> hoverAirborne_;
     std::unordered_map<uint64_t, uint32_t> remoteWasAuraLocomotion_;
     /// Aura StateKit animation of a remote unit, SpellVisualSystem::kNoAnimation for none.
     uint32_t remoteAuraStateAnimation(uint64_t guid) const;

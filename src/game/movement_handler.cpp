@@ -105,8 +105,7 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
                      Opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE,
                      Opcode::SMSG_SPLINE_MOVE_LAND_WALK,
                      Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL,
-                     Opcode::SMSG_SPLINE_MOVE_ROOT,
-                     Opcode::SMSG_SPLINE_MOVE_SET_HOVER }) {
+                     Opcode::SMSG_SPLINE_MOVE_ROOT }) {
         table[op] = [](network::Packet& packet) {
             if (packet.hasRemaining(1))
                 (void)packet.readPackedGuid();
@@ -135,6 +134,10 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
 
         table[Opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE] =
             makeSynthHandler(kWalkBit, kWalkBit);
+        // Unit::SetHover for creatures (Sapphiron's air phase, Dragon Hover).
+        constexpr uint32_t kHoverBit = asFlag(MovementFlags::HOVER);
+        table[Opcode::SMSG_SPLINE_MOVE_SET_HOVER] = makeSynthHandler(kHoverBit, kHoverBit);
+        table[Opcode::SMSG_SPLINE_MOVE_UNSET_HOVER] = makeSynthHandler(0u, kHoverBit);
         // Run mode says the unit is not walking. It says nothing about
         // swimming or flying, and clearing those took the flight animation off
         // anything that started moving.
@@ -291,9 +294,8 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
         handleClientControlUpdate(packet);
     };
 
-    // Spline move flag changes for other units (unroot/unset_hover/water_walk)
+    // Spline move flag changes for other units (unroot/water_walk)
     for (auto op : {Opcode::SMSG_SPLINE_MOVE_UNROOT,
-                    Opcode::SMSG_SPLINE_MOVE_UNSET_HOVER,
                     Opcode::SMSG_SPLINE_MOVE_WATER_WALK}) {
         table[op] = [](network::Packet& packet) {
             // Minimal parse: PackedGuid only - no animation-relevant state change.

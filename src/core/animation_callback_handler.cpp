@@ -399,6 +399,22 @@ void AnimationCallbackHandler::setupCallbacks() {
         apply(game::MovementFlags::SWIMMING, entitySpawner_.getCreatureSwimmingState());
         apply(game::MovementFlags::WALKING,  entitySpawner_.getCreatureWalkingState());
         apply(game::MovementFlags::FLYING,   entitySpawner_.getCreatureFlyingState());
+        const uint32_t hoverBit = static_cast<uint32_t>(game::MovementFlags::HOVER);
+        if (mask & hoverBit) {
+            // Set while LiftOff plays, it goes on to Hover; cleared, the unit
+            // stands at once (no Land). updateRemoteUnitState swaps the idle.
+            bool airborne = false;
+            if (moveFlags & hoverBit) {
+                auto* cr = renderer_.getCharacterRenderer();
+                const uint32_t instanceId = entitySpawner_.getCreatureInstanceId(guid);
+                uint32_t current = 0; float time = 0.0f, duration = 0.0f;
+                airborne = cr && instanceId != 0 &&
+                           cr->getAnimationState(instanceId, current, time, duration) &&
+                           current == rendering::anim::LIFT_OFF;
+            }
+            if (airborne || (moveFlags & hoverBit) == 0)
+                entitySpawner_.setHoverAirborne(guid, airborne);
+        }
     });
 
     // Emote animation callback - play server-driven emote animations on NPCs and other players.
@@ -423,6 +439,14 @@ void AnimationCallbackHandler::setupCallbacks() {
             // correct display is instantiated.
             if (emoteAnim == 0) activeEmotes.erase(guid);
             else                activeEmotes[guid] = emoteAnim;
+        }
+        // LiftOff on a hovering unit goes on to Hover; any other emote ends it.
+        if (isRemote && emoteAnim != 0) {
+            const uint32_t hoverBit = static_cast<uint32_t>(game::MovementFlags::HOVER);
+            const auto flags = entitySpawner_.getRemoteMovementFlags().find(guid);
+            const bool hovering = flags != entitySpawner_.getRemoteMovementFlags().end() &&
+                                  (flags->second & hoverBit) != 0;
+            entitySpawner_.setHoverAirborne(guid, emoteAnim == rendering::anim::LIFT_OFF && hovering);
         }
         // Look up creature instance first, then online players
         uint32_t emoteInstanceId = entitySpawner_.getCreatureInstanceId(guid);
