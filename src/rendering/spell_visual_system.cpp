@@ -54,6 +54,15 @@ float attachmentScale(const glm::mat4& attachment) {
 }
 }  // namespace
 
+// SpellVisualEffectName.Scale: the size an effect row is drawn at. One model
+// has several rows at different sizes - Shock_Missile is 1, 4 and 8 (Void
+// Reaver's Arcane Orb, 34172 visual 8159, uses the 8), icebarrier_state 0.5,
+// 1, 2 and 4.
+float SpellVisualSystem::effectScale(uint32_t effectNameId) const {
+    const auto found = effectScales_.find(effectNameId);
+    return found != effectScales_.end() ? found->second : 1.0f;
+}
+
 void SpellVisualSystem::initialize(M2Renderer* m2Renderer, Renderer* renderer) {
     m2Renderer_ = m2Renderer;
     renderer_ = renderer;
@@ -99,6 +108,9 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     const uint32_t svMissileDestinationField =
         svLayout ? svLayout->field("MissileDestinationAttachment") : 0xFFFFFFFFu;
     uint32_t fxFilePathField  = fxLayout  ? (*fxLayout)["FilePath"]       : 2;
+    const uint32_t fxScaleField = fxLayout ? fxLayout->field("Scale") : 0xFFFFFFFFu;
+    if (fxScaleField == 0xFFFFFFFFu)
+        LOG_WARNING("SpellVisual: SpellVisualEffectName layout lacks Scale; every effect drawn at 1");
 
     // Kit effect fields to probe, in priority order.
     // SpecialEffect0 > BaseEffect > LeftHand > RightHand > Chest > Head > Breath
@@ -131,6 +143,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
             // shipped is .m2.
             p = pipeline::modelPathToM2(p);
             effectPaths[id] = p;
+            if (fxScaleField < fxDbc->getFieldCount()) {
+                const float scale = fxDbc->getFloat(i, fxScaleField);
+                assert(std::isfinite(scale) && scale > 0.0f);
+                effectScales_[id] = scale;
+            }
         }
     }
 
@@ -178,7 +195,7 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 if (kitFields[k] >= fc) continue;
                 const uint32_t effectId = kitDbc->getUInt32(i, kitFields[k]);
                 if (const auto path = effectPaths.find(effectId); path != effectPaths.end())
-                    kitEffects_[kitId].push_back({path->second, attachments[k]});
+                    kitEffects_[kitId].push_back({path->second, attachments[k], effectScale(effectId)});
             }
             for (int k = 0; k < 4; ++k) {
                 if (procFields[k] >= fc || procParamFields[k] >= fc) continue;
@@ -264,7 +281,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         // Fireball - which has both kits - never showed its fireball at all.
         if (svMissileField < svFc) {
             std::string path = missilePath(svDbc->getUInt32(i, svMissileField));
-            if (!path.empty()) { spellVisualMissilePath_[vid] = path; ++loadedMissile; }
+            if (!path.empty()) {
+                spellVisualMissilePath_[vid] = path;
+                spellVisualMissileScale_[vid] = effectScale(svDbc->getUInt32(i, svMissileField));
+                ++loadedMissile;
+            }
             if (!path.empty() && svMissileAttachmentField < svFc && svMissileDestinationField < svFc) {
                 missileAttachments_[vid] = {
                     .launch = static_cast<int32_t>(svDbc->getUInt32(i, svMissileAttachmentField)),
@@ -366,8 +387,8 @@ void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPo
         const bool breath = attachment == kAttachBreath;
         const glm::vec3 spawn = attachment ? glm::vec3(attachMat[3]) : worldPosition;
         const uint32_t instanceId = breath
-            ? m2Renderer_->createInstanceWithMatrix(modelId, attachMat, spawn)
-            : m2Renderer_->createInstance(modelId, spawn, glm::vec3(0.0f), 1.0f);
+            ? m2Renderer_->createInstanceWithMatrix(modelId, glm::scale(attachMat, glm::vec3(effect.scale)), spawn)
+            : m2Renderer_->createInstance(modelId, spawn, glm::vec3(0.0f), effect.scale);
         if (instanceId == 0) {
             LOG_WARNING("SpellVisual: instance failed for kit=", kitId, " model=", effect.path);
             continue;
@@ -390,7 +411,7 @@ void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPo
         }
         activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
             .isPrecast = isPrecast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
-            .orientWithAttachment = breath});
+            .orientWithAttachment = breath, .effectScale = effect.scale});
         if (!breath && attachInstanceId)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
@@ -422,7 +443,9 @@ void SpellVisualSystem::playEffectAtAttachment(uint32_t effectNameId, uint32_t a
     }
     const uint32_t modelId = loadSpellModel(path->second);
     if (modelId == 0) return;
-    const uint32_t instanceId = m2Renderer_->createInstanceWithMatrix(modelId, attachMat, glm::vec3(attachMat[3]));
+    const float scale = effectScale(effectNameId);
+    const uint32_t instanceId = m2Renderer_->createInstanceWithMatrix(
+        modelId, glm::scale(attachMat, glm::vec3(scale)), glm::vec3(attachMat[3]));
     if (instanceId == 0) {
         LOG_WARNING("SpellVisual: instance failed for effect ", effectNameId, " model=", path->second);
         return;
@@ -435,7 +458,7 @@ void SpellVisualSystem::playEffectAtAttachment(uint32_t effectNameId, uint32_t a
     const float lifetime = animDurMs / 1000.0f;
     activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
         .isPrecast = false, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
-        .orientWithAttachment = true});
+        .orientWithAttachment = true, .effectScale = scale});
     LOG_DEBUG("SpellVisual: effect=", effectNameId, " attachment=", attachment, " instance=",
               attachInstanceId, " duration=", lifetime, "s model=", path->second);
 }
@@ -563,13 +586,14 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
         }
         const bool breath = effect.attachment == kAttachBreath;
         const uint32_t instance = breath
-            ? m2Renderer_->createInstanceWithMatrix(model, transform, spawn)
-            : m2Renderer_->createInstance(model, spawn, glm::vec3(0), 1.0f);
+            ? m2Renderer_->createInstanceWithMatrix(model, glm::scale(transform, glm::vec3(effect.scale)), spawn)
+            : m2Renderer_->createInstance(model, spawn, glm::vec3(0), effect.scale);
         if (!instance) { LOG_ERROR("Channel effect instance failed: ", effect.path); continue; }
         m2Renderer_->restartInstanceAnimation(instance);
         activeSpellVisuals_.push_back({.instanceId = instance, .elapsed = 0.0f,
             .duration = durationMs / 1000.0f, .isPrecast = false, .attachmentId = effect.attachment,
-            .attachInstanceId = attachInstanceId, .isChannel = true, .orientWithAttachment = breath});
+            .attachInstanceId = attachInstanceId, .isChannel = true, .orientWithAttachment = breath,
+            .effectScale = effect.scale});
         if (!breath)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn,
                         effect.attachment ? attachmentScale(transform) : 1.0f);
@@ -651,6 +675,7 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             }
             activeSpellVisuals_.push_back({instance, 0.0f, std::numeric_limits<float>::infinity(),
                 false, attachment, attachInstanceId, false, visual, marker});
+            activeSpellVisuals_.back().effectScale = effect.scale;
             placeOnUnit(activeSpellVisuals_.back(), characters, attachment ? glm::vec3(attachMat[3]) : position,
                         attachment ? attachmentScale(attachMat) : 1.0f);
             LOG_INFO("Aura visual: owner=", attachInstanceId, " visual=", visual,
@@ -909,7 +934,7 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     for (const auto& effect : effects->second) {
         const uint32_t modelId = loadSpellModel(effect.path);
         if (modelId == 0) continue;
-        const uint32_t instanceId = m2Renderer_->createInstance(modelId, worldPosition, glm::vec3(0.0f), 1.0f);
+        const uint32_t instanceId = m2Renderer_->createInstance(modelId, worldPosition, glm::vec3(0.0f), effect.scale);
         if (instanceId == 0) {
             LOG_WARNING("SpellVisual: persistent area instance failed, model=", effect.path);
             continue;
@@ -969,7 +994,7 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     const float duration = std::clamp(distance / speed, 0.05f, SPELL_MISSILE_MAX_DURATION);
     spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
                               .end = end, .elapsed = 0.0f, .launchAt = launchDelay, .duration = duration,
-                              .impactAtEnd = impactAtEnd});
+                              .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId)});
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
              " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay, "s");
     return true;
@@ -987,7 +1012,7 @@ void SpellVisualSystem::placeSpellMissile(const SpellMissile& missile, float t) 
         rotation.z = std::atan2(dir.y, dir.x);
         rotation.y = -std::asin(std::clamp(dir.z, -1.0f, 1.0f));
     }
-    m2Renderer_->setInstanceTransform(missile.instanceId, placementModelMatrix(pos, rotation, 1.0f));
+    m2Renderer_->setInstanceTransform(missile.instanceId, placementModelMatrix(pos, rotation, missile.scale));
 }
 
 void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
@@ -1062,12 +1087,13 @@ void SpellVisualSystem::placeOnUnit(const SpellVisualInstance& visual, Character
     float yaw = 0.0f;
     if (!characters || !visual.attachInstanceId ||
         !characters->getInstanceYaw(visual.attachInstanceId, yaw)) {
-        m2Renderer_->setInstancePosition(visual.instanceId, position);
+        m2Renderer_->setInstanceTransform(visual.instanceId,
+            glm::scale(glm::translate(glm::mat4(1.0f), position), glm::vec3(visual.effectScale)));
         return;
     }
     const glm::mat4 transform = glm::scale(
         glm::rotate(glm::translate(glm::mat4(1.0f), position), yaw, glm::vec3(0.0f, 0.0f, 1.0f)),
-        glm::vec3(scale));
+        glm::vec3(scale * visual.effectScale));
     m2Renderer_->setInstanceTransform(visual.instanceId, transform);
 }
 
@@ -1129,7 +1155,7 @@ void SpellVisualSystem::update(float deltaTime) {
             continue;
         }
         if (!it->instanceId) {
-            it->instanceId = m2Renderer_->createInstance(it->modelId, it->start, glm::vec3(0.0f), 1.0f);
+            it->instanceId = m2Renderer_->createInstance(it->modelId, it->start, glm::vec3(0.0f), it->scale);
             if (!it->instanceId) {
                 LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);
                 if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
@@ -1172,7 +1198,9 @@ void SpellVisualSystem::update(float deltaTime) {
                 glm::mat4 attachMat;
                 if (charRenderer->getAttachmentTransform(it->attachInstanceId, it->attachmentId, attachMat)) {
                     glm::vec3 bonePos = glm::vec3(attachMat[3]);
-                    if (it->orientWithAttachment) m2Renderer_->setInstanceTransform(it->instanceId, attachMat);
+                    if (it->orientWithAttachment)
+                        m2Renderer_->setInstanceTransform(it->instanceId,
+                                                          glm::scale(attachMat, glm::vec3(it->effectScale)));
                     else placeOnUnit(*it, charRenderer, bonePos, attachmentScale(attachMat));
                     static const bool traceAttachments = std::getenv("WOWEE_TRACE_AURA_ATTACHMENT") != nullptr;
                     if (traceAttachments && it->auraVisualId &&

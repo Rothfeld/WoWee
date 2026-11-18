@@ -1513,6 +1513,15 @@ Not implemented: joints, noise, arcs, flicker, pulse, Combo rows, blend 6,
 chains on cast/impact kits (Chain Lightning). Channel kit effects of a channel
 known only from the fields are held until the fields clear.
 
+Every spell effect model is drawn at its `SpellVisualEffectName.Scale` (TBC
+field 4), on top of the unit/attachment scale. One file has rows at several
+sizes: `Shock_Missile` 1, 4 and 8 - Void Reaver's Arcane Orb (34172, visual
+8159, effect 3431) is the 8 and natively a ball several yards across even
+when a human casts it (`.cast 34172`); `icebarrier_state` 0.5/1/2/4.
+Evidence: `_experiments/20261118T121312Z.glaive_glow/castorb-*` in the
+workspace root. Gotcha: needs the `Scale` field in the installed
+`dbc_layouts.json`; without it every effect is drawn at 1 (one warning).
+
 A DynamicObject's PersistentAreaKit plays its models at the area's centre for
 the object's life, and a kit with CharProc 9 also drops impacts across the
 area: CharParamZero picks the model (0 Blizzard_Impact_Base, 1

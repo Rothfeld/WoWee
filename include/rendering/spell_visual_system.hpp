@@ -160,6 +160,8 @@ private:
         bool decaying = false;
         // Follows the attachment's full transform, not only its position.
         bool orientWithAttachment = false;
+        // SpellVisualEffectName.Scale, times whatever the placement scales by.
+        float effectScale = 1.0f;
     };
 
     struct PhysicalProjectile {
@@ -182,17 +184,21 @@ private:
         float launchAt = 0.0f;       // seconds after scheduling
         float duration = 0.0f;       // landing, seconds after scheduling
         bool impactAtEnd = false;
+        float scale = 1.0f;          // SpellVisualEffectName.Scale of the missile model
     };
 
     void loadSpellVisualDbc();
+    float effectScale(uint32_t effectNameId) const;
     uint32_t kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits, uint32_t visualId);
     // duration <= 0: the model's own animation length.
     void spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
                          float duration, bool isPrecast);
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
-    struct KitEffect { std::string path; uint32_t attachment; };
+    // scale: SpellVisualEffectName.Scale, the size the effect is drawn at.
+    struct KitEffect { std::string path; uint32_t attachment; float scale = 1.0f; };
     std::unordered_map<uint32_t, std::vector<KitEffect>> kitEffects_;
     std::unordered_map<uint32_t, std::string> effectPaths_;  // SpellVisualEffectName ID -> .m2 path
+    std::unordered_map<uint32_t, float> effectScales_;       // SpellVisualEffectName ID -> Scale
     std::unordered_map<uint32_t, uint32_t> channelKits_;
     std::unordered_map<uint32_t, uint32_t> precastKits_;
     std::unordered_map<uint32_t, uint32_t> stateKits_;
@@ -291,6 +297,7 @@ private:
     std::vector<PhysicalProjectile> physicalProjectiles_;
     std::vector<SpellMissile> spellMissiles_;
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path
+    std::unordered_map<uint32_t, float> spellVisualMissileScale_;
     std::unordered_map<uint32_t, MissileAttachments> missileAttachments_;
     std::unordered_map<std::string, uint32_t> spellVisualModelIds_;   // M2 path → M2Renderer modelId
     std::unordered_set<uint32_t> spellVisualFailedModels_;           // modelIds that failed to load (negative cache)

@@ -457,8 +457,10 @@
     "PrecastKit": 1
   },
   "SpellVisualEffectName": {
+    "AreaEffectSize": 3,
     "FilePath": 2,
-    "ID": 0
+    "ID": 0,
+    "Scale": 4
   },
   "SpellVisualKit": {
     "BaseEffect": 5,
