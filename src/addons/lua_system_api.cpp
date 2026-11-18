@@ -1312,6 +1312,34 @@ const ClientCVarBinding* findClientCVar(const std::string& lowerName) {
 
 static std::string installedClientLocale(lua_State* L);
 
+// SetView(n) / SaveView(n) / ResetView(n) / NextView() / PrevView().
+// An index outside 1-5 is refused as build 8606's Lua errors on it.
+static int cameraViewOp(lua_State* L, const char* op, bool indexed) {
+    int view = 0;
+    if (indexed) {
+        view = static_cast<int>(luaL_checkinteger(L, 1));
+        if (view < 1 || view > 5) return luaL_error(L, "Usage: %s(index 1-5)", op);
+    }
+    if (auto* svc = getLuaServices(L); svc && svc->cameraView) svc->cameraView(op, view);
+    if (indexed && std::string(op) == "set") {
+        // cameraView is the zero-based current view.
+        lua_getglobal(L, "SetCVar");
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, "cameraView");
+            lua_pushstring(L, std::to_string(view - 1).c_str());
+            lua_call(L, 2, 0);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    return 0;
+}
+static int lua_SetView(lua_State* L) { return cameraViewOp(L, "set", true); }
+static int lua_SaveView(lua_State* L) { return cameraViewOp(L, "save", true); }
+static int lua_ResetView(lua_State* L) { return cameraViewOp(L, "reset", true); }
+static int lua_NextView(lua_State* L) { return cameraViewOp(L, "next", false); }
+static int lua_PrevView(lua_State* L) { return cameraViewOp(L, "prev", false); }
+
 static int lua_GetCVar(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     // Folded to lower case, because the client's CVar names are not
@@ -7160,6 +7188,11 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetPlayerMapPosition", lua_GetPlayerMapPosition},
                 {"GetPlayerFacing",     lua_GetPlayerFacing},
                 {"GetCVar",             lua_GetCVar},
+                {"SetView",             lua_SetView},
+                {"SaveView",            lua_SaveView},
+                {"ResetView",           lua_ResetView},
+                {"NextView",            lua_NextView},
+                {"PrevView",            lua_PrevView},
                 {"GetCVarBool",         lua_GetCVarBool},
                 {"ShowNameplates", [](lua_State* L) -> int {
             lua_settop(L, 0); lua_pushstring(L, "nameplateShowEnemies"); lua_pushstring(L, "1"); return lua_SetCVar(L);

@@ -157,6 +157,9 @@ void KeybindingManager::initializeDefaults(Device device) {
         {"WOWEETOGGLERECORDING", {"SHIFT-PRINTSCREEN", ""}},
         {"CAMERAZOOMIN", {"MOUSEWHEELUP", ""}}, {"CAMERAZOOMOUT", {"MOUSEWHEELDOWN", ""}},
         {"WOWEERESETCAMERA", {"R", ""}},
+        // Native defaults (GetBindingKey on 2.4.3): END / HOME; SETVIEW,
+        // SAVEVIEW and RESETVIEW are unbound.
+        {"NEXTVIEW", {"END", ""}}, {"PREVVIEW", {"HOME", ""}},
     };
     bindings_.insert(defaults.begin(), defaults.end());
     // The action bar keys as native 2.4.3 defaults them (GetBinding over
@@ -691,9 +694,14 @@ bool clientActsOnBinding(const std::string& command) {
         "MOVEFORWARD", "MOVEBACKWARD", "TURNLEFT", "TURNRIGHT", "STRAFELEFT", "STRAFERIGHT",
         "JUMP", "SITORSTAND", "TOGGLERUN", "OPENCHATSLASH", "TARGETNEARESTENEMY",
         "SCREENSHOT", "WOWEETOGGLERECORDING", "TOGGLESHEATH", "FRIENDNAMEPLATES", "CAMERAZOOMIN", "CAMERAZOOMOUT",
-        "WOWEERESETCAMERA",
+        "WOWEERESETCAMERA", "NEXTVIEW", "PREVVIEW",
     };
     for (const char* name : native) if (command == name) return true;
+    for (int i = 1; i <= 5; ++i) {
+        const std::string n = std::to_string(i);
+        if (command == "SETVIEW" + n || (i >= 2 && (command == "SAVEVIEW" + n || command == "RESETVIEW" + n)))
+            return true;
+    }
     for (const auto& [prefix, count] : {std::pair{"ACTIONBUTTON", 12},
              {"SHAPESHIFTBUTTON", 8}, {"MULTIACTIONBAR1BUTTON", 12}})
         for (int i = 1; i <= count; ++i)

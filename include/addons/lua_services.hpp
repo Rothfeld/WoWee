@@ -268,6 +268,9 @@ struct LuaServices {
     /// SetCVar has already refused values the original refuses.
     std::function<void(float yards)> setCameraDistanceMax;
     std::function<void(float yardsPerSecond)> setCameraDistanceMoveSpeed;
+    /// SetView/SaveView/ResetView/NextView/PrevView: op "set", "save",
+    /// "reset", "next" or "prev"; view 1-5 for the first three.
+    std::function<void(const std::string& op, int view)> cameraView;
 
     /// Whether the camera is inside a WMO, for IsIndoors and IsOutdoors.
     ///

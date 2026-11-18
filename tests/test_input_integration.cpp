@@ -394,6 +394,45 @@ TEST_CASE_METHOD(Integration, "Camera zoom follows the original's distance CVars
     CHECK(controller.zoomDistance() == Catch::Approx(before - 1.0f).margin(0.0833f));
 }
 
+// Build 8606 (pair 4, Shattrath): SetView 1-5 = 0/0, 5.55/-10, 5.55/-20,
+// 13.88/-30, 13.88/-10; End/Home step without wrapping; SaveView keeps the
+// current distance and pitch; ResetView of the current view applies it.
+TEST_CASE_METHOD(Integration, "Camera views follow the original's SetView, SaveView and ResetView", "[camera][views]") {
+    rendering::Camera camera;
+    rendering::CameraController controller(&camera);
+    glm::vec3 target(0);
+    controller.setFollowTarget(&target);
+    controller.setIdleOrbitEnabled(false);
+    controller.setGravityDisabled(true);
+    const auto settle = [&] { for (int i = 0; i < 2000; ++i) controller.update(0.01f); };
+    const float expected[][2] = {{0, 0}, {0.0f, 0.0f}, {5.55f, -10.0f}, {5.55f, -20.0f}, {13.88f, -30.0f}, {13.88f, -10.0f}};
+    for (int view = 1; view <= 5; ++view) {
+        controller.setView(view);
+        settle();
+        CHECK(controller.zoomDistance() == Catch::Approx(expected[view][0]).margin(0.01f));
+        CHECK(controller.getPitch() == Catch::Approx(expected[view][1]));
+    }
+    controller.nextView();
+    CHECK(controller.currentView() == 5);
+    for (int i = 0; i < 6; ++i) controller.prevView();
+    CHECK(controller.currentView() == 1);
+    settle();
+    CHECK(controller.zoomDistance() == Catch::Approx(0.0f).margin(0.01f));
+    controller.setView(2);
+    controller.processMouseWheel(3.0f);
+    settle();
+    const float zoomed = controller.zoomDistance();
+    CHECK(zoomed < 5.0f);
+    controller.saveView(2);
+    controller.setView(3);
+    controller.setView(2);
+    settle();
+    CHECK(controller.zoomDistance() == Catch::Approx(zoomed).margin(0.01f));
+    controller.resetView(2);
+    settle();
+    CHECK(controller.zoomDistance() == Catch::Approx(5.55f).margin(0.01f));
+}
+
 TEST_CASE_METHOD(Integration, "Camera collision pulls in at once and eases back over two seconds", "[camera][collision]") {
     rendering::Camera camera;
     rendering::CameraController controller(&camera);

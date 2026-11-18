@@ -574,6 +574,16 @@ bool Application::initialize() {
             if (renderer && renderer->getCameraController())
                 renderer->getCameraController()->setDistanceMax(yards);
         };
+        luaSvc.cameraView = [this](const std::string& op, int view) {
+            if (!renderer || !renderer->getCameraController()) return;
+            auto* cam = renderer->getCameraController();
+            if (op == "set") cam->setView(view);
+            else if (op == "save") cam->saveView(view);
+            else if (op == "reset") cam->resetView(view);
+            else if (op == "next") cam->nextView();
+            else if (op == "prev") cam->prevView();
+            else assert(false && "unknown camera view op");
+        };
         luaSvc.setCameraDistanceMoveSpeed = [this](float yardsPerSecond) {
             if (renderer && renderer->getCameraController())
                 renderer->getCameraController()->setDistanceMoveSpeed(yardsPerSecond);

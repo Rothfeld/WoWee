@@ -2250,7 +2250,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             const float hit = std::min(traceWmoHit_, traceM2Hit_);
             // hit == currentDistance means no hit (returns maxDistance on miss)
             if (hit >= currentDistance) return currentDistance;
-            return std::max(MIN_DISTANCE, hit - CAM_SPHERE_RADIUS - CAM_EPSILON);
+            return std::max(MIN_DISTANCE, hit - CAMERA_WALL_STANDOFF);
         };
 
         float rawLimit = geometryLimitAlong(camDir);
@@ -2294,7 +2294,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
     // Compute actual camera position
     glm::vec3 actualCam;
-    if (actualDist < MIN_DISTANCE + 0.1f) {
+    if (actualDist < FIRST_PERSON_DISTANCE) {
         // First-person: position camera at pivot (player's eyes)
         actualCam = pivot + f.forward3D * 0.1f;  // Slightly forward to not clip head
     } else {
@@ -2322,7 +2322,7 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // over which the near plane can be half in the water. Lifting eases the
     // camera back a little and dropping draws it in, so the character stays
     // framed rather than sliding down the screen.
-    if (!waterCameraBoundary && waterRenderer && actualDist >= MIN_DISTANCE + 0.1f) {
+    if (!waterCameraBoundary && waterRenderer && actualDist >= FIRST_PERSON_DISTANCE) {
         const float band = std::max(0.05f, camera->getNearPlane()
                                            * std::tan(glm::radians(camera->getFovDegrees()) * 0.5f));
         auto surfaceZ = waterRenderer->getNearestWaterHeightAt(
@@ -2879,6 +2879,14 @@ void CameraController::update(float deltaTime) {
     if (bindings.isCommandPressed("CAMERAZOOMIN")) processMouseWheel(1.0f);
     if (bindings.isCommandPressed("CAMERAZOOMOUT")) processMouseWheel(-1.0f);
     if (bindings.isCommandPressed("WOWEERESETCAMERA")) resetAngles();
+    if (bindings.isCommandPressed("NEXTVIEW")) nextView();
+    if (bindings.isCommandPressed("PREVVIEW")) prevView();
+    for (int view = 1; view <= kViewCount; ++view) {
+        const std::string n = std::to_string(view);
+        if (bindings.isCommandPressed("SETVIEW" + n)) setView(view);
+        if (view >= 2 && bindings.isCommandPressed("SAVEVIEW" + n)) saveView(view);
+        if (view >= 2 && bindings.isCommandPressed("RESETVIEW" + n)) resetView(view);
+    }
 
     // Determine current key states
     // Arrow keys mirror WASD the way the original client maps them:
@@ -3526,6 +3534,28 @@ void CameraController::releaseMouseCapture() {
     dragOffsetY_ = 0.0f;
     SDL_SetWindowRelativeMouseMode(SDL_GetKeyboardFocus(), false);
     SDL_ShowCursor();
+}
+
+void CameraController::setView(int view) {
+    assert(view >= 1 && view <= kViewCount);
+    currentView_ = view;
+    userTargetDistance = views_[view].distance;
+    zoomPending_ = 0.0f;
+    pitch = glm::clamp(views_[view].pitch, MIN_PITCH, MAX_PITCH);
+    // Back behind the character, as the original does.
+    yaw = facingYaw;
+    if (camera) camera->setRotation(yaw, pitch);
+}
+
+void CameraController::saveView(int view) {
+    assert(view >= 1 && view <= kViewCount);
+    views_[view] = {userTargetDistance, pitch};
+}
+
+void CameraController::resetView(int view) {
+    assert(view >= 1 && view <= kViewCount);
+    views_[view] = kDefaultViews[view];
+    if (view == currentView_) setView(view);
 }
 
 void CameraController::resetAngles() {

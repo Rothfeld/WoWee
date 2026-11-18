@@ -40,6 +40,17 @@ public:
         assert(yards >= 0.0f && yards <= kDistanceCeiling);
         distanceMax_ = yards;
     }
+    /// SetView/SaveView/ResetView/NextView/PrevView (build 8606): five
+    /// views of distance and pitch, the camera put back behind the character.
+    /// Defaults measured on 2.4.3: 1 first person (0 yd, 0 deg), 2 5.55/-10,
+    /// 3 5.55/-20, 4 13.88/-30, 5 13.88/-10. NextView/PrevView step without
+    /// wrapping; ResetView of the current view applies it at once.
+    void setView(int view);
+    void saveView(int view);
+    void resetView(int view);
+    void nextView() { setView(std::min(currentView_ + 1, kViewCount)); }
+    void prevView() { setView(std::max(currentView_ - 1, 1)); }
+    [[nodiscard]] int currentView() const { return currentView_; }
     void setDistanceMaxFactor(float factor) {
         assert(factor >= 0.0f);
         distanceMaxFactor_ = factor;
@@ -139,7 +150,7 @@ public:
     [[nodiscard]] float getFacingYaw() const { return facingYaw; }
     [[nodiscard]] float getTravelYaw() const { return travelYaw_; }
     [[nodiscard]] bool isThirdPerson() const { return thirdPerson; }
-    [[nodiscard]] bool isFirstPersonView() const { return thirdPerson && (userTargetDistance <= MIN_DISTANCE + 0.15f); }
+    [[nodiscard]] bool isFirstPersonView() const { return thirdPerson && (userTargetDistance <= FIRST_PERSON_DISTANCE); }
     [[nodiscard]] bool shouldHidePlayer() const { return playerCameraOpacity_ <= 0.0f; }
     [[nodiscard]] bool isGrounded() const { return grounded; }
     [[nodiscard]] float getAirborneSeconds() const { return airborneSeconds_; }
@@ -482,6 +493,14 @@ private:
     uint32_t playerInstanceId = 0;
 
     // Stored rotation (avoids lossy forward-vector round-trip)
+    static constexpr int kViewCount = 5;
+    struct SavedView { float distance; float pitch; };
+    static constexpr SavedView kDefaultViews[kViewCount + 1] = {
+        {0.0f, 0.0f}, {0.0f, 0.0f}, {5.55f, -10.0f}, {5.55f, -20.0f}, {13.88f, -30.0f}, {13.88f, -10.0f}};
+    SavedView views_[kViewCount + 1] = {
+        {0.0f, 0.0f}, {0.0f, 0.0f}, {5.55f, -10.0f}, {5.55f, -20.0f}, {13.88f, -30.0f}, {13.88f, -10.0f}};
+    // Native cameraView is 1 (view 2) in a fresh session.
+    int currentView_ = 2;
     float yaw = 180.0f;
     float pitch = -30.0f;
     float facingYaw = 180.0f;  // Character-facing yaw (can differ from camera yaw)
@@ -526,7 +545,14 @@ private:
     float collisionDistance = kStartDistance;   // Max allowed by collision
     bool externalFollow_ = false;
     std::optional<glm::vec3> viewTarget_;
-    static constexpr float MIN_DISTANCE = 0.5f;     // Minimum zoom (first-person threshold)
+    // Build 8606 zooms continuously to 0 (0.48, 0.25, 0.14, 0.02, 0.00 yd).
+    static constexpr float MIN_DISTANCE = 0.0f;
+    // At or under this the camera sits at the eyes (first person).
+    static constexpr float FIRST_PERSON_DISTANCE = 0.1f;
+    // Native leaves 0.111 yd between the camera and the WMO surface its ray
+    // hits, along the ray, at every angle (Shattrath Terrace wall,
+    // incidence cos 0.6-0.97); WoWee kept 0.54.
+    static constexpr float CAMERA_WALL_STANDOFF = 0.111f;
     float distanceMax_ = 15.0f;          // cameraDistanceMax default
     float distanceMaxFactor_ = 1.0f;     // cameraDistanceMaxFactor default
     float distanceMoveSpeed_ = 8.33f;    // cameraDistanceMoveSpeed default
