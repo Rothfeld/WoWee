@@ -512,7 +512,9 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                 std::optional<float> terrainH;
                 std::optional<float> wmoH;
                 std::optional<float> m2H;
-                if (terrainManager) terrainH = terrainManager->getHeightAt(targetPos.x, targetPos.y);
+                if (terrainManager)
+                    terrainH = liquidBedTerrain(terrainManager->getHeightAt(targetPos.x, targetPos.y),
+                                                targetPos.z + 2.0f);
                 if (wmoRenderer) wmoH = wmoRenderer->getFloorHeight(targetPos.x, targetPos.y, targetPos.z + 2.0f);
                 if (m2Renderer) m2H = m2Renderer->getFloorHeight(targetPos.x, targetPos.y, targetPos.z + 1.0f);
                 auto floorH = selectHighestFloor(terrainH, wmoH, m2H);
@@ -2677,7 +2679,8 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
         std::optional<float> terrainH;
         std::optional<float> wmoH;
         std::optional<float> m2H;
-        if (terrainManager) terrainH = terrainManager->getHeightAt(newPos.x, newPos.y);
+        if (terrainManager)
+            terrainH = liquidBedTerrain(terrainManager->getHeightAt(newPos.x, newPos.y), feetZ + 2.0f);
         if (wmoRenderer) wmoH = wmoRenderer->getFloorHeight(newPos.x, newPos.y, feetZ + 2.0f);
         if (m2Renderer && !externalFollow_) m2H = m2Renderer->getFloorHeight(newPos.x, newPos.y, feetZ + 1.0f);
         auto floorH = selectHighestFloor(terrainH, wmoH, m2H);

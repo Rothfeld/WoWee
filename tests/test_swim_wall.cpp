@@ -13,6 +13,7 @@
 
 #include "rendering/swim_wall.hpp"
 
+using wowee::rendering::liquidBedTerrain;
 using wowee::rendering::SwimStep;
 using wowee::rendering::swimStepAgainstTerrain;
 
@@ -75,4 +76,22 @@ TEST_CASE("terrain with no height at all blocks nothing", "[swim]") {
     const SwimStep out = swimStepAgainstTerrain(from, into, 1.0f, noHeight);
     CHECK(out.x == into.x);
     CHECK(out.y == into.y);
+}
+
+TEST_CASE("a swimmer under the heightfield is not walled in by it", "[swim]") {
+    // C'Thun's stomach: slime at -98 inside a WMO, Ahn'Qiraj's desert at 204.8
+    // overhead everywhere. Native build 8606 swims about in the acid.
+    const auto desertOverhead = [](float, float) { return std::optional<float>(204.8f); };
+    const SwimStep from{.x = 0.0f, .y = 0.0f};
+    const SwimStep into{.x = 0.5f, .y = 0.3f};
+    const SwimStep out = swimStepAgainstTerrain(from, into, -99.6f + 0.9f, desertOverhead);
+    CHECK(out.x == into.x);
+    CHECK(out.y == into.y);
+}
+
+TEST_CASE("heightfield above the swimmer is not a liquid's bed", "[swim]") {
+    // Feet at -99.6 in C'Thun's stomach acid, probed from 2 yd above them.
+    CHECK_FALSE(liquidBedTerrain(204.8f, -97.6f).has_value());
+    CHECK(liquidBedTerrain(-106.6f, -97.6f) == std::optional<float>(-106.6f));
+    CHECK_FALSE(liquidBedTerrain(std::nullopt, -97.6f).has_value());
 }

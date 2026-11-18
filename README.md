@@ -938,6 +938,18 @@ determine horizontal travel. Validate outgoing jumps on a native observer as wel
 as checking packet trajectories. A server session still marked teleporting drops
 movement packets even while local physics and outgoing client logs look valid.
 
+A liquid's bed is the highest floor below the swimmer's probe height (feet + 2
+yd, as the WMO floor query), and heightfield over a swimmer who is already
+under it is a ceiling, not a shore that stops swimming
+(`rendering/swim_wall.hpp`, `build/bin/test_swim_wall`). Ahn'Qiraj's desert
+lies 300 yd over C'Thun's stomach (server GroundZ 204.8, slime surface -98.0,
+bed -106.6): taken as the bed it left WoWee walking on the bottom of the acid,
+taken as a shore it froze a swimmer in place; native swims there (`.gps`:
+liquid type flags 4 slime, status 4 in water). Evidence:
+`_experiments/20261118T1800Z.cthun_beams/` (stomach-00.jpg, acid*-00.jpg).
+Open: native draws that acid dark green and nearly opaque from above, WoWee
+bright green.
+
 Underwater lighting uses water height at the camera, independently of swimming.
 Terrain water and WMO pools both receive underwater fog. Surface swimmers keep
 the orbit camera above water; diving below surface float depth keeps it below.
