@@ -253,6 +253,7 @@ struct CharMaterialUBO {
     int32_t combiner0, combiner1;  // texture stage modes, see character.frag
     float interiorLightR, interiorLightG, interiorLightB;
     int32_t interiorLit;
+    float kitLightR, kitLightG, kitLightB;
 };
 
 // GPU vertex struct with tangent (expanded from M2Vertex for normal mapping)
@@ -2299,6 +2300,15 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             }
         }
 
+        // CharProc 13 light runs out on its own clock.
+        if (inst.kitLightRemaining > 0.0f) {
+            inst.kitLightRemaining -= deltaTime;
+            if (inst.kitLightRemaining <= 0.0f) {
+                inst.kitLightRemaining = 0.0f;
+                inst.kitLight = glm::vec3(1.0f);
+            }
+        }
+
         // Kit opacity transition, carried to the unit's weapons and their effects.
         if (inst.kitOpacity != inst.kitOpacityTarget) {
             inst.kitOpacityTime += deltaTime;
@@ -3502,6 +3512,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 matData.kitColorR = instance.kitColor.r;
                 matData.kitColorG = instance.kitColor.g;
                 matData.kitColorB = instance.kitColor.b;
+                matData.kitLightR = instance.kitLight.r;
+                matData.kitLightG = instance.kitLight.g;
+                matData.kitLightB = instance.kitLight.b;
                 matData.interiorLit = instance.interiorLight ? 1 : 0;
                 if (instance.interiorLight) {
                     matData.interiorLightR = instance.interiorLight->r;
@@ -3683,6 +3696,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             matData.kitColorR = instance.kitColor.r;
             matData.kitColorG = instance.kitColor.g;
             matData.kitColorB = instance.kitColor.b;
+            matData.kitLightR = instance.kitLight.r;
+            matData.kitLightG = instance.kitLight.g;
+            matData.kitLightB = instance.kitLight.b;
             matData.interiorLit = instance.interiorLight ? 1 : 0;
             if (instance.interiorLight) {
                 matData.interiorLightR = instance.interiorLight->r;
@@ -4327,6 +4343,21 @@ void CharacterRenderer::setInstanceCameraOpacity(uint32_t instanceId, float opac
     }
 }
 
+void CharacterRenderer::startInstanceKitLight(uint32_t instanceId, const glm::vec3& color, float seconds) {
+    assert(seconds > 0.0f && std::isfinite(seconds));
+    auto& instance = instances.at(instanceId);
+    const auto apply = [&](CharacterInstance& target) {
+        target.kitLight = color;
+        target.kitLightRemaining = seconds;
+    };
+    apply(instance);
+    for (const auto& attachment : instance.weaponAttachments) {
+        apply(instances.at(attachment.weaponInstanceId));
+        for (const auto& effect : attachment.effects)
+            apply(instances.at(effect.effectInstanceId));
+    }
+}
+
 void CharacterRenderer::setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity) {
     assert(opacity >= 0.0f && opacity <= 1.0f);
     auto& instance = instances.at(instanceId);
@@ -4759,6 +4790,8 @@ bool CharacterRenderer::attachWeapon(uint32_t charInstanceId, uint32_t attachmen
         weapIt->second.opacity = charInstance.opacity;
         weapIt->second.cameraOpacity = charInstance.cameraOpacity;
         weapIt->second.kitColor = charInstance.kitColor;
+        weapIt->second.kitLight = charInstance.kitLight;
+        weapIt->second.kitLightRemaining = charInstance.kitLightRemaining;
         weapIt->second.kitOpacity = weapIt->second.kitOpacityTarget = charInstance.kitOpacity;
     }
 
@@ -5090,6 +5123,8 @@ bool CharacterRenderer::attachWeaponEffect(uint32_t charInstanceId, uint32_t att
     fxIt->second.opacity = charIt->second.opacity;
     fxIt->second.cameraOpacity = charIt->second.cameraOpacity;
     fxIt->second.kitColor = charIt->second.kitColor;
+    fxIt->second.kitLight = charIt->second.kitLight;
+    fxIt->second.kitLightRemaining = charIt->second.kitLightRemaining;
     fxIt->second.kitOpacity = fxIt->second.kitOpacityTarget = charIt->second.kitOpacity;
 
     WeaponEffectAttachment fx;

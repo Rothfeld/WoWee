@@ -192,6 +192,19 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                     const auto rgb = static_cast<uint32_t>(param);
                     kitCharacterProcedures_[kitId].color = glm::vec3(
                         ((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f);
+                } else if (procedure == kCharProcLight) {
+                    // Shadow Image Visual kit 7441: 0x000000 for 1e11 s; Chain
+                    // Lightning impact kit 282: 0x6C6CFF for 0.5 s. Kits 7003 and
+                    // 6957 give 0 s, which lights nothing.
+                    assert(std::isfinite(param) && param >= 0.0f && param < 16777216.0f);
+                    assert(procParamOneFields[k] < fc);
+                    const float seconds = kitDbc->getFloat(i, procParamOneFields[k]);
+                    assert(std::isfinite(seconds) && seconds >= 0.0f);
+                    const auto rgb = static_cast<uint32_t>(param);
+                    if (seconds > 0.0f)
+                        kitLights_[kitId] = {.color = glm::vec3(((rgb >> 16) & 0xFF) / 255.0f,
+                                                                ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f),
+                                             .seconds = seconds};
                 } else if (procedure == kCharProcOpacity) {
                     assert(std::isfinite(param) && param >= 0.0f && param <= 1.0f);
                     kitCharacterProcedures_[kitId].opacity = param;
@@ -580,6 +593,13 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
         } else ++it;
     }
     const auto previous = found == unitAuraVisuals_.end() ? std::vector<uint32_t>{} : found->second.ids;
+    // A newly applied aura's state kit starts its CharProc 13 light; the light
+    // then runs its own time, removal of the aura does not end it.
+    for (uint32_t visual : visualIds) {
+        if (std::find(previous.begin(), previous.end(), visual) != previous.end()) continue;
+        if (const auto kit = stateKits_.find(visual); kit != stateKits_.end() && kit->second)
+            startKitLight(kit->second, attachInstanceId);
+    }
     const bool revealMarkers = observerConcealed &&
         (found == unitAuraVisuals_.end() || !found->second.observerConcealed);
     for (uint32_t visual : visualIds) {
@@ -807,7 +827,19 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
         }
     }
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
+    startKitLight(kitId, attachInstanceId);
     spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, /*isPrecast=*/false);
+}
+
+void SpellVisualSystem::startKitLight(uint32_t kitId, uint32_t attachInstanceId) {
+    if (!attachInstanceId) return;
+    const auto light = kitLights_.find(kitId);
+    if (light == kitLights_.end()) return;
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    if (!characters) return;
+    characters->startInstanceKitLight(attachInstanceId, light->second.color, light->second.seconds);
+    LOG_DEBUG("Kit light: owner=", attachInstanceId, " kit=", kitId, " color=(", light->second.color.r, ",",
+              light->second.color.g, ",", light->second.color.b, ") seconds=", light->second.seconds);
 }
 
 // Flamestrike 2120: visual 10383, PersistentAreaKit 9357 BaseEffect

@@ -208,6 +208,9 @@ private:
     static constexpr uint32_t kCharProcChain = 0;
     static constexpr uint32_t kCharProcColor = 1;
     static constexpr uint32_t kCharProcOpacity = 14;
+    /// SpellVisualKit CharProc 13: CharParamZero 0xRRGGBB tints the light on
+    /// the unit for CharParamOne seconds (CharacterRenderer::startInstanceKitLight).
+    static constexpr uint32_t kCharProcLight = 13;
     /// SpellVisualKit CharProc 9: impacts falling at random spots of the area
     /// while the kit plays - Blizzard's shards, Rain of Fire's fireballs, Cave
     /// In's rocks. CharParamZero picks the model (kAreaImpactModels),
@@ -238,6 +241,13 @@ private:
         std::optional<float> opacity;
     };
     std::unordered_map<uint32_t, KitCharacterProcedures> kitCharacterProcedures_;
+    struct KitLight {
+        glm::vec3 color{1.0f};
+        float seconds = 0.0f;
+    };
+    std::unordered_map<uint32_t, KitLight> kitLights_;
+    /// Start the kit's CharProc 13 light on the unit, where the kit has one.
+    void startKitLight(uint32_t kitId, uint32_t attachInstanceId);
     void applyCharacterProcedures(uint32_t attachInstanceId, const std::vector<uint32_t>& applied);
     std::unordered_map<uint32_t, UnitAuraVisuals> unitAuraVisuals_;
     /// SpellChainEffects.dbc, TBC 2.4.3 173-byte records: dwords 0-38, then

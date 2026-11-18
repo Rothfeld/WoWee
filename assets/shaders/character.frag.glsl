@@ -69,6 +69,11 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float interiorLightG;
     float interiorLightB;
     int interiorLit;
+    // SpellVisualKit CharProc 13 colour of the directional light (white when
+    // none): Shadow Image Visual's black leaves the ambient term alone.
+    float kitLightR;
+    float kitLightG;
+    float kitLightB;
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
@@ -427,6 +432,7 @@ void main() {
         result = lightDir.w != 0.0 ? texColor.rgb : texColor.rgb * (1.0 + warm);
     } else {
         vec3 ldir = normalize(-lightDir.xyz);
+        vec3 sunLight = lightColor.rgb * vec3(kitLightR, kitLightG, kitLightB);
         // A hard clamp at zero takes a surface turned away from the sun down to
         // the ambient term alone, and the ambient term does not vary across a
         // surface, so those pixels come out one flat tone that reads as a
@@ -457,14 +463,14 @@ void main() {
         shadow = rtShadow(rt, shadow);
 
         result = rtAmbient(rt, ambientColor.rgb) * texColor.rgb
-               + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb);
+               + shadow * (diff * sunLight * texColor.rgb + spec * sunLight);
         if (lightDir.w != 0.0) {
             // TBC: creatures and players are M2 models and take the same
             // light as every other M2 (m2.vert/m2.frag): LightParams ambient
             // plus diffuse by N.L, saturated, times the texture. No floor
             // under N.L and no added highlight; those were this renderer's.
             vec3 legacyLight = clamp(ambientColor.rgb +
-                max(dot(norm, ldir), 0.0) * lightColor.rgb, 0.0, 1.0);
+                max(dot(norm, ldir), 0.0) * sunLight, 0.0, 1.0);
             result = texColor.rgb * (ambientColor.rgb + shadow * (legacyLight - ambientColor.rgb));
         }
         if (interiorLit != 0) {

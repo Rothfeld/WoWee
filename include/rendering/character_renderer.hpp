@@ -163,6 +163,15 @@ public:
     /// Steal Magic, Banish, Stealth, whatever the kit's CharParamOne-Three;
     /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
     void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity);
+    /// SpellVisualKit CharProc 13 ("Glowy"): the directional light on the
+    /// model is multiplied by color for seconds, from now, whatever happens to
+    /// the aura or spell that played the kit; ambient stays. Native 2.4.3:
+    /// Shadow Image Visual (45263, kit 7441, black, 1e11 s) leaves a unit lit
+    /// by ambient alone at once and keeps it so after .unaura; Dire Wolf
+    /// Visual (31332, 0xFF09FF) leaves red and blue as unlit-by-kit and green
+    /// as ambient alone (_experiments/20261118T101500Z.shadow_image_charproc13).
+    /// The latest kit replaces an earlier one. Carried to weapons and effects.
+    void startInstanceKitLight(uint32_t instanceId, const glm::vec3& color, float seconds);
     /// Light of a model standing at a world position in a WMO interior, or
     /// nothing outdoors (WMORenderer::interiorObjectLight).
     using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
@@ -418,6 +427,9 @@ private:
         float opacity = 1.0f;
         float cameraOpacity = 1.0f;
         glm::vec3 kitColor{1.0f};
+        // CharProc 13 light colour and the seconds it has left (startInstanceKitLight).
+        glm::vec3 kitLight{1.0f};
+        float kitLightRemaining = 0.0f;
         // Floor light of a locally lit WMO interior under the instance, or
         // nothing outdoors (setInteriorLightQuery); re-asked as it moves.
         std::optional<glm::vec3> interiorLight;
