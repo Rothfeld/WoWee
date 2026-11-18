@@ -954,9 +954,18 @@ bool EntitySpawner::remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId
     // Player clients send their own gait in every MSG_MOVE's WALK_MODE bit.
     if (!entity || entity->getType() != game::ObjectType::UNIT)
         return creatureWalkingState_.count(guid) > 0;
-    // A model without an authored Walk stride has nothing to walk with.
-    const auto stride = renderer_->getCharacterRenderer()->locomotionStride(
-        locomotionInstanceId, rendering::anim::WALK);
+    auto* characters = renderer_->getCharacterRenderer();
+    std::optional<float> stride = characters->locomotionStride(locomotionInstanceId, rendering::anim::WALK);
+    // HumanFemale.m2 authors every sequence with moveSpeed 0, Walk included.
+    // Native still walks such a unit (Phantom Guardsman display 16457,
+    // Karazhan) and keeps the stride rule at the model's scale: display 16457
+    // (x1.15) walked at 4.0 and ran at 5.6 yd/s; at creature scale 2 it
+    // walked at 5.6. The unit's own walk speed from its movement block stands
+    // in for the stride (_experiments/20261118T104000Z.guardsman_gait).
+    if (!stride && entity->groundWalkSpeed > 0.0f &&
+        characters->hasAnimation(locomotionInstanceId, rendering::anim::WALK))
+        stride = entity->groundWalkSpeed * characters->getInstanceScale(locomotionInstanceId);
+    // A model without a Walk sequence has nothing to walk with.
     if (!stride) return false;
     return rendering::splineGroundGaitWalks(entity->getLocomotionSpeed(), *stride);
 }

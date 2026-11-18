@@ -2783,7 +2783,8 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
         restoreMovementSpline(block, *entity);
-        if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
+        if ((entity->getType() == ObjectType::PLAYER || entity->getType() == ObjectType::UNIT) &&
+            block.runSpeed > 0.0f) {
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
             entity->groundBackSpeed = block.runBackSpeed;
@@ -2851,7 +2852,8 @@ void EntityController::handleValuesUpdate(const UpdateBlock& block) {
         float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
         entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
         restoreMovementSpline(block, *entity);
-        if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
+        if ((entity->getType() == ObjectType::PLAYER || entity->getType() == ObjectType::UNIT) &&
+            block.runSpeed > 0.0f) {
             entity->groundWalkSpeed = block.walkSpeed;
             entity->groundRunSpeed = block.runSpeed;
             entity->groundBackSpeed = block.runBackSpeed;
@@ -2886,7 +2888,8 @@ void EntityController::handleMovementUpdate(const UpdateBlock& block) {
                 float oCanonical = core::coords::serverToCanonicalYaw(block.orientation);
                 entity->setPosition(pos.x, pos.y, pos.z, oCanonical);
                 restoreMovementSpline(block, *entity);
-                if (entity->getType() == ObjectType::PLAYER && block.runSpeed > 0.0f) {
+                if ((entity->getType() == ObjectType::PLAYER || entity->getType() == ObjectType::UNIT) &&
+                    block.runSpeed > 0.0f) {
                     entity->groundWalkSpeed = block.walkSpeed;
                     entity->groundRunSpeed = block.runSpeed;
                     entity->groundBackSpeed = block.runBackSpeed;
