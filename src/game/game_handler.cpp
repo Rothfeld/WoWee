@@ -2617,7 +2617,10 @@ float GameHandler::getHealthRegenFromSpirit() const {
     const float spirit = static_cast<float>(std::max(0, getPlayerStat(4 /* SPIRIT */)));
     const float baseSpirit = std::min(spirit, 50.0f);
     const float moreSpirit = spirit - baseSpirit;
-    return (baseSpirit * gtOctRegenHp_[idx] + moreSpirit * gtRegenHpPerSpt_[idx]) * 2.0f;
+    // Per second, as the Spirit tooltip prints it: 2.4.3 reads 13 for a level
+    // 40 rogue with 41 Spirit (0.333 per point in both tables). Doubling it
+    // into the server's two-second tick read 27.
+    return baseSpirit * gtOctRegenHp_[idx] + moreSpirit * gtRegenHpPerSpt_[idx];
 }
 
 float GameHandler::getManaRegenFromSpirit() const {
@@ -2630,7 +2633,11 @@ float GameHandler::getManaRegenFromSpirit() const {
     const size_t idx = static_cast<size_t>(pclass - 1) * kGtMaxLevel + (level - 1);
     if (idx >= gtRegenMpPerSpt_.size()) return 0.0f;
     const float spirit = static_cast<float>(std::max(0, getPlayerStat(4 /* SPIRIT */)));
-    return spirit * gtRegenMpPerSpt_[idx];
+    // Player::UpdateManaRegen: sqrt(Intellect) * Spirit * gtRegenMPPerSpt.
+    // 2.4.3 reads 4.76 for a level 40 dwarf hunter with Spirit 50 and
+    // Intellect 47; without the Intellect term this read 0.69.
+    const float intellect = static_cast<float>(std::max(0, getPlayerStat(3 /* INTELLECT */)));
+    return std::sqrt(intellect) * spirit * gtRegenMpPerSpt_[idx];
 }
 
 float GameHandler::getCombatRatingBonus(int cr) const {

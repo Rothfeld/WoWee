@@ -1,6 +1,8 @@
 // lua_unit_api.cpp - Unit query, stats, party/raid, and player state Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
+#include <bit>
+#include <optional>
 #include "game/game_utils.hpp"
 #include "game/bg_score_defs.hpp"
 #include "addons/lua_api_helpers.hpp"
@@ -848,6 +850,52 @@ static int lua_UnitSex(lua_State* L) {
 
 // --- Player/Game API ---
 
+/// A word of a unit's update fields, or nullopt where this expansion's
+/// table does not map the field or the unit is not in the world. The
+/// character sheet's numbers are the server's own: it sends weapon damage,
+/// stat buffs and block value already worked out, so reading them is exact
+/// where modelling the formulas here is an approximation.
+static std::optional<uint32_t> unitFieldWord(lua_State* L, const char* unitId, game::UF field, int offset = 0) {
+    const uint16_t base = game::fieldIndex(field);
+    if (base == 0xFFFF) return std::nullopt;
+    auto* unit = resolveUnit(L, unitId);
+    if (!unit) return std::nullopt;
+    return unit->getField(static_cast<uint16_t>(base + offset));
+}
+static std::optional<float> unitFieldFloat(lua_State* L, const char* unitId, game::UF field, int offset = 0) {
+    const auto word = unitFieldWord(L, unitId, field, offset);
+    if (!word) return std::nullopt;
+    return std::bit_cast<float>(*word);
+}
+
+/// The player's skill line a weapon in an equipment slot trains, from the
+/// server's own table (CMaNGOS Item::GetSkill, indexed by weapon subclass).
+/// An empty hand is Unarmed; zero where the slot holds no weapon skill.
+static uint32_t weaponSkillLineFor(game::GameHandler* gh, game::EquipSlot slot) {
+    static constexpr uint32_t kWeaponSkills[] = {
+        44, 172, 45, 46, 54, 160, 229, 43, 55, 0,
+        136, 0, 0, 162, 0, 173, 176, 253, 226, 228, 356};
+    constexpr uint32_t kUnarmed = 162;
+    const auto& item = gh->getInventory().getEquipSlot(slot);
+    if (item.empty()) return slot == game::EquipSlot::RANGED ? 0 : kUnarmed;
+    if (item.item.itemClass != game::ITEM_CLASS_WEAPON) return slot == game::EquipSlot::RANGED ? 0 : kUnarmed;
+    return item.item.subClass < std::size(kWeaponSkills) ? kWeaponSkills[item.item.subClass] : 0;
+}
+
+/// (base, modifier) for a skill line as the sheet's skill readouts answer it:
+/// the trained value, and what items, buffs and the given combat rating add.
+static std::pair<int, int> skillWithModifier(game::GameHandler* gh, uint32_t skillLine, int ratingIndex) {
+    const auto& skills = gh->getPlayerSkills();
+    const auto it = skills.find(skillLine);
+    int base = 0, modifier = 0;
+    if (it != skills.end()) {
+        base = it->second.value;
+        modifier = it->second.bonusTemp + it->second.bonusPerm;
+    }
+    if (ratingIndex >= 0) modifier += static_cast<int>(gh->getCombatRatingBonus(ratingIndex));
+    return {base, modifier};
+}
+
 static int lua_UnitStat(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 0); return 4; }
@@ -863,11 +911,18 @@ static int lua_UnitStat(lua_State* L) {
         val = gh->getPlayerStat(statIdx);
     }
     if (val < 0) val = 0;
-    // We only have the effective value from the server; report base=effective, no buffs
-    lua_pushnumber(L, val); // base (approximate - server only sends effective)
-    lua_pushnumber(L, val); // effective
-    lua_pushnumber(L, 0);   // positive buff
-    lua_pushnumber(L, 0);   // negative buff
+    // UNIT_FIELD_STAT already counts the buffs; the server sends them apart
+    // in POSSTAT/NEGSTAT, and the base is what is left - the same split
+    // UnitResistance makes.
+    int32_t positive = 0, negative = 0;
+    if (statIdx >= 0 && statIdx < 5) {
+        positive = static_cast<int32_t>(unitFieldWord(L, who.c_str(), game::UF::UNIT_FIELD_POSSTAT0, statIdx).value_or(0));
+        negative = static_cast<int32_t>(unitFieldWord(L, who.c_str(), game::UF::UNIT_FIELD_NEGSTAT0, statIdx).value_or(0));
+    }
+    lua_pushnumber(L, val - positive - negative); // base
+    lua_pushnumber(L, val);                       // effective
+    lua_pushnumber(L, positive);
+    lua_pushnumber(L, negative);
     return 4;
 }
 
@@ -911,11 +966,15 @@ static int lua_GetRangedCritChance(lua_State* L) {
     return 1;
 }
 
-// GetSpellCritChance(school) → percent  (1=Holy,2=Fire,3=Nature,4=Frost,5=Shadow,6=Arcane)
+// GetSpellCritChance(school) → percent. FrameXML counts schools from 1 for
+// Physical (2 Holy ... 7 Arcane); PLAYER_SPELL_CRIT_PERCENTAGE1 counts from 0
+// for Physical. Reading the field at the FrameXML number shifted every school
+// by one and left Arcane, the seventh, past the end: 0.00% where 2.4.3 reads
+// the same 4.73% as the other schools for a level 40 dwarf hunter.
 static int lua_GetSpellCritChance(lua_State* L) {
     auto* gh = getGameHandler(L);
     int school = static_cast<int>(luaL_checknumber(L, 1));
-    float v = gh ? gh->getSpellCritPct(school) : 0.0f;
+    float v = gh ? gh->getSpellCritPct(school - 1) : 0.0f;
     lua_pushnumber(L, v >= 0 ? v : 0.0);
     return 1;
 }
@@ -951,15 +1010,31 @@ static int lua_GetSpellBonusHealing(lua_State* L) {
     return 1;
 }
 
-// GetMeleeHaste / GetAttackPowerForStat stubs for addon compat
-static int lua_GetAttackPower(lua_State* L) {
+/// GetAttackPowerForStat(statIndex, effectiveStat) -> the melee attack power
+/// that one stat gives. The class formulas are CMaNGOS
+/// Player::UpdateAttackPowerAndDamage: warriors, paladins, shamans and druids
+/// get two per Strength, rogues and hunters one per Strength and one per
+/// Agility, everyone else one per Strength, less a flat twenty (ten for the
+/// one-stat classes). 2.4.3 charges that flat part to the stats it comes
+/// from, ten per point of coefficient: a level 40 rogue with Strength 57 and
+/// Agility 90 reads 47 and 80.
+static int lua_GetAttackPowerForStat(lua_State* L) {
     auto* gh = getGameHandler(L);
-    int32_t ap = gh ? gh->getMeleeAttackPower() : 0;
-    if (ap < 0) ap = 0;
-    lua_pushnumber(L, ap);  // base
-    lua_pushnumber(L, 0);   // posBuff
-    lua_pushnumber(L, 0);   // negBuff
-    return 3;
+    const int stat = static_cast<int>(luaL_checknumber(L, 1));
+    const double value = luaL_checknumber(L, 2);
+    int coefficient = 0;
+    if (gh) {
+        enum : uint8_t { Warrior = 1, Paladin, Hunter, Rogue, Priest, Shaman = 7, Mage, Warlock, Druid = 11 };
+        const uint8_t cls = gh->getPlayerClass();
+        constexpr int kStrength = 1, kAgility = 2;
+        if (stat == kStrength) {
+            coefficient = (cls == Warrior || cls == Paladin || cls == Shaman || cls == Druid) ? 2 : 1;
+        } else if (stat == kAgility) {
+            coefficient = (cls == Rogue || cls == Hunter) ? 1 : 0;
+        }
+    }
+    lua_pushnumber(L, std::max(0.0, (value - 10.0) * coefficient));
+    return 1;
 }
 
 static int lua_GetRangedAttackPower(lua_State* L) {
@@ -1520,10 +1595,12 @@ static int lua_UnitRangedAttackPower(lua_State* L) {
 /// the defence rating that pushes it to the crit-immunity threshold.
 static int lua_UnitDefense(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const int level = gh ? static_cast<int>(gh->getPlayerLevel()) : 1;
+    constexpr uint32_t kDefenseSkill = 95;
     constexpr int kCrDefenseSkill = 1;  // 0-based CombatRating enum
-    const int modifier = gh ? static_cast<int>(gh->getCombatRatingBonus(kCrDefenseSkill)) : 0;
-    lua_pushnumber(L, level * 5);
+    // The trained Defense skill, which the skill packet does carry: 2.4.3
+    // reads 198 for a level 40 character at 198/200 and 95 at 95/200.
+    const auto [base, modifier] = gh ? skillWithModifier(gh, kDefenseSkill, kCrDefenseSkill) : std::pair{0, 0};
+    lua_pushnumber(L, base);
     lua_pushnumber(L, modifier);
     return 2;
 }
@@ -1620,38 +1697,61 @@ static int lua_UnitDamage(lua_State* L) {
 }
 
 /// UnitRangedDamage(unit) → speed, min, max, positive, negative, percent.
+///
+/// The speed and the damage range are the server's (UNIT_FIELD_RANGEDATTACKTIME
+/// and MIN/MAXRANGEDDAMAGE): 2.4.3 reads 1.60 and 14.71 - 15.71 for a level 40
+/// rogue's Light Throwing Knife, where a flat 2.8-second guess read 2.80 and
+/// 24 - 24.
 static int lua_UnitRangedDamage(lua_State* L) {
-    auto* gh = getGameHandler(L);
-    const int32_t ap = gh ? gh->getRangedAttackPower() : -1;
-    const double swing = (ap > 0) ? (ap / 14.0) * 2.8 : 0.0;
-    lua_pushnumber(L, 2.8);
-    lua_pushnumber(L, swing);
-    lua_pushnumber(L, swing);
+    const char* unit = luaL_optstring(L, 1, "player");
+    const double speedMs = unitFieldWord(L, unit, game::UF::UNIT_FIELD_RANGEDATTACKTIME).value_or(0);
+    lua_pushnumber(L, speedMs / 1000.0);
+    lua_pushnumber(L, unitFieldFloat(L, unit, game::UF::UNIT_FIELD_MINRANGEDDAMAGE).value_or(0.0f));
+    lua_pushnumber(L, unitFieldFloat(L, unit, game::UF::UNIT_FIELD_MAXRANGEDDAMAGE).value_or(0.0f));
     lua_pushnumber(L, 0);
     lua_pushnumber(L, 0);
     lua_pushnumber(L, 1.0);
     return 6;
 }
 
-/// UnitRangedAttack(unit) → skill, modifier. As with defense, five per level.
+/// UnitRangedAttack(unit) → skill, modifier: the skill of the weapon in the
+/// ranged slot (2.4.3: Thrown 2 for a rogue at 2/200 Thrown).
 static int lua_UnitRangedAttack(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const int level = gh ? static_cast<int>(gh->getPlayerLevel()) : 1;
-    lua_pushnumber(L, level * 5);
-    lua_pushnumber(L, 0);
+    constexpr int kCrWeaponSkillRanged = 22;  // 0-based CombatRating enum (CMaNGOS Unit.h)
+    const auto [base, modifier] = gh
+        ? skillWithModifier(gh, weaponSkillLineFor(gh, game::EquipSlot::RANGED), kCrWeaponSkillRanged)
+        : std::pair{0, 0};
+    lua_pushnumber(L, base);
+    lua_pushnumber(L, modifier);
     return 2;
 }
 
 /// UnitAttackBothHands(unit) → main skill, main modifier, off skill, off
-/// modifier.
+/// modifier: the skill each hand's weapon trains, Unarmed for an empty hand
+/// (2.4.3: 8, 0, 1, 0 for Daggers 8 and Unarmed 1 with no off-hand weapon).
 static int lua_UnitAttackBothHands(lua_State* L) {
     auto* gh = getGameHandler(L);
-    const int level = gh ? static_cast<int>(gh->getPlayerLevel()) : 1;
-    lua_pushnumber(L, level * 5);
-    lua_pushnumber(L, 0);
-    lua_pushnumber(L, level * 5);
-    lua_pushnumber(L, 0);
+    constexpr int kCrWeaponSkillMainhand = 20;  // 0-based CombatRating enum (CMaNGOS Unit.h)
+    constexpr int kCrWeaponSkillOffhand = 21;
+    const auto [mainBase, mainMod] = gh
+        ? skillWithModifier(gh, weaponSkillLineFor(gh, game::EquipSlot::MAIN_HAND), kCrWeaponSkillMainhand)
+        : std::pair{0, 0};
+    const auto [offBase, offMod] = gh
+        ? skillWithModifier(gh, weaponSkillLineFor(gh, game::EquipSlot::OFF_HAND), kCrWeaponSkillOffhand)
+        : std::pair{0, 0};
+    lua_pushnumber(L, mainBase);
+    lua_pushnumber(L, mainMod);
+    lua_pushnumber(L, offBase);
+    lua_pushnumber(L, offMod);
     return 4;
+}
+
+/// GetShieldBlock() → what a block stops, PLAYER_SHIELD_BLOCK. 2.4.3 reads 1
+/// for a rogue without a shield: the server's value has a Strength term.
+static int lua_GetShieldBlock(lua_State* L) {
+    lua_pushnumber(L, unitFieldWord(L, "player", game::UF::PLAYER_SHIELD_BLOCK).value_or(0));
+    return 1;
 }
 
 /// GetManaRegen() → while not casting, while casting. Both per second; the
@@ -2655,7 +2755,7 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"GetCombatRating",     lua_GetCombatRating},
                 {"GetSpellBonusDamage", lua_GetSpellBonusDamage},
                 {"GetSpellBonusHealing", lua_GetSpellBonusHealing},
-                {"GetAttackPowerForStat", lua_GetAttackPower},
+                {"GetAttackPowerForStat", lua_GetAttackPowerForStat},
                 {"GetRangedAttackPower",  lua_GetRangedAttackPower},
                 {"IsInGroup",     lua_IsInGroup},
                 {"IsInRaid",      lua_IsInRaid},
@@ -3484,7 +3584,7 @@ void registerUnitLuaAPI(lua_State* L) {
                 // any player field the server sends - the inventory does not yet total
                 // item stat mods, so these stay a genuine zero rather than a stale stub.
                 {"GetSpellPenetration",     lua_ZeroPercent},
-                {"GetShieldBlock",          lua_ZeroPercent},
+                {"GetShieldBlock",          lua_GetShieldBlock},
                 {"GetUnitHealthRegenRateFromSpirit", lua_GetUnitHealthRegenRateFromSpirit},
                 {"GetUnitManaRegenRateFromSpirit",   lua_GetUnitManaRegenRateFromSpirit},
                 {"GetWatchedFactionInfo",   lua_GetWatchedFactionInfo},

@@ -73,8 +73,10 @@ enum class UF : uint16_t {
     UNIT_FIELD_MAXDAMAGE,            // ...and high end
     UNIT_FIELD_ATTACK_POWER,         // Melee attack power (int32)
     UNIT_FIELD_RANGED_ATTACK_POWER,  // Ranged attack power (int32)
-    UNIT_FIELD_POWER_REGEN_FLAT_MODIFIER,             // Power regen while not casting (float[7], mana=0); PRIVATE/OWNER
+    UNIT_FIELD_POWER_REGEN_FLAT_MODIFIER,             // Power regen while not casting (float[7], mana=0); PRIVATE/OWNER.
+                                                      // TBC: PLAYER_FIELD_MOD_MANA_REGEN, mana only.
     UNIT_FIELD_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER, // ...and the reduced rate during the five-second rule
+                                                      // (TBC: PLAYER_FIELD_MOD_MANA_REGEN_INTERRUPT).
 
     // Player fields
     PLAYER_DUEL_ARBITER,
@@ -182,6 +184,17 @@ enum class UF : uint16_t {
 
     UNIT_FIELD_RESISTANCEBUFFMODSPOSITIVE,
     UNIT_FIELD_RESISTANCEBUFFMODSNEGATIVE,
+    /// Buffs and debuffs on each primary stat (5 fields each); UNIT_FIELD_STAT0
+    /// already includes them.
+    UNIT_FIELD_POSSTAT0,
+    UNIT_FIELD_NEGSTAT0,
+    /// Ranged weapon damage the server works out, float bits.
+    UNIT_FIELD_MINRANGEDDAMAGE,
+    UNIT_FIELD_MAXRANGEDDAMAGE,
+    /// What a block stops (int).
+    PLAYER_SHIELD_BLOCK,
+    /// The item entry the ammo slot names; the ammo itself stays in the bags.
+    PLAYER_AMMO_ID,
     /// Main-hand and off-hand attack time, ms (2 fields).
     UNIT_FIELD_BASEATTACKTIME,
     UNIT_FIELD_RANGEDATTACKTIME,
