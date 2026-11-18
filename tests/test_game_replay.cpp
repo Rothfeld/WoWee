@@ -1021,3 +1021,34 @@ TEST_CASE("a TBC creature's aura fields give it auras", "[replay][tbc][aura]") {
     s.receive(UpdateObject().tbc().values(vashj, {{UF::UNIT_FIELD_AURAS, 0}}));
     CHECK(s.handler().getUnitAuras(vashj)->front().isEmpty());
 }
+
+TEST_CASE("a refreshed aura's duration does not pass to the next aura in its slot",
+          "[replay][tbc][aura]") {
+    // Reliquary of Souls: Fixate 41295 is re-cast every few seconds, each
+    // time with SMSG_UPDATE_AURA_DURATION and no field change. When it left
+    // the slot, the next aura there (one whose duration the server never
+    // sends) took that old duration and showed "0 s".
+    Session s("tbc");
+    s.receive(UpdateObject().tbc().create(Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_MAXHEALTH, 100}}, true));
+    s.handler().spellNameCacheLoadedRef() = true;
+    const auto duration = [&](uint8_t slot, uint32_t ms) {
+        wowee::network::Packet p(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_UPDATE_AURA_DURATION));
+        p.writeUInt8(slot);
+        p.writeUInt32(ms);
+        s.receive(p);
+    };
+    duration(0, 10000);
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_AURAS, 41295}}));
+    REQUIRE(s.handler().getPlayerAuras().at(0).spellId == 41295u);
+    CHECK(s.handler().getPlayerAuras().at(0).durationMs == 10000);
+    duration(0, 10000);   // refresh: same spell, fields unchanged
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_AURAS, 0}}));
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_AURAS, 41294}}));
+    REQUIRE(s.handler().getPlayerAuras().at(0).spellId == 41294u);
+    CHECK(s.handler().getPlayerAuras().at(0).durationMs == -1);
+    // A replacement whose duration did come first still keeps it (Hydross).
+    duration(0, 30000);
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_AURAS, 38216}}));
+    CHECK(s.handler().getPlayerAuras().at(0).durationMs == 30000);
+}

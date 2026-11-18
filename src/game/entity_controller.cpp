@@ -594,24 +594,25 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
                 a.durationMs = pendingIt->second.durationMs;
                 a.maxDurationMs = pendingIt->second.durationMs;
                 a.receivedAtMs = pendingIt->second.receivedAtMs;
-            } else if (static_cast<size_t>(slot) < previousAuras.size() &&
-                (sameAura ||
-                 (previousAuras[slot].isEmpty() && previousAuras[slot].durationMs >= 0))) {
+            } else if (sameAura) {
                 a.durationMs = previousAuras[slot].durationMs;
                 a.maxDurationMs = previousAuras[slot].maxDurationMs;
                 a.receivedAtMs = previousAuras[slot].receivedAtMs;
             } else {
                 a.receivedAtMs = nowMs;
             }
-            if (pendingIt != pending.end()) pending.erase(pendingIt);
             a.casterGuid = localPlayer ? owner_.getPlayerGuid() : 0;
-        } else if (static_cast<size_t>(slot) < previousAuras.size() &&
-                   previousAuras[slot].isEmpty() && previousAuras[slot].durationMs >= 0) {
-            // An unrelated fields packet must not discard a duration waiting
-            // for its spell ID. Empty slots remain invisible to the UI.
-            rebuilt[slot] = previousAuras[slot];
         }
     }
+    // A pending duration is for the aura the next aura-field change puts in
+    // its slot, or for the aura already there; either way this rebuild was
+    // its one use. Kept longer, a duration for an aura that was only
+    // refreshed (Reliquary of Souls' Fixate 41295, re-cast every few
+    // seconds, its fields unchanged) waited in its slot and was handed to
+    // the next, unrelated aura there: an old receive time, so "0 s" under an
+    // aura whose duration the server never sends (Fixate 41294 carries
+    // SPELL_ATTR_EX5_DO_NOT_DISPLAY_DURATION).
+    if (localPlayer) owner_.getSpellHandler()->pendingPlayerAuraDurations().clear();
     if (!localPlayer) {
         owner_.getSpellHandler()->mirrorAurasByGuid(entity->getGuid(), rebuilt);
         // Every token the unit answers to, party and raid slots included.
