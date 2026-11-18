@@ -986,6 +986,13 @@ void GameHandler::closeDistantNpcWindows() {
         if (!windowOpen || npcGuid == 0) return;
         auto npc = entityController_->getEntityManager().getEntity(npcGuid);
         if (!npc) return;
+        // An item that starts a quest (Blackhand's Command) is the giver of its
+        // quest window and has no place in the world; only units and game
+        // objects have a distance to keep. Measuring to its origin closed the
+        // details the moment they opened.
+        const auto type = npc->getType();
+        if (type != ObjectType::UNIT && type != ObjectType::PLAYER &&
+            type != ObjectType::GAMEOBJECT) return;
         float dx = movementInfo.x - npc->getX();
         float dy = movementInfo.y - npc->getY();
         const float dz = movementInfo.z - npc->getZ();
