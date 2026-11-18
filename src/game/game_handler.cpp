@@ -1315,10 +1315,14 @@ std::vector<uint32_t> GameHandler::getMacroIds() const {
 }
 
 void GameHandler::setMacroText(uint32_t macroId, const std::string& text) {
-    if (text.empty())
-        macros_.erase(macroId);
-    else
-        macros_[macroId] = text;
+    macros_[macroId] = text;
+    saveCharacterConfig();
+}
+
+void GameHandler::deleteMacro(uint32_t macroId) {
+    macros_.erase(macroId);
+    macroNames_.erase(macroId);
+    macroIcons_.erase(macroId);
     saveCharacterConfig();
 }
 
@@ -1350,7 +1354,7 @@ void GameHandler::saveCharacterConfig() {
 
     // Save client-side macro text (escape newlines as \n literal)
     for (const auto& [id, text] : macros_) {
-        if (!text.empty()) {
+        {
             std::string escaped;
             escaped.reserve(text.size());
             for (char c : text) {
@@ -1445,7 +1449,7 @@ void GameHandler::loadCharacterConfig() {
             if (secondUnder == std::string::npos) continue;
             uint32_t macroId = 0;
             try { macroId = static_cast<uint32_t>(std::stoul(key.substr(firstUnder, secondUnder - firstUnder))); } catch (...) { continue; }
-            if (key.substr(secondUnder + 1) == "text" && !val.empty()) {
+            if (key.substr(secondUnder + 1) == "text") {
                 // Unescape \n and \\ sequences
                 std::string unescaped;
                 unescaped.reserve(val.size());

@@ -2185,7 +2185,7 @@ void registerActionLuaAPI(lua_State* L) {
                 {"GetMacroInfo",        [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
-            if (!gh || id == 0 || gh->getMacroText(id).empty()) {
+            if (!gh || id == 0 || !gh->hasMacro(id)) {
                 return luaReturnNil(L);
             }
             std::string name = gh->getMacroName(id);
@@ -2204,7 +2204,7 @@ void registerActionLuaAPI(lua_State* L) {
                 {"GetMacroSpell",       [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
-            if (!gh || id == 0 || gh->getMacroText(id).empty()) return luaReturnNil(L);
+            if (!gh || id == 0 || !gh->hasMacro(id)) return luaReturnNil(L);
             const MacroTarget target = resolveMacroTarget(*gh, id);
             if (target.kind != MacroTarget::Kind::Spell) return luaReturnNil(L);
             lua_pushstring(L, gh->getSpellName(target.id).c_str());
@@ -2216,7 +2216,7 @@ void registerActionLuaAPI(lua_State* L) {
                 {"GetMacroItem",        [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
-            if (!gh || id == 0 || gh->getMacroText(id).empty()) return luaReturnNil(L);
+            if (!gh || id == 0 || !gh->hasMacro(id)) return luaReturnNil(L);
             const MacroTarget target = resolveMacroTarget(*gh, id);
             const auto* info = target.kind == MacroTarget::Kind::Item ? gh->getItemInfo(target.id) : nullptr;
             if (!info || !info->valid) return luaReturnNil(L);
@@ -2273,7 +2273,7 @@ void registerActionLuaAPI(lua_State* L) {
             const uint32_t last  = perChar ? macroCharacterLast() : macroAccountLast();
             uint32_t id = 0;
             for (uint32_t candidate = first; candidate <= last; ++candidate) {
-                if (gh->getMacroText(candidate).empty()) { id = candidate; break; }
+                if (!gh->hasMacro(candidate)) { id = candidate; break; }
             }
             if (id == 0) return luaReturnNil(L);
             gh->setMacroText(id, body);
@@ -2329,19 +2329,16 @@ void registerActionLuaAPI(lua_State* L) {
             const uint32_t last  = (id > macroAccountLast()) ? macroCharacterLast() : macroAccountLast();
             if (id < first || id > last) return 0;
             for (uint32_t slot = id; slot < last; ++slot) {
-                const std::string next = gh->getMacroText(slot + 1);
-                if (next.empty()) {
-                    gh->setMacroText(slot, "");
-                    gh->setMacroMeta(slot, "", "");
+                if (!gh->hasMacro(slot + 1)) {
+                    gh->deleteMacro(slot);
                     break;
                 }
-                gh->setMacroText(slot, next);
+                gh->setMacroText(slot, gh->getMacroText(slot + 1));
                 gh->setMacroMeta(slot, gh->getMacroName(slot + 1),
                                        gh->getMacroIcon(slot + 1));
             }
             // The last slot in the half is never written by the loop above.
-            gh->setMacroText(last, "");
-            gh->setMacroMeta(last, "", "");
+            gh->deleteMacro(last);
             return 0;
         }},
                 // Saved as each change is made, so this has nothing to do.
@@ -2353,7 +2350,7 @@ void registerActionLuaAPI(lua_State* L) {
                 {"PickupMacro",         [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const uint32_t id = static_cast<uint32_t>(luaL_optnumber(L, 1, 0));
-            if (!gh || id == 0 || gh->getMacroText(id).empty()) return 0;
+            if (!gh || id == 0 || !gh->hasMacro(id)) return 0;
             setCursorType(L, CursorType::MACRO);
             s_cursorId = id;
             std::string icon = gh->getMacroIcon(id);

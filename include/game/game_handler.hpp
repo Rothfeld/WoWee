@@ -1311,7 +1311,13 @@ public:
 
     // Client-side macro text storage (server sends only macro index; text is stored locally)
     const std::string& getMacroText(uint32_t macroId) const;
+    /// Stores the text; an empty text is a macro with no commands yet.
+    /// Blizzard_MacroUI creates every macro that way - CreateMacro(name,
+    /// icon, nil, nil, perCharacter) - and writes the body later.
     void setMacroText(uint32_t macroId, const std::string& text);
+    bool hasMacro(uint32_t macroId) const { return macros_.count(macroId) != 0; }
+    /// Removes the macro's text, name and icon.
+    void deleteMacro(uint32_t macroId);
     /// A macro's name and icon, which the text alone never carried. Stored
     /// beside it under their own keys, so a config written before this still
     /// loads - the name simply comes back empty and is shown as "Macro".
