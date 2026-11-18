@@ -90,6 +90,28 @@ inline float sampleFloat(const pipeline::M2AnimationTrack& track,
         : keys.floatValues[lower];
 }
 
+/// Whether a multi-key track without interpolation (type 0) is sampled past
+/// its sequence's last key. Native emits nothing there: Holy Ground
+/// (spells/consecration_impact_base.m2, rate keys 0 at 0 ms and 200 at 67 ms
+/// in a 12.4 s Stand) shows no particles in the original client. All 429
+/// pre-264 emitter rate ranges whose keys end early are type 0.
+inline bool pastLastStepKey(const pipeline::M2AnimationTrack& track,
+                            int animationSequenceIndex, float animationTimeMs,
+                            float globalTimeMs,
+                            const std::vector<uint32_t>& globalSequenceDurations) {
+    if (track.interpolationType != 0) return false;
+    const auto sampleTime = resolveTime(track, animationSequenceIndex,
+                                        animationTimeMs, globalTimeMs,
+                                        globalSequenceDurations);
+    if (sampleTime.sequenceIndex < 0 ||
+        static_cast<size_t>(sampleTime.sequenceIndex) >= track.sequences.size()) {
+        return false;
+    }
+    const auto& keys = track.sequences[static_cast<size_t>(sampleTime.sequenceIndex)];
+    if (keys.timestamps.size() < 2) return false;
+    return sampleTime.timeMs + keys.timeOffset > static_cast<float>(keys.timestamps.back());
+}
+
 inline glm::vec3 sampleVec3(const pipeline::M2AnimationTrack& track,
                             int animationSequenceIndex, float animationTimeMs,
                             float globalTimeMs,

@@ -111,6 +111,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
         float rate = interpFloat(em.emissionRate, inst.animTime, inst.globalSequenceTime,
                                  inst.currentSequenceIndex, gpu.globalSequenceDurations);
+        if (m2_track::pastLastStepKey(em.emissionRate, inst.currentSequenceIndex, inst.animTime,
+                                      inst.globalSequenceTime, gpu.globalSequenceDurations))
+            rate = 0.0f;
         float life = interpFloat(em.lifespan, inst.animTime, inst.globalSequenceTime,
                                  inst.currentSequenceIndex, gpu.globalSequenceDurations);
         // What the player asked to see of it, before the floor below. The order
