@@ -821,7 +821,26 @@ static int lua_ClearCursor(lua_State* L) {
     // cancelling a pickup - Escape, a right-click, a click on nothing, all of
     // which reach this - put the item back and left its picture stuck to the
     // cursor for the rest of the session.
+    //
+    // An item goes back unlocked, and 2.4.3 says so with ITEM_LOCK_CHANGED for
+    // the slot it came from. Without it the bag button stayed greyed after a
+    // cancelled drag - an item the auction sell slot had refused, for one.
+    // Announced after the cursor is down, because the lock is read from the
+    // cursor here and a redraw any earlier would draw it locked again.
+    const bool carriedItem = s_cursorType == CursorType::ITEM &&
+                             game::slots::cursorSourceIsInventory(s_cursorBag);
+    const auto held = cursorItemSlot();
     clearCursorItem(L);
+    if (carriedItem) {
+        if (auto* gh = getGameHandler(L)) {
+            if (held.equipped) {
+                gh->fireAddonEvent("ITEM_LOCK_CHANGED", {std::to_string(held.slot)});
+            } else {
+                gh->fireAddonEvent("ITEM_LOCK_CHANGED",
+                                   {std::to_string(held.bag), std::to_string(held.slot)});
+            }
+        }
+    }
     return 0;
 }
 
