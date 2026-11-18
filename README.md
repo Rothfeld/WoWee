@@ -1295,6 +1295,24 @@ Not implemented: joints, noise, arcs, flicker, pulse, Combo rows, blend 6,
 chains on cast/impact kits (Chain Lightning). Channel kit effects of a channel
 known only from the fields are held until the fields clear.
 
+A DynamicObject's PersistentAreaKit plays its models at the area's centre for
+the object's life, and a kit with CharProc 9 also drops impacts across the
+area: CharParamZero picks the model (0 Blizzard_Impact_Base, 1
+RainOfFire_Impact_Base, 2 CallLightning_Impact, 3 FlamestrikeSmall_Impact_Base,
+4 DeathAndDecay_Area_Base, 5 ArcaneShot_Area, 6 StarShards_Impact_Base, 7
+Fel_RainOfFire_Impact_Base, 8 HellfireRaid_Dust_Impact_Base), CharParamOne is
+impacts a second, each one play of the model at a random point within the
+radius of the spell's PERSISTENT_AREA_AURA effect. Gruul's Cave In (36240,
+kit 9373: Smash_Impact_Chest glow at the centre, rocks of index 8 at 5 a
+second) and Rain of Fire (5740, about five fireballs a second) measured
+against the original: `_experiments/20261117T235000Z.pair8_unit_cursor_cavein/`.
+Gotcha: CharParamOne0-3 are new `SpellVisualKit` layout fields; an installed
+data tree's `dbc_layouts.json` does not refresh, and without them no impacts
+are drawn (one warning). Not implemented: CharProc 9 on other kit stages
+(Rain of Fire 42223's InstantAreaKit 9160), impacts on uneven ground (all land
+at the area's height), the original's impact positions and orientations
+(uniform in the disc, unrotated, evenly spaced in time here).
+
 Small solid M2 props keep their geometry even when they contain multiple
 emitters. Spherical emitters use their authored area and radial velocity;
 flag 0x100 selects vertical velocity. Ordinary particle colors retain their

@@ -100,8 +100,9 @@ public:
                                 uint32_t castTimeMs = 0, uint32_t attachInstanceId = 0);
 
     // A DynamicObject's ground effect: the visual's PersistentAreaKit models at
-    // worldPosition, held until stopPersistentArea with the same key.
-    void playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition);
+    // worldPosition, held until stopPersistentArea with the same key, and the
+    // kit's area impacts (CharProc 9) falling within radius yards of it.
+    void playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition, float radius);
     void stopPersistentArea(uint64_t key);
 
     // Whether this visual has a missile model (SpellVisual.dbc MissileModel).
@@ -207,6 +208,24 @@ private:
     static constexpr uint32_t kCharProcChain = 0;
     static constexpr uint32_t kCharProcColor = 1;
     static constexpr uint32_t kCharProcOpacity = 14;
+    /// SpellVisualKit CharProc 9: impacts falling at random spots of the area
+    /// while the kit plays - Blizzard's shards, Rain of Fire's fireballs, Cave
+    /// In's rocks. CharParamZero picks the model (kAreaImpactModels),
+    /// CharParamOne is impacts a second.
+    static constexpr uint32_t kCharProcAreaImpacts = 9;
+    struct AreaImpacts {
+        std::string path;
+        float perSecond = 0.0f;
+    };
+    std::unordered_map<uint32_t, AreaImpacts> kitAreaImpacts_;  // kit -> impacts
+    struct ActiveAreaImpacts {
+        AreaImpacts impacts;
+        glm::vec3 center{0.0f};
+        float radius = 0.0f;
+        float due = 0.0f;  // impacts owed and not yet dropped
+    };
+    std::unordered_map<uint64_t, ActiveAreaImpacts> activeAreaImpacts_;  // persistent area key
+    void dropAreaImpacts(float deltaTime);
     struct UnitAuraVisuals {
         std::vector<uint32_t> ids;
         bool observerConcealed = false;

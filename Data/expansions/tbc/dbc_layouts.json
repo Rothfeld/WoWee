@@ -443,6 +443,10 @@
   "SpellVisualKit": {
     "BaseEffect": 5,
     "BreathEffect": 8,
+    "CharParamOne0": 25,
+    "CharParamOne1": 26,
+    "CharParamOne2": 27,
+    "CharParamOne3": 28,
     "CharParamZero0": 21,
     "CharParamZero1": 22,
     "CharParamZero2": 23,

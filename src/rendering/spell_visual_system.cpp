@@ -25,6 +25,29 @@
 namespace wowee {
 namespace rendering {
 
+namespace {
+// SpellVisualKit CharProc 9's CharParamZero, by index. The same names stand in
+// this order in the 2.4.3 executable's string data, and the DBC agrees: kits
+// with this procedure name the model of their index as their BaseEffect too -
+// 0 Blizzard kit 9350 Blizzard_Impact_Base, 1 Rain of Fire 9352
+// RainOfFire_Impact_Base, 2 Revelations 9261 CallLightning_Impact, 4 Death &
+// Decay 9359 DeathAndDecay_Area_Base, 5 Volley 9356 ArcaneShot_Area, 6 Starfall
+// 9364 StarShards_Impact_Base, 7 Rain of Chaos 9383 Fel_RainOfFire_Impact_Base,
+// 8 Debris 9110 HellfireRaid_Dust_Impact_Base (Cave In 9373 drops these rocks
+// in the original). No TBC kit uses 3.
+constexpr const char* kAreaImpactModels[] = {
+    "Spells\\Blizzard_Impact_Base.m2",
+    "Spells\\RainOfFire_Impact_Base.m2",
+    "Spells\\CallLightning_Impact.m2",
+    "Spells\\FlamestrikeSmall_Impact_Base.m2",
+    "Spells\\DeathAndDecay_Area_Base.m2",
+    "Spells\\ArcaneShot_Area.m2",
+    "Spells\\StarShards_Impact_Base.m2",
+    "Spells\\Fel_RainOfFire_Impact_Base.m2",
+    "Spells\\HellfireRaid_Dust_Impact_Base.m2",
+};
+}  // namespace
+
 void SpellVisualSystem::initialize(M2Renderer* m2Renderer, Renderer* renderer) {
     m2Renderer_ = m2Renderer;
     renderer_ = renderer;
@@ -108,10 +131,11 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     // slot names.
     auto kitDbc = cachedAssetManager_->loadDBC("SpellVisualKit.dbc");
     // CharProc0-3 and the first parameter of each (CharParamZero0-3).
-    uint32_t procFields[4], procParamFields[4];
+    uint32_t procFields[4], procParamFields[4], procParamOneFields[4];
     for (int k = 0; k < 4; ++k) {
         procFields[k] = kitLayout ? kitLayout->field("CharProc" + std::to_string(k)) : 0xFFFFFFFFu;
         procParamFields[k] = kitLayout ? kitLayout->field("CharParamZero" + std::to_string(k)) : 0xFFFFFFFFu;
+        procParamOneFields[k] = kitLayout ? kitLayout->field("CharParamOne" + std::to_string(k)) : 0xFFFFFFFFu;
     }
     if (kitDbc && kitDbc->isLoaded()) {
         uint32_t fc = kitDbc->getFieldCount();
@@ -160,6 +184,19 @@ void SpellVisualSystem::loadSpellVisualDbc() {
                 } else if (procedure == kCharProcOpacity) {
                     assert(std::isfinite(param) && param >= 0.0f && param <= 1.0f);
                     kitCharacterProcedures_[kitId].opacity = param;
+                } else if (procedure == kCharProcAreaImpacts) {
+                    if (procParamOneFields[k] >= fc) {
+                        static bool said = false;
+                        if (!said) LOG_WARNING("SpellVisual: SpellVisualKit layout lacks CharParamOne", k,
+                                               "; area impacts (Blizzard shards, Cave In rocks) are not drawn");
+                        said = true;
+                        continue;
+                    }
+                    const float perSecond = kitDbc->getFloat(i, procParamOneFields[k]);
+                    assert(param >= 0.0f && param < std::size(kAreaImpactModels) && param == std::floor(param));
+                    assert(std::isfinite(perSecond) && perSecond > 0.0f);
+                    kitAreaImpacts_[kitId] = {.path = kAreaImpactModels[static_cast<size_t>(param)],
+                                              .perSecond = perSecond};
                 }
             }
         }
@@ -752,7 +789,8 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
 // Flamestrike_Impact_Base, the burning ground the original keeps under the
 // area for the DynamicObject's life (8 s). The model loops its own sequence;
 // it is removed with the object, not on a timer.
-void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition) {
+void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, const glm::vec3& worldPosition,
+                                           float radius) {
     if (!m2Renderer_ || visualId == 0) return;
     if (!cachedAssetManager_)
         cachedAssetManager_ = core::Application::getInstance().getAssetManager();
@@ -761,6 +799,18 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
     stopPersistentArea(key);
     const auto kit = persistentAreaKits_.find(visualId);
     if (kit == persistentAreaKits_.end() || kit->second == 0) return;
+    // Cave In 36240 (kit 9373): Smash_Impact_Chest glows at the centre, a
+    // 1 s loop, while HellfireRaid_Dust_Impact_Base rock falls land around it
+    // (original 2.4.3, pair 8). Rain of Fire 5740 (kit 9352, 5 a second)
+    // drops about five fireballs a second across its 8 yards.
+    if (const auto impacts = kitAreaImpacts_.find(kit->second); impacts != kitAreaImpacts_.end()) {
+        if (radius > 0.0f) {
+            activeAreaImpacts_[key] = {.impacts = impacts->second, .center = worldPosition, .radius = radius};
+        } else {
+            LOG_WARNING("SpellVisual: persistent area 0x", std::hex, key, std::dec, " kit ", kit->second,
+                        " drops area impacts but its spell names no area radius; none drawn");
+        }
+    }
     const auto effects = kitEffects_.find(kit->second);
     if (effects == kitEffects_.end()) {
         LOG_WARNING("SpellVisual: persistent area kit ", kit->second, " of visual ", visualId, " has no models");
@@ -783,6 +833,8 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
 }
 
 void SpellVisualSystem::stopPersistentArea(uint64_t key) {
+    // Impacts already falling finish their fall.
+    activeAreaImpacts_.erase(key);
     const auto it = persistentAreas_.find(key);
     if (it == persistentAreas_.end()) return;
     if (m2Renderer_)
@@ -919,8 +971,39 @@ void SpellVisualSystem::placeOnUnit(const SpellVisualInstance& visual, Character
     m2Renderer_->setInstanceTransform(visual.instanceId, transform);
 }
 
+// Each impact is one play of the model at a uniformly random point of the
+// area's disc, on the area's own height, unrotated; impacts are evenly spaced
+// in time at the kit's rate.
+void SpellVisualSystem::dropAreaImpacts(float deltaTime) {
+    if (activeAreaImpacts_.empty() || !m2Renderer_) return;
+    static thread_local std::mt19937 random{std::random_device{}()};
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    for (auto& [key, area] : activeAreaImpacts_) {
+        area.due += deltaTime * area.impacts.perSecond;
+        while (area.due >= 1.0f) {
+            area.due -= 1.0f;
+            const uint32_t modelId = loadSpellModel(area.impacts.path);
+            if (modelId == 0) continue;
+            const float distance = area.radius * std::sqrt(unit(random));
+            const float angle = glm::two_pi<float>() * unit(random);
+            const glm::vec3 at = area.center + glm::vec3(distance * std::cos(angle), distance * std::sin(angle), 0.0f);
+            const uint32_t instanceId = m2Renderer_->createInstance(modelId, at, glm::vec3(0.0f), 1.0f);
+            if (instanceId == 0) {
+                LOG_WARNING("SpellVisual: area impact instance failed, model=", area.impacts.path);
+                continue;
+            }
+            m2Renderer_->restartInstanceAnimation(instanceId);
+            const float lifetime = m2Renderer_->getInstanceAnimDuration(instanceId) / 1000.0f;
+            assert(lifetime > 0.0f);
+            activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
+                .isPrecast = false, .attachmentId = 0, .attachInstanceId = 0});
+        }
+    }
+}
+
 void SpellVisualSystem::update(float deltaTime) {
     beamClock_ += deltaTime;
+    dropAreaImpacts(deltaTime);
     if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
         std::erase_if(unitAuraVisuals_, [&](const auto& entry) {
             glm::vec3 position;
@@ -1080,6 +1163,7 @@ void SpellVisualSystem::reset() {
             for (uint32_t instanceId : instances) m2Renderer_->removeInstance(instanceId);
     }
     persistentAreas_.clear();
+    activeAreaImpacts_.clear();
     // Reset the negative cache so models that failed during asset loading can retry.
     spellVisualFailedModels_.clear();
 }

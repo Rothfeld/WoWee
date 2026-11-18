@@ -824,7 +824,33 @@ void SpellHandler::showPersistentArea(uint64_t guid, uint32_t spellId, const glm
         LOG_WARNING("SpellVisual: DynamicObject 0x", std::hex, guid, std::dec, " spell ", spellId, " has no visual");
         return;
     }
-    svs->playPersistentArea(guid, visualId, core::coords::canonicalToRender(canonicalPosition));
+    // The area's radius is the one its PERSISTENT_AREA_AURA effect names
+    // (SpellRadius.dbc), which is what the server gives the object: Cave In
+    // 36240 radius index 14, 8 yards; Blizzard 10 index 13. Zero when the
+    // object comes from another effect; only area impacts use it.
+    float radius = 0.0f;
+    {
+        auto* am = owner_.services().assetManager;
+        assert(am && am->isInitialized());
+        const auto* layout = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+        assert(layout && layout->field("Effect0") != 0xFFFFFFFF &&
+               layout->field("EffectRadiusIndex0") != 0xFFFFFFFF);
+        const auto spells = am->loadDBC("Spell.dbc");
+        const auto radii = am->loadDBC("SpellRadius.dbc");
+        assert(spells && spells->isLoaded() && radii && radii->isLoaded());
+        const int32_t row = spells->findRecordById(spellId);
+        assert(row >= 0);
+        constexpr uint32_t kEffectPersistentAreaAura = 27;
+        for (int e = 0; e < 3; ++e) {
+            const auto k = std::to_string(e);
+            if (spells->getUInt32(row, layout->field("Effect" + k)) != kEffectPersistentAreaAura) continue;
+            const int32_t radiusRow = radii->findRecordById(spells->getUInt32(row, layout->field("EffectRadiusIndex" + k)));
+            if (radiusRow >= 0) radius = radii->getFloat(radiusRow, 1);
+            break;
+        }
+    }
+    svs->playPersistentArea(guid, visualId, core::coords::canonicalToRender(canonicalPosition), radius);
 }
 
 void SpellHandler::hidePersistentArea(uint64_t guid) {
