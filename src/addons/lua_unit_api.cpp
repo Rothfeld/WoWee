@@ -3091,6 +3091,9 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"CheckInteractDistance", lua_CheckInteractDistance},
                 {"UnitInRange",           lua_UnitInRange},
                 {"IsRaidLeader",          lua_IsRaidLeader},
+                // 2.4.3 FrameXML (lfgframe.lua:325) calls it every frame; outside a
+                // battleground it answers as IsRaidLeader.
+                {"IsRealRaidLeader",      lua_IsRaidLeader},
                 // The class token without the localised name beside it, which
                 // is all UnitClassBase is: the same second return UnitClass
                 // already computes.
