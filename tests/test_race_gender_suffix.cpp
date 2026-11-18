@@ -66,3 +66,28 @@ TEST_CASE("no two races share a code", "[appearance]") {
         seen += suffix + ";";
     }
 }
+
+using wowee::core::helmMaskCoversRace;
+using wowee::core::hideGeosetGroups;
+
+TEST_CASE("HelmetGeosetVisData masks carry bit N for race id N", "[appearance]") {
+    // Row 248, ears column, 2.4.3: every race but night elf, troll, blood elf.
+    constexpr uint32_t ears248 = 0xFFFFFAEFu;
+    CHECK(helmMaskCoversRace(ears248, 1));    // human
+    CHECK(helmMaskCoversRace(ears248, 3));    // dwarf
+    CHECK_FALSE(helmMaskCoversRace(ears248, 4));   // night elf
+    CHECK_FALSE(helmMaskCoversRace(ears248, 8));   // troll
+    CHECK_FALSE(helmMaskCoversRace(ears248, 10));  // blood elf
+    CHECK(helmMaskCoversRace(ears248, 11));   // draenei
+    CHECK_FALSE(helmMaskCoversRace(0, 3));
+}
+
+TEST_CASE("a hidden group falls back to its x01 member and keeps the body", "[appearance]") {
+    // Dwarf male, hair style 5, beard 105 + 305, ears absent from the model.
+    std::unordered_set<uint16_t> geosets = {0, 5, 105, 305, 401, 501, 702};
+    hideGeosetGroups(geosets, {0, 1, 3, 7});
+    CHECK(geosets == std::unordered_set<uint16_t>{0, 1, 101, 301, 401, 501, 701});
+    std::unordered_set<uint16_t> untouched = {0, 5, 105};
+    hideGeosetGroups(untouched, {});
+    CHECK(untouched == std::unordered_set<uint16_t>{0, 5, 105});
+}

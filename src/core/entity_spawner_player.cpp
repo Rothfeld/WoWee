@@ -589,13 +589,10 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     // Tabard (invType 19)
     if (hasInvType({19})) geosets.insert(kGeosetDefaultTabard);
 
-    // Hide hair under helmets: replace style-specific scalp with bald scalp
-    // HEAD slot is index 0 in the 19-element equipment array
-    if (displayInfoIds[0] != 0 && hairStyleId > 0 &&
-        core::helmHidesHair(*assetManager_, displayInfoIds[0], st.genderId)) {
-        geosets.erase(selectedHairScalp);                              // Remove style scalp
-        geosets.insert(1);    // Bald scalp cap (group 0)
-    }
+    // What the helm covers - hair, beard channels, ears - per race and gender
+    // from HelmetGeosetVisData. HEAD slot is index 0 of the equipment array.
+    core::hideGeosetGroups(geosets, core::helmHiddenGeosetGroups(
+        *assetManager_, displayInfoIds[0], st.raceId, st.genderId));
 
     charRenderer->setActiveGeosets(st.instanceId, geosets);
 

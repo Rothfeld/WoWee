@@ -160,6 +160,16 @@
     "ID": 0,
     "ModelName": 1
   },
+  "HelmetGeosetVisData": {
+    "HideEars": 5,
+    "HideFacial1": 2,
+    "HideFacial2": 3,
+    "HideFacial3": 4,
+    "HideHair": 1,
+    "HideUnknown6": 6,
+    "HideUnknown7": 7,
+    "ID": 0
+  },
   "Item": {
     "DisplayInfoID": 1,
     "ID": 0,
@@ -169,6 +179,8 @@
   "ItemDisplayInfo": {
     "GeosetGroup1": 7,
     "GeosetGroup3": 9,
+    "HelmetGeosetVisFemale": 14,
+    "HelmetGeosetVisMale": 13,
     "ID": 0,
     "InventoryIcon": 5,
     "ItemVisual": 23,

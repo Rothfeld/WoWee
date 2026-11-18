@@ -965,12 +965,9 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
         if (geosetTabard != 0) geosets.insert(geosetTabard);
     }
 
-    const uint32_t headDisplay = findDisplayId({1});
-    if (headDisplay && core::helmHidesHair(*assetManager_, headDisplay,
-                                         static_cast<uint8_t>(gender_))) {
-        geosets.erase(selectedHairScalpGeoset());
-        geosets.insert(1);
-    }
+    core::hideGeosetGroups(geosets, core::helmHiddenGeosetGroups(
+        *assetManager_, findDisplayId({1}), static_cast<uint8_t>(race_),
+        static_cast<uint8_t>(gender_)));
 
     charRenderer_->setActiveGeosets(instanceId_, geosets);
 

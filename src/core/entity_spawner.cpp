@@ -1460,6 +1460,8 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
         uint16_t selectedFacial100 = 100;
         uint16_t selectedFacial200 = 200;
         uint16_t selectedFacial300 = 300;
+        // Geoset groups the CreatureDisplayInfoExtra helm covers; applied last.
+        std::vector<uint16_t> helmHiddenGroups;
         uint32_t equipChestGG = 0, equipLegsGG = 0, equipFeetGG = 0, equipGlovesGG = 0, equipCapeGG = 0;
         uint32_t equipRobeGG = 0;
         uint32_t equipKneepadsGG = 0;
@@ -1477,10 +1479,8 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
                 if (itHairGeo != hairGeosetMap_.end() && itHairGeo->second > 0) {
                     selectedHairScalp = itHairGeo->second;
                 }
-                if (itExtra->second.equipDisplayId[0] != 0 &&
-                    helmHidesHair(*assetManager_, itExtra->second.equipDisplayId[0], extraSexId)) {
-                    selectedHairScalp = 1;
-                }
+                helmHiddenGroups = helmHiddenGeosetGroups(
+                    *assetManager_, itExtra->second.equipDisplayId[0], extraRaceId, extraSexId);
                 const uint32_t facialKey = appearanceKey(
                     extraRaceId, extraSexId, itExtra->second.facialHairId);
                 auto itFacial = facialHairGeosetMap_.find(facialKey);
@@ -1694,6 +1694,8 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
                 normalizedGeosets.insert(kGeosetNoCape);
             }
         }
+
+        hideGeosetGroups(normalizedGeosets, helmHiddenGroups);
 
         if (!normalizedGeosets.empty()) {
             charRenderer->setActiveGeosets(instanceId, normalizedGeosets);

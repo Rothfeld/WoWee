@@ -286,31 +286,22 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
         geosets.insert(core::kGeosetDefaultTabard);
     }
 
-    // Hide hair under a helm: drop the style scalp and put the bald cap on.
-    // Group 0 holds the body plus one scalp; 0 itself is the body and stays.
-    // The other-player path has always done this, so a helm covered their hair
-    // and not yours.
+    // Hide what a helm covers: hair scalp -> bald cap, beard channels, ears.
     // Only while it is actually on the head. The show-helm toggle takes the
     // model away and left this branch running, so hiding a helm hid the hair
     // with it and the player stood there bald wearing nothing.
     if (hasEquippedType({1}) && helmShown) {
         const uint32_t headDisplayId = findEquippedDisplayId({1});
-        uint8_t genderId = 0;
-        if (auto* gh = app.getGameHandler()) {
-            if (const auto* ch = gh->getActiveCharacter()) {
-                genderId = static_cast<uint8_t>(ch->gender);
-            }
-        }
-        // A circlet, tiara or crown sits over the hair rather than covering it,
-        // and the data says which does what - see core::helmHidesHair.
-        if (auto* assets = app.getAssetManager();
-            assets && core::helmHidesHair(*assets, headDisplayId, genderId)) {
-            for (auto it = geosets.begin(); it != geosets.end();) {
-                if (*it != 0 && (*it / 100) == 0) it = geosets.erase(it);
-                else ++it;
-            }
-            geosets.insert(1);
-        }
+        const auto* gh = app.getGameHandler();
+        const auto* ch = gh ? gh->getActiveCharacter() : nullptr;
+        assert(ch && "updateCharacterGeosets: helm equipped without an active character");
+        // What the helm covers - hair, beard channels, ears - per race and
+        // gender from HelmetGeosetVisData. A circlet covers nothing.
+        auto* assets = app.getAssetManager();
+        assert(assets && "updateCharacterGeosets: no asset manager");
+        core::hideGeosetGroups(geosets, core::helmHiddenGeosetGroups(
+            *assets, headDisplayId, static_cast<uint8_t>(ch->race),
+            static_cast<uint8_t>(ch->gender)));
     }
 
     // Bald with nothing on your head, which is the reported bug and the one

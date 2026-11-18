@@ -2,10 +2,12 @@
 
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
+#include "pipeline/dbc_loader.hpp"
+#include "core/logger.hpp"
+
+#include <cassert>
 
 #include <algorithm>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace wowee {
 namespace core {
@@ -59,71 +61,66 @@ HelmVisual resolveHelmVisual(pipeline::AssetManager& assets,
 }
 
 
-namespace {
+std::vector<uint16_t> helmHiddenGeosetGroups(pipeline::AssetManager& assets,
+                                             uint32_t itemDisplayInfoId,
+                                             uint8_t raceId,
+                                             uint8_t genderId) {
+    std::vector<uint16_t> groups;
+    if (itemDisplayInfoId == 0) return groups;
 
-/// Which ItemDisplayInfo columns hold HelmetGeosetVis[male] and [female].
-///
-/// They move with the file: 12 and 13 in the 23-field build that ships in the
-/// expansion overlays, 13 and 14 in the 25-field one. Rather than keep a table
-/// of indices per expansion and get it wrong the way the facial-feature columns
-/// were, find them once by asking which columns actually reference the
-/// visibility table.
-struct VisColumns { uint32_t male = 0xFFFFFFFFu; uint32_t female = 0xFFFFFFFFu; };
-
-VisColumns findVisColumns(pipeline::DBCFile& displayInfo, pipeline::DBCFile& visData) {
-    VisColumns out;
-    std::unordered_set<uint32_t> ids;
-    for (uint32_t r = 0; r < visData.getRecordCount(); ++r) {
-        ids.insert(visData.getUInt32(r, 0));
+    const auto* active = pipeline::getActiveDBCLayout();
+    assert(active && "helmHiddenGeosetGroups: no active DBC layout");
+    const auto* idiLayout = active->getLayout("ItemDisplayInfo");
+    const auto* visLayout = active->getLayout("HelmetGeosetVisData");
+    if (!idiLayout || !visLayout) {
+        static bool reported = false;
+        if (!reported) LOG_ERROR("helmHiddenGeosetGroups: dbc_layouts.json lacks ",
+                  idiLayout ? "HelmetGeosetVisData" : "ItemDisplayInfo",
+                  "; helms hide nothing");
+        reported = true;
+        return groups;
     }
-    if (ids.empty()) return out;
-
-    const uint32_t rows = displayInfo.getRecordCount();
-    const uint32_t step = std::max(1u, rows / 400u);
-    for (uint32_t c = 0; c < displayInfo.getFieldCount(); ++c) {
-        uint32_t nonZero = 0, valid = 0;
-        for (uint32_t r = 0; r < rows; r += step) {
-            const uint32_t v = displayInfo.getUInt32(r, c);
-            if (v == 0) continue;
-            ++nonZero;
-            if (ids.count(v)) ++valid;
-        }
-        // A column of ids is a column where every value present is an id.
-        if (nonZero >= 8 && valid == nonZero) {
-            if (out.male == 0xFFFFFFFFu) out.male = c;
-            else if (out.female == 0xFFFFFFFFu) { out.female = c; break; }
-        }
-    }
-    return out;
-}
-
-} // namespace
-
-bool helmHidesHair(pipeline::AssetManager& assets,
-                   uint32_t itemDisplayInfoId,
-                   uint8_t genderId) {
-    if (itemDisplayInfoId == 0) return false;
+    const uint32_t visColumn =
+        (*idiLayout)[genderId == 0 ? "HelmetGeosetVisMale" : "HelmetGeosetVisFemale"];
+    if (visColumn == 0xFFFFFFFFu) return groups;  // noteMissingLayoutField reported it
 
     auto displayInfo = assets.loadDBC("ItemDisplayInfo.dbc");
     auto visData = assets.loadDBC("HelmetGeosetVisData.dbc");
-    if (!displayInfo || !visData) return true;  // no data: keep the old behaviour
-
-    static VisColumns columns = findVisColumns(*displayInfo, *visData);
-    const uint32_t column = (genderId == 0) ? columns.male : columns.female;
-    if (column == 0xFFFFFFFFu) return true;
-
+    if (!displayInfo || !visData) {
+        LOG_ERROR("helmHiddenGeosetGroups: ItemDisplayInfo.dbc or HelmetGeosetVisData.dbc missing");
+        return groups;
+    }
     const int32_t row = displayInfo->findRecordById(itemDisplayInfoId);
-    if (row < 0) return true;
-    const uint32_t visId = displayInfo->getUInt32(static_cast<uint32_t>(row), column);
-    if (visId == 0) return false;  // hides nothing
+    if (row < 0) {
+        LOG_WARNING("helmHiddenGeosetGroups: ItemDisplayInfo ", itemDisplayInfoId, " not found");
+        return groups;
+    }
+    const uint32_t visId = displayInfo->getUInt32(static_cast<uint32_t>(row), visColumn);
+    if (visId == 0) return groups;
 
     const int32_t visRow = visData->findRecordById(visId);
-    if (visRow < 0) return false;
-    // Every mask zero is the row circlets, tiaras and crowns point at.
-    for (uint32_t f = 1; f < visData->getFieldCount(); ++f) {
-        if (visData->getUInt32(static_cast<uint32_t>(visRow), f) != 0) return true;
+    if (visRow < 0) {
+        LOG_ERROR("helmHiddenGeosetGroups: ItemDisplayInfo ", itemDisplayInfoId,
+                  " names HelmetGeosetVisData ", visId, ", which the file lacks");
+        return groups;
     }
-    return false;
+    for (const auto& column : kHelmHideColumns) {
+        const uint32_t field = (*visLayout)[column.layoutName];
+        if (field == 0xFFFFFFFFu) continue;  // noteMissingLayoutField reported it
+        if (helmMaskCoversRace(visData->getUInt32(static_cast<uint32_t>(visRow), field), raceId)) {
+            groups.push_back(column.geosetGroup);
+        }
+    }
+    for (const char* name : kHelmHideUnmappedColumns) {
+        const uint32_t field = visLayout->tryField(name);
+        if (field == 0xFFFFFFFFu) continue;
+        if (helmMaskCoversRace(visData->getUInt32(static_cast<uint32_t>(visRow), field), raceId)) {
+            LOG_WARNING("helmHiddenGeosetGroups: HelmetGeosetVisData ", visId, " ", name,
+                        " covers race ", static_cast<int>(raceId),
+                        "; no character geoset group is known for it, not applied");
+        }
+    }
+    return groups;
 }
 
 } // namespace core
