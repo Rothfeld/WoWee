@@ -2216,10 +2216,11 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
     // Camera direction from yaw/pitch (already computed as forward3D)
     glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
-    // Ground contact (build 8606, Goldshire terrain and Shattrath's WMO
-    // floor): once the camera rests on the floor, pitching up further keeps
-    // the camera where it is and turns only the view; pitching back down
-    // below that orbit pitch moves the camera again.
+    // Contact below the pivot (build 8606, Goldshire and Elwynn terrain,
+    // Shattrath walls and floor): once an obstacle stops the camera and the
+    // camera is below the pivot, pitching up further keeps the camera where
+    // it is and turns only the view; pitching back down below that orbit
+    // pitch moves the camera again.
     if (floorContactPitch_ && pitch <= *floorContactPitch_) floorContactPitch_.reset();
     const float orbitPitch = floorContactPitch_ ? *floorContactPitch_ : pitch;
     if (floorContactPitch_) {
@@ -2285,14 +2286,12 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         const float applied = easedCollisionLimit(
             rawLimit < currentDistance ? std::optional<float>(rawLimit) : std::nullopt, deltaTime);
         collisionDistance = std::min(collisionDistance, applied);
-        // The camera stopped by the floor under the character: what it hit
-        // lies at about the feet's height, below the pivot.
-        // Terrain is always floor here; a building surface counts when it
-        // lies at about the feet's height.
+        // Any obstacle holds it once the camera is below the pivot: native
+        // against a Terrace wall slid along the ray down to orbit -1 deg and
+        // held at +2 (camera 1.65 yd above the feet, not on the floor); on
+        // terrain it held at the first blocked pitch (Elwynn 5.5, Goldshire 1).
         if (!floorContactPitch_ && rawLimit < currentDistance - 0.01f && camDir.z < 0.0f) {
-            const bool terrainStopped = smoothedTerrainDist_ >= 0.0f && smoothedTerrainDist_ <= rawLimit + 0.01f;
-            const float hitZ = (pivot + camDir * (rawLimit + CAMERA_WALL_STANDOFF)).z;
-            if (terrainStopped || hitZ <= targetPos.z + 0.5f) floorContactPitch_ = orbitPitch;
+            floorContactPitch_ = orbitPitch;
         }
     } else {
         smoothedCollisionDist_ = -1.0f;   // Reset when no collision sources available
@@ -2526,7 +2525,10 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // request. Share this visibility decision with the renderer so its
         // recovery path cannot immediately reveal the intersecting mesh again.
         const float eyeDistance = glm::distance(smoothedCamPos, pivot);
-        playerCameraOpacity_ = glm::clamp((eyeDistance - 0.5f) / 1.0f, 0.0f, 1.0f);
+        // Build 8606 (zoom steps at the Terrace): opaque at 1.31 yd and above,
+        // partly transparent at 1.06, about half at 0.79-0.63, faint at 0.43,
+        // gone by 0.17-0.23: a linear fade from 1.2 down to 0.2 yd.
+        playerCameraOpacity_ = glm::clamp((eyeDistance - 0.2f) / 1.0f, 0.0f, 1.0f);
         characterRenderer->setInstanceCameraOpacity(playerInstanceId,
             playerCameraOpacity_);
         characterRenderer->setInstanceVisible(playerInstanceId, !shouldHidePlayer());
@@ -3474,12 +3476,16 @@ void CameraController::processMouseMotion(const SDL_MouseMotionEvent& event) {
         rotateArmed_ = true;  // past the dead-zone: this is a deliberate drag
     }
 
-    // Directly update stored yaw/pitch (no lossy forward-vector derivation)
-    yaw -= event.xrel * mouseSensitivity;
+    // Directly update stored yaw/pitch (no lossy forward-vector derivation).
+    // Build 8606 turns cameraYawMoveSpeed/800 degrees of yaw and
+    // cameraPitchMoveSpeed/600 of pitch per pixel (defaults 180 and 90:
+    // 0.225 and 0.15 at 1280x720; mouseSpeed has no effect). The yaw rate is
+    // 1.125x the sensitivity setting (0.2 by default), the pitch rate 0.75x.
+    yaw -= event.xrel * mouseSensitivity * kMouseYawScale;
     // SDL yrel > 0 = mouse moved DOWN. In WoW, mouse-down = look down = pitch decreases.
     // invertMouse flips to flight-sim style (mouse-down = look up).
     float invert = invertMouse ? 1.0f : -1.0f;
-    pitch += event.yrel * mouseSensitivity * invert;
+    pitch += event.yrel * mouseSensitivity * kMousePitchScale * invert;
 
     // WoW-style pitch limits: can look almost straight down, limited upward
     pitch = glm::clamp(pitch, MIN_PITCH, MAX_PITCH);
@@ -3569,11 +3575,13 @@ void CameraController::setView(int view) {
 void CameraController::saveView(int view) {
     assert(view >= 1 && view <= kViewCount);
     views_[view] = {userTargetDistance, pitch};
+    if (viewSavedCallback_ && view >= 2) viewSavedCallback_(view, views_[view].distance, views_[view].pitch);
 }
 
 void CameraController::resetView(int view) {
     assert(view >= 1 && view <= kViewCount);
     views_[view] = kDefaultViews[view];
+    if (viewSavedCallback_ && view >= 2) viewSavedCallback_(view, views_[view].distance, views_[view].pitch);
     if (view == currentView_) setView(view);
 }
 

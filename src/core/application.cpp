@@ -574,6 +574,28 @@ bool Application::initialize() {
             if (renderer && renderer->getCameraController())
                 renderer->getCameraController()->setDistanceMax(yards);
         };
+        if (renderer && renderer->getCameraController()) {
+            auto* cam = renderer->getCameraController();
+            // Native Config.wtf keys: view 2 is A ... view 5 is D; pitch is
+            // stored positive when looking down (SaveView(2) at -10 wrote 10).
+            const auto key = [](const char* what, int view) {
+                return std::string("camera") + what + static_cast<char>('A' + view - 2);
+            };
+            for (int view = 2; view <= 5; ++view) {
+                const std::string d = addons::storedCVarValue(key("Distance", view), "");
+                const std::string pt = addons::storedCVarValue(key("Pitch", view), "");
+                if (!d.empty() && !pt.empty())
+                    cam->loadSavedView(view, std::stof(d), -std::stof(pt));
+            }
+            cam->setViewSavedCallback([key](int view, float distance, float pitch) {
+                char buffer[32];
+                std::snprintf(buffer, sizeof(buffer), "%.6f", distance);
+                addons::setStoredCVar(key("Distance", view), buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.6f", -pitch);
+                addons::setStoredCVar(key("Pitch", view), buffer);
+                addons::setStoredCVar(key("Yaw", view), "0.000000");
+            });
+        }
         luaSvc.cameraView = [this](const std::string& op, int view) {
             if (!renderer || !renderer->getCameraController()) return;
             auto* cam = renderer->getCameraController();

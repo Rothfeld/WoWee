@@ -51,6 +51,16 @@ public:
     void nextView() { setView(std::min(currentView_ + 1, kViewCount)); }
     void prevView() { setView(std::max(currentView_ - 1, 1)); }
     [[nodiscard]] int currentView() const { return currentView_; }
+    /// Saved views 2-5 persist as native's Config.wtf CVars cameraDistanceA-D,
+    /// cameraPitchA-D (positive = looking down) and cameraYawA-D. Told on every
+    /// SaveView/ResetView; a stored view is put back with loadSavedView.
+    void setViewSavedCallback(std::function<void(int view, float distance, float pitch)> cb) {
+        viewSavedCallback_ = std::move(cb);
+    }
+    void loadSavedView(int view, float distance, float pitch) {
+        assert(view >= 2 && view <= kViewCount);
+        views_[view] = {distance, pitch};
+    }
     void setDistanceMaxFactor(float factor) {
         assert(factor >= 0.0f);
         distanceMaxFactor_ = factor;
@@ -504,6 +514,7 @@ private:
     // Orbit pitch held while the camera rests on the floor (see
     // updateOrbitCamera); the view pitch keeps turning.
     std::optional<float> floorContactPitch_;
+    std::function<void(int view, float distance, float pitch)> viewSavedCallback_;
     float yaw = 180.0f;
     float pitch = -30.0f;
     float facingYaw = 180.0f;  // Character-facing yaw (can differ from camera yaw)
@@ -517,6 +528,8 @@ private:
 
     // Mouse settings
     float mouseSensitivity = 0.2f;
+    static constexpr float kMouseYawScale = 1.125f;
+    static constexpr float kMousePitchScale = 0.75f;
     bool invertMouse = false;
     bool mouseButtonDown = false;
     glm::vec2 mouseCapturePosition_{0.0f};

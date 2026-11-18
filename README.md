@@ -928,7 +928,7 @@ spine counter-rotation must not be applied on top of those poses. Verify both
 Q and E underwater, where the whole body is visible.
 
 Player camera fade uses actual camera-to-pivot distance, becoming transparent
-between 1.5 and 0.5 yards. Collision can shorten that distance while requested
+between 1.2 and 0.2 yards (build 8606 zoom steps: opaque at 1.31, gone by 0.2). Collision can shorten that distance while requested
 zoom stays far away. Camera opacity multiplies ghost/stealth/spawn opacity and
 propagates to weapons and their effects. Renderer visibility recovery respects
 the camera controller's fully transparent state.
@@ -1222,11 +1222,13 @@ distance and pitch; ResetView of the current view applies it. SETVIEW,
 SAVEVIEW and RESETVIEW are unbound by default. Zoom runs to 0 yd. The camera
 stops 0.111 yd short of the surface its ray hits, along the ray, at any
 incidence (Shattrath Terrace wall, offline raycast of native camera rays).
-Ground contact: once the camera rests on the floor (terrain, or a building
-surface at about feet height below the pivot), pitching up further keeps the
-camera in place and turns only the view; pitching below that orbit pitch moves
-it again (native Goldshire and Elwynn: orbit held at 5.5 deg, view to 42 deg).
-Gotcha: native turns 0.15 deg per pixel of mouse-look, WoWee 0.2 (not changed).
+Contact hold: once any obstacle (terrain, floor, wall) stops the camera while
+it is below the pivot, pitching up further keeps the camera in place and turns
+only the view; pitching below that orbit pitch moves it again (native Elwynn:
+orbit held at 5.5 deg, view to 42; Terrace wall: slid along the ray to orbit
+-1, held at +2 with the camera 1.65 yd above the feet). Mouse-look turns
+cameraYawMoveSpeed/800 deg of yaw and cameraPitchMoveSpeed/600 of pitch per
+pixel (180 and 90: 0.225 and 0.15 at 1280x720; mouseSpeed has no effect).
 
 ### Following another character
 
