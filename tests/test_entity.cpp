@@ -13,6 +13,7 @@ TEST_CASE("Stationary creatures track selected targets while players preserve fa
     UpdateFieldTable fields;
     fields.setIndex(UF::UNIT_FIELD_TARGET_LO, 16);
     fields.setIndex(UF::UNIT_FIELD_TARGET_HI, 17);
+    fields.setIndex(UF::UNIT_FIELD_BYTES_1, 159);
     struct RestoreTable {
         const UpdateFieldTable* previous;
         ~RestoreTable() { setActiveUpdateFieldTable(previous); }
@@ -44,6 +45,14 @@ TEST_CASE("Stationary creatures track selected targets while players preserve fa
     player.setField(fieldIndex(UF::UNIT_FIELD_TARGET_HI), static_cast<uint32_t>(targetGuid >> 32));
     REQUIRE_FALSE(creatureTargetFacing(player, entities).has_value());
     creature.setHealth(100);
+    // Native: a seated or stunned Marshal Dughan keeps his heading.
+    creature.setUnitFlags(0x00040000);
+    REQUIRE_FALSE(creatureTargetFacing(creature, entities).has_value());
+    creature.setUnitFlags(0);
+    creature.setField(fieldIndex(UF::UNIT_FIELD_BYTES_1), 1);
+    REQUIRE_FALSE(creatureTargetFacing(creature, entities).has_value());
+    creature.setField(fieldIndex(UF::UNIT_FIELD_BYTES_1), 0);
+    REQUIRE(creatureTargetFacing(creature, entities).has_value());
     entities.removeEntity(targetGuid);
     REQUIRE_FALSE(creatureTargetFacing(creature, entities).has_value());
 }

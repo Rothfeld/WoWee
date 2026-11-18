@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/coordinates.hpp"
-#include "game/protocol_constants.hpp"
+#include "game/entity.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -16,7 +16,7 @@ namespace wowee::core {
 // unit flags 0x8040 and a dragon model still turn. Vaelastrasz (13020) lies
 // in stand state 7 until his speech, so he does not turn.
 inline bool npcTurnsToConversationPartner(uint8_t standState, uint32_t unitFlags) {
-    return standState == 0 && (unitFlags & game::UNIT_FLAG_STUNNED) == 0;
+    return game::unitTurnsInPlace(standState, unitFlags);
 }
 
 // Native conversation turns settle in about 50 ms. The interval belongs to

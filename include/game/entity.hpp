@@ -777,12 +777,23 @@ inline uint64_t unitTargetGuid(const std::shared_ptr<Entity>& entity) {
     return entity ? unitTargetGuid(*entity) : 0;
 }
 
+/// Native 2.4.3 turns a unit in place (toward its UNIT_FIELD_TARGET, or toward
+/// the player while a gossip/quest panel is open) only while its stand state
+/// (UNIT_FIELD_BYTES_1 byte 0) is 0 and it is not UNIT_FLAG_STUNNED. Measured
+/// on Marshal Dughan: sitting, sleeping, dead, kneeling, chair and submerged
+/// states and the stun flag keep the server heading.
+inline bool unitTurnsInPlace(uint8_t standState, uint32_t unitFlags) {
+    return standState == 0 && (unitFlags & UNIT_FLAG_STUNNED) == 0;
+}
+
 // CMaNGOS Unit::Attack sets this field because stationary creatures turn to
 // their selected target client-side. Player selections never control facing.
 inline std::optional<float> creatureTargetFacing(const Entity& entity,
                                                 const EntityManager& entities) {
     if (entity.getType() != ObjectType::UNIT || entity.isActivelyMoving() ||
         static_cast<const Unit&>(entity).getHealth() == 0) return std::nullopt;
+    if (!unitTurnsInPlace(static_cast<uint8_t>(entity.getField(fieldIndex(UF::UNIT_FIELD_BYTES_1))),
+                          static_cast<const Unit&>(entity).getUnitFlags())) return std::nullopt;
     const auto target = entities.getEntity(unitTargetGuid(entity));
     if (!target) return std::nullopt;
     const float dx = target->getX() - entity.getX();
