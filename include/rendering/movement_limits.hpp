@@ -237,4 +237,27 @@ inline bool wmoFloorIsWayIn(float terrainZ, float feetZ, float stepUpBudget) {
     return terrainOutOfReach(terrainZ, feetZ, stepUpBudget);
 }
 
+/// Whether feet under the heightfield are inside the ground, whatever
+/// structure floor is holding them there.
+///
+/// The same reach as wmoFloorIsWayIn: ground the player could step onto is the
+/// ground underfoot, not a roof overhead, so feet below it are in it. The
+/// original client stands them on it. The stone stairs up to the Ruins of Ahn'Qiraj
+/// ruins (40manmainbosswest.wmo) run within a yard of the sand, partly above it
+/// and partly below. A player left on a tread 0.69 under the sand at
+/// (-9200.4, 2062.0) - by a fast climb, or a teleport there - stood sunk to the
+/// knees and could not walk on, the next riser being more than a step up. The
+/// original, from that same spot, rises onto the sand within its first frames
+/// of walking.
+///
+/// A hole in the ground is not ground, and inside an interior WMO group the
+/// heightfield is outside the room; neither counts.
+inline bool feetInsideGround(float terrainZ, float feetZ, float stepUpBudget,
+                             bool holeHere, bool insideInteriorWmo) {
+    constexpr float kMinPenetration = 0.10f;
+    if (holeHere || insideInteriorWmo) return false;
+    return terrainZ - feetZ > kMinPenetration &&
+           !terrainOutOfReach(terrainZ, feetZ, stepUpBudget);
+}
+
 } // namespace wowee::rendering::movement

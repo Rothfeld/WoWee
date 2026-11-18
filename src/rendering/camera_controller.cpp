@@ -1816,12 +1816,34 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
             *groundH >= targetPos.z - 2.0f &&
             *groundH <= targetPos.z + 0.6f;
 
-        // In flight as well: flightStepAgainstGround keeps a mount from flying
-        // into a hill, and this is what brings one back out that is already in
-        // it.
-        if (!swimming && !hoverActive_ && !externalFollow_ &&
+        // Feet inside ground they could step onto, held there by a structure
+        // floor running just under it. The rescue below stands down near any
+        // structure, because under a cave, tunnel or city the heightfield is
+        // overhead; within a step of the feet it is not overhead, and no
+        // structure makes it so. See movement::feetInsideGround.
+        const bool feetInsideGround =
+            !swimming && !hoverActive_ && !externalFollow_ && terrainManager &&
+            centerTerrainH && verticalVelocity <= 0.0f &&
+            movement::feetInsideGround(*centerTerrainH, targetPos.z, stepUpBudget,
+                                       terrainManager->isHoleAt(targetPos.x, targetPos.y),
+                                       cachedInsideInteriorWMO);
+        if (feetInsideGround) {
+            if (!terrainRescueActive_) {
+                terrainRescueActive_ = true;
+                LOG_INFO("Terrain penetration rescue: feet ", *centerTerrainH - targetPos.z,
+                         " inside unholed ground at (", targetPos.x, ", ", targetPos.y,
+                         "), structure floor ", groundH ? std::to_string(*groundH) : "none");
+            }
+            targetPos.z = *centerTerrainH;
+            verticalVelocity = 0.0f;
+            groundH = centerTerrainH;
+            lastGroundZ = *centerTerrainH;
+        } else if (!swimming && !hoverActive_ && !externalFollow_ &&
             !cachedInsideWMO && !nearStructureSpace && !standingOnStructure &&
             centerTerrainH && verticalVelocity <= 0.0f) {
+            // In flight as well: flightStepAgainstGround keeps a mount from
+            // flying into a hill, and this is what brings one back out that is
+            // already in it.
             const float penetration = *centerTerrainH - targetPos.z;
             // Below the shallow bound is ordinary contact and sampling jitter;
             // above the deep bound is somewhere this heuristic cannot vouch for,

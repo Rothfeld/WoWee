@@ -158,6 +158,47 @@ TEST_CASE("a seam only prefers the WMO floor when it is the way in") {
     }
 }
 
+// The stone stairs up to the ruins in the Ruins of Ahn'Qiraj
+// (40manmainbosswest.wmo groups 0 and 2, map 509) run within a yard of the
+// sand they are built into. At (-9200.4, 2062.0) the tread is at 71.52 and the
+// unholed sand at 72.22. WoWee kept a player on the tread, sunk to the knees
+// and unable to walk on; the original rises onto the sand.
+TEST_CASE("feet within a step under unholed ground are inside it", "[movement][floor]") {
+    using namespace wowee::rendering::movement;
+    constexpr float kStepUp = kMaxStepUp;
+
+    SECTION("the Ahn'Qiraj stairs: the tread under the sand is not the ground") {
+        REQUIRE(feetInsideGround(72.22f, 71.52f, kStepUp, false, false));
+    }
+
+    SECTION("a hole in the ground is the way in, not ground") {
+        REQUIRE_FALSE(feetInsideGround(72.22f, 71.52f, kStepUp, true, false));
+    }
+
+    SECTION("inside an interior group the heightfield is outside the room") {
+        REQUIRE_FALSE(feetInsideGround(72.22f, 71.52f, kStepUp, false, true));
+    }
+
+    SECTION("ground out of reach overhead is a roof: caves, tunnels, cities") {
+        REQUIRE_FALSE(feetInsideGround(26.0f, 20.0f, kStepUp, false, false));
+        REQUIRE_FALSE(feetInsideGround(61.66f, -51.5f, kStepUp, false, false));
+    }
+
+    SECTION("feet on or above the ground are not in it") {
+        REQUIRE_FALSE(feetInsideGround(72.22f, 72.22f, kStepUp, false, false));
+        REQUIRE_FALSE(feetInsideGround(72.22f, 72.17f, kStepUp, false, false));
+        REQUIRE_FALSE(feetInsideGround(71.0f, 72.0f, kStepUp, false, false));
+    }
+
+    SECTION("the reach is the one wmoFloorIsWayIn uses") {
+        const float feet = 10.0f;
+        const float edge = feet + kStepUp + 0.5f;
+        REQUIRE(feetInsideGround(edge - 0.01f, feet, kStepUp, false, false));
+        REQUIRE_FALSE(feetInsideGround(edge + 0.01f, feet, kStepUp, false, false));
+        REQUIRE(wmoFloorIsWayIn(edge + 0.01f, feet, kStepUp));
+    }
+}
+
 TEST_CASE("the floor pick anchors where the player actually stands", "[movement][floor]") {
     using wowee::rendering::movement::floorArbitrationAnchor;
     using wowee::rendering::movement::standingOnLastGround;
