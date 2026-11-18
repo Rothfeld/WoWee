@@ -2586,6 +2586,12 @@ wowee_add_test(test_auction_slot_filter
     SOURCES test_auction_slot_filter.cpp
             ${TEST_COMMON_SOURCES})
 
+# ── test_auction_sell_slot ───────────────────────────────────
+# The Auctions tab's sell slot: the items 2.4.3 refuses there, and what a click
+# does with the cursor and with the item the slot holds.
+wowee_add_test(test_auction_sell_slot
+    SOURCES test_auction_sell_slot.cpp)
+
 # ── test_binding_file ────────────────────────────────────────
 # The saved key bindings file the key binding panel writes and every start
 # reads back.

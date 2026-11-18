@@ -10573,6 +10573,13 @@ void LuaEngine::fireEvent(const std::string& eventName,
         lua_pop(L_, 1); // pop event frame list
     }
     lua_pop(L_, 1); // pop __WoweeFrameEvents
+
+    // Closing the auction house lets go of the sell slot's item, after the
+    // interface has heard the close: 2.4.3 sends AUCTION_HOUSE_CLOSED, then
+    // ITEM_LOCK_CHANGED for the bag slot, then NEW_AUCTION_UPDATE. Kept, the
+    // item stayed greyed in the bag and came back in the slot at the next
+    // auctioneer.
+    if (eventName == "AUCTION_HOUSE_CLOSED") releaseAuctionSellItem(getGameHandler(L_));
 }
 
 namespace {

@@ -1289,8 +1289,12 @@ bool boughtHeldMerchantItem(lua_State* L) {
 ///
 /// Split out of lua_PickupContainerItem so PickupItem can reach it. Writing the
 /// cursor twice is how one of them would come to set the icon and the other not.
+///
+/// `announceLock` is false where the item was locked already and stays so -
+/// the auction sell slot handing its item back to the cursor - because 2.4.3
+/// says nothing about a lock that did not change.
 static void pickupFromContainerSlot(lua_State* L, game::GameHandler* gh,
-                                    int bag, int slot) {
+                                    int bag, int slot, bool announceLock = true) {
     const auto& inv = gh->getInventory();
     // Every container this numbering reaches, not the backpack and the four
     // worn bags alone: the bank's own slots are container -1 and its bags are
@@ -1315,8 +1319,10 @@ static void pickupFromContainerSlot(lua_State* L, game::GameHandler* gh,
         cursorItemSlot() = {bag, slot, false};
         // The slot draws greyed while its item is on the cursor, which is how a
         // bag shows that something has been picked up out of it.
-        gh->fireAddonEvent("ITEM_LOCK_CHANGED",
-                           {std::to_string(bag), std::to_string(slot)});
+        if (announceLock) {
+            gh->fireAddonEvent("ITEM_LOCK_CHANGED",
+                               {std::to_string(bag), std::to_string(slot)});
+        }
         LOG_WARNING("FrameXML pickup: bag ", bag, " slot ", slot,
                     " item ", itemSlot->item.itemId);
     } else {
@@ -1481,7 +1487,103 @@ static int lua_PickupContainerItem(lua_State* L) {
         return 0;
     }
 
+    // The item in the auction house's sell slot is locked in its bag, and
+    // 2.4.3 does nothing at all when it is clicked there: no pickup, no event.
+    if (auctionSellItem() == game::BagSlotRef{bag, slot}) {
+        LOG_WARNING("FrameXML pickup: bag ", bag, " slot ", slot,
+                    " - locked in the auction sell slot");
+        return 0;
+    }
+
     pickupFromContainerSlot(L, gh, bag, slot);
+    return 0;
+}
+
+/// ClickAuctionSellItemButton() - the Auctions tab's sell slot: its OnClick,
+/// OnDragStart and OnReceiveDrag all call it.
+///
+/// Carrying a bag item offers it: the client refuses soulbound, quest,
+/// conjured and lootable items with their own error and changes nothing else,
+/// and otherwise takes it - the item stays in its bag, locked, and whatever
+/// the slot held comes back onto the cursor. Carrying nothing takes the slot's
+/// item back onto the cursor. game/auction_sell_slot.hpp has the rule and the
+/// measurements.
+///
+/// It used to take anything and put the cursor down, which unlocked the bag
+/// slot without saying so: the button stayed greyed, a soulbound item sat in
+/// the slot until the server refused the post, and an item dropped on an
+/// occupied slot pushed the old one out of sight instead of onto the cursor.
+static int lua_ClickAuctionSellItemButton(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+
+    game::BagSlotRef carried;
+    if (s_cursorType == CursorType::ITEM) {
+        // Bag items only. A worn item or a split stack has no measured answer
+        // here, and neither can be named by a bag slot alone, so the drag ends
+        // where it started rather than guessing.
+        if (cursorItemSlot().equipped || s_cursorSplit > 0 ||
+            !game::slots::cursorSourceIsInventory(s_cursorBag)) {
+            LOG_WARNING("ClickAuctionSellItemButton: cursor holds bag ", s_cursorBag,
+                        " slot ", s_cursorSlot, " split ", s_cursorSplit,
+                        " - not a whole bag item, left on the cursor");
+            return 0;
+        }
+        carried = {s_cursorBag, s_cursorSlot};
+    } else if (s_cursorType != CursorType::NONE) {
+        LOG_WARNING("ClickAuctionSellItemButton: cursor holds a non-item (type ",
+                    static_cast<int>(s_cursorType), "), left as it is");
+        return 0;
+    }
+
+    const char* refusal = nullptr;
+    if (!carried.empty()) {
+        const auto* held = containerItemSlot(gh->getInventory(), carried.bag, carried.slot);
+        if (!held || held->empty()) {
+            LOG_WARNING("ClickAuctionSellItemButton: bag ", carried.bag, " slot ",
+                        carried.slot, " holds nothing");
+            return 0;
+        }
+        const auto* info = gh->getItemInfo(held->item.itemId);
+        if (!info || !info->valid) {
+            // Its template decides whether it may be sold, and the template has
+            // not arrived. Taking it would be guessing.
+            LOG_WARNING("ClickAuctionSellItemButton: no item data yet for ",
+                        held->item.itemId, " - not placed");
+            return 0;
+        }
+        refusal = game::auctionSellRefusal(held->item.soulbound, info->bindType,
+                                           info->itemFlags);
+    }
+
+    const game::AuctionSellClick click =
+        game::auctionSellClick(auctionSellItem(), carried, refusal);
+    using Kind = game::AuctionSellClick::Kind;
+    switch (click.kind) {
+        case Kind::Nothing:
+            return 0;
+        case Kind::Refuse:
+            gh->errorGlobal(click.error);
+            return 0;
+        case Kind::Place:
+            auctionSellItem() = click.slot;
+            if (click.toCursor.empty()) {
+                // Put down without unlocking: the item stays locked in its bag
+                // for as long as it is in the sell slot.
+                clearCursorItem(L);
+            } else {
+                pickupFromContainerSlot(L, gh, click.toCursor.bag, click.toCursor.slot,
+                                        /*announceLock=*/false);
+            }
+            gh->fireAddonEvent("NEW_AUCTION_UPDATE", {});
+            return 0;
+        case Kind::TakeBack:
+            auctionSellItem() = click.slot;
+            pickupFromContainerSlot(L, gh, click.toCursor.bag, click.toCursor.slot,
+                                    /*announceLock=*/false);
+            gh->fireAddonEvent("NEW_AUCTION_UPDATE", {});
+            return 0;
+    }
     return 0;
 }
 
@@ -2370,6 +2472,7 @@ void registerActionLuaAPI(lua_State* L) {
                 {"PickupInventoryItem", lua_PickupInventoryItem},
                 {"PickupBagFromSlot",   lua_PickupBagFromSlot},
                 {"ClickSendMailItemButton", lua_ClickSendMailItemButton},
+                {"ClickAuctionSellItemButton", lua_ClickAuctionSellItemButton},
                 {"ClearCursor",         lua_ClearCursor},
                 {"GetCursorInfo",       lua_GetCursorInfo},
                 {"PickupPetAction",     lua_PickupPetAction},

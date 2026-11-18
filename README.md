@@ -1378,6 +1378,25 @@ same pending option again, and vendor selection does not send an additional
 inventory request. Repeated interaction with the same vendor refreshes inventory
 with `MERCHANT_UPDATE`, preserving the open shop and backpack.
 
+### Auction sell slot
+
+`build/bin/test_auction_sell_slot`. The Auctions tab's sell slot
+(`include/game/auction_sell_slot.hpp`) names a bag slot; the item stays in the
+bag, locked (greyed), until it is taken back onto the cursor, swapped out,
+posted, or the auction house closes - the last two fire `ITEM_LOCK_CHANGED`
+then `NEW_AUCTION_UPDATE`. Dropping an item on an occupied slot puts the old one
+on the cursor. Build 8606 refuses items itself and changes nothing else (item
+stays on the cursor): a bound item is `ERR_AUCTION_BOUND_ITEM`, or
+`ERR_AUCTION_QUEST_ITEM` when its template binds as a quest item (Gnoll Paw
+725, Wailing Essence 6464); conjured (flag 0x2) and has-loot (flag 0x4) items
+get their own messages. Gotchas: "bound" is the item's ITEM_FIELD_FLAGS bit,
+and `.additem` leaves BoP and quest items unbound, so those are accepted;
+item class 12 plays no part. An empty slot answers `GetAuctionSellItemInfo()`
+with `nil, nil, 1, -1, nil, 0`; a lone nil breaks
+`AuctionSellItemButton_OnEvent` and leaves the old item's count and prices on
+the panel. Native measurements: `_experiments/20261118T1935Z.auction_sell_slot/`
+in the workspace.
+
 ### Online spawn floor
 
 Camera reset preserves the server spawn elevation. Floor searches above outdoor

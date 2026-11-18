@@ -17,6 +17,7 @@
 #include "game/game_utils.hpp"
 #include "game/update_field_table.hpp"
 #include "game/inventory_slots.hpp"
+#include "game/auction_sell_slot.hpp"
 #include "game/reputation_standing.hpp"
 #include "core/logger.hpp"
 #include "core/app_clock.hpp"
@@ -181,6 +182,24 @@ inline CursorItemSlot& cursorItemSlot() {
     static CursorItemSlot held;
     return held;
 }
+
+/// The bag slot whose item sits in the auction house's sell slot.
+///
+/// The item stays in its bag and reads as locked there while it is in the
+/// sell slot, as the one on the cursor does - see game/auction_sell_slot.hpp.
+/// Shared for the same reason as cursorItemSlot: the cursor bindings put items
+/// in and take them out, the container bindings answer whether a slot is
+/// locked, and the auction bindings describe and post it.
+inline game::BagSlotRef& auctionSellItem() {
+    static game::BagSlotRef held;
+    return held;
+}
+
+/// Let go of the sell slot's item: the slot empties, its bag slot unlocks, and
+/// the interface hears ITEM_LOCK_CHANGED and then NEW_AUCTION_UPDATE, in that
+/// order, as 2.4.3 announces it when StartAuction posts the item and when the
+/// auction house closes. Nothing when the slot is empty.
+void releaseAuctionSellItem(game::GameHandler* gh);
 
 /// The uppercase tokens WoW returns second from UnitClass, and the key every
 /// class-indexed table in FrameXML uses - CLASS_ICON_TCOORDS for the class

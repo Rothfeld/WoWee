@@ -2707,9 +2707,13 @@ static int lua_GetContainerItemInfo(lua_State* L) {
     lua_pushnumber(L, itemSlot->item.stackCount);  // count
     // Locked while its item is on the cursor: ContainerFrame_UpdateLockedItem
     // greys the slot from this, which is what shows the item has been picked up
-    // out of it rather than still sitting there.
+    // out of it rather than still sitting there. The item in the auction
+    // house's sell slot stays in its bag and is locked the same way, until it
+    // leaves that slot.
     const auto& held = cursorItemSlot();
-    lua_pushboolean(L, (!held.equipped && held.bag == container && held.slot == slot) ? 1 : 0);
+    const bool onCursor = !held.equipped && held.bag == container && held.slot == slot;
+    const bool inSellSlot = auctionSellItem() == game::BagSlotRef{container, slot};
+    lua_pushboolean(L, (onCursor || inSellSlot) ? 1 : 0);
     lua_pushnumber(L, info ? info->quality : 0);  // quality
     lua_pushboolean(L, 0);  // readable
     lua_pushboolean(L, 0);  // lootable
@@ -2859,20 +2863,9 @@ static const game::AuctionListResult& auctionListFor(game::GameHandler* gh,
     return gh->getAuctionBrowseResults();
 }
 
-/// The panel's own state: which row is selected, and which bag slot is sitting
-/// in the sell box. Neither is anything the client has an opinion about.
+/// The panel's own state: which row is selected. The sell slot is
+/// auctionSellItem(), shared with the cursor bindings that fill it.
 static int& auctionSelection() { static int sel = 0; return sel; }
-
-/// The item sitting in the sell box, as the flat (container, slot) pair the
-/// cursor speaks in. Kept in that form rather than as a backpack index so a
-/// worn bag can hold the item too - the send takes a guid, and every container
-/// can produce one.
-struct AuctionSellSlot {
-    bool    held = false;
-    uint8_t bag  = 0;
-    uint8_t slot = 0;
-};
-static AuctionSellSlot& auctionSellSlot() { static AuctionSellSlot s; return s; }
 
 /// Say the sell slot changed.
 ///
@@ -2886,31 +2879,27 @@ static void fireAuctionSellUpdate(game::GameHandler* gh) {
     if (gh) gh->fireAddonEvent("NEW_AUCTION_UPDATE", {});
 }
 
-/// The item a wire (container, slot) pair names, and its guid. Null when the
-/// pair names nothing this client is holding.
+/// The item the sell slot names, and its guid. Null when it names nothing, or
+/// a bag slot that no longer holds anything.
 static const game::ItemSlot* auctionSellItemSlot(game::GameHandler* gh,
                                                  uint64_t* guidOut = nullptr) {
     if (guidOut) *guidOut = 0;
-    const AuctionSellSlot& sel = auctionSellSlot();
-    if (!gh || !sel.held) return nullptr;
-    const auto& inv = gh->getInventory();
-    if (sel.bag == 0xFF) {
-        const int index = static_cast<int>(sel.slot) - game::slots::backpackWireSlot(0);
-        if (index < 0 || index >= inv.getBackpackSize()) return nullptr;
-        const auto& s = inv.getBackpackSlot(index);
-        if (s.empty()) return nullptr;
-        if (guidOut) *guidOut = gh->getBackpackItemGuid(index);
-        return &s;
-    }
-    for (int b = 0; b < game::Inventory::NUM_BAG_SLOTS; ++b) {
-        if (sel.bag != static_cast<uint8_t>(game::slots::wornBagContainer(b))) continue;
-        if (sel.slot >= inv.getBagSize(b)) return nullptr;
-        const auto& s = inv.getBagSlot(b, sel.slot);
-        if (s.empty()) return nullptr;
-        if (guidOut) *guidOut = gh->getBagItemGuid(b, sel.slot);
-        return &s;
-    }
-    return nullptr;
+    const game::BagSlotRef& sel = auctionSellItem();
+    if (!gh || sel.empty()) return nullptr;
+    const auto* s = containerItemSlot(gh->getInventory(), sel.bag, sel.slot);
+    if (!s || s->empty()) return nullptr;
+    if (guidOut) *guidOut = containerSlotGuid(gh, sel.bag, sel.slot);
+    return s;
+}
+
+void releaseAuctionSellItem(game::GameHandler* gh) {
+    const game::BagSlotRef held = auctionSellItem();
+    if (held.empty()) return;
+    auctionSellItem() = {};
+    if (!gh) return;
+    gh->fireAddonEvent("ITEM_LOCK_CHANGED",
+                       {std::to_string(held.bag), std::to_string(held.slot)});
+    fireAuctionSellUpdate(gh);
 }
 
 /// GetInventoryItemCount(unit, slot) → how many are in that equipped slot.
@@ -4757,44 +4746,15 @@ void registerInventoryLuaAPI(lua_State* L) {
             const uint32_t stack = static_cast<uint32_t>(
                 luaL_optnumber(L, 4, item->item.stackCount ? item->item.stackCount : 1));
             gh->auctionSellItemByGuid(guid, stack, bid, buy, dur);
-            auctionSellSlot() = AuctionSellSlot{};
-            fireAuctionSellUpdate(gh);
+            // 2.4.3 lets go of the item as the request goes out, before the
+            // server answers: the bag slot unlocks and the sell slot empties.
+            releaseAuctionSellItem(gh);
             return 0;
         }},
-                // The sell slot: the item the player dropped on it, held here
-                // because it is the panel's own state until StartAuction sends
-                // it.
-                {"ClickAuctionSellItemButton", [](lua_State* L) -> int {
-            // The slot had state and StartAuction read it, but nothing ever
-            // set it: this was a no-op, so no item could be put up for auction
-            // at all. What it needed was a drop target, and the cursor bridge
-            // is one - the item the player is carrying is exactly what a click
-            // on this button is offering.
-            //
-            uint8_t bag = 0, slot = 0;
-            if (!wowee::ui::frameXmlCursorWireSlot(bag, slot)) {
-                // Nothing carried: a click takes the item back out.
-                auctionSellSlot() = AuctionSellSlot{};
-                fireAuctionSellUpdate(getGameHandler(L));
-                return 0;
-            }
-            auto* gh = getGameHandler(L);
-            AuctionSellSlot candidate{.held = true, .bag = bag, .slot = slot};
-            AuctionSellSlot previous = auctionSellSlot();
-            auctionSellSlot() = candidate;
-            // Only if it names something. Equipment and the bank produce wire
-            // pairs too, and neither can be auctioned from here.
-            if (!auctionSellItemSlot(gh)) {
-                auctionSellSlot() = previous;
-                return 0;
-            }
-            wowee::ui::frameXmlPutCursorDown();
-            fireAuctionSellUpdate(gh);
-            return 0;
-        }},
+                // ClickAuctionSellItemButton lives with the cursor, in
+                // lua_action_api.cpp: what it does depends on what is carried.
                 {"CancelSell", [](lua_State* L) -> int {
-            auctionSellSlot() = AuctionSellSlot{};
-            fireAuctionSellUpdate(getGameHandler(L));
+            releaseAuctionSellItem(getGameHandler(L));
             return 0;
         }},
                 {"GetAuctionSellItemInfo", [](lua_State* L) -> int {
@@ -4810,7 +4770,23 @@ void registerInventoryLuaAPI(lua_State* L) {
             // stackCount) and the number of stacks at totalCount / stackSize.
             auto* gh = getGameHandler(L);
             const auto* held = auctionSellItemSlot(gh);
-            if (!held) { auctionSellSlot() = AuctionSellSlot{}; return luaReturnNil(L); }
+            if (!held) {
+                // An empty slot is not a single nil. 2.4.3 answers
+                // nil, nil, 1, -1, nil, 0, and AuctionSellItemButton_OnEvent
+                // relies on it: it runs `count > 1` and floor(price * 1.5) on
+                // every NEW_AUCTION_UPDATE, including the one that says the
+                // slot emptied. Answering nil raised there after the texture
+                // and name were cleared, so the count, the prices and the
+                // deposit of the item that had left stayed on the panel.
+                auctionSellItem() = {};
+                lua_pushnil(L);
+                lua_pushnil(L);
+                lua_pushnumber(L, 1);
+                lua_pushnumber(L, -1);
+                lua_pushnil(L);
+                lua_pushnumber(L, 0);
+                return 6;
+            }
             const auto& s = *held;
             const auto* info = gh->getItemInfo(s.item.itemId);
             const uint32_t inStack = s.item.stackCount ? s.item.stackCount : 1;
