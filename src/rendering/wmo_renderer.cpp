@@ -4162,7 +4162,7 @@ bool WMORenderer::isInsideWMO(float glX, float glY, float glZ, uint32_t* outMode
 }
 
 bool WMORenderer::isInsideInteriorWMO(float glX, float glY, float glZ) const {
-    return isInsideWMOGroups(glX, glY, glZ, /*interiorOnly=*/true, nullptr);
+    return getInteriorLocation(glm::vec3(glX, glY, glZ)).has_value();
 }
 
 std::optional<WMOFogSample> WMORenderer::getFog(const glm::vec3& position, bool underwater) const {
@@ -4276,50 +4276,59 @@ std::optional<WMORenderer::SealedInterior> WMORenderer::findSealedInterior(const
 }
 
 std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(const glm::vec3& position, bool indoorOnly) const {
+    // The group a point is in is the one whose surface lies nearest below it.
+    //
+    // Indoor classification (indoorOnly) used to be bounding-box containment,
+    // smallest box first. Boxes overlap: Black Temple's "Den of Mortal
+    // Delights" (indoor, 0x2000) has a box from z 65 to 444 that swallows the
+    // outdoor ramp from Supremus up to the Grand Promenade (group 3 "maingate",
+    // outdoor). Standing on that ramp counted as inside the Den, a sealed
+    // interior, so terrain and sky were not drawn and the minimap went black,
+    // where build 8606 draws the Illidari Training Grounds around it. Now the
+    // nearest surface below decides for indoor queries too - as it already did
+    // for area names - and the point is indoors only when that surface belongs
+    // to an indoor group. Indoor queries also require the point inside that
+    // group's box; area names keep the column below the point.
     gatherCandidates(position - glm::vec3(0.5f, 0.5f, indoorOnly ? 0.5f : 500.0f),
                      position + glm::vec3(0.5f), tl_candidateScratch);
     std::optional<InteriorLocation> result;
-    float bestVolume = std::numeric_limits<float>::max();
+    bool resultIndoor = false;
+    float bestDistance = std::numeric_limits<float>::max();
     for (size_t index : tl_candidateScratch) {
         const auto& instance = instances[index];
         const auto modelIt = loadedModels.find(instance.modelId);
         if (modelIt == loadedModels.end()) continue;
         const auto& model = modelIt->second;
         const glm::vec3 local(instance.invModelMatrix * glm::vec4(position, 1));
+        const glm::vec3 down(instance.invModelMatrix * glm::vec4(0, 0, -1, 0));
         for (size_t groupIndex = 0; groupIndex < model.groups.size(); ++groupIndex) {
             const auto& group = model.groups[groupIndex];
-            if (indoorOnly && !(group.groupFlags & kWMOGroupIndoor)) continue;
-            const auto size = group.boundingBoxMax - group.boundingBoxMin;
-            float volume = size.x * size.y * size.z;
             if (indoorOnly) {
                 if (glm::any(glm::lessThan(local, group.boundingBoxMin)) ||
                     glm::any(glm::greaterThan(local, group.boundingBoxMax))) continue;
-            } else {
-                // A group bounding box includes empty space around the entrance.
-                // Select the closest surface below the player, including outdoor
-                // stairs. Do not use the camera's indoor classification for names.
-                const glm::vec3 down(instance.invModelMatrix * glm::vec4(0, 0, -1, 0));
-                if (!rayIntersectsAABB(local, down, group.boundingBoxMin, group.boundingBoxMax)) continue;
-                if (!trianglesAlongRay(group, local, down, tl_triScratch)) continue;
-                volume = 500.0f;
-                for (uint32_t triangle : tl_triScratch) {
-                    const auto& indices = group.collisionIndices;
-                    const auto& vertices = group.collisionVertices;
-                    const float distance = rayTriangleIntersect(local, down,
-                        vertices[indices[triangle]], vertices[indices[triangle + 1]],
-                        vertices[indices[triangle + 2]]);
-                    if (distance > 0.0f) volume = std::min(volume, distance);
-                }
-                if (volume == 500.0f) continue;
+            } else if (!rayIntersectsAABB(local, down, group.boundingBoxMin, group.boundingBoxMax)) {
+                continue;
             }
-            if (volume >= bestVolume) continue;
-            bestVolume = volume;
+            if (!trianglesAlongRay(group, local, down, tl_triScratch)) continue;
+            float distance = std::numeric_limits<float>::max();
+            for (uint32_t triangle : tl_triScratch) {
+                const auto& indices = group.collisionIndices;
+                const auto& vertices = group.collisionVertices;
+                const float t = rayTriangleIntersect(local, down,
+                    vertices[indices[triangle]], vertices[indices[triangle + 1]],
+                    vertices[indices[triangle + 2]]);
+                if (t > 0.0f) distance = std::min(distance, t);
+            }
+            if (distance >= bestDistance) continue;
+            bestDistance = distance;
+            resultIndoor = (group.groupFlags & kWMOGroupIndoor) != 0;
             result = InteriorLocation{model.rootId, instance.nameSet, group.groupId,
                 static_cast<uint32_t>(groupIndex), instance.id, model.sourcePath,
                 local, group.boundingBoxMin, group.boundingBoxMax, instance.modelMatrix,
-                indoorOnly ? position.z : position.z - volume};
+                position.z - distance};
         }
     }
+    if (indoorOnly && !resultIndoor) return std::nullopt;
     return result;
 }
 
