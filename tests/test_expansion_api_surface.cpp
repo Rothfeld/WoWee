@@ -74,6 +74,13 @@ int answersClass(lua_State* L) {
     lua_pushnumber(L, 4);
     return 3;
 }
+int countsCalls(lua_State* L) {
+    lua_getglobal(L, "calls");
+    lua_pushnumber(L, lua_tonumber(L, -1) + 1);
+    lua_setglobal(L, "calls");
+    return 0;
+}
+
 std::string run(lua_State* L, const char* code) {
     if (luaL_dostring(L, code) != 0) return std::string("error: ") + lua_tostring(L, -1);
     const char* s = lua_tostring(L, -1);
@@ -90,6 +97,19 @@ struct ConventionFixture {
         lua_register(L, "UnitExists", answersTrue);
         lua_register(L, "UnitIsDead", answersFalse);
         lua_register(L, "UnitClass", answersClass);
+        lua_register(L, "TargetUnit", countsCalls);
+        // The engine's event hook, recording what was fired.
+        lua_pushcfunction(L, [](lua_State* S) -> int {
+            std::string line;
+            for (int i = 1; i <= lua_gettop(S); ++i) {
+                if (i > 1) line += ' ';
+                line += lua_tostring(S, i);
+            }
+            lua_pushstring(S, line.c_str());
+            lua_setglobal(S, "fired");
+            return 0;
+        });
+        lua_setfield(L, LUA_REGISTRYINDEX, "wowee_fire_event");
         wowee::addons::applyApiConventions(L, "tbc");
     }
     ~ConventionFixture() { lua_close(L); }
@@ -109,6 +129,41 @@ TEST_CASE("TBC result counts", "[addons][api_surface]") {
     CHECK(run(f.L, "return select('#', UnitClass('player'))") == "2");
     CHECK(run(f.L, "return select(2, UnitClassBase('player'))") == "ROGUE");
     CHECK(run(f.L, "return select('#', UnitClassBase('player'))") == "2");
+}
+
+TEST_CASE("TBC refuses protected functions from a macro script", "[addons][api_surface]") {
+    ConventionFixture f;
+    const char* script = "TargetUnit('player')";
+    // Interface code runs it.
+    CHECK(run(f.L, "TargetUnit('player') return tostring(calls)") == "1");
+    CHECK(run(f.L, "return tostring(issecure())") == "1");
+    // A /script line does not.
+    wowee::addons::markInsecureChunk(f.L, script);
+    REQUIRE(luaL_loadbuffer(f.L, script, std::strlen(script), script) == 0);
+    REQUIRE(lua_pcall(f.L, 0, 0, 0) == 0);
+    CHECK(run(f.L, "return tostring(calls)") == "1");
+    CHECK(run(f.L, "return fired") == "MACRO_ACTION_FORBIDDEN TargetUnit()");
+}
+
+TEST_CASE("TBC refuses protected functions from an AddOn", "[addons][api_surface]") {
+    ConventionFixture f;
+    wowee::addons::markInsecureRoot(f.L, "/x/Interface/AddOns/Probe", "Probe");
+    const char* code = "function ProbeCall() TargetUnit('player') end\n"
+                       "function ProbeSecure() return issecure() end\n"
+                       "function ProbePcall() pcall(TargetUnit, 'player') end";
+    const char* chunk = "@/x/Interface/AddOns/Probe/probe.lua";
+    REQUIRE(luaL_loadbuffer(f.L, code, std::strlen(code), chunk) == 0);
+    REQUIRE(lua_pcall(f.L, 0, 0, 0) == 0);
+    CHECK(run(f.L, "ProbeCall() return tostring(calls)") == "nil");
+    CHECK(run(f.L, "return fired") == "ADDON_ACTION_FORBIDDEN Probe TargetUnit()");
+    CHECK(run(f.L, "ProbePcall() return fired") == "ADDON_ACTION_FORBIDDEN Probe UNKNOWN()");
+    CHECK(run(f.L, "return tostring(ProbeSecure())") == "nil");
+    // Blizzard's code from a sibling directory stays secure.
+    const char* blizzard = "function BlizzCall() TargetUnit('player') end";
+    REQUIRE(luaL_loadbuffer(f.L, blizzard, std::strlen(blizzard),
+                            "@/x/Interface/AddOns/Blizzard_RaidUI/x.lua") == 0);
+    REQUIRE(lua_pcall(f.L, 0, 0, 0) == 0);
+    CHECK(run(f.L, "BlizzCall() return tostring(calls)") == "1");
 }
 
 TEST_CASE("Unmeasured expansions keep their answers", "[addons][api_surface]") {

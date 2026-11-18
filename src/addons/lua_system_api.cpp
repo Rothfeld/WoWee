@@ -30,6 +30,7 @@
 #include "ui/widget_tree.hpp"
 #include "rendering/camera_controller.hpp"
 #include "addons/lua_engine.hpp"
+#include "addons/expansion_api_surface.hpp"
 #include "game/world_state_ui.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -3976,6 +3977,9 @@ static int lua_UnitFactionGroup(lua_State* L) {
 static int lua_RunScript(lua_State* L) {
     const char* body = luaL_optstring(L, 1, nullptr);
     if (!body || !*body) return 0;
+    // A macro script, insecure on 2.4.3: protected functions refuse it with
+    // MACRO_ACTION_FORBIDDEN.
+    markInsecureChunk(L, body);
     if (luaL_loadstring(L, body) != 0) {
         const char* err = lua_tostring(L, -1);
         LOG_WARNING("RunScript would not compile: ", err ? err : "?");

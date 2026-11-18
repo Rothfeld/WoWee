@@ -40,6 +40,10 @@ public:
 
     bool executeFile(const std::string& path);
     bool executeString(const std::string& code);
+    /// executeString under an explicit chunk name ("@path" for code that came
+    /// from a file, such as the Lua an XML file became), so the code's
+    /// functions carry where they came from.
+    bool executeString(const std::string& code, const std::string& chunkName);
     /// A string global such as a GlobalStrings pattern (UNITNAME_TITLE_MINION),
     /// read raw from _G; empty when it is not a string.
     [[nodiscard]] std::string globalString(const char* name) const;

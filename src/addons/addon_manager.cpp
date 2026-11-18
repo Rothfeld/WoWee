@@ -359,7 +359,7 @@ void AddonManager::loadAllAddons() {
     const auto* profile = luaServices_.expansionRegistry
         ? luaServices_.expansionRegistry->getActive() : nullptr;
     if (profile) removeApiAbsentFrom(luaEngine_.getState(), profile->id);
-    // And its answer conventions (1/nil, result counts),
+    // And its answer conventions (1/nil, result counts, protected functions),
     // wrapped before FrameXML takes references to any of them.
     if (profile) applyApiConventions(luaEngine_.getState(), profile->id);
 
@@ -1490,7 +1490,9 @@ bool AddonManager::loadXmlFile(const std::string& path, int depth) {
         }
     }
     if (!emitted.lua.empty()) {
-        if (!luaEngine_.executeString(emitted.lua)) {
+        // Named for its file, so functions an AddOn's XML defines are known
+        // to be that AddOn's (see markInsecureRoot).
+        if (!luaEngine_.executeString(emitted.lua, "@" + path)) {
             if (ok) lastXmlError_ = "frames: " + luaEngine_.lastError();
             LOG_ERROR("AddonManager: frames from ", path, " failed to build");
             ok = false;
@@ -1511,6 +1513,17 @@ bool AddonManager::loadAddon(const TocFile& addon) {
             : fs::path(addon.basePath) / fs::path(path).filename();
         luaEngine_.loadSavedVariables(source.string());
     };
+    // Every file of an AddOn runs insecure, as on 2.4.3, except Blizzard's own
+    // and this client's (Wowee*): a function an AddOn defines may not call a
+    // protected function. See applyApiConventions.
+    {
+        std::string lower = addon.addonName;
+        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (lower.rfind("blizzard_", 0) != 0 && lower.rfind("wowee", 0) != 0) {
+            if (lua_State* L = luaEngine_.getState())
+                markInsecureRoot(L, addon.basePath, addon.addonName);
+        }
+    }
     bool success = true;
     for (const auto& filename : addon.files) {
         std::string lower = filename;
@@ -1636,6 +1649,8 @@ bool AddonManager::loadAddOnByName(const std::string& name, std::string& reason)
 }
 
 bool AddonManager::runScript(const std::string& code) {
+    // /run and /script: a macro script, which 2.4.3 treats as insecure.
+    if (lua_State* L = luaEngine_.getState()) markInsecureChunk(L, code.c_str());
     return luaEngine_.executeString(code);
 }
 

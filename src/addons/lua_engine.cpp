@@ -6652,6 +6652,20 @@ bool LuaEngine::initialize() {
     // the one gaining it, and only the engine knows which that was.
     lua_pushlightuserdata(L_, this);
     lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_lua_engine");
+    // fire(event, args...) for code that holds only the lua_State - the
+    // protected-function refusal in expansion_api_surface.cpp.
+    lua_pushcfunction(L_, [](lua_State* L) -> int {
+        auto* e = engineFrom(L);
+        if (!e) return 0;
+        std::vector<std::string> args;
+        for (int i = 2; i <= lua_gettop(L); ++i) {
+            const char* a = lua_tostring(L, i);
+            args.emplace_back(a ? a : "");
+        }
+        e->fireEvent(luaL_checkstring(L, 1), args);
+        return 0;
+    });
+    lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_fire_event");
 
     registerCoreAPI();
     registerEventAPI();
@@ -13345,10 +13359,14 @@ std::string LuaEngine::globalString(const char* name) const {
 }
 
 bool LuaEngine::executeString(const std::string& code) {
+    return executeString(code, code);
+}
+
+bool LuaEngine::executeString(const std::string& code, const std::string& chunkName) {
     if (!L_) return false;
 
     BudgetGuard guard(L_, chunkTimeoutMs_);
-    int err = runChunk(L_, code.c_str(), code.size(), code.c_str());
+    int err = runChunk(L_, code.c_str(), code.size(), chunkName.c_str());
     if (err != 0) {
         const char* errMsg = lua_tostring(L_, -1);
         std::string msg = errMsg ? errMsg : "(unknown error)";

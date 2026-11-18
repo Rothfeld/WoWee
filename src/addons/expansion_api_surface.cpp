@@ -1,5 +1,6 @@
 #include "addons/expansion_api_surface.hpp"
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -130,6 +131,29 @@ constexpr ResultCount kResultCountsTbc[] = {
     {"GetItemInfo", 10}, {"GetMapContinents", 3},
 };
 
+/// Functions 2.4.3 refuses to run from insecure code - a /script line or any
+/// AddOn - firing MACRO_ACTION_FORBIDDEN("Name()") or
+/// ADDON_ACTION_FORBIDDEN(addon, "Name()") instead. Measured out of combat
+/// with arguments that reach the check: an invalid one returns first
+/// (TargetUnit("none") fires nothing, TargetUnit("player") is refused). The
+/// refused call answers nothing, except the three that answered one nil.
+/// Measured as not protected: Dismount, FollowUnit, Pickup*/PlaceAction,
+/// SetRaidTarget, InviteUnit, UninviteUnit, PromoteToLeader,
+/// ClearPartyAssignment, SetBinding*, ChangeActionBarPage, RegisterUnitWatch.
+struct Protected { const char* name; int refusedResults; };
+constexpr Protected kProtectedTbc[] = {
+    {"AssistUnit", 0}, {"AttackTarget", 0}, {"CastSpell", 0}, {"CastSpellByName", 0},
+    {"ClearFocus", 0}, {"ClearTarget", 1}, {"FocusUnit", 0}, {"PetAggressiveMode", 0},
+    {"PetAttack", 0}, {"PetDefensiveMode", 0}, {"PetFollow", 0}, {"PetPassiveMode", 0},
+    {"PetWait", 0}, {"RunMacroText", 0}, {"SetPartyAssignment", 0}, {"SpellStopCasting", 1},
+    {"SpellStopTargeting", 1}, {"SpellTargetItem", 0}, {"SpellTargetUnit", 0},
+    {"StartAttack", 0}, {"StopMacro", 0}, {"TargetLastTarget", 0}, {"TargetNearestEnemy", 0},
+    {"TargetNearestEnemyPlayer", 0}, {"TargetNearestFriend", 0},
+    {"TargetNearestFriendPlayer", 0}, {"TargetNearestPartyMember", 0},
+    {"TargetNearestRaidMember", 0}, {"TargetUnit", 0}, {"TogglePetAutocast", 0},
+    {"UseAction", 0}, {"UseContainerItem", 0}, {"UseItemByName", 0},
+};
+
 /// Widget methods measured the same way (each method of fresh and FrameXML
 /// objects of every widget type): 1/nil on 2.4.3, true/false here. Only
 /// EditBox:HasFocus answers a boolean there. TargetFrame_OnUpdate compares
@@ -140,13 +164,91 @@ constexpr const char* kFlagMethodsTbc[] = {
     "IsProtected", "IsResizable", "IsShown", "IsToplevel", "IsUserPlaced", "IsVisible",
 };
 
-enum ShapeBits : int { kFlags = 1 };
+constexpr const char* kInsecureRoots = "wowee_insecure_roots";
+constexpr const char* kInsecureChunks = "wowee_insecure_chunks";
+
+enum ShapeBits : int { kFlags = 1, kProtect = 2 };
+
+/// Who made the running code insecure, innermost first: the AddOn whose file
+/// defined a function on the stack, or a /script chunk. Empty when every Lua
+/// frame is the interface's own (FrameXML, Blizzard_*, this client's chunks).
+struct Taint { bool found = false; bool macro = false; std::string addon; };
+
+Taint insecureCaller(lua_State* L) {
+    Taint t;
+    lua_Debug ar;
+    for (int level = 1; lua_getstack(L, level, &ar); ++level) {
+        if (!lua_getinfo(L, "S", &ar) || !ar.source) continue;
+        if (std::strcmp(ar.what, "C") == 0) continue;
+        if (ar.source[0] == '@') {
+            lua_getfield(L, LUA_REGISTRYINDEX, kInsecureRoots);
+            if (lua_istable(L, -1)) {
+                lua_pushnil(L);
+                while (lua_next(L, -2) != 0) {
+                    size_t len = 0;
+                    const char* root = lua_tolstring(L, -2, &len);
+                    if (root && std::strncmp(ar.source, root, len) == 0) {
+                        t.found = true;
+                        t.addon = lua_tostring(L, -1);
+                        lua_pop(L, 3);
+                        return t;
+                    }
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+            continue;
+        }
+        lua_getfield(L, LUA_REGISTRYINDEX, kInsecureChunks);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, ar.source);
+            lua_rawget(L, -2);
+            const bool macro = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 2);
+            if (macro) { t.found = true; t.macro = true; return t; }
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    return t;
+}
+
+/// Fire an interface event through the engine's registry hook
+/// (LuaEngine::initialize sets "wowee_fire_event").
+void fireEvent(lua_State* L, const char* event, const std::vector<std::string>& args) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_fire_event");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushstring(L, event);
+    for (const auto& a : args) lua_pushstring(L, a.c_str());
+    lua_call(L, static_cast<int>(args.size()) + 1, 0);
+}
 
 /// The global replaced by a closure over the original. Upvalues: 1 the
-/// original function, 2 ShapeBits, 3 most values (-1 any).
+/// original function, 2 ShapeBits, 3 most values (-1 any), 4 values a refused
+/// protected call answers.
 int shapedCall(lua_State* L) {
     const int bits = static_cast<int>(lua_tointeger(L, lua_upvalueindex(2)));
     const int most = static_cast<int>(lua_tointeger(L, lua_upvalueindex(3)));
+    if (bits & kProtect) {
+        if (const Taint t = insecureCaller(L); t.found) {
+            // The name the caller used, as 2.4.3 reports it: "TargetUnit()"
+            // for a direct call, "UNKNOWN()" through pcall.
+            lua_Debug self;
+            std::string name = "UNKNOWN";
+            if (lua_getstack(L, 0, &self) && lua_getinfo(L, "n", &self) && self.name)
+                name = self.name;
+            name += "()";
+            if (t.macro) fireEvent(L, "MACRO_ACTION_FORBIDDEN", {name});
+            else fireEvent(L, "ADDON_ACTION_FORBIDDEN", {t.addon, name});
+            const int refused = static_cast<int>(lua_tointeger(L, lua_upvalueindex(4)));
+            lua_settop(L, 0);
+            for (int i = 0; i < refused; ++i) lua_pushnil(L);
+            return refused;
+        }
+    }
     const int nargs = lua_gettop(L);
     lua_pushvalue(L, lua_upvalueindex(1));
     lua_insert(L, 1);
@@ -163,7 +265,14 @@ int shapedCall(lua_State* L) {
     return n;
 }
 
-struct Shape { int bits = 0; int most = -1; };
+/// issecure() -> 1 when no insecure code is on the stack, else nil. From a
+/// /script line and from an AddOn 2.4.3 answers nil.
+int lua_issecure(lua_State* L) {
+    if (insecureCaller(L).found) lua_pushnil(L); else lua_pushnumber(L, 1);
+    return 1;
+}
+
+struct Shape { int bits = 0; int most = -1; int refused = 0; };
 
 void shapeGlobal(lua_State* L, const char* name, const Shape& shape) {
     lua_getglobal(L, name);
@@ -173,7 +282,8 @@ void shapeGlobal(lua_State* L, const char* name, const Shape& shape) {
     }
     lua_pushinteger(L, shape.bits);
     lua_pushinteger(L, shape.most);
-    lua_pushcclosure(L, shapedCall, 3);
+    lua_pushinteger(L, shape.refused);
+    lua_pushcclosure(L, shapedCall, 4);
     lua_setglobal(L, name);
 }
 
@@ -201,6 +311,11 @@ void applyApiConventions(lua_State* L, std::string_view expansionId) {
     };
     for (const char* name : kFlagAnswersTbc) at(name).bits |= kFlags;
     for (const auto& r : kResultCountsTbc) at(r.name).most = r.count;
+    for (const auto& p : kProtectedTbc) {
+        Shape& sh = at(p.name);
+        sh.bits |= kProtect;
+        sh.refused = p.refusedResults;
+    }
     // UnitClassBase answers what UnitClass answers on 2.4.3 ("Rogue",
     // "ROGUE"); here it answered the token alone.
     lua_getglobal(L, "UnitClass");
@@ -219,10 +334,42 @@ void applyApiConventions(lua_State* L, std::string_view expansionId) {
             }
             lua_pushinteger(L, kFlags);
             lua_pushinteger(L, -1);
-            lua_pushcclosure(L, shapedCall, 3);
+            lua_pushinteger(L, 0);
+            lua_pushcclosure(L, shapedCall, 4);
             lua_setfield(L, -2, name);
         }
     }
+    lua_pop(L, 1);
+    lua_pushcfunction(L, lua_issecure);
+    lua_setglobal(L, "issecure");
+}
+
+void markInsecureRoot(lua_State* L, const std::string& directory, const std::string& addon) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kInsecureRoots);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, kInsecureRoots);
+    }
+    const std::string root = "@" + directory + (directory.empty() || directory.back() == '/' ? "" : "/");
+    lua_pushstring(L, root.c_str());
+    lua_pushstring(L, addon.c_str());
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+}
+
+void markInsecureChunk(lua_State* L, const char* chunk) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kInsecureChunks);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, kInsecureChunks);
+    }
+    lua_pushstring(L, chunk);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, -3);
     lua_pop(L, 1);
 }
 
