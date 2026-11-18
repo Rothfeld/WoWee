@@ -344,6 +344,18 @@ void SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPo
         if (modelId == 0) continue;
         uint32_t attachment = attachInstanceId ? effect.attachment : 0;
         glm::mat4 attachMat(1.0f);
+        // A LeftHand/RightHand effect on a model without SpellLeftHand/
+        // SpellRightHand (21/22) is not shown: build 8606 draws Bloodlust's
+        // hand glow (2825, BloodLust_State_Hand) on HumanMale but nothing on
+        // Zombie, HUMSMerchant, HumanMaleNoble, Turtle, CryptFiend,
+        // WarpStalker or Dryder, which lack 21/22 - not at their hands 1/2,
+        // not at their feet (_experiments/20261118T114913Z.hand_effect_attachments).
+        if ((attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand) &&
+            (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, attachMat))) {
+            LOG_DEBUG("SpellVisual: kit=", kitId, " hand attachment ", attachment, " absent on instance ",
+                      attachInstanceId, "; not shown: ", effect.path);
+            continue;
+        }
         if (attachment != 0 &&
             (!characters || !characters->getAttachmentTransform(attachInstanceId, attachment, attachMat))) {
             LOG_WARNING("SpellVisual: kit=", kitId, " attachment ", attachment,
@@ -614,6 +626,14 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
         for (const auto& effect : effects->second) {
             const bool marker = isConcealmentDetectionMarker(effect.path);
             if ((marker && !observerConcealed) || (existing && !marker)) continue;
+            // A hand slot on a model without 21/22 is not shown (as spawnKitEffects).
+            glm::mat4 handMat(1.0f);
+            if ((effect.attachment == kAttachSpellLeftHand || effect.attachment == kAttachSpellRightHand) &&
+                !characters->getAttachmentTransform(attachInstanceId, effect.attachment, handMat)) {
+                LOG_DEBUG("Aura visual: hand attachment ", effect.attachment, " absent on instance ",
+                          attachInstanceId, "; not shown: ", effect.path);
+                continue;
+            }
             const uint32_t model = loadSpellModel(effect.path);
             if (!model) { LOG_ERROR("Aura model unavailable: ", effect.path); continue; }
             const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f);

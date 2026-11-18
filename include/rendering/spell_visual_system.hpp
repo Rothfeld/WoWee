@@ -206,6 +206,7 @@ private:
     /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
     /// carries it on bone 82 in front of the face, bone +X forward.
     static constexpr uint32_t kAttachBreath = 17;
+    static constexpr uint32_t kAttachSpellLeftHand = 21, kAttachSpellRightHand = 22;
     /// SpellVisualKit CharProc 0: CharParamZero is a SpellChainEffects.dbc id,
     /// the beam drawn while the kit plays. All 284 TBC kits with procedure 0
     /// and a parameter name an existing record; Green Beam's (33346) channel
