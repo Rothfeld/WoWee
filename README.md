@@ -1259,6 +1259,9 @@ distance and pitch; ResetView of the current view applies it. SETVIEW,
 SAVEVIEW and RESETVIEW are unbound by default. Zoom runs to 0 yd. The camera
 stops 0.111 yd short of the surface its ray hits, along the ray, at any
 incidence (Shattrath Terrace wall, offline raycast of native camera rays).
+WMO triangles flagged MOPY 0x02 do not stop the camera; every other WMO
+triangle does (detail, rendered or hull, from either side), and so does M2
+collision geometry (Black Temple: golden statue, banner pole, tapestry).
 Contact hold: once any obstacle (terrain, floor, wall) stops the camera while
 it is below the pivot, pitching up further keeps the camera in place and turns
 only the view; pitching below that orbit pitch moves it again (native Elwynn:
@@ -1341,6 +1344,10 @@ SMSG_SET_FORCED_REACTIONS 960 -> 1 (hostile), 14 -> 4 (friendly), which
 override template and standing (CMaNGOS Unit::GetReactionTo). Gotcha: a level
 40 test character dies to Sathrovarr within seconds once the reaction is
 forced; entering map 580 needs `.gm on` (level 70 + raid otherwise).
+The group a point is in is the one whose surface lies nearest below it;
+the point is indoors when that group is indoor (0x2000) and its box
+contains the point. Group boxes overlap: Black Temple's indoor Den of Mortal
+Delights box covers the outdoor Supremus ramp.
 A camera in an interior group from which no portal path reaches an exterior
 group (WMORenderer::findSealedInterior) sees only those groups: terrain,
 grass, sky and every model or unit outside their box are not drawn, and the
