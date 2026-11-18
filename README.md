@@ -64,7 +64,17 @@ them into bytes. Both ship in TBC. Pre-264 head/tail (0 head, 1 tail, 2 both)
 is byte `0x2c`; `0x2d` is zero in every TBC emitter. Wrath uses `0x2d`.
 Billboard bones require per-frame updates
 even without animation tracks, and cannot reuse another instance's camera-facing
-pose. Silvermyst crystal glow cards are an example. Visible
+pose. Silvermyst crystal glow cards are an example. Character models
+and the items attached to them (helms, shoulders, weapons) turn their
+billboard bones toward the camera too, in the frame the wearer places them
+in, and a billboard bone's children ride the turned frame
+(`rendering::billboardBoneMatrix`, shared with M2 doodads). The raid warlock
+helm on High Astromancer Solarian (18805,
+`Helm_Robe_RaidWarlock_D_01_BEF.m2`) hangs its black smoke 0.43 yd along -X
+of billboard bone 1: native keeps it behind her torso seen from front and side; left
+in the helm's authored frame it trailed behind her back, out beside her when
+seen from the side or while casting
+(`_experiments/20261118T124000Z.astromancer_glow/` in the workspace). Visible
 character and M2 bones update every frame; distance/frustum culling still
 limits work. Character animation uses the same radius as character drawing.
 Remote NPCs and players consume `UNIT_FIELD_BYTES_1` stand states. Persistent

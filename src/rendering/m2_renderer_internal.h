@@ -3,6 +3,7 @@
 #pragma once
 
 #include "rendering/collision_geometry.hpp"
+#include "rendering/m2_billboard.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_track_sampler.hpp"
 #include "pipeline/m2_loader.hpp"
@@ -313,13 +314,8 @@ inline void startStateEffect(const M2ModelGPU& model, M2Instance& instance) {
     instance.animSpeed = 1;
 }
 
-/// A bone marked spherical billboard carries geometry that must always face
-/// the camera: glow cards, flame sprites, the halo on a lamp. The flag was
-/// loaded and never read, so those cards rendered at whatever angle the artist
-/// left them at and cut through the model they belong to. Orgrimmar's bonfire
-/// keeps its glow on bone 0, flagged 0x8.
-constexpr uint32_t kM2BoneSphericalBillboard = 0x8;
-constexpr uint32_t kM2BoneCylindricalBillboardZ = 0x40;
+using rendering::kM2BoneSphericalBillboard;
+using rendering::kM2BoneCylindricalBillboardZ;
 
 /// Bone transforms for one instance.
 ///
@@ -351,43 +347,12 @@ inline void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance,
 
         glm::mat4 local = glm::translate(glm::mat4(1.0f), bone.pivot);
         local = glm::translate(local, trans);
-        if (cameraPosWorld && (bone.flags & (kM2BoneSphericalBillboard | kM2BoneCylindricalBillboardZ)) != 0) {
-            // Aim the inherited card plane, not a local frame that the parent
-            // rotates again. Sap_State_Head billboards orbit under two animated
-            // parents. Keep that orbit and inherited stretch, then rotate the
-            // resulting plane toward the camera around its animated pivot.
+        if (cameraPosWorld && isBillboardBone(bone.flags)) {
             const glm::mat4 parent = bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < numBones
                 ? instance.boneMatrices[bone.parentBone] : glm::mat4(1.0f);
-            const glm::vec3 pivot(parent * glm::vec4(bone.pivot + trans, 1));
-            const glm::mat3 inherited(parent);
-            const glm::vec3 inheritedNormal = glm::cross(inherited[1], inherited[2]);
             const glm::vec3 camModel =
                 glm::vec3(instance.invModelMatrix * glm::vec4(*cameraPosWorld, 1.0f));
-            glm::vec3 toCamera = camModel - pivot;
-            // Quest question marks rotate around Z while remaining upright.
-            if (bone.flags & kM2BoneCylindricalBillboardZ) toCamera.z = 0.0f;
-            const float len2 = glm::dot(toCamera, toCamera);
-            glm::mat3 orient(1.0f);
-            if (len2 > 1e-8f && glm::dot(inheritedNormal, inheritedNormal) > 0.0f) {
-                toCamera *= glm::inversesqrt(len2);
-                // Up is model +Z unless the view is nearly along it, where the
-                // cross product collapses and the card would spin.
-                glm::vec3 up(0.0f, 0.0f, 1.0f);
-                if (std::abs(toCamera.z) > 0.999f) up = glm::vec3(0.0f, 1.0f, 0.0f);
-                const glm::vec3 right = glm::normalize(glm::cross(up, toCamera));
-                const glm::vec3 trueUp = glm::cross(toCamera, right);
-                const glm::vec3 oldForward = glm::normalize(inheritedNormal);
-                const glm::vec3 oldRight = glm::normalize(inherited[1]);
-                const glm::vec3 oldUp = glm::cross(oldForward, oldRight);
-                orient = glm::mat3(toCamera, right, trueUp) *
-                    glm::transpose(glm::mat3(oldForward, oldRight, oldUp));
-            }
-            // A collapsed inherited card stays collapsed; no inverse of its
-            // singular matrix is needed. Rotation preserves authored stretches
-            // and mirrored axes, including nonuniform parent scaling.
-            instance.boneMatrices[i] = glm::translate(glm::mat4(1), pivot) *
-                glm::mat4(orient * inherited) * glm::scale(glm::mat4(1), scl) *
-                glm::translate(glm::mat4(1), -bone.pivot);
+            instance.boneMatrices[i] = billboardBoneMatrix(bone.flags, bone.pivot, trans, scl, parent, camModel);
             continue;
         } else {
             local *= glm::toMat4(rot);

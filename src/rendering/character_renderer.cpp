@@ -18,6 +18,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include "rendering/m2_billboard.hpp"
 #include <glm/gtx/string_cast.hpp>
 #include "rendering/character_emitters.hpp"
 #include "rendering/unit_fade.hpp"
@@ -1764,6 +1765,8 @@ bool CharacterRenderer::loadModel(const pipeline::M2Model& model, uint32_t id) {
     M2ModelGPU gpuModel;
     gpuModel.data = model;
     gpuModel.handGrip = makeHandGripPose(model);
+    gpuModel.hasBillboardBones = std::any_of(model.bones.begin(), model.bones.end(),
+        [](const pipeline::M2Bone& bone) { return isBillboardBone(bone.flags); });
     if (!model.vertices.empty()) {
         gpuModel.visualBoundMin = glm::vec3(std::numeric_limits<float>::max());
         gpuModel.visualBoundMax = glm::vec3(-std::numeric_limits<float>::max());
@@ -2293,6 +2296,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
     for (const uint32_t id : fadedOut_) removeInstance(id);
     fadedOut_.clear();
 
+    boneCameraPos_ = cameraPos;
+
     // Distance culling for animation updates in dense areas.
     const float animUpdateRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_RENDER_RADIUS", 130));
     const float animUpdateRadiusSq = animUpdateRadius * animUpdateRadius;
@@ -2637,6 +2642,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             weapIt->second.hasOverrideModelMatrix = true;
             // Animation distance culling works off instance position.
             weapIt->second.position = instance.position;
+            if (weapIt->second.cachedModel && weapIt->second.cachedModel->hasBillboardBones)
+                calculateBoneMatrices(weapIt->second);
 
             // Item visuals ride the weapon at their attachment on it: the
             // weapon bone carries it (Glave_1H_DualBlade_D_02 scales its
@@ -2652,6 +2659,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                 // Keep the effect near the character so animation distance culling
                 // (which works off instance position) treats it like its wielder.
                 fxIt->second.position = instance.position;
+                if (fxIt->second.cachedModel && fxIt->second.cachedModel->hasBillboardBones)
+                    calculateBoneMatrices(fxIt->second);
             }
         }
     }
@@ -2869,6 +2878,17 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     const bool armsOwnSequences = (instance.armSequenceIndex[0] >= 0 || instance.armSequenceIndex[1] >= 0) &&
                                   instance.boneArm.size() == numBones;
 
+    // Billboard bones turn toward the camera in the instance's own frame.
+    // An attached item (helm, weapon) is placed by its wearer, so its
+    // placement is final only after the wearer's bones: update() recomputes
+    // such items once they are placed.
+    glm::vec3 cameraModel(0.0f);
+    if (instance.cachedModel->hasBillboardBones) {
+        const glm::mat4 modelMatrix = instance.hasOverrideModelMatrix
+            ? instance.overrideModelMatrix : getModelMatrix(instance);
+        cameraModel = glm::vec3(glm::inverse(modelMatrix) * glm::vec4(boneCameraPos_, 1.0f));
+    }
+
     const auto& grip = instance.cachedModel->handGrip;
     bool heldHand[3] = {false, false, false};
     for (const auto& attachment : instance.weaponAttachments) {
@@ -2924,10 +2944,17 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
         }
 
         // Compose with parent
-        if (bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < numBones) {
-            instance.boneMatrices[i] = instance.boneMatrices[bone.parentBone] * localTransform;
+        const glm::mat4 parent = bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < numBones
+            ? instance.boneMatrices[bone.parentBone] : glm::mat4(1.0f);
+        if (isBillboardBone(bone.flags)) {
+            instance.boneMatrices[i] = billboardBoneMatrix(bone.flags, bone.pivot,
+                m2_track::sampleVec3(bone.translation, sequence, time, instance.globalSequenceTime,
+                                     gsd, glm::vec3(0.0f)),
+                m2_track::sampleVec3(bone.scale, sequence, time, instance.globalSequenceTime,
+                                     gsd, glm::vec3(1.0f)),
+                parent, cameraModel);
         } else {
-            instance.boneMatrices[i] = localTransform;
+            instance.boneMatrices[i] = parent * localTransform;
         }
 
         // Diagnostic: detect bones with extreme translation. Gated so the abs()

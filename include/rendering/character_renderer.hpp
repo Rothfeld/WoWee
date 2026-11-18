@@ -345,6 +345,7 @@ private:
 
         pipeline::M2Model data;  // Original model data
         HandGripPose handGrip;
+        bool hasBillboardBones = false;  // any bone turns toward the camera
         std::vector<glm::mat4> bindPose;  // Inverse bind pose matrices
 
         // Tight bind-pose bounds from rendered vertices. M2 header
@@ -723,6 +724,7 @@ private:
     uint32_t numAnimThreads_ = 1;
     std::vector<std::future<void>> animFutures_;
     std::vector<std::reference_wrapper<CharacterInstance>> toUpdate_;  // reused across frames
+    glm::vec3 boneCameraPos_{0.0f};  // what billboard bones turn toward this frame
     std::vector<uint32_t> fadedOut_;  // fade-out finished; removed at the next update
 
     // Shadow pipeline resources

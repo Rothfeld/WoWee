@@ -342,6 +342,27 @@ TEST_CASE("Z billboard faces the viewer while staying upright", "[m2][billboard]
     }
 }
 
+TEST_CASE("child of a billboard bone stays on the far side from the camera", "[m2][billboard-child]") {
+    // Helm_Robe_RaidWarlock_D_01_BEF.m2: smoke emitter bone 4 sits 0.43 yd
+    // along -X of spherical billboard bone 1. Under an attached model's
+    // placement (yawed, scaled) the smoke stays behind the pivot as seen
+    // from any camera position.
+    const glm::vec3 pivot(0.005f, 0.0f, -0.582f);
+    const glm::vec3 child(-0.428f, 0.0f, -0.563f);
+    const glm::mat4 placement = glm::scale(glm::rotate(glm::translate(glm::mat4(1), glm::vec3(10, 20, 5)),
+                                                       1.1f, glm::vec3(0, 0, 1)), glm::vec3(2.6f));
+    const glm::mat4 inverse = glm::inverse(placement);
+    for (const auto& cameraWorld : {glm::vec3(30, 20, 9), glm::vec3(10, 40, 7), glm::vec3(-5, 0, 2)}) {
+        const glm::vec3 cameraModel(inverse * glm::vec4(cameraWorld, 1));
+        const glm::mat4 bone = wowee::rendering::billboardBoneMatrix(
+            wowee::rendering::kM2BoneSphericalBillboard, pivot, glm::vec3(0), glm::vec3(1), glm::mat4(1), cameraModel);
+        const glm::vec3 pivotWorld(placement * glm::vec4(pivot, 1));
+        const glm::vec3 childWorld(placement * bone * glm::vec4(child, 1));
+        const glm::vec3 toCamera = glm::normalize(cameraWorld - pivotWorld);
+        CHECK(glm::dot(childWorld - pivotWorld, toCamera) == Catch::Approx(-0.433f * 2.6f).epsilon(0.02));
+    }
+}
+
 TEST_CASE("authored bone scale preserves hidden phases and mirrored axes", "[m2][bone-scale]") {
     wowee::rendering::M2ModelGPU model;
     model.bones.resize(1);
