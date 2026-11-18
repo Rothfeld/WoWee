@@ -69,8 +69,10 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float interiorLightG;
     float interiorLightB;
     int interiorLit;
-    // SpellVisualKit CharProc 13 colour of the directional light (white when
-    // none): Shadow Image Visual's black leaves the ambient term alone.
+    // SpellVisualKit CharProc 13 colour (white when none), multiplying all
+    // light on the unit: ambient, sun, interior and local lights. Demonic
+    // Alignment / Shadow Image's black leaves only fog: native 2.4.3 shows a
+    // pitch-black unit on GM Island at night under an ambient of 0x637d5b.
     float kitLightR;
     float kitLightG;
     float kitLightB;
@@ -438,7 +440,9 @@ void main() {
         result = lightDir.w != 0.0 ? texColor.rgb : texColor.rgb * (1.0 + warm);
     } else {
         vec3 ldir = normalize(-lightDir.xyz);
-        vec3 sunLight = lightColor.rgb * vec3(kitLightR, kitLightG, kitLightB);
+        vec3 kitLight = vec3(kitLightR, kitLightG, kitLightB);
+        vec3 ambient = ambientColor.rgb * kitLight;
+        vec3 sunLight = lightColor.rgb * kitLight;
         // A hard clamp at zero takes a surface turned away from the sun down to
         // the ambient term alone, and the ambient term does not vary across a
         // surface, so those pixels come out one flat tone that reads as a
@@ -468,23 +472,24 @@ void main() {
         RtLight rt = rtLightAt(FragPos);
         shadow = rtShadow(rt, shadow);
 
-        result = rtAmbient(rt, ambientColor.rgb) * texColor.rgb
+        result = rtAmbient(rt, ambient) * texColor.rgb
                + shadow * (diff * sunLight * texColor.rgb + spec * sunLight);
         if (lightDir.w != 0.0) {
             // TBC: creatures and players are M2 models and take the same
             // light as every other M2 (m2.vert/m2.frag): LightParams ambient
             // plus diffuse by N.L, saturated, times the texture. No floor
             // under N.L and no added highlight; those were this renderer's.
-            vec3 legacyLight = clamp(ambientColor.rgb +
+            vec3 legacyLight = clamp(ambient +
                 max(dot(norm, ldir), 0.0) * sunLight, 0.0, 1.0);
-            result = texColor.rgb * (ambientColor.rgb + shadow * (legacyLight - ambientColor.rgb));
+            result = texColor.rgb * (ambient + shadow * (legacyLight - ambient));
         }
         if (interiorLit != 0) {
-            result = texColor.rgb * vec3(interiorLightR, interiorLightG, interiorLightB);
+            result = texColor.rgb * vec3(interiorLightR, interiorLightG, interiorLightB) * kitLight;
         }
     }
 
-    if (unlit == 0) result += localLightContribution(FragPos, norm, texColor.rgb);
+    if (unlit == 0)
+        result += localLightContribution(FragPos, norm, texColor.rgb) * vec3(kitLightR, kitLightG, kitLightB);
     result *= vec3(kitColorR, kitColorG, kitColorB);
 
     // Unit hover doubles the shaded colour. Measured on 2.4.3 (pointer on vs

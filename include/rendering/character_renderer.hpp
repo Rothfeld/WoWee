@@ -175,13 +175,16 @@ public:
     /// Steal Magic, Banish, Stealth, whatever the kit's CharParamOne-Three;
     /// _experiments/20261118T001500Z.pair6_kit_colour_timing).
     void setInstanceKitAppearance(uint32_t instanceId, const glm::vec3& color, float opacity);
-    /// SpellVisualKit CharProc 13 ("Glowy"): the directional light on the
-    /// model is multiplied by color for seconds, from now, whatever happens to
-    /// the aura or spell that played the kit; ambient stays. Native 2.4.3:
-    /// Shadow Image Visual (45263, kit 7441, black, 1e11 s) leaves a unit lit
-    /// by ambient alone at once and keeps it so after .unaura; Dire Wolf
-    /// Visual (31332, 0xFF09FF) leaves red and blue as unlit-by-kit and green
-    /// as ambient alone (_experiments/20261118T101500Z.shadow_image_charproc13).
+    /// SpellVisualKit CharProc 13 ("Glowy"): all light on the model (ambient,
+    /// sun, interior and local lights) is multiplied by color for seconds,
+    /// from now, whatever happens to the aura or spell that played the kit;
+    /// fog still applies. Native 2.4.3: Shadow Image Visual (45263, kit 7441,
+    /// black, 1e11 s) keeps working after .unaura; Dire Wolf Visual (31332,
+    /// 0xFF09FF) leaves red and blue as unlit-by-kit
+    /// (_experiments/20261118T101500Z.shadow_image_charproc13). Demonic
+    /// Alignment (37713, same kit) turns a unit on GM Island at night pitch
+    /// black (body 1,3,2) under an ambient of 0x637d5b, so ambient is scaled
+    /// too (_experiments/20261118T1330Z.leotheras_glaives).
     /// The latest kit replaces an earlier one. Carried to weapons and effects.
     void startInstanceKitLight(uint32_t instanceId, const glm::vec3& color, float seconds);
     /// Light of a model standing at a world position in a WMO interior, or
