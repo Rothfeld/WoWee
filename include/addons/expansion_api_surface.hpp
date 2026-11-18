@@ -23,4 +23,10 @@ std::span<const char* const> apiAbsentFrom(std::string_view expansionId);
 /// loads, so its OnLoad feature checks see the expansion's real surface.
 void removeApiAbsentFrom(lua_State* L, std::string_view expansionId);
 
+/// The expansion's measured answer conventions, applied by wrapping globals
+/// and widget methods: 1/nil where this client answers true/false, and the
+/// expansion's result counts. Run after registration, before FrameXML loads.
+/// Measured only for TBC (build 8606); other expansions are left as they are.
+void applyApiConventions(lua_State* L, std::string_view expansionId);
+
 } // namespace wowee::addons

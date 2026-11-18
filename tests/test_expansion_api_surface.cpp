@@ -5,8 +5,10 @@
 extern "C" {
 #include "lauxlib.h"
 #include "lua.h"
+#include "lualib.h"
 }
 
+#include <cstring>
 #include <string>
 
 #include "addons/expansion_api_surface.hpp"
@@ -60,4 +62,74 @@ TEST_CASE("Unmeasured expansions keep every function", "[addons][api_surface]") 
     CHECK(isFunction(f.L, "VehicleAimUpStart"));
     CHECK(apiAbsentFrom("wotlk").empty());
     CHECK_FALSE(apiAbsentFrom("tbc").empty());
+}
+
+namespace {
+
+int answersTrue(lua_State* L) { lua_pushboolean(L, 1); return 1; }
+int answersFalse(lua_State* L) { lua_pushboolean(L, 0); return 1; }
+int answersClass(lua_State* L) {
+    lua_pushstring(L, "Rogue");
+    lua_pushstring(L, "ROGUE");
+    lua_pushnumber(L, 4);
+    return 3;
+}
+std::string run(lua_State* L, const char* code) {
+    if (luaL_dostring(L, code) != 0) return std::string("error: ") + lua_tostring(L, -1);
+    const char* s = lua_tostring(L, -1);
+    std::string out = s ? s : "nil";
+    lua_settop(L, 0);
+    return out;
+}
+
+struct ConventionFixture {
+    lua_State* L = luaL_newstate();
+    ConventionFixture() {
+        luaopen_base(L);
+        lua_settop(L, 0);
+        lua_register(L, "UnitExists", answersTrue);
+        lua_register(L, "UnitIsDead", answersFalse);
+        lua_register(L, "UnitClass", answersClass);
+        wowee::addons::applyApiConventions(L, "tbc");
+    }
+    ~ConventionFixture() { lua_close(L); }
+};
+
+} // namespace
+
+TEST_CASE("TBC answers flags as 1 or nil", "[addons][api_surface]") {
+    ConventionFixture f;
+    CHECK(run(f.L, "return tostring(UnitExists('player'))") == "1");
+    CHECK(run(f.L, "return tostring(UnitIsDead('player'))") == "nil");
+    CHECK(run(f.L, "return select('#', UnitIsDead('player'))") == "1");
+}
+
+TEST_CASE("TBC result counts", "[addons][api_surface]") {
+    ConventionFixture f;
+    CHECK(run(f.L, "return select('#', UnitClass('player'))") == "2");
+    CHECK(run(f.L, "return select(2, UnitClassBase('player'))") == "ROGUE");
+    CHECK(run(f.L, "return select('#', UnitClassBase('player'))") == "2");
+}
+
+TEST_CASE("Unmeasured expansions keep their answers", "[addons][api_surface]") {
+    lua_State* L = luaL_newstate();
+    luaopen_base(L);
+    lua_settop(L, 0);
+    lua_register(L, "UnitExists", answersTrue);
+    wowee::addons::applyApiConventions(L, "wotlk");
+    CHECK(run(L, "return tostring(UnitExists('player'))") == "true");
+    lua_close(L);
+}
+
+TEST_CASE("TBC widget methods answer flags as 1 or nil", "[addons][api_surface]") {
+    lua_State* L = luaL_newstate();
+    luaopen_base(L);
+    lua_settop(L, 0);
+    lua_newtable(L);
+    lua_pushcfunction(L, answersFalse);
+    lua_setfield(L, -2, "IsShown");
+    lua_setglobal(L, "__WoweeFrameMT");
+    wowee::addons::applyApiConventions(L, "tbc");
+    CHECK(run(L, "return tostring(__WoweeFrameMT.IsShown({}))") == "nil");
+    lua_close(L);
 }

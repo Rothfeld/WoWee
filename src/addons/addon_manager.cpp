@@ -359,6 +359,9 @@ void AddonManager::loadAllAddons() {
     const auto* profile = luaServices_.expansionRegistry
         ? luaServices_.expansionRegistry->getActive() : nullptr;
     if (profile) removeApiAbsentFrom(luaEngine_.getState(), profile->id);
+    // And its answer conventions (1/nil, result counts),
+    // wrapped before FrameXML takes references to any of them.
+    if (profile) applyApiConventions(luaEngine_.getState(), profile->id);
 
     const char* wantFrameXml = std::getenv("WOWEE_LOAD_FRAMEXML");
     const bool loadIt = wantFrameXml ? (std::string(wantFrameXml) != "0") : true;
