@@ -103,13 +103,6 @@ held width without 0x8: ValentineFirework). Velocity stays the
 emitter's vertical cone; native FlameCircle flames rise straight up.
 Wrath (264+) spline offsets are not read.
 
-A multi-key emission rate without interpolation (type 0) emits nothing once
-its sequence is past the last key. Holy Ground (29512,
-`consecration_impact_base.m2`: rate 0 at 0 ms, 200 at 67 ms, 12.4 s Stand)
-shows only its lava cracks in the original; holding 200/s drew a saturated
-10 yd disc of DUST1_A. All 429 pre-264 rate ranges that end before their
-sequence are type 0; linear ones always run to the end.
-
 Geometry particles: a pre-264 emitter naming a model at `+0x18` (28 TBC
 emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull) draws that
 model's bind-pose triangles at each particle instead of a sprite: birth-pose
