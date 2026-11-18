@@ -970,6 +970,14 @@ cards retain their authored blending and depth behavior.
 
 ## TBC scene integration
 
+`GetGamma()`/`SetGamma(v)` use build 8606's scale: the offset of the `gamma`
+CVar below 1 (`SetGamma(0.2)` stores `0.800000`, neutral is 0). The TBC Video
+options set their -0.5..0.5 Gamma slider to `GetGamma()` on opening, so a
+client answering 1 there clamps the slider to 0.5 and writes it straight back.
+The CVar is held only; it is the original's display gamma ramp, and the
+reference install runs with `DesktopGamma 1`. WoWee's own Brightness setting
+(`brightness=50` in `settings.cfg` is neutral, 25 halves the scene) is separate.
+
 WMO area names use the root ID, placement name-set and authored group ID with
 `WMOAreaTable.dbc`. A building can have area ID zero: Anvilmar is root 752,
 name-set 1, with its building name on the group -1 row. That name overrides

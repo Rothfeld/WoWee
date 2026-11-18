@@ -793,10 +793,6 @@ elsewhereText:SetJustifyV("TOP")
 -- reach the same values through getAudioSetting, which is what stops the two
 -- disagreeing - not their being left out of here.
 WOWEE_SETTINGS_ELSEWHERE = {
-    -- "gamma (brightness)" because it is one control with two names: the
-    -- game's panel calls it gamma, this client's own window calls it
-    -- brightness, and SetGamma is what both of them end up in. A player who
-    -- knows it by either word finds it.
     -- View distance, ground clutter and gamma were named here and are not
     -- any more: they are rows on this client's own Graphics, Detail and
     -- Display pages, along with everything else the retired Effects panel
@@ -1272,7 +1268,7 @@ local kRemoved = {
 
     -- More of the same, since the schema's pages sit in this window too. Each
     -- of these writes a value the schema shows on a row of its own: vertical
-    -- sync, windowed mode and gamma on the Display page, gamma as brightness;
+    -- sync, windowed mode and brightness on the Display page;
     -- invert mouse, camera style, follow speed and max camera distance on
     -- Camera; auto loot and the secure ability toggle on Gameplay; the four
     -- extra bars on Action Bars, where Bottom Right drove nothing at all; and
@@ -1657,31 +1653,8 @@ end
 ///
 /// Hooked, not edited into videooptionspanels.lua: the interface data is
 /// extracted game content and not somewhere our changes can live.
-/// Put the Gamma slider on the scale its own value is measured in.
-///
-/// ResolutionPanelOptions.gamma offers -0.5 to 0.5. GetGamma answers 1 for a
-/// neutral screen, so the slider sat past its own maximum, and every position
-/// on it sent a number GameScreen::setGamma clamps to nearly black - the
-/// control was unusable in both directions at once.
-///
-/// This cannot go through kCVarRanges like the view distance and camera
-/// distance sliders did. Those are registered with a `cvar`, and
-/// BlizzardOptionsPanel_OnEvent consults GetCVarMin/GetCVarMax only for
-/// controls that have one; the gamma slider carries a `label` instead and is
-/// always given the table's own numbers. So the table is what has to change,
-/// and it is changed here rather than in videooptionspanels.lua because the
-/// interface data is extracted game content and not ours to keep edits in.
-///
-/// The ceiling is what setGamma can hold - brightness runs 0 to 100 and gamma
-/// is that over 50. The floor is Blizzard's own 0.3, so one drag to the left
-/// cannot black the screen out.
+/// Option table fixes, applied after FrameXML defines the tables.
 inline constexpr const char* kOptionRangeFixesLua = R"LUA(
-if ResolutionPanelOptions and ResolutionPanelOptions.gamma then
-    ResolutionPanelOptions.gamma.minValue = 0.3
-    ResolutionPanelOptions.gamma.maxValue = 2.0
-    ResolutionPanelOptions.gamma.valueStep = 0.05
-end
-
 -- Shadow Quality is chosen when the shadow map is built, which is at start-up,
 -- so it takes effect on the next run. The shipped table does not say so - the
 -- original client could change it live - and a setting that silently waits for

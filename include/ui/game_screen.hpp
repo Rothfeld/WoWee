@@ -84,13 +84,6 @@ public:
     [[nodiscard]] int getAntiAliasingIndex() const;
     void setAntiAliasingIndex(int index);
 
-    // Gamma, as WoW's video options mean it: 1.0 is untouched, and the client
-    // keeps the same number as a 0-100 brightness where 50 is neutral. Exposed
-    // so the interface's own brightness slider drives the one setting rather
-    // than a second copy of it.
-    [[nodiscard]] float getGamma() const;
-    void  setGamma(float gamma);
-
     /// Hand the saved anti-aliasing setting to the renderer.
     ///
     /// Called once at startup, before the first frame. It used to be applied

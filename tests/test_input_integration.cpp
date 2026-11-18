@@ -2846,6 +2846,30 @@ TEST_CASE_METHOD(Integration, "Death effect CVar controls compositor independent
     lua.setLuaServices({});
 }
 
+// Build 8606, measured (pair 19, _experiments/20261118T1650Z.half_brightness):
+// GetGamma() is 1 minus the gamma CVar, 0 untouched; SetGamma(v) stores 1 - v.
+// The TBC video options set their -0.5..0.5 Gamma slider to GetGamma() when they
+// open and pass every change to SetGamma, so a neutral reading must stay put.
+TEST_CASE_METHOD(Integration, "GetGamma and SetGamma are offsets from the gamma CVar", "[gamma]") {
+    truth("GetCVarDefault('gamma') == '1.0'");
+    run("SetGamma(0.2)");
+    truth("GetCVar('gamma') == '0.800000'");
+    truth("math.abs(GetGamma() - 0.19999998807907) < 1e-12");
+    run("SetGamma(-0.3)");
+    truth("GetCVar('gamma') == '1.300000'");
+    truth("math.abs(GetGamma() + 0.29999995231628) < 1e-12");
+    run("SetGamma(0)");
+    truth("GetGamma() == 0 and GetCVar('gamma') == '1.000000'");
+    run(R"lua(
+        gammaSlider = CreateFrame('Slider', nil, UIParent)
+        gammaSlider:SetScript('OnValueChanged', function() SetGamma(arg1) end)
+        gammaSlider:SetMinMaxValues(-0.5, 0.5)
+        gammaSlider:SetValueStep(0.1)
+        gammaSlider:SetValue(GetGamma())
+    )lua");
+    truth("GetGamma() == 0 and GetCVar('gamma') == '1.000000'");
+}
+
 // Build 8606, measured (pair 4, _experiments/20261118T1516.native_mouselook):
 // a drag turns cameraYawMoveSpeed/800 degrees of yaw and cameraPitchMoveSpeed/600
 // of pitch per pixel, the same at 1280x720 and 800x600; mouseSpeed changes

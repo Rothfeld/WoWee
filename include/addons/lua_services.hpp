@@ -115,17 +115,15 @@ struct LuaServices {
     /// cases handing chat over to FrameXML quietly dropped.
     std::function<void(const std::string&)> playEmoteAnimation;
 
-    /// Screen gamma, for the interface's own video options. Callbacks rather
+    /// The video options' glow and death-effect switches. Callbacks rather
     /// than a renderer pointer, to keep this header off the rendering ones.
-    std::function<float()> getGamma;
-    std::function<void(float)> setGamma;
     std::function<void(bool)> setGlowEnabled;
     std::function<void(bool)> setDeathEffectEnabled;
 
     /// What the world map is showing, for the interface's own map.
     ///
     /// Callbacks and plain structs rather than the facade, on the same
-    /// principle as the gamma pair above: this header stays off the rendering
+    /// principle as the glow switches above: this header stays off the rendering
     /// ones. The client keeps every one of these and drew them only itself, so
     /// FrameXML's map had a full set of readers and nothing to read.
     struct MapOverlay {

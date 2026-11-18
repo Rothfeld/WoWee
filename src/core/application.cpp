@@ -715,12 +715,6 @@ bool Application::initialize() {
             if (!rend) return;
             if (auto* ac = rend->getAnimationController()) ac->playEmote(name);
         };
-        luaSvc.getGamma = [uim = uiManager.get()]() -> float {
-            return uim ? uim->getGameScreen().getGamma() : 1.0f;
-        };
-        luaSvc.setGamma = [uim = uiManager.get()](float g) {
-            if (uim) uim->getGameScreen().setGamma(g);
-        };
         luaSvc.setGlowEnabled = [rend = renderer.get()](bool enabled) {
             if (rend && rend->getPostProcessPipeline())
                 rend->getPostProcessPipeline()->setGlowEnabled(enabled);

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -778,6 +779,8 @@ static void applySoundCVars(lua_State* L) {
 /// opened. Nothing looked broken: the button worked, it just always agreed
 /// with wherever the controls already were.
 
+static constexpr const char* kGammaCVarDefault = "1.0";
+
 static void pushCvarDefault(lua_State* L, const std::string& n) {
     if (n == "ffxglow" || n == "ffxdeath") {
         lua_pushstring(L, "1");
@@ -807,6 +810,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // The controls are taken off the panels; see kRemovedControlsLua.
     else if (n == "sound_numchannels") lua_pushstring(L, "64");
     else if (n == "sound_outputquality") lua_pushstring(L, "2");
+    // Build 8606: GetCVarDefault("gamma") answers "1.0".
+    else if (n == "gamma") lua_pushstring(L, kGammaCVarDefault);
     else if (n == "uiscale") lua_pushstring(L, "1");
     else if (n == "useuiscale") lua_pushstring(L, "1");
     else if (n == "screenwidth" || n == "gxresolution") {
@@ -5307,18 +5312,31 @@ static int lua_WoweeSaveVariables(lua_State* L) {
     return 0;
 }
 
-// GetGamma() / SetGamma(value) - screen brightness, as the video options mean
-// it. One is neutral. Backed by the client's own brightness setting, so the
-// two sliders move together instead of disagreeing.
+// GetGamma() / SetGamma(offset) - build 8606's scale: how far the gamma CVar
+// sits below one, zero for an untouched screen. Measured on the original:
+// with gamma 1.0 GetGamma() answers 0; SetGamma(0.2) stores "0.800000" and
+// GetGamma() then answers 0.19999998807907 (one minus the CVar as a float);
+// SetGamma(-0.3) stores "1.300000".
+//
+// The TBC video options set their Gamma slider (-0.5 to 0.5) to GetGamma() on
+// opening, and its OnValueChanged calls SetGamma. Answering 1 for neutral put
+// the slider past its maximum; it clamped to 0.5, handed SetGamma(0.5) on,
+// and that halved the client's brightness setting every time the panel opened.
+//
+// The CVar is the original's display gamma ramp, applied outside the frame
+// (the reference install keeps DesktopGamma 1, which leaves it off). It is
+// held here and not drawn; this client's own Brightness setting is separate.
 static int lua_GetGamma(lua_State* L) {
-    auto* svc = getLuaServices(L);
-    lua_pushnumber(L, (svc && svc->getGamma) ? svc->getGamma() : 1.0);
+    const float gamma = static_cast<float>(std::atof(cvarValueOr(L, "gamma", kGammaCVarDefault).c_str()));
+    lua_pushnumber(L, 1.0 - static_cast<double>(gamma));
     return 1;
 }
 
 static int lua_SetGamma(lua_State* L) {
-    auto* svc = getLuaServices(L);
-    if (svc && svc->setGamma) svc->setGamma(static_cast<float>(luaL_optnumber(L, 1, 1.0)));
+    const float gamma = 1.0f - static_cast<float>(luaL_checknumber(L, 1));
+    char text[32];
+    std::snprintf(text, sizeof(text), "%f", static_cast<double>(gamma));
+    setStoredCVar("gamma", text);
     return 0;
 }
 

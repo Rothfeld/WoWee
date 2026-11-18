@@ -34,12 +34,8 @@ which these are, the six with no row being exactly the ones a Blizzard control
 drives.
 
 The declared range is not always the offered one. `kOptionRangeFixesLua`
-rewrites some of these tables at start-up, because a slider can ship on a scale
-this client does not measure in - the gamma slider offers -0.5 to 0.5 where
-GetGamma answers 1 for a neutral screen, so every position on it asked for a
-nearly black picture, which is this same fault in a control that is not bound
-through kClientCVars. The overrides are read too, or this would compare against
-numbers the client never uses.
+can rewrite these tables at start-up. The overrides are read too, or this would
+compare against numbers the client never uses.
 
 It also checks that two sliders over one value offer the same range. Mouse
 Sensitivity and Mouse Look Speed were once both bound to one mouse setting of
@@ -72,12 +68,9 @@ PANEL = ROOT / "src/ui/settings_panel.cpp"
 def sliderRanges():
     """cvar -> (min, max), as the client actually offers them.
 
-    The shipped tables are not the last word. kOptionRangeFixesLua rewrites some
-    of them at start-up, because a slider can ship on a scale this client does
-    not measure in - the gamma slider offers -0.5 to 0.5 where GetGamma answers
-    1 for a neutral screen, so every position on it asked for a nearly black
-    picture. Reading the .lua files alone would compare against numbers the
-    client never uses.
+    The shipped tables are not the last word. kOptionRangeFixesLua can rewrite
+    them at start-up. Reading the .lua files alone would compare against numbers
+    the client never uses.
     """
     out = {}
     for path in sorted(FRAMEXML.glob("*.lua")):
