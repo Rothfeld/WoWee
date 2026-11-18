@@ -55,6 +55,7 @@
     "Variation": 2
   },
   "CreatureDisplayInfo": {
+    "ParticleColorID": 13,
     "CreatureModelAlpha": 5,
     "CreatureModelScale": 4,
     "ExtraDisplayId": 3,

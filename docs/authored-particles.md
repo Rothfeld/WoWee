@@ -116,6 +116,15 @@ alpha peak at 0.6 of life; SPARKLE.BLP is an X, and the original shows the
 star as a + (rays near 0/90 degrees in 3 s mean images); unturned, WoWee drew
 a fixed X. Turning direction is not established.
 
+Particle colour index (version 263 emitter `+0x2A`, 0 or 11-13; 190 TBC
+emitters): such an emitter takes start/mid/end ARGB of slot index - 11 from
+the ParticleColor row its creature display names (CreatureDisplayInfo
+column 13, `ParticleColorID`; 606 TBC displays). FelReaver.m2's flames,
+smoke and LAVADRIP drool (#4-#7, index 12) are green on Fel Reavers (row 332)
+and blue-violet on the Void Reaver (display 18951, row 306); WoWee drew the
+model's own green on both. Rows 355/356 carry real alpha, so alpha is
+replaced too.
+
 Geometry particles: a pre-264 emitter naming a model at `+0x18` (28 TBC
 emitters: WhirlwindGeoWhite, ConeofCold_Geo, CycloneGeo, Skull) draws that
 model's bind-pose triangles at each particle instead of a sprite: birth-pose

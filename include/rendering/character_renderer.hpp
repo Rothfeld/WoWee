@@ -17,6 +17,7 @@
 #include <optional>
 #include <limits>
 #include "pipeline/char_sections.hpp"
+#include <array>
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
@@ -666,7 +667,14 @@ private:
     struct EmitterCompanion {
         uint32_t characterModelId = 0;
         uint32_t m2InstanceId = 0;
+        uint32_t particleColorId = 0;
     };
+    /// CreatureDisplayInfo ParticleColorID of a display (0: none), and the
+    /// ParticleColor rows, read on first use.
+    uint32_t displayParticleColorId(uint32_t displayId);
+    std::unordered_map<uint32_t, uint32_t> displayParticleColor_;
+    std::unordered_map<uint32_t, std::array<uint32_t, 9>> particleColorRows_;
+    bool particleColorsLoaded_ = false;
     std::unordered_map<uint32_t, EmitterCompanion> emitterCompanions_;
     std::unordered_set<uint32_t> emitterModelsLoaded_;
 

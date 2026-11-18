@@ -1697,6 +1697,15 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                     em.tumbleMax = {readValue<float>(m2Data, base + 0x1A8),
                                     readValue<float>(m2Data, base + 0x1AC),
                                     readValue<float>(m2Data, base + 0x1B0)};
+                    if (header.version >= 263) {
+                        em.particleColorIndex = readValue<uint16_t>(m2Data, base + 0x2A);
+                        if (em.particleColorIndex != 0 &&
+                            (em.particleColorIndex < 11 || em.particleColorIndex > 13)) {
+                            core::Logger::getInstance().error("Invalid M2 particle colour index: ",
+                                                              em.particleColorIndex);
+                            return M2Model{};
+                        }
+                    }
                     em.geometryModel = readString(m2Data, readValue<uint32_t>(m2Data, base + 0x1C),
                                                   readValue<uint32_t>(m2Data, base + 0x18));
                     {

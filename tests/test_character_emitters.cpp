@@ -66,10 +66,10 @@ TEST_CASE("emitters fade and hide with their owner", "[character-emitters]") {
 }
 
 TEST_CASE("each character model gets its own stable emitter model id", "[character-emitters]") {
-    const auto a = rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 7);
-    CHECK(a == rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 7));
-    CHECK(a != rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 8));
-    CHECK(a != rendering::characterEmitterModelId("Creature\\FireElemental\\FireElemental.m2", 7));
+    const auto a = rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 7, 0);
+    CHECK(a == rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 7, 0));
+    CHECK(a != rendering::characterEmitterModelId("Creature\\Wisp\\Wisp.m2", 8, 0));
+    CHECK(a != rendering::characterEmitterModelId("Creature\\FireElemental\\FireElemental.m2", 7, 0));
 }
 
 TEST_CASE("a held last frame bears no particles", "[character-emitters]") {
@@ -78,4 +78,24 @@ TEST_CASE("a held last frame bears no particles", "[character-emitters]") {
     CHECK_FALSE(rendering::characterEmitterClockHeld(false, 3333, 1200.0f));  // still dying
     CHECK_FALSE(rendering::characterEmitterClockHeld(true, 2667, 2667.0f));   // looping Stand
     CHECK_FALSE(rendering::characterEmitterClockHeld(false, 0, 0.0f));        // no duration
+}
+
+TEST_CASE("A display's ParticleColor row recolours emitters by their colour index", "[character-emitters]") {
+    // FelReaver.m2 #4 (index 12) on the Void Reaver: ParticleColor row 306.
+    pipeline::M2Model model;
+    pipeline::M2ParticleEmitter drip;
+    drip.particleColorIndex = 12;
+    drip.particleColor.vec3Values = {glm::vec3(0, 1, 0), glm::vec3(0, 1, 0), glm::vec3(0, 1, 0)};
+    drip.particleAlpha.floatValues = {1, 1, 1};
+    pipeline::M2ParticleEmitter own = drip;
+    own.particleColorIndex = 0;
+    model.particleEmitters = {drip, own};
+    const rendering::ParticleColorRow row306 = {0xff8bfeff, 0xff6fbaff, 0xff3abdc9, 0xff843ac9, 0xff672785,
+                                                0xff271038, 0xff130d94, 0xff24273e, 0xff020216};
+    rendering::applyParticleColors(model, row306);
+    CHECK(model.particleEmitters[0].particleColor.vec3Values[0].r == Catch::Approx(0x6f / 255.0f));
+    CHECK(model.particleEmitters[0].particleColor.vec3Values[1].b == Catch::Approx(0x85 / 255.0f));
+    CHECK(model.particleEmitters[0].particleAlpha.floatValues[2] == Catch::Approx(1.0f));
+    CHECK(model.particleEmitters[1].particleColor.vec3Values[0] == glm::vec3(0, 1, 0));
+    CHECK(rendering::characterEmitterModelId("FelReaver", 3, 306) != rendering::characterEmitterModelId("FelReaver", 3, 332));
 }

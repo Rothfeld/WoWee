@@ -14,6 +14,10 @@
 
 #include "pipeline/m2_loader.hpp"
 
+#include <cassert>
+#include <glm/glm.hpp>
+
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -39,6 +43,27 @@ inline pipeline::M2Model emitterOnlyModel(const pipeline::M2Model& model) {
     return effects;
 }
 
+/// A ParticleColor.dbc row: ARGB start[3], mid[3], end[3]; slot k serves
+/// emitters with colour index 11 + k. Rows 355/356 carry real alpha
+/// (0x00 -> 0x3c -> 0x00) as an emitter's own colour words do.
+using ParticleColorRow = std::array<uint32_t, 9>;
+
+/// The emitter-only model recoloured by its display's ParticleColor row.
+inline void applyParticleColors(pipeline::M2Model& model, const ParticleColorRow& row) {
+    const auto rgb = [](uint32_t argb) {
+        return glm::vec3((argb >> 16) & 255u, (argb >> 8) & 255u, argb & 255u) / 255.0f;
+    };
+    const auto alpha = [](uint32_t argb) { return static_cast<float>(argb >> 24) / 255.0f; };
+    for (auto& emitter : model.particleEmitters) {
+        if (emitter.particleColorIndex == 0) continue;
+        const size_t k = emitter.particleColorIndex - 11u;
+        assert(k < 3);
+        assert(emitter.particleColor.vec3Values.size() == 3 && emitter.particleAlpha.floatValues.size() == 3);
+        emitter.particleColor.vec3Values = {rgb(row[k]), rgb(row[3 + k]), rgb(row[6 + k])};
+        emitter.particleAlpha.floatValues = {alpha(row[k]), alpha(row[3 + k]), alpha(row[6 + k])};
+    }
+}
+
 /// The alpha the emitters are drawn at; 0 means the owner is not drawn and
 /// its emitters are dropped.
 inline float characterEmitterFade(bool visible, float opacity, float cameraOpacity) {
@@ -56,9 +81,11 @@ inline bool characterEmitterClockHeld(bool loop, uint32_t sequenceDurationMs, fl
 
 /// The M2Renderer model id for a character model's emitters. Hashed from the
 /// model path and the character model id, as world doodads hash their path.
-inline uint32_t characterEmitterModelId(const std::string& modelName, uint32_t characterModelId) {
+inline uint32_t characterEmitterModelId(const std::string& modelName, uint32_t characterModelId,
+                                        uint32_t particleColorId) {
     return static_cast<uint32_t>(std::hash<std::string>{}(
-        "character-emitters:" + modelName + ":" + std::to_string(characterModelId)));
+        "character-emitters:" + modelName + ":" + std::to_string(characterModelId) + ":" +
+        std::to_string(particleColorId)));
 }
 
 } // namespace wowee::rendering

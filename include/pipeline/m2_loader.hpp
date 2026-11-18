@@ -215,6 +215,12 @@ struct M2ParticleEmitter {
     /// pre-264 emitters have none). FlameCircle.m2
     /// is four quarter circles of radius 2.78 with handles 0.552 of it.
     std::vector<glm::vec3> splinePoints;
+    /// Version 263 emitter +0x2A: 0, or 11-13 to take the colour of that slot
+    /// of the creature display's ParticleColor row (CreatureDisplayInfo
+    /// ParticleColorID). 190 TBC emitters use it; FelReaver.m2 #4-#7 (index
+    /// 12, LAVADRIP) drip green on Fel Reavers (row 332) and blue-violet on
+    /// the Void Reaver (display 18951, row 306).
+    uint16_t particleColorIndex = 0;
     bool enabled = true;
     /// Animated on/off (pre-Wrath +0x1DC, byte, discrete). Off: no births;
     /// live particles finish. Empty track: always on.

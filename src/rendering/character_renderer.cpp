@@ -2647,6 +2647,7 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
         const auto owner = instances.find(it->first);
         const bool keep = owner != instances.end() &&
             owner->second.modelId == it->second.characterModelId &&
+            displayParticleColorId(owner->second.displayId) == it->second.particleColorId &&
             characterEmitterFade(owner->second.visible && !owner->second.replaced, owner->second.opacity,
                                  owner->second.cameraOpacity) > 0.0f &&
             m2Renderer.hasInstance(it->second.m2InstanceId);
@@ -2669,9 +2670,17 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
             ? instance.overrideModelMatrix : getModelMatrix(instance);
         auto companion = emitterCompanions_.find(id);
         if (companion == emitterCompanions_.end()) {
-            const uint32_t emitterModelId = characterEmitterModelId(model.name, instance.modelId);
+            const uint32_t particleColorId = displayParticleColorId(instance.displayId);
+            const uint32_t emitterModelId = characterEmitterModelId(model.name, instance.modelId,
+                                                                    particleColorId);
             if (!m2Renderer.hasModel(emitterModelId)) {
-                if (!m2Renderer.loadModel(emitterOnlyModel(model), emitterModelId)) {
+                auto effects = emitterOnlyModel(model);
+                if (particleColorId != 0) {
+                    const auto row = particleColorRows_.find(particleColorId);
+                    assert(row != particleColorRows_.end() && "CreatureDisplayInfo names a missing ParticleColor row");
+                    applyParticleColors(effects, row->second);
+                }
+                if (!m2Renderer.loadModel(effects, emitterModelId)) {
                     LOG_ERROR("Character emitters: cannot load '", model.name, "' into the M2 renderer");
                     throw std::runtime_error("Cannot load character emitters: " + model.name);
                 }
@@ -2686,7 +2695,8 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
                 LOG_ERROR("Character emitters: cannot create instance for '", model.name, "'");
                 throw std::runtime_error("Cannot create character emitter instance: " + model.name);
             }
-            companion = emitterCompanions_.emplace(id, EmitterCompanion{instance.modelId, m2InstanceId}).first;
+            companion = emitterCompanions_.emplace(id, EmitterCompanion{instance.modelId, m2InstanceId,
+                                                                        particleColorId}).first;
             LOG_INFO("Character emitters: '", model.name, "' character instance=", id,
                      " particles=", model.particleEmitters.size(),
                      " ribbons=", model.ribbonEmitters.size());
@@ -2712,6 +2722,33 @@ void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
             instance.animationLoop, model.sequences[sequence].duration, instance.animationTime);
         m2Renderer.setExternalPose(companion->second.m2InstanceId, pose);
     }
+}
+
+uint32_t CharacterRenderer::displayParticleColorId(uint32_t displayId) {
+    if (displayId == 0) return 0;
+    if (!particleColorsLoaded_) {
+        particleColorsLoaded_ = true;
+        const auto* layout = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("CreatureDisplayInfo") : nullptr;
+        const uint32_t field = layout ? (*layout)["ParticleColorID"] : 0xFFFFFFFFu;
+        if (field == 0xFFFFFFFFu) return 0;  // noted once by the layout lookup
+        auto displays = assetManager->loadDBC("CreatureDisplayInfo.dbc");
+        auto colors = assetManager->loadDBC("ParticleColor.dbc");
+        assert(displays && displays->isLoaded() && colors && colors->isLoaded());
+        for (uint32_t i = 0; i < displays->getRecordCount(); ++i)
+            if (const uint32_t id = displays->getUInt32(i, field))
+                displayParticleColor_[displays->getUInt32(i, 0)] = id;
+        assert(colors->getFieldCount() == 10);
+        for (uint32_t i = 0; i < colors->getRecordCount(); ++i) {
+            std::array<uint32_t, 9> row{};
+            for (uint32_t f = 0; f < 9; ++f) row[f] = colors->getUInt32(i, f + 1);
+            particleColorRows_[colors->getUInt32(i, 0)] = row;
+        }
+        LOG_INFO("Particle colours: ", displayParticleColor_.size(), " displays, ",
+                 particleColorRows_.size(), " ParticleColor rows");
+    }
+    const auto it = displayParticleColor_.find(displayId);
+    return it == displayParticleColor_.end() ? 0 : it->second;
 }
 
 // --- Bone transform calculation ---
