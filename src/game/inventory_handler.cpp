@@ -4070,7 +4070,7 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
         case 0:   // BUSY
         case 5:   // BUSY_2
             resetTradeState();
-            owner_.addSystemChatMessage("Trade failed: player is busy.");
+            owner_.errorGlobal("ERR_PLAYER_BUSY_S", {tradePeerName_});
             break;
         case 1: { // BEGIN_TRADE - someone is asking
             if (packet.hasRemaining(8))
@@ -4085,36 +4085,36 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             // window rather than after, and said in chat, because a request
             // silently swallowed reads as the other player being ignored.
             if (addons::storedCVarValue("blockTrades", "0") != "0") {
-                owner_.addSystemChatMessage(
-                    "Declined a trade from " + tradePeerName_ + " (trades are blocked).");
+                owner_.systemGlobal("ERR_TRADE_BLOCKED_S", {tradePeerName_});
                 declineTradeRequest();
                 break;
             }
-            owner_.addSystemChatMessage(tradePeerName_ + " wants to trade with you.");
-            if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_REQUEST", {tradePeerName_});
+            // 2.4.3 opens the window at once for the one asked, with no line
+            // and no question (pair 6: Edricf's /trade opened Edrikf's trade
+            // frame directly).
+            acceptTradeRequest();
             break;
         }
         case 2:   // OPEN_WINDOW
             tradeStatus_ = TradeStatus::Open;
             tradeSelfAccepted_ = false;
             tradePartnerAccepted_ = false;
-            owner_.addSystemChatMessage("Trade opened.");
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_SHOW", {});
             break;
         case 3:   // TRADE_CANCELED
             resetTradeState();
-            owner_.addSystemChatMessage("Trade cancelled.");
+            // The yellow info line for both traders, not chat (pair 6).
+            owner_.infoGlobal("ERR_TRADE_CANCELLED");
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_CLOSED", {});
             break;
         case 4:   // TRADE_ACCEPT - the other side pressed accept
             tradeStatus_ = TradeStatus::Accepted;
             tradePartnerAccepted_ = true;
-            owner_.addSystemChatMessage("Trade partner accepted.");
             fireTradeAcceptUpdate();
             break;
         case 6:   // NO_TARGET
             resetTradeState();
-            owner_.raiseUiError("You have no target.");
+            owner_.errorGlobal("ERR_GENERIC_NO_TARGET");
             break;
         case 7:   // BACK_TO_TRADE - an acceptance was taken back
             tradeStatus_ = TradeStatus::Open;
@@ -4129,7 +4129,7 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             tradeStatus_ = TradeStatus::None;
             tradeSelfAccepted_ = false;
             tradePartnerAccepted_ = false;
-            owner_.addSystemChatMessage("Trade complete.");
+            owner_.infoGlobal("ERR_TRADE_COMPLETE");
             if (owner_.addonEventCallbackRef()) {
                 owner_.addonEventCallbackRef()("TRADE_CLOSED", {});
                 fireBagUpdates();
@@ -4138,16 +4138,15 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             break;
         case 9:   // TRADE_REJECTED
             resetTradeState();
-            owner_.addSystemChatMessage("Trade declined.");
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("TRADE_CLOSED", {});
             break;
         case 10:  // TARGET_TO_FAR
             resetTradeState();
-            owner_.addSystemChatMessage("Trade failed: target is too far away.");
+            owner_.errorGlobal("ERR_TRADE_TOO_FAR");
             break;
         case 11:  // WRONG_FACTION
             resetTradeState();
-            owner_.raiseUiError("You cannot trade with the enemy.");
+            owner_.errorGlobal("ERR_PLAYER_WRONG_FACTION");
             break;
         case 12:  // CLOSE_WINDOW
             resetTradeState();
@@ -4155,24 +4154,27 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             break;
         case 14:  // IGNORE_YOU
             resetTradeState();
-            owner_.raiseUiError("That player is ignoring you.");
+            owner_.errorGlobal("ERR_IGNORING_YOU_S", {tradePeerName_});
             break;
         case 15:  // YOU_STUNNED
-            owner_.raiseUiError("You are stunned.");
+            owner_.errorGlobal("ERR_GENERIC_STUNNED");
             break;
         case 16:  // TARGET_STUNNED
-            owner_.raiseUiError("That player is stunned.");
+            owner_.errorGlobal("ERR_TARGET_STUNNED");
             break;
         case 17:  // YOU_DEAD
-            owner_.raiseUiError("You are dead.");
+            owner_.errorGlobal("ERR_PLAYER_DEAD");
             break;
         case 18:  // TARGET_DEAD
-            owner_.raiseUiError("That player is dead.");
+            owner_.errorGlobal("ERR_TRADE_TARGET_DEAD");
             break;
         case 19:  // YOU_LOGOUT
+            resetTradeState();
+            owner_.errorGlobal("ERR_LOGGING_OUT");
+            break;
         case 20:  // TARGET_LOGOUT
             resetTradeState();
-            owner_.addSystemChatMessage("Trade failed: logging out.");
+            owner_.errorGlobal("ERR_TARGET_LOGGING_OUT");
             break;
         case 23:  // NOT_ON_TAPLIST
             owner_.raiseUiError("You do not have permission to loot that item.");
@@ -5947,13 +5949,21 @@ void InventoryHandler::initiateTrade(uint64_t targetGuid) {
     }
 
     if (targetGuid == 0) {
-        owner_.raiseUiError("You must target a player to trade with.");
+        owner_.errorGlobal("ERR_GENERIC_NO_TARGET");
         return;
     }
 
     auto packet = InitiateTradePacket::build(targetGuid);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Requesting trade with target.");
+    // "You have requested to trade with Edricf." (pair 6).
+    std::string name;
+    if (auto it = owner_.getPlayerNameCache().find(targetGuid); it != owner_.getPlayerNameCache().end())
+        name = it->second;
+    if (auto ent = owner_.getEntityManager().getEntity(targetGuid); name.empty() && ent)
+        if (auto* unit = dynamic_cast<Unit*>(ent.get())) name = unit->getName();
+    tradePeerName_ = name;
+    if (name.empty()) LOG_ERROR("Trade request: no name for target ", targetGuid);
+    else owner_.systemGlobal("ERR_INITIATE_TRADE_S", {name});
     LOG_INFO("Initiated trade with target: 0x", std::hex, targetGuid, std::dec);
 }
 
