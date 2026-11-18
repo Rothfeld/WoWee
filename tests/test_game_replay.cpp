@@ -39,6 +39,10 @@ void huntMob(Session& s) {
     // spells used by its cast tests so prerequisite validation can resolve them.
     s.handler().spellNameCacheRef()[75].name = "Auto Shot";
     s.handler().spellNameCacheRef()[3044].name = "Arcane Shot";
+    // Arcane Shot's Spell.dbc global cooldown: StartRecoveryCategory 133,
+    // StartRecoveryTime 1500 - the GCD now comes from these fields.
+    s.handler().spellNameCacheRef()[3044].startRecoveryCategory = 133;
+    s.handler().spellNameCacheRef()[3044].startRecoveryMs = 1500;
     s.handler().spellNameCacheLoadedRef() = true;
     s.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 181}, {UF::UNIT_FIELD_LEVEL, 9}});
     s.receive(UpdateObject().create(kMob, wowee::game::ObjectType::UNIT,
