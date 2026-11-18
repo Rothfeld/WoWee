@@ -702,6 +702,26 @@ looked nearer 1.5 natively. Particle trails of LootFX's flare emitter still
 read stronger than the original's.
 Evidence: `_experiments/20261117T2300Z.go_sparkle/` in the workspace.
 
+### Naj'entus Spine
+
+Impaling Spine 39837 shows no kit model on the impaled player: its StateKit
+7776 only holds animation 6, its ImpactKit 7682 plays
+`nagalordshell_impact` on the chest. The spine is a game object. The stun
+aura makes the target cast server-side 39929, which summons Naj'entus Spine
+185584 (goober, display 7362 `G_NagaShellMissile`, size 6) at the target.
+Its linked trap 185601 (Naj'entus Spine Trap, same display, size 1) appears
+with it. Native draws both: the size-6 spine around the player and, on its
+own, a small spine. Each server game object has its own M2 instance. The M2
+renderer's same-model, same-position merge used to give the spine the size-1
+trap's instance whenever the trap's create came first. The model has no bone
+keyframes; its slight lean is authored and turns with the target's facing.
+Reproduce with `.modify hp 60000` then `.aura 39837` at Black Temple 440.6
+817.0 12.5: 39837 deals 4.5-5k and kills a level 40 test character. Gotcha: a
+dead player's chat `.revive` did nothing on the pair; `revive <name>` on the
+world console works. Spawning Naj'entus outside Black Temple dereferences the
+missing instance script in `Reset()`. Evidence:
+`_experiments/20261118T140851Z.najentus_spine/` in the workspace.
+
 ### Cast failure text
 
 `build/bin/test_tbc_cast_results` checks the result-to-GlobalStrings names.
