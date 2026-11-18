@@ -153,7 +153,8 @@ void openInterfaceQuestLog(game::GameHandler& gh, uint32_t questId) {
     if (row > 0) {
         gh.runInterfaceCommand("QuestLog_OpenToQuest(" + std::to_string(row) + ")");
     } else {
-        gh.runInterfaceCommand("ToggleFrame(QuestLogFrame)");
+        // Open, through the panel manager, so Escape (CloseAllWindows) closes it.
+        gh.runInterfaceCommand("ShowUIPanel(QuestLogFrame)");
     }
 }
 

@@ -5500,57 +5500,41 @@ void Application::render() {
             {
                 using ui::UiElement;
                 using K = ui::KeybindingManager;
-                struct Route { UiElement element; K::Action action; const char* call; };
+                // Each key runs the body its binding has in the loaded
+                // FrameXML's Bindings.xml (__WoweeBindingScripts), so the
+                // panel opens the way the original opens it. Hand-written
+                // calls drifted from the data: 2.4.3 binds TOGGLEQUESTLOG to
+                // ToggleQuestLog(), which shows QuestLogFrame through
+                // ShowUIPanel; ToggleFrame(QuestLogFrame) showed it outside
+                // the panel manager, so CloseAllWindows did not know it and
+                // Escape opened the game menu over it instead of closing it.
+                // TOGGLELFGPARENT is ToggleLFGParentFrame() in 2.4.3 and
+                // ToggleLFDParentFrame() in 3.3.5.
+                struct Route { UiElement element; K::Action action; const char* binding; };
                 // NOLINTBEGIN(modernize-use-designated-initializers) - a table
                 // whose columns are its field names, with the struct in view
                 // directly above.
                 static const Route kRoutes[] = {
-                    // Names checked against this FrameXML rather than assumed:
-                    // ToggleAllBags, ToggleQuestLog and ToggleWorldMap are all
-                    // later additions and do not exist in 3.3.5, so calling
-                    // them did nothing at all - the fallback answers an
-                    // unknown name and calling it yields nothing.
-                    {UiElement::Bags,           K::Action::TOGGLE_BAGS,             "ToggleBackpack()"},
-                    {UiElement::Spellbook,      K::Action::TOGGLE_SPELLBOOK,        "ToggleSpellBook(BOOKTYPE_SPELL)"},
-                    {UiElement::QuestLog,       K::Action::TOGGLE_QUESTS,           "ToggleFrame(QuestLogFrame)"},
-                    {UiElement::CharacterFrame, K::Action::TOGGLE_CHARACTER_SCREEN, "ToggleCharacter(\"PaperDollFrame\")"},
-                    {UiElement::WorldMap,       K::Action::TOGGLE_WORLD_MAP,        "if select(4, GetBuildInfo()) < 30000 then ToggleWorldMap() else ToggleFrame(WorldMapFrame) end"},
-                    // Three more panels that poll their own key from inside
-                    // their own draw, found by asking which of this client's
-                    // windows do that and which of those are gated. Every one
-                    // that is gated and not listed here is a key that stops
-                    // working the moment its element is handed over - the
-                    // talent frame on N, the guild roster and the dungeon
-                    // finder on theirs.
-                    //
-                    // Names checked against this FrameXML, as the note above
-                    // says to: ToggleTalentFrame is in uiparent.lua,
-                    // ToggleFriendsFrame takes a tab number and three is the
-                    // guild one, and the dungeon finder is ToggleLFDParentFrame
-                    // - the binding is still called TOGGLELFGPARENT, which is
-                    // the old name kept so nobody's key was reset.
-                    {UiElement::Talents,        K::Action::TOGGLE_TALENTS,          "ToggleTalentFrame()"},
-                    // ToggleFriendsFrame with no tab, which is what this key
-                    // is: bindings.xml gives TOGGLESOCIAL - O by default, and
-                    // the action here is O - the body ToggleFriendsFrame(),
-                    // while ToggleFriendsFrame(3) belongs to TOGGLEGUILDTAB on
-                    // a key of its own.
-                    //
-                    // The difference is not cosmetic. The tab form has two
-                    // paths that do not close: it returns without doing
-                    // anything at all when the player is in no guild, and when
-                    // the selected tab is not the one asked for it re-shows on
-                    // that tab rather than hiding. The plain form is what its
-                    // name says - shown becomes hidden, hidden becomes shown -
-                    // so the key stopped closing the window it had opened.
-                    {UiElement::Social,         K::Action::TOGGLE_GUILD_ROSTER,     "ToggleFriendsFrame()"},
-                    {UiElement::DungeonFinder,  K::Action::TOGGLE_DUNGEON_FINDER,   "ToggleLFDParentFrame()"},
+                    {UiElement::Bags,           K::Action::TOGGLE_BAGS,             "TOGGLEBACKPACK"},
+                    {UiElement::Spellbook,      K::Action::TOGGLE_SPELLBOOK,        "TOGGLESPELLBOOK"},
+                    {UiElement::QuestLog,       K::Action::TOGGLE_QUESTS,           "TOGGLEQUESTLOG"},
+                    {UiElement::CharacterFrame, K::Action::TOGGLE_CHARACTER_SCREEN, "TOGGLECHARACTER0"},
+                    {UiElement::WorldMap,       K::Action::TOGGLE_WORLD_MAP,        "TOGGLEWORLDMAP"},
+                    {UiElement::Talents,        K::Action::TOGGLE_TALENTS,          "TOGGLETALENTS"},
+                    {UiElement::Social,         K::Action::TOGGLE_GUILD_ROSTER,     "TOGGLESOCIAL"},
+                    {UiElement::DungeonFinder,  K::Action::TOGGLE_DUNGEON_FINDER,   "TOGGLELFGPARENT"},
                 };
                 // NOLINTEND(modernize-use-designated-initializers)
                 for (const Route& r : kRoutes) {
                     if (!ui::frameXmlOwns(r.element)) continue;
                     if (!K::getInstance().isActionPressed(r.action)) continue;
-                    engine->executeString(r.call);
+                    const std::string name = r.binding;
+                    if (!engine->executeString(
+                            "local f = __WoweeBindingScripts and __WoweeBindingScripts[\"" + name + "\"]\n"
+                            "if not f then error(\"FrameXML has no binding " + name + "\") end\n"
+                            "f(\"down\")", "binding " + name)) {
+                        LOG_ERROR("Key route: binding ", name, " did not run");
+                    }
                 }
             }
 
