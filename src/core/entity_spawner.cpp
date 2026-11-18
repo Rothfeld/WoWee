@@ -233,7 +233,7 @@ void EntitySpawner::syncCreatureVisualState() {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     if (!characterRenderer) return;
 
-    // Stealth flags flip rarely, but this scan visits every spawned creature.
+    // Scale and display alpha change rarely, but this scan visits every spawned creature.
     // Doing that each frame with the mutex-locked getEntity() plus a
     // dynamic_pointer_cast per creature was a measurable main-thread cost in
     // crowded areas - a few sweeps per second is visually indistinguishable.
@@ -243,9 +243,6 @@ void EntitySpawner::syncCreatureVisualState() {
     // getEntities() reference is safe and avoids a mutex acquire per creature.
     const auto& entities = gameHandler_->getEntityManager().getEntities();
 
-    // Undetected stealth is culled by the server. Units that are sent with the
-    // CREEP visibility flag use the translucent detected-stealth presentation.
-    constexpr float kDetectedStealthOpacity = 0.35f;
     for (const auto& [guid, instanceId] : creatureInstances_) {
         auto entIt = entities.find(guid);
         if (entIt == entities.end() || !entIt->second) continue;
@@ -271,9 +268,11 @@ void EntitySpawner::syncCreatureVisualState() {
         }
 
         // CreatureDisplayInfo's model alpha (the Boar Spirit's display 4716
-        // is 128) times the detected-stealth presentation.
-        const float opacity = creatureDisplayAlpha(unit->getDisplayId()) *
-                              (unit->hasCreepVisibility() ? kDetectedStealthOpacity : 1.0f);
+        // is 128). Stealth fades a unit through its aura's SpellVisualKit
+        // (CharProc 14), not through the CREEP visibility flag: in 2.4.3 a
+        // creature under Stealth 31621 (CREEP, no kit) stays opaque, and one
+        // under Stealth 1784 (kit 312, 0.3) is drawn at 0.3, not less.
+        const float opacity = creatureDisplayAlpha(unit->getDisplayId());
         auto [it, inserted] = creatureAppliedOpacity_.try_emplace(guid, opacity);
         if (!inserted && it->second == opacity) continue;
 
