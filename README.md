@@ -1971,6 +1971,28 @@ none). Spell buttons count their reagent (Vanish shows Flash Powder).
 Evidence and probe addon: `_experiments/20261117T214218Z.usable_action_pair2`
 in the workspace.
 
+### Spell and melee range
+
+Range to a unit is 3D, centre to centre, and takes both units'
+`UNIT_FIELD_COMBATREACH` (`spellclass::checkSpellRange`,
+`GameHandler::unitSpellRange`). Melee (SpellRange flag 1, Sinister Strike)
+reaches both reaches plus 4/3 yard, never less than 5: a human (1.5)
+reaches Onyxia (23.4) from 26.23 yards. Other ranges are MaxRange plus both
+reaches (from Onyxia: Blind 10 -> 34.9, Fireball 35 -> 59.9); a MinRange gets
+both reaches too (Charge 8-25 -> 32.9-49.9); a ranged weapon (flag 2: Throw, Shoot) is too
+close inside melee reach. Bounding radius and model size play no part.
+`IsSpellInRange`, `IsActionInRange` (button colour) and the cast itself use the
+same answer: out of range the cast is refused before sending, with
+"Out of range." or "Target too close" and `UNIT_SPELLCAST_FAILED`, after the
+equipment check. Auto-attack out of melee reach says "You are too far away!"
+at once, again for the server's `SMSG_ATTACKSWING_NOTINRANGE`, then every 4 s.
+`CheckInteractDistance` is 30 yards for 1 and 4, 11.11 for 2, 10 for 3,
+whatever the reaches. Measured on pair 2 with a stunned Mottled Boar whose
+reach was set by `.debug setvaluebyname UNIT_FIELD_COMBATREACH`; evidence,
+probe addon and scripts: `_experiments/20261118T170000Z.melee_range_pair2` in
+the workspace. Gotcha: a GM (`.gm on`) gets nil for every harmful spell, so
+range answers need `.gm off`.
+
 ### Action bar macros, stances and keys
 
 Measured on pair 2 against native 2.4.3 (rogue). A macro button stands for
