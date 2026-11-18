@@ -27,9 +27,6 @@ constexpr size_t kMaxReceiveBufferBytes = 8 * 1024 * 1024;
 constexpr int kDefaultMaxParsedPacketsPerUpdate = 64;
 constexpr int kAbsoluteMaxParsedPacketsPerUpdate = 220;
 constexpr int kMinParsedPacketsPerUpdate = 8;
-constexpr int kDefaultMaxPacketCallbacksPerUpdate = 48;
-constexpr int kAbsoluteMaxPacketCallbacksPerUpdate = 64;
-constexpr int kMinPacketCallbacksPerUpdate = 1;
 constexpr int kMaxRecvCallsPerUpdate = 64;
 constexpr size_t kMaxRecvBytesPerUpdate = 512 * 1024;
 constexpr size_t kMaxQueuedPacketCallbacks = 4096;
@@ -46,20 +43,6 @@ inline int parsedPacketsBudgetPerUpdate() {
         if (end == raw) return kDefaultMaxParsedPacketsPerUpdate;
         if (parsed < kMinParsedPacketsPerUpdate) return kMinParsedPacketsPerUpdate;
         if (parsed > kAbsoluteMaxParsedPacketsPerUpdate) return kAbsoluteMaxParsedPacketsPerUpdate;
-        return static_cast<int>(parsed);
-    }();
-    return budget;
-}
-
-inline int packetCallbacksBudgetPerUpdate() {
-    static int budget = []() {
-        const char* raw = std::getenv("WOWEE_NET_MAX_PACKET_CALLBACKS");
-        if (!raw || !*raw) return kDefaultMaxPacketCallbacksPerUpdate;
-        char* end = nullptr;
-        long parsed = std::strtol(raw, &end, 10);
-        if (end == raw) return kDefaultMaxPacketCallbacksPerUpdate;
-        if (parsed < kMinPacketCallbacksPerUpdate) return kMinPacketCallbacksPerUpdate;
-        if (parsed > kAbsoluteMaxPacketCallbacksPerUpdate) return kAbsoluteMaxPacketCallbacksPerUpdate;
         return static_cast<int>(parsed);
     }();
     return budget;
@@ -135,8 +118,7 @@ WorldSocket::WorldSocket() {
     LOG_INFO("WorldSocket net opts: fast_recv_append=", useFastRecvAppend_ ? "on" : "off",
              " async_pump=", useAsyncPump_ ? "on" : "off",
              " parse_scratch=", useParseScratchQueue_ ? "on" : "off",
-             " max_parsed_packets=", parsedPacketsBudgetPerUpdate(),
-             " max_packet_callbacks=", packetCallbacksBudgetPerUpdate());
+             " max_parsed_packets=", parsedPacketsBudgetPerUpdate());
 }
 
 WorldSocket::~WorldSocket() {
@@ -824,16 +806,9 @@ void WorldSocket::dispatchQueuedPackets() {
         if (!packetCallback || pendingPacketCallbacks_.empty()) {
             return;
         }
-        const int maxCallbacksThisTick = packetCallbacksBudgetPerUpdate();
-        for (int i = 0; i < maxCallbacksThisTick && !pendingPacketCallbacks_.empty(); ++i) {
-            localPackets.push_back(std::move(pendingPacketCallbacks_.front()));
-            pendingPacketCallbacks_.pop_front();
-        }
-        if (!pendingPacketCallbacks_.empty()) {
-            LOG_DEBUG("World socket callback budget reached (", localPackets.size(),
-                      " callbacks); deferring ", pendingPacketCallbacks_.size(),
-                      " queued packet callbacks");
-        }
+        // Every parsed packet is handed on each update; a per-update cap let
+        // a busy scene outrun a slow frame until the queue overflowed.
+        localPackets.swap(pendingPacketCallbacks_);
     }
 
     while (!localPackets.empty()) {

@@ -84,29 +84,11 @@ bool isAuthCharPipelineOpcode(LogicalOpcode op) {
     }
 }
 
-int incomingPacketsBudgetPerUpdate(WorldState state) {
-    static const int inWorldBudget =
-        core::envIntClamped("WOWEE_NET_MAX_GAMEHANDLER_PACKETS", 24, 1, 512);
-    static const int loginBudget =
-        core::envIntClamped("WOWEE_NET_MAX_GAMEHANDLER_PACKETS_LOGIN", 96, 1, 512);
-    return state == WorldState::IN_WORLD ? inWorldBudget : loginBudget;
-}
-
-float incomingPacketBudgetMs(WorldState state) {
-    static const int inWorldBudgetMs =
-        core::envIntClamped("WOWEE_NET_MAX_GAMEHANDLER_PACKET_MS", 2, 1, 50);
-    static const int loginBudgetMs =
-        core::envIntClamped("WOWEE_NET_MAX_GAMEHANDLER_PACKET_MS_LOGIN", 8, 1, 50);
-    return static_cast<float>(state == WorldState::IN_WORLD ? inWorldBudgetMs : loginBudgetMs);
-}
-
 float slowPacketLogThresholdMs() {
     static const int thresholdMs =
         core::envIntClamped("WOWEE_NET_SLOW_PACKET_LOG_MS", 10, 1, 60000);
     return static_cast<float>(thresholdMs);
 }
-
-constexpr size_t kMaxQueuedInboundPackets = 4096;
 
 } // end anonymous namespace
 
@@ -3677,11 +3659,9 @@ void GameHandler::handlePacket(network::Packet& packet) {
 }
 
 void GameHandler::enqueueIncomingPacket(const network::Packet& packet) {
-    if (pendingIncomingPackets_.size() >= kMaxQueuedInboundPackets) {
-        LOG_ERROR("Inbound packet queue overflow (", pendingIncomingPackets_.size(),
-                  " packets); dropping oldest packet to preserve responsiveness");
-        pendingIncomingPackets_.pop_front();
-    }
+    // Every server packet is applied, in order. Dropping the oldest when the
+    // queue grew lost deaths, health and aura updates whenever a busy scene
+    // (a Black Temple pull on a loaded machine) outran a frame's share.
     pendingIncomingPackets_.push_back(packet);
     lastRxTime_ = std::chrono::steady_clock::now();
     rxSilenceLogged_ = false;
@@ -3689,11 +3669,6 @@ void GameHandler::enqueueIncomingPacket(const network::Packet& packet) {
 }
 
 void GameHandler::enqueueIncomingPacketFront(network::Packet&& packet) {
-    if (pendingIncomingPackets_.size() >= kMaxQueuedInboundPackets) {
-        LOG_ERROR("Inbound packet queue overflow while prepending (", pendingIncomingPackets_.size(),
-                  " packets); dropping newest queued packet to preserve ordering");
-        pendingIncomingPackets_.pop_back();
-    }
     pendingIncomingPackets_.emplace_front(std::move(packet));
 }
 
@@ -3704,23 +3679,14 @@ void GameHandler::processQueuedIncomingPackets() {
         return;
     }
 
-    const int maxPacketsThisUpdate = incomingPacketsBudgetPerUpdate(state);
-    const float budgetMs = incomingPacketBudgetMs(state);
+    // Everything received so far is applied this update. A per-frame packet
+    // and time budget let the queue fall behind on a slow frame and never
+    // catch up, so the world shown lagged the server by ever more.
     const auto start = std::chrono::steady_clock::now();
-    int processed = 0;
-
-    while (processed < maxPacketsThisUpdate) {
-        float elapsedMs = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
-        if (elapsedMs >= budgetMs) {
-            break;
-        }
-
+    constexpr float kNoBudgetMs = std::numeric_limits<float>::infinity();
+    while (true) {
         if (entityController_->hasPendingUpdateObjectWork()) {
-            entityController_->processPendingUpdateObjectWork(start, budgetMs);
-            if (entityController_->hasPendingUpdateObjectWork()) {
-                break;
-            }
+            entityController_->processPendingUpdateObjectWork(start, kNoBudgetMs);
             continue;
         }
 
@@ -3746,18 +3712,8 @@ void GameHandler::processQueuedIncomingPackets() {
                         " size=", packet.getSize(),
                         " state=", worldStateName(state));
         }
-        ++processed;
     }
 
-    if (entityController_->hasPendingUpdateObjectWork()) {
-        return;
-    }
-
-    if (!pendingIncomingPackets_.empty()) {
-        LOG_DEBUG("GameHandler packet budget reached (processed=", processed,
-                  ", remaining=", pendingIncomingPackets_.size(),
-                  ", state=", worldStateName(state), ")");
-    }
 }
 
 
