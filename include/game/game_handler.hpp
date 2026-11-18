@@ -1721,12 +1721,22 @@ public:
     void setFactionTemplateRepList(std::unordered_map<uint32_t, uint32_t> map) {
         factionTemplateRepList_ = std::move(map);
     }
+    void setFactionTemplateFactions(std::unordered_map<uint32_t, uint32_t> map) {
+        factionTemplateFaction_ = std::move(map);
+    }
+    /// A reaction forced on the player for this template's faction
+    /// (SMSG_SET_FORCED_REACTIONS, aura 139), as a ReputationRank: 0 hated,
+    /// 1 hostile, 2 unfriendly, 3 neutral, 4 friendly. It overrides the
+    /// template rule and any standing, as CMaNGOS Unit::GetReactionTo does:
+    /// Kalecgos's Spectral Realm forces Sathrovarr's faction 960 hostile.
+    [[nodiscard]] std::optional<int> forcedReactionRank(uint32_t factionTemplateId) const;
     /// Whether a beneficial spell may be aimed at this faction.
     ///
     /// Not the negation of isHostileFaction: a faction can be neither, and most
     /// wildlife is. Unknown answers false, so a spell falls back to the caster
     /// rather than being sent at something the server will refuse.
     bool isFriendlyFaction(uint32_t factionTemplateId) const {
+        if (const auto forced = forcedReactionRank(factionTemplateId)) return *forced >= 4;
         if (const int atWar = factionAtWarLive(factionTemplateId); atWar >= 0) return atWar == 0;
         auto it = factionFriendlyMap_.find(factionTemplateId);
         return it != factionFriendlyMap_.end() ? it->second : false;
@@ -4222,6 +4232,7 @@ public:
         uint32_t suffixFactor = 0;       // ITEM_FIELD_PROPERTY_SEED (random-suffix stat scale)
     };
     bool isHostileFaction(uint32_t factionTemplateId) const {
+        if (const auto forced = forcedReactionRank(factionTemplateId)) return *forced <= 1;
         if (const int atWar = factionAtWarLive(factionTemplateId); atWar >= 0) return atWar == 1;
         auto it = factionHostileMap_.find(factionTemplateId);
         return it != factionHostileMap_.end() ? it->second : true;
@@ -4906,6 +4917,7 @@ private:
     /// Object faction templates absent from FactionTemplate.dbc, reported once.
     mutable std::unordered_set<uint32_t> reportedAbsentObjectFactions_;
     std::unordered_map<uint32_t, uint32_t> factionTemplateRepList_;
+    std::unordered_map<uint32_t, uint32_t> factionTemplateFaction_;
 
     // Vehicle (WotLK): non-zero when player is seated in a vehicle
     uint32_t vehicleId_ = 0;

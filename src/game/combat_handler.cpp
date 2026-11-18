@@ -903,8 +903,10 @@ void CombatHandler::handleSetForcedReactions(network::Packet& packet) {
         uint32_t factionId = packet.readUInt32();
         uint32_t reaction  = packet.readUInt32();
         forcedReactions_[factionId] = static_cast<uint8_t>(reaction);
+        LOG_INFO("SMSG_SET_FORCED_REACTIONS: faction ", factionId, " rank ", reaction);
     }
     LOG_INFO("SMSG_SET_FORCED_REACTIONS: ", forcedReactions_.size(), " faction overrides");
+    owner_.refreshUnitHostility();
 }
 
 // ============================================================

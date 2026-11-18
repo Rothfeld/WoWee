@@ -150,9 +150,12 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     // What a game object of each template thinks of the player: the same
     // template rule, without the standing override below.
     std::unordered_map<uint32_t, int> objectReaction;
+    // Each template's faction, which forced reactions are keyed by.
+    std::unordered_map<uint32_t, uint32_t> templateFaction;
     for (uint32_t i = 0; i < ftDbc->getRecordCount(); i++) {
         uint32_t id = ftDbc->getUInt32(i, ftID);
         uint32_t parentFaction = ftDbc->getUInt32(i, ftFaction);
+        templateFaction[id] = parentFaction;
         groupMasks[id] = ftDbc->getUInt32(i, ftFG);
 
         // How a unit of this template regards the player: the template rule
@@ -184,6 +187,7 @@ void buildFactionHostilityMap(pipeline::AssetManager& assetManager, GameHandler&
     LOG_INFO("Faction friendliness: ", friendlyCount, "/", friendlyMap.size(),
              " templates friendly; the rest are hostile or neutral");
     gameHandler.setFactionTemplateRepList(std::move(templateRepList));
+    gameHandler.setFactionTemplateFactions(std::move(templateFaction));
     gameHandler.setFactionGroupMasks(std::move(groupMasks));
     gameHandler.setFactionFriendlyMap(std::move(friendlyMap));
     gameHandler.setFactionHostileMap(std::move(factionMap));

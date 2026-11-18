@@ -65,7 +65,10 @@ bool TerrainRenderer::buildMainPassPipelines(VkDevice device,
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
         .setVertexInput({ vertexBinding }, vertexAttribs)
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        // Terrain is one-sided: from below it is not drawn and the sky shows
+        // through (native, Kalecgos's Spectral Realm 128 yards under the
+        // Sunwell Plateau terrain).
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT)
         .setDepthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendDisabled())
         .setMultisample(vkCtx->getMsaaSamples())

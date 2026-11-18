@@ -1249,6 +1249,32 @@ TEST_CASE_METHOD(Integration, "TBC movement packets carry the instant of their p
     CHECK(later == drift);
 }
 
+// Kalecgos's Spectral Realm: Sathrovarr's template 1959 (faction 960) is
+// friendly to players; aura 44852 makes the server send forced reactions
+// 960 -> 1 (hostile) and 14 -> 4 (friendly), logged live on pair 4.
+TEST_CASE_METHOD(Integration, "TBC forced reactions override the faction template", "[faction]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    handler.setFactionTemplateFactions({{1959, 960}, {16, 14}});
+    handler.setFactionFriendlyMap({{1959, true}, {16, false}});
+    handler.setFactionHostileMap({{1959, false}, {16, true}});
+    CHECK_FALSE(handler.isHostileFaction(1959));
+    wowee::network::Packet forced(wireOpcode(Opcode::SMSG_SET_FORCED_REACTIONS));
+    forced.writeUInt32(2);
+    forced.writeUInt32(14); forced.writeUInt32(4);
+    forced.writeUInt32(960); forced.writeUInt32(1);
+    session.receive(forced);
+    CHECK(handler.isHostileFaction(1959));
+    CHECK_FALSE(handler.isFriendlyFaction(1959));
+    CHECK(handler.isFriendlyFaction(16));
+    CHECK_FALSE(handler.isHostileFaction(16));
+    wowee::network::Packet cleared(wireOpcode(Opcode::SMSG_SET_FORCED_REACTIONS));
+    cleared.writeUInt32(0);
+    session.receive(cleared);
+    CHECK_FALSE(handler.isHostileFaction(1959));
+}
+
 TEST_CASE_METHOD(Integration, "TBC outgoing boat offsets preserve model-local axes", "[transport]") {
     using namespace wowee::game;
     replay::Session session("tbc");

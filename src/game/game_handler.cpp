@@ -3011,9 +3011,22 @@ bool GameHandler::canPlayerAttackUnit(const Unit& unit) const {
     return !isFriendlyFaction(unit.getFactionTemplate()) && unitReactionToPlayer(unit) <= 4;
 }
 
+std::optional<int> GameHandler::forcedReactionRank(uint32_t factionTemplateId) const {
+    if (!combatHandler_) return std::nullopt;
+    const auto& forced = combatHandler_->getForcedReactions();
+    if (forced.empty()) return std::nullopt;
+    const auto faction = factionTemplateFaction_.find(factionTemplateId);
+    if (faction == factionTemplateFaction_.end()) return std::nullopt;
+    const auto rank = forced.find(faction->second);
+    if (rank == forced.end()) return std::nullopt;
+    return static_cast<int>(rank->second);
+}
+
 int GameHandler::unitReactionToPlayer(const Unit& unit) const {
     if (isDuelOpponent(unit)) return 2;
     const uint32_t ft = unit.getFactionTemplate();
+    // UnitReaction numbers ranks from 1 (hated); ReputationRank from 0.
+    if (const auto forced = forcedReactionRank(ft)) return *forced + 1;
     if (auto it = factionTemplateRepList_.find(ft);
         it != factionTemplateRepList_.end() && it->second < initialFactions_.size()) {
         const auto& standing = initialFactions_[it->second];
