@@ -155,12 +155,13 @@ a rising column. A negative radius is no radius: Etherial.m2 Death #20
 `deceleration`) is still unused: making particles travel away from
 `(0, 0, zSource)` showed no difference on the Ethereal death.
 
-Not an emission problem: the green columns over Illidari Defiler corpses
-in Black Temple are the state kit of Fiery Aura 39839
-(`Fel_Immolate_State_Base.mdx`, from `creature_template_addon`; death
-persistent, AttributesEx3 0x100000). The original draws nothing for that
-aura on a live Defiler, on its corpse, or with `.aura 39839` on a player,
-while Immolate 348 (`Immolate_State_Base.mdx`, identical emitters) draws.
-The rule that hides it is not known; Spell Attributes 0x100 and
-AttributesEx 0x10000000 alone do not hide state kits (2895, 8909, 6606
-show in the original).
+The green columns over Illidari Defiler corpses in Black Temple are the
+state kit of Fiery Aura 39839 (`Fel_Immolate_State_Base.mdx`, from
+`creature_template_addon`; death persistent, AttributesEx3 0x100000, so it
+stays on corpses). The original draws it: a Stand intro (1.5 s, emitting
+throughout), then the Hold loop (4.5 s, emitting its first 1.5 s). Green
+pixels after `.aura 39839` on a player: lit 4.4 s, dark 1.7 s, lit 2.0 s.
+The model has no bone animation, so WoWee's clock looped Stand and never
+reached Hold: the flames never went out. On the Defiler (Satyr, display
+scale 2, Base bone scale 1.45) WoWee's flames still spread wider round the
+body than the original's.

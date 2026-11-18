@@ -472,6 +472,22 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
             if (instance.holdAtEnd) {
                 instance.animTime = instance.animDuration;
                 instance.animSpeed = 0.0f;
+            } else if (instance.playingVariation && instance.cachedModel &&
+                       instance.idleSequenceIndex >= 0 &&
+                       instance.idleSequenceIndex < static_cast<int>(instance.cachedModel->sequences.size())) {
+                // A state effect without bone animation still goes on from
+                // its Stand intro to its Hold loop. Fiery Aura 39839
+                // (Fel_Immolate_State_Base: Stand 1.5 s emitting throughout,
+                // Hold 4.5 s emitting its first 1.5 s) is lit 4.4 s after it
+                // lands, dark 1.7 s, lit 2 s in the original; looping Stand
+                // burned without a break.
+                instance.animTime -= instance.animDuration;
+                instance.playingVariation = false;
+                instance.currentSequenceIndex = instance.idleSequenceIndex;
+                instance.animDuration = static_cast<float>(
+                    instance.cachedModel->sequences[instance.idleSequenceIndex].duration);
+                if (instance.animDuration > 0.0f)
+                    instance.animTime = std::fmod(instance.animTime, instance.animDuration);
             } else {
                 instance.animTime = std::fmod(instance.animTime, instance.animDuration);
             }
