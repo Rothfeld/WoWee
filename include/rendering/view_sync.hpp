@@ -11,6 +11,10 @@
 
 namespace wowee::rendering {
 
+// Requests written before this process started belong to an earlier client.
+inline const std::filesystem::file_time_type viewSyncProcessStart =
+    std::filesystem::file_time_type::clock::now();
+
 // Opt-in local comparison protocol. Writers replace the request atomically.
 // No file polling or camera changes without WOWEE_VIEW_SYNC.
 inline void updateViewSync(Camera& camera) {
@@ -25,7 +29,15 @@ inline void updateViewSync(Camera& camera) {
     try {
         if (std::filesystem::exists(path)) {
             const auto modified = std::filesystem::last_write_time(path);
-            if (modified != lastWrite) {
+            if (modified != lastWrite && modified < viewSyncProcessStart) {
+                // The file outlives the client that answered it. A "hold"
+                // left by an earlier session would pin this camera - and the
+                // terrain streamed around it - to wherever that session was
+                // while the character teleports elsewhere. Writers always
+                // send a fresh token and wait for its ack.
+                lastWrite = modified;
+                LOG_WARNING("View sync: ignoring request written before this client started: ", path);
+            } else if (modified != lastWrite) {
                 lastWrite = modified;
                 std::ifstream input(path);
                 input.exceptions(std::ios::badbit);
