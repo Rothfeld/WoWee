@@ -840,6 +840,47 @@ TEST_CASE("A button shows one state texture, not all of them",
     REQUIRE_FALSE(drawn(highlight));
 }
 
+TEST_CASE("A disabled button without disabled art keeps its normal art",
+          "[widget][draworder]") {
+    // 2.4.3: a disabled OptionsCheckButtonTemplate (no DisabledTexture) still
+    // draws its UI-CheckBox-Up box, with the grey DisabledCheckedTexture tick
+    // when checked - LFMFrame's Auto Add Members box. Hiding the normal art
+    // left only the label.
+    WidgetTree tree;
+    const uint32_t button = tree.create(WidgetKind::Frame, tree.root(), "C");
+    tree.get(button)->objectType = "CheckButton";
+    tree.get(button)->width = 24.0f;
+    tree.get(button)->height = 24.0f;
+    tree.addPoint(button, Anchor{"CENTER", 0, "CENTER", 0.0f, 0.0f});
+    auto art = [&](const char* name, ButtonArt kind) {
+        const uint32_t t = tree.create(WidgetKind::Texture, button, name);
+        tree.get(t)->texturePath = "Interface\\Art";
+        tree.get(t)->buttonArt = kind;
+        tree.setAllPoints(t, button);
+        return t;
+    };
+    const uint32_t normal          = art("CN", ButtonArt::Normal);
+    const uint32_t checked         = art("CC", ButtonArt::Checked);
+    const uint32_t disabledChecked = art("CD", ButtonArt::DisabledChecked);
+    auto drawn = [&](uint32_t id) {
+        for (const Widget* w : tree.drawOrder()) if (w->id == id) return true;
+        return false;
+    };
+
+    tree.get(button)->enabled = false;
+    tree.setInteraction(0, 0);
+    tree.layout(1024.0f, 768.0f);
+    REQUIRE(drawn(normal));
+    REQUIRE_FALSE(drawn(checked));
+    REQUIRE_FALSE(drawn(disabledChecked));
+
+    tree.get(button)->checked = true;
+    tree.layout(1024.0f, 768.0f);
+    REQUIRE(drawn(normal));
+    REQUIRE(drawn(disabledChecked));
+    REQUIRE_FALSE(drawn(checked));
+}
+
 TEST_CASE("A state the interface asked for outlasts the cursor",
           "[widget][draworder]") {
     // ActionButton_UpdateState holds down the button for an ability that is

@@ -1286,7 +1286,17 @@ bool WidgetTree::buttonArtVisible(const Widget& w) const {
         case ButtonArt::Highlight:       return (hovered || owner->highlightLocked) && usable;
         case ButtonArt::Disabled:        return !usable;
         case ButtonArt::Pushed:          return usable && pressed;
-        case ButtonArt::Normal:          return usable && !pressed;
+        // A disabled button without a DisabledTexture keeps showing its
+        // NormalTexture, unchanged (2.4.3: the box of a disabled
+        // OptionsCheckButtonTemplate, a disabled icon-only Button). One
+        // with a DisabledTexture shows that instead.
+        case ButtonArt::Normal:
+            if (usable) return !pressed;
+            for (uint32_t child : owner->children) {
+                const Widget* art = get(child);
+                if (art && art->buttonArt == ButtonArt::Disabled) return false;
+            }
+            return true;
         case ButtonArt::Checked:         return owner->checked && usable;
         case ButtonArt::DisabledChecked: return owner->checked && !usable;
         default:                         return true;
