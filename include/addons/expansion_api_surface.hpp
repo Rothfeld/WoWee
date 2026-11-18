@@ -32,6 +32,11 @@ void removeApiAbsentFrom(lua_State* L, std::string_view expansionId);
 /// Measured only for TBC (build 8606); other expansions are left as they are.
 void applyApiConventions(lua_State* L, std::string_view expansionId);
 
+/// How many values a global answers once applyApiConventions has shaped it
+/// on that expansion (UnitClass 2, GetContainerItemInfo 6 on TBC); -1 when
+/// it is not trimmed. The client's own Lua must not read past it.
+int apiResultCount(std::string_view expansionId, std::string_view name);
+
 /// Code loaded from files under `directory` belongs to `addon` and is
 /// insecure: protected functions refuse it.
 void markInsecureRoot(lua_State* L, const std::string& directory, const std::string& addon);

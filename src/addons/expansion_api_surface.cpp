@@ -344,6 +344,13 @@ void applyApiConventions(lua_State* L, std::string_view expansionId) {
     lua_setglobal(L, "issecure");
 }
 
+int apiResultCount(std::string_view expansionId, std::string_view name) {
+    if (expansionId != "tbc") return -1;
+    for (const auto& r : kResultCountsTbc)
+        if (name == r.name) return r.count;
+    return -1;
+}
+
 void markInsecureRoot(lua_State* L, const std::string& directory, const std::string& addon) {
     lua_getfield(L, LUA_REGISTRYINDEX, kInsecureRoots);
     if (!lua_istable(L, -1)) {

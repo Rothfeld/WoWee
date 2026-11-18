@@ -349,6 +349,7 @@ target_include_directories(test_expansion_api_surface PRIVATE ${TEST_INCLUDE_DIR
 target_include_directories(test_expansion_api_surface SYSTEM PRIVATE
     ${TEST_SYSTEM_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/extern/lua-5.1.5/src)
 target_link_libraries(test_expansion_api_surface PRIVATE catch2_main lua51)
+target_compile_definitions(test_expansion_api_surface PRIVATE WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 wowee_test_link_glm(test_expansion_api_surface)
 add_test(NAME expansion_api_surface COMMAND test_expansion_api_surface)
 register_test_target(test_expansion_api_surface)

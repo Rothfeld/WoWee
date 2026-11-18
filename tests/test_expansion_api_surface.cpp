@@ -8,7 +8,10 @@ extern "C" {
 #include "lualib.h"
 }
 
+#include <algorithm>
 #include <cstring>
+#include <fstream>
+#include <regex>
 #include <string>
 
 #include "addons/expansion_api_surface.hpp"
@@ -187,4 +190,36 @@ TEST_CASE("TBC widget methods answer flags as 1 or nil", "[addons][api_surface]"
     wowee::addons::applyApiConventions(L, "tbc");
     CHECK(run(L, "return tostring(__WoweeFrameMT.IsShown({}))") == "nil");
     lua_close(L);
+}
+
+// The client's own Lua (bootstrap and injected snippets, written as C++
+// string literals) runs under the TBC shapes too. A `local a, b, ... = F(`
+// that names more values than applyApiConventions leaves F read nil there:
+// SetBagItem took the link as GetContainerItemInfo's seventh value and every
+// bag tooltip was empty on TBC.
+TEST_CASE("Client Lua reads no more values than TBC answers", "[addons][api_surface]") {
+    const std::regex call(R"re(local\s+([A-Za-z_][\w\s,]*?)\s*=\s*([A-Za-z_]\w*)\()re");
+    // WatchFrame exists from 3.0 only, so this replacement never runs on TBC.
+    const std::string watchFrameOnly = "addon_manager.cpp:GetQuestLogTitle";
+    for (const char* file : {"lua_engine.cpp", "addon_manager.cpp", "lua_action_api.cpp",
+                             "lua_system_api.cpp", "lua_social_api.cpp", "lua_unit_api.cpp",
+                             "lua_spell_api.cpp", "lua_quest_api.cpp", "lua_inventory_api.cpp"}) {
+        std::ifstream in(std::string(WOWEE_SOURCE_DIR) + "/src/addons/" + file);
+        REQUIRE(in.is_open());
+        std::string line;
+        int number = 0;
+        while (std::getline(in, line)) {
+            ++number;
+            if (line.find('"') == std::string::npos) continue;  // Lua lives in string literals
+            for (std::sregex_iterator it(line.begin(), line.end(), call), end; it != end; ++it) {
+                const std::string name = (*it)[2];
+                const int most = wowee::addons::apiResultCount("tbc", name);
+                if (most < 0 || std::string(file) + ":" + name == watchFrameOnly) continue;
+                const std::string vars = (*it)[1];
+                const int count = 1 + static_cast<int>(std::count(vars.begin(), vars.end(), ','));
+                INFO(file << ":" << number << " " << line);
+                CHECK(count <= most);
+            }
+        }
+    }
 }

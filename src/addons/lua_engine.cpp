@@ -9283,7 +9283,7 @@ void LuaEngine::registerCoreAPI() {
         // inst is the held item's instance (soulbound, durability) when the
         // tooltip is for a bag or equipment slot.
         "function _WoweePopulateItemTooltip(self, itemId, embedded, inst)\n"
-        "    local name, itemLink, quality, iLevel, reqLevel, class, subclass, maxStack, equipSlot, texture, sellPrice = GetItemInfo(itemId)\n"
+        "    local name, itemLink, quality, iLevel, reqLevel, class, subclass, maxStack, equipSlot, texture = GetItemInfo(itemId)\n"
         "    if not name then return false end\n"
         "    local qColors = {[0]={0.62,0.62,0.62},[1]={1,1,1},[2]={0.12,1,0},[3]={0,0.44,0.87},[4]={0.64,0.21,0.93},[5]={1,0.5,0},[6]={0.9,0.8,0.5},[7]={0,0.8,1}}\n"
         "    local c = qColors[quality or 1] or {1,1,1}\n"
@@ -9494,7 +9494,9 @@ void LuaEngine::registerCoreAPI() {
         "        elseif data.openable then self:AddLine(ITEM_OPENABLE, 0, 1, 0) end\n"
         "        if data.sockets then self:AddLine(ITEM_SOCKETABLE, 0, 1, 0) end\n"
         "    end\n"
-        "    if sellPrice and sellPrice > 0 and select(4, GetBuildInfo()) >= 30000 then\n"
+        // The sell price is GetItemInfo's eleventh value, 3.x only.
+        "    local sellPrice = select(4, GetBuildInfo()) >= 30000 and select(11, GetItemInfo(itemId)) or nil\n"
+        "    if sellPrice and sellPrice > 0 then\n"
         "        self:AddLine('Sell Price: '..GetCoinTextureString(sellPrice), 1, 1, 1)\n"
         "    end\n"
         "    return true\n"
@@ -9511,7 +9513,10 @@ void LuaEngine::registerCoreAPI() {
         // this shape a fault and was right.
         "function __WoweeFrameMT:SetBagItem(bag, slot)\n"
         "    self:ClearLines()\n"
-        "    local tex, count, locked, quality, readable, lootable, link = GetContainerItemInfo(bag, slot)\n"
+        // The link from GetContainerItemLink: on TBC GetContainerItemInfo
+        // answers 2.4.3's six values, and its seventh (the link) read nil,
+        // so every bag tooltip came out empty.
+        "    local link = GetContainerItemLink(bag, slot)\n"
         "    if not link then return end\n"
         "    local id = link:match('item:(%d+)')\n"
         "    if not id then return end\n"
