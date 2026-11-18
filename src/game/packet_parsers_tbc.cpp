@@ -1253,7 +1253,10 @@ bool TbcPacketParsers::parseSpellDamageLog(network::Packet& packet, SpellDamageL
 // ============================================================================
 // TbcPacketParsers::parseSpellHealLog - TBC 2.4.3 SMSG_SPELLHEALLOG
 //
-// CMaNGOS TBC writes target and caster as packed GUIDs.
+// CMaNGOS TBC (Unit::SendHealSpellLog): packed target, packed caster,
+// uint32 spell, uint32 heal, uint8 critical, uint8 unused - 14 bytes for a
+// self heal (pair 7 Flash Heal). There is no overheal or absorbed field;
+// asking for one rejected every heal.
 // ============================================================================
 bool TbcPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealLogData& data) {
     data = SpellHealLogData{};
@@ -1264,15 +1267,10 @@ bool TbcPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealLogDa
     if (rem() < 1 || !packet.hasFullPackedGuid()) return false;
     data.casterGuid = packet.readPackedGuid();
 
-    if (rem() < 12) return false;
+    if (rem() < 9) return false;
     data.spellId    = packet.readUInt32();
     data.heal       = packet.readUInt32();
-    data.overheal   = packet.readUInt32();
-    // TBC has no absorbed field in SMSG_SPELLHEALLOG; skip crit flag
-    if (packet.getReadPos() < packet.getSize()) {
-        uint8_t critFlag = packet.readUInt8();
-        data.isCrit = (critFlag != 0);
-    }
+    data.isCrit     = packet.readUInt8() != 0;
 
     LOG_DEBUG("[TBC] Spell heal: spellId=", data.spellId, " heal=", data.heal,
               data.isCrit ? " CRIT" : "");
