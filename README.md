@@ -1258,8 +1258,12 @@ grass, sky and every model or unit outside their box are not drawn, and the
 background is the WMO fog colour. Native shows (59,28,107) there; MFOG 0 is
 (56,27,98). Ironforge, Undercity, the Deadmines and Blackrock Depths reach an
 exterior group and are unaffected (checked at their teleport points). Units in
-the realm stay brighter than native's dark tint (open; MOHD ambient is
-(9,34,22)). Spectral Blast 46648's SpellVisual 10441 plays ImpactAreaKit 9254
+the realm are lit by the floor MOCV under them (interiorObjectLight): the
+player there gets (0.31,0.31,0.70), and native's player is the same dark
+blue. Native creatures facing the camera (Sathrovarr, chest (59,43,28) on
+a grey texture) show a warm lit side that WoWee, replacing the light by the
+MOCV, does not draw (open). `WOWEE_INTERIOR_LIGHT_TRACE=1` logs each unit's
+interior light. Spectral Blast 46648's SpellVisual 10441 plays ImpactAreaKit 9254
 (Shadow_Fissure_Base, pink beams and shards) at the SMSG_SPELL_GO destination
 besides PersistentAreaKit 9566 on its DynamicObject; TBC column 23 is
 ImpactAreaKit.

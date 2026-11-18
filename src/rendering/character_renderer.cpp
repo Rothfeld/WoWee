@@ -18,6 +18,7 @@
  */
 #include <atomic>
 #include "rendering/character_renderer.hpp"
+#include <glm/gtx/string_cast.hpp>
 #include "rendering/character_emitters.hpp"
 #include "rendering/unit_fade.hpp"
 #include "rendering/m2_renderer.hpp"
@@ -2295,6 +2296,12 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             const glm::vec3 moved = inst.position - inst.interiorLightQueriedAt;
             if (inst.interiorLightAge >= 1.0f || glm::dot(moved, moved) > 0.0625f) {
                 inst.interiorLight = interiorLightQuery_(inst.position);
+                static const bool traceInteriorLight = core::envFlagEnabled("WOWEE_INTERIOR_LIGHT_TRACE");
+                if (traceInteriorLight) {
+                    LOG_INFO("Interior light: instance ", pair.first, " at (", inst.position.x, ",",
+                             inst.position.y, ",", inst.position.z, ") = ",
+                             inst.interiorLight ? glm::to_string(*inst.interiorLight) : std::string("outdoor"));
+                }
                 inst.interiorLightQueriedAt = inst.position;
                 inst.interiorLightAge = 0.0f;
             }
