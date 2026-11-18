@@ -3348,6 +3348,11 @@ void SocialHandler::handleWho(network::Packet& packet) {
                 owner_.systemGlobal("WHO_LIST_GUILD_FORMAT", {e.name, e.name, level, race, cls, e.guildName, zone});
         }
         owner_.systemGlobal("WHO_NUM_RESULTS", {std::to_string(whoOnlineCount_)});
+        // Printed answers do not reach the panel: FrameXML's WhoList_Update
+        // ends in ShowUIPanel(FriendsFrame), so WHO_LIST_UPDATE here opened
+        // the who list over every /who typed in chat, which 2.4.3 does not
+        // (pair 6: "/who Edrikf" printed two lines and opened nothing).
+        return;
     }
 
     // The who panel asked for this and redraws its rows on the answer coming
