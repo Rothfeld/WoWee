@@ -3417,6 +3417,8 @@ void GameHandler::setFactionAtWar(uint32_t repListId, bool atWar) {
     // Optimistic local update; the server echoes SMSG_SET_FACTION_ATWAR to confirm.
     if (atWar) initialFactions_[repListId].flags |=  FACTION_FLAG_AT_WAR;
     else       initialFactions_[repListId].flags &= ~FACTION_FLAG_AT_WAR;
+    invalidateReputationViews();
+    fireAddonEvent("UPDATE_FACTION", {});
     if (!isInWorld() || !socket) return;
     // CMSG_SET_FACTION_ATWAR: uint32 repListId + uint8 flag
     network::Packet pkt(wireOpcode(Opcode::CMSG_SET_FACTION_ATWAR));
@@ -3431,6 +3433,10 @@ void GameHandler::setFactionInactive(uint32_t repListId, bool inactive) {
     // No SMSG confirmation is sent for inactive, so update the local flag directly.
     if (inactive) initialFactions_[repListId].flags |=  FACTION_FLAG_INACTIVE;
     else          initialFactions_[repListId].flags &= ~FACTION_FLAG_INACTIVE;
+    // The panel redraws on UPDATE_FACTION, which 2.4.3 raises for this
+    // without a server message: the faction moves under Inactive at once.
+    invalidateReputationViews();
+    fireAddonEvent("UPDATE_FACTION", {});
     if (!isInWorld() || !socket) return;
     // CMSG_SET_FACTION_INACTIVE: uint32 repListId + uint8 flag
     network::Packet pkt(wireOpcode(Opcode::CMSG_SET_FACTION_INACTIVE));
@@ -4731,7 +4737,11 @@ uint32_t GameHandler::getFactionParentId(uint32_t factionId) const {
 }
 
 void GameHandler::setFactionCollapsed(uint32_t factionId, bool collapsed) {
-    if (factionId == 0) return;
+    if (factionId == 0) {
+        if (inactiveGroupExpanded_ == collapsed) reputationRowsDirty_ = true;
+        inactiveGroupExpanded_ = !collapsed;
+        return;
+    }
     const bool changed = collapsed ? collapsedFactionIds_.insert(factionId).second
                                    : collapsedFactionIds_.erase(factionId) > 0;
     // Rebuilding on a no-op would be harmless but the redraw is not: the
@@ -4751,10 +4761,20 @@ const std::vector<GameHandler::ReputationRow>& GameHandler::getReputationRows() 
     // Everything drawn: the visible factions, plus every faction one of them
     // descends from. A group whose members the player has not met is not drawn
     // at all, so its heading is not either.
+    //
+    // A faction moved to Inactive leaves its group and is listed under an
+    // Inactive heading after everything else, closed until opened: 2.4.3
+    // moves Darnassus there from a human's Alliance group.
     std::unordered_map<uint32_t, const ReputationEntry*> byId;
     std::unordered_set<uint32_t> displayed;
-    for (const auto& e : flat) { byId[e.factionId] = &e; displayed.insert(e.factionId); }
+    std::vector<const ReputationEntry*> inactive;
     for (const auto& e : flat) {
+        byId[e.factionId] = &e;
+        if (e.flags & FACTION_FLAG_INACTIVE) inactive.push_back(&e);
+        else displayed.insert(e.factionId);
+    }
+    for (const auto& e : flat) {
+        if (e.flags & FACTION_FLAG_INACTIVE) continue;
         // Faction.dbc is data, and a cycle in it would spin here. The real
         // chain is three deep, so a small ceiling costs nothing.
         uint32_t p = getFactionParentId(e.factionId);
@@ -4846,6 +4866,30 @@ const std::vector<GameHandler::ReputationRow>& GameHandler::getReputationRows() 
         if (!isHeader || isFactionCollapsed(factionId)) continue;
         for (uint32_t child : std::views::reverse(kidsIt->second)) {
             stack.emplace_back(child, depth + 1);
+        }
+    }
+
+    // An inactive faction that still heads active ones stays drawn there.
+    std::erase_if(inactive, [&](const ReputationEntry* e) { return displayed.count(e->factionId) > 0; });
+    if (!inactive.empty()) {
+        ReputationRow heading;
+        heading.isHeader = true;
+        heading.isInactiveGroup = true;
+        reputationRows_.push_back(std::move(heading));
+        if (!isFactionCollapsed(0)) {
+            std::sort(inactive.begin(), inactive.end(), [](const ReputationEntry* a, const ReputationEntry* b) {
+                return a->name != b->name ? a->name < b->name : a->factionId < b->factionId;
+            });
+            for (const ReputationEntry* e : inactive) {
+                ReputationRow row;
+                row.factionId = e->factionId;
+                row.reputationIndex = e->reputationIndex;
+                row.name = e->name;
+                row.flags = e->flags;
+                row.isChild = true;
+                row.hasRep = true;
+                reputationRows_.push_back(std::move(row));
+            }
         }
     }
     return reputationRows_;

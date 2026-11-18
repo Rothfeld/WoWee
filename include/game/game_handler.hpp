@@ -2698,13 +2698,18 @@ public:
         bool isHeader = false;    ///< something below it descends from this
         bool isChild = false;     ///< drawn indented, under a header
         bool hasRep = false;      ///< the player has a standing to show
+        /// The Inactive group's heading (factionId 0): its name is the
+        /// interface's FACTION_INACTIVE string.
+        bool isInactiveGroup = false;
     };
     /// The rows currently on screen: headers, plus the children of every header
     /// that is not collapsed. This is what GetNumFactions counts and what
     /// GetFactionInfo indexes, so every binding taking a "faction index" must
     /// resolve it through here rather than through the flat list.
     const std::vector<ReputationRow>& getReputationRows() const;
+    /// Faction id 0 is the Inactive group, which starts closed.
     bool isFactionCollapsed(uint32_t factionId) const {
+        if (factionId == 0) return !inactiveGroupExpanded_;
         return collapsedFactionIds_.count(factionId) > 0;
     }
     void setFactionCollapsed(uint32_t factionId, bool collapsed);
@@ -4051,7 +4056,17 @@ public:
     auto& playerExploredZonesRef() { return playerExploredZones_; }
     auto& hasPlayerExploredZonesRef() { return hasPlayerExploredZones_; }
     auto& factionStandingsRef() { return factionStandings_; }
-    auto& initialFactionsRef() { return initialFactions_; }
+    /// Every write to the standings comes through here, so the lists built
+    /// from them are rebuilt on the next read: a faction moved to Inactive,
+    /// declared at war or newly met changed the flags and the panel kept the
+    /// list it built at login, for the rest of the session and into the next
+    /// character's.
+    auto& initialFactionsRef() { invalidateReputationViews(); return initialFactions_; }
+    void invalidateReputationViews() const {
+        reputationListBuilt_ = false;
+        reputationList_.clear();
+        reputationRowsDirty_ = true;
+    }
     auto& watchedFactionIdRef() { return watchedFactionId_; }
 
     // ── Corpse & Home Bind ───────────────────────────────────────────
@@ -5266,6 +5281,7 @@ private:
     /// Headers the player has closed. Client-side only: the server has no
     /// opinion about it, so it is saved with the rest of the character config.
     std::unordered_set<uint32_t> collapsedFactionIds_;
+    bool inactiveGroupExpanded_ = false;
     std::unordered_map<uint32_t, std::string> achievementDescCache_;
     std::unordered_map<uint32_t, uint32_t>    achievementPointsCache_;
     std::unordered_map<uint32_t, uint32_t>    achievementIconCache_;  // achievementId → SpellIcon.dbc ID

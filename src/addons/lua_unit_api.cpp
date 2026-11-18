@@ -1472,12 +1472,19 @@ static int lua_GetXPExhaustion(lua_State* L) {
 /// through Honored shows a half-full bar rather than one two-thirds along.
 static int lua_GetWatchedFactionInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh) return 0;
+    // Nothing watched is nil and four zeros in 2.4.3, and a watched faction
+    // is five values: the faction id sixth is a later addition.
+    const auto none = [L] {
+        lua_pushnil(L);
+        for (int i = 0; i < 4; ++i) lua_pushnumber(L, 0);
+        return 5;
+    };
+    if (!gh) return none();
     const uint32_t factionId = gh->getWatchedFactionId();
-    if (factionId == 0) return 0;
+    if (factionId == 0) return none();
     const auto& standings = gh->getFactionStandings();
     auto it = standings.find(factionId);
-    if (it == standings.end()) return 0;
+    if (it == standings.end()) return none();
     const int32_t standing = it->second;
 
     // Blizzard's own thresholds, and the standing id that goes with each. Hated
@@ -1497,6 +1504,7 @@ static int lua_GetWatchedFactionInfo(lua_State* L) {
     lua_pushnumber(L, kRanks[rank].min);
     lua_pushnumber(L, kRanks[rank].max);
     lua_pushnumber(L, standing);
+    if (game::isActiveExpansion("tbc")) return 5;
     lua_pushnumber(L, factionId);
     return 6;
 }

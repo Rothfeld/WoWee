@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
+#include <cassert>
 
 #include "game/item_text.hpp"
 #include "game/level_difficulty.hpp"
@@ -588,7 +590,11 @@ inline int factionHeaderSetCollapsed(lua_State* L, bool collapsed) {
     const auto& rows = gh->getReputationRows();
     if (index > static_cast<int>(rows.size())) return 0;
     const auto& row = rows[static_cast<size_t>(index) - 1];
-    if (row.isHeader) gh->setFactionCollapsed(row.factionId, collapsed);
+    if (!row.isHeader) return 0;
+    gh->setFactionCollapsed(row.factionId, collapsed);
+    // ReputationFrame redraws on UPDATE_FACTION; without it the heading kept
+    // its old isCollapsed and the next click could not open it again.
+    gh->fireAddonEvent("UPDATE_FACTION", {});
     return 0;
 }
 
@@ -599,6 +605,12 @@ inline int pushFactionRow(lua_State* L, game::GameHandler* gh,
     e.factionId = row.factionId;
     e.reputationIndex = row.reputationIndex;
     e.name = row.name;
+    if (row.isInactiveGroup) {
+        lua_getglobal(L, "FACTION_INACTIVE");
+        e.name = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        assert(!e.name.empty() && "FrameXML defines FACTION_INACTIVE");
+    }
     e.flags = row.flags;
     return pushFactionInfo(L, gh, e, row.isHeader,
                            row.isHeader && gh->isFactionCollapsed(row.factionId),

@@ -867,11 +867,13 @@ std::string guildRosterNameAt(game::GameHandler* gh, int index) {
 /// the menu that shows a tick beside it.
 bool& optOutOfLoot() { static bool out = false; return out; }
 
-/// Which row the panel has selected. The client has no opinion - it is what
-/// the player last clicked - so it lives here rather than being invented.
-/// Nothing until a row is clicked: 2.4.3 answers 0 before that.
-int& selectedFaction() {
-    static int selected = 0;
+/// Which faction the panel has selected, held as the faction rather than its
+/// row: 2.4.3 keeps Darnassus selected when it comes back from Inactive two
+/// rows higher, and selects nothing (closing the detail panel) while it sits
+/// under the closed Inactive heading. Nothing until a row is clicked: 2.4.3
+/// answers 0 before that.
+uint32_t& selectedFactionId() {
+    static uint32_t selected = 0;
     return selected;
 }
 
@@ -2911,11 +2913,29 @@ void registerSocialLuaAPI(lua_State* L) {
             return 1;
         }},
                 {"GetSelectedFaction", [](lua_State* L) -> int {
-            lua_pushnumber(L, selectedFaction());
+            auto* gh = getGameHandler(L);
+            int index = 0;
+            if (gh && selectedFactionId() != 0) {
+                const auto& rows = gh->getReputationRows();
+                for (size_t i = 0; i < rows.size(); ++i) {
+                    if (rows[i].factionId == selectedFactionId() && !rows[i].isInactiveGroup) {
+                        index = static_cast<int>(i) + 1;
+                        break;
+                    }
+                }
+            }
+            lua_pushnumber(L, index);
             return 1;
         }},
                 {"SetSelectedFaction", [](lua_State* L) -> int {
-            selectedFaction() = static_cast<int>(luaL_checknumber(L, 1));
+            auto* gh = getGameHandler(L);
+            const int index = static_cast<int>(luaL_checknumber(L, 1));
+            selectedFactionId() = 0;
+            if (gh && index >= 1) {
+                const auto& rows = gh->getReputationRows();
+                if (index <= static_cast<int>(rows.size()) && !rows[static_cast<size_t>(index) - 1].isInactiveGroup)
+                    selectedFactionId() = rows[static_cast<size_t>(index) - 1].factionId;
+            }
             return 0;
         }},
                 {"ForceGossip", [](lua_State* L) -> int {
