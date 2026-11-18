@@ -3016,8 +3016,9 @@ void registerSocialLuaAPI(lua_State* L) {
             if (!gh) return 0;
             const char* who = luaL_optstring(L, 1, "target");
             const uint64_t guid = resolveUnitOrName(gh, *who ? who : "target");
+            // Nothing to follow: "You have no target." (pair 6, /follow).
             if (guid) gh->followTarget(guid);
-            else gh->raiseUiError("Invalid follow target.");
+            else gh->errorGlobal("ERR_GENERIC_NO_TARGET");
             return 0;
         }},
                 // Inspect and duel, both of which unitpopup.lua calls straight
@@ -3031,7 +3032,9 @@ void registerSocialLuaAPI(lua_State* L) {
             if (!gh || !unit) return 0;
             std::string uid(unit);
             toLowerInPlace(uid);
+            // "/inspect" with nothing targeted: "You have no target." (pair 6).
             if (const uint64_t guid = resolveUnitGuid(gh, uid)) gh->inspectUnit(guid);
+            else gh->errorGlobal("ERR_GENERIC_NO_TARGET");
             return 0;
         }},
                 // The achievement comparison the same menu offers. The query

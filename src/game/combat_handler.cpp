@@ -1633,7 +1633,7 @@ void CombatHandler::assistTarget() {
     }
 
     if (owner_.getTargetGuid() == 0) {
-        owner_.raiseUiError("You must target someone to assist.");
+        owner_.errorGlobal("ERR_GENERIC_NO_TARGET");
         return;
     }
 
@@ -1659,7 +1659,6 @@ void CombatHandler::assistTarget() {
     const uint64_t assistTargetGuid = unitTargetGuid(target);
 
     if (assistTargetGuid == 0) {
-        owner_.addSystemChatMessage(targetName + " has no target.");
         LOG_INFO("Assist: ", targetName, " has no target");
         return;
     }

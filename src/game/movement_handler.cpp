@@ -3963,7 +3963,7 @@ void MovementHandler::followTarget(uint64_t guid) {
 
     if (guid == 0) guid = owner_.getTargetGuid();
     if (guid == 0) {
-        owner_.raiseUiError("You must target someone to follow.");
+        owner_.errorGlobal("ERR_GENERIC_NO_TARGET");
         return;
     }
 
@@ -3996,7 +3996,6 @@ void MovementHandler::followTarget(uint64_t guid) {
         targetName = unit->getName();
     }
 
-    owner_.addSystemChatMessage("Now following " + targetName + ".");
     LOG_INFO("Following target: ", targetName, " (GUID: 0x", std::hex, guid, std::dec, ")");
     // The name goes with it: the status text is formatted from this argument,
     // and without one it formats a nil.
@@ -4015,7 +4014,6 @@ void MovementHandler::cancelFollow() {
     if (owner_.autoFollowCallbackRef()) {
         owner_.autoFollowCallbackRef()(nullptr);
     }
-    owner_.addSystemChatMessage("You stop following.");
     owner_.fireAddonEvent("AUTOFOLLOW_END", {});
 }
 

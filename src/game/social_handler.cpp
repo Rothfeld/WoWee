@@ -1124,7 +1124,7 @@ void SocialHandler::inspectUnit(uint64_t guid) {
         return;
     }
     if (guid == 0) {
-        owner_.raiseUiError("You must target a player to inspect.");
+        owner_.errorGlobal("ERR_GENERIC_NO_TARGET");
         return;
     }
     auto entity = owner_.getEntityManager().getEntity(guid);

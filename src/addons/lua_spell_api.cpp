@@ -1059,7 +1059,12 @@ static int lua_AssistUnit(lua_State* L) {
     std::string uidStr(uid);
     toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
-    if (guid == 0) return 0;
+    // "/assist" with nothing targeted: "You have no target." on the error
+    // line (pair 6, the original).
+    if (guid == 0) {
+        gh->errorGlobal("ERR_GENERIC_NO_TARGET");
+        return 0;
+    }
     uint64_t theirTarget = getEntityTargetGuid(gh, guid);
     if (theirTarget != 0) gh->setTarget(theirTarget);
     return 0;

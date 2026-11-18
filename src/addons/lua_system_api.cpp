@@ -7823,7 +7823,14 @@ void registerSystemLuaAPI(lua_State* L) {
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             }
             const uint64_t guid = resolveUnitGuid(gh, uidStr);
-            if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+            // CanInspect(unit, showError): InspectFrame_Show asks with the
+            // second set, and "/inspect" with nothing targeted then shows
+            // "You have no target." on the error line (pair 6, the original).
+            if (guid == 0) {
+                if (lua_toboolean(L, 2)) gh->errorGlobal("ERR_GENERIC_NO_TARGET");
+                lua_pushboolean(L, 0);
+                return 1;
+            }
             // High word 0x0000 marks a player guid in this range; creatures
             // carry 0xF13/0xF14 and cannot be inspected at all.
             const bool isPlayer = ((guid >> 48) & 0xFFFF) == 0;
