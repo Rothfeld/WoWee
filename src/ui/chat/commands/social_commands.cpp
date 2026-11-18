@@ -132,24 +132,10 @@ public:
         if (first == std::string::npos) query.clear();
         else { size_t last = query.find_last_not_of(" \t\r\n"); query = query.substr(first, last - first + 1); }
 
-        if (ctx.fullCommand == "whois" && query.empty()) {
-            game::MessageChatData msg;
-            msg.type = game::ChatType::SYSTEM;
-            msg.language = game::ChatLanguage::UNIVERSAL;
-            msg.message = "Usage: /whois <playerName>";
-            ctx.gameHandler.addLocalChatMessage(msg);
-            return {};
-        }
-        if (ctx.fullCommand == "who" && (query == "help" || query == "?")) {
-            game::MessageChatData msg;
-            msg.type = game::ChatType::SYSTEM;
-            msg.language = game::ChatLanguage::UNIVERSAL;
-            msg.message = "Who commands: /who [name/filter], /whois <name>, /online";
-            ctx.gameHandler.addLocalChatMessage(msg);
-            return {};
-        }
+        // As SlashCmdList WHO: a bare /who opens the panel, a query only
+        // asks - its answer prints in chat (pair 6).
         ctx.gameHandler.queryWho(query);
-        ctx.panel.getSlashCmds().showWho = true;
+        if (query.empty()) ctx.panel.getSlashCmds().showWho = true;
         return {};
     }
     [[nodiscard]] std::vector<std::string> aliases() const override { return {"who", "whois", "online", "players"}; }

@@ -1140,7 +1140,6 @@ void SocialHandler::inspectUnit(uint64_t guid) {
     }
     auto player = std::static_pointer_cast<Player>(entity);
     std::string name = player->getName().empty() ? "Target" : player->getName();
-    owner_.addSystemChatMessage("Inspecting " + name + "...");
     LOG_INFO("Sent inspect request for player: ", name, " (GUID: 0x", std::hex, guid, std::dec, ")");
 }
 
@@ -1455,61 +1454,63 @@ void SocialHandler::queryWho(const std::string& playerName) {
 
 void SocialHandler::addFriend(const std::string& playerName, const std::string& note) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
+    lastSocialRequestName_ = playerName;
     auto packet = AddFriendPacket::build(playerName, note);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Sending friend request to " + playerName + "...");
     LOG_INFO("Sent friend request to: ", playerName);
 }
 
 void SocialHandler::removeFriend(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
+    lastSocialRequestName_ = playerName;
     auto it = owner_.friendsCacheRef().find(playerName);
+    // A name not on the list is refused here, in chat: "/friend Nobodyxyz"
+    // is answered by nothing at all (the realm's lookup finds no row and
+    // stays silent) and "/removefriend Nobodyxyz" by "Player not found."
+    // (pair 6).
     if (it == owner_.friendsCacheRef().end()) {
-        owner_.addSystemChatMessage(playerName + " is not in your friends list.");
+        owner_.systemGlobal("ERR_FRIEND_NOT_FOUND");
         return;
     }
     auto packet = DelFriendPacket::build(it->second);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Removing " + playerName + " from friends list...");
     LOG_INFO("Sent remove friend request for: ", playerName);
 }
 
 void SocialHandler::setFriendNote(const std::string& playerName, const std::string& note) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
     auto it = owner_.friendsCacheRef().find(playerName);
     if (it == owner_.friendsCacheRef().end()) {
-        owner_.addSystemChatMessage(playerName + " is not in your friends list.");
         return;
     }
     auto packet = SetContactNotesPacket::build(it->second, note);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Updated note for " + playerName);
     LOG_INFO("Set friend note for: ", playerName);
 }
 
 void SocialHandler::addIgnore(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
+    lastSocialRequestName_ = playerName;
     auto packet = AddIgnorePacket::build(playerName);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Adding " + playerName + " to ignore list...");
     LOG_INFO("Sent ignore request for: ", playerName);
 }
 
 void SocialHandler::removeIgnore(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
+    lastSocialRequestName_ = playerName;
     auto it = owner_.ignoreCacheRef().find(playerName);
     if (it == owner_.ignoreCacheRef().end()) {
-        owner_.addSystemChatMessage(playerName + " is not in your ignore list.");
+        owner_.systemGlobal("ERR_IGNORE_NOT_FOUND");
         return;
     }
     auto packet = DelIgnorePacket::build(it->second);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Removing " + playerName + " from ignore list...");
     // Don't erase from ignoreCache here - wait for the server's SMSG_IGNORE_LIST
     // response to confirm. Erasing optimistically desyncs the cache if the server
     // rejects the request. (Compare with removeFriend which also waits for
@@ -1554,7 +1555,6 @@ void SocialHandler::requestLogout(bool exitAfterLogout) {
             if (owner_.logoutCompleteCallbackRef()) owner_.logoutCompleteCallbackRef()(true);
             return;
         }
-        owner_.addSystemChatMessage("Already logging out.");
         return;
     }
     auto packet = LogoutRequestPacket::build();
@@ -1566,13 +1566,12 @@ void SocialHandler::requestLogout(bool exitAfterLogout) {
 
 void SocialHandler::cancelLogout() {
     if (!owner_.getSocket()) return;
-    if (!loggingOut_) { owner_.addSystemChatMessage("Not currently logging out."); return; }
+    if (!loggingOut_) return;
     auto packet = LogoutCancelPacket::build();
     owner_.getSocket()->send(packet);
     loggingOut_ = false;
     exitAfterLogout_ = false;
     logoutCountdown_ = 0.0f;
-    owner_.addSystemChatMessage("Logout cancelled.");
     LOG_INFO("Cancelled logout");
 }
 
@@ -1622,38 +1621,33 @@ void SocialHandler::setGuildMotd(const std::string& motd) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = GuildMotdPacket::build(motd);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Guild MOTD updated.");
 }
 
 void SocialHandler::promoteGuildMember(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
     auto packet = GuildPromotePacket::build(playerName);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Promoting " + playerName + "...");
 }
 
 void SocialHandler::demoteGuildMember(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
     auto packet = GuildDemotePacket::build(playerName);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Demoting " + playerName + "...");
 }
 
 void SocialHandler::leaveGuild() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = GuildLeavePacket::build();
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Leaving guild...");
 }
 
 void SocialHandler::inviteToGuild(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (playerName.empty()) { owner_.raiseUiError("You must specify a player name."); return; }
+    if (playerName.empty()) return;
     auto packet = GuildInvitePacket::build(playerName);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Inviting " + playerName + " to guild...");
 }
 
 void SocialHandler::kickGuildMember(const std::string& playerName) {
@@ -1786,14 +1780,12 @@ void SocialHandler::initiateReadyCheck() {
     if (!isInGroup()) { owner_.raiseUiError("You must be in a group to initiate a ready check."); return; }
     auto packet = ReadyCheckPacket::build();
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Ready check initiated.");
 }
 
 void SocialHandler::respondToReadyCheck(bool ready) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = ReadyCheckConfirmPacket::build(ready);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage(ready ? "You are ready." : "You are not ready.");
 }
 
 // ============================================================
@@ -1831,7 +1823,6 @@ void SocialHandler::reportPlayer(uint64_t targetGuid, const std::string& reason)
     }
     auto packet = ComplainPacket::build(targetGuid, reason);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Player report submitted.");
     LOG_INFO("Reported player: 0x", std::hex, targetGuid, std::dec, " reason=", reason);
 }
 
@@ -2134,7 +2125,6 @@ void SocialHandler::setMainTank(uint64_t targetGuid) {
     if (targetGuid == 0) { owner_.raiseUiError("You must have a target selected."); return; }
     auto packet = RaidTargetUpdatePacket::build(0, targetGuid);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Main tank set.");
 }
 
 void SocialHandler::setMainAssist(uint64_t targetGuid) {
@@ -2142,21 +2132,18 @@ void SocialHandler::setMainAssist(uint64_t targetGuid) {
     if (targetGuid == 0) { owner_.raiseUiError("You must have a target selected."); return; }
     auto packet = RaidTargetUpdatePacket::build(1, targetGuid);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Main assist set.");
 }
 
 void SocialHandler::clearMainTank() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = RaidTargetUpdatePacket::build(0, 0);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Main tank cleared.");
 }
 
 void SocialHandler::clearMainAssist() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = RaidTargetUpdatePacket::build(1, 0);
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage("Main assist cleared.");
 }
 
 void SocialHandler::setRaidMarkLocally(uint64_t guid, uint8_t icon) {
@@ -3298,12 +3285,14 @@ void SocialHandler::handlePlayedTime(network::Packet& packet) {
 }
 
 void SocialHandler::handleWho(network::Packet& packet) {
-    const bool hasGender = isActiveExpansion("wotlk");
+    // TBC writes the gender byte too (CMaNGOS MiscHandler: race, gender,
+    // zone); read without it the zone was the gender plus three bytes and
+    // named no area, so the chat line ended in " - ".
+    const bool hasGender = isActiveExpansion("wotlk") || isActiveExpansion("tbc");
     uint32_t displayCount = packet.readUInt32();
     uint32_t onlineCount = packet.readUInt32();
     whoResults_.clear();
     whoOnlineCount_ = onlineCount;
-    if (displayCount == 0) { owner_.raiseUiError("No players found."); return; }
     for (uint32_t i = 0; i < displayCount; ++i) {
         if (packet.getReadPos() >= packet.getSize()) break;
         std::string playerName = packet.readString();
@@ -3331,19 +3320,20 @@ void SocialHandler::handleWho(network::Packet& packet) {
     // client's to print rather than the interface's, which is why no FrameXML
     // file formats them. The count line carries a |4 escape, which resolves on
     // the way to the screen.
+    // "[Edrikf]: Level 70 Human Rogue - Blackwing Lair" per row, then "1
+    // player total"; no match prints "0 players total" (pair 6).
     if (!whoToUI_) {
         for (const auto& e : whoResults_) {
-            std::string line = "|Hplayer:" + e.name + "|h[" + e.name + "]|h: Level " +
-                               std::to_string(e.level) + " " +
-                               getRaceName(static_cast<Race>(e.raceId)) + std::string(" ") +
-                               getClassName(static_cast<Class>(e.classId));
-            if (!e.guildName.empty()) line += " <" + e.guildName + ">";
+            const std::string race = getRaceName(static_cast<Race>(e.raceId));
+            const std::string cls = getClassName(static_cast<Class>(e.classId));
             const std::string zone = owner_.getWhoAreaName(e.zoneId);
-            if (!zone.empty()) line += " - " + zone;
-            owner_.addSystemChatMessage(line);
+            const std::string level = std::to_string(e.level);
+            if (e.guildName.empty())
+                owner_.systemGlobal("WHO_LIST_FORMAT", {e.name, e.name, level, race, cls, zone});
+            else
+                owner_.systemGlobal("WHO_LIST_GUILD_FORMAT", {e.name, e.name, level, race, cls, e.guildName, zone});
         }
-        owner_.addSystemChatMessage(std::to_string(whoOnlineCount_) +
-                                    " |4player:players; total");
+        owner_.systemGlobal("WHO_NUM_RESULTS", {std::to_string(whoOnlineCount_)});
     }
 
     // The who panel asked for this and redraws its rows on the answer coming
@@ -3499,19 +3489,43 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
             owner_.contactsRef().push_back(std::move(entry));
         }
     }
+    // SocialMgr's FriendsResult, each the GlobalStrings line 2.4.3 prints in
+    // chat (pair 6: "Player not found.", "You can't put yourself on your
+    // friend list.", "You can't ignore yourself."). The name for an answer
+    // about someone not yet known is the one this client asked about.
+    if (playerName.empty()) playerName = lastSocialRequestName_;
+    const char* line = nullptr;
+    bool named = false;
+    bool twice = false;
     switch (data.status) {
-        case kDbError:      owner_.addSystemChatMessage("Your friends list could not be reached."); break;
-        case kListFull:     owner_.addSystemChatMessage("Your friends list is full."); break;
-        case kOnline:       owner_.addSystemChatMessage(playerName + " is now online."); break;
-        case kOffline:      owner_.addSystemChatMessage(playerName + " is now offline."); break;
-        case kNotFound:     owner_.addSystemChatMessage("Player not found."); break;
-        case kRemoved:      owner_.addSystemChatMessage(playerName + " has been removed from your friends list."); break;
+        case kDbError:      line = "ERR_FRIEND_DB_ERROR"; break;
+        case kListFull:     line = "ERR_FRIEND_LIST_FULL"; break;
+        case kOnline:       line = "ERR_FRIEND_ONLINE_SS"; named = twice = true; break;
+        case kOffline:      line = "ERR_FRIEND_OFFLINE_S"; named = true; break;
+        case kNotFound:     line = "ERR_FRIEND_NOT_FOUND"; break;
+        case kRemoved:      line = "ERR_FRIEND_REMOVED_S"; named = true; break;
         case kAddedOnline:
-        case kAddedOffline: owner_.addSystemChatMessage(playerName + " has been added to your friends list."); break;
-        case kAlready:      owner_.addSystemChatMessage(playerName + " is already in your friends list."); break;
-        case kSelf:         owner_.addSystemChatMessage("You cannot add yourself as a friend."); break;
-        case kEnemy:        owner_.addSystemChatMessage(playerName + " belongs to the other faction."); break;
-        default: break;
+        case kAddedOffline: line = "ERR_FRIEND_ADDED_S"; named = true; break;
+        case kAlready:      line = "ERR_FRIEND_ALREADY_S"; named = true; break;
+        case kSelf:         line = "ERR_FRIEND_SELF"; break;
+        case kEnemy:        line = "ERR_FRIEND_WRONG_FACTION"; break;
+        case 0x0B:          line = "ERR_IGNORE_FULL"; break;
+        case 0x0C:          line = "ERR_IGNORE_SELF"; break;
+        case 0x0D:          line = "ERR_IGNORE_NOT_FOUND"; break;
+        case 0x0E:          line = "ERR_IGNORE_ALREADY_S"; named = true; break;
+        case 0x0F:          line = "ERR_IGNORE_ADDED_S"; named = true; break;
+        case 0x10:          line = "ERR_IGNORE_REMOVED_S"; named = true; break;
+        case 0x11:          line = "ERR_IGNORE_AMBIGUOUS"; break;
+        default:
+            LOG_WARNING("SMSG_FRIEND_STATUS: no line for result ", static_cast<int>(data.status));
+            break;
+    }
+    if (line && named && playerName.empty()) {
+        LOG_ERROR("SMSG_FRIEND_STATUS ", static_cast<int>(data.status), ": no name for guid ", data.guid);
+    } else if (line) {
+        owner_.systemGlobal(line, !named ? std::vector<std::string>{}
+                                  : twice ? std::vector<std::string>{playerName, playerName}
+                                          : std::vector<std::string>{playerName});
     }
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("FRIENDLIST_UPDATE", {});
 }
@@ -3519,14 +3533,21 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
 void SocialHandler::handleRandomRoll(network::Packet& packet) {
     RandomRollData data;
     if (!RandomRollParser::parse(packet, data)) return;
-    std::string rollerName = (data.rollerGuid == owner_.getPlayerGuid()) ? "You" : "Someone";
-    if (data.rollerGuid != owner_.getPlayerGuid()) {
-        auto it = owner_.getPlayerNameCache().find(data.rollerGuid);
-        if (it != owner_.getPlayerNameCache().end()) rollerName = it->second;
+    // RANDOM_ROLL_RESULT, "Edrikf rolls 42 (1-100)", with the roller's own
+    // name for the player too.
+    std::string rollerName;
+    if (data.rollerGuid == owner_.getPlayerGuid()) {
+        if (const auto* self = owner_.getActiveCharacter()) rollerName = self->name;
+    } else if (auto it = owner_.getPlayerNameCache().find(data.rollerGuid);
+               it != owner_.getPlayerNameCache().end()) {
+        rollerName = it->second;
     }
-    std::string msg = rollerName + ((data.rollerGuid == owner_.getPlayerGuid()) ? " roll " : " rolls ");
-    msg += std::to_string(data.result) + " (" + std::to_string(data.minRoll) + "-" + std::to_string(data.maxRoll) + ")";
-    owner_.addSystemChatMessage(msg);
+    if (rollerName.empty()) {
+        LOG_ERROR("MSG_RANDOM_ROLL: no name for roller ", data.rollerGuid);
+        return;
+    }
+    owner_.systemGlobal("RANDOM_ROLL_RESULT", {rollerName, std::to_string(data.result),
+                                               std::to_string(data.minRoll), std::to_string(data.maxRoll)});
 }
 
 // ============================================================
@@ -3537,8 +3558,8 @@ void SocialHandler::handleLogoutResponse(network::Packet& packet) {
     LogoutResponseData data;
     if (!LogoutResponseParser::parse(packet, data)) return;
     if (data.result == 0) {
-        if (data.instant) { owner_.addSystemChatMessage("Logging out..."); logoutCountdown_ = 0.0f; }
-        else { owner_.addSystemChatMessage("Logging out in 20 seconds..."); logoutCountdown_ = 20.0f; }
+        // No chat line: the CAMP popup counts down (PLAYER_CAMPING below).
+        logoutCountdown_ = data.instant ? 0.0f : 20.0f;
         if (owner_.addonEventCallbackRef()) {
             owner_.addonEventCallbackRef()("PLAYER_LOGOUT", {});
             // The timer the server just imposed, announced so the interface can
@@ -3570,7 +3591,7 @@ void SocialHandler::handleLogoutResponse(network::Packet& packet) {
             LOG_WARNING("Logout refused, but Exit Game was asked for - closing anyway");
             if (owner_.logoutCompleteCallbackRef()) owner_.logoutCompleteCallbackRef()(true);
         } else {
-            owner_.raiseUiError("Cannot logout right now.");
+            owner_.errorGlobal("ERR_LOGOUT_FAILED");
         }
     }
 }
@@ -3580,7 +3601,6 @@ void SocialHandler::handleLogoutComplete(network::Packet& /*packet*/) {
     // character is actually out of the world, and only then can the client leave -
     // to character select, or out of the game entirely for /quit and /exit.
     const bool exiting = exitAfterLogout_;
-    owner_.addSystemChatMessage("Logout complete.");
     loggingOut_ = false; exitAfterLogout_ = false; logoutCountdown_ = 0.0f;
     LOG_WARNING("Logout complete (exiting=", exiting ? "yes" : "no", ")");  // temporary: visible at default log level
     if (owner_.logoutCompleteCallbackRef()) owner_.logoutCompleteCallbackRef()(exiting);
@@ -3722,7 +3742,6 @@ void SocialHandler::acceptBattlefield(uint32_t queueSlot) {
     owner_.getSocket()->send(pkt);
     uint32_t clearSlot = slot->queueSlot;
     if (clearSlot < bgQueues_.size()) bgQueues_[clearSlot].statusId = 3;
-    owner_.addSystemChatMessage("Accepting battleground invitation...");
 }
 
 // Leave the battleground the player is standing in, which is a different thing
@@ -5128,13 +5147,11 @@ void SocialHandler::sendSummonResponse(bool accept) {
 void SocialHandler::acceptSummon() {
     if (!owner_.pendingSummonRequestRef()) return;
     sendSummonResponse(true);
-    owner_.addSystemChatMessage("Accepting summon...");
     LOG_INFO("Accepted summon from ", owner_.summonerNameRef());
 }
 
 void SocialHandler::declineSummon() {
     sendSummonResponse(false);
-    owner_.addSystemChatMessage("Summon declined.");
 }
 
 // ============================================================
@@ -5387,7 +5404,6 @@ void SocialHandler::toggleHelm() {
     owner_.helmVisibleRef() = !owner_.helmVisibleRef();
     auto packet = ShowingHelmPacket::build(owner_.helmVisibleRef());
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage(owner_.helmVisibleRef() ? "Helm is now visible." : "Helm is now hidden.");
     // The flag alone changed nothing on screen: it was set, sent to the server
     // and never read. Mark equipment dirty so the helm model and the hair under
     // it are both rebuilt from it.
@@ -5404,7 +5420,6 @@ void SocialHandler::toggleCloak() {
     owner_.cloakVisibleRef() = !owner_.cloakVisibleRef();
     auto packet = ShowingCloakPacket::build(owner_.cloakVisibleRef());
     owner_.getSocket()->send(packet);
-    owner_.addSystemChatMessage(owner_.cloakVisibleRef() ? "Cloak is now visible." : "Cloak is now hidden.");
     LOG_INFO("Cloak visibility toggled: ", owner_.cloakVisibleRef());
 }
 
