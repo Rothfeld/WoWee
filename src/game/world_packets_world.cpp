@@ -1326,6 +1326,72 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
     return true;
 }
 
+bool QuestQueryResponseParser::parseTbc(network::Packet& packet, QuestQueryResponseData& d) {
+    // Field for field as cmangos-tbc writes it (QuestHandler.cpp,
+    // HandleQuestQueryOpcode): 19 numbers, 4 reward and 6 choice pairs, the
+    // map point, four strings, four objective records and four objective texts.
+    const auto& raw = packet.getData();
+    const auto readCString = [&](std::string& out) {
+        const size_t start = packet.getReadPos();
+        size_t end = start;
+        while (end < raw.size() && raw[end] != 0) ++end;
+        if (end >= raw.size()) return false;    // unterminated: not this layout
+        out.assign(reinterpret_cast<const char*>(raw.data()) + start, end - start);
+        packet.setReadPos(end + 1);
+        return true;
+    };
+    if (!packet.hasRemaining((19 + 20 + 4) * 4)) return false;
+    d.questId = packet.readUInt32();
+    d.method = packet.readUInt32();
+    d.level = static_cast<int32_t>(packet.readUInt32());
+    d.zoneOrSort = static_cast<int32_t>(packet.readUInt32());
+    d.type = packet.readUInt32();
+    d.suggestedPlayers = packet.readUInt32();
+    d.repObjectiveFaction = packet.readUInt32();
+    d.repObjectiveValue = packet.readUInt32();
+    packet.readUInt32();                        // required opposite faction (always 0)
+    packet.readUInt32();                        // its value
+    d.nextQuestInChain = packet.readUInt32();
+    d.rewardMoney = static_cast<int32_t>(packet.readUInt32());
+    d.rewardMoneyMaxLevel = packet.readUInt32();
+    d.rewardSpell = packet.readUInt32();
+    d.rewardSpellCast = packet.readUInt32();
+    d.rewardHonor = packet.readUInt32();
+    d.sourceItemId = packet.readUInt32();
+    d.flags = packet.readUInt32();
+    d.charTitleId = packet.readUInt32();
+    for (size_t i = 0; i < 4; ++i) {
+        d.rewardItemId[i] = packet.readUInt32();
+        d.rewardItemCount[i] = packet.readUInt32();
+    }
+    for (size_t i = 0; i < 6; ++i) {
+        d.choiceItemId[i] = packet.readUInt32();
+        d.choiceItemCount[i] = packet.readUInt32();
+    }
+    d.pointMapId = packet.readUInt32();
+    d.pointX = packet.readFloat();
+    d.pointY = packet.readFloat();
+    d.pointOpt = packet.readUInt32();
+    if (!readCString(d.title) || !readCString(d.objectives) ||
+        !readCString(d.details) || !readCString(d.endText)) {
+        return false;
+    }
+    if (!packet.hasRemaining(4 * 16)) return false;
+    for (auto& o : d.objectiveRecords) {
+        const uint32_t id = packet.readUInt32();
+        // A game object travels as its entry with the top bit set.
+        o.creatureOrGoId = (id & 0x80000000u) ? -static_cast<int32_t>(id & 0x7FFFFFFFu)
+                                              : static_cast<int32_t>(id);
+        o.creatureOrGoCount = packet.readUInt32();
+        o.itemId = packet.readUInt32();
+        o.itemCount = packet.readUInt32();
+    }
+    for (auto& text : d.objectiveTexts) {
+        if (!readCString(text)) return false;
+    }
+    return true;
+}
+
 QuestQueryRewardsData QuestQueryRewardsParser::parse(const std::vector<uint8_t>& data,
                                                      uint8_t questLogStride) {
     // Reward arrays are ALWAYS interleaved (itemId, count) pairs, present even

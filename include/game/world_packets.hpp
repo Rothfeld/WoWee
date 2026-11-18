@@ -2856,6 +2856,54 @@ struct QuestQueryRewardsData {
     bool valid = false;
 };
 
+/// SMSG_QUEST_QUERY_RESPONSE read field by field, for the layouts whose writer
+/// is known exactly (TBC: cmangos-tbc WorldSession::HandleQuestQueryOpcode).
+struct QuestQueryResponseData {
+    uint32_t questId = 0;
+    uint32_t method = 0;
+    int32_t  level = 0;               ///< -1: the quest takes the player's level
+    int32_t  zoneOrSort = 0;          ///< >0 AreaTable id, <0 QuestSort id negated
+    uint32_t type = 0;                ///< QuestInfo.dbc id: Group, PvP, Raid, Dungeon...
+    uint32_t suggestedPlayers = 0;
+    uint32_t repObjectiveFaction = 0;
+    uint32_t repObjectiveValue = 0;
+    uint32_t nextQuestInChain = 0;
+    int32_t  rewardMoney = 0;         ///< negative: money the quest requires
+    uint32_t rewardMoneyMaxLevel = 0; ///< added to the money at the level cap
+    uint32_t rewardSpell = 0;
+    uint32_t rewardSpellCast = 0;
+    uint32_t rewardHonor = 0;
+    uint32_t sourceItemId = 0;
+    uint32_t flags = 0;
+    uint32_t charTitleId = 0;
+    std::array<uint32_t, 4> rewardItemId{};
+    std::array<uint32_t, 4> rewardItemCount{};
+    std::array<uint32_t, 6> choiceItemId{};
+    std::array<uint32_t, 6> choiceItemCount{};
+    uint32_t pointMapId = 0;
+    float    pointX = 0.0f;
+    float    pointY = 0.0f;
+    uint32_t pointOpt = 0;
+    std::string title;
+    std::string objectives;
+    std::string details;
+    std::string endText;
+    struct Objective {
+        int32_t  creatureOrGoId = 0;  ///< negative: a game object entry
+        uint32_t creatureOrGoCount = 0;
+        uint32_t itemId = 0;
+        uint32_t itemCount = 0;
+    };
+    std::array<Objective, 4> objectiveRecords{};
+    std::array<std::string, 4> objectiveTexts;
+};
+
+class QuestQueryResponseParser {
+public:
+    /// TBC 2.4.3. False when the packet ends before its last field.
+    static bool parseTbc(network::Packet& packet, QuestQueryResponseData& data);
+};
+
 /** Fixed-offset reward extractor for SMSG_QUEST_QUERY_RESPONSE.
  *  `data` is the full packet payload (starting at questId);
  *  `questLogStride` selects the expansion layout (3=Classic, 4=TBC, 5=WotLK). */

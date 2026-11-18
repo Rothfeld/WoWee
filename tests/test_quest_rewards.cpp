@@ -153,6 +153,63 @@ TEST_CASE("Quest query rewards: TBC layout (cmangos-tbc)", "[quest_rewards]") {
     CHECK(r.choiceItemId[3] == 0);
 }
 
+// Quest 9729 "Fhwoor Smash!" field by field as cmangos-tbc
+// HandleQuestQueryOpcode writes it. The old offset seed read the title four
+// bytes early (an empty string), and the printable scan then took the EndText
+// "Ark of Ssslith safely returned to Sporeggar" for the title.
+TEST_CASE("Quest query response: TBC read field by field", "[quest_rewards]") {
+    Bytes b;
+    putU32(b, 9729); putU32(b, 2); putU32(b, 65); putU32(b, 3521);
+    putU32(b, 1);     // type: Group
+    putU32(b, 3);     // suggestedPlayers
+    putU32(b, 0); putU32(b, 0); putU32(b, 0); putU32(b, 0); putU32(b, 0);
+    putU32(b, 0);     // money
+    putU32(b, 82500); // money at max level
+    putU32(b, 0); putU32(b, 0); putU32(b, 0);
+    putU32(b, 0);     // srcItem
+    putU32(b, 0x1008);// flags: sharable | daily
+    putU32(b, 0);     // charTitle
+    for (int i = 0; i < 4; ++i) { putU32(b, 0); putU32(b, 0); }
+    putU32(b, 25539); putU32(b, 1);
+    for (int i = 1; i < 6; ++i) { putU32(b, 0); putU32(b, 0); }
+    putU32(b, 530); putF(b, 1.0f); putF(b, 2.0f); putU32(b, 0);
+    putStr(b, "Fhwoor Smash!");
+    putStr(b, "Escort Fhwoor.");
+    putStr(b, "Little naga make Fhwoor angry!");
+    putStr(b, "Ark of Ssslith safely returned to Sporeggar");
+    putU32(b, 0x80000000u | 182116); putU32(b, 1); putU32(b, 0); putU32(b, 0);
+    putU32(b, 18398); putU32(b, 2); putU32(b, 24330); putU32(b, 3);
+    for (int i = 2; i < 4; ++i) { putU32(b, 0); putU32(b, 0); putU32(b, 0); putU32(b, 0); }
+    putStr(b, ""); putStr(b, "Capture The Overlook"); putStr(b, ""); putStr(b, "");
+
+    network::Packet packet(0, b);
+    QuestQueryResponseData d;
+    REQUIRE(QuestQueryResponseParser::parseTbc(packet, d));
+    CHECK(d.questId == 9729);
+    CHECK(d.level == 65);
+    CHECK(d.zoneOrSort == 3521);
+    CHECK(d.type == 1);
+    CHECK(d.suggestedPlayers == 3);
+    CHECK(d.rewardMoneyMaxLevel == 82500);
+    CHECK(d.flags == 0x1008);
+    CHECK(d.choiceItemId[0] == 25539);
+    CHECK(d.title == "Fhwoor Smash!");
+    CHECK(d.objectives == "Escort Fhwoor.");
+    CHECK(d.details == "Little naga make Fhwoor angry!");
+    CHECK(d.endText == "Ark of Ssslith safely returned to Sporeggar");
+    CHECK(d.objectiveRecords[0].creatureOrGoId == -182116);
+    CHECK(d.objectiveRecords[1].creatureOrGoId == 18398);
+    CHECK(d.objectiveRecords[1].itemId == 24330);
+    CHECK(d.objectiveRecords[1].itemCount == 3);
+    CHECK(d.objectiveTexts[1] == "Capture The Overlook");
+
+    // Cut inside the objective texts: the packet does not fit the layout.
+    Bytes cut(b.begin(), b.end() - 3);
+    network::Packet shortPacket(0, cut);
+    QuestQueryResponseData d2;
+    CHECK_FALSE(QuestQueryResponseParser::parseTbc(shortPacket, d2));
+}
+
 TEST_CASE("Quest query rewards: WotLK layout (AzerothCore)", "[quest_rewards]") {
     Bytes b;
     putU32(b, 300);   // questId
