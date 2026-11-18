@@ -7,6 +7,7 @@
 #include "pipeline/dbc_loader.hpp"
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/gesture_weapons.hpp"
+#include "rendering/animation/hit_reaction.hpp"
 #include <cstring>
 #include <vector>
 
@@ -341,4 +342,14 @@ TEST_CASE("IDs above 145 follow 3.3.5's AnimationData.dbc", "[animation]") {
     REQUIRE(anim::FLY_FORWARD == anim::FLY);
     REQUIRE(anim::FLY_IDLE == anim::HOVER);
     REQUIRE(std::string(anim::nameFromId(193)) == "HOVER");
+}
+
+TEST_CASE("Creatures with type flag 0x8 do not flinch from hits", "[hit-reaction]") {
+    using namespace wowee::rendering;
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x8));      // Qiraji Gladiator
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_CRITICAL, true, 0x848)); // Amani'shi Warbringer
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x4c));     // Hex Lord Malacrass
+    CHECK(unitPlaysWound(anim::COMBAT_WOUND, true, 0));              // Defias Thug
+    CHECK(unitPlaysWound(anim::DODGE, true, 0x8));
+    CHECK(unitPlaysWound(anim::COMBAT_WOUND, false, 0x8));           // players have no type flags
 }

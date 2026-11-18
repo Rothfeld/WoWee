@@ -8,6 +8,7 @@
 #include "rendering/character_renderer.hpp"
 #include "rendering/camera_controller.hpp"
 #include "rendering/animation_controller.hpp"
+#include "rendering/animation/hit_reaction.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation/combat_fsm.hpp"
 #include "rendering/animation/emote_registry.hpp"
@@ -352,6 +353,22 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (!cr->hasAnimation(instanceId, animId)) {
             LOG_DEBUG("Hit reaction ", animId, " not authored for unit 0x", std::hex, victimGuid, std::dec);
             return;
+        }
+        if (!isLocalPlayer) {
+            const auto victim = std::dynamic_pointer_cast<game::Unit>(
+                gameHandler_.getEntityManager().getEntity(victimGuid));
+            const bool creature = victim && victim->getType() == game::ObjectType::UNIT;
+            uint32_t typeFlags = 0;
+            if (creature) {
+                const auto& cache = gameHandler_.getCreatureInfoCache();
+                if (const auto info = cache.find(victim->getEntry()); info != cache.end())
+                    typeFlags = info->second.typeFlags;
+            }
+            if (!rendering::unitPlaysWound(animId, creature, typeFlags)) {
+                LOG_DEBUG("Hit reaction ", animId, " suppressed on 0x", std::hex, victimGuid,
+                          " (creature type flags 0x", typeFlags, ")", std::dec);
+                return;
+            }
         }
         LOG_DEBUG("Hit reaction ", animId, " on 0x", std::hex, victimGuid, std::dec,
                   isLocalPlayer ? " (local player)" : "");
