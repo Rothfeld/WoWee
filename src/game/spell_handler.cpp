@@ -5261,6 +5261,8 @@ void SpellHandler::handleSpellModifier(network::Packet& packet, bool isFlat) {
         }
         GameHandler::SpellModKey key{ .op = static_cast<GameHandler::SpellModOp>(modOpRaw), .group = groupIndex };
         modMap[key] = value;
+        LOG_INFO("Spell modifier (", isFlat ? "flat" : "pct", "): group ", static_cast<int>(groupIndex),
+                 " op ", static_cast<int>(modOpRaw), " value ", value);
     }
     packet.skipAll();
 }

@@ -4078,6 +4078,7 @@ const SpellDescriptionRecord* GameHandler::spellDescriptionRecord(uint32_t spell
         r.pointsPerComboPoint[e] = f32("EffectPointsPerComboPoint" + k);
         r.amplitudeMs[e] = u32("EffectAmplitude" + k);
         r.auraType[e] = u32("EffectApplyAuraName" + k);
+        r.effectType[e] = u32("Effect" + k);
         r.multipleValue[e] = f32("EffectMultipleValue" + k);
         r.chainTargets[e] = u32("EffectChainTarget" + k);
         r.miscValue[e] = static_cast<int32_t>(u32("EffectMiscValue" + k));
@@ -4166,6 +4167,7 @@ std::string GameHandler::formatSpellDescription(uint32_t selfSpellId,
         }
         return false;
     };
+    env.damageModifiers = [this](uint32_t id) { return spellModifiersFor(id, SpellModOp::Damage); };
     env.unresolved = [selfSpellId](const std::string& token) {
         LOG_WARNING("Spell ", selfSpellId, " description token ", token, " unresolved");
     };

@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 
 namespace wowee {
 namespace game {
@@ -52,6 +53,9 @@ struct SpellDescriptionRecord {
     float pointsPerComboPoint[3]{};
     uint32_t amplitudeMs[3]{};
     uint32_t auraType[3]{};
+    /// Spell.dbc Effect: what the effect does (2 school damage, 31 weapon
+    /// percent damage, ...).
+    uint32_t effectType[3]{};
     float multipleValue[3]{};
     uint32_t chainTargets[3]{};
     int32_t miscValue[3]{};
@@ -90,6 +94,9 @@ struct SpellDescriptionEnvironment {
     uint32_t auraStacks = 1;
     bool female = false;
     std::string homeName;
+    /// The player's damage modifiers (SpellModOp 0) for a spell: flat and
+    /// percent, from SMSG_SET_FLAT/PCT_SPELL_MODIFIER. Null for none.
+    std::function<std::pair<int32_t, int32_t>(uint32_t)> damageModifiers;
     /// Each token left unresolved, with its text.
     std::function<void(const std::string&)> unresolved;
 };

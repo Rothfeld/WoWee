@@ -154,3 +154,26 @@ TEST_CASE("An aura tooltip states its stacked amount", "[spell-description]") {
     CHECK(formatSpellDescriptionText(25225, "Armor decreased by $s1.", f.env) ==
           "Armor decreased by 1560.");
 }
+
+TEST_CASE("Damage modifiers change direct damage effects only", "[spell-description]") {
+    Fixture f;
+    // Native 2.4.3, Improved Eviscerate rank 1 (+5%): "254-380" at AP 200.
+    SpellDescriptionRecord evisc = effect(59, 121, 1);
+    evisc.pointsPerComboPoint[0] = 185.0f;
+    evisc.effectType[0] = 2;
+    f.spells[26865] = evisc;
+    f.player["AP"] = 200.0;
+    // Ambush rank 7: weapon percent damage 275 in effect 2, combo point in 3;
+    // the server's +15% reads "316 to 317%" and still "1 combo point".
+    SpellDescriptionRecord ambush;
+    ambush.basePoints[1] = 274; ambush.dieSides[1] = 1; ambush.baseDice[1] = 1; ambush.effectType[1] = 31;
+    ambush.basePoints[2] = 0; ambush.dieSides[2] = 1; ambush.baseDice[2] = 1; ambush.effectType[2] = 80;
+    f.spells[27441] = ambush;
+    f.env.damageModifiers = [](uint32_t id) {
+        return id == 26865 ? std::pair<int32_t, int32_t>{0, 5} : std::pair<int32_t, int32_t>{0, 15};
+    };
+    CHECK(formatSpellDescriptionText(26865,
+        "${$m1+($b1*1)+$AP*0.03}-${$M1+($b1*1)+$AP*0.03}", f.env) == "254-380");
+    CHECK(formatSpellDescriptionText(27441, "causing $s2% weapon damage. Awards $s3 combo", f.env) ==
+          "causing 316 to 317% weapon damage. Awards 1 combo");
+}

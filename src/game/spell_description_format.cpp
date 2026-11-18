@@ -43,6 +43,16 @@ EffectRange effectRange(const SpellDescriptionRecord& r, int index, uint32_t cas
     return out;
 }
 
+/// Direct damage effects, the ones the damage modifier (SpellModOp 0)
+/// changes in a description: school damage (2), weapon damage (17, 58, 121)
+/// and weapon percent damage (31). Native 2.4.3 with the server's +5%
+/// Eviscerate and +15% Ambush/Garrote modifiers: Eviscerate "254-380" (base
+/// 60-180 plus combo and AP terms), Ambush "316 to 317%" (275%); Garrote's
+/// periodic aura and Ambush's combo point effect stay as written.
+bool isDirectDamageEffect(uint32_t type) {
+    return type == 2 || type == 17 || type == 31 || type == 58 || type == 121;
+}
+
 std::string integerText(double v) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(std::llround(v)));
@@ -68,6 +78,18 @@ private:
     void report(const std::string& token) const {
         if (env_.unresolved) env_.unresolved(token);
     }
+    /// The effect's range with the player's damage modifiers applied, as
+    /// GameHandler::applySpellMod does: (value + flat) * (1 + pct / 100),
+    /// unrounded.
+    EffectRange modifiedRange(uint32_t id, const SpellDescriptionRecord& r, int index) const {
+        EffectRange e = effectRange(r, index, env_.casterLevel);
+        if (!env_.damageModifiers || !isDirectDamageEffect(r.effectType[index])) return e;
+        const auto [flat, pct] = env_.damageModifiers(id);
+        const auto apply = [&](double v) { return (v + flat) * (1.0 + pct / 100.0); };
+        e.min = apply(e.min);
+        e.max = apply(e.max);
+        return e;
+    }
 
     /// A single-letter token of spell `id`; signed for expressions.
     bool letterValue(uint32_t id, char code, int index, bool signedValue, bool maximum,
@@ -89,18 +111,21 @@ bool Formatter::letterValue(uint32_t id, char code, int index, bool signedValue,
     const auto magnitude = [&](double v) { return signedValue ? v : std::abs(v); };
     switch (code) {
         case 's': case 'S': {
-            const EffectRange e = effectRange(*r, index, env_.casterLevel);
+            const EffectRange e = modifiedRange(id, *r, index);
             const double stacks = id == self_ ? env_.auraStacks : 1.0;
             double lo = magnitude(e.min) * stacks, hi = magnitude(e.max) * stacks;
             if (lo > hi) std::swap(lo, hi);
             out = maximum ? hi : lo;
             if (textOut) {
-                *textOut = lo == hi ? integerText(lo) : integerText(lo) + " to " + integerText(hi);
+                // A modified value with a fraction reads as the whole numbers
+                // either side of it: Ambush's 275% at +15% is "316 to 317%".
+                const double low = std::floor(lo), high = std::ceil(hi);
+                *textOut = low == high ? integerText(low) : integerText(low) + " to " + integerText(high);
             }
             return true;
         }
         case 'm': case 'M': {
-            const EffectRange e = effectRange(*r, index, env_.casterLevel);
+            const EffectRange e = modifiedRange(id, *r, index);
             out = magnitude(code == 'M' ? e.max : e.min);
             if (textOut) *textOut = integerText(out);
             return true;
@@ -111,7 +136,7 @@ bool Formatter::letterValue(uint32_t id, char code, int index, bool signedValue,
             // per five seconds and carry no interval.
             if (period == 0 && (r->auraType[index] == 84 || r->auraType[index] == 85)) period = 5000;
             if (period == 0 || r->durationMs <= 0) return false;
-            const EffectRange e = effectRange(*r, index, env_.casterLevel);
+            const EffectRange e = modifiedRange(id, *r, index);
             // Not whole ticks: native Darnassian Bleu (433, 17 per 5 sec over
             // 18 sec) reads "Restores 61 health" = 17 * 18 / 5.
             const double ticks = static_cast<double>(r->durationMs) / period;
