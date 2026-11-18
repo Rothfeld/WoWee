@@ -1555,7 +1555,8 @@ void registerSocialLuaAPI(lua_State* L) {
                 {"CanSummonFriend", luaReturnFalse},
                 {"SummonFriend",    [](lua_State* L) -> int { (void)L; return 0; }},
                 // The voice mute list, which cannot have entries without voice.
-                {"GetSelectedMute", [](lua_State* L) -> int { return luaReturnNil(L); }},
+                // 0 with nothing selected, as 2.4.3 answers.
+                {"GetSelectedMute", [](lua_State* L) -> int { lua_pushnumber(L, 0); return 1; }},
                 {"SetSelectedMute", [](lua_State* L) -> int { (void)L; return 0; }},
                 {"GetMuteName",     [](lua_State* L) -> int { return luaReturnNil(L); }},
                 {"DelMute",         [](lua_State* L) -> int { (void)L; return 0; }},

@@ -861,6 +861,19 @@ inline uint32_t spellIdForCall(lua_State* L, game::GameHandler* gh) {
     return 0;
 }
 
+/// Primary professions the player may still learn: two, less those known
+/// (SkillLine category 11). The second value of UnitCharacterPoints("player")
+/// and GetAdjustedSkillPoints(); 2.4.3 answered 1 for both with Mining known.
+inline int freePrimaryProfessionSlots(game::GameHandler& gh) {
+    constexpr int kMaxPrimaryProfessions = 2;
+    int known = 0;
+    for (const auto& [skillId, skill] : gh.getPlayerSkills()) {
+        (void)skill;
+        if (gh.getSkillCategory(skillId) == 11) ++known;
+    }
+    return std::max(0, kMaxPrimaryProfessions - known);
+}
+
 /// The item a call names: an item id, an item link ("item:N:...") or a name
 /// already in the item cache. Zero when none of them resolves.
 inline uint32_t itemIdForCall(lua_State* L, int idx, game::GameHandler* gh) {

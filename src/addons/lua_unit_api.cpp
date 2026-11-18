@@ -1214,14 +1214,8 @@ static int lua_UnitCharacterPoints(lua_State* L) {
     toLowerInPlace(uidStr);
     if (!gh || uidStr != "player") { lua_pushinteger(L, 0); lua_pushinteger(L, 0); return 2; }
 
-    constexpr int kMaxPrimaryProfessions = 2;
-    int known = 0;
-    for (const auto& [skillId, skill] : gh->getPlayerSkills()) {
-        (void)skill;
-        if (gh->getSkillCategory(skillId) == 11) ++known;
-    }
     lua_pushinteger(L, static_cast<lua_Integer>(gh->getUnspentTalentPoints()));
-    lua_pushinteger(L, std::max(0, kMaxPrimaryProfessions - known));
+    lua_pushinteger(L, freePrimaryProfessionSlots(*gh));
     return 2;
 }
 

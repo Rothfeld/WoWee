@@ -3691,12 +3691,6 @@ static int lua_GetExpansionLevel(lua_State* L) {
     return 1;
 }
 
-/// Normal, which is the difficulty a fresh group is on.
-static int lua_ReturnOne(lua_State* L) {
-    lua_pushnumber(L, 1.0);
-    return 1;
-}
-
 // WorldStateAlwaysUpFrame's lines: WorldStateUI.dbc rows for the player's map
 // and area, filled in from the server's world states (game/world_state_ui.hpp).
 static std::vector<game::WorldStateUILine> worldStateUILines(lua_State* L) {
@@ -5711,7 +5705,30 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushboolean(L, gh && !gh->getEarnedAchievements().empty() ? 1 : 0);
             return 1;
         }},
-                {"TurnInGuildCharter",       lua_ReturnNothing},
+                // The guild registrar's Turn In: the carried Guild Charter
+                // (item 5863) goes back to the server, which reads only the
+                // petition's guid - the charter item's own.
+                {"TurnInGuildCharter", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (!gh) return 0;
+            constexpr uint32_t kGuildCharter = 5863;
+            const auto& inv = gh->getInventory();
+            for (int i = 0; i < inv.getBackpackSize(); ++i) {
+                if (inv.getBackpackSlot(i).item.itemId == kGuildCharter) {
+                    gh->turnInPetition(gh->getBackpackItemGuid(i));
+                    return 0;
+                }
+            }
+            for (int b = 0; b < game::Inventory::NUM_BAG_SLOTS; ++b) {
+                for (int sl = 0; sl < inv.getBagSize(b); ++sl) {
+                    if (inv.getBagSlot(b, sl).item.itemId == kGuildCharter) {
+                        gh->turnInPetition(gh->getBagItemGuid(b, sl));
+                        return 0;
+                    }
+                }
+            }
+            return 0;
+        }},
                 // Nothing is being driven, so aiming it does nothing
                 // and there is nothing to climb out of.
                 {"VehicleAimUpStart",        lua_ReturnNothing},
@@ -5762,7 +5779,37 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushnumber(L, (gh ? gh->getInstanceDifficulty() : 0u) + 1u);
             return 1;
         }},
-                {"GetChatTypeIndex",         lua_ReturnOne},
+                // GetChatTypeIndex(type) - the message id ChatFrame_OnLoad
+                // stores on each ChatTypeInfo entry, which AddMessage tags
+                // lines with and UpdateColorByID recolours by. One id for
+                // every type recoloured every line on any colour change.
+                {"GetChatTypeIndex", [](lua_State* L) -> int {
+            if (!game::isActiveExpansion("tbc")) { lua_pushnumber(L, 1); return 1; }
+            // Read off the 2.4.3 client for every ChatTypeInfo key: the
+            // ChatMsg enum plus one, CHANNEL1-10 after RESTRICTED, 0 for
+            // anything else (REPLY, unknown names).
+            static constexpr const char* kTypes[] = {
+                "SYSTEM", "SAY", "PARTY", "RAID", "GUILD", "OFFICER", "YELL",
+                // 9 is no ChatTypeInfo key; its name was not measured.
+                "WHISPER", nullptr, "WHISPER_INFORM", "EMOTE", "TEXT_EMOTE",
+                "MONSTER_SAY", "MONSTER_PARTY", "MONSTER_YELL", "MONSTER_WHISPER",
+                "MONSTER_EMOTE", "CHANNEL", "CHANNEL_JOIN", "CHANNEL_LEAVE",
+                "CHANNEL_LIST", "CHANNEL_NOTICE", "CHANNEL_NOTICE_USER", "AFK", "DND",
+                "IGNORED", "SKILL", "LOOT", "MONEY", "OPENING", "TRADESKILLS",
+                "PET_INFO", "COMBAT_MISC_INFO", "COMBAT_XP_GAIN", "COMBAT_HONOR_GAIN",
+                "COMBAT_FACTION_CHANGE", "BG_SYSTEM_NEUTRAL", "BG_SYSTEM_ALLIANCE",
+                "BG_SYSTEM_HORDE", "RAID_LEADER", "RAID_WARNING", "RAID_BOSS_EMOTE",
+                "RAID_BOSS_WHISPER", "FILTERED", "BATTLEGROUND", "BATTLEGROUND_LEADER",
+                "RESTRICTED", "CHANNEL1", "CHANNEL2", "CHANNEL3", "CHANNEL4",
+                "CHANNEL5", "CHANNEL6", "CHANNEL7", "CHANNEL8", "CHANNEL9", "CHANNEL10"};
+            const char* type = luaL_optstring(L, 1, "");
+            int index = 0;
+            for (int i = 0; i < static_cast<int>(std::size(kTypes)); ++i) {
+                if (kTypes[i] && std::strcmp(type, kTypes[i]) == 0) { index = i + 1; break; }
+            }
+            lua_pushnumber(L, index);
+            return 1;
+        }},
                 {"GetDefaultLanguage",       lua_GetDefaultLanguage},
                 {"GetWeaponEnchantInfo",     lua_GetWeaponEnchantInfo},
                 // The PvP reclaim timer, which this client already tracks.
@@ -5773,7 +5820,12 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushnumber(L, gh ? gh->getCorpseReclaimDelaySec() : 0.0);
             return 1;
         }},
-                {"GetAdjustedSkillPoints",   lua_ReturnZero},
+                // SkillFrame compares it with each learnable skill's cost.
+                {"GetAdjustedSkillPoints", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            lua_pushnumber(L, gh ? freePrimaryProfessionSlots(*gh) : 0);
+            return 1;
+        }},
                 // Which party slot holds the leader, in the same 1-to-4
                 // ordering resolveUnitGuid gives "party1".."party4": members
                 // other than the player, in order. Zero means the player leads
@@ -6223,13 +6275,42 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushstring(L, line);
             return 1;
         }},
-                // The GM survey. Four DBCs describe one, but a survey is
-                // something a game master sends and no opcode here delivers,
-                // so there is never one in progress: nil questions means the
-                // frame counts zero of them and draws empty, which is what an
-                // account with no survey pending should see.
-                {"GMSurveyQuestion",            lua_ReturnNil},
-                {"GMSurveyAnswer",              lua_ReturnNil},
+                // GMSurveyQuestion(i) - question i (1-10) of the current
+                // survey, whether or not one is pending: 2.4.3 answers
+                // question 1 with "Did the GM provide an appropriate answer
+                // or solution to your question/problem?" on a fresh login,
+                // and nil for 0 and for 6, where survey 6 has no question.
+                // GMSurveyCurrentSurvey maps the locale's LANGID to a survey,
+                // GMSurveySurveys lists its question ids, GMSurveyQuestions
+                // holds the text. GMSurveyAnswer does not exist on 2.4.3.
+                {"GMSurveyQuestion", [](lua_State* L) -> int {
+            const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+            auto* gh = getGameHandler(L);
+            auto* svc = getLuaServices(L);
+            auto* am = gh ? gh->services().assetManager : nullptr;
+            const auto* profile = svc && svc->expansionRegistry ? svc->expansionRegistry->getActive() : nullptr;
+            if (!am || !profile || index < 1 || index > 10) return luaReturnNil(L);
+            static const std::pair<const char*, uint32_t> kLangIds[] = {
+                {"enUS", 0}, {"enGB", 0}, {"koKR", 1}, {"frFR", 2}, {"deDE", 3},
+                {"zhCN", 4}, {"zhTW", 5}, {"esES", 6}, {"esMX", 7}};
+            const auto lang = std::find_if(std::begin(kLangIds), std::end(kLangIds),
+                [&](const auto& l) { return profile->locale == l.first; });
+            if (lang == std::end(kLangIds)) return luaReturnNil(L);
+            const auto current = am->loadDBC("GMSurveyCurrentSurvey.dbc");
+            const auto surveys = am->loadDBC("GMSurveySurveys.dbc");
+            const auto questions = am->loadDBC("GMSurveyQuestions.dbc");
+            if (!current || !current->isLoaded() || !surveys || !surveys->isLoaded() ||
+                !questions || !questions->isLoaded()) return luaReturnNil(L);
+            const int32_t langRow = current->findRecordById(lang->second);
+            if (langRow < 0) return luaReturnNil(L);
+            const int32_t surveyRow = surveys->findRecordById(current->getUInt32(langRow, 1));
+            if (surveyRow < 0 || surveys->getFieldCount() <= static_cast<uint32_t>(index))
+                return luaReturnNil(L);
+            const int32_t questionRow = questions->findRecordById(surveys->getUInt32(surveyRow, index));
+            if (questionRow < 0) return luaReturnNil(L);
+            lua_pushstring(L, questions->getString(questionRow, 1).c_str());
+            return 1;
+        }},
                 // Movie recording, which is a Mac client feature this build
                 // does not have. Its siblings above already answer; these are
                 // the ones MacOptionsFrame reaches as it loads, so each one
@@ -6267,8 +6348,8 @@ void registerSystemLuaAPI(lua_State* L) {
             return 1;
         }},
                 {"GetMultiCastTotemSpells",  lua_ReturnNil},
-                {"GetVoiceStatus",           lua_ReturnFalse},
-                {"GetMuteStatus",            lua_ReturnFalse},
+                {"GetVoiceStatus",           lua_ReturnNil},
+                {"GetMuteStatus",            lua_ReturnNil},
                 {"GetActiveVoiceChannel",    lua_ReturnNil},
                 {"GetVoiceCurrentSessionID", lua_ReturnNil},
                 // GetZonePVPInfo() → pvpType, isSubZonePvP, factionName
@@ -6315,7 +6396,12 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"ResetChatWindows",             lua_ResetChatWindows},
                 {"SetChatColorNameByClass",      lua_SetChatColorNameByClass},
                 {"GetChatColorNameByClass",      lua_GetChatColorNameByClass},
-                {"GetExistingLocales",       lua_ReturnNil},
+                // The locales installed. 2.4.3 lists every locale directory
+                // under Data (enGB and ruRU on this install); this client's
+                // extracted data carries one, the one GetLocale answers, so
+                // the Languages panel - registered only for more than one -
+                // stays away as there is nothing to switch to.
+                {"GetExistingLocales", lua_GetLocale},
                 // Read from the real keyboard: a shift-click means something
                 // different from a click, and FrameXML asks on every press.
                 {"IsShiftKeyDown",           lua_IsShiftKeyDown},
@@ -6521,9 +6607,9 @@ void registerSystemLuaAPI(lua_State* L) {
             lua_pushboolean(L, 0);
             return 1;
         }},
-                {"IsReferAFriendLinked",     lua_ReturnFalse},
+                {"IsReferAFriendLinked",     lua_ReturnNil},
                 {"IsStereoVideoAvailable",   lua_ReturnFalse},
-                {"IsVoiceChatEnabled",       lua_ReturnFalse},
+                {"IsVoiceChatEnabled",       lua_ReturnNil},
                 // False always, which is what disabled the zoom-out button at
                 // every level of the map. The only way back out of a zone was
                 // the right-click that reaches the same handler without
@@ -6875,7 +6961,7 @@ void registerSystemLuaAPI(lua_State* L) {
                 // cosmetic and wrong in the smaller direction.
                 //
                 // Turn this on with the recorder, not before it.
-                {"IsMacClient",              lua_ReturnFalse},
+                {"IsMacClient",              lua_ReturnNil},
                 // IsPartyLeader() - whether *this* player leads the group.
                 //
                 // The client has known this all along: the party data carries a
