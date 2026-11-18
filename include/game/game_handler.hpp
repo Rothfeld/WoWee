@@ -2701,8 +2701,14 @@ public:
     struct TotemSlot {
         uint32_t spellId     = 0;
         uint32_t durationMs  = 0;
+        /// The totem unit SMSG_TOTEM_CREATED named. The slot is held until
+        /// that unit is destroyed, not until the timer reads zero: native
+        /// Stoneclaw Totem (15 s) shows "0 seconds remaining" from 15.0 s and
+        /// its button goes when the server despawns the totem, about 0.3 s
+        /// later, when CMaNGOS puts it in an update's out-of-range list.
+        uint64_t guid        = 0;
         std::chrono::steady_clock::time_point placedAt{};
-        [[nodiscard]] bool active() const { return spellId != 0 && remainingMs() > 0; }
+        [[nodiscard]] bool active() const { return spellId != 0; }
         [[nodiscard]] float remainingMs() const {
             if (spellId == 0 || durationMs == 0) return 0.0f;
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2712,6 +2718,8 @@ public:
         }
     };
     static constexpr int NUM_TOTEM_SLOTS = 4;
+    /// The totem unit `guid` is gone: free its slot and tell the totem bar.
+    void releaseTotem(uint64_t guid);
     /// Pull down a totem by the slot it stands in.
     void destroyTotem(int slot);
 

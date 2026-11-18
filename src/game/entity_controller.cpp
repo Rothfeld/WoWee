@@ -281,6 +281,9 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
         }
 
         LOG_DEBUG("Entity went out of range: 0x", std::hex, guid, std::dec);
+        // CMaNGOS removes an expired totem this way (out-of-range block in
+        // SMSG_UPDATE_OBJECT), not with SMSG_DESTROY_OBJECT.
+        owner_.releaseTotem(guid);
         // Trigger despawn callbacks before removing entity
         if (entity->getType() == ObjectType::UNIT && owner_.creatureDespawnCallbackRef()) {
             owner_.creatureDespawnCallbackRef()(guid);
@@ -3003,6 +3006,7 @@ void EntityController::handleDestroyObject(network::Packet& packet) {
                 return;
             }
         }
+        owner_.releaseTotem(data.guid);
         // Mirror out-of-range handling: invoke render-layer despawn callbacks before entity removal.
         auto entity = entityManager.getEntity(data.guid);
         if (entity) {

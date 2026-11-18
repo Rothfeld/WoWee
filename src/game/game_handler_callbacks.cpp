@@ -2880,6 +2880,19 @@ void GameHandler::destroyTotem(int slot) {
     getSocket()->send(pkt);
 }
 
+void GameHandler::releaseTotem(uint64_t guid) {
+    if (guid == 0) return;
+    for (int slot = 0; slot < NUM_TOTEM_SLOTS; ++slot) {
+        auto& totem = activeTotemSlots_[slot];
+        if (totem.guid != guid) continue;
+        totem = TotemSlot{};
+        // TotemFrame_OnEvent reads GetTotemInfo for the slot: duration 0
+        // hides the button (TotemButton_Update).
+        if (addonEventCallbackRef())
+            addonEventCallbackRef()("PLAYER_TOTEM_UPDATE", {std::to_string(slot + 1)});
+    }
+}
+
 void GameHandler::deleteGmTicket() {
     if (socialHandler_) socialHandler_->deleteGmTicket();
 }
