@@ -1196,6 +1196,20 @@ material, blend and animation path. Doodad (M2) surfaces do not receive it,
 and vertical faces such as step risers stay bare. In UBRS the original also
 paints step sides.
 
+### Kalecgos's Spectral Realm
+
+The realm (spell 46019, map 580 at 1704.31, 927.98, -74.56) is WMO group
+`sunwell_046.wmo` (indoor 0x2000, no portals, WMOAreaTable "Inner Veil")
+128 yards under the plateau terrain. Terrain is drawn one-sided, so from
+below it is not drawn, as in native. Sathrovarr's template 1959 (faction
+960) is friendly to players by its template; aura 44852 makes the server send
+SMSG_SET_FORCED_REACTIONS 960 -> 1 (hostile), 14 -> 4 (friendly), which
+override template and standing (CMaNGOS Unit::GetReactionTo). Gotcha: a level
+40 test character dies to Sathrovarr within seconds once the reaction is
+forced; entering map 580 needs `.gm on` (level 70 + raid otherwise).
+Native draws nothing of the plateau above the realm and a blue-purple sky;
+WoWee still draws the plateau's models above and its own sky (open).
+
 ### Tab targeting
 
 `build/bin/test_tab_target` checks the rule. Tab (TargetNearestEnemy) and
