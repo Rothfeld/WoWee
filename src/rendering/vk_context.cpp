@@ -570,6 +570,10 @@ bool VkContext::selectPhysicalDevice() {
     blockCompressionSupported_ =
         enableIfPresent(&VkPhysicalDeviceFeatures::textureCompressionBC);
     pipeline::setBlockCompressionSupported(blockCompressionSupported_);
+    // Point sizes above one pixel: weather particles write gl_PointSize, and
+    // without this feature only 1.0 is defined. Sandstorm grains are 1-2 px.
+    LOG_INFO("Large points supported: ",
+             enableIfPresent(&VkPhysicalDeviceFeatures::largePoints) ? "YES" : "NO");
     // Bounds-checked buffer access, on unless asked otherwise. The one device
     // loss this client has ever pinned to a cause was a vertex shader reading
     // past the end of the M2 instance buffer; NVIDIA answers that read with a

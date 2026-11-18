@@ -47,6 +47,7 @@ class StarField;
 class Clouds;
 class LensFlare;
 class Weather;
+class SandStorm;
 class Lightning;
 class LightingManager;
 class SwimEffects;
@@ -308,6 +309,9 @@ private:
     std::unique_ptr<Clouds> clouds;
     std::unique_ptr<LensFlare> lensFlare;
     std::unique_ptr<Weather> weather;
+    std::unique_ptr<SandStorm> sandStorm;
+    /// Server sandstorm grade while outdoors, else 0; set before update.
+    float sandStormTarget_ = 0.0f;
     std::unique_ptr<Lightning> lightning;
     std::unique_ptr<LightingManager> lightingManager;
     std::unique_ptr<SkySystem> skySystem;  // Coordinator for sky rendering

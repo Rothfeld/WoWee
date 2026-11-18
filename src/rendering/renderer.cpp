@@ -22,6 +22,7 @@
 #include "rendering/clouds.hpp"
 #include "rendering/lens_flare.hpp"
 #include "rendering/weather.hpp"
+#include "rendering/sand_storm.hpp"
 #include "rendering/lightning.hpp"
 #include "rendering/lighting_manager.hpp"
 #include "core/profiler.hpp"
@@ -822,6 +823,7 @@ bool Renderer::initialize(core::Window* win) {
 
     questMarkerRenderer = std::make_unique<QuestMarkerRenderer>();
     footprintRenderer = std::make_unique<FootprintRenderer>();
+    sandStorm = std::make_unique<SandStorm>();
 
     LOG_INFO("Vulkan sub-renderers initialized (Phase 3)");
 
@@ -974,6 +976,11 @@ void Renderer::shutdown() {
     if (footprintRenderer) {
         footprintRenderer->shutdown();
         footprintRenderer.reset();
+    }
+
+    if (sandStorm) {
+        sandStorm->shutdown();
+        sandStorm.reset();
     }
 
     LOG_DEBUG("Renderer::shutdown - characterRenderer...");
@@ -1143,6 +1150,7 @@ void Renderer::applyMsaaChange() {
     if (characterRenderer) characterRenderer->recreatePipelines();
     if (footprintRenderer) footprintRenderer->recreatePipelines();
     if (weather) weather->recreatePipelines();
+    if (sandStorm) sandStorm->recreatePipelines();
     if (lightning) lightning->recreatePipelines();
     if (swimEffects) {
         syncSwimEffectsTargetPass();
@@ -2157,8 +2165,8 @@ void Renderer::update(float deltaTime) {
             } else {
                 // The server's weather, and only that: it sends fine weather
                 // on entering a zone that has none, and this drew a random
-                // zone weather over it. Fog and sandstorms have no particles
-                // here, so they draw nothing rather than rain.
+                // zone weather over it. Fog has no particles here. Sandstorms
+                // are their own effect (SandStorm), not rain particles.
                 switch (game::weatherKind(wType)) {
                     case game::WeatherKind::RAIN:         weather->setWeatherType(Weather::Type::RAIN); break;
                     case game::WeatherKind::SNOW:         weather->setWeatherType(Weather::Type::SNOW); break;
@@ -2168,6 +2176,13 @@ void Renderer::update(float deltaTime) {
                 weather->setIntensity(weather->getWeatherType() == Weather::Type::NONE ? 0.0f : wInt);
             }
             weather->setEnabled(!insideWmo);
+            // Off in indoor WMO groups only. The ruins of Ahn'Qiraj are outdoor
+            // WMO groups, and 2.4.3 draws the storm among them; isInsideWMO
+            // counts any group's box and turned it off there.
+            const bool cameraIndoors = wmoRenderer &&
+                wmoRenderer->isInsideInteriorWMO(camPos.x, camPos.y, camPos.z);
+            sandStormTarget_ = (!cameraIndoors &&
+                                game::weatherKind(wType) == game::WeatherKind::SANDSTORM) ? wInt : 0.0f;
 
             // Lightning flash disabled
             if (lightning) {
@@ -2177,6 +2192,7 @@ void Renderer::update(float deltaTime) {
             // No game handler (single-player without network) - zone weather only
             weather->updateZoneWeather(getCurrentZoneId(), deltaTime);
             weather->setEnabled(!insideWmo);
+            sandStormTarget_ = 0.0f;
         }
     }
 
@@ -2273,6 +2289,10 @@ void Renderer::update(float deltaTime) {
     // Update weather particles
     if (weather && camera) {
         weather->update(*camera, deltaTime);
+    }
+    if (sandStorm && camera) {
+        if (weather) sandStorm->setDensityScale(weather->densityScale());
+        sandStorm->update(*camera, deltaTime, sandStormTarget_);
     }
 
     // Update lightning (storm / heavy rain)
@@ -2538,6 +2558,9 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
         case 5:
             if (footprintRenderer && !footprintRenderer->initialize(this, vkCtx, perFrameSetLayout, cachedAssetManager))
                 LOG_WARNING("Footprint renderer re-init failed (non-fatal)");
+            if (sandStorm && !sandStorm->isInitialized() &&
+                !sandStorm->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
+                LOG_ERROR("Sandstorm weather initialization failed");
             break;
         default:
             deferredWorldInitPending_ = false;
@@ -3362,6 +3385,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 waterRenderer->render(cmd, perFrameSet, *camera, globalTime, false, frameIdx);
             }
             if (weather && camera) weather->render(cmd, perFrameSet);
+            if (sandStorm && camera) sandStorm->render(cmd, perFrameSet);
             if (lightning && camera && lightning->isEnabled()) lightning->render(cmd, perFrameSet);
             if (swimEffects && camera && !swimEffectsDrawWithWater_) {
                 swimEffects->render(cmd, perFrameSet);
@@ -3559,6 +3583,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (vkCtx) vkCtx->gpuMark(currentCmd, "water");
         }
         if (weather && camera) weather->render(currentCmd, perFrameSet);
+        if (sandStorm && camera) sandStorm->render(currentCmd, perFrameSet);
         if (lightning && camera && lightning->isEnabled()) lightning->render(currentCmd, perFrameSet);
         if (swimEffects && camera && !swimEffectsDrawWithWater_) {
             swimEffects->render(currentCmd, perFrameSet);

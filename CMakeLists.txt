@@ -928,6 +928,7 @@ set(WOWEE_SOURCES
     src/rendering/clouds.cpp
     src/rendering/lens_flare.cpp
     src/rendering/weather.cpp
+    src/rendering/sand_storm.cpp
     src/rendering/lightning.cpp
     src/rendering/lighting_manager.cpp
     src/rendering/sky_system.cpp
@@ -1163,6 +1164,7 @@ set(WOWEE_HEADERS
     include/rendering/clouds.hpp
     include/rendering/lens_flare.hpp
     include/rendering/weather.hpp
+    include/rendering/sand_storm.hpp
     include/rendering/lightning.hpp
     include/rendering/swim_effects.hpp
     include/rendering/world_map.hpp

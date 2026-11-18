@@ -36,6 +36,18 @@ neighbor's shared edge during merging.
 Spline particle trails retain their animated emitter's birth pose in model
 space. Reapplying the current bone to every live particle collapses Draenei
 holographic rune trails into bright bulbs.
+Sandstorms are SMSG_WEATHER states 22, 41 and 42 (Weather.dbc EffectType 3,
+no EffectTexture). `rendering::SandStorm` draws them as 2.4.3 does: point
+grains moved by the game's own `Shaders\Vertex\sand.bls` program (linear
+path, 0.2 s fade in and out, distance-sized points) and
+`Textures\Weather\WeatherMistGrainy01.blp` puffs, both in the fog colour and
+streaming at the camera from where it looks. Ruins of Ahn'Qiraj gets one when
+Ossirian sets heavy storm weather; Silithus, Tanaris and the AQ zones roll it
+from `game_weather`. `.wchange 3 1` forces it. Gotchas: the ruins are outdoor
+WMO groups, so only indoor groups switch it off; 239 LightIntBand and 41
+LightFloatBand rows store a key out of time order (storm LightParams 8 among
+them) and are sorted at load. Measurements and which constants are fitted:
+`_experiments/20261118T171000Z.aq20_sandstorm/` in the workspace.
 Matrix-created WMO doodad particles use authored placement scale for sprite
 width. See [authored particle motion](docs/authored-particles.md).
 Ground clutter uses expansion-specific DBC layouts. Vanilla/TBC
