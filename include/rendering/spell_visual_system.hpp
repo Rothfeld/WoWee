@@ -65,6 +65,13 @@ public:
     // caster's own position) at the caster; Volcanic Geyser 42052 (source
     // location only) shows none (_experiments/20261118T141843Z.supremus_ground).
     void playInstantAreaKit(uint32_t visualId, const glm::vec3& destination);
+    /// SpellVisual CasterImpactKit (TBC column 13) on the caster at
+    /// SMSG_SPELL_GO. Build 8606, pair 24: a player under Pillar of Fire
+    /// 43218 casts Burn 43217 every second, and kit 8255 (Flamestrike
+    /// Impact (2x), Fire ImpactDD Uber Base) puts a column of fire on them
+    /// each time; Zul'jin's invisible Column of Fire (24187) does the same.
+    /// The caller plays it only for a spell that hit at least one unit.
+    void playCasterImpactKit(uint32_t visualId, const glm::vec3& casterPosition, uint32_t casterInstanceId);
     /// SpellVisual ImpactAreaKit at the spell's destination. Spectral Blast
     /// 46648 (visual 10441, kit 9254 Shadow_Fissure_Base): the pink beams and
     /// dark shards native draws where the Spectral Rift opens.
@@ -232,6 +239,8 @@ private:
     std::unordered_map<uint32_t, uint32_t> impactKits_;
     std::unordered_map<uint32_t, uint32_t> instantAreaKits_;
     std::unordered_map<uint32_t, uint32_t> impactAreaKits_;
+    std::unordered_map<uint32_t, uint32_t> casterImpactKits_;
+    std::unordered_map<uint32_t, uint32_t> targetImpactKits_;
     std::unordered_map<uint32_t, uint32_t> persistentAreaKits_;
     std::unordered_map<uint64_t, std::vector<uint32_t>> persistentAreas_;  // key -> M2 instances
     /// M2 attachment 17, named Breath. SpellVisualKit's BreathEffect slot is

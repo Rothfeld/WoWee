@@ -3392,6 +3392,13 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         svs->playCastKit(visualId, casterPos,
                                          owner_.resolveUnitRenderInstance(data.casterUnit), ends, chained,
                                          std::max(0.0f, getSpellDuration(data.spellId)));
+                        // Only a spell that hit someone: Drums of Battle 35476
+                        // cast by a game master hit nobody and showed no wolf
+                        // head in the original; Drums of Restoration 35478
+                        // hitting its caster and a party member did.
+                        if (!data.hitTargets.empty())
+                            svs->playCasterImpactKit(visualId, casterPos,
+                                                     owner_.resolveUnitRenderInstance(data.casterUnit));
                         if (data.destination)
                             svs->playInstantAreaKit(visualId, core::coords::canonicalToRender(
                                 core::coords::serverToCanonical(*data.destination)));

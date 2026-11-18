@@ -104,6 +104,10 @@ void SpellVisualSystem::loadSpellVisualDbc() {
     // 2.4.3 data (MissileModel 7, InstantAreaKit 22 holds summon/portal kits).
     const uint32_t svInstantAreaKitField = svLayout ? svLayout->field("InstantAreaKit") : 0xFFFFFFFFu;
     const uint32_t svPersistentAreaKitField = svLayout ? svLayout->field("PersistentAreaKit") : 0xFFFFFFFFu;
+    // TBC columns 13/14 (Burn 43217's visual 9727: kit 8255 on the caster,
+    // 213 on each unit hit). Absent from other layouts.
+    const uint32_t svCasterImpactKitField = svLayout ? svLayout->field("CasterImpactKit") : 0xFFFFFFFFu;
+    const uint32_t svTargetImpactKitField = svLayout ? svLayout->field("TargetImpactKit") : 0xFFFFFFFFu;
     const uint32_t svImpactAreaKitField = svLayout ? svLayout->field("ImpactAreaKit") : 0xFFFFFFFFu;
     const uint32_t svMissileAttachmentField = svLayout ? svLayout->field("MissileAttachment") : 0xFFFFFFFFu;
     const uint32_t svMissileDestinationField =
@@ -271,6 +275,8 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         if (svImpactKitField < svFc) impactKits_[vid] = svDbc->getUInt32(i, svImpactKitField);
         if (svInstantAreaKitField < svFc) instantAreaKits_[vid] = svDbc->getUInt32(i, svInstantAreaKitField);
         if (svImpactAreaKitField < svFc) impactAreaKits_[vid] = svDbc->getUInt32(i, svImpactAreaKitField);
+        if (svCasterImpactKitField < svFc) casterImpactKits_[vid] = svDbc->getUInt32(i, svCasterImpactKitField);
+        if (svTargetImpactKitField < svFc) targetImpactKits_[vid] = svDbc->getUInt32(i, svTargetImpactKitField);
         if (svPersistentAreaKitField < svFc)
             persistentAreaKits_[vid] = svDbc->getUInt32(i, svPersistentAreaKitField);
         const uint32_t stateField = (*svLayout)["StateKit"];
@@ -572,17 +578,23 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
 
     // Cast and impact stages are independent, including deliberately empty kits.
-    const auto& kits = useImpactKit ? impactKits_ : castKits_;
-    const auto kit = kits.find(visualId);
-    if (kit == kits.end() || !kit->second) return;
-    // An impact kit's animation plays on the unit it lands on, as a kit sent
-    // by SMSG_PLAY_SPELL_IMPACT does: General Drakkisath's Knockdown (16790)
-    // and Backhand (6253) impact kit 348 throws the target down with
-    // Knockdown (121).
     if (useImpactKit) {
-        playSpellVisualKit(kit->second, worldPosition, attachInstanceId);
+        // A spell landing on a unit plays its ImpactKit and its TargetImpactKit
+        // there. Burn 43217 (Zul'jin's Column of Fire) has only the latter:
+        // kit 213, Fire ImpactDD Low Chest on each player it burns.
+        // An impact kit's animation plays on the unit it lands on, as a kit
+        // sent by SMSG_PLAY_SPELL_IMPACT does: General Drakkisath's Knockdown
+        // (16790) and Backhand (6253) impact kit 348 throws the target down
+        // with Knockdown (121).
+        for (const auto* kits : {&impactKits_, &targetImpactKits_}) {
+            const auto kit = kits->find(visualId);
+            if (kit != kits->end() && kit->second)
+                playSpellVisualKit(kit->second, worldPosition, attachInstanceId);
+        }
         return;
     }
+    const auto kit = castKits_.find(visualId);
+    if (kit == castKits_.end() || !kit->second) return;
     spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, /*isPrecast=*/false);
 }
 
@@ -1058,6 +1070,15 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     }
     LOG_INFO("SpellVisual: cast kit ", kit->second, " beam chain ", chainId->second, " to ", ends.size(),
              " end(s) for ", plays, " s", chained ? ", hopping" : "");
+}
+
+void SpellVisualSystem::playCasterImpactKit(uint32_t visualId, const glm::vec3& casterPosition,
+                                            uint32_t casterInstanceId) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto kit = casterImpactKits_.find(visualId);
+    if (kit == casterImpactKits_.end() || !kit->second) return;
+    LOG_INFO("SpellVisual: caster impact kit ", kit->second, " of visual ", visualId);
+    playSpellVisualKit(kit->second, casterPosition, casterInstanceId);
 }
 
 void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& destination) {

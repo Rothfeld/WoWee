@@ -448,6 +448,8 @@
     "CastKit": 2,
     "ID": 0,
     "ImpactKit": 3,
+    "CasterImpactKit": 13,
+    "TargetImpactKit": 14,
     "InstantAreaKit": 22,
     "ImpactAreaKit": 23,
     "PersistentAreaKit": 24,
