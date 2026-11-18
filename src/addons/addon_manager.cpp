@@ -809,12 +809,12 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
     // for the event. Same engine either way: the handler is what fills
     // ChatTypeInfo and repaints the lines already on screen.
     //
-    // 3.3.5's own palette. Anything not named here keeps white, which is what
-    // it had before, so a type left out is no worse than it was.
+    // 3.3.5's own palette for the other interfaces; TBC's measured table
+    // below. Anything not named keeps white.
     //
-    // Three decimals, because an event argument is only read back as a number
-    // when it is short: a full float arrives as a string and would be assigned
-    // straight into a colour field.
+    // Six decimals at most, because an event argument is only read back as a
+    // number when it is short (under twelve characters): a full float arrives
+    // as a string and would be assigned straight into a colour field.
     {
         struct ChatColour { const char* type; float r, g, b; };
         static constexpr ChatColour kChatColours[] = {
@@ -839,13 +839,80 @@ bool AddonManager::loadFrameXml(const std::string& frameXmlDir) {
             {"BG_SYSTEM_ALLIANCE", 0.25f, 0.75f, 1.0f},
             {"BG_SYSTEM_HORDE", 1.0f, 0.1f, 0.1f},
         };
+        // 2.4.3's own, every key: ChatTypeInfo read back on the original
+        // (pair 6, _experiments/20261118T074332Z.chatlines_native/
+        // native-chattypeinfo.txt). The 3.3.5 subset above left
+        // RAID_BOSS_EMOTE white - the Eredar Twins' emote is yellow
+        // (1, 0.867, 0) on the original - and 30 other kinds with it.
+        static constexpr ChatColour kTbcChatColours[] = {
+            {"AFK", 1.000000f, 0.501961f, 1.000000f},
+            {"BATTLEGROUND", 1.000000f, 0.498039f, 0.000000f},
+            {"BATTLEGROUND_LEADER", 1.000000f, 0.858824f, 0.717647f},
+            {"BG_SYSTEM_ALLIANCE", 0.000000f, 0.682353f, 0.937255f},
+            {"BG_SYSTEM_HORDE", 1.000000f, 0.000000f, 0.000000f},
+            {"BG_SYSTEM_NEUTRAL", 1.000000f, 0.470588f, 0.039216f},
+            {"CHANNEL10", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL1", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL2", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL3", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL4", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL5", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL6", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL7", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL8", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL9", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL", 1.000000f, 0.752941f, 0.752941f},
+            {"CHANNEL_JOIN", 0.752941f, 0.501961f, 0.501961f},
+            {"CHANNEL_LEAVE", 0.752941f, 0.501961f, 0.501961f},
+            {"CHANNEL_LIST", 0.752941f, 0.501961f, 0.501961f},
+            {"CHANNEL_NOTICE", 0.752941f, 0.752941f, 0.752941f},
+            {"CHANNEL_NOTICE_USER", 0.752941f, 0.752941f, 0.752941f},
+            {"COMBAT_FACTION_CHANGE", 0.501961f, 0.501961f, 1.000000f},
+            {"COMBAT_HONOR_GAIN", 0.878431f, 0.792157f, 0.039216f},
+            {"COMBAT_MISC_INFO", 0.501961f, 0.501961f, 1.000000f},
+            {"COMBAT_XP_GAIN", 0.435294f, 0.435294f, 1.000000f},
+            {"DND", 1.000000f, 0.501961f, 1.000000f},
+            {"EMOTE", 1.000000f, 0.501961f, 0.250980f},
+            {"FILTERED", 1.000000f, 0.000000f, 0.000000f},
+            {"GUILD", 0.250980f, 1.000000f, 0.250980f},
+            {"IGNORED", 1.000000f, 0.000000f, 0.000000f},
+            {"LOOT", 0.000000f, 0.666667f, 0.000000f},
+            {"MONEY", 1.000000f, 1.000000f, 0.000000f},
+            {"MONSTER_EMOTE", 1.000000f, 0.501961f, 0.250980f},
+            {"MONSTER_PARTY", 0.666667f, 0.666667f, 1.000000f},
+            {"MONSTER_SAY", 1.000000f, 1.000000f, 0.623529f},
+            {"MONSTER_WHISPER", 1.000000f, 0.709804f, 0.921569f},
+            {"MONSTER_YELL", 1.000000f, 0.250980f, 0.250980f},
+            {"OFFICER", 0.250980f, 0.752941f, 0.250980f},
+            {"OPENING", 0.501961f, 0.501961f, 1.000000f},
+            {"PARTY", 0.666667f, 0.666667f, 1.000000f},
+            {"PET_INFO", 0.501961f, 0.501961f, 1.000000f},
+            {"RAID", 1.000000f, 0.498039f, 0.000000f},
+            {"RAID_BOSS_EMOTE", 1.000000f, 0.866667f, 0.000000f},
+            {"RAID_BOSS_WHISPER", 1.000000f, 0.866667f, 0.000000f},
+            {"RAID_LEADER", 1.000000f, 0.282353f, 0.035294f},
+            {"RAID_WARNING", 1.000000f, 0.282353f, 0.000000f},
+            {"REPLY", 1.000000f, 0.501961f, 1.000000f},
+            {"RESTRICTED", 1.000000f, 0.000000f, 0.000000f},
+            {"SAY", 1.000000f, 1.000000f, 1.000000f},
+            {"SKILL", 0.333333f, 0.333333f, 1.000000f},
+            {"SYSTEM", 1.000000f, 1.000000f, 0.000000f},
+            {"TEXT_EMOTE", 1.000000f, 0.501961f, 0.250980f},
+            {"TRADESKILLS", 1.000000f, 1.000000f, 1.000000f},
+            {"WHISPER", 1.000000f, 0.501961f, 1.000000f},
+            {"WHISPER_INFORM", 1.000000f, 0.501961f, 1.000000f},
+            {"YELL", 1.000000f, 0.250980f, 0.250980f},
+        };
+        const bool tbc = interfaceVersion >= 20000 && interfaceVersion < 30000;
         char r[16], g[16], b[16];
-        for (const auto& c : kChatColours) {
-            std::snprintf(r, sizeof(r), "%.3f", c.r);
-            std::snprintf(g, sizeof(g), "%.3f", c.g);
-            std::snprintf(b, sizeof(b), "%.3f", c.b);
+        auto send = [&](const ChatColour& c) {
+            std::snprintf(r, sizeof(r), "%.6f", c.r);
+            std::snprintf(g, sizeof(g), "%.6f", c.g);
+            std::snprintf(b, sizeof(b), "%.6f", c.b);
             luaEngine_.fireEvent("UPDATE_CHAT_COLOR", {c.type, r, g, b});
-        }
+        };
+        if (tbc) for (const auto& c : kTbcChatColours) send(c);
+        else for (const auto& c : kChatColours) send(c);
     }
 
     // Whether that landed. chatframe.lua sets every ChatTypeInfo entry to white
