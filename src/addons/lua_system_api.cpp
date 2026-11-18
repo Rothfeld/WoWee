@@ -1199,15 +1199,10 @@ struct ClientCVarBinding {
 // drives. Naming the fields makes both of them see an empty table.
 constexpr ClientCVarBinding kClientCVars[] = {
     {"farclip",              "viewdistance"},
-    // Mouse Sensitivity. Its shipped range is 0.5 to 1.5, a multiplier around
-    // 1.0, and this client's sensitivity is an amount that runs 0.05 to 1.0 -
-    // so passed through unchanged the slowest setting that slider offered was
-    // two and a half times this client's default. Its range is redefined in
-    // kCVarRanges rather than converted here, which is what farclip and
-    // cameraYawMoveSpeed do, and it has to be: Mouse Look Speed writes this
-    // same setting through that route, so a scale on this one alone would have
-    // the two sliders disagree about the value they share.
-    {"mousespeed",           "mousespeed"},
+    // mouseSpeed (Mouse Sensitivity) is not bound to the camera: build 8606's
+    // mouse-look rate does not change with it (measured, ledger 127c). Bound
+    // here it set the camera to its native default 1.0 - five times the
+    // mouse-look rate.
     {"showclock",            "minimapclock"},
     {"nameplateshowfriends", "friendlyplates"},
     // Not gxWindow: it is the fullscreen row the other way round, which a scale
@@ -5360,10 +5355,6 @@ constexpr CVarRange kCVarRanges[] = {
     {"texturefilteringmode", 0.0f, 4.0f},
     // Mouse Look Speed, over the range this client's own mouse slider uses.
     {"camerayawmovespeed", 0.05f, 1.0f},
-    // Mouse Sensitivity, which writes the same setting as Mouse Look Speed
-    // above and so has to offer the same range. Shipped as 0.5 to 1.5, a
-    // multiplier around 1.0, against a setting that sits at 0.2 and stops at 1.
-    {"mousespeed", 0.05f, 1.0f},
     // Camera Following Speed. Not the shipped range: see the note in
     // applyCVarSideEffects - these are the bounds the camera itself clamps to,
     // so every position on the slider is a speed this client can actually run.
