@@ -942,9 +942,10 @@ misses uphill landings and leaves jump momentum active after penetration recover
 Regression target: `test_hill_climbing`.
 
 Moving landings resolve directly to walk/run. Character rendering cross-fades
-jump, landing and locomotion sequences using the destination sequence's authored
-blend time. Outgoing one-shots clamp at their final frame during the blend;
-looping sequences wrap. Stationary landings retain JumpEnd.
+every change of animation using the destination sequence's authored blend time
+(see [Missing animations and cross-fades](#missing-animations-and-cross-fades)).
+Outgoing one-shots clamp at their final frame during the blend; looping
+sequences wrap. Stationary landings retain JumpEnd.
 
 Descending floor selection excludes prop/structure candidates above previous
 feet. A nearby log rim must not hide terrain crossed beneath it. Terrain retains
@@ -1154,7 +1155,7 @@ Every looping animation starts on a variation drawn by M2 frequency and redraws 
 
 Walk or Run (rendering::splineGroundGaitWalks) compares the spline speed with the Walk stride at the display's own size: OBJECT_FIELD_SCALE_X enlarges the model but not the stride. Native Akama 21700 (display 20681 x1.3, Walk 2.5) ran at 6.94 yd/s at object scale 1, 2 and 3; Akama 22990 (same display, created at object scale 2) ran at 8.0; El Pollo Grande (display 589 x10) walked at 8.0. For Black Temple Akama 23089 (display 21112 x2.6, run speed 10) the rule gives Walk (stride 6.5, threshold 13); a native 21700 given display 21112 also walked at 10.4. The real Illidan event was not observed natively.
 
-### Missing animations
+### Missing animations and cross-fades
 
 ```sh
 WOWEE_TBC_DATA_DIR=client/wowee-data/expansions/tbc build/bin/test_playable_animation
@@ -1176,6 +1177,15 @@ ReadyUnarmed. Native build 8606 follows the lookup: `.npc playemote 39`
 (ParryUnarmed) and `43` (ShieldBlock) left JAB Nether Serpent (21329) in Stand,
 `44` (ReadyUnarmed, which it has) raised its ready stance; WoWee had shown the
 ready stance for all three. `rendering/animation/playable_animation.hpp`.
+
+Every change of animation cross-fades from the shown pose into the new sequence
+over that sequence's authored blend time, into and out of one-shots too. Native
+Ice Thistle Yeti (7458, Wendigo.m2: no ready stance, AttackUnarmed 1000 ms,
+Stand blend 350 ms) moved on 1.27-1.30 s after each swing and eased back into
+Stand; WoWee cut from the swing's last frame to Stand's first after 1.0 s, the
+reported snap to the idle pose after every attack (Qiraji Gladiator, Wendigo
+yetis, every model whose swing ends away from its idle pose). A stand-in frozen
+on its last frame (a corpse coming into view) shows at once.
 
 M2 sequence flags 0x2, 0x4 and 0x8 copy AnimationData BodyFlags 0x200, 0x400
 and 0x800 (0x2 on every Death and SleepDown, 0x4 on SleepUp, 0x8 on Sleep, Fly

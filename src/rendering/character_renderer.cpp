@@ -2317,43 +2317,21 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
             LOG_WARNING("Animation ", animationId, " not found in model ", mId, ", using default");
         }
     }
-    // Locomotion and weapon-ready poses share authored cross-fades. Entering
-    // or leaving combat must blend the skeleton, without replaying a weapon
-    // draw. One-shot animation chains retain their completion semantics.
-    const auto blendablePose = [](uint32_t id) {
-        switch (id) {
-            case anim::STAND:
-            case anim::WALK:
-            case anim::RUN:
-            case anim::SPRINT:
-            case anim::WALK_BACKWARDS:
-            case anim::SHUFFLE_LEFT:
-            case anim::SHUFFLE_RIGHT:
-            case anim::SWIM_IDLE:
-            case anim::SWIM:
-            case anim::SWIM_LEFT:
-            case anim::SWIM_RIGHT:
-            case anim::SWIM_BACKWARDS:
-            case anim::JUMP_START:
-            case anim::JUMP:
-            case anim::JUMP_END:
-            case anim::READY_UNARMED:
-            case anim::READY_1H:
-            case anim::READY_2H:
-            case anim::READY_2H_LOOSE:
-            case anim::READY_BOW:
-            case anim::READY_RIFLE:
-            case anim::READY_THROWN:
-            case anim::READY_SPELL_DIRECTED:
-                return true;
-            default:
-                return false;
-        }
-    };
+    // Every change of animation cross-fades from the pose shown to the new
+    // sequence over that sequence's authored blend time, one-shots included.
+    // Native build 8606 Ice Thistle Yeti (Wendigo.m2, AttackUnarmed 1000 ms,
+    // Stand blend 350 ms) moves on for 1.27-1.30 s after each swing packet
+    // and eases back to Stand; WoWee cut from the swing's last frame to
+    // Stand's first, the snap to the idle pose after every attack the user
+    // reported (_experiments/20261118T205000Z.anim_fallback, yeti2, yo1).
+    // A one-shot restarted (consecutive swings) blends from where it was. A
+    // stand-in frozen on its last frame (a corpse coming into view) is shown
+    // at once.
+    const bool frozenStandIn = instance.holdFinalPose && instance.currentSequenceIndex >= 0 &&
+        instance.animationTime >= static_cast<float>(model.sequences[instance.currentSequenceIndex].duration);
     instance.blendSequenceIndex = -1;
-    if (previousSequence >= 0 && previousId != instance.currentAnimationId &&
-        blendablePose(previousId) && blendablePose(instance.currentAnimationId) &&
-        instance.currentSequenceIndex >= 0) {
+    if (previousSequence >= 0 && instance.currentSequenceIndex >= 0 && !frozenStandIn &&
+        (previousId != instance.currentAnimationId || !loop)) {
         instance.blendDuration = model.sequences[instance.currentSequenceIndex].blendTime;
         if (instance.blendDuration > 0.0f) {
             instance.blendSequenceIndex = previousSequence;
