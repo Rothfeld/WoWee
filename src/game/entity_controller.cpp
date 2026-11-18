@@ -586,8 +586,18 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
             }
             a.durationMs = -1;
             a.maxDurationMs = -1;
-            if (static_cast<size_t>(slot) < previousAuras.size() &&
-                (previousAuras[slot].spellId == a.spellId ||
+            auto& pending = owner_.getSpellHandler()->pendingPlayerAuraDurations();
+            const auto pendingIt = localPlayer ? pending.find(static_cast<uint8_t>(slot)) : pending.end();
+            const bool sameAura = static_cast<size_t>(slot) < previousAuras.size() &&
+                                  previousAuras[slot].spellId == a.spellId;
+            if (!sameAura && pendingIt != pending.end()) {
+                // A new aura in this slot, whose duration came first - also
+                // when it replaced the aura that held the slot.
+                a.durationMs = pendingIt->second.durationMs;
+                a.maxDurationMs = pendingIt->second.durationMs;
+                a.receivedAtMs = pendingIt->second.receivedAtMs;
+            } else if (static_cast<size_t>(slot) < previousAuras.size() &&
+                (sameAura ||
                  (previousAuras[slot].isEmpty() && previousAuras[slot].durationMs >= 0))) {
                 a.durationMs = previousAuras[slot].durationMs;
                 a.maxDurationMs = previousAuras[slot].maxDurationMs;
@@ -595,6 +605,7 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
             } else {
                 a.receivedAtMs = nowMs;
             }
+            if (pendingIt != pending.end()) pending.erase(pendingIt);
             a.casterGuid = localPlayer ? owner_.getPlayerGuid() : 0;
         } else if (static_cast<size_t>(slot) < previousAuras.size() &&
                    previousAuras[slot].isEmpty() && previousAuras[slot].durationMs >= 0) {

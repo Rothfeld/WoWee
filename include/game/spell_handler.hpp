@@ -216,6 +216,16 @@ public:
     void resetPlayerAuras(size_t capacity) { playerAuras_.clear(); playerAuras_.resize(capacity); }
     AuraSlot& getPlayerAuraSlotRef(size_t slot) { return playerAuras_[slot]; }
     std::vector<AuraSlot>& getPlayerAurasMut() { return playerAuras_; }
+    /// The last SMSG_UPDATE_AURA_DURATION for a player aura slot, kept until
+    /// the update fields say which spell the slot holds. CMaNGOS sends the
+    /// duration when the aura is applied and the UNIT_FIELD_AURA change only
+    /// with the next object update, so when a new aura takes the slot of the
+    /// one it replaces (Hydross' Mark of Hydross 38215 -> 38216 -> ...) the
+    /// duration arrives while the slot still names the old spell.
+    struct PendingAuraDuration { int32_t durationMs = -1; uint64_t receivedAtMs = 0; };
+    std::unordered_map<uint8_t, PendingAuraDuration>& pendingPlayerAuraDurations() {
+        return pendingPlayerAuraDurations_;
+    }
 
     // Target cast helpers
     [[nodiscard]] bool isTargetCasting() const;
@@ -603,6 +613,7 @@ private:
 
     // Auras
     std::vector<AuraSlot> playerAuras_;
+    std::unordered_map<uint8_t, PendingAuraDuration> pendingPlayerAuraDurations_;
     std::vector<AuraSlot> targetAuras_;
     std::unordered_map<uint64_t, std::vector<AuraSlot>> unitAurasCache_;
 

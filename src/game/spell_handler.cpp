@@ -4207,14 +4207,21 @@ void SpellHandler::clearUnitCaches() {
 // ============================================================
 
 void SpellHandler::handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs) {
-    if (slot >= playerAuras_.size()) return;
-    // Duration may arrive before the corresponding object-field update.
-    playerAuras_[slot].durationMs = durationMs == 0 ? -1 : static_cast<int32_t>(durationMs);
-    if (playerAuras_[slot].maxDurationMs < playerAuras_[slot].durationMs)
-        playerAuras_[slot].maxDurationMs = playerAuras_[slot].durationMs;
-    playerAuras_[slot].receivedAtMs = static_cast<uint64_t>(
+    const int32_t duration = durationMs == 0 ? -1 : static_cast<int32_t>(durationMs);
+    const auto now = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
+    // Duration may arrive before the corresponding object-field update; see
+    // pendingPlayerAuraDurations.
+    pendingPlayerAuraDurations_[slot] = {duration, now};
+    LOG_DEBUG("SMSG_UPDATE_AURA_DURATION slot=", static_cast<int>(slot), " ms=", durationMs,
+              " held=", slot < playerAuras_.size() ? playerAuras_[slot].spellId : 0u);
+    if (slot >= playerAuras_.size()) return;
+    playerAuras_[slot].durationMs = duration;
+    // The full length for a fresh application, not the larger of old and new:
+    // a slot taken over by a new aura must not keep the old aura's maximum.
+    playerAuras_[slot].maxDurationMs = duration;
+    playerAuras_[slot].receivedAtMs = now;
     refreshRestorationFromPlayerAuras();
 }
 
