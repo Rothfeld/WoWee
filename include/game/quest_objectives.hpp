@@ -40,6 +40,9 @@ inline int questObjectiveCount(const GameHandler::QuestLogEntry& q) {
     for (const auto& item : q.itemObjectives) {
         if (isQuestObjective(static_cast<int32_t>(item.itemId), item.required)) ++count;
     }
+    // The quest's EndText is an objective of its own ("event"), as 2.4.3
+    // lists it: "Ark of Ssslith safely returned to Sporeggar".
+    if (!q.endText.empty()) ++count;
     return count;
 }
 

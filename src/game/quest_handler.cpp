@@ -1109,8 +1109,22 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             return;
         }
 
-        uint32_t questId = packet.readUInt32();
-        packet.readUInt32(); // questMethod
+        // An expansion whose writer is known is read field by field; the
+        // others fall through to the offset seeds and the printable scan.
+        QuestQueryResponseData exact;
+        const std::optional<bool> exactRead = owner_.getPacketParsers()
+            ? owner_.getPacketParsers()->parseQuestQueryResponse(packet, exact)
+            : std::nullopt;
+        if (exactRead.has_value() && !*exactRead) {
+            LOG_WARNING("SMSG_QUEST_QUERY_RESPONSE: ", packet.getSize(),
+                        " bytes do not fit the quest query layout");
+            return;
+        }
+        const bool isExact = exactRead.has_value();
+        if (!isExact) packet.setReadPos(0);
+
+        uint32_t questId = isExact ? exact.questId : packet.readUInt32();
+        if (!isExact) packet.readUInt32(); // questMethod
 
         const uint8_t questLogStride = owner_.getPacketParsers()
                                            ? owner_.getPacketParsers()->questLogStride() : 5;
@@ -1119,7 +1133,9 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
         // questLevel is the third field (after questId + questMethod) in every
         // expansion's SMSG_QUEST_QUERY_RESPONSE; -1 = player-scaling (WotLK)
         int32_t questLevel = 0;
-        if (packet.getData().size() >= 12) {
+        if (isExact) {
+            questLevel = exact.level;
+        } else if (packet.getData().size() >= 12) {
             questLevel = static_cast<int32_t>(readU32At(packet.getData(), 8));
             if (questLevel < -1 || questLevel > 255) questLevel = 0; // sanity: wrong layout
         }
@@ -1128,7 +1144,9 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
         // (which inserted MinLevel before it). >0 = AreaTable zone id, <0 =
         // QuestSort.dbc category. Used to group the quest log by zone.
         int32_t zoneOrSort = 0;
-        {
+        if (isExact) {
+            zoneOrSort = exact.zoneOrSort;
+        } else {
             const size_t zosOffset = (questLogStride >= 5) ? 16 : 12;
             if (packet.getData().size() >= zosOffset + 4) {
                 zoneOrSort = static_cast<int32_t>(readU32At(packet.getData(), zosOffset));
@@ -1136,8 +1154,23 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
             }
         }
 
-        const QuestQueryTextCandidate parsed = pickBestQuestQueryTexts(packet.getData(), isClassicLayout);
-        const QuestQueryObjectives objs = extractQuestQueryObjectives(packet.getData(), questLogStride);
+        QuestQueryTextCandidate parsed;
+        QuestQueryObjectives objs;
+        if (isExact) {
+            parsed.title = normalizeQuestText(exact.title, true);
+            parsed.objectives = normalizeQuestText(exact.objectives, false);
+            parsed.description = normalizeQuestText(exact.details, false);
+            parsed.completionText = pickQuestCompletedLine(exact.endText, "");
+            for (size_t i = 0; i < 4; ++i) {
+                const auto& rec = exact.objectiveRecords[i];
+                objs.kills[i] = {rec.creatureOrGoId, rec.creatureOrGoCount};
+                objs.items[i] = {rec.itemId, rec.itemCount};
+            }
+            objs.valid = true;
+        } else {
+            parsed = pickBestQuestQueryTexts(packet.getData(), isClassicLayout);
+            objs = extractQuestQueryObjectives(packet.getData(), questLogStride);
+        }
         // What the text and objective parses actually found, at warning so it
         // survives the default log. Two reports meet here: a blank description
         // panel, and no objectives shown on screen or in the log. The text
@@ -1169,11 +1202,43 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                     parsed.debugThirdRaw.substr(0, 50), "\"",
                     " objParse: valid=", objs.valid ? 1 : 0,
                     " kills=", objKills, " items=", objItems);
-        const QuestQueryRewardsData rwds = QuestQueryRewardsParser::parse(packet.getData(), questLogStride);
+        QuestQueryRewardsData rwds;
+        if (isExact) {
+            rwds.rewardMoney = exact.rewardMoney;
+            rwds.itemId = exact.rewardItemId;
+            rwds.itemCount = exact.rewardItemCount;
+            rwds.choiceItemId = exact.choiceItemId;
+            rwds.choiceItemCount = exact.choiceItemCount;
+            rwds.sourceItemId = exact.sourceItemId;
+            // The spell the quest shows; RewSpellCast is what is cast on reward.
+            rwds.rewardSpellId = exact.rewardSpell;
+            rwds.rewardHonor = exact.rewardHonor;
+            rwds.rewardTitleId = exact.charTitleId;
+            rwds.valid = true;
+        } else {
+            rwds = QuestQueryRewardsParser::parse(packet.getData(), questLogStride);
+        }
 
         for (auto& q : questLog_) {
             if (q.questId != questId) continue;
 
+            if (isExact) {
+                // Every field is the server's own: nothing to weigh up.
+                q.level = questLevel;
+                q.zoneOrSort = zoneOrSort;
+                q.type = exact.type;
+                q.suggestedPlayers = exact.suggestedPlayers;
+                q.flags = exact.flags;
+                q.rewardMoneyMaxLevel = exact.rewardMoneyMaxLevel;
+                for (size_t i = 0; i < 4; ++i)
+                    q.objectiveTexts[i] = normalizeQuestText(exact.objectiveTexts[i], true);
+                q.endText = normalizeQuestText(exact.endText, true);
+                q.queryExact = true;
+                q.title = parsed.title;
+                q.objectives = parsed.objectives;
+                q.description = parsed.description;
+                q.completionText = parsed.completionText;
+            }
             if (questLevel != 0) q.level = questLevel;
             if (zoneOrSort != 0) q.zoneOrSort = zoneOrSort;
 
@@ -1668,6 +1733,7 @@ void QuestHandler::abandonQuest(uint32_t questId) {
     }
 
     if (localIndex >= 0) {
+        owner_.setQuestTracked(questId, false);
         questLog_.erase(questLog_.begin() + static_cast<ptrdiff_t>(localIndex));
         if (owner_.addonEventCallbackRef()) {
             owner_.addonEventCallbackRef()("QUEST_LOG_UPDATE", {});
@@ -1734,6 +1800,113 @@ int QuestHandler::maxQuestLogSlots() const {
     return isClassicLikeExpansion() ? 20 : 25;
 }
 
+QuestHandler::QuestLogRows QuestHandler::questLogRows() {
+    // Measured on 2.4.3 with quests in nine headers, a QuestSort among them
+    // (_experiments/20261118T2010Z.questlog_audit): every header in name
+    // order - Herbalism and Special sort among the zones, not after them -
+    // and under each the quests by level, then title. A level -1 quest sorts
+    // at the player's level, as GetQuestLogTitle reports it.
+    struct Group {
+        int32_t key = 0;
+        std::string title;
+        std::vector<const QuestLogEntry*> quests;
+    };
+    std::map<int32_t, Group> byKey;
+    for (const auto& q : questLog_) {
+        if (q.questId == 0) continue;
+        auto& g = byKey[q.zoneOrSort];
+        g.key = q.zoneOrSort;
+        g.quests.push_back(&q);
+    }
+    const int32_t playerLevel = static_cast<int32_t>(owner_.getPlayerLevel());
+    const auto shownLevel = [playerLevel](const QuestLogEntry* q) {
+        return q->level == -1 ? playerLevel : q->level;
+    };
+    std::vector<Group*> ordered;
+    ordered.reserve(byKey.size());
+    for (auto& [key, g] : byKey) {
+        if (key > 0) {
+            g.title = owner_.getAreaName(static_cast<uint32_t>(key));
+        } else if (key < 0) {
+            g.title = getQuestSortName(static_cast<uint32_t>(-key));
+        }
+        // A quest whose query response has not landed has no zone yet, and one
+        // whose zone is not in the file still has to sit somewhere nameable.
+        if (g.title.empty()) g.title = "Miscellaneous";
+        std::stable_sort(g.quests.begin(), g.quests.end(),
+                         [&](const QuestLogEntry* a, const QuestLogEntry* b) {
+            if (shownLevel(a) != shownLevel(b)) return shownLevel(a) < shownLevel(b);
+            if (a->title != b->title) return a->title < b->title;
+            return a->questId < b->questId;
+        });
+        ordered.push_back(&g);
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const Group* a, const Group* b) {
+        if (a->title != b->title) return a->title < b->title;
+        return a->key < b->key;
+    });
+
+    QuestLogRows out;
+    for (const Group* g : ordered) {
+        QuestLogRow header;
+        header.isHeader = true;
+        header.group = g->key;
+        header.headerTitle = g->title;
+        out.rows.push_back(std::move(header));
+        if (collapsedQuestGroups_.count(g->key)) continue;
+        for (const auto* q : g->quests) out.rows.push_back({false, g->key, {}, q});
+    }
+    out.visible = out.rows.size();
+    // The quests folded away under collapsed headers. 2.4.3 answers them past
+    // the visible count; its order among them was seen to change between
+    // updates, so this keeps the header order instead.
+    for (const Group* g : ordered) {
+        if (!collapsedQuestGroups_.count(g->key)) continue;
+        for (const auto* q : g->quests) out.rows.push_back({false, g->key, {}, q});
+    }
+    return out;
+}
+
+int QuestHandler::questLogIndexOf(uint32_t questId) {
+    if (questId == 0) return 0;
+    const auto rows = questLogRows();
+    for (size_t i = 0; i < rows.rows.size(); ++i) {
+        if (rows.rows[i].quest && rows.rows[i].quest->questId == questId) {
+            return static_cast<int>(i) + 1;   // the interface counts from one
+        }
+    }
+    return 0;
+}
+
+void QuestHandler::setQuestHeaderCollapsed(int index, bool collapse) {
+    const auto rows = questLogRows();
+    if (index >= 1 && index <= static_cast<int>(rows.visible) && rows.rows[index - 1].isHeader) {
+        if (collapse) collapsedQuestGroups_.insert(rows.rows[index - 1].group);
+        else          collapsedQuestGroups_.erase(rows.rows[index - 1].group);
+    } else if (collapse) {
+        for (const auto& row : rows.rows) {
+            if (row.isHeader) collapsedQuestGroups_.insert(row.group);
+        }
+    } else {
+        collapsedQuestGroups_.clear();
+    }
+    // Every call, a header that was already so included.
+    owner_.queueAddonEvent("QUEST_LOG_UPDATE", {});
+}
+
+int QuestHandler::getSelectedQuestLogIndex() {
+    const int index = questLogIndexOf(selectedQuestId_);
+    if (index == 0) selectedQuestId_ = 0;   // the quest left the log
+    return index;
+}
+
+void QuestHandler::setSelectedQuestLogIndex(int idx) {
+    if (idx < 1) return;
+    const auto rows = questLogRows();
+    if (idx > static_cast<int>(rows.rows.size())) return;
+    if (const auto* q = rows.rows[idx - 1].quest) selectedQuestId_ = q->questId;
+}
+
 const std::string& QuestHandler::getQuestSortName(uint32_t sortId) {
     static const std::string kEmpty;
     if (!questSortDbcLoaded_) {
@@ -1755,6 +1928,28 @@ const std::string& QuestHandler::getQuestSortName(uint32_t sortId) {
     }
     auto it = questSortNames_.find(sortId);
     return it != questSortNames_.end() ? it->second : kEmpty;
+}
+
+const std::string& QuestHandler::getQuestInfoName(uint32_t typeId) {
+    static const std::string kEmpty;
+    if (!questInfoDbcLoaded_) {
+        questInfoDbcLoaded_ = true;
+        auto* am = owner_.services().assetManager;
+        if (am && am->isInitialized()) {
+            // Same shape as QuestSort.dbc: ID, then the name locstring.
+            auto dbc = am->loadDBC("QuestInfo.dbc");
+            if (dbc && dbc->isLoaded() && dbc->getFieldCount() >= 2) {
+                for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+                    const uint32_t id = dbc->getUInt32(i, 0);
+                    std::string name = dbc->getString(i, 1);
+                    if (id != 0 && !name.empty()) questInfoNames_[id] = std::move(name);
+                }
+                LOG_INFO("Loaded ", questInfoNames_.size(), " quest type names");
+            }
+        }
+    }
+    auto it = questInfoNames_.find(typeId);
+    return it != questInfoNames_.end() ? it->second : kEmpty;
 }
 
 uint32_t QuestHandler::getQuestRewardXP(int32_t level, uint32_t xpDifficulty) {
@@ -2081,7 +2276,33 @@ void QuestHandler::applyQuestStateFromFields(const FlatFieldMap& fields) {
             if (quest.questId == questId && !quest.complete) {
                 quest.complete = true;
                 LOG_INFO("Quest ", questId, " marked complete from VALUES update field state");
+                // Nothing else says so: ".quest complete", an escort or an
+                // event finishing sets only this bit. 2.4.3 redraws the log
+                // ("(Complete)") and auto-watches the quest on it.
+                announceQuestLogChanged(questId);
                 break;
+            }
+        }
+    }
+
+    // A quest whose slot the server emptied has left the log - by
+    // ".quest remove", a script, or the server's answer to an abandon. The log
+    // is the slots: 2.4.3 drops the quest with the field. Only quests seen in
+    // a slot before count, so a quest accepted a moment ago and not yet given
+    // its slot is not taken for a removed one.
+    if (questSlotsSeen_) {
+        const size_t before = questLog_.size();
+        std::erase_if(questLog_, [&](const QuestLogEntry& q) {
+            const bool gone = seenSlotQuests_.count(q.questId) && !nowSlotQuests.count(q.questId);
+            // Its watch goes with it; GetNumQuestWatches counts held quests.
+            if (gone) owner_.setQuestTracked(q.questId, false);
+            return gone;
+        });
+        if (questLog_.size() != before) {
+            LOG_INFO("Quest log: ", before - questLog_.size(), " quest(s) left their slots");
+            if (owner_.addonEventCallbackRef()) {
+                owner_.addonEventCallbackRef()("UNIT_QUEST_LOG_CHANGED", {"player"});
+                owner_.addonEventCallbackRef()("QUEST_LOG_UPDATE", {});
             }
         }
     }

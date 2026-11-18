@@ -6,6 +6,8 @@
 #include "addons/lua_engine.hpp"
 #include "game/auction_filters.hpp"
 #include "game/game_utils.hpp"
+#include "game/expansion_profile.hpp"
+#include "game/level_difficulty.hpp"
 #include "game/packed_time.hpp"
 #include "game/quest_progress.hpp"
 #include "game/quest_objectives.hpp"
@@ -24,100 +26,14 @@ namespace wowee::addons {
 //
 // WoW's quest log is grouped: a zone header, the quests in that zone, the next
 // header, and so on - and every index-taking quest function counts the headers
-// as rows. This log was flat, so it listed 23 quests in server order with no
-// grouping at all, ExpandQuestHeader/CollapseQuestHeader were no-ops, and
-// GetQuestLogTitle answered false for isHeader on every row.
+// as rows. The rows, their order, the collapsed headers and the selection live
+// in QuestHandler (questLogRows), because the game side names quests by the
+// same index in QUEST_WATCH_UPDATE.
 //
-// The grouping key is the quest's zoneOrSort: an AreaTable id when positive
-// (the zone the quest belongs to) and a QuestSort id negated when negative
-// (Epic, Seasonal, a class or a profession). Zero means the query response has
-// not arrived yet, and those wait under their own header rather than being
-// dropped.
-//
-// Everything that takes a quest log index goes through questRows() rather than
-// indexing getQuestLog() directly, because with headers in the list the two are
-// no longer the same number: quest 3 of the log can be row 5 of the display.
+// Everything that takes a quest log index goes through those rows rather than
+// indexing getQuestLog() directly: quest 3 of the log can be row 5 of the
+// display, or a row past the visible ones when its header is collapsed.
 namespace {
-
-struct QuestRow {
-    bool isHeader = false;
-    int32_t group = 0;                              ///< zoneOrSort of the group
-    std::string headerTitle;                        ///< headers only
-    const game::GameHandler::QuestLogEntry* quest = nullptr;     ///< quests only
-};
-
-/// Headers the player has collapsed, by group key. Interface state, so it lives
-/// here rather than in the model - and it is deliberately not persisted, which
-/// is what WoW does with a fresh session too.
-std::set<int32_t>& collapsedQuestGroups() {
-    static std::set<int32_t> collapsed;
-    return collapsed;
-}
-
-/// What a group's header row is called.
-std::string questGroupTitle(game::GameHandler* gh, int32_t group) {
-    if (!gh) return "Miscellaneous";
-    if (group > 0) {
-        std::string name = gh->getAreaName(static_cast<uint32_t>(group));
-        if (!name.empty()) return name;
-    } else if (group < 0) {
-        std::string name = gh->getQuestSortName(static_cast<uint32_t>(-group));
-        if (!name.empty()) return name;
-    }
-    // A quest whose query response has not landed has no zone yet, and one
-    // whose zone is not in the file still has to sit somewhere nameable.
-    return "Miscellaneous";
-}
-
-/// The display list: one row per header, then the rows of its quests unless the
-/// header is collapsed. Rebuilt per call - the log holds tens of entries, and a
-/// cache here would have to be invalidated by every quest update, every query
-/// response and every collapse.
-std::vector<QuestRow> questRows(game::GameHandler* gh) {
-    std::vector<QuestRow> rows;
-    if (!gh) return rows;
-    const auto& ql = gh->getQuestLog();
-
-    // Group, keeping each group's quests in the order the log holds them.
-    std::map<int32_t, std::vector<const game::GameHandler::QuestLogEntry*>> groups;
-    for (const auto& q : ql) {
-        if (q.questId == 0) continue;
-        groups[q.zoneOrSort].push_back(&q);
-    }
-
-    // Zones first and in name order, then the QuestSort groups (Epic, class,
-    // profession), then the not-yet-known ones - which is the order the real
-    // log reads in, and stable so the list does not reshuffle under the cursor
-    // as query responses land.
-    struct Group { int32_t key; std::string title; int rank; };
-    std::vector<Group> ordered;
-    ordered.reserve(groups.size());
-    for (const auto& [key, _] : groups) {
-        const int rank = (key > 0) ? 0 : (key < 0 ? 1 : 2);
-        ordered.push_back({key, questGroupTitle(gh, key), rank});
-    }
-    std::sort(ordered.begin(), ordered.end(), [](const Group& a, const Group& b) {
-        if (a.rank != b.rank) return a.rank < b.rank;
-        if (a.title != b.title) return a.title < b.title;
-        return a.key < b.key;
-    });
-
-    for (const Group& g : ordered) {
-        QuestRow header;
-        header.isHeader = true;
-        header.group = g.key;
-        header.headerTitle = g.title;
-        rows.push_back(std::move(header));
-        if (collapsedQuestGroups().count(g.key)) continue;
-        for (const auto* q : groups[g.key]) {
-            QuestRow row;
-            row.group = g.key;
-            row.quest = q;
-            rows.push_back(std::move(row));
-        }
-    }
-    return rows;
-}
 
 /// Server text as the player should read it.
 ///
@@ -135,17 +51,9 @@ std::string forPlayer(lua_State* L, const std::string& text) {
 
 }  // namespace
 
-// Declared in lua_api_helpers.hpp; defined here because questRows above is the
-// one list every quest log index is counted against.
+// Declared in lua_api_helpers.hpp.
 int questLogRowForQuest(game::GameHandler* gh, uint32_t questId) {
-    if (!gh || questId == 0) return 0;
-    const auto rows = questRows(gh);
-    for (size_t i = 0; i < rows.size(); ++i) {
-        if (!rows[i].isHeader && rows[i].quest && rows[i].quest->questId == questId) {
-            return static_cast<int>(i) + 1;  // the interface counts from one
-        }
-    }
-    return 0;
+    return gh ? gh->questLogIndexOf(questId) : 0;
 }
 
 void openInterfaceQuestLog(game::GameHandler& gh, uint32_t questId) {
@@ -160,15 +68,16 @@ void openInterfaceQuestLog(game::GameHandler& gh, uint32_t questId) {
 
 namespace {
 
-/// The quest at a display index, or null when that row is a header or the index
-/// is off either end. This is what every "…(questLogIndex)" binding needs: a
-/// header row genuinely has no quest, and answering with the wrong one is how a
-/// log shows the details of a quest the player did not click.
+/// The quest at an index, or null when that row is a header or the index is off
+/// either end. This is what every "...(questLogIndex)" binding needs: a header
+/// row genuinely has no quest, and answering with the wrong one is how a log
+/// shows the details of a quest the player did not click. Indexes past the
+/// visible rows reach the quests of collapsed headers, as on 2.4.3.
 const game::GameHandler::QuestLogEntry* questAtRow(game::GameHandler* gh, int index) {
-    if (index < 1) return nullptr;
-    const auto rows = questRows(gh);
-    if (index > static_cast<int>(rows.size())) return nullptr;
-    return rows[index - 1].quest;
+    if (!gh || index < 1) return nullptr;
+    const auto rows = gh->questLogRows();
+    if (index > static_cast<int>(rows.rows.size())) return nullptr;
+    return rows.rows[index - 1].quest;
 }
 
 } // namespace
@@ -185,7 +94,7 @@ static int lua_GetNumQuestLogEntries(lua_State* L) {
     // numEntries counts the rows the log displays - headers included, and the
     // quests under a collapsed header excluded, because that is what the frame
     // walks with GetQuestLogTitle.
-    lua_pushnumber(L, questRows(gh).size());
+    lua_pushnumber(L, static_cast<lua_Number>(gh->questLogRows().visible));
     // numQuests is every quest held, whatever is collapsed: it is what
     // QuestLog_UpdateQuestCount prints against MAX_QUESTLOG_QUESTS, and
     // QuestLogFrame only picks a first selection when it is above zero.
@@ -204,15 +113,18 @@ static int lua_GetNumQuestLogEntries(lua_State* L) {
 // None of these appeared in a scan of either frame's own file, because the
 // panel that draws the rewards is a third file they both pull in.
 
+// The selected quest, through the rows. Defined with the reward readers.
+static const game::GameHandler::QuestLogEntry* selectedLogEntry(game::GameHandler* gh);
+
 // GetQuestLogTimeLeft() → seconds left on the selected quest, or nil.
 // Backed by the same PLAYER_QUEST_LOG expiry the tracker's timers read.
 static int lua_GetQuestLogTimeLeft(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return luaReturnNil(L);
-    const int sel = gh->getSelectedQuestLogIndex();
-    const auto& ql = gh->getQuestLog();
-    if (sel < 1 || sel > static_cast<int>(ql.size())) return luaReturnNil(L);
-    const uint32_t questId = ql[static_cast<size_t>(sel) - 1].questId;
+    // The selected row, headers counted (not a position in getQuestLog()).
+    const auto* selected = selectedLogEntry(gh);
+    if (!selected) return luaReturnNil(L);
+    const uint32_t questId = selected->questId;
     for (const auto& t : gh->getQuestTimers()) {
         if (t.first == questId) { lua_pushnumber(L, t.second); return 1; }
     }
@@ -220,7 +132,6 @@ static int lua_GetQuestLogTimeLeft(lua_State* L) {
 }
 
 // Defined further down, with the other quest-log readers.
-static const game::GameHandler::QuestLogEntry* selectedLogEntry(game::GameHandler* gh);
 
 // Whether the quest being looked at has been failed.
 //
@@ -276,10 +187,7 @@ static int lua_GetQuestRewardTitle(lua_State* L) {
     if (gh->isQuestOfferRewardOpen()) {
         titleId = gh->getQuestOfferReward().rewardTitleId;
     } else {
-        const int index = gh->getSelectedQuestLogIndex();
-        const auto& log = gh->getQuestLog();
-        if (index >= 1 && index <= static_cast<int>(log.size()))
-            titleId = log[static_cast<size_t>(index - 1)].rewardTitleId;
+        if (const auto* selected = selectedLogEntry(gh)) titleId = selected->rewardTitleId;
     }
     if (titleId == 0) { return luaReturnNil(L); }
     const std::string name = gh->getFormattedTitleById(titleId);
@@ -297,12 +205,12 @@ static int lua_ProcessQuestLogRewardFactions(lua_State* L) { (void)L; return 0; 
 /// The log index is 1-based, as the interface counts it. This was defined
 /// twice in this file under two names, identically - one for the reward
 /// panels and one for everything else - which is one function.
+// Through the rows like every other reader of the selection: the selected
+// index counts headers, and subscripting getQuestLog() with it answered for
+// some other quest - sharing, pushability and reward factions all read the
+// wrong one.
 static const game::QuestHandler::QuestLogEntry* selectedQuest(game::GameHandler* gh) {
-    if (!gh) return nullptr;
-    const int index = gh->getSelectedQuestLogIndex();
-    const auto& log = gh->getQuestLog();
-    if (index < 1 || index > static_cast<int>(log.size())) return nullptr;
-    return &log[static_cast<size_t>(index - 1)];
+    return selectedLogEntry(gh);
 }
 // The reputation reward slots for whichever panel is open - the offer's own
 // when it is up, the selected log quest's otherwise (same reason as the title:
@@ -469,14 +377,10 @@ static int lua_GetQuestIndexForTimer(lua_State* L) {
     if (idx > static_cast<int>(timers.size())) return luaReturnNil(L);
     const uint32_t questId = timers[static_cast<size_t>(idx) - 1].first;
     // A display index, since that is what every other quest binding takes.
-    const auto rows = questRows(gh);
-    for (size_t i = 0; i < rows.size(); ++i) {
-        if (rows[i].quest && rows[i].quest->questId == questId) {
-            lua_pushnumber(L, static_cast<double>(i + 1));
-            return 1;
-        }
-    }
-    return luaReturnNil(L);
+    const int index = gh->questLogIndexOf(questId);
+    if (index == 0) return luaReturnNil(L);
+    lua_pushnumber(L, index);
+    return 1;
 }
 
 /// Which page of an open book is being read, zero-based.
@@ -494,98 +398,75 @@ static void fireItemTextReady(lua_State* L) {
 static int lua_GetQuestLogTitle(lua_State* L) {
     auto* gh = getGameHandler(L);
     // optnumber, not checknumber: FrameXML walks the quest log with an index
-    // that can be nil before anything has been selected, and raising there
-    // loses whatever asked rather than answering that there is no such quest.
+    // that can be nil before anything has been selected.
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
-    if (!gh) { return luaReturnNil(L); }
-    const auto rows = questRows(gh);
-    // A header row: the zone (or Epic/class/profession) the quests under it
-    // belong to. isHeader is what tells QuestLog_Update to draw it as one and to
-    // hang a collapse box off it, and isCollapsed is what that box reads.
-    if (index >= 1 && index <= static_cast<int>(rows.size()) && rows[index - 1].isHeader) {
-        const auto& row = rows[index - 1];
-        lua_pushstring(L, row.headerTitle.c_str());                        // 1: title
-        lua_pushnumber(L, 0);                                              // 2: level
-        lua_pushnil(L);                                                    // 3: questTag
-        lua_pushnumber(L, 0);                                              // 4: suggestedGroup
-        lua_pushboolean(L, 1);                                             // 5: isHeader
-        lua_pushboolean(L, collapsedQuestGroups().count(row.group) ? 1 : 0); // 6: isCollapsed
-        lua_pushnil(L);                                                    // 7: isComplete
-        lua_pushboolean(L, 0);                                             // 8: isDaily
-        lua_pushnumber(L, 0);                                              // 9: questID
-        lua_pushboolean(L, 0);                                             // 10: displayQuestID
-        return 10;
-    }
-    // An index off either end gets an empty row, not a bare nil.
-    //
-    // QuestLog_Update reads the count once and then walks GetQuestLogTitle in a
-    // loop; a server update landing between frames while the log is scrolled
-    // can shrink the log under a count the frame still holds, so an index it
-    // believes valid comes back past the end. In colourblind mode the very next
-    // line is `title = "["..level.."] "..title`, and a nil title raised there
-    // and tore down the whole redraw - which is what left the list a mess. An
-    // empty title concatenates cleanly and the row corrects itself on the next
-    // pass; a raise does not.
-    //
-    // The low end too, not just the high: the button loop guards only the upper
-    // bound (`if questIndex <= numEntries`), so a scroll offset that drives the
-    // index to zero or below still reaches here and hit `"  "..title` at a nil
-    // - the questlogframe.lua:430 raise seen driving the log headlessly. The
-    // `if title` callers all iterate 1..numEntries and never reach a low index,
-    // so an empty row here changes nothing for them.
-    const game::GameHandler::QuestLogEntry* qp =
-        (index >= 1 && index <= static_cast<int>(rows.size())) ? rows[index - 1].quest : nullptr;
-    if (!qp) {
-        lua_pushstring(L, "");   // 1: title (empty, never nil)
-        lua_pushnumber(L, 0);    // 2: level
-        lua_pushnil(L);          // 3: questTag
-        lua_pushnumber(L, 0);    // 4: suggestedGroup
-        lua_pushboolean(L, 0);   // 5: isHeader
-        lua_pushboolean(L, 0);   // 6: isCollapsed
-        lua_pushnil(L);          // 7: isComplete
-        lua_pushboolean(L, 0);   // 8: isDaily
-        lua_pushnumber(L, 0);    // 9: questID
-        lua_pushboolean(L, 0);   // 10: displayQuestID
-        return 10;
-    }
-    const auto& q = *qp;
-    // The client's ten, in its order:
+    const auto rows = gh ? gh->questLogRows() : game::GameHandler::QuestLogRows{};
+    const game::GameHandler::QuestLogRow* row =
+        (index >= 1 && index <= static_cast<int>(rows.rows.size())) ? &rows.rows[index - 1] : nullptr;
+    // The client's ten, in its order (TBC answers the first eight):
     //
     //   title, level, questTag, suggestedGroup, isHeader, isCollapsed,
     //   isComplete, isDaily, questID, displayQuestID
     //
-    // Eight were returned, with questTag and isDaily absent, so everything
-    // from the third value on landed one or two places early. isComplete
-    // received a zero and so no quest ever showed as complete; isDaily
-    // received the quest id, which is a large number and therefore true, so
-    // every quest in the log was marked daily; and questID arrived nil.
+    // An index off either end answers as 2.4.3 does: a nil title, level and
+    // group zero, the rest nil.
+    if (!row) {
+        lua_pushnil(L);                      // 1: title
+        lua_pushnumber(L, 0);                // 2: level
+        lua_pushnil(L);                      // 3: questTag
+        lua_pushnumber(L, 0);                // 4: suggestedGroup
+        lua_pushnil(L);                      // 5: isHeader
+        lua_pushnil(L);                      // 6: isCollapsed
+        lua_pushnil(L);                      // 7: isComplete
+        lua_pushnil(L);                      // 8: isDaily
+        lua_pushnumber(L, 0);                // 9: questID
+        lua_pushnil(L);                      // 10: displayQuestID
+        return 10;
+    }
+    // A header row: the zone (or QuestSort) the quests under it belong to.
+    // isHeader is what tells QuestLog_Update to draw it as one and to hang a
+    // collapse box off it, and isCollapsed is what that box reads.
+    if (row->isHeader) {
+        lua_pushstring(L, row->headerTitle.c_str());                       // 1: title
+        lua_pushnumber(L, 0);                                              // 2: level
+        lua_pushnil(L);                                                    // 3: questTag
+        lua_pushnumber(L, 0);                                              // 4: suggestedGroup
+        lua_pushboolean(L, 1);                                             // 5: isHeader
+        if (gh->isQuestGroupCollapsed(row->group)) lua_pushboolean(L, 1);
+        else lua_pushnil(L);                                               // 6: isCollapsed
+        lua_pushnil(L);                                                    // 7: isComplete
+        lua_pushnil(L);                                                    // 8: isDaily
+        lua_pushnumber(L, 0);                                              // 9: questID
+        lua_pushnil(L);                                                    // 10: displayQuestID
+        return 10;
+    }
+    const auto& q = *row->quest;
     lua_pushstring(L, forPlayer(L, q.title).c_str());  // 1: title
-    // The level is tracked - the query response carries it - and was being
-    // answered as a flat zero beside a comment saying it was not.
-    lua_pushnumber(L, q.level);          // 2: level
-    lua_pushnil(L);                      // 3: questTag ("Elite", "PvP", …)
-    lua_pushnumber(L, 0);                // 4: suggestedGroup
-    lua_pushboolean(L, 0);               // 5: isHeader
-    lua_pushboolean(L, 0);               // 6: isCollapsed
+    // A level -1 quest goes with the player: 2.4.3 answers the player's level.
+    lua_pushnumber(L, q.level == -1 ? static_cast<int>(gh->getPlayerLevel()) : q.level); // 2
+    // QuestInfo.dbc's name for the quest's type: Group, PvP, Raid, Dungeon...
+    if (const std::string& tag = gh->getQuestInfoName(q.type); q.type != 0 && !tag.empty())
+        lua_pushstring(L, tag.c_str());
+    else
+        lua_pushnil(L);                                 // 3: questTag
+    lua_pushnumber(L, q.suggestedPlayers);              // 4: suggestedGroup
+    lua_pushnil(L);                                     // 5: isHeader
+    lua_pushnil(L);                                     // 6: isCollapsed
     // A number, not a boolean: 1 for complete, -1 for failed, nil otherwise.
     // watchframe.lua writes `if ( isComplete and isComplete < 0 )` to tell a
-    // failed quest from a finished one, and comparing a boolean with a number
-    // raises. Correcting the *position* of this value without correcting its
-    // type turned a quiet wrong answer into an error on the quest tracker.
-    //
-    // Failed is tested first: the server can set both bits, and a quest whose
-    // timer ran out is failed whatever else is true of it.
+    // failed quest from a finished one. Failed is tested first: the server can
+    // set both bits, and a quest whose timer ran out is failed whatever else
+    // is true of it.
     if (q.failed)        lua_pushnumber(L, -1);
     else if (q.complete) lua_pushnumber(L, 1);
-    else                 lua_pushnil(L);                        // 7: isComplete
-    lua_pushboolean(L, 0);               // 8: isDaily
-    lua_pushnumber(L, q.questId);        // 9: questID
+    else                 lua_pushnil(L);                // 7: isComplete
+    // QUEST_FLAGS_DAILY (0x1000).
+    if (q.flags & 0x1000u) lua_pushboolean(L, 1);
+    else                   lua_pushnil(L);              // 8: isDaily
+    lua_pushnumber(L, q.questId);                       // 9: questID
     // Not the id again: this is the developer switch that asks for the id to
-    // be *shown*, and the quest log writes "26102 - Wolves Across the Border"
-    // when it is set. An id is a large number and therefore true, so every
-    // quest in the log wore its own number. Off is what the real client
-    // ships.
-    lua_pushboolean(L, 0);               // 10: displayQuestID
+    // be *shown*. Off is what the real client ships.
+    lua_pushnil(L);                                     // 10: displayQuestID
     return 10;
 }
 
@@ -661,16 +542,14 @@ static int lua_GetQuestLogSelection(lua_State* L) {
     return 1;
 }
 
-/// The quest the log has selected, or null if none is.
-// GetQuestLogPushable() → whether the selected quest may be offered to the party.
-//
-// Yes for any real selection. Which quests the server will actually share is a
-// flag on the quest, and no packet this client parses carries it - so the
-// choice is between offering the attempt and letting the server refuse, or
-// never offering it at all. The button is disabled without this, and sharing
-// works, so silence would be the more misleading answer of the two.
+// GetQuestLogPushable() → whether the selected quest may be offered to the party:
+// QUEST_FLAGS_SHARABLE (0x8) where the query layout carries the flags, as 2.4.3
+// answers it; any selected quest otherwise.
 static int lua_GetQuestLogPushable(lua_State* L) {
-    lua_pushboolean(L, selectedQuest(getGameHandler(L)) != nullptr ? 1 : 0);
+    const auto* q = selectedQuest(getGameHandler(L));
+    const bool pushable = q && (!q->queryExact || (q->flags & 0x8u));
+    if (pushable) lua_pushboolean(L, 1);
+    else lua_pushnil(L);
     return 1;
 }
 
@@ -734,7 +613,9 @@ static int lua_GetQuestIndexForWatch(lua_State* L) {
     // than by counting through getQuestLog(). Answering the raw log position
     // pointed the watch frame at whatever row happened to hold that number,
     // which after grouping is usually a different quest or a header.
-    const auto rows = questRows(gh);
+    // Past the visible rows too: a watched quest under a collapsed header keeps
+    // its line in the tracker (2.4.3 answers its index past the count).
+    const auto rows = gh->questLogRows().rows;
     const auto& tracked = gh->getTrackedQuestIds();
     int found = 0;
     for (size_t i = 0; i < rows.size(); ++i) {
@@ -783,7 +664,11 @@ static int lua_IsQuestWatched(lua_State* L) {
     return 1;
 }
 
-// GetQuestLink(questLogIndex) → "|cff...|Hquest:id:level|h[title]|h|r"
+// GetQuestLink(questLogIndex) → "|cff808080|Hquest:4734:60|h[Egg Freezing]|h|r"
+//
+// As 2.4.3 writes it: coloured by the quest's difficulty for the player (the
+// quest log's own colours, each channel times 256 capped at ff: 0.75 -> c0),
+// with the quest's level as the query gave it (-1 for a quest that scales).
 static int lua_GetQuestLink(lua_State* L) {
     auto* gh = getGameHandler(L);
     int index = static_cast<int>(luaL_checknumber(L, 1));
@@ -791,9 +676,19 @@ static int lua_GetQuestLink(lua_State* L) {
     const auto* qp = questAtRow(gh, index);
     if (!qp) { return luaReturnNil(L); }
     const auto& q = *qp;
-    // Yellow quest link format matching WoW
-    std::string link = "|cff808000|Hquest:" + std::to_string(q.questId) +
-                       ":0|h[" + q.title + "]|h|r";
+    const uint32_t playerLevel = gh->getPlayerLevel();
+    const int32_t shownLevel = q.level == -1 ? static_cast<int32_t>(playerLevel) : q.level;
+    // QuestDifficultyColor in QuestLogFrame.lua.
+    const char* color = "808080";
+    switch (game::questLevelDifficulty(tbcInterface(L), playerLevel, shownLevel)) {
+        case game::LevelDifficulty::Red:    color = "ff1919"; break;
+        case game::LevelDifficulty::Orange: color = "ff8040"; break;
+        case game::LevelDifficulty::Yellow: color = "ffff00"; break;
+        case game::LevelDifficulty::Green:  color = "40c040"; break;
+        case game::LevelDifficulty::Gray:   color = "808080"; break;
+    }
+    const std::string link = std::string("|cff") + color + "|Hquest:" + std::to_string(q.questId) +
+                             ":" + std::to_string(q.level) + "|h[" + q.title + "]|h|r";
     lua_pushstring(L, link.c_str());
     return 1;
 }
@@ -897,15 +792,7 @@ static int lua_QuestPOIGetQuestIDByVisibleIndex(lua_State* L) {
     // outlive the log entry - the server sends POIs separately - so a quest
     // that is no longer held answers zero rather than a stale position.
     int logIndex = 0;
-    if (gh) {
-        const auto rows = questRows(gh);
-        for (size_t i = 0; i < rows.size(); ++i) {
-            if (rows[i].quest && rows[i].quest->questId == questId) {
-                logIndex = static_cast<int>(i) + 1;
-                break;
-            }
-        }
-    }
+    if (gh) logIndex = gh->questLogIndexOf(questId);
     lua_pushnumber(L, logIndex);
     return 2;
 }
@@ -982,14 +869,7 @@ static int lua_GetQuestPOILeaderBoard(lua_State* L) {
     auto* gh = getGameHandler(L);
     const uint32_t questId = static_cast<uint32_t>(luaL_optnumber(L, 2, 0));
     if (!gh || questId == 0) { return luaReturnNil(L); }
-    const auto rows = questRows(gh);
-    int index = 0;
-    for (size_t i = 0; i < rows.size(); ++i) {
-        if (rows[i].quest && rows[i].quest->questId == questId) {
-            index = static_cast<int>(i) + 1;
-            break;
-        }
-    }
+    const int index = gh->questLogIndexOf(questId);
     if (index == 0) { return luaReturnNil(L); }
     lua_pushvalue(L, 1);            // objective index, unchanged
     lua_pushnumber(L, index);       // the log index the other one wants
@@ -1022,29 +902,17 @@ static int lua_GetQuestLogLeaderBoard(lua_State* L) {
 
 // ExpandQuestHeader(index) / CollapseQuestHeader(index) - fold a zone away.
 //
-// The index is a display index naming a header row, and zero means every header
-// at once, which is what the log's own "collapse all" does. Anything that is
-// not a header is ignored rather than treated as row zero.
+// The index names a visible header row; anything else - 0, -1, a quest row,
+// an index past the end - folds or unfolds every header, as 2.4.3 does. The
+// index is required (2.4.3: "Usage: CollapseQuestHeader(index)").
 static int setQuestHeaderCollapsed(lua_State* L, bool collapse) {
+    if (!lua_isnumber(L, 1)) {
+        return luaL_error(L, collapse ? "Usage: CollapseQuestHeader(index)"
+                                      : "Usage: ExpandQuestHeader(index)");
+    }
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
-    const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
-    const auto rows = questRows(gh);
-    if (index == 0) {
-        collapsedQuestGroups().clear();
-        if (collapse) {
-            for (const auto& row : rows) {
-                if (row.isHeader) collapsedQuestGroups().insert(row.group);
-            }
-        }
-    } else if (index >= 1 && index <= static_cast<int>(rows.size()) &&
-               rows[index - 1].isHeader) {
-        if (collapse) collapsedQuestGroups().insert(rows[index - 1].group);
-        else          collapsedQuestGroups().erase(rows[index - 1].group);
-    }
-    // The list the frame is walking just changed length underneath it, so it
-    // has to be told to walk it again - nothing else fires for this.
-    gh->fireAddonEvent("QUEST_LOG_UPDATE", {});
+    gh->setQuestHeaderCollapsed(static_cast<int>(lua_tonumber(L, 1)), collapse);
     return 0;
 }
 static int lua_ExpandQuestHeader(lua_State* L) { return setQuestHeaderCollapsed(L, false); }
@@ -2715,13 +2583,29 @@ static int pushRewardAt(lua_State* L, game::GameHandler* gh,
     for (const auto& r : list) {
         if (r.itemId == 0) continue;
         if (++seen != index) continue;
+        // As 2.4.3: name, texture, count, quality and whether the player can
+        // use it (nil tints the button red) - and, while the item's query is
+        // out, nil, nil, the count, 0 and nil.
         const auto* info = gh->getItemInfo(r.itemId);
-        lua_pushstring(L, info ? info->name.c_str() : "");
+        if (!info || !info->valid || info->name.empty()) {
+            gh->queryItemInfo(r.itemId, 0);
+            lua_pushnil(L);
+            lua_pushnil(L);
+            lua_pushnumber(L, r.count);
+            lua_pushnumber(L, 0);
+            lua_pushnil(L);
+            return 5;
+        }
+        lua_pushstring(L, info->name.c_str());
         lua_pushstring(L, gh->getItemIconPath(
-            info && info->displayInfoId ? info->displayInfoId : r.displayInfoId).c_str());
+            info->displayInfoId ? info->displayInfoId : r.displayInfoId).c_str());
         lua_pushnumber(L, r.count);
-        lua_pushnumber(L, info ? info->quality : 1);
-        lua_pushboolean(L, 1);
+        // -1 for an item that is not worn (tokens, quest items, pets, the
+        // Gordok Ogre Suit), its quality for equipment (2.4.3: Long Bayonet 1,
+        // Nethekurse's Rod of Torment 3, Mark of Honor Hold -1).
+        lua_pushnumber(L, info->inventoryType == 0 ? -1.0 : static_cast<double>(info->quality));
+        if (playerCanUseItem(gh, info)) lua_pushnumber(L, 1);   // 1, as 2.4.3
+        else lua_pushnil(L);
         return 5;
     }
     return luaReturnNil(L);
@@ -2762,7 +2646,8 @@ static int lua_GetSuggestedGroupNum(lua_State* L) {
 }
 
 static int lua_GetQuestLogGroupNum(lua_State* L) {
-    lua_pushnumber(L, 0);
+    const auto* q = selectedLogEntry(getGameHandler(L));
+    lua_pushnumber(L, q ? q->suggestedPlayers : 0);
     return 1;
 }
 
@@ -2838,10 +2723,20 @@ static int lua_GetQuestLogSpellLink(lua_State* L) {
 // it is negative, and the quest query serializer writes that single int32. So a
 // quest that charges the player was answering this with a negative reward, and
 // the reward panel drew a money frame with a negative amount in it.
+//
+// At the level cap the reward grows by the query's max-level money, the money
+// the server pays instead of experience (cmangos-tbc Player::RewardQuest); 2.4.3
+// shows the sum: Egg Freezing 18000 + 8700 = 26700 at level 70.
 static int lua_GetQuestLogRewardMoney(lua_State* L) {
-    const auto* q = selectedLogEntry(getGameHandler(L));
-    const int32_t money = q ? q->rewardMoney : 0;
-    lua_pushnumber(L, money > 0 ? money : 0);
+    auto* gh = getGameHandler(L);
+    const auto* q = selectedLogEntry(gh);
+    int64_t money = q && q->rewardMoney > 0 ? q->rewardMoney : 0;
+    if (q && gh) {
+        const auto* registry = gh->services().expansionRegistry;
+        const auto* profile = registry ? registry->getActive() : nullptr;
+        if (profile && gh->getPlayerLevel() >= profile->maxLevel) money += q->rewardMoneyMaxLevel;
+    }
+    lua_pushnumber(L, static_cast<lua_Number>(money));
     return 1;
 }
 
@@ -3468,7 +3363,8 @@ void registerQuestLuaAPI(lua_State* L) {
                     }
                 }
             }
-            lua_pushstring(L, "");
+            // Nothing marked: nil, as 2.4.3 answers before SetAbandonQuest.
+            lua_pushnil(L);
             return 1;
         }},
                 // What is destroyed along with the quest. Nothing here knows
@@ -3522,11 +3418,9 @@ void registerQuestLuaAPI(lua_State* L) {
                 lua_pushnumber(L, countRewards(v));
                 return 1;
             }
-            int idx = gh->getSelectedQuestLogIndex();
-            if (idx < 1) { return luaReturnZero(L); }
-            const auto& ql = gh->getQuestLog();
-            if (idx > static_cast<int>(ql.size())) { return luaReturnZero(L); }
-            lua_pushnumber(L, countRewards(&ql[idx-1].rewardItems));
+            const auto* selected = selectedLogEntry(gh);
+            if (!selected) { return luaReturnZero(L); }
+            lua_pushnumber(L, countRewards(&selected->rewardItems));
             return 1;
         }},
                 {"GetNumQuestChoices", [](lua_State* L) -> int {
@@ -3536,11 +3430,9 @@ void registerQuestLuaAPI(lua_State* L) {
                 lua_pushnumber(L, countRewards(v));
                 return 1;
             }
-            int idx = gh->getSelectedQuestLogIndex();
-            if (idx < 1) { return luaReturnZero(L); }
-            const auto& ql = gh->getQuestLog();
-            if (idx > static_cast<int>(ql.size())) { return luaReturnZero(L); }
-            lua_pushnumber(L, countRewards(&ql[idx-1].rewardChoiceItems));
+            const auto* selected = selectedLogEntry(gh);
+            if (!selected) { return luaReturnZero(L); }
+            lua_pushnumber(L, countRewards(&selected->rewardChoiceItems));
             return 1;
         }},
                 {"GetSuggestedGroupNum", lua_GetSuggestedGroupNum},

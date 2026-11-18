@@ -3300,7 +3300,10 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 if (!owner->enabled && owner->hasDisabledColor) {
                     textColor = owner->disabledColor;
                 } else if (owner->enabled && owner->hasHighlightColor &&
-                           owner->id == tree.hoveredWidget()) {
+                           (owner->id == tree.hoveredWidget() || owner->highlightLocked)) {
+                    // LockHighlight holds the highlight state, label included:
+                    // the quest log's selected row reads white like a hovered
+                    // one (2.4.3), not in the colour SetTextColor gave it.
                     textColor = owner->highlightColor;
                 }
             }

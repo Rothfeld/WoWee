@@ -2381,6 +2381,7 @@ public:
     void reconcileQuestItemObjectives(const std::unordered_map<uint32_t, uint32_t>& carriedCounts);
     // QuestSort.dbc name for negative ZoneOrSort values (class/profession/seasonal)
     const std::string& getQuestSortName(uint32_t sortId) const;
+    const std::string& getQuestInfoName(uint32_t typeId) const;
     int getSelectedQuestLogIndex() const;
     // Writes through to the QuestHandler, which is where getSelectedQuestLogIndex
     // reads it from. The two used to touch different variables - the setter this
@@ -2389,6 +2390,13 @@ public:
     // read back 0, GetQuestLogQuestText answered nil for both description and
     // objectives, and every quest's detail pane drew blank.
     void setSelectedQuestLogIndex(int idx);
+    // The quest log rows the interface indexes, headers included (QuestHandler).
+    using QuestLogRow = QuestHandler::QuestLogRow;
+    using QuestLogRows = QuestHandler::QuestLogRows;
+    QuestLogRows questLogRows() const;
+    int questLogIndexOf(uint32_t questId) const;
+    void setQuestHeaderCollapsed(int index, bool collapse);
+    bool isQuestGroupCollapsed(int32_t group) const;
     void abandonQuest(uint32_t questId);
     void shareQuestWithParty(uint32_t questId);  // CMSG_PUSHQUESTTOPARTY
     bool requestQuestQuery(uint32_t questId, bool force = false);
@@ -2401,8 +2409,9 @@ public:
             // WatchFrame is purely event-driven and never polls native state,
             // so a change here is invisible to it until something else happens
             // to fire QUEST_LOG_UPDATE (e.g. the quest log's own track/untrack
-            // button, which calls WatchFrame_Update() directly).
-            fireAddonEvent("QUEST_LOG_UPDATE", {});
+            // button, which calls WatchFrame_Update() directly). After the
+            // calling script, as 2.4.3's AddQuestWatch answers.
+            queueAddonEvent("QUEST_LOG_UPDATE", {});
         }
     }
     const std::unordered_set<uint32_t>& getTrackedQuestIds() const;
@@ -3241,6 +3250,17 @@ public:
     }
     void fireAddonEvent(const std::string& event, const std::vector<std::string>& args = {}) {
         if (addonEventCallback_) addonEventCallback_(event, args);
+    }
+    /// Fire an event once the running script has returned: at the start of the
+    /// next update, identical requests merged into one. 2.4.3 answers
+    /// ExpandQuestHeader/CollapseQuestHeader this way - the QUEST_LOG_UPDATE
+    /// reaches handlers after the call, once however many headers it folded.
+    void queueAddonEvent(const std::string& event, const std::vector<std::string>& args = {}) {
+        const std::pair<std::string, std::vector<std::string>> entry{event, args};
+        if (std::find(queuedAddonEvents_.begin(), queuedAddonEvents_.end(), entry) ==
+            queuedAddonEvents_.end()) {
+            queuedAddonEvents_.push_back(entry);
+        }
     }
     // Convenience: invoke a callback with a sound manager obtained from the renderer.
     template<typename ManagerGetter, typename Callback>
@@ -4599,6 +4619,7 @@ private:
     std::unique_ptr<InventoryHandler> inventoryHandler_;
     std::unique_ptr<SocialHandler>    socialHandler_;
     std::unique_ptr<QuestHandler>     questHandler_;
+    std::vector<std::pair<std::string, std::vector<std::string>>> queuedAddonEvents_;
     std::unique_ptr<WardenHandler>    wardenHandler_;
 
     // Opcode dispatch table - built once in registerOpcodeHandlers(), called by handlePacket()

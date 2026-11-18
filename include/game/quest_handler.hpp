@@ -8,6 +8,7 @@
 #include <chrono>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -125,6 +126,20 @@ public:
         // ZoneOrSort from query response: >0 = AreaTable zone id, <0 = QuestSort.dbc
         // category (negated), 0 = unknown
         int32_t zoneOrSort = 0;
+        /// QuestInfo.dbc id (1 Group, 41 PvP, 62 Raid, 81 Dungeon...), the
+        /// suggested group size and the quest flags (0x8 sharable, 0x1000
+        /// daily). Filled by the exact query layouts only.
+        uint32_t type = 0;
+        uint32_t suggestedPlayers = 0;
+        uint32_t flags = 0;
+        /// Money added to the reward at the level cap.
+        uint32_t rewardMoneyMaxLevel = 0;
+        /// The quest's own wording for kill objectives, empty for the
+        /// creature's name; and its EndText, an objective of its own.
+        std::array<std::string, 4> objectiveTexts{};
+        std::string endText;
+        /// Whether the fields above came from an exact query layout.
+        bool queryExact = false;
         bool complete = false;
         /// A timed quest that ran out, or one the server failed. Read from the
         /// bit beside `complete` in the same quest-slot field.
@@ -156,15 +171,35 @@ public:
     /// drawn without a running realm. Not used on the live path.
     std::vector<QuestLogEntry>& questLogRef() { return questLog_; }
 
-    /// Where a quest sits in the log, counting from one, or zero if it is not
-    /// in it. This is what the interface means by a quest index - every quest
-    /// log API takes it, and QUEST_WATCH_UPDATE carries it - and it is not the
-    /// quest id, which is what was being sent in its place.
-    [[nodiscard]] int questLogIndexOf(uint32_t questId) const {
-        for (size_t i = 0; i < questLog_.size(); ++i) {
-            if (questLog_[i].questId == questId) return static_cast<int>(i) + 1;
-        }
-        return 0;
+    /// One row of the quest log as the interface counts it: a header (a zone,
+    /// or a QuestSort such as Herbalism) or a quest under one.
+    struct QuestLogRow {
+        bool isHeader = false;
+        int32_t group = 0;                    ///< the zoneOrSort the row belongs to
+        std::string headerTitle;              ///< headers only
+        const QuestLogEntry* quest = nullptr; ///< quests only
+    };
+    /// The rows in 2.4.3's order. Headers by name, the quests under each by
+    /// level (a level -1 quest takes the player's) and then title. The first
+    /// `visible` rows are what GetNumQuestLogEntries counts; the quests of
+    /// collapsed headers follow them, where 2.4.3 still answers them by index
+    /// (a watched or selected quest under a collapsed header keeps an index
+    /// past the visible count).
+    struct QuestLogRows {
+        std::vector<QuestLogRow> rows;
+        size_t visible = 0;
+    };
+    QuestLogRows questLogRows();
+    /// Where a quest sits in those rows, counting from one, or zero if it is
+    /// not in the log. This is what the interface means by a quest index -
+    /// every quest log API takes it, and QUEST_WATCH_UPDATE carries it.
+    int questLogIndexOf(uint32_t questId);
+    /// Collapse or expand the header at a row; any index that is not a visible
+    /// header row (0, -1, a quest row, past the end) means every header, as in
+    /// 2.4.3. QUEST_LOG_UPDATE follows after the calling script returns.
+    void setQuestHeaderCollapsed(int index, bool collapse);
+    [[nodiscard]] bool isQuestGroupCollapsed(int32_t group) const {
+        return collapsedQuestGroups_.count(group) > 0;
     }
     // Seconds left on every timed quest, paired with its quest id, in quest log
     // order. The last field of each PLAYER_QUEST_LOG slot is when the quest
@@ -175,6 +210,9 @@ public:
     // QuestSort.dbc name ("Seasonal", class/profession sorts, ...) for negative
     // ZoneOrSort values; empty if unknown
     const std::string& getQuestSortName(uint32_t sortId);
+    // QuestInfo.dbc name for a quest's type ("Group", "PvP", "Raid",
+    // "Dungeon"...): the tag GetQuestLogTitle answers. Empty if unknown.
+    const std::string& getQuestInfoName(uint32_t typeId);
 
     /// The reward experience a quest shows: QuestXP.dbc read at the quest's
     /// level, in the column its XP-difficulty index selects. Zero when the
@@ -187,8 +225,13 @@ public:
     /// value index (row 1 for a gain, row 2 for a loss), the same as
     /// AzerothCore's Player::RewardReputation display value.
     int32_t getQuestRewardReputation(int32_t valueId, int32_t override);
-    [[nodiscard]] int getSelectedQuestLogIndex() const { return selectedQuestLogIndex_; }
-    void setSelectedQuestLogIndex(int idx) { selectedQuestLogIndex_ = idx; }
+    /// The selection follows its quest, not a row: collapsing or expanding a
+    /// header above it, or a quest arriving, moves its index with it. Zero once
+    /// the quest leaves the log.
+    int getSelectedQuestLogIndex();
+    /// Select the quest at a row. A header, zero or an index past every row
+    /// leaves the selection as it was (2.4.3).
+    void setSelectedQuestLogIndex(int idx);
     void abandonQuest(uint32_t questId);
     void shareQuestWithParty(uint32_t questId);
     bool requestQuestQuery(uint32_t questId, bool force = false);
@@ -256,6 +299,9 @@ public:
         questLog_.clear();
         pendingQuestQueryIds_.clear();
         npcQuestStatus_.clear();
+        // 2.4.3 enters the world with nothing selected (the log then picks its
+        // first quest) but keeps the collapsed headers for the session.
+        selectedQuestId_ = 0;
     }
 
     // Drives the quest-giver status requery cooldown; called once per frame by
@@ -317,6 +363,8 @@ private:
     // QuestSort.dbc names, loaded lazily
     std::unordered_map<uint32_t, std::string> questSortNames_;
     bool questSortDbcLoaded_ = false;
+    std::unordered_map<uint32_t, std::string> questInfoNames_;
+    bool questInfoDbcLoaded_ = false;
     // QuestXP.dbc, keyed by level; each row is the ten difficulty columns.
     std::unordered_map<int32_t, std::array<uint32_t, 10>> questXpByLevel_;
     bool questXpDbcLoaded_ = false;
@@ -332,7 +380,10 @@ private:
 
     // Quest log
     std::vector<QuestLogEntry> questLog_;
-    int selectedQuestLogIndex_ = 0;
+    uint32_t selectedQuestId_ = 0;
+    /// Headers the player has collapsed, by zoneOrSort. Kept for the session,
+    /// across /reload, as 2.4.3 keeps them.
+    std::set<int32_t> collapsedQuestGroups_;
     std::unordered_set<uint32_t> pendingQuestQueryIds_;
 
     // Quest giver status per NPC

@@ -4668,6 +4668,9 @@ void Application::update(float deltaTime) {
             addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
             addonManager_->fireEvent("PLAYER_LOGIN");
             addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+            // 2.4.3 follows a /reload with QUEST_LOG_UPDATE, which is what
+            // redraws the quest log and the watch frame from the kept state.
+            addonManager_->fireEvent("QUEST_LOG_UPDATE");
             addonManager_->fireEvent("UPDATE_PENDING_MAIL");
             if (gameHandler && gameHandler->isPlayerDead() && !gameHandler->isPlayerGhost()) {
                 addonManager_->fireEvent("PLAYER_DEAD");

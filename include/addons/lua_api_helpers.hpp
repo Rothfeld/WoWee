@@ -34,6 +34,11 @@ namespace wowee::addons {
 /// the only reason the number means anything on the other side.
 int questLogRowForQuest(game::GameHandler* gh, uint32_t questId);
 
+/// Whether the player could use or equip an item: level, class, race, weapon
+/// and armour proficiency, skill and reputation. The merchant and the quest
+/// reward buttons tint an item red when this is false.
+bool playerCanUseItem(game::GameHandler* gh, const game::ItemQueryResponseData* info);
+
 /// Put FrameXML's quest log in front of `questId`.
 ///
 /// Asked for by a quest link in chat and by the objective tracker, neither of

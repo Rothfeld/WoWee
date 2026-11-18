@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/world_packets.hpp"
+#include <optional>
 #include <memory>
 #include <string>
 
@@ -267,6 +268,15 @@ public:
         return QuestDetailsParser::parse(packet, data);  // WotLK auto-detect
     }
 
+    /** Parse SMSG_QUEST_QUERY_RESPONSE field by field: true when read, false
+     *  when the packet does not fit the layout, nullopt where no exact layout is
+     *  known for the expansion (the caller then scans the packet). */
+    virtual std::optional<bool> parseQuestQueryResponse(network::Packet& packet,
+                                                        QuestQueryResponseData& data) {
+        (void)packet; (void)data;
+        return std::nullopt;
+    }
+
     /** Stride of PLAYER_QUEST_LOG fields in update-object blocks.
      *  WotLK: 5 fields per slot, Classic/Vanilla: 3. */
     [[nodiscard]] virtual uint8_t questLogStride() const { return 5; }
@@ -433,6 +443,11 @@ public:
     // TBC 2.4.3 quest log has 4 update fields per slot (questId, state, counts, timer)
     // WotLK expands this to 5 (splits counts into two fields).
     [[nodiscard]] uint8_t questLogStride() const override { return 4; }
+    // TBC 2.4.3 SMSG_QUEST_QUERY_RESPONSE as cmangos-tbc HandleQuestQueryOpcode writes it.
+    std::optional<bool> parseQuestQueryResponse(network::Packet& packet,
+                                                QuestQueryResponseData& data) override {
+        return QuestQueryResponseParser::parseTbc(packet, data);
+    }
     // TBC 2.4.3 CMSG_QUESTGIVER_QUERY_QUEST: guid(8) + questId(4) - no trailing
     // isDialogContinued byte that WotLK added
     network::Packet buildQueryQuestPacket(uint64_t npcGuid, uint32_t questId) override;
@@ -522,6 +537,12 @@ public:
     uint8_t readQuestGiverStatus(network::Packet& packet) override;
     network::Packet buildQueryQuestPacket(uint64_t npcGuid, uint32_t questId) override;
     network::Packet buildAcceptQuestPacket(uint64_t npcGuid, uint32_t questId) override;
+    // The TBC field-by-field read does not fit vmangos' writer; keep the scan.
+    std::optional<bool> parseQuestQueryResponse(network::Packet& packet,
+                                                QuestQueryResponseData& data) override {
+        (void)packet; (void)data;
+        return std::nullopt;
+    }
     // Classic 1.12 SMSG_QUESTGIVER_QUEST_DETAILS (vmangos Quest.cpp): like TBC
     // but WITHOUT the suggestedPlayers field after activateAccept.
     bool parseQuestDetails(network::Packet& packet, QuestDetailsData& data) override {

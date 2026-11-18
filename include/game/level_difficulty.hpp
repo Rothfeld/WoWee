@@ -51,4 +51,16 @@ inline bool questIsTrivial(bool tbc, int playerLevel, int questLevel) {
     return playerLevel - questLevel > questGreenRange(false, playerLevel);
 }
 
+/// A quest's colour band, by GetDifficultyColor's rule in 2.4.3's
+/// QuestLogFrame.lua: green while the quest is no more than GetQuestGreenRange()
+/// levels below the player (questGreenRange), grey below that.
+inline LevelDifficulty questLevelDifficulty(bool tbc, uint32_t playerLevel, int32_t questLevel) {
+    const int difference = questLevel - static_cast<int>(playerLevel);
+    if (difference >= 5) return LevelDifficulty::Red;
+    if (difference >= 3) return LevelDifficulty::Orange;
+    if (difference >= -2) return LevelDifficulty::Yellow;
+    return -difference <= questGreenRange(tbc, static_cast<int>(playerLevel))
+        ? LevelDifficulty::Green : LevelDifficulty::Gray;
+}
+
 } // namespace wowee::game

@@ -463,6 +463,30 @@ static int lua_GetMerchantNumItems(lua_State* L) {
 }
 
 // GetMerchantItemInfo(index) → name, texture, price, stackCount, numAvailable, isUsable
+// Declared in lua_api_helpers.hpp.
+bool playerCanUseItem(game::GameHandler* gh, const game::ItemQueryResponseData* info) {
+    if (!gh || !info || !info->valid) return false;
+    const auto classId = gh->getPlayerClass();
+    const auto raceId = gh->getPlayerRace();
+    bool usable = info->requiredLevel <= gh->getPlayerLevel();
+    if (info->allowableClass != 0 && info->allowableClass != 0xffffffffu)
+        usable = usable && classId > 0 && classId <= 32 && (info->allowableClass & (1u << (classId - 1)));
+    if (info->allowableRace != 0 && info->allowableRace != 0xffffffffu)
+        usable = usable && raceId > 0 && raceId <= 32 && (info->allowableRace & (1u << (raceId - 1)));
+    if (info->itemClass == 2 /* weapon */)
+        usable = usable && info->subClass < 32 && gh->canUseWeaponSubclass(info->subClass);
+    if (info->itemClass == 4 /* armor */ && info->subClass != 0)
+        usable = usable && info->subClass < 32 && gh->canUseArmorSubclass(info->subClass);
+    if (info->requiredSkill != 0) {
+        const auto skill = gh->getPlayerSkills().find(info->requiredSkill);
+        usable = usable && skill != gh->getPlayerSkills().end() && skill->second.value >= info->requiredSkillRank;
+    }
+    if (info->requiredReputationFaction != 0)
+        usable = usable && game::reputationStandingFor(gh->getFactionStanding(info->requiredReputationFaction)).id - 1 >=
+            static_cast<int>(info->requiredReputationRank);
+    return usable;
+}
+
 static int lua_GetMerchantItemInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     int index = static_cast<int>(luaL_checknumber(L, 1));

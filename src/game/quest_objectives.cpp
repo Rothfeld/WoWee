@@ -33,15 +33,34 @@ std::string targetName(GameHandler& gh, int32_t npcOrGoId) {
 std::vector<QuestObjective> questObjectives(GameHandler& gh,
                                             const GameHandler::QuestLogEntry& q) {
     std::vector<QuestObjective> out;
-    for (const auto& kill : q.killObjectives) {
+    // The EndText line ("event"), what the server reports done by completing
+    // the quest. First, ahead of kills and items, as 2.4.3 lists it: "Return
+    // to Knot Thimblejack" before the Gordok Ogre Suit's four items,
+    // "Brokentoe Defeated" before the kill.
+    if (!q.endText.empty()) {
+        QuestObjective line;
+        line.text = q.endText;
+        line.type = "event";
+        line.finished = q.complete;
+        out.push_back(std::move(line));
+    }
+    for (size_t k = 0; k < q.killObjectives.size(); ++k) {
+        const auto& kill = q.killObjectives[k];
         if (!isQuestObjective(kill.npcOrGoId, kill.required)) continue;
         const uint32_t key = static_cast<uint32_t>(std::abs(kill.npcOrGoId));
         uint32_t current = 0;
         if (auto it = q.killCounts.find(key); it != q.killCounts.end()) current = it->second.first;
         const bool isObject = kill.npcOrGoId < 0;
         QuestObjective line;
-        line.text = questObjectiveLine(targetName(gh, kill.npcOrGoId), isObject, current,
-                                       kill.required);
+        // The quest's own wording where it has one, without "slain":
+        // "Capture The Overlook: 0/1" (2.4.3, Hellfire Fortifications).
+        if (k < q.objectiveTexts.size() && !q.objectiveTexts[k].empty()) {
+            line.text = q.objectiveTexts[k] + ": " + std::to_string(current) + "/" +
+                        std::to_string(kill.required);
+        } else {
+            line.text = questObjectiveLine(targetName(gh, kill.npcOrGoId), isObject, current,
+                                           kill.required);
+        }
         line.type = isObject ? "object" : "monster";
         line.finished = current >= kill.required;
         out.push_back(std::move(line));

@@ -812,6 +812,14 @@ void GameHandler::update(float deltaTime) {
         return;
     }
 
+    // Events a script asked for while it ran (queueAddonEvent), now that it
+    // has returned.
+    if (!queuedAddonEvents_.empty()) {
+        auto queued = std::move(queuedAddonEvents_);
+        queuedAddonEvents_.clear();
+        for (const auto& [event, args] : queued) fireAddonEvent(event, args);
+    }
+
     updateNetworking();
     if (!socket) return;  // disconnect() may have been called
 
@@ -5014,6 +5022,10 @@ const std::string& GameHandler::getQuestSortName(uint32_t sortId) const {
     static const std::string empty;
     return questHandler_ ? questHandler_->getQuestSortName(sortId) : empty;
 }
+const std::string& GameHandler::getQuestInfoName(uint32_t typeId) const {
+    static const std::string empty;
+    return questHandler_ ? questHandler_->getQuestInfoName(typeId) : empty;
+}
 bool GameHandler::isQuestOfferRewardOpen() const {
     return questHandler_ ? questHandler_->isQuestOfferRewardOpen() : false;
 }
@@ -5035,6 +5047,18 @@ int GameHandler::getSelectedQuestLogIndex() const {
 }
 void GameHandler::setSelectedQuestLogIndex(int idx) {
     if (questHandler_) questHandler_->setSelectedQuestLogIndex(idx);
+}
+GameHandler::QuestLogRows GameHandler::questLogRows() const {
+    return questHandler_ ? questHandler_->questLogRows() : QuestLogRows{};
+}
+int GameHandler::questLogIndexOf(uint32_t questId) const {
+    return questHandler_ ? questHandler_->questLogIndexOf(questId) : 0;
+}
+void GameHandler::setQuestHeaderCollapsed(int index, bool collapse) {
+    if (questHandler_) questHandler_->setQuestHeaderCollapsed(index, collapse);
+}
+bool GameHandler::isQuestGroupCollapsed(int32_t group) const {
+    return questHandler_ && questHandler_->isQuestGroupCollapsed(group);
 }
 uint32_t GameHandler::getSharedQuestId() const {
     return questHandler_ ? questHandler_->getSharedQuestId() : 0;
