@@ -9,7 +9,7 @@
 #include <vk_mem_alloc.h>
 
 #include "rendering/vk_context.hpp"
-#include "rendering/vk_texture.hpp"
+#include "rendering/weather_mist.hpp"
 
 namespace wowee {
 namespace pipeline { class AssetManager; }
@@ -55,7 +55,7 @@ public:
     void setDensityScale(float scale) { densityScale_ = glm::clamp(scale, 0.0f, 1.0f); }
     [[nodiscard]] float intensity() const { return intensity_; }
     [[nodiscard]] size_t grainCount() const { return grains_.size(); }
-    [[nodiscard]] size_t puffCount() const { return puffs_.size(); }
+    [[nodiscard]] size_t puffCount() const { return mist_.puffCount(); }
 
 private:
     struct Grain {          // one vertex, as sand.bls reads it
@@ -64,54 +64,28 @@ private:
         glm::vec3 velocity; // yards per second
         float death;
     };
-    struct Puff {
-        glm::vec3 start;    // camera-relative centre, at birth
-        float birth;
-        glm::vec3 velocity;
-        float death;
-        float size;         // quad edge, yards
-    };
-    struct MistVertex {
-        glm::vec3 position; // camera-relative
-        float alpha;
-        glm::vec2 uv;
-    };
-
     bool createPipelines();
     bool createBuffers();
-    bool loadTexture(pipeline::AssetManager* assets);
     void spawnGrain(const glm::vec3& forward, const glm::vec3& right);
-    void spawnPuff(const glm::vec3& forward, const glm::vec3& right);
 
     VkContext* vkCtx_ = nullptr;
     VkDescriptorSetLayout perFrameLayout_ = VK_NULL_HANDLE;
     VkPipeline grainPipeline_ = VK_NULL_HANDLE;
-    VkPipeline mistPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout grainLayout_ = VK_NULL_HANDLE;
-    VkPipelineLayout mistLayout_ = VK_NULL_HANDLE;
-    VkDescriptorSetLayout textureSetLayout_ = VK_NULL_HANDLE;
-    VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
-    VkDescriptorSet textureSet_ = VK_NULL_HANDLE;
-    VkTexture mistTexture_;
+    WeatherMist mist_;
 
     struct FrameBuffers {
         ::VkBuffer grains = VK_NULL_HANDLE;
         VmaAllocation grainsAlloc = VK_NULL_HANDLE;
         void* grainsMapped = nullptr;
-        ::VkBuffer mist = VK_NULL_HANDLE;
-        VmaAllocation mistAlloc = VK_NULL_HANDLE;
-        void* mistMapped = nullptr;
     };
     std::array<FrameBuffers, MAX_FRAMES_IN_FLIGHT> frames_{};
 
     std::vector<Grain> grains_;
-    std::vector<Puff> puffs_;
-    std::vector<MistVertex> mistVertices_;
     float time_ = 0.0f;
     float intensity_ = 0.0f;
     float densityScale_ = 1.0f;
     float grainBudget_ = 0.0f;  // fractional grains owed to the spawn rate
-    float puffBudget_ = 0.0f;
 };
 
 } // namespace rendering

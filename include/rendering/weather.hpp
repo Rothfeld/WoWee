@@ -1,29 +1,40 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <unordered_map>
+#include <vector>
 
+#include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include <glm/glm.hpp>
-#include <vector>
-#include <unordered_map>
+
+#include "rendering/vk_context.hpp"
+#include "rendering/weather_mist.hpp"
+#include "rendering/weather_texture.hpp"
 
 namespace wowee {
+namespace pipeline { class AssetManager; }
 namespace rendering {
 
 class Camera;
-class VkContext;
 
 /**
- * @brief Weather particle system for rain and snow
+ * Rain and snow, drawn as 2.4.3 draws them (measurements and data sources in
+ * weather.cpp):
  *
- * Features:
- * - Rain particles (fast vertical drops)
- * - Snow particles (slow floating flakes)
- * - Particle recycling for efficiency
- * - Camera-relative positioning (follows player)
- * - Adjustable intensity (light, medium, heavy)
- * - Vulkan point-sprite rendering
+ *  - rain: thin triangles from Shaders\Vertex\rain.bls (2 yards long, 0.1 yard
+ *    wide, RainDrop01.blp) falling from high above the camera, blended Mod2x
+ *    so each lightens the scene behind it in the scene's own colour; a
+ *    RainDropSplash01.blp splash (patter.bls) where each lands; mist puffs.
+ *  - snow: SnowFlake01.blp points moved by Shaders\Vertex\snowpoint.bls;
+ *    mist puffs.
+ *
+ * Sandstorms are SandStorm. Drops and flakes are world-placed around the
+ * camera; mist travels with the camera.
  */
 class Weather {
 public:
@@ -34,70 +45,48 @@ public:
         STORM
     };
 
+    /// Highest walkable surface under (x, y) at or below z: terrain or a
+    /// building's floor. Rain lands, and splashes, on it.
+    using GroundQuery = std::function<std::optional<float>(float x, float y, float z)>;
+
     Weather();
     ~Weather();
 
-    /**
-     * @brief Initialize weather system
-     * @param ctx Vulkan context
-     * @param perFrameLayout Descriptor set layout for the per-frame UBO (set 0)
-     * @return true if initialization succeeded
-     */
-    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
+    /// Needs the asset manager for the weather textures, so it is called once
+    /// assets are available. Returns false when anything failed; the weather
+    /// is then not drawn.
+    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+                                  pipeline::AssetManager* assets);
+    [[nodiscard]] bool isInitialized() const { return vkCtx_ != nullptr; }
     void recreatePipelines();
-    /// The pipeline state both initialize() and recreatePipelines() need.
-    void buildPipelines(VkDevice device,
-                        const VkPipelineShaderStageCreateInfo& vertStage,
-                        const VkPipelineShaderStageCreateInfo& fragStage);
+    void shutdown();
 
-    /**
-     * @brief Update weather particles
-     * @param camera Camera for particle positioning
-     * @param deltaTime Time since last frame
-     */
+    void setGroundQuery(GroundQuery query) { groundQuery_ = std::move(query); }
+
     void update(const Camera& camera, float deltaTime);
-
-    /**
-     * @brief Render weather particles
-     * @param cmd Command buffer to record into
-     * @param perFrameSet Per-frame descriptor set (set 0, contains camera UBO)
-     */
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
 
-    /**
-     * @brief Set weather type
-     */
-    void setWeatherType(Type type) { weatherType = type; }
+    void setWeatherType(Type type);
     [[nodiscard]] Type getWeatherType() const { return weatherType; }
 
-    /**
-     * @brief Set weather intensity (0.0 = none, 1.0 = heavy)
-     */
+    /// SMSG_WEATHER's grade (0..1).
     void setIntensity(float intensity);
     [[nodiscard]] float getIntensity() const { return intensity; }
 
-    /// How much of the weather to draw, as a fraction of what the current
-    /// weather would use. The game's Weather Detail setting, which is a
-    /// quality knob rather than a forecast: it says how heavily to draw the
-    /// rain, not how hard it is raining.
-    ///
-    /// Intensity is the weather itself and comes from the server; this
-    /// multiplies it, so turning the setting down thins every storm without
-    /// making any of them a different storm.
-    void setDensityScale(float scale) {
-        densityScale_ = std::clamp(scale, 0.0f, 1.0f);
-    }
+    /// The game's Weather Detail setting (CVar weatherDensity, 0 to 3; 2 when
+    /// unset): a quality knob, not a forecast. 2.4.3 draws (2 * level + 1) / 5
+    /// of the level-2 amount: rain streaks counted over the same sky with the
+    /// same rain were 105, 300, 500 and 700 a frame at levels 0 to 3, so 0
+    /// still rains. Every count in weather.cpp is the level-2 amount.
+    void setDensityLevel(int level);
     [[nodiscard]] float densityScale() const { return densityScale_; }
 
-    /**
-     * @brief Enable or disable weather
-     */
-    void setEnabled(bool enabled) { this->enabled = enabled; }
+    /// Off in indoor WMO groups (MOGP 0x2000): drops, flakes and mist go
+    /// at once and start over from the sky when the camera comes out.
+    void setEnabled(bool enabled);
     [[nodiscard]] bool isEnabled() const { return enabled; }
 
-    /**
-     * @brief Get active particle count
-     */
+    /// Live drops, splashes and flakes.
     [[nodiscard]] int getParticleCount() const;
 
     /**
@@ -111,66 +100,81 @@ public:
         float maxIntensity = 0.0f;     // Max intensity
         float probability = 0.0f;      // Chance of weather being active (0-1)
     };
-
-    /**
-     * @brief Set weather for a zone (used for zone-based weather configuration)
-     */
     void setZoneWeather(uint32_t zoneId, Type type, float minIntensity, float maxIntensity, float probability);
-
-    /**
-     * @brief Update weather based on current zone (single-player mode)
-     * @param zoneId Current zone ID
-     * @param deltaTime Time since last frame
-     */
     void updateZoneWeather(uint32_t zoneId, float deltaTime);
-
-    /**
-     * @brief Initialize default zone weather table
-     */
     void initializeZoneWeatherDefaults();
 
-    /**
-     * @brief Clean up Vulkan resources
-     */
-    void shutdown();
-
 private:
-    struct Particle {
-        glm::vec3 position;
-        glm::vec3 velocity;
-        float lifetime;
-        float maxLifetime;
+    struct Drop {
+        glm::vec3 head;     // world
+        float groundZ;      // where it stops
+        float landedAge;    // < 0 while falling
+    };
+    struct Splash {
+        glm::vec3 position; // world, where a drop landed
+        float age;
+    };
+    struct Flake {
+        glm::vec3 position; // world
+        float groundZ;
+        float age;
+        float landedAge;    // < 0 while falling
+    };
+    struct SpriteVertex {   // weather_mod2x.vert.glsl
+        glm::vec4 position; // camera-relative
+        glm::vec2 uv;
+    };
+    struct FlakeVertex {    // weather_snow.vert.glsl
+        glm::vec4 positionAlpha;  // camera-relative, alpha
     };
 
-    void resetParticles(const Camera& camera);
-    void updateParticle(Particle& particle, const glm::vec3& cameraPos, float deltaTime);
-    [[nodiscard]] glm::vec3 getRandomPosition(const glm::vec3& center) const;
+    bool createPipelines();
+    void clearParticles();
+    float groundAt(float x, float y);
+    /// Born at the top of the box, or (`anyHeight`) anywhere on its way down.
+    void spawnDrop(const glm::vec3& camera, bool anyHeight);
+    void spawnFlake(const glm::vec3& camera, bool anyHeight);
+    void updateRain(const Camera& camera, float deltaTime, float amount);
+    void updateSnow(const Camera& camera, float deltaTime, float amount);
 
-    // Vulkan objects
-    VkContext* vkCtx = nullptr;
-    VkPipeline pipeline = VK_NULL_HANDLE;
-    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    VkContext* vkCtx_ = nullptr;
+    VkDescriptorSetLayout perFrameLayout_ = VK_NULL_HANDLE;
+    VkPipeline mod2xPipeline_ = VK_NULL_HANDLE;
+    VkPipeline snowPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mod2xLayout_ = VK_NULL_HANDLE;
+    VkPipelineLayout snowLayout_ = VK_NULL_HANDLE;
+    WeatherTexture dropTexture_;
+    WeatherTexture splashTexture_;
+    WeatherTexture flakeTexture_;
+    WeatherMist mist_;
 
-    // Dynamic mapped buffer for particle positions (updated every frame)
-    ::VkBuffer dynamicVB = VK_NULL_HANDLE;
-    VmaAllocation dynamicVBAlloc = VK_NULL_HANDLE;
-    VmaAllocationInfo dynamicVBAllocInfo{};
-    VkDeviceSize dynamicVBSize = 0;
+    struct FrameBuffers {
+        ::VkBuffer sprites = VK_NULL_HANDLE;
+        VmaAllocation spritesAlloc = VK_NULL_HANDLE;
+        void* spritesMapped = nullptr;
+        ::VkBuffer flakes = VK_NULL_HANDLE;
+        VmaAllocation flakesAlloc = VK_NULL_HANDLE;
+        void* flakesMapped = nullptr;
+    };
+    std::array<FrameBuffers, MAX_FRAMES_IN_FLIGHT> frames_{};
 
-    // Particles
-    std::vector<Particle> particles;
-    std::vector<glm::vec3> particlePositions;  // For rendering
+    GroundQuery groundQuery_;
+    std::unordered_map<int64_t, float> groundCache_;  // two-yard cells
+    float groundCacheZ_ = 0.0f;              // the height lookups search down from
+    std::vector<Drop> drops_;
+    std::vector<Splash> splashes_;
+    std::vector<Flake> flakes_;
+    std::vector<SpriteVertex> dropVertices_;
+    std::vector<SpriteVertex> splashVertices_;
+    std::vector<FlakeVertex> flakeVertices_;
+    float rainBudget_ = 0.0f;   // fractional drops owed to the spawn rate
+    float snowBudget_ = 0.0f;   // fractional flakes
+    float logTimer_ = 0.0f;
 
-    // Weather parameters
     bool enabled = false;
     Type weatherType = Type::NONE;
-    float intensity = 0.5f;
+    float intensity = 0.0f;
     float densityScale_ = 1.0f;
-
-    // Particle system parameters
-    static constexpr int MAX_PARTICLES = 2000;
-    static constexpr float SPAWN_VOLUME_SIZE = 100.0f;  // Size of spawn area around camera
-    static constexpr float SPAWN_HEIGHT = 80.0f;        // Height above camera to spawn
 
     // Zone-based weather
     std::unordered_map<uint32_t, ZoneWeather> zoneWeatherTable_;

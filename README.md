@@ -1310,9 +1310,49 @@ Map 530 at 12574.1, -6774.81, 15.09 (game_tele `SunwellPlateau`), facing west in
 - Weather particles and weather sound stop only when the camera is in an indoor (0x2000)
   group. The entrance lies inside the box of the facade's outdoor groups (group 53 spans the
   whole model), and the zone's server rain (zone 4080, SMSG_WEATHER state 4) falls there natively.
-  Rain appearance still differs: native draws long faint streaks tinted by the scene and
-  red splash marks on the ground; WoWee draws short grey-blue streaks with a fixed colour
-  (`weather.cpp`) and no splashes.
+  Rain there is drawn as everywhere else (see Rain, snow and mist below).
+
+### Rain, snow and mist
+
+`rendering::Weather` draws rain and snow from the game's own data, measured against 2.4.3
+side by side on a private pair (`.wchange 1 1` rain, `.wchange 2 1` snow, `.wchange 3 1`
+sandstorm, typed by a GM on the native client). Evidence and tools:
+`_experiments/20261119T0930.weather/` in the workspace.
+
+- Rain drops are `Shaders\Vertex\rain.bls` triangles (Wow.exe RTTI
+  `Packet<Rain::Drop,0x1800,3>`): two yards long, 0.1 yard wide at the head (the program's
+  constant defaults), `Textures\Weather\RainDrop01.blp`, blended Mod2x (destination x
+  source x 2). The texture is grey (0.49-0.63) and the splash atlas's empty texels are
+  exactly 128, so a drop lightens the scene in the scene's own colour; this is the "tint".
+  A drop covering whole pixels scales the scene by 1.07-1.15 in every channel on 2.4.3.
+- Splashes are `patter.bls` triangles with `RainDropSplash01.blp`, a 4x4 atlas: column =
+  frame (0.25 s of life), row = how far down the camera looks at it. Measured size 0.23 yard.
+- Snow is `snowpoint.bls` points with `SnowFlake01.blp`: fade in over a second, out over a
+  quarter second after landing, size shrinking with distance.
+- Mist is the sandstorm's `Mists::Mist` puffs (`rendering::WeatherMist`) with
+  `SnowMist01.blp` in the fog colour; the same slab, a different count.
+- Counts are at weatherDensity 2, 2.4.3's default. The CVar scales them by (2 x level + 1) / 5
+  (streaks per frame 105/300/500/700 at levels 0-3, so level 0 still rains).
+- Velocity: rain 44.6 yd/s, snow 3.5 yd/s, both drifting 0.3 of their fall toward -x
+  (south), the same in Stranglethorn, Westfall and Winterspring.
+- Rain and snow are drawn only with the camera less than 74 yards above the ground (GM fly
+  in Westfall: 500 streaks a frame at 69 yards, none from 79), and not in indoor (0x2000)
+  WMO groups. Duskwood rains like any other zone; the old Duskwood exception was wrong.
+- The sun flare is blocked by indoor groups and roof triangles, not by any WMO group's box.
+
+Gotchas, each of which cost hours: the drop texture must be mip-mapped and sampled without
+anisotropic filtering, or the bright centre texels of a sub-pixel drop fall between pixel
+centres and 15 of 16 streaks vanish; 2.4.3 under Wine runs the D3D variants of the `.bls`
+programs (`c_tailLength`, `c_motionBlurRotateMtx`), not the ARB text; `.wchange` in a zone
+without a `game_weather` row works but the server drops it back to fine weather after a few
+minutes, so re-send it before each capture.
+
+Still different: the transition when weather starts or changes (2.4.3 waits 5-10 s, then
+fills the air at once; lowering the grade thins rain over six seconds, with gaps), the
+grade-to-count curve (2.4.3 draws 12% of the full count at grade 0.3, WoWee 30%), native
+mist varying 2x from one capture to the next (Stranglethorn and Dun Morogh can look much
+hazier than WoWee for many seconds), the sandstorm sky in Tanaris (native fully hazed, WoWee
+dark through thinner mist), and clouds in rain (WoWee draws dark clouds, 2.4.3 shows none).
 
 ### Idle loop boundaries
 

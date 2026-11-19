@@ -160,9 +160,9 @@ constexpr SettingDesc kSchema[] = {
      "How many particles a spell, fire or waterfall throws, as a\n"
      "percentage of what it asks for. Lower thins every effect at once.", "", 100},
     {"weatherdetail", "Weather", SettingKind::Enum, 0, 3, 1, "Detail", "",
-     "How heavy rain and snow fall. Off draws no weather at all, which\n"
-     "leaves the sky and the sound of it and nothing in the air.",
-     "Off|Light|Medium|Full", 3},
+     "How many rain drops and snow flakes are drawn: 1/5, 3/5, 1 and 7/5\n"
+     "of the game's default (Medium), as 2.4.3's weatherDensity 0-3.",
+     "Low|Fair|Medium|High", 2},
     {"environmentdetail", "Object detail", SettingKind::Int, 50, 150, 5, "Detail", "",
      "How far out doodads - crates, bushes, lamps, fences - keep being\n"
      "drawn, as a percentage. Lower empties the middle distance first.", "", 100},

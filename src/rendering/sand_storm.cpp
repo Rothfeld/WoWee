@@ -77,7 +77,11 @@ constexpr float kRampPerSecond = 1.0f / 7.0f;
 constexpr float kPuffFade = 0.2f;
 
 constexpr size_t kMaxGrains = 4 * kGrainsPerPacket;
-constexpr size_t kMaxPuffs = 64;
+
+constexpr WeatherMist::Shape kMist{
+    .speed = kSpeed, .nearDepth = kPuffNear, .farDepth = kPuffFar, .size = kPuffSize,
+    .halfWidth = kPuffHalfWidth, .below = kPuffBelow, .above = kPuffAbove, .fade = kPuffFade,
+    .puffsAtFull = kPuffsAtFull};
 
 struct GrainPush {
     glm::vec4 timeAndSize;  // x = now, yzw = sand.bls c_pointSize
@@ -103,13 +107,15 @@ bool SandStorm::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
     if (vkCtx_) return true;
     vkCtx_ = ctx;
     perFrameLayout_ = perFrameLayout;
-    if (!loadTexture(assetManager) || !createPipelines() || !createBuffers()) {
+    // Named in Wow.exe next to Shaders\Vertex\sand.bls; Weather.dbc's sand rows
+    // leave EffectTexture empty.
+    if (!mist_.initialize(ctx, perFrameLayout, assetManager, "Textures\\Weather\\WeatherMistGrainy01.blp") ||
+        !createPipelines() || !createBuffers()) {
         LOG_ERROR("SandStorm: initialization failed");
         shutdown();
         return false;
     }
     grains_.reserve(kMaxGrains);
-    puffs_.reserve(kMaxPuffs);
     LOG_INFO("SandStorm: initialized, ", kPuffsAtFull, " mist puffs and ", kGrainsAtFull,
              " grains at full intensity");
     return true;
@@ -122,76 +128,20 @@ void SandStorm::shutdown() {
     vkDeviceWaitIdle(device);
     for (auto& f : frames_) {
         destroy(allocator, f.grains, f.grainsAlloc);
-        destroy(allocator, f.mist, f.mistAlloc);
         f = FrameBuffers{};
     }
-    mistTexture_.destroy(device, allocator);
+    mist_.shutdown();
     destroy(device, grainPipeline_);
-    destroy(device, mistPipeline_);
     destroy(device, grainLayout_);
-    destroy(device, mistLayout_);
-    destroy(device, descriptorPool_);
-    destroy(device, textureSetLayout_);
-    textureSet_ = VK_NULL_HANDLE;
     grains_.clear();
-    puffs_.clear();
     vkCtx_ = nullptr;
-}
-
-bool SandStorm::loadTexture(pipeline::AssetManager* assets) {
-    VkDevice device = vkCtx_->getDevice();
-    // Named in Wow.exe next to Shaders\Vertex\sand.bls; Weather.dbc's sand rows
-    // leave EffectTexture empty.
-    const char* path = "Textures\\Weather\\WeatherMistGrainy01.blp";
-    pipeline::BLPImage image = assets->loadTexture(path);
-    if (!image.isValid() || !mistTexture_.upload(*vkCtx_, image.data.data(), image.width, image.height,
-                                                 VK_FORMAT_R8G8B8A8_UNORM, true)) {
-        LOG_ERROR("SandStorm: failed to load ", path);
-        return false;
-    }
-    mistTexture_.createSampler(device, VK_FILTER_LINEAR, VK_FILTER_LINEAR,
-                               VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-    if (!mistTexture_.isValid()) {
-        LOG_ERROR("SandStorm: ", path, " is not sampleable");
-        return false;
-    }
-
-    VkDescriptorSetLayoutBinding sampler{};
-    sampler.binding = 0;
-    sampler.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sampler.descriptorCount = 1;
-    sampler.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    textureSetLayout_ = createDescriptorSetLayout(device, {sampler});
-    if (!textureSetLayout_) return false;
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
-    VkDescriptorPoolCreateInfo pool{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pool.maxSets = 1;
-    pool.poolSizeCount = 1;
-    pool.pPoolSizes = &size;
-    if (vkCreateDescriptorPool(device, &pool, nullptr, &descriptorPool_) != VK_SUCCESS) return false;
-    VkDescriptorSetAllocateInfo alloc{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    alloc.descriptorPool = descriptorPool_;
-    alloc.descriptorSetCount = 1;
-    alloc.pSetLayouts = &textureSetLayout_;
-    if (vkAllocateDescriptorSets(device, &alloc, &textureSet_) != VK_SUCCESS) return false;
-    VkDescriptorImageInfo imageInfo = mistTexture_.descriptorInfo();
-    VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = textureSet_;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &imageInfo;
-    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
-    return true;
 }
 
 bool SandStorm::createPipelines() {
     VkDevice device = vkCtx_->getDevice();
     auto grainShaders = loadShaderPair(device, "assets/shaders/sand_grain.vert.spv",
                                        "assets/shaders/sand_grain.frag.spv", "sand grain");
-    auto mistShaders = loadShaderPair(device, "assets/shaders/sand_mist.vert.spv",
-                                      "assets/shaders/sand_mist.frag.spv", "sand mist");
-    if (!grainShaders || !mistShaders) return false;
+    if (!grainShaders) return false;
 
     if (!grainLayout_) {
         VkPushConstantRange push{};
@@ -199,8 +149,7 @@ bool SandStorm::createPipelines() {
         push.size = sizeof(GrainPush);
         grainLayout_ = createPipelineLayout(device, {perFrameLayout_}, {push});
     }
-    if (!mistLayout_) mistLayout_ = createPipelineLayout(device, {perFrameLayout_, textureSetLayout_}, {});
-    if (!grainLayout_ || !mistLayout_) return false;
+    if (!grainLayout_) return false;
 
     VkVertexInputBindingDescription grainBinding{0, sizeof(Grain), VK_VERTEX_INPUT_RATE_VERTEX};
     std::vector<VkVertexInputAttributeDescription> grainAttrs{
@@ -220,52 +169,27 @@ bool SandStorm::createPipelines() {
         .setDynamicStates(viewportAndScissorDynamic())
         .build(device, vkCtx_->getPipelineCache());
 
-    VkVertexInputBindingDescription mistBinding{0, sizeof(MistVertex), VK_VERTEX_INPUT_RATE_VERTEX};
-    std::vector<VkVertexInputAttributeDescription> mistAttrs{
-        {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MistVertex, position)},
-        {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MistVertex, uv)},
-    };
-    mistPipeline_ = PipelineBuilder()
-        .setShaders(mistShaders.vertStage, mistShaders.fragStage)
-        .setVertexInput({mistBinding}, mistAttrs)
-        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
-        .setColorBlendAttachment(PipelineBuilder::blendAlpha())
-        .setMultisample(vkCtx_->getMsaaSamples())
-        .setLayout(mistLayout_)
-        .setRenderPass(vkCtx_->getImGuiRenderPass())
-        .setDynamicStates(viewportAndScissorDynamic())
-        .build(device, vkCtx_->getPipelineCache());
-
     grainShaders.vert.destroy();
     grainShaders.frag.destroy();
-    mistShaders.vert.destroy();
-    mistShaders.frag.destroy();
-    return grainPipeline_ && mistPipeline_;
+    return grainPipeline_ != VK_NULL_HANDLE;
 }
 
 void SandStorm::recreatePipelines() {
     if (!vkCtx_) return;
     VkDevice device = vkCtx_->getDevice();
     destroy(device, grainPipeline_);
-    destroy(device, mistPipeline_);
     if (!createPipelines()) LOG_ERROR("SandStorm: pipeline recreation failed");
+    mist_.recreatePipeline();
 }
 
 bool SandStorm::createBuffers() {
     for (auto& f : frames_) {
         AllocatedBuffer g = createBuffer(vkCtx_->getAllocator(), kMaxGrains * sizeof(Grain),
                                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        AllocatedBuffer m = createBuffer(vkCtx_->getAllocator(), kMaxPuffs * 6 * sizeof(MistVertex),
-                                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         f.grains = g.buffer;
         f.grainsAlloc = g.allocation;
         f.grainsMapped = g.info.pMappedData;
-        f.mist = m.buffer;
-        f.mistAlloc = m.allocation;
-        f.mistMapped = m.info.pMappedData;
-        if (!f.grains || !f.mist || !f.grainsMapped || !f.mistMapped) return false;
+        if (!f.grains || !f.grainsMapped) return false;
     }
     return true;
 }
@@ -278,12 +202,6 @@ void SandStorm::spawnGrain(const glm::vec3& forward, const glm::vec3& right) {
     grains_.push_back({start, time_, -forward * kSpeed, time_ + depth / kSpeed});
 }
 
-void SandStorm::spawnPuff(const glm::vec3& forward, const glm::vec3& right) {
-    const glm::vec3 start = forward * kPuffFar + right * uniform(-kPuffHalfWidth, kPuffHalfWidth) +
-                            glm::vec3(0.0f, 0.0f, uniform(-kPuffBelow, kPuffAbove));
-    puffs_.push_back({start, time_, -forward * kSpeed, time_ + (kPuffFar - kPuffNear) / kSpeed, kPuffSize});
-}
-
 void SandStorm::update(const Camera& camera, float deltaTime, float targetIntensity) {
     if (!vkCtx_) return;
     time_ += deltaTime;
@@ -291,7 +209,6 @@ void SandStorm::update(const Camera& camera, float deltaTime, float targetIntens
     intensity_ += glm::clamp(targetIntensity - intensity_, -step, step);
 
     std::erase_if(grains_, [this](const Grain& g) { return g.death <= time_; });
-    std::erase_if(puffs_, [this](const Puff& p) { return p.death <= time_; });
 
     glm::vec3 forward = camera.getForward();
     forward.z = 0.0f;
@@ -310,53 +227,14 @@ void SandStorm::update(const Camera& camera, float deltaTime, float targetIntens
     }
     grainBudget_ = std::min(grainBudget_, 1.0f);
 
-    // Puffs: born at the far end at the rate that keeps intensity * the full
-    // count on the path, so a storm that starts fills in from the distance.
-    const float pathTime = (kPuffFar - kPuffNear) / kSpeed;
-    puffBudget_ += amount * kPuffsAtFull / pathTime * deltaTime;
-    while (puffBudget_ >= 1.0f && puffs_.size() < kMaxPuffs) {
-        spawnPuff(forward, right);
-        puffBudget_ -= 1.0f;
-    }
-    puffBudget_ = std::min(puffBudget_, 1.0f);
-
-    // Mist quads, camera-facing, far to near.
-    const glm::vec3 camRight = camera.getRight();
-    const glm::vec3 camUp = camera.getUp();
-    std::sort(puffs_.begin(), puffs_.end(), [this](const Puff& a, const Puff& b) {
-        const glm::vec3 pa = a.start + a.velocity * (time_ - a.birth);
-        const glm::vec3 pb = b.start + b.velocity * (time_ - b.birth);
-        return glm::dot(pa, pa) > glm::dot(pb, pb);
-    });
-    mistVertices_.clear();
-    for (const Puff& p : puffs_) {
-        const float age = time_ - p.birth;
-        const float life = p.death - p.birth;
-        const float alpha = glm::clamp(age / kPuffFade, 0.0f, 1.0f) *
-                            glm::clamp((life - age) / kPuffFade, 0.0f, 1.0f);
-        if (alpha <= 0.0f) continue;
-        const glm::vec3 c = p.start + p.velocity * age;
-        const glm::vec3 r = camRight * (0.5f * p.size);
-        const glm::vec3 u = camUp * (0.5f * p.size);
-        const MistVertex v0{c - r - u, alpha, {0, 1}}, v1{c + r - u, alpha, {1, 1}},
-                         v2{c + r + u, alpha, {1, 0}}, v3{c - r + u, alpha, {0, 0}};
-        mistVertices_.insert(mistVertices_.end(), {v0, v1, v2, v0, v2, v3});
-    }
+    mist_.update(camera, deltaTime, amount, kMist);
 }
 
 void SandStorm::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
-    if (!vkCtx_ || (grains_.empty() && mistVertices_.empty())) return;
+    if (!vkCtx_) return;
+    mist_.render(cmd, perFrameSet);
     FrameBuffers& f = frames_[vkCtx_->getCurrentFrame()];
     VkDeviceSize offset = 0;
-
-    if (!mistVertices_.empty()) {
-        std::memcpy(f.mistMapped, mistVertices_.data(), mistVertices_.size() * sizeof(MistVertex));
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mistPipeline_);
-        const VkDescriptorSet sets[] = {perFrameSet, textureSet_};
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mistLayout_, 0, 2, sets, 0, nullptr);
-        vkCmdBindVertexBuffers(cmd, 0, 1, &f.mist, &offset);
-        vkCmdDraw(cmd, static_cast<uint32_t>(mistVertices_.size()), 1, 0, 0);
-    }
     if (!grains_.empty()) {
         std::memcpy(f.grainsMapped, grains_.data(), grains_.size() * sizeof(Grain));
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, grainPipeline_);

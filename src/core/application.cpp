@@ -709,9 +709,9 @@ bool Application::initialize() {
             if (!renderer) return;
             if (auto* m2 = renderer->getM2Renderer()) m2->setParticleDensity(density);
         };
-        luaSvc.setWeatherDensity = [this](float scale) {
+        luaSvc.setWeatherDensity = [this](int level) {
             if (!renderer) return;
-            if (auto* weather = renderer->getWeather()) weather->setDensityScale(scale);
+            if (auto* weather = renderer->getWeather()) weather->setDensityLevel(level);
         };
         luaSvc.setClientSetting = [uim = uiManager.get()](const std::string& key,
                                                           const std::string& value) {

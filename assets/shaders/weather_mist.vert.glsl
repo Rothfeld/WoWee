@@ -1,6 +1,6 @@
 #version 450
 
-// Sandstorm mist puff: a camera-facing WeatherMistGrainy01 quad, positions
+// Weather mist puff (rain, snow, sandstorm): a camera-facing mist quad, positions
 // relative to the camera, tinted with the fog colour.
 
 layout(set = 0, binding = 0) uniform PerFrame {

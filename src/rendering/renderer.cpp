@@ -807,9 +807,9 @@ bool Renderer::initialize(core::Window* win) {
     clouds = nullptr;
     lensFlare = nullptr;
 
+    // Initialized with the asset manager (runDeferredWorldInitStep), which
+    // its textures need.
     weather = std::make_unique<Weather>();
-    if (!weather->initialize(vkCtx, perFrameSetLayout))
-        LOG_WARNING("Weather effect initialization failed (non-fatal)");
 
     lightning = std::make_unique<Lightning>();
     if (!lightning->initialize(vkCtx, perFrameSetLayout))
@@ -1946,9 +1946,11 @@ float Renderer::sampleSunOcclusion() const {
     // flare either - the time-of-day gate in LensFlare covers the same ground.
     if (sunDir.z <= 0.0f) return 1.0f;
 
-    // Indoors the sun is behind a roof by definition, and a roof is the one
-    // occluder the terrain march below cannot see.
-    if (wmoRenderer && wmoRenderer->isInsideWMO(eye.x, eye.y, eye.z)) return 1.0f;
+    // Indoors (an indoor WMO group, MOGP 0x2000) the sun is behind a roof. An
+    // outdoor group's box is not a roof: Orgrimmar's valleys and the Sunwell
+    // Plateau entrance stand inside such boxes under open sky. Roofs over an
+    // outdoor point are found by the triangle ray below.
+    if (wmoRenderer && wmoRenderer->isInsideInteriorWMO(eye.x, eye.y, eye.z)) return 1.0f;
 
     // How far to look. Far enough to clear the hill the camera is standing
     // under, and no further: past a few hundred yards a ridge on the horizon
@@ -2150,25 +2152,18 @@ void Renderer::update(float deltaTime) {
         if (weather && gh) {
             uint32_t wType = gh->getWeatherType();
             float wInt = gh->getWeatherIntensity();
-            if (resolvedZoneId == 10) {
-                // Duskwood's defining effect is persistent ground fog. Some
-                // realms continuously report rain here; suppress those streak
-                // particles so they cannot replace the authored fog ambience.
-                weather->setWeatherType(Weather::Type::NONE);
-                weather->setIntensity(0.0f);
-            } else {
-                // The server's weather, and only that: it sends fine weather
-                // on entering a zone that has none, and this drew a random
-                // zone weather over it. Fog has no particles here. Sandstorms
-                // are their own effect (SandStorm), not rain particles.
-                switch (game::weatherKind(wType)) {
-                    case game::WeatherKind::RAIN:         weather->setWeatherType(Weather::Type::RAIN); break;
-                    case game::WeatherKind::SNOW:         weather->setWeatherType(Weather::Type::SNOW); break;
-                    case game::WeatherKind::THUNDERSTORM: weather->setWeatherType(Weather::Type::STORM); break;
-                    default:                              weather->setWeatherType(Weather::Type::NONE); break;
-                }
-                weather->setIntensity(weather->getWeatherType() == Weather::Type::NONE ? 0.0f : wInt);
+            // The server's weather, and only that: it sends fine weather on
+            // entering a zone that has none, and this drew a random zone
+            // weather over it. Fog has no particles here. Sandstorms are their
+            // own effect (SandStorm), not rain particles. Duskwood rains like
+            // anywhere else (2.4.3, forced and server-rolled rain alike).
+            switch (game::weatherKind(wType)) {
+                case game::WeatherKind::RAIN:         weather->setWeatherType(Weather::Type::RAIN); break;
+                case game::WeatherKind::SNOW:         weather->setWeatherType(Weather::Type::SNOW); break;
+                case game::WeatherKind::THUNDERSTORM: weather->setWeatherType(Weather::Type::STORM); break;
+                default:                              weather->setWeatherType(Weather::Type::NONE); break;
             }
+            weather->setIntensity(weather->getWeatherType() == Weather::Type::NONE ? 0.0f : wInt);
             weather->setEnabled(!insideWmo);
             // Off in indoor WMO groups only. The ruins of Ahn'Qiraj are outdoor
             // WMO groups, and 2.4.3 draws the storm among them.
@@ -2552,6 +2547,23 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
             if (sandStorm && !sandStorm->isInitialized() &&
                 !sandStorm->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
                 LOG_ERROR("Sandstorm weather initialization failed");
+            if (weather && !weather->isInitialized()) {
+                if (!weather->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
+                    LOG_ERROR("Rain and snow initialization failed");
+                // Drops land on the terrain or on a building's floor.
+                weather->setGroundQuery([this](float x, float y, float z) -> std::optional<float> {
+                    std::optional<float> ground;
+                    if (terrainManager) {
+                        const auto h = terrainManager->getHeightAt(x, y);
+                        if (h && *h <= z) ground = h;
+                    }
+                    if (wmoRenderer) {
+                        const auto h = wmoRenderer->getFloorHeight(x, y, z);
+                        if (h && (!ground || *h > *ground)) ground = h;
+                    }
+                    return ground;
+                });
+            }
             break;
         default:
             deferredWorldInitPending_ = false;
@@ -4945,16 +4957,6 @@ float Renderer::volumetricFogExtinction() const {
         const float hours = lightingManager->getVisualTimeOfDayHours();
         const float dawn = 1.0f - glm::smoothstep(0.0f, 2.5f, std::abs(hours - 6.5f));
         extinction *= 1.0f + 0.8f * dawn;
-    }
-
-    if (weather) {
-        const float w = glm::clamp(weather->getIntensity(), 0.0f, 1.0f);
-        switch (weather->getWeatherType()) {
-            case Weather::Type::RAIN:  extinction *= 1.0f + 1.2f * w; break;
-            case Weather::Type::SNOW:  extinction *= 1.0f + 0.8f * w; break;
-            case Weather::Type::STORM: extinction *= 1.0f + 2.0f * w; break;
-            default: break;
-        }
     }
 
     // Indoors the outdoor air mostly stays outside. Not all of it: a hall

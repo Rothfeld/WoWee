@@ -505,12 +505,8 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
                 m2->setParticleDensity(static_cast<float>(pendingParticleDensity) / 100.0f);
         }
     } else if (key == "weatherdetail") {
-        // Offered as four steps and passed on as a fraction of the full
-        // amount, which is what the weather system takes. Off is no weather.
         if (renderer) {
-            constexpr float kWeatherSteps = 3.0f;
-            if (auto* w = renderer->getWeather())
-                w->setDensityScale(static_cast<float>(pendingWeatherDetail) / kWeatherSteps);
+            if (auto* w = renderer->getWeather()) w->setDensityLevel(pendingWeatherDetail);
         }
     } else if (key == "environmentdetail") {
         if (renderer) {

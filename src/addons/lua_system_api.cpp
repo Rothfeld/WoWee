@@ -858,7 +858,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "cameradistancemax") lua_pushstring(L, "15");
     else if (n == "cameradistancemovespeed") lua_pushstring(L, "8.33");
     else if (n == "cameradistancesmoothspeed") lua_pushstring(L, "8.33");
-    else if (n == "weatherdensity") lua_pushstring(L, "3");
+    else if (n == "weatherdensity") lua_pushstring(L, "2");
     else if (n == "particledensity") lua_pushstring(L, "1");
     else if (n == "environmentdetail") lua_pushstring(L, "1");
     // The top of the slider: this client has always drawn at 16x, so anything
@@ -1814,14 +1814,10 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
         }
     }
 
-    // Weather Detail, which the panel offers as 0 to 3. That is a count of
-    // steps rather than a fraction, so it is divided by its own maximum: 0
-    // draws no weather at all, which is what the bottom of that slider means.
+    // Weather Detail, 0 to 3 (Weather::setDensityLevel).
     if (key == "weatherdensity") {
         if (auto* svc = getLuaServices(L); svc && svc->setWeatherDensity) {
-            constexpr float kWeatherDetailSteps = 3.0f;
-            svc->setWeatherDensity(
-                static_cast<float>(std::atof(value.c_str())) / kWeatherDetailSteps);
+            svc->setWeatherDensity(std::clamp(std::atoi(value.c_str()), 0, 3));
         }
     }
     if (key == "useuiscale") {
