@@ -2,6 +2,7 @@
 // lua_spell_api.cpp - Spell info, casting, auras, and targeting Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
+#include "game/current_action.hpp"
 #include "addons/lua_api_helpers.hpp"
 #include "game/item_text.hpp"
 #include "game/game_utils.hpp"
@@ -1392,20 +1393,7 @@ static int lua_IsUsableSpell(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); lua_pushboolean(L, 0); return 2; }
 
-    uint32_t spellId = 0;
-    if (lua_isnumber(L, 1)) {
-        spellId = static_cast<uint32_t>(lua_tonumber(L, 1));
-    } else if (lua_isstring(L, 1)) {
-        const char* name = lua_tostring(L, 1);
-        if (!name || !*name) { lua_pushboolean(L, 0); lua_pushboolean(L, 0); return 2; }
-        std::string nameLow(name);
-        toLowerInPlace(nameLow);
-        for (uint32_t sid : gh->getKnownSpells()) {
-            std::string sn = gh->getSpellName(sid);
-            toLowerInPlace(sn);
-            if (sn == nameLow) { spellId = sid; break; }
-        }
-    }
+    const uint32_t spellId = spellIdForCall(L, gh);
 
     if (spellId == 0 || !gh->getKnownSpells().count(spellId)) {
         lua_pushboolean(L, 0);
@@ -1540,16 +1528,19 @@ void registerSpellLuaAPI(lua_State* L) {
             (void)L; lua_pushboolean(L, 0); return 1; // No proc overlay tracking
         }},
                 {"IsCurrentSpell", [](lua_State* L) -> int {
-            // A name as well as an id: native 2.4.3 IsCurrentSpell("Golden
-            // Gryphon") answers nil while riding it, and does not raise.
+            // IsCurrentSpell(name) or (slot, bookType); nil for a mount being
+            // ridden ("Golden Gryphon"), which is no cast under way.
+            // Otherwise the same answer as
+            // IsCurrentAction gives a button holding the spell: native 2.4.3
+            // says 1 for Battle Stance while in it, and for the cast or the
+            // next-swing ability under way.
             auto* gh = getGameHandler(L);
-            const uint32_t current = gh ? gh->getCurrentCastSpellId() : 0;
-            bool answer = false;
-            if (lua_type(L, 1) == LUA_TSTRING)
-                answer = current != 0 && gh->getSpellName(current) == lua_tostring(L, 1);
-            else
-                answer = current != 0 && current == static_cast<uint32_t>(luaL_checknumber(L, 1));
-            lua_pushboolean(L, answer ? 1 : 0);
+            const uint32_t spellId = gh ? spellIdForCall(L, gh) : 0;
+            const bool current = spellId != 0 &&
+                (game::isCurrentSpellAction(spellId, gh->getActiveActionSpellId(),
+                                            gh->hasAutoAttackIntent()) ||
+                 game::spellFormActive(*gh, spellId));
+            lua_pushboolean(L, current ? 1 : 0);
             return 1;
         }},
                 {"IsAutoRepeatSpell", [](lua_State* L) -> int {

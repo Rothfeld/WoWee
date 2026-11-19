@@ -900,6 +900,35 @@ inline uint32_t spellIdForBookSlot(game::GameHandler* gh, int slot) {
     return 0;
 }
 
+/// The spellbook entry a spell name means: "Cleave" is the highest rank in
+/// the book, "Cleave(Rank 2)" that rank. Native 2.4.3 resolves names through
+/// the book only: a warrior's Enrage (a talent aura, not in the book) has no
+/// GetSpellTexture, and IsUsableSpell("Cleave") weighs rank 6's 20 rage, not
+/// whichever known rank a hash set happened to list first.
+inline uint32_t spellIdForBookName(game::GameHandler* gh, const std::string& query) {
+    std::string name = query, rank;
+    if (const size_t open = query.find('('); open != std::string::npos && query.back() == ')') {
+        name = query.substr(0, open);
+        rank = query.substr(open + 1, query.size() - open - 2);
+    }
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    toLowerInPlace(name);
+    toLowerInPlace(rank);
+    uint32_t found = 0;
+    for (const auto& tab : gh->getSpellBookTabs()) {
+        for (const uint32_t sid : tab.spellIds) {
+            std::string sn = gh->getSpellName(sid);
+            toLowerInPlace(sn);
+            if (sn != name) continue;
+            if (rank.empty()) { found = sid; continue; }
+            std::string sr = gh->getSpellRank(sid);
+            toLowerInPlace(sr);
+            if (sr == rank) return sid;
+        }
+    }
+    return rank.empty() ? found : 0;
+}
+
 /// The spell a call means, in either of the two forms the client accepts.
 ///
 /// GetSpellTexture, GetSpellCooldown and GetSpellLink are each overloaded:
@@ -933,14 +962,7 @@ inline uint32_t spellIdForCall(lua_State* L, game::GameHandler* gh) {
     if (lua_isnumber(L, 1)) return static_cast<uint32_t>(lua_tonumber(L, 1));
     const char* name = lua_tostring(L, 1);
     if (!name || !*name) return 0;
-    std::string nameLow(name);
-    toLowerInPlace(nameLow);
-    for (uint32_t sid : gh->getKnownSpells()) {
-        std::string sn = gh->getSpellName(sid);
-        toLowerInPlace(sn);
-        if (sn == nameLow) return sid;
-    }
-    return 0;
+    return spellIdForBookName(gh, name);
 }
 
 /// Primary professions the player may still learn: two, less those known
