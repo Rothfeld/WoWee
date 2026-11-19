@@ -135,6 +135,17 @@ seen from the side or while casting
 (`_experiments/20261118T124000Z.astromancer_glow/` in the workspace). Visible
 character and M2 bones update every frame; distance/frustum culling still
 limits work. Units are drawn and animated out to the view distance.
+Names over units (build 8606) are world text: their size follows perspective
+(projected 0.2 yd line, larger only over name attachments above 4 yd), with no
+distance fade and no distance cut of their own; a human's name is a few
+pixels at 120 yd and gone at 190 yd. A corpse keeps its name, grey, at the height it had
+standing, so corpses at the camera's feet print large grey names across the
+upper screen in both clients (Sun's Reach Harbor). Which units are named:
+`ui::tbcUnitNameCVar`. 2.4.3 has eleven name CVars and none of Wrath's totem,
+guardian or critter ones: a player's totems and guardians follow
+UnitName*CreationName, critters and every NPC's summons UnitNameNPC, whose
+default is 0. Evidence: `_experiments/20261119T093137Z.far_unit_names/` in the
+workspace.
 Remote NPCs and players consume `UNIT_FIELD_BYTES_1` stand states. Persistent
 aura visuals use `SpellVisual.StateKit` and its authored attachment slots;
 their lifetime follows aura fields and owner existence, not cast duration.

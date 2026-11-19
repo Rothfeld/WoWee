@@ -9,6 +9,7 @@
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
 #include "ui/nameplate_stacking.hpp"
+#include "ui/unit_name_cvar.hpp"
 #include <unordered_map>
 #include "game/summon_title.hpp"
 #include "game/game_object_lock.hpp"
@@ -941,16 +942,22 @@ GameScreen::UnitLabelVisibility GameScreen::unitLabelVisibility(
         plate = glm::dot(delta, delta) <= 400.0f &&
             ui::legacyPlateAnchorVisible(clip.x, clip.y, clip.z, clip.w);
     }
-    const char* nameCVar = isPlayer ? (hostile ? "unitNameEnemyPlayerName" : "unitNameFriendlyPlayerName")
-        : companion ? "unitNameCompanionName"
-        : totem ? (hostile ? "unitNameEnemyTotemName" : "unitNameFriendlyTotemName")
-        : pet ? (hostile ? "unitNameEnemyPetName" : "unitNameFriendlyPetName")
-        : guardian ? (hostile ? "unitNameEnemyGuardianName" : "unitNameFriendlyGuardianName")
-        : creatureType == 8 ? "unitNameNonCombatCreatureName" : "unitNameNPC";
+    // Build 8606 has its own eleven name CVars (ui::tbcUnitNameCVar); the
+    // totem, guardian and critter ones below are Wrath's.
+    const ui::UnitNameCVar nameCVar = game::isActiveExpansion("tbc")
+        ? ui::tbcUnitNameCVar({.player = isPlayer, .hostile = hostile, .companion = companion,
+                               .summonedBy = game::unitSummonedByGuid(*entity),
+                               .createdBy = game::unitCreatedByGuid(*entity)})
+        : ui::UnitNameCVar{isPlayer ? (hostile ? "unitNameEnemyPlayerName" : "unitNameFriendlyPlayerName")
+            : companion ? "unitNameCompanionName"
+            : totem ? (hostile ? "unitNameEnemyTotemName" : "unitNameFriendlyTotemName")
+            : pet ? (hostile ? "unitNameEnemyPetName" : "unitNameFriendlyPetName")
+            : guardian ? (hostile ? "unitNameEnemyGuardianName" : "unitNameFriendlyGuardianName")
+            : creatureType == 8 ? "unitNameNonCombatCreatureName" : "unitNameNPC", "1"};
     // Hover is not a reason to show a name (Daelyshia, UnitNameNPC=0:
     // 20261117T102218Z.flight_marker_name_offset/h2-hover-original.png).
     const bool name = ui::unitWorldNameShown(own, plate, target,
-        addons::storedCVarValue(nameCVar, "1") != "0");
+        addons::storedCVarValue(nameCVar.name, nameCVar.defaultValue) != "0");
     if (own && addons::storedCVarValue("unitNameOwn", "0") == "0") return {};
     return {plate, name};
 }

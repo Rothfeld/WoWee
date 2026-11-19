@@ -5,6 +5,8 @@
 // by so little the two bars still read as touching.
 #include <catch_amalgamated.hpp>
 #include "ui/nameplate_stacking.hpp"
+#include "ui/unit_name_cvar.hpp"
+#include <string>
 #include "game/level_difficulty.hpp"
 
 using namespace wowee::ui;
@@ -140,6 +142,37 @@ TEST_CASE("Hovering an NPC does not reveal a name its setting hides") {
     CHECK(unitWorldNameShown(false, true, false, false));   // visible plate
     CHECK(unitWorldNameShown(false, false, false, true));   // UnitNameNPC=1
     CHECK(unitWorldNameShown(true, false, false, false));   // own character
+}
+
+TEST_CASE("Build 8606 picks a unit's name CVar by owner, not by creature type", "[nameplates][cvars]") {
+    // _experiments/20261119T093137Z.far_unit_names, each CVar turned off alone.
+    const uint64_t player = 0x0000000000001234ull;      // high word zero
+    const uint64_t creature = 0xF130000F7C000123ull;    // Dawnblade Summoner
+    const auto name = [](UnitNameKind unit) { return std::string(tbcUnitNameCVar(unit).name); };
+    CHECK(name({.player = true}) == "UnitNameFriendlyPlayerName");
+    CHECK(name({.player = true, .hostile = true}) == "UnitNameEnemyPlayerName");
+    // Imp 688: SUMMONEDBY and CREATEDBY the player.
+    CHECK(name({.summonedBy = player, .createdBy = player}) == "UnitNameFriendlyPetName");
+    CHECK(name({.hostile = true, .summonedBy = player, .createdBy = player}) == "UnitNameEnemyPetName");
+    // Stoneskin Totem 8071 and Mechanical Dragonling 4073: CREATEDBY alone.
+    CHECK(name({.createdBy = player}) == "UnitNameFriendlyCreationName");
+    CHECK(name({.hostile = true, .createdBy = player}) == "UnitNameEnemyCreationName");
+    // Bombay 10673.
+    CHECK(name({.companion = true, .createdBy = player}) == "UnitNameCompanionName");
+    // Guard, Rabbit, an ownerless Mana Spring Totem, an NPC's Imp Minion.
+    CHECK(name({}) == "UnitNameNPC");
+    CHECK(name({.hostile = true, .summonedBy = creature, .createdBy = creature}) == "UnitNameNPC");
+    CHECK(std::string(tbcUnitNameCVar({}).defaultValue) == "0");
+}
+
+TEST_CASE("Build 8606 name CVar defaults", "[nameplates][cvars]") {
+    CHECK(std::string(tbcUnitNameCVarDefault("unitnamenpc")) == "0");
+    CHECK(std::string(tbcUnitNameCVarDefault("unitnameown")) == "0");
+    CHECK(std::string(tbcUnitNameCVarDefault("unitnamefriendlycreationname")) == "1");
+    CHECK(std::string(tbcUnitNameCVarDefault("unitnamecompanionname")) == "1");
+    // Wrath's; build 8606 has no such CVar.
+    CHECK(tbcUnitNameCVarDefault("unitnamenoncombatcreaturename") == nullptr);
+    CHECK(tbcUnitNameCVarDefault("unitnamefriendlytotemname") == nullptr);
 }
 
 namespace {

@@ -25,6 +25,7 @@
 #include "core/version.hpp"
 #include "core/config_paths.hpp"
 #include "ui/settings_schema.hpp"
+#include "ui/unit_name_cvar.hpp"
 #include "imgui.h"
 #include "addons/lua_api_helpers.hpp"
 #include "addons/chat_window_background.hpp"
@@ -783,6 +784,14 @@ static void applySoundCVars(lua_State* L) {
 static constexpr const char* kGammaCVarDefault = "1.0";
 
 static void pushCvarDefault(lua_State* L, const std::string& n) {
+    // Build 8606's Names panel CVars, as GetCVarDefault answers there; the
+    // overhead names read the same table (ui/unit_name_cvar.hpp).
+    if (game::isActiveExpansion("tbc")) {
+        if (const char* value = ui::tbcUnitNameCVarDefault(n)) {
+            lua_pushstring(L, value);
+            return;
+        }
+    }
     if (n == "ffxglow" || n == "ffxdeath") {
         lua_pushstring(L, "1");
         return;
