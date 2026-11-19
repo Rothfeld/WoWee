@@ -2226,11 +2226,11 @@ void InventoryHandler::completeItemUseOnItem(uint64_t targetItemGuid, bool confi
         // Enchanting an unbound item binds it. Same family as the equip, use
         // and loot warnings, and the one of the five that was missed: the
         // interface has raised BIND_ENCHANT for it all along and nothing ever
-        // fired it.
+        // fired it. Whatever its bind type: native 2.4.3 asks before Deadly
+        // Poison VII goes onto a Worn Dagger (bonding 0, not soulbound).
         const uint32_t targetEntry = owner_.getItemEntryByGuid(targetItemGuid);
         const auto* targetInfo = targetEntry ? owner_.getItemInfo(targetEntry) : nullptr;
-        if (targetInfo && targetInfo->bindType == 2 &&
-            !owner_.isItemSoulbound(targetItemGuid)) {
+        if (targetInfo && !owner_.isItemSoulbound(targetItemGuid)) {
             pendingItemTarget_.reset();
             pendingEnchant_ = PendingEnchant{.active = true, .targetItemGuid = targetItemGuid, .request = pending};
             if (owner_.addonEventCallbackRef())
