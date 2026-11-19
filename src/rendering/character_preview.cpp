@@ -1477,6 +1477,8 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     // No fog in preview
     ubo.fogColor = glm::vec4(0.05f, 0.05f, 0.1f, 0.0f);
     ubo.fogParams = glm::vec4(9999.0f, 10000.0f, 0.0f, 0.0f);
+    ubo.outdoorFogColor = ubo.fogColor;
+    ubo.outdoorFogParams = ubo.fogParams;
     // Off-screen preview has no real shadow pass/light-space setup. Sampling
     // the global shadow binding here can produce unstable fragments on some
     // drivers, so keep the portrait on studio lighting only.

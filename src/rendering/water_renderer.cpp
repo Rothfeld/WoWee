@@ -51,8 +51,9 @@ struct WaterPushConstants {
     float legacyWmoMode = 0.0f;
     // Water: texture repeats across the surface. Authored magma: texture offset.
     float textureX = 0.0f, textureY = 0.0f;
+    float interiorFog = 0.0f; // 1: a WMO interior group's liquid, which takes the camera's interior fog (else the outdoor fog)
 };
-static_assert(sizeof(WaterPushConstants) == 112, "the two shader declarations of this range are laid out for 112 bytes");
+static_assert(sizeof(WaterPushConstants) == 116, "the two shader declarations of this range are laid out for 116 bytes");
 
 // TBC magma and slime: psLiquidMagma.bls draws vertex colour times one
 // texture, vsLiquidMagma.bls takes the vertex's own texture coordinate plus
@@ -1267,6 +1268,7 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // against a near plane of 0.05 while the camera's is 0.5.
         push.depthRange = glm::vec2(camera.getNearPlane(), camera.getFarPlane());
         push.sceneValid = sceneHistoryReady ? 1.0f : 0.0f;
+        push.interiorFog = surface.indoorColor ? 1.0f : 0.0f;
         // 1 = indoor WMO, 2 = exterior WMO, 3 = terrain depth-color ramp.
         // ADT ocean and freshwater both use authored animation and lighting.
         // 4 = authored magma/slime: texture at the vertex s,t plus a drift.

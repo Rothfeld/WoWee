@@ -24,6 +24,12 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 localLightColorIntensity[64];
     ivec4 localLightMeta;
     vec4 volumetricParams;  // x = on, y = near, z = 1 / ln(far / near), w = slices
+    mat4 rtViewProj;
+    vec4 rtCameraPos;
+    vec4 rtParams;
+    vec4 specularColor;
+    vec4 outdoorFogColor;   // the outdoor fog, also while the camera is in a WMO interior
+    vec4 outdoorFogParams;  // x = start, y = end
 };
 
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
@@ -51,13 +57,18 @@ vec4 fogVolumeAt(vec3 worldPos) {
     return textureLod(uFogVolume, vec3(uv, slice - 0.5 / volumetricParams.w), 0.0);
 }
 
+// The fog this surface takes: always the outdoor Light.dbc fog, also while
+// the camera is in a WMO interior (docs/wmo-fog.md). Set by main().
+vec4 gFogColor;
+vec4 gFogParams;
+
 // The zone's distance fog, then the air in front of it. The distance fog is
 // the far haze the sky is painted to meet, so it goes on first; the volume is
 // everything between the camera and that, sunlit shafts and torch glow
 // included.
 vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
-    float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
-    color = mix(fogColor.rgb, color, fogFactor);
+    float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+    color = mix(gFogColor.rgb, color, fogFactor);
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeAt(worldPos);
         color = color * air.a + air.rgb;
@@ -66,6 +77,8 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
+    gFogColor = outdoorFogColor;
+    gFogParams = outdoorFogParams;
     // Colours come from the ground's own vegetation profile, so scree, dry
     // scrub and meadow differ without anything here knowing which zone it is.
     vec3 albedo = mix(vRootColor, vTipColor, vHeightT * vHeightT);

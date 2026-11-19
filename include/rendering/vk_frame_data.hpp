@@ -44,6 +44,14 @@ struct GPUPerFrameData {
     glm::vec4 rtCameraPos;
     glm::vec4 rtParams;
     glm::vec4 specularColor;
+    // fogColor/fogParams are the fog around the camera: a WMO interior's
+    // authored MFOG while the camera is in such a group, else Light.dbc's.
+    // The MFOG belongs to surfaces lit as an interior (WMO interior groups,
+    // their doodads, units standing in them, interior liquids); terrain,
+    // grass, outdoor doodads, exterior groups and outdoor liquids take the
+    // outdoor fog below. Outside an interior both are the same.
+    glm::vec4 outdoorFogColor;   // xyz = color, w = unused
+    glm::vec4 outdoorFogParams;  // x = start, y = end
 };
 
 // Push constants for the model matrix (most common case)
