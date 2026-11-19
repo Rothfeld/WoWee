@@ -39,6 +39,7 @@ struct M2Sequence {
     uint16_t aliasNext;             // Alias for next animation
 };
 
+
 // Animation track with per-sequence keyframe data
 struct M2AnimationTrack {
     uint16_t interpolationType = 0; // 0=none, 1=linear, 2=hermite, 3=bezier
@@ -386,6 +387,13 @@ struct M2Model {
         return isValid() || !particleEmitters.empty() || !ribbonEmitters.empty();
     }
 };
+
+/// The sequence a model plays for Stand (0): its own Stand, or the
+/// animation its playable lookup names for Stand. A cage door without a
+/// Stand (world/goober/g_cage02.m2: Open, Opened, Close, Closed; Stand ->
+/// Closed) stands closed as a doodad. Sequence 0 when neither exists.
+int standSequenceIndex(const std::vector<M2Sequence>& sequences,
+                       const std::vector<M2Model::PlayableAnimation>& playableLookup);
 
 class M2Loader {
 public:

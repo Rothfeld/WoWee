@@ -1745,6 +1745,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     // Store bone/sequence data for animation
     gpuModel.bones = model.bones;
     gpuModel.sequences = model.sequences;
+    gpuModel.standSequenceIndex = pipeline::standSequenceIndex(model.sequences, model.playableAnimations);
     gpuModel.globalSequenceDurations = model.globalSequenceDurations;
     gpuModel.hasAnimation = false;
     for (const auto& bone : model.bones) {

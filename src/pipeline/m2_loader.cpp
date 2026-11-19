@@ -809,6 +809,21 @@ void parseFBlock(const std::vector<uint8_t>& data, uint32_t offset,
 
 } // anonymous namespace
 
+int standSequenceIndex(const std::vector<M2Sequence>& sequences,
+                       const std::vector<M2Model::PlayableAnimation>& playableLookup) {
+    const auto find = [&](uint32_t id) {
+        for (size_t i = 0; i < sequences.size(); ++i)
+            if (sequences[i].id == id) return static_cast<int>(i);
+        return -1;
+    };
+    if (const int stand = find(0); stand >= 0) return stand;
+    if (!playableLookup.empty()) {
+        if (const int shown = find(playableLookup[0].fallbackId); shown >= 0)
+            return shown;
+    }
+    return 0;
+}
+
 M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
     M2Model model;
 

@@ -547,3 +547,32 @@ TEST_CASE("Twinkle size stays within the authored range", "[m2][particle]") {
     // A fixed range (most emitters author 1 / 1) leaves the size alone.
     CHECK(particleTwinkleScale(7, 0.3f, 10.0f, 1.0f, 1.0f) == 1.0f);
 }
+
+TEST_CASE("Pre-WotLK playable animation lookup decides what Stand shows", "[m2][animation]") {
+    // world/goober/g_cage02.m2: Open, Opened, Close, Closed and no Stand; its
+    // lookup shows Closed (147) for Stand, so the doodad stands shut.
+    std::vector<uint8_t> bytes(1024, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t at, uint32_t value) { std::memcpy(bytes.data() + at, &value, 4); };
+    const auto put16 = [&](size_t at, uint16_t value) { std::memcpy(bytes.data() + at, &value, 2); };
+    put32(4, 261);
+    put32(0x2C, 1);    // playable lookup: one entry (Stand)
+    put32(0x30, 600);
+    put16(600, 147);
+    put16(602, 0);
+    const auto model = wowee::pipeline::M2Loader::load(bytes);
+    REQUIRE(model.playableAnimations.size() == 1);
+    CHECK(model.playableAnimations[0].fallbackId == 147);
+    CHECK(model.playableAnimations[0].flags == 0);
+
+    using wowee::pipeline::M2Sequence;
+    std::vector<M2Sequence> cage(4);
+    cage[0].id = 148; cage[1].id = 149; cage[2].id = 146; cage[3].id = 147;
+    CHECK(wowee::pipeline::standSequenceIndex(cage, model.playableAnimations) == 3);
+    // G_BrazierTroll lists Destroy first: Stand is still its Stand.
+    std::vector<M2Sequence> brazier(3);
+    brazier[0].id = 150; brazier[1].id = 0; brazier[2].id = 153;
+    CHECK(wowee::pipeline::standSequenceIndex(brazier, {{0, 0}}) == 1);
+    // Neither Stand nor a lookup (Wrath layout): the first sequence.
+    CHECK(wowee::pipeline::standSequenceIndex(cage, {}) == 0);
+}

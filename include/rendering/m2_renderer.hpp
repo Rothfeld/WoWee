@@ -187,6 +187,8 @@ struct M2ModelGPU {
     // Skeletal animation data (kept from M2Model for bone computation)
     std::vector<pipeline::M2Bone> bones;
     std::vector<pipeline::M2Sequence> sequences;
+    /// What the model plays as Stand (pipeline::standSequenceIndex).
+    int standSequenceIndex = 0;
     std::vector<uint32_t> globalSequenceDurations;  // Loop durations for global sequence tracks
     bool hasAnimation = false;  // True if any bone has keyframes
     uint32_t rtMesh = ~0u;      // RtScene mesh, or ~0u when it does not cast
@@ -641,6 +643,8 @@ public:
     /// Open (148).
     void setInstanceStateAnimation(uint32_t instanceId, uint32_t transitionId,
                                    uint32_t stateId, bool playTransition);
+    /// Loop the model's Stand (M2ModelGPU::standSequenceIndex) from its start.
+    void playInstanceStand(uint32_t instanceId);
 
     /// Light an instance while it is being pressed on. 0 clears it.
     void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color);

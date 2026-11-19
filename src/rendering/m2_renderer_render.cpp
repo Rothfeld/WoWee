@@ -60,16 +60,15 @@ namespace rendering {
 void M2Renderer::seedInstanceAnimation(const M2ModelGPU& model, uint32_t modelId,
                                        M2Instance& instance) {
         if (!model.sequences.empty()) {
-            instance.currentSequenceIndex = 0;
-            instance.idleSequenceIndex = 0;
-            for (int i = 0; i < static_cast<int>(model.sequences.size()); ++i) {
-                if (model.sequences[i].id == 0) {
-                    instance.idleSequenceIndex = i;
-                    break;
-                }
-            }
-            instance.animDuration = static_cast<float>(model.sequences[0].duration);
-            instance.animTime = static_cast<float>(randRange(std::max(1u, model.sequences[0].duration)));
+            // Stand, not whichever sequence comes first. G_BrazierTroll lists
+            // Destroy first and the Stranglethorn cage doors (g_cage02.m2) Open:
+            // looped, the brazier went out and back on and the cage doors
+            // swung open forever, where the original stands lit and shut.
+            const int stand = model.standSequenceIndex;
+            instance.currentSequenceIndex = stand;
+            instance.idleSequenceIndex = stand;
+            instance.animDuration = static_cast<float>(model.sequences[stand].duration);
+            instance.animTime = static_cast<float>(randRange(std::max(1u, model.sequences[stand].duration)));
             instance.variationTimer = randFloat(rendering::M2_VARIATION_TIMER_MIN_MS, rendering::M2_VARIATION_TIMER_MAX_MS);
         }
 
@@ -101,17 +100,19 @@ void M2Renderer::seedInstanceAnimation(const M2ModelGPU& model, uint32_t modelId
     }
 }
 
-// A model the bone loop does not step still plays its first sequence: its
+// A model the bone loop does not step still plays its Stand sequence: its
 // texture scroll and its emitters are keyed to it, and update() wraps the
 // clock at this length. Left at zero, the length was unknown, the clock was
 // wrapped at a fixed 3.3 s instead, and a waterfall whose scroll lasts 2.6 s
 // stood still for the difference every lap.
 void M2Renderer::seedUnanimatedSequence(const M2ModelGPU& model, M2Instance& instance) {
-    if (model.sequences.empty() || model.sequences[0].duration == 0) return;
-    instance.currentSequenceIndex = 0;
-    instance.idleSequenceIndex = 0;
-    instance.animDuration = static_cast<float>(model.sequences[0].duration);
-    instance.animTime = static_cast<float>(randRange(model.sequences[0].duration));
+    if (model.sequences.empty()) return;
+    const int stand = model.standSequenceIndex;
+    if (model.sequences[stand].duration == 0) return;
+    instance.currentSequenceIndex = stand;
+    instance.idleSequenceIndex = stand;
+    instance.animDuration = static_cast<float>(model.sequences[stand].duration);
+    instance.animTime = static_cast<float>(randRange(model.sequences[stand].duration));
 }
 
 uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
