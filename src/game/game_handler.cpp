@@ -606,16 +606,22 @@ void GameHandler::updateTimers(float deltaTime) {
     }
     // autoAttackRangeWarnCooldown_ decrement moved into CombatHandler::updateAutoAttack()
 
+    if (!questWatchSecondsLeft_.empty()) {
+        std::vector<uint32_t> ended;
+        for (auto& [questId, left] : questWatchSecondsLeft_) {
+            left -= deltaTime;
+            if (left <= 0.0f) ended.push_back(questId);
+        }
+        for (uint32_t questId : ended) setQuestTracked(questId, false);
+    }
+
     if (pendingLoginQuestResync_) {
         pendingLoginQuestResyncTimeout_ -= deltaTime;
         if (resyncQuestLogFromServerSlots(true)) {
             pendingLoginQuestResync_ = false;
             pendingLoginQuestResyncTimeout_ = 0.0f;
-            // trackedQuestIds_ was restored from the character config earlier
-            // at login, before addons were guaranteed loaded, so that restore
-            // may never have reached WatchFrame. This is the first point after
-            // world entry where both the quest log and the tracked-quest set
-            // are known settled, so force the one redraw the tracker needs.
+            // The first point after world entry where the quest log is known
+            // settled, so force the one redraw the log and tracker need.
             fireAddonEvent("QUEST_LOG_UPDATE", {});
         } else if (pendingLoginQuestResyncTimeout_ <= 0.0f) {
             pendingLoginQuestResync_ = false;
@@ -1537,20 +1543,9 @@ void GameHandler::saveCharacterConfig() {
         if (!icon.empty()) out << "macro_" << id << "_icon=" << icon << "\n";
     }
 
-    // The quest log itself is not saved: the server sends it on every login,
-    // so a stored copy could only ever be staler than what arrives. What is
-    // saved below is the tracker selection, which is a client-side choice the
-    // server knows nothing about.
-
-    // Save tracked quest IDs so the quest tracker restores on login
-    if (!trackedQuestIds_.empty()) {
-        std::string ids;
-        for (uint32_t qid : trackedQuestIds_) {
-            if (!ids.empty()) ids += ',';
-            ids += std::to_string(qid);
-        }
-        out << "tracked_quests=" << ids << "\n";
-    }
+    // Neither the quest log nor its watches are saved: the server sends the
+    // log on every login, and 2.4.3 starts every session with no quest
+    // watched (measured: relog clears them).
 
     // Which reputation headers are closed. The server has no opinion about it,
     // so this file is the only place it can survive a logout.
@@ -1581,6 +1576,7 @@ void GameHandler::loadCharacterConfig() {
     // These selections are per-character. Clear the previous character's
     // values even when the new character has no saved config yet.
     trackedQuestIds_.clear();
+    questWatchSecondsLeft_.clear();
 
     std::string path = getCharacterConfigDir() + "/" + ch->name + ".cfg";
     std::ifstream in(path);
@@ -1632,16 +1628,16 @@ void GameHandler::loadCharacterConfig() {
             } else if (key.substr(secondUnder + 1) == "icon" && !val.empty()) {
                 macroIcons_[macroId] = val;
             }
-        } else if ((key == "tracked_quests" || key == "collapsed_factions" ||
+        } else if ((key == "collapsed_factions" ||
                     key == "collapsed_skill_categories") && !val.empty()) {
             // Parse a comma-separated id list into the matching selection.
-            // map_visible_quests was a fourth of these and is no longer read:
-            // the quests whose objectives the maps draw are the ones in the
-            // log and the ones being tracked. An old file still carrying the
-            // key falls through to the unknown-key branch.
+            // map_visible_quests and tracked_quests were others and are no
+            // longer read: the quests whose objectives the maps draw are the
+            // ones in the log and the ones being tracked, and watches do not
+            // outlive a session. An old file still carrying either key falls
+            // through to the unknown-key branch.
             auto& destination =
-                  key == "tracked_quests"    ? trackedQuestIds_
-                : key == "collapsed_factions" ? collapsedFactionIds_
+                  key == "collapsed_factions" ? collapsedFactionIds_
                                               : collapsedSkillCategories_;
             if (key == "collapsed_factions") reputationRowsDirty_ = true;
             destination.clear();

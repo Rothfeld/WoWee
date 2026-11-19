@@ -2398,11 +2398,20 @@ public:
     void shareQuestWithParty(uint32_t questId);  // CMSG_PUSHQUESTTOPARTY
     bool requestQuestQuery(uint32_t questId, bool force = false);
     bool isQuestTracked(uint32_t questId) const { return trackedQuestIds_.count(questId) > 0; }
-    void setQuestTracked(uint32_t questId, bool tracked) {
+    /// Watch or unwatch a quest. A watch given `seconds` (AddQuestWatch's
+    /// second argument; QuestLog_OnEvent passes MAX_QUEST_WATCH_TIME for the
+    /// automatic watch on objective progress) ends by itself after that long,
+    /// as 2.4.3's does (measured: AddQuestWatch(i, 20) unwatched 20 s later).
+    /// A watch without one stays until removed.
+    void setQuestTracked(uint32_t questId, bool tracked, float seconds = 0.0f) {
+        if (!tracked || seconds <= 0.0f) {
+            questWatchSecondsLeft_.erase(questId);
+        } else if (!trackedQuestIds_.count(questId) || questWatchSecondsLeft_.count(questId)) {
+            questWatchSecondsLeft_[questId] = seconds;
+        }
         const bool changed = tracked ? trackedQuestIds_.insert(questId).second
                                      : trackedQuestIds_.erase(questId) > 0;
         if (changed) {
-            saveCharacterConfig();
             // WatchFrame is purely event-driven and never polls native state,
             // so a change here is invisible to it until something else happens
             // to fire QUEST_LOG_UPDATE (e.g. the quest log's own track/untrack
@@ -5139,6 +5148,8 @@ private:
     // to the QuestHandler - and has been removed.
     std::unordered_set<uint32_t> pendingQuestQueryIds_;
     std::unordered_set<uint32_t> trackedQuestIds_;
+    /// Timed watches: seconds until each ends (see setQuestTracked).
+    std::unordered_map<uint32_t, float> questWatchSecondsLeft_;
     std::unordered_set<uint32_t> blobQuestIds_;
     bool pendingLoginQuestResync_ = false;
     float pendingLoginQuestResyncTimeout_ = 0.0f;

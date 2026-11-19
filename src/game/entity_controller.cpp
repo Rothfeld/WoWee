@@ -2289,6 +2289,7 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
     queryPlayerName(block.guid);
     if (block.guid != owner_.getPlayerGuid()) {
         owner_.updateOtherPlayerVisibleItems(block.guid, entity->getFields());
+        announceGroupQuestLog(block);
     }
 
     // Unit fields (PLAYER is a unit)
@@ -2611,10 +2612,32 @@ void EntityController::mirrorGroupMemberState(const Entity& entity) {
     }
 }
 
+/// A group member's quest log changed: the quest id of each PLAYER_QUEST_LOG
+/// slot is a GROUP_ONLY field, sent for members in sight. The quest log counts
+/// members on each quest ("[1]" before the title, IsUnitOnQuest) and redraws on
+/// UNIT_QUEST_LOG_CHANGED for a party unit.
+void EntityController::announceGroupQuestLog(const UpdateBlock& block) {
+    if (block.guid == owner_.getPlayerGuid() || !owner_.getQuestHandler()) return;
+    const uint16_t start = fieldIndex(UF::PLAYER_QUEST_LOG_START);
+    if (start == 0xFFFF) return;
+    const uint8_t stride = owner_.getPacketParsers() ? owner_.getPacketParsers()->questLogStride() : 5;
+    const uint16_t end = static_cast<uint16_t>(start + owner_.getQuestHandler()->maxQuestLogSlots() * stride);
+    bool questIds = false;
+    for (const auto& [key, val] : block.fields) {
+        (void)val;
+        if (key >= start && key < end && (key - start) % stride == 0) { questIds = true; break; }
+    }
+    if (!questIds) return;
+    for (const auto& unitId : unitEventTokens(owner_, block.guid)) {
+        if (unitId.rfind("party", 0) == 0) pendingEvents_.emit("UNIT_QUEST_LOG_CHANGED", {unitId});
+    }
+}
+
 void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
     // Other player visible items
     if (block.guid != owner_.getPlayerGuid()) {
         owner_.updateOtherPlayerVisibleItems(block.guid, entity->getFields());
+        announceGroupQuestLog(block);
     }
 
     // Unit field update (player IS a unit)

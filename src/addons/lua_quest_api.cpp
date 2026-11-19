@@ -9,6 +9,8 @@
 #include "game/expansion_profile.hpp"
 #include "game/level_difficulty.hpp"
 #include "game/packed_time.hpp"
+#include "game/packet_parsers.hpp"
+#include "game/quest_handler.hpp"
 #include "game/quest_progress.hpp"
 #include "game/quest_objectives.hpp"
 #include "game/text_tokens.hpp"
@@ -644,13 +646,15 @@ static int lua_GetQuestIndexForWatch(lua_State* L) {
     return 1;
 }
 
-// AddQuestWatch(questLogIndex) - add a quest to the watch list
+// AddQuestWatch(questLogIndex[, seconds]) - add a quest to the watch list,
+// for `seconds` when given (the automatic watch on objective progress).
 static int lua_AddQuestWatch(lua_State* L) {
     auto* gh = getGameHandler(L);
     int index = static_cast<int>(luaL_checknumber(L, 1));
+    const float seconds = static_cast<float>(luaL_optnumber(L, 2, 0.0));
     if (!gh || index < 1) return 0;
     if (const auto* q = questAtRow(gh, index)) {
-        gh->setQuestTracked(q->questId, true);
+        gh->setQuestTracked(q->questId, true, seconds);
     }
     return 0;
 }
@@ -3120,19 +3124,30 @@ void registerQuestLuaAPI(lua_State* L) {
                 // on the quest, which the log prints as "[2]" beside an entry
                 // to say how many group mates share it.
                 //
-                // Only answerable for the player: the server does not tell a
-                // client what its party members' quest logs hold, and nothing
-                // here tracks them. False for everyone else is the truthful
-                // answer and is what leaves the counter hidden, rather than
-                // claiming a number nobody can stand behind.
+                // From the unit's own quest log fields: the quest id of each
+                // PLAYER_QUEST_LOG slot is a GROUP_ONLY update field, so the
+                // server sends it for group members in sight and nobody else.
+                // A unit out of sight has no object here and answers false, as
+                // native does for a member who is not "nearby".
                 {"IsUnitOnQuest", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
             const char* uid = luaL_optstring(L, 2, "player");
             std::string u(uid);
             for (char& c : u) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (!gh || u != "player" || index < 1) { lua_pushboolean(L, 0); return 1; }
-            lua_pushboolean(L, questAtRow(gh, index) != nullptr ? 1 : 0);
+            const auto* q = (gh && index >= 1) ? questAtRow(gh, index) : nullptr;
+            if (!q) { lua_pushboolean(L, 0); return 1; }
+            if (u == "player") { lua_pushboolean(L, 1); return 1; }
+            const uint64_t guid = resolveUnitGuid(gh, u);
+            const auto entity = guid != 0 ? gh->getEntityManager().getEntity(guid) : nullptr;
+            if (!entity || entity->getType() != game::ObjectType::PLAYER) { lua_pushboolean(L, 0); return 1; }
+            const uint16_t start = game::fieldIndex(game::UF::PLAYER_QUEST_LOG_START);
+            const uint8_t stride = gh->getPacketParsers() ? gh->getPacketParsers()->questLogStride() : 5;
+            const int slots = gh->getQuestHandler() ? gh->getQuestHandler()->maxQuestLogSlots() : 0;
+            bool on = false;
+            for (int slot = 0; slot < slots && !on; ++slot)
+                on = entity->getField(static_cast<uint16_t>(start + slot * stride)) == q->questId;
+            lua_pushboolean(L, on ? 1 : 0);
             return 1;
         }},
                 {"GetQuestLogQuestText",    lua_GetQuestLogQuestText},

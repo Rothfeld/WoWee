@@ -208,6 +208,7 @@ private:
     // Rebuild playerAuras_ from UNIT_FIELD_AURAS (Classic/TBC-era clients).
     //     Consolidates identical logic from CREATE and VALUES handlers.
     void mirrorGroupMemberState(const Entity& entity);
+    void announceGroupQuestLog(const UpdateBlock& block);
     void syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>& entity);
     // Detect mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes (self-player only).
     //     Consolidates identical logic from CREATE and VALUES handlers.
