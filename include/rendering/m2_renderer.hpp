@@ -1286,6 +1286,7 @@ private:
         uint32_t modelId;
         float distSq;
         float effectiveMaxDistSq;
+        bool groundDetail = false;  // blended clutter: drawn last, far to near
     };
     WmoRoomQuery wmoRoomDrawn_;
     InteriorLightQuery interiorLightQuery_;

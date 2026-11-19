@@ -102,6 +102,12 @@ in the solid pass, before what stands behind them, so the clear/sky colour
 showed as a cyan rim round every frond. Evidence:
 `_experiments/20261119T083411Z.foliage_alpha/` in the workspace.
 Evidence: `_experiments/20261118T210330Z.ground_effects/` in the workspace.
+Blended clutter writes depth, so overlapping tufts depend on draw order: a
+faint blade fringe drawn first hides the blades behind it. M2Renderer draws
+clutter after every other opaque model, far to near; grouped only by model,
+the order changed with each change of the visible set and grass blinked while
+the camera turned (Stranglethorn). Evidence:
+`_experiments/20261119T083457Z.clutter_flicker/` in the workspace.
 World M2 and character opaque/alpha-key batches complete before blending.
 Their blended meshes share one camera-depth-ordered stream, far to near:
 crystal surface layers and moth wings must sort across renderer boundaries.

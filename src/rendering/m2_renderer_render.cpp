@@ -1325,7 +1325,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             if (instance.wmoRoomInstance != 0 && wmoRoomDrawn_ &&
                 !wmoRoomDrawn_(instance.wmoRoomInstance, instance.wmoRooms)) continue;
 
-            VisibleEntry visible{.index = i, .modelId = instance.modelId, .distSq = distSq, .effectiveMaxDistSq = effectiveMaxDistSq};
+            VisibleEntry visible{.index = i, .modelId = instance.modelId, .distSq = distSq,
+                                 .effectiveMaxDistSq = effectiveMaxDistSq,
+                                 .groundDetail = instance.cachedIsGroundDetail};
             // A faded instance is drawn blended, all of it - see M2Instance::fade.
             const bool faded = instance.fade < 0.999f;
             if (!faded) out.opaque.push_back(visible);
@@ -1410,9 +1412,25 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // What it did cost was a hash map over every visible instance, two index
     // vectors and a copy of the whole list, every frame, in the pass that
     // turned out to be the largest single piece of CPU work in the frame.
+    //
+    // Ground clutter is the exception. It blends by texture alpha and writes
+    // depth (see the pipeline choice below), so where two tufts overlap the
+    // one drawn first decides the pixel: its faint blade fringe is already in
+    // the depth buffer and hides the blades of a tuft behind it drawn later.
+    // Grouped by model alone, the order within a group was whatever
+    // std::sort left among equal keys, and that changes with every change to
+    // the visible set - every frame of a turn - so overlapping blades blinked
+    // in and out (Stranglethorn's grass). Drawn last and
+    // far to near, each tuft blends over everything behind it, the result
+    // the blending asks for, and the order is a function of the camera alone.
     const auto m2T1 = std::chrono::steady_clock::now();
     std::sort(sortedVisible_.begin(), sortedVisible_.end(),
-              [](const VisibleEntry& a, const VisibleEntry& b) { return a.modelId < b.modelId; });
+              [](const VisibleEntry& a, const VisibleEntry& b) {
+                  if (a.groundDetail != b.groundDetail) return b.groundDetail;
+                  if (!a.groundDetail) return a.modelId < b.modelId;
+                  if (a.distSq != b.distSq) return a.distSq > b.distSq;
+                  return a.index < b.index;
+              });
     const auto m2T2 = std::chrono::steady_clock::now();
     // Reported at the end of the pass; see m2Profile above.
     struct M2Phases { double cull, sort, record; std::size_t visible, instances; };
@@ -1596,14 +1614,18 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 // is - at the distance where it mattered least.
                 uint16_t targetLOD = desiredLOD;
                 while (targetLOD > 0 && !(model.availableLODs & (1u << targetLOD))) --targetLOD;
+                // Clutter draws every batch at every distance (see the batch
+                // filter below); one level keeps its far-to-near order whole.
+                if (model.isGroundDetail) targetLOD = 0;
 
                 pending.push_back({.instanceIdx = entry.index, .fadeAlpha = instanceFadeAlpha, .useBones = needsBones, .targetLOD = targetLOD});
             }
 
             if (pending.empty()) { visStart = groupEnd; continue; }
 
-            // Sort by targetLOD so each sub-group occupies a contiguous SSBO range
-            std::sort(pending.begin(), pending.end(),
+            // Sort by targetLOD so each sub-group occupies a contiguous SSBO range.
+            // Stable: the incoming order is the draw order clutter depends on.
+            std::stable_sort(pending.begin(), pending.end(),
                       [](const PendingInstance& a, const PendingInstance& b) { return a.targetLOD < b.targetLOD; });
 
             // Bind vertex/index buffers once per model group
