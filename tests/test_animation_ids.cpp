@@ -358,12 +358,16 @@ TEST_CASE("IDs above 145 follow 3.3.5's AnimationData.dbc", "[animation]") {
     REQUIRE(std::string(anim::nameFromId(193)) == "HOVER");
 }
 
-TEST_CASE("Creatures with type flag 0x8 do not flinch from hits", "[hit-reaction]") {
+TEST_CASE("Type flag 0x8 creatures and model flag 0x2 units do not flinch from hits", "[hit-reaction]") {
     using namespace wowee::rendering;
-    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x8));      // Qiraji Gladiator
-    CHECK_FALSE(unitPlaysWound(anim::COMBAT_CRITICAL, true, 0x848)); // Amani'shi Warbringer
-    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x4c));     // Hex Lord Malacrass
-    CHECK(unitPlaysWound(anim::COMBAT_WOUND, true, 0));              // Defias Thug
-    CHECK(unitPlaysWound(anim::DODGE, true, 0x8));
-    CHECK(unitPlaysWound(anim::COMBAT_WOUND, false, 0x8));           // players have no type flags
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x8, 0x0));      // Qiraji Gladiator
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_CRITICAL, true, 0x848, 0x0)); // Amani'shi Warbringer
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0x4c, 0x0));     // Hex Lord Malacrass
+    CHECK(unitPlaysWound(anim::COMBAT_WOUND, true, 0, 0x4));              // Defias Thug, HumanMale.mdx
+    CHECK(unitPlaysWound(anim::COMBAT_WOUND, true, 0, 0x0));              // Defias Thug as a gnoll
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, true, 0, 0x3));        // Ras Frostwhisper, Lich.mdx
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_CRITICAL, true, 0, 0x2));     // Skeleton.mdx, Ghoul.mdx
+    CHECK_FALSE(unitPlaysWound(anim::COMBAT_WOUND, false, 0, 0x2));       // a player morphed into one
+    CHECK(unitPlaysWound(anim::DODGE, true, 0x8, 0x2));
+    CHECK(unitPlaysWound(anim::COMBAT_WOUND, false, 0x8, 0x4));           // players have no type flags
 }

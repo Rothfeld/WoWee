@@ -1455,6 +1455,23 @@ before melee observations.
 
 Evidence and tools: `_experiments/20261118T205000Z.anim_fallback` in the workspace.
 
+### Hit reactions
+
+A melee hit (SMSG_ATTACKERSTATEUPDATE) plays the victim's CombatWound (9), or
+CombatCritical (10) on a critical, unless the victim's display's model has
+CreatureModelData.Flags 0x2 or the creature's type flags have 0x8
+(`rendering/animation/hit_reaction.hpp`). Flag 0x2 is set on 136 of 773 models:
+Lich, Skeleton, Ghoul, Ghost, golems, elementals, totems. Character models
+(0x4), gnolls and nagas (0x1) have it clear. The rule depends only on the
+model: native Ras Frostwhisper (10508, Lich.mdx, flags 0x3) stays still
+through every hit, out of combat too. Given HumanMale.mdx with `.npc setmodel`,
+he flinches. A Defias Thug given Lich.mdx, Skeleton.mdx or Ghoul.mdx stops
+flinching, and keeps flinching as a gnoll. The blood or dust spurt still shows.
+Gotcha: dbc_layouts.json must name CreatureModelData `Flags` (column 1). An
+older deployed copy logs an error at startup, and every model then flinches.
+Evidence and tools (fake hits through `.debug send opcode` on a stationary
+`.npc add` spawn): `_experiments/20261119T1311Z.wound_rule` in the workspace.
+
 ### Turning in place
 
 The standing local character plays `ShuffleLeft` (11) while the player turns it

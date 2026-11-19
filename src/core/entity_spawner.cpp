@@ -894,6 +894,8 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             }
             const uint32_t modelId = cmd->getUInt32(i, cmdL ? (*cmdL)["ID"] : 0);
             modelIdToPath_[modelId] = mdx;
+            if (cmdL && cmdL->fields.count("Flags"))
+                modelIdToFlags_[modelId] = cmd->getUInt32(i, (*cmdL)["Flags"]);
             if (cmdL) {
                 const auto heightField = (*cmdL)["CollisionHeight"];
                 if (heightField != 0xFFFFFFFF && heightField < cmd->getFieldCount())
@@ -929,7 +931,10 @@ void EntitySpawner::buildCreatureDisplayLookups() {
             }
         }
         LOG_INFO("Loaded ", modelIdToPath_.size(), " model→path mappings, ",
-                 modelIdToSize_.size(), " CreatureModelData GeoBoxes");
+                 modelIdToSize_.size(), " CreatureModelData GeoBoxes, ", modelIdToFlags_.size(), " model flags");
+        if (modelIdToFlags_.empty())
+            LOG_ERROR("dbc_layouts.json names no CreatureModelData.Flags: hit reactions ignore the model's "
+                      "no-wound flag (deploy current expansion metadata)");
     }
 
     // Resolve gryphon/wyvern display IDs by exact model path so taxi mounts have textures.

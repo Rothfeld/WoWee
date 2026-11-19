@@ -10,15 +10,29 @@ namespace wowee::rendering {
 /// CMaNGOS CreatureTypeFlags::DO_NOT_PLAY_WOUND_ANIM.
 inline constexpr uint32_t kCreatureTypeDoNotPlayWoundAnim = 0x8;
 
+/// CreatureModelData.Flags bit 0x2: the model takes hits without flinching.
+/// Set on Lich, Skeleton, Ghoul, Ghost, golems, elementals and totems; clear
+/// on character models (0x4) and most beasts.
+inline constexpr uint32_t kCreatureModelNoWound = 0x2;
+
 /// Whether a melee hit plays the victim's wound animation (CombatWound 9 or
-/// CombatCritical 10). A creature whose type flags carry 0x8 takes hits
-/// without flinching; dodge, parry and block still play. Native 2.4.3: Qiraji
-/// Gladiator (15324, flags 0x8), Amani'shi Warbringer (23580, 0x848) and Hex
-/// Lord Malacrass (24239, 0x4c) never flinch; Defias Thug (38, 0) does
-/// (_experiments/20261118T1540Z.zulaman_warbringer).
-inline constexpr bool unitPlaysWound(uint32_t reactionAnimation, bool isCreature, uint32_t creatureTypeFlags) {
+/// CombatCritical 10); dodge, parry and block are not affected. Native 2.4.3:
+/// - a creature whose type flags carry 0x8 never flinches: Qiraji Gladiator
+///   (15324, flags 0x8), Amani'shi Warbringer (23580, 0x848), Hex Lord
+///   Malacrass (24239, 0x4c); Defias Thug (38, 0) does
+///   (_experiments/20261118T1540Z.zulaman_warbringer);
+/// - a unit whose display's model carries CreatureModelData flag 0x2 never
+///   flinches, whatever its entry: Ras Frostwhisper (10508, Lich.mdx 0x3)
+///   stood still through every hit and flinched once given HumanMale.mdx
+///   (0x4); Defias Thug given Lich.mdx, Skeleton.mdx (0x2) or Ghoul.mdx (0x2)
+///   stopped flinching, given Gnoll.mdx (0x0) kept it
+///   (_experiments/20261119T1311Z.wound_rule).
+inline constexpr bool unitPlaysWound(uint32_t reactionAnimation, bool isCreature, uint32_t creatureTypeFlags,
+                                     uint32_t creatureModelFlags) {
     const bool wound = reactionAnimation == anim::COMBAT_WOUND || reactionAnimation == anim::COMBAT_CRITICAL;
-    return !(wound && isCreature && (creatureTypeFlags & kCreatureTypeDoNotPlayWoundAnim));
+    if (!wound) return true;
+    if (creatureModelFlags & kCreatureModelNoWound) return false;
+    return !(isCreature && (creatureTypeFlags & kCreatureTypeDoNotPlayWoundAnim));
 }
 
 } // namespace wowee::rendering

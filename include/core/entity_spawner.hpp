@@ -362,6 +362,9 @@ public:
     /// (by violence level) -> UnitBlood CombatBloodSpurtFront/Back[small, large].
     /// 0 when the data gives the model no blood.
     uint32_t combatBloodSpurt(uint32_t displayId, bool large, bool back);
+    /// CreatureModelData.Flags of this display's model; nullopt when the
+    /// display or its model is unknown or the layout does not name Flags.
+    std::optional<uint32_t> creatureModelFlags(uint32_t displayId) const;
     std::unordered_map<uint64_t, bool>& getCreatureWasMoving() { return creatureWasMoving_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasSwimming() { return creatureWasSwimming_; }
     std::unordered_map<uint64_t, bool>& getCreatureWasFlying() { return creatureWasFlying_; }
@@ -548,6 +551,7 @@ private:
     std::unordered_map<uint32_t, std::string> modelIdToPath_;   // modelId → M2 path (from CreatureModelData.dbc)
     std::unordered_map<uint32_t, float> modelIdToScale_;        // modelId → CreatureModelData.ModelScale
     std::unordered_map<uint32_t, float> modelIdToCollisionHeight_;
+    std::unordered_map<uint32_t, uint32_t> modelIdToFlags_;    // modelId → CreatureModelData.Flags
     /// CreatureModelData GeoBox and MountHeight per model id, where the
     /// expansion's layout names them (TBC).
     struct ModelSize {

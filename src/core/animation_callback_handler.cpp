@@ -356,19 +356,28 @@ void AnimationCallbackHandler::setupCallbacks() {
             LOG_DEBUG("Hit reaction ", animId, " not authored for unit 0x", std::hex, victimGuid, std::dec);
             return;
         }
-        if (!isLocalPlayer) {
+        {
             const auto victim = std::dynamic_pointer_cast<game::Unit>(
                 gameHandler_.getEntityManager().getEntity(victimGuid));
-            const bool creature = victim && victim->getType() == game::ObjectType::UNIT;
+            if (!victim) {
+                LOG_WARNING("Hit reaction ", animId, " on 0x", std::hex, victimGuid, std::dec, " without a unit entity");
+                return;
+            }
+            const bool creature = victim->getType() == game::ObjectType::UNIT;
             uint32_t typeFlags = 0;
             if (creature) {
                 const auto& cache = gameHandler_.getCreatureInfoCache();
                 if (const auto info = cache.find(victim->getEntry()); info != cache.end())
                     typeFlags = info->second.typeFlags;
             }
-            if (!rendering::unitPlaysWound(animId, creature, typeFlags)) {
+            const auto modelFlags = entitySpawner_.creatureModelFlags(victim->getDisplayId());
+            if (!modelFlags)
+                LOG_WARNING("Hit reaction on 0x", std::hex, victimGuid, std::dec, ": display ",
+                            victim->getDisplayId(), " has no CreatureModelData flags");
+            if (!rendering::unitPlaysWound(animId, creature, typeFlags, modelFlags.value_or(0))) {
                 LOG_DEBUG("Hit reaction ", animId, " suppressed on 0x", std::hex, victimGuid,
-                          " (creature type flags 0x", typeFlags, ")", std::dec);
+                          " (creature type flags 0x", typeFlags, ", model flags 0x", modelFlags.value_or(0), ")",
+                          std::dec);
                 return;
             }
         }

@@ -1228,6 +1228,12 @@ std::optional<glm::vec3> EntitySpawner::helperModelAttachment(uint32_t displayId
     return found->second;
 }
 
+std::optional<uint32_t> EntitySpawner::creatureModelFlags(uint32_t displayId) const {
+    const auto flags = modelIdToFlags_.find(creatureModelDataIdForDisplay(displayId));
+    if (flags == modelIdToFlags_.end()) return std::nullopt;
+    return flags->second;
+}
+
 uint32_t EntitySpawner::creatureModelDataIdForDisplay(uint32_t displayId) const {
     const auto display = displayDataMap_.find(displayId);
     return display != displayDataMap_.end() ? display->second.modelId : 0;

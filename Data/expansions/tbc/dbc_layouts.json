@@ -97,6 +97,7 @@
   },
   "CreatureModelData": {
     "ID": 0,
+    "Flags": 1,
     "BloodID": 5,
     "ModelPath": 2,
     "ModelScale": 4,
