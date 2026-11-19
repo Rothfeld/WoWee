@@ -5985,6 +5985,7 @@ void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
             aura.durationMs = maximum < 0 ? -1 : static_cast<int32_t>(remaining);
             aura.maxDurationMs = maximum;
             aura.receivedAtMs = nowMs;
+            aura.playerCast = true;
             aura.casterGuid = owner_.getPlayerGuid();
         }
     }

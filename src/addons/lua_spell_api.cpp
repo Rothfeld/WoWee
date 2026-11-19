@@ -298,14 +298,14 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
                     default: lua_pushnil(L);               break;
                 }
             }
-            // The player's own auras all have a known timer: a permanent one
-            // (Devotion Aura) answers duration 0 and timeLeft 0 on 2.4.3.
-            // Another unit's untimed aura answers neither.
-            const bool own = resolveUnitGuid(gh, uidStr) == gh->getPlayerGuid();
-            if (aura.durationMs > 0 && aura.maxDurationMs > 0) {
+            // Only for an aura the player cast, wherever it is (Water Shield
+            // 600, 260.8; Devotion Aura or the player's Totem of Wrath on a
+            // party member 0, 0); a totem's or a party member's aura on the
+            // player answers neither.
+            if (aura.playerCast && aura.durationMs > 0 && aura.maxDurationMs > 0) {
                 lua_pushnumber(L, aura.maxDurationMs / 1000.0);
                 lua_pushnumber(L, aura.getRemainingMs(auraNowMs()) / 1000.0);
-            } else if (own) {
+            } else if (aura.playerCast) {
                 lua_pushnumber(L, 0);
                 lua_pushnumber(L, 0);
             } else {

@@ -20,6 +20,11 @@ struct AuraSlot {
     int32_t maxDurationMs = -1;
     uint64_t casterGuid = 0;
     uint64_t receivedAtMs = 0; // Client timestamp (ms) when durationMs was set
+    /// The player cast it: the server sent SMSG_SET_EXTRA_AURA_INFO, which goes
+    /// to the caster only. 2.4.3's UnitBuff answers duration and timeLeft for
+    /// these alone (0, 0 for a permanent one such as Devotion Aura), nothing
+    /// for a totem's Strength of Earth or a party member's Totem of Wrath.
+    bool playerCast = false;
 
     [[nodiscard]] bool isEmpty() const { return spellId == 0; }
     // Remaining duration in ms, counting down from when the packet was received

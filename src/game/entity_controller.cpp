@@ -598,6 +598,7 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
                 a.durationMs = previousAuras[slot].durationMs;
                 a.maxDurationMs = previousAuras[slot].maxDurationMs;
                 a.receivedAtMs = previousAuras[slot].receivedAtMs;
+                a.playerCast = previousAuras[slot].playerCast;
             } else {
                 a.receivedAtMs = nowMs;
             }
@@ -619,7 +620,8 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     const auto same = [](const AuraSlot& a, const AuraSlot& b) {
         return a.spellId == b.spellId && a.flags == b.flags && a.charges == b.charges &&
                a.durationMs == b.durationMs && a.maxDurationMs == b.maxDurationMs &&
-               a.receivedAtMs == b.receivedAtMs && a.casterGuid == b.casterGuid;
+               a.receivedAtMs == b.receivedAtMs && a.casterGuid == b.casterGuid &&
+               a.playerCast == b.playerCast;
     };
     if (cached && previousAuras.size() == rebuilt.size() &&
         std::equal(rebuilt.begin(), rebuilt.end(), previousAuras.begin(), same))
