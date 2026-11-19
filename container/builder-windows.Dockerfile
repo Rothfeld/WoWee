@@ -46,6 +46,7 @@ RUN "${VCPKG_ROOT}/vcpkg" install \
         openssl \
         glm \
         zlib \
+        freetype \
         ffmpeg \
     --triplet x64-mingw-static
 

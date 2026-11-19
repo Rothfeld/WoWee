@@ -33,7 +33,7 @@ sudo apt update
 sudo apt install -y \
   build-essential cmake pkg-config git \
   libglm-dev \
-  libssl-dev zlib1g-dev \
+  libssl-dev zlib1g-dev libfreetype-dev \
   libvulkan-dev vulkan-tools glslc \
   libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
   libx11-dev
@@ -77,7 +77,7 @@ sudo apt install -y libstorm-dev    # asset tools (see Asset Extraction below)
 ```bash
 sudo pacman -S --needed \
   base-devel cmake pkgconf git \
-  sdl3 glm openssl zlib libx11 \
+  sdl3 glm openssl zlib freetype2 libx11 \
   vulkan-headers vulkan-icd-loader vulkan-tools shaderc \
   ffmpeg
 ```
@@ -108,7 +108,7 @@ sudo ldconfig
 
 ```bash
 sudo dnf install gcc-c++ cmake pkgconf-pkg-config git \
-  SDL3-devel glm-devel openssl-devel zlib-devel libX11-devel \
+  SDL3-devel glm-devel openssl-devel zlib-devel freetype-devel libX11-devel \
   vulkan-devel vulkan-tools glslc ffmpeg-devel
 
 # Optional: Warden execution
@@ -231,7 +231,7 @@ per-user directory if it holds an extraction, then `Data/` in its own directory.
 Vulkan on macOS uses the Vulkan loader plus MoltenVK's Vulkan-to-Metal driver.
 
 ```bash
-brew install cmake pkg-config sdl3 glm openssl@3 zlib ffmpeg \
+brew install cmake pkg-config sdl3 glm openssl@3 zlib freetype ffmpeg \
   vulkan-loader vulkan-headers molten-vk shaderc
 ```
 
@@ -334,6 +334,7 @@ pacman -S --needed \
   mingw-w64-x86_64-glm \
   mingw-w64-x86_64-openssl \
   mingw-w64-x86_64-zlib \
+  mingw-w64-x86_64-freetype \
   mingw-w64-x86_64-ffmpeg \
   mingw-w64-x86_64-unicorn \
   mingw-w64-x86_64-vulkan-loader \
@@ -385,7 +386,7 @@ For users who prefer Visual Studio over MSYS2.
 ### vcpkg Dependencies
 
 ```powershell
-vcpkg install "sdl3[vulkan]" glm openssl zlib ffmpeg stormlib --triplet x64-windows
+vcpkg install "sdl3[vulkan]" glm openssl zlib freetype ffmpeg stormlib --triplet x64-windows
 ```
 
 ### Clone

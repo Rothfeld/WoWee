@@ -619,12 +619,8 @@ float WidgetRenderer::drawNativeRow(ImDrawList* dl, ImFont* font, const NativeTe
                                     uint32_t fallback, float alpha, float pixelsPerUnit) {
     assert(font && m.face && m.pixelHeight > 0);
     const float size = static_cast<float>(m.pixelHeight);
-    // Capital ink centred in the row, as drawMarkupText places it.
-    auto* baked = font->GetFontBaked(size);
-    const auto* capital = baked->FindGlyph('H');
-    assert(capital);
-    const float glyphScale = size / baked->Size;
-    const float glyphOffsetY = std::round((size - (capital->Y0 + capital->Y1) * glyphScale) * 0.5f);
+    // The baseline is the face's own (ui/native_glyph_loader.hpp): glyphs
+    // are drawn from the row's top.
     struct Glyph { uint32_t cp; size_t run; const char* b0; const char* b1; };
     std::vector<Glyph> glyphs;
     for (size_t r = 0; r < runs.size(); ++r) {
@@ -659,7 +655,7 @@ float WidgetRenderer::drawNativeRow(ImDrawList* dl, ImFont* font, const NativeTe
             float rgba[4] = {run.rgba[0], run.rgba[1], run.rgba[2], run.rgba[3]};
             col = packColor(rgba, alpha);
         }
-        if (g.cp != ' ') dl->AddText(font, size, ImVec2(x, y + glyphOffsetY), col, g.b0, g.b1);
+        if (g.cp != ' ') dl->AddText(font, size, ImVec2(x, y), col, g.b0, g.b1);
         const uint32_t next = i + 1 < glyphs.size() ? glyphs[i + 1].cp : 0;
         x += static_cast<float>(m.pen(g.cp, next));
     }
@@ -689,13 +685,8 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size, f
     const auto lines = wrapTextNative(parseMarkup(text), wrapWidth > 0.0f ? wrapWidth - shadowPx : 0.0f,
                                       nonSpaceWrap, m, textureWidth, continuationIndent);
     const float lineH = lineHeightPx > 0.0f ? lineHeightPx : px;
-    // Capital ink centred in the row, a fixed reference glyph so the baseline
-    // stays put across ascenders, descenders and markup runs.
-    auto* baked = font->GetFontBaked(px);
-    const auto* capital = baked->FindGlyph('H');
-    assert(capital);
-    const float glyphScale = px / baked->Size;
-    const float glyphOffsetY = std::round((px - (capital->Y0 + capital->Y1) * glyphScale) * 0.5f);
+    // Glyphs are drawn from the row's top; the face's loader puts the
+    // baseline where 2.4.3 does (ui/native_glyph_loader.hpp).
     float y = textOriginY(at.y);
     int characterIndex = 0;
     if (boxWidth < 0.0f) boxWidth = wrapWidth;
@@ -757,7 +748,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size, f
                 const Glyph& g = glyphs[gi];
                 const int firstVertex = dl->VtxBuffer.Size;
                 if (g.cp != ' ') {
-                    dl->AddText(font, px, ImVec2(x, y + glyphOffsetY), col,
+                    dl->AddText(font, px, ImVec2(x, y), col,
                                 run.text.data() + g.b0, run.text.data() + g.b1);
                 }
                 if (gradientStart >= 0.0f) {

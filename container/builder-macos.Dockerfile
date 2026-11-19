@@ -116,6 +116,7 @@ RUN "${VCPKG_ROOT}/vcpkg" install \
         openssl \
         glm \
         zlib \
+        freetype \
         ffmpeg \
     --triplet arm64-osx-cross \
     --overlay-triplets=/opt/vcpkg-triplets
@@ -125,6 +126,7 @@ RUN "${VCPKG_ROOT}/vcpkg" install \
         openssl \
         glm \
         zlib \
+        freetype \
         ffmpeg \
     --triplet x64-osx-cross \
     --overlay-triplets=/opt/vcpkg-triplets

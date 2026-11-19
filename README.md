@@ -279,7 +279,7 @@ Ubuntu, Debian, Fedora and Arch, which only development needs, are in the
 Vulkan runs through MoltenVK.
 
 ```bash
-brew install cmake pkg-config sdl3 glm openssl@3 zlib ffmpeg \
+brew install cmake pkg-config sdl3 glm openssl@3 zlib freetype ffmpeg \
   vulkan-loader vulkan-headers molten-vk shaderc
 
 # Optional: Warden execution and MPQ extraction
@@ -1887,10 +1887,8 @@ early and its lines sat 14.5 pixels apart where native has 12. Measured on
 
 Gotchas:
 
-- Native rasterizes with hinted FreeType; this client uses ImGui's unhinted
-  stb_truetype (no FreeType development files in this environment). Pens and
-  line starts match; glyph ink can be a pixel narrower or a pixel higher/lower
-  than native (stems are blurrier, e.g. FRIZQT "I" two pixels wide).
+- Glyph shapes and the baseline come from the faces' font loader, see
+  "Interface glyph raster" below.
 - An edge that lands exactly on a whole pixel (a centre, a right edge, a box
   top) follows native float error: native's GetStringWidth reads 36.0000014
   for 36 pixels, so such ties often fall a pixel left or down there. Both
@@ -1937,6 +1935,60 @@ Dragging a member (leader or assistant) puts the button under the cursor with
 
 Evidence and probe addon: `_experiments/20261119T0935Z.raidinfo_clip/` in the
 workspace.
+
+### Interface glyph raster
+
+```sh
+build/bin/test_native_glyph_raster
+```
+
+The faces FrameXML names (FRIZQT__, MORPHEUS, SKURRI, ARIALN, FRIENDS) are
+rasterized by `ui/native_glyph_loader.hpp`, an ImGui font loader, the way
+2.4.3 draws them. Compared pixel by pixel with native captures of all four
+faces at 9..24 pixels (62 glyphs each, white on black, GlyphProbe addon):
+
+- Unhinted outlines (FreeType, `FT_LOAD_NO_HINTING`), the em square the pixel
+  height tall. FreeType's hinting (TrueType bytecode v35/v40, autohinter,
+  light) matches none of the captures.
+- Coverage from FreeType 2.1.10's anti-aliasing rasterizer
+  (`third_party/freetype-2.1.10-grays`, standalone). Current FreeType loads the
+  same outlines but flattens curves differently: inside bowls ("O", "6", "e")
+  it gives up to one 4-bit level more coverage. 2.1.4, 2.1.9 and 2.1.10 give the same
+  result; 2.2.1, 2.3.5 and 2.13.2 match native less well.
+- 4-bit coverage: `value >> 4`, drawn as level * 17 alpha.
+- Only the first pixel-height rows of a glyph are drawn (SKURRI's long "f",
+  "h", "k", "j" tails are cut).
+- The bitmap starts ceil(xMin) - 1 pixels from the pen: one pixel left of
+  FreeType's box when the outline starts exactly on a pixel edge.
+- Baseline: row top + h + 1 - round(h * descender / (ascender + descender)),
+  hhea ascender and descender (FRIZQT 12 px: 10 rows down).
+
+Every probe glyph lands where this predicts. What is left: 273 4-bit levels
+over all 2728 glyphs (MORPHEUS 220 of them), against 17812 with current
+FreeType's rasterizer and FRIZQT "I" two pixels wide with stb_truetype. Text
+in the quest log, tooltips, chat and character frame has native's glyph shapes
+at native's positions (side-by-side captures; the backgrounds differ).
+
+Gotchas:
+
+- FreeType's development headers are required to build (Debian/Ubuntu:
+  `libfreetype-dev`, Fedora: `freetype-devel`, Arch: `freetype2`, Homebrew and
+  vcpkg: `freetype`). CMake stops at `find_package(Freetype REQUIRED)`
+  without them. Built and checked with 2.13.2; it only loads outlines, the
+  bundled 2.1.10 rasterizer draws them.
+- A size given to these faces is the em size (`ExtraSizeScale` stays 1).
+  The client's own ImGui windows keep the stb_truetype FRIZQT face.
+- Not matched: OUTLINE and THICKOUTLINE. Native draws the glyph 1 pixel right
+  (THICK: 2 right, 1 up) inside a ring whose alpha is 9/15 along straight
+  edges and 5/15 at corners (THICK: a full ring, then the same soft one), on
+  odd alpha levels only; this client draws eight black copies one pixel
+  around. Nameplates and overhead names are drawn by the HUD in the client's
+  own face, not by this loader.
+- A CENTER-justified label sized by its own text starts one pixel left of
+  this client's when its width is odd (measured on single glyphs, whose
+  GetStringWidth is ceil(xMax) + 1); LEFT-justified ones match.
+
+Evidence: `_experiments/20261119T112856Z.freetype_glyphs/` in the workspace.
 
 ### Quest text reveal
 

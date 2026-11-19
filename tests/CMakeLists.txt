@@ -1593,6 +1593,18 @@ target_link_libraries(test_native_text_metrics PRIVATE catch2_main)
 add_test(NAME native_text_metrics COMMAND test_native_text_metrics)
 register_test_target(test_native_text_metrics)
 
+# ── test_native_glyph_raster ─────────────────────────────────
+# Interface glyph baseline, placement, 4-bit coverage and the FreeType 2.1.10
+# rasterizer, as the original 2.4.3 client draws glyphs.
+add_executable(test_native_glyph_raster
+    test_native_glyph_raster.cpp
+)
+target_include_directories(test_native_glyph_raster PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_native_glyph_raster SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_native_glyph_raster PRIVATE catch2_main wowee_ft2110_grays)
+add_test(NAME native_glyph_raster COMMAND test_native_glyph_raster)
+register_test_target(test_native_glyph_raster)
+
 # ── test_text_markup ─────────────────────────────────────────
 add_executable(test_text_markup
     test_text_markup.cpp

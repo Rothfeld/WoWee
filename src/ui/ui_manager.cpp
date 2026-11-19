@@ -3,6 +3,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "ui/imgui_theme.hpp"
 #include "ui/interface_fonts.hpp"
+#include "ui/native_glyph_loader.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -268,15 +269,22 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
         cfg.ExtraSizeScale = emScale;
         return cfg;
     };
+    // The faces FrameXML names are rasterized as 2.4.3 rasterizes them
+    // (ui/native_glyph_loader.hpp), where a size already is the em size.
+    auto nativeFaceConfig = [] {
+        ImFontConfig cfg;
+        cfg.FontLoader = nativeGlyphLoader();
+        return cfg;
+    };
 
-    auto addFromArchive = [&](const char* name, float size) -> ImFont* {
+    auto addFromArchive = [&](const char* name, float size, bool nativeGlyphs) -> ImFont* {
         if (!assets) return nullptr;
         auto data = assets->readFileOptional(std::string("Fonts\\") + name);
         if (data.empty()) return nullptr;
         void* owned = IM_ALLOC(data.size());
         std::memcpy(owned, data.data(), data.size());
-        ImFontConfig cfg = interfaceFontConfig(
-            fontEmSizeScale(data.data(), data.size()));
+        ImFontConfig cfg = nativeGlyphs ? nativeFaceConfig()
+                                        : interfaceFontConfig(fontEmSizeScale(data.data(), data.size()));
         cfg.FontDataOwnedByAtlas = true;
         return io.Fonts->AddFontFromMemoryTTF(owned, static_cast<int>(data.size()),
                                               size, &cfg);
@@ -292,7 +300,7 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
     } else if (assets) {
         clientFontData_ = assets->readFileOptional("Fonts\\FRIZQT__.TTF");
     }
-    if (frizqt.empty() && addFromArchive("FRIZQT__.TTF", kClientSize)) {
+    if (frizqt.empty() && addFromArchive("FRIZQT__.TTF", kClientSize, false)) {
         LOG_INFO("Interface font read from the archives rather than from disk");
     } else if (!frizqt.empty()) {
         ImFontConfig clientCfg =
@@ -319,10 +327,7 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
     int loaded = 0;
     for (const char* name : faces) {
         const fs::path file = resolve(name);
-        ImFontConfig faceCfg =
-            interfaceFontConfig(file.empty()
-                                    ? 1.0f
-                                    : fontEmSizeScaleOfFile(file.string()));
+        ImFontConfig faceCfg = nativeFaceConfig();
         ImFont* f = file.empty()
             ? nullptr
             : io.Fonts->AddFontFromFileTTF(file.string().c_str(), kAtlasSize,
@@ -332,7 +337,7 @@ void UIManager::loadInterfaceFont(const std::string& dataRoot,
             // filesystem that cares and costs nothing on one that does not.
             std::string upper(name);
             for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            f = addFromArchive(upper.c_str(), kAtlasSize);
+            f = addFromArchive(upper.c_str(), kAtlasSize, true);
         }
         if (f) {
             registerInterfaceFace(name, f);
