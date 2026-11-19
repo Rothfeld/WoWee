@@ -3329,9 +3329,26 @@ X-Perl, Titan Panel, Prat, Bagnon, DBM, BigWigs, QuestHelper, ...):
 - The frame references this client keeps per frame (parent, tooltip owner,
   font string, bar fill, scroll child) live in `__WoweePriv(frame)`, not in
   the frame's table: PitBull resets every frame-valued field of its unit
-  frames and collapsed UIParent when they were plain fields. Other `__`
-  fields (`__wid`, `__scripts`, ...) are still in the table; native has
-  only `[0]` there.
+  frames and collapsed UIParent when they were plain fields. A frame's
+  table still carries `__scripts` and a few other `__` fields.
+
+- Every script error (handlers, slash commands, bindings, file bodies,
+  files that do not compile, /script) goes to the function seterrorhandler
+  installed; OnLoad errors do not stop the rest of the XML file.
+- A frame with no parent is level 0; CreateFrame without a parent has none.
+  A frame with no anchors, or anchored to one without a position, answers
+  nil for GetLeft/GetCenter/GetRect and is not drawn; drawing does not depend
+  on the parent being drawn (Titan's plugin buttons sit in an unanchored
+  container and draw).
+- Frame and region tables hold only `[0]` (the widget id) and what the addon
+  stores; region methods live in a per-kind metatable with exactly 2.4.3's
+  44 Texture / 58 FontString methods on a TBC interface. Internal frame
+  references are in `__WoweePriv(frame)`.
+- `$parent` names the nearest named frame up from the owner; at the top of a
+  file it is the frame `parent=` names.
+- Addons never toggled follow `## DefaultState`; disabled addons are listed
+  with reason DISABLED. Blizzard_* addons are listed by GetAddOnInfo here and
+  not on 2.4.3 (open difference).
 
 Gotcha: a GM-mode character (`.gm on`) has faction template 35, so
 UnitFactionGroup("player") is nil on both clients and AceDB-3.0 fails to load.
