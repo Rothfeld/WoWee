@@ -1494,14 +1494,17 @@ void WidgetTree::collectDrawOrder() {
     // in OVERLAY and DressUpModel (level 2) draws the figure over it. Doubled,
     // a frame's own painting sits at 2L, its regions at 2L+1 and its child
     // frames from 2L+2.
-    auto sortLevel = [](const Widget* w) {
+    auto frameDrawsOwnText = [](const Widget* w) {
+        return w->isEditBox || (!w->hasBackdrop && (w->isMessageFrame || w->isSimpleHtml));
+    };
+    auto sortLevel = [&](const Widget* w) {
         if (w->kind != WidgetKind::Frame) return 2 * w->effLevel - 1;
-        return ((w->isStatusBar && !w->barTexture.empty()) || w->isEditBox)
+        return ((w->isStatusBar && !w->barTexture.empty()) || frameDrawsOwnText(w))
                    ? 2 * w->effLevel + 1
                    : 2 * w->effLevel;
     };
-    auto sortLayer = [](const Widget* w) {
-        if (w->isEditBox) return layerRank(DrawLayer::Artwork);
+    auto sortLayer = [&](const Widget* w) {
+        if (frameDrawsOwnText(w)) return layerRank(DrawLayer::Artwork);
         return layerRank((w->isStatusBar && !w->barTexture.empty()) ? w->barLayer : w->layer);
     };
     std::sort(drawOrder_.begin(), drawOrder_.end(),
@@ -1527,8 +1530,8 @@ void WidgetTree::collectDrawOrder() {
                   // Text is painted after textures within the same layer.
                   // MirrorTimer declares its label before its border, but the
                   // border must not cover the label's ascenders.
-                  const bool textA = a->kind == WidgetKind::FontString || a->isEditBox;
-                  const bool textB = b->kind == WidgetKind::FontString || b->isEditBox;
+                  const bool textA = a->kind == WidgetKind::FontString || frameDrawsOwnText(a);
+                  const bool textB = b->kind == WidgetKind::FontString || frameDrawsOwnText(b);
                   if (textA != textB) return !textA;
                   // Regions of the same kind retain creation order.
                   return a->creationOrder < b->creationOrder;

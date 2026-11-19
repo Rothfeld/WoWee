@@ -4287,3 +4287,59 @@ TEST_CASE_METHOD(Integration, "Hidden and debug bindings are not listed", "[inpu
         assert(type(__WoweeBindingScripts.TURNORACTION) == 'function')
     )lua");
 }
+
+TEST_CASE_METHOD(Integration, "MessageFrame and ScrollingMessageFrame defaults, fade window, and scroll offset", "[input][lua][message-frame]") {
+    run(R"lua(
+        MF = CreateFrame("MessageFrame", "TestMF", UIParent)
+        MF:SetFont("Fonts\\FRIZQT__.TTF", 16)
+        MF:SetTextColor(1, 0.82, 0)
+        assert(MF:GetInsertMode() == "BOTTOM")
+        assert(MF:GetTimeVisible() == 10)
+        assert(MF:GetFadeDuration() == 3)
+        assert(MF:GetFading())
+        MF:SetInsertMode("TOP")
+        MF:SetTimeVisible(5)
+        MF:AddMessage("First")
+        MF:AddMessage("Second", 1, 0.1, 0.1)
+
+        SMF = CreateFrame("ScrollingMessageFrame", "TestSMF", UIParent)
+        SMF:SetFont("Fonts\\FRIZQT__.TTF", 12)
+        SMF:SetTextColor(1, 0.82, 0)
+        assert(SMF:GetInsertMode() == "BOTTOM")
+        assert(SMF:GetTimeVisible() == 10)
+        assert(SMF:GetFadeDuration() == 3)
+        assert(SMF:GetMaxLines() == 8)
+        SMF:SetInsertMode("TOP")
+        SMF:SetFading(false)
+        for i = 1, 5 do SMF:AddMessage("E" .. i) end
+        SMF:SetScrollOffset(2)
+        assert(SMF:GetCurrentScroll() == 2)
+    )lua");
+
+    const auto* mf = lua.widgets().findByName("TestMF");
+    REQUIRE(mf);
+    REQUIRE(mf->messages.size() == 2);
+    // Chronological storage: [0] is oldest, [1] is newest.
+    CHECK(mf->messages[0].text == "First");
+    CHECK(mf->messages[1].text == "Second");
+    // MessageFrame defaults omitted r,g,b to white despite gold SetTextColor.
+    CHECK(mf->messages[0].color[1] == Catch::Approx(1.0f));
+    CHECK(mf->messages[0].color[2] == Catch::Approx(1.0f));
+    CHECK(mf->messages[1].color[1] == Catch::Approx(0.1f));
+
+    const auto* smf = lua.widgets().findByName("TestSMF");
+    REQUIRE(smf);
+    REQUIRE(smf->messages.size() == 5);
+    // ScrollingMessageFrame falls back to the frame's text colour.
+    CHECK(smf->messages[0].color[1] == Catch::Approx(0.82f));
+    CHECK(smf->messages[0].color[2] == Catch::Approx(0.0f));
+    CHECK(smf->messageScroll == 2);
+
+    // Hold full opacity for timeVisible (5 s), then linear fade over fadeDuration (3 s).
+    lua.expireMessages(4.9f);
+    CHECK(mf->messages[1].color[3] == Catch::Approx(1.0f));
+    lua.expireMessages(1.6f); // age = 6.5 s -> halfway through 3 s fade
+    CHECK(mf->messages[1].color[3] == Catch::Approx(0.5f));
+    lua.expireMessages(1.6f); // age = 8.1 s -> fully faded
+    CHECK(mf->messages[1].color[3] == Catch::Approx(0.0f));
+}

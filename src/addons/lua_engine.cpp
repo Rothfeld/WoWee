@@ -1738,10 +1738,16 @@ int lua_MessageFrame_AddMessage(lua_State* L) {
     // and a message frame never passes through SetText, so resolving it there
     // alone would have left every one of these lines showing the escape.
     m.text = wowee::ui::resolvePluralEscapes(luaL_optstring(L, 2, ""));
-    // WoW's colours are optional and default to the frame's own.
-    m.color[0] = static_cast<float>(luaL_optnumber(L, 3, w->color[0]));
-    m.color[1] = static_cast<float>(luaL_optnumber(L, 4, w->color[1]));
-    m.color[2] = static_cast<float>(luaL_optnumber(L, 5, w->color[2]));
+    // ScrollingMessageFrame falls back to the frame's text colour (set by
+    // SetFontObject / SetTextColor); MessageFrame defaults omitted r,g,b to
+    // white even when its FontObject is gold (measured on build 8606, pair 22).
+    const bool fixedWhite = (w->objectType == "MessageFrame");
+    auto colour = [L](int arg, float fallback) {
+        return lua_isnumber(L, arg) ? static_cast<float>(lua_tonumber(L, arg)) : fallback;
+    };
+    m.color[0] = colour(3, fixedWhite ? 1.0f : w->color[0]);
+    m.color[1] = colour(4, fixedWhite ? 1.0f : w->color[1]);
+    m.color[2] = colour(5, fixedWhite ? 1.0f : w->color[2]);
     m.color[3] = 1.0f;
     // The three the chat history hangs off a line. FrameXML hands them over on
     // the way in and reads them back with GetMessageInfo when it moves a
@@ -1759,16 +1765,15 @@ int lua_MessageFrame_AddMessage(lua_State* L) {
         m.extra = lua_tostring(L, 9);
     }
     w->isMessageFrame = true;
-    // UIErrorsFrame asks for insertMode="TOP", which puts a new line above the
-    // ones already there rather than below them.
-    if (w->messagesInsertTop) w->messages.push_front(std::move(m));
-    else                      w->messages.push_back(std::move(m));
+    // Chronological order regardless of insertMode: index 0 is oldest and
+    // back() is newest; ui/message_frame_layout.hpp walks from back() either
+    // downward from y0 (insertMode="TOP") or upward from the bottom.
+    w->messages.push_back(std::move(m));
     while (w->messages.size() > w->maxMessages) {
-        if (w->messagesInsertTop) w->messages.pop_back();
-        else                      w->messages.pop_front();
+        w->messages.pop_front();
     }
-    // A new line at the bottom means the view follows it, which is what a
-    // chat frame does unless someone has scrolled up.
+    // A new line at the newest end keeps a scrolled-back view on the lines it
+    // was reading.
     if (w->messageScroll > 0) ++w->messageScroll;
     return 0;
 }
@@ -1907,6 +1912,11 @@ int lua_MessageFrame_SetFadeDuration(lua_State* L) {
     auto* w = widgetOf(L, 1);
     if (w) w->messageFadeDuration = static_cast<float>(luaL_optnumber(L, 2, 3.0));
     return 0;
+}
+int lua_MessageFrame_GetFadeDuration(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushnumber(L, w ? w->messageFadeDuration : 3.0);
+    return 1;
 }
 int lua_MessageFrame_SetInsertMode(lua_State* L) {
     auto* w = widgetOf(L, 1);
@@ -4347,6 +4357,7 @@ int lua_MessageFrame_SetMaxLines(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         const int n = static_cast<int>(luaL_optnumber(L, 2, 128));
         w->maxMessages = (n > 0) ? static_cast<size_t>(n) : 1;
+        while (w->messages.size() > w->maxMessages) w->messages.pop_front();
     }
     return 0;
 }
@@ -4366,6 +4377,19 @@ int lua_MessageFrame_ScrollDown(lua_State* L) {
 int lua_MessageFrame_ScrollToBottom(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) w->messageScroll = 0;
     return 0;
+}
+int lua_MessageFrame_SetScrollOffset(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) {
+        const int maxOff = w->messages.empty() ? 0 : static_cast<int>(w->messages.size()) - 1;
+        const int req = static_cast<int>(luaL_optnumber(L, 2, 0));
+        w->messageScroll = std::clamp(req, 0, maxOff);
+    }
+    return 0;
+}
+int lua_MessageFrame_GetCurrentScroll(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushnumber(L, w ? w->messageScroll : 0);
+    return 1;
 }
 
 /// The getters of SetMaxLines, SetMinResize and SetMaxResize, and the other
@@ -7168,6 +7192,13 @@ static int lua_CreateFrame(lua_State* L) {
             // Marked at creation rather than only when a child is set, so a
             // scroll frame clips what is under it even while it is empty.
             if (ft == "ScrollFrame") tree->markScrollFrame(id);
+            if (ft == "MessageFrame" || ft == "ScrollingMessageFrame") {
+                w->isMessageFrame = true;
+                w->messageDuration = 10.0f;
+                w->messageFadeDuration = 3.0f;
+                w->messageFading = true;
+                if (ft == "ScrollingMessageFrame") w->maxMessages = 8;
+            }
             // Its text lives on the frame, so the renderer has to be told
             // this is one of the few frames that draws any - and so does the
             // frame metatable, whose SetText otherwise has nowhere to put it.
@@ -7915,6 +7946,7 @@ void LuaEngine::registerCoreAPI() {
         {"SetTimeVisible",  lua_MessageFrame_SetTimeVisible},
         {"GetTimeVisible",  lua_MessageFrame_GetTimeVisible},
         {"SetFadeDuration", lua_MessageFrame_SetFadeDuration},
+        {"GetFadeDuration", lua_MessageFrame_GetFadeDuration},
         {"SetFading",       lua_MessageFrame_SetFading},
         {"GetFading",       lua_MessageFrame_GetFading},
         {"SetInsertMode",   lua_MessageFrame_SetInsertMode},
@@ -7923,6 +7955,8 @@ void LuaEngine::registerCoreAPI() {
         {"ScrollDown",      lua_MessageFrame_ScrollDown},
         {"ScrollToBottom",  lua_MessageFrame_ScrollToBottom},
         {"ScrollToTop",     lua_MessageFrame_ScrollToTop},
+        {"SetScrollOffset", lua_MessageFrame_SetScrollOffset},
+        {"GetCurrentScroll",lua_MessageFrame_GetCurrentScroll},
         {"GetMaxLines",     lua_MessageFrame_GetMaxLines},
         {"GetMinResize",    lua_Frame_GetMinResize},
         {"GetMaxResize",    lua_Frame_GetMaxResize},
@@ -8842,7 +8876,7 @@ void LuaEngine::registerCoreAPI() {
         // "cannot describe it yet", and a name in it that works reads as a gap
         // that is not there, in the one place someone would check.
         "SetSocketGem=1,SetSocketedItem=1,SetExistingSocketGem=1,\n"
-        "SetScrollOffset=1,RegisterAllEvents=1,\n"
+        "RegisterAllEvents=1,\n"
         "SetStatusBarTexture=1,SetTexCoord=1,SetText=1,\n"
         "SetTexture=1,SetToplevel=1,\n"
         "SetUIPanel=1,SetUnit=1,\n"
@@ -13663,16 +13697,19 @@ void LuaEngine::expireMessages(float elapsed) {
             for (auto& m : w->messages) m.color[3] = 1.0f;
             continue;
         }
-        const bool readingBack = w->messageScroll > 0;
+        const bool readingBack = w->objectType != "MessageFrame" && w->messageScroll > 0;
         const float life = w->messageDuration;
         const float fade = w->messageFadeDuration > 0.0f ? w->messageFadeDuration : 0.0f;
         for (auto& m : w->messages) {
             m.age += elapsed;
             if (readingBack) { m.color[3] = 1.0f; continue; }
-            const float left = life - m.age;
-            m.color[3] = (left <= 0.0f) ? 0.0f
-                       : (fade > 0.0f && left < fade) ? (left / fade)
-                       : 1.0f;
+            // SetTimeVisible is the full-alpha hold interval; the linear fade
+            // runs for fadeDuration seconds after it (measured on UIErrorsFrame:
+            // displayDuration="5" holds 1.0 until 5 s and reaches 0 at 8 s).
+            const float past = m.age - life;
+            m.color[3] = (past <= 0.0f) ? 1.0f
+                       : (fade > 0.0f && past < fade) ? (1.0f - past / fade)
+                       : 0.0f;
         }
     }
 }

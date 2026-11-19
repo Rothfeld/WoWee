@@ -1043,16 +1043,26 @@ TEST_CASE("A message frame keeps its lines and drops the oldest",
     REQUIRE(w->messages.front().text == "two");
     REQUIRE(w->messages.back().text == "four");
 
-    // A frame with lines paints, even though a bare frame does not.
+    // A frame with lines paints, even though a bare frame does not, and draws
+    // after a BACKGROUND/ARTWORK texture on the frame itself.
+    const uint32_t bg = tree.create(WidgetKind::Texture, chat, "ChatBg");
+    tree.get(bg)->solidColor = true;
+    tree.get(bg)->width = 200.0f;
+    tree.get(bg)->height = 60.0f;
+    tree.addPoint(bg, Anchor{"TOPLEFT", chat, "TOPLEFT", 0.0f, 0.0f});
     tree.layout(1024.0f, 768.0f);
-    bool drawn = false;
-    for (const Widget* d : tree.drawOrder()) if (d->id == chat) drawn = true;
-    REQUIRE(drawn);
+    int bgPos = -1, chatPos = -1;
+    for (size_t i = 0; i < tree.drawOrder().size(); ++i) {
+        if (tree.drawOrder()[i]->id == bg) bgPos = static_cast<int>(i);
+        if (tree.drawOrder()[i]->id == chat) chatPos = static_cast<int>(i);
+    }
+    REQUIRE(bgPos >= 0);
+    REQUIRE(chatPos > bgPos);
 
     // Emptied, it goes back to painting nothing.
     w->messages.clear();
     tree.layout(1024.0f, 768.0f);
-    drawn = false;
+    bool drawn = false;
     for (const Widget* d : tree.drawOrder()) if (d->id == chat) drawn = true;
     REQUIRE_FALSE(drawn);
 }

@@ -8,6 +8,7 @@
 #include "ui/native_text_metrics.hpp"
 #include "ui/native_pixel_rules.hpp"
 #include "ui/tooltip_layout.hpp"
+#include "ui/message_frame_layout.hpp"
 #include <deque>
 #include <set>
 
@@ -2619,94 +2620,72 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 }
             }
 
-            // Chat and its kind: the newest line sits at the bottom and the
-            // older ones stack upward, as many as the frame is tall enough to
-            // hold. Scrolling moves the window back through the history
-            // rather than moving the lines.
+            // MessageFrame and ScrollingMessageFrame lines (see
+            // ui/message_frame_layout.hpp): insertMode="TOP" draws newest down
+            // from y0; insertMode="BOTTOM" draws newest upward from y1 on
+            // ScrollingMessageFrame and from the last whole slot on MessageFrame.
             if (w->isMessageFrame && !w->messages.empty()) {
                 ImFont* font = interfaceFaceOrDefault(w->fontFace);
+                const float effScale = w->effScale > 0.0f ? w->effScale : 1.0f;
                 const float size = interfaceFontSize(w->fontHeight, ws) * ws;
-                // One pixel height a row, as native's chat lines are.
                 const int pixelHeight = static_cast<int>(std::floor(size + 0.5f));
                 const NativeTextMeasure measure = interfaceTextMeasure(font, pixelHeight);
                 assert(measure.face && "interface text is drawn in a registered interface face");
-                const float lineH = static_cast<float>(pixelHeight) + w->messagePadding * ws;
-                // A chat line is wrapped to the frame, not run off the end of
-                // it. Every other label in the interface has wrapped for as
-                // long as there has been a wrapper; this surface drew each
-                // message as one unbroken line, so anything longer than the
-                // window simply left it.
-                const float wrapW = (x1 - x0) > size ? (x1 - x0) : 0.0f;
+                const int spacePx = spacingPixels(w->lineSpacing, ws);
+                const float shadowPx = static_cast<float>(shadowPixels(w->hasShadow ? w->shadowX : 0.0f, ws));
+                const float boxW = x1 - x0;
+                const float wrapW = boxW > size ? boxW : 0.0f;
                 const float indent = w->indentedWordWrap ? size : 0.0f;
-                auto lineCount = [&](const std::string& text) {
+                auto lineCount = [&](size_t idx) {
                     if (wrapW <= 0.0f) return size_t{1};
                     const auto lines = wrapTextNative(
-                        parseMarkup(text), wrapW, false, measure,
+                        parseMarkup(w->messages[idx].text), wrapW - shadowPx, false, measure,
                         [&](const WrapRun& run) { return nativeTextureWidth(run, pixelHeight, ws); },
                         indent);
                     return lines.empty() ? size_t{1} : lines.size();
                 };
-                float y = y1 - lineH;
-                int painted = 0;
-                const int scroll = w->messageScroll;
-                for (int i = static_cast<int>(w->messages.size()) - 1 - scroll;
-                     i >= 0 && y >= y0; --i) {
-                    const auto& m = w->messages[static_cast<size_t>(i)];
-                    // A line whose time is up is still in the history - it
-                    // comes back when the frame is scrolled - but it takes no
-                    // room on screen, so the ones still lit pack together.
-                    if (m.color[3] <= 0.0f) continue;
-                    float rgba[4] = {m.color[0], m.color[1], m.color[2], m.color[3]};
-                    // Through the markup parser, not straight to AddText.
-                    //
-                    // A chat line is the densest markup the interface produces:
-                    // "|cff9d9d9d|Hitem:3299|h[Fractured Canine]|h|r" is one
-                    // item link with a colour around it, and drawn raw that is
-                    // what appeared on screen - every escape, every bar, in the
-                    // middle of the sentence. It is also where the links are,
-                    // so this is what files their rects and makes a click on
-                    // one land somewhere.
-                    // A wrapped message occupies several lines and grows
-                    // upward, because the newest sits at the bottom: the block
-                    // starts as many lines above the cursor as it needs, and
-                    // the cursor then moves past all of them.
-                    const size_t rows = lineCount(m.text);
-                    const float top = y - static_cast<float>(rows - 1) * lineH;
-                    // A message that does not fit whole is not drawn at all.
-                    //
-                    // The loop's own bound only knows where the *last* row of
-                    // the next message goes, and a wrapped one is drawn from as
-                    // many lines above that as it needs - so a two-row line
-                    // arriving at the top of the window put its first row above
-                    // the window, through the tabs and whatever else sat there.
-                    // "Total time played: 1 day, 4 hours, 23 minutes" is two
-                    // rows and is the first thing said on every login.
-                    //
-                    // Stopping rather than skipping: these are drawn newest
-                    // first and upward, so the next one back starts higher
-                    // still and nothing after this can fit either.
-                    if (top < y0) break;
-                    // Under the line, the same single offset copy a font
-                    // string draws. ChatFontNormal declares one; this surface
-                    // ignored it, which is what left chat pale over bright
-                    // ground. No link rects filed for it - the pass above owns
-                    // those, and filing them twice would double every click.
+                const bool plainMessageFrame = (w->objectType == "MessageFrame");
+                const auto placed = placeMessageFrameLines(
+                    y0, y1, size, pixelHeight, spacePx, w->messagePadding * ws, effScale,
+                    plainMessageFrame, w->messagesInsertTop, w->messageScroll, w->messages.size(),
+                    [&](size_t idx) { return w->messages[idx].color[3] > 0.0f; },
+                    lineCount);
+                for (const PlacedMessage& pm : placed) {
+                    const auto& m = w->messages[pm.index];
+                    const float msgAlpha = w->effAlpha * m.color[3];
+                    float rgb[4] = {m.color[0], m.color[1], m.color[2], 1.0f};
+                    if (!w->fontOutline.empty()) {
+                        const float d = (w->fontOutline == "THICK") ? 2.0f : 1.0f;
+                        const uint32_t outlineCol = IM_COL32(
+                            0, 0, 0, static_cast<int>(std::clamp(msgAlpha, 0.0f, 1.0f) * 255.0f + 0.5f));
+                        const ImVec2 around[8] = {
+                            {-d, 0}, {d, 0}, {0, -d}, {0, d},
+                            {-d, -d}, {d, -d}, {-d, d}, {d, d},
+                        };
+                        for (const ImVec2& o : around) {
+                            drawMarkupText(dl, font, size, ws, ImVec2(x0 + o.x, pm.top + o.y),
+                                           outlineCol, msgAlpha, m.text, wrapW, false,
+                                           w->justifyH.c_str(), true, nullptr, 0, -1.0f, 0.0f,
+                                           indent, pm.rowHeight, shadowPx, boxW);
+                        }
+                    }
                     if (w->hasShadow) {
                         float sc[4] = {w->shadowColor[0], w->shadowColor[1],
                                        w->shadowColor[2], w->shadowColor[3]};
                         drawMarkupText(dl, font, size, ws,
-                                       ImVec2(x0 + std::round(w->shadowX * ws), top + std::round(-w->shadowY * ws)),
-                                       packColor(sc, w->effAlpha * w->shadowColor[3]),
-                                       w->effAlpha, m.text, wrapW, false, w->justifyH.c_str(), true,
-                                       nullptr, 0, -1.0f, 0.0f, indent, lineH);
+                                       ImVec2(x0 + std::round(w->shadowX * ws),
+                                              pm.top + std::round(-w->shadowY * ws)),
+                                       packColor(sc, msgAlpha), msgAlpha, m.text, wrapW, false,
+                                       w->justifyH.c_str(), true, nullptr, 0, -1.0f, 0.0f,
+                                       indent, pm.rowHeight, shadowPx, boxW);
                     }
-                    drawMarkupText(dl, font, size, ws, ImVec2(x0, top),
-                                   packColor(rgba, w->effAlpha), w->effAlpha, m.text,
-                                   wrapW, false, w->justifyH.c_str(), false, &tree, w->id,
-                                   -1.0f, 0.0f, indent, lineH);
-                    y -= lineH * static_cast<float>(rows);
-                    ++painted;
+                    drawMarkupText(dl, font, size, ws, ImVec2(x0, pm.top),
+                                   packColor(rgb, msgAlpha), msgAlpha, m.text, wrapW, false,
+                                   w->justifyH.c_str(), false, &tree, w->id, -1.0f, 0.0f,
+                                   indent, pm.rowHeight, shadowPx, boxW);
                 }
+                const int painted = static_cast<int>(placed.size());
+                const float lineH = static_cast<float>(pixelHeight + spacePx) + w->messagePadding * ws;
                 // A window holding lines and painting none of them.
                 //
                 // Reported as no visible text at all in the chat window, and

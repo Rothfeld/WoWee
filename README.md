@@ -2027,6 +2027,38 @@ Gotchas:
 
 Evidence: `_experiments/20261119T092759Z.questlog_fonts/` in the workspace.
 
+### MessageFrame and ScrollingMessageFrame layout
+
+```sh
+build/bin/test_interface_text_lines '[message-frame]'; build/bin/test_input_integration '[message-frame]'
+```
+
+`MessageFrame` (`UIErrorsFrame`) and `ScrollingMessageFrame` (`ChatFrame1`..`7`,
+`GuildEventMessageFrame`, `GuildBankMessageFrame`) keep lines in chronological
+order and place them by build 8606's rules (`ui/message_frame_layout.hpp`),
+measured on pair 22 at 1280x720 (0.9375 px/unit) and frame scale 0.8:
+
+- `insertMode="TOP"` places the newest message (`count - 1 - scroll`) at `y0`
+  and stacks older ones downward until the next message crosses `y1`. On
+  1280x720, `UIErrorsFrame` (`TOP` `y = -122`, height 60, `ErrorFont` 16) holds
+  three 15-pixel rows starting at `y0 = 114.375` (`textOriginY = 115`).
+- `insertMode="BOTTOM"` stacks upward from the newest message: `ScrollingMessageFrame`
+  starts at `y1`; `MessageFrame` divides its box into `floor((y1 - y0) / slotAdvance)`
+  slots from `y0` and starts at the bottom of the last whole slot. `SetJustifyV`
+  does not move slots on either widget type.
+- Within a wrapped message, rows step by `pixelHeight + spacingPixels`. Between
+  messages, `ScrollingMessageFrame` steps by that row height while `MessageFrame`
+  steps its first row by `(ceil(scaledFontSize) + spacingPixels) / effScale`.
+- `CreateFrame` starts both types with `timeVisible = 10`, `fadeDuration = 3`,
+  `fading = true`, `insertMode = "BOTTOM"`, and `ScrollingMessageFrame` with
+  `maxLines = 8` (`UI.xsd`). `SetTimeVisible` sets the full-alpha hold interval;
+  the linear fade runs for `fadeDuration` seconds after it (`UIErrorsFrame` holds
+  alpha 1 until 5 s and reaches 0 at 8 s). Omitted `AddMessage` RGB arguments
+  default to white on `MessageFrame` and to the frame's text colour on
+  `ScrollingMessageFrame`.
+
+Evidence: `_experiments/20261119T1700Z.uierrors_position/` in the workspace.
+
 ### Scroll frame clipping
 
 ```sh
