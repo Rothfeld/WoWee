@@ -60,6 +60,8 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         }
 
         const game::GameObjectQueryResponseData* goInfo = nullptr;
+        bool highlightOnly = false;
+        bool highlightable = false;
         if (type == game::ObjectType::GAMEOBJECT) {
             auto go = std::static_pointer_cast<game::GameObject>(entity);
             // Neither cursor nor name for an object the player may not use:
@@ -85,9 +87,13 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             if (!goInfo) continue;
             // The per-type table (game_object_interaction.hpp): an object
             // with neither a use nor a name does not take the mouse at all,
-            // so it cannot hide what stands behind it.
-            if (!game::gameObjectAffordance(goInfo->type, goInfo->data[0], goInfo->data[1],
-                                            enabled).hoverable()) continue;
+            // so it cannot hide what stands behind it. It may still light up
+            // under the pointer (highlightObjectGuid).
+            highlightOnly = !game::gameObjectAffordance(goInfo->type, goInfo->data[0], goInfo->data[1],
+                                                        enabled).hoverable();
+            // Flagged off or hostile (not enabled): nothing, as before.
+            highlightable = enabled && game::gameObjectHighlights(goInfo->type, goInfo->data[1]);
+            if (highlightOnly && !highlightable) continue;
         }
 
         glm::vec3 hitCenter;
@@ -198,6 +204,11 @@ ScenePick pickScene(game::GameHandler& gameHandler,
             }
         } else if (type == game::ObjectType::GAMEOBJECT) {
             assert(goInfo);
+            if (highlightable && hitT < pick.highlightObjectT) {
+                pick.highlightObjectT = hitT;
+                pick.highlightObjectGuid = guid;
+            }
+            if (highlightOnly) continue;
             const bool interactive = game::gameObjectTypeRule(goInfo->type).use;
             if (hitT < pick.closestT) {
                 pick.closestT = hitT;

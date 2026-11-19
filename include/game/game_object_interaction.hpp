@@ -120,6 +120,14 @@ inline ObjectNameTooltip objectNameTooltip(uint32_t type, uint32_t data0, uint32
     return data1 != 0 ? ObjectNameTooltip::Default : ObjectNameTooltip::None;
 }
 
+/// Whether 2.4.3 lights the object under the pointer. Elwynn and Hellfire:
+/// a chest, Peacebloom, a mailbox, a wanted poster and a campfire (SPELL_FOCUS,
+/// no cursor and no name) all do; GENERIC only with data1, its highlight
+/// field (barrels and crates of scenery stay dark).
+inline bool gameObjectHighlights(uint32_t type, uint32_t data1) {
+    return type != 5 || data1 != 0;
+}
+
 /// What the mouse gets from one object: whether a click uses it, which name
 /// tooltip it shows, and nothing at all when neither (the pick passes
 /// through it). `available` is the flag/faction/ghost gate

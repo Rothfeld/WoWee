@@ -106,6 +106,13 @@ struct ScenePick {
     uint64_t namedObjectGuid = 0;
     float    namedObjectT = 1e30f;
 
+    /// The nearest game object hit that 2.4.3 lights under the pointer:
+    /// every type, a GENERIC one only with its highlight field (data1).
+    /// Includes objects the mouse otherwise passes through (a campfire, a
+    /// spell focus, has neither cursor nor name and still lights up).
+    uint64_t highlightObjectGuid = 0;
+    float    highlightObjectT = 1e30f;
+
     /// What a click acts on: the nearest hit when it is something a click
     /// uses, nothing when scenery is in front of it, the deferred corpse when
     /// nothing else was hit at all.

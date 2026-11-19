@@ -1577,6 +1577,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     worldHoverGuid_ = 0;
     worldObjectHoverGuid_ = 0;
     uint64_t highlightedObject = 0;
+    // Hover and press light an object alike (m2.vert.glsl: one more unit of light gain).
     const float objectHoverStrength = 1.0f;
     // Cursor affordance: show hand cursor over interactable entities.
     // Not while the cursor is over a frame FrameXML owns: ImGui has never heard
@@ -1597,22 +1598,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 ui::pickScene(gameHandler, ray, ui::ScenePickParams{});
             const auto hovered = gameHandler.getEntityManager().getEntity(hoverPick.resolve());
             if (hovered && hovered->isUnit()) worldHoverGuid_ = hovered->getGuid();
-            if (const auto named = gameHandler.getEntityManager().getEntity(hoverPick.namedObjectGuid);
-                    named && named->getType() == game::ObjectType::GAMEOBJECT) {
-                // 2.4.3 lights the object nearest under the pointer whatever
-                // it is used for: a chest, a herb, a mailbox, a wanted poster
-                // and a campfire (a spell focus nothing clicks) all came out
-                // 2x in Elwynn and Hellfire; Workshop Door 90566 and a
-                // Practice Lockbox brighten alike, greyed or with Pick Lock
-                // armed (pair 22). A generic object only with its highlight
-                // field (GENERIC data1): barrels and crates of scenery stay
-                // dark. How much is the M2 light's gain (m2.vert.glsl).
-                const auto object = std::static_pointer_cast<game::GameObject>(named);
-                const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
-                if (info && hoverPick.closestGuid == named->getGuid() &&
-                        (info->type != 5 || info->data[1] != 0))
-                    highlightedObject = named->getGuid();
-            }
+            // 2.4.3 lights the object nearest under the pointer
+            // (ScenePick::highlightObjectGuid), whether a click uses it or
+            // not: a chest, a herb, a mailbox, a wanted poster and a campfire
+            // came out 2x in Elwynn and Hellfire; Workshop Door 90566 and a
+            // Practice Lockbox brighten alike, greyed or with Pick Lock armed
+            // (pair 22). Not when a unit is nearer. How much is the M2
+            // light's gain (m2.vert.glsl).
+            if (hoverPick.highlightObjectGuid != 0 && hoverPick.highlightObjectT <= hoverPick.closestT)
+                highlightedObject = hoverPick.highlightObjectGuid;
             if (gameHandler.pendingLockTargetSpell() != 0) {
                 // A spell waiting for its lock (Pick Lock): "Cast" where
                 // lockSpellAim allows a cast, whatever the player's rank;
