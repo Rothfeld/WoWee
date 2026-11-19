@@ -2,6 +2,7 @@
 #include "core/logger.hpp"
 
 #include <cstring>
+#include <string>
 
 extern "C" {
 #include <lua.h>
@@ -66,10 +67,71 @@ void pushSaveTable(lua_State* L) {
 
 }  // namespace
 
+namespace {
+int gRoutingDepth = 0;
+}
+
+bool routingScriptError() { return gRoutingDepth > 0; }
+
+void callLuaErrorHandler(lua_State* L, int messageIndex) {
+    messageIndex = messageIndex > 0 ? messageIndex : lua_gettop(L) + messageIndex + 1;
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_error_handler");
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
+    // A handler that raises itself, or recurses into another error, must not
+    // turn one error into a stack overflow.
+    if (gRoutingDepth > 4) { lua_pop(L, 1); return; }
+    lua_pushvalue(L, messageIndex);
+    ++gRoutingDepth;
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        const char* herr = lua_tostring(L, -1);
+        LOG_ERROR("LuaEngine: error handler raised: ", herr ? herr : "?");
+        lua_pop(L, 1);
+    }
+    --gRoutingDepth;
+}
+
+int luaScriptErrorHandler(lua_State* L) {
+    // The handler seterrorhandler installed sees the error first, at the
+    // point it was raised, so its debugstack() still shows where.
+    callLuaErrorHandler(L, 1);
+    const char* msg = lua_tostring(L, 1);
+    std::string out = msg ? msg : "(error)";
+    for (int level = 1; level < 12; ++level) {
+        lua_Debug ar;
+        if (!lua_getstack(L, level, &ar)) break;
+        if (!lua_getinfo(L, "Sln", &ar)) break;
+        out += "\n      at ";
+        out += (ar.short_src[0] ? ar.short_src : "?");
+        out += ":" + std::to_string(ar.currentline);
+        if (ar.name) { out += " in "; out += ar.name; }
+    }
+    lua_pushstring(L, out.c_str());
+    return 1;
+}
+
+int pcallRouted(lua_State* L, int nargs, int nresults) {
+    const int fn = lua_gettop(L) - nargs;
+    lua_pushcfunction(L, luaScriptErrorHandler);
+    lua_insert(L, fn);
+    const int rc = lua_pcall(L, nargs, nresults, fn);
+    lua_remove(L, fn);
+    return rc;
+}
+
 void setLegacyHandlerGlobals(bool on) { gLegacyHandlerGlobals = on; }
 bool legacyHandlerGlobals() { return gLegacyHandlerGlobals; }
 
 int pcallScript(lua_State* L, const char* script, int nargs, int errfunc) {
+    // No handler of the caller's own: the error handler route, as every
+    // script error takes on 2.4.3.
+    if (errfunc == 0) {
+        const int fn = lua_gettop(L) - nargs;
+        lua_pushcfunction(L, luaScriptErrorHandler);
+        lua_insert(L, fn);
+        const int rc = pcallScript(L, script, nargs, fn);
+        lua_remove(L, fn);
+        return rc;
+    }
     if (!gLegacyHandlerGlobals || nargs < 1)
         return lua_pcall(L, nargs, 0, errfunc);
 
@@ -146,16 +208,13 @@ int pcallScript(lua_State* L, const char* script, int nargs, int errfunc) {
 /// stopped at TargetFrame's OnLoad on a /reload with a target, before
 /// TargetofTargetFrame existed.
 static void reportOnLoadError(lua_State* L) {
+    // pcallScript has given it to the error handler already; recorded here.
     const char* err = lua_tostring(L, -1);
     LOG_ERROR("LuaEngine: OnLoad: ", err ? err : "?");
-    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_error_handler");
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_note_lua_error");
     if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, -2);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            const char* herr = lua_tostring(L, -1);
-            LOG_ERROR("LuaEngine: error handler raised: ", herr ? herr : "?");
-            lua_pop(L, 1);
-        }
+        lua_pushfstring(L, "OnLoad: %s", err ? err : "?");
+        lua_call(L, 1, 0);
     } else {
         lua_pop(L, 1);
     }

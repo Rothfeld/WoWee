@@ -29,6 +29,7 @@
 #include "ui/unit_name_cvar.hpp"
 #include "imgui.h"
 #include "addons/lua_api_helpers.hpp"
+#include "addons/lua_handler_globals.hpp"
 #include "addons/chat_window_background.hpp"
 #include "game/chat_handler.hpp"
 #include "ui/display_modes.hpp"
@@ -4191,12 +4192,13 @@ static int lua_RunScript(lua_State* L) {
     // MACRO_ACTION_FORBIDDEN.
     markInsecureChunk(L, body);
     if (luaL_loadstring(L, body) != 0) {
+        callLuaErrorHandler(L, -1);
         const char* err = lua_tostring(L, -1);
         LOG_WARNING("RunScript would not compile: ", err ? err : "?");
         lua_pop(L, 1);
         return 0;
     }
-    if (lua_pcall(L, 0, 0, 0) != 0) {
+    if (pcallRouted(L, 0, 0) != 0) {
         const char* err = lua_tostring(L, -1);
         LOG_WARNING("RunScript failed: ", err ? err : "?");
         lua_pop(L, 1);

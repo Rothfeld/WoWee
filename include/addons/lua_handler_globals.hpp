@@ -45,6 +45,23 @@ bool legacyHandlerGlobals();
 /// name before the payload. Zero results, which every dispatch site wants.
 int pcallScript(lua_State* L, const char* script, int nargs, int errfunc);
 
+/// Script errors take one route, as on 2.4.3: the function seterrorhandler
+/// installed is called with the message where the error was raised, for event
+/// and script handlers, slash commands, bindings, addon file bodies and
+/// /script alike. luaScriptErrorHandler is that route as a pcall message
+/// handler; it then answers the message with a traceback appended for this
+/// client's log. pcallScript with errfunc 0 and pcallRouted use it.
+int luaScriptErrorHandler(lua_State* L);
+/// lua_pcall through luaScriptErrorHandler.
+int pcallRouted(lua_State* L, int nargs, int nresults);
+/// Call the installed error handler with the message at messageIndex (for an
+/// error that has no stack to be raised from, such as a file that will not
+/// compile).
+void callLuaErrorHandler(lua_State* L, int messageIndex);
+/// True while the installed handler is being called from that route, so
+/// debuginfo() does not record the same error a second time.
+bool routingScriptError();
+
 /// __WoweeFireOnLoad(frame) - run a frame's OnLoad now that it is built.
 ///
 /// Emitted by framexml_emitter at the end of every frame it builds, in place of
