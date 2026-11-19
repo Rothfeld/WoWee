@@ -608,8 +608,6 @@ static uint32_t itemIdFromArg(lua_State* L, int index) {
 /// offers. The list belongs to the frame rather than to the application: a
 /// second dressing room would have its own, and closing one is what empties it.
 ///
-/// An item already on the same inventory slot is replaced, because trying on
-/// two chests means wearing the second.
 static int lua_WoweeTryOn(lua_State* L) {
     auto* gh = getGameHandler(L);
     auto* tree = getWidgetTree(L);
@@ -622,14 +620,10 @@ static int lua_WoweeTryOn(lua_State* L) {
     const auto* info = itemId ? gh->getItemInfo(itemId) : nullptr;
     if (!info || info->displayInfoId == 0) return 0;
 
-    const uint8_t slot = static_cast<uint8_t>(info->inventoryType);
-    for (auto& worn : w->tryOnItems) {
-        if (worn.inventoryType == slot) {
-            worn.displayInfoId = info->displayInfoId;
-            return 0;
-        }
-    }
-    w->tryOnItems.push_back({info->displayInfoId, slot});
+    // Kept in order; the render loop lays them over the worn equipment slot
+    // by slot and hand by hand, which is where one displaces another.
+    if (info->inventoryType == 0) return 0;
+    w->tryOnItems.push_back({info->displayInfoId, static_cast<uint8_t>(info->inventoryType)});
     return 0;
 }
 
@@ -650,12 +644,19 @@ static int lua_WoweeSetModelCreature(lua_State* L) {
     return 0;
 }
 
-/// __WoweeUndress(frame) - take everything tried on back off.
+/// __WoweeUndress(frame, naked) - take everything tried on back off.
+///
+/// DressUpModel:Undress() leaves the figure naked, weapons included, and
+/// whatever is tried on next goes onto that; Dress() - the Reset button -
+/// returns it to what the unit is wearing.
 static int lua_WoweeUndress(lua_State* L) {
     auto* tree = getWidgetTree(L);
     if (!tree || !lua_istable(L, 1)) return 0;
     const uint32_t id = tableWidgetId(L, 1);
-    if (auto* w = tree->get(id)) w->tryOnItems.clear();
+    if (auto* w = tree->get(id)) {
+        w->tryOnItems.clear();
+        w->modelUndressed = lua_toboolean(L, 2) != 0;
+    }
     return 0;
 }
 

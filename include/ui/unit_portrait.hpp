@@ -104,9 +104,13 @@ public:
         targetHeight_ = height;
     }
 
-    /// Turn the figure by this much, in radians. What the paperdoll's rotate
-    /// buttons drive.
-    void rotate(float yawDelta);
+    /// What a full-body player figure is shown with: the Model frame's
+    /// facing (SetRotation, radians) and camera scale (model scale at the
+    /// last SetUnit over the current one). Applied every update.
+    void setModelFrameView(float facing, float cameraScale) {
+        modelFacing_ = facing;
+        modelCameraScale_ = cameraScale;
+    }
 
     /// The rendered portrait, or zero until the first composite has run. The
     /// value is a VkDescriptorSet, carried as an integer so this header does
@@ -121,9 +125,18 @@ public:
     void shutdown(rendering::Renderer* renderer);
 
 private:
+    /// setModelFrameView on the preview; false (logged once) when the model
+    /// has no character-sheet camera.
+    bool applyModelFrameView();
+
     std::unique_ptr<rendering::CharacterPreview> preview_;
     bool initialized_ = false;
     Framing framing_ = Framing::Face;
+    float modelFacing_ = 0.0f;
+    float modelCameraScale_ = 1.0f;
+    /// A full-body player figure whose model lacks the character-sheet
+    /// camera is not drawn; this is the load that found so.
+    bool modelFrameViewMissing_ = false;
     int targetWidth_ = 640;
     int targetHeight_ = 800;
     bool registered_ = false;

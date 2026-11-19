@@ -31,6 +31,12 @@ struct WrapRun {
     /// has something to name; the display text alone cannot say what was
     /// clicked.
     std::string link;
+    /// The whole escape the link was written as, colour included -
+    /// "|cffa335ee|Hitem:1168:0:0:0:0:0:0:0|h[Skullflame Shield]|h|r". It is
+    /// what OnHyperlinkClick hands FrameXML as its text: SetItemRef passes it
+    /// on to HandleModifiedItemClick, so a Ctrl-click tries the item on and a
+    /// Shift-click puts the link itself into the chat box.
+    std::string hyperlink;
 
     /// An inline texture: the file named by a |Tpath:h:w:ox:oy|t escape.
     ///

@@ -63,6 +63,24 @@ TEST_CASE("a link keeps its display text", "[markup]") {
         REQUIRE(found);
     }
 
+    SECTION("the whole escape is carried, colour included, for OnHyperlinkClick") {
+        const std::string link =
+            "|cffa335ee|Hitem:1168:0:0:0:0:0:0:0|h[Skullflame Shield]|h|r";
+        bool found = false;
+        for (const WrapRun& r : parseMarkup("Link: " + link + " - more")) {
+            if (r.link.empty()) {
+                REQUIRE(r.hyperlink.empty());
+                continue;
+            }
+            REQUIRE(r.hyperlink == link);
+            found = true;
+        }
+        REQUIRE(found);
+        for (const WrapRun& r : parseMarkup("|Hitem:1|h[A]|h")) {
+            if (!r.link.empty()) REQUIRE(r.hyperlink == "|Hitem:1|h[A]|h");
+        }
+    }
+
     SECTION("text after the closing marker is not part of the link") {
         for (const WrapRun& r : parseMarkup("|Hitem:1|h[A]|h tail")) {
             if (r.text.find("tail") != std::string::npos) REQUIRE(r.link.empty());

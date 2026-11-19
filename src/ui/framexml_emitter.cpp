@@ -1226,8 +1226,15 @@ struct Emitter {
             }
             break;
         }
+        // On a Model the attribute is the model's scale - the 2.4.3 schema
+        // declares `scale` on ModelType alone. Read as the frame's scale it
+        // doubled DressUpModel's rect and every child anchored inside it:
+        // the dressing room's figure covered the top of the screen and its
+        // rotate buttons hung in the middle of the scene.
         if (const std::string* sc = node.attr("scale")) {
-            line(var + ":SetScale(" + *sc + ")");
+            const bool model = node.name == "Model" || node.name == "PlayerModel" ||
+                               node.name == "DressUpModel" || node.name == "TabardModel";
+            line(var + (model ? ":SetModelScale(" : ":SetScale(") + *sc + ")");
         }
         if (node.attr("toplevel")) {
             line(var + ":SetToplevel(" +

@@ -92,13 +92,7 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
             preview_->applyEquipment(worn);
             // After the model, because its bounds are what the framing is
             // measured against.
-            if (framing_ == Framing::Face) {
-                preview_->setPortraitFraming();
-            } else {
-                // The whole figure, facing the viewer. resetView is the
-                // character-select framing, which is what a paperdoll wants.
-                preview_->resetView();
-            }
+            if (framing_ == Framing::Face) preview_->setPortraitFraming();
         }
         // Logged because a portrait that rebuilds every frame looks like one
         // that flickers, and the two are indistinguishable from outside.
@@ -111,9 +105,22 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         loadedEquipHash_ = equipHash;
     }
 
+    if (framing_ == Framing::FullBody && !applyModelFrameView()) return;
     preview_->update(deltaTime);
     preview_->render();
     preview_->requestComposite();
+}
+
+bool UnitPortrait::applyModelFrameView() {
+    if (preview_->setModelFrameView(modelFacing_, modelCameraScale_)) {
+        modelFrameViewMissing_ = false;
+        return true;
+    }
+    if (preview_->isModelLoaded() && !modelFrameViewMissing_) {
+        LOG_ERROR("UnitPortrait: player model has no character-sheet camera (M2 camera type 1)");
+    }
+    modelFrameViewMissing_ = true;
+    return false;
 }
 
 bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
@@ -164,7 +171,6 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
             // it, which is the half applyEquipment cannot composite for an NPC.
             if (!pendingBake_.empty()) preview_->setBakedSkin(pendingBake_);
             if (framing_ == Framing::Face) preview_->setPortraitFraming();
-            else                           preview_->resetView();
         }
         LOG_INFO("UnitPortrait: rebuilt for player race ", static_cast<int>(race),
                  " appearance ", appearanceBytes);
@@ -178,6 +184,7 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
         loadedBake_ = pendingBake_;
     }
 
+    if (framing_ == Framing::FullBody && !applyModelFrameView()) return false;
     preview_->update(deltaTime);
     preview_->render();
     preview_->requestComposite();
@@ -243,10 +250,6 @@ bool UnitPortrait::updateKnownSubject(uint64_t guid, float deltaTime) {
     preview_->render();
     preview_->requestComposite();
     return true;
-}
-
-void UnitPortrait::rotate(float yawDelta) {
-    if (preview_ && yawDelta != 0.0f) preview_->rotate(yawDelta);
 }
 
 void UnitPortrait::shutdown(rendering::Renderer* renderer) {

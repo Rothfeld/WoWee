@@ -781,6 +781,20 @@ int lua_Model_GetFacing(lua_State* L) {
     lua_pushnumber(L, w ? w->modelFacing : 0.0);
     return 1;
 }
+/// SetModelScale(scale) / GetModelScale() on a model frame. A Model's XML
+/// `scale` attribute arrives here too: in 2.4.3 it is the model's scale, not
+/// the frame's (MiniMapPing answers GetScale() 1, GetModelScale() 0.4).
+int lua_Model_SetModelScale(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    const float scale = static_cast<float>(luaL_checknumber(L, 2));
+    if (w && scale > 0.0f) w->modelScale = scale;
+    return 0;
+}
+int lua_Model_GetModelScale(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushnumber(L, w ? w->modelScale : 1.0);
+    return 1;
+}
 
 int lua_Frame_SetMovable(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) w->movable = lua_toboolean(L, 2) != 0;
@@ -3302,6 +3316,13 @@ int lua_Tooltip_SetUnit(lua_State* L) {
         for (char& c : uid) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         w->modelUnitGuid = gh ? wowee::addons::resolveUnitGuid(gh, uid) : 0;
         w->modelDisplayId = 0;
+        // A fresh load of the unit as it is: nothing tried on, dressed, and the
+        // camera placed for the model scale it has now. DressUpItemLink calls
+        // this on every opening, which is why a reopened dressing room starts
+        // over in build 8606.
+        w->tryOnItems.clear();
+        w->modelUndressed = false;
+        w->modelLoadScale = w->modelScale;
         return 0;
     }
     auto* gh = wowee::addons::getGameHandler(L);
@@ -7785,6 +7806,8 @@ void LuaEngine::registerCoreAPI() {
         {"SetRotation",     lua_Model_SetFacing},
         {"SetFacing",       lua_Model_SetFacing},
         {"GetFacing",       lua_Model_GetFacing},
+        {"SetModelScale",   lua_Model_SetModelScale},
+        {"GetModelScale",   lua_Model_GetModelScale},
         {"IsMovable",       lua_Frame_IsMovable},
         {"RegisterForDrag", lua_Frame_RegisterForDrag},
         {"StartMoving",     lua_Frame_StartMoving},
@@ -8122,7 +8145,8 @@ void LuaEngine::registerCoreAPI() {
         // it forwards to live where item links are already parsed, and the
         // alternative was a third copy of that parser.
         "function mt:TryOn(link) __WoweeTryOn(self, link) end\n"
-        "function mt:Undress() __WoweeUndress(self) end\n"
+        "function mt:Undress() __WoweeUndress(self, true) end\n"
+        "function mt:Dress() __WoweeUndress(self, false) end\n"
         // SetUnit and RefreshUnit are what a model frame is told to show. The
         // frame is driven by name from the render loop - the paperdoll, the
         // inspect window and the dressing room each have their own - so what
@@ -8794,7 +8818,7 @@ void LuaEngine::registerCoreAPI() {
         "SetInventoryItem=1,\n"
         "SetLight=1,SetMaxBytes=1,\n"
         "SetMaxLetters=1,\n"
-        "SetMinMaxValues=1,SetModel=1,SetModelScale=1,\n"
+        "SetMinMaxValues=1,SetModel=1,\n"
         "SetMovable=1,SetMultiLine=1,SetNormalFontObject=1,SetNormalTexture=1,\n"
         "SetNumber=1,SetNumeric=1,SetOwner=1,SetParent=1,SetPetAction=1,\n"
         "SetPlayerTextureHeight=1,SetPlayerTextureWidth=1,SetPoint=1,SetPosition=1,\n"
@@ -13339,9 +13363,12 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
                         hit == 0 || ui::isSelfOrDescendantOf(widgets_, hit, owner);
                     if (owner != 0 && ownerW && ownerW->hyperlinksEnabled &&
                         linkIsWhatIsUnderTheCursor) {
+                        // The text is the whole escape, as 2.4.3 passes it:
+                        // SetItemRef hands it to HandleModifiedItemClick, and
+                        // the display text alone named no item to try on.
                         callFrameScript3(owner, "OnHyperlinkClick",
                                          hitLink->link.c_str(),
-                                         hitLink->text.c_str(), b.name);
+                                         hitLink->hyperlink.c_str(), b.name);
                         tookLink = true;
                     }
                 }

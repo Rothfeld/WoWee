@@ -646,8 +646,21 @@ struct Widget {
     /// and inventory type. The dressing room's contents belong to the frame
     /// rather than to the application: a second one would have its own, and
     /// closing this one is what empties it.
+    /// In the order they were tried on: each one takes the hands or the
+    /// equipment slot it fits, so later pieces displace earlier ones.
     struct TryOnItem { uint32_t displayInfoId; uint8_t inventoryType; };
     std::vector<TryOnItem> tryOnItems;
+    /// DressUpModel:Undress() - the figure without anything the unit wears,
+    /// tried-on items still go on top. Dress() and SetUnit() put it back.
+    bool modelUndressed = false;
+    /// Model:SetModelScale, which is what a Model's XML `scale` attribute
+    /// sets in 2.4.3 (DressUpModel scale="2.0" answers GetScale() 1 and
+    /// GetModelScale() 2). The camera is placed when the unit is loaded, in
+    /// proportion to the model scale at that moment, so loading a unit looks
+    /// the same at any scale; a later SetModelScale grows or shrinks the figure
+    /// in front of that camera. modelLoadScale is the scale at the last load.
+    float modelScale = 1.0f;
+    float modelLoadScale = 1.0f;
 
     /// A creature this model frame has been told to show, by display id. Set
     /// by whichever binding decides - the stable's paperdoll is told a slot
@@ -786,6 +799,7 @@ struct LinkRect {
     uint32_t    widget = 0;   ///< the font string the link was drawn in
     std::string link;         ///< "item:3299", "quest:1234:60"
     std::string text;         ///< what it drew, brackets and all
+    std::string hyperlink;    ///< the whole |c|H...|h...|h|r escape (WrapRun::hyperlink)
     float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
 };
 

@@ -1134,6 +1134,20 @@ TEST_CASE("HitRectInsets become a SetHitRectInsets call", "[framexml][emit]") {
     REQUIRE(has(r.lua, "SetHitRectInsets(0, 30, 0, 45)"));
 }
 
+TEST_CASE("A Model's scale attribute is its model scale", "[framexml][emit]") {
+    // 2.4.3 declares `scale` on ModelType only: DressUpModel scale="2.0"
+    // answers GetScale() 1 and GetModelScale() 2 there.
+    XmlNode root = parseOrFail(
+        "<Ui><Frame name=\"Room\"><Frames>"
+        "<DressUpModel name=\"Doll\" scale=\"2.0\"/>"
+        "<Model name=\"Ping\" scale=\"0.4\"/>"
+        "</Frames></Frame></Ui>");
+    const EmitResult r = emitFrameXml(root);
+    REQUIRE(has(r.lua, "SetModelScale(2.0)"));
+    REQUIRE(has(r.lua, "SetModelScale(0.4)"));
+    REQUIRE_FALSE(has(r.lua, "SetScale("));
+}
+
 TEST_CASE("A font object's Shadow reaches the table", "[framexml][emit]") {
     XmlNode root = parseOrFail(
         "<Ui><Font name=\"Shadowed\" font=\"F.ttf\">"

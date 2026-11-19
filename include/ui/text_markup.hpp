@@ -46,6 +46,9 @@ inline std::vector<WrapRun> parseMarkup(const std::string& in) {
         return (hi < 0 || lo < 0) ? -1 : hi * 16 + lo;
     };
 
+    // Where the colour escape in force began, so a link written inside one
+    // can be handed back whole.
+    size_t colorStart = std::string::npos;
     for (size_t i = 0; i < in.size();) {
         if (in[i] != '|') { cur.text += in[i++]; continue; }
         if (i + 1 >= in.size()) { cur.text += in[i++]; continue; }
@@ -63,11 +66,18 @@ inline std::vector<WrapRun> parseMarkup(const std::string& in) {
                 cur.hasColor = true;
                 cur.rgba[0] = r / 255.0f; cur.rgba[1] = g / 255.0f;
                 cur.rgba[2] = b / 255.0f; cur.rgba[3] = 1.0f;
+                colorStart = i;
                 i += 10;
                 continue;
             }
         }
-        if (tag == 'r' || tag == 'R') { flush(); cur.hasColor = false; i += 2; continue; }
+        if (tag == 'r' || tag == 'R') {
+            flush();
+            cur.hasColor = false;
+            colorStart = std::string::npos;
+            i += 2;
+            continue;
+        }
         // |n is WoW's line break, and it was not handled at all - so every one
         // of them drew as a literal bar and an n. globalstrings.lua alone has a
         // hundred and thirty-eight.
@@ -105,12 +115,20 @@ inline std::vector<WrapRun> parseMarkup(const std::string& in) {
             if (close == std::string::npos) { i = in.size(); continue; }
             flush();
             cur.link = in.substr(i + 2, close - (i + 2));
+            {
+                const size_t start = cur.hasColor ? colorStart : i;
+                const size_t textEnd = in.find("|h", close + 2);
+                size_t end = textEnd == std::string::npos ? in.size() : textEnd + 2;
+                if (cur.hasColor && in.compare(end, 2, "|r") == 0) end += 2;
+                cur.hyperlink = in.substr(start, end - start);
+            }
             i = close + 2;
             continue;
         }
         if (tag == 'h') {          // the closing marker; the link ends here
             flush();
             cur.link.clear();
+            cur.hyperlink.clear();
             i += 2;
             continue;
         }

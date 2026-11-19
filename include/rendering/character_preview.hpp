@@ -80,6 +80,17 @@ public:
     /// together and zooms to the face.
     void setPortraitFraming();
 
+    /// The view a Model frame shows a player through in 2.4.3: the model's
+    /// own character-sheet camera (M2 camera type 1), its diagonal field of
+    /// view spread over the frame's aspect, the figure at the origin turned
+    /// by `facingRadians` (Model:SetRotation; 0 faces the camera).
+    /// `cameraScale` moves that camera along with the model scale the unit
+    /// was loaded at, divided by the current one (see Widget::modelScale).
+    /// Measured on build 8606: a 316x331 frame shows a human 238 px high at
+    /// 720p and a 233x331 frame 208 px - the ratio the diagonal FOV
+    /// predicts. False when the loaded model has no such camera.
+    bool setModelFrameView(float facingRadians, float cameraScale);
+
     /// Draws the character against nothing rather than a lit backdrop, so what
     /// surrounds it is transparent. A portrait is masked by the frame art
     /// around it, and anything opaque behind the head shows as a block of
@@ -191,6 +202,12 @@ private:
     glm::vec3 portraitCameraPos_{0.0f};
     glm::vec3 portraitCameraTarget_{0.0f};
     float portraitCameraFovDegrees_ = 0.0f;
+    /// The character-sheet camera (M2 camera type 1) of the loaded player
+    /// model, for setModelFrameView. Model space, fov diagonal in radians.
+    bool modelFrameCameraValid_ = false;
+    glm::vec3 modelFrameCameraPos_{0.0f};
+    glm::vec3 modelFrameCameraTarget_{0.0f};
+    float modelFrameCameraFov_ = 0.0f;
     float modelBoundMinZ_ = 0.0f;
     float modelBoundMaxZ_ = 2.0f;
     /// Where the head is attached, in model Z, or zero if the skeleton does

@@ -2,6 +2,7 @@
 #include "core/application.hpp"
 #include "game/game_utils.hpp"
 #include "core/frame_pacer.hpp"
+#include <cassert>
 #include <array>
 #include "core/env_flag.hpp"
 #include "core/character_paths.hpp"
@@ -85,6 +86,7 @@
 #include "ui/ui_services.hpp"
 #include "auth/auth_handler.hpp"
 #include "game/game_handler.hpp"
+#include "game/inventory.hpp"
 #include "game/chat_handler.hpp"
 #include "game/faction_hostility.hpp"
 #include "game/transport_manager.hpp"
@@ -5189,6 +5191,12 @@ void Application::render() {
                 // rather than a blurrier one, and bounded either way: nothing
                 // smaller than is worth compositing, nothing larger than the
                 // paperdoll ever needed.
+                // Where a Model frame's camera stands, relative to the model's
+                // own character-sheet camera: placed for the model scale of the
+                // last SetUnit, so a later SetModelScale grows the figure.
+                const auto modelCameraScale = [](const ui::Widget& frame) {
+                    return frame.modelLoadScale / frame.modelScale;
+                };
                 auto sizeFor = [&widgets](ui::UnitPortrait& view, const ui::Widget* frame) {
                     if (!frame || frame->rectW <= 0.0f || frame->rectH <= 0.0f) return;
                     const float scale = widgets.uiScale();
@@ -5213,13 +5221,7 @@ void Application::render() {
                 if (doll && doll->visible) {
                     sizeFor(paperdollModel_, doll);
                     paperdollModel_.setFraming(ui::UnitPortrait::Framing::FullBody);
-                    // The rotate buttons keep their own running total and set
-                    // it as an absolute facing, so the turn to apply is the
-                    // change since last frame.
-                    if (doll->modelFacing != paperdollFacing_) {
-                        paperdollModel_.rotate(doll->modelFacing - paperdollFacing_);
-                        paperdollFacing_ = doll->modelFacing;
-                    }
+                    paperdollModel_.setModelFrameView(doll->modelFacing, modelCameraScale(*doll));
                     paperdollModel_.update(*gameHandler, assetManager.get(),
                                            renderer.get(), io.DeltaTime,
                                            appearanceComposer_
@@ -5264,45 +5266,85 @@ void Application::render() {
                             if (c.guid == gameHandler->getPlayerGuid()) { self = &c; break; }
                         }
                         if (self) {
-                            // What they are wearing, with a tried-on piece
-                            // standing in for the slot it belongs to. Replaced
-                            // rather than appended: wearing two chests is
-                            // wearing the second.
-                            //
-                            // Now rather than at login, and from the same place
-                            // the portrait beside it reads: the character list
-                            // holds the equipment SMSG_CHAR_ENUM described and
-                            // is never updated, so a dressing room built from it
-                            // showed the gear worn at the select screen under
-                            // whatever was being tried on.
-                            std::vector<game::EquipmentItem> worn;
-                            {
-                                std::array<uint32_t, 19> displayIds{};
-                                std::array<uint8_t, 19> invTypes{};
-                                if (gameHandler->getOtherPlayerEquipment(
-                                        self->guid, displayIds, invTypes)) {
-                                    for (size_t slot = 0; slot < displayIds.size(); ++slot) {
-                                        if (displayIds[slot] == 0) continue;
-                                        worn.push_back({.displayModel = displayIds[slot],
-                                                        .inventoryType = invTypes[slot],
-                                                        .enchantment = 0u});
-                                    }
-                                }
-                                if (worn.empty()) worn = self->equipment;
+                            // What they are wearing - from the same place the
+                            // portrait beside it reads, not the character list,
+                            // which holds the gear of the select screen - or
+                            // nothing after Undress(), with the tried-on pieces
+                            // laid over it in order, slot by slot.
+                            std::array<uint32_t, 19> displayIds{};
+                            std::array<uint8_t, 19> invTypes{};
+                            if (!dressUp->modelUndressed) {
+                                [[maybe_unused]] const bool known = gameHandler->getOtherPlayerEquipment(
+                                    self->guid, displayIds, invTypes);
+                                assert(known && "the player's own visible equipment");
                             }
+                            namespace IT = game::InvType;
+                            const auto at = [](game::EquipSlot slot) {
+                                return static_cast<size_t>(slot);
+                            };
+                            const size_t right = at(game::EquipSlot::MAIN_HAND);
+                            const size_t left = at(game::EquipSlot::OFF_HAND);
+                            // The ranged slot is not drawn: a rogue's thrown
+                            // knife never shows in 2.4.3's dressing room.
+                            displayIds[at(game::EquipSlot::RANGED)] = 0;
+                            const auto clear = [&](size_t slot) {
+                                displayIds[slot] = 0;
+                                invTypes[slot] = 0;
+                            };
+                            // Weapons by hand, as build 8606 does them (pair 19,
+                            // _experiments/20261119T1337Z.dressup): a one-hander
+                            // always takes the right hand, a two-hander or a
+                            // ranged weapon empties the other hand, a bow is
+                            // held in the left, and a shield or off-hand item
+                            // empties a right hand holding a two-hander.
+                            const auto bothHands = [](uint8_t type) {
+                                return type == IT::TWO_HAND || type == IT::RANGED_BOW ||
+                                       type == IT::THROWN || type == IT::RANGED_GUN;
+                            };
                             for (const auto& tried : dressUp->tryOnItems) {
-                                bool replaced = false;
-                                for (auto& item : worn) {
-                                    if (item.inventoryType != tried.inventoryType) continue;
-                                    item.displayModel = tried.displayInfoId;
-                                    replaced = true;
-                                    break;
+                                const uint8_t type = tried.inventoryType;
+                                size_t slot = 0;
+                                switch (type) {
+                                    case IT::ONE_HAND: case IT::MAIN_HAND:
+                                        slot = right;
+                                        if (bothHands(invTypes[left])) clear(left);
+                                        break;
+                                    case IT::TWO_HAND: case IT::THROWN: case IT::RANGED_GUN:
+                                        slot = right;
+                                        clear(left);
+                                        break;
+                                    case IT::RANGED_BOW:
+                                        slot = left;
+                                        clear(right);
+                                        break;
+                                    case IT::SHIELD: case IT::OFF_HAND: case IT::HOLDABLE:
+                                        slot = left;
+                                        if (bothHands(invTypes[right])) clear(right);
+                                        break;
+                                    case IT::HEAD: slot = at(game::EquipSlot::HEAD); break;
+                                    case IT::SHOULDERS: slot = at(game::EquipSlot::SHOULDERS); break;
+                                    case IT::SHIRT: slot = at(game::EquipSlot::SHIRT); break;
+                                    case IT::CHEST: case IT::ROBE: slot = at(game::EquipSlot::CHEST); break;
+                                    case IT::WAIST: slot = at(game::EquipSlot::WAIST); break;
+                                    case IT::LEGS: slot = at(game::EquipSlot::LEGS); break;
+                                    case IT::FEET: slot = at(game::EquipSlot::FEET); break;
+                                    case IT::WRISTS: slot = at(game::EquipSlot::WRISTS); break;
+                                    case IT::HANDS: slot = at(game::EquipSlot::HANDS); break;
+                                    case IT::BACK: slot = at(game::EquipSlot::BACK); break;
+                                    case IT::TABARD: slot = at(game::EquipSlot::TABARD); break;
+                                    // Rings, trinkets, necks, bags and ammunition
+                                    // show nothing.
+                                    default: continue;
                                 }
-                                if (!replaced) {
-                                    worn.push_back({.displayModel = tried.displayInfoId,
-                                                    .inventoryType = tried.inventoryType,
-                                                    .enchantment = 0u});
-                                }
+                                displayIds[slot] = tried.displayInfoId;
+                                invTypes[slot] = type;
+                            }
+                            std::vector<game::EquipmentItem> worn;
+                            for (size_t slot = 0; slot < displayIds.size(); ++slot) {
+                                if (displayIds[slot] == 0) continue;
+                                worn.push_back({.displayModel = displayIds[slot],
+                                                .inventoryType = invTypes[slot],
+                                                .enchantment = 0u});
                             }
                             const uint8_t gender =
                                 (self->gender == game::Gender::FEMALE ||
@@ -5310,6 +5352,8 @@ void Application::render() {
                                   self->useFemaleModel)) ? 1 : 0;
                             sizeFor(*room.model, dressUp);
                             room.model->setFraming(ui::UnitPortrait::Framing::FullBody);
+                            room.model->setModelFrameView(dressUp->modelFacing,
+                                                          modelCameraScale(*dressUp));
                             shown = room.model->updatePlayer(
                                 static_cast<uint8_t>(self->race), gender,
                                 self->appearanceBytes, self->facialFeatures, worn,
@@ -5436,6 +5480,8 @@ void Application::render() {
                             }
                             sizeFor(inspectModel_, inspectModel);
                             inspectModel_.setFraming(ui::UnitPortrait::Framing::FullBody);
+                            inspectModel_.setModelFrameView(inspectModel->modelFacing,
+                                                            modelCameraScale(*inspectModel));
                             shown = inspectModel_.updatePlayer(
                                 race, gender, appearance, facial, worn,
                                 assetManager.get(), renderer.get(), io.DeltaTime);
@@ -5469,6 +5515,7 @@ void Application::render() {
                             slot->setFraming(ui::UnitPortrait::Framing::FullBody);
                         }
                         sizeFor(*slot, frame);
+                        slot->setModelFrameView(frame->modelFacing, modelCameraScale(*frame));
                         const uint64_t guid = frame->modelUnitGuid;
                         bool shown = false;
                         uint8_t race = 0, gender = 0, facial = 0;

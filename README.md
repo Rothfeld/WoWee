@@ -2402,6 +2402,51 @@ north), so bindings swap. Exploration differs per character: compare two
 characters only after copying exploredZones between them.
 Evidence: `_experiments/20261118T223042.worldmap_audit/`.
 
+### Model frames and the dressing room
+
+```lua
+/run DressUpItemLink("item:7711") DressUpModel:TryOn("item:1168")
+```
+
+Native 2.4.3 answers, measured on a private pair (pair 19):
+
+- A Model's XML `scale` is its model scale, not the frame's (the 2.4.3 schema
+  declares it on ModelType only): DressUpModel scale="2.0" answers GetScale() 1,
+  GetModelScale() 2; MiniMapPing 1 and 0.4.
+- A player in a Model frame is seen through the M2's own character-sheet
+  camera (camera type 1), its diagonal FOV spread over the frame's aspect
+  (vertical = fov / sqrt(1 + (w/h)^2)); SetRotation(r) turns the figure, 0
+  faces the camera, FrameXML starts at 0.61. SetUnit places that camera for
+  the model scale at that moment, so a load looks the same at any scale; a
+  later SetModelScale(s) grows the figure by s / scale-at-load. A 316x331
+  frame shows a human 238 px high at 720p, a 233x331 one 208 px.
+- SetUnit resets the try-on list. Undress() strips everything, weapons too;
+  Dress() (the Reset button) returns to what the unit wears. The worn ranged
+  slot is not drawn. Hands: a one-hander (13, 21) always takes the right hand,
+  a two-hander, thrown or gun empties the left, a bow goes to the left hand and
+  empties the right, a shield or off-hand item empties a right hand holding a
+  two-hander or ranged weapon. Robes and chests share a slot; tabards draw
+  over robes.
+- A child frame draws over every layer of its parent: DressUpFrame's racial
+  background is OVERLAY art and the figure (DressUpModel, one level up) is on
+  top. The draw order compares levels doubled for this (frame 2L, its
+  regions 2L+1, children from 2L+2).
+- OnHyperlinkClick's text is the whole escape, colour included
+  (`|cffa335ee|Hitem:1168:...|h[Skullflame Shield]|h|r`); SetItemRef hands it
+  to HandleModifiedItemClick, which is how Ctrl-click on a chat link tries the
+  item on.
+
+Gotchas: TryOn of an item with InventoryType 0 (or a quick series of
+uncached ranged items) crashed native Wow.exe once on the pair (ERROR #132);
+keep native probes to cached, equippable items. Pair characters are clones
+with different appearance bytes (Edrics is bald, skin 0), so skin and hair
+differ between the two clients by data, not by rendering.
+Not compared: a tried-on thrown weapon or gun (kept in the right hand), the
+paperdoll's sheathed weapons (native 2.4.3 shows a sheathed dagger at the hip
+in CharacterModelFrame; WoWee draws it in hand), the auction house and
+merchant entry points (same HandleModifiedItemClick path as the bags).
+Evidence: `_experiments/20261119T1337Z.dressup/` (workspace root).
+
 ## TBC interaction compatibility
 
 `build/bin/test_input_integration '[guard-gossip],[npc-attack],[mail-coin],[mail-stationery],[gm-mail]'`

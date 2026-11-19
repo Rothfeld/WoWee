@@ -39,12 +39,14 @@ inline void mouseToTreeSpace(float& x, float& y, float screenH, float scale) {
 inline LinkRect linkRectFromDraw(uint32_t owner, const std::string& link,
                                  const std::string& text,
                                  float x, float y, float runW, float lineH,
-                                 float screenH, float scale) {
+                                 float screenH, float scale,
+                                 const std::string& hyperlink = {}) {
     const float s = (scale > 0.0f) ? scale : 1.0f;
     LinkRect r;
     r.widget = owner;
     r.link = link;
     r.text = text;
+    r.hyperlink = hyperlink;
     r.x0 = x / s;
     r.x1 = (x + runW) / s;
     r.y0 = (screenH - (y + lineH)) / s;

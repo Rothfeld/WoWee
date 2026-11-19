@@ -1,4 +1,5 @@
 #include "rendering/character_preview.hpp"
+#include <cassert>
 #include "rendering/imgui_texture.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/animation/animation_ids.hpp"
@@ -598,6 +599,20 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         fullBodyDistance_ = camera_->getPosition().y;
         // Player M2s carry the same type-0 portrait camera as creatures.
         // Use authored framing rather than a generic head-bone distance.
+        modelFrameCameraValid_ = false;
+        for (const auto& cam : model.cameras) {
+            if (cam.type != 1) continue;
+            if (!isFiniteVec3(cam.positionBase) || !isFiniteVec3(cam.targetBase) ||
+                !(cam.fov > 0.0f)) {
+                LOG_ERROR("CharacterPreview: invalid player character-sheet camera: ", m2Path);
+                return false;
+            }
+            modelFrameCameraPos_ = cam.positionBase;
+            modelFrameCameraTarget_ = cam.targetBase;
+            modelFrameCameraFov_ = cam.fov;
+            modelFrameCameraValid_ = true;
+            break;
+        }
         portraitCameraValid_ = false;
         for (const auto& cam : model.cameras) {
             if (cam.type != 0) continue;
@@ -1256,10 +1271,12 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
         std::initializer_list<uint8_t> invTypes;
         uint32_t attachmentId;
     };
-    // Main hand also covers two-handers and ranged; off hand covers shields and held items.
+    // Main hand also covers two-handers, thrown weapons, guns and wands; off
+    // hand covers shields and held items, and a bow, which 2.4.3's dressing
+    // room puts in the left hand.
     const WeaponSlot slots[] = {
-        { .invTypes = {13, 17, 21, 15, 25, 26}, .attachmentId = 1 },
-        { .invTypes = {14, 22, 23},             .attachmentId = 2 },
+        { .invTypes = {13, 17, 21, 25, 26}, .attachmentId = 1 },
+        { .invTypes = {14, 22, 23, 15},     .attachmentId = 2 },
     };
 
     for (const auto& ws : slots) {
@@ -1551,6 +1568,26 @@ void CharacterPreview::setPortraitFraming() {
     modelYaw_ = glm::degrees(std::atan2(previewViewDirection_.y,
                                         previewViewDirection_.x));
     applyPreviewView();
+}
+
+bool CharacterPreview::setModelFrameView(float facingRadians, float cameraScale) {
+    if (!camera_ || !modelFrameCameraValid_) return false;
+    assert(cameraScale > 0.0f);
+    const glm::vec3 target = modelFrameCameraTarget_ * cameraScale;
+    const glm::vec3 camPos = modelFrameCameraPos_ * cameraScale;
+    camera_->setPosition(camPos);
+    const glm::vec3 forward = glm::normalize(target - camPos);
+    camera_->setRotation(glm::degrees(std::atan2(forward.y, forward.x)),
+                         glm::degrees(std::asin(std::clamp(forward.z, -1.0f, 1.0f))));
+    if (defaultFovDegrees_ <= 0.0f) defaultFovDegrees_ = camera_->getFovDegrees();
+    // The M2 field of view is diagonal; Camera takes the vertical one.
+    const float aspect = camera_->getAspectRatio();
+    camera_->setFov(glm::degrees(modelFrameCameraFov_) / std::sqrt(1.0f + aspect * aspect));
+    if (instanceId_ > 0 && charRenderer_) {
+        charRenderer_->setInstancePosition(instanceId_, glm::vec3(0.0f));
+        charRenderer_->setInstanceRotation(instanceId_, glm::vec3(0.0f, 0.0f, facingRadians));
+    }
+    return true;
 }
 
 void CharacterPreview::resetView() {

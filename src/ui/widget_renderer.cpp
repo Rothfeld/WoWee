@@ -784,7 +784,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size, f
                 // coordinate here is a screen pixel with y growing down.
                 linkSink->addLinkRect(linkRectFromDraw(
                     linkOwner, run.link, run.text, runX, y, x - runX, lineH,
-                    linkScreenH_, linkScale_));
+                    linkScreenH_, linkScale_, run.hyperlink));
             }
         }
         y += lineH;
