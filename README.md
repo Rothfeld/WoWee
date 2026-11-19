@@ -907,6 +907,7 @@ channel name" and never lists the channel. The realm answers nothing to
 TBC item links have eight fields (no level). Zone channels are joined by
 ChatChannels.dbc id (flag 0x1, plus GuildRecruitment by CVar) and named from
 the pattern and the zone under the player; the realm moves them on zone change.
+See [Chat channels](#chat-channels).
 Notices raised before FrameXML loads (the login roster, loot rules) are held
 and printed once it is up. The ready check's asker sends
 MSG_RAID_READY_CHECK_FINISHED (all answered or 30 s); the realm only relays it. GM mail is from "Customer
@@ -2864,6 +2865,56 @@ popup closes on GetReadyCheckTimeLeft() == 0. DoReadyCheck while a check runs:
 UI error "You are already running a ready check", nothing sent.
 Gotcha: a member out of sight has no entity; names come from the group roster.
 
+
+
+### Chat channels
+
+`build/bin/test_game_replay '[channels]'`
+
+Measured on pair 15 against native 2.4.3 with the SocialProbe addon
+(`_experiments/20261119T093133Z.chat_channels/` in the workspace).
+
+| ChatChannels.dbc | flags | joined at login |
+|---|---|---|
+| 1 General - %s | 0x3 | yes |
+| 2 Trade - %s | 0x3b | yes; "Trade - City" in a capital (0x20) |
+| 22 LocalDefense - %s | 0x10003 | yes |
+| 23 WorldDefense | 0x10004 | no |
+| 25 GuildRecruitment - %s | 0x20032 | when `guildRecruitmentChannel` is on (default "1") and not in a guild (0x20000); "- City" in a capital |
+| 26 LookingForGroup | 0x40001 | yes |
+
+In Tanaris, outside a guild: "1. General - Tanaris", "2. Trade - Tanaris",
+"3. LocalDefense - Tanaris", "4. GuildRecruitment - Tanaris", "5.
+LookingForGroup". Each join is CMSG_JOIN_CHANNEL with the row's id; a zone
+change is the realm's (Player::UpdateLocalChannels: "Changed Channel: [1.
+General - Shattrath City]", same number), the client sends nothing.
+Joining a guild leaves GuildRecruitment, leaving one joins it again.
+SetGuildRecruitmentMode(0/1) leaves/joins it without touching the CVar.
+
+A channel left gives up its number and the others keep theirs; the next join
+takes the lowest free number. GetChannelList answers built-in channels by
+their ChatChannels name ("General"), GetChannelName(1) the full name.
+CHAT_MSG_CHANNEL and the channel notices carry arg4 "1. General - Tanaris",
+arg7 the ChatChannels id (0 custom), arg8 the number, arg9 the full name; a
+chat window keeps a line whose arg7 is one of its zone channel ids
+(GetChatWindowChannels: General 1, Trade 2, LocalDefense 22,
+GuildRecruitment 25, LookingForGroup 0 by name) or whose arg9 is one of its
+channel names. The Chat tab lists Group (Party / Raid (n), no number), World
+(built-in, by number) and Custom headers.
+
+Native keeps per character, in `WTF/.../chat-cache.txt`, which built-in
+channels are joined (`ZONECHANNELS`, bit id-1, default 0x3200003) and the custom
+channels with their numbers (`CHANNELS`, "zzprobe 1 6"): `/leave 3` in
+Shattrath and a relog leaves LocalDefense out, and "zzprobe" comes back as 6.
+WoWee does not keep this yet; it joins its chat settings' channels every
+login and no custom ones. Gotchas: the stock FrameXML options checkbox and
+WoWee's settings row both write the CVar, so a `guildrecruitmentchannel=0`
+saved by an earlier build (whose default was "0") still keeps
+GuildRecruitment out until it is removed from `cvars.cfg`. A ScrollFrame
+measured while hidden reads rows the last layout did not place:
+ChannelListScrollFrame reported a range of 621 for nine rows and the tab
+opened with a scroll bar; ranges are now measured on resolved rects and only
+for shown frames (native has no rect for a hidden frame).
 ### The held cursor
 
 `build/bin/test_input_integration '[action-cursor]'`
