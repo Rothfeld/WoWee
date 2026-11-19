@@ -1807,6 +1807,15 @@ box one is drawn (with its doodads) only through an in-view portal of the
 camera's or the character's group that leads to it (Illidan's summit, group 2
 -> 48). IsIndoors() and [indoors] additionally need
 the group to lack MOGP 0x8000 (Undercity, the Great Forge: nil in 8606).
+Game objects, their GM quest sparkle (LootFX) and WMO liquids follow the
+same rooms: from 120-200 yards above Orgrimmar (pair 13 against native) none
+of the city's interior groups is drawn, nor its Mighty Blaze braziers,
+signs or pools. Orgrimmar's valleys are terrain inside interior group boxes,
+so a point over no WMO surface belongs to every interior-only group whose
+box holds it (WMORenderer::interiorRoomsOf). Gotcha: CMaNGOS turns the
+sparkle on for every GENERIC, SPELL_FOCUS and GOOBER object (and ready
+chests) while `.gm on`; native draws it too (Mighty Blaze with and without
+GM mode), so a city full of sparkles is the GM view, not a quest state.
 Native WMO movement collision looked one-sided in Black Temple and
 Undercity (walls passed from behind, ceilings fallen through from above);
 WoWee's is two-sided.
