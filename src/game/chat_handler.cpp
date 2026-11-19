@@ -1497,8 +1497,12 @@ void ChatHandler::fireChatEvent(const MessageChatData& msg) {
     const Character* ac = owner_.getActiveCharacter();
     // The client's own notices are nobody's: 2.4.3's CHAT_MSG_SYSTEM has an
     // empty arg2 and arg3 for "Edrikk added to friends." (pair 11), where
-    // this sent the player's name and "Universal".
-    const bool system = msg.type == ChatType::SYSTEM;
+    // this sent the player's name and "Universal". So are the skill, loot and
+    // trade skill lines: 2.4.3 fires CHAT_MSG_SKILL "Your skill in First Aid
+    // has increased to 2.", CHAT_MSG_LOOT "You create: ..." and
+    // CHAT_MSG_TRADESKILLS "You create Linen Bandage." with '' and '' (pair 8).
+    const bool system = msg.type == ChatType::SYSTEM || msg.type == ChatType::SKILL ||
+                        msg.type == ChatType::LOOT || msg.type == ChatType::TRADESKILLS;
     std::string senderName = system ? std::string{} : msg.senderName.empty()
         ? (ac ? ac->name : std::string{}) : msg.senderName;
     char guidBuf[32];

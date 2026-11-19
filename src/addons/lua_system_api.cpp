@@ -3400,6 +3400,34 @@ inline constexpr const char* kClassicCombatLogGroups[] = {
     "COMBAT_FACTION_CHANGE",
 };
 
+/// 2.4.3's own defaults, as a new character's chat-cache.txt writes them
+/// (identical for all 31 native pair characters): General without the
+/// opening, trade skill, pet and experience lines, which go to the Combat Log
+/// window. Read on 2.4.3: a crafted item's "You create Linen Bandage."
+/// (CHAT_MSG_TRADESKILLS) is not printed in General.
+inline constexpr const char* kDefaultChatGroupsTbc[] = {
+    "SYSTEM", "SYSTEM_NOMENU", "SAY", "EMOTE", "YELL", "WHISPER", "PARTY", "RAID",
+    "RAID_LEADER", "RAID_WARNING", "BATTLEGROUND", "BATTLEGROUND_LEADER", "GUILD",
+    "GUILD_OFFICER", "MONSTER_SAY", "MONSTER_YELL", "MONSTER_EMOTE", "MONSTER_WHISPER",
+    "MONSTER_BOSS_EMOTE", "MONSTER_BOSS_WHISPER", "ERRORS", "AFK", "DND", "IGNORED",
+    "BG_HORDE", "BG_ALLIANCE", "BG_NEUTRAL", "COMBAT_FACTION_CHANGE", "SKILL", "LOOT",
+    "MONEY", "CHANNEL",
+};
+inline constexpr const char* kCombatLogGroupsTbc[] = {
+    "OPENING", "TRADESKILLS", "PET_INFO", "COMBAT_XP_GAIN", "COMBAT_HONOR_GAIN", "COMBAT_MISC_INFO",
+};
+
+/// The groups a chat window shows when nothing is configured for it.
+static std::vector<const char*> defaultChatGroups(int window) {
+    const bool tbc = game::isActiveExpansion("tbc");
+    if (window == 1) {
+        if (tbc) return {std::begin(kDefaultChatGroupsTbc), std::end(kDefaultChatGroupsTbc)};
+        return {std::begin(kDefaultChatGroups), std::end(kDefaultChatGroups)};
+    }
+    if (window == 2 && tbc) return {std::begin(kCombatLogGroupsTbc), std::end(kCombatLogGroupsTbc)};
+    return {};
+}
+
 /// NUM_CHAT_WINDOWS in 3.3.5. Indices are one-based from Lua.
 static constexpr int kNumChatWindows = 10;
 
@@ -3417,10 +3445,11 @@ static std::array<ChatWindowSettings, kNumChatWindows>& chatWindows() {
         // answering one for every window claimed each was first.
         w[0].shown = true; w[0].docked = 1;
         w[1].shown = true; w[1].docked = 2;
-        // General carries everything; the combat log window is driven by
-        // Blizzard_CombatLog and registers its own events, so its list is
-        // empty here exactly as it is in the real client.
-        for (const char* g : kDefaultChatGroups) w[0].messageGroups.emplace_back(g);
+        // The real client's defaults: on 2.4.3 the combat log window keeps the
+        // opening, trade skill, pet and experience groups beside the events
+        // Blizzard_CombatLog registers; on 3.3.5 General carries everything.
+        for (const char* g : defaultChatGroups(1)) w[0].messageGroups.emplace_back(g);
+        for (const char* g : defaultChatGroups(2)) w[1].messageGroups.emplace_back(g);
         // The channels the default layout carries. FrameXML never adds one by
         // itself - ChatFrame_RegisterForChannels reads this list and nothing
         // else fills it - so with it empty every channel line was matched
@@ -6916,8 +6945,9 @@ void registerSystemLuaAPI(lua_State* L) {
             // player has emptied one group at a time is a real setting and is
             // left alone; General with none at all is the wipe above.
             if (w->messageGroups.empty() && lua_tonumber(L, 1) == 1) {
-                for (const char* g : kDefaultChatGroups) lua_pushstring(L, g);
-                return static_cast<int>(std::size(kDefaultChatGroups));
+                const auto groups = defaultChatGroups(1);
+                for (const char* g : groups) lua_pushstring(L, g);
+                return static_cast<int>(groups.size());
             }
             // The same rule for 1.12's Combat Log window, whose defaults are
             // the combat groups. Unanswered, ChatFrame2 registered for nothing

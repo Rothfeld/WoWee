@@ -6318,16 +6318,18 @@ void SpellHandler::parseEffectCreateItem(network::Packet& packet, uint32_t effec
 
         owner_.ensureItemInfo(itemEntry);
         const ItemQueryResponseData* info = owner_.getItemInfo(itemEntry);
-        std::string itemName = (info && !info->name.empty())
-            ? info->name : ("item #" + std::to_string(itemEntry));
-        const auto& spellName = owner_.getSpellName(spellId);
-        std::string msg = spellName.empty()
-            ? ("You create: " + itemName + ".")
-            : ("You create " + itemName + " using " + spellName + ".");
-        // Combat-log material, not a chat line in 2.4.3 (no GlobalStrings line).
-        LOG_DEBUG("Not printed: ", msg);
-        LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", spellId,
-                  " item=", itemEntry, " name=", itemName);
+        // CHAT_MSG_TRADESKILLS TRADESKILL_LOG_FIRSTPERSON, the item by name:
+        // 2.4.3 fires "You create Linen Bandage." after the loot line's
+        // "You create: [Linen Bandage]." (the default chat frame does not
+        // show this group).
+        if (info && info->valid) {
+            owner_.addLocalChatLine(ChatType::TRADESKILLS,
+                                    owner_.globalLine("TRADESKILL_LOG_FIRSTPERSON", {info->name}));
+        } else {
+            LOG_WARNING("SMSG_SPELLLOGEXECUTE CREATE_ITEM: item ", itemEntry,
+                        " not cached; no trade skill line");
+        }
+        LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", spellId, " item=", itemEntry);
     }
 }
 
