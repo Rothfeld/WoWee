@@ -4405,6 +4405,9 @@ public:
         /// The form an APPLY_AURA MOD_SHAPESHIFT (36) effect puts the caster
         /// in, from its EffectMiscValue (Stealth 30, Cat Form 1); 0 for none.
         uint8_t shapeshiftForm = 0;
+        /// StanceBarOrder: the place on the stance bar (Battle Stance 0,
+        /// Defensive 1, Berserker 2).
+        uint32_t stanceBarOrder = 0;
     };
     /// The cached Spell.dbc row, or null.
     const SpellNameEntry* getSpellNameEntry(uint32_t spellId) const {

@@ -2933,10 +2933,21 @@ spell; Blinding Powder or Copper Ore stays on the cursor, silently. A
 button whose spell the player does not know (a superseded rank stored
 by the server) is empty: `HasAction` nil.
 
-The stance bar lists the forms the known spells take (aura 36,
-EffectMiscValue); `GetShapeshiftForm` is the place on that bar (1 in
-Stealth). An active form spell shows its `ActiveIconID` and counts as
-current. A cast also counts as current from `UNIT_SPELLCAST_SENT` until
+The stance bar lists the known spells with Spell.dbc AttributesEx2 0x10
+(USE_SHAPESHIFT_BAR: the paladin auras) or an aura 36 (MOD_SHAPESHIFT) effect
+without AttributesEx2 0x2 (NO_SHAPESHIFT_UI keeps Shadowform and Ghost Wolf
+off it), ordered by Spell.dbc StanceBarOrder: Battle, Defensive, Berserker
+Stance; Bear, Aquatic, Cat, Travel, Moonkin, Flight Form; Devotion,
+Retribution, Concentration, Shadow, Frost, Fire Resistance, Sanctity,
+Crusader Aura. A button is lit while its form is on or, for an aura, its
+spell's aura is on the player. `GetShapeshiftForm` is the place of the
+active one in that list with the hidden forms counted (1 in Stealth, 1
+under Devotion Aura, 1 in Shadowform with `GetNumShapeshiftForms` 0). An
+active form spell shows its `ActiveIconID` and counts as current. A spell
+whose StancesNot holds the current form (Flash Heal in Shadowform) is
+refused without a word: `UNIT_SPELLCAST_FAILED`, nothing sent. Gotcha:
+StanceBarOrder is only in the TBC `dbc_layouts.json`; the other expansions
+log an error and fall back to forms only, by spell id. A cast also counts as current from `UNIT_SPELLCAST_SENT` until
 the server answers it. Default keys: Shift-1..6 page the main bar,
 Ctrl-1..0 are the bonus bar, Ctrl-F1..F10 the stance bar.
 

@@ -1,105 +1,65 @@
-// The stance bar's three questions, which have to be about the same list.
+// The stance bar: which known spells are on it and in what order, from their
+// Spell.dbc rows (AttributesEx2, the MOD_SHAPESHIFT form, StanceBarOrder).
 //
-// FrameXML builds the bar by walking 1..GetNumShapeshiftForms() and asking
-// GetShapeshiftFormInfo about each index, then binding CastShapeshiftForm to
-// the same index. Those were three separate lists: the count walked eight
-// druid forms, the other two a fixed six in a different order. A druid who had
-// learned Aquatic Form was counted a button the bar could not describe, and
-// every index past the first mismatch showed one form and cast another.
-//
-// The oracle is retail's contract rather than the old code: the i-th form is
-// the i-th form *the character has*, and all three bindings mean the same i.
+// The orders are native 2.4.3 (build 8606) with every spell learned at once:
+// GetShapeshiftFormInfo(1..GetNumShapeshiftForms()) on a private pair
+// (_experiments/20261119T095500Z.class_ui_b in the workspace).
 #include <catch_amalgamated.hpp>
 
-#include <set>
+#include <vector>
 
-#include "game/protocol_constants.hpp"
 #include "game/shapeshift_forms.hpp"
 
-using wowee::game::allShapeshiftForms;
-using wowee::game::knownShapeshiftForms;
+using wowee::game::ShapeshiftForm;
+using wowee::game::StanceBarSpell;
+using wowee::game::stanceBarForms;
 
 namespace {
 
-constexpr uint8_t kDruid = 11;
-constexpr uint8_t kPriest = 5;
-constexpr uint8_t kMage = 8;
+std::vector<uint32_t> ids(const std::vector<ShapeshiftForm>& forms) {
+    std::vector<uint32_t> out;
+    for (const auto& f : forms) out.push_back(f.spellId);
+    return out;
+}
 
 }  // namespace
 
-TEST_CASE("a form the character has not learned is not on the bar",
-          "[shapeshift]") {
-    // The case that named this: a level 14 priest was offered Shadowform,
-    // which is learned at 40.
-    const std::set<uint32_t> nothing;
-    CHECK(knownShapeshiftForms(kPriest, nothing).empty());
-
-    const std::set<uint32_t> shadow{wowee::game::SPELL_SHADOWFORM};
-    REQUIRE(knownShapeshiftForms(kPriest, shadow).size() == 1);
-    CHECK(std::string(knownShapeshiftForms(kPriest, shadow)[0].name) == "Shadowform");
+TEST_CASE("paladin auras are on the bar by StanceBarOrder", "[shapeshift]") {
+    // Known ranks as the server sends them (Devotion Aura Rank 8 is 27149),
+    // AttributesEx2 0x10 (USE_SHAPESHIFT_BAR), no form.
+    const std::vector<StanceBarSpell> known{
+        {32223, 0x10, 0, 7}, {20218, 0x10, 0, 6}, {27153, 0x10, 0, 5}, {27152, 0x10, 0, 4},
+        {27151, 0x10, 0, 3}, {19746, 0x10, 0, 2}, {27150, 0x10, 0, 1}, {27149, 0x10, 0, 0},
+        {25780, 0x0, 0, 0},  // Righteous Fury: a buff, not on the bar
+    };
+    const auto forms = stanceBarForms(known);
+    CHECK(ids(forms) == std::vector<uint32_t>{27149, 27150, 19746, 27151, 27152, 27153, 20218, 32223});
+    for (const auto& f : forms) CHECK(f.formId == 0);
 }
 
-TEST_CASE("the forms keep bar order, not the order they were learned",
-          "[shapeshift]") {
-    // Cat is third in the table and Bear first, whichever the player learned
-    // first. An index means a position on the bar.
-    const std::set<uint32_t> known{wowee::game::SPELL_CAT_FORM,
-                                   wowee::game::SPELL_BEAR_FORM};
-    const auto forms = knownShapeshiftForms(kDruid, known);
-    REQUIRE(forms.size() == 2);
-    CHECK(forms[0].spellId == wowee::game::SPELL_BEAR_FORM);
-    CHECK(forms[1].spellId == wowee::game::SPELL_CAT_FORM);
+TEST_CASE("warrior stances follow StanceBarOrder, not spell id", "[shapeshift]") {
+    // Defensive Stance is spell 71, yet second.
+    const auto forms = stanceBarForms({{71, 0x0, 18, 1}, {2458, 0x0, 19, 2}, {2457, 0x1, 17, 0}});
+    CHECK(ids(forms) == std::vector<uint32_t>{2457, 71, 2458});
+    CHECK(forms[0].formId == 17);
 }
 
-TEST_CASE("Aquatic and Flight Form are forms", "[shapeshift]") {
-    // Both were in the list the count used and in neither of the other two, so
-    // a druid who had them was counted buttons that described nothing.
-    const std::set<uint32_t> known{wowee::game::SPELL_BEAR_FORM,
-                                   wowee::game::SPELL_AQUATIC_FORM,
-                                   wowee::game::SPELL_FLIGHT_FORM};
-    const auto forms = knownShapeshiftForms(kDruid, known);
-    REQUIRE(forms.size() == 3);
-    CHECK(forms[1].spellId == wowee::game::SPELL_AQUATIC_FORM);
-    CHECK(forms[2].spellId == wowee::game::SPELL_FLIGHT_FORM);
+TEST_CASE("druid forms: Bear, Aquatic, Cat, Travel, Moonkin, Flight", "[shapeshift]") {
+    const auto forms = stanceBarForms({{768, 0, 1, 2}, {783, 0, 3, 3}, {1066, 0, 4, 1},
+                                       {5487, 0, 5, 0}, {24858, 0, 31, 4}, {33943, 0, 29, 5}});
+    CHECK(ids(forms) == std::vector<uint32_t>{5487, 1066, 768, 783, 24858, 33943});
 }
 
-TEST_CASE("every index the count allows describes a form", "[shapeshift]") {
-    // The invariant the bar depends on, stated directly: for any set of known
-    // spells, walking 1..count and indexing the same list never runs off the
-    // end, because they are the same list.
-    const std::set<uint32_t> known{
-        wowee::game::SPELL_BEAR_FORM, wowee::game::SPELL_AQUATIC_FORM,
-        wowee::game::SPELL_CAT_FORM, wowee::game::SPELL_TRAVEL_FORM,
-        wowee::game::SPELL_MOONKIN_FORM, wowee::game::SPELL_TREE_OF_LIFE,
-        wowee::game::SPELL_FLIGHT_FORM, wowee::game::SPELL_SWIFT_FLIGHT};
-
-    const auto forms = knownShapeshiftForms(kDruid, known);
-    CHECK(forms.size() == 8);
-    for (size_t i = 0; i < forms.size(); ++i) {
-        INFO("index " << (i + 1));
-        CHECK(forms[i].spellId != 0);
-        CHECK(forms[i].name != nullptr);
-        CHECK(forms[i].icon != nullptr);
-    }
+TEST_CASE("NO_SHAPESHIFT_UI keeps a form off the bar", "[shapeshift]") {
+    // Shadowform (15473) and Ghost Wolf (2645) carry AttributesEx2 0x2; Stealth
+    // (1784) does not and is the rogue's only button.
+    CHECK(stanceBarForms({{15473, 0x2, 28, 0}}).empty());
+    CHECK(stanceBarForms({{2645, 0x2, 16, 0}}).empty());
+    CHECK(ids(stanceBarForms({{1784, 0x00200000, 30, 0}})) == std::vector<uint32_t>{1784});
+    // GetShapeshiftForm still counts it: 1 in Shadowform.
+    CHECK(ids(stanceBarForms({{15473, 0x2, 28, 0}}, true)) == std::vector<uint32_t>{15473});
 }
 
-TEST_CASE("every form has a distinct form id and spell", "[shapeshift]") {
-    // The form id is what "is this one active" compares against, so two forms
-    // sharing one would both light up. Dire Bear is deliberately not in the
-    // table for exactly this reason: it shares Bear's slot.
-    for (uint8_t classId : {uint8_t{1}, uint8_t{4}, kPriest, uint8_t{6}, kDruid}) {
-        std::set<uint8_t> formIds;
-        std::set<uint32_t> spellIds;
-        for (const auto& form : allShapeshiftForms(classId)) {
-            INFO("class " << int(classId) << " form " << form.name);
-            CHECK(formIds.insert(form.formId).second);
-            CHECK(spellIds.insert(form.spellId).second);
-        }
-    }
-}
-
-TEST_CASE("a class with no stance bar has no forms", "[shapeshift]") {
-    CHECK(allShapeshiftForms(kMage).empty());
-    const std::set<uint32_t> known{wowee::game::SPELL_BEAR_FORM};
-    CHECK(knownShapeshiftForms(kMage, known).empty());
+TEST_CASE("spells with neither attribute nor form are not on the bar", "[shapeshift]") {
+    CHECK(stanceBarForms({{1459, 0, 0, 0}, {588, 0x00080000, 0, 0}}).empty());
 }

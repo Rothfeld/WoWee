@@ -112,36 +112,6 @@ constexpr uint32_t CLASS_WARLOCK = 9;
 constexpr uint32_t CLASS_DRUID   = 11;
 
 // ---------------------------------------------------------------------------
-// Class-specific stance / form / presence spell IDs
-// ---------------------------------------------------------------------------
-// Warrior stances
-constexpr uint32_t SPELL_BATTLE_STANCE    = 2457;
-constexpr uint32_t SPELL_DEFENSIVE_STANCE = 71;
-constexpr uint32_t SPELL_BERSERKER_STANCE = 2458;
-
-// Death Knight presences
-constexpr uint32_t SPELL_BLOOD_PRESENCE  = 48266;
-constexpr uint32_t SPELL_FROST_PRESENCE  = 48263;
-constexpr uint32_t SPELL_UNHOLY_PRESENCE = 48265;
-
-// Druid forms
-constexpr uint32_t SPELL_BEAR_FORM       = 5487;
-constexpr uint32_t SPELL_DIRE_BEAR_FORM  = 9634;
-constexpr uint32_t SPELL_CAT_FORM        = 768;
-constexpr uint32_t SPELL_AQUATIC_FORM    = 1066;
-constexpr uint32_t SPELL_TRAVEL_FORM     = 783;
-constexpr uint32_t SPELL_MOONKIN_FORM    = 24858;
-constexpr uint32_t SPELL_FLIGHT_FORM     = 33943;
-constexpr uint32_t SPELL_SWIFT_FLIGHT    = 40120;
-constexpr uint32_t SPELL_TREE_OF_LIFE    = 33891;
-
-// Rogue
-constexpr uint32_t SPELL_STEALTH         = 1784;
-
-// Priest
-constexpr uint32_t SPELL_SHADOWFORM      = 15473;
-
-// ---------------------------------------------------------------------------
 // Session / network timing
 // ---------------------------------------------------------------------------
 constexpr uint32_t RX_SILENCE_WARNING_MS       = 10000;  // 10 s

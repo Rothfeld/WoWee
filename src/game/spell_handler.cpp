@@ -1393,30 +1393,26 @@ SpellUsability spellUsability(GameHandler& owner, uint32_t spellId) {
     return castableNow(owner, spellId);
 }
 
-std::vector<ShapeshiftForm> playerShapeshiftForms(GameHandler& owner) {
-    owner.loadSpellNameCache();
-    const auto& cache = owner.spellNameCacheRef();
-    std::vector<ShapeshiftForm> out;
-    for (ShapeshiftForm form : allShapeshiftForms(owner.getPlayerClass())) {
-        uint32_t best = 0;
-        for (const uint32_t spellId : owner.getKnownSpells()) {
-            const auto it = cache.find(spellId);
-            if (it != cache.end() && it->second.shapeshiftForm == form.formId && spellId > best)
-                best = spellId;
-        }
-        if (best == 0) continue;
-        form.spellId = best;
-        out.push_back(form);
+std::vector<ShapeshiftForm> playerShapeshiftForms(GameHandler& owner, bool withHidden) {
+    std::vector<StanceBarSpell> known;
+    for (const uint32_t spellId : owner.getKnownSpells()) {
+        const auto* entry = owner.getSpellNameEntry(spellId);
+        if (!entry) continue;
+        known.push_back({.spellId = spellId, .attrEx2 = entry->attrEx2,
+                         .shapeshiftForm = entry->shapeshiftForm, .stanceBarOrder = entry->stanceBarOrder});
     }
-    return out;
+    return stanceBarForms(std::move(known), withHidden);
+}
+
+bool stanceBarFormActive(GameHandler& owner, const ShapeshiftForm& form) {
+    if (form.formId != 0) return form.formId == owner.getShapeshiftFormId();
+    return owner.playerCarriesAura(form.spellId);
 }
 
 int currentShapeshiftFormIndex(GameHandler& owner) {
-    const uint8_t current = owner.getShapeshiftFormId();
-    if (current == 0) return 0;
-    const auto forms = playerShapeshiftForms(owner);
+    const auto forms = playerShapeshiftForms(owner, /*withHidden=*/true);
     for (size_t i = 0; i < forms.size(); ++i)
-        if (forms[i].formId == current) return static_cast<int>(i) + 1;
+        if (stanceBarFormActive(owner, forms[i])) return static_cast<int>(i) + 1;
     return 0;
 }
 
@@ -4647,6 +4643,10 @@ void SpellHandler::loadSpellNameCache() const {
     const uint32_t totemFields[2] = {column("Totem0"), column("Totem1")};
     const uint32_t totemCategoryFields[2] = {column("TotemCategory0"), column("TotemCategory1")};
     const uint32_t activeIconField = column("ActiveIconID");
+    const uint32_t stanceBarOrderField = column("StanceBarOrder");
+    if (attrEx2Field == 0xFFFFFFFFu || stanceBarOrderField == 0xFFFFFFFFu)
+        LOG_ERROR("dbc_layouts.json lacks Spell.AttributesEx2 or Spell.StanceBarOrder: the stance bar "
+                  "shows forms only (no paladin auras), in spell id order.");
     const uint32_t miscFields[3] = {column("EffectMiscValue0"), column("EffectMiscValue1"),
                                     column("EffectMiscValue2")};
     if (activeIconField == 0xFFFFFFFFu || miscFields[0] == 0xFFFFFFFFu)
@@ -4774,6 +4774,7 @@ void SpellHandler::loadSpellNameCache() const {
                 entry.totemCategories[t] = read(i, totemCategoryFields[t]);
             }
             entry.activeIconId = read(i, activeIconField);
+            entry.stanceBarOrder = read(i, stanceBarOrderField);
             constexpr uint32_t kAuraModShapeshift = 36;
             for (int e = 0; e < 3; ++e)
                 if (entry.effectAuraIds[e] == kAuraModShapeshift)

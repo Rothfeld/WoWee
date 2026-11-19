@@ -2824,7 +2824,7 @@ void registerUnitLuaAPI(lua_State* L) {
             const auto& fi = forms[static_cast<size_t>(index) - 1];
             lua_pushstring(L, game::actionSpellIcon(*gh, fi.spellId).c_str());
             lua_pushstring(L, gh->getSpellName(fi.spellId).c_str());
-            if (gh->getShapeshiftFormId() == fi.formId) lua_pushnumber(L, 1); else lua_pushnil(L);
+            if (game::stanceBarFormActive(*gh, fi)) lua_pushnumber(L, 1); else lua_pushnil(L);
             lua_pushnumber(L, 1);                                // isCastable
             return 4;
         }},

@@ -416,6 +416,7 @@
     "MaxAffectedTargets": 202,
     "Stances": 12,
     "StancesNot": 13,
+    "StanceBarOrder": 205,
     "RequiresSpellFocus": 16,
     "Totem0": 44,
     "Totem1": 45,
