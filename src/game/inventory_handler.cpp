@@ -2261,6 +2261,11 @@ void InventoryHandler::completeItemUseOnItem(uint64_t targetItemGuid, bool confi
             ? owner_.getPacketParsers()->buildCastSpellOnItem(pending.spellId, targetItemGuid)
             : CastSpellPacket::buildItemTarget(pending.spellId, targetItemGuid, 0);
         owner_.getSocket()->send(packet);
+        // As any cast going out: 2.4.3 fires UNIT_SPELLCAST_SENT "player",
+        // "Enchant Bracer - Minor Health", "", "" when the item is clicked.
+        if (isActiveExpansion("tbc"))
+            owner_.fireAddonEvent("UNIT_SPELLCAST_SENT", {"player", owner_.getSpellName(pending.spellId),
+                                                          owner_.getSpellRank(pending.spellId), ""});
         LOG_INFO("Casting ", pending.itemName, " (spell ", pending.spellId, ") on item 0x",
                  std::hex, targetItemGuid, std::dec);
         return;
