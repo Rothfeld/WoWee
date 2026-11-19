@@ -1876,9 +1876,13 @@ early and its lines sat 14.5 pixels apart where native has 12. Measured on
   font (GameFontNormal and family) has a (1, -1) shadow, so their labels are
   one pixel wider than the bare measure; the y offset changes nothing.
 - SetSpacing adds ceil(spacing * ppu) pixels between rows (`spacingPixels`).
-- A line starts at floor(left) + 2 (LEFT), floor(left) + 2 +
-  floor((box - width - shadow) / 2) (CENTER), floor(right) + 1 - width (RIGHT);
-  the box top snaps to the next pixel down (`placeTextLine`, `textOriginY`).
+- A line starts at floor(left) + 2 (LEFT), floor(left + box / 2) + 2 -
+  ceil((width + shadow) / 2) (CENTER), and floor(right) + 1 - width with a
+  shadow or ceil(right) + 1 - width without (RIGHT); the box top snaps to the
+  next pixel down (`placeTextLine`, `textOriginY`). The centre and right rules
+  come from boxes off the pixel grid at all sixteen 1/16-pixel lefts
+  (`_experiments/20261119T0935Z.raidinfo_clip`, CT()); on a whole-pixel box
+  they agree with the integer-box measurements below.
 - Shadows are drawn whole pixels away from the glyphs.
 
 Gotchas:
@@ -1887,13 +1891,52 @@ Gotchas:
   stb_truetype (no FreeType development files in this environment). Pens and
   line starts match; glyph ink can be a pixel narrower or a pixel higher/lower
   than native (stems are blurrier, e.g. FRIZQT "I" two pixels wide).
-- An autosized label anchored by TOP or TOPRIGHT can start one pixel off
-  native: there native's line start depends on the anchor, not only on the box
-  (FP_Place3 data in the experiment below); not modelled.
+- An edge that lands exactly on a whole pixel (a centre, a right edge, a box
+  top) follows native float error: native's GetStringWidth reads 36.0000014
+  for 36 pixels, so such ties often fall a pixel left or down there. Both
+  experiments' autosized TOP/TOPRIGHT cells off by one were these ties; the
+  raid information list's fifth row (top 330.0) is one pixel higher here.
 - GetStringWidth of a multi-paragraph string can differ by a few pixels
   (quest description: native 1237, here 1234 = widest paragraph).
 
 Evidence: `_experiments/20261119T092759Z.questlog_fonts/` in the workspace.
+
+### Scroll frame clipping
+
+```sh
+build/bin/test_native_text_metrics '[native-pixels]'
+```
+
+Which pixels a scroll frame leaves visible (`ui/native_pixel_rules.hpp`),
+measured at 1280x720 through all sixteen phases of the 15/16 scale: its
+textures from round(left) to round(right) and round(top) to round(bottom), far
+ends included; its glyphs on every column it touches (floor(left) ..
+ceil(right) - 1) and on even rows only. RaidInfoScrollFrame starts at 367.5 px
+and native draws column 367 of its text; ImGui's truncated scissor cut the
+first letter of every line. The texture and text rules differ on purpose.
+
+### Raid roster order and dragging members
+
+`build/bin/test_input_integration '[anchor]'`
+
+GetRaidRosterInfo lists the others in SMSG_GROUP_LIST order and the player
+last, so two clients of one raid show their members in different orders:
+Graulberto's client lists Graulberon first and Graulberon's lists Graulberto
+first. Compare one character on both clients, not the two halves of a pair.
+
+Dragging a member (leader or assistant) puts the button under the cursor with
+`SetPoint("CENTER", nil, "BOTTOMLEFT", cursor * GetScreenWidthScale())`; on
+16:9 that is right of the cursor on native too. Gotchas:
+
+- SetPoint with an explicit nil relative frame is the screen; leaving the
+  frame out is the parent. The FrameXML emitter must never write nil for an
+  XML anchor without relativeTo.
+- ClearAllPoints keeps the frame's last rect until it is anchored again
+  (RaidPulloutStopMoving reads GetCenter right after it).
+- OnDragStart needs 16 pixels of travel in any direction.
+
+Evidence and probe addon: `_experiments/20261119T0935Z.raidinfo_clip/` in the
+workspace.
 
 ### Quest text reveal
 
