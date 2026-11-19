@@ -360,24 +360,46 @@ TEST_CASE("a key is used through the item spell that opens locks", "[use_item][g
     }
 }
 
-TEST_CASE("the keys a lock names depend on GO_FLAG_LOCKED", "[go-lock]") {
+TEST_CASE("a lock's slots apply by the object's state and GO_FLAG_LOCKED", "[go-lock]") {
+    // Shut objects use Action 1 when flagged, 0 otherwise; open ones Action 2.
+    CHECK(lockActionNow(1, true) == 1);
+    CHECK(lockActionNow(1, false) == 0);
+    CHECK(lockActionNow(kGoStateActive, true) == 2);
+    CHECK(lockActionNow(kGoStateActive, false) == 2);
+
     // Lock 1718 (Shield Generator): slot 0 key Tainted Core, Action 0.
     LockRecord generator;
     generator.type[0] = kLockKeyItem; generator.index[0] = 31088;
-    CHECK(lockKeyItems(generator, false) == std::vector<uint32_t>{31088});
-    CHECK(lockKeyItems(generator, true).empty());
+    CHECK(lockKeyItems(generator, 0) == std::vector<uint32_t>{31088});
+    CHECK(lockKeyItems(generator, 1).empty());
 
-    // Lock 1562 (Dire Maul's Door 177198): Crescent Key with Action 1,
-    // Lockpicking 300, Quick Open, Quick Close, Blasting.
-    LockRecord direMaul;
-    direMaul.type = {kLockKeyItem, kLockKeySkill, kLockKeySkill, kLockKeySkill, kLockKeySkill, 0, 0, 0};
-    direMaul.index = {18249, 1, 10, 11, 16, 0, 0, 0};
-    direMaul.action = {1, 1, 0, 2, 1, 0, 0, 0};
-    CHECK(lockKeyItems(direMaul, true) == std::vector<uint32_t>{18249});
-    CHECK(lockKeyItems(direMaul, false) == std::vector<uint32_t>{18249});
+    // Lock 879 (Gauntlet Gate) and 1562 (Dire Maul's Door 177198): key with
+    // Action 1, Lockpicking 300, Quick Open, Quick Close, Blasting 300.
+    LockRecord gate;
+    gate.type = {kLockKeyItem, kLockKeySkill, kLockKeySkill, kLockKeySkill, kLockKeySkill, 0, 0, 0};
+    gate.index = {12382, 1, 10, 11, 16, 0, 0, 0};
+    gate.skill = {0, 300, 0, 0, 300, 0, 0, 0};
+    gate.action = {1, 1, 0, 2, 1, 0, 0, 0};
+    // Shut and flagged (175357): "Requires Key to the City"; Lockpicking and
+    // Blasting are the skill slots.
+    CHECK(lockKeyItems(gate, 1) == std::vector<uint32_t>{12382});
+    CHECK(lockSkillSlots(gate, 1) == std::vector<uint32_t>{1, 4});
+    // Shut and unflagged (175356): Quick Open only, no key line.
+    CHECK(lockKeyItems(gate, 0).empty());
+    CHECK(lockSkillSlots(gate, 0) == std::vector<uint32_t>{2});
+    // Open (King's Square Gate spawned): Quick Close only.
+    CHECK(lockKeyItems(gate, 2).empty());
+    CHECK(lockSkillSlots(gate, 2) == std::vector<uint32_t>{3});
+}
 
-    // Lock 86 (Lady Vashj Bridge Console, Heavy Door 17153): Quick Open only.
-    LockRecord quickOpen;
-    quickOpen.type[1] = kLockKeySkill; quickOpen.index[1] = 10;
-    CHECK(lockKeyItems(quickOpen, false).empty());
+TEST_CASE("lock line colours follow the rank over the lock's Skill", "[go-lock]") {
+    // Lucius's Lockbox, Lockpicking 25 (pair 22).
+    CHECK(lockDifficulty(20, 25) == LockDifficulty::Impossible);
+    CHECK_FALSE(lockDifficultyColour(LockDifficulty::Impossible));
+    CHECK(lockDifficulty(30, 25) == LockDifficulty::Orange);
+    CHECK(lockDifficulty(120, 25) == LockDifficulty::Green);
+    CHECK(lockDifficulty(200, 25) == LockDifficulty::Trivial);
+    CHECK(lockDifficultyColour(LockDifficulty::Trivial)->r == 0.5f);
+    // Quick Close at an open gate: Closing's 100 points against Skill 0.
+    CHECK(lockDifficulty(100, 0) == LockDifficulty::Trivial);
 }

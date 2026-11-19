@@ -1,6 +1,7 @@
 // lua_inventory_api.cpp - Items, containers, merchant, loot, equipment, trading, auction, and mail Lua API bindings.
 #include <cassert>
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
+#include "game/game_object_lock.hpp"
 #include "game/item_text.hpp"
 #include "game/reputation_standing.hpp"
 #include "addons/lua_api_helpers.hpp"
@@ -2276,6 +2277,8 @@ void pushItemInstanceTable(lua_State* L, game::GameHandler* gh, const game::Item
     lua_newtable(L);
     lua_pushboolean(L, item.soulbound ? 1 : 0);
     lua_setfield(L, -2, "soulbound");
+    lua_pushboolean(L, item.unlocked ? 1 : 0);  // a picked lockbox (ITEM_FIELD_FLAGS 0x4)
+    lua_setfield(L, -2, "unlocked");
     lua_pushnumber(L, item.curDurability);
     lua_setfield(L, -2, "durability");
     lua_pushnumber(L, item.maxDurability);
@@ -2377,6 +2380,21 @@ static int lua_GetItemTooltipData(lua_State* L) {
                 lua_rawseti(L, -2, ++n);
             }
             lua_setfield(L, -2, "lockRequirements");
+            // "Locked" and its requirement lines take the difficulty of the
+            // Action 1 slots (GameHandler::lockStatus): red out of reach, then
+            // orange, yellow, green, grey. Original 2.4.3 (pair 22, Pick Lock
+            // known, Lockpicking 120): Worn Junkbox (70) green, Sturdy (175)
+            // and Heavy Junkbox (250) red.
+            // Absent when out of reach: the tooltip uses RED_FONT_COLOR.
+            constexpr uint32_t kLockedItemAction = 1;
+            if (const auto c = game::lockDifficultyColour(
+                    gh->lockStatus(info->lockId, kLockedItemAction, 0).difficulty)) {
+                lua_newtable(L);
+                lua_pushnumber(L, c->r); lua_rawseti(L, -2, 1);
+                lua_pushnumber(L, c->g); lua_rawseti(L, -2, 2);
+                lua_pushnumber(L, c->b); lua_rawseti(L, -2, 3);
+                lua_setfield(L, -2, "lockColour");
+            }
         }
     }
     if ((info->itemFlags & 0x4u) && info->lockId == 0) { lua_pushboolean(L, 1); lua_setfield(L, -2, "openable"); }

@@ -22,6 +22,7 @@
 #include "game/quest_handler.hpp"
 #include "game/movement_handler.hpp"
 #include "game/entity_controller.hpp"
+#include "game/game_object_lock.hpp"
 #include "game/game_services.hpp"
 #include "network/packet.hpp"
 #include "core/logger.hpp"
@@ -66,14 +67,39 @@ namespace audio { enum class PlayerErrorSpeech : uint8_t; }
 
 namespace game {
 
-/// A lock opened by a profession (lock slot 0's LockType opened by a spell
-/// with a SKILL effect): Herbalism, Mining.
+/// A lock opened by a profession (the first slot that applies now,
+/// lockActionNow, whose LockType a spell with a SKILL effect opens):
+/// Herbalism, Mining.
 struct GameObjectProfessionLock {
     std::string name;            ///< LockType name, "Herbalism"
-    uint32_t requiredRank = 0;   ///< Lock.dbc Skill[0]
+    uint32_t requiredRank = 0;   ///< Lock.dbc Skill of that slot
     uint32_t skillLine = 0;      ///< from the known spell's SKILL effect
     uint32_t spellId = 0;        ///< a known spell that opens it; 0 when none
     uint32_t playerRank = 0;     ///< the player's rank in skillLine
+};
+
+/// What a lock asks of the player now: the Lock.dbc slots whose Action
+/// applies, for a game object lockActionNow(state, GO_FLAG_LOCKED).
+struct GameObjectLockStatus {
+    bool flaggedLocked = false;  ///< GO_FLAG_LOCKED
+    uint32_t action = 0;         ///< the Lock.dbc Action that applies
+    std::vector<uint32_t> keys;  ///< key items of those slots, slot order
+    bool keyHeld = false;        ///< one of them in the bags or on the keyring
+    /// A known spell that opens one of those LockType slots (OPEN_LOCK misc
+    /// = LockType) with points reaching its Skill, 5 x the object's level
+    /// when it has none; 0 when there is none. Professions (a SKILL effect)
+    /// are gameObjectProfessionLock's.
+    uint32_t openSpellId = 0;
+    /// The hardest of the slots that apply: a key is Green carried and
+    /// Impossible otherwise; a LockType slot takes the difficulty of the
+    /// player's rank against its Skill when a known spell opens it (rank in
+    /// the spell's SkillLineAbility line, or the spell's points without that
+    /// skill: Closing's 100 at Quick Close), Impossible when none does; no
+    /// slot at all is Impossible. "Locked" takes its colour. Original 2.4.3
+    /// (pair 22): Viewing Room Door 175167 (Lock 1199, key only) red, green
+    /// with the key on the keyring; Gauntlet Gate 175357 red with and without
+    /// Key to the City (Lockpicking 300 and Blasting stay out of reach).
+    LockDifficulty difficulty = LockDifficulty::Impossible;
 };
 
 struct PlayerSkill {
@@ -2356,7 +2382,14 @@ public:
     std::optional<bool> carriesSpellTool(bool category, uint32_t id);
     /// The profession lock on a game object, nullopt when it has none.
     [[nodiscard]] std::optional<GameObjectProfessionLock> gameObjectProfessionLock(
-        const GameObjectQueryResponseData* info) const;
+        const GameObjectQueryResponseData* info, const Entity& object) const;
+    /// nullopt for an object without a lock.
+    [[nodiscard]] std::optional<GameObjectLockStatus> gameObjectLockStatus(
+        const GameObjectQueryResponseData* info, const Entity& object) const;
+    /// The same for Lock.dbc row `lockId` and the slots with `action`
+    /// (flaggedLocked stays false); objectLevel stands in for a slot without
+    /// Skill (5 x level). A locked bag item asks with Action 1.
+    [[nodiscard]] GameObjectLockStatus lockStatus(uint32_t lockId, uint32_t action, uint32_t objectLevel) const;
     void interactWithGameObject(uint64_t guid);
     uint64_t getHookedFishingBobberGuid() const { return hookedFishingBobberGuid_; }
     void selectGossipOption(uint32_t optionId, const std::string& code = "");
@@ -3496,6 +3529,10 @@ public:
     void completeItemUseOnUnit(uint64_t targetUnitGuid);
     /// Arm the item-picking cursor for a spell that must be cast at an item.
     void beginSpellItemTargeting(uint32_t spellId, const std::string& spellName);
+    /// InventoryHandler::beginSpellLockTargeting and its completion.
+    void beginSpellLockTargeting(uint32_t spellId, const std::string& spellName);
+    [[nodiscard]] uint32_t pendingLockTargetSpell() const;
+    void completeLockTargetOnGameObject(uint64_t objectGuid);
     uint32_t getPendingItemTargetSourceItemId() const;
     void cancelItemTargeting();
     void completeItemUseOnItem(uint64_t targetItemGuid, bool confirmed = false);

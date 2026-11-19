@@ -1818,27 +1818,29 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 ? "GameTooltip:SetOwner(WorldFrame, 'ANCHOR_CURSOR'); "
                 : "GameTooltip_SetDefaultAnchor(GameTooltip, WorldFrame); ";
             script += "GameTooltip:SetText(" + literal + "); ";
-            // A locked object's tooltip: LOCKED in red when GO_FLAG_LOCKED,
-            // then LOCKED_WITH_ITEM in white for each key that opens it
-            // (lockKeyItems: Action 1 keys only when flagged). Original 2.4.3:
-            // Dire Maul's Door 177198 "Door / Locked / Requires Crescent Key";
-            // Iron Clad Door 16397 (Lock 202, no key) "Iron Clad Door /
-            // Locked"; the unflagged Heavy Door 17153 its name only (pair 0);
-            // the unflagged Shield Generator 185051 "Shield Generator /
-            // Requires Tainted Core", with or without the core (pair 17).
-            constexpr uint32_t kGoFlagLocked = 0x2;
-            const uint32_t lockId = game::gameObjectLockId(info);
-            if (lockId != 0) {
-                const bool flaggedLocked =
-                    (object->getField(game::fieldIndex(game::UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
-                if (flaggedLocked)
-                    script += "GameTooltip:AddLine(LOCKED, RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b); ";
-                const auto locks = services_.assetManager->loadDBC("Lock.dbc");
-                assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
-                const int32_t row = locks->findRecordById(lockId);
-                assert(row >= 0);
-                for (const uint32_t item : game::lockKeyItems(
-                         game::readLockRecord(*locks, static_cast<uint32_t>(row)), flaggedLocked)) {
+            // A locked object's tooltip, from the lock slots that apply now
+            // (game::lockActionNow: Action 2 while it stands open, else 1 for
+            // GO_FLAG_LOCKED and 0): LOCKED when GO_FLAG_LOCKED, then
+            // LOCKED_WITH_ITEM in white for each of those slots' keys, carried
+            // or not. LOCKED takes the colour of the hardest of those slots
+            // (GameObjectLockStatus::difficulty), red when one is out of reach. Original 2.4.3 (pair 22): Gauntlet Gate 175357
+            // (shut, flagged, Lock 879) "Locked" red and "Requires Key to the
+            // City" with and without the key, at Lockpicking 200 and 375 (Pick
+            // Lock's 200 points fall short of 300); Gauntlet Gate 175356 (shut,
+            // unflagged) its name only; King's Square Gate 175352 spawned open
+            // "Locked" grey (Closing, 100 points); Lucius's Lockbox (Lock 23,
+            // Lockpicking 25) "Locked" red, then orange at Lockpicking 30 once
+            // Pick Lock is known; Viewing Room Door 175167 "Locked" green with
+            // Viewing Room Key on the keyring. Shield Generator 185051 (pair 17, unflagged)
+            // "Requires Tainted Core" with or without the core.
+            if (const auto lock = gameHandler.gameObjectLockStatus(info, *entity)) {
+                if (lock->flaggedLocked) {
+                    std::string colour = "RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b";
+                    if (const auto c = game::lockDifficultyColour(lock->difficulty))
+                        colour = std::to_string(c->r) + ", " + std::to_string(c->g) + ", " + std::to_string(c->b);
+                    script += "GameTooltip:AddLine(LOCKED, " + colour + "); ";
+                }
+                for (const uint32_t item : lock->keys) {
                     if (!gameHandler.getItemInfo(item)) {
                         gameHandler.ensureItemInfo(item);
                         keyNamePending = true;
@@ -1855,8 +1857,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             // Peacebloom, Lock 29 rank 0): without Herbalism (255,0,0)
             // "Requires Herbalism"; with Herbalism 1 the same line orange
             // (255,128,64). Dark Iron Deposit (rank 230), shared native
-            // client: no rank on the line either.
-            if (const auto lock = gameHandler.gameObjectProfessionLock(info)) {
+            // client: no rank on the line either. A spawned (open) Peacebloom
+            // has no line: its slot's Action 0 does not apply.
+            if (const auto lock = gameHandler.gameObjectProfessionLock(info, *entity)) {
                 std::string text = "'";
                 for (const unsigned char c : lock->name) {
                     text += '\\';
@@ -1865,11 +1868,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                     text += static_cast<char>('0' + c % 10);
                 }
                 text += "'";
-                const char* color = "1, 0, 0";
-                if (lock->spellId != 0 && lock->playerRank >= lock->requiredRank) {
-                    const uint32_t over = lock->playerRank - lock->requiredRank;
-                    color = over >= 100 ? "0.5, 0.5, 0.5" : over >= 50 ? "0.25, 0.75, 0.25"
-                          : over >= 25 ? "1, 1, 0" : "1, 0.5, 0.25";
+                std::string color = "1, 0, 0";
+                if (lock->spellId != 0) {
+                    if (const auto c = game::lockDifficultyColour(game::lockDifficulty(lock->playerRank, lock->requiredRank)))
+                        color = std::to_string(c->r) + ", " + std::to_string(c->g) + ", " + std::to_string(c->b);
                 }
                 script += std::string("GameTooltip:AddLine(format(") +
                           (lock->spellId == 0 ? "LOCKED_WITH_SPELL" : "LOCKED_WITH_SPELL_KNOWN") +

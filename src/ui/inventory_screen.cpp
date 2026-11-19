@@ -221,6 +221,10 @@ void InventoryScreen::renderItemTargetCursor() {
         }
     }
 
+    // A spell waiting for its lock draws the game's own Cast / UnableCast
+    // cursor (GameScreen picks it over the world), not this overlay.
+    if (gameHandler_->pendingLockTargetSpell() != 0) return;
+
     ImVec2 mousePos = ImGui::GetIO().MousePos;
     constexpr float size = 36.0f;
     ImVec2 pos(mousePos.x - size * 0.5f, mousePos.y - size * 0.5f);

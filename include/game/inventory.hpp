@@ -205,6 +205,10 @@ struct ItemDef {
     // A BoE item is bindType==2 but only prompts on equip while this is false; once the
     // server sets the soulbound bit (on equip), it is already bound and must not prompt.
     bool soulbound = false;
+    /// ITEM_FIELD_FLAGS 0x4 (ITEM_DYNFLAG_UNLOCKED): a lockbox already picked.
+    /// Original 2.4.3 (pair 22): a picked Battered Junkbox shows
+    /// "<Right Click to Open>" instead of "Locked".
+    bool unlocked = false;
 
     /// Would equipping this bind it to the player?
     ///

@@ -535,8 +535,15 @@ bool shouldDespawnGatherTarget(uint8_t result) {
 // show "Examining". UnitCastingInfo returned name "Opening", text "" and
 // "Examining" (_experiments/20261117T171500Z.pair0_go_ghost_pet/).
 //
-// nullopt: not an OPEN_LOCK cast at a locked object, or vanilla, whose query
-// response carries no such text; the bar then shows the spell name.
+// Only a spell hidden from the interface (Attributes 0x80, DO_NOT_DISPLAY:
+// the Opening and Closing spells) gives the bar over to the object; one the
+// player casts by name keeps it. Original 2.4.3 (pair 22): Pick Lock at a
+// Practice Lockbox (empty opening text) shows "Pick Lock"; Herb Gathering at
+// Peacebloom (pair 0) "Herb Gathering".
+//
+// nullopt: not an OPEN_LOCK cast at a locked object, a spell that names
+// itself, or vanilla, whose query response carries no such text; the bar
+// then shows the spell name.
 std::optional<std::string> openLockCastBarCaption(pipeline::AssetManager* assets,
                                                   const GameObjectQueryResponseData& info,
                                                   uint32_t spellId) {
@@ -557,6 +564,10 @@ std::optional<std::string> openLockCastBarCaption(pipeline::AssetManager* assets
 
     const int32_t spellRow = spellDbc->findRecordById(spellId);
     if (spellRow < 0) return std::nullopt;
+    const uint32_t attributesField = spellL->field("Attributes");
+    assert(attributesField != 0xFFFFFFFF);
+    constexpr uint32_t kAttrDoNotDisplay = 0x80;
+    if ((spellDbc->getUInt32(spellRow, attributesField) & kAttrDoNotDisplay) == 0) return std::nullopt;
     constexpr uint32_t kSpellEffectOpenLock = 33;
     std::optional<uint32_t> lockType;
     for (uint32_t effect = 0; effect < 3 && !lockType; ++effect) {
@@ -1860,6 +1871,25 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         }
         owner_.beginSpellItemTargeting(spellId, getSpellName(spellId));
         return;
+    }
+
+    // A spell aimed at a game object (implicit target TARGET_GAMEOBJECT 23, or
+    // TARGET_LOCKED 26: an object or a locked item), with no object named:
+    // build 8606 arms the targeting cursor ("Cast" over a lock in reach,
+    // "UnableCast" elsewhere) and casts at the object or bag item clicked
+    // next; a click on the ground leaves it armed, Escape puts it down.
+    // Original 2.4.3 (pair 22): /cast Pick Lock, click a Practice Lockbox,
+    // cast bar "Pick Lock", loot. The cast went out here with no target and
+    // the server answered "Invalid target".
+    constexpr uint32_t kTargetGameObject = 23, kTargetLocked = 26;
+    const uint32_t implicitA = getSpellImplicitTargetA(spellId);
+    if (heldItemGuid == 0 && (implicitA == kTargetGameObject || implicitA == kTargetLocked)) {
+        const auto named = targetGuid != 0 ? owner_.getEntityManager().getEntity(targetGuid) : nullptr;
+        if (!named || named->getType() != ObjectType::GAMEOBJECT) {
+            owner_.beginSpellLockTargeting(spellId, getSpellName(spellId));
+            LOG_INFO("Spell ", spellId, " waits for a game object or item target");
+            return;
+        }
     }
 
     // Auto self-cast: a spell that has to be aimed at a friendly unit falls back

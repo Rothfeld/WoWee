@@ -287,6 +287,15 @@ public:
     /// Arm item targeting for a spell that must be cast at an item. The cast is
     /// sent once the player picks one.
     void beginSpellItemTargeting(uint32_t spellId, const std::string& spellName);
+    /// Arm the targeting cursor for an OPEN_LOCK spell aimed at a lock (Pick
+    /// Lock): the next click on a game object casts it there, a click on a
+    /// bag item casts it at the item.
+    void beginSpellLockTargeting(uint32_t spellId, const std::string& spellName);
+    /// The OPEN_LOCK spell waiting for its lock, 0 when none.
+    [[nodiscard]] uint32_t pendingLockTargetSpell() const;
+    /// Cast the waiting OPEN_LOCK spell at a game object (CMSG_CAST_SPELL,
+    /// TARGET_FLAG_GAMEOBJECT) and put the cursor down.
+    void completeLockTargetOnGameObject(uint64_t objectGuid);
     /// Sends the parked CMSG_USE_ITEM with TARGET_FLAG_ITEM against targetItemGuid.
     void completeItemUseOnItem(uint64_t targetItemGuid, bool confirmed = false);
 
@@ -673,6 +682,8 @@ private:
         /// applied to another item. Disenchant, Prospecting, Milling and the
         /// enchant formulas all take an item and are cast, not used.
         bool fromSpell = false;
+        /// An OPEN_LOCK spell aimed at a lock: a game object or a locked item.
+        bool opensLock = false;
     };
     // mutable: isAwaitingItemTarget() drops the pending use when out of world.
     mutable std::optional<PendingItemTarget> pendingItemTarget_;

@@ -108,7 +108,7 @@ LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
                                 const GameObjectQueryResponseData* info,
                                 const std::unordered_set<uint32_t>& knownSpells,
                                 uint32_t playerLevel, uint32_t goLevel,
-                                bool flaggedLocked) {
+                                uint32_t action) {
     LockOpenPlan plan;
     const uint32_t lockId = gameObjectLockId(info);
     if (!assets || lockId == 0) return plan;
@@ -172,16 +172,16 @@ LockOpenPlan planGameObjectOpen(pipeline::AssetManager* assets,
             const uint32_t keyType = lockDbc->getUInt32(row, 1 + slot);
             const uint32_t keyIndex = lockDbc->getUInt32(row, 9 + slot);
             if (keyIndex == 0) continue;
-            // Action[8] at cols 25-32. A GO_FLAG_LOCKED object opens only by
-            // its Action 1 methods (key, Lockpicking, Blasting). Original
-            // 2.4.3 (pair 0): Dire Maul's Door 177198 (flags 0x22, Lock 1562
-            // = key 18249, Lockpicking 300, Quick Open, Quick Close, Blasting
-            // 300) answers "The door is locked." without the key, and the
-            // Deadmines Iron Clad Door 16397 (0x22, Lock 202) says Locked;
-            // the unflagged Heavy Door 17153 (0x20, Lock 86 = Quick Open)
-            // opens with Opening 6247. Casting 6247 at the flagged door is
-            // accepted by CMaNGOS, so the client is what keeps it shut.
-            if (flaggedLocked && lockDbc->getUInt32(row, 25 + slot) != 1) continue;
+            // Action[8] at cols 25-32: only the slots whose Action applies now
+            // (lockActionNow). Original 2.4.3 (pair 0): Dire Maul's Door
+            // 177198 (flags 0x22, Lock 1562 = key 18249, Lockpicking 300,
+            // Quick Open, Quick Close, Blasting 300) answers "The door is
+            // locked." without the key, and the Deadmines Iron Clad Door 16397
+            // (0x22, Lock 202) says Locked; the unflagged Heavy Door 17153
+            // (0x20, Lock 86 = Quick Open) opens with Opening 6247. Casting
+            // 6247 at the flagged door is accepted by CMaNGOS, so the client
+            // is what keeps it shut.
+            if (lockDbc->getUInt32(row, 25 + slot) != action) continue;
             // Skill[8] at cols 17-24.
             const uint32_t lockSkill = lockDbc->getUInt32(row, 17 + slot);
             const int32_t requiredPoints = static_cast<int32_t>(lockSkill ? lockSkill : 5 * goLevel);
@@ -3267,8 +3267,24 @@ std::optional<bool> GameHandler::isGameObjectInRange(uint64_t guid) {
                                  *entity, glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z));
 }
 
+namespace {
+
+/// GAMEOBJECT_STATE (TBC) or GAMEOBJECT_BYTES_1's low byte.
+uint32_t gameObjectStateOf(const Entity& object) {
+    const uint16_t field = fieldIndex(isActiveExpansion("tbc") ? UF::GAMEOBJECT_STATE : UF::GAMEOBJECT_BYTES_1);
+    assert(field != 0xFFFF && "update-field table lacks the game object state");
+    return object.getField(field) & 0xFF;
+}
+
+uint32_t lockActionOf(const Entity& object) {
+    return lockActionNow(gameObjectStateOf(object),
+                         (object.getField(fieldIndex(UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0);
+}
+
+} // namespace
+
 std::optional<GameObjectProfessionLock> GameHandler::gameObjectProfessionLock(
-        const GameObjectQueryResponseData* info) const {
+        const GameObjectQueryResponseData* info, const Entity& object) const {
     const uint32_t lockId = gameObjectLockId(info);
     if (lockId == 0) return std::nullopt;
     auto* assets = services_.assetManager;
@@ -3285,48 +3301,151 @@ std::optional<GameObjectProfessionLock> GameHandler::gameObjectProfessionLock(
     assert(effect0 != 0xFFFFFFFF && misc0 != 0xFFFFFFFF);
     const int32_t row = locks->findRecordById(lockId);
     assert(row >= 0);
-    constexpr uint32_t kLockKeySkill = 2;
-    const uint32_t lockType = locks->getUInt32(row, 9);
-    if (locks->getUInt32(row, 1) != kLockKeySkill || lockType == 0) return std::nullopt;
+    const LockRecord lock = readLockRecord(*locks, static_cast<uint32_t>(row));
     constexpr uint32_t kEffectOpenLock = 33, kEffectSkill = 118;
-    // The spells that open this LockType as a profession: OPEN_LOCK for it
-    // plus SKILL naming the profession's skill line. Lockpicking, Opening
-    // and the rest carry no SKILL effect and are not professions here.
-    const auto professionSkill = [&](uint32_t spellRow) -> uint32_t {
-        bool opens = false;
-        uint32_t skill = 0;
-        for (uint32_t e = 0; e < 3; ++e) {
-            const uint32_t effect = spells->getUInt32(spellRow, effect0 + e);
-            const uint32_t misc = spells->getUInt32(spellRow, misc0 + e);
-            if (effect == kEffectOpenLock && misc == lockType) opens = true;
-            if (effect == kEffectSkill) skill = misc;
+    for (const uint32_t slot : lockSkillSlots(lock, lockActionOf(object))) {
+        const uint32_t lockType = lock.index[slot];
+        // The spells that open this LockType as a profession: OPEN_LOCK for it
+        // plus SKILL naming the profession's skill line. Lockpicking, Opening
+        // and the rest carry no SKILL effect and are not professions here.
+        const auto professionSkill = [&](uint32_t spellRow) -> uint32_t {
+            bool opens = false;
+            uint32_t skill = 0;
+            for (uint32_t e = 0; e < 3; ++e) {
+                const uint32_t effect = spells->getUInt32(spellRow, effect0 + e);
+                const uint32_t misc = spells->getUInt32(spellRow, misc0 + e);
+                if (effect == kEffectOpenLock && misc == lockType) opens = true;
+                if (effect == kEffectSkill) skill = misc;
+            }
+            return opens ? skill : 0;
+        };
+        GameObjectProfessionLock result;
+        for (const uint32_t spellId : spellHandler_->getKnownSpells()) {
+            const int32_t spellRow = spells->findRecordById(spellId);
+            if (spellRow < 0) continue;
+            if (const uint32_t skill = professionSkill(static_cast<uint32_t>(spellRow))) {
+                result.spellId = spellId;
+                result.skillLine = skill;
+                break;
+            }
         }
-        return opens ? skill : 0;
+        if (result.spellId == 0) {
+            bool profession = false;
+            for (uint32_t r = 0; r < spells->getRecordCount() && !profession; ++r)
+                profession = professionSkill(r) != 0;
+            if (!profession) continue;
+        } else {
+            const auto skill = playerSkills_.find(result.skillLine);
+            result.playerRank = skill != playerSkills_.end() ? skill->second.effectiveValue() : 0;
+        }
+        const int32_t typeRow = types->findRecordById(lockType);
+        assert(typeRow >= 0);
+        result.name = types->getString(static_cast<uint32_t>(typeRow), 1);
+        result.requiredRank = lock.skill[slot];
+        return result;
+    }
+    return std::nullopt;
+}
+
+std::optional<GameObjectLockStatus> GameHandler::gameObjectLockStatus(
+        const GameObjectQueryResponseData* info, const Entity& object) const {
+    const uint32_t lockId = gameObjectLockId(info);
+    if (lockId == 0) return std::nullopt;
+    const uint16_t levelField = fieldIndex(UF::GAMEOBJECT_LEVEL);
+    GameObjectLockStatus status = lockStatus(lockId, lockActionOf(object),
+                                             levelField != 0xFFFF ? object.getField(levelField) : 0);
+    status.flaggedLocked = (object.getField(fieldIndex(UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
+    return status;
+}
+
+GameObjectLockStatus GameHandler::lockStatus(uint32_t lockId, uint32_t action, uint32_t objectLevel) const {
+    auto* assets = services_.assetManager;
+    assert(assets);
+    const auto locks = assets->loadDBC("Lock.dbc");
+    const auto spells = assets->loadDBC("Spell.dbc");
+    const auto* spellL = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+    assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
+    assert(spells && spells->isLoaded() && spellL);
+    const uint32_t effect0 = spellL->field("Effect0");
+    const uint32_t misc0 = spellL->field("EffectMiscValue0");
+    const uint32_t base0 = spellL->field("EffectBasePoints0");
+    const uint32_t perLevel0 = spellL->field("EffectRealPointsPerLevel0");
+    const uint32_t maxLevelField = spellL->field("MaxLevel");
+    const uint32_t baseLevelField = spellL->field("BaseLevel");
+    const uint32_t spellLevelField = spellL->field("SpellLevel");
+    assert(effect0 != 0xFFFFFFFF && misc0 != 0xFFFFFFFF);
+    assert(base0 != 0xFFFFFFFF && perLevel0 != 0xFFFFFFFF && maxLevelField != 0xFFFFFFFF &&
+           baseLevelField != 0xFFFFFFFF && spellLevelField != 0xFFFFFFFF);
+    const int32_t row = locks->findRecordById(lockId);
+    assert(row >= 0 && "game object lock absent from Lock.dbc");
+    const LockRecord lock = readLockRecord(*locks, static_cast<uint32_t>(row));
+
+    GameObjectLockStatus status;
+    status.action = action;
+    status.keys = lockKeyItems(lock, status.action);
+    const Inventory& inv = getInventory();
+    for (const uint32_t key : status.keys) {
+        status.keyHeld = status.keyHeld || inv.countItem(key) > 0;
+        for (int i = 0; i < inv.getKeyringSize() && !status.keyHeld; ++i)
+            status.keyHeld = inv.getKeyringSlot(i).item.itemId == key;
+    }
+
+    // basePoints + 1 + perLevel x (caster level clamped to the spell's level
+    // range, less SpellLevel): Pick Lock 1804 is 5 + 5 per level, 200 at
+    // level 40, so Lock 879's Lockpicking 300 stays red at Lockpicking 375
+    // and Lucius's Lockbox (25) is green at 120 (pair 22). The Opening and
+    // Closing spells are 100.
+    const auto minPoints = [&](uint32_t spellRow, uint32_t effect) {
+        int32_t level = static_cast<int32_t>(getPlayerLevel());
+        const int32_t maxLevel = spells->getInt32(spellRow, maxLevelField);
+        const int32_t baseLevel = spells->getInt32(spellRow, baseLevelField);
+        if (maxLevel > 0 && level > maxLevel) level = maxLevel;
+        else if (level < baseLevel) level = baseLevel;
+        level -= spells->getInt32(spellRow, spellLevelField);
+        return spells->getInt32(spellRow, base0 + effect) + 1 +
+               static_cast<int32_t>(spells->getFloat(spellRow, perLevel0 + effect) * static_cast<float>(level));
     };
-    GameObjectProfessionLock result;
-    for (const uint32_t spellId : spellHandler_->getKnownSpells()) {
-        const int32_t spellRow = spells->findRecordById(spellId);
-        if (spellRow < 0) continue;
-        if (const uint32_t skill = professionSkill(static_cast<uint32_t>(spellRow))) {
-            result.spellId = spellId;
-            result.skillLine = skill;
-            break;
+    constexpr uint32_t kEffectOpenLock = 33, kEffectSkill = 118;
+    // Read with the initial spell list (SpellHandler on SMSG_INITIAL_SPELLS).
+    assert(!spellToSkillLine_.empty() && "SkillLineAbility.dbc not read yet");
+    // Each slot that applies: a key carried is Green, missing Impossible.
+    std::vector<LockDifficulty> slots;
+    for (const uint32_t key : status.keys) {
+        bool held = inv.countItem(key) > 0;
+        for (int i = 0; i < inv.getKeyringSize() && !held; ++i) held = inv.getKeyringSlot(i).item.itemId == key;
+        slots.push_back(held ? LockDifficulty::Green : LockDifficulty::Impossible);
+    }
+    for (const uint32_t slot : lockSkillSlots(lock, status.action)) {
+        const int32_t required = static_cast<int32_t>(lock.skill[slot] ? lock.skill[slot] : 5 * objectLevel);
+        LockDifficulty difficulty = LockDifficulty::Impossible;
+        bool found = false;
+        for (const uint32_t spellId : spellHandler_->getKnownSpells()) {
+            const int32_t spellRow = spells->findRecordById(spellId);
+            if (spellRow < 0) continue;
+            const auto r = static_cast<uint32_t>(spellRow);
+            bool profession = false;
+            for (uint32_t e = 0; e < 3; ++e) profession = profession || spells->getUInt32(r, effect0 + e) == kEffectSkill;
+            if (profession) continue;
+            for (uint32_t e = 0; e < 3 && !found; ++e) {
+                if (spells->getUInt32(r, effect0 + e) != kEffectOpenLock ||
+                    spells->getUInt32(r, misc0 + e) != lock.index[slot]) continue;
+                const int32_t points = minPoints(r, e);
+                if (points < required) continue;
+                found = true;
+                if (status.openSpellId == 0) status.openSpellId = spellId;
+                const auto line = spellToSkillLine_.find(spellId);
+                const auto skill = line != spellToSkillLine_.end() ? playerSkills_.find(line->second) : playerSkills_.end();
+                const uint32_t rank = skill != playerSkills_.end() ? skill->second.effectiveValue()
+                                                                   : static_cast<uint32_t>(points);
+                difficulty = lockDifficulty(rank, lock.skill[slot]);
+            }
+            if (found) break;
         }
+        slots.push_back(difficulty);
     }
-    if (result.spellId == 0) {
-        bool profession = false;
-        for (uint32_t r = 0; r < spells->getRecordCount() && !profession; ++r)
-            profession = professionSkill(r) != 0;
-        if (!profession) return std::nullopt;
-    } else {
-        const auto skill = playerSkills_.find(result.skillLine);
-        result.playerRank = skill != playerSkills_.end() ? skill->second.effectiveValue() : 0;
-    }
-    const int32_t typeRow = types->findRecordById(lockType);
-    assert(typeRow >= 0);
-    result.name = types->getString(static_cast<uint32_t>(typeRow), 1);
-    result.requiredRank = locks->getUInt32(row, 17);
-    return result;
+    if (!slots.empty()) status.difficulty = *std::min_element(slots.begin(), slots.end());
+    return status;
 }
 
 void GameHandler::interactWithGameObject(uint64_t guid) {
@@ -3492,20 +3611,12 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         if (goInfo && goType == 0 && gameObjectLockId(goInfo) != 0 &&
             (entity->getField(fieldIndex(UF::GAMEOBJECT_FLAGS)) & 0x2u)) {
             const uint16_t levelField = fieldIndex(UF::GAMEOBJECT_LEVEL);
+            const auto lockStatus = gameObjectLockStatus(goInfo, *entity);
+            assert(lockStatus);
             const LockOpenPlan plan = planGameObjectOpen(
                 services_.assetManager, goInfo, spellHandler_->getKnownSpells(), getPlayerLevel(),
-                levelField != 0xFFFF ? entity->getField(levelField) : 0, true);
-            const auto locks = services_.assetManager->loadDBC("Lock.dbc");
-            assert(locks && locks->isLoaded() && locks->getFieldCount() >= 33);
-            const int32_t row = locks->findRecordById(gameObjectLockId(goInfo));
-            assert(row >= 0 && "game object lock absent from Lock.dbc");
-            const Inventory& inv = getInventory();
-            bool keyHeld = false;
-            for (const uint32_t key : lockKeyItems(readLockRecord(*locks, static_cast<uint32_t>(row)), true)) {
-                keyHeld = keyHeld || inv.countItem(key) > 0;
-                for (int i = 0; i < inv.getKeyringSize() && !keyHeld; ++i)
-                    keyHeld = inv.getKeyringSlot(i).item.itemId == key;
-            }
+                levelField != 0xFFFF ? entity->getField(levelField) : 0, lockStatus->action);
+            const bool keyHeld = lockStatus->keyHeld;
             if (plan.method != LockOpenMethod::CastSpell && !keyHeld) {
                 errorGlobal("ERR_DOOR_LOCKED");
                 LOG_INFO("GO locked door refused before reach: entry=", goEntry,
@@ -3607,7 +3718,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
     // Herbalism the click sends nothing and UIErrorsFrame shows
     // ERR_USE_LOCKED_WITH_SPELL_S "Requires Herbalism"; a known skill below
     // the lock's rank is ERR_USE_LOCKED_WITH_SPELL_KNOWN_SI "Requires %s %d".
-    if (const auto lock = gameObjectProfessionLock(goInfo)) {
+    if (const auto lock = entity ? gameObjectProfessionLock(goInfo, *entity) : std::nullopt) {
         if (lock->spellId == 0) {
             errorGlobal("ERR_USE_LOCKED_WITH_SPELL_S", {lock->name});
             LOG_INFO("GO profession lock: ", lock->name, " not known; guid=0x", std::hex, guid, std::dec);
@@ -3637,14 +3748,13 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         // validates the lock. A plain CMSG_GAMEOBJ_USE only opens unlocked /
         // server-gated quest containers (e.g. the Legend of Stalvan Sealed Crate).
         const uint16_t goLevelField = fieldIndex(UF::GAMEOBJECT_LEVEL);
-        const uint32_t goLevel = (entity && goLevelField != 0xFFFF)
-            ? entity->getField(goLevelField) : 0;
-        constexpr uint32_t kGoFlagLocked = 0x2;
-        const bool flaggedLocked = entity &&
-            (entity->getField(fieldIndex(UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
+        assert(entity && "a lock comes from the object's own template");
+        const uint32_t goLevel = goLevelField != 0xFFFF ? entity->getField(goLevelField) : 0;
+        const bool flaggedLocked = (entity->getField(fieldIndex(UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
+        const uint32_t lockAction = lockActionOf(*entity);
         const LockOpenPlan plan = planGameObjectOpen(
             services_.assetManager, goInfo, spellHandler_->getKnownSpells(),
-            getPlayerLevel(), goLevel, flaggedLocked);
+            getPlayerLevel(), goLevel, lockAction);
         if (plan.method == LockOpenMethod::CastSpell) {
             auto castPacket = getPacketParsers()->buildCastGameObjectSpell(
                 plan.spellId, guid, 0);
@@ -3668,7 +3778,7 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
         const int32_t lockRow = lockDbc->findRecordById(gameObjectLockId(goInfo));
         assert(lockRow >= 0 && "game object lock absent from Lock.dbc");
         const auto keys = lockKeyItems(readLockRecord(*lockDbc, static_cast<uint32_t>(lockRow)),
-                                       flaggedLocked);
+                                       lockAction);
         if (!keys.empty()) {
             // Locate a key: wire (bag, slot) + item GUID. Keyring wire slots
             // start at 86; backpack at 23 in bag 0xFF; equipped bags are 19..22.
@@ -4064,6 +4174,20 @@ void GameHandler::completeItemUseOnUnit(uint64_t targetUnitGuid) {
 
 void GameHandler::beginSpellItemTargeting(uint32_t spellId, const std::string& spellName) {
     if (inventoryHandler_) inventoryHandler_->beginSpellItemTargeting(spellId, spellName);
+}
+
+void GameHandler::beginSpellLockTargeting(uint32_t spellId, const std::string& spellName) {
+    assert(inventoryHandler_);
+    inventoryHandler_->beginSpellLockTargeting(spellId, spellName);
+}
+
+uint32_t GameHandler::pendingLockTargetSpell() const {
+    return inventoryHandler_ ? inventoryHandler_->pendingLockTargetSpell() : 0;
+}
+
+void GameHandler::completeLockTargetOnGameObject(uint64_t objectGuid) {
+    assert(inventoryHandler_);
+    inventoryHandler_->completeLockTargetOnGameObject(objectGuid);
 }
 
 uint32_t GameHandler::getPendingItemTargetSourceItemId() const {

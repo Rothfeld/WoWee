@@ -15,17 +15,21 @@ struct GameObjectCursorFacts {
     /// LockType CursorName of lock slot 0 ("PickLock", "GatherHerbs",
     /// "Mine"); empty when there is no lock or that slot names none.
     std::string lockCursor;
-    /// GO_FLAG_LOCKED.
+    /// GO_FLAG_LOCKED and the player cannot open it (no key carried, no
+    /// known spell for the lock slots that apply now).
     bool flaggedLocked = false;
     bool inRange = true;
 };
 
 /// Interface\Cursor\<name>.blp, the way build 8606 shows it (pair 0 hovers,
 /// _experiments/20261117T195204Z.pair0_go_cursors):
-///   - a GO_FLAG_LOCKED object shows the gear greyed, whatever the player
-///     knows or carries: Battered Footlocker 179486 (Lockpicking) also with
-///     Pick Lock at skill 200, Coilskar Chest 184716 also with its key in
-///     the backpack, Dire Maul's Door 177198 (Crescent Key first);
+///   - a GO_FLAG_LOCKED object the player cannot open shows the gear
+///     greyed: Battered Footlocker 179486 spawned open (no slot applies)
+///     also with Pick Lock, Coilskar Chest 184716 spawned open also with its
+///     key in the backpack, Dire Maul's Door 177198 without the Crescent Key;
+///     Gauntlet Gate 175357 with Key to the City carried, King's Square Gate
+///     175352 standing open (Closing) and Practice Lockbox 178244 with Pick
+///     Lock known show the gear (pair 22);
 ///   - a quest giver object whose status names a cursor shows it
 ///     (questGiverCursor): Wanted Poster 186426 Quest, also Wanted Poster
 ///     142122 with only out-levelled quests and no mark (pair 16); Skull

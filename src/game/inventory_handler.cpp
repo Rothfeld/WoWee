@@ -2138,6 +2138,28 @@ void InventoryHandler::beginSpellItemTargeting(uint32_t spellId, const std::stri
     pendingItemTarget_ = pending;
 }
 
+void InventoryHandler::beginSpellLockTargeting(uint32_t spellId, const std::string& spellName) {
+    PendingItemTarget pending;
+    pending.spellId = spellId;
+    pending.itemName = spellName;
+    pending.fromSpell = true;
+    pending.opensLock = true;
+    pendingItemTarget_ = pending;
+}
+
+uint32_t InventoryHandler::pendingLockTargetSpell() const {
+    return isAwaitingItemTarget() && pendingItemTarget_->opensLock ? pendingItemTarget_->spellId : 0;
+}
+
+void InventoryHandler::completeLockTargetOnGameObject(uint64_t objectGuid) {
+    assert(pendingLockTargetSpell() != 0 && objectGuid != 0);
+    const uint32_t spellId = pendingItemTarget_->spellId;
+    pendingItemTarget_.reset();
+    if (!owner_.getSocket()) return;
+    owner_.getSocket()->send(owner_.getPacketParsers()->buildCastGameObjectSpell(spellId, objectGuid, 0));
+    LOG_INFO("Casting spell ", spellId, " at game object 0x", std::hex, objectGuid, std::dec);
+}
+
 void InventoryHandler::replaceEnchant() {
     const PendingEnchant pending = pendingEnchant_;
     pendingEnchant_ = PendingEnchant{};
@@ -2222,7 +2244,7 @@ void InventoryHandler::completeItemUseOnItem(uint64_t targetItemGuid, bool confi
     // warned about, because the temporary slot is minutes of a stone rather
     // than an enchanter, and naming a permanent enchant that is not being
     // replaced would be a warning about the wrong thing.
-    if (!confirmed && !destroysTarget) {
+    if (!confirmed && !destroysTarget && !pending.opensLock) {
         // Enchanting an unbound item binds it. Same family as the equip, use
         // and loot warnings, and the one of the five that was missed: the
         // interface has raised BIND_ENCHANT for it all along and nothing ever
@@ -5021,6 +5043,7 @@ ItemDef InventoryHandler::buildItemDef(uint32_t entry, uint32_t stackCount,
     def.maxStack = 1;
     // ITEM_FLAG_SOULBOUND (0x1): a BoE item that has already bound must not re-prompt.
     def.soulbound = (flags & 0x1u) != 0;
+    def.unlocked = (flags & 0x4u) != 0;
     def.randomPropertyId = randomPropertyId;
     def.suffixFactor = suffixFactor;
 

@@ -1148,12 +1148,16 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
                 facts.lockCursor = types->getString(typeRow, types->getFieldCount() - 1);
             }
         }
-        // GO_FLAG_LOCKED greys the gear whatever the player carries or knows:
-        // Battered Footlocker 179486 with Pick Lock at Lockpicking 200, and
-        // Coilskar Chest 184716 with its key in the backpack, stay
-        // UnableInteract natively (pair 0).
-        constexpr uint32_t kGoFlagLocked = 0x2;
-        facts.flaggedLocked = (go->getField(game::fieldIndex(game::UF::GAMEOBJECT_FLAGS)) & kGoFlagLocked) != 0;
+        // GO_FLAG_LOCKED greys the gear unless the player can open it: a key
+        // of the slots that apply now carried, or a known spell opening one
+        // (game::GameObjectLockStatus). Original 2.4.3 (pair 22): Gauntlet
+        // Gate 175357 greyed without Key to the City, the gear with it;
+        // King's Square Gate spawned open (Closing) the gear; Practice
+        // Lockbox (Lockpicking 1) the gear with Pick Lock known, 3 yards away.
+        if (lockId != 0) {
+            const auto lock = gameHandler.gameObjectLockStatus(info, *go);
+            facts.flaggedLocked = lock->flaggedLocked && !lock->keyHeld && lock->openSpellId == 0;
+        }
         // Fishing has a single cursor asset; bobbers use their own reach.
         facts.inRange = info->type == 17 || gameHandler.isGameObjectInRange(guid) != false;
         const std::string path = game::gameObjectCursorPath(facts);
@@ -1569,7 +1573,24 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     objectHoverStrength = 0.7f;
                 }
             }
-            if (hoverPick.closestGuid != 0) {
+            if (gameHandler.pendingLockTargetSpell() != 0) {
+                // A spell waiting for its lock (Pick Lock): "Cast" over a
+                // locked object in reach, "UnableCast" over anything else
+                // (pair 22: a Practice Lockbox 2.6 yards away, the ground,
+                // the same lockbox 11 yards away).
+                const uint64_t objectGuid = hoverPick.resolve() ? hoverPick.resolve() : hoverPick.namedObjectGuid;
+                const auto object = gameHandler.getEntityManager().getEntity(objectGuid);
+                bool aimed = false;
+                if (object && object->getType() == game::ObjectType::GAMEOBJECT) {
+                    const auto* info = gameHandler.getCachedGameObjectInfo(
+                        std::static_pointer_cast<game::GameObject>(object)->getEntry());
+                    aimed = game::gameObjectLockId(info) != 0 &&
+                            gameHandler.isGameObjectInRange(objectGuid) == true;
+                }
+                if (const auto texture = cursorTexture(services_.assetManager, services_.window,
+                        aimed ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp"))
+                    selectCursorTexture(texture);
+            } else if (hoverPick.closestGuid != 0) {
                 if (!drawVendorCursor(gameHandler, hoverPick) &&
                     !drawWorldObjectCursor(gameHandler, hoverPick)) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -1753,6 +1774,16 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                             return;
                         }
                     }
+                }
+
+                // A spell waiting for its lock takes a click on a game object
+                // and casts there; anywhere else the cursor stays armed.
+                if (gameHandler.pendingLockTargetSpell() != 0) {
+                    const uint64_t objectGuid = closestGuid ? closestGuid : pick.namedObjectGuid;
+                    const auto object = gameHandler.getEntityManager().getEntity(objectGuid);
+                    if (object && object->getType() == game::ObjectType::GAMEOBJECT)
+                        gameHandler.completeLockTargetOnGameObject(objectGuid);
+                    return;
                 }
 
                 // An item waiting for a unit takes this click instead of it
