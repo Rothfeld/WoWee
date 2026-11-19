@@ -386,7 +386,9 @@ TEST_CASE("Size and anchors become the same calls a script would make",
         "<Offset><AbsDimension x=\"5\" y=\"-7\"/></Offset></Anchor></Anchors>"
         "</Frame></Ui>");
     const EmitResult r = emitFrameXml(root);
-    REQUIRE(has(r.lua, ":SetSize(128"));
+    // SetWidth and SetHeight: 2.4.3 regions have no SetSize.
+    REQUIRE(has(r.lua, ":SetWidth(128"));
+    REQUIRE(has(r.lua, ":SetHeight(64"));
     REQUIRE(has(r.lua, ":SetPoint(\"TOPLEFT\""));
     REQUIRE(has(r.lua, "\"BOTTOMRIGHT\""));
     REQUIRE(has(r.lua, "5.000000, -7.000000"));
@@ -1439,4 +1441,16 @@ TEST_CASE("Top-level XML frames preserve absent parents", "[framexml][emit]") {
     REQUIRE(has(result.lua, "CreateFrame(\"Button\", \"DropDownList1\", nil)"));
     REQUIRE_FALSE(has(result.lua, "CreateFrame(\"Button\", \"DropDownList1Button1\", nil)"));
     REQUIRE(has(result.lua, "CreateFrame(\"Frame\", \"CharacterFrame\", UIParent)"));
+}
+
+// HealBot_Options_EditBoxTemplate has two <Layers>; the label is in the second.
+TEST_CASE("Every Layers element of a frame is built", "[framexml][emit]") {
+    XmlNode root = parseOrFail(
+        "<Ui><Frame name=\"F\">"
+        "<Layers><Layer><Texture name=\"$parentA\"/></Layer></Layers>"
+        "<Layers><Layer><FontString name=\"$parentText\"/></Layer></Layers>"
+        "</Frame></Ui>");
+    const EmitResult r = emitFrameXml(root);
+    REQUIRE(has(r.lua, "\"FA\""));
+    REQUIRE(has(r.lua, "\"FText\""));
 }

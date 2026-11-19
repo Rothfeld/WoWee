@@ -347,7 +347,7 @@ struct Emitter {
         if (const XmlNode* size = node.child("Size")) {
             float w = 0, h = 0;
             if (readDimension(*size, w, h))
-                line(var + ":SetSize(" + std::to_string(w) + ", " + std::to_string(h) + ")");
+                line(var + ":SetWidth(" + std::to_string(w) + ") " + var + ":SetHeight(" + std::to_string(h) + ")");
         }
         if (const XmlNode* tc = node.child("TexCoords")) {
             line(var + ":SetTexCoord(" + std::to_string(tc->attrFloat("left", 0.0f)) + ", " +
@@ -814,7 +814,14 @@ struct Emitter {
                           const std::string& parentName,
                           const std::string& nameVar = std::string()) {
         const std::string rawName = node.attrOr("name", "");
-        const std::string name = substituteParent(rawName, parentName);
+        // At the top of a file $parent is the frame parent= names: TitanAggro
+        // declares <Frame name="$parentTitanAggroIcon" parent="PlayerFrame">
+        // and 2.4.3 builds PlayerFrameTitanAggroIcon.
+        const std::string* declaredParentName = node.attr("parent");
+        const std::string& effectiveParentName =
+            (parentVar.empty() && parentName.empty() && declaredParentName)
+                ? *declaredParentName : parentName;
+        const std::string name = substituteParent(rawName, effectiveParentName);
         // A template is declared at the top of a file. virtual= on a frame
         // inside another frame's <Frames> is a mistake, and the real client
         // treats it as one - it builds the frame, because a nested element has
@@ -916,7 +923,7 @@ struct Emitter {
         const std::string ownerVar =
             (node.attr("parent") || nameVar.empty()) ? parentArg : nameVar;
         line(var + " = CreateFrame(" + frameTypeArg(node) + ", " +
-             nameArg(rawName, parentName, ownerVar) + ", " + parentArg + ")");
+             nameArg(rawName, effectiveParentName, ownerVar) + ", " + parentArg + ")");
 
         // Identity before anything is built on top of it. FrameXML makes names
         // out of the id - a party member's pet frame opens its OnLoad with
@@ -1000,7 +1007,7 @@ struct Emitter {
         if (const XmlNode* size = node.child("Size")) {
             float w = 0, h = 0;
             if (readDimension(*size, w, h))
-                line(var + ":SetSize(" + std::to_string(w) + ", " + std::to_string(h) + ")");
+                line(var + ":SetWidth(" + std::to_string(w) + ") " + var + ":SetHeight(" + std::to_string(h) + ")");
         }
         if (const std::string* strata = node.attr("frameStrata")) {
             line(var + ":SetFrameStrata(" + quote(*strata) + ")");
@@ -1356,7 +1363,7 @@ struct Emitter {
         // the chat box is open. Up and down still walk the history; that is
         // what the real client does with the same flag.
         if (node.attr("ignoreArrows")) {
-            line(var + ":SetIgnoreArrows(" +
+            line(var + ":SetAltArrowKeyMode(" +
                  (node.attrBool("ignoreArrows") ? "true" : "false") + ")");
         }
         // Declared false on nearly every box in FrameXML, which is the whole
@@ -1453,7 +1460,12 @@ struct Emitter {
                  std::to_string(col->attrFloat("a", 1.0f)) + ")");
         }
 
-        if (const XmlNode* layers = node.child("Layers")) {
+        // Every <Layers> element, not the first: HealBot's edit box template
+        // declares two, and 2.4.3 builds the label in the second
+        // ($parentText) that its OnLoad sets.
+        for (const XmlNode& layersNode : node.children) {
+            if (layersNode.name != "Layers") continue;
+            const XmlNode* layers = &layersNode;
             for (const XmlNode& layer : layers->children) {
                 if (layer.name != "Layer") continue;
                 const std::string level = layer.attrOr("level", "ARTWORK");
@@ -1518,7 +1530,9 @@ struct Emitter {
                     line(var + ":SetScrollChild(" + childVar + ")");
             }
         }
-        if (const XmlNode* frames = node.child("Frames")) {
+        for (const XmlNode& framesNode : node.children) {
+            if (framesNode.name != "Frames") continue;
+            const XmlNode* frames = &framesNode;
             for (const XmlNode& child : frames->children) {
                 // A named element that is not a known type is a template's own
                 // name used as an element - see emitFrame. Unnamed and unknown
@@ -1537,8 +1551,8 @@ struct Emitter {
         // box's own OnLoad had set self.chatFrame, which is the very thing that
         // handler opens by indexing. The template only installs the script; the
         // frame it is applied to runs it, after its own body has had its say.
-        if (const XmlNode* scripts = node.child("Scripts")) {
-            emitScripts(*scripts, var);
+        for (const XmlNode& scripts : node.children) {
+            if (scripts.name == "Scripts") emitScripts(scripts, var);
         }
         // Whether or not this frame declared one: a template it inherits may
         // have installed the handler, and that frame still loads. The runtime
