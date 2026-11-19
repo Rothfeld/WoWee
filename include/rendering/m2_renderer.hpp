@@ -391,8 +391,8 @@ struct M2Instance {
     /// their attached weapons), which share the character's skeleton.
     bool externalPose = false;
     /// The owner holds a finished one-shot sequence on its last frame (a
-    /// corpse at the end of Death): its animation clock has stopped, so no
-    /// particles are born. Those alive finish their lives.
+    /// corpse at the end of Death): emitters flagged
+    /// kParticleStopsOnHeldFrame bear no particles there.
     bool externalClockHeld = false;
     /// Sprite size scale of an externally posed instance's particles, from
     /// its owner (ExternalPose::particleScale); its model matrix places them.

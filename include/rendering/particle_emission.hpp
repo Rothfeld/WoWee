@@ -32,6 +32,17 @@ inline constexpr uint32_t kParticleModelFrame = kParticleInModelSpace | kParticl
 // #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001).
 inline constexpr uint32_t kParticleXYQuad = 0x1000;
 inline constexpr uint32_t kParticlePinned = 0x400;
+// Pre-264 flag 0x8000 marks an emitter that bears nothing while its owner
+// holds a finished one-shot sequence on its last frame (a corpse at the end
+// of Death); emitters without it keep emitting there, their tracks sampled
+// at the held frame. 39 TBC creature emitters carry it, the death bursts:
+// ElementalEarth #6/#8/#9/#12 (Stone Rumbler: glow ball, mist and rocks keyed
+// 100/30/12/100 from 27.7 s to 33.3 s, past Death's end at 30 s), Ghost #0/#1
+// (sparks and shockwave from 57.2 s, Death ends 59.3 s). Their corpses in the
+// original show none of it, while unflagged emitters go on: Ghost #2's flare
+// (0x9), the Harvest Golem's smoke (#0, 0x2, rate keyed 10 at Death's end),
+// the fel fire in a dead Shivarra's hands (Shivan.m2 #0-#7, 0x29-0x239).
+inline constexpr uint32_t kParticleStopsOnHeldFrame = 0x8000;
 // Particle vertex: position 3, colour 4, half width 1, cell 1, tail or
 // XYQuad axis 3, rotation 1 (radians).
 inline constexpr size_t kParticleVertexFloats = 13;

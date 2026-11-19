@@ -1375,6 +1375,19 @@ units. `build/bin/test_game_replay '[death][emote]'`. Evidence:
 `_experiments/20261118T1320Z.death_over_emote` in the workspace. Unverified
 against native: swing/hit/channel-field packets aimed at a corpse.
 
+A corpse's own model emitters keep going on the held last frame of Death,
+their tracks sampled there, except emitters with pre-264 flag 0x8000
+(`kParticleStopsOnHeldFrame`, 39 TBC creature emitters, the death bursts).
+Native, pair 15, tempspawned and killed with `.die`: a dead Shivarra (Priestess
+of Dementia 22957 / of Delight 22962, `Shivan.m2` #0-#7, flags 0x29-0x239,
+ParticleColor 312) keeps the green fel fire in its hands (the Black Temple
+Den of Mortal Delights report); a Harvest Golem (36) keeps its smoke (#0, 0x2,
+rate keyed 10 at Death's end); a Ravenclaw Apparition (2056, `Ghost.m2`) keeps
+its flare (#2, 0x9) but not its sparks and shockwave (#0/#1, 0x8009); a Stone
+Rumbler (4528, `ElementalEarth.m2`) shows none of its 0x8001 bursts, which are
+keyed 100/30/12/100 past Death's end. Evidence:
+`_experiments/20261119T0900Z.corpse_fire` in the workspace.
+
 A display change keeps the death pose too. Native Akama (21700) under Shape of the Bear (42377) killed with `.die` loses the aura with its life: the bear becomes Akama, and that model plays the whole of Death, then lies. A corpse given another display later (`.npc setmodel`) shows the new model lying at once. `EntitySpawner::removeCreatureForNewDisplay` keeps a corpse marked dead through the rebuild: Death on the new model while the old one was still falling, else Dead. A morphed player's creature model follows the same rule. Nalorakk (23576) dying in bear form is the reported case. Evidence: `_experiments/20261118T1620Z.corpse_display_change` in the workspace.
 
 ### Sheathed weapons

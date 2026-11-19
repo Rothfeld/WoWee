@@ -88,10 +88,6 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         }
     }
 
-    // A held last frame is a stopped clock: nothing is born (see
-    // characterEmitterClockHeld). Particles already alive finish their lives.
-    if (inst.externalPose && inst.externalClockHeld) return;
-
     std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
@@ -105,6 +101,10 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         const glm::mat4 previousBirth = inst.emitterPreviousBirth[ei];
         inst.emitterPreviousBirth[ei] = birthTransform;
         if (!em.enabled) continue;
+        // On a held last frame (a corpse) only flagged emitters stop; the
+        // rest keep emitting at the held frame's track values. Particles
+        // already alive finish their lives.
+        if (inst.externalPose && inst.externalClockHeld && (em.flags & kParticleStopsOnHeldFrame)) continue;
         if (m2_track::sampleFloat(em.enabledIn, inst.currentSequenceIndex, inst.animTime,
                                   inst.globalSequenceTime, gpu.globalSequenceDurations, 1.0f) <= 0.0f)
             continue;

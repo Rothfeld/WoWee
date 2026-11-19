@@ -77,10 +77,8 @@ inline float characterEmitterFade(bool visible, float opacity, float cameraOpaci
 }
 
 /// Whether the owner holds a finished one-shot sequence on its last frame
-/// (a corpse at the end of Death). Its animation clock has stopped and its
-/// emitters bear no particles: ElementalEarth's Death bursts keep rate 100
-/// from 27701 ms to a key at 33333 ms, past Death's end at 30000 ms, and the
-/// original client leaves the Stone Rumbler's corpse without them.
+/// (a corpse at the end of Death). Its emitters flagged
+/// kParticleStopsOnHeldFrame then bear no particles; the others go on.
 inline bool characterEmitterClockHeld(bool loop, uint32_t sequenceDurationMs, float timeMs) {
     return !loop && sequenceDurationMs > 0 && timeMs >= static_cast<float>(sequenceDurationMs);
 }

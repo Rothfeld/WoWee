@@ -72,7 +72,7 @@ TEST_CASE("each character model gets its own stable emitter model id", "[charact
     CHECK(a != rendering::characterEmitterModelId("Creature\\FireElemental\\FireElemental.m2", 7, 0));
 }
 
-TEST_CASE("a held last frame bears no particles", "[character-emitters]") {
+TEST_CASE("a finished one-shot sequence is held on its last frame", "[character-emitters]") {
     // ElementalEarth Death: 3333 ms, held on the corpse.
     CHECK(rendering::characterEmitterClockHeld(false, 3333, 3333.0f));
     CHECK_FALSE(rendering::characterEmitterClockHeld(false, 3333, 1200.0f));  // still dying
