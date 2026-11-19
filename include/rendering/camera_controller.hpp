@@ -175,6 +175,9 @@ public:
     [[nodiscard]] float getPitch() const { return pitch; }
     [[nodiscard]] float getFacingYaw() const { return facingYaw; }
     [[nodiscard]] float getTravelYaw() const { return travelYaw_; }
+    // The lower body turns onto getTravelYaw: strafing, not backing up, on the
+    // ground by the held keys, in the air by the momentum the keys gave it.
+    [[nodiscard]] bool legsFollowTravel() const { return legsFollowTravel_; }
     [[nodiscard]] bool isThirdPerson() const { return thirdPerson; }
     [[nodiscard]] bool isFirstPersonView() const { return thirdPerson && (userTargetDistance <= FIRST_PERSON_DISTANCE); }
     [[nodiscard]] bool shouldHidePlayer() const { return playerCameraOpacity_ <= 0.0f; }
@@ -539,6 +542,7 @@ private:
     float pitch = -30.0f;
     float facingYaw = 180.0f;  // Character-facing yaw (can differ from camera yaw)
     float travelYaw_ = 180.0f; // Heading of actual movement vector (see getTravelYaw)
+    bool legsFollowTravel_ = false;
 
     // Movement settings
     float groundLocomotionSpeed_ = 0.0f;
@@ -767,6 +771,9 @@ private:
     bool stepFromRest_ = false;
     glm::vec3 airborneHorizontalVelocity_{0.0f};
     bool preserveAirborneMomentum_ = false;
+    // Whether the keys that gave airborneHorizontalVelocity_ were a strafe
+    // without backing up, the keys the lower body turned for on the ground.
+    bool airborneMomentumStrafe_ = false;
     static constexpr float STAND_EYE_HEIGHT = 1.2f;  // Standing eye height
     static constexpr float CROUCH_EYE_HEIGHT = 0.6f; // Crouching eye height
     float eyeHeight = STAND_EYE_HEIGHT;

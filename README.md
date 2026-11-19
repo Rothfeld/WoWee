@@ -1040,6 +1040,17 @@ every change of animation using the destination sequence's authored blend time
 Outgoing one-shots clamp at their final frame during the blend; looping
 sequences wrap. Stationary landings retain JumpEnd.
 
+In the air the lower body keeps the direction it left the ground with until
+landing. Native 2.4.3, own character and as seen by others: strafing right,
+jump, switch to strafe left (or release, or add forward) mid-air, and the leg
+twist stays on the takeoff side; on touching down it turns to the new keys over
+about 0.2 s. A standing jump takes the direction of the first key pressed in
+the air, which is also the drift direction. Local player: `CameraController`
+aims `getTravelYaw` at the airborne momentum (`legsFollowTravel`); remote
+players: `rendering::airborneLegDirection` latches the movement-flag
+direction at takeoff. `build/bin/test_entity '[animation]'`. Evidence:
+`_experiments/20261119T1040.jump_legs/` in the workspace.
+
 Descending floor selection excludes prop/structure candidates above previous
 feet. A nearby log rim must not hide terrain crossed beneath it. Terrain retains
 its endpoint crossing rule for uphill landings; grounded step-up is separate.

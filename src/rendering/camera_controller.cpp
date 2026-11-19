@@ -929,6 +929,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
                 : f.speed;
             airborneHorizontalVelocity_ = f.movement * takeoffSpeed;
             preserveAirborneMomentum_ = moveLenSq > 1e-6f;
+            airborneMomentumStrafe_ = (f.nowStrafeLeft || f.nowStrafeRight) && !f.nowBackward;
         } else if (!preserveAirborneMomentum_ && moveLenSq > 1e-6f && !knockbackActive_) {
             // Airborne without momentum (a standing jump): the first direction
             // pressed drifts the character at a fixed speed in that direction
@@ -937,6 +938,7 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
             // and walk mode alike (horizontalSpeed 2.5 in its packets).
             airborneHorizontalVelocity_ = f.movement * kAirborneDriftSpeed;
             preserveAirborneMomentum_ = true;
+            airborneMomentumStrafe_ = (f.nowStrafeLeft || f.nowStrafeRight) && !f.nowBackward;
         }
         const glm::vec3 horizontalVelocity =
             (!grounded || startWaterJump) && preserveAirborneMomentum_ && !knockbackActive_
@@ -3300,12 +3302,6 @@ void CameraController::update(float deltaTime) {
     if (nowStrafeLeft) movement += right;
     if (nowStrafeRight) movement -= right;
 
-    if (glm::dot(movement, movement) > 0.0001f) {
-        travelYaw_ = glm::degrees(std::atan2(movement.y, movement.x));
-    } else {
-        travelYaw_ = facingYaw;
-    }
-
     // Everything the two camera modes need from the work above.
     FrameInput f;
     f.physicsDeltaTime = physicsDeltaTime;
@@ -3340,6 +3336,22 @@ void CameraController::update(float deltaTime) {
     // The modes adjust the move - the swim clamp and the flight path both do -
     // and the movement opcodes below are decided from what actually happened.
     movement = f.movement;
+
+    // The lower body aims where the character travels. In the air that is the
+    // momentum it left the ground with (or the drift of a standing jump), not
+    // the keys: native 2.4.3 keeps a strafing jumper's legs turned to the side
+    // to the landing when the keys switch to the other side, are released, or
+    // forward gains a strafe; the legs take the new keys on touching down.
+    const bool airborneMomentum = !grounded && !swimming && preserveAirborneMomentum_ && !knockbackActive_;
+    const glm::vec3 travel = airborneMomentum ? airborneHorizontalVelocity_ : movement;
+    if (glm::dot(travel, travel) > 0.0001f) {
+        travelYaw_ = glm::degrees(std::atan2(travel.y, travel.x));
+        legsFollowTravel_ = airborneMomentum ? airborneMomentumStrafe_
+                                             : (nowStrafeLeft || nowStrafeRight) && !nowBackward;
+    } else {
+        travelYaw_ = facingYaw;
+        legsFollowTravel_ = false;
+    }
 
     // --- Edge-detection: send movement opcodes on state transitions ---
     if (movementCallback) {

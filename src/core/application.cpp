@@ -4119,6 +4119,8 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
             const auto direction = rendering::groundDirection(
                 hasMoveFlag(game::MovementFlags::FORWARD), hasMoveFlag(game::MovementFlags::BACKWARD),
                 hasMoveFlag(game::MovementFlags::STRAFE_LEFT), hasMoveFlag(game::MovementFlags::STRAFE_RIGHT));
+            const auto legs = rendering::airborneLegDirection(
+                entitySpawner_->getRemoteAirborneLegs()[guid], airborne, direction);
             charRenderer->setLocomotionSpeed(instanceId, entity->getLocomotionSpeed());
 
             // Entity owns evaluated movement, including remote ground prediction
@@ -4328,11 +4330,13 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
 
             // Orientation sync
             const float facingYaw = entity->getOrientation() + glm::radians(90.0f);
-            const bool groundLocomotion = !airborne && entity->isActivelyMoving() &&
+            // On the ground the legs follow the keys; in the air (jump or fall)
+            // they keep the direction they left the ground with.
+            const bool legsTravel = (airborne || entity->isActivelyMoving()) &&
                 !_pCreatureFlyingState.count(guid) && !_pCreatureSwimmingState.count(guid);
-            const float renderYaw = facingYaw + (groundLocomotion ? direction.modelYawOffset : 0.0f);
+            const float renderYaw = facingYaw + (legsTravel ? legs.modelYawOffset : 0.0f);
             charRenderer->setInstanceTorsoYaw(instanceId,
-                groundLocomotion && !remoteMount ? direction.torsoYawOffset : 0.0f);
+                legsTravel && !remoteMount ? legs.torsoYawOffset : 0.0f);
             charRenderer->setInstanceRotation(instanceId, glm::vec3(0.0f, 0.0f, renderYaw));
             if (remoteMount) {
                 charRenderer->setInstanceRotation(remoteMount->instanceId,

@@ -2193,8 +2193,6 @@ void Renderer::update(float deltaTime) {
 
         // Movement-facing comes from camera controller and is decoupled from LMB orbit.
         bool taxiFlight = animationController_ && animationController_->isTaxiFlight();
-        bool activeStrafe = (cameraController->isStrafingLeft() || cameraController->isStrafingRight())
-                             && !cameraController->isMovingBackward();
         float torsoYawDeltaDeg = 0.0f;
         if (taxiFlight || cameraController->isServerControlled()) {
             characterYaw = cameraController->getFacingYaw();
@@ -2231,8 +2229,7 @@ void Renderer::update(float deltaTime) {
         float modelYaw = characterYaw;
         // Swim-left/right sequences already contain the lateral body pose.
         // Applying the land-stride yaw and spine counter-rotation twists it twice.
-        if (!taxiFlight && !cameraController->isSwimming() &&
-            cameraController->isMoving() && activeStrafe) {
+        if (!taxiFlight && !cameraController->isSwimming() && cameraController->legsFollowTravel()) {
             modelYaw = cameraController->getTravelYaw();
             torsoYawDeltaDeg = characterYaw - modelYaw;
         }

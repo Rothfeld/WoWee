@@ -4,6 +4,7 @@
 #include "game/remote_jump.hpp"
 #include "rendering/loot_sparkles.hpp"
 #include "rendering/animation/ground_direction.hpp"
+#include <optional>
 #include <algorithm>
 #include <memory>
 
@@ -437,6 +438,32 @@ TEST_CASE("Directional ground pose preserves facing while aligning legs", "[move
     const auto stopped = groundDirection(false, false, false, false);
     REQUIRE(stopped.modelYawOffset == 0);
     REQUIRE(stopped.torsoYawOffset == 0);
+}
+
+TEST_CASE("Legs keep the takeoff direction until landing", "[movement][animation]") {
+    using wowee::rendering::airborneLegDirection;
+    using wowee::rendering::groundDirection;
+    constexpr float halfPi = 1.57079632679f;
+    const auto left = groundDirection(false, false, true, false);
+    const auto right = groundDirection(false, false, false, true);
+    const auto forwardRight = groundDirection(true, false, false, true);
+    const auto none = groundDirection(false, false, false, false);
+    std::optional<wowee::rendering::GroundDirection> held;
+
+    // Strafing right on the ground, jump, switch to left in the air, release.
+    REQUIRE(airborneLegDirection(held, false, right).modelYawOffset == Catch::Approx(-halfPi));
+    REQUIRE(airborneLegDirection(held, true, right).modelYawOffset == Catch::Approx(-halfPi));
+    REQUIRE(airborneLegDirection(held, true, left).modelYawOffset == Catch::Approx(-halfPi));
+    REQUIRE(airborneLegDirection(held, true, forwardRight).modelYawOffset == Catch::Approx(-halfPi));
+    REQUIRE(airborneLegDirection(held, true, none).modelYawOffset == Catch::Approx(-halfPi));
+    // Landing takes the keys.
+    REQUIRE(airborneLegDirection(held, false, left).modelYawOffset == Catch::Approx(halfPi));
+
+    // A standing jump takes the first direction pressed in the air, then holds it.
+    REQUIRE_FALSE(airborneLegDirection(held, true, none).moving);
+    REQUIRE(airborneLegDirection(held, true, left).modelYawOffset == Catch::Approx(halfPi));
+    REQUIRE(airborneLegDirection(held, true, right).modelYawOffset == Catch::Approx(halfPi));
+    REQUIRE(airborneLegDirection(held, false, none).modelYawOffset == 0);
 }
 
 TEST_CASE("Remote jump follows an arc across heartbeats and lands", "[entity][movement]") {
