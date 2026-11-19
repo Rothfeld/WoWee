@@ -386,9 +386,13 @@ std::string AddonManager::loadBlocker(const TocFile& addon) {
         ++depth;
         const std::string depWhy = loadBlocker(*dep);
         --depth;
-        if (const std::string& why = depWhy;
-            why == "INTERFACE_VERSION" || why == "INCOMPATIBLE")
-            return "DEP_" + why;
+        // Transitively, as 2.4.3 reports it: Auc-Stat-Simple needs
+        // Auc-Advanced, which needs an out-of-date Stubby, and both are
+        // DEP_INTERFACE_VERSION there.
+        if (depWhy == "INTERFACE_VERSION" || depWhy == "DEP_INTERFACE_VERSION")
+            return "DEP_INTERFACE_VERSION";
+        if (depWhy == "INCOMPATIBLE" || depWhy == "DEP_INCOMPATIBLE")
+            return "DEP_INCOMPATIBLE";
     }
     return {};
 }
@@ -492,6 +496,16 @@ void AddonManager::loadAllAddons() {
         // InterfaceOptions_AddCategory is FrameXML's - the bootstrap's stub for
         // it is overwritten when the real one loads, and registering against the
         // stub would put the panel nowhere.
+        // The world map's C-built arrow frames belong to WorldMapFrame and its
+        // FULLSCREEN strata, as on 2.4.3 (both report level 1 there with the
+        // map at 0).
+        if (!luaEngine_.executeString(
+                "if WorldMapFrame then\n"
+                "  for _, f in ipairs({PlayerArrowFrame, PlayerArrowEffectFrame}) do\n"
+                "    if f and f:GetParent() ~= WorldMapFrame then f:SetParent(WorldMapFrame) end\n"
+                "  end\n"
+                "end\n", "world map arrow frames"))
+            LOG_WARNING("World map arrow frames: ", luaEngine_.lastError());
         registerWoweeOptionsPanel();
         giveCoinAmountsClearance();
         if (!luaEngine_.executeString(kBindingDeviceEditor)) {
@@ -533,8 +547,9 @@ void AddonManager::loadAllAddons() {
         ui::frameXmlReportUnaccountedElements();
     }
 
-    // Only hand the Lua VM the addons that are actually enabled, so disabled ones
-    // don't appear via GetNumAddOns/IsAddOnLoaded either.
+    // Every addon on disk, disabled ones too: 2.4.3 lists those with
+    // reason DISABLED (GetAddOnInfo's enabled nil), and the AddOns panel
+    // ticks them on from there.
     //
     // Load-on-demand addons are listed too, as WoW lists them: an addon
     // manager panel shows the talent tree and the auction house alongside
@@ -546,7 +561,7 @@ void AddonManager::loadAllAddons() {
     enabled.reserve(addons_.size() + lodAddons_.size());
     for (const auto* list : {&addons_, &lodAddons_})
         for (const auto& addon : *list)
-            if (isAddonEnabled(addon.addonName)) enabled.push_back(addon);
+            enabled.push_back(addon);
     std::stable_sort(enabled.begin(), enabled.end(), [](const TocFile& a, const TocFile& b) {
         return lowered(a.addonName) < lowered(b.addonName);
     });
@@ -555,11 +570,11 @@ void AddonManager::loadAllAddons() {
     luaEngine_.setAddonList(enabled, blockers);
     int loaded = 0, failed = 0, skipped = 0;
     for (const auto& addon : enabled) {
-        if (addon.isLoadOnDemand()) continue;
+        if (addon.isLoadOnDemand() || !isAddonEnabled(addon.addonName)) continue;
         if (loadWithDependencies(addon)) loaded++;
         else failed++;
     }
-    skipped = static_cast<int>(addons_.size() + lodAddons_.size() - enabled.size());
+    for (const auto& addon : enabled) if (!isAddonEnabled(addon.addonName)) ++skipped;
     addonsLoaded_ = true;
     LOG_INFO("AddonManager: loaded ", loaded, " addons",
              (failed > 0 ? (", " + std::to_string(failed) + " failed") : ""),
@@ -570,7 +585,15 @@ void AddonManager::loadAllAddons() {
 
 bool AddonManager::isAddonEnabled(const std::string& addonName) const {
     auto it = addonEnabled_.find(addonName);
-    return (it == addonEnabled_.end()) ? true : it->second;  // default: enabled
+    if (it != addonEnabled_.end()) return it->second;
+    // Never chosen: the .toc's "## DefaultState", enabled unless it says
+    // disabled (2.4.3 lists XPerl_RaidMonitor, "## DefaultState: Disabled",
+    // as DISABLED on first sight).
+    if (const TocFile* toc = findAddon(addonName)) {
+        const auto ds = toc->directives.find("DefaultState");
+        if (ds != toc->directives.end() && lowered(ds->second) == "disabled") return false;
+    }
+    return true;
 }
 
 void AddonManager::setAddonEnabled(const std::string& addonName, bool enabled) {

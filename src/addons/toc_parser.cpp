@@ -41,6 +41,7 @@ static std::string canonicalAddonName(const std::string& onDisk) {
         "Blizzard_AuctionUI",       "Blizzard_BarberShopUI",
         "Blizzard_BattlefieldMinimap", "Blizzard_BindingUI",
         "Blizzard_Calendar",        "Blizzard_CombatLog",
+        "Blizzard_CraftUI",
         "Blizzard_CombatText",      "Blizzard_DebugTools",
         "Blizzard_GlyphUI",         "Blizzard_GMChatUI",
         "Blizzard_GMSurveyUI",      "Blizzard_GuildBankUI",
