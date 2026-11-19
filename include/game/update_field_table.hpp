@@ -152,6 +152,8 @@ enum class UF : uint16_t {
     /// The unit or object the player's camera looks from (Camera::SetView).
     PLAYER_FARSIGHT,
     UNIT_FIELD_CHARMEDBY,
+    /// The unit's pet (low half; the high half follows). TBC: OBJECT_END + 2.
+    UNIT_FIELD_SUMMON,
     /// Who summoned this unit, if anyone. Two fields, low half first, like
     /// every other guid here. A pet, a guardian and a totem all carry it; what
     /// separates them is UNIT_FLAG_PLAYER_CONTROLLED and the creature type.

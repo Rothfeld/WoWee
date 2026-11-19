@@ -435,10 +435,23 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
         if (suffix == "target") return getEntityTargetGuid(gh, guid);
         if (suffix != "pet") return 0;
         if (guid == gh->getPlayerGuid()) return gh->getPetGuid();
+        // A member in sight names its pet in UNIT_FIELD_SUMMON; CMaNGOS sends
+        // SMSG_PARTY_MEMBER_STATS (and with it the pet guid) only for members
+        // out of sight.
+        if (const auto member = gh->getEntityManager().getEntity(guid)) {
+            const uint16_t summon = game::fieldIndex(game::UF::UNIT_FIELD_SUMMON);
+            if (summon != 0xFFFF)
+                return static_cast<uint64_t>(member->getField(summon)) |
+                       (static_cast<uint64_t>(member->getField(summon + 1)) << 32);
+        }
         for (const auto& m : gh->getPartyData().members)
             if (m.guid == guid) return m.petGuid;
         return 0;
     };
+    // partypet1 and raidpet3 are 2.4.3's names for the same pets
+    // (PartyMemberFrame_UpdatePet asks UnitExists("partypet"..id)).
+    if (uid.rfind("partypet", 0) == 0 && uid.size() > 8) return resolveUnitGuid(gh, "party" + uid.substr(8) + "pet");
+    if (uid.rfind("raidpet", 0) == 0 && uid.size() > 7) return resolveUnitGuid(gh, "raid" + uid.substr(7) + "pet");
     if (uid.rfind("party", 0) == 0 && uid.size() > 5) {
         const auto [idx, suffix] = member(5, 4);
         if (idx == 0) return 0;
