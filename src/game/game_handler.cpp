@@ -3337,6 +3337,21 @@ std::string GameHandler::getSpellIconPath(uint32_t spellId) const {
         }
         return getItemIconPath(displayId);
     }
+    // An auto-repeat shot (AttributesEx2 0x20: Auto Shot, the wand's Shoot)
+    // wears the ranged weapon's icon: native 2.4.3 GetSpellTexture("Auto Shot")
+    // and the action button holding it answer INV_Weapon_Rifle_01 for a hunter
+    // with an Old Blunderbuss. Throw (no auto-repeat) keeps Ability_Throw.
+    constexpr uint32_t kAttrEx2AutoRepeat = 0x20;
+    if (const auto* entry = getSpellNameEntry(spellId); entry && (entry->attrEx2 & kAttrEx2AutoRepeat)) {
+        const auto& ranged = inventory.getEquipSlot(EquipSlot::RANGED);
+        if (!ranged.empty()) {
+            uint32_t displayId = ranged.item.displayInfoId;
+            if (displayId == 0) {
+                if (const auto* info = getItemInfo(ranged.item.itemId)) displayId = info->displayInfoId;
+            }
+            if (displayId != 0) return getItemIconPath(displayId);
+        }
+    }
     return spellIconPathResolver_ ? spellIconPathResolver_(spellId) : std::string{};
 }
 
