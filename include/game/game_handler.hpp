@@ -2039,6 +2039,9 @@ public:
 
     // Instance difficulty (0=5N, 1=5H, 2=25N, 3=25H for WotLK)
     uint32_t getInstanceDifficulty() const;
+    /// The player's dungeon difficulty setting (0 normal, 1 heroic), which
+    /// GetDungeonDifficulty and the DUNGEON_DIFFICULTY game objects follow.
+    uint32_t getDungeonDifficulty() const;
 
     /// The bind-or-leave prompt raised on entering an instance in progress.
     /// False when nothing is pending, in which case the out-params are

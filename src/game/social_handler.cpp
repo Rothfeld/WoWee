@@ -840,9 +840,8 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     };
 
     // ---- Instance ----
-    for (auto op : { Opcode::SMSG_INSTANCE_DIFFICULTY, Opcode::MSG_SET_DUNGEON_DIFFICULTY }) {
-        table[op] = [this](network::Packet& packet) { handleInstanceDifficulty(packet); };
-    }
+    table[Opcode::SMSG_INSTANCE_DIFFICULTY] = [this](network::Packet& packet) { handleInstanceDifficulty(packet); };
+    table[Opcode::MSG_SET_DUNGEON_DIFFICULTY] = [this](network::Packet& packet) { handleDungeonDifficulty(packet); };
 
     // ---- Guild / RAF / PvP AFK (moved from GameHandler) ----
     table[Opcode::SMSG_GUILD_DECLINE] = [this](network::Packet& packet) {
@@ -4068,17 +4067,46 @@ void SocialHandler::handleInstanceDifficulty(network::Packet& packet) {
         instanceIsHeroic_ = (instanceDifficulty_ == 1);
     }
     inInstance_ = true;
+    // The difficulty of the map just entered, sent on every world port - in
+    // the open world as 0. It is not the player's dungeon difficulty and 2.4.3
+    // says nothing in chat for it: entering a heroic Magisters' Terrace and
+    // porting back out to Hellfire printed no line natively, where this said
+    // "Dungeon difficulty set to Heroic" and then "... Normal" while the
+    // player was still set to heroic
+    // (_experiments/20261119T143842.heroic_portal_difficulty).
     if (instanceDifficulty_ != prevDifficulty) {
-        const char* diffLabel = instanceDifficultyName(instanceDifficulty_);
-        if (diffLabel) owner_.addSystemChatMessage(std::string("Dungeon difficulty set to ") + diffLabel + ".");
-        // Already noticed and already said - in chat, to the player. The
-        // minimap hangs a difficulty banner off its own corner and rereads
-        // GetInstanceInfo on this, which answers from the value just stored,
-        // so the banner was the one thing not told the difficulty had changed.
+        // The minimap hangs a difficulty banner off its own corner and rereads
+        // GetInstanceInfo on this, which answers from the value just stored.
         if (owner_.addonEventCallbackRef()) {
-            owner_.addonEventCallbackRef()("PLAYER_DIFFICULTY_CHANGED", {});
             owner_.addonEventCallbackRef()("UPDATE_INSTANCE_INFO", {});
         }
+    }
+}
+
+void SocialHandler::handleDungeonDifficulty(network::Packet& packet) {
+    // MSG_SET_DUNGEON_DIFFICULTY: uint32 difficulty, uint32 1, uint32 in group
+    // (CMaNGOS Player::SendDungeonDifficulty). Sent at login and when a group
+    // sets the difficulty of its members - also to a member standing inside
+    // an instance of the other difficulty.
+    assert(packet.getRemainingSize() >= 4);
+    setDungeonDifficulty(packet.readUInt32());
+}
+
+void SocialHandler::setDungeonDifficulty(uint32_t difficulty) {
+    const bool known = dungeonDifficultyKnown_;
+    const uint32_t previous = dungeonDifficulty_;
+    dungeonDifficulty_ = difficulty;
+    dungeonDifficultyKnown_ = true;
+    LOG_INFO("Dungeon difficulty: ", previous, " -> ", difficulty, known ? "" : " (first)");
+    if (!known || previous == difficulty) return;
+    // Natively on its own request (the server answers that with nothing but
+    // SMSG_INSTANCE_RESET) and on a group's MSG_SET_DUNGEON_DIFFICULTY:
+    // "Dungeon Difficulty set to Normal. (All saved instances have been reset)".
+    const char* name = difficulty == 0 ? "\x01" "DUNGEON_DIFFICULTY1"
+                                       : "\x01" "DUNGEON_DIFFICULTY2";
+    owner_.systemGlobal("ERR_DUNGEON_DIFFICULTY_CHANGED_S", {name});
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("PLAYER_DIFFICULTY_CHANGED", {});
     }
 }
 
@@ -5642,6 +5670,11 @@ void SocialHandler::sendSetDifficulty(uint32_t difficulty, bool raid) {
     owner_.getSocket()->send(packet);
     LOG_INFO(raid ? "MSG_SET_RAID_DIFFICULTY sent: difficulty="
                   : "MSG_SET_DUNGEON_DIFFICULTY sent: difficulty=", difficulty);
+    // 2.4.3 takes its own request as the new setting: the server answers a
+    // player outside a group with SMSG_INSTANCE_RESET only, and the native
+    // client switched the entrance portals to heroic at once
+    // (_experiments/20261119T143842.heroic_portal_difficulty, qd_outside_heroic).
+    if (!raid) setDungeonDifficulty(difficulty);
 }
 
 void SocialHandler::toggleHelm() {

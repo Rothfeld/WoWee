@@ -82,6 +82,15 @@ public:
     void onGameObjectInfoReceived(uint32_t entry);
 
 private:
+    /// GAMEOBJECT_TYPE_DUNGEON_DIFFICULTY (31) is drawn only while its data1
+    /// difficulty is the player's dungeon difficulty. False while the type is
+    /// unknown; onGameObjectInfoReceived settles it.
+    [[nodiscard]] bool gameObjectHiddenByDifficulty(uint32_t entry) const;
+    /// Remove the DUNGEON_DIFFICULTY objects of the other difficulty and queue
+    /// those of the current one again.
+    void applyDungeonDifficulty();
+    /// What applyDungeonDifficulty last applied; UINT32_MAX before the first.
+    uint32_t appliedDungeonDifficulty_ = 0xFFFFFFFFu;
     // Freeze or animate a spawned game object based on its type, deferring the
     // decision when the type has not been queried yet.
     void applyGameObjectAnimationPolicy(uint64_t guid, uint32_t entry, uint32_t instanceId);
@@ -856,6 +865,10 @@ private:
         float scale = 1.0f;
     };
     std::deque<PendingGameObjectSpawn> pendingGameObjectSpawns_;
+    /// Every game object the server has in view, by guid, as it was queued:
+    /// a DUNGEON_DIFFICULTY object removed for the other difficulty is spawned
+    /// again from this when the player's difficulty comes back to its own.
+    std::unordered_map<uint64_t, PendingGameObjectSpawn> serverGameObjectSpawns_;
     void processGameObjectSpawnQueue();
 
     // --- Async WMO loading for game objects ---

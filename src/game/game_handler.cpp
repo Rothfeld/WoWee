@@ -4582,6 +4582,10 @@ uint32_t GameHandler::getInstanceDifficulty() const {
     return socialHandler_ ? socialHandler_->getInstanceDifficulty() : 0;
 }
 
+uint32_t GameHandler::getDungeonDifficulty() const {
+    return socialHandler_ ? socialHandler_->getDungeonDifficulty() : 0;
+}
+
 bool GameHandler::isInstanceHeroic() const {
     return socialHandler_ ? socialHandler_->isInstanceHeroic() : false;
 }

@@ -33,6 +33,7 @@
 #include "game/transport_manager.hpp"
 
 #include <cmath>
+#include <cassert>
 #include <algorithm>
 #include <cctype>
 #include <sstream>
@@ -925,7 +926,55 @@ void EntitySpawner::processPendingWmoUploads() {
     pendingWmoUploads_.erase(pendingWmoUploads_.begin());
 }
 
+bool EntitySpawner::gameObjectHiddenByDifficulty(uint32_t entry) const {
+    // GAMEOBJECT_TYPE_DUNGEON_DIFFICULTY: data0 map, data1 difficulty
+    // (CMaNGOS GameObject.h dungeonDifficulty). The server sends both of an
+    // entrance's pair - Hellfire Ramparts' InstancePortal_PurpleDifficulty
+    // (data1 0, plain swirl) and ..._PurpleDifficultyIcon (data1 1, skull) at
+    // one spot - and 2.4.3 draws the one of the player's dungeon difficulty.
+    // Magisters' Terrace has only the skull, inside (188177) and at its
+    // Quel'Danas door (188178), and natively neither is there at normal.
+    // The player's setting decides, not the map's: the skull stayed at
+    // Hellfire after a far port in heroic (SMSG_INSTANCE_DIFFICULTY 0), and
+    // went inside a heroic Magisters' Terrace when joining a normal group
+    // (MSG_SET_DUNGEON_DIFFICULTY 0)
+    // (_experiments/20261119T143842.heroic_portal_difficulty).
+    if (!gameHandler_ || entry == 0) return false;
+    const auto* info = gameHandler_->getCachedGameObjectInfo(entry);
+    if (!info || info->type != 31u) return false;
+    assert(info->hasData);
+    return info->data[1] != gameHandler_->getDungeonDifficulty();
+}
+
+void EntitySpawner::applyDungeonDifficulty() {
+    appliedDungeonDifficulty_ = gameHandler_ ? gameHandler_->getDungeonDifficulty() : 0u;
+    for (const auto& [guid, spawn] : serverGameObjectSpawns_) {
+        const auto* info = gameHandler_ ? gameHandler_->getCachedGameObjectInfo(spawn.entry) : nullptr;
+        if (!info || info->type != 31u) continue;
+        const bool hidden = gameObjectHiddenByDifficulty(spawn.entry);
+        if (hidden) {
+            if (gameObjectInstances_.count(guid)) {
+                despawnGameObject(guid);
+                LOG_INFO("DUNGEON_DIFFICULTY object removed: guid=0x", std::hex, guid, std::dec,
+                         " entry=", spawn.entry, " difficulty=", info->data[1],
+                         " player=", appliedDungeonDifficulty_);
+            }
+            continue;
+        }
+        if (gameObjectInstances_.count(guid)) continue;
+        const bool queued = std::any_of(pendingGameObjectSpawns_.begin(), pendingGameObjectSpawns_.end(),
+                                        [guid](const PendingGameObjectSpawn& p) { return p.guid == guid; });
+        if (queued) continue;
+        pendingGameObjectSpawns_.push_back(spawn);
+        LOG_INFO("DUNGEON_DIFFICULTY object queued: guid=0x", std::hex, guid, std::dec,
+                 " entry=", spawn.entry, " difficulty=", info->data[1]);
+    }
+}
+
 void EntitySpawner::processGameObjectSpawnQueue() {
+    if (gameHandler_ && gameHandler_->getDungeonDifficulty() != appliedDungeonDifficulty_) {
+        applyDungeonDifficulty();
+    }
     // Finalize any completed async WMO loads first
     processAsyncGameObjectResults();
     // Then advance one in-progress upload, which may finish a spawn.
@@ -2003,6 +2052,10 @@ bool EntitySpawner::applyGameObjectDestroyPose(uint32_t instanceId, uint32_t goT
 }
 
 void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
+    if (const auto* info = gameHandler_ ? gameHandler_->getCachedGameObjectInfo(entry) : nullptr;
+        info && info->type == 31u) {
+        applyDungeonDifficulty();
+    }
     // A door's open state can arrive before its query response (BRS
     // portcullises: state 0 at 22:01:01.8, type at 22:01:02.7), when
     // applyGameObjectState could not yet tell it was a door and left its
@@ -2065,6 +2118,7 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
 }
 
 void EntitySpawner::despawnGameObjectFromServer(uint64_t guid) {
+    serverGameObjectSpawns_.erase(guid);
     auto it = gameObjectInstances_.find(guid);
     auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
     if (it != gameObjectInstances_.end() && !it->second.isWmo && m2 &&

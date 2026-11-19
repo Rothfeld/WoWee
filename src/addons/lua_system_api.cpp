@@ -6003,8 +6003,9 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"VehicleAimGetNormPower",   lua_ReturnZero},
                 {"GetMapInfo",               lua_GetMapInfo},
                 {"GetExpansionLevel",        lua_GetExpansionLevel},
-                // The difficulty the player is set to, which this client is
-                // told by SMSG_INSTANCE_DIFFICULTY and kept answering as one.
+                // The difficulty the player is set to (MSG_SET_DUNGEON_DIFFICULTY
+                // and the player's own requests; GetDungeonDifficulty) and the
+                // current map's (SMSG_INSTANCE_DIFFICULTY; the other two).
                 // A dropdown reading a constant shows the wrong tick and, worse,
                 // sends a change nobody asked for when the menu is opened.
                 // The wire counts difficulties from zero and the interface from
@@ -6016,9 +6017,6 @@ void registerSystemLuaAPI(lua_State* L) {
                 // unitpopup's `GetDungeonDifficulty() == 1` heroic-lockout
                 // check was true inside a heroic.
                 //
-                // Both answer from the one value this client tracks. Only one
-                // of the two applies at a time, so that holds until a party
-                // sets a raid difficulty while standing in a dungeon.
                 {"GetCurrentDungeonDifficulty", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             lua_pushinteger(L, (gh ? gh->getInstanceDifficulty() : 0u) + 1u);
@@ -6026,7 +6024,9 @@ void registerSystemLuaAPI(lua_State* L) {
         }},
                 {"GetDungeonDifficulty", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushnumber(L, (gh ? gh->getInstanceDifficulty() : 0u) + 1u);
+            // The setting, not the map's: natively 2 (heroic) after a far
+            // port to the open world, where SMSG_INSTANCE_DIFFICULTY says 0.
+            lua_pushnumber(L, (gh ? gh->getDungeonDifficulty() : 0u) + 1u);
             return 1;
         }},
                 {"GetRaidDifficulty", [](lua_State* L) -> int {

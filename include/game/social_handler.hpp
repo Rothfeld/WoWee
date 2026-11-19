@@ -384,7 +384,11 @@ public:
     [[nodiscard]] const std::vector<InstanceLockout>& getInstanceLockouts() const { return instanceLockouts_; }
 
     // Instance difficulty
+    /// The difficulty of the current map (SMSG_INSTANCE_DIFFICULTY).
     [[nodiscard]] uint32_t getInstanceDifficulty() const { return instanceDifficulty_; }
+    /// The player's dungeon difficulty setting: MSG_SET_DUNGEON_DIFFICULTY
+    /// and the player's own requests. 0 normal, 1 heroic.
+    [[nodiscard]] uint32_t getDungeonDifficulty() const { return dungeonDifficulty_; }
     [[nodiscard]] bool isInstanceHeroic() const { return instanceIsHeroic_; }
     [[nodiscard]] bool isInInstance() const { return inInstance_; }
 
@@ -577,6 +581,8 @@ private:
     void handleBattlefieldList(network::Packet& packet);
     void handleRaidInstanceInfo(network::Packet& packet);
     void handleInstanceDifficulty(network::Packet& packet);
+    void handleDungeonDifficulty(network::Packet& packet);
+    void setDungeonDifficulty(uint32_t difficulty);
     void handleDuelRequested(network::Packet& packet);
     void handleDuelComplete(network::Packet& packet);
     void handleDuelWinner(network::Packet& packet);
@@ -710,6 +716,8 @@ private:
     /// Six item tabs and the money log after them.
     std::array<std::vector<GuildBankLogEntry>, 7> guildBankLogs_;
     uint32_t instanceDifficulty_ = 0;
+    uint32_t dungeonDifficulty_ = 0;
+    bool dungeonDifficultyKnown_ = false;
     bool instanceIsHeroic_ = false;
     bool inInstance_ = false;
 

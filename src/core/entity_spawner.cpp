@@ -508,6 +508,7 @@ void EntitySpawner::queuePlayerSpawn(uint64_t guid, uint8_t raceId, uint8_t gend
 void EntitySpawner::queueGameObjectSpawn(uint64_t guid, uint32_t entry, uint32_t displayId,
                                           float x, float y, float z, float orientation, float scale) {
     pendingGameObjectSpawns_.push_back({guid, entry, displayId, x, y, z, orientation, scale});
+    serverGameObjectSpawns_[guid] = pendingGameObjectSpawns_.back();
 }
 
 void EntitySpawner::queuePlayerEquipment(uint64_t guid,
@@ -532,6 +533,7 @@ void EntitySpawner::clearAllQueues() {
     pendingOnlinePlayerEquipment_.clear();
     deferredEquipmentQueue_.clear();
     pendingGameObjectSpawns_.clear();
+    serverGameObjectSpawns_.clear();
     // Including the one that is already partway onto the GPU. An incremental
     // upload survives a map change otherwise: processPendingWmoUploads() only
     // gives up when the renderer pointer is null, and a transition leaves the
@@ -570,6 +572,7 @@ void EntitySpawner::despawnAllGameObjects() {
     for (const auto& [g, _] : gameObjectInstances_) guids.push_back(g);
     for (auto g : guids) despawnGameObject(g);
     removeFadingGameObjects();
+    serverGameObjectSpawns_.clear();
 }
 
 // --- Methods extracted from Application (with comments preserved) ---

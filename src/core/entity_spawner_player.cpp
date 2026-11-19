@@ -1436,6 +1436,13 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
     }
     if (!gameObjectLookupsBuilt_) return;
 
+    if (gameObjectHiddenByDifficulty(entry)) {
+        despawnGameObject(guid);
+        LOG_DEBUG("GO spawn skipped, other dungeon difficulty: guid=0x", std::hex, guid, std::dec,
+                  " entry=", entry);
+        return;
+    }
+
     LOG_DEBUG("GO spawn attempt: guid=0x", std::hex, guid, std::dec,
              " displayId=", displayId, " entry=", entry,
              " pos=(", x, ", ", y, ", ", z, ")");
