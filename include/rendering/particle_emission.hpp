@@ -175,7 +175,9 @@ inline glm::vec3 particleBirthPosition(const glm::mat4& previous, const glm::mat
                     glm::vec3(previous * glm::vec4(local, 1.0f)), back);
 }
 
-inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model) {
+inline bool particleMovesInYards(uint32_t flags, bool mapDoodad);
+
+inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model, bool mapDoodad) {
     // Gravity pulls along the model's -Z, never the emitter bone's: the
     // Core Hound's drool falls straight down on the original while its head
     // bone is pitched. The model placement keeps its scale and orientation.
@@ -184,7 +186,7 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
     // frame, as they move (particleWorldVelocityBasis).
     if (flags & (kParticleNoTrail | kParticleModelFrame)) return {0, 0, -1};
     const glm::vec3 down = glm::mat3(model) * glm::vec3(0, 0, -1);
-    return flags & kParticleTravelsInYards ? glm::normalize(down) : down;
+    return particleMovesInYards(flags, mapDoodad) ? glm::normalize(down) : down;
 }
 
 // Flag 0x8: a detached particle (neither NoTrail nor in the model's frame)
@@ -204,13 +206,23 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
 // flames (0x339, NoTrail, scale 6) rise with the model's scale in the original.
 // Gravity follows the velocity's rule; it is not observed separately for
 // emitters without 0x8.
-inline bool particleMovesInYards(uint32_t flags) {
-    return !(flags & (kParticleNoTrail | kParticleModelFrame)) && (flags & kParticleTravelsInYards);
+// Map doodads (ADT MDDF and WMO MODD placements; not game objects, units or
+// spell visuals) move at their placement scale with 0x8 as well. Magisters'
+// Terrace's throne orb (BloodElf_PowerOrb_Green.m2, MODD 964, scale 0.358,
+// smoke #5/#6 0x629 at 2.2-2.8 yd/s) lifts its green wisps about 1 yd over
+// the orb in the original; in yards they rose 4-5 yd up the throne. A Wild
+// Shore bonfire (OrcBonfire.m2 at -14695.8 503.2, scale 0.47, flames #1 0x29
+// at 1.11 yd/s for 2 s) keeps its flames inside the log pile in the
+// original; in yards they stood a log pile's height above it.
+inline bool particleMovesInYards(uint32_t flags, bool mapDoodad) {
+    return !mapDoodad && !(flags & (kParticleNoTrail | kParticleModelFrame)) &&
+           (flags & kParticleTravelsInYards);
 }
 
-inline glm::mat3 particleWorldVelocityBasis(uint32_t flags, const glm::mat4& birthTransform) {
+inline glm::mat3 particleWorldVelocityBasis(uint32_t flags, const glm::mat4& birthTransform,
+                                            bool mapDoodad) {
     glm::mat3 basis(birthTransform);
-    if (!particleMovesInYards(flags)) return basis;
+    if (!particleMovesInYards(flags, mapDoodad)) return basis;
     for (int c = 0; c < 3; ++c) basis[c] = glm::normalize(basis[c]);
     return basis;
 }

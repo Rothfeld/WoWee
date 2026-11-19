@@ -43,7 +43,15 @@ longer columns at GO size 5 than at 0.5. With `0x8`: the Sunwell gate barrier (G
 otherwise threw its sparks 8.7x too fast as radial streaks past the doorway
 (native: an even fire wall; mean-image correlation 0.82 -> 0.89), and
 Netherspite's Void Zone (PortalofKathune.m2, display scale 0.1, 0x229) lifted
-its smoke a tenth as high. Attached particles live in the scaled bone or
+its smoke a tenth as high. Map doodads (ADT MDDF and WMO MODD placements) are the
+exception: their particles move at the placement scale with `0x8` too.
+Magisters' Terrace's throne orb (`BloodElf_PowerOrb_Green.m2`, MODD 964,
+scale 0.358, smoke #5/#6 0x629 at 2.2-2.8 yd/s) lifts its green wisps about
+1 yd over the orb in the original, 4-5 yd up the throne in yards; a Wild
+Shore bonfire (`OrcBonfire.m2`, -14695.8 503.2, scale 0.47, flames #1 0x29)
+keeps its flames inside the log pile, where in yards they stood a pile's
+height above it. Whether the rule is the owner kind or a separate object
+scale that `0x8` removes is not established. Attached particles live in the scaled bone or
 model frame: Brutallus' NoTrail flames (scale 6) rise with it in the original;
 moving them in yards left a flat band below his spikes.
 

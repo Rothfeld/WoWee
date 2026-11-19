@@ -163,8 +163,8 @@ TEST_CASE("Attached particle motion retains the scaled and rotated basis", "[m2]
     for (const uint32_t flags : {0x89u,0x39u,0x4429u}) {
         const auto birth = particleBirthTransform(flags,model,bone);
         const auto render = particleRenderTransform(flags,model,bone);
-        CHECK(particleWorldVelocityBasis(flags, birth) == glm::mat3(birth));
-        const auto acceleration = particleGravityDirection(flags,model)*gravity;
+        CHECK(particleWorldVelocityBasis(flags, birth, false) == glm::mat3(birth));
+        const auto acceleration = particleGravityDirection(flags,model,false)*gravity;
         const auto simulated = birth*localPosition + birth*localVelocity*seconds + glm::vec4(acceleration*(.5f*seconds*seconds),0);
         const auto actual = render*simulated;
         CHECK(actual.x == Catch::Approx(expected.x).margin(.00001f));
@@ -178,7 +178,7 @@ TEST_CASE("Detached particle gravity ignores the emitter bone's rotation", "[m2]
     // Core Hound drool: the head bone is pitched, the drops fall straight down.
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(30.0f),glm::vec3(0,0,1)),glm::vec3(2));
     for (const uint32_t flags : {0x29u,0x89u}) {
-        const auto down = particleGravityDirection(flags,model);
+        const auto down = particleGravityDirection(flags,model,false);
         const glm::vec3 expected(0,0,-1);
         CHECK(down.x == Catch::Approx(expected.x).margin(.00001f));
         CHECK(down.y == Catch::Approx(expected.y).margin(.00001f));
@@ -544,9 +544,9 @@ TEST_CASE("Detached particles move in yards whatever the placement scale", "[m2]
     // gravity -1.39 lifts its smoke 1.56 yd in 1.5 s, not a tenth of that.
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(40.0f),glm::vec3(0,0,1)),glm::vec3(0.1f));
     const auto birth = particleBirthTransform(0x229u, model, glm::mat4(1));
-    const auto basis = particleWorldVelocityBasis(0x229u, birth);
+    const auto basis = particleWorldVelocityBasis(0x229u, birth, false);
     CHECK(glm::length(basis * glm::vec3(0,0,1.1111f)) == Catch::Approx(1.1111f));
-    CHECK(glm::length(particleGravityDirection(0x229u, model)) == Catch::Approx(1.0f));
+    CHECK(glm::length(particleGravityDirection(0x229u, model, false)) == Catch::Approx(1.0f));
     // Its birth point still takes the placement: a 25 yd area is 2.5 yd.
     CHECK(glm::length(glm::vec3(birth * glm::vec4(25,0,0,1))) == Catch::Approx(2.5f));
 }
@@ -557,10 +557,24 @@ TEST_CASE("Detached particles without flag 0x8 move at placement scale", "[m2][p
     // sparkle scale 3.52: rises about 3 yd in the original.
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(40.0f),glm::vec3(0,0,1)),glm::vec3(3.52f));
     const auto birth = particleBirthTransform(0x101u, model, glm::mat4(1));
-    const auto basis = particleWorldVelocityBasis(0x101u, birth);
+    const auto basis = particleWorldVelocityBasis(0x101u, birth, false);
     CHECK(glm::length(basis * glm::vec3(0,0,0.5556f)) * 1.6f == Catch::Approx(3.129f).margin(0.001f));
-    CHECK(glm::length(particleGravityDirection(0x101u, model)) == Catch::Approx(3.52f));
-    CHECK(glm::length(particleGravityDirection(0x109u, model)) == Catch::Approx(1.0f));
+    CHECK(glm::length(particleGravityDirection(0x101u, model, false)) == Catch::Approx(3.52f));
+    CHECK(glm::length(particleGravityDirection(0x109u, model, false)) == Catch::Approx(1.0f));
+}
+
+TEST_CASE("Map doodad particles move at placement scale with flag 0x8", "[m2][particle]") {
+    using namespace wowee::rendering;
+    // Magisters' Terrace throne orb: BloodElf_PowerOrb_Green.m2, MODD scale
+    // 0.358, smoke #5 0x629 at 2.222 yd/s: 0.8 yd/s in the original.
+    const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(89.0f),glm::vec3(0,0,1)),glm::vec3(0.358f));
+    const auto birth = particleBirthTransform(0x629u, model, glm::mat4(1));
+    CHECK(glm::length(particleWorldVelocityBasis(0x629u, birth, true) * glm::vec3(0,0,2.222f))
+          == Catch::Approx(0.7955f).margin(0.001f));
+    CHECK(glm::length(particleGravityDirection(0x629u, model, true)) == Catch::Approx(0.358f));
+    // The same emitter on a game object or unit keeps yards.
+    CHECK(glm::length(particleWorldVelocityBasis(0x629u, birth, false) * glm::vec3(0,0,2.222f))
+          == Catch::Approx(2.222f));
 }
 
 TEST_CASE("Sprites turn by spin times age", "[m2][particle]") {

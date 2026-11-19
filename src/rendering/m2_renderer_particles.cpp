@@ -89,6 +89,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
     }
 
     std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
+    // An ADT or WMO placement: its scale moves the particles whatever 0x8
+    // says (particleMovesInYards).
+    const bool mapDoodad = !inst.isGameObject && !inst.isSpellVisual && !inst.externalPose;
 
     for (size_t ei = 0; ei < gpu.particleEmitters.size(); ei++) {
         const auto& em = gpu.particleEmitters[ei];
@@ -197,7 +200,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
                                                          localPos, p.life, dt));
             p.birthPosition = p.position;
-            p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix);
+            p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix, mapDoodad);
             p.birthBasis = glm::mat3(birthTransform);
             p.twinkleSeed = static_cast<uint32_t>(particleRng_());
             if (!em.geometryModel.empty()) {
@@ -224,7 +227,7 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             const float variation = interpFloat(em.speedVariation, inst.animTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
             speed *= 1.0f + distN(particleRng_) * variation;
-            const glm::mat3 rotMat = particleWorldVelocityBasis(em.flags, birthTransform);
+            const glm::mat3 rotMat = particleWorldVelocityBasis(em.flags, birthTransform, mapDoodad);
             p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
 
             const float gravity = interpFloat(em.gravity, inst.animTime,
