@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 #include <glm/glm.hpp>
 #include "pipeline/m2_loader.hpp"
@@ -28,8 +29,10 @@ inline constexpr uint32_t kParticleInModelSpace = 0x80;
 // sit on animated bones: hunter shot missiles, hanging braziers).
 inline constexpr uint32_t kParticleFollowsModel = 0x4000;
 inline constexpr uint32_t kParticleModelFrame = kParticleInModelSpace | kParticleFollowsModel;
-// Sprites lie flat in the model's XY plane (ground rings: WaterElemental
-// #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001).
+// Sprites lie flat in the XY plane of their emitter bone, as placed in the
+// world (particleQuadAxes). Ground rings stand on unrotated bones
+// (WaterElemental #16 WhiteRingNoiseWater, #21 Shockwave10, flags 0x1001);
+// 145 of 363 TBC XYQuad emitters sit under a rotated or billboard bone.
 inline constexpr uint32_t kParticleXYQuad = 0x1000;
 inline constexpr uint32_t kParticlePinned = 0x400;
 // Pre-264 flag 0x8000 marks an emitter that bears nothing while its owner
@@ -44,8 +47,19 @@ inline constexpr uint32_t kParticlePinned = 0x400;
 // the fel fire in a dead Shivarra's hands (Shivan.m2 #0-#7, 0x29-0x239).
 inline constexpr uint32_t kParticleStopsOnHeldFrame = 0x8000;
 // Particle vertex: position 3, colour 4, half width 1, cell 1, tail or
-// XYQuad axis 3, rotation 1 (radians).
-inline constexpr size_t kParticleVertexFloats = 13;
+// XYQuad X axis 3, rotation 1 (radians), XYQuad Y axis 3.
+inline constexpr size_t kParticleVertexFloats = 16;
+
+/// World axes an XYQuad sprite spans: the emitter bone's X and Y as the
+/// placed model carries them (`placedBone` = model matrix * bone matrix),
+/// unit length. Time Rift (display 18877, time_rift1.m2) has its ring
+/// emitters 0-2 (0x1219/0x121b) on bones 28-30 under bone 17, which turns
+/// 90 degrees about Y, under bone 3, a Z-cylindrical billboard: the ring
+/// faces the camera in the original. Laid in the model's XY plane it lay
+/// flat over the ground like a halo.
+inline std::pair<glm::vec3, glm::vec3> particleQuadAxes(const glm::mat4& placedBone) {
+    return {glm::normalize(glm::vec3(placedBone[0])), glm::normalize(glm::vec3(placedBone[1]))};
+}
 
 // Pre-264 emitter +0x198 is a spin rate in radians per second: a sprite
 // turns by spin * age. Christmas Tree (Medium), GO 178557 (spin 0.5, 3 s life,
@@ -111,10 +125,17 @@ inline float particlePlacementScale(const glm::mat4& model) {
 //   (median blob) at sparkle scales 1, 3.5 and 4.7 in the original, while its
 //   spread and rise grow; Light of Elune (feralaslightblue.m2, 0x1) drops the
 //   same small dots at GO sizes 0.5, 2 and 5.
-// Unobserved: attached emitters (NoTrail or model frame) without 0x20 (235).
+// - NoTrail (0x10) emitters, drawn in their bone's frame, take the
+//   placement scale with or without 0x20: Time Rift (display 18877, scale 4,
+//   time_rift1.m2) draws its rings (#0/#1, 0x1219, authored half width
+//   about 2.5) about 19 yd across at 58 yd in the original, its toon smoke
+//   (#3, 0x219) as a cloud of the same size; at authored size WoWee drew
+//   them a quarter as large
+//   (_experiments/20261119T082500Z.orient_shadow/, sweep_fix).
+// Unobserved: model-frame emitters (0x80/0x4000, not NoTrail) without 0x20.
 inline constexpr uint32_t kParticleScaledSprite = 0x20;
 inline float particleSpriteHalfWidth(uint32_t flags, float authoredScale, float placementScale) {
-    return flags & kParticleScaledSprite ? authoredScale * placementScale : authoredScale;
+    return flags & (kParticleScaledSprite | 0x10u) ? authoredScale * placementScale : authoredScale;
 }
 
 // NoTrail particles remain attached to the animated emitter. Other particles

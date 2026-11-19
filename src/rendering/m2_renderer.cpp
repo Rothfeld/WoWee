@@ -386,6 +386,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
             {.location = 3, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 8 * sizeof(float)},          // tile
             {.location = 4, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 9 * sizeof(float)}, // tail displacement
             {.location = 5, .binding = 0, .format = VK_FORMAT_R32_SFLOAT, .offset = 12 * sizeof(float)},         // rotation
+            {.location = 6, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 13 * sizeof(float)}, // XYQuad Y axis
         };
 
         auto buildParticlePipeline = [&](VkPipelineColorBlendAttachmentState blend) -> VkPipeline {

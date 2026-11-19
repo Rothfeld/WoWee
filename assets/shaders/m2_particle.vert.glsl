@@ -34,6 +34,7 @@ layout(location = 2) in float aSize;
 layout(location = 3) in float aTile;
 layout(location = 4) in vec3 aTail;
 layout(location = 5) in float aRotation;
+layout(location = 6) in vec3 aQuadY;
 
 layout(location = 0) out vec4 vColor;
 layout(location = 1) out float vTile;
@@ -59,9 +60,10 @@ void main() {
                                    vec2(0,0), vec2(1,1), vec2(0,1));
     vUV = corners[gl_VertexIndex];
     if (aSize < 0.0) {
-        // XYQuad: flat in the model's XY plane; aTail is the model X axis.
+        // XYQuad: flat in the emitter bone's XY plane; aTail is its X axis,
+        // aQuadY its Y axis (world space).
         vec3 axisX = aTail;
-        vec3 axisY = normalize(cross(vec3(0.0, 0.0, 1.0), axisX));
+        vec3 axisY = aQuadY;
         vec2 c = (vUV * 2.0 - 1.0) * -aSize;
         viewPos4 = view * vec4(aPos + axisX * c.x + axisY * c.y, 1.0);
     } else if (dot(aTail, aTail) > 0.00000001) {

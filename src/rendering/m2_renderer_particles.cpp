@@ -896,6 +896,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         // animFrame depends only on inst.animTime + totalTiles, so it's also
         // emitter-stable within one frame.
         glm::mat4 cachedParticleTransform(1.0f);
+        std::pair<glm::vec3, glm::vec3> cachedQuadAxes{glm::vec3(1, 0, 0), glm::vec3(0, 1, 0)};
 
         // How far this instance's particles actually reach, against how far
         // the model says it extends. A fire twice the height of the hut behind
@@ -931,12 +932,12 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             if (p.emitterIndex != lastEmitterIdx) {
                 lastEmitterIdx = p.emitterIndex;
                 cachedEm = &gpu.particleEmitters[p.emitterIndex];
-                glm::mat4 bone(1.0f);
-                if ((cachedEm->flags & kParticleNoTrail) && !gpu.bones.empty()) {
-                    bone = inst.boneMatrices.at(cachedEm->bone);
-                }
+                const glm::mat4 emitterBone = gpu.bones.empty() ? glm::mat4(1.0f)
+                                                                : inst.boneMatrices.at(cachedEm->bone);
+                const glm::mat4 bone = (cachedEm->flags & kParticleNoTrail) ? emitterBone : glm::mat4(1.0f);
                 cachedParticleTransform = particleRenderTransform(
                     cachedEm->flags, inst.modelMatrix, bone);
+                cachedQuadAxes = particleQuadAxes(inst.modelMatrix * emitterBone);
 
                 cachedTex = whiteTexture_.get();
                 if (p.emitterIndex < static_cast<int>(gpu.particleTextures.size())) {
@@ -1000,14 +1001,15 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[4] = color.g;
                 vd[5] = color.b;
                 vd[6] = alpha;
-                // XYQuad (flag 0x1000) sprites lie in the model's XY plane
-                // instead of facing the camera. Marked by a negative size;
-                // the tail slot carries the model X axis for the quad.
+                // XYQuad (flag 0x1000) sprites lie in their emitter bone's
+                // XY plane instead of facing the camera. Marked by a negative
+                // size; the tail slot carries the quad's X axis, the last
+                // three floats its Y axis.
                 const float halfWidth = particleSpriteHalfWidth(em.flags, scale, placementScale);
                 vd[7] = xyQuad ? -halfWidth : halfWidth;
                 const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
                 vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
-                const glm::vec3 displacement = xyQuad ? glm::normalize(glm::vec3(inst.modelMatrix[0]))
+                const glm::vec3 displacement = xyQuad ? cachedQuadAxes.first
                     : tail ? particleTailVector(em.flags, worldVelocity, em.tailLength,
                         glm::vec3(cachedParticleTransform * glm::vec4(p.birthPosition, 1)) - worldPosition)
                     : glm::vec3(0);
@@ -1015,6 +1017,10 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[10] = displacement.y;
                 vd[11] = displacement.z;
                 vd[12] = particleRotation(em.spin, p.life);
+                const glm::vec3 quadY = xyQuad ? cachedQuadAxes.second : glm::vec3(0);
+                vd[13] = quadY.x;
+                vd[14] = quadY.y;
+                vd[15] = quadY.z;
                 ++vbWritten;
                 ++particleRuns_.back().count;
             }

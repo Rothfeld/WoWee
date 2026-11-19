@@ -260,7 +260,7 @@ TEST_CASE("Particle sprites keep authored lifecycle scale above one yard", "[m2]
     CHECK(particleSpriteHalfWidth(0x0u, 0.0000278f, 1.0f) == Catch::Approx(0.0000278f));
 }
 
-TEST_CASE("Only emitters with flag 0x20 size their sprites by placement", "[m2][particle]") {
+TEST_CASE("Emitters with flag 0x20 or NoTrail size their sprites by placement", "[m2][particle]") {
     using wowee::rendering::particleSpriteHalfWidth;
     // LootFX.m2 over GnomeBigGear (sparkle scale 3.52): star #3 (0x229, mid
     // scale 0.0833) grows with it, flare #0 (0x101, 0.1389) stays authored.
@@ -270,6 +270,21 @@ TEST_CASE("Only emitters with flag 0x20 size their sprites by placement", "[m2][
     CHECK(particleSpriteHalfWidth(0x1u, 0.1389f, 5.0f) == Catch::Approx(0.1389f));
     // Mark of Kael'Thas, GO size 5, flames 0x521.
     CHECK(particleSpriteHalfWidth(0x521u, 0.5556f, 5.0f) == Catch::Approx(2.778f));
+    // Time Rift (display scale 4): ring #1 (0x1219) and toon smoke #3 (0x219)
+    // ride their bones without 0x20 and grow with the creature.
+    CHECK(particleSpriteHalfWidth(0x1219u, 2.461f, 4.0f) == Catch::Approx(9.844f));
+    CHECK(particleSpriteHalfWidth(0x219u, 2.908f, 4.0f) == Catch::Approx(11.632f));
+}
+
+TEST_CASE("XYQuad sprites span their emitter bone's placed X and Y", "[m2][particle]") {
+    // Time Rift ring bones: a 90 degree turn about Y under the creature's
+    // placement turns the quad's X axis down and keeps Y.
+    const glm::mat4 placed = glm::scale(glm::mat4(1.0f), glm::vec3(4.0f)) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 1, 0));
+    const auto [x, y] = wowee::rendering::particleQuadAxes(placed);
+    CHECK(x.z == Catch::Approx(-1.0f));
+    CHECK(glm::length(x) == Catch::Approx(1.0f));
+    CHECK(y.y == Catch::Approx(1.0f));
 }
 
 TEST_CASE("Legacy emitters keep authored all-zero lifecycle alpha", "[m2][particle]") {

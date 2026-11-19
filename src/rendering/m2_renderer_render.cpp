@@ -2106,6 +2106,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             *dst++ = 0.0f;
             *dst++ = 0.0f;
             *dst++ = 0.0f;  // rotation
+            *dst++ = 0.0f;  // XYQuad Y axis (none)
+            *dst++ = 0.0f;
+            *dst++ = 0.0f;
         }
 
         VkDeviceSize offset = 0;
