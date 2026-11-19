@@ -1854,9 +1854,14 @@ bool AddonManager::unloadAll() {
 
 bool AddonManager::reload() {
     LOG_INFO("AddonManager: reloading all addons...");
-    // Build 8606 sends PLAYER_LOGOUT on /reload before it writes saved
-    // variables; Recount, Titan and others store their state from it.
-    if (addonsLoaded_) luaEngine_.fireEvent("PLAYER_LOGOUT", {});
+    // Build 8606 sends PLAYER_LEAVING_WORLD and PLAYER_LOGOUT on /reload
+    // before it writes saved variables; Recount, Titan and others store
+    // their state from them.
+    // PLAYER_LEAVING_WORLD first, as 2.4.3 sends both on /reload.
+    if (addonsLoaded_) {
+        luaEngine_.fireEvent("PLAYER_LEAVING_WORLD", {});
+        luaEngine_.fireEvent("PLAYER_LOGOUT", {});
+    }
     if (!unloadAll()) {
         LOG_ERROR("AddonManager: failed to reinitialize Lua VM during reload");
         return false;

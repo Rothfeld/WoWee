@@ -7363,6 +7363,15 @@ void LuaEngine::registerCoreAPI() {
     lua_pushcfunction(L_, lua_WoweePriv);
     lua_setglobal(L_, "__WoweePriv");
 
+    lua_pushcfunction(L_, [](lua_State* L) -> int {
+        lua_getfield(L, LUA_REGISTRYINDEX, "wowee_logged_in");
+        const bool in = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        if (in) lua_pushnumber(L, 1); else lua_pushnil(L);
+        return 1;
+    });
+    lua_setglobal(L_, "IsLoggedIn");
+
     lua_pushcfunction(L_, lua_WoweeCallScript);
     lua_setglobal(L_, "__WoweeCallScript");
 
@@ -10162,7 +10171,6 @@ void LuaEngine::registerCoreAPI() {
         // Misc compatibility stubs
         // GetScreenWidth, GetScreenHeight, GetNumLootItems are now C functions
         // GetFramerate is now a C function
-        "function IsLoggedIn() return true end\n"
         "function StaticPopup_Show() end\n"
         "function StaticPopup_Hide() end\n"
         // UI Panel management - Show/Hide standard WoW panels
@@ -10763,6 +10771,15 @@ void LuaEngine::fireEvent(const std::string& eventName,
                            const std::vector<std::string>& args) {
     if (!L_) return;
 
+    // IsLoggedIn() is 1 from PLAYER_LOGIN on, nil before: measured on 2.4.3,
+    // nil while addon files run (at login and on /reload) and 1 inside the
+    // PLAYER_LOGIN handlers. LibRock-1.0 enables its addons at PLAYER_LOGIN
+    // when it was nil at load; answering true throughout enabled PitBull
+    // inside its own ADDON_LOADED, before the modules it loads existed.
+    if (eventName == "PLAYER_LOGIN") {
+        lua_pushboolean(L_, 1);
+        lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_logged_in");
+    }
     if (eventName == "COMBAT_LOG_EVENT_UNFILTERED") recordCombatLogEvent(args);
     if (eventName == game::classic_combat::kLineEvent) {
         fireClassicCombatLine(args);

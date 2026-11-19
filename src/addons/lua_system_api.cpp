@@ -2087,7 +2087,23 @@ int pushAddonRegistryAndIndex(lua_State* L, int arg) {
 static int lua_GetAddOnInfo(lua_State* L) {
     // Accept index (1-based) or addon name
     const int idx = pushAddonRegistryAndIndex(L, 1);
-    if (idx < 1) { lua_pushnil(L); return 1; }
+    if (idx < 1) {
+        // As build 8606: a name it does not know answers the name, four nils,
+        // "MISSING" and "INSECURE" (PitBull's modules test the sixth value
+        // against "MISSING" to decide whether they are running from their
+        // own folder); an index out of range raises.
+        if (lua_type(L, 1) == LUA_TNUMBER) {
+            lua_getfield(L, LUA_REGISTRYINDEX, "wowee_addon_count");
+            const int count = static_cast<int>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+            return luaL_error(L, "AddOn index must be in the range of 1 to %d", count);
+        }
+        lua_pushvalue(L, 1);
+        for (int i = 0; i < 4; ++i) lua_pushnil(L);
+        lua_pushstring(L, "MISSING");
+        lua_pushstring(L, "INSECURE");
+        return 7;
+    }
 
     lua_rawgeti(L, -1, idx);
     if (!lua_istable(L, -1)) { lua_pop(L, 2); lua_pushnil(L); return 1; }
