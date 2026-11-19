@@ -3303,6 +3303,9 @@ public:
     // Mount display changes for visible players other than the local character.
     using OtherPlayerMountCallback = std::function<void(uint64_t guid, uint32_t mountDisplayId)>;
     void setOtherPlayerMountCallback(OtherPlayerMountCallback cb) { otherPlayerMountCallback_ = std::move(cb); }
+    /// SMSG_MOUNTSPECIAL_ANIM: another player's mount rears (they pressed jump standing).
+    using MountSpecialAnimCallback = std::function<void(uint64_t guid)>;
+    void setMountSpecialAnimCallback(MountSpecialAnimCallback cb) { mountSpecialAnimCallback_ = std::move(cb); }
 
     // Taxi terrain precaching callback
     using TaxiPrecacheCallback = std::function<void(const std::vector<glm::vec3>&)>;
@@ -3364,6 +3367,7 @@ public:
     // Positive = nose up, negative = nose down.
     void setMovementPitch(float radians) { movementInfo.pitch = radians; }
     void dismount();
+    void sendMountSpecialAnim();
     /// In the air on a flying mount or not - see MovementHandler::setFlightAirborne.
     void setFlightAirborne(bool airborne);
 
@@ -5503,6 +5507,7 @@ private:
     mutable bool languageNamesLoaded_ = false;
     OtherPlayerLevelUpCallback otherPlayerLevelUpCallback_;
     OtherPlayerMountCallback otherPlayerMountCallback_;
+    MountSpecialAnimCallback mountSpecialAnimCallback_;
     AchievementEarnedCallback achievementEarnedCallback_;
     MountCallback mountCallback_;
     TaxiPrecacheCallback taxiPrecacheCallback_;

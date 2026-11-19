@@ -1778,8 +1778,10 @@ void GameHandler::registerRemainingOpcodes() {
     };
     // A plain guid: Unit::SendMountSpecialAnim writes GetGUID(), not the
     // packed form, so reading it packed consumed the wrong number of bytes.
-    dispatchTable_[Opcode::SMSG_MOUNTSPECIAL_ANIM] = [](network::Packet& packet) {
-        if (packet.hasRemaining(8)) (void)packet.readUInt64();
+    dispatchTable_[Opcode::SMSG_MOUNTSPECIAL_ANIM] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(8)) return;
+        const uint64_t guid = packet.readUInt64();
+        if (mountSpecialAnimCallback_) mountSpecialAnimCallback_(guid);
     };
     dispatchTable_[Opcode::SMSG_CHAR_CUSTOMIZE] = [this](network::Packet& packet) {
         if (packet.hasRemaining(1)) {

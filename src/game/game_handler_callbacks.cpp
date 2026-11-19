@@ -2505,6 +2505,16 @@ void GameHandler::dismount() {
     if (movementHandler_) movementHandler_->dismount();
 }
 
+void GameHandler::sendMountSpecialAnim() {
+    // Jump pressed standing on a mount: the mount rears (MountSpecial) and
+    // the server shows it to everyone else (SMSG_MOUNTSPECIAL_ANIM, sent to
+    // the set without the sender). No body.
+    if (!socket || state != WorldState::IN_WORLD) return;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_MOUNTSPECIAL_ANIM));
+    socket->send(pkt);
+    LOG_INFO("Sent CMSG_MOUNTSPECIAL_ANIM");
+}
+
 // ============================================================
 // Arena / Battleground Handlers
 // ============================================================

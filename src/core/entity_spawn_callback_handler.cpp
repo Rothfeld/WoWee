@@ -74,6 +74,18 @@ void EntitySpawnCallbackHandler::setupCallbacks() {
         entitySpawner_.setRemotePlayerMountDisplayId(guid, mountDisplayId);
     });
 
+    // Native 2.4.3 rears the other player's mount (MountSpecial) once and
+    // returns it to what it was doing; the rider stays seated.
+    gameHandler_.setMountSpecialAnimCallback([this](uint64_t guid) {
+        const auto* mount = entitySpawner_.getRemotePlayerMount(guid);
+        auto* cr = renderer_.getCharacterRenderer();
+        if (!mount || mount->instanceId == 0 || !cr) return;
+        uint32_t current = rendering::anim::STAND;
+        float t = 0.0f, duration = 0.0f;
+        cr->getAnimationState(mount->instanceId, current, t, duration);
+        cr->playAnimation(mount->instanceId, rendering::anim::MOUNT_SPECIAL, false, current);
+    });
+
     // Creature despawn callback (online mode) - remove creature models
     gameHandler_.setCreatureDespawnCallback([this](uint64_t guid) {
         entitySpawner_.despawnCreatureFromServer(guid);

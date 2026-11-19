@@ -397,7 +397,6 @@ public:
     [[nodiscard]] bool isAutoFollowing() const { return autoFollowTarget_ != nullptr; }
 
     // Trigger mount jump (applies vertical velocity for physics hop)
-    void triggerMountJump();
 
     // Apply server-driven knockback impulse.
     // dir: render-space 2D direction unit vector (from vcos/vsin in packet)
@@ -925,13 +924,6 @@ private:
     static constexpr float WOW_TURN_SPEED = 180.0f;  // Keyboard turn deg/sec
     static constexpr float WOW_GRAVITY = -19.29f;
     static constexpr float WOW_JUMP_VELOCITY = 7.96f;
-    static constexpr float MOUNT_GRAVITY = -18.0f;       // Snappy WoW-feel jump
-    static constexpr float MOUNT_JUMP_HEIGHT = 1.0f;    // Desired jump height in meters
-
-    // Computed jump velocity using vz = sqrt(2 * g * h)
-    static inline float getMountJumpVelocity() {
-        return std::sqrt(2.0f * std::abs(MOUNT_GRAVITY) * MOUNT_JUMP_HEIGHT);
-    }
 
     // Server-driven speed overrides (0 = use hardcoded default)
     float runSpeedOverride_ = 0.0f;

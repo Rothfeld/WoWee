@@ -259,10 +259,21 @@ private:
     float mountRoll_ = 0.0f;       // External roll for taxi flights (lean roll computed by MountFSM)
     bool taxiFlight_ = false;
     bool m2TransportRiding_ = false;
+    // On the ground (and swimming) the mount model plays the player's own
+    // locomotion: the same LocomotionFSM rules on the mount's sequences.
+    LocomotionFSM mountLocomotion_;
+    AnimCapabilitySet mountCaps_;
+    bool mountCapsProbed_ = false;
+    uint32_t lastMountAnimRequest_ = UINT32_MAX;
+    bool lastMountLoopRequest_ = false;
+    bool mountJumpKeyHeld_ = false;
+    bool mountSpecialActive_ = false;
 
     // ── Private helpers ──────────────────────────────────────────────────
     uint32_t resolveMeleeAnimId();
-    void updateMountedAnimation(float deltaTime);
+    void updateMountedAnimation(float deltaTime, int turnDirection);
+    void updateMountedGroundAnimation(float deltaTime, int turnDirection);
+    void applyRiderSeatAnimation();
     void applyMountPositioning(float mountBob, float mountRoll, float characterYaw);
 };
 

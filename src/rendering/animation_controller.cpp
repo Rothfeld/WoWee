@@ -643,6 +643,11 @@ void AnimationController::setMounted(uint32_t mountInstId, uint32_t mountDisplay
     mountInstanceId_ = mountInstId;
     mountHeightOffset_ = heightOffset;
     mountPitch_ = 0.0f;
+    mountLocomotion_.reset();
+    mountCapsProbed_ = false;
+    lastMountAnimRequest_ = UINT32_MAX;
+    mountJumpKeyHeld_ = false;
+    mountSpecialActive_ = false;
 
     if (cameraController) {
         cameraController->setMounted(true);
@@ -841,8 +846,10 @@ void AnimationController::setMounted(uint32_t mountInstId, uint32_t mountDisplay
                                  (seq.aliasNext == mountAnims.stand) ||
                                  (seq.nextAnimation == -1);
 
-            mountAnims.fidgets.push_back(seq.id);
-            core::Logger::getInstance().debug("  >> Selected fidget: id=", seq.id,
+            // Listed only. A mount idles in its Stand variations (the
+            // renderer draws them by M2 frequency); native never plays
+            // MountSpecial or other one-shots on an idle mount by itself.
+            core::Logger::getInstance().debug("  one-shot (not played idle): id=", seq.id,
                 (chainsToStand ? " (chains to stand)" : ""));
         }
     }
@@ -962,11 +969,106 @@ void AnimationController::applyMountPositioning(float mountBob, float mountRoll,
 
 // ── Mounted animation update (uses MountFSM) ────────────────────────────────
 
-void AnimationController::updateMountedAnimation(float deltaTime) {
+void AnimationController::applyRiderSeatAnimation() {
+    // The rider sits in Mount, in the air as on the ground: 2.4.3 has no
+    // flight poses for a rider.
+    auto* characterRenderer = renderer_->getCharacterRenderer();
+    const uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
+    const uint32_t riderAnim = anim::MOUNT;
+    uint32_t currentAnimId = 0;
+    float currentAnimTimeMs = 0.0f, currentAnimDurationMs = 0.0f;
+    const bool haveState = characterRenderer->getAnimationState(characterInstanceId, currentAnimId,
+                                                                currentAnimTimeMs, currentAnimDurationMs);
+    if (!haveState || currentAnimId != riderAnim) {
+        characterRenderer->playAnimation(characterInstanceId, riderAnim, true);
+        lastPlayerAnimRequest_ = riderAnim;
+        lastPlayerAnimLoopRequest_ = true;
+    }
+}
+
+// On the ground and in water a mount moves as its rider would on foot: the
+// player's own LocomotionFSM picks Stand, Walk, Run, Walkbackwards, the turn
+// shuffles, JumpStart/Jump/JumpEnd, Fall, SwimIdle and Swim from the mount
+// model's sequences. Native 2.4.3, Brown Horse (RidingHorse.m2): backing up
+// plays Walkbackwards, not the gallop; a running jump leaves the ground in
+// its jump. Jump pressed standing still rears the mount (MountSpecial, 94)
+// and does not jump; it is sent as CMSG_MOUNTSPECIAL_ANIM for others to see.
+// No procedural bob or roll: native moves the mount by its animation alone.
+void AnimationController::updateMountedGroundAnimation(float deltaTime, int turnDirection) {
+    auto* cr = renderer_->getCharacterRenderer();
+    auto* cc = renderer_->getCameraController();
+    if (mountInstanceId_ == 0 || !cr || !cc || !cr->hasInstance(mountInstanceId_)) return;
+    if (!mountCapsProbed_) {
+        // A model still loading has no sequences yet; ask again next frame.
+        std::vector<pipeline::M2Sequence> sequences;
+        if (!cr->getAnimationSequences(mountInstanceId_, sequences) || sequences.empty()) return;
+        mountCaps_ = AnimCapabilityProbe::probe(renderer_, mountInstanceId_);
+        mountCapsProbed_ = true;
+    }
+    LocomotionFSM::Input in;
+    in.moving = cc->isMoving();
+    in.sprinting = cc->isSprinting();
+    in.movingForward = cc->isMovingForward();
+    in.movingBackward = cc->isMovingBackward();
+    in.strafeLeft = cc->isStrafingLeft();
+    in.strafeRight = cc->isStrafingRight();
+    in.grounded = cc->isGrounded();
+    in.jumping = cc->isJumping();
+    in.swimming = cc->isSwimming();
+    in.turnDirection = turnDirection;
+    in.deltaTime = deltaTime;
+    in.haveAnimState = cr->getAnimationState(mountInstanceId_, in.currentAnimId,
+                                             in.currentAnimTime, in.currentAnimDuration);
+    const auto before = mountLocomotion_.getState();
+    const AnimOutput out = mountLocomotion_.resolve(in, mountCaps_);
+    const auto after = mountLocomotion_.getState();
+    using S = LocomotionFSM::State;
+    const auto airborne = [](S st) { return st == S::JUMP_START || st == S::JUMP_MID; };
+    if (auto* sounds = renderer_->getAudioCoordinator()->getMountSoundManager()) {
+        if (after == S::JUMP_START && before != S::JUMP_START) sounds->playJumpSound();
+        if (airborne(before) && !airborne(after) && in.grounded) sounds->playLandSound();
+    }
+
+    const bool jumpKey = cc->isJumpKeyPressed();
+    if (jumpKey && !mountJumpKeyHeld_ && in.grounded && !in.moving && !in.swimming &&
+        cr->hasAnimation(mountInstanceId_, anim::MOUNT_SPECIAL)) {
+        cr->playAnimation(mountInstanceId_, anim::MOUNT_SPECIAL, false, 0, true);
+        mountSpecialActive_ = true;
+        if (auto* gh = core::Application::getInstance().getGameHandler()) gh->sendMountSpecialAnim();
+        mountJumpKeyHeld_ = jumpKey;
+        return;
+    }
+    mountJumpKeyHeld_ = jumpKey;
+    if (mountSpecialActive_) {
+        const bool finished = !in.haveAnimState || in.currentAnimId != anim::MOUNT_SPECIAL ||
+                              in.currentAnimTime >= in.currentAnimDuration;
+        if (!finished && !in.moving && in.grounded && !in.swimming) return;
+        mountSpecialActive_ = false;
+        lastMountAnimRequest_ = UINT32_MAX;
+    }
+    if (!out.valid) return;
+    const bool drifted = in.haveAnimState && out.loop && in.currentAnimId != out.animId;
+    if (out.animId != lastMountAnimRequest_ || out.loop != lastMountLoopRequest_ || drifted) {
+        cr->playAnimation(mountInstanceId_, out.animId, out.loop, 0, !out.loop);
+        lastMountAnimRequest_ = out.animId;
+        lastMountLoopRequest_ = out.loop;
+    }
+}
+
+void AnimationController::updateMountedAnimation(float deltaTime, int turnDirection) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     auto* cameraController = renderer_->getCameraController();
-    uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     float characterYaw = renderer_->getCharacterYaw();
+    if (!taxiFlight_ && !cameraController->isFlightAirborne()) {
+        updateMountedGroundAnimation(deltaTime, turnDirection);
+        applyRiderSeatAnimation();
+        applyMountPositioning(0.0f, 0.0f, characterYaw);
+        return;
+    }
+    // In the air (flying mount) or on a taxi: MountFSM's flight animations.
+    mountLocomotion_.reset();
+    lastMountAnimRequest_ = UINT32_MAX;
+    mountSpecialActive_ = false;
     auto& mountFSM = characterAnimator_.getMountFSM();
 
     // Build MountFSM input
@@ -999,19 +1101,7 @@ void AnimationController::updateMountedAnimation(float deltaTime) {
         characterRenderer->playAnimation(mountInstanceId_, mountOut.mountAnimId, mountOut.mountAnimLoop);
     }
 
-    // The rider sits in Mount, in the air as on the ground: 3.3.5 has no
-    // flight poses for a rider.
-    const uint32_t riderAnim = anim::MOUNT;
-
-    // Apply rider animation
-    uint32_t currentAnimId = 0;
-    float currentAnimTimeMs = 0.0f, currentAnimDurationMs = 0.0f;
-    bool haveState = characterRenderer->getAnimationState(characterInstanceId, currentAnimId, currentAnimTimeMs, currentAnimDurationMs);
-    if (!haveState || currentAnimId != riderAnim) {
-        characterRenderer->playAnimation(characterInstanceId, riderAnim, true);
-        lastPlayerAnimRequest_ = riderAnim;
-        lastPlayerAnimLoopRequest_ = true;
-    }
+    applyRiderSeatAnimation();
 
     // Handle mount sounds
     auto* mountSoundMgr = renderer_->getAudioCoordinator()->getMountSoundManager();
@@ -1026,9 +1116,6 @@ void AnimationController::updateMountedAnimation(float deltaTime) {
     }
     if (mountOut.playIdleSound && mountSoundMgr) {
         mountSoundMgr->playIdleSound();
-    }
-    if (mountOut.triggerMountJump && cameraController) {
-        cameraController->triggerMountJump();
     }
 
     // Apply positioning (uses mountBob and mountRoll from MountFSM)
@@ -1076,7 +1163,7 @@ void AnimationController::updateCharacterAnimation() {
 
     // When mounted, delegate to MountFSM and handle positioning
     if (!dead && isMounted()) {
-        updateMountedAnimation(lastDeltaTime_);
+        updateMountedAnimation(lastDeltaTime_, turnDirection);
         return;
     }
 

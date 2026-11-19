@@ -961,7 +961,11 @@ glm::vec3 CameraController::moveFollowedCharacter(float /*deltaTime*/, FrameInpu
         if (f.nowJump) jumpBufferTimer = JUMP_BUFFER_TIME;
         if (grounded) coyoteTimer = COYOTE_TIME;
 
-        bool canJump = (coyoteTimer > 0.0f) && (jumpBufferTimer > 0.0f) && !mounted_;
+        // Mounted, jump is the same jump on the move; standing still the
+        // mount rears instead (AnimationController, MountSpecial) and stays
+        // on the ground, as on native 2.4.3.
+        bool canJump = (coyoteTimer > 0.0f) && (jumpBufferTimer > 0.0f) &&
+                       !(mounted_ && moveLenSq <= 1e-6f);
         if (canJump) {
             f.startedJump = true;
             verticalVelocity = startWaterJump ? WATER_JUMP_VELOCITY : f.jumpVel;
@@ -2777,7 +2781,7 @@ void CameraController::updateFreeFlyCamera(float /*deltaTime*/, FrameInput& f) {
         if (f.nowJump) jumpBufferTimer = JUMP_BUFFER_TIME;
         if (grounded) coyoteTimer = COYOTE_TIME;
 
-        if (coyoteTimer > 0.0f && jumpBufferTimer > 0.0f && !mounted_) {
+        if (coyoteTimer > 0.0f && jumpBufferTimer > 0.0f && !(mounted_ && movLenSq2 <= 1e-6f)) {
             f.startedJump = true;
             verticalVelocity = f.jumpVel;
             grounded = false;
@@ -4039,15 +4043,6 @@ bool CameraController::isSprinting() const {
     return enabled && camera && runPace;
 }
 
-void CameraController::triggerMountJump() {
-    // Apply physics-driven mount jump: vz = sqrt(2 * g * h)
-    // Desired height and gravity are configurable constants
-    if (grounded || coyoteTimer > 0.0f) {
-        verticalVelocity = getMountJumpVelocity();
-        grounded = false;
-        coyoteTimer = 0.0f;
-    }
-}
 
 void CameraController::applyKnockBack(float vcos, float vsin, float hspeed, float vspeed) {
     // The server sends (vcos, vsin) as the 2D direction vector in server/wire

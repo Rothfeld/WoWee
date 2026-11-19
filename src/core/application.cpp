@@ -4206,8 +4206,13 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 const bool movingBackward = isMovingNow && direction.backwards;
                 const bool prevBackward = entitySpawner_->getRemoteWasMovingBackward()[guid];
                 const bool wasAirborne = entitySpawner_->getRemoteWasAirborne()[guid];
+                // A rider's movement is played by its mount: walking, running,
+                // backing up, jumping, falling and swimming, as native 2.4.3
+                // shows another player's horse (RidingHorse.m2 Walkbackwards,
+                // JumpStart/Jump/JumpEnd). The rider stays in Mount.
+                const uint32_t moverInstance = remoteMount ? remoteMount->instanceId : instanceId;
                 uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
-                const bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
+                const bool gotState = charRenderer->getAnimationState(moverInstance, curAnimId, curT, curDur);
                 const bool jumpFinished = gotState && curDur > 0.0f && curT >= curDur &&
                     (curAnimId == rendering::anim::JUMP_START || curAnimId == rendering::anim::JUMP_END);
                 // An aura's held animation replaces locomotion and the jump
@@ -4236,28 +4241,32 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                             // Preserve takeoff's one-shot -> airborne chain across
                             // heartbeats and horizontal movement-state changes.
                             if (jumpFinished && curAnimId == rendering::anim::JUMP_START)
-                                charRenderer->playAnimation(instanceId, rendering::anim::JUMP, true);
+                                charRenderer->playAnimation(moverInstance, rendering::anim::JUMP, true);
                             else if (curAnimId != rendering::anim::JUMP_START &&
                                 curAnimId != rendering::anim::JUMP && curAnimId != rendering::anim::FALL)
-                                charRenderer->playAnimation(instanceId, rendering::anim::FALL, true);
+                                charRenderer->playAnimation(moverInstance, rendering::anim::FALL, true);
                         } else {
                             if (remoteMount) {
                                 // The rider keeps the mounted seat pose; locomotion
                                 // belongs to the separately rendered mount model.
-                                targetAnim = mountedRiderAnim;
                                 uint32_t mountAnim = rendering::anim::STAND;
                                 if (isMovingNow) {
                                     if (isFlyingNow) mountAnim = rendering::anim::FLY_FORWARD;
+                                    else if (isSwimmingNow) mountAnim = rendering::anim::SWIM;
                                     else if (movingBackward) mountAnim = rendering::anim::WALK_BACKWARDS;
                                     else if (isWalkingNow) mountAnim = rendering::anim::WALK;
                                     else mountAnim = rendering::anim::RUN;
                                 } else if (isFlyingNow) {
                                     mountAnim = rendering::anim::FLY_IDLE;
+                                } else if (isSwimmingNow) {
+                                    mountAnim = rendering::anim::SWIM_IDLE;
                                 }
-                                if (!charRenderer->hasAnimation(remoteMount->instanceId, mountAnim)) {
-                                    mountAnim = isMovingNow ? rendering::anim::RUN : rendering::anim::STAND;
-                                }
-                                charRenderer->playAnimation(remoteMount->instanceId, mountAnim, true);
+                                if (wasAirborne && !isSwimmingNow && !isFlyingNow)
+                                    charRenderer->playAnimation(moverInstance, rendering::anim::JUMP_END,
+                                                                false, mountAnim);
+                                else
+                                    charRenderer->playAnimation(moverInstance, mountAnim, true);
+                                targetAnim = mountedRiderAnim;
                             } else if (isMovingNow) {
                                 if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
                                 else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
@@ -4269,7 +4278,9 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                                 else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
                                 else                    targetAnim = entitySpawner_->remoteIdleAnimation(guid);
                             }
-                            if (wasAirborne && !remoteMount && !isSwimmingNow && !isFlyingNow && !auraLocomotion) {
+                            if (remoteMount) {
+                                // Rider: repaired to Mount below.
+                            } else if (wasAirborne && !isSwimmingNow && !isFlyingNow && !auraLocomotion) {
                                 charRenderer->playAnimation(instanceId, rendering::anim::JUMP_END,
                                                             false, targetAnim);
                             } else {
@@ -4295,10 +4306,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                     }
                 }
 
-                driveTurnShuffle(*charRenderer, guid, instanceId, entitySpawner_->getRemoteTurns()[guid],
+                driveTurnShuffle(*charRenderer, guid, moverInstance, entitySpawner_->getRemoteTurns()[guid],
                     entity->getOrientation(),
                     !deadOrCorpse && !isMovingNow && !airborne && !isSwimmingNow && !isFlyingNow &&
-                    !remoteMount && !auraLocomotion &&
+                    !auraLocomotion &&
                     entitySpawner_->remoteIdleAnimation(guid) == rendering::anim::STAND);
             }
 
