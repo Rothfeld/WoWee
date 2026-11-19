@@ -28,6 +28,18 @@ TEST_CASE("A rider's swings, casts and wounds play over the seat", "[rider]") {
         CHECK_FALSE(rendering::riderKeepsSeat(action));
 }
 
+TEST_CASE("A rider's weapons follow its swing, else its seat", "[rider][sheath]") {
+    // Native Bonechewer Raider / Amani'shi Warbringer at sheath state 1:
+    // axes on the back while seated (Mount 91, WeaponFlags 4), in hand for
+    // each Attack1H (17) or AttackOff (87) above the spine, on the back again
+    // after it (_experiments/20261118T231500Z.rider_attack).
+    CHECK(rendering::riderWeaponPoseAnimation(0, anim::MOUNT) == anim::MOUNT);
+    CHECK(rendering::riderWeaponPoseAnimation(17, anim::MOUNT) == 17u);
+    CHECK(rendering::riderWeaponPoseAnimation(87, anim::MOUNT) == 87u);
+    // A cast above the seat (SpellCastDirected 53, WeaponFlags 4) decides too.
+    CHECK(rendering::riderWeaponPoseAnimation(53, anim::MOUNT) == 53u);
+}
+
 TEST_CASE("A mount is drawn at its own scale times its rider's", "[rider]") {
     // Wind Reaver: rider display 21546 at 2.0 on nether drake display 21548
     // (1.0, model 2516 at 1.0) - the drake twice a player's.

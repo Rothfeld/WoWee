@@ -2339,6 +2339,19 @@ in both). This differs from the hover flag, which hovers only after LiftOff
 or when the unit is created with it, and drops to Stand after an emote
 (Sapphiron). `remoteIdlesInHover` decides it. Evidence:
 `_experiments/20261118T220958Z.wyrm_fly` in the workspace.
+A rider's weapons follow what plays above its spine, else the seat: Mount
+has WeaponFlags 4 and puts them on the back; a swing (WeaponFlags 0x20) has
+them in hand for its length (`riderWeaponPoseAnimation`). Native Bonechewer
+Raider (16925) and Amani'shi Warbringer (23580) at sheath state 1 sit with
+their axes on their backs, fresh, after swings and with combat flags set.
+The mount keeps its own idle through the rider's swings, emotes and wounds:
+a riding horse (2410), cockatrice (20937) and riding elekk (17063) never
+reared or pecked natively in real and fake fights, though the same models
+standing alone do. Not established: the Warbringer's war bear (22467,
+bearmount.m2) does lunge on some swings natively, in real fights more than
+in fake ones; what selects it was not found, and WoWee leaves it in its idle.
+Furious Roar (42496) grows rider and bear together over about 1.2 s both
+ways in both clients. Evidence: `_experiments/20261118T231500Z.rider_attack`.
 
 TBC MCLQ freshwater preserves per-vertex depth and authored surface height
 through both individual and merged terrain meshes. Liquid IDs use the same

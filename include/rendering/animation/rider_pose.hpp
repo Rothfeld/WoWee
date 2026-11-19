@@ -51,6 +51,18 @@ inline constexpr bool riderKeepsSeat(uint32_t animation) {
     }
 }
 
+// The animation whose AnimationData WeaponFlags place a rider's weapons:
+// the swing, cast or wound playing above the spine, else the seat (Mount 91,
+// WeaponFlags 4, which sheathes). Original 2.4.3, sheath state 1: a fresh
+// Bonechewer Raider (16925) and Amani'shi Warbringer (23580) sit with their
+// axes on their backs, draw them for each swing (Attack1H, AttackOff:
+// WeaponFlags 0x20) and have them on their backs again once seated, also
+// in combat (_experiments/20261118T231500Z.rider_attack, sheath*.jpg).
+inline constexpr uint32_t riderWeaponPoseAnimation(uint32_t upperBodyAnimation,
+                                                   uint32_t seatAnimation) {
+    return upperBodyAnimation != 0 ? upperBodyAnimation : seatAnimation;
+}
+
 // The mount model's scale: its own display's (CreatureDisplayInfo scale x
 // CreatureModelData scale) times the rider's drawn scale. Original: the
 // Wind Reaver's rider display 21546 is authored at 2.0 and its nether drake

@@ -2731,13 +2731,13 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         // emotes, SitGround and Kneel have 16.
         instance.poseSheathAnimation = 0;
         instance.poseSheathFlags = 0;
-        for (const uint32_t animation : {upperAnimation, instance.currentAnimationId}) {
+        // A rider's weapons follow its upper-body swing or cast, else its
+        // seat, which sheathes them (riderWeaponPoseAnimation).
+        const uint32_t riderPose = instance.riding
+            ? riderWeaponPoseAnimation(upperAnimation, instance.currentAnimationId) : 0;
+        for (const uint32_t animation : {instance.riding ? riderPose : upperAnimation,
+                                         instance.riding ? 0u : instance.currentAnimationId}) {
             if (animation == 0 || animation == instance.gestureHoldAnimation) continue;
-            // A rider's seat (Mount 91, WeaponFlags 4) keeps its weapons by
-            // sheath state: native Amani'shi Warbringer (23580, sheath 1)
-            // holds both axes sitting on its bear between swings
-            // (_experiments/20261118T1540Z.zulaman_warbringer).
-            if (instance.riding && animation == anim::MOUNT) continue;
             const auto flags = animationWeaponFlags_.find(animation);
             if (flags != animationWeaponFlags_.end() && (flags->second & 0x14u)) {
                 instance.poseSheathAnimation = animation;
