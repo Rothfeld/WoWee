@@ -702,6 +702,32 @@ void WidgetTree::noteScreenSize(float pixelW, float pixelH) {
     // The same scale the full pass works out, so a rect resolved before that
     // pass is in the units everything else will be in.
     uiScale_ = (pixelH / kInterfaceHeight) * userScale_;
+    // The screen and UIParent are measured from the moment the size is known,
+    // not from the first full pass: on 2.4.3 UIParent:GetWidth() is 1365.33
+    // while addon files run, at login and on /reload alike. Left at 0x0
+    // until the pass, a frame anchored to UIParent's CENTER measured itself
+    // at the origin, and Recount - which saves its window as an offset from
+    // the screen centre straight after placing it - moved its window half a
+    // screen down and left on every load until it was off the screen.
+    // The same geometry the full pass gives them (see layout()).
+    const float screenW = pixelW / uiScale_;
+    const float screenH = pixelH / uiScale_;
+    if (Widget* root = get(rootId_)) {
+        root->left = 0.0f;
+        root->bottom = 0.0f;
+        root->rectW = screenW;
+        root->rectH = screenH;
+        root->effScale = 1.0f;
+    }
+    if (Widget* ui = get(uiParentId_)) {
+        const float inL = safeLeft_ / uiScale_;
+        const float inB = safeBottom_ / uiScale_;
+        ui->left = inL;
+        ui->bottom = inB;
+        ui->rectW = std::max(screenW - inL - safeRight_ / uiScale_, 1.0f);
+        ui->rectH = std::max(screenH - inB - safeTop_ / uiScale_, 1.0f);
+        ui->effScale = 1.0f;
+    }
     markLayoutDirty();
 }
 
