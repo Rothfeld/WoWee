@@ -55,6 +55,7 @@
 #include "rendering/m2_renderer.hpp"
 #include "rendering/minimap.hpp"
 #include "rendering/world_map.hpp"
+#include "rendering/world_map/map_navigator.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "ui/keybinding_manager.hpp"
 #include "rendering/quest_marker_renderer.hpp"
@@ -300,6 +301,30 @@ Application* Application::instance = nullptr;
 
 Application::Application() {
     instance = this;
+}
+
+rendering::world_map::MapNavigator* Application::mapNavigator() {
+    if (mapNavigator_) return mapNavigator_.get();
+    if (!assetManager || !gameHandler || !pipeline::getActiveDBCLayout()) return nullptr;
+    auto sizes = std::make_shared<std::unordered_map<std::string, glm::ivec2>>();
+    mapNavigator_ = std::make_unique<rendering::world_map::MapNavigator>(
+        rendering::world_map::loadMapNavigatorData(*assetManager),
+        [gh = gameHandler.get()](uint32_t bit) {
+            const auto& masks = gh->getPlayerExploredZoneMasks();
+            return bit / 32 < masks.size() && (masks[bit / 32] >> (bit % 32) & 1u) != 0;
+        },
+        [gh = gameHandler.get()](uint32_t id) { return gh->getWorldState(id).value_or(0u); },
+        [am = assetManager.get(), sizes](const std::string& folder) {
+            auto found = sizes->find(folder);
+            if (found == sizes->end()) {
+                const auto texture = am->loadTexture("Interface\\WorldMap\\" + folder + "\\" +
+                                                     folder + "Highlight.blp");
+                found = sizes->emplace(folder, texture.isValid()
+                    ? glm::ivec2(texture.width, texture.height) : glm::ivec2(0)).first;
+            }
+            return found->second;
+        });
+    return mapNavigator_.get();
 }
 
 Application::~Application() {
@@ -772,131 +797,118 @@ bool Application::initialize() {
             if (rend && rend->getPostProcessPipeline())
                 rend->getPostProcessPipeline()->setDeathEffectEnabled(enabled);
         };
-        // The world map's own data, for the interface's map. The client keeps
-        // the zones, their overlays and the area POIs and drew them only
-        // itself; FrameXML's map has readers for exactly these and had nothing
-        // behind them.
-        luaSvc.getMapFileName = [r = renderer.get()]() -> std::string {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->currentMapFolder() : std::string();
+        // FrameXML's world map asks every question through MapNavigator, which
+        // holds every continent at once with the original's rules. This
+        // client's own map window keeps its own state and is not consulted:
+        // the two answering for one map is how its dropdowns, zoom and world
+        // view came to disagree with what was drawn.
+        luaSvc.getMapFileName = [this]() -> std::string {
+            auto* nav = mapNavigator();
+            const auto file = nav ? nav->mapFile() : std::nullopt;
+            return file ? *file : std::string();
         };
-        luaSvc.getMapOverlays = [r = renderer.get()]() {
+        luaSvc.getMapOverlays = [this]() {
             std::vector<addons::LuaServices::MapOverlay> out;
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            if (!wmap) return out;
-            const std::string folder = wmap->currentMapFolder();
-            for (const auto& o : wmap->currentOverlays()) {
-                addons::LuaServices::MapOverlay m;
-                // The whole path up to the tile number, because that is what
-                // the interface does with it: WorldMapFrame_Update appends the
-                // index and nothing else, so a bare DBC name asks for
-                // "CHILLWINDPOINT1" and finds nothing.
-                m.texture = folder.empty()
-                                ? o.textureName
-                                : "Interface\\WorldMap\\" + folder + "\\" + o.textureName;
-                m.width = o.texWidth;
-                m.height = o.texHeight;
-                m.offsetX = o.offsetX;
-                m.offsetY = o.offsetY;
-                out.push_back(std::move(m));
+            if (auto* nav = mapNavigator()) {
+                for (const auto& o : nav->overlays())
+                    out.push_back({o.texture, o.width, o.height, o.offsetX, o.offsetY});
             }
             return out;
         };
-        luaSvc.getMapLandmarks = [r = renderer.get(), gh = gameHandler.get()]() {
+        luaSvc.getMapLandmarks = [this, gh = gameHandler.get()]() {
             std::vector<addons::LuaServices::MapLandmark> out;
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            if (!wmap) return out;
-            for (const auto& l : wmap->currentLandmarks()) {
-                addons::LuaServices::MapLandmark m;
-                m.name = l.name;
-                m.description = l.description;
-                m.icon = static_cast<int>(l.iconType);
-                m.x = l.x;
-                m.y = l.y;
-                out.push_back(std::move(m));
+            auto* nav = mapNavigator();
+            if (!nav) return out;
+            for (const auto& l : nav->landmarks()) {
+                out.push_back({l.name, l.description, l.texture, l.x, l.y});
             }
             if (gh) {
                 for (const auto& poi : gh->getGossipPois()) {
-                    if (poi.questObjectiveIndex != -2 || poi.mapId != gh->getCurrentMapId()) continue;
-                    float u = 0.0f, v = 0.0f;
-                    if (!wmap->mapUVForCanonical(poi.x, poi.y, 0.0f, u, v)) continue;
-                    addons::LuaServices::MapLandmark m;
-                    m.name = poi.name;
-                    m.icon = static_cast<int>(poi.icon);
-                    m.x = u;
-                    m.y = v;
-                    out.push_back(std::move(m));
+                    if (poi.questObjectiveIndex != -2) continue;
+                    const auto uv = nav->project(gh->getCurrentMapId(), poi.x, poi.y);
+                    if (!uv) continue;
+                    out.push_back({poi.name, std::string(), static_cast<int>(poi.icon), uv->x, uv->y});
                 }
             }
             return out;
         };
-        luaSvc.getMapHighlightAt = [r = renderer.get()](float u, float v) {
+        luaSvc.getMapHighlightAt = [this](float u, float v) {
             addons::LuaServices::MapHighlight result;
-            if (auto* map = r->getWorldMap()) {
-                const auto h = map->highlightAtMapPoint(u, v);
-                result = {h.file, h.texU, h.texV, h.width, h.height, h.x, h.y};
+            if (auto* nav = mapNavigator()) {
+                const auto h = nav->highlight(u, v);
+                result = {h.name.value_or(std::string()), h.file.value_or(std::string()),
+                          h.texU, h.texV, h.width, h.height, h.x, h.y};
             }
             return result;
         };
-        luaSvc.getMapZoneNameAt = [r = renderer.get()](float u, float v) -> std::string {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->zoneNameAtMapPoint(u, v) : std::string();
+        luaSvc.clickMapPoint = [this](float u, float v) -> bool {
+            auto* nav = mapNavigator();
+            return nav && nav->click(u, v);
         };
-        luaSvc.clickMapPoint = [r = renderer.get()](float u, float v) -> bool {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->clickMapPoint(u, v) : false;
+        // These two take this client's canonical coordinates, which are the
+        // server's with X and Y exchanged (core::coords::serverToCanonical);
+        // the navigator works in the DBC's own convention, X north.
+        luaSvc.mapUVForMapPos = [this](uint32_t mapId, float x, float y, float /*z*/,
+                                       float& u, float& v) -> bool {
+            auto* nav = mapNavigator();
+            const auto uv = nav ? nav->project(mapId, y, x) : std::nullopt;
+            if (!uv) return false;
+            u = uv->x;
+            v = uv->y;
+            return true;
         };
-        luaSvc.mapUVForWorldPos = [r = renderer.get()](float x, float y, float z,
-                                                      float& u, float& v) -> bool {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->mapUVForCanonical(x, y, z, u, v) : false;
+        luaSvc.mapUVForWorldPos = [this, gh = gameHandler.get()](float x, float y, float /*z*/,
+                                                                float& u, float& v) -> bool {
+            auto* nav = mapNavigator();
+            const auto uv = (nav && gh) ? nav->project(gh->getCurrentMapId(), y, x) : std::nullopt;
+            if (!uv) return false;
+            u = uv->x;
+            v = uv->y;
+            return true;
         };
-        luaSvc.mapUVForMapPos = [r = renderer.get()](uint32_t mapId, float x, float y, float z,
-                                                   float& u, float& v) -> bool {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap && wmap->mapUVForCanonical(x, y, z, u, v, mapId);
+        luaSvc.zoomMapOut = [this]() {
+            if (auto* nav = mapNavigator()) nav->zoomOut();
         };
-        luaSvc.zoomMapOut = [r = renderer.get()]() {
-            if (auto* wmap = r ? r->getWorldMap() : nullptr) wmap->zoomOutOneLevel();
+        luaSvc.getMapContinentNames = [this]() -> std::vector<std::string> {
+            auto* nav = mapNavigator();
+            return nav ? nav->continentNames() : std::vector<std::string>();
         };
-        luaSvc.getMapContinentNames = [r = renderer.get()]() -> std::vector<std::string> {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->continentNames() : std::vector<std::string>();
+        luaSvc.getMapZoneNames = [this](int continent) -> std::vector<std::string> {
+            auto* nav = mapNavigator();
+            return nav ? nav->zoneNames(continent) : std::vector<std::string>();
         };
-        luaSvc.getMapZoneNames = [r = renderer.get()](int continent) -> std::vector<std::string> {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->zoneNames(continent) : std::vector<std::string>();
+        luaSvc.setMapByIndex = [this](int continent, int zone) -> bool {
+            auto* nav = mapNavigator();
+            if (!nav) return false;
+            nav->setZoom(continent, zone);
+            return true;
         };
-        luaSvc.setMapByIndex = [r = renderer.get()](int continent, int zone) -> bool {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap && wmap->showMap(continent, zone);
+        luaSvc.getMapContinentIndex = [this]() -> int {
+            auto* nav = mapNavigator();
+            return nav ? nav->continent() : 0;
         };
-        luaSvc.getMapContinentIndex = [r = renderer.get()]() -> int {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->currentContinentIndex() : 0;
+        luaSvc.getMapZoneIndex = [this]() -> int {
+            auto* nav = mapNavigator();
+            return nav ? nav->zone() : 0;
         };
-        luaSvc.getMapZoneIndex = [r = renderer.get()]() -> int {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->currentZoneIndex() : 0;
+        luaSvc.canZoomMapOut = [this]() -> bool {
+            auto* nav = mapNavigator();
+            return nav && nav->continent() != rendering::world_map::MapNavigator::kCosmic;
         };
-        luaSvc.canZoomMapOut = [r = renderer.get()]() -> bool {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap && wmap->canZoomOut();
+        luaSvc.showPlayerMapZone = [this, r = renderer.get(), gh = gameHandler.get()]() {
+            auto* nav = mapNavigator();
+            if (!nav || !gh || !r) return;
+            const auto& movement = gh->getMovementInfo();
+            // Canonical X/Y are the server's exchanged; see mapUVForMapPos.
+            nav->setToPosition(gh->getCurrentMapId(), movement.y, movement.x, r->getCurrentZoneId());
         };
-        luaSvc.showPlayerMapZone = [r = renderer.get(), gh = gameHandler.get()]() {
-            if (auto* wmap = r ? r->getWorldMap() : nullptr; wmap && gh) {
-                const auto& movement = gh->getMovementInfo();
-                wmap->setPlayerZoneId(r->getCurrentZoneId());
-                wmap->showPlayerZone(core::coords::canonicalToRender(
-                    glm::vec3(movement.x, movement.y, movement.z)));
-            }
+        luaSvc.getMapWorldAreaId = [this]() -> uint32_t {
+            auto* nav = mapNavigator();
+            return nav ? nav->mapAreaId() : 0u;
         };
-        luaSvc.getMapWorldAreaId = [r = renderer.get()]() -> uint32_t {
-            auto* wmap = r ? r->getWorldMap() : nullptr;
-            return wmap ? wmap->currentWorldMapAreaId() : 0u;
-        };
-        luaSvc.setMapWorldAreaId = [r = renderer.get()](uint32_t id) {
-            if (auto* wmap = r ? r->getWorldMap() : nullptr) wmap->showWorldMapArea(id);
+        luaSvc.setMapWorldAreaId = [this](uint32_t id) {
+            if (auto* nav = mapNavigator(); nav && !nav->showMapArea(id))
+                LOG_WARNING("SetMapByID(", id, "): no WorldMapArea row with that id");
         };
         luaSvc.getLiveZoneId = [r = renderer.get()]() -> uint32_t {
             return r ? r->getCurrentZoneId() : 0u;
@@ -5037,6 +5049,11 @@ void Application::render() {
                         wmap->setFrameRect(wm->left * sc,
                                            io.DisplaySize.y - (wm->bottom + wm->rectH) * sc,
                                            wm->rectW * sc, wm->rectH * sc, true);
+                        const auto& mi = gameHandler->getMovementInfo();
+                        auto* nav = mapNavigator();
+                        wmap->setHostedPlayerMarker(
+                            nav ? nav->project(gameHandler->getCurrentMapId(), mi.y, mi.x)
+                                : std::nullopt);
                     } else {
                         wmap->clearFrameRect();
                     }

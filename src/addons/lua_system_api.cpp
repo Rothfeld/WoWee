@@ -2288,21 +2288,6 @@ static int lua_GetMinimapZoneText(lua_State* L) {
 
 // --- World Map Navigation API ---
 
-// Map ID → continent mapping
-static int mapIdToContinent(uint32_t mapId) {
-    switch (mapId) {
-        case 0:   return 2; // Eastern Kingdoms
-        case 1:   return 1; // Kalimdor
-        case 530: return 3; // Outland
-        case 571: return 4; // Northrend
-        default:  return 0; // Instance or unknown
-    }
-}
-
-// Internal tracked map state (which continent/zone the map UI is viewing)
-static int s_mapContinent = 0;
-static int s_mapZone = 0;
-
 /// The map view changed, so say so.
 ///
 /// Fired unconditionally, including when the view was already what it is being
@@ -2318,104 +2303,38 @@ static void fireWorldMapUpdate(lua_State* L) {
     if (engine) engine->fireEvent("WORLD_MAP_UPDATE", {});
 }
 
-// SetMapToCurrentZone() - sets map view to the player's current zone
+// SetMapToCurrentZone() - the map shows the zone the player is in.
 static int lua_SetMapToCurrentZone(lua_State* L) {
-    // Called every time the map is shown. It set two statics that nothing
-    // reads any more and never told the map, so a map left on another zone
-    // stayed there when reopened.
-    if (auto* svc = getLuaServices(L)) {
-        if (svc->showPlayerMapZone) svc->showPlayerMapZone();
-    }
-    auto* gh = getGameHandler(L);
-    if (gh) {
-        s_mapContinent = mapIdToContinent(gh->getCurrentMapId());
-        s_mapZone = static_cast<int>(gh->getWorldStateZoneId());
-    }
+    if (auto* svc = getLuaServices(L); svc && svc->showPlayerMapZone) svc->showPlayerMapZone();
+    else LOG_WARNING("SetMapToCurrentZone: no world map to set");
     fireWorldMapUpdate(L);
     return 0;
 }
 
-// GetCurrentMapContinent() → continentId (1=Kalimdor, 2=EK, 3=Outland, 4=Northrend)
+// GetCurrentMapContinent() -> -1 cosmic, 0 world, 1.. the GetMapContinents row.
 static int lua_GetCurrentMapContinent(lua_State* L) {
-    // What the map is showing, asked of the map. This kept a static of its
-    // own instead, set from the player's position on first use and from
-    // SetMapZoom after that, and the map itself was never consulted or told -
-    // so the two dropdowns and the zoom-out button moved a number no one drew
-    // from while the map stayed where it was.
-    if (auto* svc = getLuaServices(L)) {
-        if (svc->getMapContinentIndex) {
-            const int shown = svc->getMapContinentIndex();
-            // Said once per disagreement, because this one is asked from
-            // WorldMapFrame_OnUpdate and a line per frame is not a report.
-            //
-            // Zero from the map means WORLD or COSMIC level, and both
-            // dropdowns answer it with UIDropDownMenu_ClearAll - so a pick
-            // that moved the number here but did not move the map leaves the
-            // dropdown blank, which reads as the dropdown not working.
-            static int lastReported = -1;
-            if (shown == 0 && s_mapContinent != 0 && lastReported != s_mapContinent) {
-                lastReported = s_mapContinent;
-                LOG_WARNING("GetCurrentMapContinent: asked for continent ",
-                            s_mapContinent, " and the map is showing none, so"
-                            " both dropdowns clear themselves");
-            } else if (shown != 0) {
-                lastReported = -1;
-            }
-            lua_pushnumber(L, shown);
-            return 1;
-        }
-    }
-    if (s_mapContinent == 0) {
-        auto* gh = getGameHandler(L);
-        if (gh) s_mapContinent = mapIdToContinent(gh->getCurrentMapId());
-    }
-    lua_pushnumber(L, s_mapContinent);
+    auto* svc = getLuaServices(L);
+    lua_pushnumber(L, svc && svc->getMapContinentIndex ? svc->getMapContinentIndex() : 0);
     return 1;
 }
 
-// GetCurrentMapZone() → zoneId
+// GetCurrentMapZone() -> the GetMapZones row shown, 0 for a continent or above.
 static int lua_GetCurrentMapZone(lua_State* L) {
-    // A row in the zone dropdown, not an area id. The fallback below answered
-    // the area id - a number in the thousands where the dropdown wanted a
-    // position in a list of a few dozen - so the selected row was never the
-    // one being shown. SetMapZoom, meanwhile, wrote a row number into the same
-    // static, and the two meanings sat in one variable.
-    if (auto* svc = getLuaServices(L)) {
-        if (svc->getMapZoneIndex) {
-            lua_pushnumber(L, svc->getMapZoneIndex());
-            return 1;
-        }
-    }
-    if (s_mapZone == 0) {
-        auto* gh = getGameHandler(L);
-        if (gh) s_mapZone = static_cast<int>(gh->getWorldStateZoneId());
-    }
-    lua_pushnumber(L, s_mapZone);
+    auto* svc = getLuaServices(L);
+    lua_pushnumber(L, svc && svc->getMapZoneIndex ? svc->getMapZoneIndex() : 0);
     return 1;
 }
 
-// SetMapZoom(continent [, zone]) - sets map view to continent/zone
+// SetMapZoom(continent [, zone]) - the dropdowns, the zoom-out button and the
+// cosmic sheet's two buttons all come through here.
 static int lua_SetMapZoom(lua_State* L) {
-    s_mapContinent = static_cast<int>(luaL_checknumber(L, 1));
-    s_mapZone = static_cast<int>(luaL_optnumber(L, 2, 0));
-    // Tell the map, which this never did. Every route out of a zone map runs
-    // through here - the zone dropdown, the continent dropdown, and four of
-    // the zoom-out button's six branches - so none of them changed what was
-    // drawn.
-    // At warning when the map turns the pair down, because every symptom of
-    // that is a non-event: the dropdown keeps the row it was clicked on, the
-    // map stays where it was, and nothing is written down. An unknown
-    // continent and a zone row past the end of that continent's list are the
-    // two ways in, and they are the two the dropdowns can produce.
-    if (auto* svc = getLuaServices(L)) {
-        if (!svc->setMapByIndex) {
-            LOG_WARNING("SetMapZoom(", s_mapContinent, ", ", s_mapZone,
-                        "): no map to tell - the view number moved and nothing"
-                        " drew from it");
-        } else if (!svc->setMapByIndex(s_mapContinent, s_mapZone)) {
-            LOG_WARNING("SetMapZoom(", s_mapContinent, ", ", s_mapZone,
-                        "): the map refused the pair, so it stays where it was");
-        }
+    const int continent = static_cast<int>(luaL_checknumber(L, 1));
+    const int zone = static_cast<int>(luaL_optnumber(L, 2, 0));
+    auto* svc = getLuaServices(L);
+    if (!svc || !svc->setMapByIndex) {
+        LOG_WARNING("SetMapZoom(", continent, ", ", zone, "): no world map to set");
+    } else if (!svc->setMapByIndex(continent, zone)) {
+        LOG_WARNING("SetMapZoom(", continent, ", ", zone, "): the map refused it");
     }
     fireWorldMapUpdate(L);
     return 0;
@@ -2494,6 +2413,8 @@ static int lua_GetNumMapLandmarks(lua_State* L) {
 /// The area POIs on whatever the map is showing. Answered zero of them while
 /// the client had them loaded from AreaPOI.dbc and was drawing them on its own
 /// map, so FrameXML's map came up with no pins on it at all.
+static int expansionLevelZeroBased(lua_State* L);
+
 static int lua_GetMapLandmarkInfo(lua_State* L) {
     auto* svc = getLuaServices(L);
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
@@ -2509,14 +2430,11 @@ static int lua_GetMapLandmarkInfo(lua_State* L) {
     lua_pushnumber(L, m.icon);                  // 3: textureIndex
     lua_pushnumber(L, m.x);                     // 4: x across the map
     lua_pushnumber(L, m.y);                     // 5: y down the map
-    // A landmark that leads to another map. Nothing here links one to another,
-    // and nil is what a plain point of interest answers.
+    // TBC and earlier answer these five; mapLinkID and showInBattleMap are
+    // Wrath's.
+    if (expansionLevelZeroBased(L) < 2) return 5;
     lua_pushnil(L);                             // 6: mapLinkID
-    // Whether the battlefield minimap shows it too. Seven values, not six:
-    // blizzard_battlefieldminimap.lua gates every pin on this one, so a nil
-    // here is a battle map with no points of interest on it at all. AreaPOI
-    // carries no such flag, and a landmark worth drawing on the world map is
-    // worth drawing on the smaller one.
+    // blizzard_battlefieldminimap.lua (3.3.5) gates every pin on this one.
     lua_pushboolean(L, 1);                      // 7: showInBattleMap
     return 7;
 }
@@ -3242,6 +3160,44 @@ static int lua_GetBattlefieldPosition(lua_State* L) {
     lua_pushnumber(L, 0.0);
     lua_pushstring(L, "");
     return 3;
+}
+
+/// GetCorpseMapPosition() -> where the player's corpse lies on the map shown,
+/// 0, 0 when there is none or it is off this map. Only a ghost has a corpse to
+/// walk back to.
+static int lua_GetCorpseMapPosition(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    auto* svc = getLuaServices(L);
+    float x = 0.0f, y = 0.0f, u = 0.0f, v = 0.0f;
+    if (gh && svc && svc->mapUVForWorldPos && gh->isPlayerGhost() &&
+        gh->getCorpseCanonicalPos(x, y) && svc->mapUVForWorldPos(x, y, 0.0f, u, v)) {
+        lua_pushnumber(L, u);
+        lua_pushnumber(L, v);
+        return 2;
+    }
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 0);
+    return 2;
+}
+
+/// GetDeathReleasePosition() -> the spirit healer releasing would send the
+/// player to, on the map shown. WorldMapFrame hides it again for a ghost.
+static int lua_GetDeathReleasePosition(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    auto* svc = getLuaServices(L);
+    uint32_t mapId = 0;
+    glm::vec3 healer(0.0f);
+    float u = 0.0f, v = 0.0f;
+    if (gh && svc && svc->mapUVForMapPos && gh->isPlayerDead() &&
+        gh->getDeathReleaseLocation(mapId, healer) &&
+        svc->mapUVForMapPos(mapId, healer.x, healer.y, healer.z, u, v)) {
+        lua_pushnumber(L, u);
+        lua_pushnumber(L, v);
+        return 2;
+    }
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 0);
+    return 2;
 }
 
 /// GetBattlefieldFlagPosition(index) → where a carried flag is, and which flag.
@@ -6816,19 +6772,10 @@ void registerSystemLuaAPI(lua_State* L) {
             return 1;
         }},
                 {"GetBattlefieldPosition",   lua_GetBattlefieldPosition},
-                // Both of these want a position normalised to the map frame
-                // currently on screen, which only the map that is drawing knows
-                // - and this client draws its own, so FrameXML's WorldMapFrame
-                // is suppressed and neither is reached.
-                //
-                // Zero is not a placeholder here, it is the answer: both call
-                // sites read `if ( x == 0 and y == 0 )` and hide the marker.
-                // The corpse and the spirit healer are drawn by this client's
-                // own map, from getCorpseCanonicalPos and
-                // getDeathReleaseLocation. Handing the world map over means
-                // giving these the projection, not just filling them in.
-                {"GetCorpseMapPosition",     lua_GetBattlefieldPosition},
-                {"GetDeathReleasePosition",  lua_GetBattlefieldPosition},
+                // Zero is the answer for "not on this map": both call sites
+                // read `if ( x == 0 and y == 0 )` and hide the marker.
+                {"GetCorpseMapPosition",     lua_GetCorpseMapPosition},
+                {"GetDeathReleasePosition",  lua_GetDeathReleasePosition},
                 {"GetNumBattlefieldVehicles", lua_ReturnZero},
                 {"GetBattlefieldVehicleInfo", lua_ReturnNil},
                 {"GetChatWindowInfo",        lua_GetChatWindowInfo},
@@ -7394,45 +7341,26 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetMapContinents",    lua_GetMapContinents},
                 {"GetMapZones",         lua_GetMapZones},
                 {"GetNumMapLandmarks",  lua_GetNumMapLandmarks},
-                // The rest of the world map's own calls. None of them was
-                // bound, and two run on every open: WorldMapFrame_OnUpdate
-                // asks UpdateMapHighlight for whatever is under the cursor on
-                // every frame the mouse is over the map, and the zoom-out
-                // button reaches ZoomOut whenever the map is not a continent.
-                //
-                // Answered rather than filled in. This client draws its own
-                // world map and keeps its zones, overlays and area POIs in
-                // rendering/world_map, which no callback reaches from here yet
-                // - so these say "nothing there" honestly instead of raising,
-                // and the map opens empty rather than not at all.
-                //
-                // Nothing under the cursor: eight values, and the first is the
-                // area name the label is set from. Nil leaves it blank, which
-                // is what a cursor over no zone should do.
-                // UpdateMapHighlight(x, y) →
+                // UpdateMapHighlight(x, y) ->
                 //   name, fileName, texPercentageX, texPercentageY,
                 //   textureX, textureY, scrollChildX, scrollChildY
                 //
-                // FrameXML owns the highlight texture and additive blending;
-                // supply the hovered area's native art crop and map rectangle.
+                // Asked by WorldMapButton_OnUpdate every frame the map is up.
+                // The original answers zeroes, not nils, for the six numbers
+                // when there is no highlight art under the point.
                 {"UpdateMapHighlight", [](lua_State* L) -> int {
             auto* svc = getLuaServices(L);
             const float u = static_cast<float>(luaL_optnumber(L, 1, -1.0));
             const float v = static_cast<float>(luaL_optnumber(L, 2, -1.0));
-            std::string name;
-            if (svc && svc->getMapZoneNameAt) name = svc->getMapZoneNameAt(u, v);
-            if (name.empty()) lua_pushnil(L);
-            else              lua_pushstring(L, name.c_str());
             const auto highlight = svc && svc->getMapHighlightAt
                 ? svc->getMapHighlightAt(u, v) : LuaServices::MapHighlight{};
-            if (highlight.file.empty()) {
-                for (int i = 0; i < 7; ++i) lua_pushnil(L);
-            } else {
-                lua_pushstring(L, highlight.file.c_str());
-                for (float value : {highlight.texU, highlight.texV, highlight.width,
-                                    highlight.height, highlight.x, highlight.y})
-                    lua_pushnumber(L, value);
-            }
+            if (highlight.name.empty()) lua_pushnil(L);
+            else                        lua_pushstring(L, highlight.name.c_str());
+            if (highlight.file.empty()) lua_pushnil(L);
+            else                        lua_pushstring(L, highlight.file.c_str());
+            for (float value : {highlight.texU, highlight.texV, highlight.width,
+                                highlight.height, highlight.x, highlight.y})
+                lua_pushnumber(L, value);
             return 8;
         }},
                 // Clicking a continent drills into the zone under the point.

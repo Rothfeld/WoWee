@@ -25,6 +25,8 @@ namespace world_map {
 /// Context passed to each overlay layer during rendering.
 struct LayerContext {
     bool frameXmlHosted = false;
+    /// Hosted in FrameXML: the player's position from the map API, if on the map.
+    std::optional<glm::vec2> hostedPlayerUV;
     ImDrawList* drawList = nullptr;
     ImVec2 imgMin;           // top-left of map image in screen space
     float displayW = 0, displayH = 0;

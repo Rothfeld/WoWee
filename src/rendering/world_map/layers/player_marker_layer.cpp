@@ -46,22 +46,28 @@ void PlayerMarkerLayer::ensureTexture() {
 }
 
 void PlayerMarkerLayer::render(const LayerContext& ctx) {
-    const auto projection = currentProjection(ctx);
-    if (!projection) return;
+    glm::vec2 playerUV;
+    if (ctx.frameXmlHosted) {
+        if (!ctx.hostedPlayerUV) return;
+        playerUV = *ctx.hostedPlayerUV;
+    } else {
+        const auto projection = currentProjection(ctx);
+        if (!projection) return;
 
-    // The one extra question this layer asks: on a continent, the player is
-    // only drawn when they are actually somewhere on it. The marker layers
-    // around it draw things whose position is already known to belong here.
-    if (projection->isContinent) {
-        const int playerZone =
-            findZoneForPlayer(*ctx.zones, ctx.playerRenderPos, ctx.playerZoneId);
-        if (playerZone < 0 || !zoneBelongsToContinent(*ctx.zones, playerZone, ctx.currentZoneIdx))
-            return;
+        // The one extra question this layer asks: on a continent, the player is
+        // only drawn when they are actually somewhere on it. The marker layers
+        // around it draw things whose position is already known to belong here.
+        if (projection->isContinent) {
+            const int playerZone =
+                findZoneForPlayer(*ctx.zones, ctx.playerRenderPos, ctx.playerZoneId);
+            if (playerZone < 0 || !zoneBelongsToContinent(*ctx.zones, playerZone, ctx.currentZoneIdx))
+                return;
+        }
+
+        playerUV = renderPosToMapUV(ctx.playerRenderPos, projection->bounds, projection->isContinent);
+        if (playerUV.x < 0.0f || playerUV.x > 1.0f ||
+            playerUV.y < 0.0f || playerUV.y > 1.0f) return;
     }
-
-    glm::vec2 playerUV = renderPosToMapUV(ctx.playerRenderPos, projection->bounds, projection->isContinent);
-    if (playerUV.x < 0.0f || playerUV.x > 1.0f ||
-        playerUV.y < 0.0f || playerUV.y > 1.0f) return;
 
     float px = ctx.imgMin.x + playerUV.x * ctx.displayW;
     float py = ctx.imgMin.y + playerUV.y * ctx.displayH;

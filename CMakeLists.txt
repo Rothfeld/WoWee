@@ -970,6 +970,8 @@ set(WOWEE_SOURCES
     src/rendering/world_map/overlay_renderer.cpp
     src/rendering/world_map/input_handler.cpp
     src/rendering/world_map/world_map_facade.cpp
+    src/rendering/world_map/map_navigator.cpp
+    src/rendering/world_map/map_navigator_loader.cpp
     src/rendering/world_map/layers/player_marker_layer.cpp
     src/rendering/world_map/layers/party_dot_layer.cpp
     src/rendering/world_map/layers/taxi_node_layer.cpp
@@ -1169,6 +1171,7 @@ set(WOWEE_HEADERS
     include/rendering/swim_effects.hpp
     include/rendering/world_map.hpp
     include/rendering/world_map/world_map_types.hpp
+    include/rendering/world_map/map_navigator.hpp
     include/rendering/world_map/coordinate_projection.hpp
     include/rendering/world_map/map_resolver.hpp
     include/rendering/world_map/exploration_state.hpp

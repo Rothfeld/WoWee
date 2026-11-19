@@ -33,7 +33,7 @@
 namespace wowee {
 
 // Forward declarations
-namespace rendering { class Renderer; }
+namespace rendering { class Renderer; namespace world_map { class MapNavigator; } }
 namespace ui { class UIManager; class MapWindow; }
 namespace auth { class AuthHandler; }
 namespace game { class GameHandler; class World; class ExpansionRegistry; struct ExpansionProfile; struct GameHandlerTestAccess; }
@@ -108,6 +108,9 @@ public:
     game::GameHandler* getGameHandler() { return gameHandler.get(); }
     game::World* getWorld() { return world.get(); }
     pipeline::AssetManager* getAssetManager() { return assetManager.get(); }
+    /// The world map FrameXML's map API answers from; built on first use,
+    /// once the DBC layout and assets are loaded. Null before that.
+    rendering::world_map::MapNavigator* mapNavigator();
     addons::AddonManager* getAddonManager() { return addonManager_.get(); }
     game::ExpansionRegistry* getExpansionRegistry() { return expansionRegistry_.get(); }
 
@@ -270,6 +273,7 @@ private:
     std::unique_ptr<game::GameHandler> gameHandler;
     std::unique_ptr<game::World> world;
     std::unique_ptr<pipeline::AssetManager> assetManager;
+    std::unique_ptr<rendering::world_map::MapNavigator> mapNavigator_;
     std::unique_ptr<addons::AddonManager> addonManager_;
     // Set by ReloadUI() from inside Lua, acted on between frames - the reload
     // destroys the state that asked for it.

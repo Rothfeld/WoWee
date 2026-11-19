@@ -1550,6 +1550,12 @@ wowee_add_test(test_world_map_exploration_state
             ${CMAKE_SOURCE_DIR}/src/rendering/world_map/exploration_state.cpp
             ${CMAKE_SOURCE_DIR}/src/rendering/world_map/coordinate_projection.cpp)
 
+# ── test_world_map_navigator ──────────────────────────────────
+wowee_add_test(test_world_map_navigator
+    SOURCES test_world_map_navigator.cpp
+            ${CMAKE_SOURCE_DIR}/src/rendering/world_map/map_navigator.cpp
+            ${TEST_COMMON_SOURCES})
+
 # ── test_world_map_zone_metadata ──────────────────────────────
 wowee_add_test(test_world_map_zone_metadata
     SOURCES test_world_map_zone_metadata.cpp

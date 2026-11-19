@@ -8,12 +8,14 @@
   },
   "AreaPOI": {
     "AreaID": 9,
+    "Description": 27,
     "Flags": 8,
     "ID": 0,
     "Icon": 2,
     "Importance": 1,
     "MapID": 7,
     "Name": 10,
+    "WorldState": 44,
     "X": 4,
     "Y": 5,
     "Z": 6
@@ -22,6 +24,7 @@
     "ExploreFlag": 3,
     "ID": 0,
     "MapID": 1,
+    "Name": 11,
     "ParentAreaNum": 2
   },
   "CharHairGeosets": {
@@ -292,9 +295,13 @@
     "LightParamsID": 0
   },
   "Map": {
+    "EntranceMapID": 117,
+    "EntranceX": 118,
+    "EntranceY": 119,
     "ID": 0,
     "InternalName": 1,
-    "LinkedZone": 27
+    "LinkedZone": 27,
+    "Name": 4
   },
   "SkillLine": {
     "Category": 1,
@@ -592,5 +599,44 @@
     "SubClassID": 1,
     "DisplayName": 10,
     "VerboseName": 27
+  },
+  "WorldMapContinent": {
+    "BottomBoundary": 5,
+    "ContinentOffsetX": 6,
+    "ContinentOffsetY": 7,
+    "ID": 0,
+    "LeftBoundary": 2,
+    "MapID": 1,
+    "RightBoundary": 3,
+    "Scale": 8,
+    "TopBoundary": 4
+  },
+  "WorldMapOverlay": {
+    "AreaID0": 2,
+    "AreaID1": 3,
+    "AreaID2": 4,
+    "AreaID3": 5,
+    "HitRectBottom": 15,
+    "HitRectLeft": 14,
+    "HitRectRight": 16,
+    "HitRectTop": 13,
+    "ID": 0,
+    "MapAreaID": 1,
+    "OffsetX": 11,
+    "OffsetY": 12,
+    "TextureHeight": 10,
+    "TextureName": 8,
+    "TextureWidth": 9
+  },
+  "WorldMapTransforms": {
+    "ID": 0,
+    "MapID": 1,
+    "NewMapID": 6,
+    "RegionMaxX": 4,
+    "RegionMaxY": 5,
+    "RegionMinX": 2,
+    "RegionMinY": 3,
+    "RegionOffsetX": 7,
+    "RegionOffsetY": 8
   }
 }

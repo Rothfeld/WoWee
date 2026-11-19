@@ -145,10 +145,10 @@ struct LuaServices {
     };
     std::function<std::vector<MapLandmark>()> getMapLandmarks;
 
-    /// The zone under a point on the map, in [0,1] map space, or empty. This
-    /// is what names the label under the cursor.
-    std::function<std::string(float, float)> getMapZoneNameAt;
+    /// UpdateMapHighlight: what is under a point on the map, in [0,1] map
+    /// space. The name labels it; a file names the highlight art.
     struct MapHighlight {
+        std::string name;
         std::string file;
         float texU = 0, texV = 0, width = 0, height = 0, x = 0, y = 0;
     };

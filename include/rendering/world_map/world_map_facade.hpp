@@ -61,6 +61,10 @@ public:
     /// than to a window underneath it. Unset, nothing changes.
     void setFrameRect(float x, float y, float w, float h, bool frameXml = false);
     void clearFrameRect();
+    /// Where FrameXML's map API puts the player, [0,1] across the hosted map,
+    /// or nothing when the player is not on the map shown. The arrow is drawn
+    /// there rather than from this class's own view.
+    void setHostedPlayerMarker(std::optional<glm::vec2> uv);
     /// Whether a frame rect is set - which, when FrameXML owns the map, is how
     /// the client knows FrameXML has its map panel on screen and wants the map
     /// drawn into it.

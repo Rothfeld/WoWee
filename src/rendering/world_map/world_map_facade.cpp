@@ -160,6 +160,7 @@ struct WorldMapFacade::Impl {
     // Lives here rather than on the facade because the drawing does.
     bool  hasFrameRect = false;
     bool frameXmlHosted = false;
+    std::optional<glm::vec2> hostedPlayerUV;
     std::unordered_map<std::string, glm::vec2> highlightSizes;
     float frameRectX = 0.0f, frameRectY = 0.0f;
     float frameRectW = 0.0f, frameRectH = 0.0f;
@@ -928,6 +929,7 @@ void WorldMapFacade::setFrameRect(float x, float y, float w, float h, bool frame
 }
 
 void WorldMapFacade::clearFrameRect() { impl_->hasFrameRect = false; }
+void WorldMapFacade::setHostedPlayerMarker(std::optional<glm::vec2> uv) { impl_->hostedPlayerUV = uv; }
 bool WorldMapFacade::hasFrameRect() const { return impl_->hasFrameRect; }
 
 void WorldMapFacade::setCorpsePos(bool hasCorpse, glm::vec3 renderPos) {
@@ -1147,6 +1149,7 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         // Build layer context
         LayerContext layerCtx;
         layerCtx.frameXmlHosted = frameXmlHosted;
+        layerCtx.hostedPlayerUV = hostedPlayerUV;
         layerCtx.drawList = drawList;
         layerCtx.imgMin = imgMin;
         layerCtx.displayW = displayW;
@@ -1339,8 +1342,15 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
             }
         }
 
-        // Render all overlay layers
-        overlay.render(layerCtx);
+        // Inside FrameXML's map, the interface draws every pin itself from the
+        // map API; only the player's arrow is this client's to draw (2.4.3
+        // creates it in code, CWorldMap::CreatePlayerArrowFrame), at the
+        // position the API answers.
+        if (frameXmlHosted) {
+            if (playerMarkerLayer) playerMarkerLayer->render(layerCtx);
+        } else {
+            overlay.render(layerCtx);
+        }
 
         // Zone view: back to continent + zone name
         if (!hasFrameRect && vl == ViewLevel::ZONE && viewState.continentIdx() >= 0) {
