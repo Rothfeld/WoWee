@@ -1004,16 +1004,10 @@ bool InitialSpellsParser::parse(network::Packet& packet, InitialSpellsData& data
     data.talentSpec = packet.readUInt8();
     uint16_t spellCount = packet.readUInt16();
 
-    // Cap spell count to prevent excessive iteration.
-    // WotLK characters with all ranks, mounts, professions, and racials can
-    // know 400-600 spells; 1024 covers all practical cases with headroom.
-    constexpr uint16_t kMaxSpells = 1024;
-    if (spellCount > kMaxSpells) {
-        LOG_WARNING("SMSG_INITIAL_SPELLS: spellCount=", spellCount, " exceeds max ", kMaxSpells,
-                    ", capping");
-        spellCount = kMaxSpells;
-    }
-
+    // No cap: the count is a uint16 and every entry is bounds-checked below. A
+    // level 70 with every profession at 375 knows 2244 spells (pair 8); a cap
+    // of 1024 dropped half the recipes and then read the cooldown count from
+    // the middle of the spell list.
     LOG_DEBUG("SMSG_INITIAL_SPELLS: spellCount=", spellCount,
               vanillaFormat ? " (uint16 spell format)" : " (uint32 spell format)");
 
@@ -1048,16 +1042,6 @@ bool InitialSpellsParser::parse(network::Packet& packet, InitialSpellsData& data
     }
 
     uint16_t cooldownCount = packet.readUInt16();
-
-    // Cap cooldown count to prevent excessive iteration.
-    // Some servers include entries for all spells (even with zero remaining time)
-    // to communicate category cooldown data, so the count can be high.
-    constexpr uint16_t kMaxCooldowns = 1024;
-    if (cooldownCount > kMaxCooldowns) {
-        LOG_WARNING("SMSG_INITIAL_SPELLS: cooldownCount=", cooldownCount, " exceeds max ", kMaxCooldowns,
-                    ", capping");
-        cooldownCount = kMaxCooldowns;
-    }
 
     data.cooldowns.reserve(cooldownCount);
     for (uint16_t i = 0; i < cooldownCount; ++i) {
