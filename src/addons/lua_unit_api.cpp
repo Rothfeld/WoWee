@@ -883,27 +883,33 @@ static std::optional<float> unitFieldFloat(lua_State* L, const char* unitId, gam
 
 /// The player's skill line a weapon in an equipment slot trains, from the
 /// server's own table (CMaNGOS Item::GetSkill, indexed by weapon subclass).
-/// An empty hand is Unarmed; zero where the slot holds no weapon skill.
+/// An empty slot is Unarmed, the ranged one too; a slot holding something
+/// that is no weapon trains nothing. Native 2.4.3, a new warrior with a
+/// shield and no ranged weapon: UnitAttackBothHands off hand 0, 0 and
+/// UnitRangedAttack 1, 0 (Unarmed at 1).
 static uint32_t weaponSkillLineFor(game::GameHandler* gh, game::EquipSlot slot) {
     static constexpr uint32_t kWeaponSkills[] = {
         44, 172, 45, 46, 54, 160, 229, 43, 55, 0,
         136, 0, 0, 162, 0, 173, 176, 253, 226, 228, 356};
     constexpr uint32_t kUnarmed = 162;
     const auto& item = gh->getInventory().getEquipSlot(slot);
-    if (item.empty()) return slot == game::EquipSlot::RANGED ? 0 : kUnarmed;
-    if (item.item.itemClass != game::ITEM_CLASS_WEAPON) return slot == game::EquipSlot::RANGED ? 0 : kUnarmed;
+    if (item.empty()) return kUnarmed;
+    if (item.item.itemClass != game::ITEM_CLASS_WEAPON) return 0;
     return item.item.subClass < std::size(kWeaponSkills) ? kWeaponSkills[item.item.subClass] : 0;
 }
 
-/// (base, modifier) for a skill line as the sheet's skill readouts answer it:
-/// the trained value, and what items, buffs and the given combat rating add.
+/// (base, modifier) for a skill line as the sheet's skill readouts answer it.
+/// The base is the trained value with the permanent bonus talents give
+/// (SKILL_INFO's permanent half); the modifier is the temporary bonus and the
+/// given combat rating. Native 2.4.3, a warrior at Defense 1 with Anticipation
+/// (+20): UnitDefense 21, 0.
 static std::pair<int, int> skillWithModifier(game::GameHandler* gh, uint32_t skillLine, int ratingIndex) {
     const auto& skills = gh->getPlayerSkills();
     const auto it = skills.find(skillLine);
     int base = 0, modifier = 0;
     if (it != skills.end()) {
-        base = it->second.value;
-        modifier = it->second.bonusTemp + it->second.bonusPerm;
+        base = it->second.value + it->second.bonusPerm;
+        modifier = it->second.bonusTemp;
     }
     if (ratingIndex >= 0) modifier += static_cast<int>(gh->getCombatRatingBonus(ratingIndex));
     return {base, modifier};
@@ -1670,8 +1676,10 @@ static int lua_UnitAttackSpeed(lua_State* L) {
         const auto& inv = gh->getInventory();
         const auto& mh = inv.getEquipSlot(game::EquipSlot::MAIN_HAND);
         if (!mh.empty() && mh.item.delayMs > 0) mainSpeed = mh.item.delayMs / 1000.0;
+        // A shield is no off-hand attack: native 2.4.3 answers one value
+        // for a warrior with sword and shield.
         const auto& oh = inv.getEquipSlot(game::EquipSlot::OFF_HAND);
-        hasOffHand = !oh.empty();
+        hasOffHand = !oh.empty() && oh.item.itemClass == game::ITEM_CLASS_WEAPON;
         if (hasOffHand) offSpeed = oh.item.delayMs > 0 ? oh.item.delayMs / 1000.0 : 2.0;
     }
     lua_pushnumber(L, mainSpeed);
@@ -1704,6 +1712,21 @@ static int lua_UnitDamage(lua_State* L) {
         lua_pushnumber(L, 0.0);  // physical bonus, positive
         lua_pushnumber(L, 0.0);  // ...and negative
         lua_pushnumber(L, 1.0);  // damage percent
+        return 7;
+    }
+    // The server works both hands' damage out (UNIT_FIELD_MINDAMAGE,
+    // MAXDAMAGE, MINOFFHANDDAMAGE, MAXOFFHANDDAMAGE, consecutive floats) and
+    // 2.4.3 shows those: 76.94 - 79.14 and an off hand of 42.86 for a new
+    // level 70 warrior with sword and shield. Vanilla layouts here do not
+    // name the fields, so their sheet still adds attack power to the weapon.
+    if (const auto lo = unitFieldFloat(L, who.c_str(), game::UF::UNIT_FIELD_MINDAMAGE)) {
+        lua_pushnumber(L, *lo);
+        lua_pushnumber(L, unitFieldFloat(L, who.c_str(), game::UF::UNIT_FIELD_MINDAMAGE, 1).value_or(0.0f));
+        lua_pushnumber(L, unitFieldFloat(L, who.c_str(), game::UF::UNIT_FIELD_MINDAMAGE, 2).value_or(0.0f));
+        lua_pushnumber(L, unitFieldFloat(L, who.c_str(), game::UF::UNIT_FIELD_MINDAMAGE, 3).value_or(0.0f));
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 1.0);
         return 7;
     }
     const int32_t ap = gh ? gh->getMeleeAttackPower() : -1;
