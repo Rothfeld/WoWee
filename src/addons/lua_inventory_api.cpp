@@ -576,7 +576,23 @@ static uint32_t itemIdFromArg(lua_State* L, int index) {
         const auto pos = str.find("item:");
         if (pos != std::string::npos) {
             try { return static_cast<uint32_t>(std::stoul(str.substr(pos + 5))); } catch (...) {}
+            return 0;
         }
+        // A plain name means an item the client has seen: native 2.4.3
+        // answers GetItemInfo("Instant Poison VII") from its item cache, and
+        // the /use and /cast commands decide by that answer whether the text
+        // names an item to use or a spell to cast.
+        auto* gh = getGameHandler(L);
+        if (!gh || str.empty()) return 0;
+        uint32_t found = 0;
+        for (const auto& [id, info] : gh->getItemInfoCache()) {
+            if (!info.valid || info.name.size() != str.size()) continue;
+            const bool same = std::equal(str.begin(), str.end(), info.name.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            });
+            if (same && (found == 0 || id < found)) found = id;
+        }
+        return found;
     }
     return 0;
 }
@@ -1060,8 +1076,9 @@ uint32_t currencyListItemId(lua_State* L, int index) {
 static int lua_GetItemCount(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnZero(L); }
-    const uint32_t itemId = static_cast<uint32_t>(luaL_checknumber(L, 1));
-    lua_pushnumber(L, gh->getInventory().countItem(itemId));
+    // An id, a link or a name, as GetItemInfo takes them.
+    const uint32_t itemId = itemIdFromArg(L, 1);
+    lua_pushnumber(L, itemId != 0 ? gh->getInventory().countItem(itemId) : 0);
     return 1;
 }
 
