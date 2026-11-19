@@ -2357,10 +2357,21 @@ static int lua_GetThreatStatusColor(lua_State* L) {
     return 3;
 }
 
-// GetReadyCheckStatus(unit) → status string
+// GetReadyCheckStatus(unit): "waiting", "ready" or "notready" while a check
+// runs, on the leader's and raid assistants' clients only; nil otherwise.
+// PlayerFrame, PartyMemberFrame and the raid buttons draw their check icons
+// from it.
 static int lua_GetReadyCheckStatus(lua_State* L) {
-    (void)L;
-    lua_pushnil(L); // No ready check in progress
+    auto* gh = getGameHandler(L);
+    std::string unit = luaL_optstring(L, 1, "player");
+    toLowerInPlace(unit);
+    const auto status = gh ? gh->readyCheckStatus(resolveUnitGuid(gh, unit)) : std::nullopt;
+    if (!status) { lua_pushnil(L); return 1; }
+    switch (*status) {
+        case game::ReadyCheckStatus::Waiting: lua_pushstring(L, "waiting"); break;
+        case game::ReadyCheckStatus::Ready: lua_pushstring(L, "ready"); break;
+        case game::ReadyCheckStatus::NotReady: lua_pushstring(L, "notready"); break;
+    }
     return 1;
 }
 

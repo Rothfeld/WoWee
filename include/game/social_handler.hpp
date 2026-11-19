@@ -9,6 +9,7 @@
 #include <array>
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -20,6 +21,7 @@ namespace game {
 class GameHandler;
 
 class SocialHandler {
+    friend struct GameHandlerTestAccess;
 public:
     using PacketHandler = std::function<void(network::Packet&)>;
     using DispatchTable = std::unordered_map<LogicalOpcode, PacketHandler>;
@@ -51,8 +53,6 @@ public:
     using PetitionSignature = game::PetitionSignature;
 
     using PetitionInfo = game::PetitionInfo;
-
-    using ReadyCheckResult = game::ReadyCheckResult;
 
     using InstanceLockout = game::InstanceLockout;
 
@@ -294,10 +294,15 @@ public:
     // Ready check
     void initiateReadyCheck();
     void respondToReadyCheck(bool ready);
-    [[nodiscard]] bool hasPendingReadyCheck() const { return pendingReadyCheck_; }
-    void dismissReadyCheck() { pendingReadyCheck_ = false; }
-    [[nodiscard]] const std::string& getReadyCheckInitiator() const { return readyCheckInitiator_; }
-    [[nodiscard]] const std::vector<ReadyCheckResult>& getReadyCheckResults() const { return readyCheckResults_; }
+    /// GetReadyCheckTimeLeft: whole seconds left on the running check, 0
+    /// when none runs.
+    [[nodiscard]] int readyCheckTimeLeft() const;
+    /// GetReadyCheckStatus: only the leader and raid assistants keep answers
+    /// (only they receive them); nullopt for everyone else and for a member
+    /// the check did not start with.
+    [[nodiscard]] std::optional<ReadyCheckStatus> readyCheckStatus(uint64_t guid) const;
+    /// Thirty seconds on: the asker names who did not answer and finishes.
+    void updateReadyCheck();
 
     // Duel
     void acceptDuel();
@@ -682,19 +687,19 @@ private:
     bool removedFromGroup_ = false;
     std::string pendingInviterName;
 
-    // Ready check
-    bool        pendingReadyCheck_       = false;
-    uint32_t    readyCheckReadyCount_    = 0;
-    uint32_t    readyCheckNotReadyCount_ = 0;
-    std::string readyCheckInitiator_;
-    /// This player asked for the check: the summary lines are theirs.
-    bool readyCheckMine_ = false;
-    bool readyCheckFinishSent_ = false;
-    std::chrono::steady_clock::time_point readyCheckStartedAt_{};
-public:
-    void updateReadyCheck();
-private:
-    std::vector<ReadyCheckResult> readyCheckResults_;
+    // Ready check, measured on 2.4.3 (_experiments/20261119T094500Z.readycheck_audit):
+    // the timer runs thirty seconds from MSG_RAID_READY_CHECK; the leader and
+    // raid assistants keep one status per member until every member has
+    // answered or the time is up.
+    std::chrono::steady_clock::time_point readyCheckDeadline_{};
+    bool readyCheckRunning_ = false;
+    uint64_t readyCheckInitiator_ = 0;
+    std::vector<std::pair<uint64_t, ReadyCheckStatus>> readyCheckStatuses_;
+    /// The check stops without a word: leader change, leaving the group, or
+    /// (for those keeping answers) the end of the check.
+    void resetReadyCheck();
+    /// The name the roster gives `guid`, this player's own for the player.
+    [[nodiscard]] std::string groupMemberName(uint64_t guid) const;
 
     // Instance
     std::vector<InstanceLockout> instanceLockouts_;

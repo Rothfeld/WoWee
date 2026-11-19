@@ -299,10 +299,9 @@ struct LfgRoleCheckDungeon {
 
 // ---- Ready check ----
 
-struct ReadyCheckResult {
-    std::string name;
-    bool ready = false;
-};
+/// A member's answer as GetReadyCheckStatus names it: "waiting", "ready",
+/// "notready".
+enum class ReadyCheckStatus : uint8_t { Waiting, Ready, NotReady };
 
 // ---- Chat ----
 

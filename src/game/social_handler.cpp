@@ -557,99 +557,85 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_PARTY_MEMBER_STATS_FULL] = [this](network::Packet& packet) { handlePartyMemberStats(packet, true); };
 
     // ---- Ready check ----
+    // As 2.4.3 runs it (pair 5, _experiments/20261119T094500Z.readycheck_audit):
+    // CMaNGOS broadcasts the asker's guid to the whole group, relays answers
+    // to the leader and assistants only, and relays MSG_RAID_READY_CHECK_FINISHED
+    // from the asker. The leader and assistants keep a status per member - the
+    // asker "ready", everyone else "waiting" - and stop the check when nobody
+    // is waiting or thirty seconds are up. Only the asker prints the result
+    // and sends the finish; members print nothing after the opening line.
     table[Opcode::MSG_RAID_READY_CHECK] = [this](network::Packet& packet) {
-        pendingReadyCheck_ = true;
-        readyCheckReadyCount_ = 0;
-        readyCheckNotReadyCount_ = 0;
-        readyCheckInitiator_.clear();
-        readyCheckResults_.clear();
-        readyCheckMine_ = false;
-        readyCheckFinishSent_ = false;
-        readyCheckStartedAt_ = std::chrono::steady_clock::now();
-        if (packet.hasRemaining(8)) {
-            uint64_t initiatorGuid = packet.readUInt64();
-            readyCheckMine_ = initiatorGuid == owner_.getPlayerGuid();
-            auto entity = owner_.getEntityManager().getEntity(initiatorGuid);
-            if (auto* unit = dynamic_cast<Unit*>(entity.get()))
-                readyCheckInitiator_ = unit->getName();
+        if (!packet.hasRemaining(8)) {
+            LOG_WARNING("MSG_RAID_READY_CHECK without the asker's guid, ", packet.getSize(), " bytes");
+            packet.skipAll();
+            return;
         }
-        if (readyCheckInitiator_.empty() && partyData.leaderGuid != 0) {
-            for (const auto& member : partyData.members) {
-                if (member.guid == partyData.leaderGuid) { readyCheckInitiator_ = member.name; break; }
-            }
+        const uint64_t initiator = packet.readUInt64();
+        const uint64_t self = owner_.getPlayerGuid();
+        readyCheckInitiator_ = initiator;
+        readyCheckDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        readyCheckRunning_ = true;
+        readyCheckStatuses_.clear();
+        constexpr uint8_t kMemberFlagAssistant = 0x01;
+        const bool keepsAnswers = partyData.leaderGuid == self ||
+            (groupIsRaid(partyData.groupType) && (partyData.flags & kMemberFlagAssistant));
+        if (keepsAnswers) {
+            auto initial = [&](uint64_t guid) {
+                return guid == initiator ? ReadyCheckStatus::Ready : ReadyCheckStatus::Waiting;
+            };
+            for (const auto& m : partyData.members)
+                if (m.guid != self) readyCheckStatuses_.emplace_back(m.guid, initial(m.guid));
+            readyCheckStatuses_.emplace_back(self, initial(self));
         }
-        // 2.4.3 (pair 6): the one who asked sees "Starting ready check...",
-        // the others "Edricf has initiated a ready check.".
-        if (readyCheckMine_) owner_.systemGlobal("READY_CHECK_START");
-        else if (!readyCheckInitiator_.empty())
-            owner_.systemGlobal("ERR_RAID_LEADER_READY_CHECK_START_S", {readyCheckInitiator_});
-        if (owner_.addonEventCallbackRef())
-            owner_.addonEventCallbackRef()("READY_CHECK", {readyCheckInitiator_, "30"});
+        const std::string name = groupMemberName(initiator);
+        if (name.empty()) LOG_WARNING("Ready check asker ", initiator, " is not in the group roster");
+        if (initiator == self) owner_.systemGlobal("READY_CHECK_START");
+        else owner_.systemGlobal("ERR_RAID_LEADER_READY_CHECK_START_S", {name});
+        owner_.fireAddonEvent("READY_CHECK", {name, std::to_string(readyCheckTimeLeft())});
     };
     table[Opcode::MSG_RAID_READY_CHECK_CONFIRM] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(9)) { packet.skipAll(); return; }
-        uint64_t respGuid = packet.readUInt64();
-        uint8_t  isReady  = packet.readUInt8();
-        if (isReady) ++readyCheckReadyCount_; else ++readyCheckNotReadyCount_;
-        auto nit = owner_.getPlayerNameCache().find(respGuid);
-        std::string rname;
-        if (nit != owner_.getPlayerNameCache().end()) rname = nit->second;
-        else {
-            // Only cast to Unit if the entity actually is one - a raw
-            // static_pointer_cast on a GameObject would be undefined behavior.
-            auto ent = owner_.getEntityManager().getEntity(respGuid);
-            if (ent && (ent->getType() == ObjectType::UNIT || ent->getType() == ObjectType::PLAYER))
-                rname = std::static_pointer_cast<game::Unit>(ent)->getName();
+        if (!packet.hasRemaining(9)) {
+            LOG_WARNING("MSG_RAID_READY_CHECK_CONFIRM of ", packet.getSize(), " bytes");
+            packet.skipAll();
+            return;
         }
-        if (!rname.empty()) {
-            bool found = false;
-            for (auto& r : readyCheckResults_) {
-                if (r.name == rname) { r.ready = (isReady != 0); found = true; break; }
+        const uint64_t guid = packet.readUInt64();
+        const bool ready = packet.readUInt8() != 0;
+        const uint64_t self = owner_.getPlayerGuid();
+        const bool mine = readyCheckInitiator_ == self && !readyCheckStatuses_.empty();
+        for (auto& [member, status] : readyCheckStatuses_)
+            if (member == guid) status = ready ? ReadyCheckStatus::Ready : ReadyCheckStatus::NotReady;
+        // Before the event, as native prints it.
+        if (mine && !ready) owner_.systemGlobal("RAID_MEMBER_NOT_READY", {groupMemberName(guid)});
+        // The member's number in the raid (raidN), or in the party (partyN).
+        int index = 0;
+        if (groupIsRaid(partyData.groupType)) {
+            index = raidRosterIndex(partyData, self, guid);
+        } else {
+            int n = 0;
+            for (const auto& m : partyData.members) {
+                if (m.guid == self) continue;
+                ++n;
+                if (m.guid == guid) { index = n; break; }
             }
-            if (!found) readyCheckResults_.push_back({ .name = rname, .ready = isReady != 0 });
-            // Answers are reported once the check finishes, to the one who
-            // asked (MSG_RAID_READY_CHECK_FINISHED).
         }
-        if (owner_.addonEventCallbackRef()) {
-            char guidBuf[32];
-            snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)respGuid);
-            owner_.addonEventCallbackRef()("READY_CHECK_CONFIRM", {guidBuf, isReady ? "1" : "0"});
+        owner_.fireAddonEvent("READY_CHECK_CONFIRM", {std::to_string(index), ready ? "1" : "0"});
+        if (readyCheckStatuses_.empty()) return;
+        const bool waiting = std::any_of(readyCheckStatuses_.begin(), readyCheckStatuses_.end(),
+            [](const auto& entry) { return entry.second == ReadyCheckStatus::Waiting; });
+        if (waiting) return;
+        if (mine) {
+            const bool allReady = std::all_of(readyCheckStatuses_.begin(), readyCheckStatuses_.end(),
+                [](const auto& entry) { return entry.second == ReadyCheckStatus::Ready; });
+            owner_.systemGlobal(allReady ? "READY_CHECK_ALL_READY" : "READY_CHECK_FINISHED");
+            if (owner_.getSocket()) owner_.getSocket()->send(network::Packet(wireOpcode(Opcode::MSG_RAID_READY_CHECK_FINISHED)));
         }
+        resetReadyCheck();
     };
     table[Opcode::MSG_RAID_READY_CHECK_FINISHED] = [this](network::Packet& /*packet*/) {
-        // The asker's summary (pair 6): everyone ready, "Everyone is Ready";
-        // someone said no, "Edricf is not ready" each, then "Ready check
-        // finished"; someone did not answer, "The following players are
-        // AFK: Edricf". Members print nothing here.
-        if (readyCheckMine_) {
-            std::string afk;
-            std::vector<std::string> notReady;
-            for (const auto& m : partyData.members) {
-                if (m.guid == owner_.getPlayerGuid() || m.name.empty()) continue;
-                const auto r = std::find_if(readyCheckResults_.begin(), readyCheckResults_.end(),
-                    [&](const ReadyCheckResult& x) { return x.name == m.name; });
-                if (r == readyCheckResults_.end()) {
-                    if (!afk.empty()) afk += owner_.globalString("PLAYER_LIST_DELIMITER");
-                    afk += m.name;
-                } else if (!r->ready) {
-                    notReady.push_back(m.name);
-                }
-            }
-            if (!afk.empty()) {
-                owner_.systemGlobal("RAID_MEMBERS_AFK", {afk});
-            } else if (!notReady.empty()) {
-                for (const auto& n : notReady) owner_.systemGlobal("RAID_MEMBER_NOT_READY", {n});
-                owner_.systemGlobal("READY_CHECK_FINISHED");
-            } else {
-                owner_.systemGlobal("READY_CHECK_ALL_READY");
-            }
-        }
-        readyCheckMine_ = false;
-        pendingReadyCheck_ = false;
-        readyCheckReadyCount_ = 0;
-        readyCheckNotReadyCount_ = 0;
-        readyCheckResults_.clear();
-        if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("READY_CHECK_FINISHED", {});
+        // A member's timer goes on running to its end (native GetReadyCheckTimeLeft).
+        if (!readyCheckStatuses_.empty()) resetReadyCheck();
+        owner_.fireAddonEvent("READY_CHECK_FINISHED", {});
     };
     table[Opcode::SMSG_RAID_INSTANCE_INFO] = [this](network::Packet& packet) { handleRaidInstanceInfo(packet); };
 
@@ -1823,7 +1809,7 @@ void SocialHandler::offerPetition(uint64_t petitionGuid, uint64_t targetGuid) {
 
 void SocialHandler::initiateReadyCheck() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    if (!isInGroup()) { owner_.raiseUiError("You must be in a group to initiate a ready check."); return; }
+    if (readyCheckTimeLeft() > 0) { owner_.errorGlobal("ERR_READY_CHECK_IN_PROGRESS"); return; }
     auto packet = ReadyCheckPacket::build();
     owner_.getSocket()->send(packet);
 }
@@ -1832,6 +1818,36 @@ void SocialHandler::respondToReadyCheck(bool ready) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     auto packet = ReadyCheckConfirmPacket::build(ready);
     owner_.getSocket()->send(packet);
+}
+
+int SocialHandler::readyCheckTimeLeft() const {
+    if (!readyCheckRunning_) return 0;
+    const auto left = std::chrono::duration_cast<std::chrono::seconds>(
+        readyCheckDeadline_ - std::chrono::steady_clock::now()).count();
+    return left > 0 ? static_cast<int>(left) : 0;
+}
+
+std::optional<ReadyCheckStatus> SocialHandler::readyCheckStatus(uint64_t guid) const {
+    for (const auto& [member, status] : readyCheckStatuses_)
+        if (member == guid) return status;
+    return std::nullopt;
+}
+
+void SocialHandler::resetReadyCheck() {
+    readyCheckRunning_ = false;
+    readyCheckStatuses_.clear();
+}
+
+std::string SocialHandler::groupMemberName(uint64_t guid) const {
+    if (guid == owner_.getPlayerGuid()) {
+        const auto* character = owner_.getActiveCharacter();
+        return character ? character->name : std::string{};
+    }
+    for (const auto& m : partyData.members)
+        if (m.guid == guid && !m.name.empty()) return m.name;
+    const auto& names = owner_.getPlayerNameCache();
+    const auto found = names.find(guid);
+    return found != names.end() ? found->second : std::string{};
 }
 
 // ============================================================
@@ -2385,6 +2401,9 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     if (!nowInGroup) {
         leftGroupByRequest_ = false;
         removedFromGroup_ = false;
+        // Out of the group the check is gone, for the one who left and the
+        // one left behind alike, without a line or an event (pair 5).
+        resetReadyCheck();
     }
     if (!nowInGroup && wasInGroup) {
         LOG_INFO("Left group");
@@ -2488,6 +2507,7 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
 void SocialHandler::handleGroupUninvite(network::Packet& packet) {
     (void)packet;
     partyData = GroupListData{};
+    resetReadyCheck();
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GROUP_ROSTER_UPDATE", {});
         owner_.addonEventCallbackRef()("PARTY_MEMBERS_CHANGED", {});
@@ -5204,6 +5224,10 @@ void SocialHandler::handleSetFactionVisible(network::Packet& packet) {
 void SocialHandler::handleGroupSetLeader(network::Packet& packet) {
     if (!packet.hasData()) return;
     std::string leaderName = packet.readString();
+    // A new leader ends a running ready check on every client, silently: no
+    // line, no READY_CHECK_FINISHED; ReadyCheckFrame closes on
+    // GetReadyCheckTimeLeft() == 0 (pair 5, both sides of a promotion).
+    resetReadyCheck();
     auto& pd = mutablePartyData();
     // The server's member list excludes this player. Resolve self before
     // notifying FrameXML, otherwise its party crown reads the previous leader.
@@ -5226,21 +5250,24 @@ void SocialHandler::handleGroupSetLeader(network::Packet& packet) {
     owner_.fireAddonEvent("GROUP_ROSTER_UPDATE", {});
 }
 
-// The one who asked for a ready check ends it: 2.4.3 sends
-// MSG_RAID_READY_CHECK_FINISHED once every member has answered or thirty
-// seconds have passed (the realm only relays it, CMaNGOS
-// HandleRaidReadyCheckFinishedOpcode), and the summary lines follow the relay.
+// Thirty seconds after MSG_RAID_READY_CHECK the leader and assistants stop
+// keeping answers; the asker names everyone still waiting and sends
+// MSG_RAID_READY_CHECK_FINISHED, which the realm relays to the group. A
+// member's timer just runs out (GetReadyCheckTimeLeft 0, which closes
+// ReadyCheckFrame).
 void SocialHandler::updateReadyCheck() {
-    if (!readyCheckMine_ || readyCheckFinishSent_ || !pendingReadyCheck_) return;
-    size_t others = 0;
-    for (const auto& m : partyData.members) if (m.guid != owner_.getPlayerGuid()) ++others;
-    const bool allAnswered = readyCheckResults_.size() >= others;
-    const bool timedOut = std::chrono::steady_clock::now() - readyCheckStartedAt_ >= std::chrono::seconds(30);
-    if (!allAnswered && !timedOut) return;
-    if (!owner_.getSocket()) return;
-    network::Packet pkt(wireOpcode(Opcode::MSG_RAID_READY_CHECK_FINISHED));
-    owner_.getSocket()->send(pkt);
-    readyCheckFinishSent_ = true;
+    if (!readyCheckRunning_ || std::chrono::steady_clock::now() < readyCheckDeadline_) return;
+    if (readyCheckInitiator_ == owner_.getPlayerGuid() && !readyCheckStatuses_.empty()) {
+        std::string afk;
+        for (const auto& [member, status] : readyCheckStatuses_) {
+            if (status != ReadyCheckStatus::Waiting) continue;
+            if (!afk.empty()) afk += owner_.globalString("PLAYER_LIST_DELIMITER");
+            afk += groupMemberName(member);
+        }
+        if (!afk.empty()) owner_.systemGlobal("RAID_MEMBERS_AFK", {afk});
+        if (owner_.getSocket()) owner_.getSocket()->send(network::Packet(wireOpcode(Opcode::MSG_RAID_READY_CHECK_FINISHED)));
+    }
+    resetReadyCheck();
 }
 
 void SocialHandler::flushDeferredRaidEvents() {

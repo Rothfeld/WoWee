@@ -1514,7 +1514,7 @@ public:
     static network::Packet build();
 };
 
-/** MSG_RAID_READY_CHECK_CONFIRM packet builder */
+/** The answer to a ready check, sent on MSG_RAID_READY_CHECK with one byte */
 class ReadyCheckConfirmPacket {
 public:
     static network::Packet build(bool ready);

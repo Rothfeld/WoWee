@@ -939,19 +939,12 @@ public:
     // Returns the guildId for a player entity (from PLAYER_GUILDID update field).
     uint32_t getEntityGuildId(uint64_t guid) const;
 
-    using ReadyCheckResult = game::ReadyCheckResult;
     void initiateReadyCheck();
     void respondToReadyCheck(bool ready);
-    bool hasPendingReadyCheck() const;
-    /// Clears the ready check the social handler is holding.
-    ///
-    /// This wrote a flag of its own, which nothing read: the reader
-    /// beside it forwards to SocialHandler and always did. Dismissing a
-    /// ready check therefore cleared nothing the client asks about, and
-    /// hasPendingReadyCheck went on answering true.
-    void dismissReadyCheck();
-    const std::string& getReadyCheckInitiator() const;
-    const std::vector<ReadyCheckResult>& getReadyCheckResults() const;
+    [[nodiscard]] int readyCheckTimeLeft() const;
+    [[nodiscard]] std::optional<ReadyCheckStatus> readyCheckStatus(uint64_t guid) const;
+    /// CheckReadyCheckTime: the asker's check ends when its time is up.
+    void checkReadyCheckTime();
 
     // Duel
     void forfeitDuel();

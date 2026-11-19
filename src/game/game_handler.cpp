@@ -4386,24 +4386,16 @@ bool GameHandler::hasPetitionSignaturesUI() const {
     return socialHandler_ ? socialHandler_->hasPetitionSignaturesUI() : false;
 }
 
-bool GameHandler::hasPendingReadyCheck() const {
-    return socialHandler_ ? socialHandler_->hasPendingReadyCheck() : false;
+int GameHandler::readyCheckTimeLeft() const {
+    return socialHandler_ ? socialHandler_->readyCheckTimeLeft() : 0;
 }
 
-void GameHandler::dismissReadyCheck() {
-    if (socialHandler_) socialHandler_->dismissReadyCheck();
+std::optional<ReadyCheckStatus> GameHandler::readyCheckStatus(uint64_t guid) const {
+    return socialHandler_ ? socialHandler_->readyCheckStatus(guid) : std::nullopt;
 }
 
-const std::string& GameHandler::getReadyCheckInitiator() const {
-    if (socialHandler_) return socialHandler_->getReadyCheckInitiator();
-    static const std::string empty;
-    return empty;
-}
-
-const std::vector<GameHandler::ReadyCheckResult>& GameHandler::getReadyCheckResults() const {
-    if (socialHandler_) return socialHandler_->getReadyCheckResults();
-    static const std::vector<ReadyCheckResult> empty;
-    return empty;
+void GameHandler::checkReadyCheckTime() {
+    if (socialHandler_) socialHandler_->updateReadyCheck();
 }
 
 uint32_t GameHandler::getInstanceDifficulty() const {

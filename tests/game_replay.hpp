@@ -25,10 +25,12 @@
 #include "game/game_services.hpp"
 #include "game/opcode_table.hpp"
 #include "game/packet_parsers.hpp"
+#include "game/social_handler.hpp"
 #include "game/update_field_table.hpp"
 #include "network/packet.hpp"
 #include "network/world_socket.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -61,6 +63,10 @@ struct GameHandlerTestAccess {
         REQUIRE_FALSE(pending());
     }
     static void enterWorld(GameHandler& gh) { gh.setState(WorldState::IN_WORLD); }
+    // The thirty seconds of a running ready check, over.
+    static void expireReadyCheck(GameHandler& gh) {
+        gh.socialHandler_->readyCheckDeadline_ = std::chrono::steady_clock::now();
+    }
     static void setSocket(GameHandler& gh, std::unique_ptr<network::WorldSocket> socket) {
         gh.socket = std::move(socket);
     }

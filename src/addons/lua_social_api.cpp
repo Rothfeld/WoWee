@@ -2805,27 +2805,20 @@ void registerSocialLuaAPI(lua_State* L) {
             return 0; }},
                 {"AddOrRemoveFriend",   lua_AddOrRemoveFriend},
                 {"AddOrDelIgnore",      lua_AddOrDelIgnore},
-                // DoReadyCheck() - what /readycheck does
+                // Whole seconds, 0 when no check runs: ReadyCheckFrame closes on
+                // 0, so a promotion mid-check closes it without "You were AFK".
                 {"GetReadyCheckTimeLeft", [](lua_State* L) -> int {
-            lua_getfield(L, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
-            const double deadline = lua_tonumber(L, -1);
-            lua_pop(L, 1);
-            lua_pushnumber(L, std::max(0.0, deadline - core::appTimeSeconds()));
+            auto* gh = getGameHandler(L);
+            lua_pushnumber(L, gh ? gh->readyCheckTimeLeft() : 0);
             return 1;
         }},
+                // UIParent's OnUpdate calls it every frame: the asker's check
+                // ends when its thirty seconds are up.
                 {"CheckReadyCheckTime", [](lua_State* L) -> int {
-            lua_getfield(L, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
-            const double deadline = lua_tonumber(L, -1);
-            lua_pop(L, 1);
-            if (deadline > 0.0 && core::appTimeSeconds() >= deadline) {
-                lua_pushnumber(L, 0); lua_setfield(L, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
-                if (auto* gh = getGameHandler(L)) {
-                    gh->dismissReadyCheck();
-                    gh->fireAddonEvent("READY_CHECK_FINISHED", {});
-                }
-            }
+            if (auto* gh = getGameHandler(L)) gh->checkReadyCheckTime();
             return 0;
         }},
+                // What /readycheck does once chatframe.lua has checked leadership.
                 {"DoReadyCheck", [](lua_State* L) -> int {
             if (auto* gh = getGameHandler(L)) gh->initiateReadyCheck();
             return 0;
@@ -2835,10 +2828,7 @@ void registerSocialLuaAPI(lua_State* L) {
                 // and passes NOTHING for no, so the absent argument has to read
                 // as false rather than as a missing parameter.
                 {"ConfirmReadyCheck", [](lua_State* L) -> int {
-            if (auto* gh = getGameHandler(L)) {
-                gh->respondToReadyCheck(lua_toboolean(L, 1) != 0);
-                gh->dismissReadyCheck();
-            }
+            if (auto* gh = getGameHandler(L)) gh->respondToReadyCheck(lua_toboolean(L, 1) != 0);
             return 0;
         }},
                 // The buttons on FrameXML's summon and talent-wipe popups.

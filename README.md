@@ -2791,6 +2791,36 @@ SetGuildRosterShowOffline and SetWhoToUI get 0 for off, which is true in Lua;
 GameTooltip:SetUnit answers nil on TBC, or UnitFrame_UpdateTooltip rebuilds the
 tooltip every 0.2 s and drops lines added after it; 2.4.3 has no /reload
 (`/script ReloadUI()`).
+### Ready check
+
+`build/bin/test_game_replay '[readycheck]'`
+
+Measured against 2.4.3 on pair 5 with a probe addon, party and raid, the
+native client asking, answering, as assistant and as plain member
+(`_experiments/20261119T094500Z.readycheck_audit/` in the workspace).
+CMaNGOS broadcasts MSG_RAID_READY_CHECK (asker's guid) to the group, relays
+each answer (sent on MSG_RAID_READY_CHECK with one byte;
+MSG_RAID_READY_CHECK_CONFIRM from a client is discarded) to the leader and
+assistants only, and relays MSG_RAID_READY_CHECK_FINISHED from the asker.
+The asker prints "Starting ready check...", everyone else "Edrike has
+initiated a ready check."; READY_CHECK gets the asker's name and the whole
+seconds left (29, sometimes 30). GetReadyCheckTimeLeft counts whole seconds
+down from 30. The leader and raid assistants keep a status per member
+(GetReadyCheckStatus: asker "ready", the rest "waiting"), which is what puts
+the icons on PlayerFrame, PartyMemberFrame and the raid buttons; plain members
+answer nil. READY_CHECK_CONFIRM gets the member's raid number (party number
+in a party) and 1 or 0. A "no" is printed by the asker alone, at once, before
+the event ("Edrike is not ready"). When nobody waits any more the leader and
+assistants drop statuses and timer; the asker prints "Everyone is Ready" or
+"Ready check finished" and sends the finish. After 30 s the asker prints "The
+following players are AFK: Edrike" and sends the finish; an assistant just
+drops. A plain member's timer runs on after the finish, and its FrameXML popup
+prints "You were AFK for a ready check" when its own 29/30 s are up. A new
+leader or leaving the group ends the check with no line and no event; the
+popup closes on GetReadyCheckTimeLeft() == 0. DoReadyCheck while a check runs:
+UI error "You are already running a ready check", nothing sent.
+Gotcha: a member out of sight has no entity; names come from the group roster.
+
 ### The held cursor
 
 `build/bin/test_input_integration '[action-cursor]'`

@@ -10486,11 +10486,6 @@ void LuaEngine::fireEvent(const std::string& eventName,
                            const std::vector<std::string>& args) {
     if (!L_) return;
 
-    if (eventName == "READY_CHECK" || eventName == "READY_CHECK_FINISHED") {
-        lua_pushnumber(L_, eventName == "READY_CHECK" ? core::appTimeSeconds() + 30.0 : 0.0);
-        lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_ready_check_deadline");
-    }
-
     if (eventName == "COMBAT_LOG_EVENT_UNFILTERED") recordCombatLogEvent(args);
     if (eventName == game::classic_combat::kLineEvent) {
         fireClassicCombatLine(args);
