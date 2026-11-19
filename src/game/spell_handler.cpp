@@ -2635,6 +2635,7 @@ void SpellHandler::loadTalentDbc() {
         const uint32_t tPrereq0 = talL ? (*talL)["PrereqTalent0"] : 9;
         const uint32_t tPrereqR0 = talL ? (*talL)["PrereqRank0"] : 12;
         const uint32_t tDependsOnSpell = talL ? talL->tryField("DependsOnSpell") : 0xFFFFFFFFu;
+        const uint32_t tFlags = talL ? talL->tryField("Flags") : 0xFFFFFFFFu;
 
         uint32_t count = talentDbc->getRecordCount();
         for (uint32_t i = 0; i < count; ++i) {
@@ -2657,6 +2658,7 @@ void SpellHandler::loadTalentDbc() {
 
             if (tDependsOnSpell != 0xFFFFFFFFu)
                 entry.dependsOnSpell = talentDbc->getUInt32(i, tDependsOnSpell);
+            if (tFlags != 0xFFFFFFFFu) entry.flags = talentDbc->getUInt32(i, tFlags);
 
             entry.maxRank = 0;
             for (int r = 0; r < 5; ++r) {

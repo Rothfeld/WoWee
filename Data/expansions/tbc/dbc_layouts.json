@@ -517,6 +517,7 @@
   "Talent": {
     "Column": 3,
     "DependsOnSpell": 20,
+    "Flags": 19,
     "ID": 0,
     "PrereqRank0": 16,
     "PrereqTalent0": 13,

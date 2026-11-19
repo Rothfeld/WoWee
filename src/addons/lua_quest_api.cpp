@@ -1708,7 +1708,8 @@ static int lua_GetTalentInfo(lua_State* L) {
         // that chain from GetTalentPrereqs. It answers 1 for every rogue
         // talent; the remaining server-side condition of Player::LearnTalent
         // is Talent.dbc m_requiredSpellID (only talent 761 sets it in 2.4.3).
-        lua_pushnil(L);                        // 7: isExceptional
+        if (talent->flags & 1u) lua_pushnumber(L, 1);  // 7: isExceptional
+        else lua_pushnil(L);
         const bool spellKnown = talent->dependsOnSpell == 0 ||
             gh->getKnownSpells().count(talent->dependsOnSpell) > 0;
         if (spellKnown) lua_pushnumber(L, 1);  // 8: meetsPrereq

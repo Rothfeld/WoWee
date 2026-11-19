@@ -32,6 +32,9 @@ struct TalentEntry {
     /// Talent.dbc m_requiredSpellID: a spell the player must know before the
     /// talent can be learned (Player::LearnTalent DependsOnSpell). 0 for none.
     uint32_t dependsOnSpell = 0;
+    /// Talent.dbc Flags. Bit 0 is GetTalentInfo's isExceptional (2.4.3:
+    /// Aura Mastery, Divine Favor, Holy Shock; not Improved Devotion Aura).
+    uint32_t flags = 0;
 };
 
 struct TalentTabEntry {
