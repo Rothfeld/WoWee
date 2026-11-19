@@ -36,12 +36,13 @@ struct StanceBarSpell {
 bool onStanceBar(uint32_t attrEx2, uint8_t shapeshiftForm, bool withHidden = false);
 
 /// The stance-bar spells among `known`, in bar order: StanceBarOrder, then
-/// spell id. Native 2.4.3, everything learned at once: paladin Devotion,
-/// Retribution, Concentration, Shadow, Frost, Fire Resistance, Sanctity,
-/// Crusader Aura (orders 0-7); warrior Battle, Defensive, Berserker Stance
-/// (0, 1, 2; Defensive is spell 71); druid Bear, Aquatic, Cat, Travel,
-/// Moonkin, Flight Form (0-5; Cat is 768). Unlearning one and learning it
-/// again puts it back in its place.
+/// form, then spell id. Native 2.4.3, everything learned at once: paladin
+/// Devotion, Retribution, Concentration, Shadow, Frost, Fire Resistance,
+/// Sanctity, Crusader Aura (orders 0-7); warrior Battle, Defensive, Berserker
+/// Stance (0, 1, 2; Defensive is spell 71); druid Dire Bear, Aquatic, Cat,
+/// Travel, Tree of Life, Moonkin, Swift Flight Form (0-5; Cat is 768; Tree of
+/// Life form 2 and Moonkin form 31 share order 4, Tree first). Unlearning one
+/// and learning it again puts it back in its place.
 std::vector<ShapeshiftForm> stanceBarForms(std::vector<StanceBarSpell> known, bool withHidden = false);
 
 /// The player's stance bar from the known spells' Spell.dbc rows.

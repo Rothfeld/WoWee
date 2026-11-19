@@ -50,6 +50,15 @@ TEST_CASE("druid forms: Bear, Aquatic, Cat, Travel, Moonkin, Flight", "[shapeshi
     CHECK(ids(forms) == std::vector<uint32_t>{5487, 1066, 768, 783, 24858, 33943});
 }
 
+TEST_CASE("druid Tree of Life before Moonkin: same order, lower form", "[shapeshift]") {
+    // Native 2.4.3 (pair 9, all talents): Dire Bear, Aquatic, Cat, Travel,
+    // Tree of Life, Moonkin, Swift Flight Form. Tree (33891, form 2) and
+    // Moonkin (24858, form 31) both have StanceBarOrder 4.
+    const auto forms = stanceBarForms({{9634, 0, 8, 0}, {1066, 0, 4, 1}, {768, 0, 1, 2}, {783, 0, 3, 3},
+                                       {24858, 0, 31, 4}, {33891, 0, 2, 4}, {40120, 0, 27, 5}});
+    CHECK(ids(forms) == std::vector<uint32_t>{9634, 1066, 768, 783, 33891, 24858, 40120});
+}
+
 TEST_CASE("NO_SHAPESHIFT_UI keeps a form off the bar", "[shapeshift]") {
     // Shadowform (15473) and Ghost Wolf (2645) carry AttributesEx2 0x2; Stealth
     // (1784) does not and is the rogue's only button.
