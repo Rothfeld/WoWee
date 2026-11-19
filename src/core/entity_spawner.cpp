@@ -1657,11 +1657,11 @@ void EntitySpawner::normalizeHumanoidClothingGeosets(uint32_t instanceId, uint32
 // Normalize only clothing groups while leaving all other model batches untouched.
 if (const auto* md = charRenderer->getModelData(modelId)) {
     std::unordered_set<uint16_t> allGeosets;
-    std::unordered_map<uint16_t, uint16_t> firstByGroup;
     bool hasGroup3 = false;  // glove/forearm variants
     bool hasGroup4 = false;  // glove/forearm variants (some models)
     bool hasGroup5 = false;  // boot/shin variants
     bool hasGroup8 = false;  // sleeve/wrist variants
+    bool hasGroup10 = false; // chest flap below the waist
     bool hasGroup12 = false; // tabard variants
     bool hasGroup13 = false; // trousers/robe skirt variants
     bool hasGroup15 = false; // cloak variants
@@ -1669,14 +1669,11 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
         const uint16_t sid = b.submeshId;
         const uint16_t group = static_cast<uint16_t>(sid / 100);
         allGeosets.insert(sid);
-        auto itFirst = firstByGroup.find(group);
-        if (itFirst == firstByGroup.end() || sid < itFirst->second) {
-            firstByGroup[group] = sid;
-        }
         if (group == 3) hasGroup3 = true;
         if (group == 4) hasGroup4 = true;
         if (group == 5) hasGroup5 = true;
         if (group == 8) hasGroup8 = true;
+        if (group == 10) hasGroup10 = true;
         if (group == 12) hasGroup12 = true;
         if (group == 13) hasGroup13 = true;
         if (group == 15) hasGroup15 = true;
@@ -1693,10 +1690,9 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
         itDisplayData->second.extraDisplayId != 0 &&
         humanoidExtraMap_.find(itDisplayData->second.extraDisplayId) != humanoidExtraMap_.end();
     if (hasHumanoidDisplayExtra &&
-        (hasGroup3 || hasGroup4 || hasGroup5 || hasGroup8 || hasGroup12 || hasGroup13 || hasGroup15)) {
+        (hasGroup3 || hasGroup4 || hasGroup5 || hasGroup8 || hasGroup10 || hasGroup12 || hasGroup13 || hasGroup15)) {
         bool hasRenderableCape = false;
         std::string capeTexturePath;  // first found cape texture for override
-        bool hasEquippedTabard = false;
         bool hasHumanoidExtra = false;
         uint8_t extraRaceId = 0;
         uint8_t extraSexId = 0;
@@ -1722,7 +1718,9 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
         std::vector<uint16_t> helmHiddenGroups;
         uint32_t equipChestGG = 0, equipLegsGG = 0, equipFeetGG = 0, equipGlovesGG = 0, equipCapeGG = 0;
         uint32_t equipRobeGG = 0;
+        uint32_t equipChestFlapGG = 0;
         uint32_t equipKneepadsGG = 0;
+        uint32_t equipTabardGG = 0;
         if (itDisplayData != displayDataMap_.end() &&
             itDisplayData->second.extraDisplayId != 0) {
             auto itExtra = humanoidExtraMap_.find(itDisplayData->second.extraDisplayId);
@@ -1730,7 +1728,6 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
                 hasHumanoidExtra = true;
                 extraRaceId = itExtra->second.raceId;
                 extraSexId = itExtra->second.sexId;
-                hasEquippedTabard = (itExtra->second.equipDisplayId[9] != 0);
                 const uint32_t hairKey = appearanceKey(
                     extraRaceId, extraSexId, itExtra->second.hairStyleId);
                 auto itHairGeo = hairGeosetMap_.find(hairKey);
@@ -1807,11 +1804,14 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
                     auto readGG = [&](uint32_t did) { return readField(did, fGG1); };
                     equipChestGG = readGG(itExtra->second.equipDisplayId[3]);
                     if (equipChestGG == 0) equipChestGG = readGG(itExtra->second.equipDisplayId[2]); // shirt fallback
+                    equipChestFlapGG = readField(itExtra->second.equipDisplayId[3], fGG2);
+                    if (equipChestFlapGG == 0) equipChestFlapGG = readField(itExtra->second.equipDisplayId[2], fGG2);
                     equipLegsGG = readGG(itExtra->second.equipDisplayId[5]);
                     equipKneepadsGG = readField(itExtra->second.equipDisplayId[5], fGG2);
                     equipFeetGG = readGG(itExtra->second.equipDisplayId[6]);
                     equipGlovesGG = readGG(itExtra->second.equipDisplayId[8]);
                     equipCapeGG = readGG(itExtra->second.equipDisplayId[10]);
+                    equipTabardGG = readGG(itExtra->second.equipDisplayId[9]);
                     equipRobeGG = readField(itExtra->second.equipDisplayId[3], fGG3);
                     if (equipRobeGG == 0)
                         equipRobeGG = readField(itExtra->second.equipDisplayId[5], fGG3);
@@ -1822,7 +1822,7 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
         std::unordered_set<uint16_t> normalizedGeosets;
         for (uint16_t sid : allGeosets) {
             const uint16_t group = static_cast<uint16_t>(sid / 100);
-            if (group == 3 || group == 4 || group == 5 || group == 8 || group == 12 || group == 13 || group == 15) continue;
+            if (group == 3 || group == 4 || group == 5 || group == 8 || group == 10 || group == 12 || group == 13 || group == 15) continue;
             // Group 17 = eye glow (DK/Night Elf "shining eyes" overlay), group 18 = related
             // glow geosets. NPCs are never DK/NE players opting into eye glow, so strip
             // these groups so creatures don't get unwanted glowing blue night-elf eyes.
@@ -1835,26 +1835,13 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
             if (hasHumanoidExtra && sid < 100 && sid != 0 && sid != selectedHairScalp) {
                 continue;
             }
-            // Group 1 is the first CharacterFacialHairStyles channel.
-            if (hasHumanoidExtra && group == 1) {
-                uint16_t resolvedFacial100 = selectedFacial100;
-                if (allGeosets.count(resolvedFacial100) == 0)
-                    resolvedFacial100 = allGeosets.count(101) > 0 ? 101 : firstByGroup[1];
-                if (sid != resolvedFacial100) continue;
-            }
-            // Group 2 facial variants: keep selected variant; fallback only if missing.
-            if (hasHumanoidExtra && group == 2) {
-                uint16_t resolvedFacial200 = selectedFacial200;
-                if (allGeosets.count(resolvedFacial200) == 0) {
-                    if (allGeosets.count(201) > 0) resolvedFacial200 = 201;
-                    else if (allGeosets.count(200) > 0) resolvedFacial200 = 200;
-                    else {
-                        auto itFirst = firstByGroup.find(2);
-                        resolvedFacial200 = (itFirst != firstByGroup.end()) ? itFirst->second : 0;
-                    }
-                }
-                if (sid != resolvedFacial200) continue;
-            }
+            // Groups 1 and 2 are CharacterFacialHairStyles channels. A zero
+            // variant is none and draws nothing: gnome male 5428 (facial 0)
+            // is clean-shaven in native, gnome female 5435 (facial 0) wears no
+            // earrings. Substituting the group's first member put a goatee
+            // (102) and an earring (202) on them.
+            if (hasHumanoidExtra && group == 1 && sid != resolveGeoset(selectedFacial100, allGeosets)) continue;
+            if (hasHumanoidExtra && group == 2 && sid != resolveGeoset(selectedFacial200, allGeosets)) continue;
             normalizedGeosets.insert(sid);
         }
 
@@ -1872,6 +1859,16 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
             if (forearmSid != 0) normalizedGeosets.insert(forearmSid);
         }
 
+        // Group 10 is the chest's flap below the waist, chosen by the chest's
+        // GeosetGroup2 (1001 + value). It was never stripped, so every NPC wore
+        // 1002, a skirt ring round the hips that native draws only for such a
+        // chest (human female 11148 and gnome female 6714 have none).
+        if (hasGroup10 && equipChestFlapGG > 0) {
+            const uint16_t flapSid = resolveGeoset(
+                equippedGeoset(equipment::kChestFlapBare, equipChestFlapGG), allGeosets);
+            if (flapSid != 0) normalizedGeosets.insert(flapSid);
+        }
+
         // Add sleeve/wrist meshes when chest armor calls for them.
         if (hasGroup8 && equipChestGG > 0) {
             uint16_t wantSleeves = equippedGeoset(equipment::kChestBare, equipChestGG);
@@ -1879,48 +1876,23 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
             if (sleeveSid != 0) normalizedGeosets.insert(sleeveSid);
         }
 
-        // Show tabard mesh only when CreatureDisplayInfoExtra equips one.
-        if (hasGroup12 && hasEquippedTabard) {
-            uint16_t wantTabard = kGeosetDefaultTabard;  // Default fallback
-
-            // Try to read tabard geoset variant from ItemDisplayInfo.dbc (slot 9)
-            if (hasHumanoidExtra && itDisplayData != displayDataMap_.end() &&
-                itDisplayData->second.extraDisplayId != 0) {
-                auto itExtra = humanoidExtraMap_.find(itDisplayData->second.extraDisplayId);
-                if (itExtra != humanoidExtraMap_.end()) {
-                    uint32_t tabardDisplayId = itExtra->second.equipDisplayId[9];
-                    if (tabardDisplayId != 0) {
-                        auto itemDisplayDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
-                        const auto* idiL = pipeline::getActiveDBCLayout()
-                            ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
-                        if (itemDisplayDbc && idiL) {
-                            int32_t tabardIdx = itemDisplayDbc->findRecordById(tabardDisplayId);
-                            if (tabardIdx >= 0) {
-                                // Get geoset variant from ItemDisplayInfo GeosetGroup1 field
-                                const uint32_t ggField = (*idiL)["GeosetGroup1"];
-                                uint32_t tabardGG = itemDisplayDbc->getUInt32(static_cast<uint32_t>(tabardIdx), ggField);
-                                if (tabardGG > 0) {
-                                    wantTabard = equippedGeoset(equipment::kTabardBase, tabardGG);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            uint16_t tabardSid = resolveGeoset(wantTabard, allGeosets);
+        // The tabard flap, selected by the tabard's GeosetGroup1 like every
+        // other worn item: 1201 + value. Its print is in the bake (or the
+        // torso regions); without the flap the gnome Scholomance Adept 11150
+        // showed bare trousers where native hangs tabard 3454 to the knees.
+        // A robe's skirt (group 13 from GeosetGroup3) takes its place: native
+        // draws no flap on Father Gavin 1616 (legs robe), Scarlet Augur 2495
+        // (chest robe) or Magus Zabraxis 16372, all wearing tabards.
+        if (hasGroup12 && equipTabardGG > 0 && equipRobeGG == 0) {
+            const uint16_t tabardSid = resolveGeoset(
+                equippedGeoset(equipment::kTabardBare, equipTabardGG), allGeosets);
             if (tabardSid != 0) normalizedGeosets.insert(tabardSid);
         }
 
-        // Some mustache/goatee variants are authored in facial group 3xx.
-        // Re-add selected facial 3xx plus low-index facial fallbacks.
+        // The third facial channel, group 3, under the same rule: zero is none.
         if (hasHumanoidExtra) {
             uint16_t facial300Sid = resolveGeoset(selectedFacial300, allGeosets);
             if (facial300Sid != 0) normalizedGeosets.insert(facial300Sid);
-            if (facial300Sid == 0) {
-                if (allGeosets.count(300) > 0) normalizedGeosets.insert(300);
-                else if (allGeosets.count(301) > 0) normalizedGeosets.insert(301);
-            }
         }
 
         // Night Elf NPC eyes require the model's eye overlay. Continue to

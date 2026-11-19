@@ -895,6 +895,8 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     uint16_t geosetBoots = pickGeoset(core::kGeosetBareShins, lowestInGroup(5));
     uint16_t geosetSleeves = pickGeoset(core::kGeosetBareSleeves, core::kGeosetBareSleeves);
     uint16_t geosetPants = pickGeoset(core::kGeosetBarePants, core::kGeosetBarePants);
+    uint16_t geosetChestFlap = 0;
+    bool wearsRobe = false;  // a robe's skirt replaces the tabard flap
 
     // Chest/Shirt/Robe → group 8 (sleeves)
     {
@@ -905,6 +907,10 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
         // Robe kilt legs
         uint32_t gg3 = getGeosetGroup(did, geosetGroup3Field);
         if (gg3 > 0) geosetPants = pickGeoset(core::equippedGeoset(core::equipment::kRobeKiltBare, gg3), core::kGeosetBarePants);
+        wearsRobe = gg3 > 0;
+        // Flap below the waist → group 10, from the second column (1001 is none)
+        geosetChestFlap = pickGeoset(core::equippedGeoset(core::equipment::kChestFlapBare,
+            getGeosetGroup(did, geosetGroup1Field + 1)), 0);
     }
     // Legs → group 13 (trousers)
     {
@@ -955,13 +961,15 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     if (geosetSleeves != 0) geosets.insert(geosetSleeves);
     if (geosetPants != 0) geosets.insert(geosetPants);
     if (geosetBelt != 0) geosets.insert(geosetBelt);
+    if (geosetChestFlap != 0) geosets.insert(geosetChestFlap);
     uint32_t capeGG = getGeosetGroup(findDisplayId({16}), geosetGroup1Field);
     uint16_t geosetCape = pickGeoset(
         hasInvType({16}) ? core::cloakGeoset(capeGG) : core::kGeosetNoCape,
         core::kGeosetNoCape);
     if (geosetCape != 0) geosets.insert(geosetCape); // Cloak mesh toggle (visual may still be limited)
-    if (hasInvType({19})) {
-        uint16_t geosetTabard = pickGeoset(core::kGeosetDefaultTabard, 0);
+    if (hasInvType({19}) && !wearsRobe) {
+        uint16_t geosetTabard = pickGeoset(core::equippedGeoset(core::equipment::kTabardBare,
+            getGeosetGroup(findDisplayId({19}), geosetGroup1Field)), 0);
         if (geosetTabard != 0) geosets.insert(geosetTabard);
     }
 

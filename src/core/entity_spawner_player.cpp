@@ -511,6 +511,8 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     uint16_t geosetBoots   = pickGeoset(kGeosetBareShins, lowestInGroup(5));
     uint16_t geosetSleeves = pickGeoset(kGeosetBareSleeves, kGeosetBareSleeves);
     uint16_t geosetPants   = pickGeoset(kGeosetBarePants, kGeosetBarePants);
+    uint16_t geosetChestFlap = 0;
+    bool wearsRobe = false;  // a robe's skirt replaces the tabard flap
 
     // Chest/Shirt/Robe (invType 4,5,20) → wrist/sleeve group 8
     {
@@ -521,6 +523,10 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
         // Robe kilt → leg group 13
         uint32_t gg3 = getGeosetGroup(did, geosetGroup3Field);
         if (gg3 > 0) geosetPants = pickGeoset(equippedGeoset(equipment::kRobeKiltBare, gg3), kGeosetBarePants);
+        wearsRobe = gg3 > 0;
+        // Flap below the waist → group 10, from the second column
+        geosetChestFlap = pickGeoset(equippedGeoset(equipment::kChestFlapBare,
+            getGeosetGroup(did, geosetGroup1Field + 1)), 0);
     }
 
     // Legs (invType 7) → leg group 13
@@ -580,14 +586,19 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     if (geosetSleeves != 0) geosets.insert(geosetSleeves);
     if (geosetPants != 0) geosets.insert(geosetPants);
     if (geosetBelt != 0) geosets.insert(geosetBelt);
+    if (geosetChestFlap != 0) geosets.insert(geosetChestFlap);
     // Back/Cloak (invType 16)
     uint32_t capeGG = getGeosetGroup(findDisplayIdByInvType({16}), geosetGroup1Field);
     uint16_t geosetCape = pickGeoset(
         hasInvType({16}) ? cloakGeoset(capeGG) : kGeosetNoCape,
         kGeosetNoCape);
     if (geosetCape != 0) geosets.insert(geosetCape);
-    // Tabard (invType 19)
-    if (hasInvType({19})) geosets.insert(kGeosetDefaultTabard);
+    // Tabard (invType 19): 1201 + its GeosetGroup1, the flap 1202 for a tabard of 1.
+    if (hasInvType({19}) && !wearsRobe) {
+        const uint32_t tabardGG = getGeosetGroup(findDisplayIdByInvType({19}), geosetGroup1Field);
+        const uint16_t geosetTabard = pickGeoset(equippedGeoset(equipment::kTabardBare, tabardGG), 0);
+        if (geosetTabard != 0) geosets.insert(geosetTabard);
+    }
 
     // What the helm covers - hair, beard channels, ears - per race and gender
     // from HelmetGeosetVisData. HEAD slot is index 0 of the equipment array.

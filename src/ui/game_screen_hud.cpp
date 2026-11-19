@@ -201,6 +201,7 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
     eraseGroup(13);
     eraseGroup(15);
     eraseGroup(12);
+    eraseGroup(10);
 
     // CharGeosets mapping (verified via vertex bounding boxes):
     //   Group 4 (401+) = GLOVES (forearm area, Z~1.1-1.4)
@@ -228,6 +229,7 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
         geosets.insert(selectedShin);
     }
 
+    bool wearsRobe = false;  // a robe's skirt replaces the tabard flap
     // Chest/Shirt: inventoryType 4 (shirt), 5 (chest), 20 (robe)
     // Controls group 8 (wristbands/sleeve length): 801=bare wrists, 802+=sleeve styles
     // Also controls group 13 (trousers) via GeosetGroup[2] for robes
@@ -241,6 +243,11 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
         if (gg3 > 0) {
             geosets.insert(core::equippedGeoset(core::equipment::kRobeKiltBare, gg3));
         }
+        wearsRobe = gg3 > 0;
+        // Flap below the waist: group 10 from the second column, 1001 is none.
+        const uint16_t flap = core::resolveGeoset(core::equippedGeoset(core::equipment::kChestFlapBare,
+            getGeosetGroup(did, geosetGroup1Field + 1)), modelGeosets);
+        if (flap != 0) geosets.insert(flap);
     }
 
     // Kneepads: group 9 is not worn bare. 902 is a kneepad mesh - on the human
@@ -283,9 +290,11 @@ void GameScreen::updateCharacterGeosets(game::Inventory& inventory) {
     geosets.insert((hasEquippedType({16}) && cloakShown) ? core::cloakGeoset(capeGG)
                                                          : core::kGeosetNoCape);
 
-    // Tabard: inventoryType 19 → group 12
-    if (hasEquippedType({19})) {
-        geosets.insert(core::kGeosetDefaultTabard);
+    // Tabard: inventoryType 19 → group 12, 1201 + its GeosetGroup1 (1202, the flap)
+    if (hasEquippedType({19}) && !wearsRobe) {
+        const uint16_t tabard = core::resolveGeoset(core::equippedGeoset(core::equipment::kTabardBare,
+            getGeosetGroup(findEquippedDisplayId({19}), geosetGroup1Field)), modelGeosets);
+        if (tabard != 0) geosets.insert(tabard);
     }
 
     // Hide what a helm covers: hair scalp -> bald cap, beard channels, ears.

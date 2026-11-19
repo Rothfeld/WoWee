@@ -205,6 +205,14 @@ TEST_CASE("equipment selects a variant after the bare one", "[geoset]") {
         CHECK(geosetGroup(equippedGeoset(kGeosetBareSleeves, 9)) == 8);
         CHECK(geosetGroup(equippedGeoset(kGeosetBareShins, 9)) == 5);
     }
+
+    SECTION("a tabard of 1 is the flap the character models carry") {
+        // Every TBC character model has 1202 and nothing else in group 12.
+        // Tabard 3454 (Scholomance Adept) has GeosetGroup1 = 1.
+        const std::unordered_set<uint16_t> gnomeMale{0, 1202, 1301, 1302};
+        CHECK(resolveGeoset(equippedGeoset(equipment::kTabardBare, 1), gnomeMale) == 1202);
+        CHECK(resolveGeoset(equippedGeoset(equipment::kTabardBare, 0), gnomeMale) == 0);
+    }
 }
 
 TEST_CASE("a night elf's eyes glow and nobody else's do", "[geoset]") {
