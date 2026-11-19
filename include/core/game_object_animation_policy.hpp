@@ -46,4 +46,20 @@ constexpr bool gameObjectActiveShowsDestroy(uint32_t type, bool hasOpen, bool ha
     return gameObjectPoseIsStateDriven(type) && hasDestroy && !hasOpen && !hasOpened;
 }
 
+// Whether READY loops the model's Stand where a model with Closed (147) would
+// otherwise loop Closed. ScholomanceCrystalBall01.m2 (display 4891) authors
+// Stand and Opened at 333-667 ms, constant, and Closed at 1000-2000 ms, which
+// fades its additive ORBREFLECT layer from 1 to 0: a 1 s pulse. Paired 20 Hz
+// recordings of all its READY spawns on original 2.4.3
+// (_experiments/20261119T1445Z.orb_pulse): the 1 s pulse shows on QUESTGIVER
+// (Orb of Command 179879), SPELL_FOCUS (Archmage Vargoth's Orb 183507) and
+// GOOBER (Orb of Domination 177808, scale 1.5); GENERIC (Orb of the Blue Flight
+// 188415) and CAMERA (Magisters' Terrace Scrying Orb 187578) glow steadily.
+// A model without Stand plays Closed either way: its playable lookup sends
+// Stand to Closed (every spawned GENERIC model with Closed and no Stand).
+constexpr bool gameObjectReadyShowsStand(uint32_t type) {
+    return type == 5u     // GENERIC
+           || type == 13u; // CAMERA
+}
+
 } // namespace wowee::core

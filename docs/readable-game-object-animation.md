@@ -31,6 +31,19 @@ lid and the Bar Door (DOOR 170571) swings open. GENERIC objects keep Stand
 `_experiments/20261118T230000Z.brazier_state/` in the workspace root. Its
 state can arrive before its type; the template response applies the pose then.
 
+READY loops Closed (147) where the model has it, except on GENERIC (5) and
+CAMERA (13) objects, which loop Stand (`gameObjectReadyShowsStand`).
+`ScholomanceCrystalBall01.m2` (display 4891) shows it: Stand is constant,
+Closed fades its additive `ORBREFLECT.BLP` layer from 1 to 0 over 1 s. Original
+2.4.3 pulses once a second as Orb of Command (QUESTGIVER 179879), Archmage
+Vargoth's Orb (SPELL_FOCUS 183507) and Orb of Domination (GOOBER 177808), and
+glows steadily as Orb of the Blue Flight (GENERIC 188415) and Magisters'
+Terrace's Scrying Orb (CAMERA 187578). Spawned GENERIC models with Closed and no
+Stand send Stand to Closed through their playable lookup, so they are unchanged.
+The type can arrive after the state; the template response then swaps Closed
+for Stand. Paired 20 Hz recordings:
+`_experiments/20261119T1445Z.orb_pulse/` in the workspace root.
+
 Every M2 instance starts on its Stand sequence, resolved through the model's
 pre-WotLK playable animation lookup when it has no Stand
 (`pipeline::standSequenceIndex`). Doodad cage doors in Zul'Gurub

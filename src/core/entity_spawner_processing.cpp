@@ -1992,9 +1992,13 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     LOG_DEBUG("GO state: guid=0x", std::hex, guid, std::dec, " state=", static_cast<int>(goState),
               " closed=", m2->hasAnimation(instanceId, 147u), " opened=", m2->hasAnimation(instanceId, 149u),
               " skipToEnd=", skipToEnd);
+    // GENERIC and CAMERA loop Stand in READY instead (gameObjectReadyShowsStand);
+    // a type still unknown here is revisited in onGameObjectInfoReceived.
     if (goState <= 1) {
-        const uint32_t stateLoop = goState == 0 ? 149u : 147u;
+        uint32_t stateLoop = goState == 0 ? 149u : 147u;
         if (m2->hasAnimation(instanceId, stateLoop)) {
+            if (goState == 1 && goType != 0xFFFFFFFFu && gameObjectReadyShowsStand(goType))
+                stateLoop = m2->standSequenceId(instanceId).value();
             m2->setInstanceStateAnimation(instanceId, anim, stateLoop, !skipToEnd);
             return;
         }
@@ -2083,7 +2087,17 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
             auto entity = gameHandler_->getEntityManager().getEntity(guid);
             if (!entity || entity->getType() != game::ObjectType::GAMEOBJECT) continue;
             if (std::static_pointer_cast<game::GameObject>(entity)->getEntry() != entry) continue;
-            applyGameObjectDestroyPose(inst->second.instanceId, info->type, state, true);
+            const uint32_t instanceId = inst->second.instanceId;
+            applyGameObjectDestroyPose(instanceId, info->type, state, true);
+            // READY looped Closed while the type was unknown.
+            auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
+            if (m2 && state == 1 && gameObjectReadyShowsStand(info->type) &&
+                m2->hasAnimation(instanceId, 147u)) {
+                m2->setInstanceStateAnimation(instanceId, 146u,
+                                              m2->standSequenceId(instanceId).value(), false);
+                LOG_DEBUG("GO READY shows Stand after query: guid=0x", std::hex, guid, std::dec,
+                          " type=", info->type);
+            }
         }
     }
     auto it = gameObjectPendingAnimPolicy_.find(entry);

@@ -705,6 +705,9 @@ public:
     /// and that animation is the opening. Undercity's lift doors are the case:
     /// one bone, one sequence, id 0, 3333ms.
     [[nodiscard]] std::optional<uint32_t> soleSequenceId(uint32_t instanceId) const;
+    /// The animation id of what the instance's model plays as Stand
+    /// (M2ModelGPU::standSequenceIndex): 0, or its playable lookup's stand-in.
+    [[nodiscard]] std::optional<uint32_t> standSequenceId(uint32_t instanceId) const;
     /// True while the instance is still live in the renderer. Owners that cache
     /// instance IDs (game objects, transports) use this to notice an instance
     /// that was dropped underneath them - e.g. by a renderer-wide clear - and

@@ -174,6 +174,14 @@ std::optional<uint32_t> M2Renderer::soleSequenceId(uint32_t instanceId) const {
     return inst.cachedModel->sequences[0].id;
 }
 
+std::optional<uint32_t> M2Renderer::standSequenceId(uint32_t instanceId) const {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return std::nullopt;
+    const auto& inst = instances[idxIt->second];
+    if (!inst.cachedModel || inst.cachedModel->sequences.empty()) return std::nullopt;
+    return inst.cachedModel->sequences[inst.cachedModel->standSequenceIndex].id;
+}
+
 void M2Renderer::setInstanceStateAnimation(uint32_t instanceId, uint32_t transitionId,
                                            uint32_t stateId, bool playTransition) {
     auto idxIt = instanceIndexById.find(instanceId);

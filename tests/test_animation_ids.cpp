@@ -122,6 +122,21 @@ TEST_CASE("ACTIVE shows Destroy only for stateful models without Open", "[game-o
     CHECK_FALSE(gameObjectActiveShowsDestroy(1u, false, false, false));
 }
 
+TEST_CASE("READY loops Stand for GENERIC and CAMERA, Closed for the others", "[game-object-pose]") {
+    using wowee::core::gameObjectReadyShowsStand;
+    // ScholomanceCrystalBall01 glows steadily natively as Orb of the Blue Flight
+    // (GENERIC) and Magisters' Terrace's Scrying Orb (CAMERA).
+    CHECK(gameObjectReadyShowsStand(5u));
+    CHECK(gameObjectReadyShowsStand(13u));
+    // It pulses with Closed as Orb of Command (QUESTGIVER), Archmage Vargoth's
+    // Orb (SPELL_FOCUS) and Orb of Domination (GOOBER); Warpwood Pod (CHEST)
+    // stands as a closed pulsing bulb.
+    for (uint32_t type : {2u, 3u, 8u, 10u}) {
+        CAPTURE(type);
+        CHECK_FALSE(gameObjectReadyShowsStand(type));
+    }
+}
+
 TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creature-locomotion]") {
     using wowee::rendering::creatureMovingAnimation;
     CHECK(creatureMovingAnimation(false, false, false) == anim::RUN);
