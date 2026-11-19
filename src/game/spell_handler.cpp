@@ -1287,6 +1287,22 @@ uint32_t shapeshiftFormFlags(GameHandler& owner, uint8_t form) {
 // CMaNGOS GetErrorAtShapeshiftedCast, the client's rule as well: native
 // 2.4.3 greys Premeditation (Stances = Stealth, no stealth attribute) outside
 // stealth, and leaves Vanish (not while shapeshifted) usable inside it.
+// A form the client leaves by itself to cast a spell that cannot be cast in
+// it: a real shapeshift (no flag 1) without SpellShapeshiftForm flag 0x100
+// (Spirit of Redemption has it). Native 2.4.3 in Cat Form answers
+// IsUsableSpell 1 for Healing Touch, Wrath and Dire Bear Form, and /cast Dire
+// Bear Form there leaves Cat Form and becomes a bear.
+bool autoUnshiftFor(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    constexpr uint32_t kAttrNotShapeshift = 0x00010000;
+    constexpr uint32_t kFormFlagActsAsNoForm = 0x1;
+    constexpr uint32_t kFormFlagNoAutoUnshift = 0x100;
+    const uint8_t form = owner.getShapeshiftFormId();
+    if (form == 0 || !(entry.attr & kAttrNotShapeshift) || entry.stances != 0) return false;
+    if ((1u << (form - 1)) & entry.stancesNot) return false;
+    const uint32_t flags = shapeshiftFormFlags(owner, form);
+    return !(flags & kFormFlagActsAsNoForm) && !(flags & kFormFlagNoAutoUnshift);
+}
+
 bool formAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
     const uint8_t form = owner.getShapeshiftFormId();
     const uint32_t formBit = form ? (1u << (form - 1)) : 0u;
@@ -1296,7 +1312,7 @@ bool formAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
     constexpr uint32_t kAttrEx2AllowWhileNotShapeshifted = 0x00080000;
     constexpr uint32_t kFormFlagActsAsNoForm = 0x1;
     const bool shifted = form != 0 && !(shapeshiftFormFlags(owner, form) & kFormFlagActsAsNoForm);
-    if (shifted) return !(entry.attr & kAttrNotShapeshift) && entry.stances == 0;
+    if (shifted) return autoUnshiftFor(owner, entry) || (!(entry.attr & kAttrNotShapeshift) && entry.stances == 0);
     return entry.stances == 0 || (entry.attrEx2 & kAttrEx2AllowWhileNotShapeshifted);
 }
 
@@ -1576,6 +1592,13 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         if (!text.empty()) owner_.raiseUiError(text);
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
+    }
+    // Leaving the form first: the server refuses a NOT_SHAPESHIFT spell in it
+    // (SPELL_FAILED_NOT_SHAPESHIFT), so the client cancels the form's aura and
+    // casts after it, as native 2.4.3 does from Cat Form.
+    if (const auto* entry = owner_.getSpellNameEntry(spellId); entry && autoUnshiftFor(owner_, *entry)) {
+        LOG_INFO("Spell ", spellId, " leaves form ", static_cast<int>(owner_.getShapeshiftFormId()), " first");
+        cancelShapeshiftForm();
     }
     // SPELL_ATTR_HELD_ITEM_ONLY (0x200): cast at the main-hand item, which the
     // client picks itself (the shaman weapon imbues). Native 2.4.3 with the
