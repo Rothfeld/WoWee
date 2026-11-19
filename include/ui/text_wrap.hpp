@@ -44,6 +44,17 @@ struct WrapRun {
     float texWidth = 0.0f;
 };
 
+/// How many lines a font string's text takes: a final break opens no line of
+/// its own. 2.4.3 sizes TradeSkillReagentLabel, "Reagents: |n", one line high
+/// (9.6 at its 12-unit font); counting the empty line after the break put the
+/// reagent buttons anchored under it 12 units low.
+template <typename Lines>
+int textLineCount(const Lines& lines) {
+    size_t n = lines.size();
+    if (n > 1 && lines.back().empty()) --n;
+    return static_cast<int>(n);
+}
+
 /// Whether two runs are the same style, so adjacent pieces can be merged back
 /// into one rather than left as a string of one-word runs.
 inline bool sameStyle(const WrapRun& a, const WrapRun& b) {

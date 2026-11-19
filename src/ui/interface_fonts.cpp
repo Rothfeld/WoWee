@@ -228,7 +228,11 @@ int interfaceTextLines(const std::string& text, const std::string& fontFace,
     if (interfaceNativeFace(fontFace)) {
         const auto rows = interfaceWrap(text, fontFace, fontHeight, wrapWidth, nonSpaceWrap, pixelScale,
                                         shadowX);
-        return rows.empty() ? 1 : static_cast<int>(rows.size());
+        if (rows.empty()) return 1;
+        // A final line break opens no line of its own (textLineCount).
+        size_t n = rows.size();
+        if (n > 1 && rows.back().runs.empty()) --n;
+        return static_cast<int>(n);
     }
     // The same estimate interfaceTextWidth answers without a face, so a
     // measure taken during the load does not answer that everything fits on
@@ -238,7 +242,7 @@ int interfaceTextLines(const std::string& text, const std::string& fontFace,
         return static_cast<float>(piece.size()) * size * 0.5f;
     };
     const auto lines = wrapText(parseMarkup(text), wrapWidth, nonSpaceWrap, measure);
-    return lines.empty() ? 1 : static_cast<int>(lines.size());
+    return lines.empty() ? 1 : textLineCount(lines);
 }
 
 float fontEmSizeScale(const void* ttfData, size_t byteCount) {

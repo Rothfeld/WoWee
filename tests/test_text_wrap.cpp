@@ -463,3 +463,11 @@ TEST_CASE("Lines start where 2.4.3 starts them in boxes off the pixel grid", "[w
         CHECK(wowee::ui::placeTextLine(c.left, c.box, 36.0f, c.shadow, c.justify) == static_cast<float>(c.pen));
     }
 }
+
+TEST_CASE("a final break opens no line of its own", "[text-wrap]") {
+    // TradeSkillReagentLabel says "Reagents: |n"; 2.4.3 sizes it one line high.
+    using wowee::ui::textLineCount;
+    CHECK(textLineCount(wrapText(plain("Reagents: \n"), 0.0f, false, charWidth)) == 1);
+    CHECK(textLineCount(wrapText(plain("a\nb"), 0.0f, false, charWidth)) == 2);
+    CHECK(textLineCount(wrapText(plain("a\n\n"), 0.0f, false, charWidth)) == 2);
+}
