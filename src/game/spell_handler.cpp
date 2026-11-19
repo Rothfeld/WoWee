@@ -521,10 +521,10 @@ bool shouldDespawnGatherTarget(uint8_t result) {
     return result == kSpellFailedAlreadyOpen || result == kSpellFailedChestInUse;
 }
 
-// What the cast bar says when the player casts an OPEN_LOCK spell at a game
-// object: the object's own text, not the spell's name. The server sends it in
-// the object's query response; CMaNGOS TBC documents the opening text as used
-// "when lock specifies action 0 or 1" and the closing text "when lock
+// The game object text an OPEN_LOCK cast at an object carries to the cast
+// bar (game/cast_bar_text.hpp decides whether it is shown). The server sends
+// it in the object's query response; CMaNGOS TBC documents the opening text as
+// used "when lock specifies action 0 or 1" and the closing text "when lock
 // specifies action 2" (QueryHandler.cpp). The lock case is the one the spell
 // opens: LOCK_KEY_SKILL whose index is the spell's OPEN_LOCK misc value, else
 // the key-item case.
@@ -542,8 +542,9 @@ bool shouldDespawnGatherTarget(uint8_t result) {
 // Peacebloom (pair 0) "Herb Gathering".
 //
 // nullopt: not an OPEN_LOCK cast at a locked object, a spell that names
-// itself, or vanilla, whose query response carries no such text; the bar
-// then shows the spell name.
+// itself, or vanilla, whose query response carries no such text. An empty
+// caption or nullopt leaves the bar to castBarText (game/cast_bar_text.hpp):
+// the spell name unless NO_CASTING_BAR_TEXT.
 std::optional<std::string> openLockCastBarCaption(pipeline::AssetManager* assets,
                                                   const GameObjectQueryResponseData& info,
                                                   uint32_t spellId) {
@@ -2202,6 +2203,7 @@ void SpellHandler::cancelCast() {
     }
     owner_.pendingGameObjectInteractGuidRef() = 0;
     owner_.lastInteractedGoGuidRef() = 0;
+    const uint32_t cancelledSpellId = currentCastSpellId_;
     casting_ = false;
     castIsChannel_ = false;
     currentCastSpellId_ = 0;
@@ -2210,8 +2212,10 @@ void SpellHandler::cancelCast() {
     craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
+    // Original 2.4.3 (pair 8): a jump during Hearthstone fires
+    // UNIT_SPELLCAST_STOP "player", "Hearthstone", "" at once.
     if (owner_.addonEventCallbackRef())
-        owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", {"player"});
+        owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", cancelledSpellId));
     // Remove lingering precast visual effects
     if (auto* renderer = owner_.services().renderer) {
         if (auto* svs = renderer->getSpellVisualSystem())
@@ -5923,8 +5927,11 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
     if (owner_.addonEventCallbackRef()) {
         auto unitId = (failGuid == 0) ? std::string("player") : owner_.guidToUnitId(failGuid);
         if (!unitId.empty()) {
-            uint32_t spellId = 0;
-            if (const auto* st = getUnitCastState(failGuid)) spellId = st->spellId;
+            // The packet names the spell. Original 2.4.3 (pair 8): Hearthstone
+            // broken by a jump, UNIT_SPELLCAST_INTERRUPTED "player",
+            // "Hearthstone", "".
+            uint32_t spellId = failSpellId;
+            if (const auto* st = getUnitCastState(failGuid); spellId == 0 && st) spellId = st->spellId;
             owner_.fireAddonEvent("UNIT_SPELLCAST_INTERRUPTED", spellcastArgs(unitId, spellId));
             owner_.fireAddonEvent("UNIT_SPELLCAST_STOP", spellcastArgs(unitId, spellId));
         }

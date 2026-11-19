@@ -6,11 +6,13 @@
 #include "addons/lua_api_helpers.hpp"
 #include "game/item_text.hpp"
 #include "game/game_utils.hpp"
+#include "game/cast_bar_text.hpp"
 #include "addons/lua_engine.hpp"
 #include "core/logger.hpp"
 #include <set>
 #include <optional>
 #include <limits>
+#include <cmath>
 
 namespace wowee::addons {
 
@@ -562,7 +564,10 @@ static int lua_UnitAuraGeneric(lua_State* L) {
 // Returns number of Lua return values (0 if not casting/channeling the requested type).
 static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
     auto* gh = getGameHandler(L);
-    if (!gh) { return luaReturnNil(L); }
+    // Nothing at all, not one nil, for a unit that is not casting: original
+    // 2.4.3 select("#", UnitChannelInfo("player")) is 0 during a Hearthstone
+    // cast (pair 8).
+    if (!gh) return 0;
 
     const char* uid = luaL_optstring(L, 1, "player");
     std::string uidStr(uid ? uid : "player");
@@ -588,9 +593,9 @@ static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
         interruptible = true;
     } else {
         uint64_t guid = resolveUnitGuid(gh, uidStr);
-        if (guid == 0) { return luaReturnNil(L); }
+        if (guid == 0) return 0;
         const auto* state = gh->getUnitCastState(guid);
-        if (!state) { return luaReturnNil(L); }
+        if (!state) return 0;
         isCasting = state->casting;
         isChannel = state->isChannel;
         spellId = state->spellId;
@@ -599,65 +604,58 @@ static int lua_UnitCastInfo(lua_State* L, bool wantChannel) {
         interruptible = state->interruptible;
     }
 
-    if (!isCasting) { return luaReturnNil(L); }
+    if (!isCasting) return 0;
 
     // UnitCastingInfo: only returns for non-channel casts
     // UnitChannelInfo: only returns for channels
-    if (wantChannel != isChannel) { return luaReturnNil(L); }
+    if (wantChannel != isChannel) return 0;
 
     // Spell name + icon
     const std::string& name = gh->getSpellName(spellId);
     std::string iconPath = gh->getSpellIconPath(spellId);
 
-    // Time values in milliseconds (WoW API convention)
-    double startTimeMs = (nowSec - (timeTotal - timeRemaining)) * 1000.0;
-    double endTimeMs   = (nowSec + timeRemaining) * 1000.0;
+    // Whole milliseconds on the GetTime() clock, as the original reports
+    // them: Hearthstone 279850576 and 279860576 (pair 8).
+    const double startTimeMs = std::round((nowSec - (timeTotal - timeRemaining)) * 1000.0);
+    const double endTimeMs   = std::round((nowSec + timeRemaining) * 1000.0);
 
-    // The real signatures, which are one wider than what this used to send:
+    //   2.4.3: name, nameSubtext, text, texture, startTime, endTime,
+    //          isTradeSkill - seven values for both (pair 8: Hearthstone,
+    //          "", "Hearthstone", "Interface\Icons\INV_Misc_Rune_01",
+    //          279850576, 279860576, false).
+    //   3.3.5: UnitCastingInfo adds castID and notInterruptible,
+    //          UnitChannelInfo notInterruptible.
     //
-    //   UnitCastingInfo → name, nameSubtext, text, texture, startTime,
-    //                     endTime, isTradeSkill, castID, notInterruptible
-    //   UnitChannelInfo → the same without castID
-    //
-    // nameSubtext is the rank, and leaving it out shifted every value after it
-    // by one. castingbarframe.lua destructures all nine by name, so it read the
-    // icon path as the bar's text, a timestamp as the texture, and a boolean as
-    // endTime - then computed (endTime - startTime) and raised, which is why no
-    // cast bar was ever drawn rather than a wrong one.
+    // nameSubtext is the rank; castingbarframe.lua destructures them by
+    // position, so a missing one shifts every value after it.
     lua_pushstring(L, name.empty() ? "Unknown" : name.c_str()); // name
     const std::string& rank = gh->getSpellRank(spellId);
     lua_pushstring(L, rank.c_str());                             // nameSubtext
-    // What the bar is labelled with, which is the third value and not the
-    // first: castingbarframe.lua reads `text` into barText and never touches
-    // `name`. An empty string there is a bar that fills up saying nothing -
-    // no way to tell a Fireball from a Frostbolt, or a cast from a channel.
-    //
-    // The spell's own name, except for an OPEN_LOCK cast at a game object,
-    // where it is the object's opening or closing text - empty for most. The
-    // original shows Opening at the Scarlet Monastery torch as name "Opening"
-    // and text "", and at Rizzle's Guarded Plans as text "Examining".
+    // `text` is what CastingBarFrame puts on the bar; it never reads `name`.
+    // game/cast_bar_text.hpp holds the rule and the original's cases.
     //
     // A channel is labelled with GlobalStrings CHANNELING ("Channeling"),
     // which no FrameXML file reads: the client hands it over as `text`.
     // Original 2.4.3 (pair 17, Strange Gong 187359 in Zul'Aman):
     // UnitChannelInfo("player") answered name "Zul'Aman Object Visual",
     // rank "", text "Channeling", and the bar read "Channeling".
-    std::optional<std::string> caption;
-    if (uidStr == "player" && !wantChannel) caption = gh->getCastBarCaption();
     if (wantChannel) {
         lua_getglobal(L, "CHANNELING");
         if (!lua_isstring(L, -1))
             return luaL_error(L, "UnitChannelInfo: GlobalStrings CHANNELING is not loaded");
-    } else if (caption) {
-        lua_pushstring(L, caption->c_str());                    // text
     } else {
-        lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
+        const auto* entry = gh->getSpellNameEntry(spellId);
+        const std::string text = game::castBarText(
+            name, entry ? entry->attrEx3 : 0u,
+            uidStr == "player" ? gh->getCastBarCaption() : std::nullopt);
+        lua_pushstring(L, text.c_str());                         // text
     }
     if (!iconPath.empty()) lua_pushstring(L, iconPath.c_str());
     else lua_pushstring(L, "Interface\\Icons\\INV_Misc_QuestionMark");  // texture
     lua_pushnumber(L, startTimeMs);                              // startTime (ms)
     lua_pushnumber(L, endTimeMs);                                // endTime (ms)
     lua_pushboolean(L, gh->isProfessionSpell(spellId) ? 1 : 0); // isTradeSkill
+    if (game::isActiveExpansion("tbc")) return 7;
     if (!wantChannel) {
         lua_pushnumber(L, spellId);                              // castID (UnitCastingInfo only)
     }

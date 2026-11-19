@@ -138,9 +138,9 @@ public:
     [[nodiscard]] uint32_t getCurrentCastSpellId() const {
         return casting_ ? currentCastSpellId_ : 0;
     }
-    // The text the player's cast bar shows instead of the spell name: a game
-    // object's opening/closing text for an OPEN_LOCK cast at it. nullopt
-    // means the spell name.
+    // The game object text the player's current cast shows on its bar: the
+    // opening/closing text of the object an OPEN_LOCK cast is aimed at, which
+    // can be empty. nullopt when the cast is not one (castBarText decides).
     [[nodiscard]] std::optional<std::string> getCastBarCaption() const {
         if (!casting_ || castIsChannel_ || castBarCaptionSpellId_ != currentCastSpellId_)
             return std::nullopt;

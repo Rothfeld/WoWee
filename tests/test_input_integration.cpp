@@ -3581,6 +3581,43 @@ TEST_CASE_METHOD(Integration, "A channel's bar text is CHANNELING, not the spell
     lua.setGameHandler(nullptr);
 }
 
+// Original 2.4.3 (pair 8, _experiments/20261119T1330Z.castbar_text):
+// UnitCastingInfo answers seven values (Hearthstone, "", "Hearthstone",
+// texture, start, end, false) and UnitChannelInfo none at all meanwhile. A
+// spell with AttributesEx3 NO_CASTING_BAR_TEXT (Opening 6477) shows no text.
+TEST_CASE_METHOD(Integration, "UnitCastingInfo text and values as 2.4.3", "[cast-text]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.spellNameCacheLoadedRef() = true;
+    handler.spellNameCacheRef()[8690].name = "Hearthstone";
+    handler.spellNameCacheRef()[6477].name = "Opening";
+    handler.spellNameCacheRef()[6477].attrEx3 = 0x4;
+    const auto cast = [&](uint32_t spell) {
+        wowee::network::Packet start(wireOpcode(Opcode::SMSG_SPELL_START));
+        start.writePackedGuid(replay::Session::kPlayerGuid);
+        start.writePackedGuid(replay::Session::kPlayerGuid);
+        start.writeUInt32(spell); start.writeUInt8(1); start.writeUInt16(0);
+        start.writeUInt32(10000); start.writeUInt32(0);
+        session.receive(start);
+        REQUIRE(handler.isCasting());
+    };
+    truth("select('#', UnitCastingInfo('player')) == 0");
+    cast(8690);
+    truth("select('#', UnitCastingInfo('player')) == 7");
+    truth("select('#', UnitChannelInfo('player')) == 0");
+    truth("select(3, UnitCastingInfo('player')) == 'Hearthstone'");
+    truth("select(2, UnitCastingInfo('player')) == ''");
+    truth("select(6, UnitCastingInfo('player')) - select(5, UnitCastingInfo('player')) == 10000");
+    truth("select(5, UnitCastingInfo('player')) == math.floor(select(5, UnitCastingInfo('player')))");
+    handler.cancelCast();
+    cast(6477);
+    truth("UnitCastingInfo('player') == 'Opening'");
+    truth("select(3, UnitCastingInfo('player')) == ''");
+    lua.setGameHandler(nullptr);
+}
+
 TEST_CASE_METHOD(Integration, "TargetUnit resolves nearby names and exact commands", "[target-name]") {
     using namespace wowee::game;
     replay::Session session("tbc");
