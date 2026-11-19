@@ -9,6 +9,7 @@
 #include "pipeline/blp_loader.hpp"
 #include "pipeline/grass_clearing.hpp"
 #include "rendering/m2_model_classifier.hpp"
+#include "rendering/m2_view_distance.hpp"
 #include "rendering/projected_texture.hpp"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
@@ -380,11 +381,16 @@ struct M2Instance {
     // visible") so a freshly spawned instance skips the HiZ test rather than
     // being judged against depth data that never contained it.
     uint8_t hizPrevCulledFrames = 2;
-    // Server game object (mailbox, chest, node, door): exempt from the adaptive
-    // ambient-doodad distance, which collapses to ~200 units in a city and hid
-    // interactable objects long before the server stopped sending them.
-    // Set by the spawner; see M2_GAME_OBJECT_MIN_RENDER_DISTANCE.
+    // Server game object (mailbox, chest, node, door). Set by the spawner.
     bool isGameObject = false;
+    // Spell visual (SpellVisualSystem): a glow, beam end or state kit on a unit
+    // or at a place the server named. Set by SpellVisualSystem.
+    bool isSpellVisual = false;
+    // Drawn to the view distance like the units CharacterRenderer draws, not to
+    // the adaptive ambient-doodad distance (~200 yd in a city): the server
+    // decides what is in range. Archimonde's Banish_Chest glow and his body
+    // have to come and go together.
+    [[nodiscard]] bool serverVisibility() const { return isGameObject || isSpellVisual || externalPose; }
     /// Posed by its owner rather than by this renderer: model matrix, bone
     /// matrices, sequence and clocks are written each frame through
     /// setExternalPose, and update() neither advances nor animates it. Its
@@ -722,6 +728,7 @@ public:
     /// Mark an instance as a server game object so the adaptive doodad render
     /// distance can't cull it while the server still considers it visible.
     void setInstanceIsGameObject(uint32_t instanceId, bool isGameObject);
+    void setInstanceIsSpellVisual(uint32_t instanceId);
     void setSkipCollision(uint32_t instanceId, bool skip);
     void clear();
     /** Drop all instances but keep models in GPU memory. Cheap path for the
@@ -847,6 +854,19 @@ public:
     void setDoodadDistanceCap(float yards) { doodadDistanceCapYards_ = yards; }
 
     /// The doodad view distance with that cap applied.
+    /// Squared distance one instance draws to (m2InstanceMaxDistSq), given
+    /// this frame's ambient doodad distance.
+    float maxDistSqOf(const M2Instance& inst, float baseMaxDistSq) const {
+        return m2InstanceMaxDistSq(baseMaxDistSq, inst.cachedEffectiveMaxDistSqFactor, inst.serverVisibility(),
+                                   inst.serverVisibility() ? viewDistanceAbsolute_ : cappedViewDistance(),
+                                   inst.cachedIsGroundDetail, groundDetailMaxDistance_);
+    }
+    /// Squared distance an instance's particles and ribbons are drawn and
+    /// stepped to: the scene's model distance, or the view distance for a
+    /// server object (its particles go wherever it is drawn).
+    float particleMaxDistSq(const M2Instance& inst) const {
+        return inst.serverVisibility() ? viewDistanceAbsolute_ * viewDistanceAbsolute_ : cachedMaxRenderDistSq_;
+    }
     float cappedViewDistance() const {
         return doodadDistanceCapYards_ > 0.0f
                    ? std::min(viewDistanceAbsolute_, doodadDistanceCapYards_)

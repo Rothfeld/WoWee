@@ -7,13 +7,12 @@
 using wowee::rendering::m2InstanceMaxDistSq;
 
 namespace {
-constexpr float kGameObjectFloor = 600.0f;
 float distanceOf(float distSq) { return std::sqrt(distSq); }
 }
 
 TEST_CASE("an ordinary doodad draws to the scene distance", "[m2][viewdist]") {
     const float base = 1000.0f * 1000.0f;
-    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, false, kGameObjectFloor, 2400.0f))
+    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, false, 2400.0f))
             == Catch::Approx(1000.0f));
 }
 
@@ -23,25 +22,25 @@ TEST_CASE("a large model's widening factor stops at the view distance", "[m2][vi
     // scene's range while the terrain under it stopped at the slider.
     const float base = 1000.0f * 1000.0f;
     const float factor = 16.0f;  // 4x the distance, unclamped
-    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, factor, false, kGameObjectFloor, 4000.0f))
+    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, factor, false, 4000.0f))
             == Catch::Approx(4000.0f));
-    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, factor, false, kGameObjectFloor, 1200.0f))
+    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, factor, false, 1200.0f))
             == Catch::Approx(1200.0f));
 }
 
-TEST_CASE("the game object floor cannot reach past the ground either", "[m2][viewdist]") {
-    // The floor is 600 yards, above the 400-yard minimum view distance: a
-    // mailbox is meant to stay findable, not to hang in the air.
+TEST_CASE("a server object draws to the view distance", "[m2][viewdist]") {
+    // Game objects, unit emitters and spell visuals: what the server keeps in
+    // range is drawn, however short the ambient doodad distance has become.
     const float base = 100.0f * 100.0f;
-    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, true, kGameObjectFloor, 2400.0f))
-            == Catch::Approx(kGameObjectFloor));
-    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, true, kGameObjectFloor, 400.0f))
-            == Catch::Approx(400.0f));
+    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, true, 2400.0f)) == Catch::Approx(2400.0f));
+    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, true, 400.0f)) == Catch::Approx(400.0f));
+    // Ground cover's radius is not theirs.
+    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, true, 400.0f, true, 70.0f)) == Catch::Approx(400.0f));
 }
 
-TEST_CASE("a non-game-object ignores the floor", "[m2][viewdist]") {
+TEST_CASE("scenery keeps the ambient distance", "[m2][viewdist]") {
     const float base = 100.0f * 100.0f;
-    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, false, kGameObjectFloor, 2400.0f))
+    REQUIRE(distanceOf(m2InstanceMaxDistSq(base, 1.0f, false, 2400.0f))
             == Catch::Approx(100.0f));
 }
 
@@ -49,7 +48,7 @@ TEST_CASE("raising the view distance never shortens an instance's range", "[m2][
     const float base = 1000.0f * 1000.0f;
     float previous = 0.0f;
     for (float viewDistance = 400.0f; viewDistance <= 2400.0f; viewDistance += 100.0f) {
-        const float d = m2InstanceMaxDistSq(base, 3.0f, true, kGameObjectFloor, viewDistance);
+        const float d = m2InstanceMaxDistSq(base, 3.0f, true, viewDistance);
         REQUIRE(d >= previous);
         previous = d;
     }
@@ -71,11 +70,11 @@ TEST_CASE("Environment detail can thin the clutter but not push it past the grou
     };
 
     // Turned down, doodads stop closer than the world does.
-    const float thin = m2InstanceMaxDistSq(baseFor(0.5f), 1.0f, false, 600.0f, viewDistance);
+    const float thin = m2InstanceMaxDistSq(baseFor(0.5f), 1.0f, false, viewDistance);
     CHECK(distanceOf(thin) == Catch::Approx(500.0f));
 
     // Turned up, the ceiling is what answers, not the setting.
-    const float wide = m2InstanceMaxDistSq(baseFor(1.5f), 4.0f, false, 600.0f, viewDistance);
+    const float wide = m2InstanceMaxDistSq(baseFor(1.5f), 4.0f, false, viewDistance);
     CHECK(distanceOf(wide) == Catch::Approx(viewDistance));
 }
 
@@ -86,12 +85,12 @@ TEST_CASE("Ground cover stops at its own radius, not the doodads'", "[m2][viewdi
     const float base = 1000.0f * 1000.0f;
     const float viewDistance = 2400.0f;
 
-    const float grass = m2InstanceMaxDistSq(base, 1.0f, false, 600.0f, viewDistance,
+    const float grass = m2InstanceMaxDistSq(base, 1.0f, false, viewDistance,
                                             /*isGroundDetail=*/true, 70.0f);
     CHECK(distanceOf(grass) == Catch::Approx(70.0f));
 
     // Everything else is untouched by it.
-    const float tree = m2InstanceMaxDistSq(base, 1.0f, false, 600.0f, viewDistance,
+    const float tree = m2InstanceMaxDistSq(base, 1.0f, false, viewDistance,
                                            /*isGroundDetail=*/false, 70.0f);
     CHECK(distanceOf(tree) == Catch::Approx(1000.0f));
 }
@@ -100,7 +99,7 @@ TEST_CASE("The clutter radius cannot reach past the world either", "[m2][viewdis
     // A radius wider than the view distance is still held by the ceiling: the
     // ground cover has no more ground to sit on than anything else does.
     const float base = 1000.0f * 1000.0f;
-    const float grass = m2InstanceMaxDistSq(base, 1.0f, false, 600.0f, /*viewDistance=*/400.0f,
+    const float grass = m2InstanceMaxDistSq(base, 1.0f, false, /*viewDistance=*/400.0f,
                                             /*isGroundDetail=*/true, 500.0f);
     CHECK(distanceOf(grass) == Catch::Approx(400.0f));
 }
@@ -109,7 +108,7 @@ TEST_CASE("No clutter radius set leaves ground detail as it was", "[m2][viewdist
     // Zero means "no cap of its own", which is what a client that has never
     // been told the setting should do.
     const float base = 1000.0f * 1000.0f;
-    const float grass = m2InstanceMaxDistSq(base, 1.0f, false, 600.0f, 2400.0f,
+    const float grass = m2InstanceMaxDistSq(base, 1.0f, false, 2400.0f,
                                             /*isGroundDetail=*/true, 0.0f);
     CHECK(distanceOf(grass) == Catch::Approx(1000.0f));
 }

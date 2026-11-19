@@ -437,6 +437,7 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
             LOG_WARNING("SpellVisual: instance failed for kit=", kitId, " model=", effect.path);
             continue;
         }
+        m2Renderer_->setInstanceIsSpellVisual(instanceId);
         m2Renderer_->restartInstanceAnimation(instanceId);
         // Without a stage length (cast time, aura, channel) the effect lives
         // one play of the sequence it shows. Authored lengths run from 0.33 s
@@ -496,6 +497,7 @@ void SpellVisualSystem::playEffectAtAttachment(uint32_t effectNameId, uint32_t a
         LOG_WARNING("SpellVisual: instance failed for effect ", effectNameId, " model=", path->second);
         return;
     }
+    m2Renderer_->setInstanceIsSpellVisual(instanceId);
     m2Renderer_->restartInstanceAnimation(instanceId);
     // One play of the model's sequence, as for kit effects.
     const float animDurMs = m2Renderer_->getInstanceAnimDuration(instanceId);
@@ -641,6 +643,7 @@ void SpellVisualSystem::startChannelVisual(uint32_t visualId, const glm::vec3& p
             ? m2Renderer_->createInstanceWithMatrix(model, glm::scale(transform, glm::vec3(effect.scale)), spawn)
             : m2Renderer_->createInstance(model, spawn, glm::vec3(0), effect.scale);
         if (!instance) { LOG_ERROR("Channel effect instance failed: ", effect.path); continue; }
+        m2Renderer_->setInstanceIsSpellVisual(instance);
         // A channel effect plays Stand once, then loops Hold, as a state
         // effect does (27 of 65 TBC ChannelKit models author both). Dark
         // Channeling 21157 on Magister Kalendris (Shadow_Snare_High_base:
@@ -721,6 +724,7 @@ void SpellVisualSystem::syncAuraVisuals(uint32_t attachInstanceId,
             if (!model) { LOG_ERROR("Aura model unavailable: ", effect.path); continue; }
             const uint32_t instance = m2Renderer_->createInstance(model, position, glm::vec3(0), 1.0f);
             if (!instance) { LOG_ERROR("Aura instance failed: ", effect.path); continue; }
+            m2Renderer_->setInstanceIsSpellVisual(instance);
             m2Renderer_->startInstanceStateEffect(instance);
             // As spawnKitEffects: a model without the slot's attachment (40 of
             // 769 TBC creature models lack Base 19, e.g. HumSCitizenMid) has
@@ -1232,6 +1236,7 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
             LOG_WARNING("SpellVisual: persistent area instance failed, model=", effect.path);
             continue;
         }
+        m2Renderer_->setInstanceIsSpellVisual(instanceId);
         m2Renderer_->restartInstanceAnimation(instanceId);
         instances.push_back(instanceId);
         LOG_INFO("SpellVisual: persistent area 0x", std::hex, key, std::dec, " visual=", visualId,
@@ -1412,6 +1417,7 @@ void SpellVisualSystem::dropAreaImpacts(float deltaTime) {
                 LOG_WARNING("SpellVisual: area impact instance failed, model=", area.impacts.path);
                 continue;
             }
+            m2Renderer_->setInstanceIsSpellVisual(instanceId);
             m2Renderer_->restartInstanceAnimation(instanceId);
             const float lifetime = m2Renderer_->getInstanceAnimDuration(instanceId) / 1000.0f;
             assert(lifetime > 0.0f);
@@ -1469,6 +1475,7 @@ void SpellVisualSystem::update(float deltaTime) {
                 it = spellMissiles_.erase(it);
                 continue;
             }
+            m2Renderer_->setInstanceIsSpellVisual(it->instanceId);
             m2Renderer_->restartInstanceAnimation(it->instanceId);
         }
         placeSpellMissile(*it, (it->elapsed - it->launchAt) / (it->duration - it->launchAt));

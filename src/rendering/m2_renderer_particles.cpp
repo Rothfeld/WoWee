@@ -475,7 +475,7 @@ void M2Renderer::renderParticleMeshes(VkCommandBuffer cmd, VkDescriptorSet perFr
         if (!inst.cachedModel || inst.particles.empty()) continue;
         const auto& gpu = *inst.cachedModel;
         const glm::vec3 distance = inst.position - cachedCamPos_;
-        if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
+        if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
         if (outsideVisibleRegion(inst.position) || roomCulled(inst)) continue;
         for (const auto& p : inst.particles) {
             if (p.emitterIndex < 0 || static_cast<size_t>(p.emitterIndex) >= gpu.particleGeometry.size()) continue;
@@ -816,7 +816,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         const auto& inst = instances[idx];
         if (!inst.cachedModel) continue;
         const glm::vec3 distance = inst.position - cachedCamPos_;
-        if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
+        if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
         if (outsideVisibleRegion(inst.position) || roomCulled(inst)) continue;
         for (const auto& particle : inst.particles) {
             const auto& emitter = inst.cachedModel->particleEmitters.at(particle.emitterIndex);
@@ -882,7 +882,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         if (!inst.cachedModel) continue;
         const auto& gpu = *inst.cachedModel;
         const glm::vec3 distance = inst.position - cachedCamPos_;
-        if (glm::dot(distance, distance) > cachedMaxRenderDistSq_) continue;
+        if (glm::dot(distance, distance) > particleMaxDistSq(inst)) continue;
         if (outsideVisibleRegion(inst.position) || roomCulled(inst)) continue;
 
         // Cache the last emitter's per-emitter state so adjacent particles

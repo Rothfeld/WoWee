@@ -115,7 +115,7 @@ in the helm's authored frame it trailed behind her back, out beside her when
 seen from the side or while casting
 (`_experiments/20261118T124000Z.astromancer_glow/` in the workspace). Visible
 character and M2 bones update every frame; distance/frustum culling still
-limits work. Character animation uses the same radius as character drawing.
+limits work. Units are drawn and animated out to the view distance.
 Remote NPCs and players consume `UNIT_FIELD_BYTES_1` stand states. Persistent
 aura visuals use `SpellVisual.StateKit` and its authored attachment slots;
 their lifetime follows aura fields and owner existence, not cast duration.
@@ -1066,6 +1066,24 @@ Vanish, Shadowmeld: kit 312, 0.3; Invisibility: kit 3450, 0.5) times the
 CreatureDisplayInfo alpha. UNIT_VIS_FLAG_CREEP does not fade a unit: a creature
 under Stealth 31621 (CREEP, no kit) stays opaque in 2.4.3. Evidence:
 `_experiments/20261118T201300Z.stealth_alpha/` in the workspace.
+
+### Unit draw distance
+
+2.4.3 draws every unit the server keeps in range; it has no distance or model
+size cut of its own for units. What arrives is decided by the server (cmangos
+`Visibility.Distance.*`: 100 yd on continents, 170 in instances, 533 in
+battlegrounds; LARGE_AOI/GIGANTIC_AOI creatures 200/400, e.g. Lady Jaina 4968,
+Frost Wyrm 17907, Archimonde 17968). Far units fade into the fog, which ends
+at the `farclip` CVar (477): at farclip 177 a Sea Giant fades out smoothly over
+150-180 yd, no pop. Native's `DistCull` (500) and `SmallCull` (0.04) CVars do
+not touch units: at DistCull 60 and SmallCull 1 a human 190 yd away is still
+drawn. CharacterRenderer culls units at the view distance (the one terrain and
+WMOs stop at) and the frustum. Game objects, the emitters of units
+(`externalPose`) and spell visuals draw to the view distance as well
+(`M2Instance::serverVisibility`), so a unit's glow comes and goes with it.
+Gotcha: a unit's name plate is drawn independently of its model; a culled
+model leaves a name floating over nothing. Evidence:
+`_experiments/20261118T235900Z.unit_distance/` in the workspace.
 
 ## TBC scene integration
 

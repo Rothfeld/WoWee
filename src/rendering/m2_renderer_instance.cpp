@@ -427,6 +427,12 @@ void M2Renderer::setInstanceIsGameObject(uint32_t instanceId, bool isGameObject)
     instances[idxIt->second].isGameObject = isGameObject;
 }
 
+void M2Renderer::setInstanceIsSpellVisual(uint32_t instanceId) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    assert(idxIt != instanceIndexById.end());
+    instances[idxIt->second].isSpellVisual = true;
+}
+
 void M2Renderer::setSkipCollision(uint32_t instanceId, bool skip) {
     for (auto& inst : instances) {
         if (inst.id == instanceId) {
