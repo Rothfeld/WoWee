@@ -422,9 +422,11 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                             liquidMatrix = glm::rotate(liquidMatrix, wmoRot.y, glm::vec3(0, 1, 0));
                             liquidMatrix = glm::rotate(liquidMatrix, wmoRot.x, glm::vec3(1, 0, 0));
                             uint32_t liquidGroups = 0;
-                            for (const auto& group : wmoModel.groups) {
+                            for (size_t gi = 0; gi < wmoModel.groups.size(); ++gi) {
+                                const auto& group = wmoModel.groups[gi];
                                 if (!group.liquid.hasLiquid()) continue;
-                                water->loadFromWMO(group.liquid, liquidMatrix, instanceId);
+                                water->loadFromWMO(group.liquid, liquidMatrix, instanceId,
+                                                   static_cast<uint16_t>(gi));
                                 ++liquidGroups;
                             }
                             LOG_INFO("Instance WMO liquid groups: ", liquidGroups);

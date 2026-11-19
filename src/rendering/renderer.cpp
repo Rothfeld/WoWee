@@ -3239,6 +3239,13 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 return wmo->anyGroupDrawn(instanceId, groups);
             }) : M2Renderer::WmoRoomQuery{});
     }
+    if (waterRenderer) {
+        WMORenderer* wmo = wmoRenderer.get();
+        waterRenderer->setWmoGroupQuery(wmo ? WaterRenderer::WmoGroupQuery(
+            [wmo](uint32_t instanceId, const std::vector<uint16_t>& groups) {
+                return wmo->anyGroupDrawn(instanceId, groups);
+            }) : WaterRenderer::WmoGroupQuery{});
+    }
 
     // ── Multithreaded secondary command buffer recording ──
     // Terrain, WMO, and M2 record on worker threads while main thread handles

@@ -1058,7 +1058,8 @@ void WaterRenderer::removeTile(int tileX, int tileY) {
 }
 
 void WaterRenderer::loadFromWMO(const pipeline::WMOLiquid& liquid,
-                                 const glm::mat4& modelMatrix, uint32_t wmoId) {
+                                 const glm::mat4& modelMatrix, uint32_t wmoId,
+                                 uint16_t groupIndex) {
     // Coverage, heights and type come from MLIQ alone: a tile holds liquid
     // unless its low nibble is 0x0F, and its four corner vertices give the
     // surface height. Vertices touching only dry tiles store 0 and are unused.
@@ -1072,6 +1073,7 @@ void WaterRenderer::loadFromWMO(const pipeline::WMOLiquid& liquid,
     surface.tileX = -1;
     surface.tileY = -1;
     surface.wmoId = wmoId;
+    surface.wmoGroup = groupIndex;
     surface.liquidType = liquid.liquidType;
     if (liquid.indoor) {
         const uint32_t color = liquid.materialColor;
@@ -1203,9 +1205,14 @@ void WaterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
     const uint32_t lakeFrame = legacyWater
         ? static_cast<uint32_t>(std::max(0.0f, time) / (1.25f / 30.0f)) % 30 : 0;
+    std::vector<uint16_t> wmoGroup(1);
     for (const auto& surface : surfaces) {
         if (surface.vertexBuffer == VK_NULL_HANDLE || surface.indexCount == 0) continue;
         if (!surface.materialSet) continue;
+        if (surface.wmoId != 0 && wmoGroupDrawn_) {
+            wmoGroup[0] = surface.wmoGroup;
+            if (!wmoGroupDrawn_(surface.wmoId, wmoGroup)) continue;
+        }
 
         // Frustum cull: compute AABB from surface origin + step vectors
         {

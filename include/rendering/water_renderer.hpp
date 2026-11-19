@@ -39,6 +39,8 @@ struct WaterSurface {
 
     int tileX = -1, tileY = -1;
     uint32_t wmoId = 0;
+    // The WMO group (MOGP) the liquid belongs to; drawn with that group.
+    uint16_t wmoGroup = 0;
 
     uint8_t xOffset = 0;
     uint8_t yOffset = 0;
@@ -112,7 +114,14 @@ public:
     void loadFromTerrain(const pipeline::ADTTerrain& terrain, bool append = false,
                          int tileX = -1, int tileY = -1, bool greenMagma = false);
 
-    void loadFromWMO(const pipeline::WMOLiquid& liquid, const glm::mat4& modelMatrix, uint32_t wmoId);
+    void loadFromWMO(const pipeline::WMOLiquid& liquid, const glm::mat4& modelMatrix, uint32_t wmoId,
+                     uint16_t groupIndex);
+    /// Whether any of these groups of a WMO instance is drawn this frame
+    /// (WMORenderer::anyGroupDrawn). A group's liquid is drawn with the
+    /// group: 2.4.3 seen from above Orgrimmar draws neither the interior
+    /// groups nor their pools.
+    using WmoGroupQuery = std::function<bool(uint32_t wmoInstanceId, const std::vector<uint16_t>& groups)>;
+    void setWmoGroupQuery(WmoGroupQuery query) { wmoGroupDrawn_ = std::move(query); }
     void removeWMO(uint32_t wmoId);
     void removeTile(int tileX, int tileY);
     void clear();
@@ -319,6 +328,7 @@ private:
 
     std::vector<WaterSurface> surfaces;
     bool renderingEnabled = true;
+    WmoGroupQuery wmoGroupDrawn_;
     bool refractionEnabled = false;
     VkExtent2D renderExtent_{.width = 0, .height = 0};
 };

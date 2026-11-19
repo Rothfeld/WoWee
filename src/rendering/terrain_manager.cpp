@@ -1211,7 +1211,8 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                         const auto& group = groups[ft.wmoLiquidGroupIndex];
                         ft.wmoLiquidGroupIndex++;
                         if (!group.liquid.hasLiquid()) continue;
-                        waterRenderer->loadFromWMO(group.liquid, modelMatrix, wmoInstId);
+                        waterRenderer->loadFromWMO(group.liquid, modelMatrix, wmoInstId,
+                                                   static_cast<uint16_t>(ft.wmoLiquidGroupIndex - 1));
                         liquidGroupsLoaded++;
                     }
                     // More liquid groups remain on this WMO - yield
