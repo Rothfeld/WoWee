@@ -53,6 +53,10 @@ namespace {
 // Spell.dbc AttributesEx bit 28: the aura shows no buff icon (warrior
 // stances, tracking). Native 2.4.3 never sends CMSG_CANCEL_AURA for one.
 constexpr uint32_t kAttrExNoAuraIcon = 0x10000000u;
+// Spell.dbc Attributes bit 15: only usable outdoors (mounts, Picnic).
+constexpr uint32_t kAttrOnlyOutdoors = 0x00008000u;
+// EffectApplyAuraName 78: SPELL_AURA_MOUNTED.
+constexpr uint32_t kAuraMounted = 78;
 constexpr uint8_t kSpellFailedNotReady = 67;
 constexpr uint8_t kSpellFailedAlreadyOpen = 8;
 constexpr uint8_t kSpellFailedChestInUse = 25;
@@ -1722,6 +1726,25 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                     (moveFlags & static_cast<uint32_t>(MovementFlags::STRAFE_LEFT)  ? " STRAFE_LEFT" : ""),
                     (moveFlags & static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) ? " STRAFE_RIGHT" : ""));
         raiseGlobalStringError(owner_, "SPELL_FAILED_MOVING");
+        return;
+    }
+
+    // Outdoors only (Spell.dbc Attributes 0x8000) is refused here, after the
+    // moving check, wherever IsIndoors() is 1. Native 2.4.3 in Black Temple's
+    // Sanctuary of Shadows and Den of Mortal Delights: Brown Horse says "You
+    // can't mount here." (SPELL_FAILED_NO_MOUNTS_ALLOWED: the spell applies
+    // aura 78, Mounted), Fishing Chair and Picnic "Can only use outside"
+    // (SPELL_FAILED_ONLY_OUTDOORS); running, the mount says "Can't do that
+    // while moving" first. IsUsableSpell stays 1 indoors. The server let the
+    // mount through there, so this is the only refusal there is.
+    if (const auto* entry = owner_.getSpellNameEntry(spellId);
+        entry && (entry->attr & kAttrOnlyOutdoors) && owner_.services().renderer &&
+        owner_.services().renderer->isPlayerIndoorRules()) {
+        const bool mounts = std::find(std::begin(entry->effectAuraIds), std::end(entry->effectAuraIds),
+                                      kAuraMounted) != std::end(entry->effectAuraIds);
+        LOG_INFO("Cast refused indoors: spell ", spellId, mounts ? " (mount)" : "");
+        raiseGlobalStringError(owner_, mounts ? "SPELL_FAILED_NO_MOUNTS_ALLOWED" : "SPELL_FAILED_ONLY_OUTDOORS");
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
 
