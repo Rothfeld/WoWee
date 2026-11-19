@@ -81,7 +81,11 @@ public:
     using EquipmentSetInfo = game::EquipmentSetInfo;
 
     // --- Public API (delegated from GameHandler) ---
-    void castSpell(uint32_t spellId, uint64_t targetGuid = 0);
+    /// destination: a TARGET_FLAG_DEST_LOCATION spell's floor point (canonical),
+    /// from GameHandler::castGroundTarget. Without one such a spell arms the
+    /// ground target instead of casting.
+    void castSpell(uint32_t spellId, uint64_t targetGuid = 0,
+                   std::optional<glm::vec3> destination = std::nullopt);
 
     /// Spell.dbc EffectImplicitTargetA, or 0 when the spell is unknown. 21 means
     /// the spell has to be aimed at a friendly unit.

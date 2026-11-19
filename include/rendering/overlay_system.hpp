@@ -51,6 +51,18 @@ public:
                                const HeightQuery3D& m2Height,
                                const SurfaceTriangles& surfaces);
 
+    // Ground target reticle (a spell cast at a place: Blizzard, Flamestrike)
+    void loadGroundTargetTextures(pipeline::AssetManager& assets);
+    /// center: the floor point under the cursor; radius: the spell's
+    /// SpellRadius.dbc radius; acceptable: within reach (the green
+    /// Spell-Shadow-Acceptable, else the red Spell-Shadow-Unacceptable).
+    void setGroundTargetReticle(const glm::vec3& center, float radius, bool acceptable);
+    void clearGroundTargetReticle();
+    /// Projected straight down onto the terrain and WMO triangles within the
+    /// radius above and below the centre, like the selection circle.
+    void renderGroundTargetReticle(const glm::mat4& view, const glm::mat4& projection,
+                                   VkCommandBuffer cmd, const SurfaceTriangles& surfaces);
+
     // Ground blob shadows under units (rendering/unit_shadow.hpp)
     void loadUnitShadowTexture(pipeline::AssetManager& assets);
     void setUnitShadows(std::vector<UnitShadowBlob> blobs);
@@ -109,6 +121,27 @@ private:
     bool selCircleVisible_ = false;
     // The world triangles the ring is drawn on this frame.
     std::vector<glm::vec3> selCircleTriangles_;
+
+    // Ground target reticle resources
+    void initGroundTargetReticle();
+    VkPipeline reticlePipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout reticlePipelineLayout_ = VK_NULL_HANDLE;
+    std::array<AllocatedBuffer, MAX_FRAMES_IN_FLIGHT> reticleVertexBuffers_{};
+    std::array<size_t, MAX_FRAMES_IN_FLIGHT> reticleVertexCapacity_{};
+    VkTexture reticleAcceptableTexture_;
+    VkTexture reticleUnacceptableTexture_;
+    // Identically defined, so either is compatible with the pipeline layout.
+    VkDescriptorSetLayout reticleAcceptableSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout reticleUnacceptableSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool reticleAcceptablePool_ = VK_NULL_HANDLE;
+    VkDescriptorPool reticleUnacceptablePool_ = VK_NULL_HANDLE;
+    VkDescriptorSet reticleAcceptableSet_ = VK_NULL_HANDLE;
+    VkDescriptorSet reticleUnacceptableSet_ = VK_NULL_HANDLE;
+    glm::vec3 reticleCenter_{0.0f};
+    float reticleRadius_ = 0.0f;
+    bool reticleAcceptable_ = true;
+    bool reticleVisible_ = false;
+    std::vector<glm::vec3> reticleTriangles_;
 
     // Unit blob shadow resources
     void initUnitShadows();

@@ -98,6 +98,13 @@ public:
         return CastSpellPacket::buildItemTarget(spellId, itemGuid, castCount);
     }
 
+    /** Build CMSG_CAST_SPELL at a place (TARGET_FLAG_DEST_LOCATION): Blizzard,
+     *  Flamestrike. serverPosition is in server coordinates. */
+    virtual network::Packet buildCastSpellAtDestination(uint32_t spellId, uint8_t castCount,
+                                                         const glm::vec3& serverPosition) {
+        return CastSpellPacket::buildDestination(spellId, castCount, serverPosition);
+    }
+
     /** Build CMSG_USE_ITEM (WotLK default: bag + slot + castCount + spellId + itemGuid + glyphIndex + castFlags + targets)
      *  itemTargetGuid selects TARGET_FLAG_ITEM for spells that enchant another item;
      *  gameObjectGuid selects TARGET_FLAG_GAMEOBJECT (a key used on a locked object).
@@ -409,6 +416,8 @@ public:
     network::Packet buildCastSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) override;
     network::Packet buildCastGameObjectSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) override;
     network::Packet buildCastSpellOnItem(uint32_t spellId, uint64_t itemGuid, uint8_t castCount = 0) override;
+    network::Packet buildCastSpellAtDestination(uint32_t spellId, uint8_t castCount,
+                                                const glm::vec3& serverPosition) override;
     // TBC 2.4.3 CMSG_USE_ITEM uses spellIndex + castCount + itemGuid + targets.
     network::Packet buildUseItem(uint8_t bagIndex, uint8_t slotIndex,
                                  uint64_t itemGuid, uint32_t spellId = 0,
@@ -509,6 +518,8 @@ public:
     network::Packet buildCastSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) override;
     network::Packet buildCastGameObjectSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) override;
     network::Packet buildCastSpellOnItem(uint32_t spellId, uint64_t itemGuid, uint8_t castCount = 0) override;
+    network::Packet buildCastSpellAtDestination(uint32_t spellId, uint8_t castCount,
+                                                const glm::vec3& serverPosition) override;
     network::Packet buildUseItem(uint8_t bagIndex, uint8_t slotIndex,
                                  uint64_t itemGuid, uint32_t spellId = 0,
                                  uint64_t targetGuid = 0, uint64_t itemTargetGuid = 0,

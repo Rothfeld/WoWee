@@ -3368,6 +3368,46 @@ probe addon and scripts: `_experiments/20261118T170000Z.melee_range_pair2` in
 the workspace. Gotcha: a GM (`.gm on`) gets nil for every harmful spell, so
 range answers need `.gm off`.
 
+### Ground-targeted spells
+
+A spell whose Spell.dbc Targets has TARGET_FLAG_DEST_LOCATION (0x40: Blizzard,
+Flamestrike, Rain of Fire, Hurricane, Mass Dispel) arms a ground target instead
+of casting (`GameHandler::beginGroundTarget`; `SpellIsTargeting` is true). Under
+the cursor build 8606 lays `Interface\SpellShadow\Spell-Shadow-Acceptable.blp`
+on the terrain and WMO triangles at the largest SpellRadius.dbc radius of the
+spell's effects (Spice Mortar 31364: 10 and 20 yards, drawn at 20), fixed to
+the world with the triangle's apex north and the texture mirrored left to right
+as seen from above, with the `Cast` cursor. The click casts at the first
+terrain or WMO surface the cursor ray meets; units do not stop it (Blizzard
+clicked on a Target Dummy lands 6.5 yards behind it). TBC CMSG_CAST_SPELL
+carries mask 0x40 and the server-order x, y, z, and nothing else even with a
+unit selected (the server's SMSG_SPELL_GO echoes flags 0x40, no unit).
+Measured on pair 8: WoWee and native destinations for the same pixel under the
+same camera agree within 0.05 yd on ground, a WMO porch and through an NPC.
+
+Reach is 3D from the player to the point, SpellRange max range with the
+player's range modifiers, no combat reach (CMaNGOS `Spell::CheckRange` for a
+destination). Beyond it the cursor is `UnableCast` and the reticle turns to
+`Spell-Shadow-Unacceptable.blp`; the colour switches at the same hover step as
+native. A click beyond it fires UNIT_SPELLCAST_SENT, "Out of range."
+(ERR_SPELL_OUT_OF_RANGE, with the full stop) and UNIT_SPELLCAST_FAILED and puts
+the target down. Right-click puts it down with UNIT_SPELLCAST_FAILED; Escape
+through `SpellStopTargeting`. A click on the sky leaves it armed. Volley
+without a ranged weapon is refused before arming; Consecration (Targets 0)
+casts at once. Line of sight is the server's (SPELL_FAILED_LINE_OF_SIGHT).
+
+Not matched: native draws the red Unacceptable art at a fixed size of about
+1.4 yards half side whatever the spell's radius (Flamestrike 5 and Blizzard 8
+measured alike); WoWee draws it at the spell radius. Native paints only the
+lowest yard or two of a wall (Goldshire smithy foundation, at 5, 8 and 20 yard
+radii alike) where WoWee paints the wall up to the radius. Native Escape fires
+UNIT_SPELLCAST_STOP; WoWee fires none. Native fires more
+CURRENT_SPELL_CAST_CHANGED / CURSOR_UPDATE pairs around arming and casting.
+Area effects, the same whoever casts: Blizzard's impacts lack native's bright
+white snowflake burst, Flamestrike's flame column is narrower without native's
+outer red sheets, Hurricane's cloud is larger and lower than native's.
+Evidence: `_experiments/20261119T1555Z.ground_target_pair8/` in the workspace.
+
 ### Action bar macros, stances and keys
 
 Measured on pair 2 against native 2.4.3 (rogue). A macro button stands for

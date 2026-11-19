@@ -2263,6 +2263,9 @@ public:
     static network::Packet buildGameObjectTarget(uint32_t spellId, uint64_t targetGuid, uint8_t castCount);
     /// Cast at an item - Disenchant, Prospecting, Milling, enchant formulas.
     static network::Packet buildItemTarget(uint32_t spellId, uint64_t itemGuid, uint8_t castCount);
+    /// Cast at a place: mask 0x40, the transport packed guid (none), x, y, z.
+    static network::Packet buildDestination(uint32_t spellId, uint8_t castCount,
+                                            const glm::vec3& serverPosition);
 };
 
 /** CMSG_CANCEL_AURA packet builder */

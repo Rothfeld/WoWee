@@ -7,6 +7,7 @@
 #include "core/logger.hpp"
 #include "pipeline/asset_manager.hpp"
 #include <algorithm>
+#include <cassert>
 #include <stdexcept>
 #include <cstring>
 #include <glm/gtc/matrix_transform.hpp>
@@ -34,6 +35,18 @@ void OverlaySystem::cleanup() {
     destroy(device, selCircleSetLayout_);
     selCircleSet_ = VK_NULL_HANDLE;
     selCircleTexture_.destroy(device, vkCtx_->getAllocator());
+    destroy(device, reticlePipeline_);
+    destroy(device, reticlePipelineLayout_);
+    for (auto& buffer : reticleVertexBuffers_) destroyBuffer(vkCtx_->getAllocator(), buffer);
+    reticleVertexCapacity_ = {};
+    destroy(device, reticleAcceptablePool_);
+    destroy(device, reticleUnacceptablePool_);
+    destroy(device, reticleAcceptableSetLayout_);
+    destroy(device, reticleUnacceptableSetLayout_);
+    reticleAcceptableSet_ = VK_NULL_HANDLE;
+    reticleUnacceptableSet_ = VK_NULL_HANDLE;
+    reticleAcceptableTexture_.destroy(device, vkCtx_->getAllocator());
+    reticleUnacceptableTexture_.destroy(device, vkCtx_->getAllocator());
     destroy(device, shadowPipeline_);
     destroy(device, shadowPipelineLayout_);
     for (auto& buffer : shadowVertexBuffers_) destroyBuffer(vkCtx_->getAllocator(), buffer);
@@ -52,6 +65,7 @@ void OverlaySystem::recreatePipelines() {
     VkDevice device = vkCtx_->getDevice();
     // Destroy only pipelines (keep geometry buffers)
     destroy(device, selCirclePipeline_);
+    destroy(device, reticlePipeline_);
     destroy(device, shadowPipeline_);
     destroy(device, overlayPipeline_);
     destroy(device, brightnessPipeline_);
@@ -124,6 +138,36 @@ void OverlaySystem::loadSelectionTexture(pipeline::AssetManager& assets) {
     LOG_INFO("Selection circle uses Textures/UnitSelectTexture.blp");
 }
 
+void OverlaySystem::loadGroundTargetTextures(pipeline::AssetManager& assets) {
+    if (reticleAcceptableTexture_.isValid()) return;
+    // Build 8606's ground target art: its two Interface\SpellShadow textures
+    // are the only spell-shadow paths in Wow.exe's strings.
+    loadClampedTexture(*vkCtx_, assets, reticleAcceptableTexture_,
+                       "Interface\\SpellShadow\\Spell-Shadow-Acceptable.blp");
+    loadClampedTexture(*vkCtx_, assets, reticleUnacceptableTexture_,
+                       "Interface\\SpellShadow\\Spell-Shadow-Unacceptable.blp");
+    createTextureSet(vkCtx_->getDevice(), reticleAcceptableTexture_, reticleAcceptableSetLayout_,
+                     reticleAcceptablePool_, reticleAcceptableSet_, "Ground target reticle");
+    createTextureSet(vkCtx_->getDevice(), reticleUnacceptableTexture_, reticleUnacceptableSetLayout_,
+                     reticleUnacceptablePool_, reticleUnacceptableSet_, "Ground target reticle");
+    // Outside frame recording, as the unit shadows: a missing shader stops
+    // the client at load with its name.
+    initGroundTargetReticle();
+    LOG_INFO("Ground target reticle uses Interface/SpellShadow/Spell-Shadow-(Un)Acceptable.blp");
+}
+
+void OverlaySystem::setGroundTargetReticle(const glm::vec3& center, float radius, bool acceptable) {
+    assert(radius > 0.0f);
+    reticleCenter_ = center;
+    reticleRadius_ = radius;
+    reticleAcceptable_ = acceptable;
+    reticleVisible_ = true;
+}
+
+void OverlaySystem::clearGroundTargetReticle() {
+    reticleVisible_ = false;
+}
+
 void OverlaySystem::loadUnitShadowTexture(pipeline::AssetManager& assets) {
     if (shadowTexture_.isValid()) return;
     loadClampedTexture(*vkCtx_, assets, shadowTexture_, "Textures\\ShadowBlob.blp");
@@ -142,7 +186,7 @@ namespace {
 struct SelectionPush {
     glm::mat4 mvp;
     glm::vec4 color;
-    glm::vec4 square;          // centre x, y; half side; unused
+    glm::vec4 square;          // centre x, y; half side; u sign (-1 mirrors)
     glm::vec4 axisAndHeights;  // the square's right axis x, y; lowest and highest z drawn
 };
 static_assert(sizeof(SelectionPush) == 112, "must match selection_circle's push block");
@@ -287,7 +331,7 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
     SelectionPush push{};
     push.mvp = projection * view;
     push.color = glm::vec4(selCircleColor_, 1.0f);
-    push.square = glm::vec4(center.x, center.y, radius, 0.0f);
+    push.square = glm::vec4(center.x, center.y, radius, 1.0f);
     push.axisAndHeights = glm::vec4(right, boxMin.z, boxMax.z);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, selCirclePipelineLayout_,
@@ -295,6 +339,95 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
     vkCmdPushConstants(cmd, selCirclePipelineLayout_,
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+    vkCmdDraw(cmd, static_cast<uint32_t>(triangles.size()), 1, 0, 0);
+}
+
+void OverlaySystem::initGroundTargetReticle() {
+    if (reticlePipeline_ != VK_NULL_HANDLE || !vkCtx_) return;
+    if (!reticleAcceptableSet_) throw std::logic_error("Ground target textures were not initialized");
+    VkDevice device = vkCtx_->getDevice();
+    // The selection circle's projection: the texture laid straight down over
+    // the square centre +- radius.
+    VkShaderModule vertShader, fragShader;
+    if (!vertShader.loadFromFile(device, "assets/shaders/selection_circle.vert.spv") ||
+        !fragShader.loadFromFile(device, "assets/shaders/selection_circle.frag.spv")) {
+        vertShader.destroy();
+        fragShader.destroy();
+        throw std::runtime_error("Ground target reticle shaders failed to load");
+    }
+    VkPushConstantRange pcRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                sizeof(SelectionPush)};
+    if (!reticlePipelineLayout_)
+        reticlePipelineLayout_ = createPipelineLayout(device, {reticleAcceptableSetLayout_}, {pcRange});
+    VkVertexInputBindingDescription vertBind{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription position{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+    reticlePipeline_ = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({vertBind}, {position})
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        .setDepthBias(-1.0f, -1.0f)
+        .setColorBlendAttachment(PipelineBuilder::blendAlpha())
+        .setMultisample(vkCtx_->getMsaaSamples())
+        .setLayout(reticlePipelineLayout_)
+        .setRenderPass(vkCtx_->getImGuiRenderPass())
+        .setDynamicStates(viewportAndScissorDynamic())
+        .build(device, vkCtx_->getPipelineCache());
+    vertShader.destroy();
+    fragShader.destroy();
+    if (!reticlePipeline_) throw std::runtime_error("Ground target reticle pipeline failed to build");
+}
+
+void OverlaySystem::renderGroundTargetReticle(const glm::mat4& view, const glm::mat4& projection,
+                                              VkCommandBuffer cmd, const SurfaceTriangles& surfaces) {
+    if (!reticleVisible_ || cmd == VK_NULL_HANDLE || !reticleAcceptableTexture_.isValid()) return;
+    initGroundTargetReticle();
+    const glm::vec3 c = reticleCenter_;
+    const float r = reticleRadius_;
+    const glm::vec3 boxMin(c.x - r, c.y - r, c.z - r);
+    const glm::vec3 boxMax(c.x + r, c.y + r, c.z + r);
+    auto& triangles = reticleTriangles_;
+    triangles.clear();
+    if (surfaces) surfaces(boxMin, boxMax, triangles);
+    if (triangles.empty()) return;
+
+    const uint32_t frame = vkCtx_->getCurrentFrame();
+    auto& buffer = reticleVertexBuffers_[frame];
+    auto& capacity = reticleVertexCapacity_[frame];
+    if (capacity < triangles.size()) {
+        destroyBuffer(vkCtx_->getAllocator(), buffer);
+        capacity = std::max<size_t>(triangles.size(), 4096) * 2;
+        buffer = createBuffer(vkCtx_->getAllocator(), capacity * sizeof(glm::vec3),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        if (!buffer.buffer) throw std::runtime_error("Ground target reticle vertex allocation failed");
+    }
+    void* mapped = nullptr;
+    if (vmaMapMemory(vkCtx_->getAllocator(), buffer.allocation, &mapped) != VK_SUCCESS)
+        throw std::runtime_error("Ground target reticle vertex mapping failed");
+    const VkDeviceSize bytes = triangles.size() * sizeof(glm::vec3);
+    std::memcpy(mapped, triangles.data(), bytes);
+    vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, bytes);
+    vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
+
+    SelectionPush push{};
+    push.mvp = projection * view;
+    push.color = glm::vec4(1.0f);
+    // Fixed to the world, whichever way the camera looks, the triangle's
+    // apex (the texture's top) to the north and the texture mirrored left to
+    // right as seen from above: native 2.4.3, Blizzard armed looking south
+    // and looking east (pair 8, Shimmering Flats).
+    push.square = glm::vec4(c.x, c.y, r, -1.0f);
+    push.axisAndHeights = glm::vec4(0.0f, -1.0f, boxMin.z, boxMax.z);
+    VkDescriptorSet set = reticleAcceptable_ ? reticleAcceptableSet_ : reticleUnacceptableSet_;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reticlePipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reticlePipelineLayout_,
+                            0, 1, &set, 0, nullptr);
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
+    vkCmdPushConstants(cmd, reticlePipelineLayout_,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
     vkCmdDraw(cmd, static_cast<uint32_t>(triangles.size()), 1, 0, 0);
 }

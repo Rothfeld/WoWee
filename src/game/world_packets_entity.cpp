@@ -1132,6 +1132,22 @@ network::Packet CastSpellPacket::buildItemTarget(uint32_t spellId, uint64_t item
     return packet;
 }
 
+// WotLK 3.3.5a: DEST_LOCATION carries the transport's packed guid before the
+// position (TrinityCore SpellCastTargets::Read); 0 here, no transport.
+network::Packet CastSpellPacket::buildDestination(uint32_t spellId, uint8_t castCount,
+                                                  const glm::vec3& serverPosition) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_CAST_SPELL));
+    packet.writeUInt8(castCount);
+    packet.writeUInt32(spellId);
+    packet.writeUInt8(0x00); // castFlags = 0 for normal cast
+    packet.writeUInt32(0x40); // TARGET_FLAG_DEST_LOCATION
+    packet.writePackedGuid(0);
+    packet.writeFloat(serverPosition.x);
+    packet.writeFloat(serverPosition.y);
+    packet.writeFloat(serverPosition.z);
+    return packet;
+}
+
 network::Packet CancelAuraPacket::build(uint32_t spellId) {
     network::Packet packet(wireOpcode(Opcode::CMSG_CANCEL_AURA));
     packet.writeUInt32(spellId);

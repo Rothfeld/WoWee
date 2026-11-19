@@ -1512,8 +1512,9 @@ SpellUsability actionUsability(GameHandler& owner, const ActionBarSlot& slot) {
     }
 }
 
-void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
-    LOG_DEBUG("castSpell: spellId=", spellId, " target=0x", std::hex, targetGuid, std::dec);
+void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optional<glm::vec3> destination) {
+    LOG_DEBUG("castSpell: spellId=", spellId, " target=0x", std::hex, targetGuid, std::dec,
+              destination ? " at a destination" : "");
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
 
     spellId = resolveHighestKnownRank(spellId);
@@ -1854,6 +1855,10 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
 
     const bool fishingCast = spellclass::isFishingCast(spellId);
     uint64_t target = targetGuid != 0 ? targetGuid : owner_.getTargetGuid();
+    // A spell cast at a place carries the place and nothing else: native
+    // 2.4.3 sends Blizzard with the Target Dummy selected as mask 0x40 alone
+    // (the server's SMSG_SPELL_GO echoes flags 0x40, no unit).
+    if (destination) target = 0;
     // Self-targeted spells (hearthstone, shouts, self-buffs) always land on the
     // caster, so they must not carry the current target along.
     const bool selfCast = (spellId == SPELL_ID_HEARTHSTONE) || isSelfCastSpell(spellId);
@@ -1865,6 +1870,19 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // disenchanted": it evaluated the question against nothing. Arm the same
     // item-picking cursor an enchanting scroll uses and send the cast once the
     // player chooses.
+    // A spell cast at a place (Spell.dbc Targets & TARGET_FLAG_DEST_LOCATION:
+    // Blizzard, Flamestrike, Rain of Fire, Hurricane, Mass Dispel) arms the
+    // ground target; the click casts it here again with the floor point.
+    // Native 2.4.3 refuses Volley without a ranged weapon before arming
+    // ("Must have a Ranged Weapon equipped", missingEquipment above); a
+    // self-centred area such as Consecration (Targets 0) casts at once.
+    constexpr uint32_t kSpellTargetFlagDestLocation = 0x40;
+    if (!destination && heldItemGuid == 0 &&
+        (getSpellTargetFlags(spellId) & kSpellTargetFlagDestLocation) != 0) {
+        owner_.beginGroundTarget(spellId);
+        return;
+    }
+
     constexpr uint32_t kSpellTargetFlagItem = 0x10;
     if (heldItemGuid == 0 && (getSpellTargetFlags(spellId) & kSpellTargetFlagItem) != 0) {
         if (owner_.isAwaitingItemTarget()) {
@@ -2094,22 +2112,45 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         return;
     }
 
+    // A destination beyond the spell's reach. Native 2.4.3, Blizzard clicked
+    // on the ground 40 yards away: UNIT_SPELLCAST_SENT, "Out of range."
+    // (ERR_SPELL_OUT_OF_RANGE, with the full stop the server's
+    // SPELL_FAILED_OUT_OF_RANGE line lacks), UNIT_SPELLCAST_FAILED, and the
+    // ground target is put down.
+    if (destination && !owner_.groundDestinationInRange(GameHandler::GroundTarget{spellId, false}, *destination)) {
+        LOG_INFO("Ground cast refused: spell ", spellId, " destination out of range");
+        owner_.fireAddonEvent("UNIT_SPELLCAST_SENT",
+            {"player", owner_.getSpellName(spellId), owner_.getSpellRank(spellId), ""});
+        raiseGlobalStringError(owner_, "ERR_SPELL_OUT_OF_RANGE");
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+        return;
+    }
+
     // Never 0: the server's own casts, such as each Auto Shot after the
     // first, are refused with castCount 0, and no press of ours may look like
     // one of them.
     if (++castCount_ == 0) ++castCount_;
-    auto packet = heldItemGuid != 0
-        ? (owner_.getPacketParsers()
-               ? owner_.getPacketParsers()->buildCastSpellOnItem(spellId, heldItemGuid, castCount_)
-               : CastSpellPacket::buildItemTarget(spellId, heldItemGuid, castCount_))
-        : owner_.getPacketParsers()
-        ? owner_.getPacketParsers()->buildCastSpell(spellId, target, castCount_)
-        : CastSpellPacket::build(spellId, target, castCount_);
+    // TBC SpellCastTargets for a place: mask 0x40 and the server-order x, y, z
+    // (CMaNGOS SpellCastTargets::read; no transport guid before WotLK).
+    auto* parsers = owner_.getPacketParsers();
+    auto packet = destination
+        ? (assert(parsers),
+           parsers->buildCastSpellAtDestination(spellId, castCount_,
+                                                core::coords::canonicalToServer(*destination)))
+        : heldItemGuid != 0
+        ? (parsers ? parsers->buildCastSpellOnItem(spellId, heldItemGuid, castCount_)
+                   : CastSpellPacket::buildItemTarget(spellId, heldItemGuid, castCount_))
+        : parsers ? parsers->buildCastSpell(spellId, target, castCount_)
+                  : CastSpellPacket::build(spellId, target, castCount_);
     LOG_DEBUG("CMSG_CAST_SPELL: spellId=", spellId, " target=0x", std::hex, target, std::dec,
               " castCount=", static_cast<int>(castCount_), " packetSize=", packet.getSize());
     owner_.getSocket()->send(packet);
+    if (destination)
+        LOG_INFO("Casting spell: ", spellId, " at canonical (", destination->x, ", ",
+                 destination->y, ", ", destination->z, ")");
+    else
+        LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
     pendingCastSpellId_ = spellId;
-    LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
 
     // Spell.dbc explicitly marks abilities that enable melee autoattack.
     // Harmful spells without this attribute must not start weapon swings.

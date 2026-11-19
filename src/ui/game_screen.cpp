@@ -319,6 +319,48 @@ void openBagsForTrading(game::GameHandler& gameHandler) {
     gameHandler.runInterfaceCommand(kOpenBagsCommand);
 }
 
+/// Where a ground-targeted spell lands: the first terrain or WMO surface the
+/// cursor ray meets, render coordinates. Units do not stop it: native 2.4.3,
+/// Blizzard clicked on a Target Dummy's chest landed on the ground 6.5 yards
+/// behind the dummy. Nothing within reach (the sky): empty.
+std::optional<glm::vec3> groundUnderRay(rendering::Renderer& renderer, const rendering::Ray& ray) {
+    // Further than any spell reaches and than the terrain streamed around
+    // the camera; the step only finds the crossing, bisection places it.
+    constexpr float kReach = 1000.0f;
+    constexpr float kStep = 1.0f;
+    float hitT = kReach;
+    if (const auto* wmo = renderer.getWMORenderer())
+        hitT = wmo->raycastVisibleGeometry(ray.origin, ray.direction, kReach);
+    if (const auto* terrain = renderer.getTerrainManager()) {
+        const auto clearance = [&](float t) -> std::optional<float> {
+            const glm::vec3 p = ray.origin + ray.direction * t;
+            if (terrain->isHoleAt(p.x, p.y)) return std::nullopt;
+            const auto h = terrain->getHeightAt(p.x, p.y);
+            if (!h) return std::nullopt;
+            return p.z - *h;
+        };
+        std::optional<float> previous = clearance(0.0f);
+        float previousT = 0.0f;
+        for (float t = kStep; t < hitT; t += kStep) {
+            const auto now = clearance(t);
+            if (previous && now && *previous >= 0.0f && *now < 0.0f) {
+                float above = previousT, below = t;
+                for (int i = 0; i < 16; ++i) {
+                    const float mid = 0.5f * (above + below);
+                    const auto c = clearance(mid);
+                    if (c && *c >= 0.0f) above = mid; else below = mid;
+                }
+                hitT = std::min(hitT, below);
+                break;
+            }
+            previous = now;
+            previousT = t;
+        }
+    }
+    if (hitT >= kReach) return std::nullopt;
+    return ray.origin + ray.direction * hitT;
+}
+
 }  // namespace
 
 void GameScreen::render(game::GameHandler& gameHandler) {
@@ -1576,6 +1618,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
     worldHoverGuid_ = 0;
     worldObjectHoverGuid_ = 0;
+    // Drawn again below for this frame's cursor while a ground spell is armed.
+    if (services_.renderer) services_.renderer->clearGroundTargetReticle();
     uint64_t highlightedObject = 0;
     // Hover and press light an object alike (m2.vert.glsl: one more unit of light gain).
     const float objectHoverStrength = 1.0f;
@@ -1607,7 +1651,25 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // light's gain (m2.vert.glsl).
             if (hoverPick.highlightObjectGuid != 0 && hoverPick.highlightObjectT <= hoverPick.closestT)
                 highlightedObject = hoverPick.highlightObjectGuid;
-            if (gameHandler.pendingLockTargetSpell() != 0) {
+            if (const auto armed = gameHandler.pendingGroundTarget()) {
+                // A spell cast at a place: Spell-Shadow-Acceptable at the
+                // spell's radius on the floor under the cursor and the "Cast"
+                // cursor within reach; the red Spell-Shadow-Unacceptable and
+                // "UnableCast" beyond it; "UnableCast" alone over the sky.
+                // Native 2.4.3, Blizzard (8 yd, 30 yd range) from the
+                // Shimmering Flats.
+                const auto floor = groundUnderRay(*renderer, ray);
+                bool reachable = false;
+                if (floor) {
+                    reachable = gameHandler.groundDestinationInRange(
+                        *armed, core::coords::renderToCanonical(*floor));
+                    if (const float radius = gameHandler.groundTargetRadius(armed->spellId); radius > 0.0f)
+                        renderer->setGroundTargetReticle(*floor, radius, reachable);
+                }
+                if (const auto texture = cursorTexture(services_.assetManager, services_.window,
+                        reachable ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp"))
+                    selectCursorTexture(texture);
+            } else if (gameHandler.pendingLockTargetSpell() != 0) {
                 // A spell waiting for its lock (Pick Lock): "Cast" where
                 // lockSpellAim allows a cast, whatever the player's rank;
                 // "UnableCast" elsewhere.
@@ -1707,7 +1769,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         // its unit, not what the ray behind it would hit.
         const uint64_t plateUnit =
             ui::plateUnitAt(plateHits_, leftClickPressPos_.x, leftClickPressPos_.y);
-        if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD && plateUnit != 0) {
+        if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD && plateUnit != 0 &&
+            !gameHandler.isAwaitingGroundTarget()) {
             if (gameHandler.isAwaitingUnitTarget()) gameHandler.completeItemUseOnUnit(plateUnit);
             else gameHandler.setTarget(plateUnit);
         } else if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD) {
@@ -1721,30 +1784,14 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
                 rendering::Ray ray = camera->screenToWorldRay(leftClickPressPos_.x, leftClickPressPos_.y, screenW, screenH);
 
-                // Placing a pet or possessed unit's ground spell: the click
-                // names a spot on the floor under the cursor, not a unit.
+                // A ground spell takes the click as its destination: the
+                // floor under the cursor, whatever unit stands in front of it.
+                // Over the sky there is no place and it stays armed.
                 if (gameHandler.isAwaitingGroundTarget()) {
-                    auto* terrain = renderer->getTerrainManager();
-                    auto* wmo = renderer->getWMORenderer();
-                    for (float t = 0.5f; t < 200.0f; t += 0.1f) {
-                        const glm::vec3 p = ray.origin + ray.direction * t;
-                        std::optional<float> floor;
-                        if (wmo) floor = wmo->getFloorHeight(p.x, p.y, p.z + 0.5f);
-                        if (terrain) {
-                            const auto h = terrain->getHeightAt(p.x, p.y);
-                            if (h && *h <= p.z + 0.5f && (!floor || *h > *floor)) floor = h;
-                        }
-                        if (floor && p.z <= *floor + 0.05f) {
-                            const glm::vec3 canonical = core::coords::renderToCanonical(
-                                glm::vec3(p.x, p.y, *floor));
-                            gameHandler.castPetSpellAtGround(canonical.x, canonical.y, canonical.z);
-                            break;
-                        }
-                    }
-                    if (gameHandler.isAwaitingGroundTarget()) {
-                        LOG_WARNING("Ground target: no floor under the cursor");
-                        gameHandler.cancelGroundTarget();
-                    }
+                    if (const auto floor = groundUnderRay(*renderer, ray))
+                        gameHandler.castGroundTarget(core::coords::renderToCanonical(*floor));
+                    else
+                        LOG_INFO("Ground target: nothing under the cursor");
                     return;
                 }
 
@@ -1892,6 +1939,12 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         const float RCLICK_THRESHOLD = clickDragThreshold();
         if (glm::dot(rDragDelta, rDragDelta) >= RCLICK_THRESHOLD * RCLICK_THRESHOLD) {
             // Treated as a camera rotate - do not interact/attack.
+            return;
+        }
+        // A right-click puts an armed ground spell down and does nothing else:
+        // native 2.4.3 fires UNIT_SPELLCAST_FAILED for it.
+        if (gameHandler.isAwaitingGroundTarget()) {
+            gameHandler.cancelGroundTarget(true);
             return;
         }
         // A right-click on a plate is a right-click on its unit: target it,

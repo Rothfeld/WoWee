@@ -4542,9 +4542,82 @@ uint64_t GameHandler::getClientControlledUnit() const {
     const uint64_t guid = movementHandler_->clientControlledUnit();
     return guid != 0 && guid == getPossessedGuid() ? guid : 0;
 }
-void GameHandler::castPetSpellAtGround(float x, float y, float z) {
-    const uint32_t spellId = pendingPetGroundSpell_;
-    pendingPetGroundSpell_ = 0;
+void GameHandler::beginGroundTarget(uint32_t spellId) {
+    assert(spellId != 0);
+    pendingGroundTarget_ = GroundTarget{spellId, false};
+    LOG_INFO("Ground target armed: spell ", spellId, " radius ", groundTargetRadius(spellId));
+    // Build 8606 on /cast Blizzard: CURRENT_SPELL_CAST_CHANGED, CURSOR_UPDATE.
+    fireAddonEvent("CURRENT_SPELL_CAST_CHANGED", {});
+    fireAddonEvent("CURSOR_UPDATE", {});
+}
+
+void GameHandler::beginPetGroundTarget(uint32_t spellId) {
+    assert(spellId != 0);
+    pendingGroundTarget_ = GroundTarget{spellId, true};
+    LOG_INFO("Ground target armed for the pet: spell ", spellId);
+    fireAddonEvent("CURRENT_SPELL_CAST_CHANGED", {});
+    fireAddonEvent("CURSOR_UPDATE", {});
+}
+
+std::optional<GameHandler::GroundTarget> GameHandler::pendingGroundTarget() const {
+    // Leaving the world abandons it, as the item targeting cursor does.
+    if (pendingGroundTarget_ && getState() != WorldState::IN_WORLD) pendingGroundTarget_.reset();
+    return pendingGroundTarget_;
+}
+
+bool GameHandler::isAwaitingGroundTarget() const {
+    return pendingGroundTarget().has_value();
+}
+
+void GameHandler::cancelGroundTarget(bool failed) {
+    if (!pendingGroundTarget_) return;
+    const GroundTarget armed = *pendingGroundTarget_;
+    pendingGroundTarget_.reset();
+    LOG_INFO("Ground target put down: spell ", armed.spellId, failed ? " (right-click)" : "");
+    fireAddonEvent("CURRENT_SPELL_CAST_CHANGED", {});
+    fireAddonEvent("CURSOR_UPDATE", {});
+    if (failed && !armed.pet && spellHandler_)
+        fireAddonEvent("UNIT_SPELLCAST_FAILED", spellHandler_->spellcastArgs("player", armed.spellId));
+}
+
+float GameHandler::groundTargetRadius(uint32_t spellId) const {
+    const SpellDescriptionRecord* record = spellDescriptionRecord(spellId);
+    if (!record) return 0.0f;
+    return *std::max_element(std::begin(record->radius), std::end(record->radius));
+}
+
+bool GameHandler::groundDestinationInRange(const GroundTarget& spell, const glm::vec3& canonical) const {
+    const uint64_t casterGuid = spell.pet ? (getPossessedGuid() ? getPossessedGuid() : getPetGuid())
+                                           : getPlayerGuid();
+    const auto caster = getEntityManager().getEntity(casterGuid);
+    if (!caster) return false;
+    // The player's own position is the one this client moves, not the last
+    // one the server echoed.
+    const glm::vec3 from = spell.pet ? glm::vec3(caster->getX(), caster->getY(), caster->getZ())
+                                      : glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z);
+    float maxRange = getSpellData(spell.spellId).maxRange;
+    if (maxRange <= 0.0f) return false;
+    if (!spell.pet) {
+        const auto [flat, pct] = spellModifiersFor(spell.spellId, SpellModOp::Range);
+        maxRange = (maxRange + static_cast<float>(flat)) * (100.0f + static_cast<float>(pct)) / 100.0f;
+    }
+    return glm::length(canonical - from) <= maxRange;
+}
+
+void GameHandler::castGroundTarget(const glm::vec3& canonical) {
+    const auto armed = pendingGroundTarget();
+    assert(armed);
+    pendingGroundTarget_.reset();
+    fireAddonEvent("CURRENT_SPELL_CAST_CHANGED", {});
+    fireAddonEvent("CURSOR_UPDATE", {});
+    if (armed->pet) {
+        castPetSpellAtGround(armed->spellId, canonical.x, canonical.y, canonical.z);
+        return;
+    }
+    if (spellHandler_) spellHandler_->castSpell(armed->spellId, 0, canonical);
+}
+
+void GameHandler::castPetSpellAtGround(uint32_t spellId, float x, float y, float z) {
     if (!socket || spellId == 0 || getPetGuid() == 0) return;
     network::Packet packet(wireOpcode(Opcode::CMSG_PET_CAST_SPELL));
     packet.writeUInt64(getPetGuid());

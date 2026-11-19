@@ -2622,6 +2622,14 @@ void Renderer::clearSelectionCircle() {
     if (overlaySystem_) overlaySystem_->clearSelectionCircle();
 }
 
+void Renderer::setGroundTargetReticle(const glm::vec3& center, float radius, bool acceptable) {
+    if (overlaySystem_) overlaySystem_->setGroundTargetReticle(center, radius, acceptable);
+}
+
+void Renderer::clearGroundTargetReticle() {
+    if (overlaySystem_) overlaySystem_->clearGroundTargetReticle();
+}
+
 // ========================= PostProcessPipeline delegation stubs (§4.3) =========================
 
 PostProcessPipeline* Renderer::getPostProcessPipeline() const {
@@ -3408,6 +3416,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                     wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
                     m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
                     selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
+                overlaySystem_->renderGroundTargetReticle(view, projection, cmd,
+                    selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
             }
             vkEndCommandBuffer(cmd);
         }
@@ -3601,6 +3611,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
                 wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
                 m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
+                selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
+            overlaySystem_->renderGroundTargetReticle(view, projection, currentCmd,
                 selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
         }
 
@@ -3948,6 +3960,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
 
     overlaySystem_->loadSelectionTexture(*assetManager);
     overlaySystem_->loadUnitShadowTexture(*assetManager);
+    overlaySystem_->loadGroundTargetTextures(*assetManager);
 
     LOG_INFO("Initializing renderers for map: ", mapName);
 

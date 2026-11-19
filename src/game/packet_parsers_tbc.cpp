@@ -637,6 +637,22 @@ network::Packet TbcPacketParsers::buildCastSpellOnItem(uint32_t spellId, uint64_
     return packet;
 }
 
+// TBC 2.4.3 CMSG_CAST_SPELL at a place: spellId, castCount, mask 0x40 and the
+// position, no transport guid (CMaNGOS SpellCastTargets::read). Native 2.4.3
+// sends Blizzard so with or without a unit selected: the server's
+// SMSG_SPELL_GO echoes flags 0x40 and no unit.
+network::Packet TbcPacketParsers::buildCastSpellAtDestination(uint32_t spellId, uint8_t castCount,
+                                                              const glm::vec3& serverPosition) {
+    network::Packet packet(wireOpcode(LogicalOpcode::CMSG_CAST_SPELL));
+    packet.writeUInt32(spellId);
+    packet.writeUInt8(castCount);
+    packet.writeUInt32(0x40); // TARGET_FLAG_DEST_LOCATION
+    packet.writeFloat(serverPosition.x);
+    packet.writeFloat(serverPosition.y);
+    packet.writeFloat(serverPosition.z);
+    return packet;
+}
+
 network::Packet TbcPacketParsers::buildCastGameObjectSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) {
     network::Packet packet(wireOpcode(LogicalOpcode::CMSG_CAST_SPELL));
     packet.writeUInt32(spellId);

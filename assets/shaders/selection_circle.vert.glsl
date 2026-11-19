@@ -2,7 +2,7 @@
 layout(push_constant) uniform Push {
     mat4 mvp;
     vec4 color;
-    vec4 square;          // centre x, y; half side
+    vec4 square;          // centre x, y; half side; u sign
     vec4 axisAndHeights;  // right axis x, y; lowest and highest z drawn
 } push;
 layout(location = 0) in vec3 aPos;

@@ -3516,18 +3516,42 @@ public:
     // Item-targeted item use: sharpening stones, weightstones and weapon oils enchant
     // another item, so using one arms a targeting cursor instead of casting immediately.
     bool isAwaitingItemTarget() const;
-    /// A spell the player's pet or possessed unit casts at a place
-    /// (Spell.dbc Targets & TARGET_FLAG_DEST_LOCATION): the next world click
-    /// picks the spot (build 8606 draws its circle under the cursor).
-    void beginPetGroundTarget(uint32_t spellId) { pendingPetGroundSpell_ = spellId; }
-    bool isAwaitingGroundTarget() const { return pendingPetGroundSpell_ != 0; }
-    void cancelGroundTarget() { pendingPetGroundSpell_ = 0; }
+    /// A spell cast at a place (Spell.dbc Targets & TARGET_FLAG_DEST_LOCATION):
+    /// Blizzard, Flamestrike, Rain of Fire, Hurricane, a chess piece's Move.
+    /// Arming it puts Interface\SpellShadow\Spell-Shadow-Acceptable.blp
+    /// under the cursor at the spell's radius (red Spell-Shadow-Unacceptable
+    /// out of range) and the next world click casts it at the floor point
+    /// under the cursor; right-click or Escape put it down.
+    struct GroundTarget {
+        uint32_t spellId = 0;
+        /// Cast by the pet or possessed unit (CMSG_PET_CAST_SPELL), not the player.
+        bool pet = false;
+    };
+    void beginGroundTarget(uint32_t spellId);
+    void beginPetGroundTarget(uint32_t spellId);
+    bool isAwaitingGroundTarget() const;
+    /// The armed spell, empty when nothing is armed (or the player left the world).
+    std::optional<GroundTarget> pendingGroundTarget() const;
+    /// Puts the armed spell down. failed: the right-click way out, which build
+    /// 8606 reports as UNIT_SPELLCAST_FAILED; SpellStopTargeting (Escape) does not.
+    void cancelGroundTarget(bool failed = false);
+    /// The reticle's radius in yards: the largest SpellRadius.dbc radius among
+    /// the spell's effects; 0 when it has none.
+    float groundTargetRadius(uint32_t spellId) const;
+    /// Whether a destination is within a ground spell's reach: 3D distance
+    /// from the casting unit (the pet's for a pet spell), SpellRange.dbc max
+    /// range with the player's range modifiers, no combat reach (CMaNGOS
+    /// Spell::CheckRange for a TARGET_FLAG_DEST_LOCATION cast). Canonical.
+    bool groundDestinationInRange(const GroundTarget& spell, const glm::vec3& canonical) const;
+    /// Casts the armed spell at a canonical floor point: CMSG_CAST_SPELL for
+    /// the player, CMSG_PET_CAST_SPELL for a pet or possessed unit.
+    void castGroundTarget(const glm::vec3& canonical);
     /// CMSG_PET_CAST_SPELL: pet guid, spell, SpellCastTargets with the
     /// destination (uint32 mask 0x40, float x, y, z), as
     /// WorldSession::HandlePetCastSpellOpcode reads it.
     /// Canonical coordinates in; sent in server order.
-    void castPetSpellAtGround(float x, float y, float z);
-    uint32_t pendingPetGroundSpell_ = 0;
+    void castPetSpellAtGround(uint32_t spellId, float x, float y, float z);
+    mutable std::optional<GroundTarget> pendingGroundTarget_;
     /// True while a used item is waiting for the player to click a unit.
     bool isAwaitingUnitTarget() const;
     uint32_t getPendingUnitTargetSourceItemId() const;

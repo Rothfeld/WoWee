@@ -241,6 +241,9 @@ public:
     void setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color,
                             uint32_t characterInstance = 0);
     void clearSelectionCircle();
+    /// The ground target reticle under the cursor (OverlaySystem), render coordinates.
+    void setGroundTargetReticle(const glm::vec3& center, float radius, bool acceptable);
+    void clearGroundTargetReticle();
     /// This frame's ground blob shadows (EntitySpawner::collectUnitShadows).
     void setUnitShadows(std::vector<UnitShadowBlob> blobs);
     void refreshSelectionCirclePosition();
