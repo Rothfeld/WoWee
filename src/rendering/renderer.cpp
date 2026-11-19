@@ -4047,6 +4047,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
         characterRenderer = std::make_unique<CharacterRenderer>();
         if (!characterRenderer->initialize(vkCtx, perFrameSetLayout, assetManager))
             LOG_ERROR("CharacterRenderer initialization failed");
+        characterRenderer->setViewDistance(viewDistance_);
         if (shadowRenderPass != VK_NULL_HANDLE) {
             if (!characterRenderer->initializeShadow(shadowRenderPass))
                 LOG_WARNING("Character shadow pipeline initialization failed");
@@ -4321,6 +4322,7 @@ void Renderer::setViewDistance(float distance) {
     if (terrainRenderer) terrainRenderer->setViewDistance(viewDistance_);
     if (wmoRenderer) wmoRenderer->setViewDistance(viewDistance_);
     if (m2Renderer) m2Renderer->setViewDistance(viewDistance_);
+    if (characterRenderer) characterRenderer->setViewDistance(viewDistance_);
     if (terrainManager) {
         terrainManager->setLoadRadius(getTerrainLoadRadius());
         terrainManager->setUnloadRadius(getTerrainUnloadRadius());

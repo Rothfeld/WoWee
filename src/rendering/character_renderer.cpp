@@ -2394,9 +2394,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
 
     boneCameraPos_ = cameraPos;
 
-    // Distance culling for animation updates in dense areas.
-    const float animUpdateRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_RENDER_RADIUS", 130));
-    const float animUpdateRadiusSq = animUpdateRadius * animUpdateRadius;
+    // Units are animated as far as they are drawn (setViewDistance).
+    const float animUpdateRadiusSq = viewDistance_ * viewDistance_;
 
     // Single pass: fade-in, movement, and animation bone collection
     toUpdate_.clear();
@@ -3344,8 +3343,6 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     if (instances.empty() || !opaquePipeline_) {
         return;
     }
-    const float renderRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_RENDER_RADIUS", 130));
-    const float renderRadiusSq = renderRadius * renderRadius;
     // Default frustum-cull radius when model bounds aren't available.
     // 4.0 covers Tauren, mounted characters, and most creature models.
     constexpr float kDefaultCharacterCullRadius = 4.0f;
@@ -3471,14 +3468,10 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         // Skip invisible instances (e.g., player in first-person mode)
         if (!instance.visible || instance.replaced || instance.roomHidden) continue;
 
-        // Character instance culling: test both distance and frustum visibility
+        // Character instance culling: view distance and frustum. No unit
+        // distance of its own (setViewDistance): Archimonde (scale 12) 137 yd
+        // off and a human 190 yd off are both drawn by 2.4.3.
         if (!instance.hasOverrideModelMatrix && !instance.isSceneModel) {
-            glm::vec3 toInst = instance.position - camPos;
-            float distSq = glm::dot(toInst, toInst);
-
-            // Distance cull: skip if beyond render radius
-            if (distSq > renderRadiusSq) continue;
-
             // Compute per-instance bounding radius from model data when available.
             // The rendered-vertex box and radius from the M2 header, the
             // sphere centred on the box centre (turned with the unit), not on
@@ -3497,6 +3490,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 cullRadius = std::max(kDefaultCharacterCullRadius, data.vertexRadius * scale);
             }
 
+            if (glm::distance(cullCentre, camPos) - cullRadius > viewDistance_) continue;
             // Frustum cull: skip if outside view frustum
             if (!frustum.intersectsSphere(cullCentre, cullRadius)) continue;
             // Outside the sealed interior the camera is in (Kalecgos 128

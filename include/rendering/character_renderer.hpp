@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <functional>
 
 #include "rendering/vk_shader.hpp"
@@ -80,6 +81,19 @@ public:
     /// Draw only units standing inside this box (a sealed interior, see
     /// WMORenderer::findSealedInterior); every unit when empty.
     void setVisibleRegion(std::optional<std::pair<glm::vec3, glm::vec3>> region) { visibleRegion_ = region; }
+    /// How far units are drawn and animated: the scene's view distance, the
+    /// same one terrain and WMOs stop at (Renderer::setViewDistance).
+    ///
+    /// 2.4.3 has no distance or size cut of its own for units: a unit is drawn
+    /// as long as the server keeps it in range (cmangos Visibility.Distance:
+    /// 100 yd on continents, 170 in instances, 533 in battlegrounds, 200/400
+    /// for LARGE_AOI/GIGANTIC_AOI creatures) and it is inside the far clip,
+    /// where it has faded into the fog. Its DistCull and SmallCull CVars do
+    /// not touch units. Measured: _experiments/20261118T235900Z.unit_distance.
+    void setViewDistance(float yards) {
+        assert(yards > 0.0f);
+        viewDistance_ = yards;
+    }
     CharacterRenderer();
     ~CharacterRenderer();
 
@@ -366,6 +380,7 @@ public:
 
 private:
     std::optional<std::pair<glm::vec3, glm::vec3>> visibleRegion_;
+    float viewDistance_ = 1200.0f;  // Renderer::setViewDistance overrides it
     std::unordered_map<std::string, pipeline::BLPImage>* predecodedBLPCache_ = nullptr;
     // GPU representation of M2 model
     struct M2ModelGPU {
