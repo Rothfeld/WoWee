@@ -797,8 +797,9 @@ static std::unordered_map<std::string, std::string>& registeredCVarDefaults() {
 
 static void pushCvarDefault(lua_State* L, const std::string& n) {
     // Build 8606's Names panel CVars, as GetCVarDefault answers there; the
-    // overhead names read the same table (ui/unit_name_cvar.hpp).
-    if (game::isActiveExpansion("tbc")) {
+    // overhead names read the same table (ui/unit_name_cvar.hpp). Asked of the
+    // Lua state's interface, not the Application, which tests do not have.
+    if (tbcInterface(L)) {
         if (const char* value = ui::tbcUnitNameCVarDefault(n)) {
             lua_pushstring(L, value);
             return;
