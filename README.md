@@ -2560,6 +2560,23 @@ bearmount.m2) does lunge on some swings natively, in real fights more than
 in fake ones; what selects it was not found, and WoWee leaves it in its idle.
 Furious Roar (42496) grows rider and bear together over about 1.2 s both
 ways in both clients. Evidence: `_experiments/20261118T231500Z.rider_attack`.
+A player's mount moves as its rider would on foot: on the ground and in water
+the player's LocomotionFSM runs on the mount model's sequences (Walkbackwards
+backing up, Shuffle turning, JumpStart/Jump/JumpEnd on a running jump, which is
+the ordinary jump and sends MSG_MOVE_JUMP); other players' jumps, falls and
+swims play on their mount, not the seated rider. Jump pressed standing rears
+the mount (MountSpecial 94) without leaving the ground and sends
+CMSG_MOUNTSPECIAL_ANIM; the server shows it to the others only
+(SMSG_MOUNTSPECIAL_ANIM), so each client plays its own rear locally. No mount
+bob, roll or random idle one-shots: MountSpecial has an M2 frequency and was
+picked as an idle fidget. Outdoors-only spells (Attributes 0x8000) are refused
+client-side where IsIndoors() is 1, after the moving check: a spell applying
+aura 78 says SPELL_FAILED_NO_MOUNTS_ALLOWED, others SPELL_FAILED_ONLY_OUTDOORS
+(Black Temple: the server let mounts through). Gotchas: CAN_FLY can go while
+FLYING is set (flying mount dismissed in the air), and FLYING must still clear
+on landing, or the server treats the player as moving (`debug viewsync align`
+refuses). A mount summon shows a smoke cloud natively whose data source was not
+found. Evidence: `_experiments/20261119T0900Z.mount_audit`.
 
 TBC MCLQ freshwater preserves per-vertex depth and authored surface height
 through both individual and merged terrain meshes. Liquid IDs use the same
