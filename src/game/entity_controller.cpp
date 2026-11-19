@@ -2277,6 +2277,20 @@ void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<En
     // player's are; only players were read, so no creature target ever showed
     // a buff or debuff (Lady Vashj's Magic Barrier, pair 8: UnitBuff nil).
     syncPreWotlkAurasFromFields(entity);
+    // The pet comes into sight after SMSG_PET_SPELLS named it: native 2.4.3
+    // follows a summon with UNIT_PET "player" again then, and only now does
+    // PetActionBar_OnEvent find UnitIsVisible("pet") and show the bar.
+    if (block.guid != 0 && block.guid == owner_.petGuidRef()) pendingEvents_.emit("UNIT_PET", {"player"});
+    // A group member's pet likewise: UNIT_PET "party1", which shows the
+    // party pet frame.
+    if (const uint16_t lo = fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_LO); lo != 0xFFFF) {
+        const uint64_t summoner = static_cast<uint64_t>(unit->getField(lo)) |
+                                  (static_cast<uint64_t>(unit->getField(fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_HI))) << 32);
+        if (summoner != 0 && summoner != owner_.getPlayerGuid())
+            for (const auto& token : unitEventTokens(owner_, summoner))
+                if (token.rfind("party", 0) == 0 || token.rfind("raid", 0) == 0)
+                    pendingEvents_.emit("UNIT_PET", {token});
+    }
 
     // Hostility
     unit->setHostile(owner_.isDuelOpponent(*unit) || owner_.isHostileFaction(unit->getFactionTemplate()));

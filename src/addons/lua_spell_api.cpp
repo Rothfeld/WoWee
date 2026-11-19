@@ -923,13 +923,16 @@ static int lua_IsSelectedSpell(lua_State* L) {
     return 1;
 }
 
-/// GetSpellAutocast(slot, bookType) → autocastable, currently autocasting.
-/// Pet spells only, and pet action bars are not modelled: false says the
-/// little rotating border is not drawn, which is right for every spell a
-/// player has.
+/// GetSpellAutocast(slot, bookType) → autocastable, currently autocasting,
+/// as 1/nil. A pet's active spell can autocast (native 2.4.3 felhunter: 1
+/// for Devour Magic); the player's spells and passives cannot.
 static int lua_GetSpellAutocast(lua_State* L) {
-    lua_pushboolean(L, 0);
-    lua_pushboolean(L, 0);
+    auto* gh = getGameHandler(L);
+    const char* book = luaL_optstring(L, 2, "spell");
+    const uint32_t id = gh && std::string(book) == "pet" ? spellIdForCall(L, gh) : 0;
+    if (id == 0 || gh->isSpellPassive(id)) { lua_pushnil(L); lua_pushnil(L); return 2; }
+    lua_pushnumber(L, 1);
+    if (gh->isPetSpellAutocast(id)) lua_pushnumber(L, 1); else lua_pushnil(L);
     return 2;
 }
 /// GetKnownSlotFromHighestRankSlot(slot) → the slot actually known. The book

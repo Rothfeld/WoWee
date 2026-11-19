@@ -2871,10 +2871,14 @@ void registerActionLuaAPI(lua_State* L) {
                 // that range, and the damage each is worth - three quarters,
                 // normal, a quarter more - is the game's, not a guess.
                 {"GetPetHappiness", [](lua_State* L) -> int {
+            // No pet, or one without happiness (a warlock's felhunter):
+            // native 2.4.3 answers nil, 100, 0.
             auto* pet = resolveUnit(L, "pet");
-            if (!pet) { lua_pushnil(L); return 1; }
-            const uint32_t maxHappiness = pet->getMaxPowerByType(4);
-            if (maxHappiness == 0) { lua_pushnil(L); return 1; }
+            const uint32_t maxHappiness = pet ? pet->getMaxPowerByType(4) : 0;
+            if (maxHappiness == 0) {
+                lua_pushnil(L); lua_pushnumber(L, 100); lua_pushnumber(L, 0);
+                return 3;
+            }
 
             const uint32_t happiness = pet->getPowerByType(4);
             const int level = (happiness * 3 >= maxHappiness * 2) ? 3
@@ -2964,6 +2968,9 @@ void registerActionLuaAPI(lua_State* L) {
                         tokenName = "PET_DISMISS";        tokenTexture = "PET_DISMISS_TEXTURE"; break;
                     default: break;
                 }
+                // The command the pet is under: native 2.4.3 lights Follow
+                // for a felhunter just summoned.
+                active = (action == gh->getPetCommand());
             } else if (type == game::pet::ActionType::Reaction) {
                 switch (action) {
                     case game::pet::kPassive:
@@ -2977,17 +2984,21 @@ void registerActionLuaAPI(lua_State* L) {
                 // The stance the pet is in is the one drawn as chosen.
                 active = (action == gh->getPetReact());
             }
+            // 2.4.3's shape (pair 21, felhunter): name, subtext, texture,
+            // isToken, isActive, autoCastAllowed, autoCastEnabled, flags as
+            // 1/nil; a token's subtext is nil, a spell's its rank.
+            const auto flag = [L](bool on) { if (on) lua_pushnumber(L, 1); else lua_pushnil(L); };
 
             if (tokenName) {
                 lua_pushstring(L, tokenName);       // 1: name - a global's name
-                lua_pushstring(L, "");              // 2: subtext
+                lua_pushnil(L);                     // 2: subtext
                 lua_pushstring(L, tokenTexture);    // 3: texture - likewise
-                lua_pushboolean(L, 1);              // 4: isToken
-                lua_pushboolean(L, active ? 1 : 0); // 5: isActive
+                flag(true);                         // 4: isToken
+                flag(active);                       // 5: isActive
                 // A command or a stance has nothing to cast automatically, and
                 // saying otherwise puts the autocast ring on all six of them.
-                lua_pushboolean(L, 0);              // 6: autoCastAllowed
-                lua_pushboolean(L, 0);              // 7: autoCastEnabled
+                flag(false);                        // 6: autoCastAllowed
+                flag(false);                        // 7: autoCastEnabled
                 return 7;
             }
 
@@ -2996,16 +3007,16 @@ void registerActionLuaAPI(lua_State* L) {
             const std::string& name = gh->getSpellName(spellId);
             const std::string iconPath = gh->getSpellIconPath(spellId);
             lua_pushstring(L, name.empty() ? "Unknown" : name.c_str());
-            lua_pushstring(L, "");
+            lua_pushstring(L, gh->getSpellRank(spellId).c_str());      // "Rank 1"
             lua_pushstring(L, iconPath.empty() ? "Interface\\Icons\\INV_Misc_QuestionMark"
                                                : iconPath.c_str());
-            lua_pushboolean(L, 0);                                      // isToken
+            flag(false);                                                // isToken
             // A pet spell is never "active" - that is the checked ring, which
             // belongs to the stance. Reading the autocast bits as active put
             // it on every spell the pet knows.
-            lua_pushboolean(L, 0);                                      // isActive
-            lua_pushboolean(L, 1);                                      // autoCastAllowed
-            lua_pushboolean(L, gh->isPetSpellAutocast(spellId) ? 1 : 0);
+            flag(false);                                                // isActive
+            flag(true);                                                 // autoCastAllowed
+            flag(gh->isPetSpellAutocast(spellId));
             return 7;
         }},
                 // IsPetAttackAction(index) - which slot is the attack command,
@@ -3036,18 +3047,20 @@ void registerActionLuaAPI(lua_State* L) {
                 {"GetPetActionCooldown", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
-            // Enable is one, not zero: zero switches the sweep off entirely,
-            // and all three go straight into CooldownFrame_SetTimer.
+            // 0, 0, 0 with no pet at all (native 2.4.3).
             if (!gh || index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) {
-                lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1);
+                lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 0);
                 return 3;
             }
             const uint32_t packed = gh->getPetActionSlot(index - 1);
             // A command or a stance has no cooldown of its own.
             const float remaining = game::pet::isPetSpellAction(packed)
                 ? gh->getSpellCooldown(game::pet::petActionId(packed)) : 0.0f;
+            // Ready: enable 1 for a spell (an imp's Firebolt), 0 for a
+            // command or a stance, as native 2.4.3 answers.
             if (remaining <= 0.01f) {
-                lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1);
+                lua_pushnumber(L, 0); lua_pushnumber(L, 0);
+                lua_pushnumber(L, game::pet::isPetSpellAction(packed) ? 1 : 0);
                 return 3;
             }
             lua_pushnumber(L, luaGetTimeNow());

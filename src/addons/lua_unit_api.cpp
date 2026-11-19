@@ -293,7 +293,10 @@ static int lua_UnitClass(lua_State* L) {
         // where "MAGE" was meant looked up nothing: SetPortraitTexture found no
         // CLASS_ICON_TCOORDS entry and fell back to the placeholder portrait,
         // which is the blue question mark on the character sheet.
-        lua_pushstring(L, kLuaClasses[classId]);
+        // A unit that is not a player answers its own name first: native
+        // 2.4.3 UnitClass("pet") of a felhunter is "Flaajhom", "PALADIN".
+        if (unit && unit->getType() != game::ObjectType::PLAYER) lua_pushstring(L, unit->getName().c_str());
+        else lua_pushstring(L, kLuaClasses[classId]);
         lua_pushstring(L, token);
         lua_pushnumber(L, classId);
         return 3;
