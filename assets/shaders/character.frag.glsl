@@ -23,6 +23,9 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 specularColor;
     vec4 outdoorFogColor;
     vec4 outdoorFogParams;  // x = start, y = end
+    // x: gain on the TBC unit light, 1 + 2 x the area's AmbientMultiplier
+    // (GPUPerFrameData::unitLight).
+    vec4 unitLight;
 };
 
 #include "rt_lighting.glsli"
@@ -498,9 +501,16 @@ void main() {
             // light as every other M2 (m2.vert/m2.frag): LightParams ambient
             // plus diffuse by N.L, saturated, times the texture. No floor
             // under N.L and no added highlight; those were this renderer's.
-            vec3 legacyLight = clamp(ambient +
-                max(dot(norm, ldir), 0.0) * sunLight, 0.0, 1.0);
-            result = texColor.rgb * (ambient + shadow * (legacyLight - ambient));
+            // Both terms take the area's gain before saturating
+            // (unitLight.x = 1 + 2 x AreaTable AmbientMultiplier): 2.4.3
+            // draws units in Thousand Needles (0.5) at twice the light of
+            // GM Island or Elwynn Forest (0), ambient and sun side alike,
+            // day and night, while terrain there is unchanged.
+            vec3 unitAmbient = ambient * unitLight.x;
+            vec3 legacyLight = clamp(unitAmbient +
+                max(dot(norm, ldir), 0.0) * sunLight * unitLight.x, 0.0, 1.0);
+            vec3 shaded = min(unitAmbient, vec3(1.0));
+            result = texColor.rgb * (shaded + shadow * (legacyLight - shaded));
         }
         if (interiorLit != 0) {
             result = texColor.rgb * vec3(interiorLightR, interiorLightG, interiorLightB) * kitLight;

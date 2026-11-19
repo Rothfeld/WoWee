@@ -107,6 +107,16 @@ bool ZoneManager::isFlyableArea(uint32_t areaId) const {
     return it != areaFlags_.end() && (it->second & 0x400u) != 0;
 }
 
+float ZoneManager::getAreaAmbientMultiplier(uint32_t areaId) const {
+    const auto own = areaAmbientMultipliers_.find(areaId);
+    if (own == areaAmbientMultipliers_.end()) return 0.0f;
+    if (own->second != 0.0f) return own->second;
+    const auto parent = areaParents_.find(areaId);
+    if (parent == areaParents_.end() || parent->second == 0 || parent->second == areaId) return 0.0f;
+    const auto zone = areaAmbientMultipliers_.find(parent->second);
+    return zone == areaAmbientMultipliers_.end() ? 0.0f : zone->second;
+}
+
 uint32_t ZoneManager::getMapZoneId(uint32_t mapId) const {
     const auto it = mapZones_.find(mapId);
     return it == mapZones_.end() ? 0 : resolveAreaZoneId(it->second);
@@ -215,7 +225,13 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
     // DBCs are absent: renderer and ambience classification depend on it.
     areaParents_.clear();
     areaFlags_.clear();
+    areaAmbientMultipliers_.clear();
     const bool haveFlags = areaFields > 4;
+    // Field 34 is AmbientMultiplier in the 35/36-field TBC and Wrath
+    // layouts (after the 17 name fields, faction group, four liquid types
+    // and MinElevation, -500 on most rows). TBC values: Thousand Needles
+    // 0.5, The Barrens 0.3, Outland 0.6, GM Island and Elwynn Forest 0.
+    const bool haveAmbientMultiplier = areaFields >= 35;
     for (uint32_t i = 0; i < numAreas; ++i) {
         const uint32_t areaId = areaDbc->getUInt32(i, 0);
         if (areaId == 0) continue;
@@ -225,6 +241,7 @@ void ZoneManager::enrichFromDBC(pipeline::AssetManager* assets) {
         // and must carry 0x01000000, and 3703 is Shattrath and must carry the
         // sanctuary bit 0x800. A wrong column reads as zero forever.
         if (haveFlags) areaFlags_[areaId] = areaDbc->getUInt32(i, 4);
+        if (haveAmbientMultiplier) areaAmbientMultipliers_[areaId] = areaDbc->getFloat(i, 34);
     }
 
     if (!zoneMusicDbc || !zoneMusicDbc->isLoaded()) {

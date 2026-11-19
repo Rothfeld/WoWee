@@ -572,6 +572,15 @@ void Renderer::updatePerFrameUBO() {
         currentFrameData.lightDir = glm::vec4(lightingManager->getSurfaceLightDirection(), game::isActiveExpansion("tbc") ? 1.0f : 0.0f);
         currentFrameData.lightColor = glm::vec4(lp.diffuseColor, 1.0f);
         currentFrameData.ambientColor = glm::vec4(lp.ambientColor, 1.0f);
+        // Units take the light above times 1 + 2 x the player's area's AmbientMultiplier
+        // (AreaTable field 34). 2.4.3, units against texel x WoWee's normal light,
+        // ambient and sun sides alike: GM Island (0) 1.0, The Barrens (0.3) 1.6,
+        // Thousand Needles (0.5) 2.0 at 09:00 and at 21:45, while the terrain
+        // around them matches without it. Evidence:
+        // _experiments/20261119T0840Z.creature_light in the workspace.
+        const float ambientMultiplier =
+            zoneManager ? zoneManager->getAreaAmbientMultiplier(getCurrentAreaId()) : 0.0f;
+        currentFrameData.unitLight = glm::vec4(1.0f + 2.0f * ambientMultiplier, 0.0f, 0.0f, 0.0f);
         currentFrameData.specularColor = glm::vec4(lp.specularColor, 1.0f);
         currentFrameData.fogColor = glm::vec4(lp.fogColor, 1.0f);
         currentFrameData.fogParams.x = lp.fogStart;

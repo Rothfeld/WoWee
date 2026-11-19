@@ -52,6 +52,10 @@ struct GPUPerFrameData {
     // outdoor fog below. Outside an interior both are the same.
     glm::vec4 outdoorFogColor;   // xyz = color, w = unused
     glm::vec4 outdoorFogParams;  // x = start, y = end
+    // x = gain on the TBC light of units (creatures, players and what they
+    // carry): 1 + 2 x AreaTable AmbientMultiplier of the player's area.
+    // Only character.frag reads it, and only under TBC light (lightDir.w).
+    glm::vec4 unitLight{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
 // Push constants for the model matrix (most common case)

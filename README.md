@@ -979,6 +979,23 @@ clients from moment to moment is the variation draw, not skinning. Paired
 captures with the original character morphed to 6373 and 10810:
 `_experiments/20261118T211000Z.azurous/` in the workspace.
 
+Units (creatures, players, what they carry) take the TBC light, ambient plus
+sun by N.L, times 1 + 2 x AreaTable field 34 (AmbientMultiplier) of the
+player's area, before saturating; an area with 0 there uses its parent zone's
+(Agama'gor, 0, is lit as The Barrens, 0.3). Native unit pixels divided by the
+same texels (WoWee unlit render) against WoWee's own light, ambient and sun
+side alike: GM Island (0) 0.85, Stone Cairn Lake in Elwynn (0) 1.0, The
+Barrens (0.3) 1.65, Thousand Needles (0.5) 2.0 at 09:00 and at 21:45, Hellfire
+Peninsula (0.6) 2.2; terrain in the same frames matches without the gain.
+LightParams HighlightSky looked like the switch at first (1 in Thousand
+Needles, 0 on GM Island) and is not: Elwynn has 1 and Hellfire 0. The
+2.4.3 model vertex shaders (`Shaders\Vertex\model2.bls`) light with nine
+spherical-harmonic constants, so the gain sits in what the client feeds
+them. Whether it follows the player's or the unit's area, and whether
+subzones with their own value (Tarren Mill 0.6 under Old Hillsbrad 0.3)
+use it, is not observed. Evidence: `_experiments/20261119T0840Z.creature_light`
+in the workspace.
+
 Grounded creatures select the nearest reachable terrain, WMO or M2 floor.
 Terrain corrections do not require a previous corrected render position; static
 server spawn Z can differ from the ADT triangle. Structure corrections retain

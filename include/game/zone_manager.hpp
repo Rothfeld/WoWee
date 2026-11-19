@@ -82,6 +82,12 @@ public:
     /// 0x4000 bit the other Outland areas also carry) answer 1; Isle of
     /// Quel'Danas, Eversong Woods, Silvermoon City and Goldshire answer nil.
     [[nodiscard]] bool isFlyableArea(uint32_t areaId) const;
+
+    /// AreaTable AmbientMultiplier (field 34) of an area, or of its parent
+    /// zone when the area's own is 0: Agama'gor (1700, 0) is lit as The
+    /// Barrens (17, 0.3). 0 for unknown areas and for layouts without the
+    /// column. See Renderer::updatePerFrameUBO for what it does to units.
+    [[nodiscard]] float getAreaAmbientMultiplier(uint32_t areaId) const;
     [[nodiscard]] const ZoneInfo* getZoneInfo(uint32_t zoneId) const;
     std::string getRandomMusic(uint32_t zoneId);
     [[nodiscard]] std::vector<std::string> getAllMusicPaths() const;
@@ -109,6 +115,7 @@ private:
     /// AreaTable's Flags column, by area id. Read in the same pass as the
     /// parents; the file is walked once either way.
     std::unordered_map<uint32_t, uint32_t> areaFlags_;
+    std::unordered_map<uint32_t, float> areaAmbientMultipliers_;
     std::string lastPlayedMusic_;
     bool useOriginalSoundtrack_ = true;
 };
