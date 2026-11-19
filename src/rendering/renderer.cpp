@@ -3182,6 +3182,17 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     if (sealedInterior) sealedClearColor_ = glm::vec3(currentFrameData.fogColor);
     const bool skipSky = envSkipSky || ablated(AblationPass::Sky) || sealedInterior;
     const bool skipGrass = ablated(AblationPass::Grass) || sealedInterior;
+    // Liquid in the scene pass goes between the opaque and the blended world
+    // models. Blended batches write no depth, so a surface drawn after them
+    // covered every one standing in it: Magisters' Terrace's energy cubes
+    // (FactoryEnergyCube.m2, two-sided alpha glass, no depth write) stand in
+    // the Observation Grounds' WMO liquid (sunwell_5man_003, height -20.10,
+    // 0.5 above the cube's base), and the liquid behind each cube was laid
+    // over its faces: pale, see-through pink where 2.4.3 shows the cube vivid
+    // magenta over the liquid. Water drawn in the refraction pass after the
+    // scene pass (waterDrawsInContinuePass) still comes after them.
+    const bool waterWithWorldModels = waterRenderer && camera && m2Renderer && !skipM2 &&
+                                      !waterDrawsInContinuePass();
     // One ordered blended stream for scenery and creatures. Independent
     // character/M2 secondaries cannot composite overlapping transparent meshes.
     const auto recordWorldModels = [&](VkCommandBuffer solid, VkCommandBuffer blended) {
@@ -3192,6 +3203,10 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         const auto drawSolidCharacters = [&]() {
             if (haveCharacters) characterRenderer->render(solid, perFrameSet, *camera,
                 CharacterRenderer::RenderPhase::Solid);
+            if (waterWithWorldModels) {
+                waterRenderer->setRenderExtent(activeRenderExtent_);
+                waterRenderer->render(blended, perFrameSet, *camera, globalTime, false, frameIdx);
+            }
             // Negative priority-plane emitters sort under the transparent
             // batches: BFD_WispSmall's black underlay (-100) beneath its glow.
             m2Renderer->renderM2Particles(blended, perFrameSet,
@@ -3418,7 +3433,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             auto t0 = std::chrono::steady_clock::now();
             VkCommandBuffer cmd = beginSecondary(SEC_POST);
             setSecondaryViewportScissor(cmd);
-            if (waterRenderer && camera && !waterDrawsInContinuePass()) {
+            if (waterRenderer && camera && !waterDrawsInContinuePass() && !waterWithWorldModels) {
                 waterRenderer->setRenderExtent(activeRenderExtent_);
                 waterRenderer->render(cmd, perFrameSet, *camera, globalTime, false, frameIdx);
             }
@@ -3617,7 +3632,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             drawCharacters();
         }
 
-        if (waterRenderer && camera && !waterDrawsInContinuePass()) {
+        if (waterRenderer && camera && !waterDrawsInContinuePass() && !waterWithWorldModels) {
             waterRenderer->setRenderExtent(activeRenderExtent_);
             waterRenderer->render(currentCmd, perFrameSet, *camera, globalTime, false, frameIdx);
             if (vkCtx) vkCtx->gpuMark(currentCmd, "water");

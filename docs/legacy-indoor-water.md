@@ -55,3 +55,19 @@ MLIQ material indices address MOMT, not LiquidType. Preserve authored vertex
 heights and depths. Group flag 0x2000 identifies interiors. Missing liquid data
 or failed texture uploads fail explicitly. Animation descriptors are immutable
 and shared across surfaces; frame changes select another descriptor.
+
+## Draw order
+
+Water drawn in the scene pass goes after the opaque world (terrain, WMOs,
+opaque M2 batches, solid characters) and before the blended world models
+(M2 pass 2, blended character layers, particles, ribbons). Blended batches
+write no depth, so water drawn after them covered whatever stood in it.
+Magisters' Terrace's energy cubes (`FactoryEnergyCube.m2`, MODD 837/838 of
+`sunwell_5man.wmo`, two-sided alpha glass without depth write) stand in the
+Observation Grounds' WMO liquid (`sunwell_5man_003.wmo`, height -20.10, half a
+yard above the cube base). With the liquid laid over the faces behind it the
+lower cube was pale see-through pink; 2.4.3 shows it uniformly vivid magenta.
+Paired captures: `_experiments/20261119T1454Z.purple_cubes/` in the workspace.
+Water drawn in the refraction continuation pass (`waterDrawsInContinuePass`:
+MSAA without an off-screen scene target, or a single-sampled continuation pass)
+still comes after the blended models.
