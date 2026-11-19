@@ -274,6 +274,8 @@ private:
     // Set by ReloadUI() from inside Lua, acted on between frames - the reload
     // destroys the state that asked for it.
     bool reloadUiPending_ = false;
+    /// A right press emptied FrameXML's cursor; its release is swallowed too.
+    bool rightPressReturnedCursor_ = false;
     /// Draws the widget tree addons build through CreateFrame/CreateTexture.
     /// Holds the texture cache for Interface\ art, so it lives as long as the app.
     ui::WidgetRenderer widgetRenderer_;

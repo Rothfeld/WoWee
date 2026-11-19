@@ -1023,6 +1023,16 @@ uint32_t cursorItemId();
 uint64_t cursorMoney();
 void setCursorMoney(lua_State* L, uint64_t copper);
 
+/// GetCoinIcon: the INV_Misc_Coin icon for an amount of copper. Also the
+/// picture of money held on the cursor.
+const char* coinIconForAmount(double copper);
+
+/// Put back whatever the cursor holds, the way ClearCursor does - an item to
+/// its bag slot with ITEM_LOCK_CHANGED, an action dropped - without going
+/// through the Lua global. A right-click anywhere does this in 2.4.3 and runs
+/// no interface code of its own. False when nothing was held.
+bool returnHeldCursor(lua_State* L);
+
 /// The paperdoll slot an item on the cursor was picked up from, or zero when it
 /// came from a bag or nothing is held. One-based, as FrameXML numbers slots.
 int cursorEquipSlot();

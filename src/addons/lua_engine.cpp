@@ -6961,6 +6961,7 @@ void LuaEngine::shutdown() {
         // client's own windows can ask what FrameXML is carrying, and calling
         // through it after the close would be reading a freed state.
         ui::frameXmlSetCursorBridge(nullptr, nullptr);
+        ui::frameXmlSetCursorPicture(nullptr);
         releaseInput();
         ui::frameXmlSetPointTest(nullptr);
         lua_close(L_);

@@ -318,15 +318,16 @@ void frameXmlNoteAddOnLoaded(const std::string& addOnName);
 /// asks for "Blizzard_AuctionUI" and the directory is blizzard_auctionui.
 bool frameXmlAddOnLoaded(std::string_view addOnName);
 
-/// The icon of the item the cursor is carrying, or empty for nothing.
+/// The icon of whatever FrameXML's cursor is carrying - a spell, an item, a
+/// macro, money - or empty for nothing.
 ///
-/// Picking an item up in WoW takes it out of its slot and puts it on the
-/// pointer, and that half is the client's job - FrameXML never draws it. Without
-/// it a drag looked like nothing was happening at all, whether or not the move
-/// went out. Set from the Lua bindings and read by the widget renderer, both on
-/// the main thread.
-void frameXmlSetCursorItem(const std::string& iconPath);
-const std::string& frameXmlCursorItem();
+/// Picking something up in WoW puts it on the pointer, and that half is the
+/// client's job - FrameXML never draws it. Asked of the Lua bindings each time
+/// rather than stored here, so the picture cannot disagree with what is held.
+/// Empty until the bindings register it, and again after the state is torn
+/// down. Main thread only.
+void frameXmlSetCursorPicture(std::function<std::string()> picture);
+std::string frameXmlCursorItem();
 
 /// Where the item on FrameXML's cursor came from, in the server's flat slot
 /// space, and how to put it down again.

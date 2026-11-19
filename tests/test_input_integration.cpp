@@ -13,6 +13,7 @@
 #include "ui/game_screen.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "addons/lua_engine.hpp"
+#include "addons/lua_api_helpers.hpp"
 #include "addons/addon_lua_snippets.hpp"
 #include "addons/lua_api_registrations.hpp"
 #include "core/gamepad.hpp"
@@ -4006,6 +4007,93 @@ TEST_CASE_METHOD(Integration, "An action swapped onto the cursor can be placed o
     lua.dispatchMouse(400, 300, 600, {});
     truth("not CursorHasSpell()");
     CHECK(handler.getActionBar()[4].isEmpty());
+    lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration, "The held cursor is one state: swaps, toggles, returns, picture", "[action-cursor]") {
+    // Build 8606, measured with a probe addon (pair 14,
+    // _experiments/20261118T203647Z.action_cursor): a swap puts the held action
+    // down (HIDEGRID) before the old one comes up (SHOWGRID) and announces the
+    // slot last; dropping the action a slot already holds empties the cursor
+    // and leaves the slot; a bag item placed on the bar goes back to its bag
+    // (ITEM_LOCK_CHANGED first); an item reference off the bar is "item" to
+    // GetCursorInfo and nil to CursorHasItem; money shows no grid; a
+    // right-click (returnHeldCursor) puts any of it back.
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    handler.setAddonEventCallback([this](const std::string& event, const std::vector<std::string>& args) {
+        lua.fireEvent(event, args);
+    });
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}});
+    handler.spellNameCacheLoadedRef() = true;
+    handler.setActionBarSlot(1, ActionBarSlot::SPELL, 1000);
+    handler.setActionBarSlot(2, ActionBarSlot::SPELL, 2000);
+    run(R"(
+        seen = {}
+        local f = CreateFrame('Frame')
+        for _, e in ipairs({'CURSOR_UPDATE', 'ACTIONBAR_SHOWGRID', 'ACTIONBAR_HIDEGRID',
+                            'ACTIONBAR_SLOT_CHANGED', 'ITEM_LOCK_CHANGED'}) do f:RegisterEvent(e) end
+        f:SetScript('OnEvent', function(self, e, a1) table.insert(seen, e .. (a1 and (':' .. a1) or '')) end)
+        function heard() local s = table.concat(seen, ' ') seen = {} return s end
+        function at(s, e) return string.find(' ' .. s .. ' ', ' ' .. e .. ' ', 1, true) end
+    )");
+    const auto held = [&] { return wowee::ui::frameXmlCursorItem(); };
+
+    run("heard() PickupAction(2) s = heard()");
+    truth("s == 'CURSOR_UPDATE ACTIONBAR_SHOWGRID ACTIONBAR_SLOT_CHANGED:2'");
+
+    run("PlaceAction(3) s = heard()");   // occupied: swap
+    truth("at(s, 'ACTIONBAR_HIDEGRID') < at(s, 'ACTIONBAR_SHOWGRID')");
+    truth("string.find(s, 'ACTIONBAR_SLOT_CHANGED:3$') ~= nil");
+    CHECK(handler.getActionBar()[2].id == 1000);
+    truth("select(4, GetCursorInfo()) == 2000");
+
+    handler.setActionBarSlot(3, ActionBarSlot::SPELL, 2000);
+    run("heard() PlaceAction(4) s = heard()");   // the same spell: cursor empties
+    truth("s == 'ACTIONBAR_HIDEGRID CURSOR_UPDATE'");
+    truth("GetCursorInfo() == nil");
+    CHECK(handler.getActionBar()[3].id == 2000);
+
+    // A bag item onto the bar: placed, and back in its bag unlocked.
+    auto& info = handler.itemInfoCacheRef()[300];
+    info.valid = true;
+    info.name = "Test cloak";
+    info.inventoryType = 16;
+    ItemDef cloak;
+    cloak.itemId = 300;
+    cloak.stackCount = 1;
+    handler.inventoryRef().setBackpackSlot(0, cloak);
+    run("PickupContainerItem(0, 1)");
+    truth("CursorHasItem() and select(3, GetContainerItemInfo(0, 1))");
+    run("heard() PlaceAction(6) s = heard()");
+    truth("at(s, 'ITEM_LOCK_CHANGED:0') == 1 and at(s, 'ITEM_LOCK_CHANGED:0') < at(s, 'ACTIONBAR_HIDEGRID')");
+    truth("not select(3, GetContainerItemInfo(0, 1)) and GetCursorInfo() == nil");
+    CHECK(handler.getActionBar()[5].type == ActionBarSlot::ITEM);
+
+    // Lifted off the bar it is a reference: "item", but not an item held.
+    run("PickupAction(6)");
+    truth("GetCursorInfo() == 'item' and not CursorHasItem()");
+    CHECK(addons::returnHeldCursor(lua.getState()));
+    truth("GetCursorInfo() == nil");
+
+    // A bag item put back by a right-click unlocks its slot first.
+    run("PickupContainerItem(0, 1) heard()");
+    CHECK(addons::returnHeldCursor(lua.getState()));
+    run("s = heard()");
+    truth("s == 'ITEM_LOCK_CHANGED:0 ACTIONBAR_HIDEGRID CURSOR_UPDATE'");
+    CHECK_FALSE(addons::returnHeldCursor(lua.getState()));
+
+    // Money: no grid, and its coin is the picture.
+    addons::setCursorMoney(lua.getState(), 5);
+    run("s = heard()");
+    truth("s == 'CURSOR_UPDATE' and CursorHasMoney()");
+    CHECK(held() == "Interface\\Icons\\INV_Misc_Coin_05");
+    CHECK(addons::returnHeldCursor(lua.getState()));
+    CHECK(held().empty());
+    run("heard() ClearCursor() s = heard()");   // nothing held: still announced
+    truth("s == 'CURSOR_UPDATE'");
     lua.setGameHandler(nullptr);
 }
 

@@ -1688,6 +1688,27 @@ void Application::run() {
                     renderer->getCameraController()->releaseMouseCapture();
             }
             if (mapWindow_ && mapWindow_->handleEvent(event)) continue;
+
+            // A right-click with something on the cursor puts it back and does
+            // nothing else. Build 8606, anywhere - the world, a unit, a frame,
+            // an action button, a bag slot: the press empties the cursor (an
+            // item to its bag with ITEM_LOCK_CHANGED, money to the purse, an
+            // action dropped) and no interface script, binding, interaction or
+            // mouse-look sees it. Taken here, ahead of every reader, and its
+            // release with it, so nothing sees half a click.
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                event.button.button == SDL_BUTTON_RIGHT && state == AppState::IN_GAME &&
+                addonManager_ && addonManager_->getLuaEngine() &&
+                addonManager_->getLuaEngine()->getState() &&
+                addons::returnHeldCursor(addonManager_->getLuaEngine()->getState())) {
+                rightPressReturnedCursor_ = true;
+                continue;
+            }
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_UP &&
+                event.button.button == SDL_BUTTON_RIGHT && rightPressReturnedCursor_) {
+                rightPressReturnedCursor_ = false;
+                continue;
+            }
             Input::getInstance().processEvent(event);
 
             // Submit native edges only after the UI has had first refusal,

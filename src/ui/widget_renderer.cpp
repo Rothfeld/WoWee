@@ -2287,20 +2287,6 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
         }
     }
 
-    // The item on the cursor, drawn over everything. FrameXML never draws this
-    // - in WoW the client does - so without it picking something up looked
-    // exactly like nothing happening.
-    if (const std::string& carried = frameXmlCursorItem(); !carried.empty()) {
-        if (VkDescriptorSet icon = texture(carried); icon != kMissing) {
-            const ImVec2 at = ImGui::GetIO().MousePos;
-            const float side = 32.0f * tree.uiScale();
-            ImDrawList* fg = ImGui::GetForegroundDrawList();
-            fg->AddImage(reinterpret_cast<ImTextureID>(icon),
-                         ImVec2(at.x, at.y),
-                         ImVec2(at.x + side, at.y + side));
-        }
-    }
-
     const auto& order = tree.drawOrder();
     if (order.empty()) return;
 

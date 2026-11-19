@@ -1263,7 +1263,7 @@ static int lua_GetSendMailItem(lua_State* L) {
 // that should have gone back could only be deleted - which destroys whatever
 // came with it.
 // Native GetCoinIcon chooses denomination, then a stack icon at ten coins.
-static const char* coinIconForAmount(double copper) {
+const char* coinIconForAmount(double copper) {
     if (copper >= 100000) return "Interface\\Icons\\INV_Misc_Coin_02";
     if (copper >= 10000) return "Interface\\Icons\\INV_Misc_Coin_01";
     if (copper >= 1000) return "Interface\\Icons\\INV_Misc_Coin_04";
@@ -3299,8 +3299,8 @@ static int lua_PutItemInBag(lua_State* L) {
         if (fromIndex != bagIndex) {
             gh->swapBagSlots(fromIndex, bagIndex);
         }
-        cursorItemSlot() = {};
-        wowee::ui::frameXmlSetCursorItem(std::string());
+        // The move is sent; the cursor is empty.
+        wowee::ui::frameXmlPutCursorDown();
         lua_pushboolean(L, 1);
         return 1;
     }
@@ -3317,8 +3317,8 @@ static int lua_PutItemInBag(lua_State* L) {
     if (size == 0) {
         gh->swapContainerItems(srcBag, srcSlot, 0xFF,
                                static_cast<uint8_t>(game::slots::toWireSlot(inventoryId)));
-        cursorItemSlot() = {};
-        wowee::ui::frameXmlSetCursorItem(std::string());
+        // The move is sent; the cursor is empty.
+        wowee::ui::frameXmlPutCursorDown();
         lua_pushboolean(L, 1);
         return 1;
     }
@@ -3331,8 +3331,8 @@ static int lua_PutItemInBag(lua_State* L) {
         gh->swapContainerItems(srcBag, srcSlot,
                                static_cast<uint8_t>(container),
                                static_cast<uint8_t>(i));
-        cursorItemSlot() = {};
-        wowee::ui::frameXmlSetCursorItem(std::string());
+        // The move is sent; the cursor is empty.
+        wowee::ui::frameXmlPutCursorDown();
         lua_pushboolean(L, 1);
         return 1;
     }
@@ -3354,8 +3354,8 @@ static int lua_PutItemInBackpack(lua_State* L) {
     if (free >= 0) {
         gh->swapContainerItems(srcBag, srcSlot, 0xFF,
                                static_cast<uint8_t>(game::slots::backpackWireSlot(free)));
-        cursorItemSlot() = {};
-        wowee::ui::frameXmlSetCursorItem(std::string());
+        // The move is sent; the cursor is empty.
+        wowee::ui::frameXmlPutCursorDown();
     }
     lua_pushboolean(L, 1);
     return 1;

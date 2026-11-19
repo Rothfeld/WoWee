@@ -144,13 +144,15 @@ std::atomic<bool> gMouseOwned{false};
 } // namespace
 
 namespace {
-/// Main thread only: the Lua bindings that set it and the renderer that reads
-/// it both run there.
-std::string gCursorItem;
+/// Main thread only: the Lua bindings that register it and the renderer that
+/// asks both run there.
+std::function<std::string()> gCursorPicture;
 } // namespace
 
-void frameXmlSetCursorItem(const std::string& iconPath) { gCursorItem = iconPath; }
-const std::string& frameXmlCursorItem() { return gCursorItem; }
+void frameXmlSetCursorPicture(std::function<std::string()> picture) {
+    gCursorPicture = std::move(picture);
+}
+std::string frameXmlCursorItem() { return gCursorPicture ? gCursorPicture() : std::string(); }
 
 namespace {
 std::function<bool(uint8_t&, uint8_t&)> gCursorHeldSlot;

@@ -140,6 +140,9 @@ public:
 private:
     void selectCursorTexture(VkDescriptorSet texture);
     VkDescriptorSet cursorTexture_ = VK_NULL_HANDLE;
+    /// The icon of what FrameXML's cursor holds, drawn under cursorTexture_
+    /// (then Interface\Cursor\Item.blp) for this frame only.
+    VkDescriptorSet heldIconTexture_ = VK_NULL_HANDLE;
     void applyCameraControlSettings();
     /// Say in the chat why a recording stopped by itself, if one did.
     void reportRecordingFailure();

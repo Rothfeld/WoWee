@@ -339,33 +339,37 @@ static int lua_PickupPetAction(lua_State* L) { (void)L; return 0; }
 /// of them used to clear only part of what a pickup sets.
 static void clearCursorItem(lua_State* L);
 
+/// Whether holding this shows the action bars' empty slots. Money is the one
+/// thing on the cursor that does not: 2.4.3 fires no ACTIONBAR_SHOWGRID for
+/// PickupPlayerMoney and none of the grid's buttons would take it.
+static bool showsActionGrid(CursorType type) {
+    return type != CursorType::NONE && type != CursorType::MONEY;
+}
+
 static void setCursorType(lua_State* L, CursorType type) {
     if (s_cursorType == type) return;
     // Putting anything down forgets the guild bank split. It rides on the
     // cursor between the pickup and the drop, and a leftover would be applied
     // to the next withdrawal - a stack the player never asked to divide.
     if (type != CursorType::GUILDBANK) s_cursorSplit = 0;
-    const bool wasCarrying = (s_cursorType != CursorType::NONE);
-    const bool nowCarrying = (type != CursorType::NONE);
+    const bool wasGrid = showsActionGrid(s_cursorType);
+    const bool nowGrid = showsActionGrid(type);
     s_cursorType = type;
     lua_getfield(L, LUA_REGISTRYINDEX, "wowee_lua_engine");
     auto* engine = static_cast<LuaEngine*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     if (!engine) return;
-    engine->fireEvent("CURSOR_UPDATE", {});
     // Picking something up shows the empty slots of the action bars, so there
     // is somewhere visible to drop it; putting it down hides them again. Every
-    // action button registers for both and neither was ever fired, so dragging
-    // a spell towards the bar showed no targets at all - the bar looked as
-    // though it would not take it.
+    // action button registers for both, and both are fired on the change
+    // rather than on every set: this function is called with the same type
+    // repeatedly and the grid would flicker.
     //
-    // Fired on the change rather than on every set: this function is called
-    // with the same type repeatedly and the grid would flicker.
-    if (nowCarrying && !wasCarrying) {
-        engine->fireEvent("ACTIONBAR_SHOWGRID", {});
-    } else if (wasCarrying && !nowCarrying) {
-        engine->fireEvent("ACTIONBAR_HIDEGRID", {});
-    }
+    // In 2.4.3's order: a pickup says CURSOR_UPDATE and then
+    // ACTIONBAR_SHOWGRID, a put-down ACTIONBAR_HIDEGRID and then CURSOR_UPDATE.
+    if (wasGrid && !nowGrid) engine->fireEvent("ACTIONBAR_HIDEGRID", {});
+    engine->fireEvent("CURSOR_UPDATE", {});
+    if (nowGrid && !wasGrid) engine->fireEvent("ACTIONBAR_SHOWGRID", {});
 }
 
 // Bonus bar five while the player possesses a unit: action slots 121-130 are
@@ -813,25 +817,22 @@ static int lua_UseAction(lua_State* L) {
 // Tracks what the player is "holding" on the cursor (spell, item, action).
 
 
-static int lua_ClearCursor(lua_State* L) {
-    // Everything a pickup set, including the icon drawn on the pointer.
-    //
-    // This cleared the type, the id, the slot and the bag and left the icon,
-    // which is a separate piece of state that only clearCursorItem touches. So
-    // cancelling a pickup - Escape, a right-click, a click on nothing, all of
-    // which reach this - put the item back and left its picture stuck to the
-    // cursor for the rest of the session.
-    //
-    // An item goes back unlocked, and 2.4.3 says so with ITEM_LOCK_CHANGED for
-    // the slot it came from. Without it the bag button stayed greyed after a
-    // cancelled drag - an item the auction sell slot had refused, for one.
-    // Announced after the cursor is down, because the lock is read from the
-    // cursor here and a redraw any earlier would draw it locked again.
+/// Put whatever the cursor holds back where it came from: ClearCursor, a
+/// right-click anywhere, and a pickup that displaces what was held.
+///
+/// An item goes back unlocked, and 2.4.3 says so with ITEM_LOCK_CHANGED for the
+/// slot it came from, ahead of ACTIONBAR_HIDEGRID and CURSOR_UPDATE. Without it
+/// the bag button stayed greyed after a cancelled drag - an item the auction
+/// sell slot had refused, for one. An action (a spell, a macro, an item
+/// reference off a bar) has nowhere to go back to and is simply dropped.
+static void returnCursor(lua_State* L) {
     const bool carriedItem = s_cursorType == CursorType::ITEM &&
                              game::slots::cursorSourceIsInventory(s_cursorBag);
     const auto held = cursorItemSlot();
-    clearCursorItem(L);
     if (carriedItem) {
+        // The slot's lock is read from this record, so it goes first: a
+        // redraw for the event below must already see the item as back.
+        cursorItemSlot() = {};
         if (auto* gh = getGameHandler(L)) {
             if (held.equipped) {
                 gh->fireAddonEvent("ITEM_LOCK_CHANGED", {std::to_string(held.slot)});
@@ -841,7 +842,23 @@ static int lua_ClearCursor(lua_State* L) {
             }
         }
     }
+    clearCursorItem(L);
+}
+
+static int lua_ClearCursor(lua_State* L) {
+    // 2.4.3 announces CURSOR_UPDATE for a ClearCursor with nothing held too.
+    if (s_cursorType == CursorType::NONE) {
+        if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("CURSOR_UPDATE", {});
+        return 0;
+    }
+    returnCursor(L);
     return 0;
+}
+
+bool returnHeldCursor(lua_State* L) {
+    if (s_cursorType == CursorType::NONE) return false;
+    returnCursor(L);
+    return true;
 }
 
 static int lua_GetCursorInfo(lua_State* L) {
@@ -894,8 +911,23 @@ static int lua_CursorHasItem(lua_State* L) {
     // A guild bank item counts. The bank frame's own OnClick tests this before
     // deciding a click is a drop, so answering no for one would have left the
     // item stuck on the cursor with nowhere that would take it.
-    lua_pushboolean(L, (s_cursorType == CursorType::ITEM ||
+    //
+    // An item reference lifted off an action bar does not: 2.4.3 answers
+    // GetCursorInfo "item" for it and CursorHasItem nil, because the cursor
+    // holds an action, not the item.
+    lua_pushboolean(L, ((s_cursorType == CursorType::ITEM &&
+                         game::slots::cursorSourceIsInventory(s_cursorBag)) ||
                         s_cursorType == CursorType::GUILDBANK) ? 1 : 0);
+    return 1;
+}
+
+static int lua_CursorHasMacro(lua_State* L) {
+    lua_pushboolean(L, s_cursorType == CursorType::MACRO ? 1 : 0);
+    return 1;
+}
+
+static int lua_CursorHasMoney(lua_State* L) {
+    lua_pushboolean(L, s_cursorType == CursorType::MONEY ? 1 : 0);
     return 1;
 }
 
@@ -904,20 +936,67 @@ static int lua_CursorHasSpell(lua_State* L) {
     return 1;
 }
 
-// PickupAction(slot) - picks up an action from the action bar
+/// What an action bar slot holds, as the cursor would hold it.
+static CursorType cursorTypeForAction(game::ActionBarSlot::Type type) {
+    switch (type) {
+        case game::ActionBarSlot::SPELL: return CursorType::SPELL;
+        case game::ActionBarSlot::ITEM:  return CursorType::ITEM;
+        case game::ActionBarSlot::MACRO: return CursorType::MACRO;
+        default: break;
+    }
+    assert(false && "an empty action slot has no cursor type");
+    return CursorType::NONE;
+}
+
+/// Put an action on the cursor: a spell, a macro, or an item reference off a
+/// bar. The fields are written before setCursorType announces the change, so
+/// CURSOR_UPDATE and ACTIONBAR_SHOWGRID handlers read the new cursor.
+///
+/// sourceSlot is the action slot it came off, or zero for the spellbook, the
+/// macro frame or a companion. An item off a bar is a reference, not the item:
+/// kCursorNoSource says it has no inventory slot behind it, so it is neither
+/// moved nor destroyed when dropped (see cursorSourceIsInventory).
+static void holdAction(lua_State* L, CursorType type, uint32_t id, int sourceSlot) {
+    assert(type == CursorType::SPELL || type == CursorType::ITEM || type == CursorType::MACRO);
+    assert(s_cursorType == CursorType::NONE);
+    s_cursorId = id;
+    s_cursorSlot = sourceSlot;
+    s_cursorBag = game::slots::kCursorNoSource;
+    cursorItemSlot() = {};
+    setCursorType(L, type);
+}
+
+/// Pick up from the spellbook, the macro frame or the companion list.
+///
+/// Whatever was held goes back first, as a ClearCursor would put it - an item
+/// to its bag with ITEM_LOCK_CHANGED - and picking up the very thing already
+/// held puts it down instead: 2.4.3 empties the cursor for PickupSpell of the
+/// spell it is carrying.
+static void pickUpAction(lua_State* L, CursorType type, uint32_t id) {
+    const bool same = s_cursorType == type && s_cursorId == id;
+    returnHeldCursor(L);
+    if (same) return;
+    holdAction(L, type, id, 0);
+}
+
 /// PickupAction(slot) - take what is in a slot onto the cursor, and put down
-/// what the cursor was already holding.
+/// what the cursor was already holding. PlaceAction, and a click on an action
+/// button while carrying something (UseAction), are the same swap.
 ///
-/// A swap, which is what the real client does and what the interface expects:
-/// ActionButton_OnClick calls this for a click on a button whether or not
-/// anything is held.
-///
-/// The slot used to be left exactly as it was. Picking an action up put a copy
-/// on the cursor and the button went on showing it, so dragging something off
-/// the bar looked like it had done nothing at all - and because the slot never
-/// changed, no ACTIONBAR_SLOT_CHANGED was fired and nothing redrew. The empty
-/// half only understood a spell, so an item or a macro dropped on a free slot
-/// vanished.
+/// Measured on build 8606:
+///  - empty cursor, occupied slot: the action comes off (CURSOR_UPDATE,
+///    ACTIONBAR_SHOWGRID, ACTIONBAR_SLOT_CHANGED).
+///  - carrying, empty slot: it goes on; an item out of a bag goes back to its
+///    bag (ITEM_LOCK_CHANGED), then ACTIONBAR_HIDEGRID, CURSOR_UPDATE,
+///    ACTIONBAR_SLOT_CHANGED.
+///  - carrying, occupied slot: the same put-down, then the old action comes
+///    onto the cursor (ACTIONBAR_SHOWGRID, plus CURSOR_UPDATE for an item),
+///    then ACTIONBAR_SLOT_CHANGED. The old action is held exactly as one lifted
+///    off the bar: an item reference answers CursorHasItem nil.
+///  - carrying the action the slot already holds: the cursor empties
+///    (ACTIONBAR_HIDEGRID, CURSOR_UPDATE) and the slot is left alone.
+///  - money, or an item that is neither equippable nor usable (Blinding
+///    Powder, Okra, the Guild Charter): nothing happens and nothing is said.
 static int lua_PickupAction(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
@@ -931,21 +1010,15 @@ static int lua_PickupAction(lua_State* L) {
     const bool hadAction = !existing.isEmpty();
     const CursorType held = s_cursorType;
     const uint32_t heldId = s_cursorId;
-
-    const auto typeForCursor = [](CursorType c) {
-        return c == CursorType::SPELL ? game::ActionBarSlot::SPELL
-             : c == CursorType::ITEM  ? game::ActionBarSlot::ITEM
-                                      : game::ActionBarSlot::MACRO;
-    };
     const bool holding = heldId != 0 &&
                          (held == CursorType::SPELL || held == CursorType::ITEM ||
                           held == CursorType::MACRO);
+    if (!holding && held != CursorType::NONE) return 0;   // money, a vendor item...
 
     // Native 2.4.3 takes an item only if it can be equipped or has a use
     // spell: Mining Pick, Rough Arrow and Linen Bandage go on, Blinding
     // Powder, Flash Powder and the Guild Charter (no InventoryType, no
-    // on-use spell) do not. A refused drop changes nothing - no event, no
-    // error, the item stays on the cursor.
+    // on-use spell) do not.
     if (holding && held == CursorType::ITEM) {
         const auto* info = gh->getItemInfo(heldId);
         if (!info || !info->valid) {
@@ -958,55 +1031,22 @@ static int lua_PickupAction(lua_State* L) {
         });
         if (info->inventoryType == 0 && !useSpell) return 0;
     }
+    if (!holding && !hadAction) return 0;
 
-    if (holding) {
-        gh->setActionBarSlot(slot - 1, typeForCursor(held), heldId);
-    } else if (hadAction) {
-        // Nothing held, so the slot empties. This is the fire that redraws the
-        // button: setActionBarSlot raises ACTIONBAR_SLOT_CHANGED for it.
-        gh->setActionBarSlot(slot - 1, game::ActionBarSlot::EMPTY, 0);
+    const auto heldAsAction = held == CursorType::SPELL ? game::ActionBarSlot::SPELL
+                            : held == CursorType::ITEM  ? game::ActionBarSlot::ITEM
+                                                        : game::ActionBarSlot::MACRO;
+    if (holding && hadAction && existing.type == heldAsAction && existing.id == heldId) {
+        returnHeldCursor(L);
+        return 0;
     }
 
-    if (hadAction) {
-        // What was there goes to the cursor, whether this was a swap or a
-        // plain pick-up. existing.type is never EMPTY here (hadAction), so
-        // this covers every case - CursorType::ACTION was a dead end lua_
-        // PlaceAction had no branch for, and picking a macro up off the bar
-        // fell to it by default: the macro left its slot, rode the cursor as
-        // an unplaceable "action", and vanished on drop instead of landing
-        // anywhere.
-        setCursorType(L, (existing.type == game::ActionBarSlot::SPELL) ? CursorType::SPELL :
-                       (existing.type == game::ActionBarSlot::ITEM)  ? CursorType::ITEM :
-                       CursorType::MACRO);
-        s_cursorId = existing.id;
-        s_cursorSlot = slot;
-        // Which button, not which slot of which bag - a fourth numbering, and
-        // the reason the source has to say so. An item action carries a real
-        // itemId, so without this the cursor was indistinguishable from one
-        // lifted off the paperdoll and the button number was spent as an
-        // equipment slot. See kCursorNoSource.
-        s_cursorBag = game::slots::kCursorNoSource;
-        // The shared cursor as well, which is a separate record of the same
-        // thing and would otherwise still be naming wherever the *previous*
-        // pickup came from: clicking a button while carrying a bag item swaps
-        // the two, and the bag slot it left behind stayed on this cursor as
-        // the source PutItemInBag would have moved from.
-        cursorItemSlot() = {};
-        // And on the pointer, or the drag reads as not having started.
-        if (existing.type == game::ActionBarSlot::SPELL) {
-            wowee::ui::frameXmlSetCursorItem(gh->getSpellIconPath(existing.id));
-        } else if (existing.type == game::ActionBarSlot::ITEM) {
-            const auto* info = gh->getItemInfo(existing.id);
-            wowee::ui::frameXmlSetCursorItem(
-                info ? gh->getItemIconPath(info->displayInfoId) : std::string());
-        } else {
-            std::string icon = gh->getMacroIcon(existing.id);
-            if (icon.empty()) icon = "Interface\\Icons\\INV_Misc_QuestionMark";
-            wowee::ui::frameXmlSetCursorItem(icon);
-        }
-    } else {
-        clearCursorItem(L);
-    }
+    if (holding) returnHeldCursor(L);
+    if (hadAction) holdAction(L, cursorTypeForAction(existing.type), existing.id, slot);
+    // Last, as 2.4.3 announces it: setActionBarSlot raises
+    // ACTIONBAR_SLOT_CHANGED, and its handlers see the cursor already settled.
+    gh->setActionBarSlot(slot - 1, holding ? heldAsAction : game::ActionBarSlot::EMPTY,
+                         holding ? heldId : 0);
     return 0;
 }
 
@@ -1014,19 +1054,10 @@ static int lua_PickupAction(lua_State* L) {
 //
 // A swap, as the real one is: whatever the slot held goes onto the cursor, so
 // a bar can be rearranged by dropping one action on another and then placing
-// the one that came off. This wrote the new action over the old and cleared
-// the cursor, so the action underneath was simply gone - and it is PlaceAction
-// an action button's OnReceiveDrag calls, so every drop onto an occupied
-// button lost what was there.
-//
-// PickupAction while holding something is exactly that swap, so this is it.
-// With nothing placeable held it does nothing, and leaves the cursor alone.
+// the one that came off. PickupAction while holding something is exactly that
+// swap, so this is it. With nothing held it does nothing.
 static int lua_PlaceAction(lua_State* L) {
-    const bool holding = s_cursorId != 0 &&
-                         (s_cursorType == CursorType::SPELL ||
-                          s_cursorType == CursorType::ITEM ||
-                          s_cursorType == CursorType::MACRO);
-    if (!holding) return 0;
+    if (s_cursorType == CursorType::NONE) return 0;
     return lua_PickupAction(L);
 }
 
@@ -1039,12 +1070,7 @@ static int lua_PickupSpell(lua_State* L) {
     // spells sat at that index.
     const uint32_t picked = spellIdForCall(L, gh);
     if (picked == 0) return 0;
-    setCursorType(L, CursorType::SPELL);
-    s_cursorId = picked;
-    // On the pointer as well as in the state, the way every other pickup here
-    // does it. Dragging a spell out of the book carried nothing visible, so
-    // the drag read as not having started.
-    wowee::ui::frameXmlSetCursorItem(gh->getSpellIconPath(s_cursorId));
+    pickUpAction(L, CursorType::SPELL, picked);
     return 0;
 }
 
@@ -1111,9 +1137,6 @@ static int lua_PickupGuildBankItem(lua_State* L) {
         s_cursorBag = tab;
         s_cursorSlot = slot;
         s_cursorSplit = 0;   // the whole stack, unless SplitGuildBankItem says otherwise
-        const auto* info = gh->getItemInfo(it.itemEntry);
-        wowee::ui::frameXmlSetCursorItem(
-            info ? gh->getItemIconPath(info->displayInfoId) : std::string());
         return 0;
     }
     return 0;
@@ -1155,9 +1178,7 @@ static int lua_PickupCompanion(lua_State* L) {
     if (index > static_cast<int>(list.size())) return 0;
     const uint32_t spellId = list[static_cast<size_t>(index) - 1].spellId;
     if (spellId == 0) return 0;
-    setCursorType(L, CursorType::SPELL);
-    s_cursorId = spellId;
-    wowee::ui::frameXmlSetCursorItem(gh->getSpellIconPath(spellId));
+    pickUpAction(L, CursorType::SPELL, spellId);
     return 0;
 }
 
@@ -1201,16 +1222,56 @@ static bool cursorWireSlot(uint8_t& bag, uint8_t& slot) {
     return true;
 }
 
-/// Put the cursor down.
+/// Put the cursor down. Everything is cleared before the events go out, so a
+/// CURSOR_UPDATE handler asking GetCursorInfo hears the empty cursor.
 static void clearCursorItem(lua_State* L) {
     s_cursorMoney = 0;
     s_cursorSplit = 0;
-    setCursorType(L, CursorType::NONE);
     s_cursorId = 0;
     s_cursorSlot = 0;
     s_cursorBag = -1;
-    wowee::ui::frameXmlSetCursorItem(std::string());
     cursorItemSlot() = {};
+    setCursorType(L, CursorType::NONE);
+}
+
+/// The picture on the pointer: the icon of whatever the cursor holds, or empty.
+///
+/// Worked out from the cursor itself every time it is drawn, never stored
+/// beside it. A stored copy was set by each pickup separately and cleared by
+/// each put-down separately, and every place that changed one without the other
+/// left a pointer showing something other than what was held - a picture with
+/// nothing held behind it, or something held and nothing shown (money).
+static std::string cursorPicture(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh || s_cursorType == CursorType::NONE) return {};
+    const auto itemIcon = [gh](uint32_t itemId) -> std::string {
+        if (const auto* info = gh->getItemInfo(itemId); info && info->displayInfoId)
+            return gh->getItemIconPath(info->displayInfoId);
+        gh->ensureItemInfo(itemId);
+        return {};
+    };
+    switch (s_cursorType) {
+        case CursorType::SPELL:
+            return gh->getSpellIconPath(s_cursorId);
+        case CursorType::ITEM:
+        case CursorType::GUILDBANK:
+            return itemIcon(s_cursorId);
+        case CursorType::MACRO: {
+            const std::string& icon = gh->getMacroIcon(s_cursorId);
+            return icon.empty() ? std::string("Interface\\Icons\\INV_Misc_QuestionMark") : icon;
+        }
+        case CursorType::MONEY:
+            return coinIconForAmount(static_cast<double>(s_cursorMoney));
+        case CursorType::MERCHANT: {
+            const auto& items = gh->getVendorItems().items;
+            const int index = static_cast<int>(s_cursorId);
+            if (index < 1 || index > static_cast<int>(items.size())) return {};
+            return gh->getItemIconPath(items[static_cast<size_t>(index) - 1].displayInfoId);
+        }
+        case CursorType::NONE:
+            break;
+    }
+    return {};
 }
 
 static bool droppedItemFromNowhere(lua_State* L) {
@@ -1239,15 +1300,6 @@ void pickupMerchantItem(lua_State* L, int index) {
     s_cursorId = static_cast<uint32_t>(index);
     s_cursorSlot = 0;
     s_cursorBag = -1;
-    // Show it on the pointer, as a bag pickup does. Without this the cursor
-    // holds something invisible and the click reads as having done nothing.
-    if (auto* gh = getGameHandler(L)) {
-        const auto& items = gh->getVendorItems().items;
-        if (index <= static_cast<int>(items.size())) {
-            ui::frameXmlSetCursorItem(
-                gh->getItemIconPath(items[index - 1].displayInfoId));
-        }
-    }
 }
 
 /// Sell whatever the cursor is holding, and put it down either way.
@@ -1316,14 +1368,6 @@ static void pickupFromContainerSlot(lua_State* L, game::GameHandler* gh,
         s_cursorId = itemSlot->item.itemId;
         s_cursorBag = bag;
         s_cursorSlot = slot;
-        uint32_t displayId = itemSlot->item.displayInfoId;
-        if (displayId == 0) {
-            if (const auto* info = gh->getItemInfo(itemSlot->item.itemId)) {
-                displayId = info->displayInfoId;
-            }
-        }
-        wowee::ui::frameXmlSetCursorItem(
-            displayId ? gh->getItemIconPath(displayId) : std::string());
         cursorItemSlot() = {bag, slot, false};
         // The slot draws greyed while its item is on the cursor, which is how a
         // bag shows that something has been picked up out of it.
@@ -1706,18 +1750,7 @@ static int lua_PickupBagFromSlot(lua_State* L) {
     // held: PutItemInBag returned false, so BagSlotButton_OnClick fell through
     // to ToggleBag and the bag opened instead of moving.
     cursorItemSlot() = {-1, slot, true};
-    // Same omission as the spell above: a bag dragged off its slot was held
-    // invisibly. The display id falls back to the item's own, which is where
-    // the equipped-item pickup below reads it from when the slot has none.
-    uint32_t displayId = held.item.displayInfoId;
-    if (displayId == 0) {
-        if (const auto* info = gh->getItemInfo(held.item.itemId)) {
-            displayId = info->displayInfoId;
-        }
-    }
-    wowee::ui::frameXmlSetCursorItem(
-        displayId ? gh->getItemIconPath(displayId) : std::string());
-    // And say the slot is locked, as the equipped pickup below does.
+    // Say the slot is locked, as the equipped pickup below does.
     // IsInventoryItemLocked already answers true for it - cursorEquipSlot
     // reads the same s_cursorSlot this just set - but nothing asks again
     // without this, so the square greyed only on the next unrelated redraw.
@@ -1768,19 +1801,10 @@ static int lua_PickupInventoryItem(lua_State* L) {
         s_cursorId = eq.item.itemId;
         s_cursorSlot = slot;
         s_cursorBag = -1;
-        // The same three things a container pickup does, which this had none
-        // of: remember where it came from, put its icon on the pointer, and say
+        // What a container pickup does: remember where it came from and say
         // the slot is locked. Without them dragging off the character sheet
-        // carried nothing visible and left the slot looking untouched.
+        // left the slot looking untouched.
         cursorItemSlot() = {-1, slot, true};
-        uint32_t displayId = eq.item.displayInfoId;
-        if (displayId == 0) {
-            if (const auto* info = gh->getItemInfo(eq.item.itemId)) {
-                displayId = info->displayInfoId;
-            }
-        }
-        wowee::ui::frameXmlSetCursorItem(
-            displayId ? gh->getItemIconPath(displayId) : std::string());
         // One argument, not two: the paperdoll's handler is
         // `if ( not arg2 and arg1 == self:GetID() )`, so an equipment lock is
         // the slot alone. A second argument makes that test fail and the square
@@ -2486,6 +2510,8 @@ void registerActionLuaAPI(lua_State* L) {
                 {"PickupPetAction",     lua_PickupPetAction},
                 {"CursorHasItem",       lua_CursorHasItem},
                 {"CursorHasSpell",      lua_CursorHasSpell},
+                {"CursorHasMacro",      lua_CursorHasMacro},
+                {"CursorHasMoney",      lua_CursorHasMoney},
                 {"DeleteCursorItem",    lua_DeleteCursorItem},
                 {"AutoEquipCursorItem", lua_AutoEquipCursorItem},
                 {"EquipCursorItem",     lua_EquipCursorItem},
@@ -2658,11 +2684,7 @@ void registerActionLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
             if (!gh || id == 0 || !gh->hasMacro(id)) return 0;
-            setCursorType(L, CursorType::MACRO);
-            s_cursorId = id;
-            std::string icon = gh->getMacroIcon(id);
-            if (icon.empty()) icon = "Interface\\Icons\\INV_Misc_QuestionMark";
-            wowee::ui::frameXmlSetCursorItem(icon);
+            pickUpAction(L, CursorType::MACRO, id);
             return 0;
         }},
                 {"GetTradePlayerItemInfo", lua_GetTradePlayerItemInfo},
@@ -3189,6 +3211,7 @@ void registerActionLuaAPI(lua_State* L) {
     ui::frameXmlSetCursorBridge(
         [](uint8_t& bag, uint8_t& slot) { return cursorWireSlot(bag, slot); },
         [L]() { clearCursorItem(L); });
+    ui::frameXmlSetCursorPicture([L]() { return cursorPicture(L); });
 }
 
 } // namespace wowee::addons

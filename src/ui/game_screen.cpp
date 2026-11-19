@@ -1062,15 +1062,20 @@ void GameScreen::selectCursorTexture(VkDescriptorSet tex) {
 
 void GameScreen::renderCursor() {
     const auto tex = cursorTexture_;
+    const auto held = heldIconTexture_;
     cursorTexture_ = VK_NULL_HANDLE;
+    heldIconTexture_ = VK_NULL_HANDLE;
     if (!tex) return;
     SDL_Window* focused = SDL_GetMouseFocus();
     if (!focused || SDL_GetWindowRelativeMouseMode(focused) ||
         !ImGui::IsMousePosValid()) return;
     const ImVec2 at = ImGui::GetIO().MousePos;
     constexpr float kSize = 32.0f;
-    ImGui::GetForegroundDrawList()->AddImage(
-        (ImTextureID)(uintptr_t)tex, at, ImVec2(at.x + kSize, at.y + kSize));
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    if (held) {
+        fg->AddImage((ImTextureID)(uintptr_t)held, at, ImVec2(at.x + kSize, at.y + kSize));
+    }
+    fg->AddImage((ImTextureID)(uintptr_t)tex, at, ImVec2(at.x + kSize, at.y + kSize));
 }
 
 bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
@@ -1581,11 +1586,28 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     // was drawn. ImGui otherwise restores its desktop arrow each frame.
     // Without a window there is no pointer to dress: the headless GameScreen
     // in test_input_integration has neither window nor assets.
-    if (services_.window && ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
-        const auto texture = cursorTexture(services_.assetManager, services_.window,
-                                           "Interface\\Cursor\\Point.blp");
-        if (!texture) throw std::runtime_error("Missing default WoW cursor texture");
-        selectCursorTexture(texture);
+    //
+    // Something held on FrameXML's cursor is the pointer instead, wherever it
+    // is - over the world, a unit, a frame, an action button, a valid drop or
+    // not: build 8606 draws the held icon, 32 pixels with its top left at the
+    // hotspot, and Interface\Cursor\Item.blp (the gold corner) over it, and
+    // no gauntlet or service cursor. Spells, items, macros, an action swapped
+    // off a bar and money (its coin icon) all look the same way.
+    if (services_.window) {
+        if (std::string held = frameXmlCursorItem(); !held.empty()) {
+            if (!held.ends_with(".blp") && !held.ends_with(".BLP")) held += ".blp";
+            const auto corner = cursorTexture(services_.assetManager, services_.window,
+                                              "Interface\\Cursor\\Item.blp");
+            if (!corner) throw std::runtime_error("Missing WoW held-item cursor texture");
+            selectCursorTexture(corner);
+            heldIconTexture_ = cursorTexture(services_.assetManager, services_.window,
+                                             held.c_str());
+        } else if (ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
+            const auto texture = cursorTexture(services_.assetManager, services_.window,
+                                               "Interface\\Cursor\\Point.blp");
+            if (!texture) throw std::runtime_error("Missing default WoW cursor texture");
+            selectCursorTexture(texture);
+        }
     }
 
     // Left-click targeting: only on mouse-up if the mouse didn't drag (camera rotate)
