@@ -337,6 +337,10 @@ public:
     /// other until it takes off again. Flight physics, the flight animations
     /// and the FLYING movement flag all follow this rather than permission.
     [[nodiscard]] bool isFlightAirborne() const { return flyingActive_ && flightAirborne_; }
+    /// Arrive airborne where flight is allowed: native, with .gm fly on,
+    /// hangs at a .tele destination in mid-air even when it left from the
+    /// ground. Touching ground there lands as usual.
+    void arriveAirborneIfFlying() { flightAirborne_ = flyingActive_; }
     /// The pitch the player is flying at, in radians: the camera's while it
     /// steers, and held when it does not. What the mount tilts to and what
     /// the server is told.

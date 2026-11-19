@@ -2265,7 +2265,7 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
         return;
     }
 
-    packet.readUInt32();  // moveFlags
+    const uint32_t serverMoveFlags = packet.readUInt32();
     if (!taNoFlags2)
         packet.readUInt16();  // moveFlags2 (WotLK only)
     if (taByteFlags2)
@@ -2278,6 +2278,7 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
 
     LOG_WARNING("MSG_MOVE_TELEPORT_ACK: guid=0x", std::hex, guid, std::dec,
                 " counter=", counter,
+                " flags=0x", std::hex, serverMoveFlags, std::dec,
                 " pos=(", serverX, ", ", serverY, ", ", serverZ, ")",
                 " currentPos=(", movementInfo.x, ", ", movementInfo.y, ", ", movementInfo.z, ")");
 
@@ -2337,7 +2338,22 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
         movementInfo.y = canonical.y;
         movementInfo.z = canonical.z;
         movementInfo.orientation = core::coords::serverToCanonicalYaw(orientation);
-        movementInfo.flags = 0;
+        // A teleport moves the player; it revokes nothing the server granted
+        // by force packets. Native keeps flying after .tele with .gm fly on
+        // (it stays airborne at the destination), and CMaNGOS's own copy of
+        // the flags in this packet is 0 there, so the states are the
+        // client's to keep. Zeroing every flag dropped flight on each
+        // same-map teleport and the character fell. Motion bits are cleared:
+        // the client sends them again for keys still held.
+        constexpr uint32_t kGrantedStates =
+            static_cast<uint32_t>(MovementFlags::CAN_FLY) |
+            static_cast<uint32_t>(MovementFlags::FLYING) |
+            static_cast<uint32_t>(MovementFlags::LEVITATING) |
+            static_cast<uint32_t>(MovementFlags::ROOT) |
+            static_cast<uint32_t>(MovementFlags::WATER_WALK) |
+            static_cast<uint32_t>(MovementFlags::FEATHER_FALL) |
+            static_cast<uint32_t>(MovementFlags::HOVER);
+        movementInfo.flags &= kGrantedStates;
     }
 
     // Clear cast bar on teleport - SpellHandler owns the casting_ flag

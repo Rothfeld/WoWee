@@ -250,6 +250,7 @@ void WorldEntryCallbackHandler::setupCallbacks() {
                 // Reset prior floor/fall state as well as the follow position;
                 // otherwise void recovery can undo an underground teleport.
                 cameraController->teleportTo(renderPos);
+                cameraController->arriveAirborneIfFlying();
                 cameraController->setFacingYaw(facing);
             }
             if (renderer_.getCameraController()) {
