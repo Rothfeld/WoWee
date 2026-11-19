@@ -1302,14 +1302,23 @@ bool formAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
 
 // UNIT_FIELD_AURASTATE keeps state n in bit n-1. Riposte needs state 1 (the
 // parry window); Stealth and Vanish refuse state 12 (Faerie Fire).
+// TargetAuraState is the same test on the current target: Execute (state 2,
+// below 20% health) is unusable in native 2.4.3 with no target or a healthy
+// one, and lights up as the target drops under a fifth.
 bool auraStateAllows(GameHandler& owner, const GameHandler::SpellNameEntry& entry) {
+    const auto statesOf = [&owner](uint64_t guid) {
+        const auto unit = guid ? owner.getEntityManager().getEntity(guid) : nullptr;
+        return unit && unit->isUnit() ? static_cast<const Unit*>(unit.get())->getAuraState() : 0u;
+    };
+    const auto has = [](uint32_t states, uint32_t state) {
+        return state != 0 && (states & (1u << (state - 1)));
+    };
+    if (entry.targetAuraState != 0 && !has(statesOf(owner.getTargetGuid()), entry.targetAuraState))
+        return false;
     if (entry.casterAuraState == 0 && entry.casterAuraStateNot == 0) return true;
-    const auto player = owner.getEntityManager().getEntity(owner.getPlayerGuid());
-    const uint32_t states = player && player->isUnit()
-        ? static_cast<const Unit*>(player.get())->getAuraState() : 0u;
-    const auto has = [states](uint32_t state) { return state != 0 && (states & (1u << (state - 1))); };
-    if (entry.casterAuraState != 0 && !has(entry.casterAuraState)) return false;
-    return !has(entry.casterAuraStateNot);
+    const uint32_t states = statesOf(owner.getPlayerGuid());
+    if (entry.casterAuraState != 0 && !has(states, entry.casterAuraState)) return false;
+    return !has(states, entry.casterAuraStateNot);
 }
 
 // Totem0/1 items and TotemCategory0/1 kinds, from the cache. Undecided while
