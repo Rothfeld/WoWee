@@ -55,7 +55,6 @@ jobs:
           libglm-dev \
           libssl-dev \
           zlib1g-dev \
-          libfreetype-dev \
           libvulkan-dev \
           vulkan-tools \
           glslc \
@@ -166,7 +165,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        brew install cmake pkg-config sdl3 glm openssl@3 zlib freetype ffmpeg unicorn \
+        brew install cmake pkg-config sdl3 glm openssl@3 zlib ffmpeg unicorn \
           stormlib vulkan-loader vulkan-headers molten-vk shaderc
 
     - name: Configure

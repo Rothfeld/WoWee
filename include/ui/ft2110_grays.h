@@ -6,7 +6,7 @@
 // The 2.4.3 client draws interface glyphs with an unhinted FreeType of that
 // era. Today's FreeType (2.13) loads the same outlines, but its rasterizer
 // splits curves differently: inside a bowl ("O", "6", "e") coverage comes out
-// up to one 4-bit level higher. Outlines loaded by the system FreeType and
+// up to one 4-bit level higher. Outlines loaded by FreeType 2.13 and
 // rendered here are bit-identical to FreeType 2.1.10 (all 2728 glyphs of
 // FRIZQT__, ARIALN, SKURRI and MORPHEUS at 9..24 px).
 //

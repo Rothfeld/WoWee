@@ -44,7 +44,6 @@ jobs:
               libglm-dev \
             libssl-dev \
             zlib1g-dev \
-            libfreetype-dev \
             libvulkan-dev \
             vulkan-tools \
             glslc \
@@ -144,7 +143,6 @@ jobs:
               libglm-dev \
             libssl-dev \
             zlib1g-dev \
-            libfreetype-dev \
             libvulkan-dev \
             vulkan-tools \
             glslc \

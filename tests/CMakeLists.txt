@@ -1598,9 +1598,14 @@ register_test_target(test_native_text_metrics)
 # rasterizer, as the original 2.4.3 client draws glyphs.
 add_executable(test_native_glyph_raster
     test_native_glyph_raster.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/ui/native_glyph_face.cpp
 )
 target_include_directories(test_native_glyph_raster PRIVATE ${TEST_INCLUDE_DIRS})
-target_include_directories(test_native_glyph_raster SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_include_directories(test_native_glyph_raster SYSTEM PRIVATE
+    ${TEST_SYSTEM_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/extern/imgui
+)
 target_link_libraries(test_native_glyph_raster PRIVATE catch2_main wowee_ft2110_grays)
 add_test(NAME native_glyph_raster COMMAND test_native_glyph_raster)
 register_test_target(test_native_glyph_raster)

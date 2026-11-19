@@ -6,7 +6,8 @@
 // and MORPHEUS at 9..24 pixels (GlyphProbe addon, experiment
 // _experiments/20261119T112856Z.freetype_glyphs/ in the workspace):
 //
-//   outline      unhinted (FT_LOAD_NO_HINTING), em = the pixel height
+//   outline      unhinted TrueType outline, em = the pixel height, scaled
+//                with FreeType's fixed-point arithmetic (NativeGlyphFace)
 //   coverage     FreeType 2.1.10's gray rasterizer (ui/ft2110_grays.h)
 //   levels       4 bit: coverage >> 4, drawn as level * 17 alpha
 //   rows         only the first `pixel height` rows of a glyph are drawn
@@ -20,11 +21,63 @@
 // remaining coverage differences total 273 4-bit levels.
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <optional>
+#include <vector>
 
 struct ImFontLoader;
 
 namespace wowee::ui {
+
+/// One interface glyph as the loader draws it at an em size.
+struct NativeGlyphRaster {
+    int advance = 0;  ///< pen advance, whole pixels (kerning aside)
+    int left = 0;     ///< bitmap's left column from the pen
+    int top = 0;      ///< bitmap's top row from the line top
+    int width = 0;
+    int rows = 0;     ///< at most the pixel height
+    std::vector<unsigned char> coverage;  ///< width * rows, level * 17; empty for a space
+};
+
+/// A TrueType face's glyphs as 2.4.3 draws them. Outlines come from the glyf
+/// table unhinted and are scaled the way FreeType scales them without hinting:
+/// 16.16 scale = em pixels * 64 / unitsPerEm (rounded), every point
+/// multiplied by it (FT_MulFix rounding), the outline moved left by the scaled
+/// xMin - lsb, the advance the scaled phantom points' distance. Off-curve
+/// points stay off-curve; ui/ft2110_grays.h draws them.
+class NativeGlyphFace {
+public:
+    /// nullptr (logged) when `data` is no TrueType face with glyf outlines.
+    /// `data` must outlive the face.
+    static std::unique_ptr<NativeGlyphFace> open(const void* data, size_t size, int index);
+    ~NativeGlyphFace();
+
+    bool contains(uint32_t codepoint) const;
+    int ascender() const { return ascender_; }    ///< hhea, font units
+    int descender() const { return descender_; }  ///< hhea, font units, <= 0
+
+    /// Pen advance in whole pixels at em size `emPixels`; nullopt when the
+    /// face lacks the glyph or its outline is malformed (logged).
+    std::optional<int> advance(uint32_t codepoint, float emPixels) const;
+    /// The glyph's bitmap and placement at em size `emPixels`.
+    std::optional<NativeGlyphRaster> rasterize(uint32_t codepoint, float emPixels) const;
+
+private:
+    struct Stb;
+    struct Outline;
+    NativeGlyphFace() = default;
+    bool loadGlyph(int glyph, int32_t scale, int depth, Outline& out) const;
+    std::optional<Outline> loadOutline(uint32_t codepoint, float emPixels) const;
+
+    std::unique_ptr<Stb> stb_;
+    const unsigned char* data_ = nullptr;
+    size_t size_ = 0;
+    int unitsPerEm_ = 0;
+    int ascender_ = 0;
+    int descender_ = 0;
+};
 
 /// The ImGui font loader for interface faces (ImFontConfig::FontLoader).
 /// Sizes are em sizes: a face added at N draws its em square N pixels tall,

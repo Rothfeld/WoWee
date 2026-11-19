@@ -1,4 +1,4 @@
-/* Glue between the system FreeType's outlines and FreeType 2.1.10's gray
+/* Glue between the interface faces' outlines (ui/native_glyph_loader) and FreeType 2.1.10's gray
  * rasterizer (see include/ui/ft2110_grays.h). Compiled with _STANDALONE_ so
  * "ftimage.h" is the 2.1.10 one next to ftgrays.c, never the system's. */
 /* As ftgrays.c defines them for a standalone build. */

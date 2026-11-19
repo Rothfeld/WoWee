@@ -50,7 +50,7 @@ This project uses the following open-source libraries:
 | [miniaudio](https://miniaud.io/) | MIT/Unlicense | Audio playback |
 | [StormLib](https://github.com/ladislav-zezula/StormLib) | MIT | MPQ archive extraction (asset_extract tool) |
 | [Dear ImGui](https://github.com/ocornut/imgui) | MIT | Immediate mode GUI |
-| [FreeType](https://freetype.org/) | FreeType License (FTL) | Interface font outlines; 2.1.10's gray rasterizer is bundled in `third_party/freetype-2.1.10-grays` |
+| [FreeType](https://freetype.org/) 2.1.10 gray rasterizer (bundled in `third_party/freetype-2.1.10-grays`) | FreeType License (FTL) | Interface glyph coverage |
 | [Lua 5.1.5](https://www.lua.org/) | MIT | Macro and addon script execution |
 | [Catch2](https://github.com/catchorg/Catch2) (amalgamated) | BSL-1.0 | Test framework (test build only) |
 | [nlohmann/json](https://github.com/nlohmann/json) | MIT | JSON parsing (opcode tables, manifests) |

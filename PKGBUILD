@@ -13,7 +13,6 @@ depends=(
   'vulkan-icd-loader' # Vulkan runtime (GPU driver communication)
   'openssl'           # SRP6a auth protocol (key exchange + RC4 encryption)
   'zlib'              # Network packet decompression and Warden module inflate
-  'freetype2'         # Interface font outlines (2.4.3 glyph raster)
   'ffmpeg'            # Video playback (login cinematics)
   'unicorn'           # Warden anti-cheat x86 emulation (cross-platform, no Wine)
   'libx11'            # X11 windowing support

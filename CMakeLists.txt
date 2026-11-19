@@ -404,10 +404,6 @@ endif()
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
-# FreeType loads the interface faces' outlines for the 2.4.3 glyph raster
-# (src/ui/native_glyph_loader.cpp). Needs the development headers
-# (Debian/Ubuntu: libfreetype-dev).
-find_package(Freetype REQUIRED)
 if(WIN32)
     find_package(PkgConfig QUIET)
 else()
@@ -1025,6 +1021,7 @@ set(WOWEE_SOURCES
     src/ui/unit_portrait.cpp
     src/ui/interface_fonts.cpp
     src/ui/native_text_metrics.cpp
+    src/ui/native_glyph_face.cpp
     src/ui/native_glyph_loader.cpp
     src/ui/text_edit.cpp
     src/ui/paper_ui.cpp
@@ -1458,7 +1455,7 @@ target_include_directories(wowee_ft2110_grays PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/freetype-2.1.10-grays
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set_source_files_properties(third_party/freetype-2.1.10-grays/ftgrays.c PROPERTIES COMPILE_OPTIONS "-w")
-target_link_libraries(wowee PRIVATE wowee_ft2110_grays Freetype::Freetype)
+target_link_libraries(wowee PRIVATE wowee_ft2110_grays)
 
 # Link vk-bootstrap
 if(TARGET vk-bootstrap)

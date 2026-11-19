@@ -27,7 +27,6 @@ RUN apt-get update && \
         libglm-dev \
         libssl-dev \
         zlib1g-dev \
-        libfreetype-dev \
         libavformat-dev \
         libavcodec-dev \
         libswscale-dev \

@@ -279,7 +279,7 @@ Ubuntu, Debian, Fedora and Arch, which only development needs, are in the
 Vulkan runs through MoltenVK.
 
 ```bash
-brew install cmake pkg-config sdl3 glm openssl@3 zlib freetype ffmpeg \
+brew install cmake pkg-config sdl3 glm openssl@3 zlib ffmpeg \
   vulkan-loader vulkan-headers molten-vk shaderc
 
 # Optional: Warden execution and MPQ extraction
@@ -1939,7 +1939,7 @@ workspace.
 ### Interface glyph raster
 
 ```sh
-build/bin/test_native_glyph_raster
+WOWEE_TBC_DATA_DIR=client/wowee-data/expansions/tbc build/bin/test_native_glyph_raster
 ```
 
 The faces FrameXML names (FRIZQT__, MORPHEUS, SKURRI, ARIALN, FRIENDS) are
@@ -1947,9 +1947,14 @@ rasterized by `ui/native_glyph_loader.hpp`, an ImGui font loader, the way
 2.4.3 draws them. Compared pixel by pixel with native captures of all four
 faces at 9..24 pixels (62 glyphs each, white on black, GlyphProbe addon):
 
-- Unhinted outlines (FreeType, `FT_LOAD_NO_HINTING`), the em square the pixel
-  height tall. FreeType's hinting (TrueType bytecode v35/v40, autohinter,
-  light) matches none of the captures.
+- Unhinted outlines, the em square the pixel height tall, as FreeType loads
+  them with `FT_LOAD_NO_HINTING`. FreeType's hinting (TrueType bytecode
+  v35/v40, autohinter, light) matches none of the captures.
+  `NativeGlyphFace` reads the glyf points itself (stb_truetype finds the
+  tables, cmap and hmtx) and scales them with FreeType's arithmetic: 16.16
+  scale `FT_DivFix(em * 64, unitsPerEm)`, each point `FT_MulFix`-rounded,
+  outline moved left by the scaled xMin - lsb, components transformed after
+  scaling, USE_MY_METRICS taking the component's advance.
 - Coverage from FreeType 2.1.10's anti-aliasing rasterizer
   (`third_party/freetype-2.1.10-grays`, standalone). Current FreeType loads the
   same outlines but flattens curves differently: inside bowls ("O", "6", "e")
@@ -1971,11 +1976,19 @@ at native's positions (side-by-side captures; the backgrounds differ).
 
 Gotchas:
 
-- FreeType's development headers are required to build (Debian/Ubuntu:
-  `libfreetype-dev`, Fedora: `freetype-devel`, Arch: `freetype2`, Homebrew and
-  vcpkg: `freetype`). CMake stops at `find_package(Freetype REQUIRED)`
-  without them. Built and checked with 2.13.2; it only loads outlines, the
-  bundled 2.1.10 rasterizer draws them.
+- The bitmap test compares every cmap glyph of FRIZQT__, ARIALN, SKURRI and
+  MORPHEUS at 9..24 px (advance, placement, rows, coverage) with hashes
+  recorded from the FreeType 2.13.2 outline loader this replaced; it skips
+  without `WOWEE_TBC_DATA_DIR`.
+- `stbtt_GetGlyphShape` outlines do not give these bitmaps: it turns two
+  consecutive off-curve points into an on-curve midpoint computed in font
+  units, where the rasterizer takes the midpoint after scaling. Through the
+  same rasterizer they differ in 8126 of 24912 glyphs (14576 4-bit levels;
+  17 ARIALN glyphs also placed differently).
+- A cmap entry past the face's last glyph is no glyph (FRIZQT__ maps U+FFFF
+  to 65535), as `FT_Get_Char_Index` has it.
+- Component point matching and SCALED_COMPONENT_OFFSET are not implemented
+  (no interface face uses them); such a glyph fails to load with an error.
 - A size given to these faces is the em size (`ExtraSizeScale` stays 1).
   The client's own ImGui windows keep the stb_truetype FRIZQT face.
 - Not matched: OUTLINE and THICKOUTLINE. Native draws the glyph 1 pixel right
