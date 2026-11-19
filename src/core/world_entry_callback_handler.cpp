@@ -154,7 +154,19 @@ void WorldEntryCallbackHandler::setupCallbacks() {
     gameHandler_.setWorldEntryCallback([this](uint32_t mapId, float x, float y, float z, bool isInitialEntry) {
         LOG_INFO("Online world entry: mapId=", mapId, " pos=(", x, ", ", y, ", ", z, ")"
                  " initial=", isInitialEntry);
-        renderer_.resetCombatVisualState();
+
+        // A same-map teleport (MSG_MOVE_TELEPORT_ACK: Blink, Shadowstep,
+        // .go) keeps the world, its units and what is playing on them, so
+        // it keeps the spell effects and combat state too. Native 2.4.3
+        // plays Blink's cast kit on the hands, its impact on the chest and
+        // its area kit at the feet after the jump; resetting here removed
+        // all three the moment the teleport arrived, right after
+        // SMSG_SPELL_GO had started them. A map load or reconnect drops
+        // every unit and resets.
+        const uint32_t loadedMap = worldLoader_ ? worldLoader_->getLoadedMapId() : 0xFFFFFFFF;
+        const bool keepsWorld = !isInitialEntry && mapId == loadedMap &&
+            renderer_.getTerrainManager() && !(worldLoader_ && worldLoader_->isLoadingWorld());
+        if (!keepsWorld) renderer_.resetCombatVisualState();
 
         // A world load in progress (re-entrant call from gameHandler->update()
         // during its warmup) owns the terrain, camera and character position

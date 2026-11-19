@@ -2392,6 +2392,19 @@ after a teleport": the minimap and tooltips follow the character, the view
 does not, and the own model is out of sight.
 Evidence: `_experiments/20261118T210500Z.teleport_world/` in the workspace.
 
+A same-map teleport (MSG_MOVE_TELEPORT_ACK) keeps spell effects and combat
+state; only a map load or reconnect resets them. CMaNGOS sends a self-teleport
+spell's SMSG_SPELL_GO just before the teleport: Blink 1953 (visual 263) plays
+CastKit 267 (Magic_Cast_Hand, both hands), ImpactKit 3394
+(blink_impact_chest at the chest) and InstantAreaKit 9159 (the same model at
+the destination, TARGET_FLAG_DEST_LOCATION). Native 2.4.3 shows all three
+around the character after the jump and nothing at the departure point, for
+its own cast and for another player's. WoWee's world entry reset removed them
+the moment the teleport arrived, so a player's own Blink showed nothing while
+other players' Blinks looked right. Shadowstep's 36563 (Vanish_Cast_Base
+cast and area kits at the arrival) went the same way. Evidence:
+`_experiments/20261119T1520Z.blink_effects/` in the workspace.
+
 ### World map (FrameXML WorldMapFrame)
 
 M opens FrameXML's WorldMapFrame (the world map element is handed over); the
