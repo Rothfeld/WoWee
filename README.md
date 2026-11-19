@@ -1056,6 +1056,20 @@ them. Whether it follows the player's or the unit's area, and whether
 subzones with their own value (Tarren Mill 0.6 under Old Hillsbrad 0.3)
 use it, is not observed. Evidence: `_experiments/20261119T0840Z.creature_light`
 in the workspace.
+A unit under the pointer, and the targeted unit, take one more unit of that
+gain, still before saturating (`hoverHighlight` in character.frag.glsl): the
+lit pixel goes up by (g + 1) / g and never past its texel. Native per pixel
+against WoWee's unlit texel, Fel Steed 1951 and Silver Riding Talbuk 21075:
+2.0x in Elwynn (g 1), 1.63-1.68x in the Barrens (g 1.6), 1.45-1.50x in
+Hellfire (g 2.2), where most of a unit is already saturated and the whole
+model brightens only 1.14x. Doubling the shaded colour after saturation
+(this renderer before) gave 2.06x there. Game objects take no area gain;
+the one under the pointer gets its M2 light doubled before saturating (2x in
+Elwynn and Hellfire: chest, Peacebloom, mailbox, wanted poster, campfire).
+Every object type lights up except a GENERIC object without its highlight
+field (data1), also one the mouse otherwise passes through (the campfire is a
+SPELL_FOCUS: no cursor, no name; `ScenePick::highlightObjectGuid`). Evidence: `_experiments/20261119T1255Z.hover_highlight` in the
+workspace.
 
 Grounded creatures select the nearest reachable terrain, WMO or M2 floor.
 Terrain corrections do not require a previous corrected render position; static
