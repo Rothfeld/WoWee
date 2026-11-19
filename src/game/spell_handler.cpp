@@ -1989,7 +1989,9 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // player has auto self-cast on, and is left to the server when they do not.
     if (target == 0 && !selfCast && !fishingCast &&
         spellclass::requiresHostileTarget(getSpellImplicitTargetA(spellId))) {
+        // Native 2.4.3 (Soul Fire): the line, then UNIT_SPELLCAST_FAILED.
         raiseGlobalStringError(owner_, "ERR_GENERIC_NO_TARGET");
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         LOG_WARNING("Cast refused: spell ", spellId,
                     " needs a hostile target and nothing is selected - sending it"
                     " with an empty target would have aimed it at the caster");
@@ -3078,6 +3080,9 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
 
     const uint64_t gatherGoGuid = owner_.lastInteractedGoGuidRef();
     const bool gatherCast = gatherGoGuid != 0 && isGatherSpellId(data.spellId);
+    // UNIT_SPELLCAST_STOP closes a UNIT_SPELLCAST_START: native 2.4.3 refuses
+    // Ritual of Summoning without a target with FAILED alone.
+    const bool started = casting_ && !castIsChannel_ && currentCastSpellId_ == data.spellId;
 
     casting_ = false;
     castIsChannel_ = false;
@@ -3166,7 +3171,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
 
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("UNIT_SPELLCAST_FAILED", spellcastArgs("player", data.spellId));
-        owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
+        if (started) owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
     }
     if (owner_.spellCastFailedCallbackRef()) owner_.spellCastFailedCallbackRef()(data.spellId);
 }
@@ -5457,6 +5462,7 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
             }
             const uint64_t gatherGoGuid = owner_.lastInteractedGoGuidRef();
             const bool gatherCast = gatherGoGuid != 0 && isGatherSpellId(castResultSpellId);
+            const bool started = casting_ && !castIsChannel_ && currentCastSpellId_ == castResultSpellId;
             casting_ = false; castIsChannel_ = false; currentCastSpellId_ = 0; castTimeRemaining_ = 0.0f;
             owner_.lastInteractedGoGuidRef() = 0;
             owner_.pendingGameObjectInteractGuidRef() = 0;
@@ -5475,7 +5481,7 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
             }
             if (owner_.spellCastFailedCallbackRef()) owner_.spellCastFailedCallbackRef()(castResultSpellId);
                 owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", castResultSpellId));
-                owner_.fireAddonEvent("UNIT_SPELLCAST_STOP",   spellcastArgs("player", castResultSpellId));
+                if (started) owner_.fireAddonEvent("UNIT_SPELLCAST_STOP", spellcastArgs("player", castResultSpellId));
             // The second of the two chat writes. See handleCastFailed.
         }
     }
@@ -6602,9 +6608,13 @@ void SpellHandler::handleChannelUpdate(network::Packet& packet) {
         if (auto* visuals = renderer->getSpellVisualSystem())
             visuals->updateChannelVisual(owner_.resolveUnitRenderInstance(chanCaster2), chanRemainMs);
     }
+    // The channel's spell, for UNIT_SPELLCAST_CHANNEL_STOP: native 2.4.3
+    // sends "player", "Evocation", "" when it ends.
+    uint32_t endedSpellId = 0;
     if (chanCaster2 == owner_.getPlayerGuid()) {
         castTimeRemaining_ = chanRemainMs / 1000.0f;
         if (chanRemainMs == 0) {
+            endedSpellId = currentCastSpellId_;
             casting_ = false;
             castIsChannel_ = false;
             currentCastSpellId_ = 0;
@@ -6613,14 +6623,18 @@ void SpellHandler::handleChannelUpdate(network::Packet& packet) {
         auto it = unitCastStates_.find(chanCaster2);
         if (it != unitCastStates_.end()) {
             it->second.timeRemaining = chanRemainMs / 1000.0f;
-            if (chanRemainMs == 0) unitCastStates_.erase(it);
+            if (chanRemainMs == 0) {
+                endedSpellId = it->second.spellId;
+                unitCastStates_.erase(it);
+            }
         }
     }
     LOG_DEBUG("MSG_CHANNEL_UPDATE: caster=0x", std::hex, chanCaster2, std::dec,
               " remaining=", chanRemainMs, "ms");
-    // Every update, not only the last: a channel that reticks or is pushed
-    // back moves its bar, and the bar is already on screen.
-    if (const std::string chanUnit = owner_.guidToUnitId(chanCaster2); !chanUnit.empty()) {
+    // Every update but the last, which is the channel's end: a channel that
+    // reticks or is pushed back moves its bar. Native 2.4.3 ends Evocation
+    // with CHANNEL_STOP alone.
+    if (const std::string chanUnit = owner_.guidToUnitId(chanCaster2); !chanUnit.empty() && chanRemainMs != 0) {
         owner_.fireAddonEvent("UNIT_SPELLCAST_CHANNEL_UPDATE", {chanUnit});
     }
     // Fire UNIT_SPELLCAST_CHANNEL_STOP when channel ends
@@ -6630,7 +6644,7 @@ void SpellHandler::handleChannelUpdate(network::Packet& packet) {
             owner_.spellCastAnimCallbackRef()(chanCaster2, SpellAnimPhase::STOP, 0);
         auto unitId = owner_.guidToUnitId(chanCaster2);
         if (!unitId.empty())
-            owner_.fireAddonEvent("UNIT_SPELLCAST_CHANNEL_STOP", {unitId});
+            owner_.fireAddonEvent("UNIT_SPELLCAST_CHANNEL_STOP", spellcastArgs(unitId, endedSpellId));
     }
 }
 
