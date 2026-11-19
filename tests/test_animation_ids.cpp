@@ -108,6 +108,20 @@ TEST_CASE("A trap without state sequences keeps Stand running in READY", "[game-
     }
 }
 
+TEST_CASE("ACTIVE shows Destroy only for stateful models without Open", "[game-object-pose]") {
+    using wowee::core::gameObjectActiveShowsDestroy;
+    // Brazier of Madness: BUTTON, G_BrazierTroll (Stand, Destroy, Custom0).
+    CHECK(gameObjectActiveShowsDestroy(1u, false, false, true));
+    // Thunderbrew Lager Keg: GOOBER, G_Keg (Stand, Destroy).
+    CHECK(gameObjectActiveShowsDestroy(10u, false, false, true));
+    // Supply Crate (GOOBER, G_Crate01) and Bar Door (DOOR) open instead.
+    CHECK_FALSE(gameObjectActiveShowsDestroy(10u, true, true, true));
+    CHECK_FALSE(gameObjectActiveShowsDestroy(0u, true, true, true));
+    // Troll Hero Fire Portal: GENERIC, FireRift (Stand, Hold, Destroy).
+    CHECK_FALSE(gameObjectActiveShowsDestroy(5u, false, false, true));
+    CHECK_FALSE(gameObjectActiveShowsDestroy(1u, false, false, false));
+}
+
 TEST_CASE("Creature spline movement retains aquatic and aerial poses", "[creature-locomotion]") {
     using wowee::rendering::creatureMovingAnimation;
     CHECK(creatureMovingAnimation(false, false, false) == anim::RUN);

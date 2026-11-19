@@ -178,6 +178,19 @@ void M2Renderer::setInstanceStateAnimation(uint32_t instanceId, uint32_t transit
     inst.playingVariation = first != state;
 }
 
+void M2Renderer::playInstanceStand(uint32_t instanceId) {
+    auto& inst = instances.at(instanceIndexById.at(instanceId));
+    assert(inst.cachedModel && !inst.cachedModel->sequences.empty());
+    const int stand = inst.cachedModel->standSequenceIndex;
+    inst.currentSequenceIndex = stand;
+    inst.idleSequenceIndex = stand;
+    inst.animDuration = static_cast<float>(inst.cachedModel->sequences[stand].duration);
+    inst.animTime = 0.0f;
+    inst.animSpeed = 1.0f;
+    inst.holdAtEnd = false;
+    inst.playingVariation = false;
+}
+
 void M2Renderer::setInstanceAnimationHeld(uint32_t instanceId, uint32_t animationId,
                                           bool skipToEnd) {
     auto idxIt = instanceIndexById.find(instanceId);

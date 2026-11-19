@@ -18,6 +18,25 @@ original client draws them as a flame front running round the rune once a
 second. Their type often arrives after their state; the template response then
 releases such traps (`gameObjectBindPoseShowsReady`).
 
+A stateful object whose model has Destroy (150) but neither Open (148) nor
+Opened (149) shows ACTIVE with Destroy, held at its last frame
+(`gameObjectActiveShowsDestroy`), and READY with Stand. Original 2.4.3:
+Zul'Gurub's Brazier of Madness (BUTTON 180327, `G_BrazierTroll.m2`: Destroy,
+Stand, Custom0) goes out when the Gurubashi Mojo Madness extinguishes it and
+is dark when it comes into view again; Blackrock Depths' Thunderbrew Lager
+Keg (GOOBER 164911, `G_Keg.m2`) bursts. Open wins where the model has it: the
+Supply Crate (GOOBER 166872, `G_Crate01.m2`, which also has Destroy) lifts its
+lid and the Bar Door (DOOR 170571) swings open. GENERIC objects keep Stand
+(Troll Hero Fire/Air Portal, `FireRift.m2`/`AirRift.m2`). Captures:
+`_experiments/20261118T230000Z.brazier_state/` in the workspace root. Its
+state can arrive before its type; the template response applies the pose then.
+
+Every M2 instance starts on its Stand sequence, resolved through the model's
+pre-WotLK playable animation lookup when it has no Stand
+(`pipeline::standSequenceIndex`). Doodad cage doors in Zul'Gurub
+(`g_cage02.m2`, `holdingpen.m2`: Open, Opened, Close, Closed; Stand -> Closed)
+stand shut, and the brazier, which lists Destroy first, starts lit.
+
 Both immediate and delayed template responses use
 `core/game_object_animation_policy.hpp`. Do not unfreeze a state-driven object
 when its template arrives: `setInstanceAnimationFrozen(false)` clears

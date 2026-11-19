@@ -117,6 +117,11 @@ public:
     /// model existed and was dropped, so every door in the world was drawn in
     /// its closed pose however the server had it.
     void applyGameObjectState(uint64_t guid, uint8_t goState);
+    /// gameObjectActiveShowsDestroy's pose for a state-driven object without
+    /// Open/Opened: Destroy held for ACTIVE, Stand otherwise. False (nothing
+    /// done) when the rule does not apply to this type and model.
+    bool applyGameObjectDestroyPose(uint32_t instanceId, uint32_t goType, uint8_t goState,
+                                    bool skipToEnd);
 
     // Quick instance ID lookups (returns 0 if not found)
     uint32_t getCreatureInstanceId(uint64_t guid) const {

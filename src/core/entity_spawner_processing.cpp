@@ -1929,6 +1929,9 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
         }
     }
 
+    if (goType != 0xFFFFFFFFu && applyGameObjectDestroyPose(instanceId, goType, goState, skipToEnd))
+        return;
+
     // A model with a state loop shows the state with it: Closed (147) for
     // READY, Opened (149) for ACTIVE, entered through Close (146) / Open (148)
     // when the state changes in view. Warpwood Pod (179526, display 391,
@@ -1979,6 +1982,24 @@ void EntitySpawner::applyGameObjectState(uint64_t guid, uint8_t goState) {
     m2->setInstanceAnimationFrozen(instanceId, goState != 0);
 }
 
+bool EntitySpawner::applyGameObjectDestroyPose(uint32_t instanceId, uint32_t goType,
+                                               uint8_t goState, bool skipToEnd) {
+    auto* m2 = renderer_ ? renderer_->getM2Renderer() : nullptr;
+    if (!m2 || !gameObjectActiveShowsDestroy(goType, m2->hasAnimation(instanceId, 148u),
+                                             m2->hasAnimation(instanceId, 149u),
+                                             m2->hasAnimation(instanceId, 150u)))
+        return false;
+    if (goState == 0) {
+        m2->setInstanceAnimationHeld(instanceId, 150u, skipToEnd);
+    } else {
+        // Lit again: the original's flames grow back from the brazier.
+        m2->playInstanceStand(instanceId);
+    }
+    LOG_DEBUG("GO destroy pose: instance=", instanceId, " type=", goType,
+              " state=", static_cast<int>(goState), " skipToEnd=", skipToEnd);
+    return true;
+}
+
 void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
     // A door's open state can arrive before its query response (BRS
     // portcullises: state 0 at 22:01:01.8, type at 22:01:02.7), when
@@ -1997,6 +2018,17 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
                 LOG_INFO("Door collision after query: guid=0x", std::hex, guid, std::dec,
                          " entry=", entry, " state=", static_cast<int>(state));
             }
+        }
+    }
+    // A used brazier's ACTIVE can likewise arrive before its type.
+    if (const auto* info = gameHandler_ ? gameHandler_->getCachedGameObjectInfo(entry) : nullptr) {
+        for (const auto& [guid, state] : gameObjectAppliedState_) {
+            auto inst = gameObjectInstances_.find(guid);
+            if (inst == gameObjectInstances_.end() || inst->second.isWmo) continue;
+            auto entity = gameHandler_->getEntityManager().getEntity(guid);
+            if (!entity || entity->getType() != game::ObjectType::GAMEOBJECT) continue;
+            if (std::static_pointer_cast<game::GameObject>(entity)->getEntry() != entry) continue;
+            applyGameObjectDestroyPose(inst->second.instanceId, info->type, state, true);
         }
     }
     auto it = gameObjectPendingAnimPolicy_.find(entry);
