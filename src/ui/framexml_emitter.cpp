@@ -1419,10 +1419,18 @@ struct Emitter {
         // fell back to a flat fill in the default white - which for a health
         // bar is not a bar with the wrong texture, it is a white block where
         // the health should be.
+        //
+        // The BarTexture is a texture region of the bar, named like any other
+        // ($parentBar), and GetRegions lists it: XPerl's arcane bar finds its
+        // <BarTexture name="$parenttex"> as self.tex that way, and
+        // GetStatusBarTexture answers the same region.
         if (const XmlNode* bar = node.child("BarTexture")) {
+            const std::string fill = emitRegion(*bar, var, name, "ARTWORK", true, anchor);
             if (const std::string* file = bar->attr("file")) {
                 line(var + ":SetStatusBarTexture(" + quote(*file) + ")");
             }
+            line(var + ".__barTexture = " + fill);
+            line("__WoweeLinkBarFill(" + var + ", " + fill + ")");
         }
         if (const XmlNode* col = node.child("BarColor")) {
             line(var + ":SetStatusBarColor(" +
@@ -1600,6 +1608,14 @@ void canonicaliseNames(XmlNode& node) {
             break;
         }
     }
+    // "$Parent" is "$parent" to the client as well: Atlas names its options
+    // check button "$ParentToggleButton" and build 8606 publishes it as
+    // AtlasOptionsFrameToggleButton. Name, relativeTo and parent all take it.
+    for (auto& [key, value] : node.attrs) {
+        if (value.size() >= 7 && value[0] == '$' && value.compare(0, 7, "$parent") != 0 &&
+            sameNameIgnoringCase(value.substr(0, 7), "$parent"))
+            value.replace(0, 7, "$parent");
+    }
     for (XmlNode& child : node.children) canonicaliseNames(child);
 }
 }  // namespace
@@ -1720,10 +1736,15 @@ EmitResult emitFrameXml(const XmlNode& rootIn) {
     }
     for (const XmlNode& node : root.children) {
         if (node.name == "Script") {
-            if (const std::string* file = node.attr("file")) e.result.scriptFiles.push_back(*file);
-            else if (!node.text.empty()) e.result.lua += node.text + "\n";
+            if (const std::string* file = node.attr("file")) {
+                e.result.files.push_back({*file, false});
+                e.line("__WoweeXmlStep(" + std::to_string(e.result.files.size()) + ")");
+            } else if (!node.text.empty()) e.result.lua += node.text + "\n";
         } else if (node.name == "Include") {
-            if (const std::string* file = node.attr("file")) e.result.includeFiles.push_back(*file);
+            if (const std::string* file = node.attr("file")) {
+                e.result.files.push_back({*file, true});
+                e.line("__WoweeXmlStep(" + std::to_string(e.result.files.size()) + ")");
+            }
         } else if (node.name == "Font") {
             e.emitFont(node);
         } else if (isFrameElement(node.name)) {

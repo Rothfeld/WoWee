@@ -93,7 +93,9 @@ private:
     std::vector<TocFile> addons_;
     /// Declared LoadOnDemand: known, listed, and not run until asked for.
     std::vector<TocFile> lodAddons_;
-    std::set<std::string> lodLoaded_;
+    /// Folded names of the addons whose files have started running, startup
+    /// and load-on-demand alike: IsAddOnLoaded's answer.
+    std::set<std::string> loaded_;
     game::GameHandler* gameHandler_ = nullptr;
     LuaServices luaServices_;
     std::string addonsPath_;
@@ -105,6 +107,15 @@ private:
     [[nodiscard]] std::vector<std::string> deferredAddonGlobals() const;
 
     bool loadAddon(const TocFile& addon);
+    /// Any addon on disk, startup or load-on-demand, by name without regard to case.
+    [[nodiscard]] const TocFile* findAddon(const std::string& name) const;
+    /// Why the addon cannot load, as GetAddOnInfo's reason: "DISABLED",
+    /// "DEP_MISSING", "DEP_DISABLED"; empty when it can.
+    [[nodiscard]] std::string loadBlocker(const TocFile& addon) const;
+    /// Load an addon after its dependencies, as build 8606 does: required
+    /// ones first (a load-on-demand one included), then optional ones that are
+    /// present and enabled. False when it is blocked or a required one is.
+    bool loadWithDependencies(const TocFile& addon);
     [[nodiscard]] std::string getSavedVariablesPath(const TocFile& addon) const;
     [[nodiscard]] std::string getSavedVariablesPerCharacterPath(const TocFile& addon) const;
     std::string characterName_;

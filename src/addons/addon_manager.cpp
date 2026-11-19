@@ -8,7 +8,9 @@
 
 extern "C" {
 #include <lua.h>
+#include <lauxlib.h>
 }
+#include <functional>
 #include "addons/addon_globals.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "core/logger.hpp"
@@ -112,7 +114,7 @@ void AddonManager::scanAddons(const std::string& addonsPath) {
     addonsPath_ = addonsPath;
     addons_.clear();
     lodAddons_.clear();
-    lodLoaded_.clear();
+    loaded_.clear();
 
     // Two places are searched. The game data's own Interface\AddOns is where a
     // player's existing addons already live, and an "addons" directory beside
@@ -338,6 +340,60 @@ std::vector<std::string> AddonManager::deferredAddonGlobals() const {
     return names;
 }
 
+namespace {
+std::string lowered(std::string v) {
+    for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return v;
+}
+}  // namespace
+
+const TocFile* AddonManager::findAddon(const std::string& name) const {
+    const std::string key = lowered(name);
+    for (const auto* list : {&addons_, &lodAddons_})
+        for (const TocFile& a : *list)
+            if (lowered(a.addonName) == key) return &a;
+    return nullptr;
+}
+
+std::string AddonManager::loadBlocker(const TocFile& addon) const {
+    if (!isAddonEnabled(addon.addonName)) return "DISABLED";
+    for (const auto& name : addon.getRequiredDeps()) {
+        const TocFile* dep = findAddon(name);
+        if (!dep) return "DEP_MISSING";
+        if (!isAddonEnabled(dep->addonName)) return "DEP_DISABLED";
+    }
+    return {};
+}
+
+bool AddonManager::loadWithDependencies(const TocFile& addon) {
+    const std::string key = lowered(addon.addonName);
+    if (loaded_.count(key)) return true;
+    if (const std::string why = loadBlocker(addon); !why.empty()) {
+        LOG_WARNING("AddonManager: not loading '", addon.addonName, "': ", why);
+        return false;
+    }
+    // Recorded before anything runs, so a dependency cycle or an addon calling
+    // LoadAddOn on itself from its own files stops here.
+    loaded_.insert(key);
+    for (const auto& name : addon.getRequiredDeps()) {
+        if (!loadWithDependencies(*findAddon(name))) {
+            LOG_WARNING("AddonManager: '", addon.addonName, "' needs '", name, "', which did not load");
+            loaded_.erase(key);
+            return false;
+        }
+    }
+    // Bagnon lists Bagnon_Forever (load-on-demand) as optional; build 8606
+    // loads it first (ADDON_LOADED Bagnon_Forever before Bagnon).
+    for (const auto& name : addon.getOptionalDeps()) {
+        const TocFile* dep = findAddon(name);
+        if (dep && loadBlocker(*dep).empty()) loadWithDependencies(*dep);
+    }
+    if (addon.isLoadOnDemand()) LOG_INFO("AddonManager: loading on demand: ", addon.addonName);
+    loadAddon(addon);
+    ui::frameXmlNoteAddOnLoaded(addon.addonName);
+    return true;
+}
+
 void AddonManager::loadAllAddons() {
     // The original interface, when asked for. Before any addon, because addons
     // are written against a world where FrameXML has already defined its frames
@@ -451,29 +507,31 @@ void AddonManager::loadAllAddons() {
 
     // Only hand the Lua VM the addons that are actually enabled, so disabled ones
     // don't appear via GetNumAddOns/IsAddOnLoaded either.
-    std::vector<TocFile> enabled;
-    enabled.reserve(addons_.size() + lodAddons_.size());
-    for (const auto& addon : addons_) {
-        if (isAddonEnabled(addon.addonName)) enabled.push_back(addon);
-    }
+    //
     // Load-on-demand addons are listed too, as WoW lists them: an addon
     // manager panel shows the talent tree and the auction house alongside
-    // everything else, and GetNumAddOns counts them. They carry a flag so
-    // IsAddOnLoaded does not mistake being listed for being loaded.
-    for (const auto& addon : lodAddons_) {
-        if (isAddonEnabled(addon.addonName)) enabled.push_back(addon);
-    }
-    luaEngine_.setAddonList(enabled);
+    // everything else, and GetNumAddOns counts them.
+    //
+    // In folder-name order without regard to case, the order build 8606 loads
+    // them in (FrameXML.log "Loading add-on" lines).
+    std::vector<TocFile> enabled;
+    enabled.reserve(addons_.size() + lodAddons_.size());
+    for (const auto* list : {&addons_, &lodAddons_})
+        for (const auto& addon : *list)
+            if (isAddonEnabled(addon.addonName)) enabled.push_back(addon);
+    std::stable_sort(enabled.begin(), enabled.end(), [](const TocFile& a, const TocFile& b) {
+        return lowered(a.addonName) < lowered(b.addonName);
+    });
+    std::vector<std::string> blockers;
+    for (const auto& addon : enabled) blockers.push_back(loadBlocker(addon));
+    luaEngine_.setAddonList(enabled, blockers);
     int loaded = 0, failed = 0, skipped = 0;
-    for (const auto& addon : addons_) {
-        if (!isAddonEnabled(addon.addonName)) {
-            LOG_INFO("AddonManager: skipping disabled addon: ", addon.addonName);
-            skipped++;
-            continue;
-        }
-        if (loadAddon(addon)) loaded++;
+    for (const auto& addon : enabled) {
+        if (addon.isLoadOnDemand()) continue;
+        if (loadWithDependencies(addon)) loaded++;
         else failed++;
     }
+    skipped = static_cast<int>(addons_.size() + lodAddons_.size() - enabled.size());
     addonsLoaded_ = true;
     LOG_INFO("AddonManager: loaded ", loaded, " addons",
              (failed > 0 ? (", " + std::to_string(failed) + " failed") : ""),
@@ -1495,67 +1553,63 @@ bool AddonManager::loadXmlFile(const std::string& path, int depth) {
         return dir / name;
     };
 
-    // Order matters and is not the order the emitter reports things in. Includes
-    // carry the templates a file inherits from, and scripts define the functions
-    // its handlers name, so both have to be in place before any frame is built.
-    // A file is only as loadable as what it pulls in, so the reason kept here is
-    // the first real one - the include or script that actually broke - rather
-    // than the name of whichever file happened to reference it.
-    // Which element named the file does not decide how to read it - the
-    // extension does.
-    //
-    // Turtle's OptionsFrame.xml pulls its two Lua files in with <Include>, and
-    // this handed them to the XML parser: "expected an element" on
-    // Options\Options.lua and Options\Functions.lua, and with them the whole
-    // options framework - OptionsFrame_AddCategory, every panel that registers
-    // one, and a run of names reading as missing somewhere else entirely. The
-    // real client reads an include by what the file is.
+    // A file the document names, loaded at the point the document names it
+    // (see EmitResult::files). Which element named the file does not decide
+    // how to read it - the extension does: Turtle's OptionsFrame.xml pulls
+    // two Lua files in with <Include>, and the real client reads an include
+    // by what the file is. A file is only as loadable as what it pulls in, so
+    // the reason kept is the first real one.
     const auto isLua = [](const std::string& name) {
         return name.size() > 4 &&
                (name.compare(name.size() - 4, 4, ".lua") == 0 ||
                 name.compare(name.size() - 4, 4, ".LUA") == 0);
     };
-    for (const auto& inc : emitted.includeFiles) {
-        const bool loaded = isLua(inc)
-            ? luaEngine_.executeFile(sibling(inc).string())
-            : loadXmlFile(sibling(inc).string(), depth + 1);
-        if (!loaded) {
-            if (ok) {
-                lastXmlError_ = "include " + inc + ": " +
-                                (isLua(inc) ? luaEngine_.lastError() : lastXmlError_);
-            }
-            ok = false;
-        }
-    }
-    for (const auto& script : emitted.scriptFiles) {
-        // A file the manifest names and the package does not ship is not a
-        // failure. Addons carry these routinely - Bagnon's config lists seven
-        // localisations and ships five, and a widget it no longer has - and
-        // the real client loads what is there and says nothing. Reported as an
-        // error, three absent translations made a working addon read as a
-        // broken one in the log, which is worse than silence: it is the log
-        // being wrong.
-        //
-        // Said once, and quietly, because a file that is missing when it
-        // should be there is still worth knowing.
-        if (!fs::exists(sibling(script))) {
-            LOG_WARNING("AddonManager: ", path, " names ", script,
+    auto runStep = [&](const ui::EmitResult::FileStep& step) {
+        const std::string& name = step.file;
+        // A script the manifest names and the package does not ship is not a
+        // failure. Bagnon's config lists seven localisations and ships five;
+        // the real client loads what is there and says nothing.
+        if (!step.include && !fs::exists(sibling(name))) {
+            LOG_WARNING("AddonManager: ", path, " names ", name,
                         ", which this addon does not ship - skipped");
-            continue;
+            return;
         }
-        // And the other way round, for the same reason.
-        const bool loaded = isLua(script)
-            ? luaEngine_.executeFile(sibling(script).string())
-            : loadXmlFile(sibling(script).string(), depth + 1);
+        const bool loaded = isLua(name)
+            ? luaEngine_.executeFile(sibling(name).string())
+            : loadXmlFile(sibling(name).string(), depth + 1);
         if (!loaded) {
             if (ok) {
-                lastXmlError_ = "script " + script + ": " +
-                                (isLua(script) ? luaEngine_.lastError() : lastXmlError_);
+                lastXmlError_ = (step.include ? "include " : "script ") + name + ": " +
+                                (isLua(name) ? luaEngine_.lastError() : lastXmlError_);
             }
-            LOG_ERROR("AddonManager: ", path, " referenced ", script, " which failed");
+            LOG_ERROR("AddonManager: ", path, " referenced ", name, " which failed");
             ok = false;
         }
-    }
+    };
+    // __WoweeXmlStep(i) for this document while its Lua runs; the one an
+    // enclosing document installed is put back afterwards.
+    std::function<void(int)> step = [&](int index) {
+        if (index >= 1 && static_cast<size_t>(index) <= emitted.files.size())
+            runStep(emitted.files[static_cast<size_t>(index) - 1]);
+    };
+    lua_State* L = luaEngine_.getState();
+    lua_getglobal(L, "__WoweeXmlStep");
+    const int previousStep = luaL_ref(L, LUA_REGISTRYINDEX);
+    lua_pushlightuserdata(L, &step);
+    lua_pushcclosure(L, [](lua_State* LS) -> int {
+        auto* fn = static_cast<std::function<void(int)>*>(lua_touserdata(LS, lua_upvalueindex(1)));
+        (*fn)(static_cast<int>(luaL_checknumber(LS, 1)));
+        return 0;
+    }, 1);
+    lua_setglobal(L, "__WoweeXmlStep");
+    struct RestoreStep {
+        lua_State* L; int ref;
+        ~RestoreStep() {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+            lua_setglobal(L, "__WoweeXmlStep");
+            luaL_unref(L, LUA_REGISTRYINDEX, ref);
+        }
+    } restoreStep{L, previousStep};
     if (!emitted.lua.empty()) {
         // Named for its file, so functions an AddOn's XML defines are known
         // to be that AddOn's (see markInsecureRoot).
@@ -1637,81 +1691,46 @@ bool AddonManager::loadAddon(const TocFile& addon) {
         }
     }
 
-    // Fire ADDON_LOADED event after all addon files are executed
-    // This is the standard WoW pattern for addon initialization
-    if (success) {
-        if (addon.addonName == "Blizzard_BindingUI" && !luaEngine_.executeString(kBindingDeviceEditor)) {
-            LOG_WARNING("Binding device selector did not install: ", luaEngine_.lastError());
-        }
-        luaEngine_.fireEvent("ADDON_LOADED", {addon.addonName});
+    // ADDON_LOADED after all files have run, whether or not one of them
+    // raised: build 8606 announces Quartz although its Swing.lua fails to
+    // compile, and the rest of the addon goes on to initialise.
+    if (addon.addonName == "Blizzard_BindingUI" && !luaEngine_.executeString(kBindingDeviceEditor)) {
+        LOG_WARNING("Binding device selector did not install: ", luaEngine_.lastError());
     }
+    luaEngine_.fireEvent("ADDON_LOADED", {addon.addonName});
     return success;
 }
 
-namespace {
-std::string lowered(std::string v) {
-    for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return v;
-}
-}  // namespace
 
 bool AddonManager::isAddOnLoadedByName(const std::string& name) const {
-    return lodLoaded_.count(lowered(name)) != 0;
+    return loaded_.count(lowered(name)) != 0;
 }
 
 bool AddonManager::loadAddOnByName(const std::string& name, std::string& reason) {
-    const std::string key = lowered(name);
     // Already loaded is success, not an error: FrameXML calls LoadAddOn every
     // time a panel is opened and only checks the first return.
-    if (lodLoaded_.count(key)) { reason.clear(); return true; }
-
-    const TocFile* found = nullptr;
-    for (const TocFile& a : lodAddons_) {
-        if (lowered(a.addonName) == key) { found = &a; break; }
-    }
-    if (!found) {
+    if (loaded_.count(lowered(name))) { reason.clear(); return true; }
+    const TocFile* found = findAddon(name);
+    if (!found) { reason = "MISSING"; return false; }
+    if (!found->isLoadOnDemand()) {
         // Not on the on-demand list is not the same as not present. An addon
         // whose .toc omits LoadOnDemand is loaded at startup instead, and
         // FrameXML still asks for it by name: uiparent.lua calls
-        // UIParentLoadAddOn("Blizzard_TokenUI"), whose .toc has no such line,
-        // and that reported MISSING for an addon already running - raising the
-        // "Couldn't load" popup over a UI that was working.
-        for (const TocFile& a : addons_) {
-            if (lowered(a.addonName) != key) continue;
-            if (!isAddonEnabled(a.addonName)) { reason = "DISABLED"; return false; }
-            // Only once the startup pass has actually run it. Before that it is
-            // listed but not loaded, and saying otherwise would have the caller
-            // use frames that do not exist yet.
-            if (addonsLoaded_) { reason.clear(); return true; }
-            break;
-        }
-        reason = "MISSING";
+        // UIParentLoadAddOn("Blizzard_TokenUI"), whose .toc has no such line.
+        // Before the startup pass it is listed but not loaded.
+        reason = loadBlocker(*found);
+        if (reason.empty()) reason = "NOT_DEMAND_LOADED";
         return false;
     }
-    if (!isAddonEnabled(found->addonName)) { reason = "DISABLED"; return false; }
-
-    // Recorded before loading, not after: the addon's own files run during
-    // this call and one of them may call LoadAddOn on the same name, which
-    // would otherwise recurse until the stack gave out.
-    lodLoaded_.insert(key);
-    LOG_INFO("AddonManager: loading on demand: ", found->addonName);
-    if (!loadAddon(*found)) {
-        // CORRUPT, not a token of our own. UIParentLoadAddOn builds a
-        // global name out of whatever comes back - _G["ADDON_"..reason] -
-        // and hands it to format, so a reason globalstrings does not have
-        // makes the report raise instead of reporting. See lua_LoadAddOn,
-        // which will not let an unknown one through either.
-        reason = "CORRUPT";
-        LOG_WARNING("AddonManager: '", found->addonName, "' failed to load on demand");
-        // Left in the loaded set deliberately. A half-run addon has already
-        // built frames and set globals, and running its files a second time
-        // would build them again - the duplicate-frame problem the scan goes
-        // out of its way to avoid.
+    reason = loadBlocker(*found);
+    if (!reason.empty()) return false;
+    if (!loadWithDependencies(*found)) {
+        // A required dependency of its own that would not load. A reason
+        // globalstrings has (ADDON_DEP_...), because UIParentLoadAddOn builds
+        // _G["ADDON_"..reason] and hands it to format.
+        reason = "DEP_NOT_DEMAND_LOADED";
         return false;
     }
-    // What it draws is on screen from here, which for some of them is a second
-    // copy of something this client is already drawing.
-    ui::frameXmlNoteAddOnLoaded(found->addonName);
     return true;
 }
 
@@ -1758,10 +1777,12 @@ void AddonManager::saveAllSavedVariables() {
     // three TRAINER_FILTER_* type filters this way, and 2.4.3 writes them to
     // WTF/Account/<account>/SavedVariables/Blizzard_TrainerUI.lua. Leaving
     // them out kept whatever file an older build had written forever.
+    // Only addons that loaded: one that did not (DEP_MISSING) holds nothing
+    // in this state, and writing its file would empty it.
     std::vector<const TocFile*> loaded;
-    for (const auto& addon : addons_) loaded.push_back(&addon);
-    for (const auto& addon : lodAddons_)
-        if (lodLoaded_.count(lowered(addon.addonName))) loaded.push_back(&addon);
+    for (const auto* list : {&addons_, &lodAddons_})
+        for (const auto& addon : *list)
+            if (loaded_.count(lowered(addon.addonName))) loaded.push_back(&addon);
     for (const TocFile* addon : loaded) {
         auto savedVars = addon->getSavedVariables();
         if (!savedVars.empty()) {
@@ -1782,7 +1803,7 @@ bool AddonManager::unloadAll() {
     saveAllSavedVariables();
     addons_.clear();
     lodAddons_.clear();
-    lodLoaded_.clear();
+    loaded_.clear();
     addonsLoaded_ = false;
     // Closing the state is what disposes of the interface: the widget tree
     // goes down with it, so the frames FrameXML built are gone rather than
@@ -1805,6 +1826,9 @@ bool AddonManager::unloadAll() {
 
 bool AddonManager::reload() {
     LOG_INFO("AddonManager: reloading all addons...");
+    // Build 8606 sends PLAYER_LOGOUT on /reload before it writes saved
+    // variables; Recount, Titan and others store their state from it.
+    if (addonsLoaded_) luaEngine_.fireEvent("PLAYER_LOGOUT", {});
     if (!unloadAll()) {
         LOG_ERROR("AddonManager: failed to reinitialize Lua VM during reload");
         return false;

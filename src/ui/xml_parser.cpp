@@ -167,6 +167,12 @@ bool parseElement(Cursor& c, XmlNode& out) {
 
 bool parseXml(const std::string& source, XmlNode& outRoot, std::string& error) {
     Cursor c{.s = source};
+    // A UTF-8 byte order mark before the first element, as Windows editors
+    // write it: build 8606 reads those files (Omen's embeds.xml, QuestHelper's
+    // LibAboutPanel/embeds.xml). The Lua loader skips the same mark.
+    if (source.size() >= 3 && static_cast<unsigned char>(source[0]) == 0xEF &&
+        static_cast<unsigned char>(source[1]) == 0xBB && static_cast<unsigned char>(source[2]) == 0xBF)
+        c.i = 3;
     while (skipIgnorable(c)) {}
     if (c.eof()) { error = "document is empty"; return false; }
     if (!parseElement(c, outRoot)) { error = c.error; return false; }

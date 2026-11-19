@@ -24,10 +24,16 @@ struct XmlNode;
 struct EmitResult {
     std::string lua;
     /// Files named by <Script file="..."/> and <Include file="..."/>, in the
-    /// order they appeared. The caller loads them; resolving paths is its job,
-    /// not the emitter's.
-    std::vector<std::string> scriptFiles;
-    std::vector<std::string> includeFiles;
+    /// order they appeared. `lua` calls __WoweeXmlStep(i) (1-based) where
+    /// file i stood among the frames and inline scripts, so the caller loads
+    /// it at that point - build 8606 reads a document in order, and Bagnon's
+    /// embeds.xml loads LibStub with a Script before the Includes that use it.
+    /// Resolving paths is the caller's job, not the emitter's.
+    struct FileStep {
+        std::string file;
+        bool include = false;
+    };
+    std::vector<FileStep> files;
     std::vector<std::string> warnings;
 };
 

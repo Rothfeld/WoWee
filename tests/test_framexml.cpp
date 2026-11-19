@@ -469,10 +469,27 @@ TEST_CASE("Referenced files are reported rather than loaded", "[framexml][emit]"
     XmlNode root = parseOrFail(
         "<Ui><Script file=\"Foo.lua\"/><Include file=\"Bar.xml\"/></Ui>");
     const EmitResult r = emitFrameXml(root);
-    REQUIRE(r.scriptFiles.size() == 1);
-    REQUIRE(r.scriptFiles[0] == "Foo.lua");
-    REQUIRE(r.includeFiles.size() == 1);
-    REQUIRE(r.includeFiles[0] == "Bar.xml");
+    REQUIRE(r.files.size() == 2);
+    REQUIRE(r.files[0].file == "Foo.lua");
+    REQUIRE_FALSE(r.files[0].include);
+    REQUIRE(r.files[1].file == "Bar.xml");
+    REQUIRE(r.files[1].include);
+}
+
+// Bagnon's embeds.xml: <Script file="libs\LibStub\LibStub.lua"/> and then the
+// Includes whose libraries call LibStub. Each file is loaded where it stands.
+TEST_CASE("Referenced files load in document order among frames", "[framexml][emit]") {
+    XmlNode root = parseOrFail(
+        "<Ui><Script file=\"A.lua\"/><Frame name=\"F\"/><Include file=\"B.xml\"/></Ui>");
+    const EmitResult r = emitFrameXml(root);
+    const auto a = r.lua.find("__WoweeXmlStep(1)");
+    const auto f = r.lua.find("\"F\"");
+    const auto b = r.lua.find("__WoweeXmlStep(2)");
+    REQUIRE(a != std::string::npos);
+    REQUIRE(f != std::string::npos);
+    REQUIRE(b != std::string::npos);
+    REQUIRE(a < f);
+    REQUIRE(f < b);
 }
 
 TEST_CASE("Nested frames are parented to the frame containing them",
