@@ -2570,6 +2570,39 @@ SetGuildRosterShowOffline and SetWhoToUI get 0 for off, which is true in Lua;
 GameTooltip:SetUnit answers nil on TBC, or UnitFrame_UpdateTooltip rebuilds the
 tooltip every 0.2 s and drops lines added after it; 2.4.3 has no /reload
 (`/script ReloadUI()`).
+### The held cursor
+
+`build/bin/test_input_integration '[action-cursor]'`
+
+Measured on pair 14 against native 2.4.3 with a probe addon and window
+captures (native runs with `gxCursor 0`, so its pointer is in the frame).
+Whatever the cursor holds - a spell, a macro, a bag item, an action swapped
+off a bar, money - is the pointer: its icon, 32x32 with the top left at the
+hotspot, under `Interface\Cursor\Item.blp` (the gold corner). No gauntlet,
+no service cursor, and the same picture over every target, valid drop or not.
+Money shows `GetCoinIcon` of the amount (5 -> Coin_05, 50 -> Coin_06,
+500 -> Coin_03, 4000 -> Coin_04). WoWee derives the picture from the cursor
+state each frame (`cursorPicture`); nothing stores it beside the state.
+
+A right-button press anywhere - world, unit, frame, action button, bag
+slot - with something held puts it back (bag item: `ITEM_LOCK_CHANGED`,
+`ACTIONBAR_HIDEGRID`, `CURSOR_UPDATE`; money to the purse; an action dropped)
+and does nothing else: no OnClick, no `UseAction`, no item use, no NPC
+interaction, no mouse-look. It is taken on the press, with its release, before
+any other reader (`Application`, `returnHeldCursor`). Escape does not touch
+the cursor: it closes windows or opens the game menu as usual.
+
+Swaps (`PickupAction`, `PlaceAction`, a click on a button while holding):
+the held thing goes down first (`ITEM_LOCK_CHANGED` for a bag item, then
+`ACTIONBAR_HIDEGRID`, `CURSOR_UPDATE`), the slot's old action comes up
+(`ACTIONBAR_SHOWGRID`), `ACTIONBAR_SLOT_CHANGED` comes last. Dropping the
+action a slot already holds, or `PickupSpell` of the spell already held,
+empties the cursor and leaves the slot. An item reference off a bar answers
+`GetCursorInfo` "item" and `CursorHasItem` nil. Money fires no grid events and
+does not go on a bar. `ClearCursor` with nothing held still fires
+`CURSOR_UPDATE`. A locked bar lifts only with Shift. Gotcha: native fires
+`PLAYER_MONEY` when money is picked up and put back; WoWee does not.
+Evidence: `_experiments/20261118T203647Z.action_cursor` in the workspace.
 
 ### TBC Lua answer conventions and protected functions
 
