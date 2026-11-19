@@ -2522,6 +2522,7 @@ std::optional<uint32_t> SpellHandler::skillRaceClassFlags(uint32_t skillLine) {
 //   0x400 - in name order. A rogue gets Assassination, Combat, Subtlety; the
 //   Internal line (769, flag 0x400 for every class) earns a tab of its own once
 //   Test Grow (18209) is known. Lockpicking and Poisons (category 7, flag 0x80),
+//   Beast Training (category 7, flags 0x492: 0x400 with 0x80),
 //   Mining, First Aid, racials and another class's lines (Fire, Arcane on a
 //   rogue: no row for the rogue) all go to General, and so does Hearthstone,
 //   which has no skill line at all.
@@ -2539,6 +2540,9 @@ std::optional<uint32_t> SpellHandler::skillRaceClassFlags(uint32_t skillLine) {
 void SpellHandler::buildTbcSpellBookTabs() {
     static constexpr uint32_t kCategoryClass = 7;
     static constexpr uint32_t kSkillRaceClassTabFlag = 0x400;
+    // 0x80 keeps a line in General even with 0x400: Beast Training (261,
+    // flags 0x492 for hunters) has no tab on 2.4.3, its spell is in General.
+    static constexpr uint32_t kSkillRaceClassGeneralFlag = 0x80;
     const uint8_t race = owner_.getPlayerRace();
     const uint8_t cls = owner_.getPlayerClass();
     assert(race > 0 && cls > 0);
@@ -2550,7 +2554,8 @@ void SpellHandler::buildTbcSpellBookTabs() {
         const auto rowsIt = skillRaceClassInfo_.find(skillLine);
         if (rowsIt == skillRaceClassInfo_.end()) return false;
         return std::any_of(rowsIt->second.begin(), rowsIt->second.end(), [&](const SkillRaceClassRow& row) {
-            return (row.raceMask & raceBit) && (row.classMask & classBit) && (row.flags & kSkillRaceClassTabFlag);
+            return (row.raceMask & raceBit) && (row.classMask & classBit) && (row.flags & kSkillRaceClassTabFlag) &&
+                   !(row.flags & kSkillRaceClassGeneralFlag);
         });
     };
 
