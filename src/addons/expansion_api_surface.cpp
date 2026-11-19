@@ -83,6 +83,8 @@ constexpr const char* kFlagAnswersTbc[] = {
     "CursorHasMoney", "CursorHasSpell",
     "GetActionBarToggles", "GetAddOnInfo", "GetBattlefieldStatus",
     "GetChannelDisplayInfo", "GetContainerItemInfo", "GetCraftFilter", "GetFactionInfo",
+    // Socketing, pair 8: GetNewSocketInfo's gem-fits flag is 1.
+    "GetNewSocketInfo", "GetExistingSocketInfo",
     "GetGuildRosterInfo", "GetGuildRosterShowOffline", "GuildControlGetRankFlags",
     "GetInventoryItemBroken", "GetOptOutOfLoot",
     "GetQuestLogLeaderBoard", "GetQuestLogPushable", "GetQuestLogTitle",

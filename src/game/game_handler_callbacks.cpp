@@ -4399,6 +4399,10 @@ std::string GameHandler::getEnchantName(uint32_t enchantId) const {
     return {};
 }
 
+uint32_t GameHandler::getEnchantCondition(uint32_t enchantId) const {
+    return spellHandler_ ? spellHandler_->getEnchantCondition(enchantId) : 0;
+}
+
 uint32_t GameHandler::getEnchantGemItem(uint32_t enchantId) const {
     if (spellHandler_) return spellHandler_->getEnchantGemItem(enchantId);
     return 0;

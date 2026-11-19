@@ -3731,6 +3731,7 @@ public:
     std::string getEnchantName(uint32_t enchantId) const;
     /// The gem item an enchantment came out of; 0 when it is not a gem.
     uint32_t getEnchantGemItem(uint32_t enchantId) const;
+    uint32_t getEnchantCondition(uint32_t enchantId) const;
     /// The template entry of an item this client is holding, by guid. Zero when
     /// the guid names nothing in the player's own inventory or bank.
     /// Has this item already bound to its owner? ITEM_FIELD_FLAGS bit 0x1.

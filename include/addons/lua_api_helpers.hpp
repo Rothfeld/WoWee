@@ -1149,6 +1149,13 @@ const game::GameHandler::CraftRecipe* recipeAtTradeSkillRow(game::GameHandler* g
 /// those reads run, so rebuilding per call changed what an index meant halfway
 /// through. Called when the game says the trade skill data moved.
 void invalidateTradeSkillRows();
+/// The craft frame's counterpart, released on CRAFT_UPDATE and CRAFT_SHOW.
+void invalidateCraftRows();
+/// The instance table the item tooltip builder takes (soulbound, durability,
+/// enchant text, socketed gems); lua_inventory_api.cpp.
+void pushItemInstanceTable(lua_State* L, game::GameHandler* gh, const game::ItemDef& item);
+/// The craft frame's recipe at a drawn-row index, or null.
+const game::GameHandler::CraftRecipe* recipeAtCraftRow(game::GameHandler* gh, int index);
 
 /// The combat log's stored history, which Blizzard_CombatLog walks to refill
 /// its window when it is opened or refiltered. Each entry is the argument list

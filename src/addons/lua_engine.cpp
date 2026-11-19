@@ -2248,7 +2248,8 @@ int lua_Tooltip_SetText(lua_State* L) {
 static bool fillItemTooltipById(wowee::ui::Widget* w, game::GameHandler* gh,
                                 uint32_t itemId);
 static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
-                                uint32_t itemId, const game::ItemDef* inst = nullptr);
+                                uint32_t itemId, const game::ItemDef* inst = nullptr,
+                                bool socketingView = false);
 static void appendRandomSuffix(lua_State* L, wowee::ui::Widget* w, game::GameHandler* gh,
                                const game::ItemDef& item);
 static void appendDurabilityLine(wowee::ui::Widget* w, const game::ItemDef& item);
@@ -3744,18 +3745,9 @@ static bool fillItemTooltipById(wowee::ui::Widget* w, game::GameHandler* gh,
 /// one, and the builder opens with SetText.
 /// The instance facts the tooltip builder prints: whether the item is bound
 /// and its durability. Pushed as the builder's fourth argument.
-static void pushItemInstance(lua_State* L, const game::ItemDef& item) {
-    lua_newtable(L);
-    lua_pushboolean(L, item.soulbound ? 1 : 0);
-    lua_setfield(L, -2, "soulbound");
-    lua_pushnumber(L, item.curDurability);
-    lua_setfield(L, -2, "durability");
-    lua_pushnumber(L, item.maxDurability);
-    lua_setfield(L, -2, "maxDurability");
-}
-
 static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
-                                uint32_t itemId, const game::ItemDef* inst) {
+                                uint32_t itemId, const game::ItemDef* inst,
+                                bool socketingView) {
     auto* w = widgetOf(L, 1);
     if (!w || !gh || itemId == 0) return false;
     const int top = lua_gettop(L);
@@ -3767,7 +3759,12 @@ static bool fillItemTooltipById(lua_State* L, game::GameHandler* gh,
         lua_pushvalue(L, 1);                                  // self
         lua_pushnumber(L, static_cast<lua_Number>(itemId));
         lua_pushnil(L);                                       // embedded
-        if (inst) pushItemInstance(L, *inst); else lua_pushnil(L);
+        if (inst) {
+            wowee::addons::pushItemInstanceTable(L, gh, *inst);
+            if (socketingView) { lua_pushboolean(L, 1); lua_setfield(L, -2, "socketing"); }
+        } else {
+            lua_pushnil(L);
+        }
         if (lua_pcall(L, 4, 1, 0) == 0) {
             const bool ok = lua_toboolean(L, -1) != 0;
             lua_settop(L, top);
@@ -4116,7 +4113,11 @@ int lua_Tooltip_SetExistingSocketGem(lua_State* L) {
 int lua_Tooltip_SetSocketedItem(lua_State* L) {
     auto* gh = wowee::addons::getGameHandler(L);
     if (!widgetOf(L, 1) || !gh) { lua_pushboolean(L, 0); return 1; }
-    lua_pushboolean(L, fillItemTooltipById(L, gh, gh->getSocketItemId()) ? 1 : 0);
+    // The item as it will be: its pending gems in their sockets.
+    game::ItemDef socketed;
+    socketed.itemId = gh->getSocketItemId();
+    socketed.guid = gh->getSocketItemGuid();
+    lua_pushboolean(L, fillItemTooltipById(L, gh, socketed.itemId, &socketed, true) ? 1 : 0);
     return 1;
 }
 
@@ -9921,6 +9922,28 @@ void LuaEngine::registerCoreAPI() {
         // ratings and spells, flavour text, the item set, right-click hints.
         // inst is the held item's instance (soulbound, durability) when the
         // tooltip is for a bag or equipment slot.
+        // A meta gem's requirements as 2.4.3 prints them, and whether the worn
+        // gems meet every one: nil when there are none.
+        "function __WoweeGemConditions(conditions)\n"
+        "    if not conditions then return nil, true end\n"
+        "    local names = {META_GEM, RED_GEM, YELLOW_GEM, BLUE_GEM}\n"
+        "    local parts, allMet = {}, true\n"
+        "    for _, c in ipairs(conditions) do\n"
+        "        local clause\n"
+        "        if c.compareColor > 0 then\n"
+        "            if c.comparator == 3 then clause = format(ENCHANT_CONDITION_MORE_COMPARE, names[c.color], names[c.compareColor])\n"
+        "            elseif c.comparator == 5 then clause = format(ENCHANT_CONDITION_MORE_EQUAL_COMPARE, names[c.color], names[c.compareColor]) end\n"
+        "        elseif c.comparator == 5 then clause = format(ENCHANT_CONDITION_MORE_VALUE, c.value, names[c.color])\n"
+        "        elseif c.comparator == 2 then clause = format(ENCHANT_CONDITION_LESS_VALUE, c.value, names[c.color]) end\n"
+        "        if clause then\n"
+        "            clause = string.gsub(clause, '|4([^:]*):([^;]*);', c.value == 1 and '%1' or '%2')\n"
+        "            parts[#parts + 1] = '  '..(c.met and '|cffffffff' or '|cff808080')..ENCHANT_CONDITION_REQUIRES..clause..'|r'\n"
+        "        end\n"
+        "        if not c.met then allMet = false end\n"
+        "    end\n"
+        "    if #parts == 0 then return nil, allMet end\n"
+        "    return table.concat(parts, '\\n'), allMet\n"
+        "end\n"
         "function _WoweePopulateItemTooltip(self, itemId, embedded, inst)\n"
         "    local name, itemLink, quality, iLevel, reqLevel, class, subclass, maxStack, equipSlot, texture = GetItemInfo(itemId)\n"
         "    if not name then return false end\n"
@@ -9959,7 +9982,11 @@ void LuaEngine::registerCoreAPI() {
         "        return true\n"
         "    end\n"
         "    -- Binding, then what kind of item it is.\n"
-        "    if inst and inst.soulbound then self:AddLine(ITEM_SOULBOUND, 1, 1, 1)\n"
+        // The socketing panel's description names neither binding, classes
+        // nor set (2.4.3, Gladiator's Leather Helm).
+        "    local socketingView = inst and inst.socketing\n"
+        "    if socketingView then\n"
+        "    elseif inst and inst.soulbound then self:AddLine(ITEM_SOULBOUND, 1, 1, 1)\n"
         "    elseif data.bindType == 1 then self:AddLine(ITEM_BIND_ON_PICKUP, 1, 1, 1)\n"
         "    elseif data.bindType == 2 then self:AddLine(ITEM_BIND_ON_EQUIP, 1, 1, 1)\n"
         "    elseif data.bindType == 3 then self:AddLine(ITEM_BIND_ON_USE, 1, 1, 1)\n"
@@ -10048,23 +10075,56 @@ void LuaEngine::registerCoreAPI() {
         "            end\n"
         "        end\n"
         "    end\n"
-        "    -- Sockets and their bonus, grey.\n"
+        // The permanent enchantment, green, after the stats (2.4.3: "+5 Health"
+        // under "15 Armor" on an enchanted Dirty Leather Bracers).
+        "    if inst and inst.enchant then self:AddLine(inst.enchant, 0, 1, 0) end\n"
+        // A gem: its stat in white, then a meta gem's requirements, one
+        // "Requires ..." per clause in a single line, grey while the worn gems
+        // fall short (2.4.3 Relentless Earthstorm Diamond: "  |cff808080Requires
+        // at least 2 Red gems|r\n  |cff808080Requires at least 2 Yellow gems|r...").
+        "    if data.gemText then self:AddLine(data.gemText, 1, 1, 1) end\n"
+        "    local conditions = __WoweeGemConditions(data.gemConditions)\n"
+        "    if conditions then self:AddLine(conditions, 1, 1, 1) end\n"
+        // Sockets: a filled one is its gem - icon, stat, a meta gem's
+        // requirements, grey while they are not met - an empty one its colour,
+        // grey. The bonus is green when every gem fits its socket's colour
+        // (2.4.3 socketing a Gladiator's Leather Helm: the diamond grey with
+        // its requirements, "+8 Strength" for the ruby, the bonus green).
+        "    local allMatch = data.sockets ~= nil\n"
         "    if data.sockets then\n"
         "        local socketNames = {[1]=EMPTY_SOCKET_META, [2]=EMPTY_SOCKET_RED, [4]=EMPTY_SOCKET_YELLOW, [8]=EMPTY_SOCKET_BLUE}\n"
         "        local socketTextures = {[1]='Meta', [2]='Red', [4]='Yellow', [8]='Blue'}\n"
-        "        for _, sock in ipairs(data.sockets) do\n"
-        "            if socketNames[sock.color] then\n"
+        "        for i, sock in ipairs(data.sockets) do\n"
+        "            local gem = inst and inst.gems and inst.gems[i]\n"
+        "            local gemData = gem and _GetItemTooltipData(gem.id)\n"
+        "            if gemData and gemData.gemText then\n"
+        "                local text, active = gemData.gemText, true\n"
+        "                local conds\n"
+        "                conds, active = __WoweeGemConditions(gemData.gemConditions)\n"
+        "                if conds then text = text..'\\n'..conds end\n"
+        "                if active then self:AddLine(text, 1, 1, 1) else self:AddLine(text, 0.5, 0.5, 0.5) end\n"
+        "                self:AddTexture(GetItemIcon(gem.id))\n"
+        "                if not gem.matches then allMatch = false end\n"
+        // The socketing panel lists only the sockets with a gem (2.4.3: an
+        // empty meta socket beside a pending ruby shows the ruby alone).
+        "            elseif socketNames[sock.color] and not socketingView then\n"
         "                self:AddLine(socketNames[sock.color], 0.5, 0.5, 0.5)\n"
         "                self:AddTexture('Interface\\\\ItemSocketingFrame\\\\UI-EmptySocket-'..socketTextures[sock.color])\n"
+        "                allMatch = false\n"
+        "            else\n"
+        "                allMatch = false\n"
         "            end\n"
         "        end\n"
         "    end\n"
-        "    if data.socketBonus then self:AddLine(format(ITEM_SOCKET_BONUS, data.socketBonus), 0.5, 0.5, 0.5) end\n"
+        "    if data.socketBonus then\n"
+        "        if allMatch then self:AddLine(format(ITEM_SOCKET_BONUS, data.socketBonus), 0, 1, 0)\n"
+        "        else self:AddLine(format(ITEM_SOCKET_BONUS, data.socketBonus), 0.5, 0.5, 0.5) end\n"
+        "    end\n"
         "    if inst and inst.maxDurability and inst.maxDurability > 0 then\n"
         "        self:AddLine(format(DURABILITY_TEMPLATE, inst.durability, inst.maxDurability), met(inst.durability > 0))\n"
         "    end\n"
         "    -- Who may use it.\n"
-        "    if data.classes then self:AddLine(format(ITEM_CLASSES_ALLOWED, data.classes), met(data.classesMet)) end\n"
+        "    if data.classes and not socketingView then self:AddLine(format(ITEM_CLASSES_ALLOWED, data.classes), met(data.classesMet)) end\n"
         "    if data.races then self:AddLine(format(ITEM_RACES_ALLOWED, data.races), met(data.racesMet)) end\n"
         "    if data.requiredLevel and data.requiredLevel > 1 then\n"
         "        self:AddLine(format(ITEM_MIN_LEVEL, data.requiredLevel), met(data.requiredLevelMet))\n"
@@ -10128,7 +10188,7 @@ void LuaEngine::registerCoreAPI() {
         "        end\n"
         "    end\n"
         "    if data.description then self:AddLine('\"'..data.description..'\"', 1, 0.82, 0, 1) end\n"
-        "    if data.set then\n"
+        "    if data.set and not socketingView then\n"
         "        local set = data.set\n"
         "        self:AddLine(' ')\n"
         "        self:AddLine(format(ITEM_SET_NAME, set.name, set.equipped, set.total), 1, 0.82, 0)\n"
@@ -10145,7 +10205,7 @@ void LuaEngine::registerCoreAPI() {
         "        end\n"
         "    end\n"
         "    -- What a right click does, for an item the player holds.\n"
-        "    if inst then\n"
+        "    if inst and not socketingView then\n"
         "        if data.readable then self:AddLine(ITEM_READABLE, 0, 1, 0)\n"
         "        elseif data.openable then self:AddLine(ITEM_OPENABLE, 0, 1, 0) end\n"
         "        if data.sockets then self:AddLine(ITEM_SOCKETABLE, 0, 1, 0) end\n"

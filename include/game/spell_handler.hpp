@@ -347,6 +347,8 @@ public:
     /// back to the gem that is in the socket - the item fields carry the
     /// enchantment id and nothing else.
     [[nodiscard]] uint32_t getEnchantGemItem(uint32_t enchantId) const;
+    /// SpellItemEnchantmentCondition.dbc row a (meta gem) enchantment needs, 0 for none.
+    uint32_t getEnchantCondition(uint32_t enchantId) const;
     [[nodiscard]] uint8_t getSpellDispelType(uint32_t spellId) const;
     [[nodiscard]] bool isSpellInterruptible(uint32_t spellId) const;
     [[nodiscard]] bool isSpellPassive(uint32_t spellId) const;

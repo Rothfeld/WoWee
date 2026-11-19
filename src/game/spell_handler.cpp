@@ -5150,6 +5150,23 @@ uint32_t SpellHandler::getEnchantGemItem(uint32_t enchantId) const {
     return dbc->getUInt32(static_cast<uint32_t>(row), gemField);
 }
 
+uint32_t SpellHandler::getEnchantCondition(uint32_t enchantId) const {
+    if (enchantId == 0) return 0;
+    auto* am = owner_.services().assetManager;
+    if (!am || !am->isInitialized()) return 0;
+    auto dbc = am->loadDBC("SpellItemEnchantment.dbc");
+    if (!dbc || !dbc->isLoaded()) return 0;
+    const auto* sieL = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("SpellItemEnchantment") : nullptr;
+    // EnchantmentCondition follows the gem item (CMaNGOS SpellItemEnchantmentEntry:
+    // GemID, EnchantmentCondition): Relentless Earthstorm Diamond's 3154 names 67.
+    const uint32_t gemField = pipeline::detectEnchantmentGemItemField(dbc.get(), sieL);
+    if (gemField == 0 || gemField + 1 >= dbc->getFieldCount()) return 0;
+    const int32_t row = dbc->findRecordById(enchantId);
+    if (row < 0) return 0;
+    return dbc->getUInt32(static_cast<uint32_t>(row), gemField + 1);
+}
+
 uint8_t SpellHandler::getSpellDispelType(uint32_t spellId) const {
     loadSpellNameCache();
     auto it = owner_.spellNameCacheRef().find(spellId);

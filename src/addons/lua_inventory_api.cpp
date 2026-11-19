@@ -16,6 +16,8 @@
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include <array>
+#include <cstring>
+#include <optional>
 #include <fstream>
 #include <filesystem>
 #include <ranges>
@@ -2149,6 +2151,138 @@ bool auctionLess(game::GameHandler* gh, const std::string& column,
 
 }  // namespace
 
+namespace {
+/// GemProperties.dbc row `id`: its enchantment (column 1) and colour mask
+/// (column 4: 1 meta, 2 red, 4 yellow, 8 blue).
+struct GemRow { uint32_t enchantId = 0; uint32_t colorMask = 0; };
+std::optional<GemRow> gemRow(game::GameHandler* gh, uint32_t gemProperties) {
+    auto* am = gh->services().assetManager;
+    if (!am || !am->isInitialized() || gemProperties == 0) return std::nullopt;
+    auto dbc = am->loadDBC("GemProperties.dbc");
+    assert(dbc && dbc->isLoaded() && dbc->getFieldCount() >= 5);
+    const int32_t row = dbc->findRecordById(gemProperties);
+    if (row < 0) return std::nullopt;
+    return GemRow{dbc->getUInt32(static_cast<uint32_t>(row), 1), dbc->getUInt32(static_cast<uint32_t>(row), 4)};
+}
+
+/// How many gems of each colour the player wears (meta, red, yellow, blue),
+/// a gem counting once for every colour it is, as CMaNGOS
+/// EnchantmentFitsRequirements counts them.
+std::array<uint32_t, 4> wornGemColors(game::GameHandler* gh) {
+    std::array<uint32_t, 4> counts{};
+    for (int slot = 0; slot < 19; ++slot) {
+        const auto it = gh->onlineItemsRef().find(gh->getEquipSlotGuid(slot));
+        if (it == gh->onlineItemsRef().end()) continue;
+        for (const uint32_t enchant : it->second.socketEnchantIds) {
+            const uint32_t gem = gh->getEnchantGemItem(enchant);
+            const auto* gemInfo = gem ? gh->getItemInfo(gem) : nullptr;
+            const auto gemProps = gemInfo ? gemRow(gh, gemInfo->gemProperties) : std::nullopt;
+            if (!gemProps) continue;
+            for (int c = 0; c < 4; ++c)
+                if (gemProps->colorMask & (1u << c)) ++counts[static_cast<size_t>(c)];
+        }
+    }
+    return counts;
+}
+
+/// A gem's stat line and, for a meta gem, its requirements: data.gemText
+/// ("+8 Strength", SpellItemEnchantment's name) and data.gemConditions, one
+/// entry per SpellItemEnchantmentCondition clause - colour, comparator,
+/// compareColor, value and whether the worn gems meet it. That file packs
+/// bytes: ID, Color[5], LT_Operand[5] (uint32), Comparator[5],
+/// CompareColor[5], Value[5] (uint32), Logic[5].
+void pushGemData(lua_State* L, game::GameHandler* gh, const game::ItemQueryResponseData& info) {
+    const auto gem = gemRow(gh, info.gemProperties);
+    if (!gem) return;
+    if (const std::string text = gh->getEnchantName(gem->enchantId); !text.empty()) {
+        lua_pushstring(L, text.c_str());
+        lua_setfield(L, -2, "gemText");
+    }
+    const uint32_t conditionId = gh->getEnchantCondition(gem->enchantId);
+    if (conditionId == 0) return;
+    auto dbc = gh->services().assetManager->loadDBC("SpellItemEnchantmentCondition.dbc");
+    assert(dbc && dbc->isLoaded() && dbc->getRecordSize() == 64);
+    const int32_t row = dbc->findRecordById(conditionId);
+    if (row < 0) {
+        LOG_ERROR("SpellItemEnchantmentCondition.dbc has no row ", conditionId);
+        return;
+    }
+    const uint8_t* rec = dbc->getRecord(static_cast<uint32_t>(row));
+    const auto u32 = [&](size_t at) {
+        uint32_t v; std::memcpy(&v, rec + at, 4); return v;
+    };
+    const auto worn = wornGemColors(gh);
+    lua_newtable(L);
+    int n = 0;
+    for (int i = 0; i < 5; ++i) {
+        const uint8_t color = rec[4 + i];
+        if (color == 0 || color > 4) continue;
+        const uint8_t comparator = rec[29 + i];
+        const uint8_t compareColor = rec[34 + i];
+        const uint32_t value = u32(39 + static_cast<size_t>(i) * 4);
+        const uint32_t have = worn[color - 1u];
+        const uint32_t against = (compareColor >= 1 && compareColor <= 4) ? worn[compareColor - 1u] : value;
+        bool met = true;
+        if (comparator == 2) met = have < against;
+        else if (comparator == 3) met = have > against;
+        else if (comparator == 5) met = have >= against;
+        lua_newtable(L);
+        lua_pushnumber(L, color); lua_setfield(L, -2, "color");
+        lua_pushnumber(L, comparator); lua_setfield(L, -2, "comparator");
+        lua_pushnumber(L, compareColor); lua_setfield(L, -2, "compareColor");
+        lua_pushnumber(L, value); lua_setfield(L, -2, "value");
+        lua_pushboolean(L, met); lua_setfield(L, -2, "met");
+        lua_rawseti(L, -2, ++n);
+    }
+    lua_setfield(L, -2, "gemConditions");
+}
+}  // namespace
+
+/// The held item's instance facts the item tooltip builder takes as its fourth
+/// argument: soulbound, durability, the permanent enchantment's text (2.4.3
+/// "+5 Health", green, under the stats of an enchanted Dirty Leather Bracers)
+/// and the gem in each socket, {id, matches} - matches when the gem's colour
+/// fits the socket's, which decides the socket bonus colour. While the
+/// socketing panel is open on this item its pending gems stand in for what the
+/// sockets hold, which is what ItemSocketingDescription shows.
+void pushItemInstanceTable(lua_State* L, game::GameHandler* gh, const game::ItemDef& item) {
+    lua_newtable(L);
+    lua_pushboolean(L, item.soulbound ? 1 : 0);
+    lua_setfield(L, -2, "soulbound");
+    lua_pushnumber(L, item.curDurability);
+    lua_setfield(L, -2, "durability");
+    lua_pushnumber(L, item.maxDurability);
+    lua_setfield(L, -2, "maxDurability");
+    if (!gh || item.guid == 0) return;
+    const auto online = gh->onlineItemsRef().find(item.guid);
+    if (online == gh->onlineItemsRef().end()) return;
+    if (const uint32_t enchant = online->second.permanentEnchantId) {
+        if (const std::string text = gh->getEnchantName(enchant); !text.empty()) {
+            lua_pushstring(L, text.c_str());
+            lua_setfield(L, -2, "enchant");
+        }
+    }
+    const auto* info = gh->getItemInfo(item.itemId);
+    if (!info) return;
+    const bool socketing = gh->isSocketingOpen() && gh->getSocketItemGuid() == item.guid;
+    lua_newtable(L);
+    for (int i = 0; i < 3; ++i) {
+        uint32_t gem = socketing ? gh->getSocketPendingGemItemId(i) : 0;
+        if (gem == 0) gem = gh->getEnchantGemItem(online->second.socketEnchantIds[static_cast<size_t>(i)]);
+        if (gem == 0 || info->socketColor[i] == 0) continue;
+        gh->ensureItemInfo(gem);
+        const auto* gemInfo = gh->getItemInfo(gem);
+        const auto props = gemInfo ? gemRow(gh, gemInfo->gemProperties) : std::nullopt;
+        lua_newtable(L);
+        lua_pushnumber(L, gem);
+        lua_setfield(L, -2, "id");
+        lua_pushboolean(L, props && (props->colorMask & info->socketColor[i]) != 0);
+        lua_setfield(L, -2, "matches");
+        lua_rawseti(L, -2, i + 1);
+    }
+    lua_setfield(L, -2, "gems");
+}
+
 // _GetItemTooltipData(itemId) → table with armor, bind, stats, damage, description
 // Returns a Lua table with detailed item info for tooltip building
 static int lua_GetItemTooltipData(lua_State* L) {
@@ -2360,6 +2494,8 @@ static int lua_GetItemTooltipData(lua_State* L) {
             lua_setfield(L, -2, "requiredStandingMet");
         }
     }
+    // A gem's own stat and requirements.
+    if (info->gemProperties != 0) pushGemData(L, gh, *info);
     // What the sockets give when every one holds the colour it asks for.
     if (info->socketBonus != 0) {
         const std::string bonus = gh->getEnchantName(info->socketBonus);
@@ -2511,13 +2647,7 @@ static int lua_GetContainerItemInstance(lua_State* L) {
     const game::ItemSlot* s = gh && slot >= 1
         ? containerItemSlot(gh->getInventory(), bag, slot) : nullptr;
     if (!s || s->empty()) { lua_pushnil(L); return 1; }
-    lua_newtable(L);
-    lua_pushboolean(L, s->item.soulbound ? 1 : 0);
-    lua_setfield(L, -2, "soulbound");
-    lua_pushnumber(L, s->item.curDurability);
-    lua_setfield(L, -2, "durability");
-    lua_pushnumber(L, s->item.maxDurability);
-    lua_setfield(L, -2, "maxDurability");
+    pushItemInstanceTable(L, gh, s->item);
     return 1;
 }
 
@@ -2529,13 +2659,7 @@ static int lua_GetInventoryItemInstance(lua_State* L) {
     const int slot = static_cast<int>(luaL_optnumber(L, 1, 0));
     const game::ItemSlot* s = gh && slot >= 1 ? inventorySlotItem(gh->getInventory(), slot) : nullptr;
     if (!s || s->empty()) { lua_pushnil(L); return 1; }
-    lua_newtable(L);
-    lua_pushboolean(L, s->item.soulbound ? 1 : 0);
-    lua_setfield(L, -2, "soulbound");
-    lua_pushnumber(L, s->item.curDurability);
-    lua_setfield(L, -2, "durability");
-    lua_pushnumber(L, s->item.maxDurability);
-    lua_setfield(L, -2, "maxDurability");
+    pushItemInstanceTable(L, gh, s->item);
     return 1;
 }
 
