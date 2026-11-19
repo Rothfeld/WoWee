@@ -2242,14 +2242,20 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     // ground). Native Illidari Fearbringers (22954) in Black Temple switch
     // between the two along their patrol
     // (_experiments/20261118T1350Z.akama_gait, bt1).
-    if (loop && instance.currentSequenceIndex >= 0) {
-        static std::mt19937 loopRandom(std::random_device{}());
-        if (const auto first = drawSequenceVariation(model.sequences, animationId, loopRandom)) {
+    // A one-shot draws its variation by frequency too: Murloc.m2 has two
+    // AttackUnarmed sequences (5: a leap upright, 8: a low lunge with an arm
+    // raised, frequency 16383 each); native 2.4.3 played the leap in two of
+    // four `.npc playemote 35` swings and the lunge in the other two, where
+    // WoWee always took the first-listed leap
+    // (_experiments/20261119T0840Z.sweepfx_verify/rep1-rep4 in the workspace).
+    if (instance.currentSequenceIndex >= 0) {
+        static std::mt19937 variationRandom(std::random_device{}());
+        if (const auto first = drawSequenceVariation(model.sequences, animationId, variationRandom)) {
             if (animationId != anim::STAND && first->index != instance.currentSequenceIndex)
-                LOG_DEBUG("Loop variation: instance=", instanceId, " animation=", animationId,
-                          " sequence=", first->index, " repeats=", first->repeats);
+                LOG_DEBUG("Sequence variation: instance=", instanceId, " animation=", animationId,
+                          " sequence=", first->index, " repeats=", loop ? first->repeats : 0);
             instance.currentSequenceIndex = first->index;
-            instance.sequenceRepeatsRemaining = first->repeats;
+            instance.sequenceRepeatsRemaining = loop ? first->repeats : 0;
         }
     }
 
