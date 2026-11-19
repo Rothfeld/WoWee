@@ -704,8 +704,20 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     //
     // Here rather than at SetTracking, and that is what makes it complete
     // rather than half: both routes end in the aura arriving, whether the
-    // spell was cast from the interface's dropdown or from a button.
-    pendingEvents_.emit("MINIMAP_UPDATE_TRACKING", {});
+    // spell was cast from the interface's dropdown or from a button. Only
+    // when a tracking aura came or went: 2.4.3 fired none for the skill and
+    // inventory updates of three First Aid crafts.
+    std::vector<uint32_t> tracking;
+    for (const auto& aura : owner_.getPlayerAuras()) {
+        const auto* se = owner_.getSpellNameEntry(aura.spellId);
+        if (!se) continue;
+        for (const uint32_t name : se->effectAuraIds)
+            if (name == 44 || name == 45) { tracking.push_back(aura.spellId); break; }
+    }
+    if (tracking != trackingAuras_) {
+        trackingAuras_ = std::move(tracking);
+        pendingEvents_.emit("MINIMAP_UPDATE_TRACKING", {});
+    }
 }
 
 // Detect player mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes

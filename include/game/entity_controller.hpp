@@ -348,6 +348,9 @@ private:
         void clear() { events.clear(); }
     };
     PendingEvents pendingEvents_;
+    /// The tracking auras (EffectApplyAuraName 44 creatures, 45 resources)
+    /// last announced with MINIMAP_UPDATE_TRACKING.
+    std::vector<uint32_t> trackingAuras_;
     void flushPendingEvents();
 
     // The player's UNIT_DYNFLAG_DEAD is Feign Death, not a death.
