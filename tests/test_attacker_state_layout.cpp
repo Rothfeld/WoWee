@@ -290,6 +290,9 @@ TEST_CASE("HitInfo crit, glancing and crushing bits follow the expansion", "[att
     CHECK(legacy.isCrushing());
     legacy.hitInfo = 0x00000200;  // UNK9 in TBC
     CHECK_FALSE(legacy.isCrit());
+    legacy.hitInfo = 0x00010002;  // NORMALSWING2 | NOACTION
+    CHECK(legacy.isNoAction());
+    CHECK_FALSE(legacy.isGlancing());
 
     AttackerStateUpdateData wotlk;
     wotlk.hitInfo = 0x00000200;
@@ -298,6 +301,7 @@ TEST_CASE("HitInfo crit, glancing and crushing bits follow the expansion", "[att
     CHECK_FALSE(wotlk.isCrit());
     wotlk.hitInfo = 0x00010000;
     CHECK(wotlk.isGlancing());
+    CHECK_FALSE(wotlk.isNoAction());
     wotlk.hitInfo = 0x00020000;
     CHECK(wotlk.isCrushing());
 }

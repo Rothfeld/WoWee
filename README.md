@@ -1467,6 +1467,12 @@ model: native Ras Frostwhisper (10508, Lich.mdx, flags 0x3) stays still
 through every hit, out of combat too. Given HumanMale.mdx with `.npc setmodel`,
 he flinches. A Defias Thug given Lich.mdx, Skeleton.mdx or Ghoul.mdx stops
 flinching, and keeps flinching as a gnoll. The blood or dust spurt still shows.
+A melee crit (HITINFO 0x80) flinches too. A hit with HITINFO_NOACTION (0x10000,
+which CMaNGOS sends for on-next-swing spell results) shows its damage and
+nothing else: no flinch, no spurt. Spell damage (SMSG_SPELLNONMELEEDAMAGELOG)
+plays no wound, crits included. Not established: whether flag 0x2 also
+suppresses parry or dodge. No model with flag 0x2 that was tested has the
+parry its ready stance asks for.
 Gotcha: dbc_layouts.json must name CreatureModelData `Flags` (column 1). An
 older deployed copy logs an error at startup, and every model then flinches.
 Evidence and tools (fake hits through `.debug send opcode` on a stationary

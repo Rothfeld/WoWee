@@ -2169,6 +2169,8 @@ struct AttackerStateUpdateData {
     [[nodiscard]] bool isMiss() const     { return (hitInfo & 0x00000010) != 0; }
     [[nodiscard]] bool isGlancing() const { return (hitInfo & (legacyHitInfo ? 0x00004000u : 0x00010000u)) != 0; }
     [[nodiscard]] bool isCrushing() const { return (hitInfo & (legacyHitInfo ? 0x00008000u : 0x00020000u)) != 0; }
+    /// Classic/TBC HITINFO_NOACTION (0x10000; WotLK's GLANCING bit, so legacy only).
+    [[nodiscard]] bool isNoAction() const { return legacyHitInfo && (hitInfo & 0x00010000u) != 0; }
 };
 
 class AttackerStateUpdateParser {

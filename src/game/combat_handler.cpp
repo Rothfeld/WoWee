@@ -759,7 +759,10 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     }
     // Observers must see the same victim reaction as the combatants. Miss,
     // evade and immunity do not wound; dodge/parry/block are explicit outcomes.
-    if (owner_.hitReactionCallbackRef()) {
+    // HITINFO_NOACTION (CMaNGOS sends it for on-next-swing spell results):
+    // build 8606 shows the damage and leaves the victim still, no spurt
+    // either (_experiments/20261119T1311Z.wound_rule, thugflags).
+    if (owner_.hitReactionCallbackRef() && !data.isNoAction()) {
         using HR = GameHandler::HitReaction;
         std::optional<HR> reaction;
         if (data.victimState == VICTIMSTATE_DODGE) reaction = HR::DODGE;
