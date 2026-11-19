@@ -1688,6 +1688,19 @@ static int lua_UnitAttackSpeed(lua_State* L) {
     return 2;
 }
 
+/// The physical damage multiplier the sheet prints beside both damage lines:
+/// PLAYER_FIELD_MOD_DAMAGE_DONE_PCT[0], fourteen fields past the positive
+/// bonuses (seven schools each). Native 2.4.3, a druid with Naturalist: 1.1
+/// for UnitDamage and UnitRangedDamage alike. The player's own field.
+static double physicalDamagePercent(lua_State* L, const char* unit) {
+    std::string who(unit ? unit : "");
+    toLowerInPlace(who);
+    if (who != "player") return 1.0;
+    constexpr int kPctAfterPos = 14;
+    const auto pct = unitFieldFloat(L, "player", game::UF::PLAYER_FIELD_MOD_DAMAGE_DONE_POS, kPctAfterPos);
+    return pct && *pct > 0.0f ? *pct : 1.0;
+}
+
 /// UnitDamage(unit) → min, max, off-hand min, off-hand max, positive bonus,
 /// negative bonus, percent.
 ///
@@ -1726,7 +1739,7 @@ static int lua_UnitDamage(lua_State* L) {
         lua_pushnumber(L, unitFieldFloat(L, who.c_str(), game::UF::UNIT_FIELD_MINDAMAGE, 3).value_or(0.0f));
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 0);
-        lua_pushnumber(L, 1.0);
+        lua_pushnumber(L, physicalDamagePercent(L, who.c_str()));
         return 7;
     }
     const int32_t ap = gh ? gh->getMeleeAttackPower() : -1;
@@ -1772,7 +1785,7 @@ static int lua_UnitRangedDamage(lua_State* L) {
     lua_pushnumber(L, unitFieldFloat(L, unit, game::UF::UNIT_FIELD_MAXRANGEDDAMAGE).value_or(0.0f));
     lua_pushnumber(L, 0);
     lua_pushnumber(L, 0);
-    lua_pushnumber(L, 1.0);
+    lua_pushnumber(L, physicalDamagePercent(L, unit));
     return 6;
 }
 
