@@ -75,9 +75,19 @@ public:
     float& autoAttackRangeWarnCooldownRef() { return autoAttackRangeWarnCooldown_; }
 
     // Combat text creation (used by other handlers, e.g. spell handler for periodic damage)
+    /// `schoolMask` is the damage school (UNIT_COMBAT's fifth argument);
+    /// `reduction` marks the absorbed/resisted/blocked part of the hit added
+    /// just before; `unitCombat` false when the caller announces the hit
+    /// itself (fireUnitCombat).
     void addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId,
                        bool isPlayerSource, uint8_t powerType = 0,
-                       uint64_t srcGuid = 0, uint64_t dstGuid = 0);
+                       uint64_t srcGuid = 0, uint64_t dstGuid = 0,
+                       uint32_t schoolMask = 0, bool reduction = false, bool unitCombat = true);
+
+    /// UNIT_COMBAT for one hit on `victim`, when the interface has a unit
+    /// token for it - whoever struck it.
+    void fireUnitCombat(uint64_t victim, const char* action, const char* flags, int32_t amount,
+                        uint32_t schoolMask);
 
     // Spellsteal dedup (used by aura update handler)
     bool shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId);

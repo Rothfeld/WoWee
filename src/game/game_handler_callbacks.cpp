@@ -2443,8 +2443,9 @@ void GameHandler::stopAutoAttack() {
 }
 
 void GameHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
-                                uint64_t srcGuid, uint64_t dstGuid) {
-    if (combatHandler_) combatHandler_->addCombatText(type, amount, spellId, isPlayerSource, powerType, srcGuid, dstGuid);
+                                uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction, bool unitCombat) {
+    if (combatHandler_) combatHandler_->addCombatText(type, amount, spellId, isPlayerSource, powerType, srcGuid, dstGuid,
+                                                      schoolMask, reduction, unitCombat);
 }
 
 bool GameHandler::shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId) {

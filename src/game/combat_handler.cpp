@@ -427,8 +427,18 @@ void CombatHandler::announceLeaveCombat() {
 // Combat text
 // ============================================================
 
+void CombatHandler::fireUnitCombat(uint64_t victim, const char* action, const char* flags, int32_t amount,
+                                   uint32_t schoolMask) {
+    if (victim == 0 || !owner_.addonEventCallbackRef()) return;
+    const std::string unitId = owner_.guidToUnitId(victim);
+    if (unitId.empty()) return;
+    owner_.addonEventCallbackRef()("UNIT_COMBAT",
+        {unitId, action, flags, std::to_string(amount), std::to_string(schoolMask)});
+}
+
 void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
-                                  uint64_t srcGuid, uint64_t dstGuid) {
+                                  uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction,
+                                  bool unitCombat) {
     // COMBAT_TEXT_UPDATE: what Blizzard_CombatText draws for the player.
     // Build 8606 fires it whatever enableCombatText says, so it is sent
     // before the panel's filters below, which govern the world numbers.
@@ -436,7 +446,7 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
         using T = CombatTextEntry;
         const bool hitsPlayer = dstGuid != 0 && dstGuid == owner_.getPlayerGuid();
         if (hitsPlayer || type == T::HONOR_GAIN) {
-            const bool reduction = type == T::ABSORB || type == T::RESIST || type == T::BLOCK;
+            // The partial forms take the damage of the hit this line is part of.
             const std::string caster = srcGuid ? owner_.lookupName(srcGuid) : std::string{};
             const auto update = combatTextUpdateFor(type, amount, spellId != 0, powerType, caster,
                                                     reduction ? incomingHitDamage_ : -1);
@@ -471,49 +481,30 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
     entry.powerType = powerType;
     entry.srcGuid = srcGuid;
     entry.dstGuid = dstGuid;
+    entry.reduction = reduction;
     combatText_.push_back(entry);
 
     // UNIT_COMBAT - the same hit, for the frames that draw their own feedback
-    // over a portrait. This client renders the floating numbers itself from the
-    // list above; the interface's unit frames render theirs from this event and
-    // were never told, so a pet or target frame showed nothing while the world
-    // filled with numbers.
-    //
-    // The tokens are not invented: CombatFeedback_OnCombatEvent enumerates the
-    // ones it acts on, and everything else falls through its final else to a
-    // blank. Only a unit the interface has a token for is worth announcing -
-    // the frame compares the first argument against its own unit.
-    if (dstGuid != 0 && owner_.addonEventCallbackRef()) {
-        const std::string unitId = owner_.guidToUnitId(dstGuid);
-        if (!unitId.empty()) {
-            const char* action = nullptr;
-            const char* flags  = "";
-            switch (type) {
-                case CombatTextEntry::MELEE_DAMAGE:
-                case CombatTextEntry::SPELL_DAMAGE:
-                case CombatTextEntry::PERIODIC_DAMAGE: action = "WOUND"; break;
-                case CombatTextEntry::CRIT_DAMAGE: action = "WOUND"; flags = "CRITICAL"; break;
-                case CombatTextEntry::GLANCING:    action = "WOUND"; flags = "GLANCING"; break;
-                case CombatTextEntry::CRUSHING:    action = "WOUND"; flags = "CRUSHING"; break;
-                case CombatTextEntry::ABSORB:      action = "WOUND"; flags = "ABSORB";   break;
-                case CombatTextEntry::MISS:   action = "MISS";   break;
-                case CombatTextEntry::DODGE:  action = "DODGE";  break;
-                case CombatTextEntry::PARRY:  action = "PARRY";  break;
-                case CombatTextEntry::BLOCK:  action = "BLOCK";  break;
-                case CombatTextEntry::EVADE:  action = "EVADE";  break;
-                case CombatTextEntry::IMMUNE: action = "IMMUNE"; break;
-                case CombatTextEntry::RESIST: action = "RESIST"; break;
-                case CombatTextEntry::HEAL:
-                case CombatTextEntry::PERIODIC_HEAL: action = "HEAL"; break;
-                case CombatTextEntry::CRIT_HEAL: action = "HEAL"; flags = "CRITICAL"; break;
-                default: break;  // energize, xp, honour - not combat feedback
-            }
-            if (action) {
-                owner_.addonEventCallbackRef()(
-                    "UNIT_COMBAT",
-                    {unitId, action, flags, std::to_string(amount), "0"});
-            }
+    // over a portrait (CombatFeedback.lua). Swings and spell damage logs
+    // announce themselves (fireUnitCombat, for every unit with a token, as the
+    // original does); this covers the other lines that land on a unit. The
+    // part of a hit that was absorbed or resisted is not a hit of its own.
+    if (unitCombat && !reduction) {
+        const char* action = nullptr;
+        const char* flags  = "";
+        switch (type) {
+            case CombatTextEntry::MELEE_DAMAGE:
+            case CombatTextEntry::SPELL_DAMAGE:
+            case CombatTextEntry::PERIODIC_DAMAGE: action = "WOUND"; break;
+            case CombatTextEntry::CRIT_DAMAGE: action = "WOUND"; flags = "CRITICAL"; break;
+            case CombatTextEntry::ABSORB: action = "WOUND"; flags = "ABSORB"; amount = 0; break;
+            case CombatTextEntry::RESIST: action = "WOUND"; flags = "RESIST"; amount = 0; break;
+            case CombatTextEntry::HEAL:
+            case CombatTextEntry::PERIODIC_HEAL: action = "HEAL"; break;
+            case CombatTextEntry::CRIT_HEAL: action = "HEAL"; flags = "CRITICAL"; break;
+            default: break;  // energize, xp, honour - not combat feedback
         }
+        if (action) fireUnitCombat(dstGuid, action, flags, amount, schoolMask);
     }
 
     // Persistent combat log - use explicit GUIDs if provided, else fall back to
@@ -791,8 +782,50 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         }
     }
 
+    // School of the swing (the first sub-damage; a swing has one), and what
+    // was taken off it.
+    const uint32_t swingSchool = data.subDamages.empty() ? 0 : data.subDamages.front().schoolMask;
+    uint32_t totalAbsorbed = 0, totalResisted = 0;
+    for (const auto& sub : data.subDamages) {
+        totalAbsorbed += sub.absorbed;
+        totalResisted += sub.resisted;
+    }
+    // UNIT_COMBAT for every unit the interface has a token for, whoever swung:
+    // the original announces another player's swings at its target as well
+    // (pair 13 log, combat_text). Outcomes that stop the whole swing are their
+    // own action with no amount; a full block is BLOCK flagged BLOCK. A swing
+    // that lands is a WOUND of its damage, flagged by how it landed or, when
+    // nothing got through, by what stopped it - the flags CombatFeedback reads.
+    {
+        const char* action = "WOUND";
+        const char* flags = "";
+        int32_t amount = 0;
+        if (data.victimState == VICTIMSTATE_EVADES) action = "EVADE";
+        else if (data.isMiss()) action = "MISS";
+        else if (data.victimState == VICTIMSTATE_DODGE) action = "DODGE";
+        else if (data.victimState == VICTIMSTATE_PARRY) action = "PARRY";
+        else if (data.victimState == VICTIMSTATE_BLOCKS) { action = "BLOCK"; flags = "BLOCK"; }
+        else if (data.victimState == VICTIMSTATE_IS_IMMUNE) action = "IMMUNE";
+        else if (data.victimState == VICTIMSTATE_DEFLECTS) action = "DEFLECT";
+        else {
+            amount = data.totalDamage;
+            if (amount != 0) {
+                if (data.isCrit()) flags = "CRITICAL";
+                else if (data.isCrushing()) flags = "CRUSHING";
+                else if (data.isGlancing()) flags = "GLANCING";
+            } else if (totalAbsorbed > 0) flags = "ABSORB";
+            else if (data.blocked > 0) flags = "BLOCK";
+            else if (totalResisted > 0) flags = "RESIST";
+        }
+        fireUnitCombat(data.targetGuid, action, flags, amount, swingSchool);
+    }
+
+    // The pet's swings are written over its victim too ("Pet Damage",
+    // PetMeleeDamage): the original showed the imp's hits on its target.
+    const bool isPetAttacker = owner_.getPetGuid() != 0 && data.attackerGuid == owner_.getPetGuid();
+
     // Local combat UI, targeting and non-positional player audio remain local.
-    if (!isPlayerAttacker && !isPlayerTarget) return;
+    if (!isPlayerAttacker && !isPlayerTarget && !isPetAttacker) return;
 
     if (isPlayerTarget && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
@@ -800,7 +833,8 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     }
 
     // Play combat sounds via CombatSoundManager + character vocalizations
-    if (auto* ac = owner_.services().audioCoordinator) {
+    auto* ac = isPlayerAttacker || isPlayerTarget ? owner_.services().audioCoordinator : nullptr;
+    if (ac) {
         if (auto* csm = ac->getCombatSoundManager()) {
             auto weaponSize = audio::CombatSoundManager::WeaponSize::MEDIUM;
             if (data.isMiss()) {
@@ -828,20 +862,32 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     }
 
     // An evade comes with the miss flag set as well, so it is asked first.
+    const auto line = [&](CombatTextEntry::Type type, int32_t amount, bool reduction = false) {
+        addCombatText(type, amount, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid,
+                      swingSchool, reduction, false);
+    };
     if (data.victimState == VICTIMSTATE_EVADES) {
-        addCombatText(CombatTextEntry::EVADE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(CombatTextEntry::EVADE, 0);
     } else if (data.isMiss()) {
-        addCombatText(CombatTextEntry::MISS, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(CombatTextEntry::MISS, 0);
     } else if (data.victimState == VICTIMSTATE_DODGE) {
-        addCombatText(CombatTextEntry::DODGE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(CombatTextEntry::DODGE, 0);
     } else if (data.victimState == VICTIMSTATE_PARRY) {
-        addCombatText(CombatTextEntry::PARRY, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(CombatTextEntry::PARRY, 0);
     } else if (data.victimState == VICTIMSTATE_BLOCKS) {
-        addCombatText(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked));
     } else if (data.victimState == VICTIMSTATE_IS_IMMUNE) {
-        addCombatText(CombatTextEntry::IMMUNE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(CombatTextEntry::IMMUNE, 0);
     } else if (data.victimState == VICTIMSTATE_DEFLECTS) {
-        addCombatText(CombatTextEntry::DEFLECT, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(CombatTextEntry::DEFLECT, 0);
+    } else if (data.totalDamage == 0 && totalAbsorbed > 0) {
+        // Nothing got through: the swing is named by what stopped it
+        // (the original writes "Absorb" over the unit, nothing else).
+        line(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed));
+    } else if (data.totalDamage == 0 && data.blocked > 0) {
+        line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked));
+    } else if (data.totalDamage == 0 && totalResisted > 0) {
+        line(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted));
     } else {
         CombatTextEntry::Type type;
         if (data.isCrit())
@@ -852,20 +898,12 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             type = CombatTextEntry::GLANCING;
         else
             type = CombatTextEntry::MELEE_DAMAGE;
-        addCombatText(type, data.totalDamage, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-        // Show partial absorb/resist from sub-damage entries
-        uint32_t totalAbsorbed = 0, totalResisted = 0;
-        for (const auto& sub : data.subDamages) {
-            totalAbsorbed += sub.absorbed;
-            totalResisted += sub.resisted;
-        }
-        if (totalAbsorbed > 0)
-            addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-        if (totalResisted > 0)
-            addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-        // A partial block is a hit like any other, with the blocked part beside it.
-        if (data.blocked > 0)
-            addCombatText(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        line(type, data.totalDamage);
+        // What was taken off a hit that still did damage, for the combat log
+        // and COMBAT_TEXT_UPDATE's partial forms.
+        if (totalAbsorbed > 0) line(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed), true);
+        if (totalResisted > 0) line(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted), true);
+        if (data.blocked > 0) line(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), true);
     }
 
 }
@@ -876,20 +914,35 @@ void CombatHandler::handleSpellDamageLog(network::Packet& packet) {
 
     bool isPlayerSource = (data.attackerGuid == owner_.getPlayerGuid());
     bool isPlayerTarget = (data.targetGuid == owner_.getPlayerGuid());
-    if (!isPlayerSource && !isPlayerTarget) return;  // Not our combat
+
+    // UNIT_COMBAT whoever cast it, as for a swing: a WOUND of the damage
+    // (`.damage 50 2 133` on the original: target|WOUND|CRITICAL|75|4).
+    fireUnitCombat(data.targetGuid, "WOUND",
+                   data.damage > 0 ? (data.isCrit ? "CRITICAL" : "")
+                                   : data.absorbed > 0 ? "ABSORB" : data.resisted > 0 ? "RESIST" : "",
+                   static_cast<int32_t>(data.damage), data.schoolMask);
+
+    const bool isPetSource = owner_.getPetGuid() != 0 && data.attackerGuid == owner_.getPetGuid();
+    if (!isPlayerSource && !isPlayerTarget && !isPetSource) return;  // Not our combat
 
     if (isPlayerTarget && data.attackerGuid != 0) {
         hostileAttackers_.insert(data.attackerGuid);
         autoTargetAttacker(data.attackerGuid);
     }
 
-    auto type = data.isCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::SPELL_DAMAGE;
-    if (data.damage > 0)
-        addCombatText(type, static_cast<int32_t>(data.damage), data.spellId, isPlayerSource, 0, data.attackerGuid, data.targetGuid);
-    if (data.absorbed > 0)
-        addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(data.absorbed), data.spellId, isPlayerSource, 0, data.attackerGuid, data.targetGuid);
-    if (data.resisted > 0)
-        addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(data.resisted), data.spellId, isPlayerSource, 0, data.attackerGuid, data.targetGuid);
+    const auto line = [&](CombatTextEntry::Type type, uint32_t amount, bool reduction = false) {
+        addCombatText(type, static_cast<int32_t>(amount), data.spellId, isPlayerSource, 0, data.attackerGuid,
+                      data.targetGuid, data.schoolMask, reduction, false);
+    };
+    if (data.damage > 0) {
+        line(data.isCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::SPELL_DAMAGE, data.damage);
+        if (data.absorbed > 0) line(CombatTextEntry::ABSORB, data.absorbed, true);
+        if (data.resisted > 0) line(CombatTextEntry::RESIST, data.resisted, true);
+    } else if (data.absorbed > 0) {
+        line(CombatTextEntry::ABSORB, data.absorbed);
+    } else if (data.resisted > 0) {
+        line(CombatTextEntry::RESIST, data.resisted);
+    }
 }
 
 void CombatHandler::handleSpellHealLog(network::Packet& packet) {
@@ -1066,8 +1119,8 @@ void CombatHandler::handleProcResist(network::Packet& packet) {
     uint64_t victim = readPrGuid();
     if (!packet.hasRemaining(4)) return;
     uint32_t spellId = packet.readUInt32();
-    if (victim == owner_.getPlayerGuid())       addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, caster, victim);
-    else if (caster == owner_.getPlayerGuid())  addCombatText(CombatTextEntry::RESIST, 0, spellId, true,  0, caster, victim);
+    if (victim == owner_.getPlayerGuid())       addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, caster, victim, 0, false, false);
+    else if (caster == owner_.getPlayerGuid())  addCombatText(CombatTextEntry::RESIST, 0, spellId, true,  0, caster, victim, 0, false, false);
     packet.skipAll();
 }
 
@@ -1141,7 +1194,7 @@ void CombatHandler::handleSpellOrDamageImmune(network::Packet& packet) {
     // or the victim (we are immune)
     if (casterGuid == owner_.getPlayerGuid() || victimGuid == owner_.getPlayerGuid()) {
         addCombatText(CombatTextEntry::IMMUNE, 0, immuneSpellId,
-                      casterGuid == owner_.getPlayerGuid(), 0, casterGuid, victimGuid);
+                      casterGuid == owner_.getPlayerGuid(), 0, casterGuid, victimGuid, 0, false, false);
     }
 }
 
@@ -1178,9 +1231,9 @@ void CombatHandler::handleResistLog(network::Packet& packet) {
     int32_t resistedAmount = static_cast<int32_t>(packet.readUInt32());
     // Show RESIST when the player is involved on either side.
     if (resistedAmount > 0 && victimGuid == owner_.getPlayerGuid()) {
-        addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, false, 0, attackerGuid, victimGuid);
+        addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, false, 0, attackerGuid, victimGuid, 0, false, false);
     } else if (resistedAmount > 0 && attackerGuid == owner_.getPlayerGuid()) {
-        addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, true, 0, attackerGuid, victimGuid);
+        addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, true, 0, attackerGuid, victimGuid, 0, false, false);
     }
     packet.skipAll();
 }

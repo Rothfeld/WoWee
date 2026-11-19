@@ -68,6 +68,10 @@ struct CombatTextEntry {
     uint8_t powerType = 0;      // For ENERGIZE/POWER_DRAIN: 0=mana,1=rage,2=focus,3=energy,6=runicpower
     uint64_t srcGuid = 0;       // Source entity (attacker/caster)
     uint64_t dstGuid = 0;       // Destination entity (victim/target) - used for world-space positioning
+    /// The part of the hit just before it that was absorbed, resisted or
+    /// blocked, when that hit still did damage. The combat log and
+    /// COMBAT_TEXT_UPDATE report it; nothing is drawn for it over the unit.
+    bool reduction = false;
 
     static constexpr float LIFETIME = 1.5f;
     [[nodiscard]] float lifetime() const {

@@ -3,6 +3,8 @@
 #include <catch_amalgamated.hpp>
 #include "ui/floating_combat_text.hpp"
 
+#include <string>
+
 using namespace wowee::ui::fct;
 
 namespace {
@@ -67,4 +69,54 @@ TEST_CASE("of four simultaneous numbers the oldest drops a row below", "[fct]") 
     CHECK(boxes[2].x > 640 + 14);
     CHECK(boxes[3].top == Catch::Approx(356));
     CHECK(boxes[3].x == Catch::Approx(640));
+}
+
+TEST_CASE("a hit shows its damage, a stopped hit names what stopped it", "[fct]") {
+    // _experiments/20261119T122954Z.combat_text: abs_original, imm_original, melee3.
+    using wowee::game::CombatTextEntry;
+    CombatTextEntry hit{};
+    hit.type = CombatTextEntry::MELEE_DAMAGE;
+    hit.amount = 4;
+    auto shown = presentationFor(hit);
+    CHECK(shown.kind == Presentation::Number);
+    CHECK(shown.number == 4);
+    CHECK_FALSE(shown.spell);
+
+    CombatTextEntry absorbedPart = hit;
+    absorbedPart.type = CombatTextEntry::ABSORB;
+    absorbedPart.amount = 36;
+    absorbedPart.reduction = true;
+    CHECK(presentationFor(absorbedPart).kind == Presentation::NotWorldText);
+
+    CombatTextEntry absorbed = absorbedPart;
+    absorbed.reduction = false;
+    shown = presentationFor(absorbed);
+    CHECK(shown.kind == Presentation::Word);
+    CHECK(std::string(shown.word) == "ABSORB");
+
+    CombatTextEntry nothing = hit;
+    nothing.amount = 0;
+    CHECK(std::string(presentationFor(nothing).word) == "MISS");
+
+    CombatTextEntry immune{};
+    immune.type = CombatTextEntry::IMMUNE;
+    immune.spellId = 686;
+    shown = presentationFor(immune);
+    CHECK(std::string(shown.word) == "IMMUNE");
+    CHECK(shown.spell);
+
+    CombatTextEntry tick{};
+    tick.type = CombatTextEntry::PERIODIC_DAMAGE;
+    tick.amount = 150;
+    tick.spellId = 172;
+    shown = presentationFor(tick);
+    CHECK(shown.kind == Presentation::Number);
+    CHECK(shown.number == 150);
+    CHECK(shown.spell);
+    CHECK_FALSE(shown.critical);
+}
+
+TEST_CASE("outcome words stay opaque as long as a critical", "[fct]") {
+    CHECK(alpha(0.9f, true) == Catch::Approx(1.0f));
+    CHECK(alpha(0.9f, false) < 1.0f);
 }

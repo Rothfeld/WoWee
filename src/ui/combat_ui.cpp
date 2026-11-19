@@ -30,6 +30,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -124,7 +125,10 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     };
 
     for (const auto& entry : entries) {
-        const bool outgoing = entry.isPlayerSource;
+        // The player's lines and the pet's ("Pet Damage") are written over
+        // the unit they landed on.
+        const bool outgoing = entry.isPlayerSource ||
+            (entry.srcGuid != 0 && entry.srcGuid == gameHandler.getPetGuid());
         const bool experience = entry.type == game::CombatTextEntry::XP_GAIN;
         const bool reward = experience || entry.type == game::CombatTextEntry::HONOR_GAIN;
         // Lines that land on the player are Blizzard_CombatText's, which
@@ -133,35 +137,36 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         // proc either.
         if (!outgoing && !reward) continue;
         if (entry.type == game::CombatTextEntry::PROC_TRIGGER) continue;
-        const bool isCrit = entry.type == game::CombatTextEntry::CRIT_DAMAGE ||
-                            entry.type == game::CombatTextEntry::CRIT_HEAL;
+        // The absorbed/resisted/blocked part of a hit that did damage.
+        if (entry.reduction) continue;
+        const fct::Presentation shown = fct::presentationFor(entry);
+        const bool measured = shown.kind != fct::Presentation::NotWorldText;
+        const bool isCrit = measured ? shown.critical
+                                     : entry.type == game::CombatTextEntry::CRIT_HEAL;
         // Native fade thresholds: ordinary hits 150/760/1500 ms;
         // XP 500/2000/4500 ms. Keep full opacity between fade intervals.
         const float fadeIn = reward ? 0.5f : 0.15f;
         const float fadeOut = reward ? 2.0f : isCrit ? 1.0f : 0.76f;
-        const bool worldNumber = outgoing && !reward && entry.type != game::CombatTextEntry::PROC_TRIGGER;
-        const float alpha = worldNumber ? fct::alpha(entry.age, isCrit) :
+        const bool worldNumber = outgoing && !reward;
+        const float alpha = worldNumber ? fct::alpha(entry.age, isCrit || shown.kind == fct::Presentation::Word) :
             std::clamp(std::min(entry.age / fadeIn,
             (entry.lifetime() - entry.age) / (entry.lifetime() - fadeOut)), 0.0f, 1.0f);
 
-        // --- Format text and color (identical logic for both world and HUD paths) ---
         ImVec4 color;
         char text[128];
-        switch (entry.type) {
-            case game::CombatTextEntry::MELEE_DAMAGE:
-            case game::CombatTextEntry::SPELL_DAMAGE:
-                snprintf(text, sizeof(text), outgoing ? "%d" : "-%d", entry.amount);
-                color = outgoing ?
-                    (entry.type == game::CombatTextEntry::MELEE_DAMAGE ?
-                     ImVec4(1,1,1,alpha) : ImVec4(1,222.0f/255.0f,0,alpha)) :
-                    ImVec4(1.0f, 0.3f, 0.3f, alpha);
-                break;
-            case game::CombatTextEntry::CRIT_DAMAGE:
-                snprintf(text, sizeof(text), outgoing ? "%d" : "-%d", entry.amount);
-                color = outgoing ?
-                    (entry.spellId ? ImVec4(1,222.0f/255.0f,0,alpha) : ImVec4(1,1,1,alpha)) :
-                    ImVec4(1.0f, 0.5f, 0.0f, alpha);
-                break;
+        if (measured) {
+            if (shown.kind == fct::Presentation::Number) {
+                snprintf(text, sizeof(text), "%d", shown.number);
+            } else {
+                const std::string word = gameHandler.globalString(shown.word);
+                if (word.empty()) {
+                    LOG_ERROR("Combat text: GlobalStrings ", shown.word, " is not loaded");
+                    continue;
+                }
+                snprintf(text, sizeof(text), "%s", word.c_str());
+            }
+            color = shown.spell ? ImVec4(1, 222.0f / 255.0f, 0, alpha) : ImVec4(1, 1, 1, alpha);
+        } else switch (entry.type) {
             case game::CombatTextEntry::HEAL:
                 snprintf(text, sizeof(text), "+%d", entry.amount);
                 color = ImVec4(0.3f, 1.0f, 0.3f, alpha);
@@ -169,39 +174,6 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
             case game::CombatTextEntry::CRIT_HEAL:
                 snprintf(text, sizeof(text), "+%d!", entry.amount);
                 color = ImVec4(0.3f, 1.0f, 0.3f, alpha);
-                break;
-            case game::CombatTextEntry::MISS:
-                snprintf(text, sizeof(text), "Miss");
-                color = ImVec4(1,1,1,alpha);
-                break;
-            case game::CombatTextEntry::DODGE:
-                snprintf(text, sizeof(text), outgoing ? "Dodge" : "You Dodge");
-                color = outgoing ? ImVec4(1,1,1,alpha)
-                                 : ImVec4(0.4f, 0.9f, 1.0f, alpha);
-                break;
-            case game::CombatTextEntry::PARRY:
-                snprintf(text, sizeof(text), outgoing ? "Parry" : "You Parry");
-                color = outgoing ? ImVec4(1,1,1,alpha)
-                                 : ImVec4(0.4f, 0.9f, 1.0f, alpha);
-                break;
-            case game::CombatTextEntry::BLOCK:
-                if (entry.amount > 0)
-                    snprintf(text, sizeof(text), outgoing ? "Block %d" : "You Block %d", entry.amount);
-                else
-                    snprintf(text, sizeof(text), outgoing ? "Block" : "You Block");
-                color = outgoing ? ImVec4(1,1,1,alpha)
-                                 : ImVec4(0.4f, 0.9f, 1.0f, alpha);
-                break;
-            case game::CombatTextEntry::EVADE:
-                snprintf(text, sizeof(text), outgoing ? "Evade" : "You Evade");
-                color = outgoing ? ImVec4(1,1,1,alpha)
-                                 : ImVec4(0.4f, 0.9f, 1.0f, alpha);
-                break;
-            case game::CombatTextEntry::PERIODIC_DAMAGE:
-                snprintf(text, sizeof(text), "-%d", entry.amount);
-                color = outgoing ?
-                    ImVec4(1.0f, 0.9f, 0.3f, alpha) :
-                    ImVec4(1.0f, 0.4f, 0.4f, alpha);
                 break;
             case game::CombatTextEntry::PERIODIC_HEAL:
                 snprintf(text, sizeof(text), "+%d", entry.amount);
@@ -246,48 +218,6 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 snprintf(text, sizeof(text), "XP: %d", entry.amount);
                 color = ImVec4(0.6f, 0.0f, 0.6f, alpha);
                 break;
-            case game::CombatTextEntry::IMMUNE:
-                snprintf(text, sizeof(text), "Immune");
-                color = ImVec4(0.9f, 0.9f, 0.9f, alpha);
-                break;
-            case game::CombatTextEntry::ABSORB:
-                if (entry.amount > 0)
-                    snprintf(text, sizeof(text), "Absorbed %d", entry.amount);
-                else
-                    snprintf(text, sizeof(text), "Absorbed");
-                color = ImVec4(0.5f, 0.8f, 1.0f, alpha);
-                break;
-            case game::CombatTextEntry::RESIST:
-                if (entry.amount > 0)
-                    snprintf(text, sizeof(text), "Resisted %d", entry.amount);
-                else
-                    snprintf(text, sizeof(text), "Resisted");
-                color = ImVec4(1,1,1,alpha);
-                break;
-            case game::CombatTextEntry::DEFLECT:
-                snprintf(text, sizeof(text), outgoing ? "Deflect" : "You Deflect");
-                color = outgoing ? ImVec4(0.7f, 0.7f, 0.7f, alpha)
-                                 : ImVec4(0.5f, 0.9f, 1.0f, alpha);
-                break;
-            case game::CombatTextEntry::REFLECT: {
-                const std::string& reflectName = entry.spellId ? gameHandler.getSpellName(entry.spellId) : "";
-                if (!reflectName.empty())
-                    snprintf(text, sizeof(text), outgoing ? "Reflected: %s" : "Reflect: %s", reflectName.c_str());
-                else
-                    snprintf(text, sizeof(text), outgoing ? "Reflected" : "You Reflect");
-                color = outgoing ? ImVec4(0.85f, 0.75f, 1.0f, alpha)
-                                 : ImVec4(0.75f, 0.85f, 1.0f, alpha);
-                break;
-            }
-            case game::CombatTextEntry::PROC_TRIGGER: {
-                const std::string& procName = entry.spellId ? gameHandler.getSpellName(entry.spellId) : "";
-                if (!procName.empty())
-                    snprintf(text, sizeof(text), "%s!", procName.c_str());
-                else
-                    snprintf(text, sizeof(text), "PROC!");
-                color = ImVec4(1.0f, 0.85f, 0.0f, alpha);
-                break;
-            }
             case game::CombatTextEntry::DISPEL:
                 if (entry.spellId != 0) {
                     const std::string& dispelledName = gameHandler.getSpellName(entry.spellId);
@@ -322,25 +252,12 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 break;
             }
             case game::CombatTextEntry::INSTAKILL:
-                snprintf(text, sizeof(text), outgoing ? "Kill!" : "Killed!");
-                color = outgoing ? ImVec4(1.0f, 0.25f, 0.25f, alpha)
-                                 : ImVec4(1.0f, 0.1f, 0.1f, alpha);
+                snprintf(text, sizeof(text), "Kill!");
+                color = ImVec4(1.0f, 0.25f, 0.25f, alpha);
                 break;
             case game::CombatTextEntry::HONOR_GAIN:
                 snprintf(text, sizeof(text), "+%d Honor", entry.amount);
                 color = ImVec4(1.0f, 0.85f, 0.0f, alpha);
-                break;
-            case game::CombatTextEntry::GLANCING:
-                snprintf(text, sizeof(text), "%d", entry.amount);
-                color = outgoing ?
-                    ImVec4(1,1,1,alpha) :
-                    ImVec4(0.75f, 0.35f, 0.35f, alpha);
-                break;
-            case game::CombatTextEntry::CRUSHING:
-                snprintf(text, sizeof(text), "%d", entry.amount);
-                color = outgoing ?
-                    ImVec4(1.0f, 0.55f, 0.1f, alpha) :
-                    ImVec4(1.0f, 0.15f, 0.15f, alpha);
                 break;
             default:
                 snprintf(text, sizeof(text), "%d", entry.amount);
@@ -358,13 +275,13 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
         ImU32 textCol   = ImGui::ColorConvertFloat4ToU32(color);
 
         if (worldNumber && camera && entry.dstGuid != 0) {
-            // Numbers start at the bottom of the unit's plain name line
-            // (name attachment + 0.25 yd): ordinary ones sit on it and climb,
-            // critical ones hang below it and stay. Laid out per unit after every
+            // Every text is born with its baseline just below the unit's name
+            // attachment (fct::kBirthBelowNameAttachment): ordinary ones climb
+            // from there, critical ones stay. Laid out per unit after every
             // entry is known.
             glm::vec3 anchor;
             if (nameAnchorFor(entry.dstGuid, anchor)) {
-                anchor.z += fct::kNameLineOffset;
+                anchor.z -= fct::kBirthBelowNameAttachment;
                 {
                     // Height on this vertical line that projects onto the top line.
                     const glm::vec4 a = viewProj * glm::vec4(anchor.x, anchor.y, 0.0f, 1.0f);
@@ -385,7 +302,11 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                         (isCrit ? fct::kCritScale * fct::critPulse(entry.age) : 1.0f);
                     fct::Box box;
                     box.naturalX = (ndc.x * 0.5f + 0.5f) * screenW;
-                    box.naturalTop = (ndc.y * 0.5f + 0.5f) * screenH - (isCrit ? 0.0f : fontPx);
+                    // The anchor is the baseline (the bottom of the digits),
+                    // for a critical as for an ordinary number.
+                    ImFontBaked* baked = font->GetFontBaked(fontPx);
+                    assert(baked && baked->Size > 0.0f);
+                    box.naturalTop = (ndc.y * 0.5f + 0.5f) * screenH - baked->Ascent * fontPx / baked->Size;
                     box.fontPx = fontPx;
                     box.width = font->CalcTextSizeA(fontPx, FLT_MAX, 0.0f, text).x;
                     worldTexts.push_back({entry.dstGuid, box, text, color, alpha});

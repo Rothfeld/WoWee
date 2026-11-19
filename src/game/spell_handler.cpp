@@ -3659,11 +3659,13 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         const bool playerIsCaster = (spellCasterGuid == owner_.getPlayerGuid());
 
         for (const auto& m : data.missTargets) {
-            if (!playerIsCaster && m.targetGuid != owner_.getPlayerGuid()) {
+            const bool petIsCaster = owner_.getPetGuid() != 0 && spellCasterGuid == owner_.getPetGuid();
+            if (!playerIsCaster && !petIsCaster && m.targetGuid != owner_.getPlayerGuid()) {
                 continue;
             }
             CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(m.missType);
-            owner_.addCombatText(ct, 0, data.spellId, playerIsCaster, 0, spellCasterGuid, m.targetGuid);
+            owner_.addCombatText(ct, 0, data.spellId, playerIsCaster, 0, spellCasterGuid, m.targetGuid,
+                                 0, false, false);  // spell misses fire no UNIT_COMBAT (original: Shadow Bolt on Divine Shield)
         }
     }
 
@@ -5890,12 +5892,13 @@ void SpellHandler::handleSpellLogMiss(network::Packet& packet) {
     for (const auto& miss : parsedMisses) {
         const uint64_t victimGuid = miss.victimGuid;
         const CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(miss.missInfo);
-        if (casterGuid == owner_.getPlayerGuid()) {
-            // We cast a spell and it missed the target
-            owner_.addCombatText(ct, 0, spellId, true, 0, casterGuid, victimGuid);
+        const bool petCaster = owner_.getPetGuid() != 0 && casterGuid == owner_.getPetGuid();
+        if (casterGuid == owner_.getPlayerGuid() || petCaster) {
+            // We (or our pet) cast a spell and it missed the target
+            owner_.addCombatText(ct, 0, spellId, !petCaster, 0, casterGuid, victimGuid, 0, false, false);
         } else if (victimGuid == owner_.getPlayerGuid()) {
             // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
-            owner_.addCombatText(ct, 0, spellId, false, 0, casterGuid, victimGuid);
+            owner_.addCombatText(ct, 0, spellId, false, 0, casterGuid, victimGuid, 0, false, false);
         }
     }
 }
@@ -6083,7 +6086,8 @@ void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
     uint32_t count   = packet.readUInt32();
     bool isPlayerVictim = (victimGuid == owner_.getPlayerGuid());
     bool isPlayerCaster = (casterGuid == owner_.getPlayerGuid());
-    if (!isPlayerVictim && !isPlayerCaster) {
+    const bool isPetCaster = owner_.getPetGuid() != 0 && casterGuid == owner_.getPetGuid();
+    if (!isPlayerVictim && !isPlayerCaster && !isPetCaster) {
         packet.skipAll();
         return;
     }
@@ -6104,21 +6108,23 @@ void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
             if (!packet.hasRemaining(dotSz)) break;
             uint32_t dmg      = packet.readUInt32();
             if (periodicWotlk) /*uint32_t overkill=*/ packet.readUInt32();
-            /*uint32_t school=*/ packet.readUInt32();
+            const uint32_t school = packet.readUInt32();  // school mask
             uint32_t abs      = packet.readUInt32();
             uint32_t res      = packet.readUInt32();
             bool dotCrit = false;
             if (periodicWotlk) dotCrit = (packet.readUInt8() != 0);
+            // A tick that did damage shows its damage only; one that did none
+            // is named by what stopped it.
             if (dmg > 0)
                 owner_.addCombatText(dotCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::PERIODIC_DAMAGE,
                               static_cast<int32_t>(dmg),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school);
             if (abs > 0)
                 owner_.addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(abs),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-            if (res > 0)
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0);
+            if (res > 0 && (dmg > 0 || abs == 0))
                 owner_.addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(res),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid, school, dmg > 0);
         } else if (auraType == 8 || auraType == 20) {
             // Classic/TBC: heal(4)
             // WotLK: heal(4)+overheal(4)+absorbed(4)+isCrit(1)

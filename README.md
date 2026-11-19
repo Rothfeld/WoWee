@@ -976,10 +976,20 @@ parameter table begins at 0xBBF1C0 (28-byte records); XP formatting is at
 0x6089E0. Incoming floating combat text follows the `enableCombatText` setting.
 Damage numbers over a unit (include/ui/floating_combat_text.hpp) keep a fixed
 on-screen size at any distance: 30 interface units, critical 45 after a pop to
-twice that over 150 ms. Ability yellow is (255,222,0). An ordinary number is born
-with its bottom on the plain name line and climbs 1.4 yd/s; a critical hangs below
-the line and stays. Opacity ramps to 0.1 over 150 ms, then is full until 0.76 s
-(critical 1.0 s) and fades out by 1.5 s. Shadow: black at half opacity, 3 px right
+twice that over 150 ms. Ability yellow is (255,222,0). Every text is born with its
+baseline 0.23 yd below the unit's name attachment (M2 attachment 18), a world offset
+that does not scale with the model; an ordinary number climbs 1.33 yd/s, a critical
+stays. Opacity ramps to 0.1 over 150 ms, then is full until 0.76 s
+(critical and outcome words 1.0 s) and fades out by 1.5 s.
+A hit shows its damage only: the absorbed, resisted or blocked part of a hit that
+did damage is not written. A hit stopped whole is named by the GlobalStrings word
+(MISS, DODGE, PARRY, BLOCK, EVADE, IMMUNE, DEFLECT, REFLECT, ABSORB, RESIST) at
+number size, white for a swing and yellow for a spell; a swing of 0 with no reason
+reads Miss. The pet's swings and spells are written over its victim too
+(`PetMeleeDamage`). UNIT_COMBAT fires for every unit with a token whoever struck it,
+with the school mask as arg5 (CombatFeedback colours non-physical yellow) and a
+fully absorbed hit as WOUND, ABSORB, 0. Measured on pair 13 in
+`_experiments/20261119T122954Z.combat_text`. Shadow: black at half opacity, 3 px right
 and 1 px up at 720 lines. Texts over one unit never overlap: the newest keeps its
 place, older ones are lifted a row (two font heights) at a time while within one
 row of their own height, otherwise set to the right. Check with

@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include "game/spell_defines.hpp"
+
 namespace wowee {
 namespace ui {
 
@@ -25,16 +27,25 @@ constexpr float kShadowX = 3.0f * 768.0f / 720.0f;
 constexpr float kShadowY = -1.0f * 768.0f / 720.0f;
 constexpr float kShadowAlpha = 0.5f;
 
-/// Height of the plain name line's bottom over the name attachment, as the
-/// world name label uses it (game_screen_hud.cpp). Paired c5 capture: an
-/// ordinary number is born with its bottom on that line (native 363-364 vs
-/// name bottom 367 px); a critical hangs below it (top 368 px).
-constexpr float kNameLineOffset = 0.25f;
+/// Where a text is born, in yards below the unit's name attachment (M2
+/// attachment 18, the point the world name label stands on): the baseline of
+/// every text over a unit - number, critical, Miss/Dodge/... - starts there.
+/// Measured on the original at two camera distances (11 and 17 yards) on
+/// HumanMale at display scale 1 and 1.4 and on DragonSpawn: the baseline of
+/// the first fully opaque frame (age 0.15 s) sits on the attachment, 0.21 yd
+/// of climb above its birth; the birth itself, from the faint fade-in frames,
+/// 0.21-0.24 yd below the attachment. The same in yards at both distances, so
+/// it is a world offset, not a pixel one, and it is not scaled with the model
+/// (_experiments/20261119T122954Z.combat_text, fctz-*.json, faint.py).
+/// An ordinary number therefore overlaps the name as it appears and a
+/// critical, which does not climb, hangs below the name.
+constexpr float kBirthBelowNameAttachment = 0.23f;
 
-/// Ordinary numbers climb from the unit's name attachment at this rate in
-/// world yards per second (1.40 at 10.5 yd camera distance; 1.31 at 24 yd).
-/// Critical numbers do not climb.
-constexpr float kRiseYardsPerSecond = 1.4f;
+/// Ordinary numbers and the outcome words climb at this rate in world yards
+/// per second; critical numbers do not climb. Measured on the original: 1.40
+/// at 10.5 yd and 1.31 at 24 yd (fct_layout), 1.34, 1.37 and 1.29 at 11 yd and
+/// 1.31 at 17 yd (combat_text melee1, crit_original, anchor2, fz*); the mean.
+constexpr float kRiseYardsPerSecond = 1.33f;
 
 constexpr float kLifetime = 1.5f;
 constexpr float kFadeInEnd = 0.15f;
@@ -50,13 +61,64 @@ constexpr float kFadeOutStart = 0.76f;
 /// units of the 768-unit UI.
 constexpr float kTopBaseline = 79.0f * 768.0f / 720.0f;
 
+/// Criticals and the outcome words (Miss, Dodge, Parry, Immune, Absorb...)
+/// stay fully opaque until 1.0 s: a "Miss" and a "Dodge" on the original read
+/// full white from 0.15 s to 1.0 s and faded out after, where a number of the
+/// same recording starts fading at 0.76 s (combat_text melee1, melee3).
 constexpr float kCritFadeOutStart = 1.0f;
 
-inline float alpha(float age, bool crit) {
+inline float alpha(float age, bool lateFade) {
     if (age < kFadeInEnd) return kFadeInPeak * std::max(age, 0.0f) / kFadeInEnd;
-    const float fadeOut = crit ? kCritFadeOutStart : kFadeOutStart;
+    const float fadeOut = lateFade ? kCritFadeOutStart : kFadeOutStart;
     if (age < fadeOut) return 1.0f;
     return std::clamp((kLifetime - age) / (kLifetime - fadeOut), 0.0f, 1.0f);
+}
+
+/// What the original writes over the unit for one line the player caused,
+/// for the kinds measured against it (_experiments/20261119T122954Z.combat_text).
+/// A hit shows its damage and nothing else: the parts absorbed, resisted or
+/// blocked of a hit that still did damage are not written (`reduction`
+/// lines). A hit that did no damage names why - Absorb, Resist, Block - and
+/// one with no reason at all reads Miss, as CombatFeedback.lua reads a WOUND
+/// of 0. The words are GlobalStrings MISS, DODGE, ... at the size of a number,
+/// white for a swing and yellow for a spell, like the numbers.
+struct Presentation {
+    enum Kind { NotWorldText, Number, Word };
+    Kind kind = NotWorldText;
+    /// GlobalStrings name of the word.
+    const char* word = nullptr;
+    int32_t number = 0;
+    bool critical = false;
+    /// Ability yellow rather than swing white.
+    bool spell = false;
+};
+
+inline Presentation presentationFor(const game::CombatTextEntry& e) {
+    using T = game::CombatTextEntry;
+    Presentation p;
+    if (e.reduction) return p;
+    p.spell = e.spellId != 0;
+    const auto word = [&](const char* name) { p.kind = Presentation::Word; p.word = name; return p; };
+    switch (e.type) {
+        case T::MELEE_DAMAGE: case T::GLANCING: case T::CRUSHING:
+        case T::SPELL_DAMAGE: case T::PERIODIC_DAMAGE: case T::CRIT_DAMAGE:
+            if (e.amount == 0) return word("MISS");
+            p.kind = Presentation::Number;
+            p.number = e.amount;
+            p.critical = e.type == T::CRIT_DAMAGE;
+            return p;
+        case T::MISS: return word("MISS");
+        case T::DODGE: return word("DODGE");
+        case T::PARRY: return word("PARRY");
+        case T::BLOCK: return word("BLOCK");
+        case T::EVADE: return word("EVADE");
+        case T::IMMUNE: return word("IMMUNE");
+        case T::DEFLECT: return word("DEFLECT");
+        case T::REFLECT: return word("REFLECT");
+        case T::ABSORB: return word("ABSORB");
+        case T::RESIST: return word("RESIST");
+        default: return p;
+    }
 }
 
 /// Critical size multiplier on top of kCritScale: grows from 0.1 to 2 over

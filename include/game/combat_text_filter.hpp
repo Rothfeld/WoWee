@@ -37,6 +37,9 @@ inline CombatTextFilterRule combatTextFilterFor(CombatTextEntry::Type type,
                                                 uint64_t petGuid,
                                                 uint64_t targetGuid) {
     using T = CombatTextEntry;
+    // Everything the pet causes is the "Pet Damage" row ("Show damage caused
+    // by your pet"): its Firebolts and their resists as well as its swings.
+    if (petGuid != 0 && srcGuid == petGuid) return {.cvar = "PetMeleeDamage", .fallback = "1"};
     switch (type) {
         // Effects rather than numbers, read against the unit they landed on
         // instead of who caused them: the panel offers your target and
@@ -47,14 +50,7 @@ inline CombatTextFilterRule combatTextFilterFor(CombatTextEntry::Type type,
             return onTarget ? CombatTextFilterRule{.cvar = "fctSpellMechanics", .fallback = "1"}
                             : CombatTextFilterRule{.cvar = "fctSpellMechanicsOther", .fallback = "0"};
         }
-        // A pet's swing is its own row, and it is answered before the damage
-        // row below so that clearing pet damage does not also require the
-        // player to clear their own.
         case T::MELEE_DAMAGE:
-            if (petGuid != 0 && srcGuid == petGuid) {
-                return {.cvar = "PetMeleeDamage", .fallback = "1"};
-            }
-            [[fallthrough]];
         case T::SPELL_DAMAGE: case T::CRIT_DAMAGE:
         case T::GLANCING: case T::CRUSHING:
             if (!isPlayerSource) return {};
