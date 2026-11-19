@@ -2836,6 +2836,37 @@ only in Open/Opened; READY is the bare spiky egg.
 
 Repeated rebuilds of unchanged objects: see [incremental build cache repair](docs/incremental-builds.md).
 
+### Class buffs, armour and unit tokens
+
+Measured against native 2.4.3 on pair 21 with every caster class at 70
+(`_experiments/20261119T095500Z.class_ui_b` in the workspace: probe addon,
+provisioning and paired captures).
+
+- `UnitBuff`/`UnitDebuff` answer the Spell.dbc Rank ("Rank 8" for Devotion
+  Aura on the player and on party members, "" for Righteous Fury). The
+  player's own untimed aura answers duration 0 and timeLeft 0; another
+  unit's answers neither. `GetPlayerBuffName(slot)` answers name and rank.
+- `UNIT_AURA` and `PLAYER_AURAS_CHANGED` fire when a unit's aura fields
+  change, not with every values update (a mana tick every two seconds).
+- `UnitArmor` answers base, effective, armor, posBuff, negBuff from the
+  resistance fields: 154, 1359, 1359, 1205, 0 under Devotion Aura, which the
+  paper doll draws in green. `GetSpellBonusDamage(school)` answers that
+  school's PLAYER_FIELD_MOD_DAMAGE_DONE_POS (0 for physical).
+- `GetTalentInfo`'s isExceptional is Talent.dbc Flags bit 0 (Aura Mastery,
+  Divine Favor, Holy Shock).
+- `party1pet`, `raid3pet` are the member's pet (GROUP_UPDATE_FLAG_PET_GUID
+  of SMSG_PARTY_MEMBER_STATS), nothing without one; `party1target` its
+  target. The number used to be read and the rest ignored, so `party1pet`
+  was party1.
+- An instant cast fires `UNIT_SPELLCAST_SENT`, `UNIT_SPELLCAST_SUCCEEDED`,
+  `UNIT_SPELLCAST_STOP`: no `UNIT_SPELLCAST_START`, and STOP after
+  SUCCEEDED.
+- After `PLAYER_ENTERING_WORLD` of a newly built interface (login and
+  ReloadUI) come `UPDATE_INVENTORY_ALERTS`, `PLAYER_AURAS_CHANGED`,
+  `PET_BAR_UPDATE` and `UPDATE_FACTION`, as 2.4.3 sends them. UPDATE_FACTION
+  is what puts the max-level bar in place of the experience bar at 70, and
+  with it the stance and pet bars 5 pixels lower.
+
 ### Action button usability
 
 `IsUsableAction`/`IsUsableSpell` follow Spell.dbc data, measured against

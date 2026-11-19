@@ -272,7 +272,9 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
             }
         }
         lua_pushstring(L, name.empty() ? "Unknown" : name.c_str()); // name
-        lua_pushstring(L, "");           // rank
+        // Spell.dbc Rank; 2.4.3 answers "Rank 8" for Devotion Aura on the
+        // player and on a party member, "" for Righteous Fury.
+        lua_pushstring(L, gh->getSpellRank(aura.spellId).c_str());
         std::string iconPath = gh->getSpellIconPath(aura.spellId);
         if (!iconPath.empty()) lua_pushstring(L, iconPath.c_str());
         else lua_pushnil(L);             // icon texture path
@@ -296,9 +298,16 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
                     default: lua_pushnil(L);               break;
                 }
             }
+            // The player's own auras all have a known timer: a permanent one
+            // (Devotion Aura) answers duration 0 and timeLeft 0 on 2.4.3.
+            // Another unit's untimed aura answers neither.
+            const bool own = resolveUnitGuid(gh, uidStr) == gh->getPlayerGuid();
             if (aura.durationMs > 0 && aura.maxDurationMs > 0) {
                 lua_pushnumber(L, aura.maxDurationMs / 1000.0);
                 lua_pushnumber(L, aura.getRemainingMs(auraNowMs()) / 1000.0);
+            } else if (own) {
+                lua_pushnumber(L, 0);
+                lua_pushnumber(L, 0);
             } else {
                 lua_pushnil(L);
                 lua_pushnil(L);
@@ -432,6 +441,16 @@ static int lua_GetPlayerBuffTexture(lua_State* L) {
     if (icon.empty()) return luaReturnNil(L);
     lua_pushstring(L, icon.c_str());
     return 1;
+}
+
+// GetPlayerBuffName(slot) -> name, rank. 2.4.3: "Devotion Aura", "Rank 8".
+static int lua_GetPlayerBuffName(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const auto* aura = playerAuraAt(L, gh, static_cast<int>(luaL_optnumber(L, 1, -1)));
+    if (!aura) return luaReturnNil(L);
+    lua_pushstring(L, gh->getSpellName(aura->spellId).c_str());
+    lua_pushstring(L, gh->getSpellRank(aura->spellId).c_str());
+    return 2;
 }
 
 // GetPlayerBuffTimeLeft(slot) -> seconds
@@ -1409,6 +1428,7 @@ void registerSpellLuaAPI(lua_State* L) {
                 // these and through nothing else.
                 {"GetPlayerBuff",             lua_GetPlayerBuff},
                 {"GetPlayerBuffTexture",      lua_GetPlayerBuffTexture},
+                {"GetPlayerBuffName",         lua_GetPlayerBuffName},
                 {"GetPlayerBuffTimeLeft",     lua_GetPlayerBuffTimeLeft},
                 {"GetPlayerBuffApplications", lua_GetPlayerBuffApplications},
                 {"GetPlayerBuffDispelType",   lua_GetPlayerBuffDispelType},

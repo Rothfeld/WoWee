@@ -994,9 +994,13 @@ static int lua_GetCombatRating(lua_State* L) {
 
 // GetSpellBonusDamage(school) → value  (1-6 magic schools)
 static int lua_GetSpellBonusDamage(lua_State* L) {
+    // School 1 (physical) to 7 (arcane): that school's
+    // PLAYER_FIELD_MOD_DAMAGE_DONE_POS. Native 2.4.3 paladin: 0 for
+    // physical, 31 for the six magic schools.
     auto* gh = getGameHandler(L);
-    if (!gh) { return luaReturnZero(L); }
-    int32_t sp = gh->getSpellPower();
+    const int school = static_cast<int>(luaL_optnumber(L, 1, 2));
+    if (!gh || school < 1 || school > 7) { return luaReturnZero(L); }
+    const int32_t sp = gh->playerSpellDmgBonusArr()[school - 1];
     lua_pushnumber(L, sp >= 0 ? sp : 0);
     return 1;
 }
@@ -2757,23 +2761,27 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"UnitSex",       lua_UnitSex},
                 {"UnitClass",     lua_UnitClass},
                 {"UnitArmor",     [](lua_State* L) -> int {
-            auto* gh = getGameHandler(L);
-            // Whose armour. PaperDollFrame_SetArmor is shared between the two
-            // sheets and the pet tab calls it with "Pet" - capitalised, which
-            // is why this compares lowered.
+            // base, effective, armor, posBuff, negBuff from school 0 of the
+            // resistance fields, as UnitResistance reads them. Native 2.4.3
+            // paladin under Devotion Aura: 154, 1359, 1359, 1205, 0 - the
+            // paper doll draws 1359 in green. The pet sheet passes "Pet".
             std::string who(luaL_optstring(L, 1, "player"));
             toLowerInPlace(who);
-            int32_t armor = 0;
-            if (gh) {
-                armor = (who == "pet") ? gh->getPetResistances()[0]
-                      : (who == "player") ? gh->getArmorRating() : 0;
+            auto* unit = resolveUnit(L, who.c_str());
+            int32_t effective = 0, positive = 0, negative = 0;
+            if (unit) {
+                const auto base = game::fieldIndex(game::UF::UNIT_FIELD_RESISTANCES);
+                const auto pos = game::fieldIndex(game::UF::UNIT_FIELD_RESISTANCEBUFFMODSPOSITIVE);
+                const auto neg = game::fieldIndex(game::UF::UNIT_FIELD_RESISTANCEBUFFMODSNEGATIVE);
+                if (base != 0xFFFF) effective = static_cast<int32_t>(unit->getField(base));
+                if (pos != 0xFFFF) positive = static_cast<int32_t>(unit->getField(pos));
+                if (neg != 0xFFFF) negative = static_cast<int32_t>(unit->getField(neg));
             }
-            if (armor < 0) armor = 0;
-            lua_pushnumber(L, armor); // base
-            lua_pushnumber(L, armor); // effective
-            lua_pushnumber(L, armor); // armor (again for compat)
-            lua_pushnumber(L, 0);     // posBuff
-            lua_pushnumber(L, 0);     // negBuff
+            lua_pushnumber(L, effective - positive - negative); // base
+            lua_pushnumber(L, effective);                       // effective
+            lua_pushnumber(L, effective);                       // armor
+            lua_pushnumber(L, positive);                        // posBuff
+            lua_pushnumber(L, negative);                        // negBuff
             return 5;
         }},
                 {"UnitResistance", [](lua_State* L) -> int {

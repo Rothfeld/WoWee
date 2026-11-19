@@ -613,6 +613,17 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
     // aura whose duration the server never sends (Fixate 41294 carries
     // SPELL_ATTR_EX5_DO_NOT_DISPLAY_DURATION).
     if (localPlayer) owner_.getSpellHandler()->pendingPlayerAuraDurations().clear();
+    // Every values update of the unit lands here, a mana tick every two
+    // seconds among them. UNIT_AURA is news of a change: native 2.4.3 fires
+    // none while the auras stay as they are.
+    const auto same = [](const AuraSlot& a, const AuraSlot& b) {
+        return a.spellId == b.spellId && a.flags == b.flags && a.charges == b.charges &&
+               a.durationMs == b.durationMs && a.maxDurationMs == b.maxDurationMs &&
+               a.receivedAtMs == b.receivedAtMs && a.casterGuid == b.casterGuid;
+    };
+    if (cached && previousAuras.size() == rebuilt.size() &&
+        std::equal(rebuilt.begin(), rebuilt.end(), previousAuras.begin(), same))
+        return;
     if (!localPlayer) {
         owner_.getSpellHandler()->mirrorAurasByGuid(entity->getGuid(), rebuilt);
         // Every token the unit answers to, party and raid slots included.
