@@ -355,12 +355,40 @@ const TocFile* AddonManager::findAddon(const std::string& name) const {
     return nullptr;
 }
 
-std::string AddonManager::loadBlocker(const TocFile& addon) const {
+std::string AddonManager::loadBlocker(const TocFile& addon) {
     if (!isAddonEnabled(addon.addonName)) return "DISABLED";
+    // Out of date: with checkAddonVersion on (its default, "1"), build 8606
+    // loads only addons whose "## Interface:" is the client's own 20400.
+    // Measured: 20300 (Bongos2), 30000 (ItemRack) and 30300 (OneBag3) are
+    // INTERFACE_VERSION and a .toc with no Interface line is INCOMPATIBLE;
+    // none of them loads. Blizzard's own addons are the client's and exempt.
+    if (lowered(addon.addonName).rfind("blizzard_", 0) != 0) {
+        lua_State* L = luaEngine_.getState();
+        lua_getglobal(L, "__WoweeInterfaceVersion");
+        const int client = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;
+        lua_pop(L, 1);
+        const bool check = luaEngine_.evaluateBoolean(
+            "GetCVar('checkAddonVersion') ~= '0'");
+        if (client != 0 && check) {
+            const auto it = addon.directives.find("Interface");
+            if (it == addon.directives.end() || it->second.empty()) return "INCOMPATIBLE";
+            if (std::atoi(it->second.c_str()) != client) return "INTERFACE_VERSION";
+        }
+    }
     for (const auto& name : addon.getRequiredDeps()) {
         const TocFile* dep = findAddon(name);
         if (!dep) return "DEP_MISSING";
         if (!isAddonEnabled(dep->addonName)) return "DEP_DISABLED";
+        // A dependency that is itself out of date or incompatible. Depth
+        // bounded, so a dependency cycle between two .toc files ends.
+        static int depth = 0;
+        if (depth > 8) continue;
+        ++depth;
+        const std::string depWhy = loadBlocker(*dep);
+        --depth;
+        if (const std::string& why = depWhy;
+            why == "INTERFACE_VERSION" || why == "INCOMPATIBLE")
+            return "DEP_" + why;
     }
     return {};
 }

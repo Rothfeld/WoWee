@@ -1204,6 +1204,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // to the "0" below would have left the indicator off with the option
     // reading Never, which is a preference nobody chose.
     else if (n == "threatwarning") lua_pushstring(L, "3");
+    // "Load out of date AddOns" unticked, as 2.4.3 ships (GetCVar answers "1").
+    else if (n == "checkaddonversion") lua_pushstring(L, "1");
     // Only reached with no client behind the call, because GetCVar answers this
     // one from the "Chat box always visible" setting. A word, not a number: the
     // social options panel branches on it and raises on anything it does not
@@ -4070,7 +4072,20 @@ static int lua_IsAddOnLoaded(lua_State* L) {
 /// time one is opened. This answered "MISSING" unconditionally, so none of them
 /// ever appeared - and an addon that ships an optional module got the same.
 static int lua_LoadAddOn(lua_State* L) {
-    const char* name = lua_isstring(L, 1) ? lua_tostring(L, 1) : nullptr;
+    // A name or a 1-based index, as GetAddOnInfo takes: PitBull loads its
+    // load-on-demand modules with LoadAddOn(i) while walking GetNumAddOns.
+    std::string byIndex;
+    if (lua_type(L, 1) == LUA_TNUMBER) {
+        const int idx = pushAddonRegistryAndIndex(L, 1);
+        if (idx >= 1) {
+            lua_rawgeti(L, -1, idx);
+            lua_getfield(L, -1, "name");
+            if (lua_isstring(L, -1)) byIndex = lua_tostring(L, -1);
+            lua_pop(L, 3);
+        }
+    }
+    const char* name = !byIndex.empty() ? byIndex.c_str()
+                     : lua_type(L, 1) == LUA_TSTRING ? lua_tostring(L, 1) : nullptr;
     auto* svc = getLuaServices(L);
     if (!name || !svc || !svc->loadAddOn) {
         lua_pushboolean(L, 0);

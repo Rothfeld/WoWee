@@ -111,7 +111,7 @@ private:
     [[nodiscard]] const TocFile* findAddon(const std::string& name) const;
     /// Why the addon cannot load, as GetAddOnInfo's reason: "DISABLED",
     /// "DEP_MISSING", "DEP_DISABLED"; empty when it can.
-    [[nodiscard]] std::string loadBlocker(const TocFile& addon) const;
+    [[nodiscard]] std::string loadBlocker(const TocFile& addon);
     /// Load an addon after its dependencies, as build 8606 does: required
     /// ones first (a load-on-demand one included), then optional ones that are
     /// present and enabled. False when it is blocked or a required one is.
