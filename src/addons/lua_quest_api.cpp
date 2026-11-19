@@ -51,14 +51,10 @@ std::string serverText(lua_State* L, const std::string& text) {
     // for a female character. Native wrote "private" for a human and "scout"
     // for a blood elf, both rank 0 (UnitPVPRank) and both in GM mode, whose
     // faction template belongs to neither team - so the team is the race's.
-    if (const auto* character = gh->getActiveCharacter()) {
-        using game::Race;
-        const Race r = character->race;
-        const bool alliance = r == Race::HUMAN || r == Race::DWARF || r == Race::NIGHT_ELF ||
-                              r == Race::GNOME || r == Race::DRAENEI;
+    {
         const int rank = 0;  // UnitPVPRank: 2.4.3 has no honour ranks left to hold
-        const std::string key = "PVP_RANK_" + std::to_string(rank) + "_" + (alliance ? "1" : "0") +
-                                (subject.female ? "_FEMALE" : "");
+        const std::string key = "PVP_RANK_" + std::to_string(rank) + "_" +
+                                (gh->isPlayerAlliance() ? "1" : "0") + (subject.female ? "_FEMALE" : "");
         lua_getglobal(L, key.c_str());
         if (const char* name = lua_tostring(L, -1)) subject.pvpRankName = name;
         else LOG_WARNING("serverText: global ", key, " is not a string - $t writes nothing");
