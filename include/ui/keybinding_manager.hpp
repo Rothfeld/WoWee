@@ -159,6 +159,14 @@ bool interfaceTakingTypedInput();
 
 /// How to answer the question above. Set once, while the interface is built.
 void setTypedInputProbe(std::function<bool()> probe);
+/// Whether the focused edit box lets this key through to the bindings while
+/// it has the keyboard: the arrow keys of a box in alt-arrow mode (XML
+/// ignoreArrows="true" or SetAltArrowKeyMode) while Alt is not held (2.4.3's
+/// chat box is one:
+/// ChatFrameEditBox:GetAltArrowKeyMode() is 1, so the arrows turn and move
+/// the character while chat is open and Alt+arrows move the caret).
+bool interfaceReleasesTypedKey(const std::string& key, bool alt);
+void setTypedInputReleaseProbe(std::function<bool(const std::string&, bool)> probe);
 
 /**
  * Whether the interface's focused edit box has already taken this key, this

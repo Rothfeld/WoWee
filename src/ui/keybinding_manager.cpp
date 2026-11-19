@@ -106,6 +106,10 @@ std::string upper(std::string s) {
     return s;
 }
 std::function<bool()>& typedInputProbe() { static std::function<bool()> probe; return probe; }
+std::function<bool(const std::string&, bool)>& typedInputReleaseProbe() {
+    static std::function<bool(const std::string&, bool)> probe;
+    return probe;
+}
 std::vector<ImGuiKey>& consumedKeys() { static std::vector<ImGuiKey> keys; return keys; }
 int& slashEchoPumps() { static int pumps = 0; return pumps; }
 }
@@ -519,7 +523,8 @@ void KeybindingManager::processInputEvent(const SDL_Event& event) {
     // Both the command and physical identity survive a down/up within this pump.
     if (!wasDown && !repeat) {
         const auto command = resolveCommand(modifiedKey(base, shift, ctrl, alt));
-        const bool blocked = interfaceTakingTypedInput() || ImGui::GetIO().WantTextInput || interfaceConsumedKey(key) ||
+        const bool blocked = (interfaceTakingTypedInput() && !interfaceReleasesTypedKey(base, alt)) ||
+            ImGui::GetIO().WantTextInput || interfaceConsumedKey(key) ||
             (base.starts_with("BUTTON") && ImGui::GetIO().WantCaptureMouse);
         heldBindings_[base] = blocked ? "" : command;
         if (!blocked && !command.empty()) pressedBindings_.emplace(base, command);
@@ -553,7 +558,8 @@ void KeybindingManager::updateInput() {
         if (base.empty()) continue;
         if (!next[i]) heldBindings_.erase(base);
         else if (!down_[i]) {
-            const bool blocked = interfaceTakingTypedInput() || ImGui::GetIO().WantTextInput ||
+            const bool blocked = (interfaceTakingTypedInput() && !interfaceReleasesTypedKey(base, alt)) ||
+                ImGui::GetIO().WantTextInput ||
                 interfaceConsumedKey(static_cast<ImGuiKey>(i + ImGuiKey_NamedKey_BEGIN)) ||
                 (base.starts_with("BUTTON") && ImGui::GetIO().WantCaptureMouse);
             heldBindings_[base] = blocked ? "" : resolveCommand(modifiedKey(base, shift, ctrl, alt));
@@ -672,6 +678,13 @@ bool KeybindingManager::loadFromConfigFile(const std::string& path) {
 }
 bool interfaceTakingTypedInput() { const auto& probe = typedInputProbe(); return probe && probe(); }
 void setTypedInputProbe(std::function<bool()> probe) { typedInputProbe() = std::move(probe); }
+bool interfaceReleasesTypedKey(const std::string& key, bool alt) {
+    const auto& probe = typedInputReleaseProbe();
+    return probe && probe(key, alt);
+}
+void setTypedInputReleaseProbe(std::function<bool(const std::string&, bool)> probe) {
+    typedInputReleaseProbe() = std::move(probe);
+}
 bool interfaceConsumedKey(ImGuiKey key) { const auto& keys = consumedKeys(); return std::find(keys.begin(), keys.end(), key) != keys.end(); }
 void noteInterfaceConsumedKey(ImGuiKey key) { if (!interfaceConsumedKey(key)) consumedKeys().push_back(key); }
 void clearInterfaceConsumedKeys() { consumedKeys().clear(); }

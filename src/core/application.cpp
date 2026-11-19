@@ -621,6 +621,13 @@ bool Application::initialize() {
                 auto* engine = addonManager_->getLuaEngine();
                 return engine != nullptr && engine->editBoxHasFocus();
             });
+        ui::setTypedInputReleaseProbe(
+            [this](const std::string& key, bool alt) -> bool {
+                if (!addonManager_ || !addonsLoaded_) return false;
+                if (key != "LEFT" && key != "RIGHT" && key != "UP" && key != "DOWN") return false;
+                auto* engine = addonManager_->getLuaEngine();
+                return engine != nullptr && engine->focusedEditReleasesArrows(alt);
+            });
         addons::LuaServices luaSvc;
         luaSvc.window            = window.get();
         luaSvc.audioCoordinator  = audioCoordinator_.get();
