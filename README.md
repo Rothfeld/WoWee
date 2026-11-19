@@ -2985,6 +2985,32 @@ provisioning and paired captures).
   is what puts the max-level bar in place of the experience bar at 70, and
   with it the stance and pet bars 5 pixels lower.
 
+### Power regeneration and unit power events
+
+`build/bin/test_game_replay '[power]'`
+
+Measured against native 2.4.3 on pair 13 with a logging proxy on both
+clients (`_experiments/20261119T115417Z.mana_regen_pair13` in the workspace).
+
+- Neither client predicts regeneration. Mana, energy and rage move only when
+  UNIT_FIELD_POWER1..5 arrive; CMaNGOS Player::RegenerateAll sends them every
+  2 s (mage level 10: +12, level 70: +36, energy +20, rage -2.5). The five
+  second rule pauses mana for about 6 s after a cast.
+- Every changed power field fires its own event, in field order: a druid's
+  Cat Form block is UNIT_MANA, UNIT_RAGE, UNIT_ENERGY, UNIT_DISPLAYPOWER,
+  UPDATE_SHAPESHIFT_FORM; a level-up UNIT_HEALTH, UNIT_MANA, UNIT_MAXHEALTH,
+  UNIT_MAXMANA, UNIT_LEVEL. 2.4.3 never fires UNIT_POWER.
+- A party member out of sight (SMSG_PARTY_MEMBER_STATS) fires the per-power
+  name for a value that changed, not for a flag that was sent: UNIT_MANA
+  party1 every 5 s while it regenerates; a level-up UNIT_LEVEL, UNIT_HEALTH,
+  UNIT_MAXHEALTH; a shift UNIT_DISPLAYPOWER, UNIT_ENERGY, UNIT_MAXENERGY.
+
+Gotcha: above level 70 mana does not regenerate on either client. That is
+the server's data, not the client: rows 71-100 of the TBC
+gtRegenMPPerSpt.dbc hold 0.00009 (level 70: 0.00933), CMaNGOS clamps only
+above level 100, and Player::Regenerate truncates the 2 s amount to an
+integer, so a level 71 mage with PLAYER_FIELD_MOD_MANA_REGEN 0.185 gains 0.
+
 ### Action button usability
 
 `IsUsableAction`/`IsUsableSpell` follow Spell.dbc data, measured against

@@ -39,6 +39,19 @@ uint16_t gameObjectStateField() {
     return field;
 }
 
+// The per-power events, indexed by power type (UNIT_FIELD_POWER1 + type).
+// FrameXML registers only the one its bar shows, so a rogue's frame is not
+// woken by every mana tick in the party.
+constexpr const char* kPowerEvents[7] = {
+    "UNIT_MANA", "UNIT_RAGE", "UNIT_FOCUS", "UNIT_ENERGY",
+    "UNIT_HAPPINESS", "UNIT_RUNIC_POWER", "UNIT_RUNIC_POWER"
+};
+// The maximum a bar is scaled against, which FrameXML redraws on.
+constexpr const char* kMaxPowerEvents[7] = {
+    "UNIT_MAXMANA", "UNIT_MAXRAGE", "UNIT_MAXFOCUS", "UNIT_MAXENERGY",
+    "UNIT_MAXHAPPINESS", "UNIT_MAXRUNIC_POWER", "UNIT_MAXRUNIC_POWER"
+};
+
 std::vector<std::string> unitEventTokens(const GameHandler& owner, uint64_t guid) {
     std::vector<std::string> tokens;
     const auto primary = owner.guidToUnitId(guid);
@@ -1131,21 +1144,9 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
         else if (key >= ufi.powerBase && key < ufi.powerBase + ufi.powerCount()) {
             const auto powerType = static_cast<uint8_t>(key - ufi.powerBase);
             unit->setPowerByType(powerType, val);
-            // Named per power rather than one event: FrameXML registers only
-            // the one its bar shows, so a rogue's frame is not woken by every
-            // mana tick in the party.
-            static const char* kPowerEvents[7] = {
-                "UNIT_MANA", "UNIT_RAGE", "UNIT_FOCUS", "UNIT_ENERGY",
-                "UNIT_HAPPINESS", "UNIT_RUNIC_POWER", "UNIT_RUNIC_POWER"
-            };
             if (powerType < 7) emitForUnit(kPowerEvents[powerType]);
         } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + ufi.powerCount()) {
             unit->setMaxPowerByType(static_cast<uint8_t>(key - ufi.maxPowerBase), val);
-            // The maximum a bar is scaled against, which FrameXML redraws on.
-            static const char* kMaxPowerEvents[7] = {
-                "UNIT_MAXMANA", "UNIT_MAXRAGE", "UNIT_MAXFOCUS", "UNIT_MAXENERGY",
-                "UNIT_MAXHAPPINESS", "UNIT_MAXRUNIC_POWER", "UNIT_MAXRUNIC_POWER"
-            };
             if (const auto t = static_cast<uint8_t>(key - ufi.maxPowerBase); t < 7)
                 emitForUnit(kMaxPowerEvents[t]);
         }
@@ -1208,10 +1209,22 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
     uint32_t oldHealth = unit->getHealth();
     bool petExperienceChanged = false;
     bool petStatsChanged = false;
+    // The unit events go out as each field is applied, so the interface hears
+    // them in field order, one per changed field, as 2.4.3 fires them: a
+    // druid's shift into Cat Form (mana, rage and energy in one block) is
+    // UNIT_MANA, UNIT_RAGE, UNIT_ENERGY, UNIT_DISPLAYPOWER, then
+    // UPDATE_SHAPESHIFT_FORM; a level-up UNIT_HEALTH, UNIT_MANA, UNIT_MAXMANA
+    // (pair 13). One event for the last power of the block left the others
+    // unannounced - in Cat Form the mana ticks fired only UNIT_ENERGY.
+    const auto unitTokens = unitEventTokens(owner_, block.guid);
+    auto emitForUnit = [&](const char* event) {
+        for (const auto& uid : unitTokens) pendingEvents_.emit(event, {uid});
+    };
     for (const auto& [key, val] : block.fields) {
         if (key == ufi.health) {
             unit->setHealth(val);
             result.healthChanged = true;
+            emitForUnit("UNIT_HEALTH");
             if (block.guid == owner_.getPlayerGuid() && val != oldHealth) {
                 LOG_DEBUG("Player health from server: ", oldHealth, " -> ", val,
                           " max=", unit->getMaxHealth());
@@ -1263,17 +1276,16 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         // (Classic packs maxHealth/level/faction adjacent to power indices)
         } else if (key == ufi.maxHealth) {
             unit->setMaxHealth(val);
+            // A health bar redraws on UNIT_HEALTH alone; once per block.
+            if (!result.healthChanged) emitForUnit("UNIT_HEALTH");
             result.healthChanged = true;
             result.maxHealthChanged = true;
+            emitForUnit("UNIT_MAXHEALTH");
         }
         else if (key == ufi.bytes0) {
             uint8_t oldPT = unit->getPowerType();
             unit->setPowerType(static_cast<uint8_t>((val >> 24) & 0xFF));
-            if (unit->getPowerType() != oldPT) {
-                auto uid = owner_.guidToUnitId(block.guid);
-                if (!uid.empty())
-                    pendingEvents_.emit("UNIT_DISPLAYPOWER", {uid});
-            }
+            if (unit->getPowerType() != oldPT) emitForUnit("UNIT_DISPLAYPOWER");
         } else if (key == ufi.flags) {
             uint32_t oldFlags = unit->getUnitFlags();
             unit->setUnitFlags(val);
@@ -1492,50 +1504,24 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
         }
         // Power/maxpower range checks AFTER all specific fields
         else if (key >= ufi.powerBase && key < ufi.powerBase + ufi.powerCount()) {
-            unit->setPowerByType(static_cast<uint8_t>(key - ufi.powerBase), val);
+            const auto powerType = static_cast<uint8_t>(key - ufi.powerBase);
+            unit->setPowerByType(powerType, val);
             result.powerChanged = true;
-            result.powerTypeChanged = static_cast<int>(key - ufi.powerBase);
+            if (powerType < 7) emitForUnit(kPowerEvents[powerType]);
         } else if (key >= ufi.maxPowerBase && key < ufi.maxPowerBase + ufi.powerCount()) {
-            unit->setMaxPowerByType(static_cast<uint8_t>(key - ufi.maxPowerBase), val);
+            const auto powerType = static_cast<uint8_t>(key - ufi.maxPowerBase);
+            unit->setMaxPowerByType(powerType, val);
             result.powerChanged = true;
-            result.maxPowerTypeChanged = static_cast<int>(key - ufi.maxPowerBase);
+            if (powerType < 7) emitForUnit(kMaxPowerEvents[powerType]);
         }
     }
 
-    // Fire UNIT_HEALTH / UNIT_POWER events for Lua addons
-    if (result.healthChanged || result.maxHealthChanged || result.powerChanged) {
-        for (const auto& unitId : unitEventTokens(owner_, block.guid)) {
-            if (result.healthChanged) pendingEvents_.emit("UNIT_HEALTH", {unitId});
-            if (result.maxHealthChanged) pendingEvents_.emit("UNIT_MAXHEALTH", {unitId});
-            if (result.powerChanged) {
-                // The event a WotLK interface is listening for is named after
-                // the power itself. UNIT_POWER is the later, generic one - it
-                // arrived in Cataclysm, and every unit frame this client
-                // targets registers UNIT_MANA, UNIT_RAGE, UNIT_ENERGY or
-                // UNIT_FOCUS instead. Sending only the generic name meant the
-                // mana bar was told nothing it understood and never moved,
-                // even though the number behind it was current.
-                //
-                // The create path already names them; this is the same table.
-                static const char* kPowerEvents[7] = {
-                    "UNIT_MANA", "UNIT_RAGE", "UNIT_FOCUS", "UNIT_ENERGY",
-                    "UNIT_HAPPINESS", "UNIT_RUNIC_POWER", "UNIT_RUNIC_POWER"
-                };
-                static const char* kMaxPowerEvents[7] = {
-                    "UNIT_MAXMANA", "UNIT_MAXRAGE", "UNIT_MAXFOCUS", "UNIT_MAXENERGY",
-                    "UNIT_MAXHAPPINESS", "UNIT_MAXRUNIC_POWER", "UNIT_MAXRUNIC_POWER"
-                };
-                if (result.powerTypeChanged >= 0 && result.powerTypeChanged < 7)
-                    pendingEvents_.emit(kPowerEvents[result.powerTypeChanged], {unitId});
-                if (result.maxPowerTypeChanged >= 0 && result.maxPowerTypeChanged < 7)
-                    pendingEvents_.emit(kMaxPowerEvents[result.maxPowerTypeChanged], {unitId});
-                pendingEvents_.emit("UNIT_POWER", {unitId});
-                // ACTIONBAR_UPDATE_USABLE comes from SpellHandler::updateTimers,
-                // only when a button's answer changed.
-                if (block.guid == owner_.getPlayerGuid()) pendingEvents_.emit("SPELL_UPDATE_USABLE", {});
-            }
-        }
-    }
+    // No UNIT_POWER: that generic event is Cataclysm's, and 2.4.3 never fires
+    // it (pair 13, registered by a probe addon).
+    // ACTIONBAR_UPDATE_USABLE comes from SpellHandler::updateTimers, only when
+    // a button's answer changed.
+    if (result.powerChanged && block.guid == owner_.getPlayerGuid())
+        pendingEvents_.emit("SPELL_UPDATE_USABLE", {});
 
     // Fire player health callback for wounded-idle animation
     if (result.healthChanged && block.guid == owner_.getPlayerGuid() && owner_.playerHealthCallbackRef()) {

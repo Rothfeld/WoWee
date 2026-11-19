@@ -2593,6 +2593,10 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
     // snapshot for as long as the group lasts.
     const bool wasOnline = (member->onlineStatus & 0x0001) != 0;
     bool onlineChanged = false;
+    // What the unit events compare against: 2.4.3 announces a value that
+    // moved, not a flag that was sent. A member's relog sends every flag and
+    // native fired only UNIT_MANA for the mana that changed (pair 13).
+    const auto before = *member;
     if (updateFlags & 0x0001) {
         if (remaining() >= 2) {
             member->onlineStatus = packet.readUInt16();
@@ -2705,10 +2709,30 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
               " flags=", updateFlags);
 
     if (owner_.addonEventCallbackRef()) {
+        // The per-power names, as for a unit in view (entity_controller.cpp):
+        // the party frame's mana bar registers UNIT_MANA, UNIT_RAGE and
+        // UNIT_ENERGY. UNIT_POWER is Cataclysm's; sent here, a member out of
+        // sight had a mana bar that never moved while UnitMana("party1") rose
+        // every five seconds.
+        static constexpr const char* kPowerEvents[5] = {
+            "UNIT_MANA", "UNIT_RAGE", "UNIT_FOCUS", "UNIT_ENERGY", "UNIT_HAPPINESS"};
+        static constexpr const char* kMaxPowerEvents[5] = {
+            "UNIT_MAXMANA", "UNIT_MAXRAGE", "UNIT_MAXFOCUS", "UNIT_MAXENERGY", "UNIT_MAXHAPPINESS"};
+        const bool healthMoved = onlineChanged || member->curHealth != before.curHealth ||
+                                 member->maxHealth != before.maxHealth;
+        const bool powerKnown = member->powerType < 5;
+        // In 2.4.3's order (pair 13): a member's level-up is UNIT_LEVEL,
+        // UNIT_HEALTH, UNIT_MAXHEALTH; a shift into Cat Form UNIT_DISPLAYPOWER,
+        // UNIT_ENERGY, UNIT_MAXENERGY.
         for (const auto& unitId : groupUnitTokens(partyData, owner_.getPlayerGuid(), memberGuid)) {
-            if (updateFlags & (0x0001 | 0x0002 | 0x0004)) owner_.addonEventCallbackRef()("UNIT_HEALTH", {unitId});
-            if (updateFlags & 0x0004) owner_.addonEventCallbackRef()("UNIT_MAXHEALTH", {unitId});
-            if (updateFlags & (0x0010 | 0x0020)) owner_.addonEventCallbackRef()("UNIT_POWER", {unitId});
+            if (member->level != before.level) owner_.addonEventCallbackRef()("UNIT_LEVEL", {unitId});
+            if (healthMoved) owner_.addonEventCallbackRef()("UNIT_HEALTH", {unitId});
+            if (member->maxHealth != before.maxHealth) owner_.addonEventCallbackRef()("UNIT_MAXHEALTH", {unitId});
+            if (member->powerType != before.powerType) owner_.addonEventCallbackRef()("UNIT_DISPLAYPOWER", {unitId});
+            if (powerKnown && member->curPower != before.curPower)
+                owner_.addonEventCallbackRef()(kPowerEvents[member->powerType], {unitId});
+            if (powerKnown && member->maxPower != before.maxPower)
+                owner_.addonEventCallbackRef()(kMaxPowerEvents[member->powerType], {unitId});
             if (updateFlags & 0x0200) owner_.addonEventCallbackRef()("UNIT_AURA", {unitId});
         }
         // Fired without arguments, as the retail client does - the interface

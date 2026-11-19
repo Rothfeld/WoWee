@@ -1052,3 +1052,75 @@ TEST_CASE("a refreshed aura's duration does not pass to the next aura in its slo
     s.receive(UpdateObject().tbc().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_AURAS, 38216}}));
     CHECK(s.handler().getPlayerAuras().at(0).durationMs == 30000);
 }
+
+TEST_CASE("every power in a values block is announced, in field order", "[replay][tbc][power]") {
+    // A night elf druid shifting into Cat Form (pair 13, CMaNGOS TBC
+    // Player::Regenerate and the form's power change in one block): mana,
+    // rage and energy move and the display power becomes energy. 2.4.3 fired
+    // UNIT_MANA, UNIT_RAGE, UNIT_ENERGY, UNIT_DISPLAYPOWER for "player".
+    Session s("tbc");
+    s.receive(UpdateObject().tbc().create(Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+        {{UF::UNIT_FIELD_HEALTH, 4254}, {UF::UNIT_FIELD_LEVEL, 70}, {UF::UNIT_FIELD_BYTES_0, 0x00000B04}},
+        true));
+    std::vector<std::pair<std::string, std::string>> events;
+    s.handler().setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& args) {
+        if (e.rfind("UNIT_", 0) == 0)
+            events.emplace_back(e, args.empty() ? std::string() : args.front());
+    });
+    const uint16_t power1 = wowee::game::fieldIndex(UF::UNIT_FIELD_POWER1);
+    const uint16_t bytes0 = wowee::game::fieldIndex(UF::UNIT_FIELD_BYTES_0);
+    REQUIRE(power1 != 0xFFFF);
+    s.receive(UpdateObject().tbc().valuesAt(Session::kPlayerGuid,
+        {{power1, 383}, {static_cast<uint16_t>(power1 + 1), 63}, {static_cast<uint16_t>(power1 + 3), 0},
+         {bytes0, 0x03000B04}}));
+    using Event = std::pair<std::string, std::string>;
+    CHECK(events == std::vector<Event>{{"UNIT_MANA", "player"}, {"UNIT_RAGE", "player"},
+                                       {"UNIT_ENERGY", "player"}, {"UNIT_DISPLAYPOWER", "player"}});
+    const auto* player = s.handler().getEntityManager().getEntity(Session::kPlayerGuid).get();
+    REQUIRE(player);
+    const auto& unit = static_cast<const wowee::game::Unit&>(*player);
+    CHECK(unit.getPowerByType(0) == 383);
+    CHECK(unit.getPowerByType(1) == 63);
+    CHECK(unit.getPowerType() == 3);
+}
+
+TEST_CASE("party stats announce the member's power by name when it moves", "[party][tbc][power]") {
+    // A level 10 mage regenerating out of sight (pair 13, Group::UpdatePlayerOutOfRange
+    // every five seconds with GROUP_UPDATE_FLAG_CUR_POWER alone). 2.4.3 fired
+    // UNIT_MANA party1 for each, and on the member's relog, where every flag
+    // is sent, only for the values that changed.
+    Session s("tbc");
+    constexpr uint64_t memberGuid = 3;
+    joinGroup(s, memberGuid, false);
+    std::vector<std::pair<std::string, std::string>> events;
+    s.handler().setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& args) {
+        events.emplace_back(e, args.empty() ? std::string() : args.front());
+    });
+    using Event = std::pair<std::string, std::string>;
+    const auto stats = [&](wowee::game::Opcode opcode, uint32_t flags, uint16_t power) {
+        wowee::network::Packet p(wowee::game::wireOpcode(opcode));
+        p.writePackedGuid(memberGuid);
+        p.writeUInt32(flags);
+        if (flags & 0x01) p.writeUInt16(3);
+        if (flags & 0x02) p.writeUInt16(187);
+        if (flags & 0x04) p.writeUInt16(187);
+        if (flags & 0x08) p.writeUInt8(0);
+        if (flags & 0x10) p.writeUInt16(power);
+        if (flags & 0x20) p.writeUInt16(456);
+        if (flags & 0x40) p.writeUInt16(10);
+        events.clear();
+        s.receive(p);
+    };
+    using wowee::game::Opcode;
+    stats(Opcode::SMSG_PARTY_MEMBER_STATS_FULL, 0x7F, 380);
+    CHECK(std::count(events.begin(), events.end(), Event{"UNIT_MANA", "party1"}) == 1);
+    CHECK(std::count(events.begin(), events.end(), Event{"UNIT_MAXMANA", "party1"}) == 1);
+    stats(Opcode::SMSG_PARTY_MEMBER_STATS, 0x10, 404);
+    CHECK(events == std::vector<Event>{{"UNIT_MANA", "party1"}});
+    CHECK(s.handler().getPartyData().members.front().curPower == 404);
+    // Everything sent again, nothing changed but the mana.
+    stats(Opcode::SMSG_PARTY_MEMBER_STATS, 0x7F, 20);
+    CHECK(events == std::vector<Event>{{"UNIT_MANA", "party1"}});
+    stats(Opcode::SMSG_PARTY_MEMBER_STATS, 0x7F, 20);
+    CHECK(events.empty());
+}
