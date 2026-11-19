@@ -2453,12 +2453,13 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
 
     // ===== Final floor clearance check =====
     // Use WMO-aware floor so the camera doesn't pop above tunnels/caves.
+    // Skipped in indoor groups (MOGP 0x2000) only. The box of an outdoor
+    // group is open ground: Orgrimmar's valleys and the Sunwell Plateau
+    // entrance lie inside such boxes, and the camera kept above the ground
+    // everywhere else could sink into it there.
     constexpr float MIN_FLOOR_CLEARANCE = 0.35f;
-    if (!cachedInsideWMO) {
-        std::optional<float> camTerrainH;
-        if (!cachedInsideInteriorWMO) {
-            camTerrainH = getTerrainFloorAt(smoothedCamPos.x, smoothedCamPos.y);
-        }
+    if (!cachedInsideInteriorWMO) {
+        const std::optional<float> camTerrainH = getTerrainFloorAt(smoothedCamPos.x, smoothedCamPos.y);
         std::optional<float> camWmoH;
         if (wmoRenderer) {
             // Skip expensive WMO floor query if camera barely moved
@@ -2468,45 +2469,15 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             if (camDeltaSq < 0.09f && hasCachedCamFloor) {
                 camWmoH = cachedCamWmoFloor;
             } else {
-                float camFloorProbeZ = smoothedCamPos.z;
-                if (cachedInsideInteriorWMO) {
-                    // Inside tunnels/buildings, probe near player height so roof
-                    // triangles above the camera don't get treated as floor.
-                    camFloorProbeZ = std::min(smoothedCamPos.z, targetPos.z + 1.0f);
-                }
                 camWmoH = wmoRenderer->getFloorHeight(
-                    smoothedCamPos.x, smoothedCamPos.y, camFloorProbeZ);
-
-                if (cachedInsideInteriorWMO && camWmoH) {
-                    // Never let camera floor clamp latch to tunnel ceilings / upper decks.
-                    float maxValidIndoorFloor = targetPos.z + 0.9f;
-                    if (*camWmoH > maxValidIndoorFloor) {
-                        camWmoH = std::nullopt;
-                    }
-                }
+                    smoothedCamPos.x, smoothedCamPos.y, smoothedCamPos.z);
                 cachedCamWmoFloor = camWmoH;
                 hasCachedCamFloor = true;
                 lastCamFloorQueryPos = smoothedCamPos;
             }
         }
-        // When camera/character are inside a WMO, force WMO floor usage for camera
-        // clearance to avoid snapping toward terrain above enclosed tunnels/caves.
-        std::optional<float> camFloorH;
-        if (cachedInsideWMO && camWmoH && camTerrainH) {
-            // Transition seam: avoid terrain-above clamp near tunnel entrances.
-            float camDropFromPlayer = targetPos.z - *camWmoH;
-            if ((*camTerrainH - *camWmoH) > 1.2f &&
-                (*camTerrainH - *camWmoH) < 8.0f &&
-                camDropFromPlayer >= -0.4f &&
-                camDropFromPlayer < 1.8f) {
-                camFloorH = camWmoH;
-            } else {
-                camFloorH = selectClosestFloor(camTerrainH, camWmoH, smoothedCamPos.z);
-            }
-        } else {
-            camFloorH = selectReachableFloor(
-                camTerrainH, camWmoH, smoothedCamPos.z, 0.5f);
-        }
+        std::optional<float> camFloorH = selectReachableFloor(
+            camTerrainH, camWmoH, smoothedCamPos.z, 0.5f);
         // Terrain has no underside. The reachability filter above is for
         // structure floors, where something half a yard over the camera may be
         // a deck it is under; applied to the heightfield it meant that a
@@ -2514,10 +2485,8 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // from a taxi, or on a sharp rise - was left there, the ground now
         // counting as a ceiling. While the character stands on or above the
         // terrain, the camera belongs above it too.
-        if (!cachedInsideInteriorWMO) {
-            auto groundH = cameraTerrainFloor(smoothedCamPos.x, smoothedCamPos.y, targetPos);
-            if (groundH && (!camFloorH || *groundH > *camFloorH)) camFloorH = groundH;
-        }
+        auto groundH = cameraTerrainFloor(smoothedCamPos.x, smoothedCamPos.y, targetPos);
+        if (groundH && (!camFloorH || *groundH > *camFloorH)) camFloorH = groundH;
         if (camFloorH && smoothedCamPos.z < *camFloorH + MIN_FLOOR_CLEARANCE) {
             smoothedCamPos.z = *camFloorH + MIN_FLOOR_CLEARANCE;
         }
