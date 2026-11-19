@@ -389,6 +389,14 @@ network::Packet ClassicPacketParsers::buildCastSpell(uint32_t spellId, uint64_t 
     return packet;
 }
 
+network::Packet ClassicPacketParsers::buildCastSpellOnItem(uint32_t spellId, uint64_t itemGuid, uint8_t /*castCount*/) {
+    network::Packet packet(wireOpcode(LogicalOpcode::CMSG_CAST_SPELL));
+    packet.writeUInt32(spellId);
+    packet.writeUInt16(0x10); // TARGET_FLAG_ITEM
+    packet.writePackedGuid(itemGuid);
+    return packet;
+}
+
 network::Packet ClassicPacketParsers::buildCastGameObjectSpell(uint32_t spellId, uint64_t targetGuid, uint8_t /*castCount*/) {
     network::Packet packet(wireOpcode(LogicalOpcode::CMSG_CAST_SPELL));
     packet.writeUInt32(spellId);

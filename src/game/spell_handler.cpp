@@ -1532,18 +1532,34 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             return;
         }
     }
+    // SPELL_ATTR_HELD_ITEM_ONLY (0x200): cast at the main-hand item, which the
+    // client picks itself (the shaman weapon imbues). Native 2.4.3 with the
+    // hand empty: "Your weapon hand is empty" before any equipment line.
+    uint64_t heldItemGuid = 0;
+    if (const auto* held = owner_.getSpellNameEntry(spellId); held && (held->attr & 0x200u)) {
+        heldItemGuid = owner_.getEquipSlotGuid(static_cast<int>(EquipSlot::MAIN_HAND));
+        if (heldItemGuid == 0) {
+            raiseGlobalStringError(owner_, "SPELL_FAILED_MAINHAND_EMPTY");
+            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+            return;
+        }
+    }
     // Equipment and then tools are refused here, before anything the server
-    // would check first. See missingEquipment and firstMissingTool.
+    // would check first. See missingEquipment and firstMissingTool. Native
+    // follows the error line with UNIT_SPELLCAST_FAILED ("Requires Earth
+    // Totem", Strength of Earth Totem without the totem).
     if (const auto result = missingEquipment(owner_, spellId)) {
         const auto& entry = owner_.spellNameCacheRef().at(spellId);
         const std::string text = castFailureText(owner_, spellId, *result,
             static_cast<uint32_t>(entry.equippedItemClass), entry.equippedItemSubClassMask);
         if (!text.empty()) owner_.raiseUiError(text);
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
     if (const auto missing = firstMissingTool(owner_, spellId)) {
         const std::string text = castFailureText(owner_, spellId, missing->first, missing->second, 0);
         if (!text.empty()) owner_.raiseUiError(text);
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
 
@@ -1768,7 +1784,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // item-picking cursor an enchanting scroll uses and send the cast once the
     // player chooses.
     constexpr uint32_t kSpellTargetFlagItem = 0x10;
-    if ((getSpellTargetFlags(spellId) & kSpellTargetFlagItem) != 0) {
+    if (heldItemGuid == 0 && (getSpellTargetFlags(spellId) & kSpellTargetFlagItem) != 0) {
         if (owner_.isAwaitingItemTarget()) {
             return;
         }
@@ -1979,7 +1995,11 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // first, are refused with castCount 0, and no press of ours may look like
     // one of them.
     if (++castCount_ == 0) ++castCount_;
-    auto packet = owner_.getPacketParsers()
+    auto packet = heldItemGuid != 0
+        ? (owner_.getPacketParsers()
+               ? owner_.getPacketParsers()->buildCastSpellOnItem(spellId, heldItemGuid, castCount_)
+               : CastSpellPacket::buildItemTarget(spellId, heldItemGuid, castCount_))
+        : owner_.getPacketParsers()
         ? owner_.getPacketParsers()->buildCastSpell(spellId, target, castCount_)
         : CastSpellPacket::build(spellId, target, castCount_);
     LOG_DEBUG("CMSG_CAST_SPELL: spellId=", spellId, " target=0x", std::hex, target, std::dec,

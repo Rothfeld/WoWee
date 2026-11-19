@@ -626,6 +626,17 @@ network::Packet TbcPacketParsers::buildCastSpell(uint32_t spellId, uint64_t targ
     return packet;
 }
 
+// The WotLK layout (castCount first, a castFlags byte) was sent for every
+// item-aimed cast: Disenchant, the enchant formulas and the weapon imbues.
+network::Packet TbcPacketParsers::buildCastSpellOnItem(uint32_t spellId, uint64_t itemGuid, uint8_t castCount) {
+    network::Packet packet(wireOpcode(LogicalOpcode::CMSG_CAST_SPELL));
+    packet.writeUInt32(spellId);
+    packet.writeUInt8(castCount);
+    packet.writeUInt32(0x10); // TARGET_FLAG_ITEM
+    packet.writePackedGuid(itemGuid);
+    return packet;
+}
+
 network::Packet TbcPacketParsers::buildCastGameObjectSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) {
     network::Packet packet(wireOpcode(LogicalOpcode::CMSG_CAST_SPELL));
     packet.writeUInt32(spellId);
