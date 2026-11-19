@@ -625,7 +625,11 @@ bool MovementHandler::restoreWorldTransferFallbackIfNearOrigin(const char* conte
 void MovementHandler::setFlightAirborne(bool airborne) {
     const uint32_t canFly = static_cast<uint32_t>(MovementFlags::CAN_FLY);
     const uint32_t flying = static_cast<uint32_t>(MovementFlags::FLYING);
-    if (!(movementInfo.flags & canFly)) return;
+    // Taking off needs CAN_FLY; coming down does not. SMSG_MOVE_UNSET_CAN_FLY
+    // (a flying mount dismissed in the air) clears CAN_FLY first, and FLYING
+    // stayed set after it: every heartbeat said 0x2000000 on the ground and
+    // the server counted the player as moving.
+    if (airborne && !(movementInfo.flags & canFly)) return;
     const bool now = (movementInfo.flags & flying) != 0;
     if (airborne == now) return;
     if (airborne) {
@@ -1207,6 +1211,13 @@ void MovementHandler::setOrientation(float orientation) {
 
 void MovementHandler::dismount() {
     if (!owner_.getSocket()) return;
+    // Not mounted, nothing is sent: native 2.4.3 /dismount on foot is silent,
+    // where the server answers CMSG_CANCEL_MOUNT_AURA with "You're not
+    // mounted so you can't dismount."
+    if (owner_.currentMountDisplayIdRef() == 0 && !taxiMountActive_) {
+        LOG_INFO("Dismount: not mounted, nothing sent");
+        return;
+    }
     // The player's mount field goes on reading its old value for a few frames
     // after the request goes out. Believing it re-mounts the player behind their
     // back, and that stale value then makes the server's own SMSG_DISMOUNT look
