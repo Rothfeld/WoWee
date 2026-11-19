@@ -95,6 +95,10 @@ struct M2ModelGPU {
         pipeline::M2AnimationTrack animatedColorAlpha;
         pipeline::M2AnimationTrack animatedTextureWeight;
         glm::vec3 center = glm::vec3(0.0f); // Center of batch geometry (model space)
+        // Submesh sort point and its bone; pass 2 draws a model's blended
+        // batches far to near by it.
+        uint16_t sortBone = 0;
+        glm::vec3 sortCenter{0.0f};
         float glowSize = 1.0f;              // Approx radius of batch geometry
 
         struct LightBoneAnchor {
@@ -928,9 +932,11 @@ private:
     // Opt-in one-sided foliage variants. Other materials retain their pipelines.
     VkPipeline foliageCullOpaquePipeline_ = VK_NULL_HANDLE;
     VkPipeline foliageCullCutoutPipeline_ = VK_NULL_HANDLE;
-    // The same for blended batches: one-sided alpha and additive materials.
+    // The same for blended batches: one-sided alpha, additive and multiply materials.
     VkPipeline cullAlphaPipeline_ = VK_NULL_HANDLE;
     VkPipeline cullAdditivePipeline_ = VK_NULL_HANDLE;
+    VkPipeline cullModPipeline_ = VK_NULL_HANDLE;
+    VkPipeline cullMod2xPipeline_ = VK_NULL_HANDLE;
     /// The back-face-culling twin of a main-pass pipeline, or the pipeline
     /// itself where there is none.
     [[nodiscard]] VkPipeline culledPipeline(VkPipeline p) const {
@@ -938,6 +944,8 @@ private:
         if (p == cutoutPipeline_ && foliageCullCutoutPipeline_) return foliageCullCutoutPipeline_;
         if (p == alphaPipeline_ && cullAlphaPipeline_) return cullAlphaPipeline_;
         if (p == additivePipeline_ && cullAdditivePipeline_) return cullAdditivePipeline_;
+        if (p == modPipeline_ && cullModPipeline_) return cullModPipeline_;
+        if (p == mod2xPipeline_ && cullMod2xPipeline_) return cullMod2xPipeline_;
         return p;
     }
     /// The ablation's clutter phase; see setSkipGroundDetail.
@@ -948,7 +956,9 @@ private:
     bool warnedShadowNoTexture_ = false;
     VkPipeline alphaTestPipeline_ = VK_NULL_HANDLE;     // blend mode 1
     VkPipeline alphaPipeline_ = VK_NULL_HANDLE;         // blend mode 2
-    VkPipeline additivePipeline_ = VK_NULL_HANDLE;      // blend mode 3+
+    VkPipeline additivePipeline_ = VK_NULL_HANDLE;      // blend modes 3, 4
+    VkPipeline modPipeline_ = VK_NULL_HANDLE;           // blend mode 5: dst * src
+    VkPipeline mod2xPipeline_ = VK_NULL_HANDLE;         // blend mode 6: dst * src * 2
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
 
     // Shadow rendering (Phase 7)
@@ -1208,6 +1218,7 @@ private:
     RoomAtQuery roomAtQuery_;
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2
+    std::vector<std::pair<float, uint32_t>> transparentBatchOrder_; // pass 2: view z, batch index
     struct GlowSprite {
         glm::vec3 worldPos;
         glm::vec4 color;

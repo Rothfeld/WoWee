@@ -354,6 +354,24 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                                      VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
     additivePipeline_ = buildM2Pipeline(PipelineBuilder::blendAdditive(), false,
                                         VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    // M2 blend modes 5 (Mod, dst * src) and 6 (Mod2x, dst * src * 2) multiply
+    // what is behind them; the destination alpha is kept. Drawn additively,
+    // Magisters' Terrace's scrying orb (BE_ScryingOrb.m2: its ball and both
+    // reflection layers Mod2x) came out a pink-white orb on a pale stand where
+    // 2.4.3 shows a deep red orb on a dark gold stand.
+    VkPipelineColorBlendAttachmentState modBlend = PipelineBuilder::blendAlpha();
+    modBlend.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+    modBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    modBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    modBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    VkPipelineColorBlendAttachmentState mod2xBlend = modBlend;
+    mod2xBlend.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+    modPipeline_ = buildM2Pipeline(modBlend, false, VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    mod2xPipeline_ = buildM2Pipeline(mod2xBlend, false, VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    if (!modPipeline_ || !mod2xPipeline_) {
+        LOG_ERROR("M2: failed to build multiply pipelines");
+        return false;
+    }
     // One-sided blended materials cull their back faces as well. The Eye's
     // DR_Draenei_HoloRunes01 (render flags 0x13, blend 4: no 0x04) is a rune
     // disc floating over Kael'thas's floor; drawn from below as well, it hung
@@ -366,7 +384,13 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
         cullAdditivePipeline_ = buildM2Pipeline(
             PipelineBuilder::blendAdditive(), false, VK_PIPELINE_CREATE_DERIVATIVE_BIT,
             opaquePipeline_, false, VK_CULL_MODE_BACK_BIT, kM2FoliageFrontFace);
-        if (!cullAlphaPipeline_ || !cullAdditivePipeline_) {
+        cullModPipeline_ = buildM2Pipeline(
+            modBlend, false, VK_PIPELINE_CREATE_DERIVATIVE_BIT,
+            opaquePipeline_, false, VK_CULL_MODE_BACK_BIT, kM2FoliageFrontFace);
+        cullMod2xPipeline_ = buildM2Pipeline(
+            mod2xBlend, false, VK_PIPELINE_CREATE_DERIVATIVE_BIT,
+            opaquePipeline_, false, VK_CULL_MODE_BACK_BIT, kM2FoliageFrontFace);
+        if (!cullAlphaPipeline_ || !cullAdditivePipeline_ || !cullModPipeline_ || !cullMod2xPipeline_) {
             LOG_ERROR("M2: failed to build one-sided blended pipelines");
             return false;
         }
@@ -955,6 +979,10 @@ void M2Renderer::shutdown() {
     destroyPipeline(alphaTestPipeline_);
     destroyPipeline(alphaPipeline_);
     destroyPipeline(additivePipeline_);
+    destroyPipeline(modPipeline_);
+    destroyPipeline(mod2xPipeline_);
+    destroyPipeline(cullModPipeline_);
+    destroyPipeline(cullMod2xPipeline_);
     destroyPipeline(particlePipeline_);
     destroyPipeline(particleAdditivePipeline_);
     destroyPipeline(particleModPipeline_);
@@ -1781,6 +1809,9 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
             if (bgpu.textureAnimIndex != 0xFFFF) {
                 gpuModel.hasTextureAnimation = true;
             }
+
+            bgpu.sortBone = batch.centerBoneIndex;
+            bgpu.sortCenter = batch.sortCenter;
 
             // Store blend mode and flags from material
             if (batch.materialIndex < model.materials.size()) {

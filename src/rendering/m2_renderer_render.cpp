@@ -1910,7 +1910,25 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         while (targetLOD > 0 && !(model.availableLODs & (1u << targetLOD))) --targetLOD;
 
 
-        for (const auto& batch : model.batches) {
+        // A model's blended batches, far to near by each submesh's sort
+        // point, carried by its center bone (a billboard turns it toward the
+        // camera). Batches of one submesh keep their skin order. Magisters'
+        // Terrace's scrying orb (BE_ScryingOrb.m2) draws its additive
+        // SHOCKWAVE10 halo (sort point at the billboard's origin) behind its
+        // Mod2x dome (0.112 toward the camera): native multiplies the halo
+        // into the red ball, and in skin order it lay on top as a white ring.
+        transparentBatchOrder_.clear();
+        const glm::mat4 modelView = camera.getViewMatrix() * instance.modelMatrix;
+        for (uint32_t bi = 0; bi < model.batches.size(); ++bi) {
+            const auto& b = model.batches[bi];
+            glm::vec4 point(b.sortCenter, 1.0f);
+            if (b.sortBone < instance.boneMatrices.size()) point = instance.boneMatrices[b.sortBone] * point;
+            transparentBatchOrder_.push_back({(modelView * point).z, bi});
+        }
+        std::stable_sort(transparentBatchOrder_.begin(), transparentBatchOrder_.end(),
+                         [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (const auto& [sortDepth, batchIndex] : transparentBatchOrder_) {
+            const auto& batch = model.batches[batchIndex];
             if (batch.indexCount == 0) continue;
             if (!model.isGroundDetail && batch.submeshLevel != targetLOD) continue;
             if (batch.batchOpacity < 0.01f) continue;
@@ -2028,6 +2046,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             VkPipeline desiredPipeline;
             switch (effectiveBlendMode) {
                 case 2: desiredPipeline = alphaPipeline_; break;
+                case M2_BLEND_MODULATE: desiredPipeline = modPipeline_; break;
+                case M2_BLEND_MODULATE2X: desiredPipeline = mod2xPipeline_; break;
                 default: desiredPipeline = additivePipeline_; break;
             }
             // An opaque layer of a faded instance: blended by its fade.

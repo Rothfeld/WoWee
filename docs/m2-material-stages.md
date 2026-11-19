@@ -27,3 +27,24 @@ half brightness, dark brown against native's yellow-orange. Paired captures:
 with bit 0x8000 (0xFFFE, 0xFFFD: Tempest Keep crystals, the Caverns of Time
 hourglass) keep modulating both stages; their rule is not established. UV
 rotation/scaling tracks are not implemented.
+
+## Multiply blend modes and batch order
+
+M2 material blend modes 5 (Mod) and 6 (Mod2x) multiply the framebuffer by the
+unlit texture (`dst * src`, `dst * src * 2`), fogged and faded toward the
+factor that changes nothing (1, 0.5), as in the character renderer. 135 TBC
+world M2s use them: Magisters' Terrace's scrying orb (`BE_ScryingOrb.m2`, MODD
+955 by Kael'thas's throne: ball and both `ORBREFLECT.BLP` layers Mod2x), the
+corrupted Bloodmyst crystals, Hellfire, Ogri'la and Shadowmoon crystals,
+Hellfire Citadel floor braziers. Drawn additively the scrying orb was a
+pink-white ball on a pale stand; 2.4.3 shows a deep red ball on a dark gold
+stand.
+
+A model's blended batches are drawn far to near by their submesh sort point
+(TBC submesh `+0x20` sortCenter, carried by its center bone `+0x12`), stable for
+batches of one submesh. The scrying orb's additive `SHOCKWAVE10.BLP` halo sits at
+its billboard's origin, 0.112 behind the Mod2x dome's sort point: native
+multiplies the halo into the red ball; in skin order it lay on top as a white
+ring. Whether native ranks priority plane above this order is not observed.
+Paired captures (pair 23):
+`_experiments/20261119T1400Z.red_orb/` in the workspace.

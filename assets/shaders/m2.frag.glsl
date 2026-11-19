@@ -271,6 +271,18 @@ void main() {
         if (lum < colorKeyThreshold) discard;
     }
     if (blendMode == 1 && texColor.a < 0.004) discard;
+    if (blendMode == 5 || blendMode == 6) {
+        // Mod / Mod2x multiply what is behind, as character.frag.glsl draws
+        // them: the unlit texture, fogged and faded toward the factor that
+        // leaves the scene unchanged (1 and 0.5).
+        if (vFadeAlpha < 1.0 / 255.0) discard;
+        float dist = length(viewPos.xyz - FragPos);
+        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        vec3 neutral = vec3(blendMode == 5 ? 1.0 : 0.5);
+        float opacity = vFadeAlpha * fadeAlpha;
+        outColor = vec4(mix(neutral, texColor.rgb, fogFactor * opacity), texColor.a * opacity);
+        return;
+    }
 
     vec3 norm = normalizedNormal(Normal);
     if (!gl_FrontFacing) norm = -norm;

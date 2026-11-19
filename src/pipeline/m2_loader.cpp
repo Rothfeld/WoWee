@@ -2039,6 +2039,8 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                     batch.vertexCount = sm.vertexCount;
                     batch.submeshId = sm.id;
                     batch.submeshLevel = sm.level;
+                    batch.centerBoneIndex = sm.centerBoneIndex;
+                    batch.sortCenter = glm::vec3(sm.sortCenterPosition[0], sm.sortCenterPosition[1], sm.sortCenterPosition[2]);
                 } else {
                     batch.indexStart = 0;
                     batch.indexCount = model.indices.size();
@@ -2154,6 +2156,8 @@ bool M2Loader::loadSkin(const std::vector<uint8_t>& skinData, M2Model& model) {
                 batch.vertexCount = sm.vertexCount;
                 batch.submeshId = sm.id;
                 batch.submeshLevel = sm.level;
+                batch.centerBoneIndex = sm.centerBoneIndex;
+                batch.sortCenter = glm::vec3(sm.sortCenterPosition[0], sm.sortCenterPosition[1], sm.sortCenterPosition[2]);
             } else {
                 // Fallback: render entire model as one batch
                 batch.indexStart = 0;

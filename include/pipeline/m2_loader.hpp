@@ -110,12 +110,16 @@ struct M2Batch {
     // Geoset info (from submesh)
     uint16_t submeshId = 0;         // Submesh/geoset ID (determines body part group)
     uint16_t submeshLevel = 0;      // Submesh level (0=base, 1+=LOD/alternate mesh)
+    // Submesh sort point (zero in vanilla's 32-byte submeshes) and the bone it
+    // moves with: blended batches of one model are drawn far to near by it.
+    uint16_t centerBoneIndex = 0;
+    glm::vec3 sortCenter{0.0f};
 };
 
 // Material / render flags (per-batch blend mode)
 struct M2Material {
     uint16_t flags;       // Render flags (unlit, unfogged, two-sided, etc.)
-    uint16_t blendMode;   // 0=Opaque, 1=AlphaKey, 2=Alpha, 3=Add, 4=Mod, 5=Mod2x, 6=BlendAdd, 7=Screen
+    uint16_t blendMode;   // 0=Opaque, 1=AlphaKey, 2=Alpha, 3=NoAlphaAdd, 4=Add, 5=Mod, 6=Mod2x, 7=BlendAdd
 };
 
 // Texture transform (UV animation) data
