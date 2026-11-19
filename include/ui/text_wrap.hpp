@@ -318,22 +318,32 @@ std::vector<NativeWrappedLine> wrapTextNative(const std::vector<WrapRun>& runs, 
 }
 
 /// Where 2.4.3 starts a line of text in a box, in whole pixels. Measured with
-/// white strings on black at fractional box positions, faces FRIZQT and
-/// MORPHEUS at 6 to 28 pixels, frame scales 1 and 0.5
-/// (_experiments/20261119T092759Z.questlog_fonts, FP_Place/FP_Place2):
+/// white strings on black, faces FRIZQT and MORPHEUS at 6 to 28 pixels, frame
+/// scales 1 and 0.5 (_experiments/20261119T092759Z.questlog_fonts, FP_Place/
+/// FP_Place2/FP_Place3), and "HHHH" in boxes 50, 50.5, 51.25 and 51.75 pixels
+/// wide at all sixteen 1/16-pixel lefts, shadow on and off
+/// (_experiments/20261119T0935Z.raidinfo_clip, CT(); centerfit.py, rightfit.py):
 ///   LEFT    floor(left) + 2
-///   CENTER  floor(left) + 2 + floor((boxWidth - width - shadow) / 2)
-///   RIGHT   floor(left + boxWidth) + 1 - width
+///   CENTER  floor(left + boxWidth / 2) + 2 - ceil((width + shadow) / 2)
+///   RIGHT   floor(left + boxWidth) + 1 - width    with a shadow
+///           ceil(left + boxWidth) + 1 - width     without
 /// `width` is the line's measured width (NativeWrappedLine::width), `shadow`
-/// the pixels a drop shadow adds (shadowPixels). The glyphs then sit on these
-/// pens as FreeType places them.
+/// the pixels a drop shadow adds (shadowPixels); width + shadow is
+/// GetStringWidth. A box sized to its own text is width + shadow wide, so
+/// centred it lands on round(left) + 1 without a shadow's odd pixel.
+/// Edges landing exactly on a whole pixel follow native float error (its
+/// GetStringWidth reads 36.0000014 for 36 pixels) and can fall one pixel to
+/// the left there. The glyphs then sit on these pens as FreeType places them.
 inline float placeTextLine(float left, float boxWidth, float width, float shadow, const std::string& justify) {
     // A thousandth of a pixel of slack: rects come out of float layout, and a
     // box edge solved to 22.9999 is the pixel at 23.
     constexpr float kSlack = 1e-3f;
     if (justify == "CENTER")
-        return std::floor(left + kSlack) + 2.0f + std::floor((boxWidth - width - shadow) * 0.5f + kSlack);
-    if (justify == "RIGHT") return std::floor(left + boxWidth + kSlack) + 1.0f - width;
+        return std::floor(left + boxWidth * 0.5f + kSlack) + 2.0f - std::ceil((width + shadow) * 0.5f - kSlack);
+    if (justify == "RIGHT") {
+        const float right = left + boxWidth;
+        return (shadow > 0.0f ? std::floor(right + kSlack) : std::ceil(right - kSlack)) + 1.0f - width;
+    }
     return std::floor(left + kSlack) + 2.0f;
 }
 
