@@ -18,6 +18,7 @@
 #include <array>
 #include <sstream>
 #include <cmath>
+#include <cstdio>
 
 namespace wowee {
 namespace rendering {
@@ -350,7 +351,14 @@ void Minimap::parseTRS() {
 // --------------------------------------------------------
 
 VkTexture* Minimap::getOrLoadTileTexture(int tileX, int tileY) {
-    return getOrLoadNamedTile(mapName + "\\map" + std::to_string(tileX) + "_" + std::to_string(tileY));
+    // md5translate.trs names every tile with two-digit indices
+    // ("Expansion01\map44_08"). Unpadded "map44_8" matched nothing, so tiles
+    // with an index below 10 - all of Isle of Quel'Danas - drew no minimap.
+    // The 3x3 grid around an edge tile reaches past the 64x64 map: no tile there.
+    if (tileX < 0 || tileX >= 64 || tileY < 0 || tileY >= 64) return noDataTexture.get();
+    char name[16];
+    std::snprintf(name, sizeof(name), "\\map%02d_%02d", tileX, tileY);
+    return getOrLoadNamedTile(mapName + name);
 }
 
 VkTexture* Minimap::getOrLoadNamedTile(std::string key) {
