@@ -2617,13 +2617,15 @@ void EntityController::handleDisplayIdChange(const UpdateBlock& block,
         unit->getHealth(), unit->getMaxHealth(), unit->getDynamicFlags());
     dispatchEntitySpawn(block.guid, entity->getType(), entity, unit,
                         isDeadNow && !result.npcDeathNotified);
+    // Every token the unit answers to, the player's own included: native
+    // 2.4.3 fires UNIT_MODEL_CHANGED player as a druid takes Cat Form, and
+    // PlayerFrame redraws its portrait as the cat. The portrait listens for
+    // UNIT_PORTRAIT_UPDATE as well, sent with it as on create.
     if (owner_.addonEventCallbackRef()) {
-        std::string uid;
-        if (block.guid == owner_.getTargetGuid()) uid = "target";
-        else if (block.guid == owner_.focusGuidRef()) uid = "focus";
-        else if (block.guid == owner_.petGuidRef()) uid = "pet";
-        if (!uid.empty())
-            pendingEvents_.emit("UNIT_MODEL_CHANGED", {uid});
+        for (const auto& token : unitEventTokens(owner_, block.guid)) {
+            pendingEvents_.emit("UNIT_MODEL_CHANGED", {token});
+            pendingEvents_.emit("UNIT_PORTRAIT_UPDATE", {token});
+        }
     }
 }
 

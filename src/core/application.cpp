@@ -5516,8 +5516,30 @@ void Application::render() {
             runRenderStage("addonWidgets/portrait", [&] {
                 if (portrait) {
                     sizeFor(unitPortrait_, portrait);
-                    unitPortrait_.update(*gameHandler, assetManager.get(),
-                                         renderer.get(), io.DeltaTime);
+                    // A shapeshifted or morphed player is drawn from the
+                    // display it wears, as the target portrait draws a morph:
+                    // native 2.4.3 shows the cat's head on PlayerFrame in Cat
+                    // Form. The display differs from UNIT_FIELD_NATIVEDISPLAYID.
+                    std::string shiftedModel;
+                    uint32_t shiftedDisplay = 0;
+                    if (const uint16_t nativeField = game::fieldIndex(game::UF::UNIT_FIELD_NATIVEDISPLAYID);
+                        nativeField != 0xFFFF && entitySpawner_) {
+                        if (game::Unit* self = gameHandler->getUnitByGuid(gameHandler->getPlayerGuid())) {
+                            const uint32_t native = self->getField(nativeField);
+                            if (native != 0 && self->getDisplayId() != 0 && self->getDisplayId() != native) {
+                                shiftedDisplay = self->getDisplayId();
+                                shiftedModel = entitySpawner_->getModelPathForDisplayId(shiftedDisplay);
+                            }
+                        }
+                    }
+                    if (!shiftedModel.empty()) {
+                        unitPortrait_.updateCreature(shiftedModel,
+                            entitySpawner_->getCreatureSkinPaths(shiftedDisplay, shiftedModel),
+                            assetManager.get(), renderer.get(), io.DeltaTime);
+                    } else {
+                        unitPortrait_.update(*gameHandler, assetManager.get(),
+                                             renderer.get(), io.DeltaTime);
+                    }
                     // Assigned every frame including when it is zero. Keeping
                     // the last good handle instead would leave the widget
                     // pointing at a descriptor set that has been destroyed -
