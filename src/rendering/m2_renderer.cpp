@@ -334,11 +334,7 @@ bool M2Renderer::buildMainPassPipelines(VkDescriptorSetLayout perFrameLayout) {
                                       /*alphaToCoverage=*/true);
     // Respect authored one-sided foliage. IronForgeSnowTree01 has overlapping
     // front/back surfaces with different triangulations; drawing both produces
-    // depth conflicts, amplified by procedural wind. Two-sided materials retain
-    // the unculled pipeline. Wind remains an independent diagnostic.
-    if (!skyMode_ && core::envFlagEnabled("WOWEE_M2_NO_FOLIAGE_WIND")) {
-        LOG_WARNING("M2 foliage diagnostic: procedural tree wind disabled");
-    }
+    // depth conflicts. Two-sided materials retain the unculled pipeline.
     const bool enableFoliageCull = !core::envFlagEnabled("WOWEE_M2_NO_FOLIAGE_CULL");
     if (!skyMode_ && enableFoliageCull) {
         foliageCullOpaquePipeline_ = buildM2Pipeline(
@@ -1538,7 +1534,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     gpuModel.isGroundDetail              = cls.isGroundDetail;
     gpuModel.isFoliageLike               = cls.isFoliageLike;
     gpuModel.disableAnimation            = cls.disableAnimation;
-    gpuModel.shadowWindFoliage           = cls.shadowWindFoliage;
+    gpuModel.cutoutFoliage           = cls.cutoutFoliage;
     // A banner whose own bones move its cloth does not want the procedural
     // sway on top of it. forsakenbanner01 at the Undercity gate is the shape:
     // 51 of its 85 vertices sit on a root bone with no keys at all - the pole

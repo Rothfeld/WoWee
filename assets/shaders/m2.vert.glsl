@@ -18,10 +18,10 @@ layout(set = 0, binding = 0) uniform PerFrame {
 // Per-draw push constants (batch-level data only)
 layout(push_constant) uniform Push {
     int texCoordSet;         // UV set index (0 or 1)
-    int isFoliage;           // -1 sky, 0 none, 1 foliage, 2 clutter, 3 hanging cloth
+    int isFoliage;           // -1 sky, 0 none, 2 clutter, 3 hanging cloth, 4 standing cloth
     int instanceDataOffset;  // Base index into InstanceSSBO for this draw group
-    float swayRefHeight;     // Model height the sway normalises against (model space)
-    float swayAmp;           // Sway amplitude scale; 1.0 = the tree-sized default
+    float swayRefHeight;     // Cloth: top of the cloth (model space)
+    float swayAmp;           // Cloth throw
     float plantHeight;       // The model's own height (model space), for the player brush
     int texCoordSet2;
 } push;
@@ -97,48 +97,6 @@ void main() {
                      + bones[bBase + bi.w] * aBoneWeights.w;
         pos = skinMat * pos;
         norm = skinMat * norm;
-    }
-
-    // How far up the model this vertex sits, 0 at the base and 1 at the top.
-    // Quadratic so the roots stay planted and the motion collects at the tip.
-    // swayRefHeight is 20 for anything tree-sized, which is the constant this
-    // used to hardcode; ground clutter passes its own height instead, because
-    // normalising a one-yard tuft against twenty moves it by nothing at all.
-    float heightFactor = 0.0;
-    if (push.isFoliage > 0) {
-        heightFactor = clamp(pos.z / max(push.swayRefHeight, 0.01), 0.0, 1.0);
-        heightFactor *= heightFactor; // quadratic - base stays grounded
-    }
-
-    // Wind animation for foliage.
-    //
-    // Ground clutter (mode 2) is left out of this on purpose. Every detail
-    // doodad has its own one-bone sequence and plays it, so a shader wind on
-    // top would be two swings of the same plant at two different rates. The
-    // player brush below still applies to it: that is motion the authored
-    // animation has no way to know about.
-    if (push.isFoliage == 1) {
-        float windTime = fogParams.z;
-        vec3 worldRef = model[3].xyz;
-        float amp = push.swayAmp * heightFactor;
-
-        // Layer 1: Trunk sway - slow, large amplitude
-        float trunkPhase = windTime * 0.8 + dot(worldRef.xy, vec2(0.1, 0.13));
-        float trunkSwayX = sin(trunkPhase) * 0.35 * amp;
-        float trunkSwayY = cos(trunkPhase * 0.7) * 0.25 * amp;
-
-        // Layer 2: Branch sway - medium frequency, per-branch phase
-        float branchPhase = windTime * 1.7 + dot(worldRef.xy, vec2(0.37, 0.71));
-        float branchSwayX = sin(branchPhase + pos.y * 0.4) * 0.15 * amp;
-        float branchSwayY = cos(branchPhase * 1.1 + pos.x * 0.3) * 0.12 * amp;
-
-        // Layer 3: Leaf flutter - fast, small amplitude, per-vertex
-        float leafPhase = windTime * 4.5 + dot(aPos, vec3(1.7, 2.3, 0.9));
-        float leafFlutterX = sin(leafPhase) * 0.06 * amp;
-        float leafFlutterY = cos(leafPhase * 1.3) * 0.05 * amp;
-
-        pos.x += trunkSwayX + branchSwayX + leafFlutterX;
-        pos.y += trunkSwayY + branchSwayY + leafFlutterY;
     }
 
     // Cloth: a banner, a flag, a tapestry. Mode 3 hangs, mode 4 stands.
@@ -217,12 +175,8 @@ void main() {
     // in yards from the player, not something the model's own scale and rotation
     // should be turning.
     //
-    // Grass, ferns and bushes all give way; a tree does not, and the taper
-    // between them is on the plant's own height rather than on which of the two
-    // sway modes it happens to use. A shoulder-high bush and a waist-high one
-    // should not behave differently because a bounding box crossed a threshold.
-    if (push.isFoliage > 0 && push.isFoliage != 3 && push.isFoliage != 4 &&
-        push.plantHeight > 0.0) {
+    // Ground clutter only: a placed doodad keeps its authored pose, as in 2.4.3.
+    if (push.isFoliage == 2 && push.plantHeight > 0.0) {
         vec3 base = model[3].xyz;                      // instance origin, on the ground
         float zScale = length(model[2].xyz);
         float plantHeight = push.plantHeight * zScale;
@@ -235,8 +189,7 @@ void main() {
         float levelGate = 1.0 - smoothstep(1.5, 4.0, abs(base.z - playerPos.z));
         levelGate *= sizeGate;
 
-        // Height along the plant, from its own base rather than from whatever
-        // the wind normalised against: mode 2 does not compute the wind at all.
+        // Height along the plant, from its own base.
         float brushT = clamp(pos.z / max(push.plantHeight, 0.01), 0.0, 1.0);
         brushT *= brushT;
 

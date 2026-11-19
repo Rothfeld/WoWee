@@ -66,18 +66,11 @@ inline constexpr VkShaderStageFlags kSharedShadowPushStages =
 
 // Push constants for shadow rendering passes.
 //
-// Two matrices filled 128 bytes exactly, which is all Vulkan guarantees for
-// push constants - and left no room for the sway a foliage caster needs to
-// match the tree it belongs to. The light-space and model matrices are
-// multiplied on the CPU instead, since nothing in the shadow shaders wanted
-// them apart: the fragment shader's world position was never read.
+// The light-space and model matrices are multiplied on the CPU: nothing in
+// the shadow shaders wants them apart.
 struct ShadowPush {
     glm::mat4 lightSpaceModel;
-    /// xy: the instance's world origin, which gives the wind its per-tree
-    /// phase. z: the height the bend is normalised against. w: its amplitude.
-    /// All zero for anything that does not sway.
-    glm::vec4 sway{0.0f};
-    /// x: sample the texture. y: alpha-test it. z: bend in the wind.
+    /// x: sample the texture. y: alpha-test it.
     ///
     /// These were in the uniform buffer, and the M2 pass writes that buffer
     /// twice a frame - once for its solid casters, once for its foliage. A
@@ -89,8 +82,6 @@ struct ShadowPush {
     /// canopy. Push constants are recorded into the command buffer with the
     /// draw, so there is nothing left to race.
     glm::ivec4 flags{0};
-    /// x: the wind clock the sway is sampled at.
-    glm::vec4 wind{0.0f};
 };
 
 // Uniform buffer for shadow rendering parameters (matches shader std140 layout)

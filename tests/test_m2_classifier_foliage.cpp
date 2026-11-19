@@ -71,7 +71,7 @@ TEST_CASE("rigid props whose names contain a foliage token do not sway",
         // solid word to come later in the name - "street" needs "lamp" after
         // it - and here "bed" comes first, so it has to win outright.
         CHECK_FALSE(classify("InnBedCanopy").isFoliageLike);
-        CHECK_FALSE(classify("InnBedCanopy").shadowWindFoliage);
+        CHECK_FALSE(classify("InnBedCanopy").cutoutFoliage);
         // Its own animation was being turned off as well, which is what
         // disableAnimation does to anything read as foliage.
         CHECK_FALSE(classify("InnBedCanopy").disableAnimation);
@@ -88,7 +88,7 @@ TEST_CASE("rigid props whose names contain a foliage token do not sway",
                               "ThornCanopy_01", "SwampSorrowCanopyTree03"}) {
             INFO(n);
             CHECK(classify(n).isFoliageLike);
-            CHECK(classify(n).shadowWindFoliage);
+            CHECK(classify(n).cutoutFoliage);
         }
     }
 
@@ -122,8 +122,8 @@ TEST_CASE("plants keep swaying when a structural word comes first",
     }
 }
 
-// isFoliageLike also drives collision and animation, so a false positive did
-// more than add wind: it made ruins walk-through and froze their animation.
+// isFoliageLike also drives collision: a false positive made ruins
+// walk-through.
 TEST_CASE("a ruin misread as foliage would also lose its collision",
           "[m2][classifier][foliage]") {
     const auto ruin = classify("StranglethornRuins07", 9.0f, 7.0f);
@@ -133,7 +133,18 @@ TEST_CASE("a ruin misread as foliage would also lose its collision",
 
     const auto tree = classify("DustwallowTree04", 9.0f, 7.0f);
     CHECK(tree.isFoliageLike);
-    CHECK(tree.disableAnimation);
+}
+
+// 2.4.3 plays a placed tree's own Stand and adds no motion to it: the canopy
+// of StranglethornTree02 sways from its keyed bones, its roots and the
+// StranglethornRoot01-03 doodads (one unkeyed bone) stand still.
+TEST_CASE("foliage keeps its authored animation", "[m2][classifier][foliage]") {
+    for (const char* n : {"StranglethornTree02", "StranglethornRoot03", "BadlandsPalmTree02",
+                          "ElwynnBush01"}) {
+        INFO(n);
+        CHECK(classify(n, 8.0f, 14.0f).isFoliageLike);
+        CHECK_FALSE(classify(n, 8.0f, 14.0f).disableAnimation);
+    }
 }
 
 // isForge forces the batch additive, so a false positive renders a solid model
@@ -331,7 +342,7 @@ TEST_CASE("a street lamp is ironwork, not a sapling", "[m2][classifier]") {
                           "WORLD\\AZEROTH\\ELWYNN\\PASSIVEDOODADS\\LAMPS\\STORMWINDSTREETLAMP01.M2"}) {
         INFO(n);
         CHECK_FALSE(classify(n, 1.2f, 5.0f).isFoliageLike);
-        CHECK_FALSE(classify(n, 1.2f, 5.0f).shadowWindFoliage);
+        CHECK_FALSE(classify(n, 1.2f, 5.0f).cutoutFoliage);
     }
     SECTION("and the sign it sits next to is still not a tree") {
         CHECK_FALSE(classify("GnomeStreetSign01").isFoliageLike);
@@ -366,18 +377,14 @@ TEST_CASE("hanging cloth is picked out by name", "[m2][classifier][cloth]") {
     }
 }
 
-// A stump is a tree by name and timber by nature.
-//
-// shadowWindFoliage is what bends a model in the wind, and it was set for
-// anything foliage-like - which a name carrying "tree" always is. So the cut
-// stumps and fallen logs scattered through Elwynn and Duskwood swayed like
-// saplings, trunk and all, with no canopy to justify it.
+// A stump is a tree by name and timber by nature: its shadow is not cut out
+// by a leaf texture's alpha.
 //
 // The classifier already separates the wooden parts of a tree from the leafy
 // ones: hardTreePart is trunk, stump and log, and it is what the collision
 // rules use to decide that these are things you step over rather than walk
-// around. The same set is what must not bend.
-TEST_CASE("the wooden parts of a tree do not sway", "[m2][classifier][foliage]") {
+// around.
+TEST_CASE("the wooden parts of a tree are not cutout foliage", "[m2][classifier][foliage]") {
     SECTION("stumps, logs and bare trunks") {
         for (const char* n : {"ElwynnTreeStump01", "elwynntreestump02",
                               "DuskwoodTreeStump01", "TreeStumpSmall",
@@ -387,21 +394,21 @@ TEST_CASE("the wooden parts of a tree do not sway", "[m2][classifier][foliage]")
                               "ElwynnTreeTrunk01", "TeldrassilTreeTrunk03",
                               "WORLD\\AZEROTH\\ELWYNN\\PASSIVEDOODADS\\TREES\\ELWYNNTREESTUMP01.M2"}) {
             INFO(n);
-            CHECK_FALSE(classify(n, 2.0f, 1.5f).shadowWindFoliage);
+            CHECK_FALSE(classify(n, 2.0f, 1.5f).cutoutFoliage);
         }
     }
 
     SECTION("but a whole tree still does") {
         for (const char* n : {"ElwynnTree01", "DuskwoodTree03", "TeldrassilTree02"}) {
             INFO(n);
-            CHECK(classify(n, 8.0f, 14.0f).shadowWindFoliage);
+            CHECK(classify(n, 8.0f, 14.0f).cutoutFoliage);
         }
     }
 
     SECTION("and so does the undergrowth around them") {
         for (const char* n : {"ElwynnBush01", "ElwynnFern02"}) {
             INFO(n);
-            CHECK(classify(n, 1.5f, 1.2f).shadowWindFoliage);
+            CHECK(classify(n, 1.5f, 1.2f).cutoutFoliage);
         }
     }
 }

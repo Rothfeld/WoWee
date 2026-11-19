@@ -551,25 +551,25 @@ M2ClassificationResult classifyM2Model(
     // ---------------------------------------------------------------
     const bool foliageOrTree = foliageName || treeLike;
     r.isFoliageLike    = foliageOrTree && !ambientCreature;
-    // Deliberately not ground detail, which was tried and reverted. Every
-    // detail doodad ships exactly one bone and one sequence, and that sequence
-    // is not always a sway - a number of them carry a small insect or butterfly
-    // that flits around the plant, and silencing the lot of them to save the
-    // bone took the ambient life of a field with it. The wind in the shader
-    // stands down for clutter instead; see the isFoliage == 2 path in
-    // m2.vert.glsl, which brushes it aside for the player and leaves the
-    // authored motion alone.
-    r.disableAnimation = r.isFoliageLike || chestName;
+    // Foliage plays its own authored Stand like every other doodad. 2.4.3 adds
+    // no motion of its own to a placed model: a tree's canopy sways because
+    // its bones are keyed (StranglethornTree02: 18 rotation tracks over a
+    // 23.3 s Stand, trunk bone unkeyed), and a model without keys stands
+    // still (StranglethornRoot01-03, StranglePlant08: one unkeyed bone).
+    // Turning the authored motion off and bending everything named like a
+    // plant in a shader wind made those roots and the palm trunks sway,
+    // which native never does.
+    r.disableAnimation = chestName;
     // Ground clutter is foliage whether or not its name says so: the detail
     // doodads the ground-effect scatterer places are grass, weeds and flowers,
     // and most of them are named for their tileset rather than for a plant
-    // (ElwGra01, 8DE_Detail02). Wind and the player's passage apply to them.
+    // (ElwGra01, 8DE_Detail02). The player's passage applies to them, and
+    // their shadows are cut out by the leaf texture's alpha.
     //
     // Except the wooden parts of a tree, which are not foliage however much
     // the name says "tree": a stump, a fallen log and a bare trunk are solid
-    // timber, and hardTreePart is already exactly that set. They matched
-    // treeLike on the name and bent in the wind like a sapling.
-    r.shadowWindFoliage = (r.isFoliageLike || r.isGroundDetail) && !hardTreePart;
+    // timber, and hardTreePart is already exactly that set.
+    r.cutoutFoliage = (r.isFoliageLike || r.isGroundDetail) && !hardTreePart;
     // Cloth: banners, flags, tapestries, pennants.
     //
     // The name is all this sees, and it is not enough on its own. It used to

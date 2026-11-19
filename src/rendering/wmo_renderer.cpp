@@ -1791,7 +1791,7 @@ bool WMORenderer::initializeShadow(VkRenderPass shadowRenderPass) {
     // The fragment stage reads the alpha-test flags out of the same block.
     pc.stageFlags = kSharedShadowPushStages;
     pc.offset = 0;
-    pc.size = sizeof(ShadowPush);  // one combined matrix, plus the sway slot
+    pc.size = sizeof(ShadowPush);  // one combined matrix and the pass flags
     shadowPipelineLayout_ = createPipelineLayout(device, {shadowParams_.layout}, {pc});
     if (!shadowPipelineLayout_) {
         core::Logger::getInstance().error("WMORenderer: failed to create shadow pipeline layout");
@@ -1859,7 +1859,6 @@ void WMORenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceM
         if (modelIt == loadedModels.end()) continue;
         const ModelData& model = modelIt->second;
 
-        // A building does not sway, so the sway slot stays zero.
         ShadowPush push{.lightSpaceModel = lightSpaceMatrix * instance.modelMatrix};
         vkCmdPushConstants(cmd, shadowPipelineLayout_, kSharedShadowPushStages,
                            0, sizeof(ShadowPush), &push);

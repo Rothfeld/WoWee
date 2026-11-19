@@ -197,8 +197,8 @@ struct M2ModelGPU {
     bool hasProjectedBatches = false;
     /// Loaded by SpellVisualSystem for a spell visual, not placed in the world.
     bool isRuntimeSpellVisual = false;
-    bool disableAnimation = false; // Keep foliage/tree doodads visually stable
-    bool shadowWindFoliage = false; // Apply wind sway in shadow pass for foliage/tree cards
+    bool disableAnimation = false; // Keep chest lids visually stable
+    bool cutoutFoliage = false; // Alpha-cut shadow caster; clutter gets the player brush
     bool isHangingCloth = false;    // Banner/flag/tapestry: sways from the end it is held by
     bool isStandingCloth = false;   // ...and that end is the foot of a planted pole
     bool isFoliageLike = false;     // Model name matches foliage/tree/bush/grass etc (precomputed)
@@ -586,7 +586,7 @@ public:
     /**
      * Render depth-only pass for shadow casting
      */
-    void renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMatrix, float globalTime = 0.0f,
+    void renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMatrix,
                       const glm::vec3& shadowCenter = glm::vec3(0), float shadowRadius = 1e9f);
 
     /// Which part of a frame's particles one renderM2Particles call draws.

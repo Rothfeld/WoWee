@@ -142,6 +142,12 @@ The colour changes in one frame and stays for the aura's lifetime;
 Blue/Red, Ignite Flesh, Enrage, also during a Chromaggus fight). Opacity moves
 to the new value over 1 s as the cube of elapsed time, both ways, whatever the
 kit's parameters (Transparency 25%/75%, Steal Magic, Banish).
+Placed doodads move only by their own Stand sequence, as in 2.4.3: no shader
+wind, whatever the name. `StranglethornTree02` and `BadlandsPalmTree02` sway their
+canopies from keyed bones; `StranglethornRoot01`-`03`, Elwynn bushes and trees and
+the palm trunks have no keys and stand still. Name tokens ("root", "palm", "thorn")
+used to switch the authored Stand off and bend those models in a procedural wind.
+Evidence: `_experiments/20261119T083245Z.stv_root_anim/` in the workspace.
 M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
 asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U

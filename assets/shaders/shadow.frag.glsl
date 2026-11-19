@@ -4,9 +4,7 @@ layout(set = 0, binding = 0) uniform sampler2D uTexture;
 
 layout(push_constant) uniform Push {
     mat4 lightSpaceModel;
-    vec4 sway;
-    ivec4 flags;            // x useTexture, y alphaTest, z foliageSway
-    vec4 wind;
+    ivec4 flags;            // x useTexture, y alphaTest
 } push;
 
 layout(location = 0) in vec2 TexCoord;

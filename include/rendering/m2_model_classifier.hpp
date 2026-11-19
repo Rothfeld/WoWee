@@ -72,7 +72,7 @@ struct M2ClassificationResult {
     bool collisionTreeTrunk          = false; ///< Tree trunk cylinder
 
     // --- Rendering / effect classification ---
-    bool isFoliageLike      = false; ///< Foliage or tree (wind sway, disabled animation)
+    bool isFoliageLike      = false; ///< Foliage or tree, by name (collision, taxi skipping)
     bool isSmallFoliage     = false; ///< Small bush/grass/plant (skip during taxi/flight)
     bool isSpellEffect      = false; ///< Spell effect / particle-dominated visual
     bool isInstancePortal   = false; ///< Instance portal (additive, spin, no collision)
@@ -94,8 +94,8 @@ struct M2ClassificationResult {
     AmbientEmitterType ambientEmitterType = AmbientEmitterType::None;
 
     // --- Animation flags ---
-    bool disableAnimation   = false; ///< Keep visually stable (foliage, chest lids, etc.)
-    bool shadowWindFoliage  = false; ///< Apply wind sway in shadow pass for foliage/trees
+    bool disableAnimation   = false; ///< Keep visually stable (chest lids)
+    bool cutoutFoliage  = false; ///< Alpha-cut shadow caster; ground clutter also gets the player brush
     /// A banner, a flag, a tapestry: cloth hung from its top edge.
     ///
     /// Held at the bar and free at the hem, which is the opposite of a plant -

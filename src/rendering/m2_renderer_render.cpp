@@ -755,11 +755,6 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
 // drawn by the particle or ribbon systems.
 static const bool kM2NoSkinning = envFlagEnabled("WOWEE_M2_NO_SKINNING");
 
-// Isolate the procedural tree wind from culling, shadows and the authored
-// mesh. Applies to both the visible model and its caster; normal rendering is
-// unchanged unless explicitly requested for an in-game comparison.
-static const bool kM2NoFoliageWind = envFlagEnabled("WOWEE_M2_NO_FOLIAGE_WIND");
-
 void M2Renderer::updateProjectedTextures(const ProjectedSurfaceQuery& surface) {
     if (!initialized_) return;
     const uint32_t frame = vkCtx_->getCurrentFrame();
@@ -1442,10 +1437,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // Push constants now carry per-batch data only; per-instance data is in instance SSBO.
     struct M2PushConstants {
         int32_t texCoordSet;        // UV set index (0 or 1)
-        int32_t isFoliage;          // -1 = sky, 0 = none, 1 = wind foliage, 2 = ground clutter
+        int32_t isFoliage;          // -1 sky, 0 none, 2 ground clutter, 3/4 hanging/standing cloth
         int32_t instanceDataOffset; // Base index into instance SSBO for this draw group
-        float swayRefHeight;        // Model-space height the wind normalises against
-        float swayAmp;              // Wind amplitude scale; 1.0 = the tree-sized default
+        float swayRefHeight;        // Cloth: model-space top of the cloth
+        float swayAmp;              // Cloth throw
         float plantHeight;          // The model's own height, for the player brush
         int32_t texCoordSet2;
     };
@@ -1469,28 +1464,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         return glm::vec4(translation.x, translation.y, 0.0f, 0.0f);
     };
 
-    // Fill the sway half of the push constants for one model.
-    //
-    // Two modes, and the split is about who owns the idle motion. Ground clutter
-    // plays a sequence of its own, so mode 2 asks the shader for the player
-    // brush and no wind - two swings of one plant at two rates reads as a
-    // glitch. Everything else the wind picks up has its animation disabled by
-    // the classifier and gets mode 1, wind and brush both.
-    //
-    // The wind itself was written for trees: it normalised height against 20
-    // yards and displaced by an absolute number of model units, so a one-yard
-    // tuft travelled a fraction of a millimetre. Every model normalises against
-    // its own height now, with an amplitude interpolated between the two ends
-    // rather than switched at a threshold - a bush a foot taller than its
-    // neighbour should not sway ten times less. Both ends reproduce the numbers
-    // that were there: a 20-yard tree still throws 0.35 model units at the tip.
+    // Fill the sway half of the push constants for one model: the player
+    // brush for ground clutter, the cloth sway for banners (m2_sway.hpp).
     auto fillSway = [](M2PushConstants& pc, const M2ModelGPU& mdl, bool sky) {
-        const M2Sway sway = m2SwayFor(sky, mdl.isHangingCloth, mdl.shadowWindFoliage,
+        const M2Sway sway = m2SwayFor(sky, mdl.isHangingCloth, mdl.cutoutFoliage,
                                       mdl.isGroundDetail, mdl.boundMin.z, mdl.boundMax.z,
                                       mdl.isStandingCloth);
         pc.isFoliage = sway.mode;
         pc.swayRefHeight = sway.refHeight;
-        pc.swayAmp = m2SwayAmplitude(sway, kM2NoFoliageWind);
+        pc.swayAmp = sway.amp;
         pc.plantHeight = sway.plantHeight;
     };
 
@@ -1584,7 +1566,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 auto& instance = instances[entry.index];
 
                 // Distance-based fade alpha
-                float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
+                float fadeFrac = (model.isFoliageLike || model.disableAnimation) ? 0.55f : fadeStartFraction;
                 float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
                 float fadeAlpha = 1.0f;
                 if (entry.distSq > fadeStartDistSq) {
@@ -2129,7 +2111,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
         // Fade alpha
         float fadeAlpha = 1.0f;
-        float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
+        float fadeFrac = (model.isFoliageLike || model.disableAnimation) ? 0.55f : fadeStartFraction;
         float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
         if (entry.distSq > fadeStartDistSq) {
             fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
@@ -2429,7 +2411,7 @@ bool M2Renderer::initializeShadow(VkRenderPass shadowRenderPass) {
     // The fragment stage reads the alpha-test flags out of the same block.
     pc.stageFlags = kSharedShadowPushStages;
     pc.offset = 0;
-    pc.size = sizeof(ShadowPush);  // one combined matrix, plus the sway slot
+    pc.size = sizeof(ShadowPush);  // one combined matrix and the pass flags
     shadowPipelineLayout_ = createPipelineLayout(device, {shadowParams_.layout}, {pc});
     if (!shadowPipelineLayout_) {
         LOG_ERROR("M2Renderer: failed to create shadow pipeline layout");
@@ -2481,7 +2463,7 @@ bool M2Renderer::initializeShadow(VkRenderPass shadowRenderPass) {
     return true;
 }
 
-void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMatrix, float globalTime,
+void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMatrix,
                               const glm::vec3& /*shadowCenter*/, float shadowRadius) {
     if (!shadowPipeline_ || !shadowParams_.set) return;
     if (instances.empty() || models.empty()) return;
@@ -2573,13 +2555,13 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
         if (std::abs(clip.x) > 1.0f + margin || std::abs(clip.y) > 1.0f + margin) continue;
         if (clip.z < -margin || clip.z > 1.0f + margin) continue;
 
-        shadowCasters_[model.shadowWindFoliage ? 1 : 0].emplace_back(instance.modelId, i);
+        shadowCasters_[model.cutoutFoliage ? 1 : 0].emplace_back(instance.modelId, i);
     }
     for (auto& bucket : shadowCasters_) {
         std::sort(bucket.begin(), bucket.end());
     }
 
-    // Helper lambda to draw instances with a given foliageSway setting
+    // Draw one bucket: solid casters, or alpha-cut foliage casters.
     auto drawPass = [&](bool foliagePass) {
         // What this pass is, carried with each draw rather than written into a
         // buffer both passes share. The uniform buffer this used to be is read
@@ -2589,9 +2571,7 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
         // land inside the previous frame's reads. A foliage batch that lost
         // its alpha test that way casts the whole leaf quad, which is the
         // canopy's outline in solid black instead of its cutout.
-        const glm::ivec4 passFlags{foliagePass ? 1 : 0, foliagePass ? 1 : 0,
-                                   foliagePass ? 1 : 0, 0};
-        const glm::vec4 wind{globalTime, 0.0f, 0.0f, 0.0f};
+        const glm::ivec4 passFlags{foliagePass ? 1 : 0, foliagePass ? 1 : 0, 0, 0};
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_,
@@ -2607,14 +2587,6 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
             if (!firstInstance.cachedModel) { g = groupEnd; continue; }
             const M2ModelGPU& model = *firstInstance.cachedModel;
 
-            // Once per model, not once per instance: the bend comes from the
-            // model's own bounds and its kind, and so do the buffers.
-            const M2Sway sway = m2SwayFor(false, model.isHangingCloth,
-                                          model.shadowWindFoliage, model.isGroundDetail,
-                                          model.boundMin.z, model.boundMax.z,
-                                          model.isStandingCloth);
-            const glm::vec2 modelSwayZW(sway.refHeight,
-                                        m2SwayAmplitude(sway, kM2NoFoliageWind));
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &model.vertexBuffer, &offset);
             vkCmdBindIndexBuffer(cmd, model.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
@@ -2653,15 +2625,9 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
 
                 for (std::size_t k = g; k < groupEnd; ++k) {
                     const auto& instance = instances[casters[k].second];
-                    // The instance's own origin is what gives the wind its
-                    // per-tree phase; the height and amplitude beside it are
-                    // the model's.
-                    const glm::vec3 origin = glm::vec3(instance.modelMatrix[3]);
                     ShadowPush push{
                         .lightSpaceModel = lightSpaceMatrix * instance.modelMatrix,
-                        .sway = glm::vec4(origin.x, origin.y, modelSwayZW.x, modelSwayZW.y),
-                        .flags = passFlags,
-                        .wind = wind};
+                        .flags = passFlags};
                     vkCmdPushConstants(cmd, shadowPipelineLayout_, kSharedShadowPushStages,
                                        0, sizeof(ShadowPush), &push);
                     vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
@@ -2672,9 +2638,9 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
         }
     };
 
-    // Pass 1: non-foliage (no wind displacement)
+    // Pass 1: solid casters
     drawPass(false);
-    // Pass 2: foliage (wind displacement enabled, per-batch alpha-tested textures)
+    // Pass 2: foliage (per-batch alpha-tested textures)
     drawPass(true);
 
     // A shadow that flickers is a caster that was drawn last frame and is not

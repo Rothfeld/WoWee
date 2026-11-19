@@ -1033,7 +1033,7 @@ bool TerrainRenderer::initializeShadow(VkRenderPass shadowRenderPass) {
     // The fragment stage reads the alpha-test flags out of the same block.
     pc.stageFlags = kSharedShadowPushStages;
     pc.offset = 0;
-    pc.size = sizeof(ShadowPush);  // one combined matrix, plus the sway slot
+    pc.size = sizeof(ShadowPush);  // one combined matrix and the pass flags
     shadowPipelineLayout_ = createPipelineLayout(device, {shadowParams_.layout}, {pc});
     if (!shadowPipelineLayout_) {
         LOG_ERROR("TerrainRenderer: failed to create shadow pipeline layout");

@@ -10,10 +10,9 @@
 #include "rendering/m2_sway.hpp"
 
 using wowee::rendering::m2SwayFor;
-using wowee::rendering::m2SwayAmplitude;
 
 namespace {
-// (sky, hangingCloth, windFoliage, groundDetail)
+// (sky, hangingCloth, cutoutFoliage, groundDetail)
 constexpr bool kNotSky = false, kNotCloth = false, kNotFoliage = false, kNotDetail = false;
 }  // namespace
 
@@ -68,27 +67,17 @@ TEST_CASE("the sway modes are unchanged by that", "[m2][sway]") {
     SECTION("standing only means anything for cloth") {
         const auto sway = m2SwayFor(kNotSky, kNotCloth, true, kNotDetail, 0.0f, 20.0f,
                                     /*standingCloth=*/true);
-        CHECK(sway.mode == 1);
+        CHECK(sway.mode == 0);
     }
-    SECTION("a tree still throws what it threw") {
+    SECTION("a placed tree, bush or root keeps its authored pose") {
+        // StranglethornRoot03 has one unkeyed bone and stands still in 2.4.3;
+        // StranglethornTree02's canopy sways from its own keys alone.
         const auto sway = m2SwayFor(kNotSky, kNotCloth, true, kNotDetail, 0.0f, 20.0f);
-        CHECK(sway.mode == 1);
-        CHECK(sway.refHeight == Catch::Approx(20.0f));
-        CHECK(sway.plantHeight == Catch::Approx(20.0f));
+        CHECK(sway.mode == 0);
     }
     SECTION("ground detail sways on its own mode") {
         const auto sway = m2SwayFor(kNotSky, kNotCloth, true, true, 0.0f, 0.8f);
         CHECK(sway.mode == 2);
         CHECK(sway.plantHeight == Catch::Approx(0.8f));
     }
-}
-
-TEST_CASE("the wind diagnostic leaves other animation paths alone", "[m2][sway]") {
-    const auto tree = m2SwayFor(kNotSky, kNotCloth, true, kNotDetail, 0.0f, 15.0f);
-    const auto grass = m2SwayFor(kNotSky, kNotCloth, true, true, 0.0f, 0.8f);
-    const auto cloth = m2SwayFor(kNotSky, true, kNotFoliage, kNotDetail, 0.0f, 6.0f);
-    CHECK(m2SwayAmplitude(tree, false) == tree.amp);
-    CHECK(m2SwayAmplitude(tree, true) == 0.0f);
-    CHECK(m2SwayAmplitude(grass, true) == grass.amp);
-    CHECK(m2SwayAmplitude(cloth, true) == cloth.amp);
 }
