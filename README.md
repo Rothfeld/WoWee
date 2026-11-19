@@ -747,8 +747,16 @@ as its mesh does, unless the emitter has flag 0x1: `BFD_WaterFalls01.m2` splash
 (0x420, authored 190,218,220) is blue under placement (84,125,223) and
 `BFD_WaterFalls10.m2` teal under (43,91,100), while `Torch.m2` (0x21) and
 `Candle01.m2` (0x39) flames keep their authored yellow-white.
-Flag 0x1000 (XYQuad) sprites lie flat in the model XY plane:
-`WaterElemental.m2` #16/#21 are the ground rings under an Aqua Guardian.
+Flag 0x1000 (XYQuad) sprites lie in the XY plane of their emitter bone as
+placed in the world (`particleQuadAxes`): `WaterElemental.m2` #16/#21 sit on
+unrotated bones and are the ground rings under an Aqua Guardian; Time Rift
+(display 18877, `time_rift1.m2`) hangs its rings (#0-#2) on bones turned 90
+degrees about Y under a Z-cylindrical billboard (bone 3, 0x40), so they face
+the camera in the original. In the model's XY plane they lay flat like a
+halo. 145 of 363 TBC XYQuad emitters sit under a rotated or billboard bone
+(Blink, Arcane/Fire/Frost Ward, Ashbringer, Ethereal storm lightning).
+Evidence: `_experiments/20261119T082500Z.orient_shadow/` in the workspace
+(scan_xyquad.txt, sweep_fix/cases/18877).
 Flag 0x400 pins a tail to its birth point: the tail runs back along
 `-velocity * tailLength` but never past where the particle was born. 2204 of
 3522 TBC tail emitters carry it, many with tailLength 10 s; without the limit
@@ -1506,6 +1514,52 @@ WoWee draws it at full strength until it vanishes. Over WMO liquid (the grey
 sludge in Huhuran's hall, group 6 MLIQ of `ahn_qiraj.wmo`) native shows the
 ring at full strength; WoWee draws its water after the ring, which dims it
 there.
+
+### Ground blob shadows under units
+
+2.4.3 multiplies `Textures/ShadowBlob.blp` (32x32, grey 160 in the middle,
+white at the rim) onto the ground under every unit: on the ground directly
+under a hovering bat or nether ray as under a standing troglodyte. The quad is
+the unit's CreatureModelData GeoBox seen from above (x/y extents times the
+unit scale), centred on the unit's position, not on the box's centre, and
+turned with its facing. It is fogged with the ground. Fitting the texture to
+the native ground darkening of 74 sweep cases gave 0.98 of the box extents
+(median) and a centre depth of 0.63 of the plate (160/255); Riding Nether Ray
+21152 (box x -4.53..1.99) sits centred on the ray. The shadow is drawn on
+ground no further than GeoBox height x scale / sqrt(2) below the unit:
+hovering 2852 tempspawns kept a full shadow until the ground left that range,
+then lost it pixel by pixel (ray 21152 at h 3 / 3.5, the same at scale 0.5 at
+1.5 / 1.75, shark 12195 at 1.25 / 1.5, bat 9750 at 1.25). The ratio 0.70-0.71
+is measured; 1/sqrt(2) is the nearest simple value. WoWee draws it with the
+selection circle's projection (terrain and WMO triangles, not doodads),
+after the ground and before units (`rendering/unit_shadow.hpp`,
+`OverlaySystem::renderUnitShadows`). Not measured: whether ground above the
+unit (uphill) takes it, WMO floors, dead units, and the player's own shadow in
+first person. WoWee's sun shadow map still darkens units' surroundings by day;
+2.4.3 has no unit shadow other than the blob.
+Evidence: `_experiments/20261119T082500Z.orient_shadow/` in the workspace
+(blob_fit.py, blob_batch.txt, hoverblob.py, sweep_fix).
+
+### Character-style NPC size and head turn
+
+A character-style NPC (CreatureDisplayInfoExtra) is drawn at its display scale
+times its race and sex's player display scale (ChrRaces columns 4/5): tauren
+male NPCs are 1.35 times taller than their display says, gnomes 1.15, as
+tauren and gnome players are. In the sweep scene 3793 and 1624 (1.0) stood
+1.35 times WoWee's height, 1941 (1.2) 1.62; tauren female 1905 and human 4397
+as WoWee.
+
+Open: in 2.4.3 a standing NPC turns its head and upper body toward the
+player character a few yards away, the hips and legs keep the server facing.
+Human 4397 at 5 yd: player 15-40 degrees off its facing, the head looks at
+the player and the chest follows part way; at 45 degrees and beyond it does
+not turn. The Chaos Gazer (beholder, 23266) turns its whole body, which hangs
+under its head bone. WoWee does not do this, which is most of the "faces a
+different way" of 23266, 3793 and other humanoids in the visual sweep;
+range, angle limit, turn rate and how the turn splits between head and spine
+bones are not measured. 830 and 17627 differ only by the Stand variation
+drawn at that moment (fidget sequences).
+Evidence: `_experiments/20261119T082500Z.orient_shadow/headlook/`.
 
 ### Chair clicks and object picking
 

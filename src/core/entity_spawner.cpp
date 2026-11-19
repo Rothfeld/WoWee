@@ -847,6 +847,37 @@ void EntitySpawner::buildCreatureDisplayLookups() {
                  dbcFieldCount, " DBC fields, bakeField=", bakeField, ")");
     }
 
+    // A character-style NPC (CreatureDisplayInfoExtra) is drawn at its own
+    // display scale times the scale of its race and sex's player display
+    // (ChrRaces columns 4/5, male/female CreatureDisplayInfo), as a player
+    // of that race is. Build 8606 in the visual sweep scene: tauren male NPCs
+    // 3793 and 1624 (display scale 1.0) stand 1.35 times WoWee's height, 1941
+    // (1.2) 1.36 times WoWee's 1.2, so 1.62; a gnome male 1832 about 1.2
+    // (player display 1563: 1.15); a tauren female 1905 and a human 4397 the
+    // same (player displays 60 and 49: 1.0).
+    // _experiments/20261119T082500Z.orient_shadow/ (sweep_fix, height_ratio.py).
+    if (auto races = assetManager_->loadDBC("ChrRaces.dbc"); races && races->isLoaded()) {
+        assert(races->getFieldCount() > 5);
+        std::unordered_map<uint32_t, float> raceSexScale;  // race << 8 | sex
+        for (uint32_t i = 0; i < races->getRecordCount(); ++i) {
+            for (uint32_t sex = 0; sex < 2; ++sex) {
+                const auto display = displayDataMap_.find(races->getUInt32(i, 4 + sex));
+                if (display != displayDataMap_.end())
+                    raceSexScale[races->getUInt32(i, 0) << 8 | sex] = display->second.displayScale;
+            }
+        }
+        uint32_t scaled = 0;
+        for (auto& [displayId, data] : displayDataMap_) {
+            const auto extra = humanoidExtraMap_.find(data.extraDisplayId);
+            if (data.extraDisplayId == 0 || extra == humanoidExtraMap_.end()) continue;
+            const auto race = raceSexScale.find(uint32_t(extra->second.raceId) << 8 | extra->second.sexId);
+            if (race == raceSexScale.end() || race->second == 1.0f) continue;
+            data.displayScale *= race->second;
+            ++scaled;
+        }
+        LOG_INFO("Scaled ", scaled, " character-style NPC displays by their race's player display");
+    }
+
     // CreatureModelData.dbc: modelId (col 0) → modelPath (col 2, .mdx → .m2)
     if (auto cmd = assetManager_->loadDBC("CreatureModelData.dbc"); cmd && cmd->isLoaded()) {
         const auto* cmdL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("CreatureModelData") : nullptr;
@@ -1225,6 +1256,14 @@ bool EntitySpawner::getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, 
 }
 
 bool EntitySpawner::getSelectionRadiusForGuid(uint64_t guid, float& outRadius) const {
+    ModelGeoBox box;
+    float scale = 1.0f;
+    if (!getUnitGeoBoxForGuid(guid, box, scale)) return false;
+    outRadius = selectionCircleRadius(box, scale);
+    return true;
+}
+
+bool EntitySpawner::getUnitGeoBoxForGuid(uint64_t guid, ModelGeoBox& outBox, float& outScale) const {
     if (!gameHandler_) return false;
     const auto unit = std::dynamic_pointer_cast<game::Unit>(
         gameHandler_->getEntityManager().getEntity(guid));
@@ -1258,8 +1297,43 @@ bool EntitySpawner::getSelectionRadiusForGuid(uint64_t guid, float& outRadius) c
         box = mountedGeoBox(box, mount->geoBox, mount->mountHeight);
         scale *= creatureDisplayScale(mountDisplay);
     }
-    outRadius = selectionCircleRadius(box, scale);
+    outBox = box;
+    outScale = scale;
     return true;
+}
+
+std::vector<rendering::UnitShadowBlob> EntitySpawner::collectUnitShadows() const {
+    std::vector<rendering::UnitShadowBlob> blobs;
+    if (!gameHandler_ || !renderer_ || !renderer_->getCharacterRenderer()) return blobs;
+    const auto* characters = renderer_->getCharacterRenderer();
+    std::vector<uint64_t> guids;
+    guids.reserve(creatureInstances_.size() + playerInstances_.size() + 1);
+    for (const auto& [guid, instance] : creatureInstances_) guids.push_back(guid);
+    for (const auto& [guid, instance] : playerInstances_) guids.push_back(guid);
+    if (!playerInstances_.count(gameHandler_->getPlayerGuid())) guids.push_back(gameHandler_->getPlayerGuid());
+    for (const uint64_t guid : guids) {
+        // The drawn unit stands where its ground instance (its mount, when
+        // riding) stands; a hidden or culled-by-room unit casts nothing.
+        const uint32_t drawn = drawnInstanceIdForGuid(guid);
+        const uint32_t ground = groundInstanceIdForGuid(guid);
+        glm::vec3 drawnPosition;
+        if (drawn == 0 || ground == 0 || !characters->getInstancePosition(drawn, drawnPosition)) continue;
+        float opacity = 1.0f;
+        if (!characters->isInstanceDrawnVisible(drawn, opacity) || characters->isInstanceRoomHidden(drawn)) continue;
+        ModelGeoBox box;
+        float scale = 1.0f;
+        if (!getUnitGeoBoxForGuid(guid, box, scale)) continue;
+        rendering::UnitShadowBlob blob;
+        float yaw = 0.0f;
+        if (!characters->getInstancePosition(ground, blob.position) || !characters->getInstanceYaw(ground, yaw))
+            continue;
+        blob.axisX = {std::cos(yaw), std::sin(yaw)};
+        blob.halfExtent = glm::vec2(box.max - box.min) * (0.5f * scale);
+        blob.reach = (box.max.z - box.min.z) * scale * rendering::kUnitShadowReachPerBoxHeight;
+        if (blob.halfExtent.x <= 0.0f || blob.halfExtent.y <= 0.0f) continue;
+        blobs.push_back(blob);
+    }
+    return blobs;
 }
 
 bool EntitySpawner::getRenderFootZForGuid(uint64_t guid, float& outFootZ) const {

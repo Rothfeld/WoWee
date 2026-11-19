@@ -2585,6 +2585,20 @@ OverlaySystem::SurfaceTriangles selectionSurfaces(const TerrainManager* terrain,
 
 }  // namespace
 
+void Renderer::setUnitShadows(std::vector<UnitShadowBlob> blobs) {
+    if (overlaySystem_) overlaySystem_->setUnitShadows(std::move(blobs));
+}
+
+void Renderer::renderUnitShadows(const glm::mat4& view, const glm::mat4& projection, VkCommandBuffer cmd) {
+    if (!camera) return;
+    overlaySystem_->renderUnitShadows(view, projection, camera->getPosition(),
+        currentFrameData.fogParams.x, currentFrameData.fogParams.y, cmd,
+        terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
+        wmoRenderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return wmoRenderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
+        m2Renderer ? OverlaySystem::HeightQuery3D([&](float x, float y, float z) { return m2Renderer->getFloorHeight(x, y, z); }) : OverlaySystem::HeightQuery3D{},
+        selectionSurfaces(terrainManager.get(), wmoRenderer.get()));
+}
+
 void Renderer::clearSelectionCircle() {
     selectionInstance_ = 0;
     if (overlaySystem_) overlaySystem_->clearSelectionCircle();
@@ -3354,6 +3368,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             VkCommandBuffer cmd = beginSecondary(SEC_SELECTION);
             setSecondaryViewportScissor(cmd);
             if (overlaySystem_) {
+                renderUnitShadows(view, projection, cmd);
                 refreshSelectionCirclePosition();
                 overlaySystem_->renderSelectionCircle(view, projection, cmd,
                     terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
@@ -3547,6 +3562,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         }
 
         if (overlaySystem_) {
+            renderUnitShadows(view, projection, currentCmd);
             refreshSelectionCirclePosition();
             overlaySystem_->renderSelectionCircle(view, projection, currentCmd,
                 terrainManager ? OverlaySystem::HeightQuery2D([&](float x, float y) { return terrainManager->getHeightAt(x, y); }) : OverlaySystem::HeightQuery2D{},
@@ -3898,6 +3914,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     }
 
     overlaySystem_->loadSelectionTexture(*assetManager);
+    overlaySystem_->loadUnitShadowTexture(*assetManager);
 
     LOG_INFO("Initializing renderers for map: ", mapName);
 

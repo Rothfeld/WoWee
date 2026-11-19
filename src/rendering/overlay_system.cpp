@@ -34,6 +34,14 @@ void OverlaySystem::cleanup() {
     destroy(device, selCircleSetLayout_);
     selCircleSet_ = VK_NULL_HANDLE;
     selCircleTexture_.destroy(device, vkCtx_->getAllocator());
+    destroy(device, shadowPipeline_);
+    destroy(device, shadowPipelineLayout_);
+    for (auto& buffer : shadowVertexBuffers_) destroyBuffer(vkCtx_->getAllocator(), buffer);
+    shadowVertexCapacity_ = {};
+    destroy(device, shadowPool_);
+    destroy(device, shadowSetLayout_);
+    shadowSet_ = VK_NULL_HANDLE;
+    shadowTexture_.destroy(device, vkCtx_->getAllocator());
     destroy(device, overlayPipeline_);
     destroy(device, brightnessPipeline_);
     destroy(device, overlayPipelineLayout_);
@@ -44,6 +52,7 @@ void OverlaySystem::recreatePipelines() {
     VkDevice device = vkCtx_->getDevice();
     // Destroy only pipelines (keep geometry buffers)
     destroy(device, selCirclePipeline_);
+    destroy(device, shadowPipeline_);
     destroy(device, overlayPipeline_);
     destroy(device, brightnessPipeline_);
 }
@@ -63,41 +72,64 @@ void OverlaySystem::clearSelectionCircle() {
     selCircleVisible_ = false;
 }
 
-void OverlaySystem::loadSelectionTexture(pipeline::AssetManager& assets) {
-    if (selCircleTexture_.isValid()) return;
-    const auto image = assets.loadTexture("Textures\\UnitSelectTexture.blp");
-    if (!image.isValid() || !selCircleTexture_.uploadBLP(*vkCtx_, image)) {
-        LOG_ERROR("Cannot load Textures/UnitSelectTexture.blp");
-        throw std::runtime_error("Selection circle texture failed to load");
-    }
-    VkDevice device = vkCtx_->getDevice();
-    if (!selCircleTexture_.createSampler(device, VK_FILTER_LINEAR, VK_FILTER_LINEAR,
-                                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE))
-        throw std::runtime_error("Selection circle sampler failed to create");
+namespace {
+
+/// One combined-image-sampler set for `texture`, in its own pool.
+void createTextureSet(VkDevice device, const VkTexture& texture, VkDescriptorSetLayout& layout,
+                      VkDescriptorPool& pool, VkDescriptorSet& set, const char* what) {
     VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                         1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-    selCircleSetLayout_ = createDescriptorSetLayout(device, {binding});
+    layout = createDescriptorSetLayout(device, {binding});
     VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
-    VkDescriptorPoolCreateInfo pool{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pool.maxSets = 1;
-    pool.poolSizeCount = 1;
-    pool.pPoolSizes = &size;
-    if (!selCircleSetLayout_ || vkCreateDescriptorPool(device, &pool, nullptr, &selCirclePool_) != VK_SUCCESS)
-        throw std::runtime_error("Selection circle descriptor pool failed to create");
+    VkDescriptorPoolCreateInfo poolInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &size;
+    if (!layout || vkCreateDescriptorPool(device, &poolInfo, nullptr, &pool) != VK_SUCCESS)
+        throw std::runtime_error(std::string(what) + " descriptor pool failed to create");
     VkDescriptorSetAllocateInfo alloc{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    alloc.descriptorPool = selCirclePool_;
+    alloc.descriptorPool = pool;
     alloc.descriptorSetCount = 1;
-    alloc.pSetLayouts = &selCircleSetLayout_;
-    if (vkAllocateDescriptorSets(device, &alloc, &selCircleSet_) != VK_SUCCESS)
-        throw std::runtime_error("Selection circle descriptor allocation failed");
-    auto info = selCircleTexture_.descriptorInfo();
+    alloc.pSetLayouts = &layout;
+    if (vkAllocateDescriptorSets(device, &alloc, &set) != VK_SUCCESS)
+        throw std::runtime_error(std::string(what) + " descriptor allocation failed");
+    auto info = texture.descriptorInfo();
     VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = selCircleSet_;
+    write.dstSet = set;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &info;
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+}
+
+/// Loads a BLP with a linear clamped sampler.
+void loadClampedTexture(VkContext& ctx, pipeline::AssetManager& assets, VkTexture& texture, const char* path) {
+    const auto image = assets.loadTexture(path);
+    if (!image.isValid() || !texture.uploadBLP(ctx, image)) {
+        LOG_ERROR("Cannot load ", path);
+        throw std::runtime_error(std::string(path) + " failed to load");
+    }
+    if (!texture.createSampler(ctx.getDevice(), VK_FILTER_LINEAR, VK_FILTER_LINEAR,
+                               VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE))
+        throw std::runtime_error(std::string(path) + " sampler failed to create");
+}
+
+}  // namespace
+
+void OverlaySystem::loadSelectionTexture(pipeline::AssetManager& assets) {
+    if (selCircleTexture_.isValid()) return;
+    loadClampedTexture(*vkCtx_, assets, selCircleTexture_, "Textures\\UnitSelectTexture.blp");
+    createTextureSet(vkCtx_->getDevice(), selCircleTexture_, selCircleSetLayout_, selCirclePool_,
+                     selCircleSet_, "Selection circle");
     LOG_INFO("Selection circle uses Textures/UnitSelectTexture.blp");
+}
+
+void OverlaySystem::loadUnitShadowTexture(pipeline::AssetManager& assets) {
+    if (shadowTexture_.isValid()) return;
+    loadClampedTexture(*vkCtx_, assets, shadowTexture_, "Textures\\ShadowBlob.blp");
+    createTextureSet(vkCtx_->getDevice(), shadowTexture_, shadowSetLayout_, shadowPool_,
+                     shadowSet_, "Unit shadow");
+    LOG_INFO("Unit shadows use Textures/ShadowBlob.blp");
 }
 
 namespace {
@@ -261,6 +293,143 @@ void OverlaySystem::renderSelectionCircle(const glm::mat4& view, const glm::mat4
     vkCmdPushConstants(cmd, selCirclePipelineLayout_,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
     vkCmdDraw(cmd, static_cast<uint32_t>(triangles.size()), 1, 0, 0);
+}
+
+namespace {
+
+/// unit_shadow.vert/.frag's push block.
+struct UnitShadowPush {
+    glm::mat4 mvp;
+    glm::vec4 centreAxis;  // unit position x, y; facing x, y
+    glm::vec4 halfAndZ;    // half extent along facing, across; lowest and highest z drawn
+    glm::vec4 camera;      // camera position; unused
+    glm::vec4 fog;         // fog start, end; unused
+};
+static_assert(sizeof(UnitShadowPush) == 128, "must match unit_shadow's push block");
+
+}  // namespace
+
+void OverlaySystem::setUnitShadows(std::vector<UnitShadowBlob> blobs) {
+    shadowBlobs_ = std::move(blobs);
+}
+
+void OverlaySystem::initUnitShadows() {
+    if (shadowPipeline_ != VK_NULL_HANDLE || !vkCtx_) return;
+    if (!shadowSet_) throw std::logic_error("Unit shadow texture was not initialized");
+    VkDevice device = vkCtx_->getDevice();
+    VkShaderModule vertShader, fragShader;
+    if (!vertShader.loadFromFile(device, "assets/shaders/unit_shadow.vert.spv") ||
+        !fragShader.loadFromFile(device, "assets/shaders/unit_shadow.frag.spv")) {
+        vertShader.destroy();
+        fragShader.destroy();
+        throw std::runtime_error("Unit shadow shaders failed to load");
+    }
+    VkPushConstantRange pcRange{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                sizeof(UnitShadowPush)};
+    if (!shadowPipelineLayout_)
+        shadowPipelineLayout_ = createPipelineLayout(device, {shadowSetLayout_}, {pcRange});
+    VkVertexInputBindingDescription vertBind{0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription position{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+    // Multiplied onto the ground: dst * src.
+    VkPipelineColorBlendAttachmentState modulate = PipelineBuilder::blendAlpha();
+    modulate.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+    modulate.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    modulate.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    modulate.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    shadowPipeline_ = PipelineBuilder()
+        .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({vertBind}, {position})
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+        // Drawn on the world's own triangles, as the selection circle.
+        .setDepthBias(-1.0f, -1.0f)
+        .setColorBlendAttachment(modulate)
+        .setMultisample(vkCtx_->getMsaaSamples())
+        .setLayout(shadowPipelineLayout_)
+        .setRenderPass(vkCtx_->getImGuiRenderPass())
+        .setDynamicStates(viewportAndScissorDynamic())
+        .build(device, vkCtx_->getPipelineCache());
+    vertShader.destroy();
+    fragShader.destroy();
+    if (!shadowPipeline_) throw std::runtime_error("Unit shadow pipeline failed to build");
+}
+
+void OverlaySystem::renderUnitShadows(const glm::mat4& view, const glm::mat4& projection,
+                                      const glm::vec3& cameraPos, float fogStart, float fogEnd,
+                                      VkCommandBuffer cmd,
+                                      const HeightQuery2D& terrainHeight,
+                                      const HeightQuery3D& wmoHeight,
+                                      const HeightQuery3D& m2Height,
+                                      const SurfaceTriangles& surfaces) {
+    if (shadowBlobs_.empty() || cmd == VK_NULL_HANDLE || !shadowTexture_.isValid()) return;
+    initUnitShadows();
+
+    struct Draw { UnitShadowPush push; uint32_t first; uint32_t count; };
+    std::vector<Draw> draws;
+    auto& triangles = shadowTriangles_;
+    triangles.clear();
+    for (const auto& blob : shadowBlobs_) {
+        const glm::vec3 p = blob.position;
+        // Nothing to draw on unless some floor under the unit lies within
+        // its reach; the triangles are then clipped to that height range.
+        std::optional<float> ground;
+        auto consider = [&](std::optional<float> h) {
+            if (h && *h <= p.z + blob.reach && *h >= p.z - blob.reach && (!ground || *h > *ground)) ground = h;
+        };
+        if (terrainHeight) consider(terrainHeight(p.x, p.y));
+        if (wmoHeight) consider(wmoHeight(p.x, p.y, p.z + blob.reach));
+        if (m2Height) consider(m2Height(p.x, p.y, p.z + blob.reach));
+        if (!ground) continue;
+        const glm::vec2 axis = blob.axisX, across(-axis.y, axis.x);
+        const glm::vec2 reach = glm::abs(axis) * blob.halfExtent.x + glm::abs(across) * blob.halfExtent.y;
+        const glm::vec3 boxMin(p.x - reach.x, p.y - reach.y, p.z - blob.reach);
+        const glm::vec3 boxMax(p.x + reach.x, p.y + reach.y, p.z + blob.reach);
+        const size_t first = triangles.size();
+        if (surfaces) surfaces(boxMin, boxMax, triangles);
+        if (triangles.size() == first) continue;
+        Draw draw{};
+        draw.push.mvp = projection * view;
+        draw.push.centreAxis = glm::vec4(p.x, p.y, axis.x, axis.y);
+        draw.push.halfAndZ = glm::vec4(blob.halfExtent, boxMin.z, boxMax.z);
+        draw.push.camera = glm::vec4(cameraPos, 0.0f);
+        draw.push.fog = glm::vec4(fogStart, fogEnd, 0.0f, 0.0f);
+        draw.first = static_cast<uint32_t>(first);
+        draw.count = static_cast<uint32_t>(triangles.size() - first);
+        draws.push_back(draw);
+    }
+    if (draws.empty()) return;
+
+    const uint32_t frame = vkCtx_->getCurrentFrame();
+    auto& buffer = shadowVertexBuffers_[frame];
+    auto& capacity = shadowVertexCapacity_[frame];
+    if (capacity < triangles.size()) {
+        // This frame's previous use of the buffer has completed (frame fence).
+        destroyBuffer(vkCtx_->getAllocator(), buffer);
+        capacity = std::max<size_t>(triangles.size(), 16384) * 2;
+        buffer = createBuffer(vkCtx_->getAllocator(), capacity * sizeof(glm::vec3),
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        if (!buffer.buffer) throw std::runtime_error("Unit shadow vertex allocation failed");
+    }
+    void* mapped = nullptr;
+    if (vmaMapMemory(vkCtx_->getAllocator(), buffer.allocation, &mapped) != VK_SUCCESS)
+        throw std::runtime_error("Unit shadow vertex mapping failed");
+    const VkDeviceSize bytes = triangles.size() * sizeof(glm::vec3);
+    std::memcpy(mapped, triangles.data(), bytes);
+    vmaFlushAllocation(vkCtx_->getAllocator(), buffer.allocation, 0, bytes);
+    vmaUnmapMemory(vkCtx_->getAllocator(), buffer.allocation);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_,
+                            0, 1, &shadowSet_, 0, nullptr);
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &buffer.buffer, &offset);
+    for (const auto& draw : draws) {
+        vkCmdPushConstants(cmd, shadowPipelineLayout_,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(draw.push), &draw.push);
+        vkCmdDraw(cmd, draw.count, 1, draw.first, 0);
+    }
 }
 
 void OverlaySystem::initOverlayPipeline() {
