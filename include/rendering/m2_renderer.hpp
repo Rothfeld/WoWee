@@ -92,6 +92,7 @@ struct M2ModelGPU {
         bool starLayer = false;
         uint8_t glowTint = 0; // 0=warm, 1=cool, 2=red
         float batchOpacity = 1.0f; // Resolved texture weight opacity (0=transparent, skip batch)
+        pipeline::M2AnimationTrack animatedColorRGB;
         pipeline::M2AnimationTrack animatedColorAlpha;
         pipeline::M2AnimationTrack animatedTextureWeight;
         glm::vec3 center = glm::vec3(0.0f); // Center of batch geometry (model space)
@@ -321,6 +322,8 @@ struct M2Instance {
 
     // Particle emitter state
     std::vector<float> emitterAccumulators;  // fractional particle counter per emitter
+    int emitterPrevSequence = -1;            // sequence at previous emission step (Squirt crossings)
+    float emitterPrevAnimTime = 0.0f;        // animTime (ms) at previous emission step
     // Birth transform of each emitter at the previous emission step. A birth
     // inside the frame is placed where the emitter was at that instant.
     std::vector<glm::mat4> emitterPreviousBirth;
@@ -1041,7 +1044,9 @@ private:
         int32_t boneCount;         //  4 bytes @ offset 84 - clamps skinning reads
         float highlight = 0.0f;    //  4 bytes @ offset 88 - pressed-on lift
         int32_t flags = {};        //  4 bytes @ offset 92 - bit 1 + bits 8..31: MODD placement light
-        glm::vec4 uvOffset2{};     // xy: second texture translation; zw reserved
+        glm::vec2 uvOffset2{};     //  8 bytes @ offset 96 - second texture translation
+        uint32_t tintPacked = 0;   //  4 bytes @ offset 104 - bit 24 + RGB8 animated M2Color tint
+        uint32_t reserved = 0;     //  4 bytes @ offset 108
     };
     // How many instances one frame may hand the GPU, not how many exist. Ground
     // clutter is what fills it: it is drawn by the thousand and every tuft

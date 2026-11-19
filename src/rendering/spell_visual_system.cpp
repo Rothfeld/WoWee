@@ -8,6 +8,9 @@
 #include "rendering/chain_effect.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/placement_transform.hpp"
+#include "rendering/projected_texture.hpp"
+#include "rendering/terrain_manager.hpp"
+#include "rendering/wmo_renderer.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -1280,7 +1283,9 @@ void SpellVisualSystem::playPersistentArea(uint64_t key, uint32_t visualId, cons
             continue;
         }
         m2Renderer_->setInstanceIsSpellVisual(instanceId);
-        m2Renderer_->restartInstanceAnimation(instanceId);
+        // PersistentAreaKit models author Stand (0), Hold (158) and optional
+        // Decay (159) state sequences (LightningStorm_Cloud_State, FlameCircleEffect).
+        m2Renderer_->startInstanceStateEffect(instanceId);
         instances.push_back(instanceId);
         LOG_INFO("SpellVisual: persistent area 0x", std::hex, key, std::dec, " visual=", visualId,
                  " kit=", kit->second, " model=", effect.path);
@@ -1292,8 +1297,17 @@ void SpellVisualSystem::stopPersistentArea(uint64_t key) {
     activeAreaImpacts_.erase(key);
     const auto it = persistentAreas_.find(key);
     if (it == persistentAreas_.end()) return;
-    if (m2Renderer_)
-        for (uint32_t instanceId : it->second) m2Renderer_->retireInstance(instanceId);
+    if (m2Renderer_) {
+        for (uint32_t instanceId : it->second) {
+            const float decay = m2Renderer_->finishInstanceStateEffect(instanceId);
+            if (decay > 0.0f) {
+                activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = decay,
+                    .isPrecast = false, .attachmentId = 0, .attachInstanceId = 0, .decaying = true});
+            } else {
+                m2Renderer_->retireInstance(instanceId);
+            }
+        }
+    }
     persistentAreas_.erase(it);
 }
 
@@ -1467,21 +1481,32 @@ void SpellVisualSystem::placeOnUnit(const SpellVisualInstance& visual, Character
 }
 
 // Each impact is one play of the model at a uniformly random point of the
-// area's disc, on the area's own height, unrotated; impacts are evenly spaced
-// in time at the kit's rate.
+// area's disc, placed on the terrain or WMO floor at its own (x, y) so shards
+// and bolts follow slopes rather than clipping into uphill ground or bursting
+// in midair on the downhill side (build 8606, pair 8, Shimmering Flats rim).
 void SpellVisualSystem::dropAreaImpacts(float deltaTime) {
     if (activeAreaImpacts_.empty() || !m2Renderer_) return;
     static thread_local std::mt19937 random{std::random_device{}()};
     std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    auto* terrain = renderer_ ? renderer_->getTerrainManager() : nullptr;
+    auto* wmo = renderer_ ? renderer_->getWMORenderer() : nullptr;
     for (auto& [key, area] : activeAreaImpacts_) {
         area.due += deltaTime * area.impacts.perSecond;
+        const float reach = area.radius * 2.0f;
         while (area.due >= 1.0f) {
             area.due -= 1.0f;
             const uint32_t modelId = loadSpellModel(area.impacts.path);
             if (modelId == 0) continue;
             const float distance = area.radius * std::sqrt(unit(random));
             const float angle = glm::two_pi<float>() * unit(random);
-            const glm::vec3 at = area.center + glm::vec3(distance * std::cos(angle), distance * std::sin(angle), 0.0f);
+            glm::vec3 at = area.center + glm::vec3(distance * std::cos(angle), distance * std::sin(angle), 0.0f);
+            const auto terH = terrain ? terrain->getHeightAt(at.x, at.y) : std::nullopt;
+            const auto wmoH = wmo
+                ? wmo->getFloorHeight(at.x, at.y, area.center.z + reach, nullptr, area.center.z)
+                : std::nullopt;
+            if (const auto floorZ = projected_texture::nearestSurfaceZ(area.center.z, reach, terH, wmoH)) {
+                at.z = *floorZ;
+            }
             const uint32_t instanceId = m2Renderer_->createInstance(modelId, at, glm::vec3(0.0f), 1.0f);
             if (instanceId == 0) {
                 LOG_WARNING("SpellVisual: area impact instance failed, model=", area.impacts.path);

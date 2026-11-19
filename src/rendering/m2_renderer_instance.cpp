@@ -150,6 +150,8 @@ void M2Renderer::restartInstanceAnimation(uint32_t instanceId) {
     if (idxIt == instanceIndexById.end()) return;
     auto& inst = instances[idxIt->second];
     inst.animTime = 0.0f;
+    inst.emitterPrevSequence = -1;
+    inst.emitterPrevAnimTime = 0.0f;
     if (inst.cachedModel) computeBoneMatrices(*inst.cachedModel, inst, &cachedCamPos_);
 }
 
@@ -157,6 +159,8 @@ void M2Renderer::startInstanceStateEffect(uint32_t instanceId) {
     auto& instance = instances.at(instanceIndexById.at(instanceId));
     assert(instance.cachedModel);
     startStateEffect(*instance.cachedModel, instance);
+    instance.emitterPrevSequence = -1;
+    instance.emitterPrevAnimTime = 0.0f;
     computeBoneMatrices(*instance.cachedModel, instance, &cachedCamPos_);
 }
 

@@ -629,3 +629,83 @@ TEST_CASE("Pre-WotLK playable animation lookup decides what Stand shows", "[m2][
     // Neither Stand nor a lookup (Wrath layout): the first sequence.
     CHECK(wowee::pipeline::standSequenceIndex(cage, {}) == 0);
 }
+
+TEST_CASE("Plane emitters measure azimuth from +Y so Hurricane's cloud lies horizontal", "[m2][particle]") {
+    using wowee::rendering::planeParticleDirection;
+    // Zero inclination stays along +Z regardless of azimuth.
+    CHECK(planeParticleDirection(0.0f, 2.1f) == glm::vec3(0.0f, 0.0f, 1.0f));
+    // At horizontal range 0, births fan in the emitter bone's YZ plane (X == 0).
+    // LightningStorm_Cloud_State.m2 #0 (Hurricane 16914) authors vertical pi,
+    // horizontal 0 on bone 3, whose rotation maps Y and Z horizontal and +X
+    // straight up +Z.
+    const glm::quat bone3Rot = glm::normalize(glm::quat(0.328f, -0.638f, -0.305f, -0.626f));
+    for (const float inc : {-3.14159265f, -1.57079633f, -0.7f, 0.0f, 1.1f, 2.4f}) {
+        const glm::vec3 localDir = planeParticleDirection(inc, 0.0f);
+        CHECK(localDir.x == Catch::Approx(0.0f).margin(1e-6f));
+        CHECK(glm::length(localDir) == Catch::Approx(1.0f));
+        const glm::vec3 worldDir = bone3Rot * localDir;
+        CHECK(std::abs(worldDir.z) < 0.06f);
+    }
+}
+
+TEST_CASE("Discrete Squirt (0x8000) emitters fire keyframe bursts once and stay silent on held frames", "[m2][particle]") {
+    using wowee::rendering::forEachSquirtBurst;
+    // Blizzard_Impact_Base.m2 #3/#4: Stand [33..3333] (timeOffset = 33),
+    // discrete rate [(33, 0), (800, 35), (933, 0)],
+    // EnabledIn [(33, 0), (800, 1), (900, 0)].
+    wowee::pipeline::M2AnimationTrack rate, enabled;
+    rate.interpolationType = 0;
+    rate.sequences.resize(1);
+    rate.sequences[0].timeOffset = 33;
+    rate.sequences[0].timestamps = {33, 800, 933};
+    rate.sequences[0].floatValues = {0.0f, 35.0f, 0.0f};
+
+    enabled.interpolationType = 0;
+    enabled.sequences.resize(1);
+    enabled.sequences[0].timeOffset = 33;
+    enabled.sequences[0].timestamps = {33, 800, 900};
+    enabled.sequences[0].floatValues = {0.0f, 1.0f, 0.0f};
+
+    auto countStep = [&](float prevMs, float currMs, bool startBoundary, float dtSec) {
+        uint32_t total = 0;
+        forEachSquirtBurst(rate, enabled, 0, prevMs, currMs, 3300.0f, startBoundary,
+                           0.0f, {}, 1.0f, dtSec,
+                           [&](uint32_t n, float age, float) {
+                               CHECK(age >= 0.0f);
+                               CHECK(age <= dtSec);
+                               total += n;
+                           });
+        return total;
+    };
+
+    // Initial step and falling shard phase (0 -> 760 ms local): nothing emitted.
+    CHECK(countStep(0.0f, 33.0f, true, 0.033f) == 0);
+    CHECK(countStep(33.0f, 760.0f, false, 0.727f) == 0);
+    // Crossing local 767 ms (global 800 ms) fires all 35 particles once, even if
+    // the frame ends at 880 ms (global 913 ms, past EnabledIn's 900 ms turn-off).
+    CHECK(countStep(760.0f, 880.0f, false, 0.120f) == 35);
+    // Remaining Stand duration and held final frame emit nothing.
+    CHECK(countStep(880.0f, 3300.0f, false, 2.420f) == 0);
+    CHECK(countStep(3300.0f, 3300.0f, false, 0.033f) == 0);
+
+    // DecisiveStrike_Impact_Chest #0 disables EnabledIn at 3400 ms where key 50 sits.
+    wowee::pipeline::M2AnimationTrack disabledAtKey;
+    disabledAtKey.interpolationType = 0;
+    disabledAtKey.sequences.resize(1);
+    disabledAtKey.sequences[0].timeOffset = 3333;
+    disabledAtKey.sequences[0].timestamps = {3333, 3400};
+    disabledAtKey.sequences[0].floatValues = {1.0f, 0.0f};
+
+    wowee::pipeline::M2AnimationTrack strikeRate;
+    strikeRate.interpolationType = 0;
+    strikeRate.sequences.resize(1);
+    strikeRate.sequences[0].timeOffset = 3333;
+    strikeRate.sequences[0].timestamps = {3333, 3400};
+    strikeRate.sequences[0].floatValues = {0.0f, 50.0f};
+
+    uint32_t suppressed = 0;
+    forEachSquirtBurst(strikeRate, disabledAtKey, 0, 0.0f, 100.0f, 667.0f, true,
+                       0.0f, {}, 1.0f, 0.100f,
+                       [&](uint32_t n, float, float) { suppressed += n; });
+    CHECK(suppressed == 0);
+}

@@ -56,3 +56,16 @@ TEST_CASE("points with no surface in reach stay on the quad", "[projected_textur
     pt::buildGrid(c, glm::vec3(0), [](float, float, float, float) { return std::optional<float>{}; }, out);
     for (const auto& v : out) REQUIRE(v.data[2] == Catch::Approx(5.0f));
 }
+
+TEST_CASE("nearestSurfaceZ follows uphill and downhill slopes and keeps caves under hills", "[projected_texture]") {
+    // Shimmering Flats 26-deg slope: DynamicObject at z = -34.94, radius 10
+    // (reach 20). Uphill impact at z = -30.5, downhill impact at z = -39.2.
+    CHECK(pt::nearestSurfaceZ(-34.94f, 20.0f, -30.5f, std::nullopt) == Catch::Approx(-30.5f));
+    CHECK(pt::nearestSurfaceZ(-34.94f, 20.0f, -39.2f, std::nullopt) == Catch::Approx(-39.2f));
+    // Indoor cave floor at z = 10.5 under a terrain hill at z = 48: hill is
+    // out of reach, and even a shallow hill at z = 22 loses to the cave floor.
+    CHECK(pt::nearestSurfaceZ(10.0f, 16.0f, 48.0f, 10.5f) == Catch::Approx(10.5f));
+    CHECK(pt::nearestSurfaceZ(10.0f, 16.0f, 22.0f, 10.5f) == Catch::Approx(10.5f));
+    // Out-of-reach surfaces yield nullopt so callers fall back cleanly.
+    CHECK_FALSE(pt::nearestSurfaceZ(0.0f, 16.0f, 40.0f, std::nullopt).has_value());
+}

@@ -896,7 +896,8 @@ void SpellHandler::triggerImpactVisual(uint32_t spellId, uint64_t targetGuid) {
                          owner_.resolveUnitRenderInstance(targetGuid));
 }
 
-void SpellHandler::showPersistentArea(uint64_t guid, uint32_t spellId, const glm::vec3& canonicalPosition) {
+void SpellHandler::showPersistentArea(uint64_t guid, uint32_t spellId, const glm::vec3& canonicalPosition,
+                                      float wireRadius) {
     auto* renderer = owner_.services().renderer;
     auto* svs = renderer ? renderer->getSpellVisualSystem() : nullptr;
     if (!svs) return;
@@ -905,12 +906,13 @@ void SpellHandler::showPersistentArea(uint64_t guid, uint32_t spellId, const glm
         LOG_WARNING("SpellVisual: DynamicObject 0x", std::hex, guid, std::dec, " spell ", spellId, " has no visual");
         return;
     }
-    // The area's radius is the one its PERSISTENT_AREA_AURA effect names
-    // (SpellRadius.dbc), which is what the server gives the object: Cave In
-    // 36240 radius index 14, 8 yards; Blizzard 10 index 13. Zero when the
-    // object comes from another effect; only area impacts use it.
+    // Prefer DYNAMICOBJECT_RADIUS from the object's update block (includes
+    // server-side SPELLMOD_RADIUS talents); fall back to SpellRadius.dbc only
+    // when the expansion profile does not declare DYNAMICOBJECT_RADIUS.
     float radius = 0.0f;
-    {
+    if (std::isfinite(wireRadius) && wireRadius >= 0.0f) {
+        radius = wireRadius;
+    } else {
         auto* am = owner_.services().assetManager;
         assert(am && am->isInitialized());
         const auto* layout = pipeline::getActiveDBCLayout()

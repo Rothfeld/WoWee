@@ -211,8 +211,10 @@ enum class UF : uint16_t {
     GAMEOBJECT_STATE,
 
     // DynamicObject fields: the spell whose persistent area this is
-    // (Flamestrike, Blizzard, Consecration) and where it lies.
+    // (Flamestrike, Blizzard, Consecration), its type/radius, and where it lies.
+    DYNAMICOBJECT_BYTES,
     DYNAMICOBJECT_SPELLID,
+    DYNAMICOBJECT_RADIUS,
     DYNAMICOBJECT_POS_X,
     DYNAMICOBJECT_POS_Y,
     DYNAMICOBJECT_POS_Z,

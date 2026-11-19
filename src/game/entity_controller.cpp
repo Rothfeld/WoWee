@@ -2513,17 +2513,27 @@ void EntityController::onCreateDynamicObject(const UpdateBlock& block) {
         return it != block.fields.end() ? it->second : 0;
     };
     auto floatField = [&](UF name) { return std::bit_cast<float>(field(name)); };
+    // DYNAMIC_OBJECT_FARSIGHT_FOCUS (type 2 in low byte of DYNAMICOBJECT_BYTES)
+    // is a camera anchor (Far Sight, Mind Vision), not an area visual.
+    constexpr uint32_t kDynamicObjectFarsightFocus = 2u;
+    if (fieldIndex(UF::DYNAMICOBJECT_BYTES) != 0xFFFF &&
+        (field(UF::DYNAMICOBJECT_BYTES) & 0xFFu) == kDynamicObjectFarsightFocus) {
+        return;
+    }
     const uint32_t spellId = field(UF::DYNAMICOBJECT_SPELLID);
     if (spellId == 0) {
         LOG_WARNING("DynamicObject 0x", std::hex, block.guid, std::dec, " created without a spell");
         return;
     }
+    const float wireRadius = fieldIndex(UF::DYNAMICOBJECT_RADIUS) != 0xFFFF
+        ? floatField(UF::DYNAMICOBJECT_RADIUS) : -1.0f;
     const glm::vec3 server(floatField(UF::DYNAMICOBJECT_POS_X), floatField(UF::DYNAMICOBJECT_POS_Y),
                            floatField(UF::DYNAMICOBJECT_POS_Z));
-    LOG_INFO("DynamicObject 0x", std::hex, block.guid, std::dec, " spell=", spellId, " at server (", server.x, ",",
-             server.y, ",", server.z, ")");
+    LOG_INFO("DynamicObject 0x", std::hex, block.guid, std::dec, " spell=", spellId, " radius=", wireRadius,
+             " at server (", server.x, ",", server.y, ",", server.z, ")");
     const glm::vec3 position = core::coords::serverToCanonical(server);
-    if (auto* spells = owner_.getSpellHandler()) spells->showPersistentArea(block.guid, spellId, position);
+    if (auto* spells = owner_.getSpellHandler())
+        spells->showPersistentArea(block.guid, spellId, position, wireRadius);
 }
 
 void EntityController::onCreateCorpse(const UpdateBlock& block) {

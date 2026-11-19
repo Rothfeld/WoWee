@@ -9,6 +9,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "pipeline/m2_loader.hpp"
+#include "rendering/m2_track_sampler.hpp"
 
 namespace wowee::rendering {
 inline constexpr uint32_t kParticleNoTrail = 0x10;
@@ -35,17 +36,15 @@ inline constexpr uint32_t kParticleModelFrame = kParticleInModelSpace | kParticl
 // 145 of 363 TBC XYQuad emitters sit under a rotated or billboard bone.
 inline constexpr uint32_t kParticleXYQuad = 0x1000;
 inline constexpr uint32_t kParticlePinned = 0x400;
-// Pre-264 flag 0x8000 marks an emitter that bears nothing while its owner
-// holds a finished one-shot sequence on its last frame (a corpse at the end
-// of Death); emitters without it keep emitting there, their tracks sampled
-// at the held frame. 39 TBC creature emitters carry it, the death bursts:
-// ElementalEarth #6/#8/#9/#12 (Stone Rumbler: glow ball, mist and rocks keyed
-// 100/30/12/100 from 27.7 s to 33.3 s, past Death's end at 30 s), Ghost #0/#1
-// (sparks and shockwave from 57.2 s, Death ends 59.3 s). Their corpses in the
-// original show none of it, while unflagged emitters go on: Ghost #2's flare
-// (0x9), the Harvest Golem's smoke (#0, 0x2, rate keyed 10 at Death's end),
-// the fel fire in a dead Shivarra's hands (Shivan.m2 #0-#7, 0x29-0x239).
-inline constexpr uint32_t kParticleStopsOnHeldFrame = 0x8000;
+// Pre-264 flag 0x8000 is M2 Squirt: on discrete (interpolationType 0) rate
+// tracks each positive keyframe fires an instant burst of that many particles
+// when the sequence clock crosses its timestamp (Blizzard_Impact_Base #3/#4
+// 35 glow + 35 snowflakes at 800 ms, Consecration_Impact_Base #0 200 sparks at
+// 67 ms, RainOfFire_Impact_Base #0 35 flames at 967 ms, ElementalEarth and
+// Ghost death bursts). On a held last frame (a corpse at the end of Death)
+// no keyframes are crossed, and linear 0x8000 tracks also stop emitting there.
+inline constexpr uint32_t kParticleSquirt = 0x8000;
+inline constexpr uint32_t kParticleStopsOnHeldFrame = kParticleSquirt;
 // Particle vertex: position 3, colour 4, half width 1, cell 1, tail or
 // XYQuad X axis 3, rotation 1 (radians), XYQuad Y axis 3.
 inline constexpr size_t kParticleVertexFloats = 16;
@@ -259,6 +258,71 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
     const float magnitude = glm::length(offset);
     return {offset, (flags & 0x100u) != 0 ? glm::vec3(0, 0, 1)
                     : magnitude > 0 ? offset / magnitude : glm::vec3(0)};
+}
+
+// Plane emitter (type 1) travel direction: inclination from +Z, azimuth from
+// +Y (matching sphericalParticleEmission). At horizontal range 0 the fan lies
+// in the emitter bone's YZ plane: Hurricane 16914 (LightningStorm_Cloud_State
+// #0, vertical pi, horizontal 0 on bone 3, whose Y and Z lie horizontal and
+// whose X points up +Z) spins a flat cloud at z = 9.2 yd in native 2.4.3.
+inline glm::vec3 planeParticleDirection(float inclination, float azimuth) {
+    return {std::sin(inclination) * std::sin(azimuth),
+            std::sin(inclination) * std::cos(azimuth),
+            std::cos(inclination)};
+}
+
+/// Discrete Squirt (0x8000, interpolationType == 0) bursts crossed during one
+/// step of an emitter's sequence clock. Each crossed positive rate keyframe
+/// whose EnabledIn track is on at that keyframe's timestamp invokes
+/// onBurst(count, ageSeconds, localKeyMs) with floor(value * density) particles.
+template <typename Fn>
+inline void forEachSquirtBurst(
+    const pipeline::M2AnimationTrack& emissionRate,
+    const pipeline::M2AnimationTrack& enabledIn,
+    int sequenceIndex,
+    float prevAnimTimeMs,
+    float currAnimTimeMs,
+    float animDurationMs,
+    bool includeStartBoundary,
+    float globalSequenceTimeMs,
+    const std::vector<uint32_t>& globalSequenceDurations,
+    float density,
+    float stepSeconds,
+    Fn&& onBurst) {
+    if (emissionRate.interpolationType != 0) return;
+    if (sequenceIndex < 0 || static_cast<size_t>(sequenceIndex) >= emissionRate.sequences.size()) return;
+    const auto& keys = emissionRate.sequences[static_cast<size_t>(sequenceIndex)];
+    const size_t count = std::min(keys.timestamps.size(), keys.floatValues.size());
+    if (count == 0) return;
+
+    auto emitRange = [&](float loMs, float hiMs, bool closedLo, float ageOffsetMs) {
+        if (hiMs < loMs || (!closedLo && hiMs == loMs)) return;
+        for (size_t k = 0; k < count; ++k) {
+            const float val = keys.floatValues[k];
+            if (val <= 0.0f) continue;
+            const float localKeyMs =
+                static_cast<float>(keys.timestamps[k]) - static_cast<float>(keys.timeOffset);
+            const bool afterLo = closedLo ? (localKeyMs >= loMs) : (localKeyMs > loMs);
+            if (!afterLo || localKeyMs > hiMs) continue;
+            if (m2_track::sampleFloat(enabledIn, sequenceIndex, localKeyMs,
+                                      globalSequenceTimeMs, globalSequenceDurations, 1.0f) <= 0.0f) {
+                continue;
+            }
+            const uint32_t burstCount =
+                static_cast<uint32_t>(std::max(0.0f, std::floor(val * density)));
+            if (burstCount == 0) continue;
+            const float ageSec = std::clamp(((hiMs - localKeyMs) + ageOffsetMs) * 0.001f,
+                                            0.0f, std::max(0.0f, stepSeconds));
+            onBurst(burstCount, ageSec, localKeyMs);
+        }
+    };
+
+    if (!includeStartBoundary && currAnimTimeMs < prevAnimTimeMs && animDurationMs > 0.0f) {
+        emitRange(prevAnimTimeMs, animDurationMs, /*closedLo=*/false, currAnimTimeMs);
+        emitRange(0.0f, currAnimTimeMs, /*closedLo=*/true, 0.0f);
+    } else {
+        emitRange(prevAnimTimeMs, currAnimTimeMs, includeStartBoundary, 0.0f);
+    }
 }
 
 /// Whether a float track takes more than one value in this sequence.

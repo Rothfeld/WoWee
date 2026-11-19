@@ -1367,6 +1367,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         const uint32_t alphaOfs  = wotlk ? 20u : 28u;   // skip the vec3 color track
         model.colorAlphas.reserve(header.nColors);
         model.colorRGB.reserve(header.nColors);
+        model.colorRGBTracks.resize(header.nColors);
         model.colorAlphaTracks.resize(header.nColors);
         for (uint32_t ci = 0; ci < header.nColors; ci++) {
             uint32_t alphaTrackOfs = header.ofsColors + ci * colorSize + alphaOfs;
@@ -1406,6 +1407,26 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
             // values. See m2ColorTrackFirstKeyOffset.
             glm::vec3 rgb(1.0f);
             const uint32_t colorTrackOfs = header.ofsColors + ci * colorSize;
+            M2AnimationTrack& rgbTrack = model.colorRGBTracks[ci];
+            if (wotlk) {
+                if (colorTrackOfs + sizeof(M2TrackDisk) <= m2Data.size()) {
+                    M2TrackDisk td = readValue<M2TrackDisk>(m2Data, colorTrackOfs);
+                    parseAnimTrack(m2Data, td, rgbTrack, TrackType::VEC3, seqFlags);
+                }
+            } else {
+                if (colorTrackOfs + sizeof(M2TrackDiskVanilla) <= m2Data.size()) {
+                    M2TrackDiskVanilla td = readValue<M2TrackDiskVanilla>(m2Data, colorTrackOfs);
+                    parseAnimTrackVanilla(m2Data, td, rgbTrack, TrackType::VEC3, vanillaSeqWindows);
+                }
+            }
+            for (auto& seq : rgbTrack.sequences) {
+                for (auto& c : seq.vec3Values) {
+                    if (!std::isfinite(c.x) || !std::isfinite(c.y) || !std::isfinite(c.z)) {
+                        c = glm::vec3(1.0f);
+                    }
+                    c = glm::clamp(c, glm::vec3(0.0f), glm::vec3(1.0f));
+                }
+            }
             uint32_t rgbOfs = 0;
             if (m2ColorTrackFirstKeyOffset(m2Data.size(), colorTrackOfs, wotlk,
                                            [&](uint32_t at) {

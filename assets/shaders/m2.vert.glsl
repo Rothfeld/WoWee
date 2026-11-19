@@ -41,7 +41,9 @@ struct InstanceData {
     float highlight;
     // Bit 1: placement lighting from MODD in bits 8..31. Also in what was padding.
     int flags;
-    vec4 uvOffset2;
+    vec2 uvOffset2;
+    uint tintPacked;
+    uint reserved;
 };
 layout(set = 3, binding = 0) readonly buffer InstanceSSBO {
     InstanceData instanceData[];
@@ -65,6 +67,7 @@ layout(location = 7) flat out float vHighlight;
 layout(location = 8) flat out vec4 vIndoorLighting;
 layout(location = 9) out vec3 VertexLighting;
 layout(location = 10) out vec2 TexCoord2;
+layout(location = 11) flat out vec4 vInstanceTint;
 
 vec3 normalizedNormal(vec3 value) {
     // Authored zero-scale bones have zero normals during hidden phases.
@@ -118,7 +121,7 @@ void main() {
     if (push.texCoordSet == -1) TexCoord = environmentUV + uvOff;
     TexCoord2 = (push.texCoordSet2 == -1 ? environmentUV :
         (push.texCoordSet2 == 1 ? aTexCoord2 : aTexCoord)) +
-        instanceData[push.instanceDataOffset + gl_InstanceIndex].uvOffset2.xy;
+        instanceData[instIdx].uvOffset2;
 
     InstanceOrigin = model[3].xyz;
     // How far up its own model this vertex is, as a fraction of the model's
@@ -131,6 +134,10 @@ void main() {
     vIndoorLighting = vec4(vec3((lighting >> 8) & 255u, (lighting >> 16) & 255u,
                               (lighting >> 24) & 255u) / 255.0,
                           (lighting & 2u) != 0u ? 1.0 : 0.0);
+    uint packedTint = instanceData[instIdx].tintPacked;
+    vInstanceTint = vec4(vec3(packedTint & 255u, (packedTint >> 8) & 255u,
+                              (packedTint >> 16) & 255u) / 255.0,
+                         (packedTint & (1u << 24)) != 0u ? 1.0 : 0.0);
 
     gl_Position = projection * view * worldPos;
     // A sky model sits on the far plane whatever its radius, so the depth

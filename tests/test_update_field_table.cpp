@@ -65,4 +65,13 @@ TEST_CASE("TBC 8606 character fields match the server wire layout", "[updatefiel
     REQUIRE(table.index(UF::PLAYER_CRIT_PERCENTAGE) == 1321);
     // TBC publishes separate game-object state/type fields, not WotLK's bytes.
     REQUIRE_FALSE(table.hasField(UF::GAMEOBJECT_BYTES_1));
+
+    // DynamicObject layout (CMaNGOS TBC UpdateFields.h: OBJECT_END = 6):
+    // CASTER = 6..7, BYTES = 8, SPELLID = 9, RADIUS = 10, POS_X/Y/Z = 11..13.
+    REQUIRE(table.index(UF::DYNAMICOBJECT_BYTES) == 8);
+    REQUIRE(table.index(UF::DYNAMICOBJECT_SPELLID) == 9);
+    REQUIRE(table.index(UF::DYNAMICOBJECT_RADIUS) == 10);
+    REQUIRE(table.index(UF::DYNAMICOBJECT_POS_X) == 11);
+    REQUIRE(table.index(UF::DYNAMICOBJECT_POS_Y) == 12);
+    REQUIRE(table.index(UF::DYNAMICOBJECT_POS_Z) == 13);
 }

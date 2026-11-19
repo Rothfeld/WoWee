@@ -3435,10 +3435,32 @@ lowest yard or two of a wall (Goldshire smithy foundation, at 5, 8 and 20 yard
 radii alike) where WoWee paints the wall up to the radius. Native Escape fires
 UNIT_SPELLCAST_STOP; WoWee fires none. Native fires more
 CURRENT_SPELL_CAST_CHANGED / CURSOR_UPDATE pairs around arming and casting.
-Area effects, the same whoever casts: Blizzard's impacts lack native's bright
-white snowflake burst, Flamestrike's flame column is narrower without native's
-outer red sheets, Hurricane's cloud is larger and lower than native's.
 Evidence: `_experiments/20261119T1555Z.ground_target_pair8/` in the workspace.
+
+### Persistent area effects
+
+A `DynamicObject` (`DYNAMICOBJECT_SPELLID`, `DYNAMICOBJECT_RADIUS`,
+`DYNAMICOBJECT_POS_X/Y/Z`, ignoring `DYNAMIC_OBJECT_FARSIGHT_FOCUS` type 2 in
+`DYNAMICOBJECT_BYTES`) plays its spell's `SpellVisual.PersistentAreaKit` models
+at `SpellVisualEffectName.Scale` (`Flamestrike_Impact_Base.m2`,
+`FlameCircleEffect.m2`, `LightningStorm_Cloud_State.m2`) through the state
+sequence lifecycle (`Stand` 0 -> `Hold` 158 -> `Decay` 159 on object removal).
+When the kit carries `CharProc` 9 (`Blizzard_Impact_Base.m2`,
+`RainOfFire_Impact_Base.m2`, `CallLightning_Impact.m2`), impacts drop at the
+kit's rate across `DYNAMICOBJECT_RADIUS` and resolve the nearest terrain or WMO
+floor height at each impact's own `(x, y)` (`projected_texture::nearestSurfaceZ`),
+following uphill ledges, ramps and cliff drop-offs. Discrete M2 `Squirt`
+emitters (`flags & 0x8000`, `interpolationType == 0`) fire keyframe burst counts
+when the sequence clock crosses each positive key while `EnabledIn` is on
+(`Blizzard_Impact_Base.m2` emitters 3 and 4: 35 glow + 35 snowflake sprites at
+800 ms; `Consecration_Impact_Base.m2` emitter 0: 200 sparks at 67 ms). Per-batch
+`M2Color` RGB tracks animate per instance (`Flamestrike_Impact_Base.m2` outer
+flame sheets turning deep red by 1133 ms), and M2 plane emitters measure azimuth
+from `+Y` (`planeParticleDirection`) so `LightningStorm_Cloud_State.m2` emitter
+0 (`verticalRange = pi, horizontalRange = 0` on `bone[3]`) spins a flat
+horizontal storm cloud at `z = 9.21` yards. Verified at 30 Hz on pair 8 across
+flat ground and a 26-degree slope for both caster and observer; evidence:
+`_experiments/20261119T1700Z.areafx_pair8/`.
 
 ### Action bar macros, stances and keys
 

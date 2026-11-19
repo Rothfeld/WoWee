@@ -30,6 +30,35 @@ inline bool opacityVaries(const pipeline::M2AnimationTrack& track) {
         [](const auto& keys) { return keys.floatValues.size() > 1; });
 }
 
+inline bool colorVaries(const pipeline::M2AnimationTrack& track) {
+    const glm::vec3* first = nullptr;
+    for (const auto& seq : track.sequences) {
+        for (const auto& v : seq.vec3Values) {
+            if (!first) first = &v;
+            else if (v != *first) return true;
+        }
+    }
+    return false;
+}
+
+inline glm::vec3 animatedBatchTint(const M2ModelGPU& model,
+                                   const M2ModelGPU::BatchGPU& batch,
+                                   const M2Instance& instance) {
+    return glm::clamp(
+        m2_track::sampleVec3(batch.animatedColorRGB,
+            instance.currentSequenceIndex, instance.animTime, instance.globalSequenceTime,
+            model.globalSequenceDurations, batch.tint),
+        glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
+inline uint32_t packAnimatedBatchTint(const M2ModelGPU& model,
+                                      const M2ModelGPU::BatchGPU& batch,
+                                      const M2Instance& instance) {
+    if (batch.animatedColorRGB.sequences.empty()) return 0u;
+    const auto rgb = glm::uvec3(glm::round(animatedBatchTint(model, batch, instance) * 255.0f));
+    return (1u << 24) | rgb.r | (rgb.g << 8) | (rgb.b << 16);
+}
+
 inline float animatedBatchOpacity(const M2ModelGPU& model,
                                   const M2ModelGPU::BatchGPU& batch,
                                   const M2Instance& instance) {

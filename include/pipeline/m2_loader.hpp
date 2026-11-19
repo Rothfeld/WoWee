@@ -350,9 +350,11 @@ struct M2Model {
     /// without it the fire renders as a white blob.
     std::vector<glm::vec3> colorRGB;
 
-    // Full per-sequence alpha keyframes for the same color slots. Evaluated at
-    // render time to hide batches whose alpha animates to 0 in the current
-    // animation (e.g. the lumberjack carry model's alternate wood bundle).
+    // Full per-sequence RGB and alpha keyframes for the same color slots.
+    // Evaluated at render time for animated batch tints (Flamestrike_Impact_Base
+    // outer flame cards turning from pale orange to deep red) and animated batch
+    // visibility (the lumberjack carry model's alternate wood bundle).
+    std::vector<M2AnimationTrack> colorRGBTracks;
     std::vector<M2AnimationTrack> colorAlphaTracks;
 
     // Attachment points (for weapon/effect anchoring)

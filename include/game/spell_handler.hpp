@@ -455,7 +455,8 @@ public:
     void buyStableSlot();
 
     // A DynamicObject (persistent spell area) appearing and leaving.
-    void showPersistentArea(uint64_t guid, uint32_t spellId, const glm::vec3& canonicalPosition);
+    void showPersistentArea(uint64_t guid, uint32_t spellId, const glm::vec3& canonicalPosition,
+                            float wireRadius = -1.0f);
     void hidePersistentArea(uint64_t guid);
 
 private:

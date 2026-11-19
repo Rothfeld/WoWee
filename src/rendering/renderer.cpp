@@ -1986,14 +1986,11 @@ void Renderer::updateM2ProjectedTextures() {
     // lower). Doodad (M2) surfaces do not receive it.
     m2Renderer->updateProjectedTextures(
         [this](float x, float y, float planeZ, float reach) -> std::optional<float> {
-            std::optional<float> best;
-            auto consider = [&](std::optional<float> h) {
-                if (!h || std::abs(*h - planeZ) > reach) return;
-                if (!best || std::abs(*h - planeZ) < std::abs(*best - planeZ)) best = h;
-            };
-            if (terrainManager) consider(terrainManager->getHeightAt(x, y));
-            if (wmoRenderer) consider(wmoRenderer->getFloorHeight(x, y, planeZ + reach, nullptr, planeZ));
-            return best;
+            const auto terH = terrainManager ? terrainManager->getHeightAt(x, y) : std::nullopt;
+            const auto wmoH = wmoRenderer
+                ? wmoRenderer->getFloorHeight(x, y, planeZ + reach, nullptr, planeZ)
+                : std::nullopt;
+            return projected_texture::nearestSurfaceZ(planeZ, reach, terH, wmoH);
         });
 }
 

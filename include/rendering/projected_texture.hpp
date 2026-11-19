@@ -79,6 +79,21 @@ struct Vertex {
 /// [planeZ - reach, planeZ + reach] around the quad's own height there.
 using SurfaceQuery = std::function<std::optional<float>(float x, float y, float planeZ, float reach)>;
 
+/// Nearest terrain or WMO floor height within [planeZ - reach, planeZ + reach].
+/// Keeps indoor cave floors below hills and lower floors under overhangs.
+inline std::optional<float> nearestSurfaceZ(float planeZ, float reach,
+                                            std::optional<float> terrainZ,
+                                            std::optional<float> wmoZ) {
+    std::optional<float> best;
+    auto consider = [&](std::optional<float> h) {
+        if (!h || std::abs(*h - planeZ) > reach) return;
+        if (!best || std::abs(*h - planeZ) < std::abs(*best - planeZ)) best = h;
+    };
+    consider(terrainZ);
+    consider(wmoZ);
+    return best;
+}
+
 /// Triangle-list vertices of the quad draped over the surface. Points where
 /// the query finds no surface stay on the quad's plane.
 inline void buildGrid(const std::array<Corner, 4>& c, const glm::vec3& origin,

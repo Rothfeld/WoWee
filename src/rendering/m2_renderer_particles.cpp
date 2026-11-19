@@ -88,6 +88,15 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         }
     }
 
+    const float stepMs = dt * 1000.0f * (inst.externalPose ? 1.0f : inst.animSpeed);
+    const bool freshSequence = inst.emitterPrevSequence != inst.currentSequenceIndex;
+    const float prevAnimTime = freshSequence
+        ? std::max(0.0f, inst.animTime - stepMs)
+        : inst.emitterPrevAnimTime;
+    const bool includeStartBoundary = freshSequence && prevAnimTime <= 0.001f;
+    inst.emitterPrevSequence = inst.currentSequenceIndex;
+    inst.emitterPrevAnimTime = inst.animTime;
+
     std::uniform_real_distribution<float> distN(-1.0f, 1.0f);
     // An ADT or WMO placement: its scale moves the particles whatever 0x8
     // says (particleMovesInYards).
@@ -108,6 +117,114 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
         // rest keep emitting at the held frame's track values. Particles
         // already alive finish their lives.
         if (inst.externalPose && inst.externalClockHeld && (em.flags & kParticleStopsOnHeldFrame)) continue;
+
+        auto spawnParticle = [&](float sampleAnimTime, float ageSeconds, float logRate) {
+            if (inst.particles.size() >= MAX_M2_PARTICLES) return;
+            const float life = interpFloat(em.lifespan, sampleAnimTime, inst.globalSequenceTime,
+                                           inst.currentSequenceIndex, gpu.globalSequenceDurations);
+            if (life <= 0.0f || ageSeconds >= life) return;
+
+            M2Particle p;
+            p.emitterIndex = static_cast<int>(ei);
+            p.life = ageSeconds;
+            p.maxLife = life;
+
+            glm::vec3 localPos = em.position;
+            glm::vec3 sphereDirection(0.0f);
+            if (em.emitterType == 1) {
+                const float length = interpFloat(em.emissionAreaLength, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float width = interpFloat(em.emissionAreaWidth, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                localPos.x += distN(particleRng_) * length * 0.5f;
+                localPos.y += distN(particleRng_) * width * 0.5f;
+            }
+            if (em.emitterType == 2) {
+                const float length = interpFloat(em.emissionAreaLength, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float width = interpFloat(em.emissionAreaWidth, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float vertical = interpFloat(em.verticalRange, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float horizontal = interpFloat(em.horizontalRange, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const auto emission = sphericalParticleEmission(length, width,
+                    distN(particleRng_) * vertical, distN(particleRng_) * horizontal,
+                    (distN(particleRng_) + 1.0f) * 0.5f, em.flags);
+                localPos += emission.offset;
+                sphereDirection = emission.direction;
+            }
+            if (em.emitterType == 3 && !em.splinePoints.empty()) {
+                const float length = interpFloat(em.emissionAreaLength, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                const float width = interpFloat(em.emissionAreaWidth, sampleAnimTime,
+                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+                localPos += splineEmissionPoint(em.splinePoints, splineBirthParameter(length, width,
+                    particleTrackVaries(em.emissionAreaWidth, inst.currentSequenceIndex),
+                    (distN(particleRng_) + 1.0f) * 0.5f));
+            }
+            // Born p.life ago: where the emitter was then, between its pose at
+            // the previous step and now. Placing every birth of a frame at the
+            // current pose bunches a moving emitter's trail into one bead per
+            // frame (DR_Draenei_HoloRunes02 sparks at 8 fps).
+            p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
+                                                         localPos, p.life, dt));
+            p.birthPosition = p.position;
+            p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix, mapDoodad);
+            p.birthBasis = glm::mat3(birthTransform);
+            p.twinkleSeed = static_cast<uint32_t>(particleRng_());
+            if (!em.geometryModel.empty()) {
+                for (int axis = 0; axis < 3; ++axis)
+                    p.tumbleRate[axis] = glm::mix(em.tumbleMin[axis], em.tumbleMax[axis],
+                                                  (distN(particleRng_) + 1.0f) * 0.5f);
+            }
+
+            float speed = interpFloat(em.emissionSpeed, sampleAnimTime, inst.globalSequenceTime,
+                                      inst.currentSequenceIndex, gpu.globalSequenceDurations);
+            const float vRange = interpFloat(em.verticalRange, sampleAnimTime, inst.globalSequenceTime,
+                                             inst.currentSequenceIndex, gpu.globalSequenceDurations);
+            const float hRange = interpFloat(em.horizontalRange, sampleAnimTime, inst.globalSequenceTime,
+                                             inst.currentSequenceIndex, gpu.globalSequenceDurations);
+
+            const float inclination = distN(particleRng_) * vRange;
+            const float azimuth = distN(particleRng_) * hRange;
+            const glm::vec3 dir = planeParticleDirection(inclination, azimuth);
+            const float variation = interpFloat(em.speedVariation, sampleAnimTime,
+                inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+            speed *= 1.0f + distN(particleRng_) * variation;
+            const glm::mat3 rotMat = particleWorldVelocityBasis(em.flags, birthTransform, mapDoodad);
+            p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
+
+            const float gravity = interpFloat(em.gravity, sampleAnimTime,
+                inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
+            p.position += p.velocity * p.life;
+            p.position += p.gravityDirection * (0.5f * gravity * p.life * p.life);
+            p.velocity += p.gravityDirection * (gravity * p.life);
+            inst.particles.push_back(p);
+
+            if (gpu.isSpellEffect && inst.particles.size() == 1) {
+                LOG_INFO("SpellEffect: first particle for '", gpu.name,
+                         "' pos=(", p.position.x, ",", p.position.y, ",", p.position.z,
+                         ") rate=", logRate, " life=", life,
+                         " bone=", em.bone, " boneCount=", inst.boneMatrices.size(),
+                         " globalSeqs=", gpu.globalSequenceDurations.size());
+            }
+        };
+
+        if ((em.flags & kParticleSquirt) != 0 && em.emissionRate.interpolationType == 0) {
+            forEachSquirtBurst(
+                em.emissionRate, em.enabledIn, inst.currentSequenceIndex,
+                prevAnimTime, inst.animTime, inst.animDuration, includeStartBoundary,
+                inst.globalSequenceTime, gpu.globalSequenceDurations,
+                particleDensity_, dt,
+                [&](uint32_t burstCount, float ageSeconds, float localKeyMs) {
+                    for (uint32_t b = 0; b < burstCount && inst.particles.size() < MAX_M2_PARTICLES; ++b) {
+                        spawnParticle(localKeyMs, ageSeconds, static_cast<float>(burstCount));
+                    }
+                });
+            continue;
+        }
+
         if (m2_track::sampleFloat(em.enabledIn, inst.currentSequenceIndex, inst.animTime,
                                   inst.globalSequenceTime, gpu.globalSequenceDurations, 1.0f) <= 0.0f)
             continue;
@@ -149,102 +266,9 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
         while (inst.emitterAccumulators[ei] >= 1.0f && inst.particles.size() < MAX_M2_PARTICLES) {
             inst.emitterAccumulators[ei] -= 1.0f;
-
-            M2Particle p;
-            p.emitterIndex = static_cast<int>(ei);
             // The accumulator locates this birth inside the frame. Aging every
             // newborn by the full frame can erase short sparks before rendering.
-            p.life = inst.emitterAccumulators[ei] / rate;
-            p.maxLife = life;
-            if (p.life >= p.maxLife) continue;
-
-            // Position: emitter position transformed by bone matrix
-            glm::vec3 localPos = em.position;
-            glm::vec3 sphereDirection(0.0f);
-            if (em.emitterType == 1) {
-                const float length = interpFloat(em.emissionAreaLength, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                const float width = interpFloat(em.emissionAreaWidth, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                localPos.x += distN(particleRng_) * length * 0.5f;
-                localPos.y += distN(particleRng_) * width * 0.5f;
-            }
-            if (em.emitterType == 2) {
-                const float length = interpFloat(em.emissionAreaLength, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                const float width = interpFloat(em.emissionAreaWidth, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                const float vertical = interpFloat(em.verticalRange, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                const float horizontal = interpFloat(em.horizontalRange, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                const auto emission = sphericalParticleEmission(length, width,
-                    distN(particleRng_) * vertical, distN(particleRng_) * horizontal,
-                    (distN(particleRng_) + 1.0f) * 0.5f, em.flags);
-                localPos += emission.offset;
-                sphereDirection = emission.direction;
-            }
-            if (em.emitterType == 3 && !em.splinePoints.empty()) {
-                const float length = interpFloat(em.emissionAreaLength, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                const float width = interpFloat(em.emissionAreaWidth, inst.animTime,
-                    inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                localPos += splineEmissionPoint(em.splinePoints, splineBirthParameter(length, width,
-                    particleTrackVaries(em.emissionAreaWidth, inst.currentSequenceIndex),
-                    (distN(particleRng_) + 1.0f) * 0.5f));
-            }
-            // Born p.life ago: where the emitter was then, between its pose at
-            // the previous step and now. Placing every birth of a frame at the
-            // current pose bunches a moving emitter's trail into one bead per
-            // frame (DR_Draenei_HoloRunes02 sparks at 8 fps).
-            p.position = glm::vec3(particleBirthPosition(previousBirth, birthTransform,
-                                                         localPos, p.life, dt));
-            p.birthPosition = p.position;
-            p.gravityDirection = particleGravityDirection(em.flags, inst.modelMatrix, mapDoodad);
-            p.birthBasis = glm::mat3(birthTransform);
-            p.twinkleSeed = static_cast<uint32_t>(particleRng_());
-            if (!em.geometryModel.empty()) {
-                for (int axis = 0; axis < 3; ++axis)
-                    p.tumbleRate[axis] = glm::mix(em.tumbleMin[axis], em.tumbleMax[axis],
-                                                  (distN(particleRng_) + 1.0f) * 0.5f);
-            }
-
-            // Velocity: emission speed in upward direction + random spread
-            float speed = interpFloat(em.emissionSpeed, inst.animTime, inst.globalSequenceTime,
-                                      inst.currentSequenceIndex, gpu.globalSequenceDurations);
-            float vRange = interpFloat(em.verticalRange, inst.animTime, inst.globalSequenceTime,
-                                       inst.currentSequenceIndex, gpu.globalSequenceDurations);
-            float hRange = interpFloat(em.horizontalRange, inst.animTime, inst.globalSequenceTime,
-                                       inst.currentSequenceIndex, gpu.globalSequenceDurations);
-
-            // Ranges are angles, not Cartesian velocity components. Zero
-            // inclination stays vertical even with a full azimuth range.
-            const float inclination = distN(particleRng_) * vRange;
-            const float azimuth = distN(particleRng_) * hRange;
-            const glm::vec3 dir(std::sin(inclination) * std::cos(azimuth),
-                                std::sin(inclination) * std::sin(azimuth),
-                                std::cos(inclination));
-            const float variation = interpFloat(em.speedVariation, inst.animTime,
-                inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-            speed *= 1.0f + distN(particleRng_) * variation;
-            const glm::mat3 rotMat = particleWorldVelocityBasis(em.flags, birthTransform, mapDoodad);
-            p.velocity = rotMat * (em.emitterType == 2 ? sphereDirection : dir) * speed;
-
-            const float gravity = interpFloat(em.gravity, inst.animTime,
-                inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-            p.position += p.velocity * p.life;
-            p.position += p.gravityDirection * (0.5f * gravity * p.life * p.life);
-            p.velocity += p.gravityDirection * (gravity * p.life);
-            inst.particles.push_back(p);
-
-            // Diagnostic: log first particle birth per spell effect instance
-            if (gpu.isSpellEffect && inst.particles.size() == 1) {
-                LOG_INFO("SpellEffect: first particle for '", gpu.name,
-                         "' pos=(", p.position.x, ",", p.position.y, ",", p.position.z,
-                         ") rate=", rate, " life=", life,
-                         " bone=", em.bone, " boneCount=", inst.boneMatrices.size(),
-                         " globalSeqs=", gpu.globalSequenceDurations.size());
-            }
+            spawnParticle(inst.animTime, inst.emitterAccumulators[ei] / rate, rate);
         }
         // Cap accumulator to avoid bursts after lag
         if (inst.emitterAccumulators[ei] > 2.0f) {

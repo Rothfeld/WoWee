@@ -1967,6 +1967,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
                     // world burns white: Orgrimmar's carries (1.0, 0.329, 0.0).
                     bgpu.tint = model.colorRGB[batch.colorIndex];
                 }
+                if (batch.colorIndex < model.colorRGBTracks.size() &&
+                    m2_internal::colorVaries(model.colorRGBTracks[batch.colorIndex])) {
+                    bgpu.animatedColorRGB = model.colorRGBTracks[batch.colorIndex];
+                }
                 if (batch.colorIndex < model.colorAlphaTracks.size() &&
                     m2_internal::opacityVaries(model.colorAlphaTracks[batch.colorIndex])) {
                     bgpu.animatedColorAlpha = model.colorAlphaTracks[batch.colorIndex];

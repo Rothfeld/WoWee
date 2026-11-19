@@ -65,6 +65,7 @@ layout(location = 7) flat in float vHighlight;
 layout(location = 8) flat in vec4 vIndoorLighting;
 layout(location = 9) in vec3 VertexLighting;
 layout(location = 10) in vec2 TexCoord2;
+layout(location = 11) flat in vec4 vInstanceTint;
 
 layout(location = 0) out vec4 outColor;
 
@@ -206,10 +207,11 @@ void main() {
             texColor *= t1;
         }
     }
-    // The batch's authored colour. A glow card is painted white and coloured
-    // here - Orgrimmar's bonfire carries (1.0, 0.329, 0.0) - so without it
-    // every fire in the world burns white.
-    texColor.rgb *= vec3(tintR, tintG, tintB);
+    // The batch's authored colour (per-instance when its M2Color RGB track
+    // animates, e.g. Flamestrike_Impact_Base's outer flame sheets). A glow
+    // card is painted white and coloured here - Orgrimmar's bonfire carries
+    // (1.0, 0.329, 0.0) - so without it every fire in the world burns white.
+    texColor.rgb *= vInstanceTint.w > 0.5 ? vInstanceTint.rgb : vec3(tintR, tintG, tintB);
 
     // Original client sky M2s carry their authored colour and alpha, and are
     // taken as they are. They are camera-centered and unlit, and must not be

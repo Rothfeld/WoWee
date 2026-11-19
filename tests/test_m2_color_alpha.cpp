@@ -235,3 +235,43 @@ TEST_CASE("Legacy sparse tracks sample within their animation window", "[m2][tra
     CHECK(sampleQuat(track, 0, 2000, 0, {}).y == Catch::Approx(1));
     CHECK(sampleFloat(track, 0, 0, 0, {}, 0) == Catch::Approx((30000.0f - 3333) / (31000 - 3333)));
 }
+
+TEST_CASE("Legacy M2Color parses animated RGB tracks for outer flame tinting", "[m2][color]") {
+    // Flamestrike_Impact_Base.m2 color[0] animates from pale peach
+    // (0.929, 0.741, 0.671) at 0 ms to vivid red (0.922, 0.020, 0.020) at
+    // 1133 ms; reading only key 0 left the outer flame column pale yellow.
+    constexpr uint32_t seqOfs = 332;
+    constexpr uint32_t colorOfs = seqOfs + 68;     // 56 bytes in v260
+    constexpr uint32_t tsOfs = colorOfs + 56;
+    constexpr uint32_t rgbOfs = tsOfs + 8;
+    std::vector<uint8_t> bytes(rgbOfs + 24, 0);
+    std::memcpy(bytes.data(), "MD20", 4);
+    const auto put32 = [&](size_t at, uint32_t v) { std::memcpy(bytes.data() + at, &v, 4); };
+    const auto put16 = [&](size_t at, uint16_t v) { std::memcpy(bytes.data() + at, &v, 2); };
+    put32(4, 260);
+    put32(0x1C, 1); put32(0x20, seqOfs);           // 1 sequence [0..12000]
+    put32(seqOfs + 8, 12000);
+    put32(0x54, 1); put32(0x58, colorOfs);         // nColors = 1, ofsColors (v260 header)
+    put16(colorOfs + 0, 1);                        // linear interpolation
+    put16(colorOfs + 2, 0xFFFF);                   // no global sequence
+    put32(colorOfs + 12, 2); put32(colorOfs + 16, tsOfs);
+    put32(colorOfs + 20, 2); put32(colorOfs + 24, rgbOfs);
+    const uint32_t times[2] = {0, 1133};
+    const float keys[6] = {0.929f, 0.741f, 0.671f, 0.922f, 0.020f, 0.020f};
+    std::memcpy(bytes.data() + tsOfs, times, sizeof(times));
+    std::memcpy(bytes.data() + rgbOfs, keys, sizeof(keys));
+
+    const M2Model model = M2Loader::load(bytes);
+    REQUIRE(model.colorRGB.size() == 1);
+    REQUIRE(model.colorRGBTracks.size() == 1);
+    CHECK(model.colorRGB[0].g == Catch::Approx(0.741f));
+    const auto& track = model.colorRGBTracks[0];
+    const auto start = wowee::rendering::m2_track::sampleVec3(track, 0, 0.0f, 0.0f, {}, glm::vec3(1.0f));
+    const auto mid = wowee::rendering::m2_track::sampleVec3(track, 0, 566.5f, 0.0f, {}, glm::vec3(1.0f));
+    const auto red = wowee::rendering::m2_track::sampleVec3(track, 0, 1133.0f, 0.0f, {}, glm::vec3(1.0f));
+    CHECK(start.g == Catch::Approx(0.741f));
+    CHECK(mid.g == Catch::Approx(0.3805f).margin(0.001f));
+    CHECK(red.r == Catch::Approx(0.922f));
+    CHECK(red.g == Catch::Approx(0.020f));
+    CHECK(red.b == Catch::Approx(0.020f));
+}

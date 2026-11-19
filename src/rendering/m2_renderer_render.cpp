@@ -1228,12 +1228,12 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     auto secondTextureOffset = [](const M2ModelGPU& model, const M2ModelGPU::BatchGPU& batch,
                                   const M2Instance& instance) {
         // Static models may carry a zero transform combo without any tracks.
-        if (model.textureTransforms.empty()) return glm::vec4(0.0f);
-        if (batch.textureAnimIndex2 == 0xFFFF) return glm::vec4(0.0f);
+        if (model.textureTransforms.empty()) return glm::vec2(0.0f);
+        if (batch.textureAnimIndex2 == 0xFFFF) return glm::vec2(0.0f);
         const auto lookup = batch.textureAnimIndex2;
-        if (lookup >= model.textureTransformLookup.size()) return glm::vec4(0.0f);
+        if (lookup >= model.textureTransformLookup.size()) return glm::vec2(0.0f);
         const auto index = model.textureTransformLookup[lookup];
-        if (index == 0xFFFF) return glm::vec4(0.0f);
+        if (index == 0xFFFF) return glm::vec2(0.0f);
         if (index >= model.textureTransforms.size()) {
             LOG_ERROR("Invalid second texture transform in ", model.name,
                 ": combo=", lookup, " transform=", index, " count=", model.textureTransforms.size());
@@ -1242,7 +1242,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         const auto translation = m2_track::sampleVec3(model.textureTransforms[index].translation,
             instance.currentSequenceIndex, instance.animTime, instance.globalSequenceTime,
             model.globalSequenceDurations, glm::vec3(0.0f));
-        return glm::vec4(translation.x, translation.y, 0.0f, 0.0f);
+        return glm::vec2(translation.x, translation.y);
     };
 
     // Fill the model half of the push constants (m2_draw_mode.hpp).
@@ -1400,7 +1400,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 auto& e = instSSBO[instanceDataCount_];
                 e.model = inst.modelMatrix;
                 e.uvOffset = glm::vec2(0.0f);
-                e.uvOffset2 = glm::vec4(0.0f);
+                e.uvOffset2 = glm::vec2(0.0f);
+                e.tintPacked = 0;
+                e.reserved = 0;
                 e.fadeAlpha = p.fadeAlpha;
                 e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
                 e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
@@ -1662,6 +1664,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     // write a separate SSBO range with the correct offsets.
                     bool hasBatchTexAnim = (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation)
                                            ||
+                                           !batch.animatedColorRGB.sequences.empty() ||
                                            !batch.animatedColorAlpha.sequences.empty() ||
                                            !batch.animatedTextureWeight.sequences.empty();
                     uint32_t drawOffset = groupSSBOOffset;
@@ -1699,6 +1702,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             e.model = inst.modelMatrix;
                             e.uvOffset = uvOffset;
                             e.uvOffset2 = secondTextureOffset(model, batch, inst);
+                            e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, inst);
+                            e.reserved = 0;
                             e.fadeAlpha = p.fadeAlpha * m2_internal::animatedBatchOpacity(model, batch, inst);
                             e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
                             e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
@@ -2024,6 +2029,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             e.model = instance.modelMatrix;
             e.uvOffset = uvOffset;
             e.uvOffset2 = secondTextureOffset(model, batch, instance);
+            e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, instance);
+            e.reserved = 0;
             e.fadeAlpha = instanceFadeAlpha * m2_internal::animatedBatchOpacity(model, batch, instance);
             e.useBones = (needsBones && !kM2NoSkinning) ? 1 : 0;
             e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
