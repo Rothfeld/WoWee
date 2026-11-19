@@ -1299,6 +1299,7 @@ void GameHandler::registerCoreOpcodes() {
             uint32_t key = packet.readUInt32();
             uint32_t val = packet.readUInt32();
             worldStates_[key] = val;
+            LOG_DEBUG("SMSG_INIT_WORLD_STATES: field=", key, " value=", val);
         }
         // Build 8606 fires UPDATE_WORLD_STATES for this packet as it does for
         // each SMSG_UPDATE_WORLD_STATE: teleporting out of Hellfire Peninsula
