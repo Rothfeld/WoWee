@@ -9,6 +9,8 @@
 #include <cmath>
 #include <algorithm>
 #include <cassert>
+#include <cctype>
+#include <utility>
 
 #include "game/item_text.hpp"
 #include "game/level_difficulty.hpp"
@@ -417,11 +419,29 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
     if (uid == "focustarget")     return getEntityTargetGuid(gh, gh->getFocusGuid());
     if (uid == "pettarget")       return getEntityTargetGuid(gh, gh->getPetGuid());
     if (uid == "mouseovertarget") return getEntityTargetGuid(gh, gh->getMouseoverGuid());
-    // party1-party4, raid1-raid40
+    // party1-party4 and raid1-raid40, each with an optional "pet" or "target"
+    // after the number: party1pet is party1's pet (nothing when it has none),
+    // never party1 itself.
+    const auto member = [&](size_t prefix, int maxIndex) -> std::pair<int, std::string> {
+        size_t end = prefix;
+        while (end < uid.size() && std::isdigit(static_cast<unsigned char>(uid[end]))) ++end;
+        if (end == prefix || end - prefix > 2) return {0, {}};
+        const int idx = std::stoi(uid.substr(prefix, end - prefix));
+        if (idx < 1 || idx > maxIndex) return {0, {}};
+        return {idx, uid.substr(end)};
+    };
+    const auto withSuffix = [&](uint64_t guid, const std::string& suffix) -> uint64_t {
+        if (guid == 0 || suffix.empty()) return guid;
+        if (suffix == "target") return getEntityTargetGuid(gh, guid);
+        if (suffix != "pet") return 0;
+        if (guid == gh->getPlayerGuid()) return gh->getPetGuid();
+        for (const auto& m : gh->getPartyData().members)
+            if (m.guid == guid) return m.petGuid;
+        return 0;
+    };
     if (uid.rfind("party", 0) == 0 && uid.size() > 5) {
-        int idx = 0;
-        try { idx = std::stoi(uid.substr(5)); } catch (...) { return 0; }
-        if (idx < 1 || idx > 4) return 0;
+        const auto [idx, suffix] = member(5, 4);
+        if (idx == 0) return 0;
         const auto& pd = gh->getPartyData();
         // party members exclude self; index 1-based. In a raid the party is
         // the player's own subgroup, as GetNumPartyMembers counts it.
@@ -430,7 +450,7 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
         for (const auto& m : pd.members) {
             if (m.guid == gh->getPlayerGuid()) continue;
             if (raid && m.subGroup != pd.subGroup) continue;
-            if (++found == idx) return m.guid;
+            if (++found == idx) return withSuffix(m.guid, suffix);
         }
         return 0;
     }
@@ -443,14 +463,13 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
         if (idx < 1 || idx > static_cast<int>(game::GameHandler::kMaxEncounterSlots)) return 0;
         return gh->getEncounterUnitGuid(static_cast<uint32_t>(idx - 1));
     }
-    if (uid.rfind("raid", 0) == 0 && uid.size() > 4 && uid[4] != 'p') {
-        int idx = 0;
-        try { idx = std::stoi(uid.substr(4)); } catch (...) { return 0; }
-        if (idx < 1 || idx > 40) return 0;
+    if (uid.rfind("raid", 0) == 0 && uid.size() > 4) {
+        const auto [idx, suffix] = member(4, 40);
+        if (idx == 0) return 0;
         // The player is the last raid index, after the other members in
         // roster order (game::raidRosterGuids).
         const auto guids = game::raidRosterGuids(gh->getPartyData(), gh->getPlayerGuid());
-        if (idx <= static_cast<int>(guids.size())) return guids[idx - 1];
+        if (idx <= static_cast<int>(guids.size())) return withSuffix(guids[idx - 1], suffix);
         return 0;
     }
     return 0;

@@ -2675,8 +2675,9 @@ void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull)
             }
         }
     }
-    // Skip pet fields and vehicle seat
-    if (updateFlags & 0x0400) { if (remaining() >= 8) packet.readUInt64(); }
+    // The pet's guid (0 without one) is what partyNpet names; its other fields
+    // are skipped, the pet being an ordinary unit while it is in sight.
+    if (updateFlags & 0x0400) { if (remaining() >= 8) member->petGuid = packet.readUInt64(); }
     if (updateFlags & 0x0800) { if (remaining() > 0) packet.readString(); }
     if (updateFlags & 0x1000) { if (remaining() >= 2) packet.readUInt16(); }
     if (updateFlags & 0x2000) { if (isWotLK) { if (remaining() >= 4) packet.readUInt32(); } else { if (remaining() >= 2) packet.readUInt16(); } }

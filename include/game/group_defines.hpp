@@ -30,6 +30,7 @@ struct GroupMember {
     int16_t posY = 0;
     uint16_t onlineStatus = 0;   // GROUP_UPDATE_FLAG_STATUS bitmask
     bool hasPartyStats = false;  // true once we've received stats
+    uint64_t petGuid = 0;        // GROUP_UPDATE_FLAG_PET_GUID, 0 for no pet
 };
 
 /**
