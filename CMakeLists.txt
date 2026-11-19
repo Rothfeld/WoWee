@@ -1595,10 +1595,16 @@ if(WOWEE_ENABLE_ASAN)
 endif()
 
 # Release build optimizations
-include(CheckIPOSupported)
-check_ipo_supported(RESULT _ipo_supported OUTPUT _ipo_error)
-if(_ipo_supported)
-    set_property(TARGET wowee PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+# Link-time optimization re-optimizes the whole program in lto1 on every link: it runs
+# locally (distcc cannot ship it) and ccache cannot cache it. Development builds
+# (tools/client-loop/build.sh) turn it off with -DWOWEE_LTO=OFF.
+option(WOWEE_LTO "Link-time optimization for Release builds" ON)
+if(WOWEE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _ipo_supported OUTPUT _ipo_error)
+    if(_ipo_supported)
+        set_property(TARGET wowee PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    endif()
 endif()
 if(NOT MSVC)
     # -O3: more aggressive inlining and auto-vectorization vs CMake's default -O2
