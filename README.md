@@ -3168,6 +3168,50 @@ and receives none, so costs and damage read unmodified. Evidence and
 probe addon: `_experiments/20261118T074449Z.actionbar_pair2` in the
 workspace.
 
+### Class interface: warrior
+
+Measured on pair 9 against native 2.4.3 with a level 70 human warrior made
+by `.learn all_myclass` / `.learn all_mytalents` (probe addon and tables:
+`_experiments/20261119T095335Z.class_ui_a` in the workspace).
+
+- Rage and runic power are held in tenths; `UnitMana`/`UnitManaMax` answer
+  whole points (warrior maximum 100), `UnitPower` too. Rage ticks, decay and
+  stance changes then match native point for point.
+- Execute's TargetAuraState 2 is tested on the target's
+  `UNIT_FIELD_AURASTATE`: unusable with no target or one above 20%, usable
+  (nil, 1 without rage) below. Overpower needs the target's combo point
+  (AttributesEx 0x100000), as finishing moves do.
+- Refusals in native order: a melee ability (SpellRange flag 1) with
+  nothing selected ("There is nothing to attack.", no
+  `UNIT_SPELLCAST_FAILED`: Execute without rage, Shield Bash in Berserker
+  Stance), then power ("Not enough rage", with `UNIT_SPELLCAST_FAILED`),
+  then the form ("Must be in Berserker Stance" for Intercept with nothing
+  selected, with `UNIT_SPELLCAST_FAILED`), then the target.
+- Spell names (`IsUsableSpell("Cleave")`, `GetSpellTexture`,
+  `IsCurrentSpell`) resolve through the spellbook: the highest rank, or the
+  `Name(Rank n)` asked for. A known spell outside the book (the Enrage
+  talent aura) answers nothing. `IsCurrentSpell` answers as
+  `IsCurrentAction` does (Battle Stance while in it).
+- The action bar is the server's `SMSG_ACTION_BUTTONS`: empty slots are
+  empty (no client Attack/Hearthstone defaults; a new warrior's page one is
+  empty, its Battle Stance page holds Attack, Heroic Strike and bread). When
+  `SMSG_SUPERCEDED_SPELL` replaces a rank on a button the client sends
+  `CMSG_SET_ACTION_BUTTON` with the new rank, as native does.
+- A talent whose spell a trainer rank replaced (Mortal Strike rank 1 by
+  rank 6) counts as learned through SkillLineAbility `SupercededBySpell`
+  (column 8, a `dbc_layouts.json` entry).
+- Paper doll: `UnitDamage` is the server's UNIT_FIELD_MINDAMAGE..
+  MAXOFFHANDDAMAGE (76.94 - 79.14, off hand 42.86 for sword and shield);
+  `UnitAttackSpeed` has no off-hand value for a shield; an empty weapon slot
+  (ranged too) trains Unarmed, a non-weapon (shield) nothing; skill readouts
+  put SKILL_INFO's permanent (talent) bonus into the base: Defense 1 with
+  Anticipation is 21, 0.
+- `UPDATE_FACTION` follows `PLAYER_ENTERING_WORLD` on login and reload, so
+  the level-70 bar shows `MainMenuBarMaxLevelBar` and the stance bar sits
+  where native puts it.
+- `UNIT_AURA`/`PLAYER_AURAS_CHANGED` fire when an update block carries an
+  aura field, not on every rage tick.
+
 ### TBC social panel
 
 FriendsFrame, measured against 2.4.3 on a private pair
