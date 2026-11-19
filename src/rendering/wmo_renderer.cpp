@@ -500,12 +500,6 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     modelData.boundingBoxMax = model.boundingBoxMax;
     modelData.wmoAmbientColor = model.ambientColor;
     modelData.fogs = model.fogs;
-    std::string lowerSourcePath = model.sourcePath;
-    std::replace(lowerSourcePath.begin(), lowerSourcePath.end(), '/', '\\');
-    std::transform(lowerSourcePath.begin(), lowerSourcePath.end(), lowerSourcePath.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const bool isStormwindCityWmo =
-        lowerSourcePath.find("\\buildings\\stormwind\\stormwind.wmo") != std::string::npos;
     {
         glm::vec3 ext = model.boundingBoxMax - model.boundingBoxMin;
         float horiz = std::max(ext.x, ext.y);
@@ -612,21 +606,6 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     modelData.setupDone = true;
     }  // end one-time setup
 
-    // Reads only the model, so it is rebuilt cheaply on every resumed call
-    // rather than kept alive across them.
-    // Helper: look up group name from MOGN raw data via MOGI nameOffset
-    auto getGroupName = [&](uint32_t groupIdx) -> std::string {
-        if (groupIdx < model.groupInfo.size()) {
-            int32_t nameOff = model.groupInfo[groupIdx].nameOffset;
-            if (nameOff >= 0 && static_cast<size_t>(nameOff) < model.groupNameRaw.size()) {
-                const char* str = reinterpret_cast<const char*>(model.groupNameRaw.data() + nameOff);
-                size_t maxLen = model.groupNameRaw.size() - nameOff;
-                return std::string(str, strnlen(str, maxLen));
-            }
-        }
-        return {};
-    };
-
     // Create GPU resources for each group, a bounded number per call. A model
     // with hundreds of groups would otherwise upload them all in one step: the
     // worst measured was 286 groups at 131ms, against an 8ms budget.
@@ -655,37 +634,9 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
 
         GroupResources resources;
         resources.authoredIndex = static_cast<uint32_t>(gi);
+        // Every group is drawn at every distance: 2.4.3 has no distance-only
+        // groups. What a camera sees of a building is chosen by portals alone.
         if (createGroupResources(wmoGroup, resources, wmoGroup.flags)) {
-            // Detect distance-only LOD/exterior shell groups:
-            // 1. Very low vertex count (<100) - portal connectors, tiny shells
-            // 2. ALWAYS_DRAW (0x10000) with low verts - distant LOD stand-ins
-            // 3. Pure OUTDOOR groups (0x8 set, 0x2000 not set) in large WMOs -
-            //    exterior cityscape shells (e.g. "city01" in Stormwind)
-            bool alwaysDraw = (wmoGroup.flags & 0x10000) != 0;
-            size_t nVerts = wmoGroup.vertices.size();
-            bool isLargeWmo = model.nGroups > 50;
-            // Detect facade groups by name (exterior face of buildings)
-            std::string gname = getGroupName(static_cast<uint32_t>(gi));
-            bool isFacade = false;
-            bool isCityShell = false;
-            if (!gname.empty()) {
-                std::string lower = gname;
-                std::transform(lower.begin(), lower.end(), lower.begin(),
-                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                isFacade = lower.find("facade") != std::string::npos;
-                // "city01" etc are exterior cityscape shells in large WMOs
-                isCityShell = (lower.find("city") == 0 && lower.size() <= 8);
-            }
-            bool isIndoor = (wmoGroup.flags & 0x2000) != 0;
-            const bool isStormwindCathedralShell = isStormwindCityWmo && isLargeWmo &&
-                                                   isIndoor && (wmoGroup.flags & 0x80) != 0;
-            if ((nVerts < 100 && isLargeWmo && !isIndoor) ||
-                (alwaysDraw && nVerts < 5000 && isLargeWmo && !isIndoor) ||
-                (isFacade && isLargeWmo && !isIndoor) ||
-                (isCityShell && !isIndoor && isLargeWmo) ||
-                isStormwindCathedralShell) {
-                resources.isLOD = true;
-            }
             modelData.groups.push_back(resources);
             modelData.loadedGroups++;
         }
@@ -1709,23 +1660,12 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
         vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT,
                             0, sizeof(WMOPushConstants), &push);
 
-        // LOD shell groups render only beyond this distance squared (190 units)
-        static constexpr float LOD_SHELL_DIST_SQ = 196.0f * 196.0f;
-
         // Render visible groups
         for (uint32_t gi : dl.visibleGroups) {
             const auto& group = model.groups[gi];
 
             // Only skip antiportal geometry
             if (group.groupFlags & 0x4000000) continue;
-
-            // Skip distance-only LOD shell groups when camera is close to the group
-            if (group.isLOD) {
-                glm::vec3 groupCenter = instance.modelMatrix * glm::vec4(
-                    (group.boundingBoxMin + group.boundingBoxMax) * 0.5f, 1.0f);
-                float groupDistSq = glm::dot(camPos - groupCenter, camPos - groupCenter);
-                if (groupDistSq < LOD_SHELL_DIST_SQ) continue;
-            }
 
             // Skip groups with invalid GPU resources
             if (group.vertexBuffer == VK_NULL_HANDLE || group.indexBuffer == VK_NULL_HANDLE) continue;
@@ -1869,9 +1809,6 @@ void WMORenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceM
 
             // Skip antiportal geometry
             if (group.groupFlags & 0x4000000) continue;
-
-            // Skip LOD groups in shadow pass (they overlap real geometry)
-            if (group.isLOD) continue;
 
             // Per-group AABB cull against shadow frustum
             if (gi < instance.worldGroupBounds.size()) {
@@ -3323,9 +3260,8 @@ void WMORenderer::appendSurfaceTriangles(const glm::vec3& boxMin, const glm::vec
                 const auto& [gMin, gMax] = instance.worldGroupBounds[gi];
                 if (glm::any(glm::lessThan(gMax, boxMin)) || glm::any(glm::greaterThan(gMin, boxMax))) continue;
             }
-            // What drawWMOs leaves out: antiportals, and the distance shells,
-            // which overlap the real geometry wherever a ring can be seen.
-            if (group.isLOD || (group.groupFlags & 0x4000000u)) continue;
+            // What drawWMOs leaves out: antiportals.
+            if (group.groupFlags & 0x4000000u) continue;
             if (!instance.drawnGroups.empty() && !instance.drawnGroups[gi]) continue;
             group.getTrianglesInRange(localMin.x, localMin.y, localMax.x, localMax.y, triangles);
             for (uint32_t triStart : triangles) {
@@ -3828,7 +3764,6 @@ void WMORenderer::debugDumpGroupsAtPosition(float glX, float glY, float glZ) con
                         " verts=", group.collisionVertices.size(),
                         " tris=", group.collisionIndices.size()/3,
                         " batches=", group.mergedBatches.size(),
-                        " isLOD=", group.isLOD,
                         " floorHits=", floorTris,
                         " bestHitZ=", bestHitZ,
                         " lowestHitZ=", (floorTris ? lowestHitZ : -999999.0f),
@@ -4760,9 +4695,9 @@ void WMORenderer::registerRtModel(uint32_t modelId, const ModelData& model) {
     if (!rtScene_ || rtModelMeshes_.count(modelId)) return;
     RtScene::MeshSource src;
     for (const auto& group : model.groups) {
-        // Distance shells and groups the renderer never draws would cast
-        // shadows the player cannot see the source of.
-        if (group.isLOD || group.allUntextured || (group.groupFlags & 0x4000000u)) continue;
+        // Groups the renderer never draws would cast shadows the player
+        // cannot see the source of.
+        if (group.allUntextured || (group.groupFlags & 0x4000000u)) continue;
         if (group.collisionVertices.empty()) continue;
         const uint32_t base = static_cast<uint32_t>(src.positions.size());
         src.positions.insert(src.positions.end(), group.collisionVertices.begin(),

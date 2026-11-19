@@ -576,7 +576,6 @@ private:
         uint32_t groupFlags = 0;
         std::array<uint8_t, 4> fogIndices{};
         bool allUntextured = false;  // True if ALL batches use fallback white texture (collision/placeholder group)
-        bool isLOD = false;          // Distance-only group (skip when camera is close)
 
         // Material batches (start index, count, material ID)
         struct Batch {
