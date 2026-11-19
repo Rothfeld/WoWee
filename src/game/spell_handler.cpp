@@ -5530,9 +5530,25 @@ void SpellHandler::extractSkillFields(const FlatFieldMap& fields) {
         newSkills[skillId] = skill;
     }
 
+    const bool initialSkills = owner_.playerSkillsRef().empty();
     for (const auto& [skillId, skill] : newSkills) {
         if (skill.value == 0) continue;
         auto oldIt = owner_.playerSkillsRef().find(skillId);
+        // A skill line that was not there: native 2.4.3 prints
+        // ERR_SKILL_GAINED_S, "You have gained the Poisons skill.", when a
+        // rogue learns Poisons. Not for the lines a login brings.
+        if (oldIt == owner_.playerSkillsRef().end() && !initialSkills) {
+            const auto catIt = owner_.skillLineCategoriesRef().find(skillId);
+            const uint32_t category = catIt != owner_.skillLineCategoriesRef().end() ? catIt->second : 0;
+            const std::string pattern = owner_.globalString("ERR_SKILL_GAINED_S");
+            const std::string& name = owner_.getSkillName(skillId);
+            if (category != 5 && category != 10 && category != 12 && !name.empty() && !pattern.empty()) {
+                std::string text = pattern;
+                if (const size_t at = text.find("%s"); at != std::string::npos) text.replace(at, 2, name);
+                owner_.addLocalChatLine(ChatType::SKILL, text);
+            }
+            continue;
+        }
         // Any change of the value, down as well: 2.4.3 printed "Your skill in
         // First Aid has increased to 1." when .setskill took it from 375 to 1.
         if (oldIt != owner_.playerSkillsRef().end() && skill.value != oldIt->second.value) {
