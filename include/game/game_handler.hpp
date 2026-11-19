@@ -85,20 +85,17 @@ struct GameObjectLockStatus {
     uint32_t action = 0;         ///< the Lock.dbc Action that applies
     std::vector<uint32_t> keys;  ///< key items of those slots, slot order
     bool keyHeld = false;        ///< one of them in the bags or on the keyring
-    /// A known spell that opens one of those LockType slots (OPEN_LOCK misc
-    /// = LockType) with points reaching its Skill, 5 x the object's level
-    /// when it has none; 0 when there is none. Professions (a SKILL effect)
-    /// are gameObjectProfessionLock's.
+    /// The first applying slot the player can use (see lockStatus): its key
+    /// carried (openKey), or the known spell opening its LockType
+    /// (openSpellId, with the slot's Skill and the player's rank). 0 when
+    /// none is usable.
+    uint32_t openKey = 0;
     uint32_t openSpellId = 0;
-    /// The hardest of the slots that apply: a key is Green carried and
-    /// Impossible otherwise; a LockType slot takes the difficulty of the
-    /// player's rank against its Skill when a known spell opens it (rank in
-    /// the spell's SkillLineAbility line, or the spell's points without that
-    /// skill: Closing's 100 at Quick Close), Impossible when none does; no
-    /// slot at all is Impossible. "Locked" takes its colour. Original 2.4.3
-    /// (pair 22): Viewing Room Door 175167 (Lock 1199, key only) red, green
-    /// with the key on the keyring; Gauntlet Gate 175357 red with and without
-    /// Key to the City (Lockpicking 300 and Blasting stay out of reach).
+    uint32_t requiredRank = 0;
+    uint32_t playerRank = 0;
+    /// That slot's difficulty: Green for a key, the rank against the Skill
+    /// for a LockType; Impossible when no slot is usable. "Locked" takes its
+    /// colour, the gear is greyed when Impossible, and a click refuses then.
     LockDifficulty difficulty = LockDifficulty::Impossible;
 };
 
@@ -2389,6 +2386,12 @@ public:
     /// nullopt for an object without a lock.
     [[nodiscard]] std::optional<GameObjectLockStatus> gameObjectLockStatus(
         const GameObjectQueryResponseData* info, const Entity& object) const;
+    /// How an OPEN_LOCK spell aimed at an object (Pick Lock's targeting
+    /// cursor) fares: NoSlot when no applying slot has the spell's LockType,
+    /// TooLow when the player's rank is below that slot's Skill, else Ok.
+    enum class LockSpellTarget { NoSlot, TooLow, Ok };
+    [[nodiscard]] LockSpellTarget lockSpellTarget(uint32_t spellId, const GameObjectQueryResponseData* info,
+                                                  const Entity& object) const;
     /// The same for Lock.dbc row `lockId` and the slots with `action`
     /// (flaggedLocked stays false); objectLevel stands in for a slot without
     /// Skill (5 x level). A locked bag item asks with Action 1.

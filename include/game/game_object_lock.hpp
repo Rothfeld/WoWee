@@ -3,6 +3,7 @@
 #include "game/world_packets.hpp"
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -108,22 +109,24 @@ inline LockDifficulty lockDifficulty(uint32_t playerRank, uint32_t requiredRank)
     return LockDifficulty::Orange;
 }
 
-/// The colour of a requirement line; nullopt for Impossible, where the
-/// caller's red applies (RED_FONT_COLOR on "Locked", pure red on "Requires
-/// Herbalism"). Original 2.4.3 (pair 22): Lucius's Lockbox (Lockpicking 25,
-/// Pick Lock known) "Locked" red at Lockpicking 20, orange at 30, green at
-/// 120, grey at 200; Peacebloom (pair 0) "Requires Herbalism" orange at
-/// Herbalism 1.
+/// The colour of a lock requirement line. Impossible is ff2020 (1, 0.125,
+/// 0.125), not RED_FONT_COLOR's (1, 0.1, 0.1): native "Locked" reads
+/// (255, 32, 32) on Herod's Door at Lockpicking 150 and on a Sturdy Junkbox,
+/// where UIErrorsFrame's red text reads (255, 26, 26) (pair 22). Original
+/// 2.4.3: Herod's Door 101854 (Lockpicking 175) orange at 175, yellow at
+/// 200, green at 225, grey at 275; Peacebloom (pair 0) "Requires Herbalism"
+/// orange at Herbalism 1 (its unmet line is pure red, the caller's).
 struct LockLineColour { float r, g, b; };
-inline std::optional<LockLineColour> lockDifficultyColour(LockDifficulty difficulty) {
+inline LockLineColour lockDifficultyColour(LockDifficulty difficulty) {
     switch (difficulty) {
-        case LockDifficulty::Impossible: return std::nullopt;
-        case LockDifficulty::Orange: return LockLineColour{1.0f, 0.5f, 0.25f};
-        case LockDifficulty::Yellow: return LockLineColour{1.0f, 1.0f, 0.0f};
-        case LockDifficulty::Green: return LockLineColour{0.25f, 0.75f, 0.25f};
-        case LockDifficulty::Trivial: return LockLineColour{0.5f, 0.5f, 0.5f};
+        case LockDifficulty::Impossible: return {1.0f, 0.125f, 0.125f};
+        case LockDifficulty::Orange: return {1.0f, 0.5f, 0.25f};
+        case LockDifficulty::Yellow: return {1.0f, 1.0f, 0.0f};
+        case LockDifficulty::Green: return {0.25f, 0.75f, 0.25f};
+        case LockDifficulty::Trivial: return {0.5f, 0.5f, 0.5f};
     }
-    return std::nullopt;
+    assert(false && "unknown lock difficulty");
+    return {1.0f, 0.125f, 0.125f};
 }
 
 /// Spell effects that open a lock.

@@ -395,11 +395,11 @@ TEST_CASE("a lock's slots apply by the object's state and GO_FLAG_LOCKED", "[go-
 TEST_CASE("lock line colours follow the rank over the lock's Skill", "[go-lock]") {
     // Lucius's Lockbox, Lockpicking 25 (pair 22).
     CHECK(lockDifficulty(20, 25) == LockDifficulty::Impossible);
-    CHECK_FALSE(lockDifficultyColour(LockDifficulty::Impossible));
+    CHECK(lockDifficultyColour(LockDifficulty::Impossible).g == 0.125f);
     CHECK(lockDifficulty(30, 25) == LockDifficulty::Orange);
     CHECK(lockDifficulty(120, 25) == LockDifficulty::Green);
     CHECK(lockDifficulty(200, 25) == LockDifficulty::Trivial);
-    CHECK(lockDifficultyColour(LockDifficulty::Trivial)->r == 0.5f);
+    CHECK(lockDifficultyColour(LockDifficulty::Trivial).r == 0.5f);
     // Quick Close at an open gate: Closing's 100 points against Skill 0.
     CHECK(lockDifficulty(100, 0) == LockDifficulty::Trivial);
 }

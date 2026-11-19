@@ -10038,7 +10038,7 @@ void LuaEngine::registerCoreAPI() {
         "    elseif data.maxCount > 1 then self:AddLine(format(ITEM_UNIQUE_MULTIPLE, data.maxCount), 1, 1, 1)\n"
         "    elseif data.isUniqueEquipped then self:AddLine(ITEM_UNIQUE_EQUIPPABLE, 1, 1, 1) end\n"
         "    if data.locked and not (inst and inst.unlocked) then\n"
-        "        local c = data.lockColour or {RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b}\n"
+        "        local c = data.lockColour\n"
         "        self:AddLine(LOCKED, c[1], c[2], c[3])\n"
         "        for _, req in ipairs(data.lockRequirements or {}) do\n"
         "            self:AddLine(format(ITEM_MIN_SKILL, req.name, req.skill), c[1], c[2], c[3])\n"

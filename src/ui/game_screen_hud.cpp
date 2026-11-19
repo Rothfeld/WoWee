@@ -1822,23 +1822,22 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             // (game::lockActionNow: Action 2 while it stands open, else 1 for
             // GO_FLAG_LOCKED and 0): LOCKED when GO_FLAG_LOCKED, then
             // LOCKED_WITH_ITEM in white for each of those slots' keys, carried
-            // or not. LOCKED takes the colour of the hardest of those slots
-            // (GameObjectLockStatus::difficulty), red when one is out of reach. Original 2.4.3 (pair 22): Gauntlet Gate 175357
-            // (shut, flagged, Lock 879) "Locked" red and "Requires Key to the
-            // City" with and without the key, at Lockpicking 200 and 375 (Pick
-            // Lock's 200 points fall short of 300); Gauntlet Gate 175356 (shut,
-            // unflagged) its name only; King's Square Gate 175352 spawned open
-            // "Locked" grey (Closing, 100 points); Lucius's Lockbox (Lock 23,
-            // Lockpicking 25) "Locked" red, then orange at Lockpicking 30 once
-            // Pick Lock is known; Viewing Room Door 175167 "Locked" green with
-            // Viewing Room Key on the keyring. Shield Generator 185051 (pair 17, unflagged)
-            // "Requires Tainted Core" with or without the core.
+            // or not. LOCKED takes the colour of the first of those slots the
+            // player can use (GameObjectLockStatus::difficulty: a key carried
+            // green, a known LockType by rank against Skill), red when none.
+            // Original 2.4.3 (pair 22): Herod's Door 101854 without the
+            // Scarlet Key grey at Lockpicking 375, red at 150; Workshop Door
+            // 90566 green with its key at any rank; Viewing Room Door 175167
+            // red, green with Viewing Room Key on the keyring; Gauntlet Gate
+            // 175356 (shut, unflagged) its name only; King's Square Gate
+            // 175352 spawned open "Locked" grey (Closing). Shield Generator
+            // 185051 (pair 17, unflagged) "Requires Tainted Core" with or
+            // without the core.
             if (const auto lock = gameHandler.gameObjectLockStatus(info, *entity)) {
                 if (lock->flaggedLocked) {
-                    std::string colour = "RED_FONT_COLOR.r, RED_FONT_COLOR.g, RED_FONT_COLOR.b";
-                    if (const auto c = game::lockDifficultyColour(lock->difficulty))
-                        colour = std::to_string(c->r) + ", " + std::to_string(c->g) + ", " + std::to_string(c->b);
-                    script += "GameTooltip:AddLine(LOCKED, " + colour + "); ";
+                    const auto c = game::lockDifficultyColour(lock->difficulty);
+                    script += "GameTooltip:AddLine(LOCKED, " + std::to_string(c.r) + ", " + std::to_string(c.g) +
+                              ", " + std::to_string(c.b) + "); ";
                 }
                 for (const uint32_t item : lock->keys) {
                     if (!gameHandler.getItemInfo(item)) {
@@ -1870,8 +1869,11 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 text += "'";
                 std::string color = "1, 0, 0";
                 if (lock->spellId != 0) {
-                    if (const auto c = game::lockDifficultyColour(game::lockDifficulty(lock->playerRank, lock->requiredRank)))
-                        color = std::to_string(c->r) + ", " + std::to_string(c->g) + ", " + std::to_string(c->b);
+                    const auto difficulty = game::lockDifficulty(lock->playerRank, lock->requiredRank);
+                    if (difficulty != game::LockDifficulty::Impossible) {
+                        const auto c = game::lockDifficultyColour(difficulty);
+                        color = std::to_string(c.r) + ", " + std::to_string(c.g) + ", " + std::to_string(c.b);
+                    }
                 }
                 script += std::string("GameTooltip:AddLine(format(") +
                           (lock->spellId == 0 ? "LOCKED_WITH_SPELL" : "LOCKED_WITH_SPELL_KNOWN") +

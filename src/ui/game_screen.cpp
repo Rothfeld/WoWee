@@ -1101,6 +1101,42 @@ bool GameScreen::drawVendorCursor(game::GameHandler& gameHandler,
     return true;
 }
 
+namespace {
+
+enum class LockSpellAim { Invalid, TooLow, Ok };
+
+/// What the spell waiting for its lock (Pick Lock) would do at a game
+/// object: Invalid ("UnableCast": not a game object, beyond the spell's range
+/// from the object's origin, or no applying lock slot of the spell's
+/// LockType), TooLow (the player's rank is below that slot's Skill) or Ok.
+/// Original 2.4.3 (pair 22): Herod's Door shows Cast 4.94 yards from its
+/// origin and UnableCast at 5.09 (Pick Lock's Interact Range, 5), while a
+/// right click still reaches it there; Cast over Workshop Door 90566 at
+/// Lockpicking 1 and 200; UnableCast over the ground, a Practice Lockbox 11
+/// yards away, Herod's Door standing open (Quick Close only), a barrel and a
+/// Scarlet Myrmidon.
+LockSpellAim lockSpellAim(game::GameHandler& gameHandler, uint64_t objectGuid) {
+    const uint32_t spellId = gameHandler.pendingLockTargetSpell();
+    assert(spellId != 0);
+    const auto object = gameHandler.getEntityManager().getEntity(objectGuid);
+    if (!object || object->getType() != game::ObjectType::GAMEOBJECT) return LockSpellAim::Invalid;
+    const auto* info = gameHandler.getCachedGameObjectInfo(
+        std::static_pointer_cast<game::GameObject>(object)->getEntry());
+    if (!info) return LockSpellAim::Invalid;
+    const auto& me = gameHandler.getMovementInfo();
+    const float distance = glm::length(glm::vec3(object->getX() - me.x, object->getY() - me.y,
+                                                 object->getZ() - me.z));
+    if (distance > gameHandler.getSpellData(spellId).maxRange) return LockSpellAim::Invalid;
+    switch (gameHandler.lockSpellTarget(spellId, info, *object)) {
+        case game::GameHandler::LockSpellTarget::NoSlot: return LockSpellAim::Invalid;
+        case game::GameHandler::LockSpellTarget::TooLow: return LockSpellAim::TooLow;
+        case game::GameHandler::LockSpellTarget::Ok: return LockSpellAim::Ok;
+    }
+    return LockSpellAim::Invalid;
+}
+
+} // namespace
+
 bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
                                        const ui::ScenePick& pick) {
     // resolve(), for the reason the vendor cursor gives: it is what a click
@@ -1156,7 +1192,7 @@ bool GameScreen::drawWorldObjectCursor(game::GameHandler& gameHandler,
         // Lockbox (Lockpicking 1) the gear with Pick Lock known, 3 yards away.
         if (lockId != 0) {
             const auto lock = gameHandler.gameObjectLockStatus(info, *go);
-            facts.flaggedLocked = lock->flaggedLocked && !lock->keyHeld && lock->openSpellId == 0;
+            facts.flaggedLocked = lock->flaggedLocked && lock->difficulty == game::LockDifficulty::Impossible;
         }
         // Fishing has a single cursor asset; bobbers use their own reach.
         facts.inRange = info->type == 17 || gameHandler.isGameObjectInRange(guid) != false;
@@ -1567,26 +1603,27 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
                 if (info && info->type == 5 && info->data[1] != 0)
                     highlightedObject = named->getGuid();
-                if (info && info->type == 23 && hoverPick.resolve() == named->getGuid()) {
+                // An object the pointer would use lights up, the same way
+                // with or without a spell waiting for its target. Original
+                // 2.4.3 (pair 22): Workshop Door 90566 and a Practice Lockbox
+                // brighten under the pointer, also greyed (Lockpicking 1) and
+                // with Pick Lock armed, by as much either way; barrels and
+                // crates of scenery do not.
+                // Meeting stones were the one case before (type 23).
+                if (info && hoverPick.resolve() == named->getGuid()) {
                     highlightedObject = named->getGuid();
-                    // Native hover is weaker than this renderer's pressed lift.
-                    objectHoverStrength = 0.7f;
+                    // Native hover is weaker than this renderer's pressed
+                    // lift: 0.7 on a meeting stone; the Practice Lockbox
+                    // brightens by 18 levels natively, 45 here at 0.7.
+                    objectHoverStrength = info->type == 23 ? 0.7f : 0.25f;
                 }
             }
             if (gameHandler.pendingLockTargetSpell() != 0) {
-                // A spell waiting for its lock (Pick Lock): "Cast" over a
-                // locked object in reach, "UnableCast" over anything else
-                // (pair 22: a Practice Lockbox 2.6 yards away, the ground,
-                // the same lockbox 11 yards away).
+                // A spell waiting for its lock (Pick Lock): "Cast" where
+                // lockSpellAim allows a cast, whatever the player's rank;
+                // "UnableCast" elsewhere.
                 const uint64_t objectGuid = hoverPick.resolve() ? hoverPick.resolve() : hoverPick.namedObjectGuid;
-                const auto object = gameHandler.getEntityManager().getEntity(objectGuid);
-                bool aimed = false;
-                if (object && object->getType() == game::ObjectType::GAMEOBJECT) {
-                    const auto* info = gameHandler.getCachedGameObjectInfo(
-                        std::static_pointer_cast<game::GameObject>(object)->getEntry());
-                    aimed = game::gameObjectLockId(info) != 0 &&
-                            gameHandler.isGameObjectInRange(objectGuid) == true;
-                }
+                const bool aimed = lockSpellAim(gameHandler, objectGuid) != LockSpellAim::Invalid;
                 if (const auto texture = cursorTexture(services_.assetManager, services_.window,
                         aimed ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp"))
                     selectCursorTexture(texture);
@@ -1779,10 +1816,22 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 // A spell waiting for its lock takes a click on a game object
                 // and casts there; anywhere else the cursor stays armed.
                 if (gameHandler.pendingLockTargetSpell() != 0) {
+                    // Over anything the cursor shows UnableCast for, the
+                    // click sends nothing and the spell stays armed: original
+                    // 2.4.3 (pair 22) clicking the ground, or a Bound Fel Iron
+                    // Chest beyond 5 yards. Below the slot's Skill it says
+                    // "Skill not high enough" (SPELL_FAILED_LOW_CASTLEVEL),
+                    // sends nothing and puts the spell down: Workshop Door
+                    // 90566 at Lockpicking 1.
                     const uint64_t objectGuid = closestGuid ? closestGuid : pick.namedObjectGuid;
-                    const auto object = gameHandler.getEntityManager().getEntity(objectGuid);
-                    if (object && object->getType() == game::ObjectType::GAMEOBJECT)
-                        gameHandler.completeLockTargetOnGameObject(objectGuid);
+                    switch (lockSpellAim(gameHandler, objectGuid)) {
+                        case LockSpellAim::Invalid: break;
+                        case LockSpellAim::TooLow:
+                            gameHandler.cancelItemTargeting();
+                            gameHandler.errorGlobal("SPELL_FAILED_LOW_CASTLEVEL");
+                            break;
+                        case LockSpellAim::Ok: gameHandler.completeLockTargetOnGameObject(objectGuid); break;
+                    }
                     return;
                 }
 

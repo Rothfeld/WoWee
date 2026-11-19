@@ -2386,16 +2386,14 @@ static int lua_GetItemTooltipData(lua_State* L) {
             // orange, yellow, green, grey. Original 2.4.3 (pair 22, Pick Lock
             // known, Lockpicking 120): Worn Junkbox (70) green, Sturdy (175)
             // and Heavy Junkbox (250) red.
-            // Absent when out of reach: the tooltip uses RED_FONT_COLOR.
             constexpr uint32_t kLockedItemAction = 1;
-            if (const auto c = game::lockDifficultyColour(
-                    gh->lockStatus(info->lockId, kLockedItemAction, 0).difficulty)) {
-                lua_newtable(L);
-                lua_pushnumber(L, c->r); lua_rawseti(L, -2, 1);
-                lua_pushnumber(L, c->g); lua_rawseti(L, -2, 2);
-                lua_pushnumber(L, c->b); lua_rawseti(L, -2, 3);
-                lua_setfield(L, -2, "lockColour");
-            }
+            const auto c = game::lockDifficultyColour(
+                gh->lockStatus(info->lockId, kLockedItemAction, 0).difficulty);
+            lua_newtable(L);
+            lua_pushnumber(L, c.r); lua_rawseti(L, -2, 1);
+            lua_pushnumber(L, c.g); lua_rawseti(L, -2, 2);
+            lua_pushnumber(L, c.b); lua_rawseti(L, -2, 3);
+            lua_setfield(L, -2, "lockColour");
         }
     }
     if ((info->itemFlags & 0x4u) && info->lockId == 0) { lua_pushboolean(L, 1); lua_setfield(L, -2, "openable"); }
