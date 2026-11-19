@@ -31,6 +31,7 @@
 #include "audio/ui_sound_manager.hpp"
 #include "audio/player_voice_manager.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -2408,10 +2409,28 @@ void SpellHandler::buildTbcSpellBookTabs() {
             general.push_back(spellId);
     }
 
-    const auto byNameThenId = [this](uint32_t a, uint32_t b) {
+    // Name, then the number of its Rank text, then id. Native 2.4.3 lists
+    // Consecration Rank 1 (26573) before Rank 2 (20116) and Holy Light
+    // Rank 10 after Rank 9; the three Holy Shock Rank 1 spells by id.
+    const auto rankNumber = [this](uint32_t id) {
+        const std::string& rank = owner_.getSpellRank(id);
+        const auto digit = std::find_if(rank.begin(), rank.end(), [](unsigned char c) { return std::isdigit(c); });
+        int n = 0;
+        for (auto it = digit; it != rank.end() && std::isdigit(static_cast<unsigned char>(*it)); ++it) n = n * 10 + (*it - '0');
+        return n;
+    };
+    // Names compare without case: "Judgement of the Crusader" before
+    // "Judgement of Vengeance".
+    const auto byNameThenId = [this, &rankNumber](uint32_t a, uint32_t b) {
         const std::string& na = owner_.getSpellName(a);
         const std::string& nb = owner_.getSpellName(b);
-        if (na != nb) return na < nb;
+        if (na != nb) {
+            const auto lower = [](unsigned char c) { return std::tolower(c); };
+            return std::lexicographical_compare(na.begin(), na.end(), nb.begin(), nb.end(),
+                [&](char x, char y) { return lower(x) < lower(y); });
+        }
+        const int ra = rankNumber(a), rb = rankNumber(b);
+        if (ra != rb) return ra < rb;
         return a < b;
     };
     if (!general.empty()) {
@@ -2946,9 +2965,8 @@ void SpellHandler::handleInitialSpells(network::Packet& packet) {
     LOG_DEBUG("Initial spells include: 527=", knownSpells_.count(527u),
               " 988=", knownSpells_.count(988u), " 1180=", knownSpells_.count(1180u));
 
-    // Ensure Attack and Hearthstone are always present
-    knownSpells_.insert(SPELL_ID_ATTACK);
-    knownSpells_.insert(SPELL_ID_HEARTHSTONE);
+    // The server's list is the spellbook: native 2.4.3 shows no Hearthstone
+    // spell for a character the server does not send 8690 for.
     if (isPreWotlk()) {
         loadTalentDbc();
         syncPreWotlkTalentsFromKnownSpells();

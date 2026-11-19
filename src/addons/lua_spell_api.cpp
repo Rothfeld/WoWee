@@ -30,9 +30,14 @@ uint32_t highestKnownRankByName(game::GameHandler* gh, const std::string& name) 
     std::string wanted(name);
     toLowerInPlace(wanted);
 
+    // The spellbook's spells, as native looks names up: Righteous Fury is
+    // 25780 there; 25781, a hidden spell of the same name the server also
+    // sends, is not a candidate.
+    std::vector<uint32_t> book;
+    for (const auto& tab : gh->getSpellBookTabs()) book.insert(book.end(), tab.spellIds.begin(), tab.spellIds.end());
     uint32_t bestId = 0;
     int bestRank = -1;
-    for (uint32_t sid : gh->getKnownSpells()) {
+    for (uint32_t sid : book) {
         std::string known = gh->getSpellName(sid);
         toLowerInPlace(known);
         if (known != wanted) continue;

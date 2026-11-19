@@ -2818,8 +2818,15 @@ SkillLine.dbc category 7 whose SkillRaceClassInfo row for the player's race
 and class has flag 0x400 (rogue: Assassination, Combat, Subtlety; Internal
 once a test spell of it is known). Professions, Lockpicking, Poisons,
 racials, another class's spells and spells without a skill line (Hearthstone)
-are in General. Tabs and spells are in name order, spells of one name by
-id; all known ranks are listed. Gotcha: `SkillRaceClassInfo` is a
+are in General. Tabs and spells are in name order without case ("Judgement
+of the Crusader" before "Judgement of Vengeance"), spells of one name by the
+number in their Rank text (Consecration Rank 1, 26573, before Rank 2, 20116;
+Holy Light Rank 10 after Rank 9), then by id; all known ranks are listed.
+Only the server's spells are in the book: no Hearthstone or Attack is added,
+and an action slot the server sends empty is empty. Attack shows the main
+hand's icon, or Interface\Buttons\Spell-Reset with none. `/cast` and
+`CastSpellByName` look names up in the book (Righteous Fury is 25780 there,
+not the hidden 25781 the server also sends). Gotcha: `SkillRaceClassInfo` is a
 `dbc_layouts.json` entry, so an installed data tree needs the new copy.
 
 An M2 batch whose animated colour alpha or texture weight is zero is not

@@ -3307,10 +3307,12 @@ void GameHandler::loadFactionNameCache() const {
 }
 
 std::string GameHandler::getSpellIconPath(uint32_t spellId) const {
-    // Attack's DBC icon is a placeholder. Its artwork follows the main hand.
+    // Attack's artwork follows the main hand. Its DBC icon is Temp, a
+    // placeholder: empty-handed, native 2.4.3 GetSpellTexture answers
+    // Interface\Buttons\Spell-Reset (a paladin with no weapon, pair 21).
     if (spellId == 6603) {
         const auto& weapon = inventory.getEquipSlot(EquipSlot::MAIN_HAND);
-        if (weapon.empty()) return "Interface\\Icons\\INV_Gauntlets_04";
+        if (weapon.empty()) return "Interface\\Buttons\\Spell-Reset";
         uint32_t displayId = weapon.item.displayInfoId;
         if (displayId == 0) {
             if (const auto* info = getItemInfo(weapon.item.itemId)) displayId = info->displayInfoId;

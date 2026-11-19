@@ -1350,8 +1350,9 @@ void GameHandler::registerCoreOpcodes() {
             rem -= 4;
             if (i >= ACTION_BAR_SLOTS) continue;
             if (packed == 0) {
-                // Empty slot - only clear if not already set to Attack/Hearthstone defaults
-                // so we don't wipe hardcoded fallbacks when the server sends zeros.
+                // The server's empty slot is empty: native 2.4.3 shows no
+                // Attack or Hearthstone where the character has none.
+                actionBar[i] = ActionBarSlot{};
                 continue;
             }
             uint8_t type = 0;

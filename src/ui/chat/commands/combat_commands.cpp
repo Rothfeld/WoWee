@@ -47,7 +47,11 @@ uint32_t resolveSpellByName(game::GameHandler& gh, const std::string& spellArg, 
 
     uint32_t bestId = 0;
     int bestRank = -1;
-    for (uint32_t sid : gh.getKnownSpells()) {
+    // The spellbook's spells only, as native looks names up (Righteous Fury
+    // 25780, not the hidden 25781 of the same name).
+    std::vector<uint32_t> book;
+    for (const auto& tab : gh.getSpellBookTabs()) book.insert(book.end(), tab.spellIds.begin(), tab.spellIds.end());
+    for (uint32_t sid : book) {
         const std::string& sName = gh.getSpellName(sid);
         if (sName.empty()) continue;
         std::string sLow = sName;
