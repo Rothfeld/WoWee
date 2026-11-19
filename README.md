@@ -1210,6 +1210,28 @@ Click diagnostics in `scene_pick.cpp` identify mesh misses and WMO/M2/terrain
 rejection; hover does not emit these logs. Run `build/bin/test_scene_pick` for
 selection ordering and terrain-hole regression checks.
 
+### Sunwell Plateau entrance (WMO groups, minimap tiles, rain)
+
+Map 530 at 12574.1, -6774.81, 15.09 (game_tele `SunwellPlateau`), facing west into
+`world\wmo\dungeon\qt_sunwell_facades\sunwell_raid_facade.wmo`, compared on a private pair:
+
+- Every WMO group is drawn at every distance; portals alone choose what a camera sees.
+  2.4.3 has no distance-only groups. Group 40 "entryfacade" (outdoor, 2406 vertices) is the
+  bright arch around the portal; with it missing, the dark outer walls of the indoor portal
+  hall (groups 38/39, 0x2000) and the `instanceportal_green.m2` haze showed as a black box
+  with a hard-edged green volume. Same model family: `sunwell.wmo` group 39, Shadowfang's
+  "towerfacade01", Dire Maul's "facadesatyr", Silvermoon's 0x10000 groups, Stormwind's
+  unreachable cathedral copies (checked against native from Cathedral Square and inside the
+  cathedral: no overlapping shell; unreachable groups are culled by portals).
+- `md5translate.trs` keys use two-digit tile indices (`Expansion01\map44_08`). Any tile with
+  an index below 10 (all of Isle of Quel'Danas) needs the padding or it has no minimap.
+- Weather particles and weather sound stop only when the camera is in an indoor (0x2000)
+  group. The entrance lies inside the box of the facade's outdoor groups (group 53 spans the
+  whole model), and the zone's server rain (zone 4080, SMSG_WEATHER state 4) falls there natively.
+  Rain appearance still differs: native draws long faint streaks tinted by the scene and
+  red splash marks on the ground; WoWee draws short grey-blue streaks with a fixed colour
+  (`weather.cpp`) and no splashes.
+
 ### Idle loop boundaries
 
 Stand variants blend from their outgoing final pose using the incoming sequence's authored blend time. This also applies when the same variant repeats, either through random selection or its replay count. TBC `DwarfMale.m2` sequence 40 has different first and last spine poses; a direct wrap produces a visible snap.
