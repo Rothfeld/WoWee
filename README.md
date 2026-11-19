@@ -1913,6 +1913,42 @@ after a teleport": the minimap and tooltips follow the character, the view
 does not, and the own model is out of sight.
 Evidence: `_experiments/20261118T210500Z.teleport_world/` in the workspace.
 
+### World map (FrameXML WorldMapFrame)
+
+M opens FrameXML's WorldMapFrame (the world map element is handed over); the
+ImGui map in `src/ui/map_window.cpp` is only the separate second-monitor
+window. WorldMapFrame draws tiles, overlays, landmarks, highlight and party
+markers itself; every answer it gets comes from
+`rendering/world_map/MapNavigator` (all continents at once, DBC data),
+not from the ImGui map's facade. Only the player arrow is drawn by the client
+(2.4.3 creates it in code), at the position GetPlayerMapPosition answers,
+28 units of the 1002-unit frame.
+
+Native 2.4.3 answers, read through its own Lua API on a private pair:
+
+- GetCurrentMapContinent: -1 cosmic, 0 world, 1 Kalimdor, 2 Eastern
+  Kingdoms, 3 Outland. GetMapInfo is nil at world and cosmic level.
+  SetMapZoom(c, z) with z past the zone list shows the continent.
+- Landmarks: AreaPOI flag 4 on zone maps, 8 on continents, 16 on the world
+  sheet, and only when the POI's area is explored (world-state POIs, flag
+  128, when their world state is set). Zone-level landmarks answer texture 15,
+  an empty POIIcons cell: they are hover names only. GetMapLandmarkInfo
+  returns five values in TBC.
+- UpdateMapHighlight: zone maps name the explored overlay under the cursor
+  (its first area) or a neighbouring zone (by the continent ZMP); continents
+  give the zone and its highlight art; the world sheet gives the continent
+  rectangle from WorldMapContinent: x = 501 + 12*(column-32) + 16*offsetX
+  (scale 0.75), the same for rows with 334. Numbers are 0, not nil, without art.
+- ProcessMapClick: world -> continent, continent -> zone; zone maps do nothing.
+- Inside an instance the map opens on the zone of its Map.dbc entrance
+  (Karazhan -> Deadwind Pass) with no player arrow.
+
+Gotchas: this client's "canonical" X/Y are the server's exchanged
+(core::coords::serverToCanonical); the navigator uses the DBC convention (X
+north), so bindings swap. Exploration differs per character: compare two
+characters only after copying exploredZones between them.
+Evidence: `_experiments/20261118T223042.worldmap_audit/`.
+
 ## TBC interaction compatibility
 
 `build/bin/test_input_integration '[guard-gossip],[npc-attack],[mail-coin],[mail-stationery],[gm-mail]'`
