@@ -2843,9 +2843,30 @@ Measured against native 2.4.3 on pair 21 with every caster class at 70
 provisioning and paired captures).
 
 - `UnitBuff`/`UnitDebuff` answer the Spell.dbc Rank ("Rank 8" for Devotion
-  Aura on the player and on party members, "" for Righteous Fury). The
-  player's own untimed aura answers duration 0 and timeLeft 0; another
-  unit's answers neither. `GetPlayerBuffName(slot)` answers name and rank.
+  Aura on the player and on party members, "" for Righteous Fury), and
+  duration and timeLeft only for an aura the player cast (the server's
+  SMSG_SET_EXTRA_AURA_INFO goes to the caster alone): Water Shield 600,
+  260.8; Devotion Aura 0, 0; nothing for a totem's Strength of Earth or a
+  party member's Totem of Wrath. `GetPlayerBuffName(slot)` answers name and
+  rank.
+- Shaman: Windfury and Flametongue Weapon (SPELL_ATTR_HELD_ITEM_ONLY 0x200)
+  are cast at the main-hand item without a cursor; empty-handed "Your weapon
+  hand is empty". `GetWeaponEnchantInfo` answers per enchanted hand (1,
+  1744738, 0 for Windfury on the main hand; nothing without an imbue).
+  `GetTotemInfo` names the totem unit ("Searing Totem VII"),
+  `GetTotemTimeLeft` whole seconds. Ghost Wolf and other forms draw at
+  their display's CreatureModelAlpha (4613: 102).
+- Pets: `GetPetActionInfo` in 1/nil with the rank as a spell's subtext and
+  Follow lit for the current command; `GetPetActionCooldown` ready is 0, 0, 1
+  for a spell and 0, 0, 0 for a command; `GetPetHappiness` without happiness
+  nil, 100, 0; `GetSpellAutocast(slot, "pet")` 1 for an active pet spell.
+  `UnitClass` of a pet or creature answers its name first. UNIT_PET
+  "player" fires again when the pet comes into sight (the pet bar shows on
+  summon) and UNIT_PET "party1" for a member's pet; `partypet1`/`raidpet1`
+  are tokens, and a member in sight names its pet in UNIT_FIELD_SUMMON.
+- `IsUsableAction` is nil, nil without a spell's reagent (Slow Fall without
+  a Light Feather). `GetSpellPenetration` is PLAYER_FIELD_MOD_TARGET_RESISTANCE
+  negated (10 with Arcane Subtlety).
 - `UNIT_AURA` and `PLAYER_AURAS_CHANGED` fire when a unit's aura fields
   change, not with every values update (a mana tick every two seconds).
 - `UnitArmor` answers base, effective, armor, posBuff, negBuff from the
@@ -2860,7 +2881,9 @@ provisioning and paired captures).
   was party1.
 - An instant cast fires `UNIT_SPELLCAST_SENT`, `UNIT_SPELLCAST_SUCCEEDED`,
   `UNIT_SPELLCAST_STOP`: no `UNIT_SPELLCAST_START`, and STOP after
-  SUCCEEDED.
+  SUCCEEDED. A refusal fires `UNIT_SPELLCAST_FAILED` (after "Requires Earth
+  Totem", "You have no target.") and STOP only if a START came first. A
+  channel ends with `UNIT_SPELLCAST_CHANNEL_STOP` "player", "Evocation", "".
 - After `PLAYER_ENTERING_WORLD` of a newly built interface (login and
   ReloadUI) come `UPDATE_INVENTORY_ALERTS`, `PLAYER_AURAS_CHANGED`,
   `PET_BAR_UPDATE` and `UPDATE_FACTION`, as 2.4.3 sends them. UPDATE_FACTION
