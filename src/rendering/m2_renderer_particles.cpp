@@ -906,9 +906,10 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         // which model it is. This does.
         float highestParticleZ = -std::numeric_limits<float>::max();
         float widestParticle = 0.0f;
-        // Sprite sizes: an externally posed instance's owner says what scale
-        // its emitters are drawn at (an item visual on a weapon: its own);
-        // the rest are sized by their placement, as doodads and objects are.
+        // Sprite sizes of emitters with flag 0x20: an externally posed
+        // instance's owner says what scale they are drawn at (an item visual
+        // on a weapon: its own); the rest are sized by their placement, as
+        // doodads and objects are. Emitters without 0x20 keep authored size.
         const float placementScale = inst.externalPose ? inst.externalParticleScale
                                                        : particlePlacementScale(inst.modelMatrix);
         // A doodad in an interior WMO group is lit by its MODD colour, and
@@ -1004,8 +1005,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 // XYQuad (flag 0x1000) sprites lie in the model's XY plane
                 // instead of facing the camera. Marked by a negative size;
                 // the tail slot carries the model X axis for the quad.
-                vd[7] = xyQuad ? -particleSpriteHalfWidth(scale, placementScale)
-                               : particleSpriteHalfWidth(scale, placementScale);
+                const float halfWidth = particleSpriteHalfWidth(em.flags, scale, placementScale);
+                vd[7] = xyQuad ? -halfWidth : halfWidth;
                 const bool tail = em.headOrTail == 1 || (em.headOrTail == 2 && sprite == 1);
                 vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
                 const glm::vec3 displacement = xyQuad ? glm::normalize(glm::vec3(inst.modelMatrix[0]))

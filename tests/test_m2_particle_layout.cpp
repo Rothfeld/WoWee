@@ -254,10 +254,22 @@ TEST_CASE("Summoning portal emits a ring rather than filling its center", "[m2][
 
 TEST_CASE("Particle sprites keep authored lifecycle scale above one yard", "[m2][particle]") {
     using wowee::rendering::particleSpriteHalfWidth;
-    // GnomereganVent emitter 0 scales 2.77778 / 4.44444 / 8.33333, placed at 0.729.
-    CHECK(particleSpriteHalfWidth(8.33333f, 0.729f) == Catch::Approx(6.075f).margin(0.001f));
-    CHECK(particleSpriteHalfWidth(2.77778f, 1.0f) == Catch::Approx(2.77778f));
-    CHECK(particleSpriteHalfWidth(0.0000278f, 1.0f) == Catch::Approx(0.0000278f));
+    // GnomereganVent emitter 0 (0x200) scales 2.77778 / 4.44444 / 8.33333.
+    CHECK(particleSpriteHalfWidth(0x200u, 8.33333f, 1.0f) == Catch::Approx(8.33333f));
+    CHECK(particleSpriteHalfWidth(0x200u, 2.77778f, 1.0f) == Catch::Approx(2.77778f));
+    CHECK(particleSpriteHalfWidth(0x0u, 0.0000278f, 1.0f) == Catch::Approx(0.0000278f));
+}
+
+TEST_CASE("Only emitters with flag 0x20 size their sprites by placement", "[m2][particle]") {
+    using wowee::rendering::particleSpriteHalfWidth;
+    // LootFX.m2 over GnomeBigGear (sparkle scale 3.52): star #3 (0x229, mid
+    // scale 0.0833) grows with it, flare #0 (0x101, 0.1389) stays authored.
+    CHECK(particleSpriteHalfWidth(0x229u, 0.0833f, 3.52f) == Catch::Approx(0.2932f).margin(0.0001f));
+    CHECK(particleSpriteHalfWidth(0x101u, 0.1389f, 3.52f) == Catch::Approx(0.1389f));
+    // Light of Elune (LARGE), GO size 5, feralaslightblue.m2 #0 (0x1).
+    CHECK(particleSpriteHalfWidth(0x1u, 0.1389f, 5.0f) == Catch::Approx(0.1389f));
+    // Mark of Kael'Thas, GO size 5, flames 0x521.
+    CHECK(particleSpriteHalfWidth(0x521u, 0.5556f, 5.0f) == Catch::Approx(2.778f));
 }
 
 TEST_CASE("Legacy emitters keep authored all-zero lifecycle alpha", "[m2][particle]") {
@@ -522,6 +534,18 @@ TEST_CASE("Detached particles move in yards whatever the placement scale", "[m2]
     CHECK(glm::length(particleGravityDirection(0x229u, model)) == Catch::Approx(1.0f));
     // Its birth point still takes the placement: a 25 yd area is 2.5 yd.
     CHECK(glm::length(glm::vec3(birth * glm::vec4(25,0,0,1))) == Catch::Approx(2.5f));
+}
+
+TEST_CASE("Detached particles without flag 0x8 move at placement scale", "[m2][particle]") {
+    using namespace wowee::rendering;
+    // LootFX.m2 flare #0 (0x101, 0.5556 yd/s for 1.6 s) over GnomeBigGear,
+    // sparkle scale 3.52: rises about 3 yd in the original.
+    const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(40.0f),glm::vec3(0,0,1)),glm::vec3(3.52f));
+    const auto birth = particleBirthTransform(0x101u, model, glm::mat4(1));
+    const auto basis = particleWorldVelocityBasis(0x101u, birth);
+    CHECK(glm::length(basis * glm::vec3(0,0,0.5556f)) * 1.6f == Catch::Approx(3.129f).margin(0.001f));
+    CHECK(glm::length(particleGravityDirection(0x101u, model)) == Catch::Approx(3.52f));
+    CHECK(glm::length(particleGravityDirection(0x109u, model)) == Catch::Approx(1.0f));
 }
 
 TEST_CASE("Sprites turn by spin times age", "[m2][particle]") {

@@ -11,6 +11,8 @@
 
 namespace wowee::rendering {
 inline constexpr uint32_t kParticleNoTrail = 0x10;
+// Detached particles travel in yards (particleWorldVelocityBasis).
+inline constexpr uint32_t kParticleTravelsInYards = 0x8;
 inline constexpr uint32_t kParticleInModelSpace = 0x80;
 // Pre-264 flag 0x4000 also keeps trailing particles in the placed model's
 // frame (285 of 16070 TBC emitters). Zul'jin's claws
@@ -86,16 +88,28 @@ inline float particlePlacementScale(const glm::mat4& model) {
     return glm::length(glm::vec3(model[0]));
 }
 
-// Billboard half-width: the authored lifecycle scale at placement scale.
-// No caps or floors; smoke plumes author scales well above one yard.
-inline float particleSpriteHalfWidth(float authoredScale, float placementScale) {
-    return authoredScale * placementScale;
+// Billboard half-width: the authored lifecycle scale, at placement scale only
+// for emitters with flag 0x20. No caps or floors; smoke plumes author scales
+// well above one yard. 10935 of 16070 TBC emitters set 0x20 (pywowlib calls
+// it "unlit"; its observed effect is the sprite size).
+// - With 0x20: LootFX.m2 stars #1-#3 (0x29, 0x229) are about three times as
+//   large over GnomeBigGear (sparkle scale 3.5) as over a sign (1) in the
+//   original; Mark of Kael'Thas (GO 185170, size 5, 0x521) burns in flames
+//   several yards wide; the Exodar runes shrink and grow with their placement.
+// - Without 0x20: LootFX.m2's flare #0 (0x101) stays 0.13-0.18 yd across
+//   (median blob) at sparkle scales 1, 3.5 and 4.7 in the original, while its
+//   spread and rise grow; Light of Elune (feralaslightblue.m2, 0x1) drops the
+//   same small dots at GO sizes 0.5, 2 and 5.
+// Unobserved: attached emitters (NoTrail or model frame) without 0x20 (235).
+inline constexpr uint32_t kParticleScaledSprite = 0x20;
+inline float particleSpriteHalfWidth(uint32_t flags, float authoredScale, float placementScale) {
+    return flags & kParticleScaledSprite ? authoredScale * placementScale : authoredScale;
 }
 
 // NoTrail particles remain attached to the animated emitter. Other particles
 // retain its birth pose, either in model space (0x80 or 0x4000) or in world
-// space. Bit 0x20 is
-// UnLit; it does not select a simulation coordinate system.
+// space. Bit 0x20 sizes sprites (particleSpriteHalfWidth); it does not select
+// a simulation coordinate system.
 inline glm::mat4 particleRenderTransform(uint32_t flags, const glm::mat4& model,
                                          const glm::mat4& bone) {
     if (flags & kParticleNoTrail) return model * bone;
@@ -134,22 +148,37 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
     // Core Hound's drool falls straight down on the original while its head
     // bone is pitched. The model placement keeps its scale and orientation.
     // NoTrail particles are simulated in the bone's own frame.
+    // Detached particles without flag 0x8 fall in the placed model's scaled
+    // frame, as they move (particleWorldVelocityBasis).
     if (flags & (kParticleNoTrail | kParticleModelFrame)) return {0, 0, -1};
-    return glm::normalize(glm::mat3(model) * glm::vec3(0, 0, -1));
+    const glm::vec3 down = glm::mat3(model) * glm::vec3(0, 0, -1);
+    return flags & kParticleTravelsInYards ? glm::normalize(down) : down;
 }
 
-// Particles detached into world space (neither NoTrail nor ModelSpace) move
-// at their authored speed and gravity in yards, whatever the placement scale;
-// only their birth point is placed with it. Attached particles live in the
-// scaled bone or model frame. The Sunwell gate barrier (GO 188118,
-// SUNWELLRAID_GATE_04.m2, scale 8.69, 0x409) otherwise throws its sparks 8.7x
-// too fast, past the doorway, as radial streaks; Netherspite's Void Zone
-// (PortalofKathune.m2, display scale 0.1, 0x229) lifts its smoke a tenth of
-// the height. Brutallus' back flames (0x339, NoTrail, scale 6) do rise with
-// the model's scale in the original.
+// Flag 0x8: a detached particle (neither NoTrail nor in the model's frame)
+// travels in yards, whatever the placement scale; without it, its velocity and
+// gravity take the placement scale as its birth point does. 12654 of 16070
+// TBC emitters set it, 7020 of them detached.
+// - With 0x8: the Sunwell gate barrier (GO 188118, SUNWELLRAID_GATE_04.m2,
+//   scale 8.69, 0x409) otherwise throws its sparks 8.7x too fast, past the
+//   doorway, as radial streaks; Netherspite's Void Zone (PortalofKathune.m2,
+//   display scale 0.1, 0x229) lifts its smoke a tenth of the height.
+// - Without 0x8: the quest-object sparkle's flare (LootFX.m2 #0, 0x101,
+//   0.56 yd/s for 1.6 s) rises 0.4-0.5 yd at scale 1 and 3-4 yd over
+//   GnomeBigGear (scale 3.5) in the original; in yards it stayed a band at
+//   the gear's hub. Light of Elune 177415/177418 (feralaslightblue.m2, 0x1,
+//   GO sizes 2 and 5) fall in columns as long as the object is large.
+// Attached particles live in the scaled bone or model frame: Brutallus' back
+// flames (0x339, NoTrail, scale 6) rise with the model's scale in the original.
+// Gravity follows the velocity's rule; it is not observed separately for
+// emitters without 0x8.
+inline bool particleMovesInYards(uint32_t flags) {
+    return !(flags & (kParticleNoTrail | kParticleModelFrame)) && (flags & kParticleTravelsInYards);
+}
+
 inline glm::mat3 particleWorldVelocityBasis(uint32_t flags, const glm::mat4& birthTransform) {
     glm::mat3 basis(birthTransform);
-    if (flags & (kParticleNoTrail | kParticleModelFrame)) return basis;
+    if (!particleMovesInYards(flags)) return basis;
     for (int c = 0; c < 3; ++c) basis[c] = glm::normalize(basis[c]);
     return basis;
 }

@@ -12,7 +12,7 @@ Particle attachment follows flags, independently of emitter shape:
 - Without `NoTrail`, particles retain the emitter pose at birth.
 - `ModelSpace` (`0x80`) keeps those trailing particles relative to the placed
   model. Otherwise their birth positions remain in world space.
-- `0x20` is `UnLit`, not a coordinate-space flag.
+- `0x20` is not a coordinate-space flag; it sizes sprites (below).
 - `0x4000` keeps trailing particles in the placed model's frame, like
   `ModelSpace` (285 TBC emitters). Zul'jin's claws (item 33975,
   `Hand_1H_ZulAman_D_01Right.m2`, 0x4429/0x4629) keep their frost wisps on the
@@ -34,8 +34,12 @@ runes (DR_Draenei_HoloRunes02/03.m2, GENERIC) are in state READY without
 Close/Closed sequences; they keep looping Stand, since only stateful object
 types (doors, chests, buttons) show READY through the bind pose.
 Detached particles (neither NoTrail nor ModelSpace) take their birth point
-from the scaled placement but move at their authored speed and gravity in
-yards, rotated only. The Sunwell gate barrier (GO 188118, scale 8.69, 0x409)
+from the scaled placement. With flag `0x8` they move at their authored speed
+and gravity in yards, rotated only; without it their motion takes the
+placement scale too. The quest-object sparkle's flare (LootFX.m2 #0, 0x101)
+rises 0.4-0.5 yd over a sign (sparkle scale 1) and 3-4 yd over GnomeBigGear
+(3.5) in the original, and Light of Elune (feralaslightblue.m2, 0x1) falls in
+longer columns at GO size 5 than at 0.5. With `0x8`: the Sunwell gate barrier (GO 188118, scale 8.69, 0x409)
 otherwise threw its sparks 8.7x too fast as radial streaks past the doorway
 (native: an even fire wall; mean-image correlation 0.82 -> 0.89), and
 Netherspite's Void Zone (PortalofKathune.m2, display scale 0.1, 0x229) lifted
@@ -73,11 +77,18 @@ with the uint16 layout yields emitter type 0 (no plane or sphere area);
 GnomereganVent at the Gnomeregan entrance then collapses its 8-10 yard green
 plumes into a point.
 
-Particle sizes are the authored lifecycle scale times placement scale, with no
-caps: GnomereganVent smoke grows 2.78 -> 4.44 -> 8.33. An all-zero lifecycle
+Particle sizes are the authored lifecycle scale, times placement scale for
+emitters with flag `0x20` (10935 of 16070), with no caps: GnomereganVent smoke
+(0x200) grows 2.78 -> 4.44 -> 8.33. In LootFX.m2 the stars (0x29, 0x229) are
+about three times as large over GnomeBigGear (sparkle scale 3.5) as over a
+sign (1) in the original, while the flare (0x101) stays 0.13-0.18 yd across;
+Light of Elune (0x1) drops equally small dots at GO sizes 0.5, 2 and 5, and
+Mark of Kael'Thas (GO 185170, size 5, 0x521) burns in flames several yards
+wide. Unobserved: attached emitters without `0x20` (235). An all-zero lifecycle
 alpha is authored (14 TBC emitters) and draws nothing.
-An item visual (ItemVisuals.dbc model on a weapon's attachment 0-4) is the
-exception: its particles are drawn at the authored size, whatever the scale of
+An item visual (ItemVisuals.dbc model on a weapon's attachment 0-4) is an
+exception for `0x20` emitters (Fear_State_Head #0 is 0x19 and so authored
+size by the flag rule alone): its particles are drawn at the authored size, whatever the scale of
 the weapon, of the weapon's attachment bone (Axe_1H_OutlandRaid_D_06 1.8,
 Knife_1H_Hunting_B_02 1.39) and of the unit wielding it. That chain still
 places them. Bonechewer Blade Fury (23235: display 2 x model 1.3) carries
