@@ -3613,15 +3613,14 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     // and group 18 unless explicitly opted in. These geosets are
                     // only for DK/NE eye glow and should be off by default.
                     //
-                    // Group 15 joins them, for the same reason and a visible
-                    // one: it is the cloak, and its variants above 1501 are
-                    // cloaks that exist. A model drawn with no filter drew one
-                    // whether or not the character wore anything - and with no
-                    // cloak texture to bind, a white sheet. An NPC that owns a
-                    // cape says so by naming the geoset; one that says nothing
-                    // has none.
+                    // Group 15 is drawn. A model without a filter is a creature
+                    // model, and 2.4.3 draws all of its submeshes; on those, 15xx
+                    // is ordinary body. Kalecgos (23459, Kalecgos.m2) has his
+                    // upper chest and collar in 1501, and skipping it showed the
+                    // inside of his cape through his chest. Akama, Medivh,
+                    // Rexxar, Zul'jin and 34 more creature models carry 15xx.
                     uint16_t grp = batch.submeshId / 100;
-                    if (grp == 17 || grp == 18 || grp == 15) continue;
+                    if (grp == 17 || grp == 18) continue;
                 }
                 // One line per head batch, for the first few instances: which
                 // texture slot it resolved to and what type that slot is. The

@@ -69,7 +69,7 @@ bool unitPickBatchDrawn(const pipeline::M2Model& model, const pipeline::M2Batch&
         if (!state.activeGeosets->count(batch.submeshId)) return false;
     } else {
         const uint16_t group = batch.submeshId / 100;
-        if (group == 15 || group == 17 || group == 18) return false;
+        if (group == 17 || group == 18) return false;  // drawn as CharacterRenderer draws them
     }
     const float alpha = state.opacity *
         evalBatchColorAlpha(model, batch, state.sequenceIndex, state.sampleTimeMs, state.globalTimeMs) *

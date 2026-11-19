@@ -37,6 +37,12 @@ Ambusher 17116, Male Ghost 15331); WoWee composites those from CharSections and
 the items. With a bake, native and WoWee both draw the bake. Comparison:
 `_experiments/20261119T130500Z.npc_clothes/` in the workspace.
 
+Creature models (no CreatureDisplayInfoExtra) get no geoset filter and are
+drawn whole, group 15 included; only 17 and 18 (eye glow) stay off. 38 TBC
+creature models carry 15xx as ordinary body: Kalecgos's human form (23459,
+`Kalecgos.m2`) keeps his upper chest and collar in 1501, and leaving it out
+showed the inside of his cape through his chest.
+
 Private native comparisons and original asset inspection live in the workspace
 experiment `20261116T224412Z.npc_appearance_audit`. Nessa feet, Handiir waist and
 Peacekeeper robe were compared at matched camera coordinates. These checks do
