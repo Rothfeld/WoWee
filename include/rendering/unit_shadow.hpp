@@ -28,8 +28,12 @@ namespace wowee::rendering {
 ///   the same at object scale 0.5 (2.46): h 1.5 full, 1.75 half, 2 none
 ///   Hammerhead shark 12195 (2.37 x 0.85): h 1.25 full, 1.5 a trace, 1.75 none
 ///   Ressan's fel bat 9750 (5.93 x 0.3): h 1.25 partly, 1.5 none
-/// Each cut lies at 0.70-0.71 of the box height; sqrt(1/2) is 0.707.
-/// Measured as a ratio; not derived from the client.
+/// The x-y extents play no part (the shark's footprint is the widest, its
+/// cut the lowest); only the box height does. The brackets above put the cut
+/// between 0.70 and 0.73 of the box height (0.25 yd height steps, ground
+/// flat to about 0.1 yd). 0.707 = 1/sqrt(2) is a value chosen inside that
+/// bracket, a fitted constant: neither the data nor the game files give it.
+/// Narrowing it needs finer native height steps.
 inline constexpr float kUnitShadowReachPerBoxHeight = 0.70710678f;
 
 struct UnitShadowBlob {

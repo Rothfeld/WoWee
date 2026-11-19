@@ -1558,8 +1558,10 @@ the native ground darkening of 74 sweep cases gave 0.98 of the box extents
 ground no further than GeoBox height x scale / sqrt(2) below the unit:
 hovering 2852 tempspawns kept a full shadow until the ground left that range,
 then lost it pixel by pixel (ray 21152 at h 3 / 3.5, the same at scale 0.5 at
-1.5 / 1.75, shark 12195 at 1.25 / 1.5, bat 9750 at 1.25). The ratio 0.70-0.71
-is measured; 1/sqrt(2) is the nearest simple value. WoWee draws it with the
+1.5 / 1.75, shark 12195 at 1.25 / 1.5, bat 9750 at 1.25). The cut lies between
+0.70 and 0.73 of the box height in all four; WoWee uses 1/sqrt(2), a value
+chosen inside that bracket (fitted, not derived; finer height steps would
+narrow it). WoWee draws it with the
 selection circle's projection (terrain and WMO triangles, not doodads),
 after the ground and before units (`rendering/unit_shadow.hpp`,
 `OverlaySystem::renderUnitShadows`). Not measured: whether ground above the

@@ -129,6 +129,10 @@ void OverlaySystem::loadUnitShadowTexture(pipeline::AssetManager& assets) {
     loadClampedTexture(*vkCtx_, assets, shadowTexture_, "Textures\\ShadowBlob.blp");
     createTextureSet(vkCtx_->getDevice(), shadowTexture_, shadowSetLayout_, shadowPool_,
                      shadowSet_, "Unit shadow");
+    // Built here, outside frame recording: a missing shader stops the client
+    // at load with its name, rather than throwing out of a half-recorded frame
+    // while worker threads record theirs (that crashed in the NVIDIA driver).
+    initUnitShadows();
     LOG_INFO("Unit shadows use Textures/ShadowBlob.blp");
 }
 

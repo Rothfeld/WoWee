@@ -495,11 +495,15 @@ function(compile_shaders TARGET_NAME)
     set(SPV_DIR ${SHADER_DIR})
     file(MAKE_DIRECTORY ${SPV_DIR})
 
-    file(GLOB GLSL_SOURCES "${SHADER_DIR}/*.glsl")
+    # CONFIGURE_DEPENDS: a shader added after the build dir was configured is
+    # compiled by the next build. Without it the glob kept its configure-time
+    # list, unit_shadow.*.glsl got no .spv in existing build dirs, and the
+    # client failed to load it at world entry.
+    file(GLOB GLSL_SOURCES CONFIGURE_DEPENDS "${SHADER_DIR}/*.glsl")
     # Shared code lives in .glsli, which the glob above does not pick up. A
     # shader that includes any of it is rebuilt when one changes; the rest are
     # left alone, since their .spv are tracked and a rebuild rewrites them.
-    file(GLOB GLSL_INCLUDES "${SHADER_DIR}/*.glsli")
+    file(GLOB GLSL_INCLUDES CONFIGURE_DEPENDS "${SHADER_DIR}/*.glsli")
     set(SPV_OUTPUTS)
 
     foreach(GLSL_FILE ${GLSL_SOURCES})
