@@ -914,6 +914,10 @@ public:
     /// Hidden frames do not count: a pool of buttons parked out of the way is
     /// not content, and counting it scrolls into empty space.
     void scrollContentExtent(uint32_t childId, float& outW, float& outH) const;
+    /// Bring the rects of `id` and of every shown widget under it up to date,
+    /// for a measurement that reads them all (scrollContentExtent). A widget
+    /// the last full pass did not place still holds the rect it had then.
+    void resolveSubtree(uint32_t id);
 
     /// Something moved, resized or changed parent - every rect is stale.
     void markLayoutDirty() { ++layoutGeneration_; }

@@ -683,6 +683,18 @@ void WidgetTree::scrollContentExtent(uint32_t childId, float& outW, float& outH)
         outH = child->editContentH;
 }
 
+void WidgetTree::resolveSubtree(uint32_t id) {
+    std::vector<uint32_t> stack{id};
+    while (!stack.empty()) {
+        const uint32_t next = stack.back();
+        stack.pop_back();
+        resolveWidget(next);
+        const Widget* w = get(next);
+        if (!w || !w->shown) continue;
+        stack.insert(stack.end(), w->children.begin(), w->children.end());
+    }
+}
+
 void WidgetTree::noteScreenSize(float pixelW, float pixelH) {
     if (pixelW <= 0.0f || pixelH <= 0.0f) return;
     lastPixelW_ = pixelW;

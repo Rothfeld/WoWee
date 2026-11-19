@@ -1365,7 +1365,7 @@ static float scrollRange(wowee::ui::WidgetTree& tree, uint32_t id, bool vertical
     // is not needed.
     const uint32_t childId = w->scrollChild;
     tree.resolveWidget(id);
-    tree.resolveWidget(childId);
+    tree.resolveSubtree(childId);
     w = tree.get(id);
     const auto* child = tree.get(childId);
     if (!w || !child) return 0.0f;
@@ -11997,11 +11997,21 @@ bool LuaEngine::editBoxHasFocus() const {
 
 void LuaEngine::updateScrollRanges() {
     if (!L_) return;
-    for (uint32_t id : widgets_.scrollFrames()) {
+    // Copied: an OnScrollRangeChanged handler may create scroll frames.
+    const std::vector<uint32_t> frames = widgets_.scrollFrames();
+    for (uint32_t id : frames) {
         auto* w = widgets_.get(id);
-        if (!w) continue;
+        // A hidden frame is not laid out and reports no change: 2.4.3 has no
+        // rect for one (GetTop nil) and answers its range 0. Measured while
+        // hidden, ChannelListScrollFrame's range came from rows the last pass
+        // had not placed (621 for nine rows that fit), and the Chat tab opened
+        // with a scroll bar beside a list that needs none (pair 15).
+        if (!w || !w->visibleChain) continue;
+        const uint32_t childId = w->scrollChild;
+        widgets_.resolveSubtree(childId);
+        w = widgets_.get(id);
         float rangeX = 0.0f, rangeY = 0.0f;
-        if (const auto* child = widgets_.get(w->scrollChild)) {
+        if (const auto* child = widgets_.get(childId)) {
             // The child's contents, not its declared size - see
             // scrollContentExtent. The two agree for a frame that sizes its own
             // child and differ sharply for one the client is expected to size.

@@ -2754,6 +2754,18 @@ TEST_CASE("A scroll child's reach is its contents, not its declared size",
         tree.scrollContentExtent(child, w3, h3);
         REQUIRE(h3 == Catch::Approx(50.0f));
     }
+
+    SECTION("contents moved since the last full pass are measured where they are now") {
+        // The rows of a list nobody has drawn yet (ChannelListScrollFrame
+        // while the social window is shut) keep the rects of the last pass
+        // until something resolves them.
+        tree.get(tall)->height = 100.0f;
+        tree.markLayoutDirty();
+        tree.resolveSubtree(child);
+        float w4 = 0.0f, h4 = 0.0f;
+        tree.scrollContentExtent(child, w4, h4);
+        REQUIRE(h4 == Catch::Approx(100.0f));
+    }
 }
 
 // An edit box paints its own text and caret, the way a status bar paints its
