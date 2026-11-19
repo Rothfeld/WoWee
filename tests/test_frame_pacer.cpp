@@ -176,3 +176,45 @@ TEST_CASE("the cap holds a 144Hz frame to its budget", "[pacing]") {
         CHECK(bestOvershoot < 2 * plain);
     }
 }
+
+TEST_CASE("maxFPS and maxFPSBk pace as build 8606 does", "[pacing]") {
+    using wowee::core::FrameLimit;
+    using wowee::core::kMinimisedFrameSleepMs;
+    using wowee::core::nativeFrameLimit;
+    // Each row was measured on the original; see nativeFrameLimit.
+    struct Row { int maxFps, maxFpsBk; bool background, minimised; int fps, sleepMs; };
+    constexpr Row kRows[] = {
+        // The defaults: nothing in front or behind, a sleep when minimised.
+        {0, 0, false, false, 0, 0},
+        {0, 0, true, false, 0, 0},
+        {0, 0, true, true, 0, kMinimisedFrameSleepMs},
+        // maxFPSBk alone changes nothing, not even minimised.
+        {0, 10, true, false, 0, 0},
+        {0, 10, true, true, 0, 0},
+        // maxFPS alone holds in front and behind; minimised still sleeps.
+        {30, 0, false, false, 30, 0},
+        {30, 0, true, false, 30, 0},
+        {30, 0, true, true, 30, kMinimisedFrameSleepMs},
+        // Both: the lower one behind and minimised.
+        {30, 10, false, false, 30, 0},
+        {30, 10, true, false, 10, 0},
+        {30, 10, true, true, 10, 0},
+        {30, 50, true, false, 30, 0},
+    };
+    for (const Row& r : kRows) {
+        INFO("maxFPS " << r.maxFps << " maxFPSBk " << r.maxFpsBk << " background " << r.background
+                       << " minimised " << r.minimised);
+        const FrameLimit limit = nativeFrameLimit(r.maxFps, r.maxFpsBk, r.background, r.minimised);
+        CHECK(limit.fps == r.fps);
+        CHECK(limit.sleepMs == r.sleepMs);
+    }
+}
+
+TEST_CASE("the stricter of two caps wins, and 0 is no cap", "[pacing]") {
+    using wowee::core::stricterFrameCap;
+    CHECK(stricterFrameCap(0, 0) == 0);
+    CHECK(stricterFrameCap(0, 30) == 30);
+    CHECK(stricterFrameCap(60, 0) == 60);
+    CHECK(stricterFrameCap(60, 30) == 30);
+    CHECK(stricterFrameCap(-1, 30) == 30);
+}

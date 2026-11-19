@@ -2,6 +2,7 @@
 #include "core/application.hpp"
 #include "game/game_utils.hpp"
 #include "core/frame_pacer.hpp"
+#include <array>
 #include "core/env_flag.hpp"
 #include "core/character_paths.hpp"
 #include "ui/settings_schema.hpp"
@@ -326,6 +327,12 @@ bool Application::initialize() {
         LOG_FATAL("Failed to initialize window");
         return false;
     }
+    // The frame limits from the start, as the original reads them from
+    // Config.wtf: the login screen is paced too, long before the interface
+    // that replays the CVar store exists. SetCVar keeps them current after.
+    window->setFpsCVars(std::atoi(addons::storedCVarValue("maxFPS", "0").c_str()),
+                        std::atoi(addons::storedCVarValue("maxFPSBk", "0").c_str()));
+    LOG_INFO("Frame limits: maxFPS=", window->maxFpsCVar(), " maxFPSBk=", window->maxFpsBkCVar());
 
     // Controllers, which are a window's business rather than a renderer's:
     // SDL delivers their events on the same queue, and a pad plugged in later
@@ -1557,6 +1564,8 @@ void Application::run() {
     // Mouse events carry no modifier mask. Track the queue position rather
     // than asking SDL for the final state after it has pumped all events.
     SDL_Keymod queuedModifiers = SDL_GetModState();
+    // background, minimised, cap, sleep: logged when any of them changes.
+    std::array<int, 4> lastPacing{-1, -1, -1, -1};
     while (running && !window->shouldClose()) {
         const auto frameStart = std::chrono::steady_clock::now();
         beatWatchdog();
@@ -1586,8 +1595,33 @@ void Application::run() {
         // it paces rather than a stall the next one has to absorb. Sleep
         // granularity is a millisecond or so, which is close enough for a
         // cap and far cheaper than spinning.
+        //
+        // Two caps: this client's own frame limit setting, and the original's
+        // maxFPS/maxFPSBk applied the way build 8606 applies them. The
+        // stricter one wins.
         if (window) {
-            pacer.waitForCap(window->frameCap());
+            SDL_Window* sdlWindow = window->getSDLWindow();
+            const bool minimised =
+                sdlWindow && (SDL_GetWindowFlags(sdlWindow) & SDL_WINDOW_MINIMIZED) != 0;
+            // Behind another program means no window of this client has the
+            // keyboard; the map window having it is still this client in front.
+            const bool background = SDL_GetKeyboardFocus() == nullptr;
+            const FrameLimit limit = nativeFrameLimit(window->maxFpsCVar(), window->maxFpsBkCVar(),
+                                                      background, minimised);
+            const int cap = stricterFrameCap(window->frameCap(), limit.fps);
+            const std::array<int, 4> pacing{background, minimised, cap, limit.sleepMs};
+            if (pacing != lastPacing) {
+                LOG_INFO("Frame pacing: ", background ? "background" : "foreground",
+                         minimised ? ", minimised" : "", ", cap ", cap,
+                         " fps, sleep ", limit.sleepMs, " ms (maxFPS=", window->maxFpsCVar(),
+                         " maxFPSBk=", window->maxFpsBkCVar(), " frame limit setting=",
+                         window->frameCap(), ")");
+                lastPacing = pacing;
+            }
+            if (limit.sleepMs > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(limit.sleepMs));
+            }
+            pacer.waitForCap(cap);
         }
 
         // Delta, and the start of the frame the cap above will pace. Taken

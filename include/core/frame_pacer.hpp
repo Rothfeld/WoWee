@@ -63,6 +63,52 @@ private:
     std::int64_t sleepSlackNs_ = 500'000;
 };
 
+/// How build 8606 paces a frame, from its maxFPS and maxFPSBk CVars and the
+/// window's state. Both CVars default to 0 there.
+///
+/// Measured on the original under Wine, with frames counted by an OnUpdate
+/// script and a second program made the foreground window (a minimised
+/// window counts as in the background too):
+///
+///   maxFPS maxFPSBk  in front  behind  minimised
+///     0       0       vsync    vsync   one frame every ~255 ms
+///     0      10       vsync    vsync   vsync
+///    30       0        30       30     one frame every ~255 ms
+///    30      10        30       10     10
+///    30      50        30       30     -
+///
+/// So maxFPSBk means something only while maxFPS is set, and then caps at
+/// the lower of the two; a minimised window with no maxFPSBk sleeps between
+/// frames instead. Losing keyboard focus alone does nothing at the defaults.
+struct FrameLimit {
+    /// Frames per second to cap at, or 0 for no cap.
+    int fps = 0;
+    /// A sleep before every frame, in milliseconds, or 0 for none.
+    int sleepMs = 0;
+};
+
+/// The sleep a minimised original takes between frames when maxFPSBk is 0.
+/// Its frames were 253 to 263 ms apart (about 4 per second), each taking a
+/// few milliseconds of work: a 250 ms sleep and then the frame.
+inline constexpr int kMinimisedFrameSleepMs = 250;
+
+[[nodiscard]] constexpr FrameLimit nativeFrameLimit(int maxFps, int maxFpsBk,
+                                                    bool background, bool minimised) {
+    maxFps = maxFps > 0 ? maxFps : 0;
+    maxFpsBk = maxFpsBk > 0 ? maxFpsBk : 0;
+    if (minimised && maxFpsBk == 0) return {.fps = maxFps, .sleepMs = kMinimisedFrameSleepMs};
+    if ((background || minimised) && maxFps > 0 && maxFpsBk > 0)
+        return {.fps = maxFps < maxFpsBk ? maxFps : maxFpsBk, .sleepMs = 0};
+    return {.fps = maxFps, .sleepMs = 0};
+}
+
+/// The stricter of two caps, where 0 means no cap.
+[[nodiscard]] constexpr int stricterFrameCap(int a, int b) {
+    if (a <= 0) return b > 0 ? b : 0;
+    if (b <= 0) return a;
+    return a < b ? a : b;
+}
+
 /// Ask the platform for the finest sleep granularity it will give, for as
 /// long as this object lives.
 ///

@@ -2619,3 +2619,38 @@ so a function and a widget method must answer in the same kind. Combat-only
 restrictions (ADDON_ACTION_BLOCKED) and data taint are not modelled.
 Evidence and probe addon: `_experiments/20261118T010104Z.lua_conventions`
 in the workspace.
+
+### Frame pacing (maxFPS, maxFPSBk)
+
+The main loop applies build 8606's maxFPS and maxFPSBk CVars (both default 0)
+through `core::nativeFrameLimit`. Measured on the original under Wine with a
+frame-counting OnUpdate script and another program in front:
+
+| maxFPS | maxFPSBk | in front | behind | minimised |
+|---|---|---|---|---|
+| 0 | 0 | vsync | vsync | one frame every ~255 ms |
+| 0 | 10 | vsync | vsync | vsync |
+| 30 | 0 | 30 | 30 | one frame every ~255 ms |
+| 30 | 10 | 30 | 10 | 10 |
+| 30 | 50 | 30 | 30 | - |
+
+"Behind" means no window of this client has the keyboard. This client's own
+frame limit setting still applies; the stricter cap wins. `Frame pacing:`
+lines in the log record each change of state and cap. The 2.4.3 cap waits are
+sleeps: at maxFPS 10 the original used a tenth of its 60 fps CPU.
+
+Gotchas:
+
+- Native clients on the pairs are pinned to CPUs 0-1 by `processAffinityMask
+  "3"` in Config.wtf, and Wow.exe re-pins threads to it itself. With 15-20
+  pairs up they share two cores, run 10-25 fps and show about 0.1 core each.
+  That is starvation, not pacing. Unpinned, the original costs about 1.1
+  cores at 60 fps, focused or not.
+- Under Wine 11, losing X focus alone (an override-redirect window) does not
+  put the original in the background; only a WM activation of another window
+  (`_NET_ACTIVE_WINDOW`) or a minimise does. Wine's `+win` trace shows
+  `set_foreground_window` when it happens.
+- On Xvfb, `vkQueuePresentKHR` costs 20-26 ms of main-thread CPU per frame
+  (FIFO and IMMEDIATE alike): the NVIDIA driver copies the image to the CPU
+  for the X server. That, not a busy-wait, is most of an idle client's core.
+  `WOWEE_FRAME_PROFILE=1` reports it as `endFrame/present`.

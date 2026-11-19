@@ -70,6 +70,16 @@ public:
     /// heat and fan noise for frames nobody sees.
     void setFrameCap(int fps) { frameCapFps_ = (fps > 0) ? fps : 0; }
     [[nodiscard]] int frameCap() const { return frameCapFps_; }
+
+    /// The original's maxFPS and maxFPSBk CVars, 0 for none. The main loop
+    /// turns them into a cap through core::nativeFrameLimit, together with
+    /// whether the window is focused or minimised.
+    void setFpsCVars(int maxFps, int maxFpsBk) {
+        maxFpsCVar_ = maxFps > 0 ? maxFps : 0;
+        maxFpsBkCVar_ = maxFpsBk > 0 ? maxFpsBk : 0;
+    }
+    [[nodiscard]] int maxFpsCVar() const { return maxFpsCVar_; }
+    [[nodiscard]] int maxFpsBkCVar() const { return maxFpsBkCVar_; }
     void setFullscreen(bool enable);
     void setVsync(bool enable);
     void applyResolution(int w, int h);
@@ -95,6 +105,8 @@ private:
     int windowedHeight = 0;
     bool fullscreen = false;
     int frameCapFps_ = 0;   // 0 = uncapped
+    int maxFpsCVar_ = 0;
+    int maxFpsBkCVar_ = 0;
     bool vsync = true;
     bool shouldCloseFlag = false;
 };

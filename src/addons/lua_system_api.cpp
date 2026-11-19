@@ -856,6 +856,10 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // UIOptionsFrame's SHOW_COMBAT_TEXT default says. It governs
     // Blizzard_CombatText only; the numbers over the world do not read it.
     else if (n == "enablecombattext") lua_pushstring(L, "0");
+    // No frame limit in front or behind: build 8606 with neither in
+    // Config.wtf answers "0" for both (pair 3,
+    // _experiments/20261118T230027Z.idle_cpu). See core::nativeFrameLimit.
+    else if (n == "maxfps" || n == "maxfpsbk") lua_pushstring(L, "0");
     // The three kinds this client draws. All on, which is what it did before
     // any of them were read; unset they fell to zero, which would have shown
     // every one of these boxes unticked while the numbers were on screen.
@@ -1612,6 +1616,14 @@ static bool mouseLookSpeedAccepted(const std::string& value) {
 
 static void applyCVarSideEffects(lua_State* L, const std::string& key,
                                  const std::string& value) {
+    // The frame limits, read by the main loop every frame. Both are handed
+    // over together because maxFPSBk only means something beside maxFPS.
+    if (key == "maxfps" || key == "maxfpsbk") {
+        if (auto* svc = getLuaServices(L); svc && svc->window) {
+            svc->window->setFpsCVars(std::atoi(cvarValueOr(L, "maxfps", "0").c_str()),
+                                     std::atoi(cvarValueOr(L, "maxfpsbk", "0").c_str()));
+        }
+    }
     if (key == "ffxdeath") {
         if (auto* svc = getLuaServices(L); svc && svc->setDeathEffectEnabled)
             svc->setDeathEffectEnabled(value != "0");
