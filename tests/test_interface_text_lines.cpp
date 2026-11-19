@@ -56,3 +56,32 @@ TEST_CASE("TBC font rasterization limit applies after UI scaling", "[fonts][scal
     wowee::ui::setInterfaceFontSizeLimit(0.0f);
     CHECK(interfaceFontSize(102.0f, 2.0f) == 102.0f);
 }
+
+TEST_CASE("A drop shadow to the right widens a string by whole pixels", "[fonts][shadow]") {
+    // Read off 2.4.3 at 0.9375 pixels per unit: SetShadowOffset(x, y) grows
+    // GetStringWidth("Strength:") by round(x * ppu) for x > 0, never for x < 0,
+    // and y changes nothing.
+    using wowee::ui::shadowPixels;
+    CHECK(shadowPixels(0.0f, 0.9375f) == 0);
+    CHECK(shadowPixels(0.4f, 0.9375f) == 0);
+    CHECK(shadowPixels(0.5f, 0.9375f) == 0);
+    CHECK(shadowPixels(0.6f, 0.9375f) == 1);
+    CHECK(shadowPixels(1.0f, 0.9375f) == 1);
+    CHECK(shadowPixels(1.5f, 0.9375f) == 1);
+    CHECK(shadowPixels(2.0f, 0.9375f) == 2);
+    CHECK(shadowPixels(3.0f, 0.9375f) == 3);
+    CHECK(shadowPixels(-1.0f, 0.9375f) == 0);
+    CHECK(shadowPixels(-2.0f, 0.9375f) == 0);
+}
+
+TEST_CASE("Line spacing rounds up to whole pixels", "[fonts][spacing]") {
+    // SetSpacing on 2.4.3, read back through GetHeight of an eight-row string.
+    using wowee::ui::spacingPixels;
+    CHECK(spacingPixels(0.0f, 0.5625f) == 0);
+    CHECK(spacingPixels(1.0f, 0.5625f) == 1);
+    CHECK(spacingPixels(2.0f, 0.5625f) == 2);
+    CHECK(spacingPixels(3.0f, 0.5625f) == 2);
+    CHECK(spacingPixels(5.0f, 0.5625f) == 3);
+    CHECK(spacingPixels(2.0f, 0.9375f) == 2);
+    CHECK(spacingPixels(5.0f, 0.9375f) == 5);
+}

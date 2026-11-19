@@ -10,17 +10,13 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace wowee::ui {
-
-// Line spacing separates baselines; it does not add padding after the last line.
-inline float textBlockHeight(float fontSize, int lineCount) {
-    return lineCount > 0 ? fontSize * (1.0f + 1.2f * (lineCount - 1)) : 0.0f;
-}
 
 /// A piece of text and whether it carries a colour of its own. The renderer's
 /// markup parser produces these; the wrap works on them rather than on the
@@ -203,11 +199,13 @@ inline bool breaksAfter(uint32_t cp) { return cp == '-' || cp == '/' || cp == ':
 /// its full width instead. Spaces always stay on the line they follow, however
 /// far past the edge. `|n` breaks at any width; `wrapPx <= 0` means no soft
 /// wrapping. A single word wider than the line takes a line of its own, broken
-/// by character only when `nonSpaceWrap` asks for it.
+/// by character only when `nonSpaceWrap` asks for it. Lines after the first
+/// have `continuationIndent` pixels less room (a chat frame's indented wrap).
 template <typename Measure, typename TextureWidth>
 std::vector<NativeWrappedLine> wrapTextNative(const std::vector<WrapRun>& runs, float wrapPx,
                                               bool nonSpaceWrap, const Measure& m,
-                                              TextureWidth textureWidth) {
+                                              TextureWidth textureWidth,
+                                              float continuationIndent = 0.0f) {
     struct Cell {
         uint32_t cp = 0;     // 0 for a picture
         size_t run = 0;
@@ -291,10 +289,11 @@ std::vector<NativeWrappedLine> wrapTextNative(const std::vector<WrapRun>& runs, 
             size_t ce = e;
             while (e < p1 && cells[e].cp == ' ') ++e;
             const bool last = e >= p1;
+            const float room = wrapPx - (lines.empty() ? 0.0f : continuationIndent);
             const auto fits = [&](size_t a) {
                 if (ce == a) return true;
                 const float w = last ? finalWidth(a, ce) : pos(ce) - pos(a);
-                return wrapPx <= 0.0f || w <= wrapPx;
+                return wrapPx <= 0.0f || w <= room;
             };
             if (s > ls && !fits(ls)) {
                 emit(ls, s, pos(s) - pos(ls));
@@ -303,7 +302,7 @@ std::vector<NativeWrappedLine> wrapTextNative(const std::vector<WrapRun>& runs, 
             if (s == ls && !fits(ls) && nonSpaceWrap) {
                 // One word wider than the line: by character, as asked.
                 for (size_t k = ls + 1; k < ce; ++k) {
-                    if (pos(k + 1) - pos(ls) > wrapPx) {
+                    if (pos(k + 1) - pos(ls) > wrapPx - (lines.empty() ? 0.0f : continuationIndent)) {
                         emit(ls, k, pos(k) - pos(ls));
                         ls = k;
                     }
@@ -317,6 +316,30 @@ std::vector<NativeWrappedLine> wrapTextNative(const std::vector<WrapRun>& runs, 
     }
     return lines;
 }
+
+/// Where 2.4.3 starts a line of text in a box, in whole pixels. Measured with
+/// white strings on black at fractional box positions, faces FRIZQT and
+/// MORPHEUS at 6 to 28 pixels, frame scales 1 and 0.5
+/// (_experiments/20261119T092759Z.questlog_fonts, FP_Place/FP_Place2):
+///   LEFT    floor(left) + 2
+///   CENTER  floor(left) + 2 + floor((boxWidth - width - shadow) / 2)
+///   RIGHT   floor(left + boxWidth) + 1 - width
+/// `width` is the line's measured width (NativeWrappedLine::width), `shadow`
+/// the pixels a drop shadow adds (shadowPixels). The glyphs then sit on these
+/// pens as FreeType places them.
+inline float placeTextLine(float left, float boxWidth, float width, float shadow, const std::string& justify) {
+    // A thousandth of a pixel of slack: rects come out of float layout, and a
+    // box edge solved to 22.9999 is the pixel at 23.
+    constexpr float kSlack = 1e-3f;
+    if (justify == "CENTER")
+        return std::floor(left + kSlack) + 2.0f + std::floor((boxWidth - width - shadow) * 0.5f + kSlack);
+    if (justify == "RIGHT") return std::floor(left + boxWidth + kSlack) + 1.0f - width;
+    return std::floor(left + kSlack) + 2.0f;
+}
+
+/// The pixel row a text box's top lands on: the next whole pixel down, as
+/// 2.4.3 snaps it (a top at 10.25 draws as at 11).
+inline float textOriginY(float top) { return std::ceil(top - 1e-3f); }
 
 /// One line of plain text cut to fit a width, ending in "..." where it had to
 /// be cut - what WoW does with a label too long for the width it was given.

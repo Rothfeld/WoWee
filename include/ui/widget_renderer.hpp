@@ -110,7 +110,7 @@ private:
     /// Labels and textures, in one pass. See sizeArtAndText.
     void sizeArtAndText(WidgetTree& tree);
     void sizeTextureWidget(Widget* w);
-    void sizeFontStringWidget(Widget* w, ImFont* font, float pixelScale);
+    void sizeFontStringWidget(Widget* w, float pixelScale);
     void sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree);
     static TooltipLayout layoutTooltipLines(const Widget& w, float ppu);
     /// One row of text at the original's whole-pixel pen positions, top-left
@@ -133,17 +133,22 @@ private:
     /// Labels holding a coin amount with a letter on the end of it.
     void reportLetteredAmounts(WidgetTree& tree);
 
-    /// Draw a string that may carry WoW's inline colour markup, as runs.
-    /// wrapWidth of zero draws one line, which is what an auto-sized label
-    /// and a tooltip row want; a positive one breaks the text to fit.
-    /// Answers the height it drew, in pixels.
-    float drawMarkupText(ImDrawList* dl, ImFont* font, float size, ImVec2 at,
+    /// Draw a string that may carry WoW's inline colour markup, as runs, laid
+    /// out by the original's rules at the whole pixel height nearest `size`.
+    /// `pixelScale` is the widget's pixels per unit (inline picture sizes).
+    /// `at` is the text box's top-left in pixels. The text wraps inside
+    /// wrapWidth (pixels; zero for no wrapping) less `shadowPx` (shadowPixels)
+    /// and each line is justified by placeTextLine in a box `boxWidth` wide -
+    /// wrapWidth when negative. Lines are `lineHeightPx` apart, the pixel
+    /// height when zero. Answers the height it drew, in pixels.
+    float drawMarkupText(ImDrawList* dl, ImFont* font, float size, float pixelScale, ImVec2 at,
                         uint32_t fallback, float alpha, const std::string& text,
                         float wrapWidth = 0.0f, bool nonSpaceWrap = false,
                         const char* justifyH = nullptr, bool forceColor = false,
                         WidgetTree* linkSink = nullptr, uint32_t linkOwner = 0,
                         float gradientStart = -1.0f, float gradientLength = 0.0f,
-                        float continuationIndent = 0.0f, float lineHeightPx = 0.0f);
+                        float continuationIndent = 0.0f, float lineHeightPx = 0.0f,
+                        float shadowPx = 0.0f, float boxWidth = -1.0f);
     /// A SimpleHTML page holding a document rather than a string: its blocks
     /// stacked down the frame, text justified per block and each picture on a
     /// line of its own. See simple_html.hpp.

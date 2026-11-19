@@ -343,7 +343,7 @@ void WidgetRenderer::sizeTextureWidget(Widget* w) {
 }
 
 /// One label, sized from its own text. See sizeArtAndText.
-void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font, float pixelScale) {
+void WidgetRenderer::sizeFontStringWidget(Widget* w, float pixelScale) {
     if (w->text.empty()) return;
     // Anchors that span an axis give the size on that axis, and the string
     // does not get a say about it. Asked per axis, the way the texture
@@ -383,24 +383,9 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font, float pixelSc
         w->wrapsToWidth ||
         (!w->autoSized && w->width > 0.0f && w->height <= 0.0f);
 
-    // The size the draw will use, not a flat twelve.
-    //
-    // A label with no fontHeight of its own is drawn at the current font
-    // size and was measured at twelve, so wherever those differ the rect
-    // came out narrower than the glyphs that go in it and the text ran out
-    // of its right edge. The money frame is where it shows: the number is
-    // anchored to end exactly where the coin icon begins, so the overspill
-    // lands on top of the coin.
-    //
-    // Same face too - the widget's own, then the interface default -
-    // rather than whichever face this measure happened to be handed.
-    ImFont* runFont = interfaceFaceOrDefault(w->fontFace);
-    if (!runFont) runFont = font;
+    // Measured by the original's rules - whole-pixel font height, whole-pixel
+    // pens - in the widget's own face, which is also how the draw lays it out.
     const float size = interfaceFontSize(w->fontHeight, pixelScale);
-    const auto measureRun = [&](const std::string& piece) {
-        return runFont->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
-    };
-
     // Already the right size for this text, measured the way it would be
     // measured now. A label that has changed what it says is measured
     // again; one sized by its XML is left alone.
@@ -429,29 +414,26 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, ImFont* font, float pixelSc
         // decide whether there is a box to wrap inside, and this string is
         // exactly the kind that has one.
         w->wrapsToWidth = true;
-        const int rows = static_cast<int>(
-            wrapText(parseMarkup(w->text), w->width, w->nonSpaceWrap,
-                     measureRun).size());
+        const int rows = interfaceTextLines(w->text, w->fontFace, w->fontHeight, w->width,
+                                            w->nonSpaceWrap, pixelScale, w->hasShadow ? w->shadowX : 0.0f);
         w->wrappedLines = rows > 0 ? rows : 1;
-        w->height = textBlockHeight(size, w->wrappedLines);
+        w->height = interfaceTextBlockHeight(w->wrappedLines, w->fontHeight, w->lineSpacing, pixelScale);
         w->measuredText = w->text;
         w->measuredSize = size;
         w->measuredFace = w->fontFace;
         return;
     }
 
-    const ImVec2 measured =
-        runFont->CalcTextSizeA(size, FLT_MAX, 0.0f, strippedText(w->text).c_str());
-    w->width = measured.x;
+    w->width = interfaceTextWidth(w->text, w->fontFace, w->fontHeight, pixelScale,
+                                  w->hasShadow ? w->shadowX : 0.0f);
     // As tall as the lines it holds. A label sized by its own text can
     // still be several lines: |n breaks one at any width, and giving it a
     // single line's height put whatever anchors below it over the top of
     // the rest.
-    const int rows = static_cast<int>(
-        wrapText(parseMarkup(w->text), 0.0f, false, measureRun).size());
+    const int rows = interfaceTextLines(w->text, w->fontFace, w->fontHeight, 0.0f, false, pixelScale);
     w->wrappedLines = rows > 0 ? rows : 1;
     if (w->height <= 0.0f || w->autoSized) {
-        w->height = textBlockHeight(size, w->wrappedLines);
+        w->height = interfaceTextBlockHeight(w->wrappedLines, w->fontHeight, w->lineSpacing, pixelScale);
     }
     w->autoSized = true;
     w->measuredText = w->text;
@@ -621,13 +603,10 @@ void WidgetRenderer::sizeTooltipWidget(Widget* w, ImFont* font, WidgetTree& tree
 ///
 /// Tooltips are deliberately not in here; see sizeTooltipWidget.
 void WidgetRenderer::sizeArtAndText(WidgetTree& tree) {
-    ImFont* font = interfaceFace("frizqt__");
-    if (!font) font = ImGui::GetFont();
-
     for (size_t id = 1; id < tree.size(); ++id) {
         Widget* w = tree.get(static_cast<uint32_t>(id));
         if (!w) continue;
-        if (font && w->kind == WidgetKind::FontString) sizeFontStringWidget(w, font, tree.uiScale() * w->effScale);
+        if (w->kind == WidgetKind::FontString) sizeFontStringWidget(w, tree.uiScale() * w->effScale);
         else if (w->kind == WidgetKind::Texture) sizeTextureWidget(w);
     }
 }
@@ -686,55 +665,66 @@ float WidgetRenderer::drawNativeRow(ImDrawList* dl, ImFont* font, const NativeTe
     return x;
 }
 
-float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
+float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size, float pixelScale,
                                      ImVec2 at, uint32_t fallback, float alpha,
                                      const std::string& text, float wrapWidth,
                                      bool nonSpaceWrap, const char* justifyH,
                                      bool forceColor, WidgetTree* linkSink,
                                      uint32_t linkOwner, float gradientStart, float gradientLength,
-                                     float continuationIndent, float lineHeightPx) {
-    const auto lines = wrapText(parseMarkup(text), wrapWidth, nonSpaceWrap,
-                                [&](const std::string& piece) {
-                                    return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
-                                                               piece.c_str()).x;
-                                }, continuationIndent);
-    const float lineH = lineHeightPx > 0.0f ? lineHeightPx : size * 1.2f;
-    // ImGui's glyph origin includes the face's ascender padding. Our layout
-    // uses an em-height line box, so center capital ink in that box. A fixed
-    // reference glyph keeps the baseline stable across ascenders/descenders
-    // and across markup runs; measuring each string would make rows jump.
-    auto* baked = font->GetFontBaked(size);
+                                     float continuationIndent, float lineHeightPx, float shadowPx,
+                                     float boxWidth) {
+    // Laid out by the original's rules (ui/native_text_metrics.hpp): the face
+    // rasterized at a whole pixel height, glyphs on whole-pixel pens, lines
+    // broken where 2.4.3 breaks them and one pixel height apart. ImGui's own
+    // fractional advances drew every string about 7% narrower than native.
+    const int pixelHeight = static_cast<int>(std::floor(size + 0.5f));
+    if (pixelHeight <= 0 || text.empty()) return 0.0f;
+    const NativeTextMeasure m = interfaceTextMeasure(font, pixelHeight);
+    assert(m.face && "interface text is drawn in a registered interface face");
+    const float px = static_cast<float>(pixelHeight);
+    const auto textureWidth = [&](const WrapRun& run) {
+        return nativeTextureWidth(run, pixelHeight, pixelScale);
+    };
+    const auto lines = wrapTextNative(parseMarkup(text), wrapWidth > 0.0f ? wrapWidth - shadowPx : 0.0f,
+                                      nonSpaceWrap, m, textureWidth, continuationIndent);
+    const float lineH = lineHeightPx > 0.0f ? lineHeightPx : px;
+    // Capital ink centred in the row, a fixed reference glyph so the baseline
+    // stays put across ascenders, descenders and markup runs.
+    auto* baked = font->GetFontBaked(px);
     const auto* capital = baked->FindGlyph('H');
     assert(capital);
-    const float glyphScale = size / baked->Size;
-    const float glyphOffsetY = (size - (capital->Y0 + capital->Y1) * glyphScale) * 0.5f;
-    float y = at.y;
+    const float glyphScale = px / baked->Size;
+    const float glyphOffsetY = std::round((px - (capital->Y0 + capital->Y1) * glyphScale) * 0.5f);
+    float y = textOriginY(at.y);
     int characterIndex = 0;
-    for (const auto& line : lines) {
-        // A picture contributes its own width, not its (empty) text's, or a
-        // centred line of coins would be justified as if it were blank.
-        const auto runWidth = [&](const TextRun& run) {
-            if (!run.texture.empty()) {
-                return run.texWidth > 0.0f    ? run.texWidth
-                     : run.texHeight > 0.0f   ? run.texHeight
-                                              : size;
-            }
-            return font->CalcTextSizeA(size, FLT_MAX, 0.0f, run.text.c_str()).x;
-        };
-        float lineW = 0.0f;
-        for (const TextRun& run : line) lineW += runWidth(run);
+    if (boxWidth < 0.0f) boxWidth = wrapWidth;
+    const std::string justify = (boxWidth > 0.0f && justifyH) ? justifyH : "LEFT";
+    for (size_t li = 0; li < lines.size(); ++li) {
+        const NativeWrappedLine& line = lines[li];
         // Each line justifies inside the box on its own, which is what makes a
         // centred paragraph look centred rather than ragged from one offset.
-        const float indent = &line == &lines.front() ? 0.0f : continuationIndent;
-        float x = at.x + indent;
-        if (wrapWidth > 0.0f && justifyH) {
-            if (std::string(justifyH) == "CENTER") x = at.x + indent + (wrapWidth - indent - lineW) * 0.5f;
-            else if (std::string(justifyH) == "RIGHT") x = at.x + wrapWidth - lineW;
+        const float indent = li == 0 ? 0.0f : continuationIndent;
+        float x = placeTextLine(at.x + indent, boxWidth - indent, line.width, shadowPx, justify);
+        // Every glyph of the line in order, so kerning reaches across runs.
+        struct Glyph { uint32_t cp; size_t run; size_t b0, b1; };
+        std::vector<Glyph> glyphs;
+        for (size_t r = 0; r < line.runs.size(); ++r) {
+            const std::string& t = line.runs[r].text;
+            if (!line.runs[r].texture.empty()) { glyphs.push_back({0, r, 0, 0}); continue; }
+            size_t pos = 0;
+            while (pos < t.size()) {
+                const size_t b0 = pos;
+                const uint32_t cp = nextCodepoint(t, pos);
+                glyphs.push_back({cp, r, b0, pos});
+            }
         }
-        for (const TextRun& run : line) {
+        size_t gi = 0;
+        for (size_t r = 0; r < line.runs.size(); ++r) {
+            const WrapRun& run = line.runs[r];
+            const float runX = x;
             if (!run.texture.empty()) {
-                const float w = runWidth(run);
-                const float h = run.texHeight > 0.0f ? run.texHeight : size;
+                const float w = textureWidth(run);
+                const float h = run.texHeight > 0.0f ? run.texHeight * pixelScale : px;
                 // Only on the pass that draws the text. The shadow and outline
                 // passes repeat the same runs offset by a pixel, and an icon
                 // drawn three times reads as a smear rather than as depth.
@@ -752,6 +742,7 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                     }
                 }
                 x += w;
+                ++gi;
                 continue;
             }
             uint32_t col = fallback;
@@ -761,18 +752,14 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                 float rgba[4] = {run.rgba[0], run.rgba[1], run.rgba[2], run.rgba[3]};
                 col = packColor(rgba, alpha);
             }
-            if (gradientStart < 0.0f) {
-                dl->AddText(font, size, ImVec2(x, y + glyphOffsetY), col, run.text.c_str());
-            } else {
-                float glyphX = x;
-                const char* glyph = run.text.c_str();
-                const char* end = glyph + run.text.size();
-                while (glyph < end) {
-                    unsigned int codepoint = 0;
-                    const int bytes = ImTextCharFromUtf8(&codepoint, glyph, end);
-                    assert(bytes > 0);
-                    const int firstVertex = dl->VtxBuffer.Size;
-                    dl->AddText(font, size, ImVec2(glyphX, y + glyphOffsetY), col, glyph, glyph + bytes);
+            for (; gi < glyphs.size() && glyphs[gi].run == r; ++gi) {
+                const Glyph& g = glyphs[gi];
+                const int firstVertex = dl->VtxBuffer.Size;
+                if (g.cp != ' ') {
+                    dl->AddText(font, px, ImVec2(x, y + glyphOffsetY), col,
+                                run.text.data() + g.b0, run.text.data() + g.b1);
+                }
+                if (gradientStart >= 0.0f) {
                     // Build 8606 (0x5c8810) subtracts floor(alpha / length)
                     // at each vertical glyph edge. Spaces advance the reveal too.
                     const int start = static_cast<int>(gradientStart);
@@ -788,13 +775,11 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                             vertex.col = (vertex.col & ~IM_COL32_A_MASK) | (faded << IM_COL32_A_SHIFT);
                         }
                     }
-                    glyphX += font->CalcTextSizeA(size, FLT_MAX, 0.0f, glyph, glyph + bytes).x;
-                    glyph += bytes;
-                    ++characterIndex;
                 }
+                const uint32_t next = gi + 1 < glyphs.size() ? glyphs[gi + 1].cp : 0;
+                x += static_cast<float>(m.pen(g.cp, next));
+                ++characterIndex;
             }
-            const float runW = font->CalcTextSizeA(size, FLT_MAX, 0.0f,
-                                                   run.text.c_str()).x;
             // Where the link landed, for the click that arrives in another
             // pass entirely. Only from the pass that draws the text itself -
             // the outline and shadow draw the same glyphs and would file the
@@ -805,17 +790,14 @@ float WidgetRenderer::drawMarkupText(ImDrawList* dl, ImFont* font, float size,
                 // and divides by the interface scale, so the tree is in
                 // interface units with y growing upward, while every
                 // coordinate here is a screen pixel with y growing down.
-                // Filing the pixels would have made the hit test miss by the
-                // scale factor and by the whole height of the screen.
                 linkSink->addLinkRect(linkRectFromDraw(
-                    linkOwner, run.link, run.text, x, y, runW, lineH,
+                    linkOwner, run.link, run.text, runX, y, x - runX, lineH,
                     linkScreenH_, linkScale_));
             }
-            x += runW;
         }
         y += lineH;
     }
-    return y - at.y;
+    return y - textOriginY(at.y);
 }
 
 void WidgetRenderer::drawSimpleHtml(ImDrawList* dl, WidgetTree& tree,
@@ -869,18 +851,18 @@ void WidgetRenderer::drawSimpleHtml(ImDrawList* dl, WidgetTree& tree,
         if (w.hasShadow) {
             float sc[4] = {w.shadowColor[0], w.shadowColor[1],
                            w.shadowColor[2], w.shadowColor[3]};
-            drawMarkupText(dl, font, size,
-                           ImVec2(x0 + w.shadowX * ws, y - w.shadowY * ws),
+            drawMarkupText(dl, font, size, ws,
+                           ImVec2(x0 + std::round(w.shadowX * ws), y + std::round(-w.shadowY * ws)),
                            packColor(sc, w.effAlpha * w.shadowColor[3]), w.effAlpha,
                            b.text, wrapW, false, align.c_str(), true);
         }
-        float h = drawMarkupText(dl, font, size, ImVec2(x0, y),
+        float h = drawMarkupText(dl, font, size, ws, ImVec2(x0, y),
                                  packColor(w.color, w.effAlpha), w.effAlpha, b.text,
                                  wrapW, false, align.c_str(), false, &tree, w.id);
         // A break at the end of a block finishes its last line rather than
         // opening another: "text<BR/></P>" is one line, and a lone <BR/>
         // between paragraphs is one blank line, not two.
-        if (!b.text.empty() && b.text.back() == '\n') h -= size * 1.2f;
+        if (!b.text.empty() && b.text.back() == '\n') h -= std::floor(size + 0.5f);
         y += h;
     }
 }
@@ -2605,8 +2587,8 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // A tooltip reads downward from the top, which is the other way
             // round from chat.
             if (isGameTooltip && tipLayout.lines.size() == w->tooltipLines.size()) {
-                // Whole pixels, as the original lays text out.
-                const float left = std::round(x0 + kTooltipTextInset * ws);
+                // Whole pixels, as the original lays text out (placeTextLine).
+                const float left = placeTextLine(x0 + kTooltipTextInset * ws, 0.0f, 0.0f, 0.0f, "LEFT");
                 float y = boxY0 + kTooltipTextInset * ws;
                 for (size_t i = 0; i < w->tooltipLines.size(); ++i) {
                     const auto& line = w->tooltipLines[i];
@@ -2614,7 +2596,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     ImFont* font = interfaceFaceOrDefault(line.fontFace);
                     const NativeTextMeasure m = interfaceTextMeasure(line.fontFace, laid.pixelHeight);
                     float lc[4] = {line.lc[0], line.lc[1], line.lc[2], line.lc[3]};
-                    float rowY = std::round(y);
+                    float rowY = textOriginY(y);
                     for (const auto& row : laid.rows) {
                         drawNativeRow(dl, font, m, left, rowY, row.runs,
                                       packColor(lc, w->effAlpha), w->effAlpha, ws);
@@ -2624,7 +2606,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                         float rc[4] = {line.rc[0], line.rc[1], line.rc[2], line.rc[3]};
                         const auto rightRuns = parseMarkup(withRealBreaks(line.right));
                         drawNativeRow(dl, font, m, left + tipLayout.contentWidth - laid.rightWidth,
-                                      std::round(y), rightRuns, packColor(rc, w->effAlpha),
+                                      textOriginY(y), rightRuns, packColor(rc, w->effAlpha),
                                       w->effAlpha, ws);
                     }
                     y += laid.advanceUnits(ws) * ws;
@@ -2638,7 +2620,11 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             if (w->isMessageFrame && !w->messages.empty()) {
                 ImFont* font = interfaceFaceOrDefault(w->fontFace);
                 const float size = interfaceFontSize(w->fontHeight, ws) * ws;
-                const float lineH = size * 1.15f + w->messagePadding * ws;
+                // One pixel height a row, as native's chat lines are.
+                const int pixelHeight = static_cast<int>(std::floor(size + 0.5f));
+                const NativeTextMeasure measure = interfaceTextMeasure(font, pixelHeight);
+                assert(measure.face && "interface text is drawn in a registered interface face");
+                const float lineH = static_cast<float>(pixelHeight) + w->messagePadding * ws;
                 // A chat line is wrapped to the frame, not run off the end of
                 // it. Every other label in the interface has wrapped for as
                 // long as there has been a wrapper; this surface drew each
@@ -2648,12 +2634,10 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 const float indent = w->indentedWordWrap ? size : 0.0f;
                 auto lineCount = [&](const std::string& text) {
                     if (wrapW <= 0.0f) return size_t{1};
-                    const auto lines = wrapText(
-                        parseMarkup(text), wrapW, false,
-                        [&](const std::string& piece) {
-                            return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
-                                                       piece.c_str()).x;
-                        }, indent);
+                    const auto lines = wrapTextNative(
+                        parseMarkup(text), wrapW, false, measure,
+                        [&](const WrapRun& run) { return nativeTextureWidth(run, pixelHeight, ws); },
+                        indent);
                     return lines.empty() ? size_t{1} : lines.size();
                 };
                 float y = y1 - lineH;
@@ -2704,16 +2688,16 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     if (w->hasShadow) {
                         float sc[4] = {w->shadowColor[0], w->shadowColor[1],
                                        w->shadowColor[2], w->shadowColor[3]};
-                        drawMarkupText(dl, font, size,
-                                       ImVec2(x0 + w->shadowX * s, top - w->shadowY * s),
+                        drawMarkupText(dl, font, size, ws,
+                                       ImVec2(x0 + std::round(w->shadowX * ws), top + std::round(-w->shadowY * ws)),
                                        packColor(sc, w->effAlpha * w->shadowColor[3]),
                                        w->effAlpha, m.text, wrapW, false, w->justifyH.c_str(), true,
-                                       nullptr, 0, -1.0f, 0.0f, indent);
+                                       nullptr, 0, -1.0f, 0.0f, indent, lineH);
                     }
-                    drawMarkupText(dl, font, size, ImVec2(x0, top),
+                    drawMarkupText(dl, font, size, ws, ImVec2(x0, top),
                                    packColor(rgba, w->effAlpha), w->effAlpha, m.text,
                                    wrapW, false, w->justifyH.c_str(), false, &tree, w->id,
-                                   -1.0f, 0.0f, indent);
+                                   -1.0f, 0.0f, indent, lineH);
                     y -= lineH * static_cast<float>(rows);
                     ++painted;
                 }
@@ -2796,13 +2780,13 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 if (w->hasShadow) {
                     float sc[4] = {w->shadowColor[0], w->shadowColor[1],
                                    w->shadowColor[2], w->shadowColor[3]};
-                    drawMarkupText(dl, font, size,
-                                   ImVec2(x0 + w->shadowX * s, y0 - w->shadowY * s),
+                    drawMarkupText(dl, font, size, ws,
+                                   ImVec2(x0 + std::round(w->shadowX * ws), y0 + std::round(-w->shadowY * ws)),
                                    packColor(sc, w->effAlpha * w->shadowColor[3]),
                                    w->effAlpha, w->text, wrapW, false,
                                    w->justifyH.c_str(), true);
                 }
-                drawMarkupText(dl, font, size, ImVec2(x0, y0),
+                drawMarkupText(dl, font, size, ws, ImVec2(x0, y0),
                                packColor(w->color, w->effAlpha), w->effAlpha, w->text,
                                wrapW, false, w->justifyH.c_str(), false,
                                &tree, w->id);
@@ -2822,7 +2806,26 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 // its top-left corner down, wrapping at its width, as native
                 // 2.4.3 does; a single line sits centred between the insets.
                 const bool multi = w->editMultiLine;
-                const float ty = multi ? boxTop : boxTop + ((boxBottom - boxTop) - size) * 0.5f;
+                const int pixelHeight = static_cast<int>(std::floor(size + 0.5f));
+                const NativeTextMeasure measure = interfaceTextMeasure(font, pixelHeight);
+                assert(measure.face && "interface text is drawn in a registered interface face");
+                const auto textureWidth = [&](const WrapRun& run) {
+                    return nativeTextureWidth(run, pixelHeight, ws);
+                };
+                // Pen sum: where the caret goes after a piece of text.
+                const auto penWidth = [&](const std::string& t) {
+                    float wsum = 0.0f;
+                    size_t at = 0;
+                    while (at < t.size()) {
+                        const uint32_t cp = nextCodepoint(t, at);
+                        size_t peek = at;
+                        const uint32_t next = at < t.size() ? nextCodepoint(t, peek) : 0;
+                        wsum += static_cast<float>(measure.pen(cp, next));
+                    }
+                    return wsum;
+                };
+                const float ty = multi ? boxTop
+                                       : std::round(boxTop + ((boxBottom - boxTop) - static_cast<float>(pixelHeight)) * 0.5f);
                 const float pad = w->textInsetLeft * s;
                 const float wrapW = multi
                     ? std::max(1.0f, (x1 - x0) - pad - w->textInsetRight * s) : 0.0f;
@@ -2831,11 +2834,9 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                 // units a line at 1280x720 - ten lines 96 - where size * 1.2
                 // made it 12.
                 const float linePx = multi ? static_cast<float>(nativePixelHeight(w->fontHeight, ws)) : 0.0f;
-                if (multi && font) {
-                    const auto lines = wrapText(parseMarkup(w->editText), wrapW, false,
-                        [&](const std::string& piece) {
-                            return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
-                        });
+                if (multi) {
+                    const auto lines = wrapTextNative(parseMarkup(w->editText), wrapW, false, measure,
+                                                      textureWidth);
                     w->editContentH = static_cast<float>(lines.size()) * linePx / ws;
                 }
                 if (!w->editText.empty()) {
@@ -2847,9 +2848,9 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     if (w->hasShadow) {
                         float sc[4] = {w->shadowColor[0], w->shadowColor[1],
                                        w->shadowColor[2], w->shadowColor[3]};
-                        drawMarkupText(dl, font, size,
-                                       ImVec2(x0 + pad + w->shadowX * s,
-                                              ty - w->shadowY * s),
+                        drawMarkupText(dl, font, size, ws,
+                                       ImVec2(x0 + pad + std::round(w->shadowX * ws),
+                                              ty + std::round(-w->shadowY * ws)),
                                        packColor(sc, w->effAlpha * w->shadowColor[3]),
                                        w->effAlpha, w->editText, wrapW, false,
                                        nullptr, true, nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
@@ -2861,7 +2862,7 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // raw that is what the player sees themselves typing.
                     // Links are only clickable at all as of this branch, so
                     // this became reachable at the same moment.
-                    drawMarkupText(dl, font, size, ImVec2(x0 + pad, ty), col,
+                    drawMarkupText(dl, font, size, ws, ImVec2(x0 + pad, ty), col,
                                    w->effAlpha, w->editText, wrapW, false, nullptr, false,
                                    nullptr, 0, -1.0f, 0.0f, 0.0f, linePx);
                 }
@@ -2873,22 +2874,22 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     const std::string rawUpTo = w->editText.substr(
                         0, std::min(w->cursorPos, w->editText.size()));
                     float caret = 0.0f, caretY = ty;
-                    if (font && multi) {
+                    if (multi) {
                         // The end of the text before the caret, laid out the
-                        // way the box draws it: its last line, that line's width.
-                        const auto lines = wrapText(parseMarkup(rawUpTo), wrapW, false,
-                            [&](const std::string& piece) {
-                                return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
-                            });
-                        for (const auto& run : lines.back())
-                            caret += font->CalcTextSizeA(size, FLT_MAX, 0.0f, run.text.c_str()).x;
-                        caretY = ty + static_cast<float>(lines.size() - 1) * linePx;
-                    } else if (font) {
-                        const std::string upTo = strippedText(rawUpTo);
-                        caret = font->CalcTextSizeA(size, FLT_MAX, 0.0f, upTo.c_str()).x;
+                        // way the box draws it: its last line, that line's pens.
+                        const auto lines = wrapTextNative(parseMarkup(rawUpTo), wrapW, false, measure,
+                                                          textureWidth);
+                        if (!lines.empty()) {
+                            for (const auto& run : lines.back().runs)
+                                caret += run.texture.empty() ? penWidth(run.text) : textureWidth(run);
+                            caretY = ty + static_cast<float>(lines.size() - 1) * linePx;
+                        }
+                    } else {
+                        caret = penWidth(strippedText(rawUpTo));
                     }
-                    const float cx = x0 + pad + caret;
-                    dl->AddLine(ImVec2(cx, caretY), ImVec2(cx, caretY + size), col);
+                    const float cx = placeTextLine(x0 + pad, 0.0f, 0.0f, 0.0f, "LEFT") + caret;
+                    dl->AddLine(ImVec2(cx, textOriginY(caretY)),
+                                ImVec2(cx, textOriginY(caretY) + static_cast<float>(pixelHeight)), col);
                 }
             }
             continue;
@@ -3176,27 +3177,30 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             // parses the runs and draws only the visible ones, in their
             // colours. It was the width the placement is computed from.
             const std::string measured = strippedText(w->text);
-            ImVec2 extent =
-                font ? font->CalcTextSizeA(size, FLT_MAX, 0.0f, measured.c_str())
-                     : ImGui::CalcTextSize(measured.c_str());
-            // Counted even when nothing wraps: |n is a line break at any
-            // width, so a label with one in it is two lines tall whether or
-            // not it is also being broken to fit.
-            if (font) {
-                const auto lines = wrapText(
-                    parseMarkup(w->text), wrapW, w->nonSpaceWrap,
-                    [&](const std::string& piece) {
-                        return font->CalcTextSizeA(size, FLT_MAX, 0.0f,
-                                                   piece.c_str()).x;
-                    });
-                w->wrappedLines = static_cast<int>(lines.size());
-                if (wrapW > 0.0f) {
-                    extent.x = wrapW;
-                    extent.y = textBlockHeight(size, static_cast<int>(lines.size()));
-                }
-            } else {
-                w->wrappedLines = 1;
-            }
+            // Laid out as the draw lays it out (drawMarkupText): native pens
+            // on the whole pixel height, rows that height apart plus the
+            // string's spacing. Counted even when nothing wraps: |n is a line
+            // break at any width, so a label with one in it is two lines tall
+            // whether or not it is also being broken to fit.
+            const int pixelHeight = interfacePixelHeight(w->fontHeight, ws);
+            const NativeTextMeasure measure = interfaceTextMeasure(font, pixelHeight);
+            assert(measure.face && "interface text is drawn in a registered interface face");
+            const float linePx = static_cast<float>(pixelHeight + spacingPixels(w->lineSpacing, ws));
+            const auto textureWidth = [&](const WrapRun& run) {
+                return nativeTextureWidth(run, pixelHeight, ws);
+            };
+            // A shadow to the right widens the string and narrows its wrap
+            // (shadowPixels).
+            const float shadowPx = static_cast<float>(shadowPixels(w->hasShadow ? w->shadowX : 0.0f, ws));
+            const auto rows = wrapTextNative(parseMarkup(w->text), wrapW > 0.0f ? wrapW - shadowPx : 0.0f,
+                                             w->nonSpaceWrap, measure,
+                                             textureWidth);
+            w->wrappedLines = static_cast<int>(rows.size());
+            ImVec2 extent(0.0f, rows.empty() ? 0.0f
+                                             : static_cast<float>(rows.size()) * linePx -
+                                                   static_cast<float>(spacingPixels(w->lineSpacing, ws)));
+            for (const auto& row : rows) extent.x = std::max(extent.x, row.width + shadowPx);
+            if (wrapW > 0.0f) extent.x = wrapW;
             // Against the box in pixels, not in interface units. rectW and
             // rectH are the widget's own units and extent comes back from a
             // font already scaled by s, so centring on the raw rect placed a
@@ -3233,19 +3237,18 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
             if (overflows && font && measured == w->text &&
                 w->text.find('\n') == std::string::npos) {
                 fitted = fitWithEllipsis(w->text, boxW, [&](const std::string& piece) {
-                    return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
+                    return static_cast<float>(measure.width(piece)) + shadowPx;
                 });
             }
             const std::string& shown = fitted.empty() ? w->text : fitted;
-            float tx = x0;
-            if (wrapW <= 0.0f && !overflows) {
-                if (w->justifyH == "CENTER")     tx = x0 + (boxW - extent.x) * 0.5f;
-                else if (w->justifyH == "RIGHT") tx = x1 - extent.x;
-            }
+            // Each line justified in the box by 2.4.3's rule (placeTextLine);
+            // one cut to fit is set from the box's left edge. A label sized by
+            // its own text has its box for a width.
+            const char* justify = overflows ? "LEFT" : w->justifyH.c_str();
+            const float tx = x0 + pushX;
             float ty = y0 + (boxH - extent.y) * 0.5f;
             if (w->justifyV == "TOP")         ty = y0;
             else if (w->justifyV == "BOTTOM") ty = y1 - extent.y;
-            tx += pushX;
             ty += pushY;
             // An outline is drawn as the same glyphs in black around the text.
             // ImGui has no outlined draw, and offsetting a few copies is what
@@ -3264,25 +3267,27 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     // it was one long line behind a wrapped label - a second
                     // copy of the words in a darker shade, out of line with
                     // the ones on top of it.
-                    drawMarkupText(dl, font, size, ImVec2(tx + o.x, ty + o.y),
+                    drawMarkupText(dl, font, size, ws, ImVec2(tx + o.x, ty + o.y),
                                    shadow, w->effAlpha, shown, wrapW,
-                                   w->nonSpaceWrap, w->justifyH.c_str(), true, nullptr, 0,
-                                   w->alphaGradientStart, w->alphaGradientLength);
+                                   w->nonSpaceWrap, justify, true, nullptr, 0,
+                                   w->alphaGradientStart, w->alphaGradientLength, 0.0f, linePx,
+                                   shadowPx, boxW);
                 }
             }
-            // The shadow sits under the text and over the outline: it is a
-            // single offset copy rather than a ring, and the offset is in
-            // interface units like everything the font object states, so it
-            // scales with the rest.
+            // The shadow sits under the text and over the outline: a single
+            // copy offset by whole pixels (the interface's units, rounded), so
+            // it keeps its distance from the glyphs wherever the box lands.
             if (w->hasShadow) {
                 float sc[4] = {w->shadowColor[0], w->shadowColor[1],
                                w->shadowColor[2], w->shadowColor[3]};
-                drawMarkupText(dl, font, size,
-                               ImVec2(tx + w->shadowX * s, ty - w->shadowY * s),
+                const float sx = std::round(w->shadowX * ws);
+                const float sy = std::round(-w->shadowY * ws);
+                drawMarkupText(dl, font, size, ws, ImVec2(tx + sx, ty + sy),
                                packColor(sc, w->effAlpha * w->shadowColor[3]),
                                w->effAlpha, shown, wrapW, w->nonSpaceWrap,
-                               w->justifyH.c_str(), true, nullptr, 0,
-                               w->alphaGradientStart, w->alphaGradientLength);
+                               justify, true, nullptr, 0,
+                               w->alphaGradientStart, w->alphaGradientLength, 0.0f, linePx,
+                               shadowPx, boxW);
             }
             // A button's label takes its colour from the button's state. The
             // colour lives on the parent because that is where the template
@@ -3300,10 +3305,11 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                     textColor = owner->highlightColor;
                 }
             }
-            drawMarkupText(dl, font, size, ImVec2(tx, ty),
+            drawMarkupText(dl, font, size, ws, ImVec2(tx, ty),
                            packColor(textColor, w->effAlpha), w->effAlpha, shown,
-                           wrapW, w->nonSpaceWrap, w->justifyH.c_str(), false,
-                           &tree, w->id, w->alphaGradientStart, w->alphaGradientLength);
+                           wrapW, w->nonSpaceWrap, justify, false,
+                           &tree, w->id, w->alphaGradientStart, w->alphaGradientLength, 0.0f, linePx,
+                           shadowPx, boxW);
         }
     }
 }

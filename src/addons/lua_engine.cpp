@@ -830,14 +830,14 @@ int lua_Region_SetHeight(lua_State* L) {
 /// the alternative was answering nil, and MoneyFrame does
 /// SetWidth(GetTextWidth() + iconWidth) - arithmetic that loses the file.
 float measureTextWidth(const std::string& text, const std::string& fontFace,
-                       float fontHeight, float pixelScale) {
+                       float fontHeight, float pixelScale, float shadowX) {
     // Through the same function the renderer draws with, so a widget sized to
     // its own text gets the width its own text will occupy. Measuring in this
     // client's face at a flat twelve while drawing in the interface's at its
     // real height made every self-sized label narrower than what went in it -
     // MoneyFrame sizes all three coin buttons that way, and the gold, silver
     // and copper ran into one another.
-    return wowee::ui::interfaceTextWidth(text, fontFace, fontHeight, pixelScale);
+    return wowee::ui::interfaceTextWidth(text, fontFace, fontHeight, pixelScale, shadowX);
 }
 
 /// The font string a widget measures: itself if it is one, and otherwise the
@@ -876,7 +876,7 @@ int lua_Region_SetAlphaGradient(lua_State* L) {
 
 int lua_Region_GetTextWidth(lua_State* L) {
     const auto* w = textWidgetOf(L, 1);
-    lua_pushnumber(L, w ? measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale) : 0.0);
+    lua_pushnumber(L, w ? measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale, w->hasShadow ? w->shadowX : 0.0f) : 0.0);
     return 1;
 }
 
@@ -947,17 +947,15 @@ int lua_Region_GetFieldSize(lua_State* L) {
 /// wrapping. A label sized by its own text wraps at nothing and is one line
 /// unless it carries a |n.
 double fontStringTextHeight(const wowee::ui::Widget& w, float pixelScale) {
-    // The size it is actually drawn at, which is what interfaceFontSize
-    // answers. Three places asked this question with three different
-    // fallbacks - twelve here, twelve below, fourteen in the edit box - and a
-    // label with no declared height is drawn at none of them.
-    const float line = wowee::ui::interfaceFontSize(w.fontHeight, pixelScale);
+    // Rows of the whole pixel height it is drawn at, as the original
+    // measures them, with the string's spacing between.
     const float wrapWidth =
         (w.wrapsToWidth || (!w.autoSized && w.width > 0.0f)) ? w.width : 0.0f;
     const int lines = std::max(1, wowee::ui::interfaceTextLines(
                                       w.text, w.fontFace, w.fontHeight,
-                                      wrapWidth, w.nonSpaceWrap, pixelScale));
-    return wowee::ui::textBlockHeight(line, lines);
+                                      wrapWidth, w.nonSpaceWrap, pixelScale,
+                                      w.hasShadow ? w.shadowX : 0.0f));
+    return wowee::ui::interfaceTextBlockHeight(lines, w.fontHeight, w.lineSpacing, pixelScale);
 }
 
 int lua_Region_GetTextHeight(lua_State* L) {
@@ -1004,7 +1002,7 @@ int lua_Region_GetWidth(lua_State* L) {
         // _G[name.."Text"]:GetWidth(), so answering zero made every tab on the
         // character sheet collapse to the width of its two end textures, with
         // the label clipped out of sight inside it.
-        lua_pushnumber(L, measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale));
+        lua_pushnumber(L, measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale, w->hasShadow ? w->shadowX : 0.0f));
         return 1;
     }
     lua_pushnumber(L, w ? (w->rectW > 0.0f ? w->rectW / es : w->width) : 0.0);

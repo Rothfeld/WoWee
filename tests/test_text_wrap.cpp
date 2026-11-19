@@ -249,9 +249,20 @@ TEST_CASE("a box too small for the dots gets the dots", "[wrap][ellipsis]") {
     CHECK(fitWithEllipsis("Anything", 2.0f, charWidth) == "...");
 }
 
-TEST_CASE("text block height includes spacing only between lines", "[text-wrap]") {
-    CHECK(wowee::ui::textBlockHeight(13, 0) == 0);
-    CHECK(wowee::ui::textBlockHeight(13, 1) == 13);
-    CHECK(wowee::ui::textBlockHeight(13, 2) == Catch::Approx(28.6f));
-    CHECK(wowee::ui::textBlockHeight(13, 3) == Catch::Approx(44.2f));
+TEST_CASE("Lines start where 2.4.3 starts them", "[wrap][place]") {
+    using wowee::ui::placeTextLine;
+    using wowee::ui::textOriginY;
+    // White strings on black, FRIZQT 12 on a 720-pixel window (FP_Place in
+    // _experiments/20261119T092759Z.questlog_fonts): "T" (width 7) and "o"
+    // (width 8) in a 60-pixel box at x = 380 and 460.
+    CHECK(placeTextLine(32.0f, 0.0f, 7.0f, 0.0f, "LEFT") == 34.0f);
+    CHECK(placeTextLine(100.5f, 0.0f, 7.0f, 0.0f, "LEFT") == 102.0f);
+    CHECK(placeTextLine(240.75f, 0.0f, 7.0f, 0.0f, "LEFT") == 242.0f);
+    CHECK(placeTextLine(380.0f, 60.0f, 7.0f, 0.0f, "CENTER") == 408.0f);
+    CHECK(placeTextLine(380.0f, 60.0f, 8.0f, 1.0f, "CENTER") == 407.0f);
+    CHECK(placeTextLine(460.0f, 60.0f, 7.0f, 0.0f, "RIGHT") == 514.0f);
+    CHECK(placeTextLine(460.0f, 60.0f, 8.0f, 0.0f, "RIGHT") == 513.0f);
+    CHECK(textOriginY(10.0f) == 10.0f);
+    CHECK(textOriginY(10.25f) == 11.0f);
+    CHECK(textOriginY(10.75f) == 11.0f);
 }

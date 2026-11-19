@@ -1732,9 +1732,46 @@ Gotchas:
 - The tooltip's size is computed during layout, so `GameTooltip:GetWidth()`
   and `GetHeight()` read in the same Lua call as `SetHyperlink` return the
   previous tooltip's size; the original answers immediately.
-- Other FontStrings (labels, quest text, chat) still measure and draw with
-  ImGui's metrics. The bare FontString wrap thresholds in
-  `tests/test_native_text_metrics.cpp` are the measured target for them.
+- Every other FontString, chat line, SimpleHTML page and edit box goes through
+  the same measure; see "Interface text layout" below.
+
+### Interface text layout
+
+```sh
+build/bin/test_text_wrap '[place]'; build/bin/test_interface_text_lines
+```
+
+All interface text (FontString, ScrollingMessageFrame, SimpleHTML, EditBox,
+GameTooltip) is measured, wrapped and drawn by the 2.4.3 rules of
+`ui/native_text_metrics.hpp`: whole-pixel font height, whole-pixel pens,
+rows one pixel height apart. ImGui's own fractional advances drew text about
+7% narrower with 1.2-line leading; the quest log wrapped "as if you" one word
+early and its lines sat 14.5 pixels apart where native has 12. Measured on
+2.4.3 at 0.9375 and 0.5625 pixels per unit (FontProbe addon):
+
+- GetStringWidth adds a right drop shadow, round(x * ppu) pixels, and a wrapped
+  shadowed string has that much less room (`shadowPixels`). Every MasterFont
+  font (GameFontNormal and family) has a (1, -1) shadow, so their labels are
+  one pixel wider than the bare measure; the y offset changes nothing.
+- SetSpacing adds ceil(spacing * ppu) pixels between rows (`spacingPixels`).
+- A line starts at floor(left) + 2 (LEFT), floor(left) + 2 +
+  floor((box - width - shadow) / 2) (CENTER), floor(right) + 1 - width (RIGHT);
+  the box top snaps to the next pixel down (`placeTextLine`, `textOriginY`).
+- Shadows are drawn whole pixels away from the glyphs.
+
+Gotchas:
+
+- Native rasterizes with hinted FreeType; this client uses ImGui's unhinted
+  stb_truetype (no FreeType development files in this environment). Pens and
+  line starts match; glyph ink can be a pixel narrower or a pixel higher/lower
+  than native (stems are blurrier, e.g. FRIZQT "I" two pixels wide).
+- An autosized label anchored by TOP or TOPRIGHT can start one pixel off
+  native: there native's line start depends on the anchor, not only on the box
+  (FP_Place3 data in the experiment below); not modelled.
+- GetStringWidth of a multi-paragraph string can differ by a few pixels
+  (quest description: native 1237, here 1234 = widest paragraph).
+
+Evidence: `_experiments/20261119T092759Z.questlog_fonts/` in the workspace.
 
 ### Quest text reveal
 
@@ -1768,7 +1805,13 @@ Gotchas:
 - Quests under collapsed headers answer at indexes past
   GetNumQuestLogEntries (watch frame, selection). 2.4.3 reorders those hidden
   rows between updates; here they keep header order.
-- Watches persist across relog here (character config); 2.4.3 clears them.
+- Watches do not persist: 2.4.3 starts every session with none, leaves an
+  accepted quest unwatched, and ends a timed watch (AddQuestWatch(i, seconds),
+  the autoQuestWatch watch on objective progress) after its seconds.
+- "[1]" before a quest title is QuestLogTitleNGroupMates: how many party
+  members are on that quest (IsUnitOnQuest). It reads the member's
+  PLAYER_QUEST_LOG quest-id fields, which the server sends only to group
+  members in sight; UNIT_QUEST_LOG_CHANGED("partyN") fires when they change.
 
 Evidence: `_experiments/20261118T2010Z.questlog_audit/` in the workspace root.
 ### $-tokens in server text

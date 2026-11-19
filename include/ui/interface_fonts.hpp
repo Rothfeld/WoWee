@@ -11,7 +11,10 @@
 #include <cstddef>
 #include <string>
 
+#include <vector>
+
 #include "ui/native_text_metrics.hpp"
+#include "ui/text_wrap.hpp"
 
 struct ImFont;
 
@@ -30,6 +33,41 @@ const NativeFace* interfaceNativeFace(const std::string& fontFace);
 /// draws them at. `face` is null when no interface face is registered.
 NativeTextMeasure interfaceTextMeasure(const std::string& fontFace, int pixelHeight);
 
+/// The original client's measure for an interface face, found by the ImFont it
+/// was registered with. `face` is null for a font that is not an interface face.
+NativeTextMeasure interfaceTextMeasure(const ImFont* font, int pixelHeight);
+
+/// The whole pixel height a widget's text is rasterized and laid out at:
+/// floor(fontHeight * pixelsPerUnit + 0.5), after the size limit.
+int interfacePixelHeight(float fontHeight, float pixelScale);
+
+/// How wide an inline |T picture is in a row of `pixelHeight`, in pixels: its
+/// own width, else its height, else the row's height.
+float nativeTextureWidth(const WrapRun& run, int pixelHeight, float pixelScale);
+
+/// The pixels a string's drop shadow adds to its width: round(x * ppu) for
+/// a shadow offset to the right, nothing for one to the left. Measured on
+/// 2.4.3 with SetShadowOffset: GetStringWidth grows by it and a wrapped
+/// string has that much less room; the y offset changes neither.
+int shadowPixels(float shadowX, float pixelScale);
+
+/// A widget's text broken into rows the way the original breaks it.
+/// `wrapWidth` is in interface units, zero for no soft wrapping; `shadowX`
+/// the string's shadow x offset in units (zero without a shadow). Row widths
+/// exclude the shadow. Empty when no interface face is registered.
+std::vector<NativeWrappedLine> interfaceWrap(const std::string& text, const std::string& fontFace,
+                                             float fontHeight, float wrapWidth, bool nonSpaceWrap,
+                                             float pixelScale, float shadowX = 0.0f);
+
+/// The pixels SetSpacing(spacing) puts between two rows: ceil(spacing * ppu).
+/// Measured on 2.4.3 at 0.5625 pixels per unit: spacing 1, 2, 3, 5 gave 1, 2,
+/// 2, 3 pixels; at 0.9375, 2 and 5 gave 2 and 5.
+int spacingPixels(float spacing, float pixelScale);
+
+/// How tall `rows` rows of a widget's text are, in interface units: each row
+/// is the font's pixel height, with spacingPixels between rows.
+float interfaceTextBlockHeight(int rows, float fontHeight, float spacing, float pixelScale);
+
 /// The face for a path a font object named, or null if it was never loaded -
 /// in which case the caller should draw with whatever it was already using.
 ImFont* interfaceFace(const std::string& pathOrName);
@@ -45,8 +83,9 @@ ImFont* interfaceFace(const std::string& pathOrName);
 ///
 /// `fontFace` is the widget's own, `fontHeight` its own point size; zero for
 /// either means the default, which is what the renderer falls back to too.
+/// GetStringWidth: the widest |n line plus the shadow (see shadowPixels).
 float interfaceTextWidth(const std::string& text, const std::string& fontFace,
-                         float fontHeight, float pixelScale = 1.0f);
+                         float fontHeight, float pixelScale = 1.0f, float shadowX = 0.0f);
 
 /// How many lines a piece of text takes when it is drawn.
 ///
@@ -56,7 +95,8 @@ float interfaceTextWidth(const std::string& text, const std::string& fontFace,
 /// sets a string's text and reads its height in the same breath, long before
 /// the next frame is laid out, and the quest tracker sizes every row that way.
 int interfaceTextLines(const std::string& text, const std::string& fontFace,
-                       float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale = 1.0f);
+                       float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale = 1.0f,
+                       float shadowX = 0.0f);
 
 /// The face a widget draws in, resolved the way the renderer resolves it: its
 /// own, then the interface default, then whatever is current.

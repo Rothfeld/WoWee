@@ -152,30 +152,89 @@ float interfaceFontSize(float fontHeight, float pixelScale) {
     return (ImGui::GetCurrentContext() != nullptr) ? ImGui::GetFontSize() : 12.0f;
 }
 
-float interfaceTextWidth(const std::string& text, const std::string& fontFace,
-                         float fontHeight, float pixelScale) {
-    if (text.empty()) return 0.0f;
-    const float size = interfaceFontSize(fontHeight, pixelScale);
-    if (ImFont* font = interfaceFaceOrDefault(fontFace)) {
-        return font->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str()).x;
+NativeTextMeasure interfaceTextMeasure(const ImFont* font, int pixelHeight) {
+    NativeTextMeasure m;
+    m.pixelHeight = pixelHeight;
+    for (const auto& [key, e] : nativeFaces()) {
+        if (e.font != font || !e.face) continue;
+        m.face = e.face.get();
+        m.missingAdvance = &fallbackAdvance;
+        m.missingCtx = e.font;
+        break;
     }
-    // No context yet - during the FrameXML load there may be no frame in
-    // flight to ask. An estimate is far better than nothing: the alternative
-    // is answering zero, and MoneyFrame does SetWidth(GetTextWidth() +
+    return m;
+}
+
+int interfacePixelHeight(float fontHeight, float pixelScale) {
+    return nativePixelHeight(interfaceFontSize(fontHeight, pixelScale), pixelScale);
+}
+
+float nativeTextureWidth(const WrapRun& run, int pixelHeight, float pixelScale) {
+    if (run.texWidth > 0.0f) return run.texWidth * pixelScale;
+    if (run.texHeight > 0.0f) return run.texHeight * pixelScale;
+    return static_cast<float>(pixelHeight);
+}
+
+int spacingPixels(float spacing, float pixelScale) {
+    return spacing > 0.0f ? static_cast<int>(std::ceil(spacing * pixelScale - 1e-4f)) : 0;
+}
+
+int shadowPixels(float shadowX, float pixelScale) {
+    return shadowX > 0.0f ? static_cast<int>(std::lround(shadowX * pixelScale)) : 0;
+}
+
+std::vector<NativeWrappedLine> interfaceWrap(const std::string& text, const std::string& fontFace,
+                                             float fontHeight, float wrapWidth, bool nonSpaceWrap,
+                                             float pixelScale, float shadowX) {
+    const int h = interfacePixelHeight(fontHeight, pixelScale);
+    const NativeTextMeasure m = interfaceTextMeasure(fontFace, h);
+    if (!m.face) return {};
+    const float wrapPx = wrapWidth > 0.0f
+        ? wrapWidth * pixelScale - static_cast<float>(shadowPixels(shadowX, pixelScale)) : 0.0f;
+    return wrapTextNative(parseMarkup(text), wrapPx, nonSpaceWrap, m,
+                          [&](const WrapRun& run) { return nativeTextureWidth(run, h, pixelScale); });
+}
+
+float interfaceTextBlockHeight(int rows, float fontHeight, float spacing, float pixelScale) {
+    if (rows <= 0) return 0.0f;
+    const float h = static_cast<float>(interfacePixelHeight(fontHeight, pixelScale));
+    const float gap = static_cast<float>(spacingPixels(spacing, pixelScale));
+    return (static_cast<float>(rows) * h + static_cast<float>(rows - 1) * gap) / pixelScale;
+}
+
+float interfaceTextWidth(const std::string& text, const std::string& fontFace,
+                         float fontHeight, float pixelScale, float shadowX) {
+    if (text.empty()) return 0.0f;
+    // GetStringWidth: the widest of the |n lines, each measured the way the
+    // original measures it - whole-pixel pens on a whole-pixel font height.
+    if (interfaceNativeFace(fontFace)) {
+        float wide = 0.0f;
+        for (const auto& row : interfaceWrap(text, fontFace, fontHeight, 0.0f, false, pixelScale))
+            wide = std::max(wide, row.width);
+        return (wide + static_cast<float>(shadowPixels(shadowX, pixelScale))) / pixelScale;
+    }
+    // No interface face registered - a headless run, or before the faces are
+    // loaded. An estimate is far better than nothing: the alternative is
+    // answering zero, and MoneyFrame does SetWidth(GetTextWidth() +
     // iconWidth), which then places three buttons on top of each other.
+    const float size = interfaceFontSize(fontHeight, pixelScale);
     return static_cast<float>(text.size()) * size * 0.5f;
 }
 
 int interfaceTextLines(const std::string& text, const std::string& fontFace,
-                       float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale) {
+                       float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale,
+                       float shadowX) {
     if (text.empty()) return 0;
+    if (interfaceNativeFace(fontFace)) {
+        const auto rows = interfaceWrap(text, fontFace, fontHeight, wrapWidth, nonSpaceWrap, pixelScale,
+                                        shadowX);
+        return rows.empty() ? 1 : static_cast<int>(rows.size());
+    }
+    // The same estimate interfaceTextWidth answers without a face, so a
+    // measure taken during the load does not answer that everything fits on
+    // one line.
     const float size = interfaceFontSize(fontHeight, pixelScale);
-    ImFont* font = interfaceFaceOrDefault(fontFace);
     const auto measure = [&](const std::string& piece) {
-        if (font) return font->CalcTextSizeA(size, FLT_MAX, 0.0f, piece.c_str()).x;
-        // The same estimate interfaceTextWidth falls back on when there is no
-        // context yet, so a measure taken during the load does not answer that
-        // everything fits on one line.
         return static_cast<float>(piece.size()) * size * 0.5f;
     };
     const auto lines = wrapText(parseMarkup(text), wrapWidth, nonSpaceWrap, measure);
