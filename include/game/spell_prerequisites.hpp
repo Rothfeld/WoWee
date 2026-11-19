@@ -3,7 +3,10 @@
 namespace wowee::game {
 class GameHandler;
 struct ActionBarSlot;
-enum class SpellPrerequisite { Ready, Unknown, Passive, NoPower, NoComboPoints, Stealth, Combat, Dead };
+/// FormRefused: the player's form is in the spell's StancesNot. Native 2.4.3
+/// refuses Flash Heal in Shadowform itself: UNIT_SPELLCAST_FAILED, no
+/// UNIT_SPELLCAST_SENT, no error line.
+enum class SpellPrerequisite { Ready, Unknown, Passive, NoPower, NoComboPoints, Stealth, Combat, Dead, FormRefused };
 SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64_t target);
 
 /// IsUsableAction / IsUsableSpell: whether the spell could be cast now, and

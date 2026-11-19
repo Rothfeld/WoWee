@@ -1231,6 +1231,8 @@ SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64
     if (entry.attr & 0x40u) return SpellPrerequisite::Passive;
     if (owner.isPlayerDead() && !(entry.attr & 0x800000u)) return SpellPrerequisite::Dead;
     if ((entry.attr & 0x10000000u) && owner.isInCombat()) return SpellPrerequisite::Combat;
+    if (const uint8_t form = owner.getShapeshiftFormId(); form != 0 && (entry.stancesNot & (1u << (form - 1))))
+        return SpellPrerequisite::FormRefused;
     if (entry.attr & 0x20000u) {
         bool stealthed = false;
         for (const auto& aura : owner.getPlayerAuras()) {
@@ -1500,6 +1502,9 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             return;
         case SpellPrerequisite::Passive:
             LOG_DEBUG("Ignoring cast request for passive spell ", spellId);
+            return;
+        case SpellPrerequisite::FormRefused:
+            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             return;
         case SpellPrerequisite::Stealth:
             // Sent, and the server answers. Original 2.4.3, Cheap Shot out of
