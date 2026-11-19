@@ -1429,7 +1429,7 @@ struct Emitter {
             if (const std::string* file = bar->attr("file")) {
                 line(var + ":SetStatusBarTexture(" + quote(*file) + ")");
             }
-            line(var + ".__barTexture = " + fill);
+            line("__WoweePriv(" + var + ").__barTexture = " + fill);
             line("__WoweeLinkBarFill(" + var + ", " + fill + ")");
         }
         if (const XmlNode* col = node.child("BarColor")) {

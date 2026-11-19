@@ -550,6 +550,9 @@ struct Widget {
     int   messageScroll = 0;
     /// EditBox:SetAltArrowKeyMode - arrows move the cursor only with Alt held.
     bool  altArrowKeyMode = false;
+    /// Texture:SetTexCoordModifiesRect. Stored for its getter; SetTexCoord
+    /// does not resize the region here.
+    bool  texCoordModifiesRect = false;
 
     /// A tooltip holds lines the same way, but draws them from the top and
     /// sizes itself to fit them - which is the part a chat frame does not do,

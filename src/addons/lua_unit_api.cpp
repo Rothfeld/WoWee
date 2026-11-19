@@ -1350,6 +1350,20 @@ static int lua_PetCanBeAbandoned(lua_State* L) {
     return 1;
 }
 
+/// UnitIsFeignDeath(unit) -> 1 while the unit feigns death
+/// (UNIT_FLAG2_FEIGN_DEATH), else nil. A 2.4.3 global; LibDogTag-Unit-3.0
+/// registers its IsFeignedDeath tag with it while loading.
+static int lua_UnitIsFeignDeath(lua_State* L) {
+    constexpr uint32_t UNIT_FLAG2_FEIGN_DEATH = 0x1;
+    const auto* unit = resolveUnit(L, luaL_optstring(L, 1, "player"));
+    const uint16_t flags2 = game::fieldIndex(game::UF::UNIT_FIELD_FLAGS_2);
+    if (unit && flags2 != 0xFFFF && (unit->getField(flags2) & UNIT_FLAG2_FEIGN_DEATH) != 0)
+        lua_pushnumber(L, 1);
+    else
+        lua_pushnil(L);
+    return 1;
+}
+
 static int lua_InCombatLockdown(lua_State* L) {
     auto* gh = getGameHandler(L);
     lua_pushboolean(L, gh && gh->isInCombat());
@@ -3239,6 +3253,7 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"UnitIsPlayer",      lua_UnitIsPlayer},
                 {"UnitPVPName",       lua_UnitPVPName},
                 {"InCombatLockdown",  lua_InCombatLockdown},
+                {"UnitIsFeignDeath",  lua_UnitIsFeignDeath},
                 {"UnitDistanceSquared", lua_UnitDistanceSquared},
                 {"CheckInteractDistance", lua_CheckInteractDistance},
                 {"UnitInRange",           lua_UnitInRange},

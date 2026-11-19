@@ -407,6 +407,63 @@ void setWidgetHandle(lua_State* L, uint32_t id) {
     lua_rawseti(L, -2, 0);
 }
 
+/// What this client keeps about a frame that is not the addon's to see.
+///
+/// A 2.4.3 frame's table holds [0] and whatever the addon put there. Frame
+/// references kept as fields of it (parent, tooltip owner, a button's font
+/// string, a bar's fill, a scroll child) showed up in pairs(frame): PitBull's
+/// layout walks every field of a unit frame and resets each one that is a
+/// frame - ClearAllPoints, SetWidth(0), SetHeight(0) - and so collapsed
+/// UIParent, taking the whole interface off screen. They live in a table
+/// keyed weakly by the frame instead; __WoweePriv(frame) hands it to Lua.
+static int framePrivateAbs(lua_State* L, int index) {
+    return index > 0 || index <= LUA_REGISTRYINDEX ? index : lua_gettop(L) + index + 1;
+}
+static void pushFramePrivate(lua_State* L, int index) {
+    index = framePrivateAbs(L, index);
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_frame_private");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_newtable(L);
+        lua_pushstring(L, "k");
+        lua_setfield(L, -2, "__mode");
+        lua_setmetatable(L, -2);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, "wowee_frame_private");
+    }
+    lua_pushvalue(L, index);
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, index);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
+    }
+    lua_remove(L, -2);
+}
+/// Push the frame's private `key`.
+void privGetField(lua_State* L, int index, const char* key) {
+    index = framePrivateAbs(L, index);
+    pushFramePrivate(L, index);
+    lua_getfield(L, -1, key);
+    lua_remove(L, -2);
+}
+/// Pop the value on top into the frame's private `key`.
+void privSetField(lua_State* L, int index, const char* key) {
+    index = framePrivateAbs(L, index);
+    pushFramePrivate(L, index);
+    lua_insert(L, -2);
+    lua_setfield(L, -2, key);
+    lua_pop(L, 1);
+}
+static int lua_WoweePriv(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    pushFramePrivate(L, 1);
+    return 1;
+}
+
 uint32_t widgetIdOf(lua_State* L, int index) {
     if (!lua_istable(L, index)) return 0;
     lua_getfield(L, index, "__wid");
@@ -912,7 +969,7 @@ const wowee::ui::Widget* textWidgetOf(lua_State* L, int index) {
     if (!w || w->kind == wowee::ui::WidgetKind::FontString) return w;
     auto* tree = wowee::addons::getWidgetTree(L);
     if (!tree) return w;
-    lua_getfield(L, index, "__fontString");
+    privGetField(L, index, "__fontString");
     const wowee::ui::Widget* fs =
         lua_istable(L, -1) ? tree->get(widgetIdOf(L, lua_gettop(L))) : nullptr;
     lua_pop(L, 1);
@@ -1154,7 +1211,7 @@ static int lua_Region_SetParent(lua_State* L) {
     }
     if (!lua_istable(L, 2) && !lua_isnil(L, 2)) return 0;
     lua_pushvalue(L, 2);
-    lua_setfield(L, 1, "__parent");
+    privSetField(L, 1, "__parent");
     // And the widget, which is what everything inherited actually follows.
     // Writing only the field left GetParent answering the new parent while the
     // frame stayed laid out, clipped and shown by the old one.
@@ -1168,7 +1225,7 @@ static int lua_Region_SetParent(lua_State* L) {
 
 static int lua_Region_GetParent(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
-    lua_getfield(L, 1, "__parent");
+    privGetField(L, 1, "__parent");
     return 1;
 }
 
@@ -1408,7 +1465,7 @@ int lua_ScrollFrame_SetScrollChild(lua_State* L) {
     // Kept on the table too, because GetScrollChild hands the frame itself
     // back and that is what the caller passed in.
     lua_pushvalue(L, 2);
-    lua_setfield(L, 1, "__scrollChild");
+    privSetField(L, 1, "__scrollChild");
     return 0;
 }
 
@@ -2063,7 +2120,7 @@ int lua_Tooltip_SetOwner(lua_State* L) {
     // FrameXML hides a tooltip on OnLeave only when it owns it, which is what
     // stops one panel's tooltip being cleared by another's cursor.
     lua_pushvalue(L, 2);
-    lua_setfield(L, 1, "__owner");
+    privSetField(L, 1, "__owner");
 
     const uint32_t owner = lua_istable(L, 2) ? widgetIdOf(L, 2) : 0;
     // So the tooltip can be taken away with the frame it describes, whether or
@@ -4607,7 +4664,7 @@ int lua_Region_Hide(lua_State* L) {
         // off at the tooltip update rate as the two fought.
         if (w->isTooltip) {
             lua_pushnil(L);
-            lua_setfield(L, 1, "__owner");
+            privSetField(L, 1, "__owner");
         }
         w->shown = false;
     }
@@ -4685,6 +4742,12 @@ int lua_Texture_SetTexture(lua_State* L) {
         w->solidTexel[1] = unit(luaL_optnumber(L, 3, 0.0));
         w->solidTexel[2] = unit(luaL_optnumber(L, 4, 0.0));
         w->solidTexel[3] = unit(luaL_optnumber(L, 5, 1.0));
+    } else if (lua_istable(L, 2)) {
+        // Another texture object: build 8606 takes it without complaint and
+        // GetTexture answers nil afterwards (Gatherer passes its blank
+        // texture this way), so it clears the texture.
+        w->solidColor = false;
+        w->texturePath.clear();
     } else {
         w->solidColor = false;
         w->texturePath = luaL_optstring(L, 2, "");
@@ -4703,6 +4766,19 @@ int lua_Texture_GetTexture(lua_State* L) {
     lua_pushstring(L, w ? w->texturePath.c_str() : "");
     return 1;
 }
+/// SetTexCoordModifiesRect(flag) / GetTexCoordModifiesRect(): both on 2.4.3
+/// textures (the getter answers nil by default). PitBull sets it on its
+/// portrait and bar textures. Only the flag is kept; see widget_tree.hpp.
+int lua_Texture_SetTexCoordModifiesRect(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) w->texCoordModifiesRect = lua_toboolean(L, 2) != 0;
+    return 0;
+}
+int lua_Texture_GetTexCoordModifiesRect(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (w && w->texCoordModifiesRect) lua_pushnumber(L, 1); else lua_pushnil(L);
+    return 1;
+}
+
 int lua_Texture_SetTexCoord(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) {
         // Eight numbers is the rotated form: a UV per corner, in WoW's order
@@ -4996,7 +5072,7 @@ int lua_FontString_GetTextColor(lua_State* L) {
     wowee::ui::Widget* w = widgetOf(L, 1);
     // A button colours the label it holds, exactly as the setter does.
     if (w && w->kind != wowee::ui::WidgetKind::FontString && tree) {
-        lua_getfield(L, 1, "__fontString");
+        privGetField(L, 1, "__fontString");
         if (lua_istable(L, -1)) {
             if (auto* fs = tree->get(widgetIdOf(L, lua_gettop(L)))) w = fs;
         }
@@ -5029,7 +5105,7 @@ int lua_FontString_SetTextColor(lua_State* L) {
     auto* tree = wowee::addons::getWidgetTree(L);
     wowee::ui::Widget* w = widgetOf(L, 1);
     if (w && w->kind != wowee::ui::WidgetKind::FontString && tree) {
-        lua_getfield(L, 1, "__fontString");
+        privGetField(L, 1, "__fontString");
         if (lua_istable(L, -1)) {
             if (auto* fs = tree->get(widgetIdOf(L, lua_gettop(L)))) w = fs;
         }
@@ -5223,7 +5299,7 @@ int lua_FontString_SetFontObject(lua_State* L) {
     auto* tree = wowee::addons::getWidgetTree(L);
     wowee::ui::Widget* w = widgetOf(L, 1);
     if (w && w->kind != wowee::ui::WidgetKind::FontString && tree) {
-        lua_getfield(L, 1, "__fontString");
+        privGetField(L, 1, "__fontString");
         if (lua_istable(L, -1)) {
             if (auto* fs = tree->get(widgetIdOf(L, lua_gettop(L)))) w = fs;
         }
@@ -5298,7 +5374,7 @@ int lua_Frame_SetNormalFontObject(lua_State* L) {
     // settings were applied to the button, the label arrived afterwards with
     // none of them, and a button that asked for GameFontNormalLeft drew its
     // text centred at the default size.
-    lua_getfield(L, 1, "__fontString");
+    privGetField(L, 1, "__fontString");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         lua_getfield(L, 1, "GetFontString");
@@ -5426,6 +5502,8 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
         set("SetTexture", lua_Texture_SetTexture);
         set("GetTexture", lua_Texture_GetTexture);
         set("SetTexCoord", lua_Texture_SetTexCoord);
+        set("SetTexCoordModifiesRect", lua_Texture_SetTexCoordModifiesRect);
+        set("GetTexCoordModifiesRect", lua_Texture_GetTexCoordModifiesRect);
         set("SetBlendMode", lua_Texture_SetBlendMode);
         set("SetDesaturated", lua_Texture_SetDesaturated);
         set("GetBlendMode", lua_Texture_GetBlendMode);
@@ -6626,7 +6704,7 @@ static int lua_Frame_CreateTexture(lua_State* L) {
     // and a region asking its owner for a size or a frame level is an ordinary
     // shape in FrameXML.
     lua_pushvalue(L, 1);
-    lua_setfield(L, -2, "__parent");
+    privSetField(L, -2, "__parent");
     installRegionMethods(L, /*isTexture=*/true, /*isFontString=*/false);
     if (name && *name) {
         lua_pushvalue(L, -1);
@@ -6660,7 +6738,7 @@ static int lua_Frame_CreateFontString(lua_State* L) {
     // and a region asking its owner for a size or a frame level is an ordinary
     // shape in FrameXML.
     lua_pushvalue(L, 1);
-    lua_setfield(L, -2, "__parent");
+    privSetField(L, -2, "__parent");
     lua_pushstring(L, "");
     lua_setfield(L, -2, "_text");
     installRegionMethods(L, /*isTexture=*/false, /*isFontString=*/true);
@@ -6799,7 +6877,7 @@ static int lua_CreateFrame(lua_State* L) {
     // divided by zero.
     if (lua_istable(L, 3)) {
         lua_pushvalue(L, 3);
-        lua_setfield(L, -2, "__parent");
+        privSetField(L, -2, "__parent");
     } else if (lua_gettop(L) >= 3 && lua_isnil(L, 3) && !lua_isstring(L, 3)) {
         // An explicit nil is a frame with no parent, which is a real thing in
         // WoW and the only way anything survives UIParent:Hide(). GetParent()
@@ -6809,7 +6887,7 @@ static int lua_CreateFrame(lua_State* L) {
         // what an addon means by omitting it.
         if (lua_isstring(L, 3)) lua_getglobal(L, lua_tostring(L, 3));
         else lua_getglobal(L, "UIParent");
-        if (lua_istable(L, -1)) lua_setfield(L, -2, "__parent");
+        if (lua_istable(L, -1)) privSetField(L, -2, "__parent");
         else lua_pop(L, 1);
     }
 
@@ -7281,6 +7359,9 @@ void LuaEngine::registerCoreAPI() {
 
     lua_pushcfunction(L_, lua_EnumerateFrames);
     lua_setglobal(L_, "EnumerateFrames");
+
+    lua_pushcfunction(L_, lua_WoweePriv);
+    lua_setglobal(L_, "__WoweePriv");
 
     lua_pushcfunction(L_, lua_WoweeCallScript);
     lua_setglobal(L_, "__WoweeCallScript");
@@ -8293,8 +8374,8 @@ void LuaEngine::registerCoreAPI() {
         // FrameXML concatenates into a name without checking.
         "function mt:SetID(id) self.__id = id end\n"
         "function mt:GetID() return self.__id or 0 end\n"
-        "function mt:GetScrollChild() return self.__scrollChild end\n"
-        "function mt:SetFontString(fs) self.__fontString = fs end\n"
+        "function mt:GetScrollChild() return __WoweePriv(self).__scrollChild end\n"
+        "function mt:SetFontString(fs) __WoweePriv(self).__fontString = fs end\n"
         // Made on demand when a button is asked for one it has not been
         // given. Every button has a font string in the real client, and
         // FrameXML assumes it: FCF_SetTabColor does
@@ -8313,17 +8394,17 @@ void LuaEngine::registerCoreAPI() {
         // drive the fill, which is drawn from the path - an honest stand-in
         // rather than a working one, and it is the raise that was the bug.
         "function mt:GetStatusBarTexture()\n"
-        "    if not self.__barTexture then\n"
-        "        self.__barTexture = self:CreateTexture(nil, 'ARTWORK')\n"
-        "        __WoweeLinkBarFill(self, self.__barTexture)\n"
+        "    if not __WoweePriv(self).__barTexture then\n"
+        "        __WoweePriv(self).__barTexture = self:CreateTexture(nil, 'ARTWORK')\n"
+        "        __WoweeLinkBarFill(self, __WoweePriv(self).__barTexture)\n"
         "    end\n"
-        "    return self.__barTexture\n"
+        "    return __WoweePriv(self).__barTexture\n"
         "end\n"
         "function mt:GetFontString()\n"
-        "    if not self.__fontString then\n"
-        "        self.__fontString = self:CreateFontString(nil, 'OVERLAY')\n"
+        "    if not __WoweePriv(self).__fontString then\n"
+        "        __WoweePriv(self).__fontString = self:CreateFontString(nil, 'OVERLAY')\n"
         "    end\n"
-        "    return self.__fontString\n"
+        "    return __WoweePriv(self).__fontString\n"
         "end\n"
         // A button's text is its font string's text; keeping them apart means
         // SetText on the button quietly does nothing, which is how a bar full
@@ -8377,22 +8458,22 @@ void LuaEngine::registerCoreAPI() {
         // Only for a button. A plain frame's SetText is a value it keeps, and
         // giving every frame a font string would draw labels nothing asked
         // for.
-        "    if not self.__fontString and self.IsObjectType\n"
+        "    if not __WoweePriv(self).__fontString and self.IsObjectType\n"
         "       and self:IsObjectType('Button') then\n"
         "        self:GetFontString()\n"
-        "        if self.__fontString then\n"
-        "            self.__fontString:SetPoint('CENTER')\n"
+        "        if __WoweePriv(self).__fontString then\n"
+        "            __WoweePriv(self).__fontString:SetPoint('CENTER')\n"
         "            local f = self.GetNormalFontObject and self:GetNormalFontObject()\n"
-        "            if f and self.__fontString.SetFontObject then\n"
-        "                self.__fontString:SetFontObject(f)\n"
+        "            if f and __WoweePriv(self).__fontString.SetFontObject then\n"
+        "                __WoweePriv(self).__fontString:SetFontObject(f)\n"
         "            end\n"
         "        end\n"
         "    end\n"
-        "    if self.__fontString then self.__fontString:SetText(text) end\n"
+        "    if __WoweePriv(self).__fontString then __WoweePriv(self).__fontString:SetText(text) end\n"
         "end\n"
         "function mt:GetText()\n"
         "    if self.__isEditBox then return __WoweeEditGetText(self) end\n"
-        "    if self.__fontString then return self.__fontString:GetText() end\n"
+        "    if __WoweePriv(self).__fontString then return __WoweePriv(self).__fontString:GetText() end\n"
         "    if self.__text == '' then return nil end\n"
         "    return self.__text\n"
         "end\n"
@@ -9330,9 +9411,9 @@ void LuaEngine::registerCoreAPI() {
         // Keeping the owner SetOwner just gave it: Hide forgets an owner, and
         // GameTooltip_ShowCompareItem calls SetOwner(GameTooltip) right before
         // this - native ShoppingTooltip1:GetOwner() answers GameTooltip.
-        "    local owner = rawget(self, '__owner')\n"
+        "    local owner = __WoweePriv(self).__owner\n"
         "    self:Hide()\n"
-        "    rawset(self, '__owner', owner)\n"
+        "    __WoweePriv(self).__owner = owner\n"
         "    if not link then return __cmpNo('no link given') end\n"
         // What the tooltip believes it is showing, said once per item. The
         // comparison is only ever as right as this: GameTooltip_ShowCompareItem
@@ -10006,8 +10087,8 @@ void LuaEngine::registerCoreAPI() {
         // from the no-op list at the same time, nothing answered IsOwned at
         // all. FrameXML calls it from CursorOnUpdate, so it raised every frame
         // until the device went down.
-        "function __WoweeFrameMT:GetOwner() return rawget(self, '__owner') end\n"
-        "function __WoweeFrameMT:IsOwned(f) return rawget(self, '__owner') == f end\n"
+        "function __WoweeFrameMT:GetOwner() return __WoweePriv(self).__owner end\n"
+        "function __WoweeFrameMT:IsOwned(f) return __WoweePriv(self).__owner == f end\n"
         // ShoppingTooltip: used by comparison tooltips
         "ShoppingTooltip1 = CreateFrame('Frame', 'ShoppingTooltip1')\n"
         "ShoppingTooltip2 = CreateFrame('Frame', 'ShoppingTooltip2')\n"
