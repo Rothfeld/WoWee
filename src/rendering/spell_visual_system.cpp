@@ -1329,6 +1329,15 @@ void SpellVisualSystem::placeSpellMissile(const SpellMissile& missile, float t) 
         rotation.y = -std::asin(std::clamp(dir.z, -1.0f, 1.0f));
     }
     m2Renderer_->setInstanceTransform(missile.instanceId, placementModelMatrix(pos, rotation, missile.scale));
+    // The model's sequence plays once over the flight, whatever its length.
+    // Arcane_Missile_Lvl3.m2 (Darkmaster Gandling's Arcane Missiles 15791,
+    // speed 20) spreads its three missiles to a third of its 1 s Stand and
+    // brings them together at its end. Build 8606, Ras casting 15791: at
+    // 7.3 yd (0.36 s) three trails part and meet at the target's chest; at
+    // 16 yd (0.81 s) they part wider and meet at the target too. Played at
+    // the clock, the first landed at full spread, 2.5 yd apart, and a melee
+    // range one barely parted.
+    m2Renderer_->setInstanceAnimationProgress(missile.instanceId, t);
 }
 
 void SpellVisualSystem::playPhysicalProjectile(const std::string& modelPath,
@@ -1472,10 +1481,19 @@ void SpellVisualSystem::update(float deltaTime) {
     std::vector<std::pair<uint32_t, glm::vec3>> areaArrivals;
     for (auto it = spellMissiles_.begin(); it != spellMissiles_.end(); ) {
         it->elapsed += deltaTime;
-        if (it->elapsed >= it->duration) {
-            if (it->instanceId) m2Renderer_->removeInstance(it->instanceId);
+        // A missile is drawn from the hand at its release even when its landing
+        // time has already passed; it then crosses in the next frame. Native
+        // Frostbolt Volley 8398 from Ras Frostwhisper (release 0.37 s, speed 28):
+        // at 6.8 yd (landing 0.24 s) the bolt shows near the target with its
+        // trail back to the hand in one frame, at 7.8 yd it crosses in about
+        // 0.1 s, at 15.7 yd it flies from the release to SPELL_GO + distance /
+        // speed. Dropped before launch, a close target saw nothing at all.
+        // It lands the frame after it was drawn at the end, and its trail
+        // lives out where it lies.
+        if (it->landed) {
             if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
             if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
+            m2Renderer_->retireMissileInstance(it->instanceId);
             it = spellMissiles_.erase(it);
             continue;
         }
@@ -1493,9 +1511,14 @@ void SpellVisualSystem::update(float deltaTime) {
                 continue;
             }
             m2Renderer_->setInstanceIsSpellVisual(it->instanceId);
-            m2Renderer_->restartInstanceAnimation(it->instanceId);
+            placeSpellMissile(*it, 0.0f);
+            ++it;
+            continue;
         }
-        placeSpellMissile(*it, (it->elapsed - it->launchAt) / (it->duration - it->launchAt));
+        const float flight = it->duration - it->launchAt;
+        const float t = flight > 0.0f ? std::min(1.0f, (it->elapsed - it->launchAt) / flight) : 1.0f;
+        placeSpellMissile(*it, t);
+        it->landed = t >= 1.0f;
         ++it;
     }
     for (const auto& [visualId, pos] : arrivals)

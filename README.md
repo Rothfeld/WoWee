@@ -2655,9 +2655,34 @@ flight at 4 s, so on a 187 yd Hyjal relay the column was gone 9 s before the
 infernal arrived. Same rule: Infernal Rain 32785/33814, Hellfire's Infernal
 33240/35431 (kit 9320, scale 5), engineering grenades (Iron Grenade 4068,
 Bomb_ExplosionA). Open: native's area impact starts about 0.4 s after the
-missile lands (infernal and Iron Grenade alike), WoWee's at the landing; the
-native ball's particles linger after it lands, WoWee removes them with the
-ball. Evidence: `_experiments/20261118T221323.261150Z.infernal_landing/`.
+missile lands (infernal and Iron Grenade alike), WoWee's at the landing.
+Evidence: `_experiments/20261118T221323.261150Z.infernal_landing/`.
+
+A missile leaves the caster at the release event of its cast animation and
+lands at SPELL_GO + distance / speed; when that landing has already passed at
+the release, it is drawn at the hand and crosses to the target in the next
+frame. It lands the frame after it was drawn at the target: its mesh goes, its
+emitters stop, and its trail (ribbon edges, a first one laid at the hand and a
+last one at the target) and its particles live out their lifetimes where they
+are (`M2Renderer::retireMissileInstance`). The missile model's sequence plays
+once over the flight, posed at the flown fraction of its length. Build 8606,
+Ras Frostwhisper (display 7919, release 0.37 s) casting Frostbolt Volley 8398
+(speed 28, Frostbolt.m2, ribbon edge lifetime 0.5 s) at one target, side view
+at 30 Hz: at 15.7 yd the bolt leaves at the release and reaches the target
+0.70 s after SPELL_GO (WoWee 0.57 s); at 7.8 yd it crosses in about 0.1 s,
+at 6.8 yd it shows near the target with its straight trail back to the hand
+in one frame; the trail stays 0.3-0.4 s after the bolt is gone. WoWee dropped
+any missile whose landing came before its release, so the volley at melee
+range showed nothing but impacts. Ras casting Darkmaster Gandling's Arcane
+Missiles 15791 (speed 20, Arcane_Missile_Lvl3.m2: three missiles that part
+to a third of its 1 s Stand and meet at its end): native's three trails part
+and meet at the target's chest at 7.3 yd (0.36 s) and 16 yd (0.81 s). Played
+by the clock, WoWee's landed 2.5 yd apart at 7.3 yd and barely parted at
+melee range. Evidence: `_experiments/20261119T1315Z.ras_frostbolt_volley/`
+(sd4n/sd8n/sd15n.jpg Frostbolt, fa4n.jpg and top20n.jpg Arcane Missiles;
+native left/`n`, WoWee `w`). Open: native's 15.7 yd landing is 0.13 s later
+than WoWee's, not separated from capture latency; the Frostbolt impact at
+6.8 yd showed about 0.24 s after the bolt in native.
 
 Breath (17) and Special (23-25) slot effects take their attachment bone's
 full orientation every frame, so a breath follows the head through the cast
@@ -2732,8 +2757,8 @@ paired capture). Aura removal without Decay is the same: `.unaura` of
 Blazerunner's Aura 13913 (CycloneWater_State) leaves the smoke for about
 0.8 s. Of the TBC kit
 models, 316 cast-kit, 136 impact-kit and 188 channel-kit uses are still
-emitting at the end of their Stand. Not compared: missile models at impact
-(still removed at once), the drain of a unit's effects when the unit leaves.
+emitting at the end of their Stand. Not compared: the drain of a unit's
+effects when the unit leaves.
 Evidence: `_experiments/20261118T211000Z.azurous/` in the workspace.
 
 An interrupted or failed cast (`SMSG_SPELL_FAILURE`, any caster) ends that

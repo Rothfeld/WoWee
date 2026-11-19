@@ -21,6 +21,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
+#include <cassert>
 #include <set>
 #include <cmath>
 #include <limits>
@@ -133,6 +134,15 @@ void M2Renderer::setInstanceAnimationFrozen(uint32_t instanceId, bool frozen) {
     if (frozen) {
         inst.animTime = 0.0f;  // Reset to bind pose
     }
+}
+
+void M2Renderer::setInstanceAnimationProgress(uint32_t instanceId, float fraction) {
+    auto& inst = instances.at(instanceIndexById.at(instanceId));
+    assert(std::isfinite(fraction));
+    inst.animSpeed = 0.0f;
+    inst.holdAtEnd = false;
+    // Just short of the end: reaching it wraps a looping sequence to its start.
+    inst.animTime = std::max(0.0f, std::clamp(fraction, 0.0f, 1.0f) * inst.animDuration - 0.5f);
 }
 
 void M2Renderer::restartInstanceAnimation(uint32_t instanceId) {
@@ -375,6 +385,22 @@ void M2Renderer::retireInstance(uint32_t instanceId) {
     inst.retiring = true;
     inst.ribbonEdges.clear();
     inst.ribbonEdgeAccumulators.clear();
+}
+
+void M2Renderer::retireMissileInstance(uint32_t instanceId) {
+    auto& inst = instances.at(instanceIndexById.at(instanceId));
+    // Ribbons age in the particle pass, which only visits models with emitters.
+    if (inst.cachedHasParticleEmitters && inst.cachedModel && !inst.cachedModel->ribbonEmitters.empty())
+        updateRibbons(inst, *inst.cachedModel, 0.0f, /*emit=*/false, /*finalEdge=*/true);
+    const bool trail = inst.cachedHasParticleEmitters &&
+        std::any_of(inst.ribbonEdges.begin(), inst.ribbonEdges.end(),
+                    [](const auto& edges) { return edges.size() >= 2; });
+    if (inst.particles.empty() && !trail) {
+        removeInstance(instanceId);
+        return;
+    }
+    inst.retiring = true;
+    inst.ribbonsLiveOut = true;
 }
 
 void M2Renderer::removeInstance(uint32_t instanceId) {

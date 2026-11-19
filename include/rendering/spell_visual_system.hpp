@@ -174,7 +174,8 @@ public:
     // Missile of the visual from start to end. It lands distance / speed
     // seconds from now (Spell.dbc Speed, yards a second) and leaves the caster
     // launchDelay seconds from now, flying whatever speed that leaves. A delay
-    // at or past the landing time draws no flight. With impactAtEnd the impact
+    // at or past the landing time draws it at the hand, then at the target in
+    // the next frame. With impactAtEnd the impact
     // kit plays at the landing instead of when the server reports the hit.
     // False when nothing was scheduled.
     // areaImpactAtEnd: a missile to a ground point plays the visual's
@@ -252,6 +253,7 @@ private:
         bool impactAtEnd = false;
         float scale = 1.0f;          // SpellVisualEffectName.Scale of the missile model
         bool areaImpactAtEnd = false;
+        bool landed = false;         // drawn at its end; lands next frame
     };
 
     void loadSpellVisualDbc();

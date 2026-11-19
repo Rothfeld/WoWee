@@ -305,7 +305,7 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
 // ---------------------------------------------------------------------------
 // Ribbon emitter simulation
 // ---------------------------------------------------------------------------
-void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt) {
+void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt, bool emit, bool finalEdge) {
 
     const auto& emitters = gpu.ribbonEmitters;
     if (emitters.empty()) return;
@@ -369,9 +369,14 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
             edges.pop_front();
         }
 
-        // Emit new edges based on edgesPerSecond
-        if (visibility > 0.5f) {
-            accum += em.edgesPerSecond * dt;
+        // Emit new edges based on edgesPerSecond. A trail starts where its
+        // emitter is when it turns on and, ending, reaches where the emitter
+        // stopped: native Frostbolt and Arcane Missile trails run from the
+        // casting hand to the target, also when the bolt crosses the gap in a
+        // frame or two (Frostbolt Volley 8398 at 6.8 and 7.8 yd).
+        if ((emit || finalEdge) && visibility > 0.5f) {
+            accum += emit ? em.edgesPerSecond * dt : 0.0f;
+            if (edges.empty() || finalEdge) accum = std::max(accum, 1.0f);
             while (accum >= 1.0f) {
                 accum -= 1.0f;
                 M2Instance::RibbonEdge e;

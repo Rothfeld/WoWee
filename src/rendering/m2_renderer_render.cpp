@@ -737,7 +737,12 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         }
         updateParticles(instance, deltaTime);
         if (instance.retiring) {
-            if (instance.particles.empty()) retiredInstanceIds_.push_back(instance.id);
+            bool trail = false;
+            if (instance.ribbonsLiveOut && !instance.cachedModel->ribbonEmitters.empty()) {
+                updateRibbons(instance, *instance.cachedModel, deltaTime, /*emit=*/false);
+                for (const auto& edges : instance.ribbonEdges) trail |= edges.size() >= 2;
+            }
+            if (instance.particles.empty() && !trail) retiredInstanceIds_.push_back(instance.id);
             continue;
         }
         emitParticles(instance, *instance.cachedModel, deltaTime);

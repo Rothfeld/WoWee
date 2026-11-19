@@ -312,6 +312,8 @@ struct M2Instance {
     /// no particle is born, and the particles alive finish their lives; the
     /// instance is removed with the last of them.
     bool retiring = false;
+    /// Retiring with its ribbon edges aging out instead of cleared (a landed missile's trail).
+    bool ribbonsLiveOut = false;
 
     // Particle emitter state
     std::vector<float> emitterAccumulators;  // fractional particle counter per emitter
@@ -600,6 +602,10 @@ public:
 
     void setInstanceTransform(uint32_t instanceId, const glm::mat4& transform);
     void setInstanceAnimationFrozen(uint32_t instanceId, bool frozen);
+    /// Pose the current sequence at a fraction (0-1) of its length and hold it
+    /// there; the clock no longer advances it. A spell missile's sequence runs
+    /// once over its flight (SpellVisualSystem::placeSpellMissile).
+    void setInstanceAnimationProgress(uint32_t instanceId, float fraction);
     /// Play from the first frame, with bones to match.
     ///
     /// New instances start at a random point so placed doodads don't animate
@@ -705,6 +711,13 @@ public:
     /// the hand lightning are gone in the next frame, the smoke at the feet
     /// stays and fades. Removed outright when it has no live particles.
     void retireInstance(uint32_t instanceId);
+    /// End a spell missile at its landing: the mesh vanishes and its emitters
+    /// stop, while the trail it already laid (ribbon edges) and its particles
+    /// live out their lifetimes where they are. Build 8606, Ras Frostwhisper's
+    /// Frostbolt Volley 8398 (Frostbolt.m2, ribbon edge lifetime 0.5 s): the
+    /// straight trail from the hand stays at the target for about 0.3-0.4 s
+    /// after the bolt arrives, at 7.8 and 15.7 yd alike.
+    void retireMissileInstance(uint32_t instanceId);
     void removeInstances(const std::vector<uint32_t>& instanceIds);
     /// Mark an instance as a server game object so the adaptive doodad render
     /// distance can't cull it while the server still considers it visible.
@@ -1342,7 +1355,9 @@ private:
     glm::vec3 interpFBlockVec3(const pipeline::M2FBlock& fb, float lifeRatio);
     void emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt);
     void updateParticles(M2Instance& inst, float dt);
-    void updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt);
+    // emit: lay edges at edgesPerSecond (the first at once); finalEdge: one more
+    // edge where the emitter is now, then no more.
+    void updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt, bool emit = true, bool finalEdge = false);
 
     // Helper to allocate descriptor sets
     VkDescriptorSet allocateMaterialSet();
