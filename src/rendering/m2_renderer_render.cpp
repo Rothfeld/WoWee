@@ -167,6 +167,7 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     instance.cachedHasAnimation = mdlRef.hasAnimation;
     instance.cachedDisableAnimation = mdlRef.disableAnimation;
     instance.cachedHasParticleEmitters = !mdlRef.particleEmitters.empty();
+    instance.cachedHasEmitters = !mdlRef.particleEmitters.empty() || !mdlRef.ribbonEmitters.empty();
     instance.cachedBoundRadius = mdlRef.boundRadius;
     instance.cachedIsGroundDetail = mdlRef.isGroundDetail;
     instance.cachedIsInvisibleTrap = mdlRef.isInvisibleTrap;
@@ -202,12 +203,12 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     instances.push_back(instance);
     size_t idx = instances.size() - 1;
     // Track special instances for fast-path iteration
-    if (!mdlRef.particleEmitters.empty()) {
+    if (instance.cachedHasEmitters) {
         particleInstanceIndices_.push_back(idx);
     }
     if (mdlRef.hasAnimation && !mdlRef.disableAnimation) {
         animatedInstanceIndices_.push_back(idx);
-    } else if (!mdlRef.particleEmitters.empty()) {
+    } else if (instance.cachedHasEmitters) {
         particleOnlyInstanceIndices_.push_back(idx);
     }
     instanceIndexById[instance.id] = idx;
@@ -262,6 +263,7 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     instance.cachedHasAnimation = mdl2.hasAnimation;
     instance.cachedDisableAnimation = mdl2.disableAnimation;
     instance.cachedHasParticleEmitters = !mdl2.particleEmitters.empty();
+    instance.cachedHasEmitters = !mdl2.particleEmitters.empty() || !mdl2.ribbonEmitters.empty();
     instance.cachedBoundRadius = mdl2.boundRadius;
     instance.cachedIsGroundDetail = mdl2.isGroundDetail;
     instance.cachedIsInvisibleTrap = mdl2.isInvisibleTrap;
@@ -301,12 +303,12 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     censusInstance(instance);
     instances.push_back(instance);
     size_t idx = instances.size() - 1;
-    if (!mdl2.particleEmitters.empty()) {
+    if (instance.cachedHasEmitters) {
         particleInstanceIndices_.push_back(idx);
     }
     if (mdl2.hasAnimation && !mdl2.disableAnimation) {
         animatedInstanceIndices_.push_back(idx);
-    } else if (!mdl2.particleEmitters.empty()) {
+    } else if (instance.cachedHasEmitters) {
         particleOnlyInstanceIndices_.push_back(idx);
     }
     instanceIndexById[instance.id] = idx;
@@ -341,6 +343,7 @@ uint32_t M2Renderer::createExternalPoseInstance(uint32_t modelId, const glm::mat
     instance.invModelMatrix = glm::inverse(modelMatrix);
     instance.worldBoundsMin = instance.worldBoundsMax = instance.position;
     instance.cachedHasParticleEmitters = !mdl.particleEmitters.empty();
+    instance.cachedHasEmitters = !mdl.particleEmitters.empty() || !mdl.ribbonEmitters.empty();
     instance.cachedBoundRadius = mdl.boundRadius;
     instance.cachedIsValid = mdl.isValid();
     instance.cachedModel = &mdl;

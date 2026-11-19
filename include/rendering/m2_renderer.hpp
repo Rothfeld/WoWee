@@ -347,6 +347,10 @@ struct M2Instance {
     bool cachedHasAnimation = false;
     bool cachedDisableAnimation = false;
     bool cachedHasParticleEmitters = false;
+    // Particle or ribbon emitters: the instance enters particleInstanceIndices_,
+    // the pass that steps both. Holy_Precast_Low_Hand.m2 (Holy Smite, Scarlet
+    // Adept) has three ribbons on spinning bones and no particle emitter.
+    bool cachedHasEmitters = false;
     bool cachedIsGroundDetail = false;
     bool cachedIsInvisibleTrap = false;
     bool cachedIsSkyBird = false;

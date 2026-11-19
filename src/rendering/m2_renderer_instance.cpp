@@ -449,10 +449,10 @@ void M2Renderer::removeInstance(uint32_t instanceId) {
                 particleInstanceIndices_.push_back(i);
             continue;
         }
-        if (ri.cachedHasParticleEmitters) particleInstanceIndices_.push_back(i);
+        if (ri.cachedHasEmitters) particleInstanceIndices_.push_back(i);
         if (ri.cachedHasAnimation && !ri.cachedDisableAnimation)
             animatedInstanceIndices_.push_back(i);
-        else if (ri.cachedHasParticleEmitters)
+        else if (ri.cachedHasEmitters)
             particleOnlyInstanceIndices_.push_back(i);
     }
 }
@@ -660,12 +660,12 @@ void M2Renderer::rebuildSpatialIndex() {
                                      !inst.cachedModel->ribbonEmitters.empty()))
                 particleInstanceIndices_.push_back(i);
         } else {
-            if (inst.cachedHasParticleEmitters) {
+            if (inst.cachedHasEmitters) {
                 particleInstanceIndices_.push_back(i);
             }
             if (inst.cachedHasAnimation && !inst.cachedDisableAnimation) {
                 animatedInstanceIndices_.push_back(i);
-            } else if (inst.cachedHasParticleEmitters) {
+            } else if (inst.cachedHasEmitters) {
                 particleOnlyInstanceIndices_.push_back(i);
             }
         }
