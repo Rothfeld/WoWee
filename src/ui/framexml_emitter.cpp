@@ -633,6 +633,19 @@ struct Emitter {
                 ox = a.attrFloat("x", ox);
                 oy = a.attrFloat("y", oy);
             }
+            // No relativeTo on a top-level frame: its parent, whichever frame
+            // that turns out to be (RaidGroup1 takes RaidFrame from its
+            // template). An explicit nil would be the screen - SetPoint reads
+            // it so, as 2.4.3 does - so the frame is left out of the call, or
+            // asked for at the time the anchor is set when the points differ.
+            if (relative == "nil") {
+                if (relPoint == point) {
+                    line(var + ":SetPoint(" + quote(point) + ", " + std::to_string(ox) + ", " +
+                         std::to_string(oy) + ")");
+                    continue;
+                }
+                relative = var + ":GetParent()";
+            }
             line(var + ":SetPoint(" + quote(point) + ", " + relative + ", " +
                  quote(relPoint) + ", " + std::to_string(ox) + ", " + std::to_string(oy) + ")");
         }

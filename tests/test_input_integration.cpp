@@ -513,6 +513,50 @@ TEST_CASE_METHOD(Integration, "$parent in an anchor deep inside unnamed frames n
     truth("RingFrame1Badge ~= nil and select(2, RingFrame1Badge:GetPoint(1)) == RingFrame1Portrait");
 }
 
+TEST_CASE_METHOD(Integration, "SetPoint with a nil relative frame measures from the screen",
+                 "[lua][anchor]") {
+    // Read off 2.4.3 (workspace _experiments/20261119T0935Z.raidinfo_clip, NP()):
+    // a 10x10 child of a 50x50 frame at (300, 200).
+    run(R"lua(
+        local p = CreateFrame("Frame", "NilAnchorParent", UIParent)
+        p:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 300, 200); p:SetWidth(50); p:SetHeight(50)
+        local c = CreateFrame("Frame", "NilAnchorChild", p)
+        c:SetWidth(10); c:SetHeight(10)
+    )lua");
+    run("NilAnchorChild:ClearAllPoints() NilAnchorChild:SetPoint('CENTER', nil, 'BOTTOMLEFT', 100, 100)");
+    layout();
+    truth("select(1, NilAnchorChild:GetCenter()) == 100 and select(2, NilAnchorChild:GetCenter()) == 100");
+    truth("select(2, NilAnchorChild:GetPoint(1)) == nil");
+    // Left out altogether it is the parent.
+    run("NilAnchorChild:ClearAllPoints() NilAnchorChild:SetPoint('BOTTOMLEFT', 100, 100)");
+    layout();
+    truth("select(1, NilAnchorChild:GetCenter()) == 405 and select(2, NilAnchorChild:GetCenter()) == 305");
+    run("NilAnchorChild:ClearAllPoints() NilAnchorChild:SetPoint('CENTER')");
+    layout();
+    truth("select(1, NilAnchorChild:GetCenter()) == 325 and select(2, NilAnchorChild:GetCenter()) == 225");
+}
+
+TEST_CASE_METHOD(Integration, "ClearAllPoints leaves a frame where it was until it is anchored again",
+                 "[lua][anchor]") {
+    // 2.4.3: a 20x20 frame at (100, 100) answers GetCenter 110, 110 both
+    // before and after ClearAllPoints (workspace _experiments/20261119T0935Z.raidinfo_clip).
+    run(R"lua(
+        local f = CreateFrame("Frame", "HeldRectFrame", UIParent)
+        f:SetWidth(20); f:SetHeight(20)
+        f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 100, 100)
+    )lua");
+    layout();
+    run("HeldRectFrame:ClearAllPoints()");
+    truth("select(1, HeldRectFrame:GetCenter()) == 110 and select(2, HeldRectFrame:GetCenter()) == 110");
+    truth("HeldRectFrame:GetNumPoints() == 0");
+    layout();
+    truth("select(1, HeldRectFrame:GetCenter()) == 110 and HeldRectFrame:GetTop() == 120");
+    // RaidPulloutStopMoving's sequence: re-anchored where it was held.
+    run("local x = HeldRectFrame:GetCenter() HeldRectFrame:SetPoint('TOP', nil, 'BOTTOMLEFT', x, HeldRectFrame:GetTop())");
+    layout();
+    truth("select(1, HeldRectFrame:GetCenter()) == 110 and HeldRectFrame:GetTop() == 120");
+}
+
 // Build 8606 measurements: _experiments/20261117T202346.492175Z.camera_max_distance.
 TEST_CASE_METHOD(Integration, "Camera zoom follows the original's distance CVars", "[camera][zoom]") {
     rendering::Camera camera;

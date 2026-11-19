@@ -319,7 +319,20 @@ const Widget* WidgetTree::get(uint32_t id) const {
 
 void WidgetTree::clearPoints(uint32_t id) {
     markLayoutDirty();
-    if (Widget* w = get(id)) w->anchors.clear();
+    Widget* w = get(id);
+    if (!w) return;
+    // Held where the last layout put it (see Widget::rectHeld). The pending
+    // layout has to run first, or this would hold a rect from before whatever
+    // moved the frame since.
+    if (!w->anchors.empty() && !w->rectHeld) {
+        resolveWidget(id);
+        if (w->rectW > 0.0f || w->rectH > 0.0f) {
+            w->rectHeld = true;
+            w->heldLeft = w->left - w->animOffsetX;
+            w->heldBottom = w->bottom - w->animOffsetY;
+        }
+    }
+    w->anchors.clear();
 }
 
 void WidgetTree::setWidth(uint32_t id, float width) {
@@ -599,6 +612,7 @@ void WidgetTree::addPoint(uint32_t id, const Anchor& anchor) {
     markLayoutDirty();
     Widget* w = get(id);
     if (!w) return;
+    w->rectHeld = false;
     // Geometry that is not a number never enters the tree. Once one does it
     // spreads: the frame's rect goes to nan, everything anchored to it
     // follows, and a nan rect is hit by every mouse position because every
@@ -636,6 +650,7 @@ void WidgetTree::setAllPoints(uint32_t id, uint32_t relativeTo) {
     markLayoutDirty();
     Widget* w = get(id);
     if (!w) return;
+    w->rectHeld = false;
     w->anchors.clear();
     // Two opposing corners, which is exactly what makes the size fall out of
     // the solver below rather than needing an explicit one.
@@ -771,7 +786,8 @@ void WidgetTree::resolveChain(uint32_t id, float screenW, float screenH, int& de
     std::vector<uint32_t> deps;
     deps.reserve(w->anchors.size());
     for (const Anchor& a : w->anchors) {
-        if (a.relativeTo != 0 && a.relativeTo != id) deps.push_back(a.relativeTo);
+        if (a.relativeTo != 0 && a.relativeTo != kAnchorScreen && a.relativeTo != id)
+            deps.push_back(a.relativeTo);
     }
     // The parent first: a widget's rect is measured from its parent's, and its
     // scale is the parent's times its own.
@@ -1019,7 +1035,9 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     cy.reserve(w->anchors.size());
 
     for (const Anchor& a : w->anchors) {
-        const Widget* rel = (a.relativeTo != 0) ? get(a.relativeTo) : parent;
+        const Widget* rel = a.relativeTo == kAnchorScreen ? nullptr
+                          : a.relativeTo != 0             ? get(a.relativeTo)
+                                                          : parent;
         float relLeft, relBottom, relW, relH;
         if (rel) {
             relLeft = rel->left; relBottom = rel->bottom; relW = rel->rectW; relH = rel->rectH;
@@ -1128,7 +1146,12 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     // the ring around the minimap, and both are written this way. Centring
     // them at no size instead meant they were laid out to nothing, never
     // reached the draw order, and so were never even uploaded.
-    if (w->kind != WidgetKind::Frame && w->anchors.empty() &&
+    if (w->rectHeld && w->anchors.empty()) {
+        w->left   = w->heldLeft;
+        w->bottom = w->heldBottom;
+        if (w->width > 0.0f)  w->rectW = w->width * es;
+        if (w->height > 0.0f) w->rectH = w->height * es;
+    } else if (w->kind != WidgetKind::Frame && w->anchors.empty() &&
         w->width <= 0.0f && w->height <= 0.0f && parent && !w->isTooltip) {
         w->left   = parent->left;
         w->bottom = parent->bottom;

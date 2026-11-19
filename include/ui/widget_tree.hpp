@@ -63,9 +63,16 @@ FrameStrata parseStrata(const std::string& name);
 /// The name parseStrata would accept back, for GetFrameStrata.
 const char* strataName(FrameStrata strata);
 
+/// Anchor::relativeTo for the screen itself: SetPoint given an explicit nil
+/// relative frame. Build 8606 measures it from the screen, not the parent - a
+/// child of a frame at (300, 200) given SetPoint("CENTER", nil, "BOTTOMLEFT",
+/// 100, 100) centres at (100, 100), and SetPoint("CENTER", nil, "CENTER") at
+/// the middle of the screen; leaving the frame out altogether is the parent.
+inline constexpr uint32_t kAnchorScreen = 0xFFFFFFFFu;
+
 struct Anchor {
     std::string point = "CENTER";
-    uint32_t relativeTo = 0;      ///< Widget id; 0 means "my parent".
+    uint32_t relativeTo = 0;      ///< Widget id; 0 means "my parent", kAnchorScreen the screen.
     std::string relativePoint = "CENTER";
     float x = 0.0f;
     float y = 0.0f;
@@ -194,6 +201,14 @@ struct Widget {
     /// point turns that into two constraints on one axis - which sizes the
     /// frame from them and opens a bag with no width.
     bool userMoved = false;
+    /// ClearAllPoints leaves a laid-out frame where it was until it is anchored
+    /// again: 2.4.3 answers GetCenter right after it with the old centre.
+    /// RaidPulloutStopMoving clears, reads GetCenter/GetTop and re-anchors the
+    /// pullout there; recentred instead, every dropped pullout jumped away.
+    /// heldLeft/heldBottom are that rect's corner, before animation offsets.
+    bool rectHeld = false;
+    float heldLeft = 0.0f;
+    float heldBottom = 0.0f;
     /// The facing a model frame was told to show, in radians. FrameXML rotates
     /// a paperdoll by keeping its own running total and calling SetRotation
     /// with it, so this is absolute rather than a delta.

@@ -700,13 +700,15 @@ int lua_Region_SetPoint(lua_State* L) {
         // FrameXML refers to most things.
         a.relativeTo = widgetIdByAnchorName(L, 1, lua_tostring(L, argi));
         ++argi;
-    } else if (lua_isnil(L, argi)) {
-        // Explicitly nil, which means the parent - and which still occupies its
-        // place in the argument list. Skipping over it read the relative point
-        // as the relative frame and everything after it moved up one, so
-        // SetPoint(point, nil, "BOTTOM") silently became point-to-point on the
-        // parent. FrameXML passes nil here constantly, and a name that failed
-        // to resolve arrives the same way.
+    } else if (lua_isnil(L, argi) && lua_gettop(L) >= argi) {
+        // Explicitly nil: the screen, not the parent (kAnchorScreen; measured
+        // on 2.4.3). The raid tab's RaidGroupButton_OnDragStart puts the
+        // dragged member at the cursor this way, and read as the parent the
+        // button sat FriendsFrame's bottom (152 units) above the cursor.
+        // The nil still occupies its place in the argument list: skipping
+        // over it read the relative point as the relative frame and
+        // everything after it moved up one.
+        a.relativeTo = wowee::ui::kAnchorScreen;
         ++argi;
     }
     // Anchoring to itself is not a position, and a name can resolve to the
@@ -12738,7 +12740,13 @@ void LuaEngine::dispatchMouse(float x, float y, float screenH, MouseButtons butt
     // draws the same line: below the threshold it is a click, above it the
     // frame's OnDragStart runs and the click is abandoned.
     if (draggingWid_ == 0) {
-        constexpr float kDragThreshold = 4.0f;   // interface units
+        // 16 screen pixels of travel, in any direction, as build 8606 asks
+        // before OnDragStart: 15 straight or 11+11 diagonally (15.6) is still
+        // a click, 16 straight or 12+12 a drag (probe button on a 1280x720
+        // window, workspace _experiments/20261119T0935Z.raidinfo_clip). At
+        // four interface units a raid member came away from its slot the
+        // moment the click wobbled.
+        const float kDragThreshold = 16.0f / widgets_.uiScale();   // interface units
         for (int i = 0; i < kMouseButtons; ++i) {
             if (!buttonDown_[i] || pressedWid_[i] == 0) continue;
             // Up through the parents until something is registered for this

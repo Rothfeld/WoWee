@@ -774,6 +774,22 @@ TEST_CASE("A nested frame anchors to its container, not the screen",
     REQUIRE_FALSE(has(r.lua, ":SetPoint(\"BOTTOMLEFT\", UIParent,"));
 }
 
+TEST_CASE("A top-level frame's anchor without relativeTo never names nil",
+          "[framexml][emit]") {
+    // RaidGroup1 is top level and takes RaidFrame as its parent from its
+    // template. SetPoint(point, nil, ...) means the screen on 2.4.3, so the
+    // emitter must leave the frame out (parent) rather than write nil.
+    XmlNode root = parseOrFail(
+        "<Ui><Frame name=\"Lone\"><Anchors>"
+        "<Anchor point=\"TOPLEFT\"><Offset><AbsDimension x=\"16\" y=\"-70\"/></Offset></Anchor>"
+        "<Anchor point=\"BOTTOMRIGHT\" relativePoint=\"TOPRIGHT\"/>"
+        "</Anchors></Frame></Ui>");
+    const EmitResult r = emitFrameXml(root);
+    REQUIRE(has(r.lua, ":SetPoint(\"TOPLEFT\", 16.000000, -70.000000)"));
+    REQUIRE(has(r.lua, ":SetPoint(\"BOTTOMRIGHT\", __w[1]:GetParent(), \"TOPRIGHT\""));
+    REQUIRE_FALSE(has(r.lua, ", nil, \"TOPLEFT\""));
+}
+
 TEST_CASE("An anchor inside a template resolves its parent at replay time",
           "[framexml][emit]") {
     // The containing frame is not known while emitting a template - it is
