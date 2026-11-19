@@ -856,6 +856,38 @@ channel shows nothing. Gotcha: the parameterised lines need the `Spell`
 `SpellShapeshiftForm` layouts in the installed `dbc_layouts.json`.
 Evidence: `_experiments/20261117T182446Z.pair7_cast_errors/` in the workspace.
 
+### Cast bar text
+
+`build/bin/test_cast_bar_text` and
+`build/bin/test_input_integration '[cast-text],[channel-text]'` check the rule.
+
+The player's cast bar shows UnitCastingInfo's third value (`text`), which
+`include/game/cast_bar_text.hpp` decides as 2.4.3 does: for an OPEN_LOCK cast
+at a game object, the object's opening text when it has one (its closing text
+for a lock action 2); otherwise nothing for a spell with AttributesEx3 0x4
+(NO_CASTING_BAR_TEXT: Opening 6477, Opening - No Text 22810); otherwise the
+spell name. The first value stays the spell name. Measured on the original:
+
+| Object | Spell | Bar |
+|---|---|---|
+| Battered Chest 2843 (no text) | Opening 3365 | Opening |
+| Sapphire Signal Fire 185216 ("Extinguishing") | Opening 3365 | Extinguishing |
+| Glowcap 182053 ("Collecting") | Opening - No Text 22810 | Collecting |
+| Scarlet Monastery Torch 97701 (no text) | Opening 6477 | (empty) |
+| Rizzle's Guarded Plans 179888 ("Examining") | Opening 6477 | Examining |
+| none (Hearthstone) | Hearthstone 8690 | Hearthstone |
+
+A channel's text is GlobalStrings CHANNELING. On TBC both functions answer
+seven values (name, rank, text, texture, startTime, endTime, isTradeSkill;
+no castID or notInterruptible), whole milliseconds, and nothing at all, not
+one nil, while the unit casts nothing of that kind. LockType.dbc has no
+"Opening" verb: its verbs are "Pick", "Gather", "Mine", "Open"; the words on
+the bar come from Spell.dbc and the object's query response.
+Gotcha: WoWee opens a chest it has no known spell for with CMSG_GAMEOBJ_USE,
+so the server picks the spell: Glowcap gets Opening 6478 (no 0x4) where the
+original casts 22810, and no UNIT_SPELLCAST_SENT fires. The text matches
+either way. Evidence: `_experiments/20261119T1330Z.castbar_text/`.
+
 ### Inventory and mail results
 
 SMSG_INVENTORY_CHANGE_FAILURE and SMSG_SEND_MAIL_RESULT refusals show the
