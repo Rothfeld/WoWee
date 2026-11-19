@@ -3997,17 +3997,22 @@ static int lua_GetWeaponEnchantInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const game::EquipSlot kHands[2] = {game::EquipSlot::MAIN_HAND,
                                        game::EquipSlot::OFF_HAND};
-    for (const game::EquipSlot hand : kHands) {
-        bool enchanted = false;
-        if (gh) {
-            const uint64_t guid = gh->getEquipSlotGuid(static_cast<int>(hand));
-            if (guid != 0) enchanted = gh->getItemEnchantIds(guid).second != 0;
-        }
-        lua_pushboolean(L, enchanted ? 1 : 0);   // hasEnchant
-        lua_pushnumber(L, 0.0);                  // expiration, not tracked
-        lua_pushnumber(L, 0.0);                  // charges
+    // hasEnchant, expiration (ms left, SMSG_ITEM_ENCHANT_TIME_UPDATE),
+    // charges per hand, up to the last enchanted one: native 2.4.3 answers
+    // nothing without an imbue and 1, 1740929, 0 with Windfury Weapon on the
+    // main hand alone. An unenchanted main hand before an enchanted off hand
+    // answers nil, nil, nil.
+    int count = 0;
+    for (int h = 0; h < 2; ++h) {
+        const uint64_t guid = gh ? gh->getEquipSlotGuid(static_cast<int>(kHands[h])) : 0;
+        if (guid == 0 || gh->getItemEnchantIds(guid).second == 0) continue;
+        while (count < h * 3) { lua_pushnil(L); ++count; }
+        lua_pushnumber(L, 1);
+        lua_pushnumber(L, gh->getTempEnchantRemainingMs(static_cast<uint32_t>(h)));
+        lua_pushnumber(L, gh->getItemTempEnchantCharges(guid));
+        count += 3;
     }
-    return 6;
+    return count;
 }
 
 /// Which modifier keys are held. Answered from the real keyboard rather than

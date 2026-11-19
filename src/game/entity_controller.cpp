@@ -1937,6 +1937,7 @@ void EntityController::trackItemOnCreate(const UpdateBlock& block, bool& newItem
         ? static_cast<uint16_t>(fieldIndex(UF::ITEM_FIELD_STACK_COUNT) + 8u) : 0xFFFFu;
     auto permEnchIt  = (enchBase != 0xFFFF) ? block.fields.find(enchBase)       : block.fields.end();
     auto tempEnchIt  = (enchBase != 0xFFFF) ? block.fields.find(enchBase + 3u)  : block.fields.end();
+    auto tempChargesIt = (enchBase != 0xFFFF) ? block.fields.find(enchBase + 5u) : block.fields.end();
     auto sock1EnchIt = (enchBase != 0xFFFF) ? block.fields.find(enchBase + 6u)  : block.fields.end();
     auto sock2EnchIt = (enchBase != 0xFFFF) ? block.fields.find(enchBase + 9u)  : block.fields.end();
     auto sock3EnchIt = (enchBase != 0xFFFF) ? block.fields.find(enchBase + 12u) : block.fields.end();
@@ -1951,6 +1952,7 @@ void EntityController::trackItemOnCreate(const UpdateBlock& block, bool& newItem
         if (maxDurIt   != block.fields.end()) info.maxDurability         = maxDurIt->second;
         if (permEnchIt != block.fields.end()) info.permanentEnchantId    = permEnchIt->second;
         if (tempEnchIt != block.fields.end()) info.temporaryEnchantId    = tempEnchIt->second;
+        if (tempChargesIt != block.fields.end()) info.temporaryEnchantCharges = tempChargesIt->second;
         if (sock1EnchIt != block.fields.end()) info.socketEnchantIds[0]  = sock1EnchIt->second;
         if (sock2EnchIt != block.fields.end()) info.socketEnchantIds[1]  = sock2EnchIt->second;
         if (sock3EnchIt != block.fields.end()) info.socketEnchantIds[2]  = sock3EnchIt->second;
@@ -2001,6 +2003,7 @@ void EntityController::updateItemOnValuesUpdate(const UpdateBlock& block,
     const uint16_t itemEnchBase      = (itemStackField != 0xFFFF) ? (itemStackField + 8u)  : 0xFFFF;
     const uint16_t itemPermEnchField = itemEnchBase;
     const uint16_t itemTempEnchField = (itemEnchBase != 0xFFFF) ? (itemEnchBase + 3u)  : 0xFFFF;
+    const uint16_t itemTempChargesField = (itemEnchBase != 0xFFFF) ? (itemEnchBase + 5u) : 0xFFFF;
     const uint16_t itemSock1EnchField= (itemEnchBase != 0xFFFF) ? (itemEnchBase + 6u)  : 0xFFFF;
     const uint16_t itemSock2EnchField= (itemEnchBase != 0xFFFF) ? (itemEnchBase + 9u)  : 0xFFFF;
     const uint16_t itemSock3EnchField= (itemEnchBase != 0xFFFF) ? (itemEnchBase + 12u) : 0xFFFF;
@@ -2064,6 +2067,11 @@ void EntityController::updateItemOnValuesUpdate(const UpdateBlock& block,
         } else if (isItemInInventory && itemTempEnchField != 0xFFFF && key == itemTempEnchField) {
             if (it->second.temporaryEnchantId != val) {
                 it->second.temporaryEnchantId = val;
+                inventoryChanged = true;
+            }
+        } else if (isItemInInventory && itemTempChargesField != 0xFFFF && key == itemTempChargesField) {
+            if (it->second.temporaryEnchantCharges != val) {
+                it->second.temporaryEnchantCharges = val;
                 inventoryChanged = true;
             }
         } else if (isItemInInventory && itemSock1EnchField != 0xFFFF && key == itemSock1EnchField) {

@@ -3828,6 +3828,10 @@ public:
         return equipSlotGuids_[slot];
     }
     // Returns the permanent and temporary enchant IDs for an item by GUID (0 if unknown).
+    uint32_t getItemTempEnchantCharges(uint64_t guid) const {
+        auto it = onlineItems_.find(guid);
+        return it == onlineItems_.end() ? 0u : it->second.temporaryEnchantCharges;
+    }
     std::pair<uint32_t, uint32_t> getItemEnchantIds(uint64_t guid) const {
         auto it = onlineItems_.find(guid);
         if (it == onlineItems_.end()) return {0, 0};
@@ -4481,6 +4485,9 @@ public:
         uint32_t maxDurability = 0;
         uint32_t permanentEnchantId = 0;
         uint32_t temporaryEnchantId = 0;
+        /// ITEM_FIELD_ENCHANTMENT temporary slot charges (poisons; 0 for the
+        /// shaman imbues).
+        uint32_t temporaryEnchantCharges = 0;
         std::array<uint32_t, 3> socketEnchantIds{};
         uint32_t flags = 0;              // ITEM_FIELD_FLAGS (bit 0x1 = soulbound)
         int32_t  randomPropertyId = 0;   // ITEM_FIELD_RANDOM_PROPERTIES_ID (signed)
