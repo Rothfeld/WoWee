@@ -2826,13 +2826,25 @@ void SpellHandler::setCharacterPointsField(uint32_t points) {
 void SpellHandler::syncPreWotlkTalentsFromKnownSpells() {
     if (!isPreWotlk() || talentCache_.empty()) return;
 
+    loadSkillLineAbilityDbc();
+    // A rank is learned while its spell or a later rank of it is known: the
+    // server drops Mortal Strike rank 1 (the talent's spell) when rank 6 is
+    // learned, and native 2.4.3 still shows the talent at 1/1.
+    const auto knownOrSuperseded = [this](uint32_t spellId) {
+        for (int step = 0; spellId != 0 && step < 32; ++step) {
+            if (knownSpells_.count(spellId)) return true;
+            const auto next = supersededBy_.find(spellId);
+            spellId = next == supersededBy_.end() ? 0 : next->second;
+        }
+        return false;
+    };
     std::unordered_map<uint32_t, uint8_t> derived;
     uint32_t spentPoints = 0;
     for (const auto& [talentId, talent] : talentCache_) {
         uint8_t rankKnown = 0;
         for (int rank = 0; rank < 5; ++rank) {
             uint32_t rankSpell = talent.rankSpells[rank];
-            if (rankSpell != 0 && knownSpells_.count(rankSpell) > 0) {
+            if (rankSpell != 0 && knownOrSuperseded(rankSpell)) {
                 rankKnown = static_cast<uint8_t>(rank + 1);
             }
         }
@@ -4999,10 +5011,16 @@ void SpellHandler::loadSkillLineAbilityDbc() {
         const uint32_t slaSkillField = slaL ? (*slaL)["SkillLineID"] : 1;
         const uint32_t slaSpellField = slaL ? (*slaL)["SpellID"]     : 2;
         const uint32_t slaFieldCount = slaDbc->getFieldCount();
+        const uint32_t slaNextField = slaL ? slaL->tryField("SupercededBySpell") : 0xFFFFFFFFu;
+        if (slaNextField >= slaFieldCount)
+            LOG_ERROR("dbc_layouts.json lacks SkillLineAbility.SupercededBySpell; talents whose spell a later rank replaced read unlearned");
         const bool hasDiffFields = (slaFieldCount > 11);
         for (uint32_t i = 0; i < slaDbc->getRecordCount(); i++) {
             uint32_t skillLineId = slaDbc->getUInt32(i, slaSkillField);
             uint32_t spellId = slaDbc->getUInt32(i, slaSpellField);
+            if (spellId > 0 && slaNextField < slaFieldCount) {
+                if (const uint32_t next = slaDbc->getUInt32(i, slaNextField)) supersededBy_[spellId] = next;
+            }
             if (spellId > 0 && skillLineId > 0) {
                 owner_.spellToSkillLineRef()[spellId] = skillLineId;
                 if (hasDiffFields) {

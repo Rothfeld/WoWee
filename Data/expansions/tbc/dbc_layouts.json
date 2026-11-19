@@ -312,7 +312,8 @@
   },
   "SkillLineAbility": {
     "SkillLineID": 1,
-    "SpellID": 2
+    "SpellID": 2,
+    "SupercededBySpell": 8
   },
   "SkillRaceClassInfo": {
     "ID": 0,

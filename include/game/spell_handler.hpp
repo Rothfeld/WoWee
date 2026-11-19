@@ -643,6 +643,10 @@ private:
     std::unordered_map<uint32_t, uint8_t> learnedTalents_[2];
     std::array<std::array<uint16_t, MAX_GLYPH_SLOTS>, 2> learnedGlyphs_{};
     std::unordered_map<uint32_t, TalentEntry> talentCache_;
+    /// SkillLineAbility SupercededBySpell: the next rank of a spell. A talent
+    /// rank whose spell a trainer rank has replaced (Mortal Strike rank 1 by
+    /// rank 6) still counts as learned.
+    std::unordered_map<uint32_t, uint32_t> supersededBy_;
     std::unordered_map<uint32_t, TalentTabEntry> talentTabCache_;
     bool talentDbcLoaded_ = false;
     bool talentsInitialized_ = false;
