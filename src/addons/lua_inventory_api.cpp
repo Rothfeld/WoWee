@@ -3112,6 +3112,23 @@ static int lua_GetInventoryItemCount(lua_State* L) {
         lua_pushnumber(L, slotId >= 1 && slotId <= static_cast<int>(game::EquipSlot::TABARD) + 1 ? 1 : 0);
         return 1;
     }
+    // A quiver or ammo pouch (item class 11) counts what it holds: native
+    // 2.4.3 answers 200 for a Small Ammo Pouch of 200 bullets, which the bag
+    // button prints over it.
+    constexpr uint32_t kItemClassQuiver = 11;
+    const int firstBagSlot = game::Inventory::FIRST_BAG_EQUIP_SLOT + 1;
+    if (slotId >= firstBagSlot && slotId < firstBagSlot + game::Inventory::NUM_BAG_SLOTS &&
+        slot.item.itemClass == kItemClassQuiver) {
+        const auto& inv = gh->getInventory();
+        const int bag = slotId - firstBagSlot;
+        uint32_t held = 0;
+        for (int i = 0; i < inv.getBagSize(bag); ++i) {
+            const auto& in = inv.getBagSlot(bag, i);
+            if (!in.empty()) held += in.item.stackCount > 0 ? in.item.stackCount : 1;
+        }
+        lua_pushnumber(L, held);
+        return 1;
+    }
     // A single item reports a stack of one rather than zero, which is how the
     // count is drawn: zero would print nothing where the client prints nothing
     // for one either, but the two mean different things to a caller.
