@@ -3235,8 +3235,9 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         }
     }
 
-    // Fire UNIT_SPELLCAST_START
-    if (owner_.addonEventCallbackRef() && !rangedWeaponAttack) {
+    // Fire UNIT_SPELLCAST_START, for a cast that takes time. Native 2.4.3 has
+    // none for an instant spell: SENT, SUCCEEDED, STOP (Devotion Aura).
+    if (owner_.addonEventCallbackRef() && !rangedWeaponAttack && data.castTime > 0) {
         std::string unitId = owner_.guidToUnitId(data.casterUnit);
         if (!unitId.empty()) {
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_START", spellcastArgs(unitId, data.spellId));
@@ -3267,6 +3268,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     SpellGoData data;
     if (!owner_.getPacketParsers()->parseSpellGo(packet, data)) return;
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
+    bool playerCastStopped = false;
     // Build 8606 draws a Spectral Sentry's Shoot bolt flying to its target
     // (_experiments/20261118T091949Z.creature_swing_anim, arrow).
     if (data.casterUnit != owner_.getPlayerGuid() && data.ammoDisplayId != 0) launchAmmoProjectile(data);
@@ -3396,8 +3398,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         // and suppresses CMSG_CANCEL_CAST for ALL subsequent spell casts.
         owner_.pendingGameObjectInteractGuidRef() = 0;
 
-        if (owner_.addonEventCallbackRef() && !rangedWeaponAttack)
-            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
+        // UNIT_SPELLCAST_STOP follows UNIT_SPELLCAST_SUCCEEDED, below.
+        playerCastStopped = !rangedWeaponAttack;
 
         // Craft queue: re-cast if more crafts remaining
         if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == data.spellId) {
@@ -3461,11 +3463,14 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         if (data.casterUnit == owner_.getPlayerGuid() && tgt != owner_.getPlayerGuid() && tgt != 0) { playerHitEnemy = true; }
     }
 
-    // Fire UNIT_SPELLCAST_SUCCEEDED
+    // Fire UNIT_SPELLCAST_SUCCEEDED, then the player's UNIT_SPELLCAST_STOP:
+    // native 2.4.3 orders them so.
     if (owner_.addonEventCallbackRef()) {
         std::string unitId = owner_.guidToUnitId(data.casterUnit);
         if (!unitId.empty())
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SUCCEEDED", spellcastArgs(unitId, data.spellId));
+        if (playerCastStopped)
+            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
     }
 
     if ((playerIsHit || playerHitEnemy) && !rangedWeaponAttack)
