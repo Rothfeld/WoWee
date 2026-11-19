@@ -3209,6 +3209,39 @@ by `.learn all_myclass` / `.learn all_mytalents` (probe addon and tables:
 - `UNIT_AURA`/`PLAYER_AURAS_CHANGED` fire when an update block carries an
   aura field, not on every rage tick.
 
+### Class interface: rogue, druid, hunter
+
+Same pair and probe as the warrior section.
+
+- Rogue: `/use Instant Poison VII` then `/use 16` poisons the main hand:
+  `GetItemInfo`/`GetItemCount` take item names (from the item cache), which
+  is how `/use` tells an item from a spell. Any item not yet soulbound asks
+  `BIND_ENCHANT` first (a Worn Dagger, bonding 0). `ERR_SKILL_GAINED_S` is
+  printed when a skill line appears ("You have gained the Poisons skill.").
+- A form change fires `UPDATE_BONUS_ACTIONBAR` then `UPDATE_SHAPESHIFT_FORM`
+  only (Defensive Stance, Stealth, Cat Form alike).
+- Druid: stance bar order is StanceBarOrder, then form id (Tree of Life,
+  form 2, before Moonkin, form 31; both order 4). In a real shapeshift
+  (SpellShapeshiftForm flags 0x1 and 0x100 clear) a NOT_SHAPESHIFT spell
+  without Stances is usable, and casting it cancels the form first (Healing
+  Touch, Dire Bear Form from Cat Form). The player's portrait shows the form:
+  a display other than `UNIT_FIELD_NATIVEDISPLAYID` is drawn as a creature,
+  and a display change fires `UNIT_MODEL_CHANGED`/`UNIT_PORTRAIT_UPDATE` for
+  every token of the unit. `UnitDamage`/`UnitRangedDamage` percent is
+  `PLAYER_FIELD_MOD_DAMAGE_DONE_PCT` (1.1 with Naturalist).
+- Hunter: `HasPetUI` 1, 1 for a pet with happiness; `GetPetHappiness` gives
+  the loyalty rate (-10, 5, 20); `GetPetLoyalty` is PetLoyalty.dbc;
+  `GetPetTrainingPoints` the two halves of `UNIT_TRAINING_POINTS`;
+  `GetPetFoodTypes` ItemPetFood names by CreatureFamily PetFoodMask;
+  `GetPetExperience` reads the pet's fields. Auto Shot (AttributesEx2 0x20)
+  wears the ranged weapon's icon. A quiver's `GetInventoryItemCount` is what
+  it holds. Beast Training (SkillRaceClassInfo 0x492: 0x400 with 0x80) is in
+  General.
+- A hit taken during a cast or channel plays its reaction once and the held
+  animation returns (Tame Beast while the beast fights back), as a remote
+  unit's cast hold already did. Gotcha: whether native plays CombatWound over
+  a channel at all was not observed; a native tame on the pair kept failing.
+
 ### TBC social panel
 
 FriendsFrame, measured against 2.4.3 on a private pair
