@@ -2,6 +2,7 @@
 // Extracted from Application as part of god-class decomposition (Section 3.3)
 
 #include "rendering/animation/melee_anim_chains.hpp"
+#include "rendering/spell_visual_system.hpp"
 #include "core/world_loader.hpp"
 #include "core/application.hpp"
 #include "core/world_entry_callback_handler.hpp"
@@ -1056,6 +1057,8 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
             if (instanceId != 0 && cr) {
                 cr->playAnimation(instanceId, alreadyDead ? rendering::anim::DEAD : rendering::anim::DEATH,
                                   alreadyDead);
+                // Its casting effects die with it (SpellVisualSystem::removeCasterStages).
+                if (auto* visuals = renderer_->getSpellVisualSystem()) visuals->removeCasterStages(instanceId);
             }
         });
 

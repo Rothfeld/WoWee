@@ -4471,6 +4471,8 @@ void Application::syncChannelVisuals() {
         std::unordered_set<uint64_t> still;
         for (const auto& channel : channels) {
             if (channel.casterGuid == self || !channel.casterInstanceId) continue;
+            // Ended by MSG_CHANNEL_UPDATE 0 ahead of its fields: its pose goes too.
+            if (visuals->channelEnded(channel.casterGuid)) continue;
             const uint32_t animation = visuals->channelAnimation(channel.visualId);
             if (animation == rendering::SpellVisualSystem::kNoAnimation) continue;
             still.insert(channel.casterGuid);

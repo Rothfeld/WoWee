@@ -387,7 +387,7 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
     // A precast lasts the server cast time when there is one.
     const float duration = castTimeMs >= 500
         ? std::clamp(static_cast<float>(castTimeMs) / 1000.0f, 0.5f, 30.0f) : -1.0f;
-    spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, /*isPrecast=*/true);
+    spawnKitEffects(kit->second, worldPosition, attachInstanceId, duration, KitStage::Precast);
 }
 
 // Every effect a kit names, each at the attachment its SpellVisualKit slot
@@ -395,7 +395,7 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
 // Base 19, Special 23-25 (17 and 23-25 oriented by their bone); World at the
 // unit's position.
 float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition,
-                                         uint32_t attachInstanceId, float duration, bool isPrecast) {
+                                         uint32_t attachInstanceId, float duration, KitStage stage) {
     const auto effects = kitEffects_.find(kitId);
     if (effects == kitEffects_.end()) return 0.0f;
     float longest = 0.0f;
@@ -456,8 +456,8 @@ float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldP
         }
         longest = std::max(longest, lifetime);
         activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
-            .isPrecast = isPrecast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
-            .orientWithAttachment = breath, .effectScale = effect.scale});
+            .isPrecast = stage == KitStage::Precast, .attachmentId = attachment, .attachInstanceId = attachInstanceId,
+            .orientWithAttachment = breath, .effectScale = effect.scale, .isCast = stage == KitStage::Cast});
         if (!breath && attachInstanceId)
             placeOnUnit(activeSpellVisuals_.back(), characters, spawn, attachment ? attachmentScale(attachMat) : 1.0f);
         LOG_INFO("SpellVisual: kit=", kitId, " slot attachment=", effect.attachment, " used=", attachment,
@@ -600,7 +600,7 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
     }
     const auto kit = castKits_.find(visualId);
     if (kit == castKits_.end() || !kit->second) return;
-    spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, /*isPrecast=*/false);
+    spawnKitEffects(kit->second, worldPosition, attachInstanceId, -1.0f, KitStage::Cast);
 }
 
 uint32_t SpellVisualSystem::kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits,
@@ -798,7 +798,7 @@ void SpellVisualSystem::updateChannelVisual(uint32_t attachInstanceId, uint32_t 
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
         if (it->isChannel && it->attachInstanceId == attachInstanceId) {
             if (!remainingMs) {
-                m2Renderer_->retireInstance(it->instanceId);
+                retireEffect(*it);
                 it = activeSpellVisuals_.erase(it);
                 continue;
             }
@@ -994,10 +994,27 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
     }
 }
 
-void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& channels) {
+// Build 8606, Scholomance Dark Summoner channelling Sunshatter 45215 at the
+// player, killed with `.die`: MSG_CHANNEL_UPDATE 0 and SMSG_SPELL_FAILURE
+// arrive 0.30 s before the object update clearing UNIT_CHANNEL_SPELL; native's
+// beam is gone 0.06-0.13 s after the first, WoWee's went with the fields
+// (_experiments/20261119T1300Z.channel_end, bmdie9_sheet.jpg).
+void SpellVisualSystem::endChannel(uint64_t casterGuid) { endedChannels_.insert(casterGuid); }
+
+void SpellVisualSystem::startChannel(uint64_t casterGuid) { endedChannels_.erase(casterGuid); }
+
+void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChannels) {
     if (!m2Renderer_) return;
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     if (!spellVisualDbcLoaded_) return;
+    // Channels the server has ended whose fields are not yet cleared are over.
+    std::erase_if(endedChannels_, [&](uint64_t guid) {
+        return std::none_of(fieldChannels.begin(), fieldChannels.end(),
+                            [&](const UnitChannel& channel) { return channel.casterGuid == guid; });
+    });
+    std::vector<UnitChannel> channels;
+    for (const auto& channel : fieldChannels)
+        if (!endedChannels_.contains(channel.casterGuid)) channels.push_back(channel);
 
     // ChannelKit effects of channels seen only through the fields. A unit
     // whose MSG_CHANNEL_START was received already has them, for that
@@ -1099,7 +1116,7 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
     const auto kit = castKits_.find(visualId);
     if (kit == castKits_.end() || !kit->second) return;
-    const float models = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, /*isPrecast=*/false);
+    const float models = spawnKitEffects(kit->second, casterPosition, casterInstanceId, -1.0f, KitStage::Cast);
     const auto chainId = kitChainEffects_.find(kit->second);
     if (chainId == kitChainEffects_.end() || ends.empty()) return;
     const bool hasModels = kitEffects_.count(kit->second) != 0;
@@ -1137,7 +1154,7 @@ void SpellVisualSystem::playInstantAreaKit(uint32_t visualId, const glm::vec3& d
     LOG_INFO("SpellVisual: instant area kit ", kit->second, " of visual ", visualId, " at (",
              destination.x, ",", destination.y, ",", destination.z, ")");
     spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
-                    /*isPrecast=*/false);
+                    KitStage::Other);
 }
 
 void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& destination) {
@@ -1147,7 +1164,7 @@ void SpellVisualSystem::playImpactAreaKit(uint32_t visualId, const glm::vec3& de
     LOG_INFO("SpellVisual: impact area kit ", kit->second, " of visual ", visualId, " at (",
              destination.x, ",", destination.y, ",", destination.z, ")");
     spawnKitEffects(kit->second, destination, /*attachInstanceId=*/0, /*duration=*/-1.0f,
-                    /*isPrecast=*/false);
+                    KitStage::Other);
 }
 
 void SpellVisualSystem::scheduleImpactAreaKit(uint32_t visualId, const glm::vec3& destination, float delay) {
@@ -1182,7 +1199,7 @@ void SpellVisualSystem::playSpellVisualKit(uint32_t kitId, const glm::vec3& worl
     }
     LOG_DEBUG("SpellVisualKit: id=", kitId, " animation=", animation->second);
     startKitLight(kitId, attachInstanceId);
-    spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, /*isPrecast=*/false);
+    spawnKitEffects(kitId, worldPosition, attachInstanceId, -1.0f, KitStage::Other);
 }
 
 void SpellVisualSystem::startKitLight(uint32_t kitId, uint32_t attachInstanceId) {
@@ -1489,6 +1506,8 @@ void SpellVisualSystem::update(float deltaTime) {
     // Get character bone tracking context (once per frame)
     CharacterRenderer* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
 
+    std::erase_if(drainingCasterEffects_,
+                  [&](const DrainingEffect& effect) { return !m2Renderer_->hasInstance(effect.instanceId); });
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
         // Effects on a unit hidden in an unseen WMO room are hidden with it.
         if (it->attachInstanceId && charRenderer)
@@ -1505,7 +1524,7 @@ void SpellVisualSystem::update(float deltaTime) {
         }
         it->elapsed += deltaTime;
         if (it->elapsed >= it->duration) {
-            m2Renderer_->retireInstance(it->instanceId);
+            retireEffect(*it);
             it = activeSpellVisuals_.erase(it);
         } else {
             // Update position for bone-tracked effects - follow the CASTER's
@@ -1572,11 +1591,53 @@ void SpellVisualSystem::update(float deltaTime) {
     }
 }
 
-void SpellVisualSystem::cancelAllPrecastVisuals() {
-    if (!m2Renderer_) return;
+// Death is not an interrupt: build 8606, Scholomance Dark Summoner killed
+// (`.die`) 0.4 s into the CastKit of Summon Frail Skeleton 16531
+// (SummonPet_Cast_Impact_Base, its rising sparks 0.3 s lives) while
+// channelling Evocation 12051 (CycloneWater_State, smoke 3 s lives): cone,
+// smoke and sparks all gone between two 15 Hz frames as the Death animation
+// starts. An Evocation interrupted by moving leaves its smoke 0.8 s, and so
+// does the interrupt arriving with the death (SMSG_SPELL_FAILURE first), so
+// the death removes the rest. Sunshatter 45215's channel beam goes with them.
+// Evidence: _experiments/20261119T1300Z.channel_end (evdie7_fine.jpg,
+// bmdie7_sheet.jpg, go8_sheet.jpg for the same CastKit playing out alive).
+void SpellVisualSystem::removeCasterStages(uint32_t attachInstanceId) {
+    if (!m2Renderer_ || !attachInstanceId) return;
+    for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end();) {
+        if (it->attachInstanceId == attachInstanceId && (it->isPrecast || it->isCast || it->isChannel)) {
+            LOG_DEBUG("SpellVisual: caster died, effect instance ", it->instanceId, " removed");
+            m2Renderer_->removeInstance(it->instanceId);
+            it = activeSpellVisuals_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    std::erase_if(castBeams_, [&](const CastBeam& beam) { return beam.start.instanceId == attachInstanceId; });
+    std::erase_if(drainingCasterEffects_, [&](const DrainingEffect& effect) {
+        if (effect.attachInstanceId != attachInstanceId) return false;
+        m2Renderer_->removeInstance(effect.instanceId);
+        return true;
+    });
+}
+
+void SpellVisualSystem::retireEffect(const SpellVisualInstance& effect) {
+    m2Renderer_->retireInstance(effect.instanceId);
+    if (effect.attachInstanceId && (effect.isPrecast || effect.isCast || effect.isChannel) &&
+        m2Renderer_->hasInstance(effect.instanceId))
+        drainingCasterEffects_.push_back({effect.attachInstanceId, effect.instanceId});
+}
+
+// As any kit's end: mesh and ribbons go, emitters stop, particles out live
+// out. Build 8606, Scholomance Dark Summoner killed (`.die`) 7 s into Summon
+// Frail Skeleton 16531 (precast kit 137: Summon_PreCast_Hand glows,
+// SummonPet_Impact_Base circle): hand glows gone the next frame, circle and
+// sparks fade within 0.3 s; WoWee played the 10 s precast out
+// (_experiments/20261119T1300Z.channel_end, die1_kill.jpg).
+void SpellVisualSystem::cancelPrecastVisuals(uint32_t attachInstanceId) {
+    if (!m2Renderer_ || !attachInstanceId) return;
     for (auto it = activeSpellVisuals_.begin(); it != activeSpellVisuals_.end(); ) {
-        if (it->isPrecast) {
-            m2Renderer_->retireInstance(it->instanceId);
+        if (it->isPrecast && it->attachInstanceId == attachInstanceId) {
+            retireEffect(*it);
             it = activeSpellVisuals_.erase(it);
         } else {
             ++it;
@@ -1592,6 +1653,8 @@ void SpellVisualSystem::reset() {
     castBeams_.clear();
     fieldChannels_.clear();
     heldChannelKits_.clear();
+    endedChannels_.clear();
+    drainingCasterEffects_.clear();
     if (m2Renderer_) m2Renderer_->setChainStrips({});
     // Clear lingering spell visual instances from the previous map/combat session.
     // Without this, old effects could remain visible after teleport or map change.

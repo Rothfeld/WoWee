@@ -247,6 +247,8 @@ void AnimationCallbackHandler::setupCallbacks() {
         if (instanceId != 0) {
             renderer_.getCharacterRenderer()->playAnimation(instanceId,
                 alreadyDead ? rendering::anim::DEAD : rendering::anim::DEATH, alreadyDead);
+            // Its casting effects die with it (SpellVisualSystem::removeCasterStages).
+            if (auto* visuals = renderer_.getSpellVisualSystem()) visuals->removeCasterStages(instanceId);
         }
     });
 

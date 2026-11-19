@@ -2694,6 +2694,29 @@ emitting at the end of their Stand. Not compared: missile models at impact
 (still removed at once), the drain of a unit's effects when the unit leaves.
 Evidence: `_experiments/20261118T211000Z.azurous/` in the workspace.
 
+An interrupted or failed cast (`SMSG_SPELL_FAILURE`, any caster) ends that
+caster's precast kit this way, only that caster's; `MSG_CHANNEL_UPDATE` 0 ends
+its channel kit and, at once, its channel beam, though `UNIT_CHANNEL_SPELL`
+stays set until the next object update (0.27-0.35 s later with CMaNGOS).
+Death is different: when the caster dies its own precast, cast and channel
+kit effects and cast kit beams vanish whole, particles included, those still
+draining from the interrupt that came just before too
+(`SpellVisualSystem::removeCasterStages`); impact and aura kits on it are not
+touched. Build 8606, Scholomance Dark Summoner (11582, tempspawned) killed
+with `.die` in its 10 s Summon Frail Skeleton 16531 (precast kit 137:
+Summon_PreCast_Hand glows, SummonPet_Impact_Base circle): hand glows gone the
+next frame, circle sparks gone within 0.3 s as it falls; WoWee played the
+precast out. Stunned (`.aura 853`): the same at the stun. Killed 0.4 s into
+the CastKit (SummonPet_Cast_Impact_Base, 0.3 s sparks, about 1.1 s alive)
+while channelling Evocation 12051: cone, smoke and sparks gone between two
+15 Hz frames when the death update arrives. Sunshatter 45215's beam at the
+player goes 0.06-0.13 s after `MSG_CHANNEL_UPDATE` 0. Evidence:
+`_experiments/20261119T1300Z.channel_end/` (die5_kill.jpg, stun5_sheet.jpg,
+evdie9_fine.jpg, bmdie10_sheet.jpg, bmstun10_sheet.jpg). Gotcha: `.cast back`
+from a creature at a player in GM mode fails (Invalid target) for hostile
+spells, `.cast self` makes the selected unit cast, and `.cast 2139` at the
+creature fails the same way; stun with `.aura 853` instead.
+
 Every spell effect model is drawn at its `SpellVisualEffectName.Scale` (TBC
 field 4), on top of the unit/attachment scale. One file has rows at several
 sizes: `Shock_Missile` 1, 4 and 8 - Void Reaver's Arcane Orb (34172, visual

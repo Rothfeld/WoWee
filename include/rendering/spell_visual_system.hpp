@@ -116,6 +116,13 @@ public:
     /// effects here, held until the fields clear; one with a target draws the
     /// ChannelKit's SpellChainEffects beam (CharProc 0) from start to end.
     void syncChannels(const std::vector<UnitChannel>& channels);
+    /// MSG_CHANNEL_UPDATE 0 ended this unit's channel: its beam and held
+    /// kit go now, though the fields still name the channel until the next
+    /// object update (0.27-0.35 s later with CMaNGOS). Ends at the unit's
+    /// next MSG_CHANNEL_START or once its fields clear.
+    void endChannel(uint64_t casterGuid);
+    void startChannel(uint64_t casterGuid);
+    [[nodiscard]] bool channelEnded(uint64_t casterGuid) const { return endedChannels_.contains(casterGuid); }
     // SpellVisual.dbc Precast/Cast/ChannelKit -> SpellVisualKit.dbc AnimID
     // (column 2, an AnimationData.dbc id). kNoAnimation when the stage has no
     // kit or its kit names no animation (-1). Column 1 is not an animation:
@@ -187,8 +194,17 @@ public:
     // Advance lifetime timers and remove expired instances.
     void update(float deltaTime);
 
-    // Remove all active precast visual instances (cast canceled/interrupted).
-    void cancelAllPrecastVisuals();
+    /// The unit drawn by attachInstanceId died: its own precast, cast and
+    /// channel kits and its cast kit beams go at once, the particles already
+    /// out with them, also those of such kits that ended just before (the
+    /// interrupt's SMSG_SPELL_FAILURE comes ahead of the death). Kits that
+    /// landed on it (impact, aura) are not touched.
+    void removeCasterStages(uint32_t attachInstanceId);
+
+    /// The precast kit of the unit drawn by attachInstanceId ends: its cast
+    /// was interrupted or failed (SMSG_SPELL_FAILURE), its caster died
+    /// mid-cast included. Other units' precasts go on.
+    void cancelPrecastVisuals(uint32_t attachInstanceId);
 
     // Remove all active spell visual instances and reset caches.
     // Called on map change / combat reset.
@@ -211,6 +227,7 @@ private:
         bool orientWithAttachment = false;
         // SpellVisualEffectName.Scale, times whatever the placement scales by.
         float effectScale = 1.0f;
+        bool isCast = false;  // the caster's CastKit (SMSG_SPELL_GO)
     };
 
     struct PhysicalProjectile {
@@ -242,8 +259,18 @@ private:
     uint32_t kitAnimation(const std::unordered_map<uint32_t, uint32_t>& kits, uint32_t visualId);
     // duration <= 0: the model's own animation length.
     // Returns the longest lifetime given to an effect (0 when none spawned).
+    enum class KitStage : uint8_t { Precast, Cast, Other };
+    // Retires an effect; a caster's own precast, cast or channel effect whose
+    // particles are still out is remembered until they are gone, for
+    // removeCasterStages.
+    void retireEffect(const SpellVisualInstance& effect);
+    struct DrainingEffect {
+        uint32_t attachInstanceId = 0;
+        uint32_t instanceId = 0;
+    };
+    std::vector<DrainingEffect> drainingCasterEffects_;
     float spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition, uint32_t attachInstanceId,
-                          float duration, bool isPrecast);
+                          float duration, KitStage stage);
     std::unordered_map<uint32_t, uint32_t> kitAnimations_;
     // scale: SpellVisualEffectName.Scale, the size the effect is drawn at.
     struct KitEffect { std::string path; uint32_t attachment; float scale = 1.0f; };
@@ -389,6 +416,7 @@ private:
     std::unordered_map<uint64_t, ChannelTargets> channelTargets_;  // caster guid
     std::unordered_map<uint32_t, uint32_t> fieldChannels_;    // caster instance -> visual
     std::unordered_set<uint32_t> heldChannelKits_;            // instances whose kit we started
+    std::unordered_set<uint64_t> endedChannels_;              // caster guids, see endChannel
     float beamClock_ = 0.0f;
     struct CastBeam {
         uint32_t chainId = 0;

@@ -2185,7 +2185,7 @@ void SpellHandler::cancelCast() {
     // Remove lingering precast visual effects
     if (auto* renderer = owner_.services().renderer) {
         if (auto* svs = renderer->getSpellVisualSystem())
-            svs->cancelAllPrecastVisuals();
+            svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(owner_.getPlayerGuid()));
     }
 }
 
@@ -3260,7 +3260,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     // Remove lingering precast visual effects
     if (auto* renderer = owner_.services().renderer) {
         if (auto* svs = renderer->getSpellVisualSystem())
-            svs->cancelAllPrecastVisuals();
+            svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(owner_.getPlayerGuid()));
     }
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
@@ -5899,6 +5899,14 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
             owner_.fireAddonEvent("UNIT_SPELLCAST_STOP", spellcastArgs(unitId, spellId));
         }
     }
+    // The caster's precast kit ends, whoever the caster is: a remote unit's
+    // interrupted or killed cast (CMaNGOS Spell::cancel sends this packet,
+    // also from the death's InterruptNonMeleeSpells) ends its precast too.
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* svs = renderer->getSpellVisualSystem())
+            svs->cancelPrecastVisuals(owner_.resolveUnitRenderInstance(
+                failGuid == 0 ? owner_.getPlayerGuid() : failGuid));
+    }
     if (failGuid == owner_.getPlayerGuid() || failGuid == 0) {
         // Player's own cast failed - clear gather-node loot target so the
         // next timed cast doesn't try to loot a stale interrupted gather node.
@@ -5909,11 +5917,6 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
         craftQueueRemaining_ = 0;
         queuedSpellId_ = 0;
         queuedSpellTarget_ = 0;
-        // Remove lingering precast visual effects
-        if (auto* renderer = owner_.services().renderer) {
-            if (auto* svs = renderer->getSpellVisualSystem())
-                svs->cancelAllPrecastVisuals();
-        }
         if (auto* ac = owner_.services().audioCoordinator) {
             if (auto* ssm = ac->getSpellSoundManager()) {
                 ssm->stopPrecast();
@@ -6785,6 +6788,7 @@ void SpellHandler::handleChannelStart(network::Packet& packet) {
         if (auto* renderer = owner_.services().renderer) {
             if (auto* visuals = renderer->getSpellVisualSystem()) {
                 glm::vec3 position;
+                visuals->startChannel(chanCaster);
                 if (resolveUnitPosition(chanCaster, position))
                     visuals->startChannelVisual(resolveSpellVisualId(chanSpellId), position,
                         chanTotalMs, owner_.resolveUnitRenderInstance(chanCaster));
@@ -6806,8 +6810,10 @@ void SpellHandler::handleChannelUpdate(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
     uint32_t chanRemainMs = packet.readUInt32();
     if (auto* renderer = owner_.services().renderer) {
-        if (auto* visuals = renderer->getSpellVisualSystem())
+        if (auto* visuals = renderer->getSpellVisualSystem()) {
             visuals->updateChannelVisual(owner_.resolveUnitRenderInstance(chanCaster2), chanRemainMs);
+            if (chanRemainMs == 0) visuals->endChannel(chanCaster2);
+        }
     }
     // The channel's spell, for UNIT_SPELLCAST_CHANNEL_STOP: native 2.4.3
     // sends "player", "Evocation", "" when it ends.
