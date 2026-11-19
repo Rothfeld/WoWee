@@ -81,6 +81,18 @@ MOCV red 0.6-0.9/0.3-0.5/0.3-0.6): native skin 134/93/75, WoWee with the MOCV
 214 native, 151 then 175. Two groups support the rule (this and Shattrath's
 0xb805), no more. Evidence: `../_experiments/20261118T121312Z.glaive_glow/`.
 
+The floor under the feet is the drawn floor: collision-only triangles (MOPY
+material 0xFF) are skipped. Collision-only vertices of their own are white:
+306643 of 314585 in TBC's locally lit groups have MOCV (255,255,255).
+Scholomance's Great Ossuary stairs (`ruinedkeep_crypt_instance.wmo` group 4
+"boneholes", 0x2805; map 289 around 73-88, 180.6) have an invisible walking
+ramp through the drawn treads (MOCV 0.24-0.28/0.28-0.33/0.33-0.39). Taking whichever surface
+lay first below feet + 0.5 switched a walking unit between white and dark on
+every step, 10 Hz luminance 15 <-> 80. 2.4.3 stays dark and steady there (22-45,
+following the treads' MOCV), with no switch and no blend. Crossing the Lion's
+Pride Inn door and Stormwind's gate, and walking up to Jasperlode Mine's mouth,
+neither client switches. Evidence: `../_experiments/20261119T1306Z.stair_light/`.
+
 Native unit light in an interior is not the floor MOCV times a gain (open; WoWee
 still uses the MOCV). Measured on Shattrath's Terrace of Light (group 1,
 0xb805) by fitting native/texel = A + D*max(N.l,0) per pixel, l the TBC sun

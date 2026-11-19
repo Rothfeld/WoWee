@@ -4289,6 +4289,16 @@ std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& posit
             const auto& indices = group.collisionIndices;
             const auto& vertices = group.collisionVertices;
             for (uint32_t triangle : tl_triScratch) {
+                assert(triangle / 3 < group.triMaterials.size() &&
+                       "WMO group without one MOPY material per triangle");
+                // The drawn floor lights, not the walking surface: collision-only
+                // triangles (MOPY material 0xFF) carry no meaningful MOCV.
+                // Scholomance's Great Ossuary stairs (ruinedkeep_crypt_instance
+                // group 4) have an invisible ramp, MOCV white, cutting through
+                // the drawn treads (MOCV about 0.25); taking whichever lay first
+                // below the feet flashed a unit white and dark on every step.
+                // 2.4.3's unit stays dark and steady there.
+                if (group.triMaterials[triangle / 3] == 0xFF) continue;
                 const glm::vec3& v0 = vertices[indices[triangle]];
                 const glm::vec3& v1 = vertices[indices[triangle + 1]];
                 const glm::vec3& v2 = vertices[indices[triangle + 2]];
