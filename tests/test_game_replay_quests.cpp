@@ -115,3 +115,72 @@ TEST_CASE("a quest player kill is shown as ERR_QUEST_ADD_PLAYER_KILL_SII", "[rep
     CHECK(info.lines == std::vector<std::string>{"Players slain: 2/5"});
     CHECK_FALSE(chatMentions(s, "2/5"));
 }
+
+namespace {
+
+using replay::UpdateObject;
+using wowee::game::QuestGiverStatus;
+using wowee::game::UF;
+
+constexpr uint64_t kGornek = 0xF130000C47000D73ull;
+constexpr uint32_t kYourPlace = 4641;
+
+size_t multipleQueries(const Session& s) {
+    return s.sent().of(Opcode::CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY).size();
+}
+
+// Player::SendQuestGiverStatusMultiple: a count, then guid and one status byte
+// per giver; 8 is TBC DIALOG_STATUS_REWARD.
+Packet statusMultiple(uint64_t guid, uint8_t status) {
+    Packet p(wireOpcode(Opcode::SMSG_QUESTGIVER_STATUS_MULTIPLE));
+    p.writeUInt32(1);
+    p.writeUInt64(guid);
+    p.writeUInt8(status);
+    return p;
+}
+
+// A quest log slot as Player::SetQuestSlot / SetQuestSlotCounter write it in
+// TBC: id, state, packed counters, timer - four fields from
+// PLAYER_QUEST_LOG_1_1.
+std::map<uint16_t, uint32_t> slot1(uint32_t id, uint32_t counters) {
+    const uint16_t start = wowee::game::fieldIndex(UF::PLAYER_QUEST_LOG_START);
+    REQUIRE(start != 0xFFFF);
+    return {{start, id}, {static_cast<uint16_t>(start + 2), counters}};
+}
+
+}  // namespace
+
+// Build 8606 asks for every giver's status whenever its quest log fields
+// change, and only then (pair 19: accepting Your Place In The World from
+// Kaltunk, ".quest add/complete/remove", one Mottled Boar killed). Gornek,
+// who takes the quest, kept the ! of Cutting Teeth when only Kaltunk was asked.
+TEST_CASE("a quest log change asks every quest giver's status once", "[replay][quest]") {
+    Session s("tbc");
+    s.receive(UpdateObject().tbc().create(Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+                                          {{UF::UNIT_FIELD_LEVEL, 1}}, true));
+    CHECK(multipleQueries(s) == 0);  // an empty log at login asks nothing
+
+    s.receive(UpdateObject().tbc().valuesAt(Session::kPlayerGuid, slot1(kYourPlace, 0)));
+    CHECK(multipleQueries(s) == 1);
+    s.receive(statusMultiple(kGornek, 8));
+    CHECK(s.handler().getQuestGiverStatus(kGornek) == QuestGiverStatus::REWARD);
+
+    s.receive(UpdateObject().tbc().valuesAt(Session::kPlayerGuid, slot1(kYourPlace, 1)));
+    CHECK(multipleQueries(s) == 2);  // a counter
+
+    s.receive(UpdateObject().tbc().values(Session::kPlayerGuid, {{UF::UNIT_FIELD_LEVEL, 2}}));
+    CHECK(multipleQueries(s) == 2);  // not the log
+
+    s.receive(UpdateObject().tbc().valuesAt(Session::kPlayerGuid, slot1(0, 0)));
+    CHECK(multipleQueries(s) == 3);  // removed or handed in
+    CHECK(s.sent().of(Opcode::CMSG_QUESTGIVER_STATUS_QUERY).empty());
+}
+
+TEST_CASE("entering the world with quests in the log asks every status once", "[replay][quest]") {
+    Session s("tbc");
+    s.receive(UpdateObject().tbc().create(Session::kPlayerGuid, wowee::game::ObjectType::PLAYER,
+                                          {{UF::UNIT_FIELD_LEVEL, 1},
+                                           {UF::PLAYER_QUEST_LOG_START, kYourPlace}},
+                                          true));
+    CHECK(multipleQueries(s) == 1);
+}

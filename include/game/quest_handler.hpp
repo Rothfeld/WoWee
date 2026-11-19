@@ -299,33 +299,39 @@ public:
         questLog_.clear();
         pendingQuestQueryIds_.clear();
         npcQuestStatus_.clear();
+        // The new character's quest log is compared against an empty one, so
+        // entering the world with quests asks for every status once, and with
+        // none asks nothing - as build 8606 does.
+        questLogFields_.clear();
+        questItemsHeld_.clear();
         // 2.4.3 enters the world with nothing selected (the log then picks its
         // first quest) but keeps the collapsed headers for the session.
         selectedQuestId_ = 0;
     }
 
-    // Drives the quest-giver status requery cooldown; called once per frame by
-    // GameHandler::update alongside the other quest bookkeeping.
-    void tickQuestGiverStatusRequery(float deltaTime);
-
 private:
-    // Request fresh quest-giver status for nearby NPCs so the !/? markers update
-    // live (e.g. the moment an objective completes) instead of only when the
-    // player leaves and re-enters the area.
-    //
-    // Rate-limited rather than sent on the spot: one call fans out to a packet
-    // per nearby quest giver, and completion events arrive in bursts (a killing
-    // blow that finishes two quests, a loot that fills several objectives).
-    // Requests inside the cooldown set a pending flag and are coalesced into a
-    // single sweep when it expires, so no refresh is dropped.
-    void requeryNearbyQuestGiverStatus();
-    void sendQuestGiverStatusQueries();
+    /// CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY: the server answers with the
+    /// status of every quest giver this client can see.
+    ///
+    /// Build 8606 sends it whenever its quest log changes and at no other
+    /// time; a single giver is asked about (CMSG_QUESTGIVER_STATUS_QUERY) only
+    /// as it comes into view. The quest log is the slot fields - a quest
+    /// taken, handed in, removed, a counter moved, ".quest add/complete/
+    /// remove" alike - and the count of each objective item carried, which
+    /// the client counts itself: 0->9, 9->10, 10->11 and 11->9 Cactus Apples
+    /// for Galgar's Cactus Apple Surprise each sent one, Linen Cloth none.
+    /// (_experiments/20261119T102200Z.questmarker_status_refresh)
+    ///
+    /// Asking only the giver the quest came from left every other one with
+    /// the mark it had before: Your Place In The World, taken from Kaltunk,
+    /// is complete on accepting and handed to Gornek, who kept the ! of
+    /// Cutting Teeth instead of the ? of the turn-in.
+    void queryAllQuestGiverStatuses();
 
-    // Minimum spacing between requery sweeps. Marker freshness is a cosmetic
-    // concern, so a second of latency is imperceptible next to the packet cost.
-    static constexpr float kQuestGiverRequeryIntervalSec = 1.0f;
-    float questGiverRequeryCooldown_ = 0.0f;
-    bool questGiverRequeryPending_ = false;
+    /// The quest log slot fields (PLAYER_QUEST_LOG_*) at the last update.
+    std::vector<uint32_t> questLogFields_;
+    /// Objective item id -> count carried, at the last inventory rebuild.
+    std::unordered_map<uint32_t, uint32_t> questItemsHeld_;
 
     // --- Packet handlers ---
     void handleGossipMessage(network::Packet& packet);

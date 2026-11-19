@@ -1247,6 +1247,20 @@ value for it; reading it as NONE gave the vendor/gossip/gear cursor and let
 gossip-derived status overwrite it. Evidence:
 `_experiments/20261118T181000Z.pair16_quest_cursor/README.md`.
 
+Status refresh: build 8606 sends `CMSG_QUESTGIVER_STATUS_QUERY` for a giver
+only as it comes into view, and `CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY` (every
+giver in view) whenever its quest log changes: any `PLAYER_QUEST_LOG_*` slot
+field (accept, hand-in, removal, a kill counter, `.quest add/complete/remove`)
+or the carried count of an objective item (0->9, 9->10, 10->11, 11->9 Cactus
+Apples each sent one, Linen Cloth none). Entering the world with quests sends
+one; with an empty log none. WoWee does the same (`queryAllQuestGiverStatuses`
+in `quest_handler.cpp`). Gotcha: asking only the giver a quest came from left
+Gornek with the ! of Cutting Teeth after Your Place In The World (Kaltunk,
+complete on accept) instead of the ? of the turn-in. The server itself sends
+the multiple status only after a reward and on level-up. Native wire captured
+with a logging proxy (header decrypt from the realm's session key):
+`_experiments/20261119T102200Z.questmarker_status_refresh/README.md`.
+
 Gossip and greeting lists mark a quest more than 5 levels below the player as
 trivial (grey icon, "(low level)"; `questIsTrivial` in
 `include/game/level_difficulty.hpp`): measured at levels 17/18, 43-46, 55/56
