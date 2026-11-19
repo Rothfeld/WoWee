@@ -738,6 +738,13 @@ short tail. Whether unpinned tails also stop at birth is unverified (about
 ten TBC emitters would differ). Evidence:
 `_experiments/20261117T233000Z.flag400_spokes` in the workspace.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
+A ribbon edge is the emitter point moved heightAbove along its bone's +Z and
+heightBelow along -Z, through bone and model matrix, so a creature's display
+scale widens its trails: Al'ar (display 18945, scale 5) drew 0.28 yd camera-facing
+lines where native shows 1.4 yd bands. Colour, alpha, heights and visibility
+follow the current sequence; every edge of edgesPerSecond x edgeLifetime is kept
+(Al'ar's tail: 100/s for 2 s). Open: Al'ar's wing loops are still narrower than
+native's; on phoenix.m2 the trail moves mostly along the bones' Z axes.
 
 ### Quest object sparkle
 
@@ -951,6 +958,19 @@ Looping Stand animations choose among authored M2 sequences using their frequenc
 weights and repetition bounds. The TBC wolf has four Stand sequences, all with
 variationIndex zero; filtering on that field cannot identify its fidgets.
 Selection happens at sequence boundaries and uses authored transition blend time.
+One-shots draw their sequence by frequency as well: Murloc.m2 AttackUnarmed is
+sequence 5 (a leap upright toward the target) or 8 (a low lunge); native 2.4.3
+played each in two of four swings. Always taking the first-listed one made
+every WoWee murloc swing the leap.
+
+A creature given a new display (`.npc setmodel`, a VALUES display change) is
+respawned with the new model but does not play Birth: Tree Disguise (16977,
+AshenvaleTreeFalling01.m2, Birth grows bone 1 from 0.09) stands at full height
+in native right after setmodel. A display whose CreatureDisplayInfo skin is
+empty leaves its texture type 11-13 slots white: Riding Wyvern 20413 (display
+19608) and Teron Gorefiend's mount (21263) are white in native, with their
+type-0 parts textured. Evidence: `_experiments/20261119T0840Z.sweepfx_verify/`
+in the workspace (`base/` is the unchanged build).
 
 Airborne terrain contact compares feet against the terrain height at each end
 of the movement segment. Comparing both endpoints against the destination floor
