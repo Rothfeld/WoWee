@@ -1339,6 +1339,11 @@ SpellUsability castableNow(GameHandler& owner, uint32_t spellId) {
     if (!auraStateAllows(owner, entry)) return {};
     if (missingEquipment(owner, spellId)) return {};
     if (!toolsCarried(owner, entry)) return {};
+    // Reagents: native 2.4.3 answers nil, nil for Slow Fall without a Light
+    // Feather (pair 21).
+    for (const auto& reagent : entry.reagents)
+        if (reagent.itemId != 0 && reagent.count > 0 &&
+            owner.getInventory().countItem(reagent.itemId) < reagent.count) return {};
     // Finishing moves: Eviscerate (0x100000) and Slice and Dice (0x400000).
     if ((entry.attrEx & 0x500000u) &&
         (owner.getComboPoints() == 0 || owner.getComboTarget() != owner.getTargetGuid()))
