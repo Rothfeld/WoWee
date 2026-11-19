@@ -4829,6 +4829,9 @@ void Application::update(float deltaTime) {
             addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
             addonManager_->fireEvent("PLAYER_LOGIN");
             addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+            // Then, as 2.4.3 after ReloadUI (pair 21): the login packets' state.
+            for (const char* event : {"UPDATE_INVENTORY_ALERTS", "PLAYER_AURAS_CHANGED", "PET_BAR_UPDATE", "UPDATE_FACTION"})
+                addonManager_->fireEvent(event);
             // 2.4.3 follows a /reload with QUEST_LOG_UPDATE, which is what
             // redraws the quest log and the watch frame from the kept state.
             addonManager_->fireEvent("QUEST_LOG_UPDATE");

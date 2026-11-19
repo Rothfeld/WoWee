@@ -1295,6 +1295,12 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         addonManager_->fireEvent("UPDATE_CHAT_WINDOWS");
         addonManager_->fireEvent("PLAYER_LOGIN");
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+        // What 2.4.3 follows PLAYER_ENTERING_WORLD with when its interface is
+        // built (a ReloadUI on pair 21): the state the login packets carried.
+        // UPDATE_FACTION is what swaps the experience bar for the max-level
+        // bar at 70, which lowers the stance and pet bars by 5 pixels.
+        for (const char* event : {"UPDATE_INVENTORY_ALERTS", "PLAYER_AURAS_CHANGED", "PET_BAR_UPDATE", "UPDATE_FACTION"})
+            addonManager_->fireEvent(event);
         if (gameHandler_) gameHandler_->onInterfaceReady(renderer_ ? renderer_->getCurrentZoneId() : 0u);
         // The next-mail-time answer arrives before FrameXML exists, so
         // MiniMapMailFrame missed it; it asks HasNewMail on this event.
