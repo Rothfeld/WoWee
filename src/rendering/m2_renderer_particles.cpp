@@ -323,52 +323,46 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
         auto& edges    = inst.ribbonEdges[ri];
         auto& accum    = inst.ribbonEdgeAccumulators[ri];
 
-        // Determine bone world position for spine
-        glm::vec3 spineWorld = inst.position;
-        // Use referenced bone; fall back to bone 0 if out of range (common for spell effects
-        // where ribbon bone fields may be unset/garbage, e.g. bone=4294967295)
+        // The edge is a segment through the emitter point along the emitter
+        // bone's local Z: heightAbove up, heightBelow down, placed by the bone
+        // and the model matrix. Native 2.4.3 draws Al'ar's (phoenix.m2) wing
+        // and tail ribbons as broad bands 5x their authored height (display
+        // scale 5), twisting with the bones; widened across the line of sight
+        // in world units they were thin camera-facing lines a fifth as wide.
         uint32_t boneIdx = em.bone;
         if (boneIdx >= inst.boneMatrices.size() && !inst.boneMatrices.empty()) {
             boneIdx = 0;
         }
-        if (boneIdx < inst.boneMatrices.size()) {
-            glm::vec4 local(em.position.x, em.position.y, em.position.z, 1.0f);
-            spineWorld = glm::vec3(inst.modelMatrix * inst.boneMatrices[boneIdx] * local);
-        } else {
-            glm::vec4 local(em.position.x, em.position.y, em.position.z, 1.0f);
-            spineWorld = glm::vec3(inst.modelMatrix * local);
-        }
+        const glm::mat4 emitterToWorld = boneIdx < inst.boneMatrices.size()
+            ? inst.modelMatrix * inst.boneMatrices[boneIdx] : inst.modelMatrix;
+        const glm::vec3 spineWorld = glm::vec3(emitterToWorld * glm::vec4(em.position, 1.0f));
 
         // Skip emitters that produce NaN positions (garbage bone/position data)
         if (std::isnan(spineWorld.x) || std::isnan(spineWorld.y) || std::isnan(spineWorld.z))
             continue;
 
-        // Evaluate animated tracks (use first available sequence key, or fallback value)
-        auto getFloatVal = [&](const pipeline::M2AnimationTrack& track, float fallback) -> float {
-            for (const auto& seq : track.sequences) {
-                if (!seq.floatValues.empty()) return seq.floatValues[0];
-            }
-            return fallback;
-        };
-        auto getVec3Val = [&](const pipeline::M2AnimationTrack& track, glm::vec3 fallback) -> glm::vec3 {
-            for (const auto& seq : track.sequences) {
-                if (!seq.vec3Values.empty()) return seq.vec3Values[0];
-            }
-            return fallback;
-        };
-
-        float visibility  = getFloatVal(em.visibilityTrack, 1.0f);
-        float heightAbove = getFloatVal(em.heightAboveTrack, 0.5f);
-        float heightBelow = getFloatVal(em.heightBelowTrack, 0.5f);
-        glm::vec3 color   = getVec3Val(em.colorTrack, glm::vec3(1.0f));
-        float alpha       = getFloatVal(em.alphaTrack, 1.0f);
+        const int seq = inst.currentSequenceIndex;
+        const auto& gsd = gpu.globalSequenceDurations;
+        const float visibility = m2_track::sampleFloat(em.visibilityTrack, seq, inst.animTime,
+                                                       inst.globalSequenceTime, gsd, 1.0f);
+        const float heightAbove = m2_track::sampleFloat(em.heightAboveTrack, seq, inst.animTime,
+                                                        inst.globalSequenceTime, gsd, 0.5f);
+        const float heightBelow = m2_track::sampleFloat(em.heightBelowTrack, seq, inst.animTime,
+                                                        inst.globalSequenceTime, gsd, 0.5f);
+        const glm::vec3 color = m2_track::sampleVec3(em.colorTrack, seq, inst.animTime,
+                                                     inst.globalSequenceTime, gsd, glm::vec3(1.0f));
+        const float alpha = m2_track::sampleFloat(em.alphaTrack, seq, inst.animTime,
+                                                  inst.globalSequenceTime, gsd, 1.0f);
 
         // Age existing edges and remove expired ones
         for (auto& e : edges) {
             e.age += dt;
             // Apply gravity
             if (em.gravity != 0.0f) {
-                e.worldPos.z -= em.gravity * dt * dt * 0.5f;
+                const float drop = em.gravity * dt * dt * 0.5f;
+                e.worldPos.z -= drop;
+                e.top.z -= drop;
+                e.bottom.z -= drop;
             }
         }
         while (!edges.empty() && edges.front().age >= em.edgeLifetime) {
@@ -381,17 +375,14 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
             while (accum >= 1.0f) {
                 accum -= 1.0f;
                 M2Instance::RibbonEdge e;
-                e.worldPos    = spineWorld;
-                e.color       = color;
-                e.alpha       = alpha;
-                // Scaled into world units here, where the instance is at hand.
-                // The spine is a world position the model matrix produced, and
-                // these two were model-space lengths added straight to it - so
-                // a doodad placed at any scale but 1 got a trail the right
-                // length and the wrong width.
-                e.heightAbove = heightAbove * inst.scale;
-                e.heightBelow = heightBelow * inst.scale;
-                e.age         = 0.0f;
+                e.worldPos = spineWorld;
+                e.top = glm::vec3(emitterToWorld *
+                    glm::vec4(em.position + glm::vec3(0.0f, 0.0f, heightAbove), 1.0f));
+                e.bottom = glm::vec3(emitterToWorld *
+                    glm::vec4(em.position - glm::vec3(0.0f, 0.0f, heightBelow), 1.0f));
+                e.color = color;
+                e.alpha = alpha;
+                e.age = 0.0f;
                 edges.push_back(e);
 
                 // Diagnostic: log first ribbon edge per spell effect instance+emitter
@@ -402,9 +393,6 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
                              " vis=", visibility, " eps=", em.edgesPerSecond,
                              " edgeLife=", em.edgeLifetime, " bone=", em.bone);
                 }
-
-                // Cap trail length
-                if (edges.size() > 128) edges.pop_front();
             }
         } else {
             accum = 0.0f;
@@ -552,18 +540,46 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     static const bool kNoRibbons = envFlagEnabled("WOWEE_M2_NO_RIBBONS");
     if (kNoRibbons) return;
 
-    // A ribbon's width runs across the trail and across the view, and it has to
-    // be computed per edge from the direction the trail is actually going.
-    //
-    // This used a fixed world Z, which is only right for a trail travelling
-    // horizontally. A flame licks upward, so its spine ran along the very axis
-    // the strip was being widened on: the top and bottom vertices of every
-    // edge landed on the spine itself, the quad collapsed, and the whole trail
-    // drew as one tall thin sliver with the fire texture smeared up it. That
-    // is the bonfire at Grom'gol standing four times the height of the huts
-    // behind it.
+    // Trail edges carry their world ends (updateRibbons); SpellChainEffects
+    // beams below are widened across their direction and the line of sight.
     const glm::vec3 camPos = cachedCamPos_;
     const glm::vec3 upWorld(0.0f, 0.0f, 1.0f);
+
+    // Every edge of every trail is drawn: Al'ar alone carries ten trails of
+    // up to 200 edges (100 per second for 2 s). The buffer grows to fit.
+    size_t required = 0;
+    for (const auto& inst : instances) {
+        if (!inst.cachedModel || inst.cachedModel->ribbonEmitters.empty()) continue;
+        for (const auto& edges : inst.ribbonEdges) required += edges.size() * 2;
+    }
+    for (const auto& strip : chainStrips_) required += strip.spine.size() * 2;
+    if (required > ribbonVertexCapacity_[frame]) {
+        const size_t capacity = std::max(required, ribbonVertexCapacity_[frame] * 2);
+        VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = capacity * 9 * sizeof(float);
+        info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        VmaAllocationCreateInfo allocationInfo{};
+        allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        allocationInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        ::VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VmaAllocationInfo mapped{};
+        const auto allocator = vkCtx_->getAllocator();
+        const VkResult result = vmaCreateBuffer(allocator, &info, &allocationInfo, &buffer, &allocation, &mapped);
+        if (result != VK_SUCCESS) {
+            LOG_ERROR("Ribbon vertex buffer allocation failed: ", result, " vertices=", capacity);
+            throw std::runtime_error("Ribbon vertex buffer allocation failed");
+        }
+        const ::VkBuffer previousBuffer = ribbonVB_[frame];
+        const VmaAllocation previousAllocation = ribbonVBAlloc_[frame];
+        vkCtx_->deferAfterAllFrameFences([allocator, previousBuffer, previousAllocation] {
+            vmaDestroyBuffer(allocator, previousBuffer, previousAllocation);
+        });
+        ribbonVB_[frame] = buffer;
+        ribbonVBAlloc_[frame] = allocation;
+        ribbonVBMapped_[frame] = mapped.pMappedData;
+        ribbonVertexCapacity_[frame] = capacity;
+    }
 
     float* dst     = static_cast<float*>(ribbonVBMapped_[frame]);
     size_t written = 0;
@@ -605,7 +621,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
 
             // Emit triangle strip: 2 verts per edge (top + bottom)
             for (size_t ei = 0; ei < edges.size(); ei++) {
-                if (written + 2 > MAX_RIBBON_VERTS) break;
+                assert(written + 2 <= ribbonVertexCapacity_[frame]);
                 const auto& e = edges[ei];
                 // No fade with edge age: the texture runs head to tail along
                 // u and carries the falloff. Fading by age as well halved the
@@ -615,25 +631,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 float a = e.alpha * inst.fade;
                 float u = static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
 
-                // The trail's own direction here, from the edges either side.
-                const glm::vec3& prev = edges[ei > 0 ? ei - 1 : ei].worldPos;
-                const glm::vec3& next = edges[ei + 1 < edges.size() ? ei + 1 : ei].worldPos;
-                glm::vec3 spineDir = next - prev;
-                float spineLen = glm::length(spineDir);
-                // Widen across the trail and across the line of sight. Where
-                // the trail doubles back on itself or points straight at the
-                // eye there is no such direction, and world up is as good an
-                // answer as any.
-                glm::vec3 side = upWorld;
-                if (spineLen > 1e-5f) {
-                    glm::vec3 toEye = camPos - e.worldPos;
-                    glm::vec3 cross = glm::cross(spineDir / spineLen, toEye);
-                    float crossLen = glm::length(cross);
-                    if (crossLen > 1e-5f) side = cross / crossLen;
-                }
-
-                // Top vertex (one side of the spine)
-                glm::vec3 top = e.worldPos + side * e.heightAbove;
+                const glm::vec3& top = e.top;
                 dst[written * 9 + 0] = top.x;
                 dst[written * 9 + 1] = top.y;
                 dst[written * 9 + 2] = top.z;
@@ -646,7 +644,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 written++;
 
                 // Bottom vertex (the other side)
-                glm::vec3 bot = e.worldPos - side * e.heightBelow;
+                const glm::vec3& bot = e.bottom;
                 dst[written * 9 + 0] = bot.x;
                 dst[written * 9 + 1] = bot.y;
                 dst[written * 9 + 2] = bot.z;
@@ -670,7 +668,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     }
 
     // SpellChainEffects beams: widened across their own direction and the
-    // line of sight, as the trails above.
+    // line of sight.
     for (const auto& strip : chainStrips_) {
         assert(strip.spine.size() == strip.u.size());
         if (strip.spine.size() < 2) continue;
@@ -678,7 +676,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         if (!texSet) continue;
         const uint32_t firstVert = static_cast<uint32_t>(written);
         for (size_t i = 0; i < strip.spine.size(); ++i) {
-            if (written + 2 > MAX_RIBBON_VERTS) break;
+            assert(written + 2 <= ribbonVertexCapacity_[frame]);
             const glm::vec3& p = strip.spine[i];
             const glm::vec3 dir = strip.spine[i + 1 < strip.spine.size() ? i + 1 : i] - strip.spine[i > 0 ? i - 1 : i];
             glm::vec3 side = upWorld;

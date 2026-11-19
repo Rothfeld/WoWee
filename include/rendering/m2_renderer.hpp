@@ -338,10 +338,14 @@ struct M2Instance {
     // Ribbon emitter state
     struct RibbonEdge {
         glm::vec3 worldPos;   // Spine world position when this edge was born
+        // The edge's two ends in world space at birth: the emitter point
+        // moved heightAbove along the emitter bone's +Z and heightBelow along
+        // its -Z, through bone and model matrix (so the owner's scale and the
+        // bone's turn are in them).
+        glm::vec3 top;
+        glm::vec3 bottom;
         glm::vec3 color;      // Interpolated color at birth
         float     alpha;      // Interpolated alpha at birth
-        float     heightAbove;// Half-width above spine
-        float     heightBelow;// Half-width below spine
         float     age;        // Seconds since spawned
     };
     // One deque of edges per ribbon emitter on this instance
@@ -1132,7 +1136,7 @@ private:
     std::vector<uint32_t> cullReadableIds_[2];
 
     // Dynamic ribbon vertex buffer (CPU-written triangle strip)
-    static constexpr size_t MAX_RIBBON_VERTS = 2048;  // 9 floats each
+    static constexpr size_t MAX_RIBBON_VERTS = 2048;  // initial ribbonVB_ size, 9 floats each
     /// Frames in flight; equal to VkContext's MAX_FRAMES_IN_FLIGHT (asserted in m2_renderer.cpp).
     static constexpr uint32_t kParticleFrames = 2;
     // One per frame in flight: the GPU may still read frame N's vertices
@@ -1142,6 +1146,8 @@ private:
     ::VkBuffer ribbonVB_[kParticleFrames] = {};
     VmaAllocation ribbonVBAlloc_[kParticleFrames] = {};
     void* ribbonVBMapped_[kParticleFrames] = {};
+    // Vertices ribbonVB_ holds; grows to fit every visible trail and beam.
+    size_t ribbonVertexCapacity_[kParticleFrames] = {};
     // Geometry-model particle triangles (ribbon layout), grown on demand.
     ::VkBuffer particleMeshVB_[kParticleFrames] = {};
     VmaAllocation particleMeshVBAlloc_[kParticleFrames] = {};

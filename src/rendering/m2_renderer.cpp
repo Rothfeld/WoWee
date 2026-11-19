@@ -1002,6 +1002,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         for (uint32_t f = 0; f < kParticleFrames; ++f) {
             vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &ribbonVB_[f], &ribbonVBAlloc_[f], &allocInfo);
             ribbonVBMapped_[f] = allocInfo.pMappedData;
+            ribbonVertexCapacity_[f] = MAX_RIBBON_VERTS;
         }
     }
 
