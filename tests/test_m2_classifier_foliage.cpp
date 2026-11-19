@@ -491,3 +491,20 @@ TEST_CASE("Small solid props retain geometry when they contain particles", "[m2]
         CHECK_FALSE(prop.isSpellEffect);
     }
 }
+
+// Ground clutter is decided by who placed the model, not by its folder. The
+// Stranglethorn fern beside the big trees is an ADT doodad in a Detail folder;
+// 2.4.3 draws it with its authored alpha key, hard and opaque.
+TEST_CASE("Ground detail comes from the ground-effect placement", "[m2][classifier][detail]") {
+    for (const char* name : {
+             "World\\Azeroth\\Stranglethorn\\PassiveDoodads\\Detail\\StranglePlant10.m2",
+             "world\\nodxt\\detail\\wetbus01.m2"}) {
+        INFO(name);
+        const glm::vec3 lo(-1.0f), hi(1.0f);
+        CHECK_FALSE(classifyM2Model(name, lo, hi, 500, 0).isGroundDetail);
+        const auto clutter = classifyM2Model(name, lo, hi, 500, 0, /*groundEffect=*/true);
+        CHECK(clutter.isGroundDetail);
+        CHECK(clutter.collisionNoBlock);
+        CHECK(clutter.shadowWindFoliage);
+    }
+}

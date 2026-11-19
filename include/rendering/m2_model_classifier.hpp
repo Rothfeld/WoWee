@@ -79,7 +79,7 @@ struct M2ClassificationResult {
     bool isElvenLike        = false; ///< Night elf / Blood elf themed model
     bool isLanternLike      = false; ///< Lantern/lamp/light model
     bool isKoboldFlame      = false; ///< Kobold candle/torch model
-    bool isGroundDetail     = false; ///< Ground-clutter detail doodad (always non-blocking)
+    bool isGroundDetail     = false; ///< Placed by the ground-effect scatterer (always non-blocking)
     bool isInvisibleTrap    = false; ///< Event-object invisible trap (no render, no collision)
     bool isWaterfall        = false; ///< Waterfall model (ambient sound + splash particles)
     bool isBrazierOrFire    = false; ///< Brazier / campfire / bonfire model
@@ -115,13 +115,17 @@ struct M2ClassificationResult {
  * @param boundsMax    Per-vertex tight bounding-box maximum
  * @param vertexCount  Number of mesh vertices
  * @param emitterCount Number of particle emitters
+ * @param groundEffect The model is ground clutter: GroundEffectDoodad.dbc names it
+ *                     and the terrain scatterer places it. The same file placed by
+ *                     an ADT or WMO is an ordinary doodad.
  */
 M2ClassificationResult classifyM2Model(
     const std::string& name,
     const glm::vec3&   boundsMin,
     const glm::vec3&   boundsMax,
     std::size_t        vertexCount,
-    std::size_t        emitterCount);
+    std::size_t        emitterCount,
+    bool               groundEffect = false);
 
 // ---------------------------------------------------------------------------
 // Batch texture classification

@@ -1052,7 +1052,7 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
             size_t uploaded = 0;
             while (ft.m2ModelIndex < pending->m2Models.size() && uploaded < kModelsPerStep) {
                 auto& m2Ready = pending->m2Models[ft.m2ModelIndex];
-                if (m2Renderer->loadModel(m2Ready.model, m2Ready.modelId)) {
+                if (m2Renderer->loadModel(m2Ready.model, m2Ready.modelId, m2Ready.groundEffect)) {
                     ft.uploadedM2ModelIds.insert(m2Ready.modelId);
                     // Track uploaded model IDs so background threads can skip re-reading
                     std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
@@ -1950,6 +1950,7 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
         ready.modelId = modelId;
         ready.model = std::move(m2Model);
         ready.path = m2Path;
+        ready.groundEffect = true;
         pending->m2Models.push_back(std::move(ready));
         preparedModelIds.insert(modelId);
         return true;
@@ -2022,7 +2023,11 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                         continue;
                     }
                     const std::string& doodadModelPath = doodadIt->second;
-                    uint32_t modelId = static_cast<uint32_t>(std::hash<std::string>{}(doodadModelPath));
+                    // Its own id space: ADTs and WMOs place some of these
+                    // files as ordinary doodads (world\nodxt\detail\wetbus01),
+                    // which keep their authored materials and collision.
+                    uint32_t modelId = static_cast<uint32_t>(
+                        std::hash<std::string>{}("GroundEffectDoodad|" + doodadModelPath));
                     if (!ensureModelPrepared(doodadModelPath, modelId)) {
                         LOG_ERROR("Ground clutter model could not load: ", doodadModelPath);
                         assert(false && "Authored ground detail model failed to load");

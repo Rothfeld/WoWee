@@ -483,7 +483,10 @@ public:
     void shutdown();
 
     [[nodiscard]] bool hasModel(uint32_t modelId) const;
-    bool loadModel(const pipeline::M2Model& model, uint32_t modelId);
+    /// groundEffect: the terrain ground-effect scatterer places this model
+    /// (see classifyM2Model). One model id is one role; loading the same id
+    /// in the other role is an error.
+    bool loadModel(const pipeline::M2Model& model, uint32_t modelId, bool groundEffect = false);
     /** Force-remove a model and all its GPU resources. Caller must ensure no instances reference it. */
     void unloadModel(uint32_t modelId);
     /** Mark a loaded model as a spell effect (full-brightness particles, no collision). */

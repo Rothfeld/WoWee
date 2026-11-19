@@ -187,9 +187,10 @@ M2ClassificationResult classifyM2Model(
     const glm::vec3&   boundsMin,
     const glm::vec3&   boundsMax,
     std::size_t        vertexCount,
-    std::size_t        emitterCount)
+    std::size_t        emitterCount,
+    bool               groundEffect)
 {
-    // Lowercased full name for explicitly path-based checks (ground detail).
+    // Lowercased full name for explicitly path-based checks.
     std::string fullPath = name;
     std::transform(fullPath.begin(), fullPath.end(), fullPath.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -212,7 +213,14 @@ M2ClassificationResult classifyM2Model(
     // Simple single-token flags
     // ---------------------------------------------------------------
     r.isInvisibleTrap = has(n, "invisibletrap");
-    r.isGroundDetail  = has(fullPath, "\\nodxt\\detail\\") || has(fullPath, "\\detail\\");
+    // Ground clutter is a placement, not a folder. 61 models under a
+    // ...\Detail\ folder are ADT and WMO doodads (1184 MMDX references:
+    // StranglePlant08/10, StranglethornFern05, ElwynnRock1/2, ElwynnSeaweed01)
+    // and 36 World\NoDXT\Detail clutter models are placed by ADTs too. 2.4.3
+    // draws those with their authored materials: StranglePlant10's alpha-key
+    // fronds stay hard and opaque beside the big trees of Stranglethorn, where
+    // the clutter path's soft blended edges painted the sky through them.
+    r.isGroundDetail  = groundEffect;
     // A model under PARTICLEEMITTERS\ is pure VFX - the 61 models there are
     // auras, wisps and splashes, and not one of them is a physical object.
     // kEffectTokens already carries "particleemitter", but tokens are matched

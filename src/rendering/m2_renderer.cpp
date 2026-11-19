@@ -1,4 +1,5 @@
 #include <atomic>
+#include <stdexcept>
 #include "rendering/placement_transform.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/particle_emission.hpp"
@@ -1423,9 +1424,10 @@ void M2Renderer::censusInstance(const M2Instance& instance) {
                 " top=", instance.position.z + gpu.boundMax.z * instance.scale);
 }
 
-bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
-    if (models.find(modelId) != models.end()) {
-        // Already loaded
+bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, bool groundEffect) {
+    if (const auto loaded = models.find(modelId); loaded != models.end()) {
+        if (loaded->second.isGroundDetail != groundEffect)
+            throw std::logic_error("M2 model id loaded as ground clutter and as a placed doodad: " + model.name);
         return true;
     }
     if (models.size() >= modelCacheLimit_) {
@@ -1516,7 +1518,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     // Classify model from name and geometry - pure function, no GPU dependencies.
     auto cls = classifyM2Model(model.name, tightMin, tightMax,
                                 model.vertices.size(),
-                                model.particleEmitters.size());
+                                model.particleEmitters.size(), groundEffect);
     const bool isInvisibleTrap   = cls.isInvisibleTrap;
     const bool groundDetailModel = cls.isGroundDetail;
     if (isInvisibleTrap) {

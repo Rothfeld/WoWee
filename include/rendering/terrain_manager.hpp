@@ -96,6 +96,7 @@ struct PendingTile {
         uint32_t modelId;
         pipeline::M2Model model;
         std::string path;
+        bool groundEffect = false;  // placed by the ground-effect scatterer
     };
     std::vector<M2Ready> m2Models;
 

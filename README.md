@@ -91,6 +91,16 @@ facing away from the sun ambient-only blue-grey (Beezil's Wreck), and the
 224 alpha key thinned mipmapped fronds to specks (Hyjal Summit's HyjGra
 ferns). Native blade edges are soft and see-through near the camera while its
 alpha-key tree branches stay hard, so clutter alone skips the key.
+Clutter is what the scatterer places (`classifyM2Model(..., groundEffect)`,
+its own model ids), not what sits in a `Detail` folder: 61 models there are
+ADT/WMO doodads (1184 MMDX references; `StranglePlant08/10`,
+`StranglethornFern05`, `ElwynnRock1/2`) and ADTs place 36
+`World\NoDXT\Detail` models directly. Native draws them with their authored
+materials; StranglePlant10's alpha-key fronds by Stranglethorn's big trees
+stay hard and opaque. Taken as clutter they were blended with depth written
+in the solid pass, before what stands behind them, so the clear/sky colour
+showed as a cyan rim round every frond. Evidence:
+`_experiments/20261119T083411Z.foliage_alpha/` in the workspace.
 Evidence: `_experiments/20261118T210330Z.ground_effects/` in the workspace.
 World M2 and character opaque/alpha-key batches complete before blending.
 Their blended meshes share one camera-depth-ordered stream, far to near:
