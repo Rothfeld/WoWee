@@ -600,11 +600,21 @@ void Renderer::updatePerFrameUBO() {
             ? waterRenderer->getNearestWaterHeightAt(position.x, position.y, position.z, 400.0f)
             : std::optional<float>{};
         const auto fog = wmoRenderer->getFog(position, waterHeight && position.z < *waterHeight);
+        // Authored WMO fog is the fog of the interior only. From Echo Ridge
+        // Mine's entrance (md_goldmine.wmo, MFOG 69 and 200 yards) build 8606
+        // shows Northshire's trees outside in their own colours, and from the
+        // stairs to Illidan's door (blacktemple.wmo group 23, a teal sphere
+        // ending at 417 yards) the floating rocks outside are not teal.
+        currentFrameData.outdoorFogColor = currentFrameData.fogColor;
+        currentFrameData.outdoorFogParams = currentFrameData.fogParams;
         if (fog) {
             currentFrameData.fogColor = glm::vec4(fog->color, 1);
             currentFrameData.fogParams.x = fog->start;
             currentFrameData.fogParams.y = fog->end;
         }
+    } else {
+        currentFrameData.outdoorFogColor = currentFrameData.fogColor;
+        currentFrameData.outdoorFogParams = currentFrameData.fogParams;
     }
 
     currentFrameData.lightSpaceMatrix = lightSpaceMatrix;

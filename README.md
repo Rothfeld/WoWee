@@ -1141,6 +1141,15 @@ Gotcha: a unit's name plate is drawn independently of its model; a culled
 model leaves a name floating over nothing. Evidence:
 `_experiments/20261118T235900Z.unit_distance/` in the workspace.
 
+### Interior fog and far doodads
+
+A WMO's authored fog (MFOG) fogs only what is lit as that interior: its
+interior groups, their doodads, units and liquids in them. Terrain, outdoor
+doodads and exterior groups seen from inside keep the outdoor Light.dbc fog, and
+no outdoor M2 is drawn past the outdoor fog's end. Native: from Black Temple's
+stairs to Illidan's door 2.4.3 shows sky where the floating rocks had drawn as
+flat teal shapes. Details, evidence and gotchas: [docs/wmo-fog.md](docs/wmo-fog.md).
+
 ## TBC scene integration
 
 `GetGamma()`/`SetGamma(v)` use build 8606's scale: the offset of the `gamma`
