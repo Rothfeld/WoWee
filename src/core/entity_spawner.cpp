@@ -521,6 +521,7 @@ void EntitySpawner::clearAllQueues() {
     creaturePermanentFailureGuids_.clear();
     deadCreatureGuids_.clear();
     dyingCreatureGuids_.clear();
+    displayChangedCreatureGuids_.clear();
     pendingPlayerSpawns_.clear();
     pendingPlayerSpawnGuids_.clear();
     pendingOnlinePlayerEquipment_.clear();
@@ -905,60 +906,16 @@ void EntitySpawner::buildCreatureDisplayLookups() {
         for (char& c : s) if (c == '/') c = '\\';
         return toLower(s);
     };
-    // A display with no skin of its own, on a model that asks for one.
-    //
-    // CreatureDisplayInfo leaves Skin1 empty in 545 of its rows. 517 of those
-    // carry an ExtraDisplayId: they are characters whose appearance is baked
-    // from CreatureDisplayInfoExtra instead, and they have to stay empty or the
-    // bake never runs. The other 28 are ordinary creatures with nothing to put
-    // in the slot their model marks replaceable (texture type 11), so the slot
-    // kept the white fallback and the creature drew untextured.
-    //
-    // 24 of those 28 have a sibling that names one - another display on the
-    // same model FILE. Several model IDs point at one .m2: 110 and 3105 are
-    // both WaterElemental.mdx, and 3105's only display is the empty one, so
-    // matching by model ID finds nothing and matching by path finds the
-    // skin every other water elemental in the game uses. That is the same
-    // recovery the taxi mounts below do, for the same reason.
-    {
-        struct SkinDonor {
-            uint32_t displayId = 0;
-            std::string skin1, skin2, skin3;
-        };
-        std::unordered_map<std::string, SkinDonor> donorByPath;
-        for (const auto& [dispId, data] : displayDataMap_) {
-            if (data.skin1.empty()) continue;
-            auto itPath = modelIdToPath_.find(data.modelId);
-            if (itPath == modelIdToPath_.end()) continue;
-            const std::string key = normalizePath(itPath->second);
-            auto it = donorByPath.find(key);
-            // Lowest display id wins, so the choice does not depend on the
-            // order an unordered_map happens to walk in.
-            if (it == donorByPath.end() || dispId < it->second.displayId) {
-                donorByPath[key] = SkinDonor{dispId, data.skin1, data.skin2, data.skin3};
-            }
-        }
-
-        int recovered = 0;
-        for (auto& [dispId, data] : displayDataMap_) {
-            (void)dispId;
-            if (!data.skin1.empty() || data.extraDisplayId != 0) continue;
-            auto itPath = modelIdToPath_.find(data.modelId);
-            if (itPath == modelIdToPath_.end()) continue;
-            auto donor = donorByPath.find(normalizePath(itPath->second));
-            if (donor == donorByPath.end()) continue;
-            data.skin1 = donor->second.skin1;
-            data.skin2 = donor->second.skin2;
-            data.skin3 = donor->second.skin3;
-            ++recovered;
-        }
-        if (recovered > 0) {
-            // Said out loud: this repairs the table the rest of the client
-            // trusts, and an NPC drawn white is the only other sign of it.
-            LOG_WARNING("Recovered skins for ", recovered,
-                     " creature display(s) whose own CreatureDisplayInfo row names none");
-        }
-    }
+    // A display with no skin of its own, on a model that asks for one, keeps
+    // the slot white. CreatureDisplayInfo leaves Skin1 empty in 545 rows; 517
+    // carry an ExtraDisplayId and are baked from CreatureDisplayInfoExtra, the
+    // other 28 are ordinary creatures on a model with texture types 11-13.
+    // Native 2.4.3 draws those slots untextured white: Riding Wyvern 20413
+    // (display 19608, RidingWyvern.m2 types 11 and 12) shows a white body
+    // with its red saddle (type 0). Borrowing another display's skin for the
+    // same model file drew it as a textured brown wyvern.
+    // Evidence: _experiments/20261118T195622Z.visual_sweep_pilot/cases/19608/
+    // in the workspace.
 
     auto resolveDisplayIdForExactPath = [&](const std::string& exactPath) -> uint32_t {
         const std::string target = normalizePath(exactPath);
@@ -1542,6 +1499,7 @@ void EntitySpawner::removeCreatureForNewDisplay(uint64_t guid) {
     if (retainedEmote != 0) creatureActiveEmotes_[guid] = retainedEmote;
     if (corpse) markCreatureDead(guid);
     if (dying) dyingCreatureGuids_.insert(guid);
+    displayChangedCreatureGuids_.insert(guid);
     LOG_DEBUG("Display change of 0x", std::hex, guid, std::dec, corpse ? (dying ? " (dying)" : " (corpse)") : "");
 }
 
@@ -1558,6 +1516,7 @@ if (deadCreatureGuids_.count(guid)) {
     else
         charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
 } else {
+    const bool displayChanged = displayChangedCreatureGuids_.erase(guid) != 0;
     // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
     uint32_t npcEmote = 0;
     if (gameHandler_) {
@@ -1578,6 +1537,13 @@ if (deadCreatureGuids_.count(guid)) {
     if (npcEmoteAnim != 0 && charRenderer->hasAnimation(instanceId, npcEmoteAnim)) {
         creatureActiveEmotes_[guid] = npcEmoteAnim;
         charRenderer->playAnimation(instanceId, npcEmoteAnim, true);
+    } else if (displayChanged) {
+        // A new display on a creature already in the world is no new
+        // creature: native 2.4.3 shows Tree Disguise (16977,
+        // AshenvaleTreeFalling01.m2, Birth grows bone 1 from 0.09 over
+        // 16.7 s) at full height right after .npc setmodel.
+        charRenderer->playAnimation(instanceId, remoteIdlesInHover(guid)
+            ? rendering::anim::FLY_IDLE : rendering::anim::STAND, true);
     } else if (charRenderer->hasAnimation(instanceId, rendering::anim::BIRTH)) {
         // Play birth animation (one-shot) - will return to STAND after
         charRenderer->playAnimation(instanceId, rendering::anim::BIRTH, false);

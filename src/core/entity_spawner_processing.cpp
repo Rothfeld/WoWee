@@ -1809,6 +1809,7 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     creaturePermanentFailureGuids_.erase(guid);
     deadCreatureGuids_.erase(guid);
     dyingCreatureGuids_.erase(guid);
+    displayChangedCreatureGuids_.erase(guid);
 
     auto it = creatureInstances_.find(guid);
     if (it == creatureInstances_.end()) return;

@@ -643,6 +643,9 @@ private:
     // Corpses whose model was replaced while Death was still playing; the new
     // model plays Death from its start (removeCreatureForNewDisplay).
     std::unordered_set<uint64_t> dyingCreatureGuids_;
+    // Creatures respawned for a display change (removeCreatureForNewDisplay):
+    // their new model does not play Birth.
+    std::unordered_set<uint64_t> displayChangedCreatureGuids_;
 
     // --- NPC equipment attachment models (helm, shoulders) ---
     // Equipment is shared across NPCs, so a crowd wearing the same gear would
