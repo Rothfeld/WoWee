@@ -245,9 +245,8 @@ TEST_CASE("A failing OnLoad restores the caller's this", "[handlerglobals]") {
     fx.handler("OnLoad", "error('load failed')");
     lua_pushcfunction(fx.L, wowee::addons::lua_WoweeFireOnLoad);
     lua_getglobal(fx.L, "f");
-    REQUIRE(lua_pcall(fx.L, 1, 0, 0) != 0);
-    REQUIRE(std::string(lua_tostring(fx.L, -1)).find("load failed") != std::string::npos);
-    lua_pop(fx.L, 1);
+    // Reported rather than raised (see the error-handler case below).
+    REQUIRE(lua_pcall(fx.L, 1, 0, 0) == 0);
     lua_getglobal(fx.L, "this");
     CHECK(std::string(lua_tostring(fx.L, -1)) == "caller");
     lua_pop(fx.L, 1);
@@ -265,4 +264,29 @@ TEST_CASE("A handler that raises still gives the names back",
     // it had, not whatever the handler was holding when it died.
     CHECK(fx.global("this") == "before");
     CHECK(fx.global("arg1") == "kept");
+}
+
+// Build 8606 gives an OnLoad's error to the error handler and goes on with the
+// file: TargetFrame's OnLoad raising on a /reload with a target must not stop
+// TargetofTargetFrame, declared after it, from being built.
+TEST_CASE("An OnLoad that raises goes to the error handler and the load goes on",
+          "[handlerglobals]") {
+    Fixture fx;
+    setLegacyHandlerGlobals(true);
+    fx.handler("OnLoad", "error('boom')");
+    REQUIRE(luaL_dostring(fx.L, "handled = nil") == 0);
+    lua_pushcfunction(fx.L, [](lua_State* L) -> int {
+        lua_pushvalue(L, 1);
+        lua_setglobal(L, "handled");
+        return 0;
+    });
+    lua_setfield(fx.L, LUA_REGISTRYINDEX, "wowee_error_handler");
+    lua_pushcfunction(fx.L, wowee::addons::lua_WoweeFireOnLoad);
+    lua_getglobal(fx.L, "f");
+    REQUIRE(lua_pcall(fx.L, 1, 0, 0) == 0);
+    lua_getglobal(fx.L, "handled");
+    REQUIRE(lua_isstring(fx.L, -1));
+    CHECK(std::string(lua_tostring(fx.L, -1)).find("boom") != std::string::npos);
+    lua_pop(fx.L, 1);
+    CHECK(fx.globalIsNil("this"));
 }

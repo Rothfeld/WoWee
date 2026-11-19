@@ -1,4 +1,5 @@
 #include "addons/lua_handler_globals.hpp"
+#include "core/logger.hpp"
 
 #include <cstring>
 
@@ -138,6 +139,29 @@ int pcallScript(lua_State* L, const char* script, int nargs, int errfunc) {
     return rc;
 }
 
+/// An OnLoad that raised, with its message on top of the stack: given to the
+/// error handler seterrorhandler installed (FrameXML's _ERRORMESSAGE, whose
+/// debuginfo() records it), and popped. Build 8606 goes on building the rest
+/// of the file; propagating it lost every frame after it - TargetFrame.xml
+/// stopped at TargetFrame's OnLoad on a /reload with a target, before
+/// TargetofTargetFrame existed.
+static void reportOnLoadError(lua_State* L) {
+    const char* err = lua_tostring(L, -1);
+    LOG_ERROR("LuaEngine: OnLoad: ", err ? err : "?");
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_error_handler");
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            const char* herr = lua_tostring(L, -1);
+            LOG_ERROR("LuaEngine: error handler raised: ", herr ? herr : "?");
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 int lua_WoweeFireOnLoad(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
     lua_getfield(L, 1, "__scripts");
@@ -146,9 +170,7 @@ int lua_WoweeFireOnLoad(lua_State* L) {
     if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return 0; }
     lua_remove(L, -2);                    // __scripts, leaving the handler
     lua_pushvalue(L, 1);                  // self
-    // OnLoad can raise while building nested frames. Restore the caller's
-    // legacy globals before propagating the error to the loader.
-    if (pcallScript(L, "OnLoad", 1, 0) != 0) return lua_error(L);
+    if (pcallScript(L, "OnLoad", 1, 0) != 0) reportOnLoadError(L);
     return 0;
 }
 
