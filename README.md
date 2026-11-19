@@ -3206,9 +3206,6 @@ by `.learn all_myclass` / `.learn all_mytalents` (probe addon and tables:
   (ranged too) trains Unarmed, a non-weapon (shield) nothing; skill readouts
   put SKILL_INFO's permanent (talent) bonus into the base: Defense 1 with
   Anticipation is 21, 0.
-- `UPDATE_FACTION` follows `PLAYER_ENTERING_WORLD` on login and reload, so
-  the level-70 bar shows `MainMenuBarMaxLevelBar` and the stance bar sits
-  where native puts it.
 - `UNIT_AURA`/`PLAYER_AURAS_CHANGED` fire when an update block carries an
   aura field, not on every rage tick.
 
