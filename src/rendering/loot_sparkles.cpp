@@ -61,11 +61,13 @@ void LootSparkles::update(M2Renderer* m2, pipeline::AssetManager* assets,
         if (it != instances_.end() && m2->hasInstance(it->second.id) && it->second.scale == spot.scale) {
             // Kept in place: a corpse can still be settling into place.
             m2->setInstancePosition(it->second.id, spot.position);
+            if (spot.roomSource != 0) m2->copyInstanceRoom(it->second.id, spot.roomSource);
             continue;
         }
         // New, or rescaled (an object whose model changed): placed afresh.
         if (it != instances_.end() && m2->hasInstance(it->second.id)) m2->removeInstance(it->second.id);
         const uint32_t id = m2->createInstance(MODEL_ID, spot.position, glm::vec3(0.0f), spot.scale);
+        if (id != 0 && spot.roomSource != 0) m2->copyInstanceRoom(id, spot.roomSource);
         if (id != 0) instances_[spot.guid] = {id, spot.scale};
         else instances_.erase(spot.guid);
     }

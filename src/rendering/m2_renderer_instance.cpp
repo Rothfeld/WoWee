@@ -101,6 +101,16 @@ void M2Renderer::addInstanceWmoDoodad(uint32_t instanceId, uint32_t wmoInstanceI
     instance.wmoRooms = std::move(merged.rooms);
 }
 
+void M2Renderer::copyInstanceRoom(uint32_t instanceId, uint32_t sourceInstanceId) {
+    const auto index = instanceIndexById.find(instanceId);
+    const auto source = instanceIndexById.find(sourceInstanceId);
+    assert(index != instanceIndexById.end() && source != instanceIndexById.end());
+    M2Instance& instance = instances[index->second];
+    assert(!instance.wmoDoodadPlaced);
+    instance.wmoRoomInstance = instances[source->second].wmoRoomInstance;
+    instance.wmoRooms = instances[source->second].wmoRooms;
+}
+
 void M2Renderer::setInstanceHighlight(uint32_t instanceId, float amount) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;

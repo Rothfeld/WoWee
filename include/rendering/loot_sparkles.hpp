@@ -34,6 +34,9 @@ public:
         uint64_t guid = 0;
         glm::vec3 position{0.0f};
         float scale = 1.0f;
+        /// The game object's M2 instance: the sparkle is drawn with its
+        /// room. 0 for a corpse.
+        uint32_t roomSource = 0;
     };
 
     /// Once a frame with everything that sparkles now. Starts the sparkle on

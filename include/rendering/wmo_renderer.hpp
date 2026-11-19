@@ -450,6 +450,11 @@ public:
     /// no WMO) leaves the object to the outdoor Light.dbc light.
     std::optional<glm::vec3> interiorObjectLight(const glm::vec3& position) const;
 
+    /// The interior-only rooms (MOGP 0x2000 without 0x8) a game object stands
+    /// in, with their WMO instance id, by the rule roomHides uses for units
+    /// (interiorRoomsOf). Nothing outdoors.
+    std::optional<std::pair<uint32_t, std::vector<uint16_t>>> interiorRoomAt(const glm::vec3& position) const;
+
     struct InteriorLocation {
         uint32_t rootId, nameSet, groupId, groupIndex, instanceId;
         std::string sourcePath;
@@ -850,6 +855,12 @@ private:
                              const Frustum& frustum, const glm::mat4& viewProj, bool cullIndoors,
                              std::unordered_set<uint32_t>& out) const;
 
+    /// The interior-only groups a point stands in: the group whose box holds
+    /// it and whose surface is first below it, or, over no WMO surface (on
+    /// the terrain), every interior-only group whose box holds it unless an
+    /// exterior group's box does. Empty: outdoors.
+    std::vector<uint16_t> interiorRoomsOf(const ModelData& model, const glm::mat4& invModelMatrix,
+                                          const glm::vec3& point) const;
     /// The group owning the first surface straight below `localPos` (the room
     /// a point stands in), or -1 when nothing of the model lies below it.
     int groupBeneath(const ModelData& model, const glm::vec3& localPos,

@@ -2433,26 +2433,72 @@ bool WMORenderer::anyGroupDrawn(uint32_t instanceId, const std::vector<uint16_t>
     return false;
 }
 
-bool WMORenderer::roomHides(const glm::vec3& point) {
+std::vector<uint16_t> WMORenderer::interiorRoomsOf(const ModelData& model, const glm::mat4& invModelMatrix,
+                                                   const glm::vec3& point) const {
     constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
     constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
+    const auto interiorOnly = [](const GroupResources& group) {
+        return (group.groupFlags & WMO_GROUP_FLAG_INDOOR) && !(group.groupFlags & WMO_GROUP_FLAG_OUTDOOR);
+    };
+    const auto holds = [](const GroupResources& group, const glm::vec3& local) {
+        return glm::all(glm::greaterThanEqual(local, group.boundingBoxMin)) &&
+               glm::all(glm::lessThanEqual(local, group.boundingBoxMax));
+    };
+    const glm::vec3 local(invModelMatrix * glm::vec4(point, 1.0f));
+    const glm::vec3 localDown = glm::normalize(glm::vec3(invModelMatrix * glm::vec4(0, 0, -1, 0)));
+    const int room = groupBeneath(model, local, localDown);
+    if (room >= 0) {
+        const auto& group = model.groups[static_cast<size_t>(room)];
+        if (!interiorOnly(group) || !holds(group, local)) return {};
+        return {static_cast<uint16_t>(room)};
+    }
+    // No WMO surface below: it stands on the terrain. Orgrimmar's valleys are
+    // ADT ground inside the boxes of its interior groups; the Valley of
+    // Wisdom bonfire (177025, in group 134's box only) and the Godan's
+    // Runeworks sign (173022, group 12's box only) are not drawn by 2.4.3 from
+    // above the city, where none of those groups is. Such a point belongs to
+    // every interior-only group whose box holds it; one exterior group's box
+    // holding it leaves it outdoors.
+    std::vector<uint16_t> rooms;
+    for (size_t gi = 0; gi < model.groups.size(); ++gi) {
+        const auto& group = model.groups[gi];
+        if (!holds(group, local)) continue;
+        if (!interiorOnly(group)) return {};
+        rooms.push_back(static_cast<uint16_t>(gi));
+    }
+    return rooms;
+}
+
+std::optional<std::pair<uint32_t, std::vector<uint16_t>>> WMORenderer::interiorRoomAt(const glm::vec3& position) const {
+    // From a little above the feet, as interiorObjectLight: the floor stood
+    // on is found and a ceiling just overhead is not.
+    const glm::vec3 point = position + glm::vec3(0.0f, 0.0f, 0.5f);
+    gatherCandidates(point - glm::vec3(0.5f), point + glm::vec3(0.5f), tl_candidateScratch);
+    for (size_t index : tl_candidateScratch) {
+        const auto& instance = instances[index];
+        const auto modelIt = loadedModels.find(instance.modelId);
+        if (modelIt == loadedModels.end()) continue;
+        auto rooms = interiorRoomsOf(modelIt->second, instance.invModelMatrix, point);
+        if (!rooms.empty()) return std::make_pair(instance.id, std::move(rooms));
+    }
+    return std::nullopt;
+}
+
+bool WMORenderer::roomHides(const glm::vec3& point) {
     gatherCandidates(point - glm::vec3(0.5f), point + glm::vec3(0.5f), tl_candidateScratch);
     for (size_t index : tl_candidateScratch) {
         const auto& instance = instances[index];
         if (instance.unitVisibleGroups.empty()) continue;  // no portal walk this frame
         const auto modelIt = loadedModels.find(instance.modelId);
         if (modelIt == loadedModels.end()) continue;
-        const ModelData& model = modelIt->second;
-        const glm::vec3 local(instance.invModelMatrix * glm::vec4(point, 1.0f));
-        const glm::vec3 localDown = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(0, 0, -1, 0)));
-        const int room = groupBeneath(model, local, localDown);
-        if (room < 0) continue;
-        const auto& group = model.groups[static_cast<size_t>(room)];
-        if (!(group.groupFlags & WMO_GROUP_FLAG_INDOOR) || (group.groupFlags & WMO_GROUP_FLAG_OUTDOOR)) continue;
-        if (glm::any(glm::lessThan(local, group.boundingBoxMin)) ||
-            glm::any(glm::greaterThan(local, group.boundingBoxMax))) continue;
-        assert(static_cast<size_t>(room) < instance.unitVisibleGroups.size());
-        if (!instance.unitVisibleGroups[static_cast<size_t>(room)]) return true;
+        const auto rooms = interiorRoomsOf(modelIt->second, instance.invModelMatrix, point);
+        if (rooms.empty()) continue;
+        bool seen = false;
+        for (uint16_t room : rooms) {
+            assert(room < instance.unitVisibleGroups.size());
+            seen = seen || instance.unitVisibleGroups[room];
+        }
+        if (!seen) return true;
     }
     return false;
 }

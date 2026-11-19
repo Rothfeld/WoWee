@@ -446,7 +446,8 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     // braziers (ANCIENT_D_STANDING_LIGHT.m2) take the purple of the floor
     // there, where the outdoor Light 458 drew them green. Asked again once
     // moved a quarter yard or a second on (a WMO loading in).
-    if (interiorLightQuery_) {
+    // Its room is asked at the same moments (setRoomAtQuery).
+    if (interiorLightQuery_ || roomAtQuery_) {
         for (auto& instance : instances) {
             if (!instance.isGameObject) continue;
             instance.interiorLightAge += deltaTime;
@@ -454,6 +455,13 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
             if (instance.interiorLightAge < 1.0f && glm::dot(moved, moved) <= 0.0625f) continue;
             instance.interiorLightAge = 0.0f;
             instance.interiorLightQueriedAt = instance.position;
+            if (roomAtQuery_ && !instance.wmoDoodadPlaced) {
+                const auto room = roomAtQuery_(instance.position);
+                instance.wmoRoomInstance = room ? room->first : 0;
+                if (room) instance.wmoRooms = std::move(room->second);
+                else instance.wmoRooms.clear();
+            }
+            if (!interiorLightQuery_) continue;
             if (const auto light = interiorLightQuery_(instance.position)) {
                 const auto rgb = glm::uvec3(glm::round(glm::clamp(*light, 0.0f, 1.0f) * 255.0f));
                 instance.indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);

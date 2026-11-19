@@ -2423,6 +2423,9 @@ void Renderer::update(float deltaTime) {
         m2Renderer->setInteriorLightQuery(wmo ? M2Renderer::InteriorLightQuery(
             [wmo](const glm::vec3& position) { return wmo->interiorObjectLight(position); })
             : M2Renderer::InteriorLightQuery{});
+        m2Renderer->setRoomAtQuery(wmo ? M2Renderer::RoomAtQuery(
+            [wmo](const glm::vec3& position) { return wmo->interiorRoomAt(position); })
+            : M2Renderer::RoomAtQuery{});
         float m2DeltaTime = deltaTime;
         glm::vec3 m2CamPos = camera->getPosition();
         glm::mat4 m2ViewProj = camera->getProjectionMatrix() * camera->getViewMatrix();

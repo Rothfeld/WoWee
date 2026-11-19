@@ -6445,7 +6445,7 @@ void Application::updateLootSparkles() {
             const auto& objects = entitySpawner_->getGameObjectInstances();
             const auto it = objects.find(guid);
             if (it == objects.end() || it->second.isWmo) continue;
-            rendering::LootSparkles::Spot spot{.guid = guid};
+            rendering::LootSparkles::Spot spot{.guid = guid, .roomSource = it->second.instanceId};
             float boxHeight = 0.0f;
             if (!m2->getInstancePosition(it->second.instanceId, spot.position) ||
                 !m2->getInstanceCollisionBoxHeight(it->second.instanceId, boxHeight)) continue;

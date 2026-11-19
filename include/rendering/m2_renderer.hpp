@@ -667,6 +667,15 @@ public:
     /// take it as interior doodads take their MODD colour.
     using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
     void setInteriorLightQuery(InteriorLightQuery query) { interiorLightQuery_ = std::move(query); }
+    /// The WMO room a game object stands in (WMORenderer::interiorRoomAt).
+    /// A game object there is drawn with that room, as a room doodad is:
+    /// Orgrimmar's Mighty Blaze braziers stand in its interior groups, and
+    /// 2.4.3 seen from above the city draws neither the groups nor them.
+    using RoomAtQuery = std::function<std::optional<std::pair<uint32_t, std::vector<uint16_t>>>(const glm::vec3&)>;
+    void setRoomAtQuery(RoomAtQuery query) { roomAtQuery_ = std::move(query); }
+    /// Draw an instance with the room of another (an effect placed on a game
+    /// object, such as its sparkle).
+    void copyInstanceRoom(uint32_t instanceId, uint32_t sourceInstanceId);
     void setInstanceHighlight(uint32_t instanceId, float amount);
     /// See M2Instance::fade.
     void setInstanceFade(uint32_t instanceId, float alpha);
@@ -1271,6 +1280,7 @@ private:
     };
     WmoRoomQuery wmoRoomDrawn_;
     InteriorLightQuery interiorLightQuery_;
+    RoomAtQuery roomAtQuery_;
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2
     struct GlowSprite {
