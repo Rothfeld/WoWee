@@ -208,16 +208,26 @@ static int lua_GetContainerItemCooldown(lua_State* L) {
     const int bag = static_cast<int>(luaL_optnumber(L, 1, -1));
     const int slot = static_cast<int>(luaL_optnumber(L, 2, 0));
     double start = 0.0, duration = 0.0;
+    // enable: 1 for an item with a use spell, 0 for any other (2.4.3 pair 8:
+    // Hearthstone, Darnassian Bleu, Blue Moth Egg 1; Mining Pick, Guild
+    // Charter, Netherweave Bag, reagents and gems 0).
+    bool usable = false;
     if (gh && slot >= 1) {
         const auto& inv = gh->getInventory();
         // Through the shared resolver, so the bank and the keyring answer too:
         // BankFrame_UpdateCooldown asks this for every one of its slots.
         const game::ItemSlot* s = containerItemSlot(inv, bag, slot);
-        if (s && !s->empty()) itemUseCooldown(gh, s->item.itemId, start, duration);
+        if (s && !s->empty()) {
+            itemUseCooldown(gh, s->item.itemId, start, duration);
+            if (const auto* info = gh->getItemInfo(s->item.itemId); info && info->valid) {
+                for (const auto& spell : info->spells)
+                    if (spell.spellId != 0 && spell.spellTrigger == 0) usable = true;
+            }
+        }
     }
     lua_pushnumber(L, start);
     lua_pushnumber(L, duration);
-    lua_pushnumber(L, 1);
+    lua_pushnumber(L, usable ? 1 : 0);
     return 3;
 }
 
