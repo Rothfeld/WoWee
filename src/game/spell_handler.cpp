@@ -3089,11 +3089,6 @@ void SpellHandler::handleInitialSpells(network::Packet& packet) {
         }
     }
 
-    // Load saved action bar or use defaults
-    owner_.actionBarRef()[0].type = ActionBarSlot::SPELL;
-    owner_.actionBarRef()[0].id = SPELL_ID_ATTACK;
-    owner_.actionBarRef()[11].type = ActionBarSlot::SPELL;
-    owner_.actionBarRef()[11].id = 8690;  // Hearthstone
     owner_.loadCharacterConfig();
 
     // Sync login-time cooldowns into action bar slot overlays
@@ -4059,6 +4054,13 @@ void SpellHandler::handleSupercededSpell(network::Packet& packet) {
             barChanged = true;
             LOG_DEBUG("Action bar slot upgraded: spell ", oldSpellId, " -> ", newSpellId);
             if (fire) fire("ACTIONBAR_SLOT_CHANGED", {std::to_string(i + 1)});
+            // The server keeps the button as it was told: native 2.4.3 sends
+            // CMSG_SET_ACTION_BUTTON with the new rank (a new warrior's Heroic
+            // Strike button 73 is stored as 30324 after `.learn all_myclass`),
+            // so the button survives a relog that no longer knows rank 1.
+            if (owner_.getSocket() && owner_.getState() == WorldState::IN_WORLD)
+                owner_.getSocket()->send(SetActionButtonPacket::build(static_cast<uint8_t>(i),
+                    static_cast<uint8_t>(ActionBarSlot::SPELL), newSpellId, isClassicLikeExpansion()));
         }
     }
     if (barChanged) owner_.saveCharacterConfig();

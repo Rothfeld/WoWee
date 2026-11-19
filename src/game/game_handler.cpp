@@ -122,12 +122,6 @@ GameHandler::GameHandler(GameServices& services)
     questHandler_     = std::make_unique<QuestHandler>(*this);
     wardenHandler_    = std::make_unique<WardenHandler>(*this);
 
-    // Default action bar layout
-    actionBar[0].type = ActionBarSlot::SPELL;
-    actionBar[0].id = game::SPELL_ID_ATTACK;   // Attack in slot 1
-    actionBar[11].type = ActionBarSlot::SPELL;
-    actionBar[11].id = game::SPELL_ID_HEARTHSTONE;  // Hearthstone in slot 12
-
     // Build the opcode dispatch table (replaces switch(*logicalOp) in handlePacket)
     registerOpcodeHandlers();
 }
