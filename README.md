@@ -1221,10 +1221,46 @@ composite over its faded base, so items with stacked layers stay denser than
 the body: under Stealth (opacity 0.3) 2.4.3 draws the body at about 0.33 and the
 sheathed Warglaive of Azzinoth at about 0.56 (opaque base plus its alpha layer).
 The fade comes only from the aura's SpellVisualKit CharProc 14 (Stealth, Prowl,
-Vanish, Shadowmeld: kit 312, 0.3; Invisibility: kit 3450, 0.5) times the
+Vanish, Shadowmeld: kit 312, 0.3; potion Invisibility 11392 and the mage's
+Fading 66: kit 3450, 0.5; mage Invisibility 32612: kit 6859, 0.35) times the
 CreatureDisplayInfo alpha. UNIT_VIS_FLAG_CREEP does not fade a unit: a creature
 under Stealth 31621 (CREEP, no kit) stays opaque in 2.4.3. Evidence:
 `_experiments/20261118T201300Z.stealth_alpha/` in the workspace.
+
+### Invisibility
+
+Mage Invisibility (66, then 32612 after 5 s) makes the server drop every unit
+and game object the invisible player cannot detect: cmangos
+`Unit::IsVisibleForOrDetect` returns false when the viewer has an invisibility
+mask and the other unit neither shares it nor detects it. The client gets
+out-of-range updates for creatures, enemies included, and creates them again
+when the aura ends. 2.4.3 shows the same thing on this server: Goldshire guards
+and the NPCs in the inn door disappear for the caster. Group members stay
+visible (group visibility in `IsFogOfWarVisibleStealth`). It is not a client
+fade, so do not look for it in the kit or renderer code.
+
+Any MOD_INVISIBILITY aura (11392 as well as 32612) sets
+`PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW` (0x40 in PLAYER_FIELD_BYTES2 byte 1).
+2.4.3 then draws the world dark blue with blurred glowing highlights, players
+pale and glowing, interface unchanged. The shipped shaders are
+`shaders/pixel/ffxnetherblur.bls`, `shaders/vertex/ffxnetherblur.bls`
+(four-tap directional blur whose direction turns with time) and
+`shaders/pixel/ffxnethercombine.bls`:
+`out = mix(S, (0.5*T + (T.r+T.g+T.b)/6) * vColorMul.rgb, vColorMul.a)` with
+`T = 0.5*S + blur`. vColorMul, the blur length and the turn rate are set by
+Wow.exe and are not in any data file. WoWee does not draw this effect. Native
+frames do not fit this formula with blur = scene and the same lighting
+(`nether_fit.py`), so the constants cannot be read from a single capture.
+
+Which observers see the kit fade differs by spell, measured from the native
+observer of a grouped player with `.aura` (opacity): 11392 0.59, 41253 0.37,
+44036 0.37, 30037 0.37, 66 0.46, 1784 0.31, 132 + 11392 0.54, but 32612 0.98
+and 9587 0.95. The two opaque spells are the ones holding
+MOD_INVISIBILITY_DETECTION misc 0 in the same spell as their MOD_INVISIBILITY;
+44036 (same layout, misc 4) fades. The rule behind this is not established.
+WoWee fades all of them. On the caster's own screen 2.4.3 fades the caster
+by the kit (32612 looks fainter than 11392).
+Evidence: `_experiments/20261119T1525Z.invisibility_others/` in the workspace.
 
 ### Unit draw distance
 
