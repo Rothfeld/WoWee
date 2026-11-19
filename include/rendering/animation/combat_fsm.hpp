@@ -115,6 +115,9 @@ private:
     // reaction: on the frame it is requested the previous pose is current.
     uint32_t hitReactionAnimId_ = 0;
     bool hitReactionAnimSeen_ = false;
+    /// A hit taken while a cast or channel is held: the held animation comes
+    /// back once the reaction has played, as a remote unit's cast hold does.
+    bool resumeSpellAfterHit_ = false;
     uint8_t hitReactionFrames_ = 0;
 
     // Spell kit one-shot; same completion rule as the hit reaction.

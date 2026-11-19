@@ -222,6 +222,43 @@ TEST_CASE("CombatFSM: hit reaction plays before it completes", "[combat]") {
     CHECK(after.animId == anim::READY_UNARMED);
 }
 
+TEST_CASE("CombatFSM: a hit during a channel plays once and the channel returns", "[combat][cast-kit]") {
+    // Tame Beast: ChannelCastDirected (124) held, the beast hits every 2 s.
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+    fsm.startSpellCast(0, anim::CHANNEL_CAST_DIRECTED, true, 0);
+    fsm.triggerHitReaction(anim::COMBAT_WOUND);
+    CHECK(fsm.getState() == CombatFSM::State::HIT_REACTION);
+    auto in = combatInput();
+    in.haveAnimState = true;
+    in.currentAnimId = anim::COMBAT_WOUND;
+    in.currentAnimTime = 100.0f;
+    in.currentAnimDuration = 800.0f;
+    CHECK(fsm.resolve(in, caps, wl).animId == anim::COMBAT_WOUND);
+    in.currentAnimTime = 800.0f;
+    auto after = fsm.resolve(in, caps, wl);
+    CHECK(fsm.getState() == CombatFSM::State::SPELL_CASTING);
+    CHECK(after.animId == anim::CHANNEL_CAST_DIRECTED);
+    CHECK(after.loop);
+}
+
+TEST_CASE("CombatFSM: a channel ended during a hit does not come back", "[combat][cast-kit]") {
+    CombatFSM fsm;
+    auto caps = makeCombatCaps();
+    auto wl = unarmedLoadout();
+    fsm.startSpellCast(0, anim::CHANNEL_CAST_DIRECTED, true, 0);
+    fsm.triggerHitReaction(anim::COMBAT_WOUND);
+    fsm.cancelSpellCast();
+    auto in = combatInput();
+    in.haveAnimState = true;
+    in.currentAnimId = anim::COMBAT_WOUND;
+    in.currentAnimTime = 800.0f;
+    in.currentAnimDuration = 800.0f;
+    fsm.resolve(in, caps, wl);
+    CHECK(fsm.getState() == CombatFSM::State::COMBAT_IDLE);
+}
+
 TEST_CASE("Parry animation follows the ready stance grip", "[combat]") {
     CHECK(parryAnimationForReady(anim::READY_UNARMED) == anim::PARRY_UNARMED);
     CHECK(parryAnimationForReady(anim::READY_1H) == anim::PARRY_1H);

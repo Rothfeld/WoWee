@@ -84,6 +84,7 @@ void CombatFSM::onEvent(AnimEvent event) {
 // ── Spell cast management ────────────────────────────────────────────────────
 
 void CombatFSM::startSpellCast(uint32_t precast, uint32_t cast, bool castLoop, uint32_t finalize) {
+    resumeSpellAfterHit_ = false;
     spellPrecastAnimId_ = precast;
     spellCastAnimId_ = cast;
     spellCastLoop_ = castLoop;
@@ -96,6 +97,12 @@ void CombatFSM::startSpellCast(uint32_t precast, uint32_t cast, bool castLoop, u
 }
 
 void CombatFSM::stopSpellCast() {
+    if (resumeSpellAfterHit_) {
+        // Ended during a hit reaction: nothing to return to.
+        resumeSpellAfterHit_ = false;
+        clearSpellState();
+        return;
+    }
     if (state_ != State::SPELL_PRECAST && state_ != State::SPELL_CASTING) return;
     spellFinalizeAnimSeen_ = false;
     spellFinalizeFrames_ = 0;
@@ -103,6 +110,11 @@ void CombatFSM::stopSpellCast() {
 }
 
 void CombatFSM::cancelSpellCast() {
+    if (resumeSpellAfterHit_) {
+        resumeSpellAfterHit_ = false;
+        clearSpellState();
+        return;
+    }
     if (state_ != State::SPELL_PRECAST && state_ != State::SPELL_CASTING &&
         state_ != State::SPELL_FINALIZE) return;
     clearSpellState();
@@ -110,6 +122,7 @@ void CombatFSM::cancelSpellCast() {
 }
 
 void CombatFSM::clearSpellState() {
+    resumeSpellAfterHit_ = false;
     spellPrecastAnimId_ = 0;
     spellCastAnimId_ = 0;
     spellCastLoop_ = false;
@@ -125,15 +138,22 @@ void CombatFSM::clearSpellState() {
 void CombatFSM::triggerHitReaction(uint32_t animId) {
     // Don't interrupt swim/jump/stun states
     if (state_ == State::STUNNED) return;
-    // Interrupt spell casting
-    if (state_ == State::SPELL_PRECAST || state_ == State::SPELL_CASTING || state_ == State::SPELL_FINALIZE) {
-        clearSpellState();
-    }
     // Zero clears a pending reaction (AnimationController::reset).
     if (animId == 0) {
         hitReactionAnimId_ = 0;
+        resumeSpellAfterHit_ = false;
         if (state_ == State::HIT_REACTION) state_ = State::INACTIVE;
         return;
+    }
+    // A hit does not end a cast or a channel: the reaction plays once and
+    // the held animation returns (Tame Beast's ChannelCastDirected while the
+    // beast fights back every two seconds). Remote units already return to
+    // their cast hold after a reaction (remoteResumeAnimation). A finishing
+    // one-shot is simply cut short.
+    if (state_ == State::SPELL_PRECAST || state_ == State::SPELL_CASTING) {
+        resumeSpellAfterHit_ = true;
+    } else if (state_ == State::SPELL_FINALIZE) {
+        clearSpellState();
     }
     hitReactionAnimId_ = animId;
     hitReactionAnimSeen_ = false;
@@ -315,6 +335,8 @@ void CombatFSM::updateTransitions(const Input& in) {
         case State::HIT_REACTION:
             if (in.swimming || in.moving) {
                 hitReactionAnimId_ = 0;
+                if (resumeSpellAfterHit_) clearSpellState();
+                resumeSpellAfterHit_ = false;
                 state_ = State::INACTIVE;
             } else if (in.haveAnimState) {
                 if (in.currentAnimId == hitReactionAnimId_) hitReactionAnimSeen_ = true;
@@ -323,7 +345,13 @@ void CombatFSM::updateTransitions(const Input& in) {
                 if ((hitReactionAnimSeen_ && oneShotComplete(in, hitReactionAnimId_)) ||
                     (!hitReactionAnimSeen_ && ++hitReactionFrames_ > 10)) {
                     hitReactionAnimId_ = 0;
-                    state_ = in.inCombat ? State::COMBAT_IDLE : State::INACTIVE;
+                    if (resumeSpellAfterHit_) {
+                        // Back to the held loop; a precast one-shot is not replayed.
+                        resumeSpellAfterHit_ = false;
+                        state_ = State::SPELL_CASTING;
+                    } else {
+                        state_ = in.inCombat ? State::COMBAT_IDLE : State::INACTIVE;
+                    }
                 }
             }
             break;
