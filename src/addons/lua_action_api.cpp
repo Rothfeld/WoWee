@@ -488,7 +488,8 @@ static int lua_IsCurrentAction(lua_State* L) {
     if (shown && shown->type == game::ActionBarSlot::SPELL) {
         current = game::isCurrentSpellAction(shown->id, gh->getActiveActionSpellId(),
                                              gh->hasAutoAttackIntent()) ||
-                  game::spellFormActive(*gh, shown->id);
+                  game::spellFormActive(*gh, shown->id) ||
+                  (gh->isMounted() && shown->id == gh->getMountedByCastSpellId());
     }
     lua_pushboolean(L, current);
     return 1;

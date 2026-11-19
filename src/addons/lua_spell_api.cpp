@@ -1480,9 +1480,16 @@ void registerSpellLuaAPI(lua_State* L) {
             (void)L; lua_pushboolean(L, 0); return 1; // No proc overlay tracking
         }},
                 {"IsCurrentSpell", [](lua_State* L) -> int {
+            // A name as well as an id: native 2.4.3 IsCurrentSpell("Golden
+            // Gryphon") answers nil while riding it, and does not raise.
             auto* gh = getGameHandler(L);
-            uint32_t spellId = static_cast<uint32_t>(luaL_checknumber(L, 1));
-            lua_pushboolean(L, gh && gh->getCurrentCastSpellId() == spellId ? 1 : 0);
+            const uint32_t current = gh ? gh->getCurrentCastSpellId() : 0;
+            bool answer = false;
+            if (lua_type(L, 1) == LUA_TSTRING)
+                answer = current != 0 && gh->getSpellName(current) == lua_tostring(L, 1);
+            else
+                answer = current != 0 && current == static_cast<uint32_t>(luaL_checknumber(L, 1));
+            lua_pushboolean(L, answer ? 1 : 0);
             return 1;
         }},
                 {"IsAutoRepeatSpell", [](lua_State* L) -> int {

@@ -3911,6 +3911,12 @@ public:
     /// Spell of the aura currently keeping the player mounted, 0 when on foot.
     /// Pressing this one again is a dismount, not a second mount.
     uint32_t getMountAuraSpellId() const { return mountAuraSpellId_; }
+    /// The mount spell (aura 78) the player's own cast mounted them with; 0
+    /// when mounted by anything else. Its action button is current (checked)
+    /// while mounted: native 2.4.3 IsCurrentAction is 1 for the Golden
+    /// Gryphon the player cast, nil for a Brown Horse aura a GM applied.
+    auto& mountedByCastSpellIdRef() { return mountedByCastSpellId_; }
+    uint32_t getMountedByCastSpellId() const { return mountedByCastSpellId_; }
     auto& shapeshiftFormIdRef() { return shapeshiftFormId_; }
     /// SpellShapeshiftForm.dbc Flags by form, read once per form asked about.
     auto& shapeshiftFormFlagsRef() { return shapeshiftFormFlags_; }
@@ -5516,7 +5522,8 @@ private:
     TaxiFlightStartCallback taxiFlightStartCallback_;
     OpenLfgCallback openLfgCallback_;
     uint32_t currentMountDisplayId_ = 0;
-    uint32_t mountAuraSpellId_ = 0;       // Spell ID of the aura that caused mounting (for CMSG_CANCEL_AURA fallback)
+    uint32_t mountAuraSpellId_ = 0;
+    uint32_t mountedByCastSpellId_ = 0;       // Spell ID of the aura that caused mounting (for CMSG_CANCEL_AURA fallback)
     bool playerDead_ = false;
     bool releasedSpirit_ = false;
     uint32_t corpseMapId_ = 0;

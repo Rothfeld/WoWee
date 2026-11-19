@@ -774,6 +774,12 @@ void EntityController::detectPlayerMountChange(uint32_t newMountDisplayId,
         // by comparing against exactly this, so a wrong id dismounted the player
         // and put them straight back on, and the button appeared to do nothing.
         if (justCast != 0) owner_.mountAuraSpellIdRef() = justCast;
+        owner_.mountedByCastSpellIdRef() = 0;
+        if (const auto* cast = justCast ? owner_.getSpellNameEntry(justCast) : nullptr) {
+            constexpr uint32_t kAuraMounted = 78;
+            for (uint32_t aura : cast->effectAuraIds)
+                if (aura == kAuraMounted) owner_.mountedByCastSpellIdRef() = justCast;
+        }
 
         // Pre-WotLK fallback: scan UNIT_FIELD_AURAS from same update block
         if (owner_.mountAuraSpellIdRef() == 0) {
@@ -790,6 +796,7 @@ void EntityController::detectPlayerMountChange(uint32_t newMountDisplayId,
         LOG_INFO("Mount detected: displayId=", newMountDisplayId, " auraSpellId=", owner_.mountAuraSpellIdRef());
     }
     if (old != 0 && newMountDisplayId == 0) {
+        owner_.mountedByCastSpellIdRef() = 0;
         // Only clear the specific mount aura, not all indefinite auras.
         // Previously this cleared every aura with maxDurationMs < 0, which
         // would strip racial passives, tracking, and zone buffs on dismount.
