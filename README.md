@@ -1061,7 +1061,10 @@ Grounded creatures select the nearest reachable terrain, WMO or M2 floor.
 Terrain corrections do not require a previous corrected render position; static
 server spawn Z can differ from the ADT triangle. Structure corrections retain
 continuity checks for overlapping floors. `WOWEE_CREATURE_GROUND_TRACE=<GUID>`
-logs one creature's server position, support position and slope rotation each second.
+logs one creature's server position, support position and slope rotation each second;
+a value below 2^32 is a creature entry (`=6487`, Arcanist Doan) and also logs the
+facing inputs: UNIT_FIELD_TARGET, whether that unit is known, both positions,
+moving, stand state and unit flags.
 
 Looping Stand animations choose among authored M2 sequences using their frequency
 weights and repetition bounds. The TBC wolf has four Stand sequences, all with
@@ -2717,6 +2720,14 @@ caster's own position as destination and play there; Volcanic Geyser 42052
 (0x20, source only) plays none. Spell-hand (21/22) and breath (17) slots on
 a model lacking that attachment are not drawn (Soul Scream 41545 on
 WellofSoulsPain.m2); other slots fall back to the unit position.
+
+An instant spell (cast time 0) shows no PrecastKit, only its CastKit at
+`SMSG_SPELL_GO`, in build 8606 as here: Evasion 5277 (precast kit 266
+Magic_PreCast_Hand, cast kit 425 Magic_Cast_Hand) cast by a player shows the
+cast pose, then the rune and burst on both hands, no hand glow in the frame
+before; Arcanist Doan's Arcane Explosion 9433 (precast 266, cast kit 1004
+ArcaneExplosion_Base) twice shows no hand glow before the ring. Evidence:
+`_experiments/20261119T1420Z.instant_cast_kits/` in the workspace.
 
 A missile spell's ImpactAreaKit waits for the missile to reach the
 destination, SPELL_GO + distance / Spell.dbc Speed, also when the spell hit

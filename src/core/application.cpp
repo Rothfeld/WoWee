@@ -4053,7 +4053,10 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 charRenderer->setInstanceRotation(creatureMount->instanceId, groundRotation);
             }
             static const char* traceGround = std::getenv("WOWEE_CREATURE_GROUND_TRACE");
-            if (traceGround && guid == std::stoull(traceGround, nullptr, 0)) {
+            // A guid, or a creature entry (below 2^32) for every unit of that entry.
+            const uint64_t traceKey = traceGround ? std::stoull(traceGround, nullptr, 0) : 0;
+            if (traceGround && (guid == traceKey ||
+                    (traceKey < (1ull << 32) && entity->getField(game::fieldIndex(game::UF::OBJECT_FIELD_ENTRY)) == traceKey))) {
                 static double lastTrace = -1.0;
                 const double now = SDL_GetTicks() / 1000.0;
                 if (now - lastTrace >= 1.0) {
@@ -4071,6 +4074,13 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                         " orientation=", entity->getOrientation(), " facing=", facing,
                         " target=0x", std::hex, game::unitTargetGuid(*entity), std::dec,
                         " scale=", charRenderer->getInstanceScale(instanceId));
+                    const auto traced = gameHandler->getEntityManager().getEntity(game::unitTargetGuid(*entity));
+                    LOG_INFO("Creature facing trace target found=", traced != nullptr,
+                        " targetPos=", traced ? traced->getX() : 0.0f, ",", traced ? traced->getY() : 0.0f,
+                        " self=", entity->getX(), ",", entity->getY(),
+                        " moving=", entity->isActivelyMoving(),
+                        " bytes1=0x", std::hex, entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)),
+                        " unitFlags=0x", unit->getUnitFlags(), std::dec, " hp=", unit->getHealth());
                 }
             }
         }
