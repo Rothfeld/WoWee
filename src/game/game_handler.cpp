@@ -1364,12 +1364,17 @@ int GameHandler::getRecipeDifficulty(uint32_t spellId) const {
     if (slIt == spellToSkillLine_.end()) return 0;
     auto skIt = getPlayerSkills().find(slIt->second);
     if (skIt == getPlayerSkills().end()) return 0;
-    const uint32_t skill = skIt->second.effectiveValue();
+    // SkillLineAbility's two trivial ranks split the bands, as 2.4.3 colours
+    // them at 375 Blacksmithing: orange below the low rank (Felsteel Shield
+    // Spike 370/390 is yellow, Dragonstrike 385/405 orange), yellow below the
+    // midpoint (385/365 is green, 375/385 yellow), green below the high rank
+    // and grey from it (Greater Ward of Shielding 375/375). Against the skill
+    // without its permanent bonus: at Jewelcrafting 375 + 5 (Gemcutting) 2.4.3
+    // colours 380/400 orange and 350/380 green.
+    const uint32_t skill = skIt->second.value;
     if (skill >= se.trivialSkillHigh) return 3;
-    if (skill >= se.trivialSkillLow)  return 2;
-    const uint32_t yellow = se.minSkillRank +
-                            (se.trivialSkillLow - se.minSkillRank) / 2;
-    if (skill >= yellow) return 1;
+    if (skill >= (se.trivialSkillLow + se.trivialSkillHigh) / 2) return 2;
+    if (skill >= se.trivialSkillLow) return 1;
     return 0;
 }
 
@@ -1377,41 +1382,60 @@ uint32_t GameHandler::countItemInBags(uint32_t itemId) const {
     return getInventory().countItem(itemId);
 }
 
-std::vector<GameHandler::CraftRecipe> GameHandler::getCraftingRecipes() const {
-    std::vector<CraftRecipe> out;
-    const uint32_t skillLine = getCraftingSkillLine();
+namespace {
+// The known spells of one skill line that `listed` admits, with their colour
+// and how many the bags have reagents for, by name.
+template <class Listed>
+std::vector<GameHandler::CraftRecipe> professionRecipes(const GameHandler& gh, uint32_t skillLine,
+                                                        Listed&& listed) {
+    std::vector<GameHandler::CraftRecipe> out;
     if (skillLine == 0) return out;
-    for (uint32_t spellId : getKnownSpells()) {
-        auto slIt = spellToSkillLine_.find(spellId);
-        if (slIt == spellToSkillLine_.end() || slIt->second != skillLine) continue;
-        auto cit = spellNameCache_.find(spellId);
-        if (cit == spellNameCache_.end()) continue;
-        const auto& se = cit->second;
-
-        bool hasReagents = false;
-        for (const auto& r : se.reagents) {
-            if (r.itemId != 0) { hasReagents = true; break; }
-        }
-        // The window-opener spell and passive skill ranks are not recipes.
-        if (!hasReagents && se.createdItemId == 0) continue;
-
-        CraftRecipe row;
+    for (uint32_t spellId : gh.getKnownSpells()) {
+        const auto& lines = gh.getSpellToSkillLine();
+        auto slIt = lines.find(spellId);
+        if (slIt == lines.end() || slIt->second != skillLine) continue;
+        const auto* se = gh.getSpellNameEntry(spellId);
+        if (!se || !listed(*se)) continue;
+        GameHandler::CraftRecipe row;
         row.spellId = spellId;
-        row.name = se.name;
-        row.difficulty = getRecipeDifficulty(spellId);
-        row.canMake = hasReagents ? 999 : 0;
-        for (const auto& r : se.reagents) {
+        row.name = se->name;
+        row.difficulty = gh.getRecipeDifficulty(spellId);
+        bool hasReagents = false;
+        row.canMake = 999;
+        for (const auto& r : se->reagents) {
             if (r.itemId == 0 || r.count == 0) continue;
+            hasReagents = true;
             row.canMake = std::min(row.canMake,
-                static_cast<int>(countItemInBags(r.itemId) / r.count));
+                static_cast<int>(gh.countItemInBags(r.itemId) / r.count));
         }
+        if (!hasReagents) row.canMake = 0;
         out.push_back(std::move(row));
     }
     std::sort(out.begin(), out.end(),
-              [](const CraftRecipe& a, const CraftRecipe& b) {
+              [](const GameHandler::CraftRecipe& a, const GameHandler::CraftRecipe& b) {
                   return a.name < b.name;
               });
     return out;
+}
+}  // namespace
+
+std::vector<GameHandler::CraftRecipe> GameHandler::getCraftingRecipes() const {
+    // A recipe is a spell marked SPELL_ATTR_TRADESPELL (0x20), which also
+    // keeps it out of the spellbook. 2.4.3 lists exactly those of the skill
+    // line in every trade skill window; Basic Campfire (Cooking, no flag)
+    // stays in the spellbook and out of the list.
+    constexpr uint32_t kAttrTradeSpell = 0x20;
+    return professionRecipes(*this, getCraftingSkillLine(),
+                             [](const SpellNameEntry& se) { return (se.attr & kAttrTradeSpell) != 0; });
+}
+
+std::vector<GameHandler::CraftRecipe> GameHandler::getCraftRecipes() const {
+    // Enchants carry no TRADESPELL flag. 2.4.3 lists all 223 known spells of
+    // Enchanting but the five ranks of the opener and Disenchant, the ones
+    // flagged 0x10 (an ability, cast from the spellbook).
+    constexpr uint32_t kAttrAbility = 0x10;
+    return professionRecipes(*this, getCraftSkillLine(),
+                             [](const SpellNameEntry& se) { return (se.attr & kAttrAbility) == 0; });
 }
 
 const std::string& GameHandler::getMacroName(uint32_t macroId) const {

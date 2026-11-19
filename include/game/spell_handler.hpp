@@ -172,8 +172,25 @@ public:
     /// interface's trade skill panel is driven entirely by these two events -
     /// it hides on TRADE_SKILL_CLOSE and fills itself on TRADE_SKILL_SHOW.
     /// Without them the panel could be complete and still never appear.
-    void openCraftingWindow(uint32_t skillLine);
+    /// `openerSpellId` is the profession spell cast; its TRADE_SKILL effect's
+    /// misc value picks the window: 0 the trade skill frame, otherwise the
+    /// craft frame (3 Enchanting, 1 Beast Training).
+    void openCraftingWindow(uint32_t skillLine, uint32_t openerSpellId);
     void closeCraftingWindow();
+    /// The craft frame (Enchanting), open beside the trade skill frame or
+    /// alone; CRAFT_SHOW, CRAFT_UPDATE and CRAFT_CLOSE drive it.
+    [[nodiscard]] bool isCraftWindowOpen() const { return craftWindowOpen_; }
+    [[nodiscard]] uint32_t getCraftSkillLine() const { return craftSkillLine_; }
+    /// The opener's TRADE_SKILL misc value: 1 Beast Training, 3 Enchanting.
+    [[nodiscard]] int32_t getCraftKind() const { return craftKind_; }
+    void closeCraftWindow();
+    /// TRADE_SKILL_UPDATE and CRAFT_UPDATE for whichever window is open: the
+    /// bags, the known spells or the skill moved under it.
+    void notifyProfessionWindows();
+    /// ReloadUI closes both windows and tells the interface being torn down,
+    /// whether or not one was open: 2.4.3 fires TRADE_SKILL_CLOSE and
+    /// CRAFT_CLOSE (then SOCKET_INFO_CLOSE) to the old interface every time.
+    void closeProfessionWindowsForReload();
     // Returns the skill line id if spellId is a tradeskill-window opener
     // (e.g. Cooking → 185) with at least one known recipe, else 0.
     uint32_t tradeskillOpenerSkillLine(uint32_t spellId);
@@ -584,10 +601,19 @@ private:
     // Repeat-craft queue
     uint32_t craftQueueSpellId_ = 0;
     int craftQueueRemaining_ = 0;
+    /// Set by startCraftQueue until its first cast is sent.
+    bool craftQueueAnnounce_ = false;
 
     // Crafting window
     bool craftingWindowOpen_ = false;
     uint32_t craftingSkillLine_ = 0;
+    bool craftWindowOpen_ = false;
+    uint32_t craftSkillLine_ = 0;
+    int32_t craftKind_ = 0;
+    /// Nesting of TRADE_SKILL_CLOSE / CRAFT_CLOSE being handled (at most the
+    /// outer event and the one its OnHide causes).
+    int craftingClosing_ = 0;
+    int craftClosing_ = 0;
 
     // SpellFocusObject.dbc names, loaded lazily
     std::unordered_map<uint32_t, std::string> spellFocusNames_;

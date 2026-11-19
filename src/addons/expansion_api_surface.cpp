@@ -48,6 +48,8 @@ constexpr const char* kAbsentFromTbc[] = {
     "IsTradeSkillLinked", "CanChangePlayerDifficulty", "GetNumArenaOpponents",
     "GetPreviousArenaSeason", "SortBGList", "QuestGetAutoAccept",
     "GetNumQuestItemDrops", "GetQuestLogItemDrop",
+    // Trade skill and socketing additions of 3.x; pair 8 read nil for each.
+    "GetTradeSkillDescription", "GetSocketItemRefundable", "GetSocketItemBoundTradeable",
     // Options and system, 3.x.
     "RestoreVideoEffectsDefaults", "RestoreVideoResolutionDefaults",
     "RestoreVideoStereoDefaults", "IsStereoVideoAvailable",

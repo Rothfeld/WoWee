@@ -3302,6 +3302,49 @@ does not go on a bar. `ClearCursor` with nothing held still fires
 `PLAYER_MONEY` when money is picked up and put back; WoWee does not.
 Evidence: `_experiments/20261118T203647Z.action_cursor` in the workspace.
 
+### Trade skill and craft windows
+
+Measured on pair 8 against native 2.4.3 with every profession at 375 and a
+probe addon (`_experiments/20261119T101632Z.professions_audit/` in the
+workspace; `build/bin/test_text_wrap '[text-wrap]'`).
+
+- A trade skill window lists the known spells of its skill line flagged
+  SPELL_ATTR_TRADESPELL (0x20); Basic Campfire is not one. The craft frame
+  (Enchanting; the opener's TRADE_SKILL effect has a non-zero misc value: 3
+  Enchanting, 1 Beast Training) lists the line's spells without 0x10.
+- Headings are the made item's ItemSubClass.dbc verbose name, else its display
+  name (One-Handed Axes, Item Enhancement), by item class, then name. Under a
+  heading: colour (orange first), then the made item's level, highest first,
+  then name. An item not cached yet has no heading and is in neither dropdown.
+- Colours from SkillLineAbility's trivial ranks against the skill without its
+  permanent bonus: orange below low, yellow below (low + high) / 2, green below
+  high, grey from it. GetSkillLineInfo folds the permanent bonus (Arcane
+  Affinity, Gemcutting) into rank and max: Enchanting 375 + 10 is 385/385.
+- GetTradeSkillTools / GetCraftSpellFocus: spell focus, tool items, tool kinds,
+  each followed by 1 or nil. The spell focus is always 1 - native printed
+  "Anvil" white in the open Thousand Needles.
+- Event order: open Tailoring TRADE_SKILL_UPDATE, TRADE_SKILL_SHOW,
+  UNIT_SPELLCAST_SUCCEEDED (no SENT; casting it again closes the window, and
+  the panel's OnHide fires a second TRADE_SKILL_CLOSE inside the first). A
+  craft: UPDATE_TRADESKILL_RECAST, SENT, START ... SUCCEEDED, STOP, the next
+  SENT, UPDATE_TRADESKILL_RECAST, SPELL_UPDATE_COOLDOWN, CHAT_MSG_LOOT,
+  CHAT_MSG_TRADESKILLS "You create Linen Bandage." (shown in the Combat Log
+  window, not General). ReloadUI fires TRADE_SKILL_CLOSE, CRAFT_CLOSE and
+  SOCKET_INFO_CLOSE to the old interface every time.
+- Item tooltips: the permanent enchantment in green after the stats; a gem
+  "+8 Strength" and a meta gem's "Requires at least 2 Red gems" lines (grey
+  while the worn gems fall short, SpellItemEnchantmentCondition.dbc, a file of
+  byte columns); a filled socket shows its gem instead of "Red Socket", and
+  the socket bonus turns green when every gem fits. The socketing panel's
+  description leaves out binding, classes, the set, empty sockets and
+  "<Shift Right Click to Socket>".
+- Gotchas: SMSG_INITIAL_SPELLS for such a character carries 2244 spells (a
+  1024 cap dropped half the recipes). A TBC item-target CMSG_CAST_SPELL is
+  spellId, castCount, uint32 TARGET_FLAG_ITEM; the WotLK shape is dropped by
+  CMaNGOS without an answer. "Reagents: |n" is one line high: a final break
+  opens no line. Native recipe order for items it has not cached is not
+  reproduced.
+
 ### TBC Lua answer conventions and protected functions
 
 On a TBC login `applyApiConventions` (src/addons/expansion_api_surface.cpp)

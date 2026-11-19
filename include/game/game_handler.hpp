@@ -1257,6 +1257,11 @@ public:
     bool isCraftingWindowOpen() const { return spellHandler_ ? spellHandler_->isCraftingWindowOpen() : false; }
     uint32_t getCraftingSkillLine() const { return spellHandler_ ? spellHandler_->getCraftingSkillLine() : 0; }
     void closeCraftingWindow() { if (spellHandler_) spellHandler_->closeCraftingWindow(); }
+    bool isCraftWindowOpen() const { return spellHandler_ ? spellHandler_->isCraftWindowOpen() : false; }
+    uint32_t getCraftSkillLine() const { return spellHandler_ ? spellHandler_->getCraftSkillLine() : 0; }
+    int32_t getCraftKind() const { return spellHandler_ ? spellHandler_->getCraftKind() : 0; }
+    void closeCraftWindow() { if (spellHandler_) spellHandler_->closeCraftWindow(); }
+    void notifyProfessionWindows() { if (spellHandler_) spellHandler_->notifyProfessionWindows(); }
 
     // 400ms spell-queue window: next spell to cast when current finishes
     uint32_t getQueuedSpellId() const;
@@ -2289,6 +2294,9 @@ public:
     const LootResponseData& getCurrentLoot() const;
     /// ItemSet.dbc row for an item's set id; null when unknown.
     const ItemSetInfo* getItemSetInfo(uint32_t setId) const;
+    /// ItemSubClass.dbc's verbose name, else its display name; empty when
+    /// the table has no such row or is not loaded yet.
+    std::string getItemSubclassListName(uint32_t itemClass, uint32_t subClass) const;
     void setAutoLoot(bool enabled);
     bool isAutoLoot() const;
     /// Turn the player to face the target when an attack or a targeted spell
@@ -2342,6 +2350,10 @@ public:
     // NPC Gossip
     void interactWithNpc(uint64_t guid);
     std::optional<bool> isGameObjectInRange(uint64_t guid);
+    /// Whether the player carries a spell's tool: item `id` (Totem0/1), or
+    /// with `category` an item serving as TotemCategory.dbc row `id`. nullopt
+    /// while a carried item's details are still being asked for.
+    std::optional<bool> carriesSpellTool(bool category, uint32_t id);
     /// The profession lock on a game object, nullopt when it has none.
     [[nodiscard]] std::optional<GameObjectProfessionLock> gameObjectProfessionLock(
         const GameObjectQueryResponseData* info) const;
@@ -3563,6 +3575,10 @@ public:
     uint32_t getSocketPendingGemItemId(int index) const;
     void openSocketing(uint64_t itemGuid);
     void closeSocketing();
+    /// What ReloadUI tells the interface it is tearing down, in 2.4.3's
+    /// order: TRADE_SKILL_CLOSE, CRAFT_CLOSE, SOCKET_INFO_CLOSE, each sent
+    /// whether its window was open or not, and the windows closed.
+    void closeInteractionsForReload();
     bool setSocketGem(int index, uint64_t gemGuid, uint32_t gemItemId);
     void acceptSockets();
 
@@ -3695,6 +3711,9 @@ public:
     /// would drift, and a recipe that is orange in one window and yellow in
     /// the other is a bug nobody can explain.
     std::vector<CraftRecipe> getCraftingRecipes() const;
+    /// The craft frame's list (Enchanting): every known spell of its skill
+    /// line except the abilities (SPELL_ATTR 0x10: the opener, Disenchant).
+    std::vector<CraftRecipe> getCraftRecipes() const;
     /// Where a recipe sits against the player's skill, in the same bands the
     /// crafting window colours by.
     int getRecipeDifficulty(uint32_t spellId) const;
@@ -4042,6 +4061,7 @@ public:
     auto& skillLineDbcLoadedRef() { return skillLineDbcLoaded_; }
     auto& skillLineNamesRef() { return skillLineNames_; }
     auto& spellToSkillLineRef() { return spellToSkillLine_; }
+    const std::unordered_map<uint32_t, uint32_t>& getSpellToSkillLine() const { return spellToSkillLine_; }
 
     // ── Spells & Talents ─────────────────────────────────────────────
     auto& spellFlatModsRef() { return spellFlatMods_; }
@@ -4349,8 +4369,12 @@ public:
         int32_t effectDieSides[3] = {0, 0, 0};
         int32_t effectBaseDice[3] = {0, 0, 0};
         uint32_t effectIds[3] = {0, 0, 0};
+        /// EffectMiscValue0-2 (TRADE_SKILL: 0 trade skill frame, else craft).
+        int32_t effectMiscValues[3] = {0, 0, 0};
         int32_t equippedItemClass = -1;
         uint32_t equippedItemSubClassMask = 0;
+        /// EquippedItemInventoryTypeMask: bit n for inventory type n.
+        uint32_t equippedItemInventoryTypeMask = 0;
         // Spell.dbc EffectApplyAuraName - which aura an APPLY_AURA effect
         // applies. The effect id above only says that one is applied; this
         // says which, and it is the only thing that distinguishes a tracking
@@ -4400,6 +4424,9 @@ public:
         /// kinds (TotemCategory.dbc) one carried item must serve as.
         uint32_t totems[2] = {0, 0};
         uint32_t totemCategories[2] = {0, 0};
+        /// RequiresSpellFocus: the SpellFocusObject.dbc row (1 Anvil, 3 Forge,
+        /// 4 Cooking Fire) a game object near the caster must provide; 0 none.
+        uint32_t requiresSpellFocus = 0;
         /// StartRecoveryCategory 133 puts the spell on the global cooldown,
         /// StartRecoveryTime long.
         uint32_t startRecoveryCategory = 0;

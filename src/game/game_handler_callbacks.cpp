@@ -1378,6 +1378,11 @@ void GameHandler::clearBook() {
 bool GameHandler::isLootWindowOpen() const {
     return inventoryHandler_ ? inventoryHandler_->isLootWindowOpen() : lootWindowOpen;
 }
+std::string GameHandler::getItemSubclassListName(uint32_t itemClass, uint32_t subClass) const {
+    if (!inventoryHandler_) return {};
+    return inventoryHandler_->itemSubclassListName(itemClass, subClass).value_or(std::string{});
+}
+
 const ItemSetInfo* GameHandler::getItemSetInfo(uint32_t setId) const {
     return inventoryHandler_ ? inventoryHandler_->getItemSetInfo(setId) : nullptr;
 }
@@ -1465,6 +1470,11 @@ void GameHandler::openSocketing(uint64_t itemGuid) {
 
 void GameHandler::closeSocketing() {
     if (inventoryHandler_) inventoryHandler_->closeSocketing();
+}
+
+void GameHandler::closeInteractionsForReload() {
+    if (spellHandler_) spellHandler_->closeProfessionWindowsForReload();
+    if (inventoryHandler_) inventoryHandler_->closeSocketingForReload();
 }
 
 bool GameHandler::setSocketGem(int index, uint64_t gemGuid, uint32_t gemItemId) {

@@ -275,6 +275,10 @@ std::string requiredFormName(GameHandler& owner, uint32_t spellId) {
 
 } // namespace
 
+std::optional<bool> GameHandler::carriesSpellTool(bool category, uint32_t id) {
+    return carriesTool(*this, category ? kCastResultTotemCategory : kCastResultTotems, id);
+}
+
 std::optional<uint8_t> missingEquipment(GameHandler& owner, uint32_t spellId) {
     auto* am = owner.services().assetManager;
     // No game data loaded (packet replay tests): nothing to check against.
@@ -1564,6 +1568,8 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     if (const auto missing = firstMissingTool(owner_, spellId)) {
         const std::string text = castFailureText(owner_, spellId, missing->first, missing->second, 0);
         if (!text.empty()) owner_.raiseUiError(text);
+        // 2.4.3 Transmute: Arcanite without a Philosopher's Stone: the error,
+        // then UNIT_SPELLCAST_FAILED, and nothing sent.
         owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
         return;
     }
@@ -1634,7 +1640,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         // of the four things happened.
         LOG_WARNING("Profession: spell ", spellId, " (", owner_.getSpellName(spellId),
                     ") opens the trade skill window for skill line ", craftSkillLine);
-        openCraftingWindow(craftSkillLine);
+        openCraftingWindow(craftSkillLine, spellId);
         return;
     }
 
@@ -2042,6 +2048,10 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         }
     }
 
+    if (craftQueueAnnounce_ && spellId == craftQueueSpellId_) {
+        craftQueueAnnounce_ = false;
+        owner_.fireAddonEvent("UPDATE_TRADESKILL_RECAST", {});
+    }
     // Fire UNIT_SPELLCAST_SENT for cast bar addons
     if (owner_.addonEventCallbackRef()) {
         std::string targetName;
@@ -2137,11 +2147,19 @@ void SpellHandler::startCraftQueue(uint32_t spellId, int count) {
     }
     craftQueueSpellId_ = spellId;
     craftQueueRemaining_ = count;
+    // 2.4.3 announces the count as the first cast goes out:
+    // UPDATE_TRADESKILL_RECAST, then UNIT_SPELLCAST_SENT. A cast refused on
+    // the client (a missing Philosopher's Stone) announces nothing.
+    craftQueueAnnounce_ = true;
     // castSpell has several silent refusals - already casting, a cast-time
     // spell while moving, a mount - and each of them leaves the queue set with
     // nothing sent, which reads as the Create button doing nothing.
     LOG_WARNING("Craft: queued spell ", spellId, " x", count, ", casting now");
     castSpell(spellId, 0);
+    if (craftQueueAnnounce_) {
+        craftQueueAnnounce_ = false;
+        cancelCraftQueue();
+    }
 }
 
 void SpellHandler::cancelCraftQueue() {
@@ -2230,16 +2248,68 @@ void SpellHandler::learnTalent(uint32_t talentId, uint32_t requestedRank) {
     owner_.getSocket()->send(packet);
 }
 
-void SpellHandler::openCraftingWindow(uint32_t skillLine) {
-    craftingWindowOpen_ = true;
-    craftingSkillLine_ = skillLine;
-    owner_.fireAddonEvent("TRADE_SKILL_SHOW", {});
+void SpellHandler::openCraftingWindow(uint32_t skillLine, uint32_t openerSpellId) {
+    constexpr uint32_t kEffectTradeSkill = 47;
+    int32_t kind = 0;
+    if (const auto* entry = owner_.getSpellNameEntry(openerSpellId)) {
+        for (int e = 0; e < 3; ++e)
+            if (entry->effectIds[e] == kEffectTradeSkill) kind = entry->effectMiscValues[e];
+    }
+    const bool craft = kind != 0;
+    // The cast succeeds on the client alone: 2.4.3 fires no
+    // UNIT_SPELLCAST_SENT, and UNIT_SPELLCAST_SUCCEEDED comes after the
+    // window's own events (Tailoring: TRADE_SKILL_UPDATE, TRADE_SKILL_SHOW,
+    // UNIT_SPELLCAST_SUCCEEDED "player", "Tailoring", "Master"; Enchanting:
+    // CRAFT_UPDATE, CRAFT_SHOW, ...). Cast again while its window is open,
+    // it closes the window instead.
+    if (craft && craftWindowOpen_ && craftSkillLine_ == skillLine) {
+        closeCraftWindow();
+    } else if (!craft && craftingWindowOpen_ && craftingSkillLine_ == skillLine) {
+        closeCraftingWindow();
+    } else if (craft) {
+        craftWindowOpen_ = true;
+        craftSkillLine_ = skillLine;
+        craftKind_ = kind;
+        owner_.fireAddonEvent("CRAFT_UPDATE", {});
+        owner_.fireAddonEvent("CRAFT_SHOW", {});
+    } else {
+        craftingWindowOpen_ = true;
+        craftingSkillLine_ = skillLine;
+        owner_.fireAddonEvent("TRADE_SKILL_UPDATE", {});
+        owner_.fireAddonEvent("TRADE_SKILL_SHOW", {});
+    }
+    owner_.fireAddonEvent("UNIT_SPELLCAST_SUCCEEDED", spellcastArgs("player", openerSpellId));
 }
 
+// The window counts as open while its TRADE_SKILL_CLOSE is handled: the
+// panel hides itself there and its OnHide calls CloseTradeSkill, which closes
+// it and fires a second TRADE_SKILL_CLOSE inside the first, as on 2.4.3.
 void SpellHandler::closeCraftingWindow() {
-    if (!craftingWindowOpen_) return;
-    craftingWindowOpen_ = false;
+    if (!craftingWindowOpen_ || craftingClosing_ > 1) return;
+    ++craftingClosing_;
     owner_.fireAddonEvent("TRADE_SKILL_CLOSE", {});
+    --craftingClosing_;
+    craftingWindowOpen_ = false;
+}
+
+void SpellHandler::closeCraftWindow() {
+    if (!craftWindowOpen_ || craftClosing_ > 1) return;
+    ++craftClosing_;
+    owner_.fireAddonEvent("CRAFT_CLOSE", {});
+    --craftClosing_;
+    craftWindowOpen_ = false;
+}
+
+void SpellHandler::closeProfessionWindowsForReload() {
+    craftingWindowOpen_ = false;
+    craftWindowOpen_ = false;
+    owner_.fireAddonEvent("TRADE_SKILL_CLOSE", {});
+    owner_.fireAddonEvent("CRAFT_CLOSE", {});
+}
+
+void SpellHandler::notifyProfessionWindows() {
+    if (craftingWindowOpen_) owner_.fireAddonEvent("TRADE_SKILL_UPDATE", {});
+    if (craftWindowOpen_) owner_.fireAddonEvent("CRAFT_UPDATE", {});
 }
 
 void SpellHandler::switchTalentSpec(uint8_t newSpec) {
@@ -3051,7 +3121,7 @@ void SpellHandler::handleInitialSpells(network::Packet& packet) {
         owner_.addonEventCallbackRef()("SPELLS_CHANGED", {});
         // A crafting window's recipes are the spells that just changed, and
         // it refreshes on its own event rather than on that one.
-        if (craftingWindowOpen_) owner_.addonEventCallbackRef()("TRADE_SKILL_UPDATE", {});
+        notifyProfessionWindows();
     }
 }
 
@@ -3298,7 +3368,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     SpellGoData data;
     if (!owner_.getPacketParsers()->parseSpellGo(packet, data)) return;
     const bool rangedWeaponAttack = spellclass::isRangedWeaponAutoAttack(data.spellId);
-    bool playerCastStopped = false;
     // Build 8606 draws a Spectral Sentry's Shoot bolt flying to its target
     // (_experiments/20261118T091949Z.creature_swing_anim, arrow).
     if (data.casterUnit != owner_.getPlayerGuid() && data.ammoDisplayId != 0) launchAmmoProjectile(data);
@@ -3428,8 +3497,14 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         // and suppresses CMSG_CANCEL_CAST for ALL subsequent spell casts.
         owner_.pendingGameObjectInteractGuidRef() = 0;
 
-        // UNIT_SPELLCAST_STOP follows UNIT_SPELLCAST_SUCCEEDED, below.
-        playerCastStopped = !rangedWeaponAttack;
+        // The player's own cast reports success before the cast bar stops, and
+        // a craft queue sends its next cast after both: 2.4.3 Linen Bandage x3
+        // fires UNIT_SPELLCAST_SUCCEEDED, UNIT_SPELLCAST_STOP, the next
+        // UNIT_SPELLCAST_SENT, then UPDATE_TRADESKILL_RECAST.
+        if (owner_.addonEventCallbackRef())
+            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SUCCEEDED", spellcastArgs("player", data.spellId));
+        if (owner_.addonEventCallbackRef() && !rangedWeaponAttack)
+            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
 
         // Craft queue: re-cast if more crafts remaining
         if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == data.spellId) {
@@ -3438,14 +3513,16 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                 LOG_INFO("Craft queue: re-casting spell=", craftQueueSpellId_,
                          " remaining=", craftQueueRemaining_);
                 castSpell(craftQueueSpellId_, 0);
+                // The count changed, and the trade skill frame only reads it
+                // when told to: UPDATE_TRADESKILL_RECAST is what makes its
+                // quantity box count down. After the next cast is sent, and
+                // not after the last craft (2.4.3, Linen Bandage x3).
+                owner_.fireAddonEvent("UPDATE_TRADESKILL_RECAST", {});
             } else {
                 craftQueueSpellId_ = 0;
             }
-            // The count changed, and the trade skill frame only reads it when
-            // told to: UPDATE_TRADESKILL_RECAST is what makes its quantity box
-            // count down instead of sitting at the number first asked for.
-            if (owner_.addonEventCallbackRef())
-                owner_.addonEventCallbackRef()("UPDATE_TRADESKILL_RECAST", {});
+            // Then the cooldowns, every craft, before the loot line.
+            owner_.fireAddonEvent("SPELL_UPDATE_COOLDOWN", {});
         }
         // Spell queue: fire the next queued spell
         else if (queuedSpellId_ != 0) {
@@ -3493,14 +3570,11 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         if (data.casterUnit == owner_.getPlayerGuid() && tgt != owner_.getPlayerGuid() && tgt != 0) { playerHitEnemy = true; }
     }
 
-    // Fire UNIT_SPELLCAST_SUCCEEDED, then the player's UNIT_SPELLCAST_STOP:
-    // native 2.4.3 orders them so.
-    if (owner_.addonEventCallbackRef()) {
+    // Fire UNIT_SPELLCAST_SUCCEEDED (the player's own went out above)
+    if (owner_.addonEventCallbackRef() && data.casterUnit != owner_.getPlayerGuid()) {
         std::string unitId = owner_.guidToUnitId(data.casterUnit);
         if (!unitId.empty())
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SUCCEEDED", spellcastArgs(unitId, data.spellId));
-        if (playerCastStopped)
-            owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", spellcastArgs("player", data.spellId));
     }
 
     if ((playerIsHit || playerHitEnemy) && !rangedWeaponAttack)
@@ -3897,7 +3971,7 @@ void SpellHandler::handleLearnedSpell(network::Packet& packet) {
             fire("UPDATE_SHAPESHIFT_FORMS", {});
         }
         fire("COMPANION_LEARNED", {});
-        if (craftingWindowOpen_) fire("TRADE_SKILL_UPDATE", {});
+        notifyProfessionWindows();
     }
     if (fire && owner_.isTrainerWindowOpen()) fire("TRAINER_UPDATE", {});
 }
@@ -3933,7 +4007,7 @@ void SpellHandler::handleRemovedSpell(network::Packet& packet) {
         owner_.addonEventCallbackRef()("COMPANION_UNLEARNED", {});
         // A crafting window's recipes are the spells that just changed, and
         // it refreshes on its own event rather than on that one.
-        if (craftingWindowOpen_) owner_.addonEventCallbackRef()("TRADE_SKILL_UPDATE", {});
+        notifyProfessionWindows();
     }
 
     bool barChanged = false;
@@ -4707,6 +4781,8 @@ void SpellHandler::loadSpellNameCache() const {
     if (attrEx2Field == 0xFFFFFFFFu || stanceBarOrderField == 0xFFFFFFFFu)
         LOG_ERROR("dbc_layouts.json lacks Spell.AttributesEx2 or Spell.StanceBarOrder: the stance bar "
                   "shows forms only (no paladin auras), in spell id order.");
+    const uint32_t spellFocusField = column("RequiresSpellFocus");
+    const uint32_t invTypeMaskField = column("EquippedItemInventoryTypeMask");
     const uint32_t miscFields[3] = {column("EffectMiscValue0"), column("EffectMiscValue1"),
                                     column("EffectMiscValue2")};
     if (activeIconField == 0xFFFFFFFFu || miscFields[0] == 0xFFFFFFFFu)
@@ -4835,7 +4911,11 @@ void SpellHandler::loadSpellNameCache() const {
             }
             entry.activeIconId = read(i, activeIconField);
             entry.stanceBarOrder = read(i, stanceBarOrderField);
+            entry.requiresSpellFocus = read(i, spellFocusField);
+            entry.equippedItemInventoryTypeMask = read(i, invTypeMaskField);
             constexpr uint32_t kAuraModShapeshift = 36;
+            for (int e = 0; e < 3; ++e)
+                entry.effectMiscValues[e] = static_cast<int32_t>(read(i, miscFields[e]));
             for (int e = 0; e < 3; ++e)
                 if (entry.effectAuraIds[e] == kAuraModShapeshift)
                     entry.shapeshiftForm = static_cast<uint8_t>(read(i, miscFields[e]));
@@ -5397,7 +5477,9 @@ void SpellHandler::extractSkillFields(const FlatFieldMap& fields) {
     for (const auto& [skillId, skill] : newSkills) {
         if (skill.value == 0) continue;
         auto oldIt = owner_.playerSkillsRef().find(skillId);
-        if (oldIt != owner_.playerSkillsRef().end() && skill.value > oldIt->second.value) {
+        // Any change of the value, down as well: 2.4.3 printed "Your skill in
+        // First Aid has increased to 1." when .setskill took it from 375 to 1.
+        if (oldIt != owner_.playerSkillsRef().end() && skill.value != oldIt->second.value) {
             auto catIt = owner_.skillLineCategoriesRef().find(skillId);
             if (catIt != owner_.skillLineCategoriesRef().end()) {
                 uint32_t category = catIt->second;

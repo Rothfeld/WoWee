@@ -4818,6 +4818,8 @@ void Application::update(float deltaTime) {
     if (reloadUiPending_) {
         reloadUiPending_ = false;
         if (addonManager_) {
+            // Told to the interface going away, as 2.4.3 does on every reload.
+            if (gameHandler && gameHandler->isInWorld()) gameHandler->closeInteractionsForReload();
             addonManager_->reload();
             // The same three the /reload command sends, so an interface
             // reloaded from a popup comes up in the same state as one reloaded

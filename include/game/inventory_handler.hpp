@@ -419,6 +419,8 @@ public:
     /// Opens the panel on an item the player owns, wherever it is.
     void openSocketing(uint64_t itemGuid);
     void closeSocketing();
+    /// Closed and announced whether open or not, as ReloadUI does on 2.4.3.
+    void closeSocketingForReload();
     /// Puts a gem in a socket, or takes back what is in one when guid is zero.
     /// Refuses a gem already sitting in another socket - the server drops the
     /// whole request when two sockets name the same guid.
@@ -580,6 +582,11 @@ public:
                                 std::array<uint8_t, 19>& invTypes) const;
     void emitAllOtherPlayerEquipment();
     void handleItemQueryResponse(network::Packet& packet);
+
+    /// The plural a list heads the subclass with: ItemSubClass.dbc's verbose
+    /// name ("One-Handed Axes", "Shields"), else its display name ("Item
+    /// Enhancement", "Metal & Stone"). The 2.4.3 trade skill headings.
+    std::optional<std::string> itemSubclassListName(uint32_t itemClass, uint32_t subClass) const;
 
 private:
     // --- Packet handlers ---
@@ -870,6 +877,7 @@ private:
     mutable bool itemSubclassesLoaded_ = false;
     mutable bool itemSubclassLayout_ = false;
     mutable std::map<std::pair<uint32_t, uint32_t>, std::string> itemSubclassNames_;
+    mutable std::map<std::pair<uint32_t, uint32_t>, std::string> itemSubclassVerboseNames_;
 
     mutable bool itemSetsLoaded_ = false;
     mutable std::unordered_map<uint32_t, ItemSetInfo> itemSets_;

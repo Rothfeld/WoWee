@@ -2543,7 +2543,7 @@ void InventoryHandler::fireBagUpdates() {
     //
     // It also releases the row list, whose canMake comes from the same bag
     // counts and is otherwise held between redraws.
-    if (owner_.isCraftingWindowOpen()) fire("TRADE_SKILL_UPDATE", {});
+    owner_.notifyProfessionWindows();
     // The first few only: enough to tell "the event never goes out" from "it
     // goes out and the interface ignores it", without a line every time the
     // inventory is rebuilt.
@@ -2994,6 +2994,11 @@ void InventoryHandler::openSocketing(uint64_t itemGuid) {
     }
 
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("SOCKET_INFO_UPDATE", {});
+}
+
+void InventoryHandler::closeSocketingForReload() {
+    socketSession_ = SocketSession{};
+    if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("SOCKET_INFO_CLOSE", {});
 }
 
 void InventoryHandler::closeSocketing() {
@@ -4533,7 +4538,14 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
             data.subclassName = std::move(*dbcName);
         }
         owner_.itemInfoCacheRef()[data.entry] = data;
-        rebuildOnlineInventory();
+        // The bags are rebuilt, and BAG_UPDATE and UNIT_INVENTORY_CHANGED
+        // announced, only for an item the player holds. Opening First Aid asks
+        // for every bandage's details: 2.4.3 answers each reply with a
+        // TRADE_SKILL_UPDATE and nothing for the bags.
+        const bool held = std::any_of(owner_.onlineItemsRef().begin(), owner_.onlineItemsRef().end(),
+                                      [&](const auto& item) { return item.second.entry == data.entry; });
+        if (held) rebuildOnlineInventory();
+        else owner_.notifyProfessionWindows();
         maybeDetectVisibleItemLayout();
 
         // The answer to a question a tooltip asked and could not wait for.
@@ -6080,9 +6092,11 @@ std::optional<std::string> InventoryHandler::itemSubclassDisplayName(uint32_t it
         }
         itemSubclassLayout_ = true;
         for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
-            itemSubclassNames_[{dbc->getUInt32(r, layout->field("ClassID")),
-                                dbc->getUInt32(r, layout->field("SubClassID"))}] =
-                dbc->getString(r, layout->field("DisplayName"));
+            const std::pair<uint32_t, uint32_t> key{dbc->getUInt32(r, layout->field("ClassID")),
+                                                    dbc->getUInt32(r, layout->field("SubClassID"))};
+            itemSubclassNames_[key] = dbc->getString(r, layout->field("DisplayName"));
+            if (layout->field("VerboseName") != 0xFFFFFFFFu)
+                itemSubclassVerboseNames_[key] = dbc->getString(r, layout->field("VerboseName"));
         }
         LOG_INFO("ItemSubClass.dbc: ", itemSubclassNames_.size(), " subclasses");
     }
@@ -6093,6 +6107,15 @@ std::optional<std::string> InventoryHandler::itemSubclassDisplayName(uint32_t it
         return std::string{};
     }
     return it->second;
+}
+
+std::optional<std::string> InventoryHandler::itemSubclassListName(uint32_t itemClass,
+                                                                 uint32_t subClass) const {
+    auto display = itemSubclassDisplayName(itemClass, subClass);
+    if (!display) return std::nullopt;
+    const auto it = itemSubclassVerboseNames_.find({itemClass, subClass});
+    if (it != itemSubclassVerboseNames_.end() && !it->second.empty()) return it->second;
+    return display;
 }
 
 const ItemSetInfo* InventoryHandler::getItemSetInfo(uint32_t setId) const {

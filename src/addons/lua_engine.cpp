@@ -3184,51 +3184,67 @@ int lua_Tooltip_SetTalent(lua_State* L) {
     return 1;
 }
 
-/// SetTradeSkillItem(index) - what a recipe in the open profession makes.
-///
-/// This client knows a recipe by its crafting spell rather than by the item it
-/// produces, so what is shown is that spell: its name and its description,
-/// which is the line that says what gets made. Not the crafted item's own
-/// tooltip, which is what the real client shows - but the useful half of it,
-/// and it is what this client actually knows.
+/// The item tooltip of item `itemId`, as SetHyperlink builds it.
+static int tooltipForItem(lua_State* L, uint32_t itemId) {
+    lua_settop(L, 1);
+    const std::string link = "item:" + std::to_string(itemId) + ":0:0:0:0:0:0:0";
+    lua_pushstring(L, link.c_str());
+    return lua_Tooltip_SetHyperlink(L);
+}
+
+/// The n-th reagent's item of a recipe spell, or 0.
+static uint32_t recipeReagentItem(game::GameHandler* gh, uint32_t spellId, int n) {
+    const auto* se = gh->getSpellNameEntry(spellId);
+    if (!se) return 0;
+    int seen = 0;
+    for (const auto& r : se->reagents)
+        if (r.itemId != 0 && ++seen == n) return r.itemId;
+    return 0;
+}
+
+/// SetTradeSkillItem(index[, reagent]): the tooltip of the item the recipe
+/// makes, or with a reagent index that reagent's, as 2.4.3 shows them over
+/// the detail pane's icon and reagent buttons. A recipe making no item shows
+/// its spell.
 int lua_Tooltip_SetTradeSkillItem(lua_State* L) {
     auto* w = widgetOf(L, 1);
     auto* gh = wowee::addons::getGameHandler(L);
     const int index = static_cast<int>(luaL_optnumber(L, 2, 0));
+    const int reagent = static_cast<int>(luaL_optnumber(L, 3, 0));
     if (!w || !gh || index < 1) { lua_pushboolean(L, 0); return 1; }
-
-    // A drawn-row index, not an index into the recipe list. The panel groups
-    // recipes under subclass headings and filters them, so the two lists have
-    // neither the same length nor the same order: subscripting the recipes
-    // described whatever happened to sit at that offset - "Enchant Bracer -
-    // Lesser Spirit" was shown as "Enchant Bracer - Minor Deflection".
+    // A drawn-row index: the panel groups and filters, so it is not an index
+    // into the recipe list.
     const auto* recipe = wowee::addons::recipeAtTradeSkillRow(gh, index);
-    if (!recipe) { lua_pushboolean(L, 0); return 1; }
-    const uint32_t spellId = recipe->spellId;
-    if (spellId == 0) { lua_pushboolean(L, 0); return 1; }
-
-    w->isTooltip = true;
-    clearTooltipUnit(L, *w);
-    w->tooltipLines.clear();
-    wowee::ui::Widget::TooltipLine title;
-    title.left = recipe->name;
-    title.lc[0] = 1.0f; title.lc[1] = 0.82f; title.lc[2] = 0.0f; title.lc[3] = 1.0f;
-    title.rc[0] = title.rc[1] = title.rc[2] = title.rc[3] = 1.0f;
-    w->tooltipLines.push_back(std::move(title));
-
-    const std::string body =
-        gh->formatSpellDescription(spellId, gh->getSpellDescription(spellId));
-    if (!body.empty()) {
-        wowee::ui::Widget::TooltipLine desc;
-        desc.left = body;
-        desc.lc[0] = desc.lc[1] = desc.lc[2] = 1.0f; desc.lc[3] = 1.0f;
-        desc.rc[0] = desc.rc[1] = desc.rc[2] = desc.rc[3] = 1.0f;
-        desc.wrap = true;  // prose; see fillSpellTooltip
-        w->tooltipLines.push_back(std::move(desc));
+    if (!recipe || recipe->spellId == 0) { lua_pushboolean(L, 0); return 1; }
+    if (reagent > 0) {
+        const uint32_t item = recipeReagentItem(gh, recipe->spellId, reagent);
+        if (item == 0) { lua_pushboolean(L, 0); return 1; }
+        return tooltipForItem(L, item);
     }
-    w->shown = true;
-    lua_pushboolean(L, 1);
+    const auto* se = gh->getSpellNameEntry(recipe->spellId);
+    if (se && se->createdItemId != 0) return tooltipForItem(L, se->createdItemId);
+    lua_pushboolean(L, fillSpellTooltip(L, w, gh, recipe->spellId) ? 1 : 0);
     return 1;
+}
+
+/// SetCraftSpell(index): the recipe's spell, as in the spellbook.
+int lua_Tooltip_SetCraftSpell(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    const auto* recipe = gh ? wowee::addons::recipeAtCraftRow(gh, static_cast<int>(luaL_optnumber(L, 2, 0))) : nullptr;
+    if (!w || !recipe) { lua_pushboolean(L, 0); return 1; }
+    lua_pushboolean(L, fillSpellTooltip(L, w, gh, recipe->spellId) ? 1 : 0);
+    return 1;
+}
+
+/// SetCraftItem(index, reagent): that reagent's item.
+int lua_Tooltip_SetCraftItem(lua_State* L) {
+    auto* gh = wowee::addons::getGameHandler(L);
+    const auto* recipe = gh ? wowee::addons::recipeAtCraftRow(gh, static_cast<int>(luaL_optnumber(L, 2, 0))) : nullptr;
+    if (!recipe) { lua_pushboolean(L, 0); return 1; }
+    const uint32_t item = recipeReagentItem(gh, recipe->spellId, static_cast<int>(luaL_optnumber(L, 3, 0)));
+    if (item == 0) { lua_pushboolean(L, 0); return 1; }
+    return tooltipForItem(L, item);
 }
 
 /// A unit's name and level, which is what hovering a unit frame shows.
@@ -7851,6 +7867,8 @@ void LuaEngine::registerCoreAPI() {
         {"_WoweeFireTooltipSetItem", [](lua_State* L) -> int { fireTooltipSetItem(L); return 0; }},
         {"_WoweeAppendEquippedEnchants", lua_Tooltip_AppendEquippedEnchants},
         {"SetTradeSkillItem", lua_Tooltip_SetTradeSkillItem},
+        {"SetCraftSpell", lua_Tooltip_SetCraftSpell},
+        {"SetCraftItem", lua_Tooltip_SetCraftItem},
         {"SetUnit",         lua_Tooltip_SetUnit},
         {"IsUnit",          lua_Tooltip_IsUnit},
         {"GetUnit",         lua_Tooltip_GetUnit},
@@ -11071,6 +11089,9 @@ void LuaEngine::fireEvent(const std::string& eventName,
     // index.
     if (eventName == "TRADE_SKILL_UPDATE" || eventName == "TRADE_SKILL_SHOW") {
         invalidateTradeSkillRows();
+    }
+    if (eventName == "CRAFT_UPDATE" || eventName == "CRAFT_SHOW") {
+        invalidateCraftRows();
     }
 
     // An event handler may cause another event, which is ordinary and has to
