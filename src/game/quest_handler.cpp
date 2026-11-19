@@ -2165,10 +2165,17 @@ void QuestHandler::applyQuestStateFromFields(const FlatFieldMap& fields) {
         }
         nowSlotQuests.insert(questId);
 
-        // Add quest to local log only if we have a pending accept for it
-        if (!hasQuestInLog(questId) && pendingQuestAcceptTimeouts_.count(questId) != 0) {
-            addQuestToLocalLogIfMissing(questId, "Quest #" + std::to_string(questId), "");
-            requestQuestQuery(questId, false);
+        // The slot is the server's answer to an accept. acceptQuest already
+        // put the quest in the local log, so the answer has to end the wait
+        // whether or not the log lacks it: a wait left running timed out 5 s
+        // later and its resync asked the giver for the quest again, which
+        // reopened the details of the quest just taken (Your Place In The
+        // World, with Accept, over Kaltunk) until the player walked away.
+        if (pendingQuestAcceptTimeouts_.count(questId) != 0) {
+            if (!hasQuestInLog(questId)) {
+                addQuestToLocalLogIfMissing(questId, "Quest #" + std::to_string(questId), "");
+                requestQuestQuery(questId, false);
+            }
             clearPendingQuestAccept(questId);
         }
 
