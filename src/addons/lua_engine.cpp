@@ -4524,8 +4524,12 @@ int lua_Region_IsVisible(lua_State* L) {
     lua_pushboolean(L, on);
     return 1;
 }
+// Kept within 0..1: ReadyCheck_OnUpdate's last fade step passes fadeTimer / 1.5
+// below zero, and 2.4.3's GetAlpha answers 0 there (pair 5,
+// _experiments/20261119T094500Z.readycheck_audit).
 int lua_Region_SetAlpha(lua_State* L) {
-    if (auto* w = widgetOf(L, 1)) w->alpha = static_cast<float>(luaL_optnumber(L, 2, 1.0));
+    if (auto* w = widgetOf(L, 1))
+        w->alpha = std::clamp(static_cast<float>(luaL_optnumber(L, 2, 1.0)), 0.0f, 1.0f);
     return 0;
 }
 int lua_Region_GetAlpha(lua_State* L) {
