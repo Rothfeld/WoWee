@@ -21,6 +21,9 @@ struct LuaServices {
     /// Run a macro body, as RunMacroText() does - one command per line,
     /// through the same path the action bar uses for a macro button.
     std::function<void(const std::string&)> runMacroText;
+    /// Whether an interface texture path names a file that loads (with the
+    /// extension and addon-folder rules the renderer applies).
+    std::function<bool(const std::string&)> textureExists;
 
     /// This client's own slash commands, and a way to run one.
     ///

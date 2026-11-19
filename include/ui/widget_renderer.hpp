@@ -37,6 +37,12 @@ struct Widget;
 
 class WidgetRenderer {
 public:
+    /// Whether an interface texture path loads, by the same rules as drawing
+    /// (cached with the size query). Texture:SetTexture answers with it.
+    bool interfaceTextureLoads(const std::string& path) {
+        float w = 0.0f, h = 0.0f;
+        return textureSize(path, w, h);
+    }
     void initialize(pipeline::AssetManager* assets, rendering::VkContext* vkCtx);
 
     /// Directory on disk for an addon, by folder name in lower case, or empty.

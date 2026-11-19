@@ -633,6 +633,9 @@ bool Application::initialize() {
         luaSvc.audioCoordinator  = audioCoordinator_.get();
         luaSvc.expansionRegistry = expansionRegistry_.get();
         luaSvc.requestReloadUI = [this]() { reloadUiPending_ = true; };
+        luaSvc.textureExists = [this](const std::string& path) {
+            return widgetRenderer_.interfaceTextureLoads(path);
+        };
         // FrameXML's options panels, driving this client's own settings.
         //
         // One table rather than a hook per setting. Every row is a CVar the

@@ -4762,15 +4762,32 @@ int lua_Texture_SetTexture(lua_State* L) {
         w->solidColor = false;
         w->texturePath.clear();
     } else {
+        const std::string path = luaL_optstring(L, 2, "");
+        // A path to nothing changes nothing and answers nil on 2.4.3 (the
+        // texture keeps what it had); one that loads answers 1. Atlas picks
+        // a map that way: SetTexture its own picture, and only when that
+        // answers nil try each plugin's - answering nothing for the first
+        // sent it on to a plugin path that does not exist, and the map was
+        // blank. Without a renderer to ask (the headless harness) every path
+        // is taken.
+        if (!path.empty()) {
+            auto* svc = getLuaServices(L);
+            if (svc && svc->textureExists && !svc->textureExists(path)) {
+                lua_pushnil(L);
+                return 1;
+            }
+        }
         w->solidColor = false;
-        w->texturePath = luaL_optstring(L, 2, "");
+        w->texturePath = path;
         // The fill region of a status bar: its texture is the bar's fill.
         if (w->barFillOwner) {
             if (auto* tree = wowee::addons::getWidgetTree(L))
                 if (auto* bar = tree->get(w->barFillOwner)) bar->barTexture = w->texturePath;
         }
     }
-    return 0;
+    // A colour, a texture object, nil and a path that loads: 1.
+    lua_pushnumber(L, 1);
+    return 1;
 }
 int lua_Texture_GetTexture(lua_State* L) {
     const auto* w = widgetOf(L, 1);
