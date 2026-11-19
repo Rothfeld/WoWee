@@ -246,6 +246,8 @@ public:
      * Must be called when state is READY or AUTHENTICATED
      */
     void requestCharacterList();
+    /// Character list request on arriving at character select (CHAR_ENUM + REALM_SPLIT).
+    void enterCharacterSelect();
 
     /**
      * Get list of characters (available after CHAR_LIST_RECEIVED state)

@@ -2344,22 +2344,17 @@ void GameHandler::registerRemainingOpcodes() {
         systemGlobal("RESET_FAILED_NOTIFY");
         packet.skipAll();
     };
-    // uint32 splitType + uint32 deferTime + string realmName
-    // Client must respond with CMSG_REALM_SPLIT to avoid session timeout on some servers.
-    dispatchTable_[Opcode::SMSG_REALM_SPLIT] = [this](network::Packet& packet) {
-        // uint32 splitType + uint32 deferTime + string realmName
-        // Client must respond with CMSG_REALM_SPLIT to avoid session timeout on some servers.
-        uint32_t splitType = 0;
-        if (packet.hasRemaining(4))
-            splitType = packet.readUInt32();
-        packet.skipAll();
-        if (socket) {
-            network::Packet resp(wireOpcode(Opcode::CMSG_REALM_SPLIT));
-            resp.writeUInt32(splitType);
-            resp.writeString("3.3.5");
-            socket->send(resp);
-            LOG_DEBUG("SMSG_REALM_SPLIT splitType=", splitType, " - sent CMSG_REALM_SPLIT ack");
+    // The answer to the CMSG_REALM_SPLIT enterCharacterSelect() sends:
+    // uint32 echoed request value + uint32 split state + string split date.
+    // Not answered: replying with another request made every answer ask again.
+    dispatchTable_[Opcode::SMSG_REALM_SPLIT] = [](network::Packet& packet) {
+        uint32_t request = 0, splitState = 0;
+        if (packet.hasRemaining(8)) {
+            request = packet.readUInt32();
+            splitState = packet.readUInt32();
         }
+        packet.skipAll();
+        LOG_DEBUG("SMSG_REALM_SPLIT request=0x", std::hex, request, std::dec, " state=", splitState);
     };
     dispatchTable_[Opcode::SMSG_REAL_GROUP_UPDATE] = [this](network::Packet& packet) {
         auto rem = [&]() { return packet.getRemainingSize(); };

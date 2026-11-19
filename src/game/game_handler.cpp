@@ -222,7 +222,7 @@ void GameHandler::returnToCharacterSelect() {
     clearWorld();
     setState(WorldState::READY);
     LOG_INFO("Left the world; back to character select");
-    requestCharacterList();
+    enterCharacterSelect();
 }
 
 void GameHandler::clearWorld() {

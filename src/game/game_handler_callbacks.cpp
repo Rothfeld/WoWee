@@ -384,8 +384,7 @@ void GameHandler::handleAuthResponse(network::Packet& packet) {
 
     setState(WorldState::READY);
 
-    // Request character list automatically
-    requestCharacterList();
+    enterCharacterSelect();
 
     // Call success callback
     if (onSuccess) {
@@ -418,6 +417,18 @@ void GameHandler::requestCharacterList() {
 
     setState(WorldState::CHAR_LIST_REQUESTED);
     LOG_INFO("CMSG_CHAR_ENUM sent, waiting for character list...");
+}
+
+void GameHandler::enterCharacterSelect() {
+    // 2.4.3 sends CMSG_CHAR_ENUM and CMSG_REALM_SPLIT (uint32 0xFFFFFFFF)
+    // together each time it arrives at character select: after world
+    // authentication and after a logout. The server answers SMSG_REALM_SPLIT.
+    requestCharacterList();
+    const uint16_t realmSplit = wireOpcode(Opcode::CMSG_REALM_SPLIT);
+    if (realmSplit == 0xFFFF || !socket || state != WorldState::CHAR_LIST_REQUESTED) return;
+    network::Packet packet(realmSplit);
+    packet.writeUInt32(0xFFFFFFFFu);
+    socket->send(packet);
 }
 
 void GameHandler::handleCharEnum(network::Packet& packet) {
