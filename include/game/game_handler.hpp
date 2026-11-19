@@ -223,6 +223,13 @@ public:
      */
     void disconnect();
 
+    /// Back to character select after SMSG_LOGOUT_COMPLETE, on the same connection.
+    ///
+    /// The server keeps the session: 2.4.3 stays connected, drops the world and
+    /// asks for the character list again (CMSG_CHAR_ENUM). Closing the socket
+    /// here instead ends the session and lands on the login screen.
+    void returnToCharacterSelect();
+
     /**
      * Check if connected to world server
      */
@@ -4662,6 +4669,10 @@ private:
      * Fail connection with reason
      */
     void fail(const std::string& reason);
+    /// Everything of the world the character was in: entities and their
+    /// render instances (despawn callbacks), per-world caches. Shared by
+    /// disconnect() and returnToCharacterSelect().
+    void clearWorld();
     void updateAttachedTransportChildren(float deltaTime);
 
     // Explicit service dependencies (owned by Application)

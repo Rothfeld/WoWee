@@ -2252,7 +2252,7 @@ void Application::run() {
             throw;
         }
 
-        processDeferredLogoutToLogin();
+        processDeferredLeaveWorld();
 
         // Exit gracefully on GPU device lost (unrecoverable)
         if (renderer && renderer->getVkContext() && renderer->getVkContext()->isDeviceLost()) {
@@ -2527,7 +2527,7 @@ void Application::setState(AppState newState) {
             if (uiManager && assetManager) {
                 uiManager->getCharacterScreen().setAssetManager(assetManager.get());
             }
-            // A backstop. Leaving the world goes through performLogoutToLogin,
+            // A backstop. Leaving the world goes through performLeaveWorld,
             // which takes the interface down there; this catches any other way
             // of arriving here with it still standing, and does nothing when
             // it is already down.
@@ -2664,17 +2664,14 @@ void Application::setState(AppState newState) {
                 // The logout countdown finishing is not the end of it: the server
                 // confirms with SMSG_LOGOUT_COMPLETE, and only then does the client
                 // leave. Without this the countdown ran out and nothing happened.
+                //
+                // 2.4.3 leaves the world to character select on the same
+                // connection either way (CMSG_CHAR_ENUM follows the logout);
+                // Quit then closes the connection and the program.
                 gameHandler->setLogoutCompleteCallback([this](bool exiting) {
-                    if (exiting) {
-                        if (auto* ac = getAudioCoordinator()) {
-                            if (auto* music = ac->getMusicManager()) music->stopMusic(0.0f);
-                        }
-                        LOG_INFO("Logout complete - quitting");
-                        if (window) window->setShouldClose(true);
-                    } else {
-                        LOG_INFO("Logout complete - returning to character select");
-                        logoutToLogin();
-                    }
+                    LOG_INFO("Logout complete - returning to character select", exiting ? ", then quitting" : "");
+                    logoutToCharacterSelect();
+                    if (exiting && window) window->setShouldClose(true);
                 });
                 gameHandler->setKnockBackCallback([this](float vcos, float vsin, float hspeed, float vspeed) {
                     if (renderer && renderer->getCameraController()) {
@@ -2842,21 +2839,31 @@ void Application::handleWorldDisconnect() {
 }
 
 void Application::logoutToLogin() {
+    leaveWorld(LeaveWorldTo::Login);
+}
+
+void Application::logoutToCharacterSelect() {
+    leaveWorld(LeaveWorldTo::CharacterSelect);
+}
+
+void Application::leaveWorld(LeaveWorldTo destination) {
     if (renderingFrame_) {
-        if (!logoutToLoginPending_) {
-            LOG_INFO("Logout requested during render; deferring until frame completes");
+        if (!leaveWorldPending_) {
+            LOG_INFO("Leaving the world requested during render; deferring until frame completes");
         }
-        logoutToLoginPending_ = true;
+        // A lost connection outranks a logout still waiting for its frame.
+        if (!leaveWorldPending_ || destination == LeaveWorldTo::Login) leaveWorldPending_ = destination;
         return;
     }
 
-    performLogoutToLogin();
+    performLeaveWorld(destination);
 }
 
-void Application::processDeferredLogoutToLogin() {
-    if (!logoutToLoginPending_) return;
-    logoutToLoginPending_ = false;
-    performLogoutToLogin();
+void Application::processDeferredLeaveWorld() {
+    if (!leaveWorldPending_) return;
+    const LeaveWorldTo destination = *leaveWorldPending_;
+    leaveWorldPending_.reset();
+    performLeaveWorld(destination);
 }
 
 void Application::unloadInterface() {
@@ -2876,8 +2883,8 @@ void Application::unloadInterface() {
     addonsLoaded_ = false;
 }
 
-void Application::performLogoutToLogin() {
-    LOG_INFO("Logout requested");
+void Application::performLeaveWorld(LeaveWorldTo destination) {
+    LOG_INFO("Leaving the world to ", destination == LeaveWorldTo::Login ? "the login screen" : "character select");
 
     // The interface leaves the world with the character that was wearing it.
     //
@@ -2897,7 +2904,8 @@ void Application::performLogoutToLogin() {
     }
 
     if (gameHandler) {
-        gameHandler->disconnect();
+        if (destination == LeaveWorldTo::Login) gameHandler->disconnect();
+        else gameHandler->returnToCharacterSelect();
     }
 
     // --- Per-session flags ---
@@ -2958,6 +2966,13 @@ void Application::performLogoutToLogin() {
         if (auto* music = audioCoordinator_ ? audioCoordinator_->getMusicManager() : nullptr) {
             music->stopMusic(0.0f);
         }
+    }
+
+    if (destination == LeaveWorldTo::CharacterSelect) {
+        // Selection starts from the saved last character again, as at login.
+        if (uiManager) uiManager->getCharacterScreen().reset();
+        setState(AppState::CHARACTER_SELECTION);
+        return;
     }
 
     // Clear stale realm/character selection so switching servers starts fresh
@@ -5977,7 +5992,7 @@ void Application::render() {
     stageStatFrames_ += 1;
     reportStageTimes();
     renderingFrame_ = false;
-    processDeferredLogoutToLogin();
+    processDeferredLeaveWorld();
 }
 
 void Application::noteStageTime(const char* stage, float milliseconds) {

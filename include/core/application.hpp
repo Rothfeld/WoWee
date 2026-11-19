@@ -138,6 +138,8 @@ public:
 
     // Logout to login screen
     void logoutToLogin();
+    // Leave the world to character select, staying connected (after SMSG_LOGOUT_COMPLETE)
+    void logoutToCharacterSelect();
 
     // Render bounds lookup (for click targeting / selection) - delegates to EntitySpawner
     bool getRenderBoundsForGuid(uint64_t guid, glm::vec3& outCenter, float& outRadius) const;
@@ -197,8 +199,13 @@ private:
     // fields (no SMSG_SPELL_START seen), with that animation.
     std::unordered_map<uint64_t, uint32_t> fieldChannelAnimations_;
     void render();
-    void performLogoutToLogin();
-    void processDeferredLogoutToLogin();
+    /// Where leaving the world lands: the login screen when the world
+    /// connection is gone (disconnect), character select when the server
+    /// logged the character out and the session goes on (Logout, Quit).
+    enum class LeaveWorldTo { Login, CharacterSelect };
+    void leaveWorld(LeaveWorldTo destination);
+    void performLeaveWorld(LeaveWorldTo destination);
+    void processDeferredLeaveWorld();
 
     /// Take the interface down, because the character it belongs to is leaving.
     ///
@@ -381,7 +388,7 @@ private:
     AppState state = AppState::AUTHENTICATION;
     bool running = false;
     bool renderingFrame_ = false;
-    bool logoutToLoginPending_ = false;
+    std::optional<LeaveWorldTo> leaveWorldPending_;
     /// Why the player is back at the login screen, when it was not their idea.
     std::string disconnectNotice_;
     bool playerCharacterSpawned = false;
