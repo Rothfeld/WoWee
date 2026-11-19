@@ -2837,6 +2837,32 @@ into the 780-entry icon list: the question mark, then Ability_* and
 Spell_* icons by name. Gotcha: a character config with 3.3.5 ids (37-54)
 keeps those macros, but on TBC the interface no longer lists them.
 
+Account ("General") macros are the account's, character macros the
+character's, as on native 2.4.3 (`WTF/Account/<ACCOUNT>/macros-cache.txt`
+and `.../<Realm>/<Character>/macros-cache.txt`). WoWee keeps the account's
+in `<config root>/accounts/<ACCOUNT>/macros.cfg` and the character's in
+`characters/<Name>.cfg`, both as `macro_<id>_text/_name/_icon` keys. Both
+halves are read anew whenever a character is selected (native picked up an
+edit made to its account file between two logins), so a General macro made
+on one character is there on the next one, in the same session or after a
+restart, and nothing of one character's own half reaches another. Ids are
+one past the highest of the half (native: GenA 1, GenB 2, delete GenA,
+GenC is 3). Configs written before the account file kept account macros
+per character: the first login with the new layout takes the logging-in
+character's and then the account's other characters' account macros into
+the account file and removes them from their configs (log lines "Account
+macro <id> (<name>) of <character>: ..."). Identical macros become one; a
+different macro under an id already taken waits for its own character's
+login, where it gets the next free id (or joins an identical macro) and that
+character's buttons follow it (CMSG_SET_ACTION_BUTTON). With both halves
+full it stays in the character's config. Gotcha: native also uploads both
+halves to the server (`account_data` type 4, `character_account_data`
+type 5, at the next login) and fetches them when its local copy differs;
+WoWee does not exchange account data, so macros made by native on the same
+account do not reach WoWee and the other way round.
+`build/bin/test_macro_store`; evidence:
+`_experiments/20261119T102205Z.macros_account_split` in the workspace.
+
 An item goes onto a button only if it can be equipped or has an on-use
 spell; Blinding Powder or Copper Ore stays on the cursor, silently. A
 button whose spell the player does not know (a superseded rank stored

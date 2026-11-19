@@ -1371,10 +1371,12 @@ void GameHandler::registerCoreOpcodes() {
                 case 0x80: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // TBC/WotLK item
                 // A macro by its identity: 0x40 an account macro, 0x41 a
                 // character one (native 2.4.3 stores ZZa as type 0x41,
-                // action 5). An id from before identities is mapped on.
+                // action 5). An id this character's macro no longer has
+                // (index-keyed, or changed when taken into the account
+                // file) is mapped on.
                 case 0x40:
                     slot.type = ActionBarSlot::MACRO;
-                    slot.id = !hasMacro(id) && legacyMacroId(id) ? legacyMacroId(id) : id;
+                    slot.id = legacyMacroId(id) ? legacyMacroId(id) : id;
                     if (slot.id != id) resendMacroButtons.push_back(i);
                     break;
                 case 0x41: slot.type = ActionBarSlot::MACRO; slot.id = kCharacterMacroFlag | id; break;

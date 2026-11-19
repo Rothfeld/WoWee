@@ -660,6 +660,10 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     // Store player GUID
     playerGuid = characterGuid;
 
+    // Both macro halves, read anew: the account's may have changed on another
+    // character since, and nothing of the last character's own may stay.
+    loadMacros();
+
     // Reset per-character state so previous character data doesn't bleed through
     inventory = Inventory();
     onlineItems_.clear();

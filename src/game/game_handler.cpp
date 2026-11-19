@@ -1340,7 +1340,7 @@ static const std::string EMPTY_MACRO_TEXT;
 
 const std::string& GameHandler::getMacroText(uint32_t macroId) const {
     auto it = macros_.find(macroId);
-    return (it != macros_.end()) ? it->second : EMPTY_MACRO_TEXT;
+    return (it != macros_.end()) ? it->second.text : EMPTY_MACRO_TEXT;
 }
 
 int GameHandler::getRecipeDifficulty(uint32_t spellId) const {
@@ -1404,36 +1404,38 @@ std::vector<GameHandler::CraftRecipe> GameHandler::getCraftingRecipes() const {
 }
 
 const std::string& GameHandler::getMacroName(uint32_t macroId) const {
-    auto it = macroNames_.find(macroId);
-    return (it != macroNames_.end()) ? it->second : EMPTY_MACRO_TEXT;
+    auto it = macros_.find(macroId);
+    return (it != macros_.end()) ? it->second.name : EMPTY_MACRO_TEXT;
 }
 
 const std::string& GameHandler::getMacroIcon(uint32_t macroId) const {
-    auto it = macroIcons_.find(macroId);
-    return (it != macroIcons_.end()) ? it->second : EMPTY_MACRO_TEXT;
+    auto it = macros_.find(macroId);
+    return (it != macros_.end()) ? it->second.icon : EMPTY_MACRO_TEXT;
 }
 
+// A change to one macro is saved to the file its half lives in: account
+// macros to the account's, character macros to the character's config.
 void GameHandler::setMacroMeta(uint32_t macroId, const std::string& name,
                                const std::string& icon) {
-    if (name.empty()) macroNames_.erase(macroId); else macroNames_[macroId] = name;
-    if (icon.empty()) macroIcons_.erase(macroId); else macroIcons_[macroId] = icon;
-    saveCharacterConfig();
+    Macro& macro = macros_[macroId];
+    macro.name = name;
+    macro.icon = icon;
+    if (isCharacterMacroId(macroId)) saveCharacterConfig(); else saveAccountMacros();
 }
 
 uint32_t GameHandler::macroAccountSlots() const { return isActiveExpansion("tbc") ? 18u : 36u; }
 
 namespace {
 // One half, in the order the interface lists it: by name, then id.
-std::vector<uint32_t> macroHalf(const std::unordered_map<uint32_t, std::string>& texts,
-                                const GameHandler& gh, bool character) {
+std::vector<uint32_t> macroHalf(const MacroSet& macros, bool character) {
     std::vector<uint32_t> ids;
-    for (const auto& [id, text] : texts) {
-        (void)text;
-        if (((id & GameHandler::kCharacterMacroFlag) != 0) == character) ids.push_back(id);
+    for (const auto& [id, macro] : macros) {
+        (void)macro;
+        if (isCharacterMacroId(id) == character) ids.push_back(id);
     }
     std::sort(ids.begin(), ids.end(), [&](uint32_t a, uint32_t b) {
-        const auto& na = gh.getMacroName(a);
-        const auto& nb = gh.getMacroName(b);
+        const auto& na = macros.at(a).name;
+        const auto& nb = macros.at(b).name;
         return na != nb ? na < nb : a < b;
     });
     return ids;
@@ -1445,13 +1447,13 @@ uint32_t GameHandler::macroIdForIndex(uint32_t index) const {
     const uint32_t accountSlots = macroAccountSlots();
     const bool character = index > accountSlots;
     const uint32_t place = character ? index - accountSlots : index;
-    const auto half = macroHalf(macros_, *this, character);
+    const auto half = macroHalf(macros_, character);
     return place <= half.size() ? half[place - 1] : 0;
 }
 
 uint32_t GameHandler::macroIndexForId(uint32_t macroId) const {
     const bool character = (macroId & kCharacterMacroFlag) != 0;
-    const auto half = macroHalf(macros_, *this, character);
+    const auto half = macroHalf(macros_, character);
     const auto it = std::find(half.begin(), half.end(), macroId);
     if (it == half.end()) return 0;
     return static_cast<uint32_t>(it - half.begin()) + 1 + (character ? macroAccountSlots() : 0u);
@@ -1459,41 +1461,32 @@ uint32_t GameHandler::macroIndexForId(uint32_t macroId) const {
 
 uint32_t GameHandler::createMacro(bool character, const std::string& name, const std::string& icon,
                                   const std::string& body) {
-    const auto half = macroHalf(macros_, *this, character);
+    const auto half = macroHalf(macros_, character);
     if (half.size() >= (character ? macroCharacterSlots() : macroAccountSlots())) return 0;
     // The next number in the half: native 2.4.3 numbered APa..MZ 5..17 in
     // the order they were made and kept 5 for APa after it was renamed.
-    uint32_t next = 1;
-    for (const uint32_t id : half) next = std::max(next, (id & 0x00FFFFFFu) + 1);
-    const uint32_t id = (character ? kCharacterMacroFlag : 0u) | next;
-    macros_[id] = body;
-    if (!name.empty()) macroNames_[id] = name;
-    if (!icon.empty()) macroIcons_[id] = icon;
-    saveCharacterConfig();
+    const uint32_t id = nextMacroId(macros_, character);
+    macros_[id] = Macro{body, name, icon};
+    if (character) saveCharacterConfig(); else saveAccountMacros();
     return id;
 }
 
 std::vector<uint32_t> GameHandler::getMacroIds() const {
     std::vector<uint32_t> ids;
     ids.reserve(macros_.size());
-    for (const auto& [id, text] : macros_) { (void)text; ids.push_back(id); }
-    // Ascending, because the interface indexes macros by position in this list
-    // and an unordered_map hands them back in whatever order it likes - the
-    // same macro would answer to a different index each session.
-    std::sort(ids.begin(), ids.end());
+    // Ascending: macros_ is ordered by id.
+    for (const auto& [id, macro] : macros_) { (void)macro; ids.push_back(id); }
     return ids;
 }
 
 void GameHandler::setMacroText(uint32_t macroId, const std::string& text) {
-    macros_[macroId] = text;
-    saveCharacterConfig();
+    macros_[macroId].text = text;
+    if (isCharacterMacroId(macroId)) saveCharacterConfig(); else saveAccountMacros();
 }
 
 void GameHandler::deleteMacro(uint32_t macroId) {
     macros_.erase(macroId);
-    macroNames_.erase(macroId);
-    macroIcons_.erase(macroId);
-    saveCharacterConfig();
+    if (isCharacterMacroId(macroId)) saveCharacterConfig(); else saveAccountMacros();
 }
 
 void GameHandler::saveCharacterConfig() {
@@ -1522,26 +1515,14 @@ void GameHandler::saveCharacterConfig() {
         out << "action_bar_" << i << "_id=" << actionBar[i].id << "\n";
     }
 
-    // Save client-side macro text (escape newlines as \n literal)
-    for (const auto& [id, text] : macros_) {
-        {
-            std::string escaped;
-            escaped.reserve(text.size());
-            for (char c : text) {
-                if (c == '\n') { escaped += "\\n"; }
-                else if (c == '\r') { /* skip CR */ }
-                else if (c == '\\') { escaped += "\\\\"; }
-                else { escaped += c; }
-            }
-            out << "macro_" << id << "_text=" << escaped << "\n";
-        }
-    }
-    for (const auto& [id, name] : macroNames_) {
-        if (!name.empty()) out << "macro_" << id << "_name=" << name << "\n";
-    }
-    for (const auto& [id, icon] : macroIcons_) {
-        if (!icon.empty()) out << "macro_" << id << "_icon=" << icon << "\n";
-    }
+    // This character's own macros; the account's live in accountMacroPath().
+    // Account macros that found no place when this config was taken into the
+    // account file stay here under their old ids.
+    assert(macrosOwnerGuid_ == playerGuid);
+    MacroSet own = deferredAccountMacros_;
+    for (const auto& [id, macro] : macros_)
+        if (isCharacterMacroId(id)) own[id] = macro;
+    writeMacroKeys(out, own);
 
     // Neither the quest log nor its watches are saved: the server sends the
     // log on every login, and 2.4.3 starts every session with no quest
@@ -1567,6 +1548,203 @@ void GameHandler::saveCharacterConfig() {
     }
 
     LOG_INFO("Character config saved to ", path);
+}
+
+std::string GameHandler::accountMacroPath() const {
+    if (accountName.empty()) return {};
+    assert(accountName.find_first_of("/\\") == std::string::npos && accountName != "." && accountName != "..");
+    return core::getConfigRoot() + "/accounts/" + accountName + "/macros.cfg";
+}
+
+namespace {
+
+/// The macro keys of a character config and the guid it was written for.
+struct CharacterMacroConfig {
+    bool exists = false;
+    uint64_t guid = 0;
+    MacroSet macros;
+};
+
+CharacterMacroConfig readCharacterMacros(const std::string& path) {
+    CharacterMacroConfig config;
+    std::ifstream in(path);
+    if (!in.is_open()) return config;
+    config.exists = true;
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = line.substr(0, eq);
+        if (key == "character_guid") config.guid = std::stoull(line.substr(eq + 1));
+        else readMacroKey(key, line.substr(eq + 1), config.macros);
+    }
+    return config;
+}
+
+/// Writes the file's lines back without the keys of the given macros.
+void dropMacroKeys(const std::string& path, const std::set<uint32_t>& ids) {
+    std::ifstream in(path);
+    assert(in.is_open());
+    std::string kept, line;
+    while (std::getline(in, line)) {
+        const size_t eq = line.find('=');
+        if (eq != std::string::npos && ids.count(macroKeyId(line.substr(0, eq)))) continue;
+        kept += line;
+        kept += '\n';
+    }
+    in.close();
+    const std::string temporary = path + ".tmp";
+    {
+        std::ofstream out(temporary, std::ios::trunc);
+        if (!out.is_open()) {
+            LOG_ERROR("Could not write ", temporary, "; its account macros stay in ", path);
+            return;
+        }
+        out << kept;
+    }
+    std::filesystem::rename(temporary, path);
+}
+
+}  // namespace
+
+void GameHandler::saveAccountMacros() const {
+    const std::string path = accountMacroPath();
+    assert(!path.empty());
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    if (ec) {
+        LOG_ERROR("Could not create the account macro directory for ", path, ": ", ec.message());
+        return;
+    }
+    MacroSet account;
+    for (const auto& [id, macro] : macros_)
+        if (!isCharacterMacroId(id)) account[id] = macro;
+    const std::string temporary = path + ".tmp";
+    {
+        std::ofstream out(temporary, std::ios::trunc);
+        if (!out.is_open()) {
+            LOG_ERROR("Could not save account macros to ", temporary);
+            return;
+        }
+        writeMacroKeys(out, account);
+    }
+    std::filesystem::rename(temporary, path);
+    LOG_INFO("Account macros (", account.size(), ") saved to ", path);
+}
+
+void GameHandler::loadMacros() {
+    macros_.clear();
+    deferredAccountMacros_.clear();
+    legacyMacroIds_.clear();
+    macroConfigStale_ = false;
+    macrosOwnerGuid_ = playerGuid;
+    const Character* ch = getActiveCharacter();
+    assert(ch && !ch->name.empty());
+    const std::string accountPath = accountMacroPath();
+    assert(!accountPath.empty());
+    const uint32_t accountSlots = macroAccountSlots();
+
+    // The account's half, as the last character to change it left it.
+    MacroSet account;
+    const bool accountFileExists = std::filesystem::exists(accountPath);
+    if (accountFileExists) {
+        std::ifstream in(accountPath);
+        std::string line;
+        while (std::getline(in, line)) {
+            const size_t eq = line.find('=');
+            if (eq != std::string::npos) readMacroKey(line.substr(0, eq), line.substr(eq + 1), account);
+        }
+        assert(std::none_of(account.begin(), account.end(),
+                            [](const auto& entry) { return isCharacterMacroId(entry.first); }) &&
+               "a character macro in the account file");
+    }
+
+    // This character's half. Its config may still hold account macros: every
+    // config did before the account file existed.
+    const std::string ownPath = getCharacterConfigDir() + "/" + ch->name + ".cfg";
+    CharacterMacroConfig own = readCharacterMacros(ownPath);
+    if (own.guid != 0 && own.guid != playerGuid) {
+        LOG_WARNING("Character config ", ownPath, " was written for guid ", own.guid,
+                    ", not ", playerGuid, "; its macros are not this character's");
+        own.macros.clear();
+    }
+    MacroSet character, foundAccount;
+    for (const auto& [id, macro] : own.macros) {
+        if (isCharacterMacroId(id)) {
+            character[id] = macro;
+        } else if (id > accountSlots) {
+            // Configs written before macros had identities keyed them by
+            // index: 1..accountSlots the account half, above that the
+            // character half (19-36 on TBC, 37-54 when written by the 3.3.5
+            // rules). Those become character macros with the same number.
+            const uint32_t to = kCharacterMacroFlag | id;
+            character[to] = macro;
+            legacyMacroIds_[id] = to;
+            macroConfigStale_ = true;
+            LOG_INFO("Macro ", id, " (", macro.name, ") is character macro 0x", std::hex, to, std::dec);
+        } else {
+            foundAccount[id] = macro;
+        }
+    }
+
+    // The character being logged in goes first: its macros keep their ids
+    // where they can, and where they cannot its buttons follow them.
+    bool accountChanged = !accountFileExists;
+    auto merge = [&](const std::string& who, const MacroSet& found, MacroSet* ownCharacter) {
+        const auto steps = mergeAccountMacros(account, found, accountSlots, macroCharacterSlots(), ownCharacter);
+        std::set<uint32_t> taken;
+        for (const auto& step : steps) {
+            const Macro& macro = found.at(step.from);
+            if (step.outcome == MacroMergeStep::Outcome::Deferred) {
+                LOG_WARNING("Account macro ", step.from, " (", macro.name, ") of ", who, ": ",
+                            macroMergeOutcomeName(step.outcome));
+                if (ownCharacter) deferredAccountMacros_[step.from] = macro;
+                continue;
+            }
+            LOG_INFO("Account macro ", step.from, " (", macro.name, ") of ", who, ": ",
+                     macroMergeOutcomeName(step.outcome), " ", step.to);
+            taken.insert(step.from);
+            if (step.outcome == MacroMergeStep::Outcome::Added ||
+                (step.outcome == MacroMergeStep::Outcome::Moved && !isCharacterMacroId(step.to)))
+                accountChanged = true;
+            if (step.from != step.to) legacyMacroIds_[step.from] = step.to;
+        }
+        return taken;
+    };
+    if (!foundAccount.empty()) {
+        merge(ch->name, foundAccount, &character);
+        macroConfigStale_ = true;
+    }
+
+    // The first login after the account file appears takes in the account
+    // macros of the account's other characters too, so a General macro made
+    // on one character before is there on every one. A macro that cannot keep
+    // its id waits for its own character's login, where its buttons can follow.
+    if (!accountFileExists) {
+        for (const auto& other : characters) {
+            if (other.guid == playerGuid || other.name.empty()) continue;
+            const std::string path = getCharacterConfigDir() + "/" + other.name + ".cfg";
+            const CharacterMacroConfig config = readCharacterMacros(path);
+            if (!config.exists) continue;
+            if (config.guid != other.guid) {
+                LOG_WARNING("Character config ", path, " was written for guid ", config.guid,
+                            ", not ", other.guid, "; its macros are left alone");
+                continue;
+            }
+            MacroSet found;
+            for (const auto& [id, macro] : config.macros)
+                if (!isCharacterMacroId(id) && id <= accountSlots) found[id] = macro;
+            if (found.empty()) continue;
+            const auto taken = merge(other.name, found, nullptr);
+            if (!taken.empty()) dropMacroKeys(path, taken);
+        }
+    }
+
+    macros_ = std::move(account);
+    macros_.insert(character.begin(), character.end());
+    if (accountChanged) saveAccountMacros();
+    LOG_INFO("Macros for ", ch->name, ": ", macroHalfSize(macros_, false), " account (", accountPath,
+             "), ", macroHalfSize(macros_, true), " character");
 }
 
 void GameHandler::loadCharacterConfig() {
@@ -1602,32 +1780,8 @@ void GameHandler::loadCharacterConfig() {
             try { savedGender = std::stoi(val); } catch (...) {}
         } else if (key == "use_female_model") {
             try { savedUseFemaleModel = std::stoi(val); } catch (...) {}
-        } else if (key.rfind("macro_", 0) == 0) {
-            // Parse macro_N_text
-            size_t firstUnder = 6; // length of "macro_"
-            size_t secondUnder = key.find('_', firstUnder);
-            if (secondUnder == std::string::npos) continue;
-            uint32_t macroId = 0;
-            try { macroId = static_cast<uint32_t>(std::stoul(key.substr(firstUnder, secondUnder - firstUnder))); } catch (...) { continue; }
-            if (key.substr(secondUnder + 1) == "text") {
-                // Unescape \n and \\ sequences
-                std::string unescaped;
-                unescaped.reserve(val.size());
-                for (size_t i = 0; i < val.size(); ++i) {
-                    if (val[i] == '\\' && i + 1 < val.size()) {
-                        if (val[i+1] == 'n')  { unescaped += '\n'; ++i; }
-                        else if (val[i+1] == '\\') { unescaped += '\\'; ++i; }
-                        else { unescaped += val[i]; }
-                    } else {
-                        unescaped += val[i];
-                    }
-                }
-                macros_[macroId] = std::move(unescaped);
-            } else if (key.substr(secondUnder + 1) == "name" && !val.empty()) {
-                macroNames_[macroId] = val;
-            } else if (key.substr(secondUnder + 1) == "icon" && !val.empty()) {
-                macroIcons_[macroId] = val;
-            }
+        } else if (macroKeyId(key) != 0) {
+            // Macros were read when the character was selected; see loadMacros.
         } else if ((key == "collapsed_factions" ||
                     key == "collapsed_skill_categories") && !val.empty()) {
             // Parse a comma-separated id list into the matching selection.
@@ -1701,29 +1855,6 @@ void GameHandler::loadCharacterConfig() {
         }
     }
 
-    // Configs written before macros had identities keyed them by index:
-    // 1..accountSlots the account half, above that the character half (19-36
-    // on TBC, 37-54 when written by the 3.3.5 rules). Those become character
-    // macros with the same number; legacyMacroIds_ maps buttons that still
-    // name the old index.
-    legacyMacroIds_.clear();
-    {
-        std::vector<uint32_t> legacy;
-        for (const auto& [id, text] : macros_) {
-            (void)text;
-            if (!(id & kCharacterMacroFlag) && id > macroAccountSlots()) legacy.push_back(id);
-        }
-        for (const uint32_t old : legacy) {
-            const uint32_t id = kCharacterMacroFlag | old;
-            macros_[id] = std::move(macros_[old]);
-            macros_.erase(old);
-            if (auto it = macroNames_.find(old); it != macroNames_.end()) { macroNames_[id] = it->second; macroNames_.erase(it); }
-            if (auto it = macroIcons_.find(old); it != macroIcons_.end()) { macroIcons_[id] = it->second; macroIcons_.erase(it); }
-            legacyMacroIds_[old] = id;
-            LOG_INFO("Macro ", old, " (", getMacroName(id), ") is character macro 0x", std::hex, id, std::dec);
-        }
-    }
-
     if (hasSlots) {
         for (int i = 0; i < ACTION_BAR_SLOTS; i++) {
             actionBar[i].type = static_cast<ActionBarSlot::Type>(types[i]);
@@ -1733,6 +1864,13 @@ void GameHandler::loadCharacterConfig() {
                     actionBar[i].id = it->second;
         }
         LOG_INFO("Character config loaded from ", path);
+    }
+
+    // Write the config without the account macros loadMacros took into the
+    // account file, and with the ids of moved macros on its buttons.
+    if (macroConfigStale_) {
+        macroConfigStale_ = false;
+        saveCharacterConfig();
     }
 }
 

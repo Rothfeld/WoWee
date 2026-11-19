@@ -181,6 +181,9 @@ wowee_add_test(test_loot_chat
 wowee_add_test(test_current_action
     SOURCES test_current_action.cpp)
 
+wowee_add_test(test_macro_store
+    SOURCES test_macro_store.cpp ${CMAKE_SOURCE_DIR}/src/game/macro_store.cpp)
+
 # Stock-style hill climbing regression test. Run directly with:
 #   cmake --build build --target test_hill_climbing && ctest --test-dir build -R hill_climbing
 wowee_add_test(test_hill_climbing

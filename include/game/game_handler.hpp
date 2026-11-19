@@ -7,6 +7,7 @@
 #include "game/world_packets.hpp"
 #include "game/packed_time.hpp"
 #include "game/character.hpp"
+#include "game/macro_store.hpp"
 #include "game/opcode_table.hpp"
 #include "game/update_field_table.hpp"
 #include "game/inventory.hpp"
@@ -1341,7 +1342,7 @@ public:
     /// macro's place in its half sorted by name: account 1..macroAccountSlots(),
     /// character after that. Native 2.4.3: renaming APa (index 19) to ZZa
     /// moved it to index 35, and the button holding it still shows ZZa.
-    static constexpr uint32_t kCharacterMacroFlag = 0x01000000u;
+    static constexpr uint32_t kCharacterMacroFlag = game::kCharacterMacroFlag;
     /// 18 per half on 2.4.3 (MAX_MACROS), 36 account on 3.3.5.
     uint32_t macroAccountSlots() const;
     uint32_t macroCharacterSlots() const { return 18u; }
@@ -1366,6 +1367,11 @@ public:
     void saveCharacterConfig();
     void loadCharacterConfig();
     static std::string getCharacterConfigDir();
+    /// <config root>/accounts/<ACCOUNT>/macros.cfg: the account ("General")
+    /// macros every character of the account shares, as native 2.4.3 keeps
+    /// them in WTF/Account/<ACCOUNT>/macros-cache.txt. Character macros stay
+    /// in the character's config. Empty before an account has logged in.
+    std::string accountMacroPath() const;
 
     // Auras - delegate to SpellHandler as canonical authority
     /// Whether the player is currently carrying this spell's aura.
@@ -4934,11 +4940,26 @@ private:
     float craftCastGoGraceSec_ = 0.0f;
 
     std::array<ActionBarSlot, ACTION_BAR_SLOTS> actionBar{};
-    std::unordered_map<uint32_t, std::string> macros_;  // client-side macro text (persisted in char config)
-    std::unordered_map<uint32_t, std::string> macroNames_;
-    std::unordered_map<uint32_t, std::string> macroIcons_;
-    /// Old index-keyed macro id -> its character macro id, from loading a
-    /// config written before macro identities; see loadCharacterConfig.
+    /// The logged-in character's macros, both halves: the account's from
+    /// accountMacroPath(), its own from its config. Read anew at every
+    /// character login (native re-reads macros-cache.txt there too).
+    MacroSet macros_;
+    /// Account macros from this character's config that found no place in
+    /// either half; written back to its config so none is lost.
+    MacroSet deferredAccountMacros_;
+    /// Guid whose macros macros_ holds; 0 before a character is selected.
+    uint64_t macrosOwnerGuid_ = 0;
+    /// The character's config still holds macros loadMacros moved; saved
+    /// once loadCharacterConfig has its action bar.
+    bool macroConfigStale_ = false;
+    /// Clears and reads both halves for the character being logged in, taking
+    /// account macros left in characters' configs into the account file.
+    void loadMacros();
+    void saveAccountMacros() const;
+    /// Old macro id -> the id it is known by now, for this character's
+    /// buttons: index-keyed ids from a config written before macro
+    /// identities, and account macros that changed id when taken into the
+    /// account file; see loadMacros.
     std::unordered_map<uint32_t, uint32_t> legacyMacroIds_;
 public:
     uint32_t legacyMacroId(uint32_t old) const {

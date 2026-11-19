@@ -670,6 +670,7 @@ set(WOWEE_SOURCES
     src/game/opcode_table.cpp
     src/game/update_field_table.cpp
     src/game/game_handler.cpp
+    src/game/macro_store.cpp
     src/game/game_handler_packets.cpp
     src/game/game_handler_callbacks.cpp
     src/game/chat_handler.cpp
