@@ -547,11 +547,12 @@ void EntityController::updateNonPlayerTransportAttachment(const UpdateBlock& blo
 }
 
 //     Rebuild playerAuras from UNIT_FIELD_AURAS (Classic/TBC-era clients).
-//     blockFields is used to check if any aura field was updated in this packet.
-//     entity->getFields() is used for reading the full accumulated state.
+//     A values update rebuilds only when its block carries an aura field;
+//     entity->getFields() is read for the full accumulated state.
 //     TBC uses 40 positive and 16 negative slots; aura flags contain effect
 //     bits, not the WotLK harmful flag. Classic uses 32 positive and 16 negative.
-void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>& entity) {
+void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>& entity,
+                                                   const UpdateBlock* changed) {
     if (!isPreWotlk() || !owner_.getSpellHandler()) return;
 
     const uint16_t ufAuras     = fieldIndex(UF::UNIT_FIELD_AURAS);
@@ -572,6 +573,25 @@ void EntityController::syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>
         if (fk >= ufAuras && fk < ufAuras + auraSlots) { hasAuraField = true; break; }
     }
     if (!hasAuraField) return;
+    // Every rage tick of a warrior is a values update of the player. Native
+    // 2.4.3 fires UNIT_AURA and PLAYER_AURAS_CHANGED when an aura comes or
+    // goes, not on each UNIT_RAGE; rebuilding on any update fired both with
+    // every tick. The pending durations are spent as a rebuild would.
+    if (changed) {
+        const auto touches = [&](uint16_t first, int count) {
+            if (first == 0xFFFF) return false;
+            for (const auto& [fk, fv] : changed->fields) {
+                (void)fv;
+                if (fk >= first && fk < first + count) return true;
+            }
+            return false;
+        };
+        if (!touches(ufAuras, auraSlots) && !touches(ufAuraFlags, (auraSlots + 3) / 4) &&
+            !touches(ufAuraApps, (auraSlots + 3) / 4)) {
+            if (localPlayer) owner_.getSpellHandler()->pendingPlayerAuraDurations().clear();
+            return;
+        }
+    }
 
     std::vector<AuraSlot> rebuilt(auraSlots);
     uint64_t nowMs = static_cast<uint64_t>(
@@ -2613,7 +2633,7 @@ void EntityController::onValuesUpdateUnit(const UpdateBlock& block, std::shared_
     auto unit = std::static_pointer_cast<Unit>(entity);
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
-    syncPreWotlkAurasFromFields(entity);
+    syncPreWotlkAurasFromFields(entity, &block);
     handleDisplayIdChange(block, entity, unit, result);
     queryPetNameIfNamed(block, *unit);
 
@@ -2694,7 +2714,7 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
     }
 
     // Pre-WotLK aura sync from UNIT_FIELD_AURAS when those fields are updated
-    syncPreWotlkAurasFromFields(entity);
+    syncPreWotlkAurasFromFields(entity, &block);
 
     // Display ID changed - re-spawn/model-change
     handleDisplayIdChange(block, entity, unit, result);

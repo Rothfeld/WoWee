@@ -209,7 +209,10 @@ private:
     //     Consolidates identical logic from CREATE and VALUES handlers.
     void mirrorGroupMemberState(const Entity& entity);
     void announceGroupQuestLog(const UpdateBlock& block);
-    void syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>& entity);
+    /// changed: the block of a values update; null on create, which always
+    /// rebuilds. An update that carries no aura field leaves the list alone.
+    void syncPreWotlkAurasFromFields(const std::shared_ptr<Entity>& entity,
+                                     const UpdateBlock* changed = nullptr);
     // Detect mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes (self-player only).
     //     Consolidates identical logic from CREATE and VALUES handlers.
     void detectPlayerMountChange(uint32_t newMountDisplayId,
