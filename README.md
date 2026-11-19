@@ -777,6 +777,16 @@ short tail. Whether unpinned tails also stop at birth is unverified (about
 ten TBC emitters would differ). Evidence:
 `_experiments/20261117T233000Z.flag400_spokes` in the workspace.
 The particle layout regression runs in `test_m2_ribbon_tracks`.
+Ribbons step in the emitter pass, which every instance with particle or ribbon
+emitters joins (`cachedHasEmitters`). 58 of the 259 pre-264 TBC models with
+ribbons have no particle emitter; when only particle emitters counted, they
+never laid an edge. `Holy_Precast_Low_Hand.m2` (Holy Smite precast and cast,
+kits 184/119, a Scarlet Adept's casts) is a hand glow plus three ribbons on
+bones spun by global sequences; native draws those as the swirling bands around
+the glow. `Lightning_PreCast_Low_Hand.m2` (Lightning Bolt 9532, Mosshide Mystic)
+is likewise ribbons only. Evidence:
+`_experiments/20261119T1325Z.holy_precast_swirl/` in the workspace
+(`ribbon_only.txt` lists the models).
 A ribbon edge is the emitter point moved heightAbove along its bone's +Z and
 heightBelow along -Z, through bone and model matrix, so a creature's display
 scale widens its trails: Al'ar (display 18945, scale 5) drew 0.28 yd camera-facing
