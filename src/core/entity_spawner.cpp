@@ -192,6 +192,9 @@ void EntitySpawner::syncPlayerMorphs() {
             if (!instance) continue;
             cr->setInstanceCreatureModel(instance, display, creatureModelDataIdForDisplay(display));
             applyCreatureInstanceAppearance(instance, modelId, display);
+            // The display's CreatureModelAlpha, as for a creature: Ghost Wolf
+            // (display 4613, alpha 102) is drawn see-through in 2.4.3.
+            cr->setInstanceOpacity(instance, creatureDisplayAlpha(display));
             LOG_INFO("Player morph: guid=0x", std::hex, guid, std::dec, " display ", display, " native ", native,
                      " model=", modelPath, " scale=", scale);
             found = playerMorphs_.emplace(guid, PlayerMorph{.displayId = display, .instanceId = instance,
