@@ -57,6 +57,11 @@
     "SexID": 1,
     "Variation": 2
   },
+  "CreatureFamily": {
+    "ID": 0,
+    "PetFoodMask": 7,
+    "Name": 8
+  },
   "CreatureDisplayInfo": {
     "ParticleColorID": 13,
     "CreatureModelAlpha": 5,
@@ -218,6 +223,10 @@
     "ItemId4": 7,
     "RequiredArenaRating": 13
   },
+  "ItemPetFood": {
+    "ID": 0,
+    "Name": 1
+  },
   "ItemSet": {
     "ID": 0,
     "Item0": 18,
@@ -302,6 +311,10 @@
     "InternalName": 1,
     "LinkedZone": 27,
     "Name": 4
+  },
+  "PetLoyalty": {
+    "ID": 0,
+    "Name": 1
   },
   "SkillLine": {
     "Category": 1,

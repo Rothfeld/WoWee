@@ -15,6 +15,9 @@
 #include "game/quest_objectives.hpp"
 #include "game/text_tokens.hpp"
 #include "core/logger.hpp"
+#include "pipeline/dbc_layout.hpp"
+#include "pipeline/dbc_loader.hpp"
+#include "pipeline/asset_manager.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1200,7 +1203,39 @@ static int lua_GetPetIcon(lua_State* L) {
     return 1;
 }
 static int lua_GetPetTalentTree(lua_State* L) { return luaReturnNil(L); }
-static int lua_GetPetFoodTypes(lua_State* L)  { return luaReturnNil(L); }
+/// GetPetFoodTypes() → the ItemPetFood.dbc names the pet's family eats, by
+/// CreatureFamily.dbc PetFoodMask (bit n-1 for food n). Native 2.4.3: "Meat"
+/// for a wolf (mask 1).
+static int lua_GetPetFoodTypes(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    auto* pet = resolveUnit(L, "pet");
+    if (!gh || !pet) return 0;
+    const uint32_t family = gh->getCreatureFamily(pet->getEntry());
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* famLayout = layouts ? layouts->getLayout("CreatureFamily") : nullptr;
+    const auto* foodLayout = layouts ? layouts->getLayout("ItemPetFood") : nullptr;
+    auto* assets = gh->services().assetManager;
+    if (family == 0 || !assets) return 0;
+    if (!famLayout || !foodLayout) {
+        LOG_ERROR("GetPetFoodTypes: dbc_layouts.json lacks CreatureFamily.PetFoodMask or ItemPetFood");
+        return 0;
+    }
+    const auto families = assets->loadDBC("CreatureFamily.dbc");
+    const int32_t row = families && families->isLoaded() ? families->findRecordById(family) : -1;
+    if (row < 0) return 0;
+    const uint32_t mask = families->getUInt32(static_cast<uint32_t>(row), famLayout->field("PetFoodMask"));
+    const auto foods = assets->loadDBC("ItemPetFood.dbc");
+    if (!foods || !foods->isLoaded()) return 0;
+    int pushed = 0;
+    for (uint32_t bit = 0; bit < 32; ++bit) {
+        if (!(mask & (1u << bit))) continue;
+        const int32_t food = foods->findRecordById(bit + 1);
+        if (food < 0) continue;
+        lua_pushstring(L, foods->getString(static_cast<uint32_t>(food), foodLayout->field("Name")).c_str());
+        ++pushed;
+    }
+    return pushed;
+}
 
 /// SetPetStablePaperdoll(model) - put the selected pet in the preview frame.
 ///

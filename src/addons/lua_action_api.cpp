@@ -18,6 +18,9 @@
 
 #include "core/config_paths.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_layout.hpp"
+#include "pipeline/dbc_loader.hpp"
+#include "core/logger.hpp"
 #include "core/application.hpp"
 #include <algorithm>
 #include <optional>
@@ -2828,12 +2831,61 @@ void registerActionLuaAPI(lua_State* L) {
                 // whether it is a hunter's. PetFrame_SetHappiness reads the
                 // second to decide whether to draw the happiness icon, and one
                 // return left it nil.
+                // A hunter's pet is the one with happiness (power 4): native
+                // 2.4.3 answers 1, 1 with a hunter's wolf out and nothing
+                // without a pet.
                 {"HasPetUI", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const bool has = gh && gh->hasPet();
-            lua_pushboolean(L, has ? 1 : 0);
-            lua_pushboolean(L, 0);   // hunter pet: not distinguished yet
+            if (!gh || !gh->hasPet()) return 0;
+            auto* pet = resolveUnit(L, "pet");
+            lua_pushnumber(L, 1);
+            if (pet && pet->getMaxPowerByType(4) != 0) lua_pushnumber(L, 1);
+            else lua_pushnil(L);
             return 2;
+        }},
+                // GetPetLoyalty() → the PetLoyalty.dbc name of the pet's
+                // loyalty level (UNIT_FIELD_BYTES_1 byte 1, CMaNGOS
+                // Pet::GetLoyaltyLevel): "(Loyalty Level 1) Rebellious" on
+                // 2.4.3. Nothing without a hunter's pet.
+                {"GetPetLoyalty", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            auto* pet = resolveUnit(L, "pet");
+            if (!gh || !pet || pet->getMaxPowerByType(4) == 0) return 0;
+            const uint16_t bytes1 = game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1);
+            if (bytes1 == 0xFFFF) return 0;
+            const uint32_t level = (pet->getField(bytes1) >> 8) & 0xFF;
+            const auto* layouts = pipeline::getActiveDBCLayout();
+            const auto* layout = layouts ? layouts->getLayout("PetLoyalty") : nullptr;
+            auto* assets = gh->services().assetManager;
+            if (!layout || !assets) {
+                LOG_ERROR("GetPetLoyalty: dbc_layouts.json lacks PetLoyalty");
+                return 0;
+            }
+            const auto dbc = assets->loadDBC("PetLoyalty.dbc");
+            const int32_t row = dbc && dbc->isLoaded() ? dbc->findRecordById(level) : -1;
+            if (row < 0) return 0;
+            lua_pushstring(L, dbc->getString(static_cast<uint32_t>(row), layout->field("Name")).c_str());
+            return 1;
+        }},
+                // GetPetTrainingPoints() → the two halves of
+                // UNIT_TRAINING_POINTS. Native 2.4.3: 65535, 65535 for a pet
+                // with no points (the server's -1), 0, 0 without a pet. Which
+                // half is total and which spent was not told apart.
+                {"GetPetTrainingPoints", [](lua_State* L) -> int {
+            auto* pet = resolveUnit(L, "pet");
+            const uint16_t field = game::fieldIndex(game::UF::UNIT_TRAINING_POINTS);
+            const uint32_t value = pet && field != 0xFFFF ? pet->getField(field) : 0;
+            lua_pushnumber(L, value & 0xFFFF);
+            lua_pushnumber(L, value >> 16);
+            return 2;
+        }},
+                // 1 while a pet is out (native 2.4.3 with a hunter's wolf),
+                // nothing without one.
+                {"GetPetActionsUsable", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (!gh || !gh->hasPet()) return 0;
+            lua_pushnumber(L, 1);
+            return 1;
         }},
                 // Happiness, for a hunter's pet only. Nil is the honest answer
                 // for everyone else and the one PetFrame_SetHappiness guards
@@ -2898,10 +2950,16 @@ void registerActionLuaAPI(lua_State* L) {
             const int level = (happiness * 3 >= maxHappiness * 2) ? 3
                             : (happiness * 3 >= maxHappiness)     ? 2
                                                                   : 1;
+            // Damage and loyalty rate per face, as native 2.4.3 answers them
+            // for a wolf fed from unhappy to happy: 1, 75, -10; 2, 100, 5;
+            // 3, 125, 20. The pet frame's tooltip says losing or gaining
+            // loyalty by the sign of the third.
             static const int kDamagePercent[4] = {0, 75, 100, 125};
+            static const int kLoyaltyRate[4] = {0, -10, 5, 20};
             lua_pushnumber(L, level);
             lua_pushnumber(L, kDamagePercent[level]);
-            return 2;
+            lua_pushnumber(L, kLoyaltyRate[level]);
+            return 3;
         }},
                 // Only referenced from commented-out code in 3.3.5, but a
                 // temporary pet's timer is nil when there is no timer.

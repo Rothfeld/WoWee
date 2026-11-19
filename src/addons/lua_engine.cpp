@@ -10770,7 +10770,6 @@ void LuaEngine::registerCoreAPI() {
         "CONTAINER_BAG_OFFSET = 19\n"
         "MAX_SKILLLINE_TABS = 8\n"
         "TRADE_ENCHANT_SLOT = 7\n"
-        "function GetPetActionsUsable() return false end\n"
     );
 
     // WoW table/string utility functions used by many addons

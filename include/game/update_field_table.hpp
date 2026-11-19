@@ -59,6 +59,9 @@ enum class UF : uint16_t {
     UNIT_FIELD_PET_NAME_TIMESTAMP, // Set when a pet carries its own name (CMSG_PET_NAME_QUERY)
     UNIT_FIELD_PETEXPERIENCE,   // A hunter pet's experience toward its next level
     UNIT_FIELD_PETNEXTLEVELEXP, // ...and what that level costs
+    /// A hunter pet's training points, two shorts (TBC: OBJECT_END + 0xA4; the
+    /// server writes -(points + 1), CMaNGOS Pet::GetDispTP).
+    UNIT_TRAINING_POINTS,
     UNIT_FIELD_RESISTANCES,   // Physical armor (index 0 of the resistance array)
     UNIT_FIELD_BASE_MANA,     // Mana before gear and stats, which percent costs are taken of
     UNIT_FIELD_STAT0,         // Strength (effective base, includes items)

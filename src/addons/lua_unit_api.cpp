@@ -3557,10 +3557,13 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"GetUnitPowerModifier",    [](lua_State* L) -> int {
             lua_pushnumber(L, 1.0); return 1; }},
                 {"GetPetExperience", [](lua_State* L) -> int {
-            // currXP, nextXP - off the pet unit's own fields, not the player's.
-            auto* gh = getGameHandler(L);
-            lua_pushnumber(L, gh ? gh->getPetExperience() : 0);
-            lua_pushnumber(L, gh ? gh->getPetNextLevelExp() : 0);
+            // currXP, nextXP - off the pet unit's own fields, read where they
+            // are kept. The copy the update path made missed the values the
+            // pet's create block carried (it arrives before SMSG_PET_SPELLS
+            // names the pet), so a called pet read 0, 0; native 2.4.3: 421,
+            // 153600 for a level 62 wolf.
+            lua_pushnumber(L, unitFieldWord(L, "pet", game::UF::UNIT_FIELD_PETEXPERIENCE).value_or(0));
+            lua_pushnumber(L, unitFieldWord(L, "pet", game::UF::UNIT_FIELD_PETNEXTLEVELEXP).value_or(0));
             return 2;
         }},
                 // GetCompanionCooldown(mode, index) → start, duration, enabled.
