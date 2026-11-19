@@ -811,24 +811,34 @@ void GameHandler::registerCoreOpcodes() {
         currentMountDisplayId_ = 0;
         if (mountCallback_) mountCallback_(0);
     };
+    // MountResult / DismountResult (the pet-mount answers; CMaNGOS TBC never
+    // sends them). Their GlobalStrings lines in result order, as 2.4.3 lists
+    // them: ERR_MOUNT_INVALIDMOUNTEE .. ERR_MOUNT_FORCEDDISMOUNT, 10 = OK;
+    // ERR_DISMOUNT_NOPET, _NOTMOUNTED, _NOTYOURPET, 3 = OK.
     dispatchTable_[Opcode::SMSG_MOUNTRESULT] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(4)) return;
-        uint32_t result = packet.readUInt32();
-        if (result != 4) {
-            const char* msgs[] = { "Cannot mount here.", "Invalid mount spell.",
-                                   "Too far away to mount.", "Already mounted." };
-            std::string mountErr = result < 4 ? msgs[result] : "Cannot mount.";
-            addUIError(mountErr);
-            addSystemChatMessage(mountErr);
-        }
+        static constexpr const char* kNames[] = {
+            "ERR_MOUNT_INVALIDMOUNTEE", "ERR_MOUNT_TOOFARAWAY", "ERR_MOUNT_ALREADYMOUNTED",
+            "ERR_MOUNT_NOTMOUNTABLE", "ERR_MOUNT_NOTYOURPET", "ERR_MOUNT_OTHER",
+            "ERR_MOUNT_LOOTING", "ERR_MOUNT_RACECANTMOUNT", "ERR_MOUNT_SHAPESHIFTED",
+            "ERR_MOUNT_FORCEDDISMOUNT"};
+        const uint32_t result = packet.readUInt32();
+        if (result == 10) return;
+        if (result >= std::size(kNames)) { LOG_ERROR("SMSG_MOUNTRESULT: unknown result ", result); return; }
+        const std::string text = globalString(kNames[result]);
+        if (text.empty()) { LOG_ERROR("GlobalStrings has no ", kNames[result]); return; }
+        raiseUiError(text);
     };
     dispatchTable_[Opcode::SMSG_DISMOUNTRESULT] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(4)) return;
-        uint32_t result = packet.readUInt32();
-        if (result != 0) {
-            addUIError("Cannot dismount here.");
-            raiseUiError("Cannot dismount here.");
-        }
+        static constexpr const char* kNames[] = {
+            "ERR_DISMOUNT_NOPET", "ERR_DISMOUNT_NOTMOUNTED", "ERR_DISMOUNT_NOTYOURPET"};
+        const uint32_t result = packet.readUInt32();
+        if (result == 3) return;
+        if (result >= std::size(kNames)) { LOG_ERROR("SMSG_DISMOUNTRESULT: unknown result ", result); return; }
+        const std::string text = globalString(kNames[result]);
+        if (text.empty()) { LOG_ERROR("GlobalStrings has no ", kNames[result]); return; }
+        raiseUiError(text);
     };
 
     // Camera shake
