@@ -132,16 +132,6 @@ struct M2ModelGPU {
     /// and for an animated model every sequence's authored bounds as well.
     glm::vec3 cullMin{0.0f};
     glm::vec3 cullMax{0.0f};
-    bool collisionSteppedFountain = false;
-    bool collisionSteppedLowPlatform = false;
-    bool collisionPlanter = false;
-    bool collisionBridge = false;
-    bool collisionSmallSolidProp = false;
-    bool collisionNarrowVerticalProp = false;
-    bool collisionTreeTrunk = false;
-    bool collisionNoBlock = false;
-    bool collisionStatue = false;
-    bool isSmallFoliage = false;    // Small foliage (bushes, grass, plants) - skip during taxi
     bool isInvisibleTrap = false;   // Invisible trap objects (don't render, no collision)
     bool isGroundDetail = false;    // Ground clutter/detail doodads (special fallback render path)
     bool isBrazierOrFire = false;   // Brazier / campfire / bonfire model
@@ -197,10 +187,6 @@ struct M2ModelGPU {
     /// Loaded by SpellVisualSystem for a spell visual, not placed in the world.
     bool isRuntimeSpellVisual = false;
     bool disableAnimation = false; // Keep chest lids visually stable
-    bool cutoutFoliage = false; // Alpha-cut shadow caster; clutter gets the player brush
-    bool isHangingCloth = false;    // Banner/flag/tapestry: sways from the end it is held by
-    bool isStandingCloth = false;   // ...and that end is the foot of a planted pole
-    bool isFoliageLike = false;     // Model name matches foliage/tree/bush/grass etc (precomputed)
     bool isElvenLike = false;       // Model name matches elf/elven/quel (precomputed)
     bool isLanternLike = false;     // Model name matches lantern/lamp/light (precomputed)
     bool isKoboldFlame = false;     // Model name matches kobold+(candle/torch/mine) (precomputed)
@@ -945,11 +931,8 @@ private:
     bool skipGroundDetail_ = false;
     /// The ablation's far-doodad phase; see setDoodadDistanceCap.
     float doodadDistanceCapYards_ = 0.0f;
-    /// Said once: a foliage batch reached the shadow pass with no texture.
+    /// Said once: a cut-out batch reached the shadow pass with no texture.
     bool warnedShadowNoTexture_ = false;
-    /// Foliage casters drawn into the shadow map last frame, for spotting a
-    /// caster count that swings while nothing is moving.
-    uint32_t lastFoliageCasters_ = 0;
     VkPipeline alphaTestPipeline_ = VK_NULL_HANDLE;     // blend mode 1
     VkPipeline alphaPipeline_ = VK_NULL_HANDLE;         // blend mode 2
     VkPipeline additivePipeline_ = VK_NULL_HANDLE;      // blend mode 3+
@@ -1026,7 +1009,7 @@ private:
         int32_t boneBase;          //  4 bytes @ offset 80
         int32_t boneCount;         //  4 bytes @ offset 84 - clamps skinning reads
         float highlight = 0.0f;    //  4 bytes @ offset 88 - pressed-on lift
-        int32_t flags = {};        //  4 bytes @ offset 92 - bit 0 unused (was boat bob)
+        int32_t flags = {};        //  4 bytes @ offset 92 - bit 1 + bits 8..31: MODD placement light
         glm::vec4 uvOffset2{};     // xy: second texture translation; zw reserved
     };
     // How many instances one frame may hand the GPU, not how many exist. Ground
@@ -1223,15 +1206,11 @@ private:
     std::unordered_map<VkImageView, VkDescriptorSet> shadowTexSetCache_;
     /// The casters this frame, grouped by model: [0] solid, [1] foliage.
     ///
-    /// The shadow pass used to walk every instance in the world twice - once
-    /// per pass - and draw them in whatever order they happened to sit in,
-    /// rebinding the vertex and index buffers whenever consecutive instances
-    /// came from different models, and rebinding a batch's texture once per
-    /// instance rather than once per batch. Culling once into these and
-    /// sorting them by model turns both into once per model.
+    /// Shadow casters of one frame as (model, instance), sorted by model so
+    /// buffers and textures are bound once per model and batch.
     ///
-    /// Kept as members so a frame's worth of casters costs no allocation.
-    std::vector<std::pair<uint32_t, uint32_t>> shadowCasters_[2];
+    /// Kept as a member so a frame's worth of casters costs no allocation.
+    std::vector<std::pair<uint32_t, uint32_t>> shadowCasters_;
 
     // Ribbon draw-call list (reused each frame)
     struct RibbonDrawCall {

@@ -232,8 +232,6 @@ void main() {
         return;
     }
 
-    bool isFoliage = (alphaTest == 2);
-
     if (alphaTest == 3) {
         // Ground clutter blends by its texture alpha. 2.4.3 draws detail
         // doodads with soft, see-through blade edges where its alpha-key
@@ -252,37 +250,13 @@ void main() {
     }
     if (blendMode == 1 && texColor.a < 0.004) discard;
 
-    // Per-instance color variation (foliage only).
-    //
-    // Half what it was. A thirty-point spread in brightness is a third of the
-    // way to another time of day, and two canopies of the same tree standing
-    // in each other reads as a seam down the middle of the crown rather than
-    // as two trees. Enough to break the copy, not enough to be seen as a
-    // difference in light.
-    if (isFoliage && lightDir.w == 0.0) {
-        float hash = fract(sin(dot(InstanceOrigin.xy, vec2(127.1, 311.7))) * 43758.5453);
-        float hueShiftR = 1.0 + (hash - 0.5) * 0.10;       // ±5% red
-        float hueShiftB = 1.0 + (fract(hash * 7.13) - 0.5) * 0.10; // ±5% blue
-        float brightness = 0.93 + hash * 0.14;               // 93-107%
-        texColor.rgb *= vec3(hueShiftR, 1.0, hueShiftB) * brightness;
-    }
-
     vec3 norm = normalizedNormal(Normal);
-    bool foliageTwoSided = (alphaTest == 2);
-    if (!foliageTwoSided && !gl_FrontFacing) norm = -norm;
+    if (!gl_FrontFacing) norm = -norm;
     // Lit as the ground under it; see m2.vert.glsl.
     if (alphaTest == 3) norm = vec3(0.0, 0.0, 1.0);
 
-    // Detail normal perturbation (foliage only) - UV-based only so wind doesn't cause flicker
-    if (isFoliage) {
-        float nx = sin(TexCoord.x * 12.0 + TexCoord.y * 5.3) * 0.10;
-        float ny = sin(TexCoord.y * 14.0 + TexCoord.x * 4.7) * 0.10;
-        norm = normalizedNormal(norm + vec3(nx, ny, 0.0));
-    }
-
     vec3 ldir = normalize(-lightDir.xyz);
-        float nDotL = dot(norm, ldir);
-        float diff = foliageTwoSided ? abs(nDotL) : max(nDotL, 0.0);
+    float diff = max(dot(norm, ldir), 0.0);
 
     vec3 result;
     if (unlit != 0) {
@@ -305,12 +279,9 @@ void main() {
     } else {
         vec3 viewDir = normalize(viewPos.xyz - FragPos);
 
-        float spec = 0.0;
+        vec3 halfDir = normalize(ldir + viewDir);
+        float spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * specularIntensity;
         float shadow = 1.0;
-        if (!isFoliage) {
-            vec3 halfDir = normalize(ldir + viewDir);
-            spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * specularIntensity;
-        }
 
         if (shadowParams.x > 0.5) {
             float normalOffset = shadowTexel() * 2.0 * (1.0 - abs(dot(norm, ldir)));
@@ -327,27 +298,11 @@ void main() {
             shadow = mix(1.0, shadow, shadowParams.y);
         }
 
-        // Leaf subsurface scattering (foliage only) - uses stable normal, no FragPos dependency
-        vec3 sss = vec3(0.0);
-        if (isFoliage) {
-            float backLit = max(-nDotL, 0.0);
-            float viewDotLight = max(dot(viewDir, -ldir), 0.0);
-            float sssAmount = backLit * pow(viewDotLight, 4.0) * 0.35 * texColor.a;
-            sss = sssAmount * vec3(1.0, 0.9, 0.5) * lightColor.rgb;
-        }
-
-        // Sky-bounce ambient for foliage: upward-facing leaves catch more
-        // ambient than the canopy underside, giving the crown depth instead
-        // of a uniformly-lit blob.
         RtLight rt = rtLightAt(FragPos);
         shadow = rtShadow(rt, shadow);
         vec3 ambientTerm = rtAmbient(rt, ambientColor.rgb);
-        if (isFoliage) {
-            ambientTerm *= 0.82 + 0.30 * clamp(norm.z, 0.0, 1.0);
-        }
         result = ambientTerm * texColor.rgb
-               + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb)
-               + sss;
+               + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb);
         if (lightDir.w != 0.0) {
             result = texColor.rgb * (ambientColor.rgb + shadow * (VertexLighting - ambientColor.rgb));
         }
@@ -355,16 +310,6 @@ void main() {
         if (interiorDarken > 0.0) {
             result *= mix(1.0, 0.5, interiorDarken);
         }
-    }
-
-    // Canopy ambient occlusion (foliage only). ModelHeight arrives as the
-    // fraction of the plant's own height, so the shading sits in the same
-    // place on a forty-yard tree and on a knee-high fern; it used to be raw
-    // model-space z against a hardcoded eighteen, which put the darkening on
-    // the trunk of anything tall and over the whole of anything short.
-    if (isFoliage && lightDir.w == 0.0) {
-        float aoFactor = mix(0.55, 1.0, smoothstep(0.0, 0.6, ModelHeight));
-        result *= aoFactor;
     }
 
     if (unlit == 0) result += localLightContribution(FragPos, norm, texColor.rgb);

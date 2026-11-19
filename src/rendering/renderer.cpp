@@ -666,8 +666,8 @@ void Renderer::updatePerFrameUBO() {
         }
     }
 
-    // Player motion, consumed by water ripples and by the foliage brush in
-    // m2.vert. Horizontal speed only: a fall shouldn't read as running.
+    // Player motion, consumed by water ripples and by the procedural grass
+    // (grass.vert). Horizontal speed only: a fall shouldn't read as running.
     {
         const float dt = std::max(lastDeltaTime_, 0.0f);
         if (!playerMotionTracked_) {

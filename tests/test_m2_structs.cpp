@@ -54,18 +54,6 @@ TEST_CASE("Hanging lantern light pools project from suspension to animated tip",
     CHECK(pool.z == Catch::Approx(1.0f));
 }
 
-TEST_CASE("Foliage asset paths never block player movement", "[m2][collision]") {
-    const auto grass = wowee::rendering::classifyM2Model(
-        "World\\NoDXT\\Detail\\ElwynnGrass01.m2",
-        glm::vec3(-1.0f), glm::vec3(1.0f), 100, 0);
-    REQUIRE(grass.collisionNoBlock);
-
-    const auto herb = wowee::rendering::classifyM2Model(
-        "World\\SkillActivated\\TradeskillNodes\\Bush_Magebloom01.m2",
-        glm::vec3(-1.0f), glm::vec3(1.0f), 100, 0);
-    REQUIRE(herb.collisionNoBlock);
-}
-
 TEST_CASE("Lighthouse beams are classified for distant bone updates", "[m2][animation]") {
     const auto beam = wowee::rendering::classifyM2Model(
         "World\\Generic\\Human\\Passive Doodads\\Stormwind\\Stormwind_LighthouseBeam_01.m2",
@@ -273,14 +261,9 @@ TEST_CASE("models without authored collision triangles never block", "[m2][colli
     rune.name = "World\\Generic\\DarkIronDwarf\\Active Doodads\\Runes\\DarkIronDwarfRune_G.m2";
     rune.boundMin = {-1.753f, -1.762f, -1.303f};
     rune.boundMax = {1.758f, 1.762f, 1.363f};
-    // Whatever a name or size classifier concludes about it.
-    rune.collisionSmallSolidProp = true;
-    rune.collisionSteppedLowPlatform = true;
     CHECK_FALSE(m2BlocksMovement(rune));
     wowee::rendering::M2ModelGPU chest;
     chest.collision.triCount = 52;  // treasurechest01.m2: 156 indices, 28 vertices
-    CHECK(m2BlocksMovement(chest));
-    chest.collisionNoBlock = true;  // a guess does not discard authored geometry
     CHECK(m2BlocksMovement(chest));
     // A name-derived effect class does not discard authored triangles:
     // GnomeStructuralSpotLight02 ("spotlight") authors 56 of them.
@@ -291,37 +274,22 @@ TEST_CASE("models without authored collision triangles never block", "[m2][colli
     CHECK_FALSE(m2BlocksMovement(chest));
 }
 
-TEST_CASE("authored collision bounds contain the trunk beyond guessed tree radius", "[m2][collision]") {
+TEST_CASE("broad-phase bounds are the authored collision bounds, else the model's own", "[m2][collision]") {
     wowee::rendering::M2ModelGPU model;
     model.boundMin = {-10.0f, -10.0f, -1.0f};
     model.boundMax = {10.0f, 10.0f, 35.0f};
-    model.collisionTreeTrunk = true;
+    glm::vec3 lo, hi;
+    // ElwynnBush01: no collision triangles, walked through; filed by its vertex box.
+    wowee::rendering::m2_internal::getTightCollisionBounds(model, lo, hi);
+    CHECK(lo == model.boundMin);
+    CHECK(hi == model.boundMax);
+    // A tree's trunk: its authored triangles reach beyond any guessed trunk radius.
     model.collision.triCount = 16;
     model.collision.boundsMin = {-2.4f, -3.1f, -0.9f};
     model.collision.boundsMax = {3.9f, 3.2f, 34.7f};
-    glm::vec3 lo, hi;
     wowee::rendering::m2_internal::getTightCollisionBounds(model, lo, hi);
     CHECK(lo == model.collision.boundsMin);
     CHECK(hi == model.collision.boundsMax);
-    // Classifier guesses must not alter the authored collider's broad phase.
-    model.collisionTreeTrunk = false;
-    model.collisionSmallSolidProp = true;
-    wowee::rendering::m2_internal::getTightCollisionBounds(model, lo, hi);
-    CHECK(lo == model.collision.boundsMin);
-    CHECK(hi == model.collision.boundsMax);
-}
-
-TEST_CASE("trunk overlap recovery requires an enclosed horizontal section", "[m2][collision]") {
-    wowee::rendering::M2ModelGPU::CollisionMesh mesh;
-    mesh.vertices = {{-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
-                     {-1,-1,3},{1,-1,3},{1,1,3},{-1,1,3}};
-    mesh.indices = {0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7};
-    using wowee::rendering::m2_internal::insideTrunkCollision;
-    CHECK(insideTrunkCollision(mesh, {0,0,1}));
-    CHECK_FALSE(insideTrunkCollision(mesh, {2,0,1}));
-    CHECK_FALSE(insideTrunkCollision(mesh, {0,0,4}));
-    mesh.indices.resize(6);
-    CHECK_FALSE(insideTrunkCollision(mesh, {0,0,1}));
 }
 
 TEST_CASE("Z billboard faces the viewer while staying upright", "[m2][billboard]") {

@@ -56,24 +56,11 @@ enum class AmbientEmitterType : uint8_t {
 };
 
 /**
- * Output of classifyM2Model(): all name/geometry-based flags for an M2 model.
+ * Output of classifyM2Model(): name-based flags for an M2 model.
  * Pure data - no Vulkan, GPU, or asset-manager dependencies.
  */
 struct M2ClassificationResult {
-    // --- Collision shape selectors ---
-    bool collisionNoBlock            = false; ///< Foliage/soft-trees/rugs: no blocking
-    bool collisionBridge             = false; ///< Walk-on-top bridge/plank/walkway
-    bool collisionPlanter            = false; ///< Low stepped planter/curb
-    bool collisionSteppedFountain    = false; ///< Stepped fountain base
-    bool collisionSteppedLowPlatform = false; ///< Low stepped platform (curb/planter/bridge)
-    bool collisionStatue             = false; ///< Statue/monument/sculpture
-    bool collisionSmallSolidProp     = false; ///< Blockable solid prop (crate/chest/barrel)
-    bool collisionNarrowVerticalProp = false; ///< Narrow tall prop (lamp/post/pole)
-    bool collisionTreeTrunk          = false; ///< Tree trunk cylinder
-
     // --- Rendering / effect classification ---
-    bool isFoliageLike      = false; ///< Foliage or tree, by name (collision, taxi skipping)
-    bool isSmallFoliage     = false; ///< Small bush/grass/plant (skip during taxi/flight)
     bool isSpellEffect      = false; ///< Spell effect / particle-dominated visual
     bool isInstancePortal   = false; ///< Instance portal (additive, spin, no collision)
     bool isElvenLike        = false; ///< Night elf / Blood elf themed model
@@ -95,24 +82,19 @@ struct M2ClassificationResult {
 
     // --- Animation flags ---
     bool disableAnimation   = false; ///< Keep visually stable (chest lids)
-    bool cutoutFoliage  = false; ///< Alpha-cut shadow caster; ground clutter also gets the player brush
-    /// A banner, a flag, a tapestry: cloth hung from its top edge.
-    ///
-    /// Held at the bar and free at the hem, which is the opposite of a plant -
-    /// so it gets a sway of its own rather than the foliage one, and a small
-    /// one: a banner indoors moves, it does not flap.
-    bool isHangingCloth     = false;
 };
 
 /**
- * Classify an M2 model by name and geometry.
+ * Classify an M2 model by name, vertex and emitter counts.
  *
  * Pure function - no Vulkan, VkContext, or AssetManager dependencies.
- * All results are derived solely from the model name string and tight vertex bounds.
+ * Collision, distance fade, cutouts and shadows are not decided here: they
+ * come from the model's data (authored collision triangles, batch materials,
+ * texture alpha).
  *
  * @param name         Full model path/name from the M2 header (any case)
- * @param boundsMin    Per-vertex tight bounding-box minimum
- * @param boundsMax    Per-vertex tight bounding-box maximum
+ * @param boundsMin    Unused
+ * @param boundsMax    Unused
  * @param vertexCount  Number of mesh vertices
  * @param emitterCount Number of particle emitters
  * @param groundEffect The model is ground clutter: GroundEffectDoodad.dbc names it

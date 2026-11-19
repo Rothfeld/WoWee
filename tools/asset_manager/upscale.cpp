@@ -5,9 +5,9 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <string_view>
 
 #include "pipeline/blp_loader.hpp"
-#include "rendering/m2_model_classifier.hpp"
 #include "texture_ops.hpp"
 
 namespace wowee::assets {
@@ -23,12 +23,6 @@ std::vector<uint8_t> slurp(const fs::path& path) {
 uint32_t readLE32(const uint8_t* at) {
     return uint32_t(at[0]) | (uint32_t(at[1]) << 8) |
            (uint32_t(at[2]) << 16) | (uint32_t(at[3]) << 24);
-}
-
-float readFloat(const uint8_t* at) {
-    float out = 0.0f;
-    std::memcpy(&out, at, 4);
-    return out;
 }
 
 std::string lower(std::string value) {
@@ -61,18 +55,19 @@ std::vector<std::string> modelTextures(const std::vector<uint8_t>& blob) {
     return out;
 }
 
-/// The model's own bounds, for the classifier.
-bool modelBounds(const std::vector<uint8_t>& blob, float lo[3], float hi[3],
-                 uint32_t& vertices) {
-    if (blob.size() < 0xD0) return false;
-    vertices = readLE32(blob.data() + 60);
-    // The bounding box sits after the sequence/bone/vertex arrays; 0xB8 is
-    // where it lands in the 3.3.5 header this reads.
-    for (int i = 0; i < 3; ++i) {
-        lo[i] = readFloat(blob.data() + 0xB8 + i * 4);
-        hi[i] = readFloat(blob.data() + 0xC4 + i * 4);
+/// Whether a model file is named for a plant. This only chooses which
+/// textures the optional upscale step resamples; the client decides nothing
+/// about a model from its name (collision, fade and cutouts come from data).
+bool plantNamed(const fs::path& path) {
+    static constexpr std::string_view kTokens[] = {
+        "tree", "bush", "shrub", "shurb", "plant", "fern", "grass", "leaf",
+        "leaves", "palm", "vine", "flower", "canopy", "frond", "hedge",
+    };
+    const std::string name = lower(path.filename().string());
+    for (std::string_view token : kTokens) {
+        if (name.find(token) != std::string::npos) return true;
     }
-    return true;
+    return false;
 }
 
 fs::path sidecarFor(const fs::path& blp) {
@@ -96,19 +91,9 @@ UpscalePlan planUpscale(const std::string& expansionDir, int sharedLimit) {
         if (!it->is_regular_file(ec)) continue;
         if (lower(it->path().extension().string()) != ".m2") continue;
 
+        if (!plantNamed(it->path())) continue;
         const std::vector<uint8_t> blob = slurp(it->path());
         if (blob.size() < 0xD0) continue;
-
-        float lo[3] = {0, 0, 0};
-        float hi[3] = {0, 0, 0};
-        uint32_t vertices = 0;
-        if (!modelBounds(blob, lo, hi, vertices)) continue;
-
-        const auto classification = wowee::rendering::classifyM2Model(
-            it->path().filename().string(),
-            glm::vec3(lo[0], lo[1], lo[2]), glm::vec3(hi[0], hi[1], hi[2]),
-            vertices, 0);
-        if (!classification.isFoliageLike) continue;
         ++plan.foliageModels;
 
         for (const std::string& texture : modelTextures(blob)) {

@@ -151,12 +151,23 @@ The colour changes in one frame and stays for the aura's lifetime;
 Blue/Red, Ignite Flesh, Enrage, also during a Chromaggus fight). Opacity moves
 to the new value over 1 s as the cube of elapsed time, both ways, whatever the
 kit's parameters (Transparency 25%/75%, Steal Magic, Banish).
-Placed doodads move only by their own Stand sequence, as in 2.4.3: no shader
-wind, whatever the name. `StranglethornTree02` and `BadlandsPalmTree02` sway their
-canopies from keyed bones; `StranglethornRoot01`-`03`, Elwynn bushes and trees and
-the palm trunks have no keys and stand still. Name tokens ("root", "palm", "thorn")
-used to switch the authored Stand off and bend those models in a procedural wind.
-Evidence: `_experiments/20261119T083245Z.stv_root_anim/` in the workspace.
+Placed doodads, banners, boats and ground clutter move only by their own keyed
+bones: no shader wind, cloth sway, boat bob or player push-aside, whatever the name. `StranglethornTree02` and `BadlandsPalmTree02` sway their canopies from keyed
+bones; `StranglethornRoot01`-`03`, Elwynn bushes and trees, the palm trunks and the
+unkeyed banners (`dr_banner01` at the Temple of Telhamat) stand still in 2.4.3 and
+here. Native grass tufts stand upright through a walking character's legs.
+Nothing about collision, fade, cutouts or shadows is read from a model's name.
+Collision is the authored collision triangles alone (`ElwynnBush01` has none and is
+walked through; `ElwynnTreeMid01` has 12 round its trunk). A batch is cut out by its
+material: alpha-key batches with texture alpha, and opaque batches whose texture
+alpha is a silhouette (`alphaIsSilhouette`: DXT1 punch-through, e.g. the
+`MullgoreThorn01`-`07` arches, which native cuts along the ragged edge). The shadow
+pass casts each batch with the same coverage. Distance fade starts at one fraction
+of the draw distance for every model except `disableAnimation` (chest) models.
+Gotcha: the M2 draw distances themselves (`M2_MAX_RENDER_DISTANCE_*`, radius/12
+factor) are WoWee constants, not measured against native.
+Evidence: `_experiments/20261119T083245Z.stv_root_anim/` and
+`_experiments/20261119T085643Z.doodad_motion/` in the workspace.
 M2 texture caching: GPU entries include WrapS/WrapT flags as well as normalized
 asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U

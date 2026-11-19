@@ -136,69 +136,15 @@ inline bool m2BlocksMovement(const M2ModelGPU& model) {
 
 inline void getTightCollisionBounds(const M2ModelGPU& model, glm::vec3& outMin, glm::vec3& outMax) {
     // Broad-phase bounds must contain every authored collision triangle.
-    // Trunk-size guesses can reject contact before the player reaches the mesh.
+    // A model without any is walked through, so its bounds only file it in
+    // the spatial grid for picking and clearings: its own vertex bounds.
     if (model.collision.valid()) {
         outMin = model.collision.boundsMin;
         outMax = model.collision.boundsMax;
         return;
     }
-    glm::vec3 center = (model.boundMin + model.boundMax) * 0.5f;
-    glm::vec3 half = (model.boundMax - model.boundMin) * 0.5f;
-
-    if (model.collisionTreeTrunk) {
-        float modelHoriz = std::max(model.boundMax.x - model.boundMin.x,
-                                    model.boundMax.y - model.boundMin.y);
-        float trunkHalf = std::clamp(modelHoriz * 0.05f, 0.5f, 5.0f);
-        half.x = trunkHalf;
-        half.y = trunkHalf;
-        half.z = std::min(trunkHalf * 2.5f, 3.5f);
-        center.z = model.boundMin.z + half.z;
-    } else if (model.collisionNarrowVerticalProp) {
-        half.x *= 0.30f;
-        half.y *= 0.30f;
-        half.z *= 0.96f;
-    } else if (model.collisionSmallSolidProp) {
-        half.x *= 1.00f;
-        half.y *= 1.00f;
-        half.z *= 1.00f;
-    } else if (model.collisionSteppedLowPlatform) {
-        half.x *= 0.98f;
-        half.y *= 0.98f;
-        half.z *= 0.52f;
-    } else {
-        half.x *= 0.66f;
-        half.y *= 0.66f;
-        half.z *= 0.76f;
-    }
-
-    outMin = center - half;
-    outMax = center + half;
-}
-
-// Closed horizontal trunk sections can contain a player after loading an
-// already-overlapping position. Require odd crossings in both directions so
-// an isolated wall is not mistaken for an enclosed volume.
-inline bool insideTrunkCollision(const M2ModelGPU::CollisionMesh& mesh,
-                                  const glm::vec3& point) {
-    for (float sign : {-1.0f, 1.0f}) {
-        const glm::vec3 direction = sign * glm::normalize(glm::vec3(1.0f, 0.371f, 0.0f));
-        std::vector<float> hits;
-        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-            const float distance = rayTriangleIntersect(point, direction,
-                mesh.vertices[mesh.indices[i]], mesh.vertices[mesh.indices[i + 1]],
-                mesh.vertices[mesh.indices[i + 2]]);
-            if (distance > 0.0f) hits.push_back(distance);
-        }
-        std::sort(hits.begin(), hits.end());
-        size_t crossings = 0;
-        float previous = -1.0f;
-        for (float distance : hits) {
-            if (previous < 0.0f || distance - previous > 1e-4f) ++crossings;
-            previous = distance;
-        }
-        if (crossings % 2 == 0) return false;
-    }
-    return true;
+    outMin = model.boundMin;
+    outMax = model.boundMax;
 }
 
 inline bool segmentIntersectsAABB(const glm::vec3& from, const glm::vec3& to,

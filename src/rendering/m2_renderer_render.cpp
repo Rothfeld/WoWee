@@ -1,7 +1,7 @@
 #include "rendering/shadow_params.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/m2_renderer_internal.h"
-#include "rendering/m2_sway.hpp"
+#include "rendering/m2_draw_mode.hpp"
 #include "rendering/m2_blend_mode.hpp"
 #include "rendering/m2_foliage_culling.hpp"
 #include "rendering/m2_glow_card.hpp"
@@ -1212,11 +1212,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // Push constants now carry per-batch data only; per-instance data is in instance SSBO.
     struct M2PushConstants {
         int32_t texCoordSet;        // UV set index (0 or 1)
-        int32_t isFoliage;          // -1 sky, 0 none, 2 ground clutter, 3/4 hanging/standing cloth
+        int32_t drawMode;           // -1 sky, 0 placed model, 2 ground clutter
         int32_t instanceDataOffset; // Base index into instance SSBO for this draw group
-        float swayRefHeight;        // Cloth: model-space top of the cloth
-        float swayAmp;              // Cloth throw
-        float plantHeight;          // The model's own height, for the player brush
+        float modelHeight;          // The model's own height (model space)
         int32_t texCoordSet2;
     };
     auto secondTextureOffset = [](const M2ModelGPU& model, const M2ModelGPU::BatchGPU& batch,
@@ -1239,16 +1237,12 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         return glm::vec4(translation.x, translation.y, 0.0f, 0.0f);
     };
 
-    // Fill the sway half of the push constants for one model: the player
-    // brush for ground clutter, the cloth sway for banners (m2_sway.hpp).
-    auto fillSway = [](M2PushConstants& pc, const M2ModelGPU& mdl, bool sky) {
-        const M2Sway sway = m2SwayFor(sky, mdl.isHangingCloth, mdl.cutoutFoliage,
-                                      mdl.isGroundDetail, mdl.boundMin.z, mdl.boundMax.z,
-                                      mdl.isStandingCloth);
-        pc.isFoliage = sway.mode;
-        pc.swayRefHeight = sway.refHeight;
-        pc.swayAmp = sway.amp;
-        pc.plantHeight = sway.plantHeight;
+    // Fill the model half of the push constants (m2_draw_mode.hpp).
+    auto fillDrawMode = [](M2PushConstants& pc, const M2ModelGPU& mdl, bool sky) {
+        const M2DrawMode draw = m2DrawModeFor(sky, mdl.isGroundDetail,
+                                              mdl.boundMin.z, mdl.boundMax.z);
+        pc.drawMode = draw.mode;
+        pc.modelHeight = draw.modelHeight;
     };
 
     // Validate per-frame descriptor set before any Vulkan commands
@@ -1331,7 +1325,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             }
 
             bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
-            const bool foliageLikeModel = model.isFoliageLike;
 
             // Collect per-instance data for this model group
             pending.clear();
@@ -1341,7 +1334,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 auto& instance = instances[entry.index];
 
                 // Distance-based fade alpha
-                float fadeFrac = (model.isFoliageLike || model.disableAnimation) ? 0.55f : fadeStartFraction;
+                float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
                 float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
                 float fadeAlpha = 1.0f;
                 if (entry.distSq > fadeStartDistSq) {
@@ -1730,16 +1723,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     //
                     // Where the alpha really is the silhouette - a card drawn
                     // on a black backing, or DXT1 punch-through, which stores
-                    // no colour under a transparent texel at all - the cutout
-                    // still stands, over the 15 models that need it: Swamp of
-                    // Sorrows' canopies, the quilboar thorn cards, Loch Modan's
-                    // leaves and the lamps whose glass is keyed out. Measured
-                    // from the texture by alphaIsSilhouette, not guessed from
-                    // its name.
+                    // no colour under a transparent texel at all - the opaque
+                    // batch is cut out, whatever the model is called. 2.4.3
+                    // cuts Mulgore's thorn arches (MullgoreThorn01-07, one
+                    // opaque batch on DXT1 AlteracTreeTrunk03) along the
+                    // texture's ragged edge. Measured from the texture by
+                    // alphaIsSilhouette.
                     const bool opaqueByMaterial = batch.blendMode == M2_BLEND_OPAQUE;
-                    const bool foliageCutout = foliageLikeModel && !model.isSpellEffect &&
-                                               batch.blendMode <= 3 &&
-                                               (!opaqueByMaterial || batch.alphaIsSilhouette);
+                    const bool silhouetteCutout = !model.isSpellEffect && opaqueByMaterial &&
+                                                  batch.alphaIsSilhouette;
                     // A batch the artist marked additive is already doing
                     // what the cutout and the colour key are approximations
                     // of: black adds nothing, so it disappears on its own.
@@ -1749,7 +1741,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     const bool forceCutout =
                         !model.isSpellEffect &&
                         !m2BlendIsAdditive(batch.blendMode) &&
-                        (model.isGroundDetail || foliageCutout ||
+                        (model.isGroundDetail || silhouetteCutout ||
                          m2BatchNeedsAlphaTest(batch.blendMode, batch.hasAlpha));
 
                     uint8_t effectiveBlendMode = batch.blendMode;
@@ -1793,7 +1785,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                         // M2s already look correct from the darker ambient/lighting.
                         mat->interiorDarken = 0.0f;
                         if (forceCutout) {
-                            mat->alphaTest = model.isGroundDetail ? 3 : (foliageCutout ? 2 : 1);
+                            mat->alphaTest = model.isGroundDetail ? 3 : 1;
                             if (model.isGroundDetail) mat->unlit = 0;
                         }
                     }
@@ -1810,7 +1802,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     M2PushConstants pc;
                     pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
                     pc.texCoordSet2 = batch.textureUnit2;
-                    fillSway(pc, model, skyMode_);
+                    fillDrawMode(pc, model, skyMode_);
                     pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
                     vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
                     vkCmdDrawIndexed(cmd, batch.indexCount, groupSize, batch.indexStart, 0, 0);
@@ -1890,7 +1882,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
         // Fade alpha
         float fadeAlpha = 1.0f;
-        float fadeFrac = (model.isFoliageLike || model.disableAnimation) ? 0.55f : fadeStartFraction;
+        float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
         float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
         if (entry.distSq > fadeStartDistSq) {
             fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
@@ -2061,7 +2053,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             M2PushConstants pc;
             pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
             pc.texCoordSet2 = batch.textureUnit2;
-            fillSway(pc, model, skyMode_);
+            fillDrawMode(pc, model, skyMode_);
             pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
             vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
             if (projectedDraw) {
@@ -2298,11 +2290,7 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
         return set;
     };
 
-    // How many casters each pass drew, so a shadow that comes and goes can say
-    // whether its caster was culled or its texture was missing.
-    uint32_t castersDrawn[2] = {0, 0};
-
-    // Cull once, into the two passes, grouped by model.
+    // Cull once, grouped by model.
     //
     // This walked every instance in the world twice - once per pass - doing a
     // light-space transform for each, then drew them in whatever order they
@@ -2311,8 +2299,7 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
     // and a batch's texture was bound once per instance rather than once per
     // batch. With tens of thousands of instances resident that is the cost of
     // this pass, and none of it is drawing.
-    shadowCasters_[0].clear();
-    shadowCasters_[1].clear();
+    shadowCasters_.clear();
     for (uint32_t i = 0; i < instances.size(); ++i) {
         const auto& instance = instances[i];
         if (!instance.cachedIsValid ||
@@ -2334,117 +2321,79 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
         if (std::abs(clip.x) > 1.0f + margin || std::abs(clip.y) > 1.0f + margin) continue;
         if (clip.z < -margin || clip.z > 1.0f + margin) continue;
 
-        shadowCasters_[model.cutoutFoliage ? 1 : 0].emplace_back(instance.modelId, i);
+        shadowCasters_.emplace_back(instance.modelId, i);
     }
-    for (auto& bucket : shadowCasters_) {
-        std::sort(bucket.begin(), bucket.end());
-    }
+    std::sort(shadowCasters_.begin(), shadowCasters_.end());
 
-    // Draw one bucket: solid casters, or alpha-cut foliage casters.
-    auto drawPass = [&](bool foliagePass) {
-        // What this pass is, carried with each draw rather than written into a
-        // buffer both passes share. The uniform buffer this used to be is read
-        // when a draw executes, not when it is recorded, so writing it again
-        // for the foliage pass decided what the solid pass's draws saw as
-        // well - and one mapped copy across frames in flight let a CPU write
-        // land inside the previous frame's reads. A foliage batch that lost
-        // its alpha test that way casts the whole leaf quad, which is the
-        // canopy's outline in solid black instead of its cutout.
-        const glm::ivec4 passFlags{foliagePass ? 1 : 0, foliagePass ? 1 : 0, 0, 0};
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
+    VkDescriptorSet boundSet = shadowParams_.set;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_,
+        0, 1, &boundSet, 0, nullptr);
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipelineLayout_,
-            0, 1, &shadowParams_.set, 0, nullptr);
+    for (std::size_t g = 0; g < shadowCasters_.size();) {
+        const uint32_t modelId = shadowCasters_[g].first;
+        std::size_t groupEnd = g;
+        while (groupEnd < shadowCasters_.size() && shadowCasters_[groupEnd].first == modelId) ++groupEnd;
 
-        const auto& casters = shadowCasters_[foliagePass ? 1 : 0];
-        for (std::size_t g = 0; g < casters.size();) {
-            const uint32_t modelId = casters[g].first;
-            std::size_t groupEnd = g;
-            while (groupEnd < casters.size() && casters[groupEnd].first == modelId) ++groupEnd;
+        const auto& firstInstance = instances[shadowCasters_[g].second];
+        if (!firstInstance.cachedModel) { g = groupEnd; continue; }
+        const M2ModelGPU& model = *firstInstance.cachedModel;
 
-            const auto& firstInstance = instances[casters[g].second];
-            if (!firstInstance.cachedModel) { g = groupEnd; continue; }
-            const M2ModelGPU& model = *firstInstance.cachedModel;
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &model.vertexBuffer, &offset);
+        vkCmdBindIndexBuffer(cmd, model.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &model.vertexBuffer, &offset);
-            vkCmdBindIndexBuffer(cmd, model.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
-            for (const auto& batch : model.batches) {
-                if (batch.submeshLevel > 0) continue;
-                if (batch.projected) continue;  // laid on the ground, casts nothing
-                // A leaf card with no texture is a shadow with no caster.
-                //
-                // The else below binds the white set, whose alpha test passes
-                // everywhere, so a batch that arrived without its texture casts
-                // the shadow of a solid quad - while the main pass skips that
-                // same batch for want of a material set. The result is a black
-                // rectangle on the ground under a tree that looks fine, coming
-                // and going as the texture cache lets the sheet back in.
-                if (foliagePass && !batch.texture) {
-                    if (!warnedShadowNoTexture_) {
-                        warnedShadowNoTexture_ = true;
-                        LOG_WARNING("Shadow pass: a foliage batch of ", model.name,
-                                    " has no texture; skipping it rather than casting a "
-                                    "solid quad. The texture cache is the usual reason.");
-                    }
-                    continue;
+        for (const auto& batch : model.batches) {
+            if (batch.submeshLevel > 0) continue;
+            if (batch.projected) continue;  // laid on the ground, casts nothing
+            // A batch casts the coverage its main pass draws: the alpha-key
+            // leaves of a tree and a DXT1 punch-through card by their texture
+            // alpha, an opaque trunk as solid. The material decides, as it
+            // does in the main pass, whatever the model is called.
+            const bool cutout = batch.blendMode == M2_BLEND_OPAQUE
+                                    ? batch.alphaIsSilhouette
+                                    : batch.hasAlpha;
+            // A cut-out batch with no texture is a shadow with no caster.
+            //
+            // The white set's alpha test passes everywhere, so a batch that
+            // arrived without its texture would cast the shadow of a solid
+            // quad - while the main pass skips that same batch for want of a
+            // material set. The result is a black rectangle on the ground under
+            // a tree that looks fine, coming and going as the texture cache
+            // lets the sheet back in.
+            if (cutout && !batch.texture) {
+                if (!warnedShadowNoTexture_) {
+                    warnedShadowNoTexture_ = true;
+                    LOG_WARNING("Shadow pass: a cut-out batch of ", model.name,
+                                " has no texture; skipping it rather than casting a "
+                                "solid quad. The texture cache is the usual reason.");
                 }
-                // Once per batch, where it used to be once per batch per
-                // instance: the texture is the batch's, and every instance of
-                // this model shares it.
-                if (foliagePass && batch.hasAlpha && batch.texture) {
-                    VkDescriptorSet texSet = getTexDescSet(batch.texture);
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        shadowPipelineLayout_, 0, 1, &texSet, 0, nullptr);
-                } else if (foliagePass) {
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        shadowPipelineLayout_, 0, 1, &shadowParams_.set, 0, nullptr);
-                }
-
-                for (std::size_t k = g; k < groupEnd; ++k) {
-                    const auto& instance = instances[casters[k].second];
-                    ShadowPush push{
-                        .lightSpaceModel = lightSpaceMatrix * instance.modelMatrix,
-                        .flags = passFlags};
-                    vkCmdPushConstants(cmd, shadowPipelineLayout_, kSharedShadowPushStages,
-                                       0, sizeof(ShadowPush), &push);
-                    vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
-                }
+                continue;
             }
-            castersDrawn[foliagePass ? 1 : 0] += static_cast<uint32_t>(groupEnd - g);
-            g = groupEnd;
-        }
-    };
+            // Once per batch: the texture is the batch's, and every instance
+            // of this model shares it.
+            const VkDescriptorSet wanted = cutout ? getTexDescSet(batch.texture) : shadowParams_.set;
+            if (wanted != boundSet) {
+                boundSet = wanted;
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    shadowPipelineLayout_, 0, 1, &boundSet, 0, nullptr);
+            }
+            // What this draw is, carried with each draw rather than written
+            // into a buffer all draws share: a uniform buffer is read when a
+            // draw executes, not when it is recorded.
+            const glm::ivec4 drawFlags{cutout ? 1 : 0, cutout ? 1 : 0, 0, 0};
 
-    // Pass 1: solid casters
-    drawPass(false);
-    // Pass 2: foliage (per-batch alpha-tested textures)
-    drawPass(true);
-
-    // A shadow that flickers is a caster that was drawn last frame and is not
-    // drawn this one. The cull is in light space and the light turns with the
-    // hour, so a tree on the boundary can cross it while the player stands
-    // still - and from the ground that reads as the shadow blinking. Said at
-    // most once a second, and only when the count actually swings, so an
-    // ordinary walk through a forest stays quiet.
-    {
-        const uint32_t foliageNow = castersDrawn[1];
-        const uint32_t foliageWas = lastFoliageCasters_;
-        lastFoliageCasters_ = foliageNow;
-        const uint32_t larger = std::max(foliageNow, foliageWas);
-        const uint32_t delta = larger - std::min(foliageNow, foliageWas);
-        if (foliageWas != 0 && larger >= 8 && delta * 10 > larger) {
-            static std::chrono::steady_clock::time_point lastLog{};
-            const auto now = std::chrono::steady_clock::now();
-            if (now - lastLog > std::chrono::seconds(1)) {
-                lastLog = now;
-                LOG_WARNING("Shadow casters swung ", foliageWas, " -> ", foliageNow,
-                            " foliage instances in one frame (", castersDrawn[0],
-                            " solid). A shadow that blinks with the player standing "
-                            "still is one of these crossing the light-space cull.");
+            for (std::size_t k = g; k < groupEnd; ++k) {
+                const auto& instance = instances[shadowCasters_[k].second];
+                ShadowPush push{
+                    .lightSpaceModel = lightSpaceMatrix * instance.modelMatrix,
+                    .flags = drawFlags};
+                vkCmdPushConstants(cmd, shadowPipelineLayout_, kSharedShadowPushStages,
+                                   0, sizeof(ShadowPush), &push);
+                vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             }
         }
+        g = groupEnd;
     }
 }
 

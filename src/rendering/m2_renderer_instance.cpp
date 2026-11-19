@@ -1371,16 +1371,6 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
             glm::vec3 localPos  = glm::vec3(instance.invModelMatrix * glm::vec4(adjustedPos, 1.0f));
             float localRadius = playerRadius / instance.scale;
 
-            // Permit escape from a trunk that already contains the player.
-            // Entry from outside still takes the normal collision path.
-            if (model.collisionTreeTrunk && insideTrunkCollision(
-                    model.collision, localFrom)) {
-                static std::set<std::string> reportedRecovery;
-                if (reportedRecovery.insert(model.name).second)
-                    LOG_WARNING("Collision: allowing exit from overlapping trunk '", model.name, "'");
-                continue;
-            }
-
             // The body is vertical in world space, even for pitched/rolled
             // doodads. Query every triangle classification touched by its span:
             // a model-local floor can become a world-space wall after placement.

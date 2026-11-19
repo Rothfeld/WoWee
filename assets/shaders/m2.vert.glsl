@@ -18,11 +18,9 @@ layout(set = 0, binding = 0) uniform PerFrame {
 // Per-draw push constants (batch-level data only)
 layout(push_constant) uniform Push {
     int texCoordSet;         // UV set index (0 or 1)
-    int isFoliage;           // -1 sky, 0 none, 2 clutter, 3 hanging cloth, 4 standing cloth
+    int drawMode;            // -1 sky, 0 placed model, 2 ground clutter
     int instanceDataOffset;  // Base index into InstanceSSBO for this draw group
-    float swayRefHeight;     // Cloth: top of the cloth (model space)
-    float swayAmp;           // Cloth throw
-    float plantHeight;       // The model's own height (model space), for the player brush
+    float modelHeight;       // The model's own height (model space)
     int texCoordSet2;
 } push;
 
@@ -41,7 +39,7 @@ struct InstanceData {
     // 0 for an ordinary instance, 1 while the player is pressing on it. Sits
     // in what was padding, so the entry is the same 96 bytes it always was.
     float highlight;
-    // Bit 0: a boat afloat, which rides the water. Also in what was padding.
+    // Bit 1: placement lighting from MODD in bits 8..31. Also in what was padding.
     int flags;
     vec4 uvOffset2;
 };
@@ -99,144 +97,7 @@ void main() {
         norm = skinMat * norm;
     }
 
-    // Cloth: a banner, a flag, a tapestry. Mode 3 hangs, mode 4 stands.
-    //
-    // Which end is held is the whole difference. A tapestry is nailed to its
-    // bar and moves at the hem, so the weight is the drop below the top. A
-    // standard is a pole planted in the ground with the cloth near its head,
-    // so the weight is the height above the base - and getting that backwards
-    // is what swung the foot of the Undercity gate's banner pole hardest of
-    // anything on the model. Neither can be told from the other by bounds:
-    // both reach z=0. The client separates them by how wide the geometry is
-    // down at the ground, a spar against a full hem, and says which this is.
-    //
-    // Two rates: a slow sway of the whole cloth and a smaller ripple across it,
-    // so it breathes rather than swinging like a sign. The amplitude is a
-    // twentieth of the cloth's own drop, set on the client side.
-    if (push.isFoliage == 3 || push.isFoliage == 4) {
-        float windTime = fogParams.z;
-        vec3 worldRef = model[3].xyz;
-        float span = max(push.plantHeight, 0.01);
-        float clothBase = push.swayRefHeight - span;
-        float held = (push.isFoliage == 4)
-                   ? clamp((pos.z - clothBase) / span, 0.0, 1.0)
-                   : clamp((push.swayRefHeight - pos.z) / span, 0.0, 1.0);
-        held *= held;
-        float amp = push.swayAmp * held;
-
-        // Per banner rather than per vertex, so two on the same wall are not
-        // in step - the phase comes from where the instance stands.
-        float phase = windTime * 1.1 + dot(worldRef.xy, vec2(0.21, 0.17));
-        vec3 sway = vec3(
-            (sin(phase) * 0.7 + sin(phase * 2.7 + pos.y * 1.9) * 0.25) * amp,
-            (cos(phase * 0.9) * 0.6 + cos(phase * 3.1 + pos.x * 1.7) * 0.2) * amp,
-            // A little in and out as well, so the cloth is not a flat sheet
-            // sliding sideways.
-            sin(phase * 1.6 + pos.x * 1.3) * 0.12 * amp);
-
-        // Away from the wall, never into it.
-        //
-        // A banner hangs flush against stone, so any motion toward its own
-        // back face goes through the masonry - a quarter of it was still
-        // enough to show. The whole perpendicular component is taken out and a
-        // third of it given back outward only: the cloth billows away from the
-        // wall and slides in its own plane, and the half-cycle that used to
-        // push it backwards now does nothing at all.
-        //
-        // Outward is each face's own normal, so a two-sided banner puffs
-        // slightly rather than parting - which is what a cloth in a draught
-        // does anyway.
-        vec3 clothN = normalizedNormal(norm.xyz);
-        float perp = dot(sway, clothN);
-        sway -= clothN * perp;
-        sway += clothN * max(perp, 0.0) * 0.35;
-        pos.xyz += sway;
-    }
-
     vec4 worldPos = model * pos;
-
-    // A boat on the water rises and falls with it and rocks a little, pivoting
-    // about where it was placed. Two rates each, so it never settles into a
-    // metronome, and the phase comes from where it is moored so a row of
-    // boats along a canal does not bob in step.
-    if ((instanceData[instIdx].flags & 1) != 0) {
-        vec3 origin = model[3].xyz;
-        float t = fogParams.z;
-        float ph = dot(origin.xy, vec2(0.37, 0.23));
-        float bob   = sin(t * 0.9 + ph) * 0.06 + sin(t * 1.7 + ph * 1.3) * 0.025;
-        float pitch = sin(t * 0.7 + ph * 0.8) * 0.020 + sin(t * 1.9 + ph) * 0.006;
-        float roll  = sin(t * 1.1 + ph * 1.9) * 0.030 + sin(t * 2.3 + ph * 0.6) * 0.008;
-        vec3 rel = worldPos.xyz - origin;
-        worldPos.z += bob + rel.x * pitch + rel.y * roll;
-    }
-
-    // Foliage parts around whoever walks through it, then springs back. Applied
-    // in world space after the model transform: the displacement is a distance
-    // in yards from the player, not something the model's own scale and rotation
-    // should be turning.
-    //
-    // Ground clutter only: a placed doodad keeps its authored pose, as in 2.4.3.
-    if (push.isFoliage == 2 && push.plantHeight > 0.0) {
-        vec3 base = model[3].xyz;                      // instance origin, on the ground
-        float zScale = length(model[2].xyz);
-        float plantHeight = push.plantHeight * zScale;
-
-        // Full effect up to about head height, nothing from a small tree up.
-        float sizeGate = 1.0 - smoothstep(4.0, 8.0, plantHeight);
-
-        // Only foliage at the player's own level reacts. Flying over a field
-        // must not flatten it, and neither must standing on the roof above it.
-        float levelGate = 1.0 - smoothstep(1.5, 4.0, abs(base.z - playerPos.z));
-        levelGate *= sizeGate;
-
-        // Height along the plant, from its own base.
-        float brushT = clamp(pos.z / max(push.plantHeight, 0.01), 0.0, 1.0);
-        brushT *= brushT;
-
-        if (levelGate > 0.0 && brushT > 0.0) {
-            // Reach grows a little with the plant, so a waist-high fern gives
-            // way sooner than a tuft of grass does.
-            float reach = 1.1 + plantHeight * 0.35;
-
-            // Bend away from the player, and from where the player was a
-            // moment ago. Taking the stronger of the two rather than the sum
-            // keeps a standing player - where the two points coincide - from
-            // bending the clutter twice as far as a walking one.
-            vec2 toNow  = base.xy - playerPos.xy;
-            vec2 toWake = base.xy - playerWake.xy;
-            float dNow  = length(toNow);
-            float dWake = length(toWake);
-            float infNow  = 1.0 - smoothstep(0.0, reach, dNow);
-            float infWake = 1.0 - smoothstep(0.0, reach, dWake);
-
-            vec2 dir;
-            float influence;
-            if (infNow >= infWake) {
-                influence = infNow;
-                dir = toNow / max(dNow, 0.001);
-            } else {
-                influence = infWake;
-                dir = toWake / max(dWake, 0.001);
-            }
-            influence *= levelGate;
-
-            // Bend, capped so tall clutter doesn't lie flat on the ground.
-            float bend = influence * brushT * min(plantHeight * 0.45, 0.75);
-
-            // Rustle: a fast quiver riding on the bend, present only while the
-            // player is actually moving. Phase is per-plant, so a field
-            // shivers rather than pulsing in unison.
-            float speed = clamp(playerPos.w / 7.0, 0.0, 1.0);
-            float rustlePhase = fogParams.z * 17.0 + dot(base.xy, vec2(3.1, 2.7));
-            float rustle = sin(rustlePhase) * influence * brushT
-                         * speed * min(plantHeight * 0.10, 0.15);
-
-            worldPos.xy += dir * bend + vec2(-dir.y, dir.x) * rustle;
-            // Trodden clutter also settles a little, rather than pivoting on
-            // its base and standing just as tall.
-            worldPos.z -= influence * brushT * plantHeight * 0.12;
-        }
-    }
 
     FragPos = worldPos.xyz;
     Normal = mat3(model) * norm.xyz;
@@ -244,7 +105,7 @@ void main() {
     // horizontal normals, and lighting those turned every tuft facing away
     // from the sun into ambient-only blue-grey; 2.4.3 draws the same tufts in
     // the terrain's own light whichever way they face (Dustwallow Marsh, Beezil's Wreck).
-    vec3 lightingNormal = push.isFoliage == 2 ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
+    vec3 lightingNormal = push.drawMode == 2 ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
     float diffuse = max(dot(lightingNormal, normalize(-lightDir.xyz)), 0.0);
     VertexLighting = clamp(ambientColor.rgb + diffuse * lightColor.rgb, 0.0, 1.0);
 
@@ -257,12 +118,11 @@ void main() {
         instanceData[push.instanceDataOffset + gl_InstanceIndex].uvOffset2.xy;
 
     InstanceOrigin = model[3].xyz;
-    // How far up the plant this vertex is, as a fraction of the plant's own
-    // height. The fragment shader shades a canopy with it, and dividing by a
-    // constant there could only be right for one size of plant.
-    ModelHeight = push.plantHeight > 0.0 ? clamp(pos.z / push.plantHeight, 0.0, 1.0) : 1.0;
+    // How far up its own model this vertex is, as a fraction of the model's
+    // height (a flame card fades out over its own tip with it).
+    ModelHeight = push.modelHeight > 0.0 ? clamp(pos.z / push.modelHeight, 0.0, 1.0) : 1.0;
     vFadeAlpha = fade;
-    vSkyMode = push.isFoliage < 0 ? 1 : 0;
+    vSkyMode = push.drawMode < 0 ? 1 : 0;
     vHighlight = instanceData[instIdx].highlight;
     uint lighting = uint(instanceData[instIdx].flags);
     vIndoorLighting = vec4(vec3((lighting >> 8) & 255u, (lighting >> 16) & 255u,
@@ -273,5 +133,5 @@ void main() {
     // A sky model sits on the far plane whatever its radius, so the depth
     // test rejects it wherever terrain has already been drawn. The sky is
     // drawn after the ground now, and this is what makes that free.
-    if (push.isFoliage < 0) gl_Position.z = gl_Position.w;
+    if (push.drawMode < 0) gl_Position.z = gl_Position.w;
 }

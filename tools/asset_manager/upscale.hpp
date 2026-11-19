@@ -9,8 +9,8 @@
 /// belongs to the whole world rather than to this tree, and upscaling it
 /// changes every creature that touches it too.
 ///
-/// Whether a model is foliage is asked of the same classifier the client uses,
-/// so the two cannot drift apart about what a tree is.
+/// Which models count as plants is a list of name tokens in upscale.cpp; it
+/// picks textures to resample and nothing else.
 
 #include <atomic>
 #include <cstddef>

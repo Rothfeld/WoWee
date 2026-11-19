@@ -91,42 +91,6 @@ bool isLitFireName(const std::string& lower) noexcept {
         || has(lower, "bonfire") || has(lower, "firepit");
 }
 
-// Where in the name a token matched, so competing tokens can be ranked.
-// Model names are head-final compounds - StranglethornRuins is a ruin,
-// DustwallowTree is a tree - so the match ending furthest right is the one that
-// says what the model is. A longer token wins a tie on the same end position,
-// which is how "corner" beats the "corn" inside it.
-struct TokenMatch {
-    std::size_t end = 0;
-    std::size_t len = 0;
-    bool found = false;
-
-    // Ranks after `other`: ends further right, or ends level but is longer.
-    [[nodiscard]] bool outranks(const TokenMatch& other) const noexcept {
-        if (!found) return false;
-        if (!other.found) return true;
-        if (end != other.end) return end > other.end;
-        return len > other.len;
-    }
-};
-
-inline TokenMatch lastMatch(const std::string& lower, std::string_view token) noexcept {
-    const std::size_t i = lower.rfind(token);
-    if (i == std::string::npos) return {};
-    return {.end = i + token.size(), .len = token.size(), .found = true};
-}
-
-template <std::size_t N>
-TokenMatch lastMatchAny(const std::string& lower,
-                        const std::array<std::string_view, N>& tokens) noexcept {
-    TokenMatch best;
-    for (auto tok : tokens) {
-        const TokenMatch m = lastMatch(lower, tok);
-        if (m.outranks(best)) best = m;
-    }
-    return best;
-}
-
 // Returns true if any token in the compile-time array is a substring of `lower`.
 template <std::size_t N>
 bool hasAny(const std::string& lower,
@@ -184,8 +148,8 @@ bool assetNameHasWordToken(const std::string& path, std::string_view token) {
 
 M2ClassificationResult classifyM2Model(
     const std::string& name,
-    const glm::vec3&   boundsMin,
-    const glm::vec3&   boundsMax,
+    const glm::vec3&   /*boundsMin*/,
+    const glm::vec3&   /*boundsMax*/,
     std::size_t        vertexCount,
     std::size_t        emitterCount,
     bool               groundEffect)
@@ -199,15 +163,6 @@ M2ClassificationResult classifyM2Model(
     const std::string n = assetTokenName(name);
 
     M2ClassificationResult r;
-
-    // ---------------------------------------------------------------
-    // Geometry metrics
-    // ---------------------------------------------------------------
-    const glm::vec3 dims = boundsMax - boundsMin;
-    const float horiz    = std::max(dims.x, dims.y);
-    const float vert     = std::max(0.0f, dims.z);
-    const bool lowWide   = (horiz > 1.4f && vert > 0.2f && vert < horiz * 0.70f);
-    const bool lowPlat   = (horiz > 1.8f && vert > 0.2f && vert < 1.8f);
 
     // ---------------------------------------------------------------
     // Simple single-token flags
@@ -306,222 +261,8 @@ M2ClassificationResult classifyM2Model(
     r.isTorch         = torchName;
     r.isForge         = forgeName;
 
-    // ---------------------------------------------------------------
-    // Collision: shape categories (mirrors original logic ordering)
-    // ---------------------------------------------------------------
-    const bool isPlanter      = has(n, "planter");
-    const bool likelyCurb     = isPlanter || has(n, "curb")  || has(n, "base")
-                                           || has(n, "ring")  || has(n, "well");
-    const bool knownSwPlanter = has(n, "stormwindplanter")
-                              || has(n, "stormwindwindowplanter");
-    const bool bridgeName     = has(n, "bridge") || has(n, "plank") || has(n, "walkway");
-    const bool statueName     = has(n, "statue") || has(n, "monument") || has(n, "sculpture");
-    const bool sittable       = has(n, "chair")  || has(n, "bench") || has(n, "stool")
-                                                 || has(n, "seat")  || has(n, "throne");
-    const bool smallSolid     = (statueName && !sittable)
-                              || has(n, "crate") || has(n, "box")
-                              || has(n, "chest") || has(n, "barrel")
-                              || has(n, "anvil") || has(n, "mailbox")
-                              || has(n, "cauldron") || has(n, "cannon")
-                              || has(n, "wagon") || has(n, "cart")
-                              || has(n, "table") || has(n, "desk");
-    const bool chestName      = has(n, "chest");
-
-    r.collisionSteppedFountain    = has(n, "fountain");
-    r.collisionSteppedLowPlatform = !r.collisionSteppedFountain
-                                  && (knownSwPlanter || bridgeName
-                                      || (likelyCurb && (lowPlat || lowWide)));
-    r.collisionBridge             = bridgeName;
-    r.collisionPlanter            = isPlanter;
-    r.collisionStatue             = statueName;
-
-    const bool narrowVertName  = has(n, "lamp")    || has(n, "lantern")
-                               || has(n, "post")    || has(n, "pole");
-    const bool narrowVertShape = (horiz > 0.12f && horiz < 2.0f
-                               && vert  > 2.2f  && vert  > horiz * 1.8f);
-    r.collisionNarrowVerticalProp = !r.collisionSteppedFountain
-                                  && !r.collisionSteppedLowPlatform
-                                  && (narrowVertName || narrowVertShape);
-
-    // ---------------------------------------------------------------
-    // Foliage token table (sorted alphabetically)
-    // ---------------------------------------------------------------
-    static constexpr auto kFoliageTokens = std::to_array<std::string_view>({
-        "algae",      "bamboo",     "banana",     "barley",     "bean",
-        "bracken",    "bramble",    "branch",     "briar",      "brush",
-        "bush",
-        "cactus",     "canopy",     "carrot",     "cattail",    "clover",
-        "clump",      "coconut",    "coral",      "corn",       "crop",
-        "dead-grass", "dead_grass", "deadgrass",
-        "dry-grass",  "dry_grass",  "drygrass",
-        "fern",       "fernleaf",   "fireflies",  "firefly",    "fireflys",
-        "flower",     "frond",      "fungus",     "gourd",      "grapes",
-        "grass",
-        "hay",        "hedge",      "herb",       "hops",       "ivy",
-        "kelp",       "leaf",       "leaves",     "lettuce",    "lichen",
-        "lily",
-        "melon",      "moss",       "mushroom",   "nettle",
-        "okra",       "onion",
-        "palm",       "pepper",     "pinecone",   "potato",     "pumpkin",
-        "reed",       "root",
-        "sapling",    "seaweed",    "seedling",   "shrub",
-        // Blizzard's own misspelling, and it is the only spelling those models
-        // have: WETLANDSSHURB09.M2 and its siblings. Reported as grass with
-        // cobwebs that could not be walked through, and no amount of reading
-        // the token list would have found it - the name had to come off the
-        // model. The client names what blocks it now for exactly this reason.
-        "shurb",
-        "sprout",
-        "squash",     "stalk",      "thorn",      "thistle",    "toadstool",
-        "tomato",     "turnip",
-        "underbrush", "vine",       "watermelon", "weed",       "wheat",
-    });
-
-    // Words that name a structure. Foliage tokens have to be matched as
-    // substrings, because model names run words together with no separator
-    // (StranglethornFern01), which rules out matching on word boundaries. The
-    // price is that a short token lands inside an unrelated word: "thorn" in
-    // Stranglethorn, "corn" in Corner, "hops" in ShopSign, "crop" in Outcrop,
-    // "tree" in StreetSign. Every one of those made a rigid prop sway in the
-    // wind. Ranking the matches by where they end resolves it without a list of
-    // exceptions: StranglethornRuins is a ruin, DustwallowTree is still a tree.
-    static constexpr auto kStructureTokens = std::to_array<std::string_view>({
-        "arch",      "bridge",    "brick",     "cage",      "chest",
-        "cliff",     "column",    "corner",    "door",      "fence",
-        "floor",     "frame",     "gate",      "herbalism", "herbalist",
-        // A street lamp is ironwork on a post. "street" contains "tree" - the
-        // same trap this list already catches for StreetSign - so without a
-        // token that ends later in the name a StreetLamp read as a tree, and
-        // Stormwind's lamps swayed in the wind like saplings.
-        "lamp",      "lantern",
-        "outcrop",   "pillar",    "pylon",     "roof",      "rock",
-        "ruin",      "shield",    "sign",      "stair",     "statue",
-        "stone",     "tomb",      "tower",     "wall",
-        // Not a structure, but no more a plant: StranglethornWaterfall01 read
-        // as foliage from the "thorn" in the zone's name, swayed in the wind,
-        // and had its animation turned off with the rest of the foliage.
-        "waterfall",
-    });
-    const TokenMatch structureHit = lastMatchAny(n, kStructureTokens);
-
-    // "plant" is foliage unless "planter" is also present (planters are solid curbs).
-    TokenMatch foliageHit = lastMatchAny(n, kFoliageTokens);
-    if (!isPlanter) {
-        const TokenMatch plantHit = lastMatch(n, "plant");
-        if (plantHit.outranks(foliageHit)) foliageHit = plantHit;
-    }
-    const TokenMatch treeHit = lastMatch(n, "tree");
-
-    // A bed is furniture, whatever else its name contains.
-    //
-    // "canopy" is a foliage token because a tree's canopy is one, and
-    // InnBedCanopy is the only model in that family that is not a tree - the
-    // rest are Elwynn's, Duskwood's, Redridge's, Sholazar's and the quilboar's
-    // thorn canopies. Classified as foliage, the bed's four posts and its frame
-    // bent in the wind like saplings, and disableAnimation turned off whatever
-    // motion it was authored with.
-    //
-    // Ranking cannot settle this the way a structure token does: "bed" comes
-    // before "canopy" in the name and outranks() needs the structure word to be
-    // the later one - which is the whole point of that mechanism, and why
-    // "street" containing "tree" needed "lamp" after it. So this wins outright,
-    // like teleport below.
-    //
-    // Substring matching takes the dwarven wardrobes with it
-    // (warDRoBEDwarven), which is furniture too and just as much not foliage.
-    const bool furnitureName = has(n, "bed");
-
-    const bool foliageName  = foliageHit.found && !structureHit.outranks(foliageHit)
-                            && !furnitureName;
-    const bool treeLike     = treeHit.found && !structureHit.outranks(treeHit)
-                            && !furnitureName;
-    const bool fallenWood = has(n, "fallen") && (treeLike || has(n, "branch"));
-    const bool hardTreePart = has(n, "trunk") || has(n, "stump") || has(n, "log") || fallenWood;
-
-    // A teleport structure is a doorway, not an object: you walk into or onto
-    // it. TeleportTree.m2 - the Rut'theran Village portal to Darnassus - is the
-    // case that proved it. The file carries no collision geometry at all
-    // (nBoundingTriangles = 0, zeroed bounding box), so the real client lets you
-    // walk straight through the arch. But the name ends in "tree", so treeLike
-    // fired and the trunk-cylinder rule planted a solid block dead centre in the
-    // archway - an invisible wall over the portal, only passable with /unstuck.
-    //
-    // The token-ranking mechanism cannot express this: outranks() needs the
-    // structure token to appear LATER in the name, and here "teleport" comes
-    // first. So this is checked ahead of the tree rules and wins outright.
-    // It covers the whole family - arches, pads and PvP/goblin teleporters -
-    // none of which is ever an obstacle.
-    const bool teleportStructure = has(n, "teleport");
-
-    // A standing trunk is the solid part of a tree by definition. A stump or a
-    // fallen log is a low prop you step over or onto, which the small-solid
-    // rules below already describe, so those two keep their exemption.
-    const bool standingTrunk = has(n, "trunk");
-    const bool lowTreePart   = has(n, "stump") || has(n, "log") || fallenWood;
-
-    // Trees big enough to have a visible trunk → solid cylinder collision.
-    //
-    // Height decides this, not the width of the canopy. Requiring six yards of
-    // spread meant a conifer - twenty yards tall and four across - failed the
-    // test, fell through to softTree and had its collision turned off outright:
-    // a full-sized pine forest that could be walked through. Anything past
-    // about eight yards has a trunk whatever its spread, and the width rule is
-    // kept for the shorter, broader trees it was written for.
-    const bool bigEnoughForTrunk = vert > 4.0f && (horiz > 6.0f || vert > 8.0f);
-    const bool treeWithTrunk = (treeLike || standingTrunk) && !lowTreePart && !foliageName
-                             && !teleportStructure
-                             && bigEnoughForTrunk;
-    const bool softTree      = treeLike && !hardTreePart && !treeWithTrunk;
-
-    r.collisionTreeTrunk = treeWithTrunk;
-
-    const bool genericSolid     = (horiz > 0.6f && horiz < 6.0f
-                                && vert  > 0.30f && vert  < 4.0f
-                                && vert  > horiz * 0.16f) || statueName;
-    const bool curbLikeName     = has(n, "curb")   || has(n, "planter")
-                                || has(n, "ring")   || has(n, "well")  || has(n, "base");
-    const bool lowPlatLikeShape = lowWide || lowPlat;
-
-    r.collisionSmallSolidProp = !r.collisionSteppedFountain
-                              && !r.collisionSteppedLowPlatform
-                              && !r.collisionNarrowVerticalProp
-                              && !r.collisionTreeTrunk
-                              && !curbLikeName
-                              && !lowPlatLikeShape
-                              && (smallSolid
-                                  || (genericSolid && !foliageName && !softTree));
-
-    const bool carpetOrRug    = has(n, "carpet") || has(n, "rug");
-    const bool forceSolidCurb = r.collisionSteppedLowPlatform || knownSwPlanter
-                              || likelyCurb || r.collisionPlanter;
-    r.collisionNoBlock        = (foliageName || softTree || carpetOrRug) && !forceSolidCurb;
-    // Walk into the arch, walk onto the pad - never around either. Set after the
-    // curb override so nothing can put the block back.
-    if (teleportStructure) r.collisionNoBlock = true;
-    // isSpellEffect already excludes VFX from every collision path; say it
-    // outright too, so a future path that reads only this flag agrees.
-    if (particleEmitterVfx) r.collisionNoBlock = true;
-    // Ground-clutter detail cards are always non-blocking.
-    if (r.isGroundDetail) r.collisionNoBlock = true;
-    // Small doodads that aren't explicitly solid should not block movement.
-    // In WoW, only named solid objects (crates, barrels, anvils, etc.) and
-    // large structural doodads have collision - small decorative models are
-    // always walkthrough regardless of their name.
-    if (!r.collisionNoBlock && !smallSolid && !forceSolidCurb
-        && !r.collisionSteppedFountain && !r.collisionTreeTrunk
-        && !r.collisionNarrowVerticalProp && !r.collisionStatue
-        && horiz < 2.0f && vert < 2.0f) {
-        r.collisionNoBlock = true;
-    }
-
-    // ---------------------------------------------------------------
-    // Ambient creatures: fireflies, dragonflies, moths, butterflies
-    // ---------------------------------------------------------------
-    static constexpr auto kAmbientTokens = std::to_array<std::string_view>({
-        "butterfly", "dragonflies", "dragonfly",
-        "fireflies", "firefly",     "fireflys", "moth",
-    });
-    const bool ambientCreature = hasAny(n, kAmbientTokens);
+    const bool chestName    = has(n, "chest");
+    const bool fountainName = has(n, "fountain");
 
     // ---------------------------------------------------------------
     // Sky birds / bats: animated flying doodads that look frozen beyond bone range
@@ -547,52 +288,15 @@ M2ClassificationResult classifyM2Model(
                        || has(n, "icebreaker_paddlewheel");
 
     // ---------------------------------------------------------------
-    // Animation / foliage rendering flags
+    // Animation
     // ---------------------------------------------------------------
-    const bool foliageOrTree = foliageName || treeLike;
-    r.isFoliageLike    = foliageOrTree && !ambientCreature;
-    // Foliage plays its own authored Stand like every other doodad. 2.4.3 adds
-    // no motion of its own to a placed model: a tree's canopy sways because
-    // its bones are keyed (StranglethornTree02: 18 rotation tracks over a
-    // 23.3 s Stand, trunk bone unkeyed), and a model without keys stands
-    // still (StranglethornRoot01-03, StranglePlant08: one unkeyed bone).
-    // Turning the authored motion off and bending everything named like a
-    // plant in a shader wind made those roots and the palm trunks sway,
-    // which native never does.
+    // Every placed model plays its own authored Stand, whatever its name, and
+    // nothing is added to it. 2.4.3 moves a tree's canopy by its keyed bones
+    // (StranglethornTree02: 18 rotation tracks over a 23.3 s Stand, trunk bone
+    // unkeyed) and leaves a model without keys still (StranglethornRoot01-03,
+    // ElwynnBush01, the static banners of the Temple of Telhamat: dr_banner01
+    // has one unkeyed bone and hangs still beside WoWee's old cloth sway).
     r.disableAnimation = chestName;
-    // Ground clutter is foliage whether or not its name says so: the detail
-    // doodads the ground-effect scatterer places are grass, weeds and flowers,
-    // and most of them are named for their tileset rather than for a plant
-    // (ElwGra01, 8DE_Detail02). The player's passage applies to them, and
-    // their shadows are cut out by the leaf texture's alpha.
-    //
-    // Except the wooden parts of a tree, which are not foliage however much
-    // the name says "tree": a stump, a fallen log and a bare trunk are solid
-    // timber, and hardTreePart is already exactly that set.
-    r.cutoutFoliage = (r.isFoliageLike || r.isGroundDetail) && !hardTreePart;
-    // Cloth: banners, flags, tapestries, pennants.
-    //
-    // The name is all this sees, and it is not enough on its own. It used to
-    // say the pole in the same model barely moves because the sway is applied
-    // from the top down - which is backwards: a standard planted in the ground
-    // has its foot where the weight is greatest, and that is what swung the
-    // Undercity gate's flagpole hardest at its base. The caller settles both
-    // halves from the geometry the classifier never sees - whether the model
-    // is painted as cloth at all, whether its own bones already move it, and
-    // which end it is held by. See m2_renderer.cpp.
-    //
-    // "flag" alone is not enough here either: a flagstone is a floor tile, and
-    // swaying a floor is worse than a still banner.
-    const bool flagCloth = has(n, "flag") && !has(n, "flagstone") &&
-                           !has(n, "flagging");
-    r.isHangingCloth = !r.isFoliageLike &&
-                       (has(n, "banner") || flagCloth || has(n, "tapestry") ||
-                        has(n, "pennant"));
-
-    // Small foliage: foliage-like models with a small bounding box.
-    // Used to skip rendering during taxi/flight for performance.
-    r.isSmallFoliage = r.isFoliageLike && !treeLike
-                     && horiz < 3.0f && vert < 2.0f;
 
     // ---------------------------------------------------------------
     // Spell effects (named tokens + particle-dominated geometry heuristic)
@@ -633,7 +337,7 @@ M2ClassificationResult classifyM2Model(
         r.ambientEmitterType = AmbientEmitterType::Torch;
     } else if (forgeName) {
         r.ambientEmitterType = AmbientEmitterType::Forge;
-    } else if (r.collisionSteppedFountain) {
+    } else if (fountainName) {
         r.ambientEmitterType = AmbientEmitterType::Fountain;
     } else if (r.isWaterfall) {
         r.ambientEmitterType = AmbientEmitterType::Waterfall;
