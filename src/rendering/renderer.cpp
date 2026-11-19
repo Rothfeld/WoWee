@@ -2047,11 +2047,14 @@ void Renderer::update(float deltaTime) {
 
     // Resolve WMO containment before weather and ambience consume it. Server
     // weather remains authoritative outdoors, but particles must not follow the
-    // camera through a roof into Ironforge or other enclosed WMOs.
+    // camera through a roof into Ironforge or other enclosed WMOs. Indoor
+    // groups (MOGP 0x2000) only: the Sunwell Plateau entrance stands inside
+    // the box of sunwell_raid_facade.wmo's outdoor groups, and 2.4.3 rains
+    // there; any group's box turned the zone's rain off.
     const bool canQueryWmo = (camera && wmoRenderer);
     const glm::vec3 camPos = camera ? camera->getPosition() : glm::vec3(0.0f);
     const bool insideWmo = canQueryWmo &&
-        wmoRenderer->isInsideWMO(camPos.x, camPos.y, camPos.z);
+        wmoRenderer->isInsideInteriorWMO(camPos.x, camPos.y, camPos.z);
     const auto playerInterior = wmoRenderer
         ? wmoRenderer->getInteriorLocation(characterPosition + glm::vec3(0, 0, 0.1f))
         : std::optional<WMORenderer::InteriorLocation>{};
@@ -2149,11 +2152,8 @@ void Renderer::update(float deltaTime) {
             }
             weather->setEnabled(!insideWmo);
             // Off in indoor WMO groups only. The ruins of Ahn'Qiraj are outdoor
-            // WMO groups, and 2.4.3 draws the storm among them; isInsideWMO
-            // counts any group's box and turned it off there.
-            const bool cameraIndoors = wmoRenderer &&
-                wmoRenderer->isInsideInteriorWMO(camPos.x, camPos.y, camPos.z);
-            sandStormTarget_ = (!cameraIndoors &&
+            // WMO groups, and 2.4.3 draws the storm among them.
+            sandStormTarget_ = (!insideWmo &&
                                 game::weatherKind(wType) == game::WeatherKind::SANDSTORM) ? wInt : 0.0f;
 
             // Lightning flash disabled
