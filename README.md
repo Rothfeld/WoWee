@@ -3072,6 +3072,39 @@ restrictions (ADDON_ACTION_BLOCKED) and data taint are not modelled.
 Evidence and probe addon: `_experiments/20261118T010104Z.lua_conventions`
 in the workspace.
 
+### AddOn loading as 2.4.3 does it
+
+Measured on build 8606 with twenty 2.4.3-era addons (Recount, Omen, PitBull,
+X-Perl, Titan Panel, Prat, Bagnon, DBM, BigWigs, QuestHelper, ...):
+
+- Folder-name order without regard to case; each addon after its required
+  dependencies (`## Dependencies`, `## RequiredDeps`, `## Dep*`, a
+  load-on-demand one included) and its present optional ones. A missing or
+  disabled required dependency is DEP_MISSING / DEP_DISABLED.
+- With checkAddonVersion "1" (default) only `## Interface: 20400` loads:
+  20300/30000 are INTERFACE_VERSION, no Interface line is INCOMPATIBLE.
+  Blizzard_* are exempt.
+- ADDON_LOADED fires even when one of the addon's files raised.
+- XML `<Script file>`/`<Include file>` run where they stand in the document
+  (`__WoweeXmlStep`), not before the frames. UTF-8 byte order marks in .toc and
+  XML are skipped. `$Parent` is `$parent`.
+- IsLoggedIn() is nil while addon files run and 1 from PLAYER_LOGIN on; /reload
+  sends PLAYER_LEAVING_WORLD and PLAYER_LOGOUT first. UIParent is screen-sized
+  while addons load.
+- No built-in LibStub or CallbackHandler (the addons bring their own);
+  collectgarbage and the `bit` library exist.
+- The frame references this client keeps per frame (parent, tooltip owner,
+  font string, bar fill, scroll child) live in `__WoweePriv(frame)`, not in
+  the frame's table: PitBull resets every frame-valued field of its unit
+  frames and collapsed UIParent when they were plain fields. Other `__`
+  fields (`__wid`, `__scripts`, ...) are still in the table; native has
+  only `[0]` there.
+
+Gotcha: a GM-mode character (`.gm on`) has faction template 35, so
+UnitFactionGroup("player") is nil on both clients and AceDB-3.0 fails to load.
+Evidence, sources and per-addon table: `_experiments/20261119T093431Z.tbc_addons`
+in the workspace.
+
 ### Frame pacing (maxFPS, maxFPSBk)
 
 The main loop applies build 8606's maxFPS and maxFPSBk CVars (both default 0)
