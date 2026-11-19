@@ -1513,6 +1513,17 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
 
     const auto prerequisite = spellPrerequisite(owner_, spellId,
         targetGuid != 0 ? targetGuid : owner_.getTargetGuid());
+    // A melee ability with nothing selected: native 2.4.3 answers Shield
+    // Bash in Berserker Stance and Execute without rage alike with "There is
+    // nothing to attack." (ERR_NO_ATTACK_TARGET) and no UNIT_SPELLCAST_FAILED,
+    // ahead of power and form. Melee is the spell's SpellRange flag.
+    if ((prerequisite == SpellPrerequisite::Ready || prerequisite == SpellPrerequisite::NoPower) &&
+        (targetGuid != 0 ? targetGuid : owner_.getTargetGuid()) == 0 &&
+        (owner_.getSpellData(spellId).rangeFlags & spellclass::kSpellRangeFlagMelee) &&
+        spellclass::requiresHostileTarget(getSpellImplicitTargetA(spellId))) {
+        raiseGlobalStringError(owner_, "ERR_NO_ATTACK_TARGET");
+        return;
+    }
     switch (prerequisite) {
         case SpellPrerequisite::Ready: break;
         case SpellPrerequisite::Unknown:
@@ -1547,8 +1558,24 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                 raiseGlobalStringError(owner_, name);
             else
                 LOG_ERROR("Cast rejected for spell ", spellId, ": GlobalStrings has no line for its resource");
+            // A refused cast is a failed one to the interface: native 2.4.3,
+            // /cast Intercept with no rage in Battle Stance, fires
+            // UI_ERROR_MESSAGE "Not enough rage" then UNIT_SPELLCAST_FAILED.
+            if (owner_.addonEventCallbackRef())
+                owner_.addonEventCallbackRef()("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             return;
         }
+    }
+    // The form, after power and before the target: native 2.4.3, /cast
+    // Intercept in Battle Stance with nothing selected, says "Not enough
+    // rage" at 0 rage and "Must be in Berserker Stance" with rage, each with
+    // UNIT_SPELLCAST_FAILED, never "You have no target.".
+    if (const auto* entry = owner_.getSpellNameEntry(spellId); entry && !formAllows(owner_, *entry) &&
+        prerequisite != SpellPrerequisite::Stealth) {
+        const std::string text = castFailureText(owner_, spellId, kCastResultOnlyShapeshift, 0, 0);
+        if (!text.empty()) owner_.raiseUiError(text);
+        owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+        return;
     }
     // SPELL_ATTR_HELD_ITEM_ONLY (0x200): cast at the main-hand item, which the
     // client picks itself (the shaman weapon imbues). Native 2.4.3 with the
