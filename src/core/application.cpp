@@ -5857,6 +5857,13 @@ void Application::render() {
     }
 
     runRenderStage("endFrame", [&] { renderer->endFrame(); });
+    {
+        const auto& t = renderer->lastEndFrameTimes();
+        noteStageTime("endFrame/post-process", t.postProcess);
+        noteStageTime("endFrame/interface", t.interface);
+        noteStageTime("endFrame/submit", t.submit);
+        noteStageTime("endFrame/present", t.present);
+    }
 
     // A picture of the client, written once and then done with.
     //

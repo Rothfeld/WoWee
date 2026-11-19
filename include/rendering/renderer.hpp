@@ -92,6 +92,12 @@ public:
     void beginFrame();
     void endFrame();
 
+    /// Where the last endFrame spent its time, in milliseconds, for the frame
+    /// budget report: recording the post-process and interface passes, the
+    /// queue submit, and the present.
+    struct EndFrameTimes { float postProcess = 0, interface = 0, submit = 0, present = 0; };
+    [[nodiscard]] const EndFrameTimes& lastEndFrameTimes() const { return endFrameTimes_; }
+
     /// Recorded after the interface is drawn and before the frame is submitted,
     /// into the frame's own command buffer. A second window draws here - see
     /// AuxSwapchain - so the frame's one fence covers it. Empty clears it.
@@ -544,6 +550,7 @@ private:
     bool worldDrawnLastFrame_ = false;
     std::chrono::steady_clock::time_point lastFrameStart_{};
     float lastDeltaTime_ = 0.0f;           // cached for post-process pipeline
+    EndFrameTimes endFrameTimes_;
     bool createSecondaryCommandResources();
     void destroySecondaryCommandResources();
     VkCommandBuffer beginSecondary(uint32_t secondaryIndex);

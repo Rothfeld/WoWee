@@ -1443,6 +1443,10 @@ void Renderer::endFrame() {
     if (!vkCtx || currentCmd == VK_NULL_HANDLE) return;
 
     logViewDistanceDiag();
+    const auto msSince = [](std::chrono::steady_clock::time_point from) {
+        return std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - from).count();
+    };
+    const auto postProcessStart = std::chrono::steady_clock::now();
 
     // Post-process execution (§4.3 - delegates to PostProcessPipeline). Whether
     // it swapped the scene pass for an INLINE one no longer matters to the
@@ -1494,6 +1498,9 @@ void Renderer::endFrame() {
     }
     vkCtx->prepareWorldLabelDepth(currentCmd, labelDepth, labelDepthMsaa, labelDepthLayout);
 
+    endFrameTimes_.postProcess = msSince(postProcessStart);
+    const auto interfaceStart = std::chrono::steady_clock::now();
+
     const auto& overlayFbs = vkCtx->getOverlayFramebuffers();
     if (vkCtx->getOverlayRenderPass() != VK_NULL_HANDLE && currentImageIndex < overlayFbs.size()) {
         VkRenderPassBeginInfo overlayRp{};
@@ -1539,8 +1546,12 @@ void Renderer::endFrame() {
     // recording dot, which it does not.
     recordScreenCapture();
 
+    endFrameTimes_.interface = msSince(interfaceStart);
+
     // Submit and present
     vkCtx->endFrame(currentCmd, currentImageIndex);
+    endFrameTimes_.submit = vkCtx->lastSubmitMs();
+    endFrameTimes_.present = vkCtx->lastPresentMs();
     currentCmd = VK_NULL_HANDLE;
 }
 

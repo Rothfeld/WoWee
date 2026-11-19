@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include <set>
+#include <chrono>
 #include <thread>
 #include <mutex>
 #include "rendering/vk_context.hpp"
@@ -3188,9 +3189,13 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
     submitInfo.signalSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
     submitInfo.pSignalSemaphores = signalSemaphores.data();
 
+    const auto submitStart = std::chrono::steady_clock::now();
     VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo,
                                           frameTimeline_ != VK_NULL_HANDLE ? VK_NULL_HANDLE
                                                                            : frame.inFlightFence);
+    const auto presentStart = std::chrono::steady_clock::now();
+    lastSubmitMs_ = std::chrono::duration<float, std::milli>(presentStart - submitStart).count();
+    lastPresentMs_ = 0.0f;
     if (submitResult == VK_SUCCESS && frameTimeline_ != VK_NULL_HANDLE) {
         // Only once the submit is in: on failure the timeline is never
         // signalled, and a slot left waiting on an unreachable value would
@@ -3272,6 +3277,8 @@ void VkContext::endFrame(VkCommandBuffer cmd, uint32_t imageIndex) {
         const VkResult extraResult = vkQueuePresentKHR(presentQueue, &extraInfo);
         if (extra.onResult) extra.onResult(extraResult);
     }
+    lastPresentMs_ = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - presentStart).count();
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }

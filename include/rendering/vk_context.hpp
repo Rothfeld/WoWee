@@ -88,6 +88,10 @@ public:
     // Frame operations
     VkCommandBuffer beginFrame(uint32_t& imageIndex);
     void endFrame(VkCommandBuffer cmd, uint32_t imageIndex);
+    /// Milliseconds the last endFrame spent in vkQueueSubmit and in
+    /// vkQueuePresentKHR (every swapchain presented that frame).
+    [[nodiscard]] float lastSubmitMs() const { return lastSubmitMs_; }
+    [[nodiscard]] float lastPresentMs() const { return lastPresentMs_; }
 
     /// A second window presented by this frame, recorded into its command buffer.
     ///
@@ -430,6 +434,8 @@ private:
     bool surfaceLost_ = false;
     bool deviceLost_ = false;
     bool vsync_ = true;
+    float lastSubmitMs_ = 0.0f;
+    float lastPresentMs_ = 0.0f;
     /// The vsync state the present-mode line last reported, so a rebuild
     /// that changes nothing says nothing. -1 until the first swapchain.
     int loggedPresentVsync_ = -1;
