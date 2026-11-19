@@ -20,9 +20,6 @@ layout(set = 0, binding = 0) uniform PerFrame {
     mat4 rtViewProj;
     vec4 rtCameraPos;
     vec4 rtParams;
-    vec4 specularColor;
-    vec4 outdoorFogColor;
-    vec4 outdoorFogParams;  // x = start, y = end
 };
 
 #include "rt_lighting.glsli"
@@ -301,24 +298,13 @@ vec4 fogVolumeAt(vec3 worldPos) {
     return textureLod(uFogVolume, vec3(uv, slice - 0.5 / volumetricParams.w), 0.0);
 }
 
-// The fog a surface takes (selectFog): fogColor/fogParams are the fog around
-// the camera - a WMO interior's MFOG while it is in one - which belongs to
-// surfaces lit as an interior; everything else takes the outdoor Light.dbc
-// fog, outdoorFogColor/outdoorFogParams (docs/wmo-fog.md).
-vec4 gFogColor;
-vec4 gFogParams;
-void selectFog(bool interior) {
-    gFogColor = interior ? fogColor : outdoorFogColor;
-    gFogParams = interior ? fogParams : outdoorFogParams;
-}
-
 // The zone's distance fog, then the air in front of it. The distance fog is
 // the far haze the sky is painted to meet, so it goes on first; the volume is
 // everything between the camera and that, sunlit shafts and torch glow
 // included.
 vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
-    float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
-    color = mix(gFogColor.rgb, color, fogFactor);
+    float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
+    color = mix(fogColor.rgb, color, fogFactor);
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeAt(worldPos);
         color = color * air.a + air.rgb;
@@ -327,7 +313,6 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
-    selectFog(interiorLit != 0);
     TexCoord = unitCoord(texCoordSet, vec2(uvOffsetX, uvOffsetY));
     vec4 secondColor = textureCount == 2
         ? texture(uTexture2, unitCoord(texCoordSet2, vec2(uvOffset2X, uvOffset2Y)))
@@ -526,7 +511,7 @@ void main() {
         // A faded model's multiply layer fades toward that factor too, as an
         // additive one adds less light: a stealthed Warglaive of Azzinoth's
         // Mod2x reflection otherwise whitened the 0.3 blade.
-        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
         vec3 neutral = vec3(blendMode == 5 ? 1.0 : 0.5);
         outColor = vec4(mix(neutral, texColor.rgb, fogFactor * opacity), texColor.a * opacity);
         return;
@@ -534,7 +519,7 @@ void main() {
     if (blendMode == 3 || blendMode == 4 || blendMode == 7) {
         // Additive, as m2.frag: distance and air only take light away; mixing
         // toward the fog colour would add that colour over the card's black.
-        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
         result *= fogFactor;
         if (volumetricParams.x > 0.5) result *= fogVolumeAt(FragPos).a;
     } else {

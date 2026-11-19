@@ -17,12 +17,6 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 localLightColorIntensity[64];
     ivec4 localLightMeta;
     vec4 volumetricParams;  // x = on, y = near, z = 1 / ln(far / near), w = slices
-    mat4 rtViewProj;
-    vec4 rtCameraPos;
-    vec4 rtParams;
-    vec4 specularColor;
-    vec4 outdoorFogColor;
-    vec4 outdoorFogParams;  // x = start, y = end
 };
 
 layout(set = 0, binding = 2) uniform sampler3D uFogVolume;
@@ -38,7 +32,6 @@ layout(push_constant) uniform Push {
     float sceneValid; // 1 once the refraction capture holds a frame, 0 before it
     float legacyWmoMode;
     float textureX, textureY; // water: texture repeats across the surface; authored magma: texture offset
-    float interiorFog; // 1: liquid of a WMO interior group, fogged by the interior fog
 } push;
 
 layout(set = 1, binding = 0) uniform WaterMaterial {
@@ -277,24 +270,13 @@ vec4 fogVolumeAt(vec3 worldPos) {
     return textureLod(uFogVolume, vec3(uv, slice - 0.5 / volumetricParams.w), 0.0);
 }
 
-// The fog a surface takes (selectFog): fogColor/fogParams are the fog around
-// the camera - a WMO interior's MFOG while it is in one - which belongs to
-// surfaces lit as an interior; everything else takes the outdoor Light.dbc
-// fog, outdoorFogColor/outdoorFogParams (docs/wmo-fog.md).
-vec4 gFogColor;
-vec4 gFogParams;
-void selectFog(bool interior) {
-    gFogColor = interior ? fogColor : outdoorFogColor;
-    gFogParams = interior ? fogParams : outdoorFogParams;
-}
-
 // The zone's distance fog, then the air in front of it. The distance fog is
 // the far haze the sky is painted to meet, so it goes on first; the volume is
 // everything between the camera and that, sunlit shafts and torch glow
 // included.
 vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
-    float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
-    color = mix(gFogColor.rgb, color, fogFactor);
+    float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
+    color = mix(fogColor.rgb, color, fogFactor);
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeAt(worldPos);
         color = color * air.a + air.rgb;
@@ -303,7 +285,6 @@ vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
 }
 
 void main() {
-    selectFog(push.interiorFog > 0.5);
     float time = fogParams.z;
     float basicType = push.liquidBasicType;
     if (push.legacyWmoMode > 3.5) {

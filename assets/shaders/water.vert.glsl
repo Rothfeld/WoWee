@@ -39,7 +39,6 @@ layout(push_constant) uniform Push {
     float sceneValid;
     float legacyWmoMode;
     float textureX, textureY; // water: texture repeats across the surface; authored magma: texture offset
-    float interiorFog;
 } push;
 
 layout(location = 0) in vec3 aPos;

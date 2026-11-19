@@ -20,9 +20,6 @@ layout(set = 0, binding = 0) uniform PerFrame {
     mat4 rtViewProj;
     vec4 rtCameraPos;
     vec4 rtParams;
-    vec4 specularColor;
-    vec4 outdoorFogColor;
-    vec4 outdoorFogParams;  // x = start, y = end
 };
 
 #include "rt_lighting.glsli"
@@ -153,24 +150,13 @@ vec4 fogVolumeAt(vec3 worldPos) {
     return textureLod(uFogVolume, vec3(uv, slice - 0.5 / volumetricParams.w), 0.0);
 }
 
-// The fog a surface takes (selectFog): fogColor/fogParams are the fog around
-// the camera - a WMO interior's MFOG while it is in one - which belongs to
-// surfaces lit as an interior; everything else takes the outdoor Light.dbc
-// fog, outdoorFogColor/outdoorFogParams (docs/wmo-fog.md).
-vec4 gFogColor;
-vec4 gFogParams;
-void selectFog(bool interior) {
-    gFogColor = interior ? fogColor : outdoorFogColor;
-    gFogParams = interior ? fogParams : outdoorFogParams;
-}
-
 // The zone's distance fog, then the air in front of it. The distance fog is
 // the far haze the sky is painted to meet, so it goes on first; the volume is
 // everything between the camera and that, sunlit shafts and torch glow
 // included.
 vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
-    float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
-    color = mix(gFogColor.rgb, color, fogFactor);
+    float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
+    color = mix(fogColor.rgb, color, fogFactor);
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeAt(worldPos);
         color = color * air.a + air.rgb;
@@ -246,14 +232,6 @@ void main() {
         return;
     }
 
-    selectFog(vIndoorLighting.w > 0.5);
-    // An outdoor doodad is not drawn past the outdoor fog's end; the sky
-    // shows there. Terrain goes on past it. Black Temple's floating rocks
-    // (shadowmoon_overhangrock_large_01, 509 yards from the stairs to
-    // Illidan's door, fog end 389) are absent in 8606 with farclip 1277, and
-    // at farclip 177 Nagrand's floating islands over Garadar go while the
-    // mountains behind them stay (docs/wmo-fog.md).
-    if (vIndoorLighting.w <= 0.5 && length(viewPos.xyz - FragPos) > outdoorFogParams.y) discard;
     if (alphaTest == 3) {
         // Ground clutter blends by its texture alpha. 2.4.3 draws detail
         // doodads with soft, see-through blade edges where its alpha-key
@@ -345,7 +323,7 @@ void main() {
         // Distance can only take an additive contribution away, and so can
         // the air in front of it: its own light is already in the scene
         // behind the card.
-        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        float fogFactor = clamp((fogParams.y - dist) / (fogParams.y - fogParams.x), 0.0, 1.0);
         result *= fogFactor;
         if (volumetricParams.x > 0.5) result *= fogVolumeAt(FragPos).a;
     } else {

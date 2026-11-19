@@ -14,39 +14,8 @@ Black Temple's open courtyard (blacktemple.wmo group 8, 0x43a41) shows the
 map's dark green Light 592 fog natively, not its teal MFOG record 0.
 Record zero supplies default WMO fog. Referenced local spheres contribute between
 their inner and outer radii; duplicate references do not multiply their weight.
-The infinite-radius flag bypasses the distance test.
-
-The sampled fog is the fog of interior surfaces only. The frame UBO's
-`fogColor`/`fogParams` carry it while the camera is in such a group, and
-`outdoorFogColor`/`outdoorFogParams` keep the Light.dbc fog. A surface takes the
-camera's fog when it is lit as an interior: WMO groups with `isInterior`, M2s
-with an interior light (WMO doodads, game objects standing in such a group),
-units with `interiorLit`, and liquids of interior groups (`push.interiorFog`).
-Terrain, grass, outdoor doodads, exterior groups and outdoor liquids take the
-outdoor fog. Particles, ribbons and the sky still read `fogColor`/`fogParams`.
-
-An outdoor M2 (one without an interior light) is not drawn past the outdoor
-fog's end (`m2.frag.glsl` discards there); the sky shows instead. Terrain, WMOs
-and units are still drawn past it, fully fogged.
-
-Native evidence, build 8606, `_experiments/20261119T084535Z.bt_cyan_planes/` in
-the workspace (pair 24, `farclip` raised to 1277 unless noted):
-- Black Temple, stairs up to Illidan's door (blacktemple.wmo group 23, teal
-  MFOG record 0, end 417; open the gate with `.gobject activate 5640021 185905`):
-  sky through the roof openings, where WoWee drew the floating rocks
-  (shadowmoon_overhangrock_large_01, 509 yd) as flat teal shapes, and with
-  the outdoor fog as flat dark olive ones (outdoor fog end 389).
-- Black Temple, Illidan's terrace: sky where WoWee drew the same rocks as flat
-  dark olive shapes.
-- Echo Ridge Mine entrance (md_goldmine.wmo, MFOG ends 69 and 200): Northshire's
-  trees outside keep their colours through the entrance.
-- Garadar, Nagrand: at `farclip` 177 the floating island over the town is gone
-  while the mountains behind it stay; at 1277 both are drawn. Clipping terrain at
-  WoWee's outdoor fog end as well removed those mountains, so only M2s are cut.
-
-Gotchas: `DistCull` is clamped at 500 and neither it (1 to 500) nor `SmallCull` 0
-changed what 8606 drew in these views. Typing into the native chat right after
-another line can drop the first character, so `/console ...` becomes a /say.
+The infinite-radius flag bypasses the distance test. The shared frame UBO receives
+the resulting fog, so buildings and characters use the same haze.
 
 Do not use the first group reference unconditionally. Exodar group references
 include blue sphere1 even where native displays default purple sphere0; a paired
