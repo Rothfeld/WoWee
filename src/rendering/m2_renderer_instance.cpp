@@ -561,8 +561,6 @@ void M2Renderer::clear() {
     instanceIndexById.clear();
     boneSeedInstanceByModel_.clear();
     instanceDedupMap_.clear();
-    for (auto& ids : cullSubmittedIds_) ids.clear();
-    for (auto& ids : cullReadableIds_) ids.clear();
     animatedInstanceIndices_.clear();
     particleOnlyInstanceIndices_.clear();
     particleInstanceIndices_.clear();
@@ -590,8 +588,6 @@ void M2Renderer::clearInstances() {
     instanceIndexById.clear();
     boneSeedInstanceByModel_.clear();
     instanceDedupMap_.clear();
-    for (auto& ids : cullSubmittedIds_) ids.clear();
-    for (auto& ids : cullReadableIds_) ids.clear();
     animatedInstanceIndices_.clear();
     particleOnlyInstanceIndices_.clear();
     particleInstanceIndices_.clear();

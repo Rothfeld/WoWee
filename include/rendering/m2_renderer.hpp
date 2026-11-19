@@ -41,7 +41,6 @@ namespace rendering {
 class Camera;
 class VkContext;
 class VkTexture;
-class HiZSystem;
 class RtScene;
 
 // Ceiling on the bone matrices computed and uploaded for one M2 instance.
@@ -367,24 +366,13 @@ struct M2Instance {
     glm::vec3 cachedCullCenter{0.0f};              // transformed visual-bounds center
     float cachedVisualRadius = 0.0f;               // transformed visual-bounds half diagonal
     // Pre-computed per-instance cull factors (depend only on static flags + scale +
-    // bound radius), populated by recomputeCachedCullFactors(). The per-frame SSBO
-    // upload just multiplies by the smoothed render distance and packs the rest.
+    // bound radius), populated by recomputeCachedCullFactors(). Each frame's cull
+    // multiplies them by the smoothed render distance.
     float cachedEffectiveMaxDistSqFactor = 1.0f;  // multiplied by maxRenderDistanceSq each frame
-    float cachedPaddedRadius = 0.0f;              // sphere radius used by the cull compute
+    float cachedPaddedRadius = 0.0f;              // frustum-test sphere radius
     float portalSpinAngle = 0.0f;  // Accumulated spin angle for portal rotation
     const M2ModelGPU* cachedModel = nullptr;  // Avoid per-frame hash lookups
 
-    // Result of the most recent GPU cull dispatch that actually covered this
-    // instance, matched back by instance ID (never by array index - see
-    // cullSubmittedIds_).  Defaults to visible so an instance created after the
-    // in-flight dispatch draws immediately instead of waiting ~2 frames for its
-    // first cull result.
-    uint8_t lastCullVisible = 1;
-    // Consecutive frames this instance has been culled (capped at 3), used for
-    // the HiZ `previouslyVisible` hysteresis.  Defaults to 2 ("not recently
-    // visible") so a freshly spawned instance skips the HiZ test rather than
-    // being judged against depth data that never contained it.
-    uint8_t hizPrevCulledFrames = 2;
     // Server game object (mailbox, chest, node, door). Set by the spawner.
     bool isGameObject = false;
     // Spell visual (SpellVisualSystem): a glow, beam end or state kit on a unit
@@ -550,8 +538,6 @@ public:
      */
     /** Pre-allocate GPU resources (bone SSBOs, descriptors) on main thread before parallel render. */
     void prepareRender(uint32_t frameIndex, const Camera& camera);
-    /** Dispatch GPU frustum culling compute shader on primary cmd before render pass. */
-    void dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, const Camera& camera);
     // Split command buffers let world opaque geometry execute before characters.
     // Inline recording uses afterOpaque to insert characters at the same boundary.
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
@@ -565,9 +551,6 @@ public:
                                glm::vec4* outColorIntensity,
                                uint32_t maxLights) const;
 
-    /** Set the HiZ system for occlusion culling (Phase 6.3). nullptr disables HiZ. */
-    void setHiZSystem(HiZSystem* hiz) { hizSystem_ = hiz; }
-
     /// Where loaded models register their geometry for the ray traced
     /// lighting. Static doodads only - animated models would cast their
     /// bind pose. Not given to the sky's renderer.
@@ -576,10 +559,6 @@ public:
     /// while the lighting is on.
     void syncRtScene();
     void setForceNoCull(bool v) { forceNoCull_ = v; }
-
-    /** Ensure GPU→CPU cull output is visible to the host after a fence wait.
-     *  Call after the early compute submission finishes (endSingleTimeCommands). */
-    void invalidateCullOutput(uint32_t frameIndex);
 
     /**
      * Initialize shadow pipeline (Phase 7)
@@ -1065,47 +1044,6 @@ private:
     VkDescriptorSet instanceSet_[2] = {};
     uint32_t instanceDataCount_ = 0; // reset each frame in render()
 
-    // GPU Frustum Culling via Compute Shader
-    // Compute shader tests each M2 instance against frustum planes + distance, writes visibility[].
-    // CPU reads back visibility to build sortedVisible_ without per-instance frustum/distance tests.
-    struct CullInstanceGPU {        // matches CullInstance in m2_cull.comp.glsl (32 bytes, std430)
-        glm::vec4 sphere;           // xyz = world position, w = padded radius
-        float effectiveMaxDistSq;   // adaptive distance cull threshold
-        uint32_t flags;             // bit 0 = valid, bit 1 = smoke, bit 2 = invisibleTrap
-        float _pad[2] = {};
-    };
-    struct CullUniformsGPU {        // matches CullUniforms in m2_cull_hiz.comp.glsl (std140)
-        glm::vec4 frustumPlanes[6]; // xyz = normal, w = distance         (96 bytes)
-        glm::vec4 cameraPos;        // xyz = camera position, w = maxPossibleDistSq (16 bytes)
-        uint32_t instanceCount;     //                                    (4 bytes)
-        uint32_t hizEnabled;        // 1 = HiZ occlusion active           (4 bytes)
-        uint32_t hizMipLevels;      // mip levels in HiZ pyramid          (4 bytes)
-        uint32_t _pad2 = {};        //                                    (4 bytes)
-        glm::vec4 hizParams;        // x=pyramidW, y=pyramidH, z=nearPlane, w=unused (16 bytes)
-        glm::mat4 viewProj;         // current frame view-projection                 (64 bytes)
-        glm::mat4 prevViewProj;     // previous frame VP for HiZ reprojection        (64 bytes)
-    };                              // Total: 272 bytes
-    static constexpr uint32_t MAX_CULL_INSTANCES = 24576;
-    VkPipeline cullPipeline_ = VK_NULL_HANDLE;           // frustum-only (fallback)
-    VkPipeline cullHiZPipeline_ = VK_NULL_HANDLE;        // frustum + HiZ occlusion
-    VkPipelineLayout cullPipelineLayout_ = VK_NULL_HANDLE;  // frustum-only layout (set 0)
-    VkPipelineLayout cullHiZPipelineLayout_ = VK_NULL_HANDLE; // HiZ layout (set 0 + set 1)
-    VkDescriptorSetLayout cullSetLayout_ = VK_NULL_HANDLE;
-    VkDescriptorPool cullDescPool_ = VK_NULL_HANDLE;
-    VkDescriptorSet cullSet_[2] = {};               // double-buffered
-    ::VkBuffer cullUniformBuffer_[2] = {};           // frustum planes + camera + HiZ params (UBO)
-    VmaAllocation cullUniformAlloc_[2] = {};
-    void* cullUniformMapped_[2] = {};
-    ::VkBuffer cullInputBuffer_[2] = {};             // per-instance bounding sphere + flags (SSBO)
-    VmaAllocation cullInputAlloc_[2] = {};
-    void* cullInputMapped_[2] = {};
-    ::VkBuffer cullOutputBuffer_[2] = {};            // uint visibility[] (SSBO, host-readable)
-    VmaAllocation cullOutputAlloc_[2] = {};
-    void* cullOutputMapped_[2] = {};
-
-    // HiZ occlusion culling (Phase 6.3) - optional, driven by Renderer
-    HiZSystem* hizSystem_ = nullptr;
-
     RtScene* rtScene_ = nullptr;
     // RtScene instances this renderer owns, and per RtScene instance id the
     // sync generation that last saw it and the mesh it places.
@@ -1115,25 +1053,6 @@ private:
     uint64_t rtSyncGeneration_ = 0;
     void registerRtModel(M2ModelGPU& gpuModel, const pipeline::M2Model& model);
     void releaseRtModel(M2ModelGPU& gpuModel);
-
-    // Previous frame's view-projection for temporal reprojection in HiZ culling.
-    // Stored each frame so the cull shader can project into the same screen space
-    // as the depth buffer the HiZ pyramid was built from.
-    glm::mat4 prevVP_{1.0f};
-
-    // Instance IDs, in dispatch order, for the cull results a frame slot holds.
-    //
-    // The visibility SSBO is read back one full slot cycle after it is written:
-    // dispatchCullCompute() records a dispatch into this frame's command buffer,
-    // and render() reads the mapped output of the dispatch recorded on the SAME
-    // slot ~2 frames earlier.  Array indices are not stable across that gap -
-    // createInstance() appends and removeInstance() swap-removes, so slot i can
-    // easily describe a different object by the time it is read.  Recording the
-    // IDs lets render() match each result back to the instance it was computed
-    // for.  cullSubmittedIds_ is the dispatch just recorded (results not ready);
-    // cullReadableIds_ is the previous one, matching the mapped data now.
-    std::vector<uint32_t> cullSubmittedIds_[2];
-    std::vector<uint32_t> cullReadableIds_[2];
 
     // Dynamic ribbon vertex buffer (CPU-written triangle strip)
     static constexpr size_t MAX_RIBBON_VERTS = 2048;  // initial ribbonVB_ size, 9 floats each

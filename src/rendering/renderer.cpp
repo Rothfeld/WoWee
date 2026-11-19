@@ -40,7 +40,6 @@
 #include "pipeline/grass_population.hpp"
 #include "pipeline/grass_terrain.hpp"
 #include "rendering/grass_renderer.hpp"
-#include "rendering/hiz_system.hpp"
 #include "rendering/volumetric_fog.hpp"
 #include "rendering/sun_shafts.hpp"
 #include "rendering/rt_lighting.hpp"
@@ -1018,10 +1017,6 @@ void Renderer::shutdown() {
     }
 
     LOG_DEBUG("Renderer::shutdown - m2Renderer...");
-    if (hizSystem_) {
-        hizSystem_->shutdown();
-        hizSystem_.reset();
-    }
     if (m2Renderer) {
         m2Renderer->shutdown();
         m2Renderer.reset();
@@ -1174,17 +1169,6 @@ void Renderer::applyMsaaChange() {
         minimap->recreatePipelines();
     }
 
-    // Resize HiZ pyramid (depth format/MSAA may have changed)
-    if (hizSystem_) {
-        auto ext = vkCtx->getSwapchainExtent();
-        if (!hizSystem_->resize(ext.width, ext.height)) {
-            LOG_WARNING("HiZ resize failed after MSAA change");
-            if (m2Renderer) m2Renderer->setHiZSystem(nullptr);
-            hizSystem_->shutdown();
-            hizSystem_.reset();
-        }
-    }
-
     // Selection circle + overlay + FSR use lazy init, just destroy them
     if (overlaySystem_) overlaySystem_->recreatePipelines();
     if (postProcessPipeline_) postProcessPipeline_->destroyAllResources(); // Will be lazily recreated in beginFrame()
@@ -1306,16 +1290,6 @@ void Renderer::beginFrame() {
         }
         // Recreate post-process resources for new swapchain dimensions
         if (postProcessPipeline_) postProcessPipeline_->handleSwapchainResize();
-        // Resize HiZ depth pyramid for new swapchain dimensions
-        if (hizSystem_) {
-            auto ext = vkCtx->getSwapchainExtent();
-            if (!hizSystem_->resize(ext.width, ext.height)) {
-                LOG_WARNING("HiZ resize failed - disabling occlusion culling");
-                if (m2Renderer) m2Renderer->setHiZSystem(nullptr);
-                hizSystem_->shutdown();
-                hizSystem_.reset();
-            }
-        }
     }
 
     // Between frames, so a resize of the ray traced lighting's images can wait
@@ -1343,19 +1317,6 @@ void Renderer::beginFrame() {
 
     // Update per-frame UBO with current camera/lighting state
     updatePerFrameUBO();
-
-    // ── Early compute: M2 frustum culling ──
-    // beginFrame() has already waited for this frame slot's previous fence, so
-    // its mapped visibility output is complete and safe for the CPU to reuse.
-    // Read/invalidate that completed output, then record the next cull dispatch
-    // directly into the normal frame command buffer. The old path submitted a
-    // separate command buffer and synchronously waited on a fence every frame,
-    // serializing CPU and GPU work solely to obtain same-frame cull results.
-    if (m2Renderer && camera && vkCtx) {
-        uint32_t frame = vkCtx->getCurrentFrame();
-        m2Renderer->invalidateCullOutput(frame);
-        m2Renderer->dispatchCullCompute(currentCmd, frame, *camera);
-    }
 
     // Grass culls here too, for the same reason: a dispatch has to be recorded
     // outside a render pass. Unlike the M2 path nothing reads the result back -
@@ -4028,10 +3989,6 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
         }
     }
 
-    // HiZ occlusion culling disabled - the pyramid build + blocking fence was
-    // the main frame-rate bottleneck.  GPU frustum culling alone provides good
-    // draw-call reduction without the per-frame GPU stall.  HiZ can be re-
-    // enabled once the pyramid build is moved to an async compute queue.
     if (!wmoRenderer) {
         wmoRenderer = std::make_unique<WMORenderer>();
         if (!wmoRenderer->initialize(vkCtx, perFrameSetLayout, assetManager))

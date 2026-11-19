@@ -944,7 +944,6 @@ set(WOWEE_SOURCES
     src/rendering/m2_renderer_instance.cpp
     src/rendering/m2_model_classifier.cpp
     src/rendering/render_graph.cpp
-    src/rendering/hiz_system.cpp
     src/rendering/volumetric_fog.cpp
     src/rendering/sun_shafts.cpp
     src/rendering/screen_capture.cpp

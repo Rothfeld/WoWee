@@ -72,7 +72,6 @@ class ChargeEffect;
 class SwimEffects;
 class RenderGraph;
 class OverlaySystem;
-class HiZSystem;
 class GrassRenderer;
 class VolumetricFog;
 class RtScene;
@@ -571,9 +570,6 @@ private:
     // Render Graph - declarative pass ordering with automatic barriers
     std::unique_ptr<RenderGraph> renderGraph_;
     void buildFrameGraph(game::GameHandler* gameHandler);
-
-    // HiZ occlusion culling - builds depth pyramid each frame
-    std::unique_ptr<HiZSystem> hizSystem_;
 
     // Volumetric fog: a froxel volume built after the shadow pass and read by
     // every world shader through set 0 binding 2.

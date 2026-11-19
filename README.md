@@ -106,7 +106,10 @@ Blended clutter writes depth, so overlapping tufts depend on draw order: a
 faint blade fringe drawn first hides the blades behind it. M2Renderer draws
 clutter after every other opaque model, far to near; grouped only by model,
 the order changed with each change of the visible set and grass blinked while
-the camera turned (Stranglethorn). Evidence:
+the camera turned (Stranglethorn). M2 visibility is culled on the CPU against
+the current frame's camera. The former GPU cull compute was read back two
+frames late (frames in flight) and dropped small models entering view during
+turns; its HiZ occlusion pyramid was never built. Evidence:
 `_experiments/20261119T083457Z.clutter_flicker/` in the workspace.
 World M2 and character opaque/alpha-key batches complete before blending.
 Their blended meshes share one camera-depth-ordered stream, far to near:
