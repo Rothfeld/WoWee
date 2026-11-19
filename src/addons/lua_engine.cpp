@@ -19,6 +19,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <strings.h>
 #include <ctime>
 #include <sstream>
 #include <algorithm>
@@ -664,7 +665,8 @@ static int lua_debuginfo(lua_State* L) {
     if (!lua_getstack(L, 1, &ar)) return 0;
     const char* local = lua_getlocal(L, &ar, 1);
     if (!local) return 0;
-    if (lua_type(L, -1) == LUA_TSTRING) {
+    // Errors this client routed itself are recorded where they were caught.
+    if (lua_type(L, -1) == LUA_TSTRING && !routingScriptError()) {
         const std::string msg = std::string("error handler: ") + lua_tostring(L, -1);
         LOG_ERROR("LuaEngine: ", msg);
         if (auto* e = engineFrom(L)) e->noteLuaError(msg);
@@ -1179,9 +1181,15 @@ static float ownUnits(const wowee::ui::Widget* w, float v) {
     const float es = (w && w->effScale > 0.0f) ? w->effScale : 1.0f;
     return v / es;
 }
+/// No position at all for a frame without anchors (WidgetTree::lacksPosition).
+static bool unplaced(lua_State* L, const wowee::ui::Widget* w) {
+    auto* tree = wowee::addons::getWidgetTree(L);
+    return !w || (tree && tree->lacksPosition(w->id));
+}
 int lua_Region_GetLeft(lua_State* L) {
     const auto* w = measuredWidgetOf(L, 1);
-    lua_pushnumber(L, w ? ownUnits(w, w->left) : 0.0);
+    if (unplaced(L, w)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, ownUnits(w, w->left));
     return 1;
 }
 /// GetCenter() - the middle of the frame, in the same screen units GetLeft and
@@ -1195,7 +1203,7 @@ int lua_Region_GetLeft(lua_State* L) {
 /// markers.
 int lua_Region_GetCenter(lua_State* L) {
     const auto* w = measuredWidgetOf(L, 1);
-    if (!w) { lua_pushnil(L); lua_pushnil(L); return 2; }
+    if (unplaced(L, w)) { lua_pushnil(L); lua_pushnil(L); return 2; }
     lua_pushnumber(L, ownUnits(w, w->left + w->rectW * 0.5f));
     lua_pushnumber(L, ownUnits(w, w->bottom + w->rectH * 0.5f));
     return 2;
@@ -1233,17 +1241,20 @@ static int lua_Region_GetParent(lua_State* L) {
 
 int lua_Region_GetRight(lua_State* L) {
     const auto* w = measuredWidgetOf(L, 1);
-    lua_pushnumber(L, w ? ownUnits(w, w->left + w->rectW) : 0.0);
+    if (unplaced(L, w)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, ownUnits(w, w->left + w->rectW));
     return 1;
 }
 int lua_Region_GetBottom(lua_State* L) {
     const auto* w = measuredWidgetOf(L, 1);
-    lua_pushnumber(L, w ? ownUnits(w, w->bottom) : 0.0);
+    if (unplaced(L, w)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, ownUnits(w, w->bottom));
     return 1;
 }
 int lua_Region_GetTop(lua_State* L) {
     const auto* w = measuredWidgetOf(L, 1);
-    lua_pushnumber(L, w ? ownUnits(w, w->bottom + w->rectH) : 0.0);
+    if (unplaced(L, w)) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, ownUnits(w, w->bottom + w->rectH));
     return 1;
 }
 /// GetRect() → left, bottom, width, height. All four at once, which is what
@@ -1268,7 +1279,7 @@ int lua_Region_IsMouseOver(lua_State* L) {
 
 int lua_Region_GetRect(lua_State* L) {
     const auto* w = measuredWidgetOf(L, 1);
-    if (!w) return 0;
+    if (unplaced(L, w)) return 0;
     lua_pushnumber(L, ownUnits(w, w->left));
     lua_pushnumber(L, ownUnits(w, w->bottom));
     lua_pushnumber(L, ownUnits(w, w->rectW));
@@ -4962,7 +4973,7 @@ int lua_Frame_SetFrameLevel(lua_State* L) {
     const uint32_t id = widgetIdOf(L, 1);
     auto* w = widgetOf(L, 1);
     if (!w) return 0;
-    const int wanted = static_cast<int>(luaL_optnumber(L, 2, 0));
+    const int wanted = std::max(0, static_cast<int>(luaL_optnumber(L, 2, 0)));
     // Anything inside that set its own level moves by the same amount, because
     // a child's level is relative to its parent. Raising a window by hand and
     // raising it by clicking it must leave the same arrangement behind.
@@ -5415,6 +5426,84 @@ int lua_Frame_SetNormalFontObject(lua_State* L) {
 }
 
 /// Attach the shared region methods to the table on top of the stack.
+/// The methods a 2.4.3 Texture and FontString have, read from build 8606
+/// (the keys of getmetatable(UIParent:CreateTexture()).__index and of a font
+/// string's). On a TBC interface a region has these and nothing else: a
+/// texture answering GetText or GetScale with a do-nothing function made
+/// `if r.GetText then tostring(r:GetText())` raise where 2.4.3 skips it.
+constexpr const char* kTextureMethodsTbc[] = {
+    "CanChangeProtectedState", "ClearAllPoints", "GetAlpha", "GetBlendMode",
+    "GetBottom", "GetCenter", "GetDrawLayer", "GetHeight", "GetLeft", "GetName",
+    "GetNumPoints", "GetObjectType", "GetParent", "GetPoint", "GetRect", "GetRight",
+    "GetTexCoord", "GetTexCoordModifiesRect", "GetTexture", "GetTop", "GetVertexColor",
+    "GetWidth", "Hide", "IsDesaturated", "IsObjectType", "IsProtected", "IsShown",
+    "IsVisible", "SetAllPoints", "SetAlpha", "SetBlendMode", "SetDesaturated",
+    "SetDrawLayer", "SetGradient", "SetGradientAlpha", "SetHeight", "SetParent",
+    "SetPoint", "SetTexCoord", "SetTexCoordModifiesRect", "SetTexture",
+    "SetVertexColor", "SetWidth", "Show",
+};
+constexpr const char* kFontStringMethodsTbc[] = {
+    "CanChangeProtectedState", "CanNonSpaceWrap", "ClearAllPoints", "GetAlpha",
+    "GetBottom", "GetCenter", "GetDrawLayer", "GetFont", "GetFontObject", "GetHeight",
+    "GetJustifyH", "GetJustifyV", "GetLeft", "GetMultilineIndent", "GetName",
+    "GetNumPoints", "GetObjectType", "GetParent", "GetPoint", "GetRect", "GetRight",
+    "GetShadowColor", "GetShadowOffset", "GetSpacing", "GetStringHeight",
+    "GetStringWidth", "GetText", "GetTextColor", "GetTop", "GetWidth", "Hide",
+    "IsObjectType", "IsProtected", "IsShown", "IsVisible", "SetAllPoints", "SetAlpha",
+    "SetAlphaGradient", "SetDrawLayer", "SetFont", "SetFontObject", "SetFormattedText",
+    "SetHeight", "SetJustifyH", "SetJustifyV", "SetMultilineIndent", "SetNonSpaceWrap",
+    "SetParent", "SetPoint", "SetShadowColor", "SetShadowOffset", "SetSpacing",
+    "SetText", "SetTextColor", "SetTextHeight", "SetVertexColor", "SetWidth", "Show",
+};
+
+int lua_Region_IsProtected(lua_State* L) { lua_pushnil(L); return 1; }
+int lua_Region_CanChangeProtectedState(lua_State* L) { lua_pushnumber(L, 1); return 1; }
+/// GetTexCoord() -> the eight corner coordinates, upper-left, lower-left,
+/// upper-right, lower-right (0,0, 0,1, 1,0, 1,1 untouched on 2.4.3).
+int lua_Texture_GetTexCoord(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    if (w->texCoordRotated) {
+        for (float v : w->texCoordQuad) lua_pushnumber(L, v);
+        return 8;
+    }
+    const float l = w->texCoord[0], r = w->texCoord[1], t = w->texCoord[2], b = w->texCoord[3];
+    for (float v : {l, t, l, b, r, t, r, b}) lua_pushnumber(L, v);
+    return 8;
+}
+int lua_Texture_IsDesaturated(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (w && w->desaturated) lua_pushnumber(L, 1); else lua_pushnil(L);
+    return 1;
+}
+/// No shadow reads 0, 0 on 2.4.3; GameFontNormal's is 1, -1.
+int lua_FontString_GetShadowOffset(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushnumber(L, w && w->hasShadow ? w->shadowX : 0.0);
+    lua_pushnumber(L, w && w->hasShadow ? w->shadowY : 0.0);
+    return 2;
+}
+int lua_FontString_GetShadowColor(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    for (float c : w->shadowColor) lua_pushnumber(L, c);
+    return 4;
+}
+int lua_FontString_CanNonSpaceWrap(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (w && w->nonSpaceWrap) lua_pushnumber(L, 1); else lua_pushnil(L);
+    return 1;
+}
+int lua_FontString_SetMultilineIndent(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) w->multilineIndent = lua_toboolean(L, 2) != 0;
+    return 0;
+}
+int lua_FontString_GetMultilineIndent(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (w && w->multilineIndent) lua_pushnumber(L, 1); else lua_pushnil(L);
+    return 1;
+}
+
 void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
     const int region = lua_gettop(L);
     const uint32_t id = widgetIdOf(L, region);
@@ -5549,6 +5638,40 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
     // Built once and shared. This used to compile a fresh chunk for every
     // region created, which over a FrameXML load is thousands of compiles of
     // the same three lines.
+    set("IsProtected", lua_Region_IsProtected);
+    set("CanChangeProtectedState", lua_Region_CanChangeProtectedState);
+    if (isTexture) {
+        set("GetTexCoord", lua_Texture_GetTexCoord);
+        set("IsDesaturated", lua_Texture_IsDesaturated);
+    }
+    if (isFontString) {
+        set("GetShadowOffset", lua_FontString_GetShadowOffset);
+        set("GetShadowColor", lua_FontString_GetShadowColor);
+        set("CanNonSpaceWrap", lua_FontString_CanNonSpaceWrap);
+        set("SetMultilineIndent", lua_FontString_SetMultilineIndent);
+        set("GetMultilineIndent", lua_FontString_GetMultilineIndent);
+    }
+    // A TBC interface: exactly 2.4.3's methods for the kind, and nothing
+    // answering for the rest (see kTextureMethodsTbc).
+    if (const int iv = interfaceVersion(L); iv >= 20000 && iv < 30000 && (isTexture || isFontString)) {
+        std::set<std::string> keep;
+        if (isTexture) for (const char* n : kTextureMethodsTbc) keep.insert(n);
+        if (isFontString) for (const char* n : kFontStringMethodsTbc) keep.insert(n);
+        std::vector<std::string> drop;
+        lua_pushnil(L);
+        while (lua_next(L, region) != 0) {
+            if (lua_type(L, -2) == LUA_TSTRING && lua_isfunction(L, -1)) {
+                const std::string key = lua_tostring(L, -2);
+                if (!keep.count(key)) drop.push_back(key);
+            }
+            lua_pop(L, 1);
+        }
+        for (const auto& key : drop) {
+            lua_pushnil(L);
+            lua_setfield(L, region, key.c_str());
+        }
+        return;
+    }
     lua_getfield(L, LUA_REGISTRYINDEX, "wowee_region_mt");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
@@ -6348,7 +6471,10 @@ int lua_EditBox_GetHistoryLines(lua_State* L) {
 }
 int lua_EditBox_SetIgnoreArrows(lua_State* L) {
     auto* w = widgetOf(L, 1);
-    if (w) w->editIgnoreArrows = lua_toboolean(L, 2) != 0;
+    // The same mode as SetAltArrowKeyMode: ChatFrameEditBoxTemplate declares
+    // ignoreArrows="true" and on 2.4.3 ChatFrameEditBox:GetAltArrowKeyMode()
+    // answers 1.
+    if (w) w->altArrowKeyMode = lua_toboolean(L, 2) != 0;
     return 0;
 }
 
@@ -6860,7 +6986,20 @@ static int lua_RecordMissingApi(lua_State* L) {
 
 // CreateFrame(frameType, name, parent, template)
 static int lua_CreateFrame(lua_State* L) {
+    // The type without regard to case, answered in the client's spelling:
+    // CreateFrame("BUTTON") is a Button whose GetObjectType() is "Button" on
+    // 2.4.3 (the interface options and chat config build their rows that way),
+    // and every type test below compares against that spelling.
+    static constexpr const char* kFrameTypes[] = {
+        "Frame", "Button", "CheckButton", "ColorSelect", "Cooldown", "EditBox",
+        "GameTooltip", "MessageFrame", "Minimap", "Model", "PlayerModel",
+        "DressUpModel", "TabardModel", "MovieFrame", "ScrollFrame",
+        "ScrollingMessageFrame", "SimpleHTML", "Slider", "StatusBar",
+    };
     const char* frameType = luaL_optstring(L, 1, "Frame");
+    for (const char* known : kFrameTypes) {
+        if (strcasecmp(known, frameType) == 0) { frameType = known; break; }
+    }
     const char* name = luaL_optstring(L, 2, nullptr);
     // Which of the per-type methods go on this frame; see where they are set,
     // below the metatable.
@@ -6877,25 +7016,21 @@ static int lua_CreateFrame(lua_State* L) {
     // failed the template declaring the button, so the button's owner never
     // got its size, and the loop sizing a list by its first button's height
     // divided by zero.
+    // No parent argument, or nil, is a frame with no parent: on 2.4.3
+    // CreateFrame("Frame"):GetParent() is nil and its frame level 0. It is
+    // also the only way anything survives UIParent:Hide().
     if (lua_istable(L, 3)) {
         lua_pushvalue(L, 3);
         privSetField(L, -2, "__parent");
-    } else if (lua_gettop(L) >= 3 && lua_isnil(L, 3) && !lua_isstring(L, 3)) {
-        // An explicit nil is a frame with no parent, which is a real thing in
-        // WoW and the only way anything survives UIParent:Hide(). GetParent()
-        // on one answers nil, so no __parent is written.
-    } else {
-        // A name, or the argument left off entirely, which means UIParent -
-        // what an addon means by omitting it.
-        if (lua_isstring(L, 3)) lua_getglobal(L, lua_tostring(L, 3));
-        else lua_getglobal(L, "UIParent");
+    } else if (lua_isstring(L, 3)) {
+        lua_getglobal(L, lua_tostring(L, 3));
         if (lua_istable(L, -1)) privSetField(L, -2, "__parent");
         else lua_pop(L, 1);
     }
 
     // Back it with a real widget so its geometry is somewhere the renderer can
-    // reach. Parent is the third argument when given, and UIParent otherwise,
-    // which is what an addon means by leaving it out.
+    // reach. Parent is the third argument when given, and the screen
+    // otherwise (see above).
     if (auto* tree = wowee::addons::getWidgetTree(L)) {
         uint32_t parent = 0;
         if (lua_istable(L, 3)) {
@@ -6904,21 +7039,6 @@ static int lua_CreateFrame(lua_State* L) {
             lua_getglobal(L, lua_tostring(L, 3));
             if (lua_istable(L, -1)) parent = widgetIdOf(L, lua_gettop(L));
             lua_pop(L, 1);
-        } else if (!(lua_gettop(L) >= 3 && lua_isnil(L, 3))) {
-            // Omitted, not nil: UIParent, and named here so the widget agrees
-            // with the __parent written above. Zero would hang it off the
-            // screen instead, which is what an explicit nil asks for.
-            //
-            // Through the global rather than the tree's own id, because
-            // uiparent.xml declares UIParent like any other frame and nothing
-            // deduplicates by name - so the widget FrameXML's UIParent points
-            // at is the one that file made, and the tree's is the placeholder
-            // that stood in before any of it was read. Fall back to that one
-            // for anything created before it loads.
-            lua_getglobal(L, "UIParent");
-            if (lua_istable(L, -1)) parent = widgetIdOf(L, lua_gettop(L));
-            lua_pop(L, 1);
-            if (parent == 0) parent = tree->uiParentId();
         }
         const uint32_t id = tree->create(wowee::ui::WidgetKind::Frame, parent,
                                          name ? name : "");
@@ -7361,6 +7481,14 @@ void LuaEngine::registerCoreAPI() {
 
     lua_pushcfunction(L_, lua_EnumerateFrames);
     lua_setglobal(L_, "EnumerateFrames");
+
+    // For lua_handler_globals.cpp, which reports OnLoad errors without the
+    // engine to hand: the client log's and lua_errors.txt's record of one.
+    lua_pushcfunction(L_, [](lua_State* L) -> int {
+        if (auto* e = engineFrom(L)) e->noteLuaError(luaL_optstring(L, 1, "?"));
+        return 0;
+    });
+    lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_note_lua_error");
 
     lua_pushcfunction(L_, lua_WoweePriv);
     lua_setglobal(L_, "__WoweePriv");
@@ -10843,7 +10971,7 @@ void LuaEngine::fireEvent(const std::string& eventName,
                 }
 
                 int nargs = 1 + static_cast<int>(args.size());
-                if (lua_pcall(L_, nargs, 0, 0) != 0) {
+                if (pcallRouted(L_, nargs, 0) != 0) {
                     const char* err = lua_tostring(L_, -1);
                     std::string errStr = err ? err : "(unknown)";
                     LOG_ERROR("LuaEngine: event '", eventName, "' handler error: ", errStr);
@@ -11761,7 +11889,7 @@ bool LuaEngine::runBindingScript(const std::string& command, bool down, int scri
     else { lua_pop(L_, 1); return false; }
     if (!lua_isfunction(L_, -1)) { lua_pop(L_, 2); return false; }
     lua_pushstring(L_, down ? "down" : "up");
-    if (lua_pcall(L_, 1, 0, 0) != 0) {
+    if (pcallRouted(L_, 1, 0) != 0) {
         LOG_WARNING("Binding ", command, " failed: ",
                     luaL_optstring(L_, -1, "?"));
         lua_pop(L_, 1);
@@ -12011,7 +12139,9 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
         // Back and forward through what was typed here before. Stepping off
         // the newest end empties the box rather than sticking on the last
         // line, which is what leaving the history means.
+        // History is Alt+Up/Down in alt-arrow mode; plain arrows move.
         case kUp:
+            if (focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) break;
             if (!w->editHistory.empty()) {
                 const int last = static_cast<int>(w->editHistory.size()) - 1;
                 w->editHistoryPos = (w->editHistoryPos < 0)
@@ -12023,6 +12153,7 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
             }
             break;
         case kDown:
+            if (focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0)) break;
             if (w->editHistoryPos >= 0) {
                 const int last = static_cast<int>(w->editHistory.size()) - 1;
                 if (w->editHistoryPos >= last) {
@@ -12042,12 +12173,14 @@ void LuaEngine::dispatchKey(int sdlKeycode, bool ctrlHeld) {
         // A step is one drawn character, not one byte. An item link is fifty
         // bytes and eighteen characters, and stepping through it a byte at a
         // time leaves the caret apparently stuck.
+        // Alt-arrow mode (ignoreArrows="true", SetAltArrowKeyMode): without
+        // Alt the arrows belong to the game, with Alt to the caret.
         case kLeft:
-            if (!w->editIgnoreArrows && w->cursorPos > 0)
+            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0) && w->cursorPos > 0)
                 w->cursorPos = ui::caretStepLeft(w->editText, w->cursorPos);
             break;
         case kRight:
-            if (!w->editIgnoreArrows && w->cursorPos < len)
+            if (!focusedEditReleasesArrows((SDL_GetModState() & SDL_KMOD_ALT) != 0) && w->cursorPos < len)
                 w->cursorPos = ui::caretStepRight(w->editText, w->cursorPos);
             break;
         case kHome:  w->cursorPos = 0; break;
@@ -12274,6 +12407,12 @@ void LuaEngine::updateVisibility() {
             }
         }
     }
+}
+
+bool LuaEngine::focusedEditReleasesArrows(bool altHeld) const {
+    if (focusedWid_ == 0) return false;
+    const auto* w = widgets_.get(focusedWid_);
+    return w && w->isEditBox && w->altArrowKeyMode && !altHeld;
 }
 
 bool LuaEngine::editBoxHasFocus() const {
@@ -13574,7 +13713,7 @@ bool LuaEngine::dispatchSlashCommand(const std::string& command, const std::stri
                     // Call the handler with args
                     lua_pushvalue(L_, -1); // copy handler
                     lua_pushstring(L_, args.c_str());
-                    if (lua_pcall(L_, 1, 0, 0) != 0) {
+                    if (pcallRouted(L_, 1, 0) != 0) {
                         const char* serr = lua_tostring(L_, -1);
                         LOG_ERROR("LuaEngine: SlashCmdList['", name, "'] error: ",
                                   serr ? serr : "?");
@@ -13778,19 +13917,8 @@ namespace {
 /// Written by hand rather than through debug.traceback because the debug
 /// library is deliberately not opened.
 int luaTracebackHandler(lua_State* L) {
-    const char* msg = lua_tostring(L, 1);
-    std::string out = msg ? msg : "(error)";
-    for (int level = 1; level < 12; ++level) {
-        lua_Debug ar;
-        if (!lua_getstack(L, level, &ar)) break;
-        if (!lua_getinfo(L, "Sln", &ar)) break;
-        out += "\n      at ";
-        out += (ar.short_src[0] ? ar.short_src : "?");
-        out += ":" + std::to_string(ar.currentline);
-        if (ar.name) { out += " in "; out += ar.name; }
-    }
-    lua_pushstring(L, out.c_str());
-    return 1;
+    // The one route every script error takes (lua_handler_globals.cpp).
+    return luaScriptErrorHandler(L);
 }
 
 /// Loads and runs a chunk with the traceback handler in place. Returns the
@@ -13800,7 +13928,9 @@ int runChunk(lua_State* L, const char* chunk, size_t len, const char* name) {
     lua_pushcfunction(L, luaTracebackHandler);
     if (luaL_loadbuffer(L, chunk, len, name) != 0) {
         // A syntax error has no stack to walk; leave the message where the
-        // caller expects it and drop the handler underneath it.
+        // caller expects it and drop the handler underneath it. The error
+        // handler hears of it as it does on 2.4.3 (Quartz's Swing.lua).
+        callLuaErrorHandler(L, -1);
         lua_remove(L, base + 1);
         return 1;
     }

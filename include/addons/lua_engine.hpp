@@ -246,6 +246,9 @@ public:
     /// asks as well, because a box can leave without ever being hidden - a
     /// panel destroyed with focus inside it, or one that went invisible
     /// through a parent before the frame that would have noticed ran.
+    /// The focused edit box leaves the arrow keys to the bindings: ignoreArrows,
+    /// or alt-arrow mode without Alt held.
+    [[nodiscard]] bool focusedEditReleasesArrows(bool altHeld) const;
     [[nodiscard]] bool editBoxHasFocus() const;
     void setEditFocus(uint32_t wid);
 

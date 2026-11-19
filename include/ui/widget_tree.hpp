@@ -397,7 +397,6 @@ struct Widget {
     int editHistoryLines = 0;
     /// Declared with ignoreArrows: left and right do not move the cursor, so
     /// they reach the game instead and a player can turn while typing.
-    bool editIgnoreArrows = false;
     bool  editFocused = false;
     bool  editNumeric = false;
     bool  editMultiLine = false;
@@ -421,6 +420,8 @@ struct Widget {
     /// Break inside a word when a single word is wider than the box. Thirty-six
     /// labels ask for it, all of them prose in a narrow column.
     bool  nonSpaceWrap = false;
+    /// FontString:SetMultilineIndent - stored for its getter.
+    bool  multilineIndent = false;
     /// Lines the last wrap produced, so the height a wrapped label reports
     /// matches what is drawn. FrameXML sizes panels from GetStringHeight.
     ///
@@ -742,7 +743,10 @@ struct Widget {
     /// interface, frameFlashManager every flash, AnimUpdateFrame the whole
     /// animation system.
     bool  visibleChain = false;
-    bool  visible = false;      ///< visibleChain, and anchored somewhere
+    bool  visible = false;      ///< visibleChain, and placed somewhere
+    /// Has a position: anchored to things that have one (a region with no
+    /// anchors fills its parent). Recomputed each layout pass.
+    bool  placed = false;
     /// Whether the interface has been told this is on screen. Visibility is
     /// not a property a frame sets - it is shown, and every ancestor shown too
     /// - so becoming visible has to be noticed rather than announced at the
@@ -1201,6 +1205,14 @@ public:
     /// anything - not a guess. The next full pass overwrites both values as it
     /// always did.
     void noteScreenSize(float pixelW, float pixelH);
+    /// A frame with no anchor points, or anchored to something without a
+    /// position, has no position on 2.4.3: GetLeft and
+    /// its kin answer nil, GetCenter nil, nil and GetRect nothing, while
+    /// GetWidth still answers its set size. The screen, UIParent's stand-in,
+    /// a scroll child (placed by its scroll frame) and a tooltip at the cursor
+    /// are positioned without anchors and are not that.
+    [[nodiscard]] bool lacksPosition(uint32_t id) const;
+    [[nodiscard]] bool lacksPosition(uint32_t id, int& depth) const;
 
 private:
 

@@ -153,7 +153,7 @@ uint32_t WidgetTree::create(WidgetKind kind, uint32_t parent, const std::string&
         // itself to 1 rather than to one above its parent, its buttons
         // followed, and the bar they sit on stayed above all of them and took
         // every click. Elsewhere the same sum went negative.
-        w.effLevel = frameLevel(parent) + 1;
+        w.effLevel = parent == rootId_ ? 0 : frameLevel(parent) + 1;
         w.effStrata = widgets_[parent].effStrata;
     }
     return id;
@@ -162,9 +162,11 @@ uint32_t WidgetTree::create(WidgetKind kind, uint32_t parent, const std::string&
 int WidgetTree::frameLevel(uint32_t id) const {
     const Widget* w = get(id);
     if (!w || id == rootId_ || id == uiParentId_) return 0;
-    const int parentLevel = frameLevel(w->parent);
-    const int level = w->levelExplicit ? w->level : parentLevel + 1;
-    return level < parentLevel ? parentLevel + 1 : level;
+    // A frame with no parent - hung off the screen here - is level 0 on
+    // 2.4.3 (UIParent, WorldFrame, CreateFrame("Frame")), and a child of
+    // UIParent level 1.
+    const int parentLevel = w->parent == rootId_ ? -1 : frameLevel(w->parent);
+    return w->levelExplicit ? w->level : parentLevel + 1;
 }
 
 void WidgetTree::setParent(uint32_t id, uint32_t newParent) {
@@ -551,10 +553,16 @@ void WidgetTree::shiftExplicitLevels(uint32_t id, int delta) {
     // A copy, because get() invalidates nothing but the recursion below may.
     const std::vector<uint32_t> kids = w->children;
     for (uint32_t child : kids) {
-        if (Widget* c = get(child)) {
-            if (c->levelExplicit) c->level += delta;
+        int childDelta = delta;
+        if (Widget* c = get(child); c && c->levelExplicit) {
+            // Never below 0, and what it actually moved by is what moves the
+            // levels set inside it. Measured on 2.4.3: a child at 13 under a
+            // parent moved from 20 to 5 lands on 0, and its own child at 14 on 1.
+            const int moved = std::max(0, c->level + delta);
+            childDelta = moved - c->level;
+            c->level = moved;
         }
-        shiftExplicitLevels(child, delta);
+        shiftExplicitLevels(child, childDelta);
     }
 }
 
@@ -568,11 +576,23 @@ void WidgetTree::raise(uint32_t id) {
     // and ShowUIPanel raises on every panel open. Levels ratcheted all session:
     // a quest frame that starts at 3 was found at 344 in a play session, and
     // two frames raising alternately climb without bound.
+    // Nor of what is inside this frame: its own children sit above it by
+    // construction, and counting them lifted the frame over its own contents
+    // on every raise (Recount's window at 31 where 2.4.3 has it at 10).
+    auto inside = [this, id](const Widget& other) {
+        for (uint32_t up = other.parent; up != 0;) {
+            if (up == id) return true;
+            const Widget* p = get(up);
+            if (!p) break;
+            up = p->parent;
+        }
+        return false;
+    };
     int highest = 0;
     for (const Widget& other : widgets_) {
         if (other.id == 0 || other.id == id) continue;
         if (other.effStrata != w->effStrata) continue;
-        if (other.effLevel > highest) highest = other.effLevel;
+        if (other.effLevel > highest && !inside(other)) highest = other.effLevel;
     }
     // Already above everything: raising is what was asked for and it is
     // already true, so leave the level alone. Raise has to be idempotent or
@@ -746,6 +766,33 @@ void WidgetTree::noteScreenSize(float pixelW, float pixelH) {
     markLayoutDirty();
 }
 
+bool WidgetTree::lacksPosition(uint32_t id) const {
+    int depth = 0;
+    return lacksPosition(id, depth);
+}
+
+bool WidgetTree::lacksPosition(uint32_t id, int& depth) const {
+    const Widget* w = get(id);
+    if (!w || id == rootId_ || id == uiParentId_ || w->tooltipAnchorCursor) return false;
+    // A cycle or a very long chain: answer as placed, as the solver does.
+    if (++depth > 32) return false;
+    const Widget* parent = get(w->parent);
+    if (parent && parent->isScrollFrame && parent->scrollChild == id) return false;
+    if (w->anchors.empty()) {
+        // A frame without anchors has no position; a region without them
+        // fills its parent and has the parent's.
+        if (w->kind == WidgetKind::Frame) return true;
+        return parent && lacksPosition(parent->id, depth);
+    }
+    // Anchored to something that has no position (2.4.3: the slots of a
+    // closed bag, anchored to their unanchored container, answer nil).
+    for (const Anchor& a : w->anchors) {
+        const uint32_t to = a.relativeTo != 0 ? a.relativeTo : w->parent;
+        if (to != id && lacksPosition(to, depth)) return true;
+    }
+    return false;
+}
+
 void WidgetTree::resolveWidget(uint32_t id) {
     if (layingOut_) return;
     // Nothing has run a full pass yet, so there is no screen size to resolve
@@ -831,6 +878,7 @@ void WidgetTree::layout(float pixelW, float pixelH) {
     rootW.rectH = screenH;
     rootW.visibleChain = rootW.shown;
     rootW.visible = rootW.shown;
+    rootW.placed = true;
     rootW.effStrata = rootW.strata;
     rootW.effLevel = 0;
     rootW.effScale = 1.0f;
@@ -850,6 +898,7 @@ void WidgetTree::layout(float pixelW, float pixelH) {
         ui->rectH = std::max(screenH - inB - safeTop_ / uiScale_, 1.0f);
         ui->visibleChain = rootW.visible && ui->shown;
         ui->visible = ui->visibleChain;
+        ui->placed = true;
         ui->effStrata = ui->strata;
         ui->effLevel = 0;
         ui->effScale = 1.0f;
@@ -948,25 +997,10 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     // without it every frame FrameXML declares without anchors - a money
     // frame, a dropdown, a quest reward panel - falls to the centre-on-parent
     // default and sits in the middle of the screen looking like a bug in
-    // something else. Regions differ: an unanchored one fills its parent, and
-    // that is handled below.
-    //
-    // The root is the exception: it is the screen, and has nothing to anchor
-    // to.
-    // A scroll frame's scroll child is the other exception: it carries no
-    // anchors because SetScrollChild positions it, not the anchor solver - the
-    // scroll frame places it at its own top-left and slides it by the scroll
-    // offset. Treating it as unanchored marked it, and therefore every element
-    // inside it, invisible: the quest dialog's title, description and
-    // objectives are all children of QuestDetailScrollChildFrame, so the whole
-    // dialog read as blank while every frame in it measured correct. It draws
-    // where it is placed like any other frame, so it must not be hidden for
-    // lacking anchors it was never meant to have.
-    const bool isScrollChild = parent && parent->isScrollFrame &&
-                               parent->scrollChild == id;
-    const bool unanchoredFrame = (w->kind == WidgetKind::Frame) &&
-                                 w->anchors.empty() && id != rootId_ &&
-                                 !isScrollChild;
+    // something else. Regions differ: an unanchored one fills its parent.
+    // The screen and a scroll child (placed by its scroll frame: the quest
+    // dialog's text is all inside QuestDetailScrollChildFrame) are placed
+    // without anchors. See lacksPosition, which the getters answer from too.
     // Two questions, and they are not the same one. Running is shown with
     // every ancestor shown; drawing additionally needs somewhere to be drawn.
     // Inherited from the parent's chain rather than its `visible`, or a child
@@ -981,7 +1015,18 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     // anchored child of an unanchored frame has nowhere to be either, because
     // the thing it is anchored to has no position. Deriving this from the
     // chain instead put those children back on screen.
-    w->visible = w->shown && (!parent || parent->visible) && !unanchoredFrame;
+    //
+    // Which is a question about where the widget is anchored, not about its
+    // parent: on 2.4.3 a frame anchored to a placed frame draws although its
+    // parent has no anchors. Titan Panel declares every plugin button inside
+    // an unnamed, unanchored <Frame parent="UIParent"> and anchors the button
+    // to the bar; deriving drawing from the parent's left the whole bar empty
+    // but for its background. An anchor to nothing in particular is an anchor
+    // to the parent, so a child anchored to an unplaced parent still has
+    // nowhere to be.
+    const bool placed = !lacksPosition(id);
+    w->placed = placed;
+    w->visible = w->visibleChain && placed;
     // Clipping is inherited: anything under a scroll frame is bounded by it,
     // however deep, because a scroll child holds frames of its own.
     //
@@ -1002,23 +1047,14 @@ void WidgetTree::layoutWidgetSelf(uint32_t id, float screenW, float screenH) {
     // frame sits one level above its parent so it draws over it, which is what
     // makes a button's own regions land on top of the frame holding it.
     w->effStrata = w->strataExplicit ? w->strata : (parent ? parent->effStrata : FrameStrata::Medium);
-    w->effLevel  = w->levelExplicit  ? w->level  : (parent ? parent->effLevel + 1 : 0);
-    // ...and never below the parent, whatever the two lines above worked out.
-    //
-    // The level a child inherits is read off the parent, so a parent raised
-    // after its children were resolved leaves them at a level computed from
-    // where it used to be. A dropdown list is raised as it opens, and its item
-    // buttons kept the old answer: the list came out at level 3 with its
-    // buttons at 2 and its own backdrop at 4. The backdrop then painted over
-    // the items, which is why they looked greyed, and the hit test - which
-    // takes the highest level under the cursor - answered the list rather than
-    // the button, which is why clicking one did nothing.
-    //
-    // Ties are settled by creation order, so a backdrop declared before the
-    // buttons still sits behind them once all three are on the same level.
-    if (parent && w->effLevel < parent->effLevel) {
-        w->effLevel = parent->effLevel + 1;
-    }
+    // A child of the screen - a frame with no parent - starts at 0, as on 2.4.3.
+    w->effLevel  = w->levelExplicit  ? w->level
+                 : (parent && parent->id != rootId_ ? parent->effLevel + 1 : 0);
+    // A level set below the parent's stays there: on 2.4.3 a child set to 3
+    // under a parent at 10 answers 3 (and its own child 4). A parent raised
+    // later carries such children with it - SetFrameLevel and raise() shift
+    // explicit levels inside the frame by the same amount - which is what
+    // keeps a raised dropdown's buttons above its backdrop.
     // Multiplied down the chain, so scaling a window scales everything in it.
     w->effScale  = (parent ? parent->effScale : 1.0f) * w->scale;
     w->effAlpha = (parent ? parent->effAlpha : 1.0f) * w->alpha;

@@ -138,17 +138,40 @@ static int lua_GetTotemTimeLeft(lua_State* L) {
     return 1;
 }
 
+/// The 2.4.3 refusal of a spell slot: "<name as called>(): Invalid spell
+/// slot" - IsSpellInRange(nil, unit) and IsSpellInRange(0, "spell", unit)
+/// both raise it, "UNKNOWN()" when called through pcall.
+static int invalidSpellSlot(lua_State* L) {
+    lua_Debug self;
+    const char* name = "UNKNOWN";
+    if (lua_getstack(L, 0, &self) && lua_getinfo(L, "n", &self) && self.name) name = self.name;
+    return luaL_error(L, "%s(): Invalid spell slot", name);
+}
+
+/// IsSpellInRange("name", unit) or IsSpellInRange(slot, "spell"|"pet", unit),
+/// as on 2.4.3: a number is a spellbook slot, never a spell id. Measured:
+/// (nil, "player") and (0, "spell", "player") raise, (999, "spell", ...)
+/// answers nil, and (1, "player") - a slot without a book - answers nil.
 static int lua_IsSpellInRange(lua_State* L) {
+    if (lua_isnoneornil(L, 1)) return invalidSpellSlot(L);
     auto* gh = getGameHandler(L);
     if (!gh) { return luaReturnNil(L); }
+    if (lua_type(L, 1) == LUA_TNUMBER) {
+        const char* book = lua_tostring(L, 2);
+        if (!book || (std::string(book) != "spell" && std::string(book) != "pet"))
+            return luaReturnNil(L);
+        if (lua_tonumber(L, 1) < 1) return invalidSpellSlot(L);
+        const uint32_t slotSpell = spellIdForCall(L, gh);
+        if (slotSpell == 0) return luaReturnNil(L);
+        std::string unit(luaL_optstring(L, 3, "target"));
+        toLowerInPlace(unit);
+        return pushSpellRangeAnswer(L, gh, slotSpell, resolveUnitGuid(gh, unit));
+    }
     const char* spellNameOrId = luaL_checkstring(L, 1);
     const char* uid = luaL_optstring(L, 2, "target");
 
-    // Resolve spell ID
     uint32_t spellId = 0;
-    if (spellNameOrId[0] >= '0' && spellNameOrId[0] <= '9') {
-        spellId = static_cast<uint32_t>(strtoul(spellNameOrId, nullptr, 10));
-    } else {
+    {
         // The rank that would actually be cast, not the first one found. A
         // range check exists to say whether pressing the button will work, so
         // it has to be asked of the same spell /cast would pick; where ranks

@@ -2814,26 +2814,33 @@ TEST_CASE("An edit box is drawn for its own text, not skipped as a container",
     }
 }
 
-TEST_CASE("A child frame never sits below its parent", "[widget][level]") {
-    // The level a child inherits is read off the parent, so a parent raised
-    // after its children were resolved leaves them at a level computed from
-    // where it used to be. A dropdown list is raised as it opens: the list came
-    // out at 3, its item buttons at 2 and its own backdrop at 4, so the
-    // backdrop painted over the items and the hit test - which takes the
-    // highest level under the cursor - answered the list rather than a button.
+TEST_CASE("Frame levels move as 2.4.3 moves them", "[widget][level]") {
+    // Measured on build 8606: P at 10 with C under it and G under C; C set to
+    // 3 answers 3 (below its parent) and G 4. P moved to 20 carries C to 13
+    // and G to 14; P moved back to 5 puts C at 0 (not -2) and G at 1.
     WidgetTree tree;
-    const uint32_t list = tree.create(WidgetKind::Frame, tree.uiParentId(), "List");
-    const uint32_t item = tree.create(WidgetKind::Frame, list, "ListItem");
-
-    tree.get(list)->level = 3;
-    tree.get(list)->levelExplicit = true;
-    // As if resolved against the list's older, lower level.
-    tree.get(item)->level = 2;
-    tree.get(item)->levelExplicit = true;
-
+    const uint32_t p = tree.create(WidgetKind::Frame, tree.uiParentId(), "P");
+    const uint32_t c = tree.create(WidgetKind::Frame, p, "C");
+    const uint32_t g = tree.create(WidgetKind::Frame, c, "G");
+    auto setLevel = [&](uint32_t id, int level) {
+        tree.shiftExplicitLevels(id, level - tree.frameLevel(id));
+        tree.get(id)->level = level;
+        tree.get(id)->levelExplicit = true;
+    };
+    setLevel(p, 10);
+    CHECK(tree.frameLevel(c) == 11);
+    CHECK(tree.frameLevel(g) == 12);
+    setLevel(c, 3);
+    CHECK(tree.frameLevel(c) == 3);
+    CHECK(tree.frameLevel(g) == 4);
+    setLevel(p, 20);
+    CHECK(tree.frameLevel(c) == 13);
+    CHECK(tree.frameLevel(g) == 14);
+    setLevel(p, 5);
+    CHECK(tree.frameLevel(c) == 0);
+    CHECK(tree.frameLevel(g) == 1);
     tree.layout(1920.0f, 1080.0f);
-
-    CHECK(tree.get(item)->effLevel > tree.get(list)->effLevel);
+    CHECK(tree.get(c)->effLevel == 0);
 }
 
 TEST_CASE("Ordinary children still stack one above their parent", "[widget][level]") {
