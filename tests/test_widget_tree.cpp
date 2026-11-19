@@ -238,6 +238,35 @@ TEST_CASE("A child frame draws over its parent", "[widget][draworder]") {
     REQUIRE(order[1]->id == childArt);
 }
 
+TEST_CASE("A child frame's own picture draws over its parent's OVERLAY art",
+          "[widget][draworder]") {
+    // DressUpFrame's racial background is OVERLAY art of the frame, and
+    // DressUpModel - a child frame - draws the figure over it on 2.4.3.
+    WidgetTree tree;
+    const uint32_t room = tree.create(WidgetKind::Frame, 0, "Room");
+    tree.get(room)->width = 100.0f;
+    tree.get(room)->height = 100.0f;
+    tree.addPoint(room, Anchor{});
+    const uint32_t backdrop = tree.create(WidgetKind::Texture, room, "bg");
+    tree.get(backdrop)->texturePath = "bg.blp";
+    tree.get(backdrop)->layer = DrawLayer::Overlay;
+    tree.setAllPoints(backdrop, room);
+    const uint32_t model = tree.create(WidgetKind::Frame, room, "Model");
+    tree.setAllPoints(model, room);
+    tree.get(model)->externalTexture = 0x1234;
+    const uint32_t ownArt = tree.create(WidgetKind::Texture, room, "under");
+    tree.get(ownArt)->texturePath = "u.blp";
+    tree.get(ownArt)->layer = DrawLayer::Background;
+    tree.setAllPoints(ownArt, room);
+
+    tree.layout(kScreenW, kScreenH);
+    const auto& order = tree.drawOrder();
+    REQUIRE(order.size() == 3);
+    CHECK(order[0]->id == ownArt);
+    CHECK(order[1]->id == backdrop);
+    CHECK(order[2]->id == model);
+}
+
 TEST_CASE("Nothing to draw is not drawn", "[widget][draworder]") {
     WidgetTree tree;
     const uint32_t parent = tree.create(WidgetKind::Frame, 0, "P");

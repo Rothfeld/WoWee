@@ -1485,10 +1485,20 @@ void WidgetTree::collectDrawOrder() {
     // ARTWORK, so it lands above the box's background and border art and
     // alongside the header rather than over it - the two never overlap, the
     // insets see to that.
+    //
+    // Levels are compared doubled. A region carries its frame's level plus
+    // one, which is also the level of that frame's child frames - so a tie on
+    // the plain number let the layer decide, and a parent's OVERLAY region
+    // went over a child frame. Build 8606 draws every layer of a frame before
+    // any frame above it: DressUpFrame (level 1) puts its racial background
+    // in OVERLAY and DressUpModel (level 2) draws the figure over it. Doubled,
+    // a frame's own painting sits at 2L, its regions at 2L+1 and its child
+    // frames from 2L+2.
     auto sortLevel = [](const Widget* w) {
+        if (w->kind != WidgetKind::Frame) return 2 * w->effLevel - 1;
         return ((w->isStatusBar && !w->barTexture.empty()) || w->isEditBox)
-                   ? w->effLevel + 1
-                   : w->effLevel;
+                   ? 2 * w->effLevel + 1
+                   : 2 * w->effLevel;
     };
     auto sortLayer = [](const Widget* w) {
         if (w->isEditBox) return layerRank(DrawLayer::Artwork);
