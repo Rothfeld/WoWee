@@ -187,43 +187,51 @@ enum ShapeBits : int { kFlags = 1, kProtect = 2, kNil = 4 };
 /// frame is the interface's own (FrameXML, Blizzard_*, this client's chunks).
 struct Taint { bool found = false; bool macro = false; std::string addon; };
 
-Taint insecureCaller(lua_State* L) {
+/// Whether code from `source` (a chunk name, lua_Debug::source) is insecure,
+/// and for which AddOn.
+Taint insecureSource(lua_State* L, const char* source) {
     Taint t;
+    if (!source) return t;
+    if (source[0] == '@') {
+        lua_getfield(L, LUA_REGISTRYINDEX, kInsecureRoots);
+        if (lua_istable(L, -1)) {
+            lua_pushnil(L);
+            while (lua_next(L, -2) != 0) {
+                size_t len = 0;
+                const char* root = lua_tolstring(L, -2, &len);
+                if (root && std::strncmp(source, root, len) == 0) {
+                    t.found = true;
+                    t.addon = lua_tostring(L, -1);
+                    lua_pop(L, 3);
+                    return t;
+                }
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
+        return t;
+    }
+    lua_getfield(L, LUA_REGISTRYINDEX, kInsecureChunks);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, source);
+        lua_rawget(L, -2);
+        const bool macro = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 2);
+        if (macro) { t.found = true; t.macro = true; }
+    } else {
+        lua_pop(L, 1);
+    }
+    return t;
+}
+
+Taint insecureCaller(lua_State* L) {
     lua_Debug ar;
     for (int level = 1; lua_getstack(L, level, &ar); ++level) {
         if (!lua_getinfo(L, "S", &ar) || !ar.source) continue;
         if (std::strcmp(ar.what, "C") == 0) continue;
-        if (ar.source[0] == '@') {
-            lua_getfield(L, LUA_REGISTRYINDEX, kInsecureRoots);
-            if (lua_istable(L, -1)) {
-                lua_pushnil(L);
-                while (lua_next(L, -2) != 0) {
-                    size_t len = 0;
-                    const char* root = lua_tolstring(L, -2, &len);
-                    if (root && std::strncmp(ar.source, root, len) == 0) {
-                        t.found = true;
-                        t.addon = lua_tostring(L, -1);
-                        lua_pop(L, 3);
-                        return t;
-                    }
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1);
-            continue;
-        }
-        lua_getfield(L, LUA_REGISTRYINDEX, kInsecureChunks);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, ar.source);
-            lua_rawget(L, -2);
-            const bool macro = lua_toboolean(L, -1) != 0;
-            lua_pop(L, 2);
-            if (macro) { t.found = true; t.macro = true; return t; }
-        } else {
-            lua_pop(L, 1);
-        }
+        if (const Taint t = insecureSource(L, ar.source); t.found) return t;
     }
-    return t;
+    return {};
 }
 
 /// Fire an interface event through the engine's registry hook
@@ -287,6 +295,33 @@ int shapedCall(lua_State* L) {
 /// /script line and from an AddOn 2.4.3 answers nil.
 int lua_issecure(lua_State* L) {
     if (insecureCaller(L).found) lua_pushnil(L); else lua_pushnumber(L, 1);
+    return 1;
+}
+
+/// issecurevariable([table,] name) -> 1 when the value is secure, else nil.
+/// 2.4.3 answers by who wrote the variable; this client does not record
+/// writers, so a Lua function stands for the code that made it: insecure
+/// when an AddOn file or a /script chunk defined it (see insecureCaller).
+/// Any other value, and an unset one, answers 1 as before. AceHook-2.1
+/// refuses to hook a method this calls secure, and Quartz hooks its own
+/// modules' methods.
+int lua_issecurevariable(lua_State* L) {
+    if (lua_istable(L, 1)) {
+        lua_pushvalue(L, 2);
+        lua_gettable(L, 1);
+    } else {
+        lua_pushvalue(L, 1);
+        lua_gettable(L, LUA_GLOBALSINDEX);
+    }
+    bool secure = true;
+    if (lua_type(L, -1) == LUA_TFUNCTION && !lua_iscfunction(L, -1)) {
+        lua_Debug ar;
+        lua_getinfo(L, ">S", &ar);
+        secure = !insecureSource(L, ar.source).found;
+    } else {
+        lua_pop(L, 1);
+    }
+    if (secure) lua_pushnumber(L, 1); else lua_pushnil(L);
     return 1;
 }
 
@@ -373,6 +408,8 @@ void applyApiConventions(lua_State* L, std::string_view expansionId) {
     lua_pop(L, 1);
     lua_pushcfunction(L, lua_issecure);
     lua_setglobal(L, "issecure");
+    lua_pushcfunction(L, lua_issecurevariable);
+    lua_setglobal(L, "issecurevariable");
 }
 
 int apiResultCount(std::string_view expansionId, std::string_view name) {

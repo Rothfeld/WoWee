@@ -284,6 +284,9 @@ struct Widget {
     std::string edgeFile;
     bool  tileBackground = false;
     float edgeSize = 16.0f;
+    /// tileSize exactly as SetBackdrop was given it (0 when absent), for
+    /// GetBackdrop; drawing uses edgeSize as above.
+    float backdropTileSize = 0.0f;
     float insetLeft = 0.0f, insetRight = 0.0f, insetTop = 0.0f, insetBottom = 0.0f;
     float backdropColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float borderColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -545,6 +548,8 @@ struct Widget {
     size_t maxMessages = 128;
     /// How far back through the history the frame has been scrolled, in lines.
     int   messageScroll = 0;
+    /// EditBox:SetAltArrowKeyMode - arrows move the cursor only with Alt held.
+    bool  altArrowKeyMode = false;
 
     /// A tooltip holds lines the same way, but draws them from the top and
     /// sizes itself to fit them - which is the part a chat frame does not do,
@@ -579,6 +584,14 @@ struct Widget {
         mutable std::string fontFace;
     };
     std::vector<TooltipLine> tooltipLines;
+    /// GameTooltip:AddFontStrings(left, right): on the tooltip, how many line
+    /// slots it has been given that way; on each of the two font strings, the
+    /// tooltip and the line they hold (1-based) and which side. They then
+    /// read and write that line as TextLeftN/TextRightN do.
+    uint16_t addedTooltipSlots = 0;
+    uint32_t tooltipSlotOwner = 0;
+    uint16_t tooltipSlotIndex = 0;
+    bool tooltipSlotRight = false;
     /// Stand-ins for GameTooltipTextLeft1..N, created on demand by whatever
     /// asks to be anchored to one. FrameXML positions things against a
     /// tooltip's individual lines - SetTooltipMoney hangs the coin frame off

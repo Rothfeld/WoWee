@@ -90,6 +90,31 @@ std::vector<std::string> TocFile::getSavedVariablesPerCharacter() const {
     return (it != directives.end()) ? parseVarList(it->second) : std::vector<std::string>{};
 }
 
+/// Names after "## Dependencies:", "## RequiredDeps:" or any "## Dep...:"
+/// key (the client accepts all three spellings), comma separated.
+/// Titan's "## Dependencies:" with nothing after it names none.
+std::vector<std::string> TocFile::getRequiredDeps() const {
+    std::vector<std::string> deps;
+    for (const auto& [key, val] : directives) {
+        std::string lower = key;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (lower.rfind("dep", 0) != 0 && lower != "requireddeps") continue;
+        for (auto& name : parseVarList(val)) deps.push_back(std::move(name));
+    }
+    return deps;
+}
+
+std::vector<std::string> TocFile::getOptionalDeps() const {
+    for (const auto& [key, val] : directives) {
+        std::string lower = key;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (lower == "optionaldeps") return parseVarList(val);
+    }
+    return {};
+}
+
 std::optional<TocFile> parseTocFile(const std::string& tocPath) {
     std::ifstream f(tocPath);
     if (!f.is_open()) return std::nullopt;
@@ -108,7 +133,15 @@ std::optional<TocFile> parseTocFile(const std::string& tocPath) {
     toc.addonName = canonicalAddonName(toc.addonName);
 
     std::string line;
+    bool firstLine = true;
     while (std::getline(f, line)) {
+        // A UTF-8 byte order mark before the first directive, as Bagnon's
+        // .toc files carry. Build 8606 reads past it; kept, the first line
+        // "## Interface: 20400" was taken for a file name.
+        if (firstLine && line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xEF &&
+            static_cast<unsigned char>(line[1]) == 0xBB && static_cast<unsigned char>(line[2]) == 0xBF)
+            line.erase(0, 3);
+        firstLine = false;
         // Strip trailing CR (Windows line endings)
         if (!line.empty() && line.back() == '\r') line.pop_back();
 

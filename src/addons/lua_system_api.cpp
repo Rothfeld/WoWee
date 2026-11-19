@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <strings.h>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -783,6 +784,16 @@ static void applySoundCVars(lua_State* L) {
 
 static constexpr const char* kGammaCVarDefault = "1.0";
 
+/// CVars an addon declared with RegisterCVar(name, default), by folded name.
+/// Build 8606 keeps the first declaration: RegisterCVar("x", "5") then
+/// RegisterCVar("x", "7") leaves GetCVar("x") at "5", and neither call
+/// returns anything. Gatherer's SlideBar and Babylonian libraries declare
+/// theirs while loading.
+static std::unordered_map<std::string, std::string>& registeredCVarDefaults() {
+    static std::unordered_map<std::string, std::string> defaults;
+    return defaults;
+}
+
 static void pushCvarDefault(lua_State* L, const std::string& n) {
     // Build 8606's Names panel CVars, as GetCVarDefault answers there; the
     // overhead names read the same table (ui/unit_name_cvar.hpp).
@@ -791,6 +802,10 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
             lua_pushstring(L, value);
             return;
         }
+    }
+    if (const auto it = registeredCVarDefaults().find(n); it != registeredCVarDefaults().end()) {
+        lua_pushstring(L, it->second.c_str());
+        return;
     }
     if (n == "ffxglow" || n == "ffxdeath") {
         lua_pushstring(L, "1");
@@ -1950,6 +1965,14 @@ static int lua_WoweeReportMissingFixedControls(lua_State* L) {
     return 0;
 }
 
+static int lua_RegisterCVar(lua_State* L) {
+    std::string key(luaL_checkstring(L, 1));
+    toLowerInPlace(key);
+    const char* value = lua_isstring(L, 2) ? lua_tostring(L, 2) : "";
+    registeredCVarDefaults().emplace(key, value);
+    return 0;
+}
+
 static int lua_SetCVar(lua_State* L) {
     const char* name = lua_isstring(L, 1) ? lua_tostring(L, 1) : nullptr;
     if (!name) return 0;
@@ -2047,7 +2070,7 @@ int pushAddonRegistryAndIndex(lua_State* L, int arg) {
             lua_getfield(L, -1, "name");
             const char* name = lua_tostring(L, -1);
             lua_pop(L, 1);
-            if (name && strcmp(name, wanted) == 0) { idx = i; lua_pop(L, 1); break; }
+            if (name && strcasecmp(name, wanted) == 0) { idx = i; lua_pop(L, 1); break; }
             lua_pop(L, 1);
         }
     }
@@ -2086,12 +2109,19 @@ static int lua_GetAddOnInfo(lua_State* L) {
     lua_remove(L, -4);              // the addon info entry
     lua_remove(L, -4);              // the registry table
 
-    lua_pushnil(L);                 // 4: url - not in a 3.3.5 manifest
-    lua_pushboolean(L, 1);          // 5: loadable
-    lua_pushnil(L);                 // 6: reason it is not, and it is
-    lua_pushstring(L, "INSECURE");  // 7: security
-    lua_pushnil(L);                 // 8: newVersion
-    return 8;
+    // 4 enabled, 5 loadable, 6 reason, 7 security, as build 8606 answers:
+    // "Bagnon 1 1 nil", "TitanItemBonuses 1 nil DEP_MISSING" (its
+    // BonusScanner dependency absent). Only enabled addons are listed here.
+    lua_pushnumber(L, 1);
+    const int idx2 = pushAddonRegistryAndIndex(L, 1);
+    lua_rawgeti(L, -1, idx2);
+    lua_getfield(L, -1, "reason");
+    lua_remove(L, -2);
+    lua_remove(L, -2);
+    if (lua_isnil(L, -1)) lua_pushnumber(L, 1); else lua_pushnil(L);
+    lua_insert(L, -2);
+    lua_pushstring(L, "INSECURE");
+    return 7;
 }
 
 // IsAddOnLoadOnDemand(addonNameOrIndex) -> 1 or nil, as the 2.4.3 API.
@@ -2106,6 +2136,23 @@ static int lua_IsAddOnLoadOnDemand(lua_State* L) {
     lua_pop(L, 3);
     if (lod) lua_pushnumber(L, 1); else lua_pushnil(L);
     return 1;
+}
+
+// GetAddOnDependencies(addonNameOrIndex) -> the required dependencies'
+// names: GetAddOnDependencies("Bagnon_Tooltips") is "Bagnon_Forever" on
+// build 8606. PitBull walks every addon with it to find its modules.
+static int lua_GetAddOnDependencies(lua_State* L) {
+    const int idx = pushAddonRegistryAndIndex(L, 1);
+    if (idx < 1) return 0;
+    lua_rawgeti(L, -1, idx);
+    lua_getfield(L, -1, "deps");
+    const int deps = lua_gettop(L);
+    const int count = lua_istable(L, deps) ? static_cast<int>(lua_objlen(L, deps)) : 0;
+    for (int i = 1; i <= count; ++i) lua_rawgeti(L, deps, i);
+    lua_remove(L, deps);
+    lua_remove(L, deps - 1);
+    lua_remove(L, deps - 2);
+    return count;
 }
 
 // GetAddOnMetadata(addonNameOrIndex, key) → value
@@ -2745,36 +2792,38 @@ static int lua_GetInstanceDifficulty(lua_State* L) {
     return 1;
 }
 
+/// strsplit(delimiters, str [, limit]): as build 8606 answers it -
+/// every character of `delimiters` separates (strsplit(",;", "a,b;c") is
+/// a, b, c), and at most `limit` pieces come back, the last holding the rest
+/// (strsplit(".", "a.b.c", 2) is "a", "b.c"; limit 1 is the whole string;
+/// 0 or none is no limit). Omen splits option paths with a limit of 2.
 static int lua_strsplit(lua_State* L) {
-    const char* delim = luaL_checkstring(L, 1);
-    const char* str = luaL_checkstring(L, 2);
-    if (!delim[0]) { lua_pushstring(L, str); return 1; }
-    int count = 0;
-    std::string s(str);
+    const std::string delims = luaL_checkstring(L, 1);
+    const std::string s = luaL_checkstring(L, 2);
+    const auto limit = static_cast<long>(luaL_optnumber(L, 3, 0));
+    if (delims.empty()) { lua_pushstring(L, s.c_str()); return 1; }
     // One value per field, and the field count follows from the string rather
     // than from anything this client chose. Lua guarantees only a small slack
     // above the arguments, and pushing past the top corrupts the heap rather
     // than raising - so the room is asked for before any of it is used.
     // A chat line of commas is all it takes.
-    const size_t fields = static_cast<size_t>(
-        std::count(s.begin(), s.end(), delim[0])) + 1;
-    if (!lua_checkstack(L, static_cast<int>(fields) + 1)) {
-        lua_pushstring(L, str);
-        return 1;
-    }
+    size_t fields = 1;
+    for (char c : s) if (delims.find(c) != std::string::npos) ++fields;
+    if (!lua_checkstack(L, static_cast<int>(fields) + 1))
+        return luaL_error(L, "strsplit: %d fields do not fit on the Lua stack", static_cast<int>(fields));
+    int count = 0;
     size_t pos = 0;
-    while (pos <= s.size()) {
-        size_t found = s.find(delim[0], pos);
+    while (true) {
+        const size_t found = (limit > 0 && count + 1 >= limit)
+            ? std::string::npos : s.find_first_of(delims, pos);
         if (found == std::string::npos) {
             lua_pushstring(L, s.substr(pos).c_str());
-            count++;
-            break;
+            return count + 1;
         }
-        lua_pushstring(L, s.substr(pos, found - pos).c_str());
-        count++;
+        lua_pushlstring(L, s.data() + pos, found - pos);
+        ++count;
         pos = found + 1;
     }
-    return count;
 }
 
 // strtrim(str) - remove leading/trailing whitespace
@@ -3989,19 +4038,13 @@ static int lua_IsAddOnLoaded(lua_State* L) {
     }
     lua_rawgeti(L, -1, idx);
     if (!lua_istable(L, -1)) { lua_pop(L, 2); lua_pushboolean(L, 0); return 1; }
-    lua_getfield(L, -1, "loadOnDemand");
-    const bool lod = lua_toboolean(L, -1) != 0;
-    lua_getfield(L, -2, "name");
+    lua_getfield(L, -1, "name");
     const std::string name = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
-    lua_pop(L, 4);
-    // Being listed means loaded only for addons that load at startup. A
-    // load-on-demand one is listed from the start and loaded later, so its
-    // state is the manager's to answer.
-    bool found = !lod;
-    if (lod) {
-        auto* svc = getLuaServices(L);
-        found = svc && svc->isAddOnLoaded && svc->isAddOnLoaded(name);
-    }
+    lua_pop(L, 3);
+    // Being listed is not being loaded: an addon later in load order, or one
+    // whose dependency is missing, is listed and not loaded.
+    auto* svc = getLuaServices(L);
+    const bool found = svc && svc->isAddOnLoaded && svc->isAddOnLoaded(name);
     lua_pushboolean(L, found ? 1 : 0);
     return 1;
 }
@@ -4065,6 +4108,7 @@ static int lua_LoadAddOn(lua_State* L) {
         "DEP_DEMAND_LOADED", "DEP_DISABLED", "DEP_INCOMPATIBLE",
         "DEP_INSECURE", "DEP_INTERFACE_VERSION", "DEP_MISSING", "DISABLED",
         "INCOMPATIBLE", "INSECURE", "INTERFACE_VERSION", "MISSING",
+        "NOT_DEMAND_LOADED", "DEP_NOT_DEMAND_LOADED",
     };
     bool known = false;
     for (const char* k : kKnown) {
@@ -7333,6 +7377,7 @@ void registerSystemLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"SetCVar",             lua_SetCVar},
+                {"RegisterCVar",        lua_RegisterCVar},
                 {"GetLocale",         lua_GetLocale},
                 // Gender-aware lookup of a global string by token name.
                 //
@@ -7476,6 +7521,7 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetNumAddOns",      lua_GetNumAddOns},
                 {"GetAddOnInfo",      lua_GetAddOnInfo},
                 {"IsAddOnLoadOnDemand", lua_IsAddOnLoadOnDemand},
+                {"GetAddOnDependencies", lua_GetAddOnDependencies},
                 // Turning an addon off, which the "an addon did something it
                 // is not allowed to" popup offers as its first button before
                 // reloading. Answered with nothing, that button reloaded and

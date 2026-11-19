@@ -18,6 +18,10 @@ struct TocFile {
     [[nodiscard]] bool isLoadOnDemand() const;
     [[nodiscard]] std::vector<std::string> getSavedVariables() const;
     [[nodiscard]] std::vector<std::string> getSavedVariablesPerCharacter() const;
+    /// Addons that must load first; without them this one does not load.
+    [[nodiscard]] std::vector<std::string> getRequiredDeps() const;
+    /// Addons loaded first when present and enabled.
+    [[nodiscard]] std::vector<std::string> getOptionalDeps() const;
 };
 
 std::optional<TocFile> parseTocFile(const std::string& tocPath);

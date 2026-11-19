@@ -364,6 +364,16 @@ static int lua_Frame_IsProtected(lua_State* L) {
     return 2;
 }
 
+/// CanChangeProtectedState() -> 1 unless the frame is protected and combat
+/// lockdown is on (UIParent and PlayerFrame answer 1 out of combat on 2.4.3).
+/// No frame is protected here (IsProtected above), so always 1. Clique asks
+/// before it edits click bindings on unit frames.
+static int lua_Frame_CanChangeProtectedState(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lua_pushnumber(L, 1);
+    return 1;
+}
+
 // Frame method: frame:GetName()
 static int lua_Frame_GetName(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -512,7 +522,46 @@ void recordScriptError(lua_State* L, const char* script) {
     lua_pop(L, 1);
 }
 
-/// seterrorhandler(fn): stores the handler geterrorhandler() forwards to.
+/// The `bit` table of build 8606 (BitLib): band, bor, bxor, bnot, lshift,
+/// rshift, arshift, mod. Measured there: arguments wrap to 32 bits
+/// (band(2^32+5, 7) = 5, band(-1, 255) = 255) and results are unsigned
+/// (bnot(0) = 4294967295, lshift(1, 31) = 2147483648) except arshift
+/// (arshift(-16, 2) = -4) and mod (mod(-7, 3) = -1). QuestHelper's scheduler
+/// and Bagnon's bag-type test call it.
+static uint32_t bitArg(lua_State* L, int index) {
+    const double d = std::trunc(luaL_checknumber(L, index));
+    double wrapped = std::fmod(d, 4294967296.0);
+    if (wrapped < 0) wrapped += 4294967296.0;
+    return static_cast<uint32_t>(wrapped);
+}
+static int bitPush(lua_State* L, uint32_t v) { lua_pushnumber(L, v); return 1; }
+template <typename Op>
+static int bitFold(lua_State* L, Op op) {
+    uint32_t v = bitArg(L, 1);
+    for (int i = 2, n = lua_gettop(L); i <= n; ++i) v = op(v, bitArg(L, i));
+    return bitPush(L, v);
+}
+static int lua_bit_band(lua_State* L) { return bitFold(L, [](uint32_t a, uint32_t b) { return a & b; }); }
+static int lua_bit_bor(lua_State* L)  { return bitFold(L, [](uint32_t a, uint32_t b) { return a | b; }); }
+static int lua_bit_bxor(lua_State* L) { return bitFold(L, [](uint32_t a, uint32_t b) { return a ^ b; }); }
+static int lua_bit_bnot(lua_State* L) { return bitPush(L, ~bitArg(L, 1)); }
+// Shift counts as the x86 shift instructions take them, modulo 32.
+static int lua_bit_lshift(lua_State* L) { return bitPush(L, bitArg(L, 1) << (bitArg(L, 2) & 31u)); }
+static int lua_bit_rshift(lua_State* L) { return bitPush(L, bitArg(L, 1) >> (bitArg(L, 2) & 31u)); }
+static int lua_bit_arshift(lua_State* L) {
+    const auto v = static_cast<int32_t>(bitArg(L, 1));
+    lua_pushnumber(L, v >> (bitArg(L, 2) & 31u));
+    return 1;
+}
+static int lua_bit_mod(lua_State* L) {
+    const auto a = static_cast<int32_t>(bitArg(L, 1));
+    const auto b = static_cast<int32_t>(bitArg(L, 2));
+    luaL_argcheck(L, b != 0, 2, "division by zero");
+    lua_pushnumber(L, b == -1 ? 0 : a % b);
+    return 1;
+}
+
+/// seterrorhandler(fn): stores the handler geterrorhandler() returns.
 /// FrameXML installs _ERRORMESSAGE, which only shows a dialog when the
 /// scriptErrors CVar is on.
 static int lua_seterrorhandler(lua_State* L) {
@@ -522,34 +571,50 @@ static int lua_seterrorhandler(lua_State* L) {
     return 0;
 }
 
-/// What geterrorhandler() returns. Libraries such as AceEvent-2.0 catch a
-/// handler's error with pcall and pass it here; recording it keeps those
-/// errors in the client log and error report before the interface's handler
-/// decides what to show.
+/// Records an error a handler was given, for the client log and error report.
 static int lua_reportingErrorHandler(lua_State* L) {
     const char* err = lua_tostring(L, 1);
     const std::string msg = std::string("error handler: ") + (err ? err : "?");
     LOG_ERROR("LuaEngine: ", msg);
     if (auto* e = engineFrom(L)) e->noteLuaError(msg);
-    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_error_handler");
-    if (lua_isfunction(L, -1)) {
-        lua_insert(L, 1);
-        lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
-        return lua_gettop(L);
-    }
-    lua_pop(L, 1);
     lua_settop(L, 1);
     return 1;
 }
 
+/// geterrorhandler(): the function seterrorhandler was last given, itself, as
+/// build 8606 answers - addons chain to it. QuestHelper wraps it:
+///     local orig = geterrorhandler()
+///     seterrorhandler(function(...) ... return orig(...) end)
+/// A stand-in that forwarded to whatever handler was current made orig call
+/// QuestHelper's own handler again, without end ("C stack overflow").
+/// Before any seterrorhandler the error is only recorded.
 static int lua_geterrorhandler(lua_State* L) {
-    lua_pushcfunction(L, lua_reportingErrorHandler);
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_error_handler");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushcfunction(L, lua_reportingErrorHandler);
+    }
     return 1;
 }
 
-/// debuginfo(): FrameXML's _ERRORMESSAGE calls it first. The shipped 2.4.3
-/// client does nothing here; the error itself is recorded by the handler.
-static int lua_debuginfo(lua_State*) { return 0; }
+/// debuginfo(): FrameXML's _ERRORMESSAGE(message) calls it first, "Show
+/// debugging information for internal use". The message is the caller's
+/// first argument; it goes to the client log and lua_errors.txt, which is
+/// where errors an addon hands to geterrorhandler() (AceEvent-2.0 does)
+/// would otherwise leave no trace.
+static int lua_debuginfo(lua_State* L) {
+    lua_Debug ar;
+    if (!lua_getstack(L, 1, &ar)) return 0;
+    const char* local = lua_getlocal(L, &ar, 1);
+    if (!local) return 0;
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        const std::string msg = std::string("error handler: ") + lua_tostring(L, -1);
+        LOG_ERROR("LuaEngine: ", msg);
+        if (auto* e = engineFrom(L)) e->noteLuaError(msg);
+    }
+    lua_pop(L, 1);
+    return 0;
+}
 
 /// Whether the frame is shown, from the widget rather than a field beside it.
 ///
@@ -1770,6 +1835,13 @@ int lua_MessageFrame_SetInsertMode(lua_State* L) {
     const char* mode = luaL_optstring(L, 2, "BOTTOM");
     if (w) w->messagesInsertTop = (mode && std::string(mode) == "TOP");
     return 0;
+}
+/// The getter: "TOP" or "BOTTOM", ChatFrame1:GetInsertMode() is "BOTTOM" on
+/// 2.4.3. Prat's Scroll module reads it.
+int lua_MessageFrame_GetInsertMode(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushstring(L, w && w->messagesInsertTop ? "TOP" : "BOTTOM");
+    return 1;
 }
 
 // ── Tooltips ───────────────────────────────────────────────────────────────
@@ -4110,6 +4182,33 @@ int lua_Tooltip_ClearLines(lua_State* L) {
     callScriptOnTable(L, 1, "OnTooltipCleared", 0);
     return 0;
 }
+/// AddFontStrings(left, right): two font strings become the tooltip's next
+/// line, after the TextLeftN its template declared. LibGratuity-3.0 and
+/// LibHealComm-3.0 build unnamed scanning tooltips this way and read the
+/// lines back through the font strings after SetHyperlink/SetBagItem.
+int lua_Tooltip_AddFontStrings(lua_State* L) {
+    auto* tree = getWidgetTree(L);
+    auto* tip = widgetOf(L, 1);
+    auto* left = widgetOf(L, 2);
+    auto* right = widgetOf(L, 3);
+    if (!tree || !tip || !left || !right) return 0;
+    uint16_t declared = 0;
+    if (!tip->name.empty()) {
+        const std::string prefix = tip->name + "TextLeft";
+        for (size_t id = 1; id < tree->size(); ++id) {
+            const auto* c = tree->get(static_cast<uint32_t>(id));
+            if (c && c->parent == tip->id && c->name.starts_with(prefix)) ++declared;
+        }
+    }
+    const auto index = static_cast<uint16_t>(declared + ++tip->addedTooltipSlots);
+    for (auto* fs : {left, right}) {
+        fs->tooltipSlotOwner = tip->id;
+        fs->tooltipSlotIndex = index;
+        fs->tooltipSlotRight = fs == right;
+    }
+    return 0;
+}
+
 int lua_Tooltip_NumLines(lua_State* L) {
     const auto* w = widgetOf(L, 1);
     lua_pushnumber(L, w ? static_cast<lua_Number>(w->tooltipLines.size()) : 0.0);
@@ -4165,6 +4264,41 @@ int lua_MessageFrame_ScrollDown(lua_State* L) {
 int lua_MessageFrame_ScrollToBottom(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) w->messageScroll = 0;
     return 0;
+}
+
+/// The getters of SetMaxLines, SetMinResize and SetMaxResize, and the other
+/// end of ScrollToBottom - all on 2.4.3 frames. Prat's History, ChatFrames
+/// and Scroll modules call them on every chat frame.
+int lua_MessageFrame_GetMaxLines(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushnumber(L, w ? static_cast<lua_Number>(w->maxMessages) : 0.0);
+    return 1;
+}
+int lua_MessageFrame_ScrollToTop(lua_State* L) {
+    if (auto* w = widgetOf(L, 1))
+        w->messageScroll = w->messages.empty() ? 0 : static_cast<int>(w->messages.size()) - 1;
+    return 0;
+}
+int lua_Frame_GetMinResize(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushnumber(L, w ? w->minResizeW : 0.0);
+    lua_pushnumber(L, w ? w->minResizeH : 0.0);
+    return 2;
+}
+int lua_Frame_GetMaxResize(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    lua_pushnumber(L, w ? w->maxResizeW : 0.0);
+    lua_pushnumber(L, w ? w->maxResizeH : 0.0);
+    return 2;
+}
+int lua_EditBox_SetAltArrowKeyMode(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) w->altArrowKeyMode = lua_toboolean(L, 2) != 0;
+    return 0;
+}
+int lua_EditBox_GetAltArrowKeyMode(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (w && w->altArrowKeyMode) lua_pushnumber(L, 1); else lua_pushnil(L);
+    return 1;
 }
 
 int lua_Region_GetNumPoints(lua_State* L) {
@@ -4764,6 +4898,12 @@ static std::pair<wowee::ui::Widget::TooltipLine*, bool> tooltipLineForFontString
     lua_State* L, const wowee::ui::Widget* w) {
     auto* tree = getWidgetTree(L);
     if (!w || !tree || w->kind != wowee::ui::WidgetKind::FontString) return {nullptr, false};
+    if (w->tooltipSlotOwner != 0) {
+        auto* owner = tree->get(w->tooltipSlotOwner);
+        if (owner && w->tooltipSlotIndex <= owner->tooltipLines.size())
+            return {&owner->tooltipLines[w->tooltipSlotIndex - 1], w->tooltipSlotRight};
+        return {nullptr, false};
+    }
     auto* owner = tree->get(w->parent);
     if (!owner || owner->objectType != "GameTooltip") return {nullptr, false};
     for (const bool right : {false, true}) {
@@ -5582,6 +5722,27 @@ int lua_Frame_GetChildren(lua_State* L) {
     return pushed;
 }
 
+/// EnumerateFrames([frame]): the frame created after `frame`, or the first
+/// one; nil past the last. Build 8606 walks every frame this way (a global,
+/// not a method); addons search the whole interface with it.
+static int lua_EnumerateFrames(lua_State* L) {
+    auto* tree = wowee::addons::getWidgetTree(L);
+    if (!tree) return 0;
+    const uint32_t after = lua_istable(L, 1) ? widgetIdOf(L, 1) : 0;
+    lua_getglobal(L, "__WoweeFramesByWid");
+    if (!lua_istable(L, -1)) return luaL_error(L, "EnumerateFrames: missing widget registry");
+    const int registry = lua_gettop(L);
+    for (size_t id = static_cast<size_t>(after) + 1; id < tree->size(); ++id) {
+        const auto* w = tree->get(static_cast<uint32_t>(id));
+        if (!w || w->id == 0 || w->kind != wowee::ui::WidgetKind::Frame) continue;
+        lua_pushinteger(L, static_cast<lua_Integer>(id));
+        lua_rawget(L, registry);
+        if (lua_istable(L, -1)) return 1;
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
 // Texture and font-string regions belonging directly to this frame.
 int lua_Frame_GetRegions(lua_State* L) {
     auto* tree = wowee::addons::getWidgetTree(L);
@@ -5606,6 +5767,25 @@ int lua_Frame_GetRegions(lua_State* L) {
     lua_remove(L, registry);
     return count;
 }
+
+/// GetNumRegions() and GetNumChildren(): the counts GetRegions and
+/// GetChildren answer, both on build 8606. PitBull sizes its region
+/// bookkeeping with GetNumRegions.
+static int countChildren(lua_State* L, bool frames) {
+    auto* tree = wowee::addons::getWidgetTree(L);
+    const auto* w = widgetOf(L, 1);
+    int count = 0;
+    if (tree && w) {
+        for (const uint32_t childId : w->children) {
+            const auto* child = tree->get(childId);
+            if (child && (child->kind == wowee::ui::WidgetKind::Frame) == frames) ++count;
+        }
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+int lua_Frame_GetNumRegions(lua_State* L) { return countChildren(L, false); }
+int lua_Frame_GetNumChildren(lua_State* L) { return countChildren(L, true); }
 
 int lua_Frame_EnableKeyboard(lua_State* L) {
     // Through the tree, which indexes keyboard frames for topKeyboardFrame.
@@ -5681,6 +5861,11 @@ int lua_Frame_SetBackdrop(lua_State* L) {
         return 0;
     }
     w->hasBackdrop = true;
+    // A new backdrop replaces the old one whole: what this table leaves out
+    // reads back empty (GetBackdrop after SetBackdrop({bgFile="A"})).
+    w->bgFile.clear();
+    w->edgeFile.clear();
+    w->insetLeft = w->insetRight = w->insetTop = w->insetBottom = 0.0f;
     auto str = [&](const char* key, std::string& out) {
         lua_getfield(L, 2, key);
         if (lua_isstring(L, -1)) out = lua_tostring(L, -1);
@@ -5697,6 +5882,8 @@ int lua_Frame_SetBackdrop(lua_State* L) {
     // tileSize describes the background's repeat, and edgeSize the border tile.
     // Where only one is given the other is the sensible stand-in.
     num("tileSize", w->edgeSize);
+    w->backdropTileSize = 0.0f;
+    num("tileSize", w->backdropTileSize);
     num("edgeSize", w->edgeSize);
     lua_getfield(L, 2, "tile");
     w->tileBackground = lua_toboolean(L, -1) != 0;
@@ -5716,6 +5903,48 @@ int lua_Frame_SetBackdrop(lua_State* L) {
     }
     lua_pop(L, 1);
     return 0;
+}
+
+/// GetBackdrop() -> a new table describing what SetBackdrop was given, or
+/// nothing at all when the frame has none (select('#') is 0 on 2.4.3).
+/// Measured there: {bgFile="A"} reads back edgeFile "", tile nil,
+/// tileSize 0 and insets of 0; tile reads 1, not true. X-Perl sizes its
+/// resize corner from the insets.
+int lua_Frame_GetBackdrop(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w || !w->hasBackdrop) return 0;
+    lua_newtable(L);
+    lua_pushstring(L, w->bgFile.c_str());
+    lua_setfield(L, -2, "bgFile");
+    lua_pushstring(L, w->edgeFile.c_str());
+    lua_setfield(L, -2, "edgeFile");
+    if (w->tileBackground) {
+        lua_pushnumber(L, 1);
+        lua_setfield(L, -2, "tile");
+    }
+    lua_pushnumber(L, w->backdropTileSize);
+    lua_setfield(L, -2, "tileSize");
+    lua_pushnumber(L, w->edgeSize);
+    lua_setfield(L, -2, "edgeSize");
+    lua_newtable(L);
+    lua_pushnumber(L, w->insetLeft);   lua_setfield(L, -2, "left");
+    lua_pushnumber(L, w->insetRight);  lua_setfield(L, -2, "right");
+    lua_pushnumber(L, w->insetTop);    lua_setfield(L, -2, "top");
+    lua_pushnumber(L, w->insetBottom); lua_setfield(L, -2, "bottom");
+    lua_setfield(L, -2, "insets");
+    return 1;
+}
+int lua_Frame_GetBackdropColor(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    for (float c : w->backdropColor) lua_pushnumber(L, c);
+    return 4;
+}
+int lua_Frame_GetBackdropBorderColor(lua_State* L) {
+    const auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    for (float c : w->borderColor) lua_pushnumber(L, c);
+    return 4;
 }
 
 int lua_Frame_SetBackdropColor(lua_State* L) {
@@ -6901,7 +7130,9 @@ bool LuaEngine::initialize() {
     luaopen_string(L_);
     luaopen_math(L_);
 
-    // Remove unsafe globals from base library.
+    // Remove unsafe globals from base library: the 2.4.3 client has none of
+    // these. collectgarbage stays, as it does there - LibRock-1.0 and Omen
+    // call it while loading (collectgarbage('count'), 'collect').
     //
     // newproxy is not among them, despite the name. It returns a userdata with
     // a fresh metatable and reaches nothing else; what it buys is __index and
@@ -6909,7 +7140,7 @@ bool LuaEngine::initialize() {
     // Blizzard's own RestrictedFrames builds secure frame handles. Removing it
     // cost us SecureHandlerTemplates and everything inheriting from it.
     const char* unsafeGlobals[] = {
-        "dofile", "loadfile", "load", "collectgarbage", nullptr
+        "dofile", "loadfile", "load", nullptr
     };
     for (const char** g = unsafeGlobals; *g; ++g) {
         lua_pushnil(L_);
@@ -7048,6 +7279,9 @@ void LuaEngine::registerCoreAPI() {
     lua_pushcfunction(L_, lua_WoweeFireOnLoad);
     lua_setglobal(L_, "__WoweeFireOnLoad");
 
+    lua_pushcfunction(L_, lua_EnumerateFrames);
+    lua_setglobal(L_, "EnumerateFrames");
+
     lua_pushcfunction(L_, lua_WoweeCallScript);
     lua_setglobal(L_, "__WoweeCallScript");
 
@@ -7125,6 +7359,18 @@ void LuaEngine::registerCoreAPI() {
             else lua_setglobal(L_, a.global);
         }
         lua_pop(L_, 1);
+    }
+    {
+        static const luaL_Reg kBit[] = {
+            {"band", lua_bit_band},     {"bor", lua_bit_bor},
+            {"bxor", lua_bit_bxor},     {"bnot", lua_bit_bnot},
+            {"lshift", lua_bit_lshift}, {"rshift", lua_bit_rshift},
+            {"arshift", lua_bit_arshift}, {"mod", lua_bit_mod},
+            {nullptr, nullptr},
+        };
+        lua_newtable(L_);
+        luaL_register(L_, nullptr, kBit);
+        lua_setglobal(L_, "bit");
     }
     // The trigonometric globals, which take and answer **degrees**.
     //
@@ -7216,6 +7462,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetScript",       lua_Frame_GetScript},
         {"HasScript",       lua_Frame_HasScript},
         {"IsProtected",     lua_Frame_IsProtected},
+        {"CanChangeProtectedState", lua_Frame_CanChangeProtectedState},
         {"GetName",         lua_Frame_GetName},
         {"Show",            lua_Region_Show},
         {"Hide",            lua_Region_Hide},
@@ -7334,6 +7581,7 @@ void LuaEngine::registerCoreAPI() {
         {"SetFrameStack",   lua_Tooltip_SetFrameStack},
         {"AppendText",      lua_Tooltip_AppendText},
         {"NumLines",        lua_Tooltip_NumLines},
+        {"AddFontStrings",  lua_Tooltip_AddFontStrings},
         {"Clear",           lua_MessageFrame_Clear},
         {"GetNumMessages",  lua_MessageFrame_GetNumMessages},
         {"GetMessageInfo",  lua_MessageFrame_GetMessageInfo},
@@ -7351,9 +7599,16 @@ void LuaEngine::registerCoreAPI() {
         {"SetFading",       lua_MessageFrame_SetFading},
         {"GetFading",       lua_MessageFrame_GetFading},
         {"SetInsertMode",   lua_MessageFrame_SetInsertMode},
+        {"GetInsertMode",   lua_MessageFrame_GetInsertMode},
         {"ScrollUp",        lua_MessageFrame_ScrollUp},
         {"ScrollDown",      lua_MessageFrame_ScrollDown},
         {"ScrollToBottom",  lua_MessageFrame_ScrollToBottom},
+        {"ScrollToTop",     lua_MessageFrame_ScrollToTop},
+        {"GetMaxLines",     lua_MessageFrame_GetMaxLines},
+        {"GetMinResize",    lua_Frame_GetMinResize},
+        {"GetMaxResize",    lua_Frame_GetMaxResize},
+        {"SetAltArrowKeyMode", lua_EditBox_SetAltArrowKeyMode},
+        {"GetAltArrowKeyMode", lua_EditBox_GetAltArrowKeyMode},
         {"Enable",          lua_Button_Enable},
         {"SetChecked",      lua_CheckButton_SetChecked},
         {"SetAttribute",    lua_Frame_SetAttribute},
@@ -7407,6 +7662,10 @@ void LuaEngine::registerCoreAPI() {
         {"SetShadowColor",        lua_FontString_SetShadowColor},
         {"SetJustifyH",           lua_FontString_SetJustifyH},
         {"SetJustifyV",           lua_FontString_SetJustifyV},
+        // Their getters: a message frame or edit box is a font instance on
+        // 2.4.3 and answers them. Prat's timestamps ask ChatFrameN:GetJustifyH().
+        {"GetJustifyH",           lua_FontString_GetJustifyH},
+        {"GetJustifyV",           lua_FontString_GetJustifyV},
         {"SetTextFontObject",     lua_Frame_SetNormalFontObject},
         {"SetHighlightFontObject", lua_Frame_SetHighlightFontObject},
         {"SetDisabledFontObject",  lua_Frame_SetDisabledFontObject},
@@ -7430,6 +7689,9 @@ void LuaEngine::registerCoreAPI() {
         {"IsClampedToScreen",     lua_Frame_IsClampedToScreen},
         {"SetBackdrop",           lua_Frame_SetBackdrop},
         {"SetBackdropColor",      lua_Frame_SetBackdropColor},
+        {"GetBackdrop",           lua_Frame_GetBackdrop},
+        {"GetBackdropColor",      lua_Frame_GetBackdropColor},
+        {"GetBackdropBorderColor", lua_Frame_GetBackdropBorderColor},
         {"SetBackdropBorderColor",lua_Frame_SetBackdropBorderColor},
         {"SetMinMaxValues",       lua_StatusBar_SetMinMaxValues},
         {"GetMinMaxValues",       lua_StatusBar_GetMinMaxValues},
@@ -7488,6 +7750,14 @@ void LuaEngine::registerCoreAPI() {
         {"GetParent",       lua_Region_GetParent},
         {"GetChildren",     lua_Frame_GetChildren},
         {"GetRegions",      lua_Frame_GetRegions},
+        {"GetNumRegions",   lua_Frame_GetNumRegions},
+        {"GetNumChildren",  lua_Frame_GetNumChildren},
+        // A frame's object type under its 2.4.3 name too: UIParent:GetFrameType()
+        // is "Frame" there. X-Perl calls it on every frame it builds.
+        {"GetFrameType",    lua_Region_GetObjectType},
+        // And IsFrameType alongside it; AceTab-2.0 tests for it to decide
+        // that ChatFrameEditBox is a frame at all.
+        {"IsFrameType",     lua_Region_IsObjectType},
         {"CreateTexture",   lua_Frame_CreateTexture},
         {"CreateFontString", lua_Frame_CreateFontString},
         {nullptr, nullptr}
@@ -8361,10 +8631,10 @@ void LuaEngine::registerCoreAPI() {
     );
 
     // The fallback is installed at the very end of initialize(), not here.
-    // Everything below is still bootstrap Lua, and much of it opens with the
-    // "LibStub = LibStub or {}" idiom - which reads nil only while _G answers
-    // honestly. With the fallback already in place those never see nil, and
-    // hang their tables off the fallback object instead of a fresh one.
+    // Everything below is still bootstrap Lua, and "X = X or {}" reads nil
+    // only while _G answers honestly. With the fallback already in place those
+    // never see nil, and hang their tables off the fallback object instead of
+    // a fresh one.
 
     // Put the C bindings back over anything the Lua above defined with the same
     // name. That block exists to give unimplemented methods a harmless no-op,
@@ -8842,82 +9112,6 @@ void LuaEngine::registerCoreAPI() {
         "        hook(...)\n"
         "        return unpack(r)\n"
         "    end\n"
-        "end\n"
-    );
-
-    // LibStub - universal library version management used by Ace3 and virtually all addon libs.
-    // This is the standard WoW LibStub implementation that addons embed/expect globally.
-    bootstrap(
-        // rawget, so the missing-API fallback cannot answer this. Read through
-        // the metatable, "LibStub or {}" is never nil - it is the fallback
-        // object - and the shim then hangs its tables off that instead of a
-        // fresh one, so every library registering against it dies indexing a
-        // field that was never really there.
-        "local LibStub = rawget(_G, 'LibStub') or {}\n"
-        "LibStub.libs = LibStub.libs or {}\n"
-        "LibStub.minors = LibStub.minors or {}\n"
-        // The version of LibStub itself, which every copy of the real one tests
-        // before deciding whether to replace what is already there:
-        //
-        //     if not LibStub or LibStub.minor < LIBSTUB_MINOR then
-        //
-        // Absent, that compared nil with a number and raised - on line 6 of the
-        // first file of the first embedded library, so every Ace3 addon died
-        // before it began. Two is what the published LibStub is, and matching
-        // it means an addon carrying its own copy keeps this one, which is the
-        // instance every library here has already registered against.
-        "LibStub.minor = LibStub.minor or 2\n"
-        "function LibStub:NewLibrary(major, minor)\n"
-        "    assert(type(major) == 'string', 'LibStub:NewLibrary: bad argument #1 (string expected)')\n"
-        "    minor = assert(tonumber(minor or (type(minor) == 'string' and minor:match('(%d+)'))), 'LibStub:NewLibrary: bad argument #2 (number expected)')\n"
-        "    local oldMinor = self.minors[major]\n"
-        "    if oldMinor and oldMinor >= minor then return nil end\n"
-        "    local lib = self.libs[major] or {}\n"
-        "    self.libs[major] = lib\n"
-        "    self.minors[major] = minor\n"
-        "    return lib, oldMinor\n"
-        "end\n"
-        "function LibStub:GetLibrary(major, silent)\n"
-        "    if not self.libs[major] and not silent then\n"
-        "        error('Cannot find a library instance of \"' .. tostring(major) .. '\".')\n"
-        "    end\n"
-        "    return self.libs[major], self.minors[major]\n"
-        "end\n"
-        "function LibStub:IterateLibraries() return pairs(self.libs) end\n"
-        "setmetatable(LibStub, { __call = LibStub.GetLibrary })\n"
-        "_G['LibStub'] = LibStub\n"
-    );
-
-    // CallbackHandler-1.0 - minimal implementation for Ace3-based addons
-    bootstrap(
-        "if LibStub then\n"
-        "  local CBH = LibStub:NewLibrary('CallbackHandler-1.0', 7)\n"
-        "  if CBH then\n"
-        "    CBH.mixins = { 'RegisterCallback', 'UnregisterCallback', 'UnregisterAllCallbacks', 'Fire' }\n"
-        "    function CBH:New(target, regName, unregName, unregAllName, onUsed)\n"
-        "      local registry = setmetatable({}, { __index = CBH })\n"
-        "      registry.callbacks = {}\n"
-        "      target = target or {}\n"
-        "      target[regName or 'RegisterCallback'] = function(self, event, method, ...)\n"
-        "        if not registry.callbacks[event] then registry.callbacks[event] = {} end\n"
-        "        local handler = type(method) == 'function' and method or self[method]\n"
-        "        registry.callbacks[event][self] = handler\n"
-        "      end\n"
-        "      target[unregName or 'UnregisterCallback'] = function(self, event)\n"
-        "        if registry.callbacks[event] then registry.callbacks[event][self] = nil end\n"
-        "      end\n"
-        "      target[unregAllName or 'UnregisterAllCallbacks'] = function(self)\n"
-        "        for event, handlers in pairs(registry.callbacks) do handlers[self] = nil end\n"
-        "      end\n"
-        "      registry.Fire = function(self, event, ...)\n"
-        "        if not self.callbacks[event] then return end\n"
-        "        for obj, handler in pairs(self.callbacks[event]) do\n"
-        "          handler(obj, event, ...)\n"
-        "        end\n"
-        "      end\n"
-        "      return registry\n"
-        "    end\n"
-        "  end\n"
         "end\n"
     );
 
@@ -13358,7 +13552,7 @@ static void serializeLuaValue(lua_State* L, int idx, std::string& out, int inden
     }
 }
 
-void LuaEngine::setAddonList(const std::vector<TocFile>& addons) {
+void LuaEngine::setAddonList(const std::vector<TocFile>& addons, const std::vector<std::string>& blockers) {
     if (!L_) return;
     lua_pushnumber(L_, static_cast<double>(addons.size()));
     lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_addon_count");
@@ -13386,6 +13580,18 @@ void LuaEngine::setAddonList(const std::vector<TocFile>& addons) {
         // from the moment the client started.
         lua_pushboolean(L_, addons[i].isLoadOnDemand() ? 1 : 0);
         lua_setfield(L_, -2, "loadOnDemand");
+        if (i < blockers.size() && !blockers[i].empty()) {
+            lua_pushstring(L_, blockers[i].c_str());
+            lua_setfield(L_, -2, "reason");
+        }
+        // GetAddOnDependencies: the required ones, as the .toc spells them.
+        lua_newtable(L_);
+        int depIndex = 0;
+        for (const auto& dep : addons[i].getRequiredDeps()) {
+            lua_pushstring(L_, dep.c_str());
+            lua_rawseti(L_, -2, ++depIndex);
+        }
+        lua_setfield(L_, -2, "deps");
         lua_rawseti(L_, -2, static_cast<int>(i + 1));
     }
     lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_addon_info");
