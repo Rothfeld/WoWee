@@ -118,6 +118,14 @@ static int lua_UnitHealthMax(lua_State* L) {
     return 1;
 }
 
+/// Rage (1) and runic power (6) are held in tenths: the update field says 155
+/// where the interface says 15. Build 8606 answers UnitMana/UnitManaMax in
+/// whole points (a warrior's maximum is 100, not 1000), and the power bar,
+/// its text and every addon reading them count in those.
+static uint32_t interfacePower(uint8_t type, uint32_t raw) {
+    return (type == 1 || type == 6) ? raw / 10 : raw;
+}
+
 /// UnitPower(unit, powerType) - the second argument names *which* bar.
 ///
 /// Absent, it means the one the unit is using, which is what the main power
@@ -135,7 +143,8 @@ static int lua_UnitPower(lua_State* L) {
     const uint8_t want = byType ? static_cast<uint8_t>(lua_tonumber(L, 2)) : 0;
     auto* unit = resolveUnit(L, uid);
     if (unit) {
-        lua_pushnumber(L, byType ? unit->getPowerByType(want) : unit->getPower());
+        const uint8_t type = byType ? want : (unit->getPowerType() < 7 ? unit->getPowerType() : 0);
+        lua_pushnumber(L, interfacePower(type, unit->getPowerByType(type)));
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
@@ -145,7 +154,7 @@ static int lua_UnitPower(lua_State* L) {
         // Party stats carry one power and say which it is, so a request for a
         // different one is answered with nothing rather than with that.
         const bool same = pm && (!byType || pm->powerType == want);
-        lua_pushnumber(L, same ? pm->curPower : 0);
+        lua_pushnumber(L, same ? interfacePower(pm->powerType, pm->curPower) : 0);
     }
     return 1;
 }
@@ -159,7 +168,8 @@ static int lua_UnitPowerMax(lua_State* L) {
     const uint8_t want = byType ? static_cast<uint8_t>(lua_tonumber(L, 2)) : 0;
     auto* unit = resolveUnit(L, uid);
     if (unit) {
-        lua_pushnumber(L, byType ? unit->getMaxPowerByType(want) : unit->getMaxPower());
+        const uint8_t type = byType ? want : (unit->getPowerType() < 7 ? unit->getPowerType() : 0);
+        lua_pushnumber(L, interfacePower(type, unit->getMaxPowerByType(type)));
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
@@ -167,7 +177,7 @@ static int lua_UnitPowerMax(lua_State* L) {
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         const bool same = pm && (!byType || pm->powerType == want);
-        lua_pushnumber(L, same ? pm->maxPower : 0);
+        lua_pushnumber(L, same ? interfacePower(pm->powerType, pm->maxPower) : 0);
     }
     return 1;
 }
