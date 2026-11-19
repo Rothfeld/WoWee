@@ -309,7 +309,9 @@ void main() {
     } else if (vIndoorLighting.w > 0.5) {
         // Interior WMO props carry placement lighting in MODD. Outdoor sky
         // lighting would tint their authored warm surfaces blue/green.
-        result = vIndoorLighting.rgb * texColor.rgb;
+        // TBC: a highlighted object takes this light twice, saturated.
+        float indoorGain = 1.0 + (lightDir.w != 0.0 ? vHighlight : 0.0);
+        result = min(vIndoorLighting.rgb * indoorGain, vec3(1.0)) * texColor.rgb;
     } else {
         vec3 viewDir = normalize(viewPos.xyz - FragPos);
 
@@ -338,7 +340,8 @@ void main() {
         result = ambientTerm * texColor.rgb
                + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb);
         if (lightDir.w != 0.0) {
-            result = texColor.rgb * (ambientColor.rgb + shadow * (VertexLighting - ambientColor.rgb));
+            vec3 ambientLight = min(ambientColor.rgb * (1.0 + vHighlight), vec3(1.0));
+            result = texColor.rgb * (ambientLight + shadow * (VertexLighting - ambientLight));
         }
 
         if (interiorDarken > 0.0) {
@@ -390,11 +393,12 @@ void main() {
         if (vFadeAlpha <= bayerDither4x4(ivec2(gl_FragCoord.xy))) discard;
         outAlpha = texColor.a;
     }
+    // Without the TBC light (TBC: VertexLighting's gain).
     // Pressed on. The real client lifts the whole model while the button is
     // down over it, which is what says "this one, and the click landed": a
     // warm brightening rather than a tint, so a dark door reads as lit and a
     // pale one does not blow out.
-    if (vHighlight > 0.0) {
+    if (vHighlight > 0.0 && lightDir.w == 0.0) {
         float lift = clamp(vHighlight, 0.0, 1.0);
         result = result * (1.0 + 0.6 * lift) + vec3(0.22, 0.19, 0.10) * lift;
     }

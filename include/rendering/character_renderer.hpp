@@ -224,7 +224,9 @@ public:
     using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
     void setInteriorLightQuery(InteriorLightQuery query) { interiorLightQuery_ = std::move(query); }
     static constexpr float kKitOpacityTransition = 1.0f;
-    void setHoveredInstance(uint32_t instanceId);
+    /// Highlight the unit under the pointer and the targeted unit (0 for
+    /// none), with what they carry. 2.4.3 lights both alike.
+    void setHighlightedInstances(uint32_t hoveredId, uint32_t targetedId);
     [[nodiscard]] const pipeline::M2Model* getModelData(uint32_t modelId) const;
     [[nodiscard]] const pipeline::M2Model* getInstanceModelData(uint32_t instanceId) const;
     void setActiveGeosets(uint32_t instanceId, const std::unordered_set<uint16_t>& geosets);
@@ -417,7 +419,7 @@ private:
     };
 
     // Character instance
-    std::vector<uint32_t> hoveredInstances_;
+    std::vector<uint32_t> highlightedInstances_;
 
     struct CharacterInstance {
         uint32_t id;

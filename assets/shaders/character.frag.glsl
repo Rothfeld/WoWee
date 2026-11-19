@@ -506,14 +506,25 @@ void main() {
             // draws units in Thousand Needles (0.5) at twice the light of
             // GM Island or Elwynn Forest (0), ambient and sun side alike,
             // day and night, while terrain there is unchanged.
-            vec3 unitAmbient = ambient * unitLight.x;
+            // A highlighted unit (pointer over it, or targeted) takes one
+            // more unit of that gain, still before saturating: 2.4.3 hover
+            // and target light the same pixel 2x in Elwynn (gain 1) and
+            // 3.2/2.2 = 1.45x in Hellfire Peninsula (gain 2.2), never past
+            // the texel, so a unit already lit to saturation by the area's
+            // gain barely changes.
+            float gain = unitLight.x + hoverHighlight;
+            vec3 unitAmbient = ambient * gain;
             vec3 legacyLight = clamp(unitAmbient +
-                max(dot(norm, ldir), 0.0) * sunLight * unitLight.x, 0.0, 1.0);
+                max(dot(norm, ldir), 0.0) * sunLight * gain, 0.0, 1.0);
             vec3 shaded = min(unitAmbient, vec3(1.0));
             result = texColor.rgb * (shaded + shadow * (legacyLight - shaded));
         }
         if (interiorLit != 0) {
-            result = texColor.rgb * vec3(interiorLightR, interiorLightG, interiorLightB) * kitLight;
+            // Highlighted, the interior light takes one more unit of gain as
+            // the outdoor light does, saturated (MOCV light is at most 1).
+            vec3 interiorLight = vec3(interiorLightR, interiorLightG, interiorLightB) * kitLight;
+            result = texColor.rgb * (lightDir.w != 0.0
+                ? min(interiorLight * (1.0 + hoverHighlight), vec3(1.0)) : interiorLight);
         }
     }
 
@@ -521,13 +532,10 @@ void main() {
         result += localLightContribution(FragPos, norm, texColor.rgb) * vec3(kitLightR, kitLightG, kitLightB);
     result *= vec3(kitColorR, kitColorG, kitColorB);
 
-    // Unit hover doubles the shaded colour. Measured on 2.4.3 (pointer on vs
-    // off another player, same frame otherwise): skin, vest and the attached
-    // shoulder pads all came out 2.0-2.2x brighter in every channel, dark and
-    // lit texels alike, so it is a multiply and not an added glow. The local
-    // player is not highlighted. Before fog, as the distance haze still
-    // applies to a highlighted unit.
-    result *= 1.0 + hoverHighlight;
+    // Without the TBC light, unit highlight doubles the shaded colour. Before
+    // fog, as the distance haze still applies to a highlighted unit. Under
+    // the TBC light it is part of the unit light's gain above.
+    if (lightDir.w == 0.0) result *= 1.0 + hoverHighlight;
 
     float dist = length(viewPos.xyz - FragPos);
     if (blendMode == 5 || blendMode == 6) {

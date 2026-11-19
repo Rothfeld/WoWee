@@ -3877,7 +3877,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 // Create per-batch material UBO
                 CharMaterialUBO matData{};
-                matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
+                matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(highlightedInstances_.begin(), highlightedInstances_.end(), instance.id) != highlightedInstances_.end() ? 1.0f : 0.0f;
                 matData.opacity = renderOpacity * batchColorAlpha;
                 matData.kitColorR = instance.kitColor.r;
                 matData.kitColorG = instance.kitColor.g;
@@ -4074,7 +4074,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
             CharMaterialUBO matData{};
             matData.tintR = matData.tintG = matData.tintB = 1.0f;
-            matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(hoveredInstances_.begin(), hoveredInstances_.end(), instance.id) != hoveredInstances_.end() ? 1.0f : 0.0f;
+            matData.hoverHighlight = renderPassOverride_ == VK_NULL_HANDLE && std::find(highlightedInstances_.begin(), highlightedInstances_.end(), instance.id) != highlightedInstances_.end() ? 1.0f : 0.0f;
             matData.opacity = renderOpacity;
             matData.kitColorR = instance.kitColor.r;
             matData.kitColorG = instance.kitColor.g;
@@ -5377,13 +5377,15 @@ bool CharacterRenderer::getInstanceKeyBonePivotZ(uint32_t instanceId, int32_t ke
     return false;
 }
 
-void CharacterRenderer::setHoveredInstance(uint32_t instanceId) {
-    hoveredInstances_.clear();
-    const auto instance = instances.find(instanceId);
-    if (instance == instances.end()) return;
-    hoveredInstances_.push_back(instanceId);
-    for (const auto& attachment : instance->second.weaponAttachments)
-        hoveredInstances_.push_back(attachment.weaponInstanceId);
+void CharacterRenderer::setHighlightedInstances(uint32_t hoveredId, uint32_t targetedId) {
+    highlightedInstances_.clear();
+    for (const uint32_t instanceId : {hoveredId, targetedId}) {
+        const auto instance = instances.find(instanceId);
+        if (instance == instances.end()) continue;
+        highlightedInstances_.push_back(instanceId);
+        for (const auto& attachment : instance->second.weaponAttachments)
+            highlightedInstances_.push_back(attachment.weaponInstanceId);
+    }
 }
 
 bool CharacterRenderer::getInstanceNamePosition(uint32_t instanceId, bool mounted, glm::vec3& outPosition) {

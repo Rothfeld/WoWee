@@ -1577,7 +1577,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     worldHoverGuid_ = 0;
     worldObjectHoverGuid_ = 0;
     uint64_t highlightedObject = 0;
-    float objectHoverStrength = 0.25f;
+    const float objectHoverStrength = 1.0f;
     // Cursor affordance: show hand cursor over interactable entities.
     // Not while the cursor is over a frame FrameXML owns: ImGui has never heard
     // of those, so its own answer is no wherever they are.
@@ -1599,24 +1599,19 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             if (hovered && hovered->isUnit()) worldHoverGuid_ = hovered->getGuid();
             if (const auto named = gameHandler.getEntityManager().getEntity(hoverPick.namedObjectGuid);
                     named && named->getType() == game::ObjectType::GAMEOBJECT) {
+                // 2.4.3 lights the object nearest under the pointer whatever
+                // it is used for: a chest, a herb, a mailbox, a wanted poster
+                // and a campfire (a spell focus nothing clicks) all came out
+                // 2x in Elwynn and Hellfire; Workshop Door 90566 and a
+                // Practice Lockbox brighten alike, greyed or with Pick Lock
+                // armed (pair 22). A generic object only with its highlight
+                // field (GENERIC data1): barrels and crates of scenery stay
+                // dark. How much is the M2 light's gain (m2.vert.glsl).
                 const auto object = std::static_pointer_cast<game::GameObject>(named);
                 const auto* info = gameHandler.getCachedGameObjectInfo(object->getEntry());
-                if (info && info->type == 5 && info->data[1] != 0)
+                if (info && hoverPick.closestGuid == named->getGuid() &&
+                        (info->type != 5 || info->data[1] != 0))
                     highlightedObject = named->getGuid();
-                // An object the pointer would use lights up, the same way
-                // with or without a spell waiting for its target. Original
-                // 2.4.3 (pair 22): Workshop Door 90566 and a Practice Lockbox
-                // brighten under the pointer, also greyed (Lockpicking 1) and
-                // with Pick Lock armed, by as much either way; barrels and
-                // crates of scenery do not.
-                // Meeting stones were the one case before (type 23).
-                if (info && hoverPick.resolve() == named->getGuid()) {
-                    highlightedObject = named->getGuid();
-                    // Native hover is weaker than this renderer's pressed
-                    // lift: 0.7 on a meeting stone; the Practice Lockbox
-                    // brightens by 18 levels natively, 45 here at 0.7.
-                    objectHoverStrength = info->type == 23 ? 0.7f : 0.25f;
-                }
             }
             if (gameHandler.pendingLockTargetSpell() != 0) {
                 // A spell waiting for its lock (Pick Lock): "Cast" where

@@ -107,7 +107,10 @@ void main() {
     // the terrain's own light whichever way they face (Dustwallow Marsh, Beezil's Wreck).
     vec3 lightingNormal = push.drawMode == 2 ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
     float diffuse = max(dot(lightingNormal, normalize(-lightDir.xyz)), 0.0);
-    VertexLighting = clamp(ambientColor.rgb + diffuse * lightColor.rgb, 0.0, 1.0);
+    // TBC: a highlighted object (pointer over it) takes its light twice
+    // before saturating, as a highlighted unit takes one more unit of its gain.
+    float lightGain = 1.0 + (lightDir.w != 0.0 ? instanceData[instIdx].highlight : 0.0);
+    VertexLighting = clamp((ambientColor.rgb + diffuse * lightColor.rgb) * lightGain, 0.0, 1.0);
 
     TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;
     vec3 eyeNormal = normalizedNormal(mat3(view) * Normal);

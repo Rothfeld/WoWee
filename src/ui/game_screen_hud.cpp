@@ -1893,8 +1893,11 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     }
     if (auto* characters = appRenderer->getCharacterRenderer()) {
         auto* spawner = core::Application::getInstance().getEntitySpawner();
-        characters->setHoveredInstance(spawner && mouseoverGuid
-            ? spawner->drawnInstanceIdForGuid(mouseoverGuid) : 0);
+        // 2.4.3 lights the targeted unit as it lights the one under the pointer.
+        const uint64_t targetGuid = gameHandler.getTargetGuid();
+        characters->setHighlightedInstances(
+            spawner && mouseoverGuid ? spawner->drawnInstanceIdForGuid(mouseoverGuid) : 0,
+            spawner && targetGuid ? spawner->drawnInstanceIdForGuid(targetGuid) : 0);
     }
 }
 
