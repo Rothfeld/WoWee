@@ -7,7 +7,6 @@
 #include <vk_mem_alloc.h>
 #include "rendering/vk_texture.hpp"
 #include "rendering/vk_context.hpp"
-#include "rendering/unit_shadow.hpp"
 #include <array>
 #include <functional>
 #include <optional>
@@ -50,20 +49,6 @@ public:
                                const HeightQuery3D& wmoHeight,
                                const HeightQuery3D& m2Height,
                                const SurfaceTriangles& surfaces);
-
-    // Ground blob shadows under units (rendering/unit_shadow.hpp)
-    void loadUnitShadowTexture(pipeline::AssetManager& assets);
-    void setUnitShadows(std::vector<UnitShadowBlob> blobs);
-    /// Multiplies ShadowBlob.blp onto the terrain and WMO triangles under
-    /// each unit near enough to the floor below it. Recorded after the
-    /// ground and before units, so it never darkens a model.
-    void renderUnitShadows(const glm::mat4& view, const glm::mat4& projection,
-                           const glm::vec3& cameraPos, float fogStart, float fogEnd,
-                           VkCommandBuffer cmd,
-                           const HeightQuery2D& terrainHeight,
-                           const HeightQuery3D& wmoHeight,
-                           const HeightQuery3D& m2Height,
-                           const SurfaceTriangles& surfaces);
 
     // Fullscreen color overlay (underwater tint, etc.)
     void renderOverlay(const glm::vec4& color, VkCommandBuffer cmd);
@@ -109,19 +94,6 @@ private:
     bool selCircleVisible_ = false;
     // The world triangles the ring is drawn on this frame.
     std::vector<glm::vec3> selCircleTriangles_;
-
-    // Unit blob shadow resources
-    void initUnitShadows();
-    VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout shadowPipelineLayout_ = VK_NULL_HANDLE;
-    std::array<AllocatedBuffer, MAX_FRAMES_IN_FLIGHT> shadowVertexBuffers_{};
-    std::array<size_t, MAX_FRAMES_IN_FLIGHT> shadowVertexCapacity_{};
-    VkTexture shadowTexture_;
-    VkDescriptorSetLayout shadowSetLayout_ = VK_NULL_HANDLE;
-    VkDescriptorPool shadowPool_ = VK_NULL_HANDLE;
-    VkDescriptorSet shadowSet_ = VK_NULL_HANDLE;
-    std::vector<UnitShadowBlob> shadowBlobs_;
-    std::vector<glm::vec3> shadowTriangles_;
 
     // Fullscreen overlay resources
     VkPipeline overlayPipeline_ = VK_NULL_HANDLE;

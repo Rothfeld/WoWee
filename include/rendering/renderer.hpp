@@ -18,7 +18,6 @@
 #include "rendering/vk_frame_data.hpp"
 #include "rendering/vk_utils.hpp"
 #include "rendering/sky_system.hpp"
-#include "rendering/unit_shadow.hpp"
 #include "core/screen_recorder.hpp"
 #include "pipeline/custom_zone_discovery.hpp"
 
@@ -241,10 +240,7 @@ public:
     void setSelectionCircle(const glm::vec3& pos, float radius, const glm::vec3& color,
                             uint32_t characterInstance = 0);
     void clearSelectionCircle();
-    /// This frame's ground blob shadows (EntitySpawner::collectUnitShadows).
-    void setUnitShadows(std::vector<UnitShadowBlob> blobs);
     void refreshSelectionCirclePosition();
-    void renderUnitShadows(const glm::mat4& view, const glm::mat4& projection, VkCommandBuffer cmd);
 
     // CPU timing stats (milliseconds, last frame).
     double getLastUpdateMs() const { return lastUpdateMs; }

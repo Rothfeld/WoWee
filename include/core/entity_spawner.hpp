@@ -8,7 +8,6 @@
 #include "pipeline/blp_loader.hpp"
 #include "pipeline/char_sections.hpp"
 #include "rendering/animation/turn_shuffle.hpp"
-#include "rendering/unit_shadow.hpp"
 #include <memory>
 #include <string>
 #include <utility>
@@ -139,13 +138,6 @@ public:
     /// mount's when mounted, at the unit's object scale. False when the unit
     /// or its model size is not known.
     bool getSelectionRadiusForGuid(uint64_t guid, float& outRadius) const;
-    /// The box and scale that radius is measured from: the display's
-    /// CreatureModelData GeoBox (joined with the mount's when mounted) and
-    /// the unit's object scale. False when the unit or its size is unknown.
-    bool getUnitGeoBoxForGuid(uint64_t guid, ModelGeoBox& outBox, float& outScale) const;
-    /// Ground blob shadows of every drawn unit this frame
-    /// (rendering/unit_shadow.hpp).
-    std::vector<rendering::UnitShadowBlob> collectUnitShadows() const;
     float getPlayerSwimmingDepth() const;
     float getUnitSwimmingDepth(uint64_t guid, uint32_t instanceId) const;
     uint32_t characterInstanceIdForGuid(uint64_t guid) const;

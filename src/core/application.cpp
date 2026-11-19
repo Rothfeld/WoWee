@@ -4895,8 +4895,6 @@ void Application::update(float deltaTime) {
             LOG_ERROR("Exception during Application::update stage 'renderer->update': ", e.what());
             throw;
         }
-        // Units have been placed for this frame: their ground shadows.
-        if (entitySpawner_) renderer->setUnitShadows(entitySpawner_->collectUnitShadows());
         float ruMs = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - rendererUpdateStart).count();
         if (ruMs > 50.0f) {
