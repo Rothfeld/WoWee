@@ -6,6 +6,7 @@
 #include "ui/link_hit.hpp"
 #include "ui/text_wrap.hpp"
 #include "ui/native_text_metrics.hpp"
+#include "ui/native_pixel_rules.hpp"
 #include "ui/tooltip_layout.hpp"
 #include <deque>
 #include <set>
@@ -2451,10 +2452,24 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                             "; it is shown and clipped away");
                     }
                 }
-                dl->PushClipRect(ImVec2(clip->left * s,
-                                        screenH - (clip->bottom + clip->rectH) * s),
-                                 ImVec2((clip->left + clip->rectW) * s,
-                                        screenH - clip->bottom * s), true);
+                // On whole pixels, chosen the way build 8606 chooses them
+                // (native_pixel_rules.hpp): glyphs keep every column the frame
+                // touches, textures stop on rounded edges. Handing ImGui the
+                // fractional rect let the Vulkan backend truncate both corners,
+                // which moved the left edge onto a column the original leaves
+                // to the text - the raid information list lost the first
+                // letter of every line to it.
+                const float cx0 = clip->left * s, cx1 = (clip->left + clip->rectW) * s;
+                const float cy0 = screenH - (clip->bottom + clip->rectH) * s;
+                const float cy1 = screenH - clip->bottom * s;
+                const bool glyphs = w->kind == WidgetKind::FontString;
+                const PixelSpan cols = glyphs ? scrollClipTextColumns(cx0, cx1)
+                                              : scrollClipTextureSpan(cx0, cx1);
+                const PixelSpan rows = glyphs ? scrollClipTextRows(cy0, cy1)
+                                              : scrollClipTextureSpan(cy0, cy1);
+                dl->PushClipRect(ImVec2(static_cast<float>(cols.first), static_cast<float>(rows.first)),
+                                 ImVec2(static_cast<float>(cols.last + 1), static_cast<float>(rows.last + 1)),
+                                 true);
                 clipped = true;
             }
         }

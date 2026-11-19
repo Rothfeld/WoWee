@@ -15,6 +15,7 @@
 
 #include "frizqt_metrics_fixture.hpp"
 #include "ui/native_text_metrics.hpp"
+#include "ui/native_pixel_rules.hpp"
 #include "ui/text_markup.hpp"
 #include "ui/text_wrap.hpp"
 
@@ -275,4 +276,95 @@ TEST_CASE("Tooltip scale changes pixel heights and the wrap", "[native-text][too
     CHECK(t.lines[4].pixelHeight == 9);
     CHECK(t.lines[4].rows.size() == 5);
     CHECK(t.contentWidth == 160.0f);
+}
+
+// ── Pixel rules (native_pixel_rules.hpp) ────────────────────────────────────
+// Read off build 8606 at 1280x720 with a probe addon, one interface unit
+// apart through a whole 15/16 cycle: _experiments/20261119T0935Z.raidinfo_clip
+// (logs/sweep1.txt, textclipv.txt, textsweep2.txt) in the workspace.
+
+TEST_CASE("A scroll frame keeps textures from its rounded edges, far ends included", "[native-pixels]") {
+    struct Case { float x0, x1, y0, y1; int first, last, top, bottom; };
+    const Case cases[] = {
+        {120.0f, 240.0f, 120.0f, 180.0f, 120, 240, 120, 180},
+        {120.9375f, 241.875f, 119.0625f, 180.0f, 121, 242, 119, 180},
+        {121.875f, 243.75f, 118.125f, 180.0f, 122, 244, 118, 180},
+        {122.8125f, 245.625f, 117.1875f, 180.0f, 123, 246, 117, 180},
+        {123.75f, 247.5f, 116.25f, 180.0f, 124, 248, 116, 180},
+        {124.6875f, 249.375f, 115.3125f, 180.0f, 125, 249, 115, 180},
+        {125.625f, 251.25f, 114.375f, 180.0f, 126, 251, 114, 180},
+        {126.5625f, 253.125f, 113.4375f, 180.0f, 127, 253, 113, 180},
+        {127.5f, 255.0f, 112.5f, 180.0f, 128, 255, 113, 180},
+        {128.4375f, 256.875f, 111.5625f, 180.0f, 128, 257, 112, 180},
+        {129.375f, 258.75f, 110.625f, 180.0f, 129, 259, 111, 180},
+        {130.3125f, 260.625f, 109.6875f, 180.0f, 130, 261, 110, 180},
+        {131.25f, 262.5f, 108.75f, 180.0f, 131, 263, 109, 180},
+        {132.1875f, 264.375f, 107.8125f, 180.0f, 132, 264, 108, 180},
+        {133.125f, 266.25f, 106.875f, 180.0f, 133, 266, 107, 180},
+        {134.0625f, 268.125f, 105.9375f, 180.0f, 134, 268, 106, 180},
+    };
+    for (const Case& c : cases) {
+        const auto cols = wowee::ui::scrollClipTextureSpan(c.x0, c.x1);
+        const auto rows = wowee::ui::scrollClipTextureSpan(c.y0, c.y1);
+        CAPTURE(c.x0, c.x1, c.y0, c.y1);
+        CHECK(cols.first == c.first);
+        CHECK(cols.last == c.last);
+        CHECK(rows.first == c.top);
+        CHECK(rows.last == c.bottom);
+    }
+}
+
+TEST_CASE("A scroll frame keeps text on even rows and on every column it touches", "[native-pixels]") {
+    struct Edge { float edge; int row; };
+    // The last row of 'IIIII' hanging past the bottom edge.
+    const Edge bottoms[] = {
+        {131.2500f, 132},
+        {130.3125f, 132},
+        {129.3750f, 130},
+        {128.4375f, 130},
+        {127.5000f, 128},
+        {126.5625f, 128},
+        {125.6250f, 126},
+        {124.6875f, 126},
+        {123.7500f, 124},
+        {122.8125f, 124},
+        {121.8750f, 122},
+        {120.9375f, 122},
+        {120.0000f, 120},
+        {119.0625f, 120},
+        {118.1250f, 120},
+        {117.1875f, 118},
+    };
+    for (const Edge& e : bottoms) {
+        CAPTURE(e.edge);
+        CHECK(wowee::ui::scrollClipTextRows(0.0f, e.edge).last == e.row);
+    }
+    // The first row of 'IIIII' reaching above the top edge.
+    const Edge tops[] = {
+        {120.0000f, 120},
+        {119.0625f, 120},
+        {118.1250f, 118},
+        {117.1875f, 118},
+        {116.2500f, 116},
+        {115.3125f, 116},
+        {114.3750f, 114},
+        {113.4375f, 114},
+        {112.5000f, 112},
+        {111.5625f, 112},
+        {110.6250f, 110},
+        {109.6875f, 110},
+        {108.7500f, 108},
+        {107.8125f, 108},
+        {106.8750f, 106},
+        {105.9375f, 106},
+    };
+    for (const Edge& e : tops) {
+        CAPTURE(e.edge);
+        CHECK(wowee::ui::scrollClipTextRows(e.edge, 400.0f).first == e.row);
+    }
+    // The raid information list: frame left 392 units, 367.5 pixels; native
+    // draws the first column of "Resets in" at 367.
+    CHECK(wowee::ui::scrollClipTextColumns(367.5f, 587.8125f).first == 367);
+    CHECK(wowee::ui::scrollClipTextColumns(120.9375f, 158.4375f).first == 120);
+    CHECK(wowee::ui::scrollClipTextColumns(125.625f, 163.125f).first == 125);
 }
