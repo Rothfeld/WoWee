@@ -185,14 +185,13 @@ struct Emitter {
         if (!isParented) return quote(rawName);
         const std::string suffix = rawName.substr(token.size());
         if (runtimeParentName) {
-            // No name on the owner means no name on the region, which is what
-            // $parent means in WoW: a name is built from one, and there is
-            // nothing to build from. Falling back to an empty string instead
-            // published the bare suffix as a global - ContainerFrameTemplate
-            // replayed onto an unnamed frame created a texture called
-            // "Portrait", and every later frame doing the same overwrote it.
-            return "(" + selfVar + ":GetName() and (" + selfVar +
-                   ":GetName() .. " + quote(suffix) + ") or nil)";
+            // The name of the nearest named frame from the owner up, as 2.4.3
+            // builds it: ItemRack's CreateFrame("Frame", nil, button,
+            // "ItemRackTimeTemplate") makes <button>Time, and one under an
+            // unnamed frame under UIParent makes UIParentTime. With no named
+            // frame at all there is no name (not the bare suffix as a global:
+            // CreateFrame("Frame", nil, nil, that template) leaves Time nil).
+            return "__WoweeParentName(" + selfVar + ", " + quote(suffix) + ")";
         }
         return quote(parentName + suffix);
     }
@@ -951,8 +950,8 @@ struct Emitter {
                  " end");
         }
         emitInherits(node, var);
-        emitFrameBody(node, var, name.empty() ? parentName : name, parentArg,
-                      parentName, /*fireOnLoad=*/true,
+        emitFrameBody(node, var, name.empty() ? effectiveParentName : name, parentArg,
+                      effectiveParentName, /*fireOnLoad=*/true,
                       rawName.empty() ? nameVar : std::string(), ownerVar);
         return var;
     }

@@ -393,17 +393,15 @@ static int lua_Frame_GetName(lua_State* L) {
 
 namespace {
 
-/// Store a widget's handle on the table at the top of the stack: __wid for
-/// this client, and [0] as a light userdata, the slot the original client
-/// fills with the widget's C object on every frame and region. Libraries
+/// Store a widget's handle on the table at the top of the stack: [0] as a
+/// light userdata, the slot the original client fills with the widget's C
+/// object on every frame and region, and the only key it puts there. Libraries
 /// tell a widget from a plain table by it - Tablet-2.0's Register(frame,
 /// otherFrame) copies the other frame's registration only when
 /// otherFrame[0] is set, AceHook-2.1 HookScript refuses a table without it
 /// - so without [0] a FuBar minimap button registered no tooltip at all.
 void setWidgetHandle(lua_State* L, uint32_t id) {
     assert(id != 0);
-    lua_pushinteger(L, static_cast<lua_Integer>(id));
-    lua_setfield(L, -2, "__wid");
     lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(id)));
     lua_rawseti(L, -2, 0);
 }
@@ -466,11 +464,7 @@ static int lua_WoweePriv(lua_State* L) {
 }
 
 uint32_t widgetIdOf(lua_State* L, int index) {
-    if (!lua_istable(L, index)) return 0;
-    lua_getfield(L, index, "__wid");
-    const uint32_t id = static_cast<uint32_t>(lua_tointeger(L, -1));
-    lua_pop(L, 1);
-    return id;
+    return tableWidgetId(L, index);
 }
 
 wowee::ui::Widget* widgetOf(lua_State* L, int index) {
@@ -5521,16 +5515,38 @@ int lua_FontString_GetMultilineIndent(lua_State* L) {
     return 1;
 }
 
-void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
-    const int region = lua_gettop(L);
-    const uint32_t id = widgetIdOf(L, region);
-    if (id != 0) {
-        lua_getglobal(L, "__WoweeRegionsByWid");
-        lua_pushinteger(L, static_cast<lua_Integer>(id));
-        lua_pushvalue(L, region);
-        lua_rawset(L, -3);
+/// A region method implemented in the Lua bootstrap, looked up when called
+/// so the shared method table can be built before the bootstrap defines it.
+static int callRegionGlobal(lua_State* L) {
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    if (!lua_isfunction(L, -1)) return luaL_error(L, "%s is not defined", lua_tostring(L, lua_upvalueindex(1)));
+    lua_insert(L, 1);
+    lua_call(L, lua_gettop(L) - 1, LUA_MULTRET);
+    return lua_gettop(L);
+}
+
+static int regionNoOp(lua_State*) { return 0; }
+/// __index for a region outside a TBC interface: its kind's methods, then a
+/// do-nothing function for a name some widget has (upvalues: methods, known).
+static int regionIndexWithNoOps(lua_State* L) {
+    lua_pushvalue(L, 2);
+    lua_rawget(L, lua_upvalueindex(1));
+    if (!lua_isnil(L, -1)) return 1;
+    lua_pop(L, 1);
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        lua_pushvalue(L, 2);
+        lua_rawget(L, lua_upvalueindex(2));
+        const bool known = lua_toboolean(L, -1) != 0;
         lua_pop(L, 1);
+        if (known) { lua_pushcfunction(L, regionNoOp); return 1; }
     }
+    return 0;
+}
+
+/// Fill the method table on top of the stack for one kind of region.
+static void buildRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
+    const int region = lua_gettop(L);   // the method table
     auto set = [&](const char* name, lua_CFunction fn) {
         lua_pushcfunction(L, fn);
         lua_setfield(L, -2, name);
@@ -5583,12 +5599,9 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
     // before the bootstrap has run, which is only true of regions built during
     // engine start-up, and those declare no animations.
     for (const char* name : {"CreateAnimationGroup", "StopAnimating"}) {
-        lua_getglobal(L, (std::string("__Wowee") +
-                          (std::strcmp(name, "StopAnimating") == 0
-                               ? "StopAnimating"
-                               : "CreateAnimationGroup")).c_str());
-        if (lua_isfunction(L, -1)) lua_setfield(L, -2, name);
-        else                       lua_pop(L, 1);
+        lua_pushstring(L, (std::string("__Wowee") + name).c_str());
+        lua_pushcclosure(L, callRegionGlobal, 1);
+        lua_setfield(L, -2, name);
     }
     set("GetScale", lua_Region_GetScale);
     set("SetScale", lua_Region_SetScale);
@@ -5689,18 +5702,45 @@ void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
         }
         return;
     }
-    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_region_mt");
+}
+
+/// A region's methods live in a metatable shared by every region of its kind,
+/// as on 2.4.3, where the table itself holds only [0]: QuestHelper recycles a
+/// font string by deleting every other key and then calls text:Hide().
+void installRegionMethods(lua_State* L, bool isTexture, bool isFontString) {
+    const int region = lua_gettop(L);
+    const uint32_t id = widgetIdOf(L, region);
+    if (id != 0) {
+        lua_getglobal(L, "__WoweeRegionsByWid");
+        lua_pushinteger(L, static_cast<lua_Integer>(id));
+        lua_pushvalue(L, region);
+        lua_rawset(L, -3);
+        lua_pop(L, 1);
+    }
+    const int iv = interfaceVersion(L);
+    const bool tbc = iv >= 20000 && iv < 30000;
+    const std::string key = std::string("wowee_region_mt_") + (isTexture ? "t" : "") +
+                            (isFontString ? "f" : "") + (tbc ? "_tbc" : "");
+    lua_getfield(L, LUA_REGISTRYINDEX, key.c_str());
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
-        luaL_dostring(L,
-            "local known = __WoweeWidgetMethods or {} "
-            "return { __index = function(_, k) "
-            "  if type(k)=='string' and known[k] then return function() end end "
-            "end }");
+        lua_newtable(L);                       // the metatable
+        lua_newtable(L);                       // its methods
+        buildRegionMethods(L, isTexture, isFontString);
+        if (tbc) {
+            lua_setfield(L, -2, "__index");
+        } else {
+            // Other interfaces keep the do-nothing answer, after the methods,
+            // for names a widget has somewhere (__WoweeWidgetMethods).
+            lua_getglobal(L, "__WoweeWidgetMethods");
+            if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_newtable(L); }
+            lua_pushcclosure(L, regionIndexWithNoOps, 2);
+            lua_setfield(L, -2, "__index");
+        }
         lua_pushvalue(L, -1);
-        lua_setfield(L, LUA_REGISTRYINDEX, "wowee_region_mt");
+        lua_setfield(L, LUA_REGISTRYINDEX, key.c_str());
     }
-    lua_setmetatable(L, -2);
+    lua_setmetatable(L, region);
 }
 
 } // namespace
@@ -8073,7 +8113,20 @@ void LuaEngine::registerCoreAPI() {
         // and built by the render loop, which is where the offscreen views
         // are; zero clears it.
         "function mt:SetCreature(id) __WoweeSetModelCreature(self, id) end\n"
-        "function mt:ClearModel() __WoweeSetModelCreature(self, 0) end\n"
+        "function mt:ClearModel() __WoweeSetModelCreature(self, 0) __WoweePriv(self).model = nil end\n"
+        // The model file a Model shows, as 2.4.3 reads it back: lower case
+        // with the .m2 extension (PlayerArrowFrame answers
+        // interface\\minimap\\minimaparrow.m2), and the frame itself when it
+        // shows none (CreateFrame("Model"):GetModel() is a table there).
+        // Gatherer walks WorldMapFrame's children with it. Only the name is
+        // kept; drawing a model file in a frame is not implemented.
+        "function mt:SetModel(path)\n"
+        "    if type(path) ~= 'string' then return end\n"
+        "    path = string.lower(path):gsub('%.mdx$', '.m2'):gsub('%.mdl$', '.m2')\n"
+        "    if not path:find('%.m2$') then path = path .. '.m2' end\n"
+        "    __WoweePriv(self).model = path\n"
+        "end\n"
+        "function mt:GetModel() return __WoweePriv(self).model or self end\n"
         "function mt:RefreshUnit() end\n"
         "function mt:GetInventorySlot()\n"
         "    return BankButtonIDToInvSlotID(self:GetID(), self.isBag)\n"
@@ -9469,7 +9522,24 @@ void LuaEngine::registerCoreAPI() {
         // Empty is the honest shape for both. This client draws the player
         // arrow and the quest areas itself, so what these need to do is exist,
         // take their scale and frame level, and draw nothing.
-        "PlayerArrowEffectFrame = CreateFrame('Frame', 'PlayerArrowEffectFrame')\n"
+        //
+        // Both of CWorldMap's frames, and as what they are on 2.4.3:
+        // PlayerArrowFrame and PlayerArrowEffectFrame are Models there, and
+        // Cartographer raises PlayerArrowFrame's level unguarded, so without
+        // it Cartographer stopped at its first map hook. They are put inside
+        // WorldMapFrame once FrameXML has built it (see loadAllAddons).
+        "PlayerArrowFrame = CreateFrame('Model', 'PlayerArrowFrame')\n"
+        // $parent inside a template replayed at runtime: the nearest named
+        // frame from the owner up (framexml_emitter.cpp nameArg).
+        "function __WoweeParentName(f, suffix)\n"
+        "  while f do\n"
+        "    local n = f:GetName()\n"
+        "    if n then return n .. suffix end\n"
+        "    f = f:GetParent()\n"
+        "  end\n"
+        "end\n"
+        "PlayerArrowEffectFrame = CreateFrame('Model', 'PlayerArrowEffectFrame')\n"        "PlayerArrowFrame:SetModel('Interface\\\\Minimap\\\\MinimapArrow')\n"
+        "PlayerArrowEffectFrame:SetModel('Interface\\\\Minimap\\\\MinimapArrow')\n"
         // The battlefield minimap's own copy of that arrow, for the same
         // reason. Its OnLoad addresses it with no guard either - and unlike
         // the world map's, it was never made, so the only thing holding that

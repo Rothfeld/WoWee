@@ -211,6 +211,20 @@ std::string macroTexture(game::GameHandler& gh, uint32_t macroId) {
 
 
 /// GetMacroIconInfo(index) as a path, empty past the end.
+/// The macro the first argument names: its index, or its name as 2.4.3 also
+/// takes it (GetMacroInfo("Decursive") answers that macro there, and
+/// Decursive edits its macro with EditMacro(name, ...)). 0 when none.
+static uint32_t macroIdArg(lua_State* L, game::GameHandler* gh) {
+    if (!gh) return 0;
+    if (lua_type(L, 1) == LUA_TSTRING && !lua_isnumber(L, 1)) {
+        const std::string name = lua_tostring(L, 1);
+        for (uint32_t id : gh->getMacroIds())
+            if (gh->getMacroName(id) == name) return id;
+        return 0;
+    }
+    return gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0)));
+}
+
 static std::string macroIconByIndex(lua_State* L, int index) {
     auto* services = getLuaServices(L);
     if (!services || !services->listIconTextures) return {};
@@ -2542,7 +2556,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // GetMacroInfo(index) → name, icon, body
                 {"GetMacroInfo",        [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
+            const uint32_t id = macroIdArg(L, gh);
             if (!gh || id == 0 || !gh->hasMacro(id)) {
                 return luaReturnNil(L);
             }
@@ -2561,7 +2575,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // "#showtooltip Kick\n/say x" answers "Kick", "Rank 5".
                 {"GetMacroSpell",       [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
+            const uint32_t id = macroIdArg(L, gh);
             if (!gh || id == 0 || !gh->hasMacro(id)) return luaReturnNil(L);
             const MacroTarget target = resolveMacroTarget(*gh, id);
             if (target.kind != MacroTarget::Kind::Spell) return luaReturnNil(L);
@@ -2573,7 +2587,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // Bandage" answers the bandage and its link.
                 {"GetMacroItem",        [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
+            const uint32_t id = macroIdArg(L, gh);
             if (!gh || id == 0 || !gh->hasMacro(id)) return luaReturnNil(L);
             const MacroTarget target = resolveMacroTarget(*gh, id);
             const auto* info = target.kind == MacroTarget::Kind::Item ? gh->getItemInfo(target.id) : nullptr;
@@ -2649,7 +2663,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // afterwards: native renaming APa (19) to ZZa answered 35.
                 {"EditMacro",           [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
+            const uint32_t id = macroIdArg(L, gh);
             if (!gh || id == 0) return luaReturnNil(L);
             const char* name = luaL_optstring(L, 2, nullptr);
             const char* body = luaL_optstring(L, 4, nullptr);
@@ -2671,7 +2685,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // hold identities and keep their macros.
                 {"DeleteMacro",         [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
+            const uint32_t id = macroIdArg(L, gh);
             if (id != 0) gh->deleteMacro(id);
             return 0;
         }},
@@ -2683,7 +2697,7 @@ void registerActionLuaAPI(lua_State* L) {
                 // was simply never something the cursor could hold.
                 {"PickupMacro",         [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const uint32_t id = gh ? gh->macroIdForIndex(static_cast<uint32_t>(luaL_optnumber(L, 1, 0))) : 0;
+            const uint32_t id = macroIdArg(L, gh);
             if (!gh || id == 0 || !gh->hasMacro(id)) return 0;
             pickUpAction(L, CursorType::MACRO, id);
             return 0;

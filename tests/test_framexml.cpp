@@ -529,8 +529,7 @@ TEST_CASE("$parent inside a template resolves to the frame that inherits it",
         "</Layer></Layers></Frame></Ui>");
     const EmitResult r = emitFrameXml(root);
 
-    REQUIRE(has(r.lua, "GetName()"));
-    REQUIRE(has(r.lua, "\"Bg\""));
+    REQUIRE(has(r.lua, "__WoweeParentName(self, \"Bg\")"));
     REQUIRE_FALSE(has(r.lua, "\"MyTemplateBg\""));
 }
 
@@ -570,10 +569,8 @@ TEST_CASE("$parent skips unnamed frames to the nearest named one",
         "</Frames></Frame></Ui>");
     const EmitResult r = emitFrameXml(root);
 
-    // Named from the template root, which is the only thing with a name -
-    // and only if it has one, since an owner with no name lends none.
-    REQUIRE(has(r.lua, "self:GetName() .. \"Name\""));
-    REQUIRE(has(r.lua, "self:GetName() and"));
+    // Named from the template root, or above it at replay time.
+    REQUIRE(has(r.lua, "__WoweeParentName(self, \"Name\")"));
 }
 
 TEST_CASE("A frame can fill its parent instead of anchoring", "[framexml][emit]") {
@@ -741,8 +738,7 @@ TEST_CASE("A nested frame in a template also resolves $parent at replay time",
         "</Frames></Frame></Ui>");
     const EmitResult r = emitFrameXml(root);
 
-    REQUIRE(has(r.lua, "GetName()"));
-    REQUIRE(has(r.lua, "\"ScrollBar\""));
+    REQUIRE(has(r.lua, "__WoweeParentName(self, \"ScrollBar\")"));
     REQUIRE_FALSE(has(r.lua, "\"MyTemplateScrollBar\""));
 }
 
@@ -984,22 +980,19 @@ TEST_CASE("$parent follows the parent attribute, not the file structure",
     REQUIRE_FALSE(has(r.lua, "\"Edge\""));
 }
 
-TEST_CASE("A $parent name on an unnamed owner is no name at all",
+TEST_CASE("A $parent name on an unnamed owner comes from the nearest named frame",
           "[framexml][emit]") {
-    // Inside a template the owner is not known until replay, so the name is
-    // built then. If the frame inheriting the template has no name there is
-    // nothing to build from, and WoW gives the region no name - where falling
-    // back to an empty string publishes the bare suffix as a global.
-    // ContainerFrameTemplate replayed onto an unnamed frame created a texture
-    // called "Portrait", and the next frame to do the same overwrote it.
+    // Measured on 2.4.3: CreateFrame("Frame", nil, unnamed-under-UIParent,
+    // "ItemRackTimeTemplate") defines UIParentTime, and with no parent at all
+    // no name (Time stays nil). __WoweeParentName walks up at replay time;
+    // the bare suffix is never published.
     XmlNode root = parseOrFail(
         "<Ui><Frame name=\"T\" virtual=\"true\"><Layers><Layer>"
         "<Texture name=\"$parentPortrait\"/>"
         "</Layer></Layers></Frame></Ui>");
     const EmitResult r = emitFrameXml(root);
-    REQUIRE(has(r.lua, "self:GetName() and"));
-    REQUIRE(has(r.lua, "or nil)"));
-    REQUIRE_FALSE(has(r.lua, "or \"\") .. \"Portrait\""));
+    REQUIRE(has(r.lua, "__WoweeParentName(self, \"Portrait\")"));
+    REQUIRE_FALSE(has(r.lua, "\"Portrait\", "));
 }
 
 TEST_CASE("A frame with hover handlers takes the mouse without saying so",

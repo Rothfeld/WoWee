@@ -1221,9 +1221,7 @@ static int lua_SetPetStablePaperdoll(lua_State* L) {
     auto* gh = getGameHandler(L);
     auto* tree = getWidgetTree(L);
     if (!gh || !tree || !lua_istable(L, 1)) return 0;
-    lua_getfield(L, 1, "__wid");
-    const uint32_t id = static_cast<uint32_t>(lua_tointeger(L, -1));
-    lua_pop(L, 1);
+    const uint32_t id = tableWidgetId(L, 1);
     auto* w = tree->get(id);
     if (!w) return 0;
 

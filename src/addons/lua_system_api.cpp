@@ -2126,13 +2126,15 @@ static int lua_GetAddOnInfo(lua_State* L) {
 
     // 4 enabled, 5 loadable, 6 reason, 7 security, as build 8606 answers:
     // "Bagnon 1 1 nil", "TitanItemBonuses 1 nil DEP_MISSING" (its
-    // BonusScanner dependency absent). Only enabled addons are listed here.
-    lua_pushnumber(L, 1);
+    // BonusScanner dependency absent), "XPerl_RaidMonitor nil nil DISABLED".
     const int idx2 = pushAddonRegistryAndIndex(L, 1);
     lua_rawgeti(L, -1, idx2);
     lua_getfield(L, -1, "reason");
     lua_remove(L, -2);
     lua_remove(L, -2);
+    const bool disabled = lua_isstring(L, -1) && std::string(lua_tostring(L, -1)) == "DISABLED";
+    if (disabled) lua_pushnil(L); else lua_pushnumber(L, 1);
+    lua_insert(L, -2);
     if (lua_isnil(L, -1)) lua_pushnumber(L, 1); else lua_pushnil(L);
     lua_insert(L, -2);
     lua_pushstring(L, "INSECURE");
@@ -7811,9 +7813,7 @@ void registerSystemLuaAPI(lua_State* L) {
             if (!tree || !lua_istable(L, 1)) return 0;
             // The widget id the frame table carries, read the same way
             // SetPortraitTexture reads it - widgetIdOf is not visible here.
-            lua_getfield(L, 1, "__wid");
-            const uint32_t id = static_cast<uint32_t>(lua_tointeger(L, -1));
-            lua_pop(L, 1);
+            const uint32_t id = tableWidgetId(L, 1);
             if (id == 0) return 0;
             auto* w = tree->get(id);
             if (!w) return 0;

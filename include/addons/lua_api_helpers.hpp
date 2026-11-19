@@ -79,6 +79,19 @@ inline void toLowerInPlace(std::string& s) {
 ///
 /// Zero reads as the oldest, which is what the loader does with a manifest
 /// that states no version.
+/// The widget a frame or region table stands for: its [0], a light userdata
+/// holding the widget id (setWidgetHandle). [0] alone, as on 2.4.3, where it
+/// is the only key the client puts in the table - QuestHelper recycles font
+/// strings by deleting every other key.
+inline uint32_t tableWidgetId(lua_State* L, int index) {
+    if (!lua_istable(L, index)) return 0;
+    lua_rawgeti(L, index, 0);
+    const uint32_t id = lua_islightuserdata(L, -1)
+        ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(lua_touserdata(L, -1))) : 0;
+    lua_pop(L, 1);
+    return id;
+}
+
 inline int interfaceVersion(lua_State* L) {
     lua_getglobal(L, "__WoweeInterfaceVersion");
     const int v = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;
