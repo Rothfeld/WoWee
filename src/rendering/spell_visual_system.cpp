@@ -285,6 +285,9 @@ void SpellVisualSystem::loadSpellVisualDbc() {
         assert(stateField < svFc);
         stateKits_[vid] = svDbc->getUInt32(i, stateField);
 
+        if (svMissileAttachmentField < svFc)
+            launchAttachments_[vid] = static_cast<int32_t>(svDbc->getUInt32(i, svMissileAttachmentField));
+
         // The missile flies from caster to target. It used to stand in for a
         // missing cast or impact kit instead, parked at one end, which is why a
         // Fireball - which has both kits - never showed its fireball at all.
@@ -835,14 +838,18 @@ SpellVisualSystem::BeamState SpellVisualSystem::newBeamState(uint32_t chainId) {
     return state;
 }
 
-// A beam ends at a unit's chest (attachment 34) while the unit is drawn, as
-// channel beams do; otherwise at the position recorded when it started.
-glm::vec3 SpellVisualSystem::beamEnd(uint32_t instanceId, const glm::vec3& fallback) {
+// A beam ends at its unit's attachment (the chest, 34, unless it is the
+// caster's start) while the unit is drawn, at the chest when the model
+// lacks that point; otherwise at the position recorded when it started.
+glm::vec3 SpellVisualSystem::beamEnd(const ChainEnd& end) {
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
-    glm::mat4 chest(1.0f);
-    if (instanceId && characters && characters->getAttachmentTransform(instanceId, 34, chest))
-        return glm::vec3(chest[3]);
-    return fallback;
+    glm::mat4 point(1.0f);
+    if (end.instanceId && characters && characters->getAttachmentTransform(end.instanceId, end.attachment, point))
+        return glm::vec3(point[3]);
+    if (end.instanceId && end.attachment != 34 && characters &&
+        characters->getAttachmentTransform(end.instanceId, 34, point))
+        return glm::vec3(point[3]);
+    return end.position;
 }
 
 void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& strips, const glm::vec3& start,
@@ -1104,8 +1111,7 @@ void SpellVisualSystem::syncChannels(const std::vector<UnitChannel>& fieldChanne
     // Cast kit beams, for as long as their kit plays.
     std::erase_if(castBeams_, [&](const CastBeam& beam) { return beamClock_ - beam.born >= beam.lifetime; });
     for (auto& beam : castBeams_) {
-        appendBeamStrip(strips, beamEnd(beam.start.instanceId, beam.start.position),
-                        beamEnd(beam.end.instanceId, beam.end.position), beamClock_ - beam.born, beam.state);
+        appendBeamStrip(strips, beamEnd(beam.start), beamEnd(beam.end), beamClock_ - beam.born, beam.state);
     }
     std::erase_if(beams_, [&](const auto& entry) { return !live.count(entry.first); });
     std::erase_if(hopBeams_, [&](const auto& entry) { return !live.count(entry.first); });
@@ -1148,7 +1154,7 @@ void SpellVisualSystem::playCastKit(uint32_t visualId, const glm::vec3& casterPo
                         " but neither an effect model nor a spell duration times it; beam not drawn");
         return;
     }
-    ChainEnd from{casterInstanceId, casterPosition};
+    ChainEnd from{casterInstanceId, casterPosition, beamStartAttachment(visualId)};
     for (const auto& end : ends) {
         castBeams_.push_back({.chainId = chainId->second, .start = from, .end = end, .born = beamClock_,
                               .lifetime = plays, .state = newBeamState(chainId->second)});
@@ -1289,6 +1295,24 @@ void SpellVisualSystem::stopPersistentArea(uint64_t key) {
     if (m2Renderer_)
         for (uint32_t instanceId : it->second) m2Renderer_->retireInstance(instanceId);
     persistentAreas_.erase(it);
+}
+
+// A beam leaves the caster where a missile of the same SpellVisual would:
+// MissileAttachment -1 (Fel Energy Cosmetic 44574, Fel Crystal Cosmetic
+// 44374, Mind Flay, Drain Life, Chain Lightning) at the hand the pose
+// raises toward the target, M2 attachment 2 (see the missile launch in
+// spell_handler.cpp). Build 8606, Magisters' Terrace Observation Grounds,
+// both clients in one instance: the Sunblade Warlock's green beam leaves
+// its outstretched hand; WoWee started it at the chest (34). A human
+// player channelling Drain Life 689 or 44374 on the Shimmering Flats, arm
+// raised away from the target, starts both natively and at attachment 2
+// next to the chest. Other MissileAttachment values (Blue Beam 38034: 3,
+// Fel Crystal Visual 44355: 1) keep the chest, which matched native for 38034
+// (_experiments/20261119T1530Z.beam_caster_end).
+uint32_t SpellVisualSystem::beamStartAttachment(uint32_t visualId) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto it = launchAttachments_.find(visualId);
+    return it != launchAttachments_.end() && it->second == -1 ? 2 : 34;
 }
 
 bool SpellVisualSystem::hasSpellMissile(uint32_t visualId) {

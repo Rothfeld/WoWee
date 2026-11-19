@@ -42,6 +42,7 @@ public:
     struct ChainEnd {
         uint32_t instanceId = 0;
         glm::vec3 position{0.0f};
+        uint32_t attachment = 34;  // M2 attachment followed while the unit is drawn
     };
     /// SMSG_SPELL_GO's CastKit: its effects at the caster, and, where the
     /// kit's CharProc 0 names a SpellChainEffects row, a beam from the caster
@@ -170,6 +171,8 @@ public:
     // of a missile visual. Only TBC declares the columns.
     struct MissileAttachments { int32_t launch = -1; uint32_t destination = 0; };
     std::optional<MissileAttachments> missileAttachments(uint32_t visualId);
+    /// The caster's attachment a channel or cast kit beam starts at.
+    uint32_t beamStartAttachment(uint32_t visualId);
 
     // Missile of the visual from start to end. It lands distance / speed
     // seconds from now (Spell.dbc Speed, yards a second) and leaves the caster
@@ -431,7 +434,7 @@ private:
     };
     std::vector<CastBeam> castBeams_;
     BeamState newBeamState(uint32_t chainId);
-    glm::vec3 beamEnd(uint32_t instanceId, const glm::vec3& fallback);
+    glm::vec3 beamEnd(const ChainEnd& end);
     // The chain effect's camera-facing strips (the row and its Combo
     // strands) from start to end at age t; nothing for a degenerate beam or
     // a blend mode that is not drawn. Advances the state's vertex noise.
@@ -460,6 +463,7 @@ private:
     std::unordered_map<uint32_t, std::string> spellVisualMissilePath_; // visualId → missile M2 path
     std::unordered_map<uint32_t, float> spellVisualMissileScale_;
     std::unordered_map<uint32_t, MissileAttachments> missileAttachments_;
+    std::unordered_map<uint32_t, int32_t> launchAttachments_;  // SpellVisual MissileAttachment, every visual
     std::unordered_map<std::string, uint32_t> spellVisualModelIds_;   // M2 path → M2Renderer modelId
     std::unordered_set<uint32_t> spellVisualFailedModels_;           // modelIds that failed to load (negative cache)
     uint32_t nextSpellVisualModelId_ = 999000; // Reserved range 999000-999799

@@ -2613,7 +2613,20 @@ Forge Camp: Mageddon is cast every ten minutes and was never seen starting.
 `SpellVisual.ChannelKit` -> `SpellVisualKit` CharProc 0 names a
 `SpellChainEffects.dbc` row in CharParamZero (all 284 such TBC kits do; Green
 Beam kit 6674 -> 269 SoulBeam.blp, Drain Life kit 402 -> 8). The beam is a
-camera-facing strip from caster to target, both at attachment 34 (Chest);
+camera-facing strip from caster to target, both at attachment 34 (Chest),
+except that a visual whose SpellVisual MissileAttachment is -1 (Fel Energy
+Cosmetic 44574, Fel Crystal Cosmetic 44374, Mind Flay, Drain Life, Chain
+Lightning; 38034's 3 and 44355's 1 keep the chest) leaves the caster's
+attachment 2, the hand a missile of that visual leaves, following the
+animated pose. Build 8606, Magisters' Terrace Observation Grounds with both
+clients grouped into one instance: the Sunblade Warlock's green beam leaves
+its outstretched hand; WoWee started it at the chest (BloodElfMale's 34 sits
+inside the torso). A human player channelling Drain Life 689 or 44374 with
+the other arm raised starts next to the chest in both clients, where
+attachment 2 is in that pose (`_experiments/20261119T1530Z.beam_caster_end/`).
+Gotcha: pair characters are in separate instances of a dungeon unless
+grouped (`.instance unbind all` on both, `/invite`, `/script AcceptGroup()`),
+and the creatures' patrols and channels then differ between the clients.
 WoWee does not draw helper models (InvisibleStalker.mdx), so their bind-pose
 chest is read from the model file. Measured against the original at Mageddon
 (`_experiments/20261117T230336Z.channel_beam_fel_sigil/`): Width is half the
@@ -2698,8 +2711,12 @@ Open Portal 46801 (chain 411: Flags 0x36, 100 yd/s, 2.5 on, 15 fade), whose
 strands natively are lit first at the caster and reach the target in about
 0.15-0.2 s, is the same rule but not re-measured. Not implemented: the Combo
 fourth byte's 0x10, blend 6, chains on impact kits. Open: Selin's yellow
-strands bow visibly natively and look nearly straight in WoWee (292:
-WaveHeight 1.45, WaveFreq 0.157); flicker on rows without pulse is not
+strands (292: WaveHeight 1.45, WaveFreq 0.157, wave angle range 0-0, no
+noise or joint radius) take a different curve, bowing up, down or barely,
+at each native sweep (max-over-6-s image
+`_experiments/20261119T1530Z.beam_caster_end/selin_strand_paths_max_*`),
+while every WoWee strand keeps one upward bow, so the row's two strands
+overlap; which value is drawn anew per sweep is not established. Flicker on rows without pulse is not
 compared with native.
 Unverified: the arc's shape. Open: native draws the Hydross
 Beam Helpers (InvisibleStalker, display scale 3) about 11 yd below their server

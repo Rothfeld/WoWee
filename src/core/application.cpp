@@ -4457,6 +4457,12 @@ void Application::syncChannelVisuals() {
         channel.visualId = spell->second.spellVisualId;
         endpoint(*entity, channel.casterPosition);
         channel.start = channel.casterPosition;
+        // The caster's end follows the hand a missile would leave
+        // (SpellVisualSystem::beamStartAttachment), animated with the pose.
+        if (glm::mat4 hand(1.0f); channel.casterInstanceId && characters &&
+            characters->getAttachmentTransform(channel.casterInstanceId,
+                                               visuals->beamStartAttachment(channel.visualId), hand))
+            channel.start = glm::vec3(hand[3]);
         const uint64_t target = static_cast<uint64_t>(entity->getField(objectLo)) |
                                 (static_cast<uint64_t>(entity->getField(objectHi)) << 32);
         if (target && target != guid) {
