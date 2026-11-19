@@ -600,6 +600,7 @@ public:
         float halfWidth = 0.0f;
         std::vector<glm::vec3> spine;
         std::vector<float> u;
+        std::vector<float> fade;  // alpha factor per spine vertex; empty: lit whole
     };
     /// Replaces the beams drawn from the next frame on.
     void setChainStrips(std::vector<ChainStrip> strips) { chainStrips_ = std::move(strips); }

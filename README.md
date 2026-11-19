@@ -2637,13 +2637,27 @@ the SSC lightning looked "animated way too quickly". Gotcha: on a loaded
 machine WoWee rendered 6-9 fps, and an 8 Hz crest rate aliases to about 4 Hz in
 a kymograph; compare spatial periods against the beam's pixel length, not
 temporal peaks alone. RopeBeam rows 473/510/511 (TextureLength 1.5) are not
-measured. Interior vertices stray up to NoiseScale x
-length across the beam, redrawn every MinDurBetweenJoints when that is set.
-Native bends of a beam between still units stay put (chain 4 at 24 yd: the
-bends averaged over 0.5 s change 0.3-1.0 px from one half second to the next
-over 5 s). When the units move and the segment count changes, the offsets are
-read at the same fractions of the beam; drawing new ones every time made
-High Priestess Jeklik's Mind Flay (chain 4) a jagged rod jumping every frame.
+measured. Interior vertices stray up to NoiseScale x length across the beam
+(a uniform draw in that disc). They never hold still: every rendered frame
+each keeps JointSmoothness (field 16; 0.75 on 190 of 320 rows) of its offset
+and moves the rest toward a fresh draw (fresh every frame, or every
+MinDurBetweenJoints when that is set); a new beam starts at a full draw.
+Build 8606, pair 13, Blue Beam 38034 (chain 4, the row of every Mind Flay and
+of Jeklik's "lightning") between still units 24 yd apart, texture motion
+cancelled by subtracting each texture phase's mean: the bends' correlation
+one frame later is 0.74-0.75 whether native renders 15, 30 or 57 fps (0.53
+after 2 frames, 0.30 after 4 at 57 fps), so the step is per frame, not per
+second, and their rms is 0.93 px at every rate, the 0.38 x draw rms this step
+gives. WoWee after: 0.69 / 0.48 / 0.35 / 0.28 at 1-4 frames (native 0.69 /
+0.50 / 0.37 / 0.30), rms 0.81 px; Drain Life (chain 8) 0.73 px (native
+0.83-0.86). Before, the offsets were drawn once and kept: a still, jagged
+beam (static bend rms 2.4-2.6 px, native 0.7) that the user saw as "almost
+static" Fel Crystal, Mind Flay and Zul'Gurub lightning; redrawn whole each
+frame, as even earlier, they jittered at full amplitude. The same rule
+gives native's jagged first frames (Chain Lightning, chain 1) settling within
+0.1-0.2 s. When the units move and the segment count changes, the offsets are
+read at the same fractions of the beam.
+Evidence: `_experiments/20261119T1500Z.beam_bend_motion/`.
 A channel spell with EffectChainTarget above 1 runs on from its target through
 its other SMSG_SPELL_GO targets (hits, then misses) in packet order: native Jeklik's Mind Flay
 23953 (chain targets 5) cast at one of two rooted, stunned Bloodwarder Vindicators (both
@@ -2651,23 +2665,43 @@ listed as misses) runs caster -> first -> second (`mindflay_hop_native.jpg`); th
 only the first.
 The beam bows ArcHeight yards at its middle (half a sine), in the plane of
 Min/MaxArcAngle plus spin. Combo is 4-byte entries naming further rows, ID
-bits 0-6 in the first byte, bit 7 as 0x02 and bit 8 as 0x20 of the fourth
-(214 of 245 TBC entries then name existing rows, nearly all just after their
-parent); each named row is drawn whole, with its own shape and look, between
-the same ends. Tear of Azzinoth Summon Channel 39857 (237 -> 239 twice): three
-interweaving green waves, as native. Sunshatter 45215 / the Black Temple door
-channel 41269 (215 -> 211, 209 x4, 217 x3): green bolt, blue bolt, broad
-pink-white wave and thin purple bolts, all seen natively; native's come and go
-(pulse), here they are always on. Gotcha: `.cast 41269` (script target
-23412) on a tempspawned trigger outside Black Temple coincided with a world
-server crash; use `.cast 45215` (same chain, dummy aura) on any unit.
-Not implemented: pulse, the Combo fourth byte's 0x10, blend 6, chains on
-impact kits. Pulse, natively (Open Portal 46801, chain 411: PulseSpeed 100,
-PulseOnLength 2.5, PulseFadeLength 15): a strand turning on is lit first at
-the caster and its lit part reaches the target in about 0.15-0.2 s
-(`openportal_pulse_native_seq.jpg`); WoWee turns whole strands on and off.
-Unverified: the arc's shape; a native beam just started (chain 4) is more
-jagged in its first 0.1-0.2 s than after (rms bend 4.6 px, then 2-3 px). Open: native draws the Hydross
+bits 0-6 in the first byte, bit 7 as 0x02 of the fourth; each named row is
+drawn whole, with its own shape and look, between the same ends. Tear of
+Azzinoth Summon Channel 39857 (237 -> 239 twice): three interweaving green
+waves, as native. Sunshatter 45215 / the Black Temple door channel 41269
+(215 -> 211, 209 x4, 217 x3): green bolt, blue bolt, broad pink-white wave and
+thin purple bolts, all seen natively. An entry with 0x20 in its fourth byte
+(105 of 245) adds another copy of the row itself, whatever ID it spells
+(read as bit 8 it names the next row): the Fel Crystals' Fel Crystal Visual
+44355 at Selin Fireheart (292, one 0x21 entry spelling 293 DrainManaLightning)
+natively shows only thin yellow 292 strands, no green lightning; Fel
+Consumption 45023 (314, two entries spelling 315 Beam_Purple) three green
+SoulBeam strands lit together, no purple. Gotcha: `.cast 41269` (script
+target 23412) on a tempspawned trigger outside Black Temple coincided with a
+world server crash; use `.cast 45215` (same chain, dummy aura) on any unit.
+Also crashing the world server: `.cast 44328` (Vexallus' Energy Feedback) by
+a player, whose aura removal calls the caster's AI, and `.npc tempspawn 22841`
+(Shade of Akama) outside Black Temple.
+
+Pulse (fields 36-38), on rows with Flags 0x20: a window PulseOnLength yards
+long, fading over PulseFadeLength on each side, sweeps along the beam at
+PulseSpeed yd/s, from the caster when positive, from the target when
+negative, and enters again once it has left the far end; the rest of the
+strand is dark, and the row's Combo copies share the window. Such rows ignore
+their flicker fields. Build 8606, Fel Consumption (314: Flags 0x68, -13,
+3.8, 1.8) over 24 yd: band about 7 yd long from target to caster every 2.50 s
+(WoWee 2.42 s, (24 + 3.8 + 2 x 1.8) / 13); Soul Cannon 41291 (72, Flags
+0x68) lights only part of its waves; Selin's crystals (292: 0x68, 6 yd/s,
+flicker 0.48-0.66 / 0.26-0.55 s) sweep unbroken yellow bands crystal to Selin
+for about 2 s each; Drain Life (8: Flags 0x44, -24 yd/s) stays lit whole.
+Open Portal 46801 (chain 411: Flags 0x36, 100 yd/s, 2.5 on, 15 fade), whose
+strands natively are lit first at the caster and reach the target in about
+0.15-0.2 s, is the same rule but not re-measured. Not implemented: the Combo
+fourth byte's 0x10, blend 6, chains on impact kits. Open: Selin's yellow
+strands bow visibly natively and look nearly straight in WoWee (292:
+WaveHeight 1.45, WaveFreq 0.157); flicker on rows without pulse is not
+compared with native.
+Unverified: the arc's shape. Open: native draws the Hydross
 Beam Helpers (InvisibleStalker, display scale 3) about 11 yd below their server
 position (.gps z 38.81, floor 38.75): nameplate ~3 yd and beam start ~5-6 yd
 below it, a beam aimed at the helper ends there too; WoWee draws the unit at

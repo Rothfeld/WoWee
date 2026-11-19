@@ -8,6 +8,8 @@
 
 using wowee::rendering::chainComboStrands;
 using wowee::rendering::chainNoiseRadius;
+using wowee::rendering::chainNoiseStep;
+using wowee::rendering::chainPulse;
 using wowee::rendering::chainTexCoord;
 using wowee::rendering::ChainJoints;
 using wowee::rendering::chainJointOffsetAt;
@@ -58,18 +60,52 @@ TEST_CASE("A zero TexCoordScale beam stands still", "[chain]") {
     CHECK(repeats(20.0f, 0.0f) == Catch::Approx(1.0f));
 }
 
-TEST_CASE("Combo names further rows, with ID bits 7 and 8 in the entry's last byte", "[chain]") {
+TEST_CASE("Combo names further rows, with ID bits 7 in the entry's last byte; 0x20 copies the row", "[chain]") {
     // Chain 215 (Sunshatter, Black Temple door channel).
     const std::string sunshatter("S\x01\x01\x13Q\x01\x01\x03Q\x01\x01\x13Q\x01\x01\x13Q\x01\x01\x13"
                                  "Y\x01\x01\x03Y\x01\x01\x03Y\x01\x01\x03", 32);
-    CHECK(chainComboStrands(sunshatter) == std::vector<uint32_t>{211, 209, 209, 209, 209, 217, 217, 217});
+    CHECK(chainComboStrands(sunshatter, 215) == std::vector<uint32_t>{211, 209, 209, 209, 209, 217, 217, 217});
     // Chain 237 (Blades of Azzinoth's Tear of Azzinoth Summon Channel).
-    CHECK(chainComboStrands(std::string("o\x01\x01\x03o\x01\x01\x13", 8)) == std::vector<uint32_t>{239, 239});
-    // Chain 302: bit 8.
-    CHECK(chainComboStrands(std::string("-\x01\x01" "1", 4)) == std::vector<uint32_t>{301});
+    CHECK(chainComboStrands(std::string("o\x01\x01\x03o\x01\x01\x13", 8), 237) == std::vector<uint32_t>{239, 239});
+    // Chain 292 (Fel Crystal Visual): '%' with 0x21 spells 293 but natively
+    // draws a second 292 strand and no green 293 lightning.
+    CHECK(chainComboStrands(std::string("%\x01\x01!", 4), 292) == std::vector<uint32_t>{292});
+    // Chain 314 (Fel Consumption): two more SoulBeam strands, no Beam_Purple 315.
+    CHECK(chainComboStrands(std::string(";\x01\x01!;\x01\x01!", 8), 314) == std::vector<uint32_t>{314, 314});
     // Chain 48: below 128.
-    CHECK(chainComboStrands(std::string("1\x01\x01\x01", 4)) == std::vector<uint32_t>{49});
-    CHECK(chainComboStrands("").empty());
+    CHECK(chainComboStrands(std::string("1\x01\x01\x01", 4), 48) == std::vector<uint32_t>{49});
+    CHECK(chainComboStrands("", 1).empty());
+}
+
+TEST_CASE("Pulse: Fel Consumption's lit window runs from the target to the caster and comes again", "[chain]") {
+    // Chain 314: -13 yd/s, 3.808 on, 1.8 fade, over 24 yd.
+    const float speed = -13.0f, on = 3.808f, fade = 1.8f, length = 24.0f;
+    const float period = (length + on + 2.0f * fade) / 13.0f;
+    // Before the window enters, the beam is dark; it enters at the target end.
+    CHECK(chainPulse(23.9f, length, speed, on, fade, 0.0f) == Catch::Approx(0.0f).margin(0.07f));
+    const float t = 3.0f / 13.0f;  // head 1.2 yd in from the target
+    CHECK(chainPulse(length - 1.0f, length, speed, on, fade, t) == Catch::Approx(1.0f));
+    CHECK(chainPulse(1.0f, length, speed, on, fade, t) == 0.0f);
+    // Mid-way the lit stretch is OnLength long with fades on both sides.
+    const float mid = (fade + 14.0f) / 13.0f;  // head 14 yd from the target, s = 10
+    CHECK(chainPulse(10.0f, length, speed, on, fade, mid) == Catch::Approx(1.0f));
+    CHECK(chainPulse(10.0f + on, length, speed, on, fade, mid) == Catch::Approx(1.0f));
+    CHECK(chainPulse(10.0f + on + fade / 2, length, speed, on, fade, mid) == Catch::Approx(0.5f));
+    CHECK(chainPulse(10.0f - fade / 2, length, speed, on, fade, mid) == Catch::Approx(0.5f));
+    CHECK(chainPulse(3.0f, length, speed, on, fade, mid) == 0.0f);
+    // One period later the same.
+    CHECK(chainPulse(10.0f, length, speed, on, fade, mid + period) == Catch::Approx(1.0f).margin(1e-3f));
+    // A positive speed starts at the caster.
+    CHECK(chainPulse(1.0f, length, 13.0f, on, fade, t) == Catch::Approx(1.0f));
+}
+
+TEST_CASE("Noise keeps JointSmoothness of its offset each frame", "[chain]") {
+    // Chain 4 (0.75): 0.75 frame to frame; stationary rms 0.38 of the draw's.
+    CHECK(chainNoiseStep(1.0f, 0.0f, 0.75f) == Catch::Approx(0.75f));
+    CHECK(chainNoiseStep(0.0f, 1.0f, 0.75f) == Catch::Approx(0.25f));
+    CHECK(chainNoiseStep(0.4f, -1.0f, 0.0f) == Catch::Approx(-1.0f));
+    const float var = 0.25f * 0.25f / (1.0f - 0.75f * 0.75f);
+    CHECK(std::sqrt(var) == Catch::Approx(0.378f).margin(1e-3f));
 }
 
 TEST_CASE("Noise strays by NoiseScale of the beam length", "[chain]") {

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -34,25 +35,67 @@ inline float chainTexCoord(float s, float length, float texCoordScale, float t) 
     return mirror * (s / length - texCoordScale * t);
 }
 
-/// The further rows a row's Combo string names, drawn whole between the
-/// same ends. Each entry is 4 bytes: ID bits 0-6 in the first, ID bit 7 as
-/// 0x02 and ID bit 8 as 0x20 of the fourth; bytes 2-3 are always 0x01 and
-/// the fourth's 0x10 is not interpreted. Read so, 214 of the 245 TBC entries
-/// name rows that exist, nearly all just after their parent (48 -> 49,
-/// 215 -> 209/211/217, 237 -> 239, 302 -> 301); the rest name IDs the
-/// file lacks (52 -> 53). Native Tear of Azzinoth Summon Channel 39857 (237:
-/// "o..\x03", "o..\x13", 239 twice) draws three green waves; Sunshatter
-/// 45215 (215) a blue bolt (209), a broad purple-white wave (211) and thin
-/// purple bolts (217) beside its green one.
-inline std::vector<uint32_t> chainComboStrands(std::string_view combo) {
+/// The further strands a row's Combo string adds, drawn whole between the
+/// same ends. Each entry is 4 bytes: a row ID's bits 0-6 in the first, ID
+/// bit 7 as 0x02 and ID bit 8 as 0x20 of the fourth; bytes 2-3 are always
+/// 0x01 and the fourth's 0x10 is not interpreted. Native Tear of Azzinoth
+/// Summon Channel 39857 (237: "o..\x03", "o..\x13", 239 twice) draws three
+/// green waves; Sunshatter 45215 (215) a blue bolt (209), a broad
+/// purple-white wave (211) and thin purple bolts (217) beside its green one.
+/// An entry with 0x20 set adds another copy of the row itself (`parent`),
+/// whatever ID it spells: build 8606 draws Fel Consumption 45023 (314, two
+/// entries spelling 315 Beam_Purple) as three green SoulBeam strands lit
+/// together, no purple; the Fel Crystals' Fel Crystal Visual 44355 (292, one
+/// entry spelling 293 DrainManaLightning) as two thin yellow strands, no
+/// green lightning (_experiments/20261119T1500Z.beam_bend_motion).
+inline std::vector<uint32_t> chainComboStrands(std::string_view combo, uint32_t parent) {
     assert(combo.size() % 4 == 0);
     std::vector<uint32_t> ids;
     for (size_t i = 0; i < combo.size(); i += 4) {
         const auto low = static_cast<uint8_t>(combo[i]);
         const auto high = static_cast<uint8_t>(combo[i + 3]);
-        ids.push_back(low | ((high & 0x02u) << 6) | ((high & 0x20u) << 3));
+        ids.push_back((high & 0x20u) ? parent : low | ((high & 0x02u) << 6));
     }
     return ids;
+}
+
+/// How lit a pulsing row is s yards from the caster on a beam `length`
+/// yards long, t seconds after it appeared (0..1). Rows with Flags 0x20 and
+/// a PulseSpeed light a window PulseOnLength yards long, fading over
+/// PulseFadeLength on each side, that sweeps along the beam at PulseSpeed
+/// yd/s, from the caster when positive, from the target when negative; once
+/// it has left the far end it enters again. Build 8606, Fel Consumption
+/// 45023 (314: Flags 0x68, -13 yd/s, 3.8 on, 1.8 fade) over 24 yd: a lit
+/// band about 7 yd long runs from the target to the caster and the next
+/// enters about 2.4 s after the last; Drain Life (8: Flags 0x44, -24, 4, 1)
+/// is lit whole (_experiments/20261119T1500Z.beam_bend_motion).
+inline float chainPulse(float s, float length, float speed, float onLength, float fadeLength, float t) {
+    assert(speed != 0.0f && onLength >= 0.0f && fadeLength >= 0.0f && length > 0.0f);
+    const float span = length + onLength + 2.0f * fadeLength;
+    const float head = std::fmod(std::abs(speed) * t, span) - fadeLength;  // leading edge of the lit part
+    const float x = speed > 0.0f ? s : length - s;                          // distance the window has come
+    const float behind = head - x;                                          // yards behind the leading edge
+    if (behind < 0.0f) return fadeLength > 0.0f ? std::clamp(1.0f + behind / fadeLength, 0.0f, 1.0f) : 0.0f;
+    if (behind <= onLength) return 1.0f;
+    return fadeLength > 0.0f ? std::clamp(1.0f - (behind - onLength) / fadeLength, 0.0f, 1.0f) : 0.0f;
+}
+
+/// One frame of a beam vertex's noise offset: it keeps JointSmoothness of
+/// where it was and moves the rest toward a fresh random offset (drawn every
+/// frame, or every MinDurationBetweenJointJumps when that is set). A new
+/// beam starts at a full random draw. Build 8606, Blue Beam 38034 (chain 4:
+/// NoiseScale 0.01, JointSmoothness 0.75) between still units 24 yd apart,
+/// texture motion cancelled: the bends' correlation from one frame to the
+/// next is 0.74-0.75 whether native renders 15, 30 or 57 frames a second
+/// (0.53 after 2 frames, 0.30 after 4 at 57 fps), so it is a per-frame step,
+/// and the bends' rms is 0.93 px at every rate, what this step gives for a
+/// uniform draw in the noise disc (0.38 of the draw's own rms). The bends
+/// are new within a quarter second at 30 fps; drawn once and kept, they
+/// stood still (_experiments/20261119T1500Z.beam_bend_motion).
+template <typename T>
+T chainNoiseStep(const T& offset, const T& drawn, float smoothness) {
+    assert(smoothness >= 0.0f && smoothness <= 1.0f);
+    return offset * smoothness + drawn * (1.0f - smoothness);
 }
 
 /// How far the beam's interior vertices stray from the straight line:

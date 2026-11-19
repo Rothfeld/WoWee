@@ -679,6 +679,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     // line of sight.
     for (const auto& strip : chainStrips_) {
         assert(strip.spine.size() == strip.u.size());
+        assert(strip.fade.empty() || strip.fade.size() == strip.spine.size());
         if (strip.spine.size() < 2) continue;
         const VkDescriptorSet texSet = chainTextureSet(strip.texturePath);
         if (!texSet) continue;
@@ -695,7 +696,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 float* out = dst + written * 9;
                 out[0] = v.x; out[1] = v.y; out[2] = v.z;
                 out[3] = strip.color.r; out[4] = strip.color.g; out[5] = strip.color.b;
-                out[6] = strip.alpha;
+                out[6] = strip.alpha * (strip.fade.empty() ? 1.0f : strip.fade[i]);
                 out[7] = strip.u[i];
                 out[8] = static_cast<float>(edge);
                 ++written;

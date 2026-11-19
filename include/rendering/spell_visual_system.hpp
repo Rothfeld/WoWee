@@ -376,7 +376,9 @@ private:
     struct ChainEffect {
         std::string texture;
         float avgSegLen = 0, width = 0, noiseScale = 0, texCoordScale = 0;
-        float minDurBetweenJoints = 0;
+        float minDurBetweenJoints = 0, jointSmoothness = 0;
+        uint32_t flags = 0;
+        float pulseSpeed = 0, pulseOnLength = 0, pulseFadeLength = 0;
         ChainJoints joints;
         float jointMoveSpeed = 0, majorJointMoveSpeed = 0;
         glm::vec2 flickerOn{0.0f}, flickerOff{0.0f};  // seconds, min..max
@@ -391,14 +393,14 @@ private:
     std::unordered_map<uint32_t, ChainEffect> chainEffects_;
     std::unordered_map<uint32_t, uint32_t> kitChainEffects_;  // kit -> chain effect id
     void loadChainEffects();
-    // One strand (the beam's row or one its Combo names): wave and arc
+    // One strand (the beam's row or one its Combo adds): wave and arc
     // planes, and interior vertex offsets in noise radii across the beam
-    // (world-up-in-plane, side), drawn from `from` toward `to` over a joint
-    // interval, then redrawn.
+    // (world-up-in-plane, side), stepped each frame toward `noiseTarget`
+    // (chainNoiseStep).
     struct StrandState {
         uint32_t chainId = 0;
         float waveAngle = 0, waveSpin = 0, arcAngle = 0, arcSpin = 0, nextJoints = 0;
-        std::vector<glm::vec2> from, to;
+        std::vector<glm::vec2> noise, noiseTarget;
         // Joint offsets in yards (up, side) and where each is heading.
         std::vector<glm::vec2> joints, jointTargets;
         float jointsMoved = 0;  // beamClock_ of the last joint step

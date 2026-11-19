@@ -325,7 +325,13 @@ void SpellVisualSystem::loadChainEffects() {
         effect.width = dbc->getFloat(i, 2);
         effect.noiseScale = dbc->getFloat(i, 3);
         effect.texCoordScale = dbc->getFloat(i, 4);
+        effect.flags = dbc->getUInt32(i, 8);
+        effect.jointSmoothness = dbc->getFloat(i, 16);
+        assert(effect.jointSmoothness >= 0.0f && effect.jointSmoothness <= 1.0f);
         effect.minDurBetweenJoints = dbc->getFloat(i, 17);
+        effect.pulseSpeed = dbc->getFloat(i, 36);
+        effect.pulseOnLength = dbc->getFloat(i, 37);
+        effect.pulseFadeLength = dbc->getFloat(i, 38);
         effect.joints = {.count = dbc->getUInt32(i, 9), .perMinor = dbc->getUInt32(i, 11),
                          .minorPerMajor = dbc->getUInt32(i, 12), .radius = dbc->getFloat(i, 10),
                          .minorScale = dbc->getFloat(i, 13), .majorScale = dbc->getFloat(i, 14)};
@@ -355,7 +361,7 @@ void SpellVisualSystem::loadChainEffects() {
         // (chainTexCoord).
         uint32_t combo = 0;
         std::memcpy(&combo, record + 161, sizeof(combo));
-        if (combo) effect.strands = chainComboStrands(dbc->getStringViewByOffset(combo));
+        if (combo) effect.strands = chainComboStrands(dbc->getStringViewByOffset(combo), dbc->getUInt32(i, 0));
         chainEffects_[dbc->getUInt32(i, 0)] = std::move(effect);
     }
     // Combo entries naming a row the file does not have (215 names 89) draw nothing.
@@ -878,12 +884,21 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
                 out[i] = glm::vec2(std::cos(a), std::sin(a)) * r;
             }
         };
+        // Pulse (chainPulse): rows with Flags 0x20 light a window sweeping
+        // along the beam; the row's Combo copies share it (Fel Consumption's
+        // three strands are lit over the same stretch). Their flicker fields
+        // do not hide them: native Fel Crystal Visual (292, flicker on
+        // 0.48-0.66 s, off 0.26-0.55 s) sweeps unbroken bands 2 s long from
+        // each crystal to Selin; hidden by the flicker they came and went in
+        // half-second pieces.
+        const bool pulsing = (effect.flags & 0x20u) && effect.pulseSpeed != 0.0f;
         // Flicker: a row with Min/MaxFlickerOn/Off is drawn for a random
-        // on-time, hidden for a random off-time, again and again. Native Open
-        // Portal from Shattrath 46801 (chain 411 eight times, on 0.3-0.5 s,
-        // off 0.4-0.65 s) shows one to four of its strands at a time; all
-        // eight drawn steadily made one dense bright bundle.
-        if (effect.flickerOn.y > 0.0f || effect.flickerOff.y > 0.0f) {
+        // on-time, hidden for a random off-time, again and again (not
+        // compared with native on a row without pulse). Open Portal from
+        // Shattrath 46801 (chain 411 eight times, Flags 0x36) pulses: native
+        // strands lit first at the caster, reaching the target in 0.15-0.2 s
+        // (PulseSpeed 100) and showing one to four at a time are its windows.
+        if (!pulsing && (effect.flickerOn.y > 0.0f || effect.flickerOff.y > 0.0f)) {
             auto between = [&](glm::vec2 range) {
                 return std::uniform_real_distribution<float>(std::min(range.x, range.y), std::max(range.x, range.y))(random);
             };
@@ -899,26 +914,30 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
             if (!strand.flickerOn) continue;
         }
         const bool redraw = effect.minDurBetweenJoints > 0.0f && beamClock_ >= strand.nextJoints;
-        // A new beam draws its offsets. When the units move and the segment
-        // count changes, the same offsets are read at the same fractions of
-        // the beam: drawing new ones made a beam between moving units
-        // (High Priestess Jeklik's Mind Flay, chain 4) a jagged rod jumping
-        // every frame, while native's bends at fixed ends stay put for
-        // seconds (chain 4 at 24 yd, _experiments/20261118T221857Z.chain_rate).
-        if (strand.to.empty()) {
-            drawNoise(strand.from);
-            drawNoise(strand.to);
+        // Noise (chainNoiseStep): a new beam starts at a full random draw;
+        // then every frame each vertex keeps JointSmoothness of its offset
+        // and moves the rest toward a random offset drawn anew every frame,
+        // or every MinDurBetweenJoints when that is set (Sunshatter, 0.08 s:
+        // native's kinks drift and are gone within a few tenths of a
+        // second). When the units move and the segment count changes, the
+        // offsets are read at the same fractions of the beam: drawing a new
+        // full set made a beam between moving units (High Priestess Jeklik's
+        // Mind Flay, chain 4) a jagged rod jumping every frame.
+        if (strand.noise.empty()) {
+            drawNoise(strand.noise);
+            drawNoise(strand.noiseTarget);
             strand.nextJoints = beamClock_ + effect.minDurBetweenJoints;
-        } else if (strand.to.size() != static_cast<size_t>(segments + 1)) {
-            strand.from = chainResample(strand.from, segments + 1);
-            strand.to = chainResample(strand.to, segments + 1);
-        } else if (redraw) {
-            // Every MinDurBetweenJoints the vertices head for new offsets
-            // (Sunshatter, 0.08 s: native's kinks drift and are gone within a
-            // few tenths of a second). Rows with 0 keep theirs.
-            strand.from = strand.to;
-            drawNoise(strand.to);
-            strand.nextJoints = beamClock_ + effect.minDurBetweenJoints;
+        } else {
+            if (strand.noise.size() != static_cast<size_t>(segments + 1)) {
+                strand.noise = chainResample(strand.noise, segments + 1);
+                strand.noiseTarget = chainResample(strand.noiseTarget, segments + 1);
+            }
+            if (effect.minDurBetweenJoints <= 0.0f || redraw) {
+                drawNoise(strand.noiseTarget);
+                strand.nextJoints = beamClock_ + effect.minDurBetweenJoints;
+            }
+            for (size_t i = 0; i < strand.noise.size(); ++i)
+                strand.noise[i] = chainNoiseStep(strand.noise[i], strand.noiseTarget[i], effect.jointSmoothness);
         }
         // Joints: JointCount points evenly between the ends, each straying
         // up to chainJointRadius yards; the beam runs straight from joint to
@@ -966,8 +985,6 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
             }
             strand.jointsMoved = beamClock_;
         }
-        const float toward = effect.minDurBetweenJoints > 0.0f
-            ? std::clamp(1.0f - (strand.nextJoints - beamClock_) / effect.minDurBetweenJoints, 0.0f, 1.0f) : 1.0f;
         const glm::vec3 across = turned(strand.waveAngle + strand.waveSpin * t);
         // ArcHeight yards at the middle, half a sine from end to end: native
         // Sunshatter (1.1) bows about a yard above the line at 24 yd.
@@ -984,11 +1001,14 @@ void SpellVisualSystem::appendBeamStrip(std::vector<M2Renderer::ChainStrip>& str
         for (int i = 0; i <= segments; ++i) {
             const float s = length * static_cast<float>(i) / static_cast<float>(segments);
             const float wave = effect.waveHeight * std::sin(effect.waveFreq * s - effect.waveSpeed * t);
-            const glm::vec2 o = glm::mix(strand.from[i], strand.to[i], toward) * noise +
+            const glm::vec2 o = strand.noise[i] * noise +
                                 chainJointOffsetAt(strand.joints, s / length);
             strip.spine.push_back(start + dir * s + across * wave + bow * std::sin(glm::pi<float>() * s / length) +
                                   up * o.x + side * o.y);
             strip.u.push_back(chainTexCoord(s, length, effect.texCoordScale, t));
+            if (pulsing)
+                strip.fade.push_back(chainPulse(s, length, effect.pulseSpeed, effect.pulseOnLength,
+                                                effect.pulseFadeLength, t));
         }
         strips.push_back(std::move(strip));
     }
