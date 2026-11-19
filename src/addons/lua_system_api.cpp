@@ -974,8 +974,10 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "camerayawmovespeed") lua_pushstring(L, "180");
     else if (n == "camerapitchmovespeed") lua_pushstring(L, "90");
     else if (n == "mousespeed") lua_pushstring(L, "1");
-    // Not joined unless asked for, as it ships.
-    else if (n == "guildrecruitmentchannel") lua_pushstring(L, "0");
+    // On, as it ships: build 8606 answers GetCVar and GetCVarDefault "1"
+    // with none set, and joins GuildRecruitment at login outside a guild
+    // (pair 15).
+    else if (n == "guildrecruitmentchannel") lua_pushstring(L, "1");
 
     // The uvarInfo table's own defaults, for the CVars it names that nothing
     // here answered. An unanswered CVar is not "off": GetCVar gives back
@@ -3334,6 +3336,10 @@ inline constexpr const char* kClassicCombatLogGroups[] = {
 /// NUM_CHAT_WINDOWS in 3.3.5. Indices are one-based from Lua.
 static constexpr int kNumChatWindows = 10;
 
+/// The channels of 2.4.3's default General window, in its order.
+static constexpr const char* kDefaultChatChannels[] = {
+    "LookingForGroup", "General", "Trade", "LocalDefense", "GuildRecruitment"};
+
 static std::array<ChatWindowSettings, kNumChatWindows>& chatWindows() {
     static std::array<ChatWindowSettings, kNumChatWindows> windows = [] {
         std::array<ChatWindowSettings, kNumChatWindows> w{};
@@ -3353,14 +3359,10 @@ static std::array<ChatWindowSettings, kNumChatWindows>& chatWindows() {
         // else fills it - so with it empty every channel line was matched
         // against nothing and dropped, however well the message parsed.
         //
-        // Names without the zone after them, which is what the frame compares:
-        // the message carries "General - Blasted Lands" and the short name
-        // beside it, and the match is on the short one. Zero for the zone id,
-        // which this client does not learn; the name settles it.
-        for (const char* c : {"General", "Trade", "LocalDefense",
-                              "LookingForGroup", "GuildRecruitment"}) {
-            w[0].channels.emplace_back(c, 0);
-        }
+        // 2.4.3's default General window (pair 15, GetChatWindowChannels(1)):
+        // LookingForGroup by name, then the zone channels. Their zone ids
+        // are the ChatChannels rows, answered by windowChannelZone.
+        for (const char* c : kDefaultChatChannels) w[0].channels.emplace_back(c, 0);
         return w;
     }();
     return windows;
@@ -3381,6 +3383,23 @@ static std::string interfaceStatePath() {
 }
 
 static void saveInterfaceState();
+
+/// A window channel's zone id as 2.4.3 answers it: a channel named after
+/// the zone (ChatChannels flag 0x2: General 1, Trade 2, LocalDefense 22,
+/// GuildRecruitment 25) is held by its row id, which ChatFrame matches
+/// against arg7 of the zone-named lines ("General - Tanaris"); any other is
+/// held by name with the id it was added under (LookingForGroup 0 in the
+/// default window). Earlier builds of this client stored 0 for the zone
+/// channels too, and those lines then matched nothing.
+static int windowChannelZone(lua_State* L, const std::string& name, int stored) {
+    auto* gh = getGameHandler(L);
+    const auto* chat = gh ? gh->getChatHandler() : nullptr;
+    assert(chat && "window channels asked for without a chat handler");
+    const uint32_t id = chat->builtinChannelId(name);
+    if (id != 0 && (chat->builtinChannelFlags(id) & game::ChatHandler::kChannelZoneDep))
+        return static_cast<int>(id);
+    return stored;
+}
 
 /// The window a one-based index names, or nullptr if it names none.
 static ChatWindowSettings* chatWindow(lua_State* L, int argIndex) {
@@ -6840,16 +6859,15 @@ void registerSystemLuaAPI(lua_State* L) {
             // the group wipe in FCF_ResetChatWindows, and a General with no
             // channels matched every channel line against nothing.
             if (w->channels.empty() && lua_tonumber(L, 1) == 1) {
-                for (const char* c : {"General", "Trade", "LocalDefense",
-                                      "LookingForGroup", "GuildRecruitment"}) {
+                for (const char* c : kDefaultChatChannels) {
                     lua_pushstring(L, c);
-                    lua_pushnumber(L, 0);
+                    lua_pushnumber(L, windowChannelZone(L, c, 0));
                 }
-                return 10;
+                return static_cast<int>(std::size(kDefaultChatChannels)) * 2;
             }
             for (const auto& c : w->channels) {
                 lua_pushstring(L, c.first.c_str());
-                lua_pushnumber(L, c.second);
+                lua_pushnumber(L, windowChannelZone(L, c.first, c.second));
             }
             return static_cast<int>(w->channels.size()) * 2;
         }},
@@ -6880,17 +6898,20 @@ void registerSystemLuaAPI(lua_State* L) {
                 // puts the channel into the frame's own list only `if
                 // ( zoneChannel )`, so returning nothing meant the channel was
                 // recorded here and never reached the frame that shows it.
-                // Zero is a real answer for a channel that is not zone based,
-                // and passes that test - zero being true in Lua.
+                // The id is the ChatChannels row the name is ("General" 1,
+                // "LookingForGroup" 26, "WorldDefense" 23 on 2.4.3, pair 15),
+                // zero for any other name ("zzprobe", "Trade - City") - zero
+                // being true in Lua.
                 {"AddChatWindowChannel", [](lua_State* L) -> int {
             ChatWindowSettings* w = chatWindow(L, 1);
             const char* name = lua_isstring(L, 2) ? lua_tostring(L, 2) : nullptr;
             if (!w || !name) return 0;
-            const int zone = static_cast<int>(luaL_optnumber(L, 3, 0));
+            auto* gh = getGameHandler(L);
+            const auto* chat = gh ? gh->getChatHandler() : nullptr;
+            const int zone = chat ? static_cast<int>(chat->builtinChannelId(name)) : 0;
             for (auto& c : w->channels) {
                 if (c.first != name) continue;
-                if (zone != 0) c.second = zone;
-                lua_pushnumber(L, c.second);
+                lua_pushnumber(L, windowChannelZone(L, c.first, c.second));
                 return 1;
             }
             w->channels.emplace_back(name, zone);
@@ -7297,19 +7318,18 @@ void registerSystemLuaAPI(lua_State* L) {
             const bool enabled = lua_toboolean(L, 1) != 0;
             lua_settop(L, 0); lua_pushstring(L, "autoLootDefault"); lua_pushboolean(L, enabled); return lua_SetCVar(L);
         }},
+                // Joins (1) or leaves (0) GuildRecruitment and nothing else:
+                // 2.4.3's GetCVar("guildRecruitmentChannel") still answers "1"
+                // after SetGuildRecruitmentMode(0) (pair 15). The options
+                // checkbox sets the CVar itself before calling this.
                 {"SetGuildRecruitmentMode", [](lua_State* L) -> int {
             const int mode = static_cast<int>(luaL_checknumber(L, 1));
             if (mode < 0 || mode > 1) return luaL_error(L, "Guild recruitment mode must be 0 or 1");
-            lua_settop(L, 0); lua_pushstring(L, "guildRecruitmentChannel"); lua_pushnumber(L, mode);
-            lua_SetCVar(L);
-            if (auto* gh = getGameHandler(L)) {
-                const auto& channels = gh->getJoinedChannels();
-                const bool joined = std::any_of(channels.begin(), channels.end(), [](const auto& name) {
-                    return name == "GuildRecruitment" || name.starts_with("GuildRecruitment - ");
-                });
-                if (mode && !joined) gh->joinChannel("GuildRecruitment");
-                else if (!mode && joined) gh->leaveChannel("GuildRecruitment");
-            }
+            auto* gh = getGameHandler(L);
+            auto* chat = gh ? gh->getChatHandler() : nullptr;
+            if (!chat) return 0;
+            if (mode) chat->joinBuiltinChannels(game::ChatHandler::kChannelNoGuild);
+            else chat->leaveBuiltinChannels(game::ChatHandler::kChannelNoGuild);
             return 0;
         }},
                 {"SetCVar",             lua_SetCVar},

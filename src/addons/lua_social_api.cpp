@@ -204,7 +204,8 @@ static int lua_SendChatMessage(lua_State* L) {
     if (ct == game::ChatType::CHANNEL && lua_isnumber(L, 4)) {
         const int index = static_cast<int>(lua_tonumber(L, 4));
         const auto& joined = gh->getJoinedChannels();
-        if (index >= 1 && index <= static_cast<int>(joined.size())) {
+        if (index >= 1 && index <= static_cast<int>(joined.size()) &&
+            !joined[static_cast<size_t>(index) - 1].empty()) {
             targetStr = joined[static_cast<size_t>(index) - 1];
         } else {
             LOG_WARNING("SendChatMessage: channel index ", index,
@@ -2126,12 +2127,21 @@ void registerSocialLuaAPI(lua_State* L) {
                 !lua_checkstack(L, static_cast<int>(joined.size()) * per)) {
                 return 0;
             }
+            // A built-in channel by its ChatChannels name: 2.4.3 in Tanaris
+            // answers 1, "General", ..., 5, "LookingForGroup", 6, "zzprobe"
+            // (pair 15), where GetChannelName(1) is "General - Tanaris". A
+            // number given up by leaving is not listed.
+            const auto* chat = gh->getChatHandler();
+            int values = 0;
             for (size_t i = 0; i < joined.size(); ++i) {
+                if (joined[i].empty()) continue;
+                const uint32_t id = chat ? chat->joinedChannelId(joined[i]) : 0;
                 lua_pushnumber(L, static_cast<lua_Number>(i + 1));
-                lua_pushstring(L, joined[i].c_str());
+                lua_pushstring(L, id != 0 ? chat->builtinChannelName(id).c_str() : joined[i].c_str());
                 if (per == 3) lua_pushboolean(L, 0);   // disabled
+                values += per;
             }
-            return static_cast<int>(joined.size()) * per;
+            return values;
         }},
                 // Channel moderation is not modelled, so the player owns none.
                 // IsDisplayChannelOwner lives in lua_system_api.cpp, beside
@@ -3691,6 +3701,7 @@ void registerSocialLuaAPI(lua_State* L) {
                     const auto& joined = gh->getJoinedChannels();
                     std::string line;
                     for (size_t i = 0; i < joined.size(); ++i) {
+                        if (joined[i].empty()) continue;
                         if (!line.empty()) line += ' ';
                         line += "[" + std::to_string(i + 1) + ". " + joined[i] + "]";
                     }
@@ -3905,10 +3916,11 @@ void registerSocialLuaAPI(lua_State* L) {
                 // Accepts a name as well as an index; chat's slash handlers
                 // pass whichever the player typed.
                 for (size_t i = 0; i < joined.size(); ++i) {
-                    if (joined[i] == wanted) { index = static_cast<int>(i) + 1; break; }
+                    if (!joined[i].empty() && joined[i] == wanted) { index = static_cast<int>(i) + 1; break; }
                 }
             }
-            if (index < 1 || index > static_cast<int>(joined.size())) {
+            if (index < 1 || index > static_cast<int>(joined.size()) ||
+                joined[static_cast<size_t>(index) - 1].empty()) {
                 lua_pushnumber(L, 0);
                 lua_pushnil(L);
                 lua_pushnumber(L, 0);

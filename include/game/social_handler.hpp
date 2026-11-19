@@ -204,6 +204,9 @@ public:
 
     // Guild state accessors
     [[nodiscard]] bool isInGuild() const;
+    /// The player left or lost their guild: no longer a member, and
+    /// GuildRecruitment is joined again when its CVar is on.
+    void onGuildLeft();
     [[nodiscard]] const std::string& getGuildName() const { return guildName_; }
     [[nodiscard]] const GuildRosterData& getGuildRoster() const { return guildRoster_; }
     [[nodiscard]] bool hasGuildRoster() const { return hasGuildRoster_; }

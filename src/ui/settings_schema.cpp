@@ -840,8 +840,8 @@ constexpr SettingDesc kSchema[] = {
     {"joinlocal", "Local", SettingKind::Bool, 0, 0, 0, "Chat", "",
      "The realm's Local channel, on realms that provide one.", "", 1},
     {"joinguildrecruitment", "GuildRecruitment", SettingKind::Bool, 0, 0, 0, "Chat", "",
-     "Guilds looking for members, and players looking for a guild.", "", 0,
-     "", "cvar:guildRecruitmentChannel"},
+     "Guilds looking for members, and players looking for a guild.", "", 1,
+     "", "cvar:guildRecruitmentChannel", "", "SetGuildRecruitmentMode(tonumber(v))"},
     // Speech bubbles were the game's own Social page's, two boxes among chat
     // options FrameXML reads for itself. These two the client reads - the
     // bubbles are drawn here - so they are rows. Party bubbles want both.

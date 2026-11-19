@@ -45,7 +45,33 @@ public:
     void requestChannelList(const std::string& channelName, bool print = false);
     [[nodiscard]] std::string getChannelByIndex(int index) const;
     [[nodiscard]] int getChannelIndex(const std::string& channelName) const;
+    /// Joined channels by chat number: slot i is number i + 1. A slot left
+    /// empty ("") is a number given up by leaving, kept free until a join
+    /// takes it: 2.4.3 keeps "5. LookingForGroup" after "4. GuildRecruitment"
+    /// is left and gives 4 to the next channel joined (pair 15).
     [[nodiscard]] const std::vector<std::string>& getJoinedChannels() const { return joinedChannels_; }
+    /// ChatChannels.dbc id of a joined channel, 0 for a custom one.
+    [[nodiscard]] uint32_t joinedChannelId(const std::string& channelName) const {
+        const auto it = joinedChannelIds_.find(channelName);
+        return it == joinedChannelIds_.end() ? 0 : it->second;
+    }
+    /// The ChatChannels.dbc row whose name is `shortName` ("General",
+    /// "LookingForGroup"), 0 when none.
+    [[nodiscard]] uint32_t builtinChannelId(const std::string& shortName) const;
+    /// ChatChannels.dbc short name by id ("General"), empty for none.
+    [[nodiscard]] std::string builtinChannelName(uint32_t id) const;
+    /// ChatChannels.dbc flags by id, 0 for none.
+    [[nodiscard]] uint32_t builtinChannelFlags(uint32_t id) const;
+    /// Join, or leave, every built-in channel carrying ChatChannels flag
+    /// `flag` (kChannelNoGuild: GuildRecruitment) under the name the zone
+    /// gives it now.
+    void joinBuiltinChannels(uint32_t flag);
+    void leaveBuiltinChannels(uint32_t flag);
+    /// ChatChannels.dbc flags (2.4.3 Flags column).
+    static constexpr uint32_t kChannelInitial  = 0x00001;  ///< joined at login
+    static constexpr uint32_t kChannelZoneDep  = 0x00002;  ///< named after the zone
+    static constexpr uint32_t kChannelCityOnly = 0x00020;  ///< "- City" in a capital
+    static constexpr uint32_t kChannelNoGuild  = 0x20000;  ///< not for guild members
     /// Whether the player owns this channel - the one who created it, or who
     /// it passed to. SMSG_CHANNEL_NOTIFY says so with OWNER_CHANGED, which
     /// carries the new owner's guid: AzerothCore's Channel::MakeOwnerChanged
@@ -225,13 +251,29 @@ private:
     bool zoneChannelsInterfaceReady_ = false;
     uint32_t zoneChannelsLiveZone_ = 0;
     void tryJoinZoneChannels();
+    /// Put a newly joined channel on the lowest free chat number.
+    void takeChannelNumber(const std::string& channelName);
     std::set<std::string> ownedChannels_;
     /// Collapsed panel headers by label ("World", "Custom").
     std::set<std::string> collapsedChannelHeaders_;
     std::map<std::string, uint32_t> channelMemberCounts_;
-    /// ChatChannels.dbc short name by id ("General"), loaded on first use.
-    mutable std::map<uint32_t, std::string> builtinChannelNames_;
-    std::string builtinChannelName(uint32_t id) const;
+    /// One ChatChannels.dbc row: id, flags, name pattern ("General - %s")
+    /// and short name ("General").
+    struct BuiltinChannel {
+        uint32_t id = 0;
+        uint32_t flags = 0;
+        std::string pattern;
+        std::string name;
+    };
+    /// Every ChatChannels.dbc row, loaded on first use.
+    mutable std::vector<BuiltinChannel> builtinChannels_;
+    const std::vector<BuiltinChannel>& builtinChannels() const;
+    /// The name a built-in channel is joined under in `zoneId`: the pattern
+    /// with the zone's AreaTable name, or "City" for a city-only channel in a
+    /// capital. Empty when the zone has no name.
+    std::string builtinChannelJoinName(const BuiltinChannel& channel, uint32_t zoneId) const;
+    /// The zone the built-in channels are named after (see tryJoinZoneChannels).
+    uint32_t channelZoneId() const;
     void handleChannelMemberCount(network::Packet& packet);
     /// Channels whose next SMSG_CHANNEL_LIST /chatlist asked to print.
     std::set<std::string> printChannelLists_;

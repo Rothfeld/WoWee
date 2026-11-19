@@ -729,13 +729,9 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
             ? std::string() : owner_.getLanguageName(static_cast<uint32_t>(data.language));
         char guidBuf[32];
         snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)data.senderGuid);
-        // arg8 is the channel's number and arg9 its name without the zone
-        // after it, and both were sent empty. That is the whole of whether a
-        // channel line is shown: the handler builds "CHANNEL"..arg8 and looks
-        // it up in ChatTypeInfo, so a zero made every channel message
-        // CHANNEL0, which no table has, and the message was dropped before it
-        // reached the window. arg9 is what the frame matches against the
-        // channels it carries when the zone id does not settle it.
+        // arg8 is the channel's number: the handler builds "CHANNEL"..arg8
+        // and looks it up in ChatTypeInfo, so a zero there (CHANNEL0, which no
+        // table has) drops the line before it reaches the window.
         // A line id of its own, remembered against the sender. FrameXML builds
         // this into the player link on the name - "|Hplayer:Name:lineId:..." -
         // so a right-click on that name hands it back and the client is
@@ -752,10 +748,14 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
             while (chatLineSenders_.size() > kRememberedLines)
                 chatLineSenders_.pop_front();
         }
+        // 2.4.3 on a General line (pair 15): arg4 "1. General - Tanaris",
+        // arg7 1 (the ChatChannels id, 0 for a custom channel), arg8 1, arg9
+        // "General - Tanaris". ChatFrame prints arg4 up to " - " as the
+        // "[1. General]" in front of the line, and keeps it when its arg7 is
+        // the window's zone channel id or arg9 its channel name.
         const int channelNumber = getChannelIndex(data.channelName);
-        const size_t dash = data.channelName.find(" - ");
-        const std::string shortChannel = (dash == std::string::npos)
-            ? data.channelName : data.channelName.substr(0, dash);
+        const std::string numberedChannel = channelNumber > 0
+            ? std::to_string(channelNumber) + ". " + data.channelName : data.channelName;
         // arg5 is the *target*, not the sender. It was the sender's own name,
         // which is only read by CHANNEL_NOTICE_USER - and read as "there are
         // two names in this notice", so every kick and ban was formatted as
@@ -802,12 +802,12 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
             data.message,
             shownName,
             lang,
-            data.channelName,
+            numberedChannel,
             data.receiverName,
             chatFlag,
-            "0",
+            std::to_string(joinedChannelId(data.channelName)),
             std::to_string(channelNumber),
-            shortChannel,
+            data.channelName,
             "0",
             std::to_string(lineId),
             guidBuf
@@ -969,32 +969,59 @@ void ChatHandler::leaveChannel(const std::string& channelName) {
     LOG_INFO("Requesting to leave channel: ", channelName);
 }
 
+void ChatHandler::takeChannelNumber(const std::string& channelName) {
+    if (std::find(joinedChannels_.begin(), joinedChannels_.end(), channelName) != joinedChannels_.end()) return;
+    const auto free = std::find(joinedChannels_.begin(), joinedChannels_.end(), std::string());
+    if (free != joinedChannels_.end()) *free = channelName;
+    else joinedChannels_.push_back(channelName);
+}
+
 std::string ChatHandler::getChannelByIndex(int index) const {
     if (index < 1 || index > static_cast<int>(joinedChannels_.size())) return "";
     return joinedChannels_[index - 1];
 }
 
 int ChatHandler::getChannelIndex(const std::string& channelName) const {
+    if (channelName.empty()) return 0;
     for (int i = 0; i < static_cast<int>(joinedChannels_.size()); ++i) {
         if (joinedChannels_[i] == channelName) return i + 1;
     }
     return 0;
 }
 
+const std::vector<ChatHandler::BuiltinChannel>& ChatHandler::builtinChannels() const {
+    if (!builtinChannels_.empty()) return builtinChannels_;
+    auto* am = owner_.services().assetManager;
+    auto dbc = am ? am->loadDBC("ChatChannels.dbc") : nullptr;
+    assert(dbc && dbc->isLoaded() && dbc->getFieldCount() >= 21 && "ChatChannels.dbc unreadable");
+    // ID, flags, faction group, the pattern in 16 locales plus a mask
+    // (column 3 on), then the name in the same shape: column 20.
+    constexpr uint32_t kPatternColumn = 3;
+    constexpr uint32_t kNameColumn = 3 + 17;
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        builtinChannels_.push_back({dbc->getUInt32(i, 0), dbc->getUInt32(i, 1),
+                                    dbc->getString(i, kPatternColumn), dbc->getString(i, kNameColumn)});
+    }
+    return builtinChannels_;
+}
+
 std::string ChatHandler::builtinChannelName(uint32_t id) const {
     if (id == 0) return {};
-    if (builtinChannelNames_.empty()) {
-        auto* am = owner_.services().assetManager;
-        auto dbc = am ? am->loadDBC("ChatChannels.dbc") : nullptr;
-        assert(dbc && dbc->isLoaded() && "ChatChannels.dbc unreadable");
-        // ID, flags, faction group, the pattern in 16 locales plus a mask
-        // (column 3 on), then the name in the same shape: column 20.
-        constexpr uint32_t kNameColumn = 3 + 17;
-        for (uint32_t i = 0; i < dbc->getRecordCount(); ++i)
-            builtinChannelNames_[dbc->getUInt32(i, 0)] = dbc->getString(i, kNameColumn);
-    }
-    const auto it = builtinChannelNames_.find(id);
-    return it == builtinChannelNames_.end() ? std::string() : it->second;
+    for (const auto& channel : builtinChannels())
+        if (channel.id == id) return channel.name;
+    return {};
+}
+
+uint32_t ChatHandler::builtinChannelFlags(uint32_t id) const {
+    for (const auto& channel : builtinChannels())
+        if (channel.id == id) return channel.flags;
+    return 0;
+}
+
+uint32_t ChatHandler::builtinChannelId(const std::string& shortName) const {
+    for (const auto& channel : builtinChannels())
+        if (channel.name == shortName) return channel.id;
+    return 0;
 }
 
 std::vector<ChatHandler::ChannelDisplayRow> ChatHandler::channelDisplayRows() const {
@@ -1005,6 +1032,7 @@ std::vector<ChatHandler::ChannelDisplayRow> ChatHandler::channelDisplayRows() co
     std::vector<ChannelDisplayRow> world, custom;
     for (size_t i = 0; i < joinedChannels_.size(); ++i) {
         const std::string& name = joinedChannels_[i];
+        if (name.empty()) continue;
         const auto id = joinedChannelIds_.find(name);
         const uint32_t dbcId = id == joinedChannelIds_.end() ? 0 : id->second;
         ChannelDisplayRow row;
@@ -1102,6 +1130,7 @@ std::optional<uint32_t> ChatHandler::channelMemberCount(const std::string& chann
 void ChatHandler::requestChannelMemberCounts() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
     for (const auto& name : joinedChannels_) {
+        if (name.empty()) continue;
         network::Packet packet(wireOpcode(Opcode::CMSG_GET_CHANNEL_MEMBER_COUNT));
         packet.writeString(name);
         owner_.getSocket()->send(packet);
@@ -1194,9 +1223,10 @@ ChannelNotice channelNotice(ChannelNotifyType type) {
 // CHAT_MSG_CHANNEL_NOTICE (or _USER when a player is named) with the notice
 // name in arg1, "N. Channel" in arg4, the player in arg2 and a second one in
 // arg5, and ChatFrame formats CHAT_<name>_NOTICE - "Joined Channel: [1.
-// General - Elwynn Forest]" (pair 6, native at login). arg8 is the channel
-// number and arg9 the bare name, which ChatFrame matches against the
-// channels the frame shows.
+// General - Elwynn Forest]" (pair 6, native at login). arg7 is the
+// ChatChannels id, arg8 the channel number and arg9 the full name ("General -
+// Tanaris", pair 15); ChatFrame keeps the line when arg7 is one of the
+// window's zone channel ids or arg9 one of its channel names.
 void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number, bool waited, bool changed) {
     ChannelNotice notice = channelNotice(data.notifyType);
     if (changed) notice.name = "YOU_CHANGED";
@@ -1222,12 +1252,13 @@ void ChatHandler::fireChannelNotice(const ChannelNotifyData& data, int number, b
     if (notice.user && player.empty())
         LOG_WARNING("Channel notice ", notice.name, " on ", data.channelName, ": player name unknown (guid ",
                     data.senderGuid, ")");
-    const size_t dash = data.channelName.find(" - ");
-    const std::string shortName = dash == std::string::npos ? data.channelName : data.channelName.substr(0, dash);
     const std::string shown = number > 0 ? std::to_string(number) + ". " + data.channelName : data.channelName;
+    // The realm names the id only in YOU_JOINED and YOU_LEFT; any other
+    // notice is about a channel the client holds, with the id it joined under.
+    const uint32_t channelId = data.channelId != 0 ? data.channelId : joinedChannelId(data.channelName);
     owner_.addonEventCallbackRef()(notice.user ? "CHAT_MSG_CHANNEL_NOTICE_USER" : "CHAT_MSG_CHANNEL_NOTICE", {
-        notice.name, player, "", shown, second, "", std::to_string(data.channelId),
-        std::to_string(number), shortName, "0", "0", "0x0000000000000000"
+        notice.name, player, "", shown, second, "", std::to_string(channelId),
+        std::to_string(number), data.channelName, "0", "0", "0x0000000000000000"
     });
 }
 
@@ -1257,14 +1288,13 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
                     break;
                 }
             }
-            if (!changed && std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
-                joinedChannels_.push_back(data.channelName);
-            }
+            if (!changed) takeChannelNumber(data.channelName);
             joinedChannelIds_[data.channelName] = data.channelId;
             LOG_INFO(changed ? "Changed channel: " : "Joined channel: ", data.channelName);
-            fireChannelNotice(data, getChannelIndex(data.channelName), false, changed);
-            // The channel panel's rows moved; it redraws on this.
+            // The channel panel's rows moved; it redraws on this. 2.4.3 fires
+            // it before the notice (pair 15).
             owner_.fireAddonEvent("CHANNEL_UI_UPDATE", {});
+            fireChannelNotice(data, getChannelIndex(data.channelName), false, changed);
             break;
         }
         case ChannelNotifyType::YOU_LEFT: {
@@ -1272,10 +1302,12 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
             const int number = getChannelIndex(data.channelName);
             ownedChannels_.erase(data.channelName);
             joinedChannelIds_.erase(data.channelName);
-            joinedChannels_.erase(
-                std::remove(joinedChannels_.begin(), joinedChannels_.end(), data.channelName),
-                joinedChannels_.end());
+            // Its number stays free, not closed up (see getJoinedChannels).
+            std::replace(joinedChannels_.begin(), joinedChannels_.end(), data.channelName, std::string());
+            while (!joinedChannels_.empty() && joinedChannels_.back().empty()) joinedChannels_.pop_back();
             LOG_INFO("Left channel: ", data.channelName);
+            // 2.4.3: CHANNEL_UI_UPDATE, the notice, CHANNEL_UI_UPDATE (pair 15).
+            owner_.fireAddonEvent("CHANNEL_UI_UPDATE", {});
             fireChannelNotice(data, number);
             owner_.fireAddonEvent("CHANNEL_UI_UPDATE", {});
             break;
@@ -1284,7 +1316,7 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
             // Server confirms we're in this channel but our local list doesn't have it yet -
             // can happen after reconnect or if the join notification was missed.
             if (std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
-                joinedChannels_.push_back(data.channelName);
+                takeChannelNumber(data.channelName);
                 LOG_INFO("Already in channel: ", data.channelName);
             }
             fireChannelNotice(data, getChannelIndex(data.channelName));
@@ -1331,69 +1363,97 @@ void ChatHandler::joinZoneChannels(uint32_t zoneId) {
     tryJoinZoneChannels();
 }
 
-// 2.4.3 at login (pair 6, Goldshire): "Joined Channel: [1. General - Elwynn
-// Forest]", "[2. Trade - Elwynn Forest]", "[3. LocalDefense - Elwynn
-// Forest]", "[4. GuildRecruitment - Elwynn Forest]", "[5. LookingForGroup]";
-// at a Blackwing Lair login "General - Blackwing Lair". ChatChannels.dbc
-// supplies the rows: the id the realm keys a built-in channel on, flag 0x1
-// for the ones joined at login (WorldDefense, without it, was not joined),
-// and the name pattern, "%s" being the zone's AreaTable name. Guild
-// Recruitment has no 0x1 and follows the interface's guildRecruitmentChannel
-// CVar, which the original's default set joins. The realm moves zone
-// channels on a zone change itself (Player::UpdateLocalChannels).
-void ChatHandler::tryJoinZoneChannels() {
+uint32_t ChatHandler::channelZoneId() const {
     // The zone under the player, as the client's own map data has it; the
     // realm's SMSG_INIT_WORLD_STATES zone when that is not known yet. A quick
     // reconnect to a session still in the world gets no INIT_WORLD_STATES.
-    const uint32_t zoneId = zoneChannelsLiveZone_ ? zoneChannelsLiveZone_ : owner_.getWorldStateZoneId();
+    return zoneChannelsLiveZone_ ? zoneChannelsLiveZone_ : owner_.getWorldStateZoneId();
+}
+
+std::string ChatHandler::builtinChannelJoinName(const BuiltinChannel& channel, uint32_t zoneId) const {
+    if (channel.pattern.find("%s") == std::string::npos) return channel.pattern;
+    const uint32_t zone = owner_.getAreaZoneId(zoneId);
+    // A city-only channel (Trade, GuildRecruitment) joined in a capital is
+    // named after AreaTable's "City" row (3459): 2.4.3 in Stormwind joins
+    // "[2. Trade - City]" beside "[1. General - Stormwind City]" (pair 11),
+    // in Shattrath "Trade - City" and "GuildRecruitment - City" (pair 15),
+    // and in Goldshire "Trade - Elwynn Forest" (pair 6).
+    constexpr uint32_t kAreaCity = 3459;
+    std::string place = owner_.getAreaName(zone);
+    if ((channel.flags & kChannelCityOnly) && owner_.isCapitalZone(zone)) {
+        place = owner_.getAreaName(kAreaCity);
+        assert(!place.empty() && "AreaTable has no City row");
+    }
+    if (place.empty()) return {};
+    return formatGlobalString(channel.pattern, {place});
+}
+
+// SetGuildRecruitmentMode(1) on 2.4.3 in Tanaris joins "[4. GuildRecruitment
+// - Tanaris]" (id 25, the lowest free number) and SetGuildRecruitmentMode(0)
+// leaves it; neither touches the guildRecruitmentChannel CVar (pair 15).
+void ChatHandler::joinBuiltinChannels(uint32_t flag) {
+    const uint32_t zoneId = channelZoneId();
+    for (const auto& channel : builtinChannels()) {
+        if (!(channel.flags & flag)) continue;
+        bool joined = false;
+        for (const auto& [name, id] : joinedChannelIds_) joined = joined || id == channel.id;
+        if (joined) continue;
+        const std::string name = builtinChannelJoinName(channel, zoneId);
+        if (name.empty()) {
+            LOG_ERROR("No name for zone ", zoneId, ": channel ", channel.pattern, " not joined");
+            continue;
+        }
+        joinChannel(name, "", channel.id);
+    }
+}
+
+void ChatHandler::leaveBuiltinChannels(uint32_t flag) {
+    std::vector<std::string> leaving;
+    for (const auto& [name, id] : joinedChannelIds_) {
+        for (const auto& channel : builtinChannels())
+            if (channel.id == id && (channel.flags & flag)) leaving.push_back(name);
+    }
+    for (const auto& name : leaving) leaveChannel(name);
+}
+
+// 2.4.3 at login (pair 6, Goldshire): "Joined Channel: [1. General - Elwynn
+// Forest]", "[2. Trade - Elwynn Forest]", "[3. LocalDefense - Elwynn
+// Forest]", "[4. GuildRecruitment - Elwynn Forest]", "[5. LookingForGroup]";
+// at a Blackwing Lair login "General - Blackwing Lair"; in Tanaris "4.
+// GuildRecruitment - Tanaris" too (pair 15, not in a guild). ChatChannels.dbc
+// supplies the rows: the id the realm keys a built-in channel on, flag 0x1
+// for the ones joined at login (WorldDefense, without it, was not joined),
+// and the name pattern, "%s" being the zone's AreaTable name.
+// GuildRecruitment has no 0x1: it carries 0x20000 (not for guild members)
+// and is joined when the guildRecruitmentChannel CVar is on (its default,
+// GetCVarDefault "1" on 2.4.3) and the character is in no guild. The realm
+// moves zone channels on a zone change itself (Player::UpdateLocalChannels).
+void ChatHandler::tryJoinZoneChannels() {
+    const uint32_t zoneId = channelZoneId();
     LOG_INFO("Zone channels: pending=", zoneChannelsPending_, " zone=", zoneId,
              " interface=", zoneChannelsInterfaceReady_);
     if (!zoneChannelsPending_ || zoneId == 0 || !zoneChannelsInterfaceReady_) return;
     zoneChannelsPending_ = false;
-    auto* am = owner_.services().assetManager;
-    auto dbc = am ? am->loadDBC("ChatChannels.dbc") : nullptr;
-    if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() < 4) {
-        LOG_ERROR("ChatChannels.dbc missing or unreadable: no channels joined");
-        return;
-    }
-    const std::string zoneName = owner_.getAreaName(owner_.getAreaZoneId(zoneId));
-    LOG_INFO("Joining built-in channels for zone ", zoneId, " '", zoneName, "'");
-    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
-        const uint32_t id = dbc->getUInt32(i, 0);
-        const uint32_t flags = dbc->getUInt32(i, 1);
-        const std::string pattern = dbc->getString(i, 3);
-        bool wanted = (flags & 0x1u) != 0;
-        switch (id) {
+    LOG_INFO("Joining built-in channels for zone ", zoneId, " '",
+             owner_.getAreaName(owner_.getAreaZoneId(zoneId)), "'");
+    for (const auto& channel : builtinChannels()) {
+        bool wanted = (channel.flags & kChannelInitial) != 0;
+        if (channel.flags & kChannelNoGuild)
+            wanted = addons::storedCVarValue("guildRecruitmentChannel", "1") != "0" && !owner_.isInGuild();
+        switch (channel.id) {
             case 1:  wanted = wanted && chatAutoJoin.general; break;
             case 2:  wanted = wanted && chatAutoJoin.trade; break;
             case 22: wanted = wanted && chatAutoJoin.localDefense; break;
             case 26: wanted = wanted && chatAutoJoin.lfg; break;
-            // Not for a guild member (ChatChannels flag 0x20000): 2.4.3 in a
-            // guild joins no GuildRecruitment at login (pair 11).
-            case 25: wanted = addons::storedCVarValue("guildRecruitmentChannel", "1") != "0" &&
-                              !owner_.isInGuild(); break;
             default: break;
         }
-        if (!wanted || pattern.empty()) continue;
-        const bool zoned = pattern.find("%s") != std::string::npos;
-        if (zoned && zoneName.empty()) {
-            LOG_ERROR("No name for zone ", zoneId, ": channel ", pattern, " not joined");
+        if (!wanted || channel.pattern.empty()) continue;
+        const std::string name = builtinChannelJoinName(channel, zoneId);
+        if (name.empty()) {
+            LOG_ERROR("No name for zone ", zoneId, ": channel ", channel.pattern, " not joined");
             continue;
         }
-        // A city-only channel (ChatChannels flag 0x20: Trade, GuildRecruitment)
-        // joined in a capital is named after AreaTable's "City" row (3459):
-        // 2.4.3 in Stormwind joins "[2. Trade - City]" beside "[1. General -
-        // Stormwind City]" (pair 11), and in Goldshire "Trade - Elwynn
-        // Forest" (pair 6).
-        constexpr uint32_t kChannelCityOnly = 0x20;
-        constexpr uint32_t kAreaCity = 3459;
-        std::string place = zoneName;
-        if ((flags & kChannelCityOnly) && owner_.isCapitalZone(owner_.getAreaZoneId(zoneId))) {
-            place = owner_.getAreaName(kAreaCity);
-            assert(!place.empty() && "AreaTable has no City row");
-        }
-        const std::string name = zoned ? formatGlobalString(pattern, {place}) : pattern;
-        joinChannel(name, "", id);
+        joinChannel(name, "", channel.id);
     }
 }
 

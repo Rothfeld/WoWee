@@ -330,7 +330,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler) {
         case 9: type = game::ChatType::PARTY; break;
         case 10: {
             const auto& chans = gameHandler.getJoinedChannels();
-            if (!chans.empty() && selectedChannelIdx_ < static_cast<int>(chans.size())) {
+            if (selectedChannelIdx_ < static_cast<int>(chans.size()) && !chans[selectedChannelIdx_].empty()) {
                 type = game::ChatType::CHANNEL;
                 target = chans[selectedChannelIdx_];
             } else { type = game::ChatType::SAY; }

@@ -8,6 +8,7 @@
 #include "addons/lua_api_registrations.hpp"
 #include "ui/framexml_takeover.hpp"
 #include "game/game_handler.hpp"
+#include "game/chat_handler.hpp"
 #include "game/game_utils.hpp"
 #include "game/entity.hpp"
 #include "game/packet_parsers.hpp"
@@ -1090,6 +1091,14 @@ uint32_t SocialHandler::ownGuildId() const {
     if (const uint32_t live = getEntityGuildId(owner_.getPlayerGuid())) return live;
     const Character* ch = owner_.getActiveCharacter();
     return ch ? ch->guildId : 0;
+}
+
+// 2.4.3 back out of a guild (pair 15, "guild delete"): "Joined Channel: [3.
+// GuildRecruitment - City]" with guildRecruitmentChannel on, as at login.
+void SocialHandler::onGuildLeft() {
+    inGuild_ = false;
+    if (addons::storedCVarValue("guildRecruitmentChannel", "1") == "0") return;
+    if (auto* chat = owner_.getChatHandler()) chat->joinBuiltinChannels(ChatHandler::kChannelNoGuild);
 }
 
 bool SocialHandler::isInGuild() const {
@@ -2766,11 +2775,7 @@ void SocialHandler::handleGuildRoster(network::Packet& packet) {
     // its character joined a guild ("Left Channel: [4. GuildRecruitment -
     // City]", pair 11).
     if (newlyIn) {
-        std::vector<std::string> recruiting;
-        for (const auto& name : owner_.getJoinedChannels())
-            if (name == "GuildRecruitment" || name.starts_with("GuildRecruitment - "))
-                recruiting.push_back(name);
-        for (const auto& name : recruiting) owner_.leaveChannel(name);
+        if (auto* chat = owner_.getChatHandler()) chat->leaveBuiltinChannels(ChatHandler::kChannelNoGuild);
     }
     if (newlyIn && owner_.addonEventCallbackRef()) {
         // What the social window listens for to rebuild its guild tab. Without
@@ -2908,6 +2913,7 @@ void SocialHandler::handleGuildEvent(network::Packet& packet) {
             break;
         case GuildEvent::DISBANDED:
             msg = "Guild has been disbanded.";
+            onGuildLeft();
             guildName_.clear();
             guildRankNames_.clear();
             guildRoster_ = GuildRosterData{};
@@ -3088,6 +3094,7 @@ void SocialHandler::handleGuildCommandResult(network::Packet& packet) {
                 break;
             case 3:
                 owner_.systemGlobal("ERR_GUILD_QUIT_S", {data.name});
+                onGuildLeft();
                 guildName_.clear(); guildRankNames_.clear();
                 guildRoster_ = GuildRosterData{}; hasGuildRoster_ = false;
                 membershipChanged = true;
