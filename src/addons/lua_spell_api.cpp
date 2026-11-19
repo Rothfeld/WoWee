@@ -95,7 +95,7 @@ static int lua_GetTotemInfo(lua_State* L) {
         lua_pushstring(L, "");
         lua_pushnumber(L, 0);
         lua_pushnumber(L, 0);
-        lua_pushnil(L);
+        lua_pushstring(L, "");
         return 5;
     }
     const auto& totem = gh->getTotemSlot(slot - 1);
@@ -104,7 +104,15 @@ static int lua_GetTotemInfo(lua_State* L) {
     const double remainingSec = totem.remainingMs() / 1000.0;
 
     lua_pushboolean(L, active ? 1 : 0);
-    lua_pushstring(L, active ? gh->getSpellName(totem.spellId).c_str() : "");
+    // The totem unit's own name, rank numeral included: native 2.4.3 answers
+    // "Searing Totem VII" where the spell is "Searing Totem". Empty until the
+    // unit is known, as for an empty slot.
+    std::string name;
+    if (active) {
+        const auto entity = gh->getEntityManager().getEntity(totem.guid);
+        if (entity && entity->isUnit()) name = static_cast<const game::Unit*>(entity.get())->getName();
+    }
+    lua_pushstring(L, name.c_str());
     // Placed at however long ago it has already run for.
     lua_pushnumber(L, active ? luaGetTimeNow() - (durationSec - remainingSec) : 0.0);
     lua_pushnumber(L, active ? durationSec : 0.0);
@@ -112,7 +120,7 @@ static int lua_GetTotemInfo(lua_State* L) {
         const std::string icon = gh->getSpellIconPath(totem.spellId);
         if (!icon.empty()) lua_pushstring(L, icon.c_str()); else lua_pushnil(L);
     } else {
-        lua_pushnil(L);
+        lua_pushstring(L, "");
     }
     return 5;
 }
@@ -125,7 +133,8 @@ static int lua_GetTotemTimeLeft(lua_State* L) {
         lua_pushnumber(L, 0);
         return 1;
     }
-    lua_pushnumber(L, gh->getTotemSlot(slot - 1).remainingMs() / 1000.0);
+    // Whole seconds, as native 2.4.3 answers (15, 70, 80, 85).
+    lua_pushnumber(L, static_cast<double>(static_cast<int64_t>(gh->getTotemSlot(slot - 1).remainingMs()) / 1000));
     return 1;
 }
 
