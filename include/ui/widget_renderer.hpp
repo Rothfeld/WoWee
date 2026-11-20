@@ -154,7 +154,8 @@ private:
                         WidgetTree* linkSink = nullptr, uint32_t linkOwner = 0,
                         float gradientStart = -1.0f, float gradientLength = 0.0f,
                         float continuationIndent = 0.0f, float lineHeightPx = 0.0f,
-                        float shadowPx = 0.0f, float boxWidth = -1.0f);
+                        float shadowPx = 0.0f, float boxWidth = -1.0f,
+                        int outlinePixels = 0);
     /// A SimpleHTML page holding a document rather than a string: its blocks
     /// stacked down the frame, text justified per block and each picture on a
     /// line of its own. See simple_html.hpp.

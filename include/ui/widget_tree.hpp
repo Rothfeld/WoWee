@@ -229,6 +229,7 @@ struct Widget {
     /// then drew glyphs wider than the box they were given.
     float measuredSize = 0.0f;
     std::string measuredFace;
+    std::string measuredOutline;
     /// A label that declared a width and left its height at zero: WoW's
     /// wrapping paragraph. The width is the box to wrap inside and the height
     /// is however many lines that takes - the opposite of autoSized, where the

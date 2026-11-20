@@ -30,6 +30,13 @@ TBC rendering notes: [meeting stone effects and validation](docs/meeting-stone-e
 Interface textures honor `SetDesaturated` using a separate grayscale texture
 variant; atlas UVs and alpha stay unchanged. `GameTooltip:SetText("")` hides
 the tooltip, while `AddLine("")` remains a valid spacer.
+Outlined interface font strings follow 2.4.3's width and pen inset rules
+(`NativeTextMeasure::outlinePixels`, `outlinePixelsForFlag`): `OUTLINE` adds
+4 px to the final glyph extent and insets the drawn pen by +1 px, while
+`THICKOUTLINE` adds 8 px to the final glyph extent, +1 px per outlined glyph
+advance, and +2 px pen inset; `THICKOUTLINE` also fills the 1 px outline ring
+so thin digits such as action button hotkeys have no hollow gap. Evidence:
+`_experiments/20261120T122707.241094Z.action_button_hotkeys/` in the workspace.
 MCLQ water height checks use vertices belonging to visible cells. Dry vertices
 can contain `FLT_MAX`; they must not flatten a wet chunk or overwrite a wet
 neighbor's shared edge during merging.

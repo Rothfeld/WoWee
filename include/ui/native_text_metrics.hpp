@@ -71,13 +71,27 @@ private:
 /// The pixel height a font of `fontHeight` interface units is rasterized at.
 int nativePixelHeight(float fontHeight, float pixelsPerUnit);
 
+/// Outline thickness in pixels for a WoW font outline flag:
+/// "" -> 0, "NORMAL" / "OUTLINE" -> 1, "THICK" / "THICKOUTLINE" -> 2.
+inline int outlinePixelsForFlag(std::string_view outline) {
+    if (outline.empty()) return 0;
+    if (outline.find("THICK") != std::string_view::npos) return 2;
+    return 1;
+}
+
 /// One face at one pixel height. Codepoints the face does not have are
 /// measured through `missingAdvance` (the width the merged fallback face
 /// draws them at, in pixels), rounded up: the original's localized clients
 /// ship their own faces, so there is no measurement of this case to follow.
+///
+/// `outlinePixels` (0 none, 1 OUTLINE, 2 THICKOUTLINE) applies 2.4.3's outline
+/// metrics measured on build 8606: OUTLINE adds 4 px to the final glyph extent
+/// (+0 per-glyph pen), THICKOUTLINE adds 8 px to the final glyph extent and
+/// +1 px to each outlined glyph's pen advance.
 struct NativeTextMeasure {
     const NativeFace* face = nullptr;
     int pixelHeight = 0;
+    int outlinePixels = 0;
     float (*missingAdvance)(uint32_t codepoint, int pixelHeight, const void* ctx) = nullptr;
     const void* missingCtx = nullptr;
 

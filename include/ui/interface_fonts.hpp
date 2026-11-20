@@ -31,11 +31,11 @@ const NativeFace* interfaceNativeFace(const std::string& fontFace);
 /// The original client's measure for a widget's face at a pixel height.
 /// Codepoints the face lacks are measured by what the merged fallback face
 /// draws them at. `face` is null when no interface face is registered.
-NativeTextMeasure interfaceTextMeasure(const std::string& fontFace, int pixelHeight);
+NativeTextMeasure interfaceTextMeasure(const std::string& fontFace, int pixelHeight, int outlinePixels = 0);
 
 /// The original client's measure for an interface face, found by the ImFont it
 /// was registered with. `face` is null for a font that is not an interface face.
-NativeTextMeasure interfaceTextMeasure(const ImFont* font, int pixelHeight);
+NativeTextMeasure interfaceTextMeasure(const ImFont* font, int pixelHeight, int outlinePixels = 0);
 
 /// The whole pixel height a widget's text is rasterized and laid out at:
 /// floor(fontHeight * pixelsPerUnit + 0.5), after the size limit.
@@ -57,7 +57,8 @@ int shadowPixels(float shadowX, float pixelScale);
 /// exclude the shadow. Empty when no interface face is registered.
 std::vector<NativeWrappedLine> interfaceWrap(const std::string& text, const std::string& fontFace,
                                              float fontHeight, float wrapWidth, bool nonSpaceWrap,
-                                             float pixelScale, float shadowX = 0.0f);
+                                             float pixelScale, float shadowX = 0.0f,
+                                             int outlinePixels = 0);
 
 /// The pixels SetSpacing(spacing) puts between two rows: ceil(spacing * ppu).
 /// Measured on 2.4.3 at 0.5625 pixels per unit: spacing 1, 2, 3, 5 gave 1, 2,
@@ -85,7 +86,8 @@ ImFont* interfaceFace(const std::string& pathOrName);
 /// either means the default, which is what the renderer falls back to too.
 /// GetStringWidth: the widest |n line plus the shadow (see shadowPixels).
 float interfaceTextWidth(const std::string& text, const std::string& fontFace,
-                         float fontHeight, float pixelScale = 1.0f, float shadowX = 0.0f);
+                         float fontHeight, float pixelScale = 1.0f, float shadowX = 0.0f,
+                         int outlinePixels = 0);
 
 /// How many lines a piece of text takes when it is drawn.
 ///
@@ -96,7 +98,7 @@ float interfaceTextWidth(const std::string& text, const std::string& fontFace,
 /// the next frame is laid out, and the quest tracker sizes every row that way.
 int interfaceTextLines(const std::string& text, const std::string& fontFace,
                        float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale = 1.0f,
-                       float shadowX = 0.0f);
+                       float shadowX = 0.0f, int outlinePixels = 0);
 
 /// The face a widget draws in, resolved the way the renderer resolves it: its
 /// own, then the interface default, then whatever is current.

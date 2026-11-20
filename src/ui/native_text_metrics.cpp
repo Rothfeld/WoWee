@@ -98,6 +98,7 @@ int NativeTextMeasure::pen(uint32_t cp, uint32_t next) const {
     }
     const int upem = face->unitsPerEm();
     int advance = static_cast<int>(to26_6(g.advance, pixelHeight, upem) >> 6) + 1;
+    if (outlinePixels > 1 && g.outline) advance += outlinePixels - 1;
     if (next != 0) {
         const int k = face->kerning(cp, next);
         if (k < 0) advance -= static_cast<int>((static_cast<int64_t>(-k) * pixelHeight) / upem);
@@ -114,7 +115,7 @@ int NativeTextMeasure::extent(uint32_t cp) const {
     }
     if (!g.outline) return (pixelHeight + 3) / 4;
     const int64_t x64 = to26_6(g.xMax, pixelHeight, face->unitsPerEm());
-    return static_cast<int>((x64 + 63) >> 6) + (g.lsb != 0 ? 1 : 0);
+    return static_cast<int>((x64 + 63) >> 6) + (g.lsb != 0 ? 1 : 0) + 4 * outlinePixels;
 }
 
 int NativeTextMeasure::width(std::string_view utf8) const {

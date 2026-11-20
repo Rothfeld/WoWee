@@ -1077,14 +1077,15 @@ int lua_Region_SetHeight(lua_State* L) {
 /// the alternative was answering nil, and MoneyFrame does
 /// SetWidth(GetTextWidth() + iconWidth) - arithmetic that loses the file.
 float measureTextWidth(const std::string& text, const std::string& fontFace,
-                       float fontHeight, float pixelScale, float shadowX) {
+                       float fontHeight, float pixelScale, float shadowX,
+                       int outlinePixels = 0) {
     // Through the same function the renderer draws with, so a widget sized to
     // its own text gets the width its own text will occupy. Measuring in this
     // client's face at a flat twelve while drawing in the interface's at its
     // real height made every self-sized label narrower than what went in it -
     // MoneyFrame sizes all three coin buttons that way, and the gold, silver
     // and copper ran into one another.
-    return wowee::ui::interfaceTextWidth(text, fontFace, fontHeight, pixelScale, shadowX);
+    return wowee::ui::interfaceTextWidth(text, fontFace, fontHeight, pixelScale, shadowX, outlinePixels);
 }
 
 /// The font string a widget measures: itself if it is one, and otherwise the
@@ -1123,7 +1124,10 @@ int lua_Region_SetAlphaGradient(lua_State* L) {
 
 int lua_Region_GetTextWidth(lua_State* L) {
     const auto* w = textWidgetOf(L, 1);
-    lua_pushnumber(L, w ? measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale, w->hasShadow ? w->shadowX : 0.0f) : 0.0);
+    lua_pushnumber(L, w ? measureTextWidth(w->text, w->fontFace, w->fontHeight,
+                                           wowee::addons::getWidgetTree(L)->uiScale() * w->effScale,
+                                           w->hasShadow ? w->shadowX : 0.0f,
+                                           wowee::ui::outlinePixelsForFlag(w->fontOutline)) : 0.0);
     return 1;
 }
 
@@ -1201,7 +1205,8 @@ double fontStringTextHeight(const wowee::ui::Widget& w, float pixelScale) {
     const int lines = std::max(1, wowee::ui::interfaceTextLines(
                                       w.text, w.fontFace, w.fontHeight,
                                       wrapWidth, w.nonSpaceWrap, pixelScale,
-                                      w.hasShadow ? w.shadowX : 0.0f));
+                                      w.hasShadow ? w.shadowX : 0.0f,
+                                      wowee::ui::outlinePixelsForFlag(w.fontOutline)));
     return wowee::ui::interfaceTextBlockHeight(lines, w.fontHeight, w.lineSpacing, pixelScale);
 }
 

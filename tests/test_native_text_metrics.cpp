@@ -368,3 +368,49 @@ TEST_CASE("A scroll frame keeps text on even rows and on every column it touches
     CHECK(wowee::ui::scrollClipTextColumns(120.9375f, 158.4375f).first == 120);
     CHECK(wowee::ui::scrollClipTextColumns(125.625f, 163.125f).first == 125);
 }
+
+TEST_CASE("Outlined text widens extent and insets pen like 2.4.3", "[native-text][outline]") {
+    CHECK(outlinePixelsForFlag("") == 0);
+    CHECK(outlinePixelsForFlag("NORMAL") == 1);
+    CHECK(outlinePixelsForFlag("OUTLINE") == 1);
+    CHECK(outlinePixelsForFlag("THICK") == 2);
+    CHECK(outlinePixelsForFlag("THICKOUTLINE") == 2);
+    CHECK(outlinePixelsForFlag("OUTLINE, THICKOUTLINE, MONOCHROME") == 2);
+
+    NativeTextMeasure plain = at(11);
+    NativeTextMeasure normal = at(11);
+    normal.outlinePixels = 1;
+    NativeTextMeasure thick = at(11);
+    thick.outlinePixels = 2;
+
+    // OUTLINE adds +4 px to total width and +0 to per-glyph pen advance.
+    CHECK(normal.width("1") == plain.width("1") + 4);
+    CHECK(normal.width("11") == plain.width("11") + 4);
+    CHECK(normal.width("222") == plain.width("222") + 4);
+    CHECK(normal.pen('2', '2') == plain.pen('2', '2'));
+
+    // THICKOUTLINE adds +8 px to total width and +1 px to each outlined glyph advance.
+    CHECK(thick.width("1") == plain.width("1") + 8);
+    CHECK(thick.width("11") == plain.width("11") + 9);
+    CHECK(thick.width("222") == plain.width("222") + 10);
+    CHECK(thick.pen('2', '2') == plain.pen('2', '2') + 1);
+
+    // RIGHT-justified placement with outline pen inset matches build 8606:
+    // plain 22 (12 px) vs OUTLINE (+4, +1 inset -> -3 px) vs THICKOUTLINE (+9, +2 inset -> -7 px).
+    const float left = 215.625f;
+    const float boxW = 56.25f;
+    const float penPlain = placeTextLine(left, boxW, 12.0f, 0.0f, "RIGHT") + 0.0f;
+    const float penOut   = placeTextLine(left, boxW, 16.0f, 0.0f, "RIGHT") + 1.0f;
+    const float penThick = placeTextLine(left, boxW, 21.0f, 0.0f, "RIGHT") + 2.0f;
+    CHECK(penPlain == 261.0f);
+    CHECK(penOut   == 258.0f);
+    CHECK(penThick == 254.0f);
+
+    // LEFT and CENTER placement with outline pen inset matches build 8606.
+    CHECK(placeTextLine(93.75f, boxW, 12.0f, 0.0f, "LEFT") + 0.0f == 95.0f);
+    CHECK(placeTextLine(93.75f, boxW, 16.0f, 0.0f, "LEFT") + 1.0f == 96.0f);
+    CHECK(placeTextLine(93.75f, boxW, 21.0f, 0.0f, "LEFT") + 2.0f == 97.0f);
+    CHECK(placeTextLine(154.6875f, boxW, 12.0f, 0.0f, "CENTER") + 0.0f == 178.0f);
+    CHECK(placeTextLine(154.6875f, boxW, 16.0f, 0.0f, "CENTER") + 1.0f == 177.0f);
+    CHECK(placeTextLine(154.6875f, boxW, 21.0f, 0.0f, "CENTER") + 2.0f == 175.0f);
+}

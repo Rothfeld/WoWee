@@ -117,9 +117,10 @@ const NativeFace* interfaceNativeFace(const std::string& fontFace) {
     return e ? e->face.get() : nullptr;
 }
 
-NativeTextMeasure interfaceTextMeasure(const std::string& fontFace, int pixelHeight) {
+NativeTextMeasure interfaceTextMeasure(const std::string& fontFace, int pixelHeight, int outlinePixels) {
     NativeTextMeasure m;
     m.pixelHeight = pixelHeight;
+    m.outlinePixels = outlinePixels;
     if (const NativeEntry* e = nativeEntry(fontFace)) {
         m.face = e->face.get();
         m.missingAdvance = &fallbackAdvance;
@@ -152,9 +153,10 @@ float interfaceFontSize(float fontHeight, float pixelScale) {
     return (ImGui::GetCurrentContext() != nullptr) ? ImGui::GetFontSize() : 12.0f;
 }
 
-NativeTextMeasure interfaceTextMeasure(const ImFont* font, int pixelHeight) {
+NativeTextMeasure interfaceTextMeasure(const ImFont* font, int pixelHeight, int outlinePixels) {
     NativeTextMeasure m;
     m.pixelHeight = pixelHeight;
+    m.outlinePixels = outlinePixels;
     for (const auto& [key, e] : nativeFaces()) {
         if (e.font != font || !e.face) continue;
         m.face = e.face.get();
@@ -185,9 +187,9 @@ int shadowPixels(float shadowX, float pixelScale) {
 
 std::vector<NativeWrappedLine> interfaceWrap(const std::string& text, const std::string& fontFace,
                                              float fontHeight, float wrapWidth, bool nonSpaceWrap,
-                                             float pixelScale, float shadowX) {
+                                             float pixelScale, float shadowX, int outlinePixels) {
     const int h = interfacePixelHeight(fontHeight, pixelScale);
-    const NativeTextMeasure m = interfaceTextMeasure(fontFace, h);
+    const NativeTextMeasure m = interfaceTextMeasure(fontFace, h, outlinePixels);
     if (!m.face) return {};
     const float wrapPx = wrapWidth > 0.0f
         ? wrapWidth * pixelScale - static_cast<float>(shadowPixels(shadowX, pixelScale)) : 0.0f;
@@ -203,13 +205,14 @@ float interfaceTextBlockHeight(int rows, float fontHeight, float spacing, float 
 }
 
 float interfaceTextWidth(const std::string& text, const std::string& fontFace,
-                         float fontHeight, float pixelScale, float shadowX) {
+                         float fontHeight, float pixelScale, float shadowX, int outlinePixels) {
     if (text.empty()) return 0.0f;
     // GetStringWidth: the widest of the |n lines, each measured the way the
     // original measures it - whole-pixel pens on a whole-pixel font height.
     if (interfaceNativeFace(fontFace)) {
         float wide = 0.0f;
-        for (const auto& row : interfaceWrap(text, fontFace, fontHeight, 0.0f, false, pixelScale))
+        for (const auto& row : interfaceWrap(text, fontFace, fontHeight, 0.0f, false, pixelScale,
+                                             0.0f, outlinePixels))
             wide = std::max(wide, row.width);
         return (wide + static_cast<float>(shadowPixels(shadowX, pixelScale))) / pixelScale;
     }
@@ -223,11 +226,11 @@ float interfaceTextWidth(const std::string& text, const std::string& fontFace,
 
 int interfaceTextLines(const std::string& text, const std::string& fontFace,
                        float fontHeight, float wrapWidth, bool nonSpaceWrap, float pixelScale,
-                       float shadowX) {
+                       float shadowX, int outlinePixels) {
     if (text.empty()) return 0;
     if (interfaceNativeFace(fontFace)) {
         const auto rows = interfaceWrap(text, fontFace, fontHeight, wrapWidth, nonSpaceWrap, pixelScale,
-                                        shadowX);
+                                        shadowX, outlinePixels);
         if (rows.empty()) return 1;
         // A final line break opens no line of its own (textLineCount).
         size_t n = rows.size();
