@@ -263,13 +263,15 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             continue;
         }
 
-        inst.emitterAccumulators[ei] += rate * dt;
+        const float random01 = (distN(particleRng_) + 1.0f) * 0.5f;
+        inst.emitterAccumulators[ei] += particleContinuousEmissionIncrement(rate, dt, random01);
 
         while (inst.emitterAccumulators[ei] >= 1.0f && inst.particles.size() < MAX_M2_PARTICLES) {
             inst.emitterAccumulators[ei] -= 1.0f;
             // The accumulator locates this birth inside the frame. Aging every
             // newborn by the full frame can erase short sparks before rendering.
-            spawnParticle(inst.animTime, inst.emitterAccumulators[ei] / rate, rate);
+            const float age = std::clamp(inst.emitterAccumulators[ei] / rate, 0.0f, std::max(dt, 0.0f));
+            spawnParticle(inst.animTime, age, rate);
         }
         // Cap accumulator to avoid bursts after lag
         if (inst.emitterAccumulators[ei] > 2.0f) {

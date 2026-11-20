@@ -753,3 +753,29 @@ TEST_CASE("Outdoor lit particles take upward ambient and diffuse lighting", "[m2
     CHECK(night.g == Catch::Approx(0.15f));
     CHECK(night.b == Catch::Approx(0.25f));
 }
+
+TEST_CASE("Continuous emitter stochastic accumulator averages half the authored rate", "[m2][particle]") {
+    using wowee::rendering::particleContinuousEmissionIncrement;
+    // d_smoke.m2 emitters 0/2 author rate=8/s, lifespan=12s.
+    CHECK(particleContinuousEmissionIncrement(8.0f, 0.05f, 0.0f) == Catch::Approx(0.0f));
+    CHECK(particleContinuousEmissionIncrement(8.0f, 0.05f, 0.5f) == Catch::Approx(0.2f));
+    CHECK(particleContinuousEmissionIncrement(8.0f, 0.05f, 1.0f) == Catch::Approx(0.4f));
+
+    // Over many frames at different frame rates, mean rate stays 0.5 * authored rate.
+    for (const float dt : {1.0f / 30.0f, 1.0f / 60.0f}) {
+        float accum = 0.0f;
+        int emitted = 0;
+        const int steps = static_cast<int>(1000.0f / dt);
+        for (int i = 0; i < steps; ++i) {
+            // Deterministic quasi-uniform sequence in [0, 1].
+            const float u = static_cast<float>((i * 2654435761u) & 0xFFFFu) / 65535.0f;
+            accum += particleContinuousEmissionIncrement(8.0f, dt, u);
+            while (accum >= 1.0f) {
+                accum -= 1.0f;
+                ++emitted;
+            }
+        }
+        const float measuredRate = static_cast<float>(emitted) / 1000.0f;
+        CHECK(measuredRate == Catch::Approx(4.0f).margin(0.15f));
+    }
+}

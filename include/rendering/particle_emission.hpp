@@ -297,6 +297,17 @@ inline glm::vec3 planeParticleDirection(float inclination, float azimuth) {
             std::cos(inclination)};
 }
 
+/// Continuous (non-Squirt) emitter accumulator step over `dt` seconds.
+/// Scaling each frame's step by `random01` in [0, 1] yields mean emission rate
+/// `0.5 * rate` (independent of frame rate) and natural stochastic puff spacing,
+/// matching TBC 2.4.3 continuous smoke, mist, and spark emitters (e.g.
+/// `d_smoke.m2` on the crashed Exodar escape pod and `ashtreesmoke01.m2` in
+/// Ammen Vale) while leaving discrete Squirt (`0x8000`) bursts untouched.
+inline float particleContinuousEmissionIncrement(float rate, float dt, float random01) {
+    assert(random01 >= 0.0f && random01 <= 1.0f);
+    return rate * dt * random01;
+}
+
 /// Discrete Squirt (0x8000, interpolationType == 0) bursts crossed during one
 /// step of an emitter's sequence clock. Each crossed positive rate keyframe
 /// whose EnabledIn track is on at that keyframe's timestamp invokes

@@ -811,6 +811,13 @@ by `255 / 90` for a 10-yard optical depth ramp), obscuring submerged geometry
 at grazing viewing angles while keeping shorelines smooth where `LiquidDepth`
 is zero. Evidence: `_experiments/20261120T100100Z.waterfall_and_water_fresnel/`
 in the workspace.
+Continuous (non-Squirt) particle emitters advance their accumulator by
+`rate * dt * random01` (`particleContinuousEmissionIncrement`, mean `0.5 * rate`
+independent of frame rate), matching TBC 2.4.3's wispy plume density and
+stochastic puff spacing on `d_smoke.m2` (crashed Exodar escape pod in Ammen Vale
+and Bloodmyst Isle), `ashtreesmoke01.m2`, and `blacksmith_smoke.m2` while
+leaving discrete Squirt (`0x8000`) bursts untouched. Evidence:
+`_experiments/20261120T113500Z.exodar_smoke_parity/` in the workspace.
 Flag 0x1000 (XYQuad) sprites lie in the XY plane of their emitter bone as
 placed in the world (`particleQuadAxes`): `WaterElemental.m2` #16/#21 sit on
 unrotated bones and are the ground rings under an Aqua Guardian; Time Rift
