@@ -2961,6 +2961,9 @@ void Application::unloadInterface() {
         // than guessing at one.
         addonManager_->setCharacterName("");
     }
+    // Reset C++ action bar page alongside Lua's __WoweeActionBarPage so /reload,
+    // logout, and character switches never leave keyboard hotkeys on a stale page.
+    if (uiManager) uiManager->getGameScreen().actionBarPanel().setMainActionBarPage(1);
     addonsLoaded_ = false;
 }
 

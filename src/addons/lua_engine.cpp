@@ -1,5 +1,6 @@
 #include "addons/lua_engine.hpp"
 #include "game/spell_prerequisites.hpp"
+#include "game/shapeshift_forms.hpp"
 #include "addons/macro_target.hpp"
 #include "game/summon_title.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -2963,6 +2964,27 @@ int lua_Tooltip_SetSpellByID(lua_State* L) {
     // rank at the right in grey, the spellbook title does not.
     const bool filled = fillSpellTooltip(L, w, gh, id, lua_toboolean(L, 3) != 0);
     if (filled) lua_pushinteger(L, id); else lua_pushnil(L);
+    lua_setfield(L, 1, "__spellId");
+    lua_pushboolean(L, filled);
+    return 1;
+}
+
+int lua_Tooltip_SetShapeshift(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    auto* gh = wowee::addons::getGameHandler(L);
+    const int index = static_cast<int>(luaL_optnumber(L, 2, 0));
+    if (!w || !gh || index < 1) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const auto forms = wowee::game::playerShapeshiftForms(*gh);
+    if (static_cast<size_t>(index) > forms.size()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const uint32_t spellId = forms[static_cast<size_t>(index) - 1].spellId;
+    const bool filled = fillSpellTooltip(L, w, gh, spellId, /*rankOnTitle=*/true);
+    if (filled) lua_pushinteger(L, spellId); else lua_pushnil(L);
     lua_setfield(L, 1, "__spellId");
     lua_pushboolean(L, filled);
     return 1;
@@ -8094,6 +8116,7 @@ void LuaEngine::registerCoreAPI() {
         {"SetBackpackToken", lua_Tooltip_ReturnFalse},
         {"SetGuildBankItem", lua_Tooltip_SetGuildBankItem},
         {"SetSpellByID",    lua_Tooltip_SetSpellByID},
+        {"SetShapeshift",   lua_Tooltip_SetShapeshift},
         {"SetPlayerBuff", lua_Tooltip_SetPlayerBuff},
         {"SetUnitBuff",   lua_Tooltip_SetUnitBuff},
         {"SetUnitDebuff", lua_Tooltip_SetUnitDebuff},
@@ -10136,16 +10159,6 @@ void LuaEngine::registerCoreAPI() {
         "    local _, name = GetShapeshiftFormInfo(index)\n"
         "    if not name then return 0, 0, 1 end\n"
         "    return GetSpellCooldown(name)\n"
-        "end\n"
-        // The stance bar's tooltip. Every druid, warrior, rogue, priest and
-        // death knight has this bar on screen the whole time, and hovering a
-        // form said nothing at all.
-        "function __WoweeFrameMT:SetShapeshift(index)\n"
-        "    self:ClearLines()\n"
-        "    local _, name, isActive = GetShapeshiftFormInfo(index)\n"
-        "    if not name then return end\n"
-        "    self:SetText(name, 1, 1, 1)\n"
-        "    if isActive then self:AddLine(ACTIVE_PETS or 'Active', 0.5, 0.5, 0.5) end\n"
         "end\n"
         // What a vendor wants besides coin - badges, marks, a token. The
         // money frame draws one of these per cost item and the tooltip is the

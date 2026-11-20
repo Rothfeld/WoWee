@@ -5222,6 +5222,7 @@ private:
     // Shapeshift form (UNIT_FIELD_BYTES_2 byte 3 on WotLK, BYTES_1 byte 3 before)
     uint8_t  shapeshiftFormId_ = 0;
     std::unordered_map<uint8_t, uint32_t> shapeshiftFormFlags_;
+    mutable std::unordered_map<uint8_t, uint32_t> bonusBarByForm_;
     // Combo points (rogues/druids)
     uint8_t  comboPoints_ = 0;
     uint64_t comboTarget_ = 0;

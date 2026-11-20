@@ -766,7 +766,7 @@ bool clientActsOnBinding(const std::string& command) {
             return true;
     }
     for (const auto& [prefix, count] : {std::pair{"ACTIONBUTTON", 12},
-             {"SHAPESHIFTBUTTON", 8}, {"MULTIACTIONBAR1BUTTON", 12}})
+             {"SHAPESHIFTBUTTON", 10}, {"MULTIACTIONBAR1BUTTON", 12}})
         for (int i = 1; i <= count; ++i)
             if (command == prefix + std::to_string(i)) return true;
     return false;

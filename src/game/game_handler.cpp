@@ -246,6 +246,8 @@ void GameHandler::clearWorld() {
     if (combatHandler_) combatHandler_->clearCombatText();
     entityController_->clearAll();
     clearTaxiNodeStatuses();
+    shapeshiftFormId_ = 0;
+    bonusBarByForm_.clear();
 }
 
 void GameHandler::resetDbcCaches() {
@@ -4242,10 +4244,9 @@ uint32_t GameHandler::getBonusActionBarOffset() const {
     const uint8_t form = shapeshiftFormId_;
     if (form == 0) return 0;
 
-    // Cached per form: the file does not change, and this is asked on every
-    // action button update.
-    static std::unordered_map<uint8_t, uint32_t> barOfForm;
-    if (auto it = barOfForm.find(form); it != barOfForm.end()) return it->second;
+    // Cached per form once SpellShapeshiftForm.dbc is loaded: never cache 0
+    // before AssetManager initializes, or later stance swaps would stay 0.
+    if (auto it = bonusBarByForm_.find(form); it != bonusBarByForm_.end()) return it->second;
 
     uint32_t bar = 0;
     auto* am = services_.assetManager;
@@ -4260,9 +4261,9 @@ uint32_t GameHandler::getBonusActionBarOffset() const {
                 bar = dbc->getUInt32(row, barField);
                 break;
             }
+            bonusBarByForm_[form] = bar;
         }
     }
-    barOfForm[form] = bar;
     return bar;
 }
 

@@ -9,6 +9,7 @@
 #include "game/packet_parsers.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
+#include "pipeline/asset_manager.hpp"
 #include "game/transport_manager.hpp"
 #include "ui/game_screen.hpp"
 #include "ui/framexml_takeover.hpp"
@@ -5098,4 +5099,162 @@ TEST_CASE_METHOD(Integration, "WoweeSettingList filters Wrath-only rows on TBC 2
     CHECK_FALSE(addons::isModifiedClickActive(lua.getState(), "AUTOLOOTTOGGLE", true, false, false));
     run("SetModifiedClick('AUTOLOOTTOGGLE', 'SHIFT')");
     CHECK(addons::isModifiedClickActive(lua.getState(), "AUTOLOOTTOGGLE", true, false, false));
+}
+
+TEST_CASE_METHOD(Integration, "GameTooltip:SetShapeshift shows full spell tooltip and GetShapeshiftFormInfo reflects usability", "[shapeshift][tooltip]") {
+    using namespace wowee::game;
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    lua.setGameHandler(&handler);
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}});
+    handler.spellNameCacheLoadedRef() = true;
+
+    auto registerStance = [&](uint32_t spellId, const char* name, const char* desc,
+                              uint8_t form, uint32_t order, uint32_t attr = 0) {
+        auto& entry = handler.spellNameCacheRef()[spellId];
+        entry.name = name;
+        entry.description = desc;
+        entry.shapeshiftForm = form;
+        entry.stanceBarOrder = order;
+        entry.attr = attr;
+        entry.recoveryMs = 1000;
+        wowee::network::Packet learned(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+        learned.writeUInt32(spellId);
+        session.receive(learned);
+    };
+    registerStance(2457, "Battle Stance", "A balanced combat stance.", 17, 1);
+    registerStance(71, "Defensive Stance", "A defensive combat stance.", 18, 2);
+    registerStance(2458, "Berserker Stance", "An aggressive stance.", 19, 3);
+    // Stealth (1784): SPELL_ATTR0_NOT_IN_COMBAT (0x00010000) -> uncastable in combat.
+    registerStance(1784, "Stealth", "Allows the rogue to sneak around.", 30, 4, 0x00010000u);
+
+    run(R"LUA(
+        SPELL_CAST_TIME_INSTANT_NO_MANA = 'Instant'
+        __tt = CreateFrame('GameTooltip', 'StanceTestTooltip', UIParent)
+        __tt:SetOwner(UIParent, 'ANCHOR_NONE')
+        __ok1 = __tt:SetShapeshift(1)
+        __okBad = __tt:SetShapeshift(99)
+    )LUA");
+    truth("__ok1 == true");
+    truth("__okBad == false");
+
+    const ui::Widget* tt = lua.widgets().findByName("StanceTestTooltip");
+    REQUIRE(tt != nullptr);
+    REQUIRE(tt->tooltipLines.size() >= 3);
+    CHECK(tt->tooltipLines[0].left == "Battle Stance");
+    CHECK(tt->tooltipLines[1].left == "Instant");
+    CHECK(tt->tooltipLines[1].right == "1 sec cooldown");
+    CHECK(tt->tooltipLines[2].left == "A balanced combat stance.");
+
+    // Defensive Stance tooltip
+    run("__ok2 = __tt:SetShapeshift(2)");
+    truth("__ok2 == true");
+    REQUIRE(tt->tooltipLines.size() >= 3);
+    CHECK(tt->tooltipLines[0].left == "Defensive Stance");
+    CHECK(tt->tooltipLines[2].left == "A defensive combat stance.");
+
+    // Out of combat: Stealth (index 4) is castable; in combat: not castable (nil).
+    run("_, _, _, __castOut = GetShapeshiftFormInfo(4)");
+    truth("__castOut == 1");
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}, {UF::UNIT_FIELD_FLAGS, 0x00080000u}}); // UNIT_FLAG_IN_COMBAT
+    run("_, _, _, __castIn = GetShapeshiftFormInfo(4)");
+    truth("__castIn == nil");
+    // Warrior Battle Stance stays castable in combat.
+    run("_, _, _, __battleIn = GetShapeshiftFormInfo(1)");
+    truth("__battleIn == 1");
+
+    lua.setGameHandler(nullptr);
+}
+
+TEST_CASE_METHOD(Integration, "Bonus action bar offset, stance hotkeys, empty-to-populated swap, and clearWorld reset", "[shapeshift][bonusbar][tbc]") {
+    using namespace wowee::game;
+    CHECK(addons::clientActsOnBinding("SHAPESHIFTBUTTON9"));
+    CHECK(addons::clientActsOnBinding("SHAPESHIFTBUTTON10"));
+
+    replay::Session session("tbc");
+    auto& handler = session.handler();
+    session.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}});
+    handler.spellNameCacheLoadedRef() = true;
+
+    // Querying before AssetManager is attached must not permanently poison the cache with 0.
+    handler.shapeshiftFormIdRef() = 17;
+    CHECK(handler.getBonusActionBarOffset() == 0);
+
+    // returnToCharacterSelect -> clearWorld resets shapeshiftFormId_ so logout/character switch cannot leak old stance.
+    handler.returnToCharacterSelect();
+    CHECK(handler.getShapeshiftFormId() == 0);
+
+    const char* tbcRoot = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!tbcRoot || !*tbcRoot) return;
+
+    replay::Session worldSession("tbc");
+    auto& gh = worldSession.handler();
+    worldSession.spawnPlayer({{UF::UNIT_FIELD_HEALTH, 100}});
+    gh.spellNameCacheLoadedRef() = true;
+
+    wowee::pipeline::AssetManager assets;
+    REQUIRE(assets.initialize(tbcRoot));
+    wowee::pipeline::DBCLayout dbcLayout;
+    REQUIRE(dbcLayout.loadFromJson(std::string(tbcRoot) + "/dbc_layouts.json"));
+    wowee::pipeline::setActiveDBCLayout(&dbcLayout);
+    const_cast<GameServices&>(gh.services()).assetManager = &assets;
+
+    // Verify TBC 2.4.3 SpellShapeshiftForm.dbc bonus bar offsets for all classes/forms:
+    // Warrior: Battle=1, Defensive=2, Berserker=3
+    // Druid: Cat=1, Tree=2, Bear/Dire Bear=3, Moonkin=4, Travel/Aquatic/Flight=0
+    // Rogue: Stealth=1; Priest: Shadowform=1
+    const std::pair<uint8_t, uint32_t> expected[] = {
+        {17, 1}, {18, 2}, {19, 3},           // Warrior stances
+        {1, 1}, {2, 2}, {5, 3}, {8, 3}, {31, 4}, // Druid bonus forms
+        {3, 0}, {4, 0}, {27, 0}, {29, 0},    // Druid non-bonus travel/flight forms
+        {30, 1},                             // Rogue Stealth
+        {28, 1},                             // Priest Shadowform
+    };
+    for (const auto& [form, offset] : expected) {
+        gh.shapeshiftFormIdRef() = form;
+        CHECK(gh.getBonusActionBarOffset() == offset);
+    }
+
+    // Populate Battle Stance (offset 1 -> 0-based slots 72..83) and leave Defensive Stance (84..95) empty.
+    constexpr uint32_t kBattleStanceAbility = 99101;
+    gh.setActionBarSlot(72, ActionBarSlot::SPELL, kBattleStanceAbility);
+    gh.spellNameCacheRef()[kBattleStanceAbility].name = "Battle Stance Test Strike";
+    wowee::network::Packet learned(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+    learned.writeUInt32(kBattleStanceAbility);
+    worldSession.receive(learned);
+
+    // Start in empty Defensive Stance (form 18, offset 2 -> slots 84..95): pressing ACTIONBUTTON1 casts nothing.
+    ui::GameScreen screen;
+    const auto render = [&] {
+        ImGui::NewFrame();
+        screen.render(gh);
+        ImGui::EndFrame();
+    };
+    const auto casts = [&] { return worldSession.sent().of(Opcode::CMSG_CAST_SPELL).size(); };
+
+    gh.shapeshiftFormIdRef() = 18; // Defensive Stance (empty bar)
+    screen.actionBarPanel().setMainActionBarPage(1);
+    REQUIRE(manager.setBinding("1", "ACTIONBUTTON1"));
+    const auto beforeDef = casts();
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_1); event(SDL_SCANCODE_1, false);
+    render();
+    CHECK(casts() == beforeDef);
+
+    // Switch to Battle Stance (form 17, offset 1 -> slots 72..83): pressing ACTIONBUTTON1 casts slot 72.
+    gh.shapeshiftFormIdRef() = 17;
+    manager.beginInputFrame();
+    event(SDL_SCANCODE_1); event(SDL_SCANCODE_1, false);
+    render();
+    REQUIRE(casts() == beforeDef + 1);
+    // TBC CMSG_CAST_SPELL starts with uint32 spellId (bytes 0..3), then uint8 castCount.
+    const auto sent = worldSession.sent().of(Opcode::CMSG_CAST_SPELL);
+    const auto& bytes = sent.back().getData();
+    REQUIRE(bytes.size() >= 4);
+    const uint32_t castSpellId = uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 |
+                                 uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24;
+    CHECK(castSpellId == kBattleStanceAbility);
+
+    const_cast<GameServices&>(gh.services()).assetManager = nullptr;
+    wowee::pipeline::setActiveDBCLayout(nullptr);
 }

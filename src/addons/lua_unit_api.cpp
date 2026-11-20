@@ -1,6 +1,7 @@
 // lua_unit_api.cpp - Unit query, stats, party/raid, and player state Lua API bindings.
 // Extracted from lua_engine.cpp as part of §5.1 (Tame LuaEngine).
 #include "game/shapeshift_forms.hpp"
+#include "game/spell_prerequisites.hpp"
 #include <bit>
 #include <optional>
 #include "game/game_utils.hpp"
@@ -2912,7 +2913,7 @@ void registerUnitLuaAPI(lua_State* L) {
             lua_pushstring(L, game::actionSpellIcon(*gh, fi.spellId).c_str());
             lua_pushstring(L, gh->getSpellName(fi.spellId).c_str());
             if (game::stanceBarFormActive(*gh, fi)) lua_pushnumber(L, 1); else lua_pushnil(L);
-            lua_pushnumber(L, 1);                                // isCastable
+            if (game::spellUsability(*gh, fi.spellId).usable) lua_pushnumber(L, 1); else lua_pushnil(L);
             return 4;
         }},
                 {"UnitIsPVP", [](lua_State* L) -> int {

@@ -59,6 +59,7 @@
 #include "game/expansion_profile.hpp"
 #include "game/character.hpp"
 #include "game/shapeshift_forms.hpp"
+#include "game/pet_action.hpp"
 #include "core/logger.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -1551,9 +1552,10 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
             // Cache only immutable names, as strings to avoid per-poll conversions.
             // Bindings and the character's known forms must stay live.
-            static const std::array<std::string, 8> shapeshiftCommands = {
+            static const std::array<std::string, 10> shapeshiftCommands = {
                 "SHAPESHIFTBUTTON1", "SHAPESHIFTBUTTON2", "SHAPESHIFTBUTTON3", "SHAPESHIFTBUTTON4",
-                "SHAPESHIFTBUTTON5", "SHAPESHIFTBUTTON6", "SHAPESHIFTBUTTON7", "SHAPESHIFTBUTTON8"};
+                "SHAPESHIFTBUTTON5", "SHAPESHIFTBUTTON6", "SHAPESHIFTBUTTON7", "SHAPESHIFTBUTTON8",
+                "SHAPESHIFTBUTTON9", "SHAPESHIFTBUTTON10"};
             std::vector<game::ShapeshiftForm> forms;
             bool formsLoaded = false;
             for (size_t i = 0; i < shapeshiftCommands.size(); ++i) {
@@ -1601,8 +1603,42 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         if (const uint32_t bonus = gameHandler.getBonusActionBarOffset(); bonus > 0)
                             slot = ActionBarPanel::actionSlotForPage(ActionBarPanel::kFrameXmlActionBarPages + static_cast<int>(bonus), i);
                     }
+                    // Possessed unit bonus bar 5 (0-based slots 120..129, 1-based 121..130):
+                    // route through sendPetAction just like lua_UseAction.
+                    if (slot >= 120 && slot < 120 + game::GameHandler::PET_ACTION_BAR_SLOTS &&
+                        gameHandler.getPossessedGuid() != 0) {
+                        const uint32_t packed = gameHandler.getPetActionSlot(slot - 120);
+                        if (packed != 0) {
+                            const auto type = game::pet::petActionType(packed);
+                            const uint32_t spell = (type == game::pet::ActionType::Command ||
+                                                    type == game::pet::ActionType::Reaction)
+                                ? 0 : game::pet::petActionId(packed);
+                            if (spell != 0) {
+                                gameHandler.getSpellName(spell);
+                                const auto it = gameHandler.spellNameCacheRef().find(spell);
+                                if (it != gameHandler.spellNameCacheRef().end() &&
+                                    (it->second.targetFlags & 0x40u)) {
+                                    gameHandler.beginPetGroundTarget(spell);
+                                    continue;
+                                }
+                            }
+                            const uint64_t target = namedTarget != 0
+                                ? namedTarget
+                                : (gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0);
+                            gameHandler.sendPetAction(packed, target);
+                        }
+                        continue;
+                    }
+                    if (slot < 0 || slot >= static_cast<int>(bar.size())) continue;
                     if (bar[slot].type == game::ActionBarSlot::SPELL && bar[slot].isReady()) {
-                        gameHandler.castSpell(bar[slot].id, namedTarget);
+                        if (const uint32_t itemForSpell = gameHandler.getItemIdForSpell(bar[slot].id)) {
+                            gameHandler.useItemById(
+                                itemForSpell,
+                                namedTarget != 0 ? namedTarget
+                                                 : (gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0));
+                        } else {
+                            gameHandler.castSpell(bar[slot].id, namedTarget);
+                        }
                     } else if (bar[slot].type == game::ActionBarSlot::ITEM && bar[slot].id != 0) {
                         gameHandler.useItemById(bar[slot].id, namedTarget);
                     } else if (bar[slot].type == game::ActionBarSlot::MACRO) {
