@@ -572,8 +572,14 @@ TEST_CASE("Detached particles without flag 0x8 move at placement scale", "[m2][p
     CHECK(glm::length(particleGravityDirection(0x109u, model, false)) == Catch::Approx(1.0f));
 }
 
-TEST_CASE("Map doodad particles move at placement scale with flag 0x8", "[m2][particle]") {
+TEST_CASE("Map doodad and spell visual particles move at placement scale with flag 0x8", "[m2][particle]") {
     using namespace wowee::rendering;
+    // Owner predicate: map doodads and spell visuals scale with placement;
+    // game objects and units (externalPose) keep yards for flag 0x8.
+    CHECK(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/false));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/true, /*externalPose=*/false));
+    CHECK_FALSE(particleScalesWithPlacement(/*isGameObject=*/false, /*externalPose=*/true));
+
     // Magisters' Terrace throne orb: BloodElf_PowerOrb_Green.m2, MODD scale
     // 0.358, smoke #5 0x629 at 2.222 yd/s: 0.8 yd/s in the original.
     const auto model = glm::scale(glm::rotate(glm::mat4(1),glm::radians(89.0f),glm::vec3(0,0,1)),glm::vec3(0.358f));
@@ -584,6 +590,18 @@ TEST_CASE("Map doodad particles move at placement scale with flag 0x8", "[m2][pa
     // The same emitter on a game object or unit keeps yards.
     CHECK(glm::length(particleWorldVelocityBasis(0x629u, birth, false) * glm::vec3(0,0,2.222f))
           == Catch::Approx(2.222f));
+
+    // Warlock Hellfire (1949/5857): HellFire_Impact_Caster_Base.m2 #0 (0x8009)
+    // attached to Base (19) scales particle ring radius with the caster's Base
+    // bone scale (0.5x Gnome, 1.0x Human, 2.0x scaled) so it matches the
+    // projected lava ground decal.
+    for (float s : {0.5f, 1.0f, 2.0f}) {
+        const auto m = glm::scale(glm::mat4(1), glm::vec3(s));
+        const auto b = particleBirthTransform(0x8009u, m, glm::mat4(1));
+        CHECK(glm::length(particleWorldVelocityBasis(0x8009u, b, true) * glm::vec3(5.0f, 0.0f, 0.0f))
+              == Catch::Approx(5.0f * s));
+        CHECK(glm::length(particleGravityDirection(0x8009u, m, true)) == Catch::Approx(s));
+    }
 }
 
 TEST_CASE("Sprites turn by spin times age", "[m2][particle]") {

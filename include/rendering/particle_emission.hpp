@@ -180,9 +180,14 @@ inline glm::vec3 particleBirthPosition(const glm::mat4& previous, const glm::mat
                     glm::vec3(previous * glm::vec4(local, 1.0f)), back);
 }
 
-inline bool particleMovesInYards(uint32_t flags, bool mapDoodad);
+inline bool particleScalesWithPlacement(bool isGameObject, bool externalPose) {
+    return !isGameObject && !externalPose;
+}
 
-inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model, bool mapDoodad) {
+inline bool particleMovesInYards(uint32_t flags, bool scalesWithPlacement);
+
+inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model,
+                                          bool scalesWithPlacement) {
     // Gravity pulls along the model's -Z, never the emitter bone's: the
     // Core Hound's drool falls straight down on the original while its head
     // bone is pitched. The model placement keeps its scale and orientation.
@@ -191,13 +196,13 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
     // frame, as they move (particleWorldVelocityBasis).
     if (flags & (kParticleNoTrail | kParticleModelFrame)) return {0, 0, -1};
     const glm::vec3 down = glm::mat3(model) * glm::vec3(0, 0, -1);
-    return particleMovesInYards(flags, mapDoodad) ? glm::normalize(down) : down;
+    return particleMovesInYards(flags, scalesWithPlacement) ? glm::normalize(down) : down;
 }
 
 // Flag 0x8: a detached particle (neither NoTrail nor in the model's frame)
-// travels in yards, whatever the placement scale; without it, its velocity and
-// gravity take the placement scale as its birth point does. 12654 of 16070
-// TBC emitters set it, 7020 of them detached.
+// on a game object or unit travels in yards, whatever the placement scale;
+// without it, its velocity and gravity take the placement scale as its birth
+// point does. 12654 of 16070 TBC emitters set it, 7020 of them detached.
 // - With 0x8: the Sunwell gate barrier (GO 188118, SUNWELLRAID_GATE_04.m2,
 //   scale 8.69, 0x409) otherwise throws its sparks 8.7x too fast, past the
 //   doorway, as radial streaks; Netherspite's Void Zone (PortalofKathune.m2,
@@ -211,23 +216,28 @@ inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model
 // flames (0x339, NoTrail, scale 6) rise with the model's scale in the original.
 // Gravity follows the velocity's rule; it is not observed separately for
 // emitters without 0x8.
-// Map doodads (ADT MDDF and WMO MODD placements; not game objects, units or
-// spell visuals) move at their placement scale with 0x8 as well. Magisters'
-// Terrace's throne orb (BloodElf_PowerOrb_Green.m2, MODD 964, scale 0.358,
-// smoke #5/#6 0x629 at 2.2-2.8 yd/s) lifts its green wisps about 1 yd over
-// the orb in the original; in yards they rose 4-5 yd up the throne. A Wild
-// Shore bonfire (OrcBonfire.m2 at -14695.8 503.2, scale 0.47, flames #1 0x29
-// at 1.11 yd/s for 2 s) keeps its flames inside the log pile in the
-// original; in yards they stood a log pile's height above it.
-inline bool particleMovesInYards(uint32_t flags, bool mapDoodad) {
-    return !mapDoodad && !(flags & (kParticleNoTrail | kParticleModelFrame)) &&
+// Map doodads (ADT MDDF and WMO MODD placements) and spell visuals move at
+// their placement scale with 0x8 as well. Magisters' Terrace's throne orb
+// (BloodElf_PowerOrb_Green.m2, MODD 964, scale 0.358, smoke #5/#6 0x629 at
+// 2.2-2.8 yd/s) lifts its green wisps about 1 yd over the orb in the original;
+// in yards they rose 4-5 yd up the throne. A Wild Shore bonfire (OrcBonfire.m2
+// at -14695.8 503.2, scale 0.47, flames #1 0x29 at 1.11 yd/s for 2 s) keeps
+// its flames inside the log pile. Warlock Hellfire (1949/5857,
+// HellFire_Impact_Caster_Base.m2, #0 0x8009) scales both its projected ground
+// decal and its fire-ring particle velocity by the caster's Base attachment
+// scale (0.5x on Gnome, 1.0x on Human, 2.0x at scale 2) in build 8606; keeping
+// 0x8 in yards left the fire ring at 1.0x so the 0.5x ground decal looked half
+// the ring's diameter on a Gnome caster
+// (_experiments/20261120T130700Z.hellfire_ground_decal).
+inline bool particleMovesInYards(uint32_t flags, bool scalesWithPlacement) {
+    return !scalesWithPlacement && !(flags & (kParticleNoTrail | kParticleModelFrame)) &&
            (flags & kParticleTravelsInYards);
 }
 
 inline glm::mat3 particleWorldVelocityBasis(uint32_t flags, const glm::mat4& birthTransform,
-                                            bool mapDoodad) {
+                                            bool scalesWithPlacement) {
     glm::mat3 basis(birthTransform);
-    if (!particleMovesInYards(flags, mapDoodad)) return basis;
+    if (!particleMovesInYards(flags, scalesWithPlacement)) return basis;
     for (int c = 0; c < 3; ++c) basis[c] = glm::normalize(basis[c]);
     return basis;
 }

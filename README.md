@@ -219,6 +219,14 @@ arbitrarily flipped single-sided quads such as `Spells\ResistanceAura_Base.m2`
 (Shadow/Frost/Fire Resistance, Sanctity, and Crusader Auras) and `g_blanket.m2`
 to back-facing so Vulkan backface culling dropped them. Evidence:
 `_experiments/20261120T112000Z.paladin_aura_visuals/` in the workspace.
+Spell-visual M2 particle emitters (`particleScalesWithPlacement`, `isSpellVisual`)
+scale detached particle velocity and gravity by the instance's placement/attachment
+scale even when flag `0x8` is set, matching map doodads; game objects and units keep
+yards for `0x8`. Warlock `Hellfire` (`1949`/`5857`, `Spells\HellFire_Impact_Caster_Base.m2`
+#0 `0x8009`) therefore scales both its projected lava ground decal and its expanding
+fire ring together by the caster's `Base` (19) attachment scale (`0.5x` Gnome, `1.0x`
+Human, `2.0x` at scale 2). Evidence:
+`_experiments/20261120T130700Z.hellfire_ground_decal/` in the workspace.
 Shapeshift and transform auras (`SPELL_AURA_MOD_SHAPESHIFT` 36, `SPELL_AURA_TRANSFORM` 56)
 replay their `SpellVisual.ImpactKit` when the aura ends and the unit leaves form
 (Ghost Wolf 2645 `Purge_Impact_Chest.m2`, Bear/Cat Form 5487/768
