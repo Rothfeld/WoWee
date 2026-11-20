@@ -36,18 +36,28 @@ inline glm::vec3 missileDirectionToEuler(const glm::vec3& dir) {
     return rotation;
 }
 
+/// Maximum catch-up speed multiplier applied when a caster's release event
+/// ($CSL/$CSR/$CST) eats most or all of the nominal flight time.
+/// Measured at 30 Hz on Native TBC 2.4.3:
+///   - Imp Firebolt (3110, speed 16, $CST 0.766s) at 10 yd & 15 yd: ~33-34 yd/s (~2x)
+///   - Mage Fireball (133, speed 24, $CSL 0.200s) at 6 yd: ~48-50 yd/s (~2x)
+///   - Mage Fireball (133, speed 24, $CSL 0.200s) at 15 yd: ~35-40 yd/s (uncapped 1.47x)
+inline constexpr float kMaxMissileCatchupFactor = 2.0f;
+
 /// Effective pursuit speed (yards/s) after the caster's cast-release delay.
 /// Preserves native TBC 2.4.3 landing timing (initialDistance / nominalSpeed) on
-/// stationary targets despite release delay ($CSL/$CSR). Returns 0 when the release
-/// delay already meets or exceeds the landing time (close-range 1-frame cross).
+/// stationary targets when the remaining flight window is wide enough, and caps
+/// close-range catch-up at kMaxMissileCatchupFactor * nominalSpeed so missiles
+/// visibly travel instead of teleporting in 1 frame into an instantaneous beam.
 inline float missileFlightSpeed(float initialDistance, float nominalSpeed, float launchDelay) {
     assert(std::isfinite(nominalSpeed) && nominalSpeed > 0.0f);
     assert(std::isfinite(launchDelay) && launchDelay >= 0.0f);
     if (!std::isfinite(initialDistance) || initialDistance <= 1e-4f) return 0.0f;
+    const float maxSpeed = nominalSpeed * kMaxMissileCatchupFactor;
     const float nominalDuration = initialDistance / nominalSpeed;
     const float flightWindow = nominalDuration - launchDelay;
-    if (flightWindow <= 1e-4f) return 0.0f;
-    return initialDistance / flightWindow;
+    if (flightWindow <= 1e-4f) return maxSpeed;
+    return std::min(initialDistance / flightWindow, maxSpeed);
 }
 
 /// Upper safety bound on homing flight duration so a projectile chasing a teleported

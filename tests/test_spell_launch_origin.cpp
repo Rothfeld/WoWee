@@ -1,5 +1,6 @@
 #include <catch_amalgamated.hpp>
 #include "pipeline/m2_loader.hpp"
+#include "rendering/missile_homing.hpp"
 #include "rendering/spell_launch_origin.hpp"
 #include <cstdlib>
 #include <filesystem>
@@ -169,11 +170,26 @@ TEST_CASE("M2Loader parses TBC 2.4.3 $CSL/$CSR/$CST release events across races 
         REQUIRE(origin.launchDelaySeconds == Catch::Approx(0.200f));
     }
 
-    SECTION("Imp.m2 SpellCastDirected (53) uses $CST @ 766ms") {
+    SECTION("Imp.m2 SpellCastDirected (53) uses $CST @ 766ms and never 1-frame teleports Firebolt") {
         auto [model, origin] = loadAndResolve("creature/imp/imp.m2", 53);
         REQUIRE(origin.source == SpellLaunchOrigin::Source::EventBone);
         REQUIRE(origin.bone == 57);
         REQUIRE(origin.localOffset.y < 0.0f);  // right hand (-Y)
         REQUIRE(origin.launchDelaySeconds == Catch::Approx(0.766f));
+        // Imp Firebolt (3110..27267) Spell.dbc Speed = 16 yd/s: at 10 yd and 15 yd,
+        // flight speed caps at 2x (32 yd/s) rather than returning 0 (1-frame teleport).
+        CHECK(missileFlightSpeed(10.0f, 16.0f, origin.launchDelaySeconds) == Catch::Approx(32.0f));
+        CHECK(missileFlightSpeed(15.0f, 16.0f, origin.launchDelaySeconds) == Catch::Approx(32.0f));
+    }
+
+    SECTION("TrollMale.m2 SpellCastDirected (53) uses $CSL @ 266ms and never 1-frame teleports Fireball") {
+        auto [model, origin] = loadAndResolve("character/troll/male/trollmale.m2", 53);
+        REQUIRE(origin.source == SpellLaunchOrigin::Source::EventBone);
+        REQUIRE(origin.launchDelaySeconds == Catch::Approx(0.266f));
+        // Mage Fireball (133..38692) Spell.dbc Speed = 24 yd/s: at 6 yd (nominal 0.25s < 0.266s),
+        // flight speed caps at 2x (48 yd/s) instead of 0.
+        CHECK(missileFlightSpeed(6.0f, 24.0f, origin.launchDelaySeconds) == Catch::Approx(48.0f));
+        CHECK(missileFlightSpeed(15.0f, 24.0f, origin.launchDelaySeconds) ==
+              Catch::Approx(15.0f / (15.0f / 24.0f - origin.launchDelaySeconds)));
     }
 }

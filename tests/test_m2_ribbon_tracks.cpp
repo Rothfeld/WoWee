@@ -15,8 +15,10 @@
 // skips when there is none.
 #include <catch_amalgamated.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <glm/gtc/quaternion.hpp>
 #include <string>
 #include <vector>
 
@@ -166,4 +168,58 @@ TEST_CASE("a particle-only M2 has renderable content", "[m2][particle][assets]")
     CHECK_FALSE(model.isValid());
     CHECK(model.particleEmitters.size() == 3);
     CHECK(model.hasRenderableContent());
+}
+
+TEST_CASE("Fireball and Shadowbolt missile ribbons use bone local Y perpendicular to +X flight",
+          "[m2][ribbon][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    auto boneWorldRotation = [](const M2Model& model, uint32_t boneIdx) {
+        glm::quat q(1.0f, 0.0f, 0.0f, 0.0f);
+        std::vector<int32_t> chain;
+        int32_t cur = static_cast<int32_t>(boneIdx);
+        while (cur >= 0 && static_cast<size_t>(cur) < model.bones.size() && chain.size() < 32) {
+            chain.push_back(cur);
+            cur = model.bones[cur].parentBone;
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            const auto& rot = model.bones[*it].rotation;
+            if (!rot.sequences.empty() && !rot.sequences[0].quatValues.empty()) {
+                q = q * rot.sequences[0].quatValues[0];
+            }
+        }
+        return q;
+    };
+
+    SECTION("Fireball_Missile_Low.m2 emits two orthogonal ribbons along local Y (vertical + horizontal)") {
+        std::ifstream in(std::string(root) + "/spells/fireball_missile_low.m2", std::ios::binary);
+        const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+        REQUIRE_FALSE(data.empty());
+        const M2Model model = M2Loader::load(data);
+        REQUIRE(model.ribbonEmitters.size() == 2);
+        CHECK(model.ribbonEmitters[0].bone == 7);
+        CHECK(model.ribbonEmitters[1].bone == 8);
+        CHECK(model.ribbonEmitters[0].edgesPerSecond == Catch::Approx(30.0f));
+        CHECK(model.ribbonEmitters[1].edgesPerSecond == Catch::Approx(30.0f));
+
+        const glm::vec3 y0 = boneWorldRotation(model, model.ribbonEmitters[0].bone) * glm::vec3(0.0f, 1.0f, 0.0f);
+        const glm::vec3 y1 = boneWorldRotation(model, model.ribbonEmitters[1].bone) * glm::vec3(0.0f, 1.0f, 0.0f);
+        // Both local Y axes are perpendicular to +X flight direction and orthogonal to each other.
+        CHECK(std::abs(y0.x) < 0.05f);
+        CHECK(std::abs(y1.x) < 0.05f);
+        CHECK(std::abs(glm::dot(y0, y1)) < 0.05f);
+    }
+
+    SECTION("Shadowbolt_Missile.m2 ribbon local Y is perpendicular to +X flight (local Z is collinear)") {
+        std::ifstream in(std::string(root) + "/spells/shadowbolt_missile.m2", std::ios::binary);
+        const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+        REQUIRE_FALSE(data.empty());
+        const M2Model model = M2Loader::load(data);
+        REQUIRE(model.ribbonEmitters.size() == 2);
+        for (const auto& rib : model.ribbonEmitters) {
+            const glm::vec3 y = boneWorldRotation(model, rib.bone) * glm::vec3(0.0f, 1.0f, 0.0f);
+            CHECK(std::abs(y.x) < 0.05f);
+        }
+    }
 }

@@ -195,17 +195,36 @@ TEST_CASE("High dt, zero-distance, and close-range launchDelay edge cases never 
         CHECK(glm::dot(step.direction, prevDir) == Catch::Approx(1.0f));
     }
 
-    // Close-range launchDelay >= nominalDuration: missileFlightSpeed returns 0 -> instant 1-frame cross.
+    // Close-range launchDelay >= nominalDuration: missileFlightSpeed caps at 2x nominalSpeed
+    // instead of returning 0 (which caused 1-frame teleportation into an instantaneous beam).
     {
         const float fs = missileFlightSpeed(/*initialDistance=*/3.0f, /*nominalSpeed=*/28.0f, /*launchDelay=*/0.2f);
-        CHECK(fs == 0.0f);
+        CHECK(fs == Catch::Approx(56.0f));
         float traveled = 0.0f;
         const HomingStepResult step = stepHomingMissile(
             glm::vec3(0.0f), glm::vec3(3.0f, 0.0f, 0.0f),
-            glm::vec3(1.0f, 0.0f, 0.0f), fs, 0.016f, traveled);
-        CHECK(step.arrived);
-        CHECK(step.position == glm::vec3(3.0f, 0.0f, 0.0f));
+            glm::vec3(1.0f, 0.0f, 0.0f), fs, 1.0f / 60.0f, traveled);
+        CHECK_FALSE(step.arrived);
+        CHECK(step.position.x == Catch::Approx(56.0f / 60.0f).margin(1e-4f));
     }
+
+    // Zero initialDistance still returns 0 and arrives cleanly.
+    CHECK(missileFlightSpeed(/*initialDistance=*/0.0f, /*nominalSpeed=*/24.0f, /*launchDelay=*/0.2f) == 0.0f);
+
+    // Imp Firebolt (speed 16, $CST 0.766s): at 10 yd (nominal 0.625s < 0.766s) and 15 yd
+    // (window 0.1715s -> uncapped 87.5 yd/s), catch-up caps at 2x (32 yd/s) so the fireball
+    // visibly flies (~0.31s at 10 yd, ~0.47s at 15 yd) matching Native TBC 2.4.3.
+    CHECK(missileFlightSpeed(10.0f, 16.0f, 0.766f) == Catch::Approx(32.0f));
+    CHECK(missileFlightSpeed(15.0f, 16.0f, 0.766f) == Catch::Approx(32.0f));
+    // At 25 yd (window 0.7965s -> 31.39 yd/s < 32 yd/s), uncapped landing timing is preserved.
+    CHECK(missileFlightSpeed(25.0f, 16.0f, 0.766f) == Catch::Approx(25.0f / (25.0f / 16.0f - 0.766f)));
+
+    // Mage Fireball (speed 24, Human $CSL 0.200s / Troll $CSL 0.266s):
+    // Close range (6 yd) caps at 2x (48 yd/s); mid/long range (15 yd, 30 yd) preserves landing time.
+    CHECK(missileFlightSpeed(6.0f, 24.0f, 0.200f) == Catch::Approx(48.0f));
+    CHECK(missileFlightSpeed(6.0f, 24.0f, 0.266f) == Catch::Approx(48.0f));
+    CHECK(missileFlightSpeed(15.0f, 24.0f, 0.200f) == Catch::Approx(15.0f / (15.0f / 24.0f - 0.200f)));
+    CHECK(missileFlightSpeed(30.0f, 24.0f, 0.266f) == Catch::Approx(30.0f / (30.0f / 24.0f - 0.266f)));
 
     CHECK(missileMaxFlightDuration(1.0f) >= 15.0f);
     CHECK(missileMaxFlightDuration(6.0f) == Catch::Approx(30.0f));

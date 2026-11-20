@@ -1766,7 +1766,8 @@ void SpellVisualSystem::update(float deltaTime) {
             placeSpellMissileAt(*it, it->pos, step.rotation, step.animProgress);
             it->landed = step.arrived;
         } else {
-            const float flight = it->duration - it->launchAt;
+            const float dist = glm::length(it->end - it->start);
+            const float flight = (it->flightSpeed > 0.0f) ? (dist / it->flightSpeed) : 0.0f;
             const float t = flight > 0.0f ? std::min(1.0f, (it->elapsed - it->launchAt) / flight) : 1.0f;
             placeSpellMissile(*it, t);
             it->landed = t >= 1.0f;

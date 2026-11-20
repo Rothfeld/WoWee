@@ -359,11 +359,15 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
         auto& accum    = inst.ribbonEdgeAccumulators[ri];
 
         // The edge is a segment through the emitter point along the emitter
-        // bone's local Z: heightAbove up, heightBelow down, placed by the bone
-        // and the model matrix. Native 2.4.3 draws Al'ar's (phoenix.m2) wing
-        // and tail ribbons as broad bands 5x their authored height (display
-        // scale 5), twisting with the bones; widened across the line of sight
-        // in world units they were thin camera-facing lines a fifth as wide.
+        // bone's local Y: heightAbove along +Y, heightBelow along -Y, placed by
+        // the bone and the model matrix. In TBC M2s (Fireball_Missile_Low.m2
+        // bones 7/8, Shadowbolt_Missile.m2 bones 6/7, Arcane_Missile_Lvl1.m2
+        // bone 5, Phoenix.m2 tail bones), local Y is the authored ribbon width
+        // axis: on Fireball_Missile_Low, bone 7 local Y -> world +Z (vertical)
+        // and bone 8 local Y -> world +Y (horizontal), forming an orthogonal
+        // '+' cross around the +X flight path; using local Z made bone 8
+        // collinear with +X (degenerate zero-width) and bone 7 edge-on in side
+        // views.
         uint32_t boneIdx = em.bone;
         if (boneIdx >= inst.boneMatrices.size() && !inst.boneMatrices.empty()) {
             boneIdx = 0;
@@ -417,9 +421,9 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 M2Instance::RibbonEdge e;
                 e.worldPos = spineWorld;
                 e.top = glm::vec3(emitterToWorld *
-                    glm::vec4(em.position + glm::vec3(0.0f, 0.0f, heightAbove), 1.0f));
+                    glm::vec4(em.position + glm::vec3(0.0f, heightAbove, 0.0f), 1.0f));
                 e.bottom = glm::vec3(emitterToWorld *
-                    glm::vec4(em.position - glm::vec3(0.0f, 0.0f, heightBelow), 1.0f));
+                    glm::vec4(em.position - glm::vec3(0.0f, heightBelow, 0.0f), 1.0f));
                 e.color = color;
                 e.alpha = alpha;
                 e.age = 0.0f;
@@ -663,13 +667,12 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             for (size_t ei = 0; ei < edges.size(); ei++) {
                 assert(written + 2 <= ribbonVertexCapacity_[frame]);
                 const auto& e = edges[ei];
-                // No fade with edge age: the texture runs head to tail along
-                // u and carries the falloff. Fading by age as well halved the
-                // visible trail; the original draws Frostbolt's and Arcane
-                // Missile's trails at full strength back to the casting hand.
-                // The instance fade still applies: a fading owner fades its trails.
+                // No fade with edge age: the texture runs head (u=0) to tail (u=1)
+                // and carries the falloff (e.g. RIBBONNE1_RED2.BLP is bright at u=0
+                // and fades to black at u=1). edges.back() is the newest edge at the
+                // emitter head; edges.front() is the oldest edge at the trail tail.
                 float a = e.alpha * inst.fade;
-                float u = static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
+                float u = 1.0f - static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
 
                 const glm::vec3& top = e.top;
                 dst[written * 9 + 0] = top.x;
