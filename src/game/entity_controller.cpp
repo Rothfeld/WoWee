@@ -3572,6 +3572,16 @@ void EntityController::handleCreatureQueryResponse(network::Packet& packet) {
             questObjectiveNames(owner_.getQuestLog(), data.entry, false)) {
             owner_.addonEventCallbackRef()("QUEST_LOG_UPDATE", {});
         }
+        // A stabled pet's family icon, diet, and 3D model display ID come from
+        // this creature template response; refresh PetStableFrame when it lands.
+        if (owner_.isStableWindowOpen() && owner_.addonEventCallbackRef()) {
+            for (const auto& pet : owner_.getStabledPets()) {
+                if (pet.entry == data.entry) {
+                    owner_.addonEventCallbackRef()("PET_STABLE_UPDATE", {});
+                    break;
+                }
+            }
+        }
     }
 }
 

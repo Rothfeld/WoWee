@@ -2695,8 +2695,8 @@ void GameHandler::requestStabledPetList() {
     if (spellHandler_) spellHandler_->requestStabledPetList();
 }
 
-void GameHandler::stablePet(uint8_t slot) {
-    if (spellHandler_) spellHandler_->stablePet(slot);
+void GameHandler::stablePet() {
+    if (spellHandler_) spellHandler_->stablePet();
 }
 
 void GameHandler::buyStableSlot() {
@@ -2730,6 +2730,10 @@ void GameHandler::resetInstances() {
 
 void GameHandler::unstablePet(uint32_t petNumber) {
     if (spellHandler_) spellHandler_->unstablePet(petNumber);
+}
+
+void GameHandler::stableSwapPet(uint32_t petNumber) {
+    if (spellHandler_) spellHandler_->stableSwapPet(petNumber);
 }
 
 void GameHandler::handleListStabledPets(network::Packet& packet) {

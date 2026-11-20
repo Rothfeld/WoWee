@@ -965,15 +965,27 @@ network::Packet ListStabledPetsPacket::build(uint64_t stableMasterGuid) {
     return p;
 }
 
-network::Packet StablePetPacket::build(uint64_t stableMasterGuid, uint8_t slot) {
+network::Packet StablePetPacket::build(uint64_t stableMasterGuid) {
     network::Packet p(wireOpcode(Opcode::CMSG_STABLE_PET));
     p.writeUInt64(stableMasterGuid);
-    p.writeUInt8(slot);
     return p;
 }
 
 network::Packet UnstablePetPacket::build(uint64_t stableMasterGuid, uint32_t petNumber) {
     network::Packet p(wireOpcode(Opcode::CMSG_UNSTABLE_PET));
+    p.writeUInt64(stableMasterGuid);
+    p.writeUInt32(petNumber);
+    return p;
+}
+
+network::Packet BuyStableSlotPacket::build(uint64_t stableMasterGuid) {
+    network::Packet p(wireOpcode(Opcode::CMSG_BUY_STABLE_SLOT));
+    p.writeUInt64(stableMasterGuid);
+    return p;
+}
+
+network::Packet StableSwapPetPacket::build(uint64_t stableMasterGuid, uint32_t petNumber) {
+    network::Packet p(wireOpcode(Opcode::CMSG_STABLE_SWAP_PET));
     p.writeUInt64(stableMasterGuid);
     p.writeUInt32(petNumber);
     return p;

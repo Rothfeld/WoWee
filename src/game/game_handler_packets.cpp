@@ -335,19 +335,34 @@ void GameHandler::registerCoreOpcodes() {
     };
     dispatchTable_[Opcode::SMSG_STABLE_RESULT] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(1)) return;
-        uint8_t result = packet.readUInt8();
-        const char* msg = nullptr;
+        const uint8_t result = packet.readUInt8();
+        // StableResultCode (mangos-tbc NPCHandler.cpp & AzerothCore):
+        //   0x01 = STABLE_ERR_MONEY
+        //   0x06 = STABLE_ERR_STABLE
+        //   0x08 = STABLE_SUCCESS_STABLE
+        //   0x09 = STABLE_SUCCESS_UNSTABLE (also used for swap)
+        //   0x0A = STABLE_SUCCESS_BUY_SLOT
+        bool shouldRefresh = false;
         switch (result) {
-            case 0x01: msg = "Pet stored in stable."; break;
-            case 0x06: msg = "Pet retrieved from stable."; break;
-            case 0x07: msg = "Stable slot purchased."; break;
-            case 0x08: msg = "Stable list updated."; break;
-            case 0x09: msg = "Stable failed: not enough money or other error."; addUIError(msg); break;
-            default: break;
+            case 0x01:
+                errorGlobal("ERR_NOT_ENOUGH_MONEY");
+                break;
+            case 0x06:
+                addUIError("An error occurred while stabling your pet.");
+                break;
+            case 0x08:
+            case 0x09:
+                shouldRefresh = true;
+                break;
+            case 0x0A:
+                ++stableNumSlots_;
+                shouldRefresh = true;
+                break;
+            default:
+                break;
         }
-        if (msg) addSystemChatMessage(msg);
-        LOG_INFO("SMSG_STABLE_RESULT: result=", static_cast<int>(result));
-        if (stableWindowOpen_ && stableMasterGuid_ != 0 && socket && result <= 0x08) {
+        LOG_INFO("SMSG_STABLE_RESULT: result=0x", std::hex, static_cast<int>(result), std::dec);
+        if (shouldRefresh && stableWindowOpen_ && stableMasterGuid_ != 0 && socket) {
             auto refreshPkt = ListStabledPetsPacket::build(stableMasterGuid_);
             socket->send(refreshPkt);
         }

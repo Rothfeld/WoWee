@@ -3661,13 +3661,25 @@ public:
 
 class StablePetPacket {
 public:
-    /** CMSG_STABLE_PET: store active pet in the given stable slot (1-based) */
-    static network::Packet build(uint64_t stableMasterGuid, uint8_t slot);
+    /** CMSG_STABLE_PET: store active pet in the first free stable slot */
+    static network::Packet build(uint64_t stableMasterGuid);
 };
 
 class UnstablePetPacket {
 public:
     /** CMSG_UNSTABLE_PET: retrieve a stabled pet by its server-side petNumber */
+    static network::Packet build(uint64_t stableMasterGuid, uint32_t petNumber);
+};
+
+class BuyStableSlotPacket {
+public:
+    /** CMSG_BUY_STABLE_SLOT: purchase the next stable slot */
+    static network::Packet build(uint64_t stableMasterGuid);
+};
+
+class StableSwapPetPacket {
+public:
+    /** CMSG_STABLE_SWAP_PET: swap active pet with stabled pet by petNumber */
     static network::Packet build(uint64_t stableMasterGuid, uint32_t petNumber);
 };
 

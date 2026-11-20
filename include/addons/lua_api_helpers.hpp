@@ -425,6 +425,8 @@ inline uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
         // the trainer's name there when the player targets someone else.
         if (gh->isTrainerWindowOpen() && gh->getTrainerSpells().trainerGuid != 0)
             return gh->getTrainerSpells().trainerGuid;
+        if (gh->isStableWindowOpen() && gh->getStableMasterGuid() != 0)
+            return gh->getStableMasterGuid();
         return gh->getTargetGuid();
     }
     // Compound unit IDs: targettarget, focustarget, pettarget, mouseovertarget
@@ -1089,6 +1091,11 @@ uint32_t cursorItemId();
 /// up has to displace an item and ClearCursor has to drop both.
 uint64_t cursorMoney();
 void setCursorMoney(lua_State* L, uint64_t copper);
+
+/// Stable pet slot currently held on the cursor (0 = active pet, 1+ = stabled
+/// slot), or -1 when the cursor does not hold a stable pet.
+int cursorStablePetSlot();
+void setCursorStablePet(lua_State* L, int slot, uint32_t creatureEntry);
 
 /// GetCoinIcon: the INV_Misc_Coin icon for an amount of copper. Also the
 /// picture of money held on the cursor.

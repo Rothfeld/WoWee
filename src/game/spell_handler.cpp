@@ -4800,6 +4800,7 @@ void SpellHandler::handleListStabledPets(network::Packet& packet) {
     owner_.stabledPetsRef().clear();
     owner_.stabledPetsRef().reserve(petCount);
 
+    const bool hasLoyalty = isPreWotlk();
     for (uint8_t i = 0; i < petCount; ++i) {
         // petNumber(4) + entry(4) + level(4) = 12 bytes before the name string
         if (!packet.hasRemaining(12)) break;
@@ -4808,33 +4809,38 @@ void SpellHandler::handleListStabledPets(network::Packet& packet) {
         pet.entry     = packet.readUInt32();
         pet.level     = packet.readUInt32();
         pet.name      = packet.readString();
-        // One byte after the name, and one only: SendStablePet writes
-        // uint32 PetNumber, uint32 CreatureId, uint32 Level, the name, then
-        // `uint8(1)` for the pet that is out and `uint8(2)` for one in a stable
-        // slot. There is no display id on the wire.
-        //
-        // This read four bytes for one and then a fifth for the flag, so the
-        // display id swallowed the flag plus three bytes of the next pet's
-        // number, the flag came from that number's fourth byte, and every pet
-        // after the first was read at the wrong offset - with the last dropped
-        // for want of five bytes that were never there.
-        if (!packet.hasRemaining(1)) break;
-        pet.isActive  = (packet.readUInt8() == 1);
+        // Classic 1.12 and TBC 2.4.3 write uint32 loyalty before uint8 slot
+        // (mangos-tbc NPCHandler::SendStablePet); WotLK 3.3.5a removed loyalty
+        // and writes only uint8 slot after the name.
+        if (hasLoyalty) {
+            if (!packet.hasRemaining(5)) break;
+            pet.loyalty = packet.readUInt32();
+        } else {
+            if (!packet.hasRemaining(1)) break;
+        }
+        pet.slot     = packet.readUInt8();
+        pet.isActive = (pet.slot == 1);
         owner_.stabledPetsRef().push_back(std::move(pet));
     }
 
+    const bool wasOpen = owner_.stableWindowOpenRef();
     owner_.stableWindowOpenRef() = true;
     LOG_INFO("MSG_LIST_STABLED_PETS: stableMasterGuid=0x", std::hex, owner_.stableMasterGuidRef(), std::dec,
              " petCount=", static_cast<int>(petCount), " numSlots=", static_cast<int>(owner_.stableNumSlotsRef()));
     for (const auto& p : owner_.stabledPetsRef()) {
         LOG_DEBUG("  Pet: number=", p.petNumber, " entry=", p.entry,
-                  " level=", p.level, " name='", p.name, "' active=", p.isActive);
+                  " level=", p.level, " name='", p.name, "' loyalty=", p.loyalty,
+                  " slot=", static_cast<int>(p.slot), " active=", p.isActive);
+        // Pre-query creature templates so CreatureFamily (icon/family/diet)
+        // and CreatureDisplayInfo (3D preview) populate immediately.
+        if (p.entry != 0 && owner_.getCreatureInfoCache().find(p.entry) == owner_.getCreatureInfoCache().end()) {
+            owner_.queryCreatureInfo(p.entry, 0);
+        }
     }
-    // This packet both opens the stable window and is the only thing that
-    // refreshes it, so it carries both events. Neither was fired, which is why
-    // the original interface's stable could not appear.
     if (owner_.addonEventCallbackRef()) {
-        owner_.addonEventCallbackRef()("PET_STABLE_SHOW", {});
+        if (!wasOpen) {
+            owner_.addonEventCallbackRef()("PET_STABLE_SHOW", {});
+        }
         owner_.addonEventCallbackRef()("PET_STABLE_UPDATE", {});
     }
 }
@@ -7274,26 +7280,17 @@ void SpellHandler::requestStabledPetList() {
     LOG_INFO("Sent MSG_LIST_STABLED_PETS to npc=0x", std::hex, owner_.stableMasterGuidRef(), std::dec);
 }
 
-void SpellHandler::stablePet(uint8_t slot) {
+void SpellHandler::stablePet() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || owner_.stableMasterGuidRef() == 0) return;
-    if (owner_.petGuidRef() == 0) {
-        owner_.errorGlobal("ERR_NO_PET");
-        return;
-    }
-    auto pkt = StablePetPacket::build(owner_.stableMasterGuidRef(), slot);
+    auto pkt = StablePetPacket::build(owner_.stableMasterGuidRef());
     owner_.getSocket()->send(pkt);
-    LOG_INFO("Sent CMSG_STABLE_PET: slot=", static_cast<int>(slot));
+    LOG_INFO("Sent CMSG_STABLE_PET to npc=0x", std::hex, owner_.stableMasterGuidRef(), std::dec);
 }
 
-// The stable master sells a fourth, fifth and sixth slot; the panel's buy
-// button asks for one at a time and the server bills for whichever is next.
-// CMSG_BUY_STABLE_SLOT carries nothing but who is being asked - HandleBuyStableSlot
-// reads a guid and checks it is a stable master, and works the price out itself.
 void SpellHandler::buyStableSlot() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() ||
         owner_.stableMasterGuidRef() == 0) return;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_BUY_STABLE_SLOT));
-    pkt.writeUInt64(owner_.stableMasterGuidRef());
+    auto pkt = BuyStableSlotPacket::build(owner_.stableMasterGuidRef());
     owner_.getSocket()->send(pkt);
     LOG_INFO("Sent CMSG_BUY_STABLE_SLOT to npc=0x", std::hex,
              owner_.stableMasterGuidRef(), std::dec);
@@ -7316,6 +7313,13 @@ void SpellHandler::unstablePet(uint32_t petNumber) {
     auto pkt = UnstablePetPacket::build(owner_.stableMasterGuidRef(), petNumber);
     owner_.getSocket()->send(pkt);
     LOG_INFO("Sent CMSG_UNSTABLE_PET: petNumber=", petNumber);
+}
+
+void SpellHandler::stableSwapPet(uint32_t petNumber) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || owner_.stableMasterGuidRef() == 0 || petNumber == 0) return;
+    auto pkt = StableSwapPetPacket::build(owner_.stableMasterGuidRef(), petNumber);
+    owner_.getSocket()->send(pkt);
+    LOG_INFO("Sent CMSG_STABLE_SWAP_PET: petNumber=", petNumber);
 }
 
 } // namespace game

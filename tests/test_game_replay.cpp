@@ -1160,3 +1160,168 @@ TEST_CASE("party stats announce the member's power by name when it moves", "[par
     stats(Opcode::SMSG_PARTY_MEMBER_STATS, 0x7F, 20);
     CHECK(events.empty());
 }
+
+TEST_CASE("TBC MSG_LIST_STABLED_PETS parses uint32 loyalty and all pets without desync", "[stable][tbc]") {
+    Session s("tbc");
+    using wowee::game::Opcode;
+    constexpr uint64_t npcGuid = 0xF130002700000123ULL;
+
+    std::vector<std::string> events;
+    s.handler().setAddonEventCallback([&](const std::string& e, const std::vector<std::string>&) {
+        events.push_back(e);
+    });
+
+    wowee::network::Packet p(wowee::game::wireOpcode(Opcode::MSG_LIST_STABLED_PETS));
+    p.writeUInt64(npcGuid);
+    p.writeUInt8(3); // 1 active + 2 stabled
+    p.writeUInt8(2); // 2 purchased stable slots
+    // Pet 1: active wolf (slot 1)
+    p.writeUInt32(101);
+    p.writeUInt32(705);
+    p.writeUInt32(12);
+    p.writeString("Timber");
+    p.writeUInt32(6); // Loyalty Level 6 (Best Friend)
+    p.writeUInt8(1);  // active
+    // Pet 2: stabled boar (slot 2)
+    p.writeUInt32(102);
+    p.writeUInt32(708);
+    p.writeUInt32(11);
+    p.writeString("Porkchop");
+    p.writeUInt32(3); // Loyalty Level 3 (Submissive)
+    p.writeUInt8(2);  // first stable slot
+    // Pet 3: stabled bear (slot 3)
+    p.writeUInt32(103);
+    p.writeUInt32(1128);
+    p.writeUInt32(14);
+    p.writeString("Misha");
+    p.writeUInt32(1); // Loyalty Level 1 (Rebellious)
+    p.writeUInt8(3);  // second stable slot
+
+    s.receive(p);
+
+    CHECK(s.handler().isStableWindowOpen());
+    CHECK(s.handler().getStableMasterGuid() == npcGuid);
+    CHECK(s.handler().getStableSlots() == 2);
+    const auto& pets = s.handler().getStabledPets();
+    REQUIRE(pets.size() == 3);
+
+    CHECK(pets[0].petNumber == 101);
+    CHECK(pets[0].entry == 705);
+    CHECK(pets[0].level == 12);
+    CHECK(pets[0].name == "Timber");
+    CHECK(pets[0].loyalty == 6);
+    CHECK(pets[0].slot == 1);
+    CHECK(pets[0].isActive);
+
+    CHECK(pets[1].petNumber == 102);
+    CHECK(pets[1].entry == 708);
+    CHECK(pets[1].level == 11);
+    CHECK(pets[1].name == "Porkchop");
+    CHECK(pets[1].loyalty == 3);
+    CHECK(pets[1].slot == 2);
+    CHECK_FALSE(pets[1].isActive);
+
+    CHECK(pets[2].petNumber == 103);
+    CHECK(pets[2].entry == 1128);
+    CHECK(pets[2].level == 14);
+    CHECK(pets[2].name == "Misha");
+    CHECK(pets[2].loyalty == 1);
+    CHECK(pets[2].slot == 3);
+    CHECK_FALSE(pets[2].isActive);
+
+    CHECK(events == std::vector<std::string>{"PET_STABLE_SHOW", "PET_STABLE_UPDATE"});
+}
+
+TEST_CASE("TBC SMSG_STABLE_RESULT handles exact StableResultCode enum and refreshes list", "[stable][tbc]") {
+    Session s("tbc");
+    using wowee::game::Opcode;
+    constexpr uint64_t npcGuid = 0xF130002700000123ULL;
+
+    // Open stable window with 0 slots
+    wowee::network::Packet listPkt(wowee::game::wireOpcode(Opcode::MSG_LIST_STABLED_PETS));
+    listPkt.writeUInt64(npcGuid);
+    listPkt.writeUInt8(0);
+    listPkt.writeUInt8(0);
+    s.receive(listPkt);
+    REQUIRE(s.handler().isStableWindowOpen());
+    REQUIRE(s.handler().getStableSlots() == 0);
+
+    const auto sendResult = [&](uint8_t code) {
+        wowee::network::Packet p(wowee::game::wireOpcode(Opcode::SMSG_STABLE_RESULT));
+        p.writeUInt8(code);
+        s.receive(p);
+    };
+
+    // 0x01 = STABLE_ERR_MONEY -> no list refresh
+    sendResult(0x01);
+    CHECK(s.sent().of(Opcode::MSG_LIST_STABLED_PETS).empty());
+    CHECK(s.handler().getStableSlots() == 0);
+
+    // 0x06 = STABLE_ERR_STABLE -> no list refresh
+    sendResult(0x06);
+    CHECK(s.sent().of(Opcode::MSG_LIST_STABLED_PETS).empty());
+
+    // 0x08 = STABLE_SUCCESS_STABLE -> re-queries MSG_LIST_STABLED_PETS
+    sendResult(0x08);
+    CHECK(s.sent().of(Opcode::MSG_LIST_STABLED_PETS).size() == 1);
+
+    // 0x09 = STABLE_SUCCESS_UNSTABLE / swap -> re-queries MSG_LIST_STABLED_PETS
+    sendResult(0x09);
+    CHECK(s.sent().of(Opcode::MSG_LIST_STABLED_PETS).size() == 2);
+
+    // 0x0A = STABLE_SUCCESS_BUY_SLOT -> increments slots & re-queries MSG_LIST_STABLED_PETS
+    sendResult(0x0A);
+    CHECK(s.handler().getStableSlots() == 1);
+    CHECK(s.sent().of(Opcode::MSG_LIST_STABLED_PETS).size() == 3);
+}
+
+TEST_CASE("Stable client packets match TBC mangos-tbc wire layouts", "[stable][tbc]") {
+    Session s("tbc");
+    using wowee::game::Opcode;
+    constexpr uint64_t npcGuid = 0xF130002700000456ULL;
+
+    wowee::network::Packet listPkt(wowee::game::wireOpcode(Opcode::MSG_LIST_STABLED_PETS));
+    listPkt.writeUInt64(npcGuid);
+    listPkt.writeUInt8(0);
+    listPkt.writeUInt8(2);
+    s.receive(listPkt);
+
+    // CMSG_STABLE_PET: exactly 8 bytes (uint64 npcGuid only, no trailing slot byte)
+    s.handler().stablePet();
+    {
+        auto pkts = s.sent().of(Opcode::CMSG_STABLE_PET);
+        REQUIRE(pkts.size() == 1);
+        CHECK(pkts[0].getSize() == 8);
+        CHECK(pkts[0].readUInt64() == npcGuid);
+    }
+
+    // CMSG_UNSTABLE_PET: 12 bytes (uint64 npcGuid + uint32 petNumber)
+    s.handler().unstablePet(42);
+    {
+        auto pkts = s.sent().of(Opcode::CMSG_UNSTABLE_PET);
+        REQUIRE(pkts.size() == 1);
+        CHECK(pkts[0].getSize() == 12);
+        CHECK(pkts[0].readUInt64() == npcGuid);
+        CHECK(pkts[0].readUInt32() == 42);
+    }
+
+    // CMSG_BUY_STABLE_SLOT: 8 bytes (uint64 npcGuid)
+    s.handler().buyStableSlot();
+    {
+        auto pkts = s.sent().of(Opcode::CMSG_BUY_STABLE_SLOT);
+        REQUIRE(pkts.size() == 1);
+        CHECK(pkts[0].getSize() == 8);
+        CHECK(pkts[0].readUInt64() == npcGuid);
+    }
+
+    // CMSG_STABLE_SWAP_PET: 12 bytes (uint64 npcGuid + uint32 petNumber)
+    s.handler().stableSwapPet(99);
+    {
+        auto pkts = s.sent().of(Opcode::CMSG_STABLE_SWAP_PET);
+        REQUIRE(pkts.size() == 1);
+        CHECK(pkts[0].getSize() == 12);
+        CHECK(pkts[0].readUInt64() == npcGuid);
+        CHECK(pkts[0].readUInt32() == 99);
+    }
+}
+

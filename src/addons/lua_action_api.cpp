@@ -255,7 +255,7 @@ static std::optional<game::ActionBarSlot> macroStandIn(game::GameHandler& gh, co
     return std::nullopt;
 }
 
-enum class CursorType { NONE, SPELL, ITEM, MACRO, MERCHANT, MONEY, GUILDBANK, PET_ACTION };
+enum class CursorType { NONE, SPELL, ITEM, MACRO, MERCHANT, MONEY, GUILDBANK, PET_ACTION, STABLE_PET };
 static CursorType s_cursorType = CursorType::NONE;
 static uint32_t   s_cursorId   = 0;    // spellId, itemId, or action slot
 static uint32_t   s_cursorPetPacked = 0; // packed pet action when CursorType::PET_ACTION
@@ -271,6 +271,7 @@ static uint64_t   s_cursorMoney = 0;   // copper, when the cursor carries money
 static uint32_t   s_cursorSplit = 0;
 static void setCursorType(lua_State* L, CursorType type);
 static void clearCursorItem(lua_State* L);
+static void returnCursor(lua_State* L);
 /// Where the cursor's item came from, in wire bag/slot space. Declared here
 /// because the guild bank pickup above needs it and it is defined further down
 /// with the other cursor helpers.
@@ -300,6 +301,30 @@ void setCursorMoney(lua_State* L, uint64_t copper) {
     s_cursorSlot = 0;
     s_cursorBag = -1;
     setCursorType(L, CursorType::MONEY);
+}
+
+int cursorStablePetSlot() {
+    return s_cursorType == CursorType::STABLE_PET ? s_cursorSlot : -1;
+}
+
+void setCursorStablePet(lua_State* L, int slot, uint32_t creatureEntry) {
+    if (slot < 0) {
+        if (s_cursorType == CursorType::STABLE_PET) clearCursorItem(L);
+        return;
+    }
+    if (s_cursorType != CursorType::NONE && s_cursorType != CursorType::STABLE_PET) {
+        returnCursor(L);
+    }
+    s_cursorMoney = 0;
+    s_cursorSplit = 0;
+    s_cursorId = creatureEntry;
+    s_cursorSlot = slot;
+    s_cursorBag = -1;
+    if (s_cursorType == CursorType::STABLE_PET) {
+        if (auto* gh = getGameHandler(L)) gh->fireAddonEvent("CURSOR_UPDATE", {});
+    } else {
+        setCursorType(L, CursorType::STABLE_PET);
+    }
 }
 
 uint32_t cursorItemId() {
@@ -397,7 +422,8 @@ static void clearCursorItem(lua_State* L);
 /// thing on the cursor that does not: 2.4.3 fires no ACTIONBAR_SHOWGRID for
 /// PickupPlayerMoney and none of the grid's buttons would take it.
 static bool showsActionGrid(CursorType type) {
-    return type != CursorType::NONE && type != CursorType::MONEY && type != CursorType::PET_ACTION;
+    return type != CursorType::NONE && type != CursorType::MONEY &&
+           type != CursorType::PET_ACTION && type != CursorType::STABLE_PET;
 }
 
 static void setCursorType(lua_State* L, CursorType type) {
@@ -1356,6 +1382,23 @@ static std::string cursorPicture(lua_State* L) {
             }
             const uint32_t spellId = game::pet::petActionId(s_cursorPetPacked);
             return spellId ? gh->getSpellIconPath(spellId) : std::string{};
+        }
+        case CursorType::STABLE_PET: {
+            const uint32_t family = gh->getCreatureFamily(s_cursorId);
+            const auto* layouts = pipeline::getActiveDBCLayout();
+            const auto* famLayout = layouts ? layouts->getLayout("CreatureFamily") : nullptr;
+            auto* assets = gh->services().assetManager;
+            if (family != 0 && famLayout && assets) {
+                const uint32_t iconCol = famLayout->field("IconFile");
+                const auto families = assets->loadDBC("CreatureFamily.dbc");
+                const int32_t row = (iconCol != 0xFFFFFFFFu && families && families->isLoaded())
+                    ? families->findRecordById(family) : -1;
+                if (row >= 0) {
+                    const std::string path = families->getString(static_cast<uint32_t>(row), iconCol);
+                    if (!path.empty()) return path;
+                }
+            }
+            return "Interface\\Icons\\Ability_Hunter_BeastTaming";
         }
         case CursorType::NONE:
             break;

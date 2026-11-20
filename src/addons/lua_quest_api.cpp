@@ -1114,47 +1114,104 @@ const game::GameHandler::StabledPet* activePet(game::GameHandler* gh) {
     return nullptr;
 }
 
-/// Which slot the player has clicked. Held here because it is a fact about the
-/// window rather than about the character, and the server is never told.
+/// Look up the pet occupying FrameXML stable slot `slot` (0 = active pet,
+/// 1..N = stabled slots). On Classic/TBC `mangos-tbc` writes wire slot 1 for
+/// active, 2 for DB stable slot 1, 3 for DB stable slot 2, so match exact wire
+/// slot (an empty slot 1 with an occupied slot 2 must leave slot 1 empty rather
+/// than duplicating slot 2 into slot 1). On WotLK servers that write 2 for
+/// every stabled pet, index positionally.
+const game::GameHandler::StabledPet* stabledPetAtSlot(game::GameHandler* gh, int slot) {
+    if (!gh || slot < 0) return nullptr;
+    if (slot == 0) return activePet(gh);
+    if (game::isPreWotlk()) {
+        const uint8_t targetWireSlot = static_cast<uint8_t>(slot + 1);
+        for (const auto& p : gh->getStabledPets()) {
+            if (!p.isActive && p.slot == targetWireSlot) return &p;
+        }
+        return nullptr;
+    }
+    const auto stabled = stabledOnly(gh);
+    if (slot >= 1 && slot <= static_cast<int>(stabled.size())) {
+        return stabled[static_cast<size_t>(slot - 1)];
+    }
+    return nullptr;
+}
+
+/// Resolve CreatureFamily.dbc metadata (name, icon path, food mask) for a
+/// creature template entry via cached SMSG_CREATURE_QUERY_RESPONSE.
+struct CreatureFamilyInfo {
+    std::string name;
+    std::string iconPath;
+    uint32_t foodMask = 0;
+    bool found = false;
+};
+
+CreatureFamilyInfo lookupCreatureFamilyInfo(game::GameHandler* gh, uint32_t entry) {
+    CreatureFamilyInfo info;
+    if (!gh || entry == 0) return info;
+    const uint32_t family = gh->getCreatureFamily(entry);
+    if (family == 0) return info;
+    auto* assets = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* famLayout = layouts ? layouts->getLayout("CreatureFamily") : nullptr;
+    if (!assets || !famLayout) return info;
+    const auto families = assets->loadDBC("CreatureFamily.dbc");
+    const int32_t row = families && families->isLoaded() ? families->findRecordById(family) : -1;
+    if (row < 0) return info;
+    const uint32_t r = static_cast<uint32_t>(row);
+    info.found = true;
+    const uint32_t nameCol = famLayout->field("Name");
+    if (nameCol != 0xFFFFFFFFu) info.name = families->getString(r, nameCol);
+    const uint32_t maskCol = famLayout->field("PetFoodMask");
+    if (maskCol != 0xFFFFFFFFu) info.foodMask = families->getUInt32(r, maskCol);
+    const uint32_t iconCol = famLayout->field("IconFile");
+    if (iconCol != 0xFFFFFFFFu) info.iconPath = families->getString(r, iconCol);
+    return info;
+}
+
+/// Resolve PetLoyalty.dbc name for Classic/TBC loyalty level (1..6).
+std::string lookupPetLoyaltyName(game::GameHandler* gh, uint32_t loyaltyLevel) {
+    if (!gh || loyaltyLevel == 0) return {};
+    auto* assets = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* layout = layouts ? layouts->getLayout("PetLoyalty") : nullptr;
+    if (!assets || !layout) return {};
+    const auto dbc = assets->loadDBC("PetLoyalty.dbc");
+    const int32_t row = dbc && dbc->isLoaded() ? dbc->findRecordById(loyaltyLevel) : -1;
+    if (row < 0) return {};
+    return dbc->getString(static_cast<uint32_t>(row), layout->field("Name"));
+}
+
+/// Which slot the player has clicked (-1 = none selected yet).
 int& selectedStableSlot() {
-    static int slot = 0;
+    static int slot = -1;
     return slot;
 }
 
 } // namespace
 
-// GetStablePetInfo(slot) → icon, name, level, family, talent
-//
-// The icon is what says a slot is occupied: the frame tests it before deciding
-// whether the slot reads as a pet or as an empty box, so an occupied slot must
-// answer something and an empty one must answer nil.
-//
-// Family and talent tree are blank. They come from the creature's family, and
-// the stable packet carries the creature entry without it - this client's own
-// stable window shows a name and a level for the same reason.
+// GetStablePetInfo(slot) → icon, name, level, family, loyalty
 static int lua_GetStablePetInfo(lua_State* L) {
     auto* gh = getGameHandler(L);
     const int slot = static_cast<int>(luaL_optnumber(L, 1, -1));
     if (!gh || slot < 0) { return luaReturnNil(L); }
 
-    const game::GameHandler::StabledPet* pet = nullptr;
-    if (slot == 0) {
-        pet = activePet(gh);
-    } else {
-        const auto stabled = stabledOnly(gh);
-        if (slot <= static_cast<int>(stabled.size())) {
-            pet = stabled[static_cast<size_t>(slot - 1)];
-        }
-    }
+    const auto* pet = stabledPetAtSlot(gh, slot);
     if (!pet) { return luaReturnNil(L); }
 
-    lua_pushstring(L, "Interface\\Icons\\Ability_Hunter_BeastTaming");
+    const CreatureFamilyInfo fam = lookupCreatureFamilyInfo(gh, pet->entry);
+    const std::string icon = !fam.iconPath.empty()
+        ? fam.iconPath
+        : std::string("Interface\\Icons\\Ability_Hunter_BeastTaming");
+    const std::string loyalty = lookupPetLoyaltyName(gh, pet->loyalty);
+
+    lua_pushstring(L, icon.c_str());
     lua_pushstring(L, pet->name.empty()
                           ? ("Pet #" + std::to_string(pet->petNumber)).c_str()
                           : pet->name.c_str());
     lua_pushnumber(L, pet->level);
-    lua_pushstring(L, "");   // family
-    lua_pushstring(L, "");   // pet talent tree
+    lua_pushstring(L, fam.name.c_str());
+    lua_pushstring(L, loyalty.c_str());
     return 5;
 }
 
@@ -1175,32 +1232,67 @@ static int lua_GetSelectedStablePet(lua_State* L) {
 }
 
 static int lua_ClickStablePet(lua_State* L) {
-    selectedStableSlot() = static_cast<int>(luaL_optnumber(L, 1, 0));
-    // The model preview shows whichever pet is selected, so selecting a
-    // different one is exactly when it has to be redrawn. Nothing else changes
-    // it, and the frame will not redraw on its own.
+    auto* gh = getGameHandler(L);
+    const int slot = static_cast<int>(luaL_optnumber(L, 1, -1));
+    if (!gh || slot < 0) return 0;
+
+    const int heldSlot = cursorStablePetSlot();
+    if (heldSlot >= 0) {
+        setCursorStablePet(L, -1, 0);
+        if (heldSlot == slot) {
+            selectedStableSlot() = slot;
+            lua_pushnumber(L, 1);
+            return 1;
+        }
+        if (heldSlot == 0 && slot >= 1) {
+            if (slot <= static_cast<int>(gh->getStableSlots())) {
+                if (const auto* dstPet = stabledPetAtSlot(gh, slot)) {
+                    gh->stableSwapPet(dstPet->petNumber);
+                } else {
+                    gh->stablePet();
+                }
+                selectedStableSlot() = slot;
+                lua_pushnumber(L, 1);
+                return 1;
+            }
+            return 0;
+        }
+        if (heldSlot >= 1 && slot == 0) {
+            if (const auto* srcPet = stabledPetAtSlot(gh, heldSlot)) {
+                if (stabledPetAtSlot(gh, 0) != nullptr || gh->hasPet()) {
+                    gh->stableSwapPet(srcPet->petNumber);
+                } else {
+                    gh->unstablePet(srcPet->petNumber);
+                }
+                selectedStableSlot() = 0;
+                lua_pushnumber(L, 1);
+                return 1;
+            }
+            return 0;
+        }
+        return 0;
+    }
+
+    selectedStableSlot() = slot;
     lua_getfield(L, LUA_REGISTRYINDEX, "wowee_lua_engine");
     auto* engine = static_cast<LuaEngine*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     if (engine) engine->fireEvent("PET_STABLE_UPDATE_PAPERDOLL", {});
-    return 0;
+    lua_pushnumber(L, 1);
+    return 1;
 }
 
-// ---- What a pet eats, and what it trains into ----
-//
-// Both come from the creature's family. This client learns a family from
-// SMSG_CREATURE_QUERY_RESPONSE, which only ever arrives for creatures it has
-// seen - and a stabled pet is by definition not in the world, so its family is
-// never known. Mapping a family to a diet would need CreatureFamily.dbc on top
-// of that, whose field layout does not read cleanly enough to trust.
-//
-// So these answer absent, and the frame is built for that: GetPetIcon and
-// GetPetFoodTypes are both tested before use, and the talent tree is taken as
-// `GetPetTalentTree() or ""`.
+// GetPetIcon() → CreatureFamily.dbc IconFile for the currently summoned pet,
+// or nil when no pet is summoned.
 static int lua_GetPetIcon(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh || !activePet(gh)) { return luaReturnNil(L); }
-    lua_pushstring(L, "Interface\\Icons\\Ability_Hunter_BeastTaming");
+    auto* pet = resolveUnit(L, "pet");
+    if (!gh || !pet) { return luaReturnNil(L); }
+    const CreatureFamilyInfo fam = lookupCreatureFamilyInfo(gh, pet->getEntry());
+    const std::string icon = !fam.iconPath.empty()
+        ? fam.iconPath
+        : std::string("Interface\\Icons\\Ability_Hunter_BeastTaming");
+    lua_pushstring(L, icon.c_str());
     return 1;
 }
 static int lua_GetPetTalentTree(lua_State* L) { return luaReturnNil(L); }
@@ -1239,20 +1331,6 @@ static int lua_GetPetFoodTypes(lua_State* L) {
 }
 
 /// SetPetStablePaperdoll(model) - put the selected pet in the preview frame.
-///
-/// This was a deliberate no-op on the reading that there was no path putting
-/// an arbitrary creature in a model frame. There is one now: the portraits
-/// needed it, so CharacterPreview will load any M2 by path and the display
-/// lookup turns a creature's display id into one.
-///
-/// The slot is the window's own state, held beside ClickStablePet. The list the
-/// server sent carries a creature *template entry* - there is no display id on
-/// that wire at all - so it is resolved here, at the read, rather than stored
-/// converted: the resolution asks the server the first time and answers zero
-/// until the reply lands, and a value frozen at parse time would keep that zero
-/// for the life of the window. What is written is the display id; the render
-/// loop is where the model is built, because that is where the offscreen views
-/// live.
 static int lua_SetPetStablePaperdoll(lua_State* L) {
     auto* gh = getGameHandler(L);
     auto* tree = getWidgetTree(L);
@@ -1261,42 +1339,76 @@ static int lua_SetPetStablePaperdoll(lua_State* L) {
     auto* w = tree->get(id);
     if (!w) return 0;
 
-    // Slots count from one and the active pet is slot zero, which the stable
-    // list carries as its own entry rather than as a slot.
     const int slot = selectedStableSlot();
-    const auto& pets = gh->getStabledPets();
     w->modelDisplayId = 0;
-    if (slot >= 1 && slot <= static_cast<int>(pets.size())) {
-        w->modelDisplayId = gh->getCreatureDisplayIdForEntry(
-            pets[static_cast<size_t>(slot) - 1].entry);
+    if (slot == 0) {
+        if (auto* petUnit = resolveUnit(L, "pet"); petUnit && petUnit->getDisplayId() != 0) {
+            w->modelDisplayId = petUnit->getDisplayId();
+            return 0;
+        }
+    }
+    if (const auto* pet = stabledPetAtSlot(gh, slot)) {
+        w->modelDisplayId = gh->getCreatureDisplayIdForEntry(pet->entry);
     }
     return 0;
 }
 
-/// PickupStablePet(slot) - start dragging a pet between stable slots.
-///
-/// Also a deliberate no-op. Moving a pet by dragging needs a cursor that can
-/// hold one, and this client's cursor holds items and spells; the buttons the
-/// stable frame offers for the same moves go through stablePet and
-/// unstablePet, which do work. So the frame loses the drag and keeps the
-/// operation.
-static int lua_PickupStablePet(lua_State* L) { (void)L; return 0; }
+/// PickupStablePet(slot) - pick up a pet from a stable slot onto the cursor.
+static int lua_PickupStablePet(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const int slot = static_cast<int>(luaL_optnumber(L, 1, -1));
+    if (!gh || !gh->isStableWindowOpen() || slot < 0) return 0;
+    const auto* pet = stabledPetAtSlot(gh, slot);
+    if (!pet) return 0;
+    setCursorStablePet(L, slot, pet->entry);
+    return 0;
+}
 
-/// GetStablePetFoodTypes(slot) - and the one that cannot answer nil.
-///
-/// Its result goes straight into format(PET_DIET_TEMPLATE,
-/// BuildListString(...)) with no test in between. BuildListString hands nil
-/// back for nil, and string.format raises on a nil where it wants a string, so
-/// answering honestly there takes the stable window down as it opens. An empty
-/// string is the one value that says "not known" without doing that: the diet
-/// line comes out blank instead of wrong.
+/// GetStablePetFoodTypes(slot) → ItemPetFood.dbc diet strings for the pet in
+/// `slot` (0 = active, 1..N = stabled). Returns "" while creature template
+/// query is still in flight so PetStable.lua's format(PET_DIET_TEMPLATE,
+/// BuildListString(...)) never errors on nil.
 static int lua_GetStablePetFoodTypes(lua_State* L) {
-    (void)L;
-    lua_pushstring(L, "");
-    return 1;
+    auto* gh = getGameHandler(L);
+    const int slot = static_cast<int>(luaL_optnumber(L, 1, -1));
+    const auto* pet = stabledPetAtSlot(gh, slot);
+    if (!gh || !pet) {
+        lua_pushstring(L, "");
+        return 1;
+    }
+    const CreatureFamilyInfo fam = lookupCreatureFamilyInfo(gh, pet->entry);
+    auto* assets = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* foodLayout = layouts ? layouts->getLayout("ItemPetFood") : nullptr;
+    if (!fam.found || fam.foodMask == 0 || !assets || !foodLayout) {
+        lua_pushstring(L, "");
+        return 1;
+    }
+    const auto foods = assets->loadDBC("ItemPetFood.dbc");
+    if (!foods || !foods->isLoaded()) {
+        lua_pushstring(L, "");
+        return 1;
+    }
+    int pushed = 0;
+    for (uint32_t bit = 0; bit < 32; ++bit) {
+        if (!(fam.foodMask & (1u << bit))) continue;
+        const int32_t food = foods->findRecordById(bit + 1);
+        if (food < 0) continue;
+        lua_pushstring(L, foods->getString(static_cast<uint32_t>(food), foodLayout->field("Name")).c_str());
+        ++pushed;
+    }
+    if (pushed == 0) {
+        lua_pushstring(L, "");
+        return 1;
+    }
+    return pushed;
 }
 
 static int lua_ClosePetStables(lua_State* L) {
+    selectedStableSlot() = -1;
+    if (cursorStablePetSlot() >= 0) {
+        setCursorStablePet(L, -1, 0);
+    }
     if (auto* gh = getGameHandler(L)) gh->closeStableWindow();
     return 0;
 }
@@ -1307,14 +1419,22 @@ static int lua_IsAtStableMaster(lua_State* L) {
     return 1;
 }
 
-// GetNextStableSlotCost() → what the next slot costs, in copper.
-//
-// Zero, because the server never says. It reaches a money frame, which divides
-// it into gold and silver the moment the window opens, so it has to be a number
-// - and a made-up price shown as though the server had quoted it is worse than
-// a visible nothing.
+// GetNextStableSlotCost() → copper cost of the next purchasable stable slot
+// from StableSlotPrices.dbc (TBC 2.4.3: slot 1 = 500c / 5s, slot 2 = 50000c / 5g).
 static int lua_GetNextStableSlotCost(lua_State* L) {
-    lua_pushnumber(L, 0);
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnumber(L, 0); return 1; }
+    auto* assets = gh->services().assetManager;
+    const auto* layouts = pipeline::getActiveDBCLayout();
+    const auto* layout = layouts ? layouts->getLayout("StableSlotPrices") : nullptr;
+    if (!assets) { lua_pushnumber(L, 0); return 1; }
+    const auto dbc = assets->loadDBC("StableSlotPrices.dbc");
+    if (!dbc || !dbc->isLoaded()) { lua_pushnumber(L, 0); return 1; }
+    const uint32_t nextSlotId = static_cast<uint32_t>(gh->getStableSlots()) + 1u;
+    const int32_t row = dbc->findRecordById(nextSlotId);
+    if (row < 0) { lua_pushnumber(L, 0); return 1; }
+    const uint32_t costCol = (layout && layout->field("Cost") != 0xFFFFFFFFu) ? layout->field("Cost") : 1u;
+    lua_pushnumber(L, dbc->getUInt32(static_cast<uint32_t>(row), costCol));
     return 1;
 }
 

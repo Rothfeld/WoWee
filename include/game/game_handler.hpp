@@ -1225,6 +1225,8 @@ public:
         uint32_t entry      = 0;   // creature entry ID
         uint32_t level      = 0;
         std::string name;
+        uint32_t loyalty    = 0;   // Classic/TBC loyalty level (1..6, 0 on WotLK)
+        uint8_t  slot       = 0;   // wire slot byte (1 = active, 2+ = stable slots)
         // No display id: MSG_LIST_STABLED_PETS carries only the entry, and a
         // model frame wants a display id. SetPetStablePaperdoll resolves it
         // from `entry` at the moment it draws, so a query still in flight
@@ -1242,8 +1244,9 @@ public:
     uint8_t  getStableSlots() const { return stableNumSlots_; }
     const std::vector<StabledPet>& getStabledPets() const { return stabledPets_; }
     void requestStabledPetList();          // CMSG MSG_LIST_STABLED_PETS
-    void stablePet(uint8_t slot);          // CMSG_STABLE_PET (store active pet in slot)
+    void stablePet();                      // CMSG_STABLE_PET (store active pet in first free slot)
     void unstablePet(uint32_t petNumber);  // CMSG_UNSTABLE_PET (retrieve to active)
+    void stableSwapPet(uint32_t petNumber);// CMSG_STABLE_SWAP_PET (swap active pet with stabled pet)
     void buyStableSlot();                  // CMSG_BUY_STABLE_SLOT (next slot from the open stable master)
     void abandonPet();                     // CMSG_PET_ABANDON (give a hunter pet up for good)
     /// Forget a primary profession. The server refuses anything that is not

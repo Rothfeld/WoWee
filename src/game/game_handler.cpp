@@ -1197,6 +1197,7 @@ void GameHandler::closeDistantNpcWindows() {
     closeIfTooFar(isGuildBankOpen(), getGuildBankerGuid(), [this]{ closeGuildBank(); }, "Guild bank");
     closeIfTooFar(hasPetitionShowlist(), getPetitionNpcGuid(), [this]{ closePetitionVendor(); }, "Petition registrar");
     closeIfTooFar(isTabardDesignerOpen(), getTabardVendorGuid(), [this]{ closeTabardCreation(); }, "Tabard designer");
+    closeIfTooFar(isStableWindowOpen(), getStableMasterGuid(), [this]{ closeStableWindow(); }, "Stable master");
 }
 
 // ============================================================

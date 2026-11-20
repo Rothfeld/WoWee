@@ -60,7 +60,8 @@
   "CreatureFamily": {
     "ID": 0,
     "PetFoodMask": 7,
-    "Name": 8
+    "Name": 8,
+    "IconFile": 25
   },
   "CreatureDisplayInfo": {
     "ParticleColorID": 13,
@@ -316,6 +317,10 @@
   "PetLoyalty": {
     "ID": 0,
     "Name": 1
+  },
+  "StableSlotPrices": {
+    "ID": 0,
+    "Cost": 1
   },
   "SkillLine": {
     "Category": 1,
