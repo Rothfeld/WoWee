@@ -5,8 +5,10 @@
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <functional>
 #include <optional>
+#include <utility>
 
 namespace wowee {
 namespace rendering {
@@ -700,6 +702,141 @@ public:
     /// unknown; the head-bone rule then stands in.
     void setFollowedCollisionHeight(float height);
 
+    /// Third-person pitch limits in degrees. Native 2.4.3 (build 8606, pair 13)
+    /// allows tilting upward to +89.0 degrees while holding camera position at
+    /// ground contact.
+    static constexpr float kMinPitch = -88.0f;
+    static constexpr float kMaxPitch = 89.0f;
+
+    /// Vertical clearance kept above the terrain heightfield along the camera
+    /// ray and at the final camera position: keeps the 0.5-yard near plane out
+    /// of terrain triangles on flat ground and steep slopes (up to 45 deg)
+    /// while letting the camera sit close to the ground as native 2.4.3 does.
+    static constexpr float kTerrainCameraClearance = 0.22f;
+    /// Half-width of the cross footprint sampled around the camera XY to catch
+    /// ridges/banks without inflating height on smooth hillsides.
+    static constexpr float kTerrainCameraFootprint = 0.15f;
+
+    /// Ray-march a terrain heightfield along `pivot -> camDir` up to `maxDist`,
+    /// returning the furthest distance that stays at least
+    /// `kTerrainCameraClearance` above the surface. `sampleHeight(x, y)` returns
+    /// `std::nullopt` for unloaded chunks or terrain holes.
+    template <typename HeightFn>
+    [[nodiscard]] static float raymarchTerrainLimit(const glm::vec3& pivot,
+                                                    const glm::vec3& camDir,
+                                                    float maxDist,
+                                                    HeightFn&& sampleHeight) {
+        if (maxDist <= MIN_DISTANCE) return maxDist;
+        // Pivot below the heightfield (caves, WMO basements, underground tunnels):
+        // the heightfield is overhead, not a floor under the camera.
+        auto pivotH = sampleHeight(pivot.x, pivot.y);
+        if (pivotH && pivot.z < *pivotH - 0.2f) return maxDist;
+
+        const int steps = std::clamp(static_cast<int>(std::ceil(maxDist / 0.5f)), 4, 48);
+        const float stepLen = maxDist / static_cast<float>(steps);
+        float prevT = 0.0f;
+        for (int i = 1; i <= steps; ++i) {
+            const float t = stepLen * static_cast<float>(i);
+            const glm::vec3 p = pivot + camDir * t;
+            const auto h = sampleHeight(p.x, p.y);
+            if (h && p.z < *h + kTerrainCameraClearance) {
+                float lo = prevT;
+                float hi = t;
+                for (int j = 0; j < 6; ++j) {
+                    const float mid = 0.5f * (lo + hi);
+                    const glm::vec3 mp = pivot + camDir * mid;
+                    const auto mh = sampleHeight(mp.x, mp.y);
+                    if (mh && mp.z < *mh + kTerrainCameraClearance) hi = mid; else lo = mid;
+                }
+                return std::max(MIN_DISTANCE, lo);
+            }
+            prevT = t;
+        }
+        return maxDist;
+    }
+
+    /// Highest terrain height under the camera's near-plane footprint, or
+    /// nullopt if the followed character stands below the heightfield.
+    template <typename HeightFn>
+    [[nodiscard]] static std::optional<float> sampleCameraTerrainFloor(
+        float x, float y, const glm::vec3& targetPos, HeightFn&& sampleHeight) {
+        auto feetH = sampleHeight(targetPos.x, targetPos.y);
+        if (feetH && targetPos.z < *feetH - 0.2f) return std::nullopt;
+
+        std::optional<float> best;
+        constexpr float f = kTerrainCameraFootprint;
+        for (const auto& [ox, oy] : {std::pair{0.0f, 0.0f},
+                                     std::pair{f, 0.0f}, std::pair{-f, 0.0f},
+                                     std::pair{0.0f, f}, std::pair{0.0f, -f}}) {
+            auto h = sampleHeight(x + ox, y + oy);
+            if (h && (!best || *h > *best)) best = h;
+        }
+        return best;
+    }
+
+    /// Keep the camera at least `kTerrainCameraClearance` above `floorH`,
+    /// without clamping against the character's feet Z (on a downhill slope
+    /// behind the player the camera legitimately sits below the player's feet).
+    [[nodiscard]] static glm::vec3 clampCameraAboveFloor(glm::vec3 camPos,
+                                                         std::optional<float> floorH) {
+        if (floorH && camPos.z < *floorH + kTerrainCameraClearance) {
+            camPos.z = *floorH + kTerrainCameraClearance;
+        }
+        return camPos;
+    }
+
+    struct OrbitPitchContactResult {
+        float orbitPitch = 0.0f;
+        glm::vec3 camDir{0.0f};
+        float rawLimit = 0.0f;
+    };
+
+    /// Resolve the camera's orbit pitch and collision distance against the
+    /// floor-contact hold (`floorContactPitch`).
+    ///
+    /// Build 8606 holds the camera position once an obstacle below the pivot
+    /// stops the ray while `viewPitch` continues tilting up to +89 deg, and
+    /// releases the hold when `viewPitch` returns below it OR when the held
+    /// ray clears (e.g. turning yaw onto a downhill slope or zooming in).
+    template <typename LimitFn>
+    static OrbitPitchContactResult resolveOrbitPitchContact(
+        std::optional<float>& floorContactPitch,
+        float viewPitch,
+        float yawDeg,
+        float currentDistance,
+        LimitFn&& limitAlongDir) {
+        auto dirForPitch = [yawDeg](float pDeg) {
+            const float ry = glm::radians(yawDeg);
+            const float rp = glm::radians(pDeg);
+            return -glm::vec3(std::cos(ry) * std::cos(rp),
+                              std::sin(ry) * std::cos(rp),
+                              std::sin(rp));
+        };
+
+        if (floorContactPitch && viewPitch <= *floorContactPitch) {
+            floorContactPitch.reset();
+        }
+        float orbitPitch = floorContactPitch ? *floorContactPitch : viewPitch;
+        glm::vec3 camDir = dirForPitch(orbitPitch);
+        float rawLimit = limitAlongDir(camDir);
+
+        // If a previously latched contact pitch is now unobstructed (e.g. the
+        // player rotated yaw toward a downhill slope or zoomed in), release it
+        // and evaluate the actual view pitch on this same frame.
+        if (floorContactPitch && rawLimit >= currentDistance - 0.01f) {
+            floorContactPitch.reset();
+            orbitPitch = viewPitch;
+            camDir = dirForPitch(orbitPitch);
+            rawLimit = limitAlongDir(camDir);
+        }
+
+        if (!floorContactPitch && rawLimit < currentDistance - 0.01f && camDir.z < 0.0f) {
+            floorContactPitch = orbitPitch;
+        }
+
+        return {orbitPitch, camDir, rawLimit};
+    }
+
     /// The pivot for whoever is being followed right now.
     [[nodiscard]] float followedPivotHeight() const {
         if (followedCollisionHeight_ > 0.0f)
@@ -742,8 +879,8 @@ private:
     static constexpr float CAM_EPSILON = 0.22f;        // Extra wall offset to avoid near-plane clipping artifacts
     static constexpr float COLLISION_FOCUS_RADIUS_THIRD_PERSON = 20.0f;  // Reduced for performance
     static constexpr float COLLISION_FOCUS_RADIUS_FREE_FLY = 20.0f;
-    static constexpr float MIN_PITCH = -88.0f;      // Look almost straight down
-    static constexpr float MAX_PITCH = 88.0f;       // Look almost straight up (WoW standard)
+    static constexpr float MIN_PITCH = kMinPitch;   // Look almost straight down
+    static constexpr float MAX_PITCH = kMaxPitch;   // Look almost straight up (Native 2.4.3: +89 deg)
     glm::vec3* followTarget = nullptr;
     glm::vec3 smoothedCamPos = glm::vec3(0.0f);     // For smooth camera movement
     float smoothedCollisionDist_ = -1.0f;           // Applied geometry limit; < 0 = none

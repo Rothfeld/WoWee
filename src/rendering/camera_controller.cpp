@@ -220,66 +220,19 @@ void CameraController::setFollowedCollisionHeight(float height) {
 float CameraController::raymarchTerrainCameraLimit(const glm::vec3& pivot, const glm::vec3& camDir,
                                                    float maxDist) const {
     if (!terrainManager || maxDist <= MIN_DISTANCE) return maxDist;
-
-    // Clearance the camera keeps above the terrain surface along the whole ray.
-    // Enough to keep the near plane out of the ground and no more: the quarter
-    // yard on top of the sphere that used to be here was felt as the ground
-    // pushing the camera forward on every rise.
-    constexpr float kClearance = CAM_SPHERE_RADIUS + 0.08f;
-
-    // If the pivot itself sits below the heightfield (caves, WMO basements,
-    // terrain holes under cities), the heightfield is not the relevant occluder
-    // here - skip limiting rather than pinning the camera to first-person.
-    auto pivotH = terrainManager->getHeightAt(pivot.x, pivot.y);
-    if (pivotH && pivot.z < *pivotH - 0.2f) return maxDist;
-
-    // Coarse march in ~1.25-unit steps (capped so worst case stays cheap),
-    // then bisect between the last clear sample and the first blocked one.
-    const int steps = std::clamp(static_cast<int>(maxDist / 1.25f) + 1, 4, 24);
-    const float stepLen = maxDist / static_cast<float>(steps);
-    float prevT = 0.0f;
-    for (int i = 1; i <= steps; ++i) {
-        float t = stepLen * static_cast<float>(i);
-        glm::vec3 p = pivot + camDir * t;
-        auto h = terrainManager->getHeightAt(p.x, p.y);
-        if (h && p.z < *h + kClearance) {
-            float lo = prevT;
-            float hi = t;
-            for (int j = 0; j < 4; ++j) {
-                float mid = 0.5f * (lo + hi);
-                glm::vec3 mp = pivot + camDir * mid;
-                auto mh = terrainManager->getHeightAt(mp.x, mp.y);
-                if (mh && mp.z < *mh + kClearance) hi = mid; else lo = mid;
-            }
-            return std::max(MIN_DISTANCE, lo);
-        }
-        prevT = t;
-    }
-    return maxDist;
+    return raymarchTerrainLimit(pivot, camDir, maxDist, [this](float x, float y) -> std::optional<float> {
+        if (terrainManager->isHoleAt(x, y)) return std::nullopt;
+        return terrainManager->getHeightAt(x, y);
+    });
 }
 
 std::optional<float> CameraController::cameraTerrainFloor(float x, float y,
                                                          const glm::vec3& targetPos) const {
     if (!terrainManager) return std::nullopt;
-    auto feetH = terrainManager->getHeightAt(targetPos.x, targetPos.y);
-    if (feetH && targetPos.z < *feetH - 0.2f) return std::nullopt;
-
-    // The near plane is wider than a point. On a ridge or a bank the ground a
-    // few hand-widths to the side can stand well above the ground straight
-    // below, and a camera held clear of only the latter looks into the hill.
-    constexpr float kFootprint = 0.35f;
-    //
-    // A hole-cut quad is a cave mouth or a way underground; the height across
-    // it is interpolated and is not ground, so it holds nothing up.
-    std::optional<float> best;
-    for (const auto& [ox, oy] : {std::pair{0.0f, 0.0f},
-                                 std::pair{kFootprint, 0.0f}, std::pair{-kFootprint, 0.0f},
-                                 std::pair{0.0f, kFootprint}, std::pair{0.0f, -kFootprint}}) {
-        if (terrainManager->isHoleAt(x + ox, y + oy)) continue;
-        auto h = terrainManager->getHeightAt(x + ox, y + oy);
-        if (h && (!best || *h > *best)) best = h;
-    }
-    return best;
+    return sampleCameraTerrainFloor(x, y, targetPos, [this](float sx, float sy) -> std::optional<float> {
+        if (terrainManager->isHoleAt(sx, sy)) return std::nullopt;
+        return terrainManager->getHeightAt(sx, sy);
+    });
 }
 
 void CameraController::triggerShake(float magnitude, float frequency, float duration) {
@@ -2185,79 +2138,11 @@ void CameraController::groundFollowedCharacter(float deltaTime, FrameInput& f,
 void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
                                          const glm::vec3& targetPos) {
     // ===== WoW-style orbit camera =====
-    // Pivot point at upper chest/neck.
+    // Native 2.4.3 keeps the pivot at a constant height over the feet across
+    // flat ground and slopes (no terrain pivot lift).
     float mountedOffset = mounted_ ? mountHeightOffset_ : 0.0f;
-    float pivotLift = 0.0f;
-    if (terrainManager && !externalFollow_ && !cachedInsideInteriorWMO) {
-        float plx = targetPos.x - lastPivotLiftQueryPos_.x;
-        float ply = targetPos.y - lastPivotLiftQueryPos_.y;
-        float movedSq = plx * plx + ply * ply;
-        constexpr float kPivotLiftPosSq = PIVOT_LIFT_POS_THRESHOLD * PIVOT_LIFT_POS_THRESHOLD;
-        float distDelta = std::abs(currentDistance - lastPivotLiftDistance_);
-        bool queryLift = (++pivotLiftQueryCounter_ >= PIVOT_LIFT_QUERY_INTERVAL) ||
-                         (movedSq >= kPivotLiftPosSq) ||
-                         (distDelta >= PIVOT_LIFT_DIST_THRESHOLD);
-        if (queryLift) {
-            pivotLiftQueryCounter_ = 0;
-            lastPivotLiftQueryPos_ = targetPos;
-            lastPivotLiftDistance_ = currentDistance;
-
-            // Estimate where camera sits horizontally and ensure enough terrain clearance.
-            glm::vec3 probeCam = targetPos + (-f.forward3D) * currentDistance;
-            auto terrainAtCam = terrainManager->getHeightAt(probeCam.x, probeCam.y);
-            auto terrainAtPivot = terrainManager->getHeightAt(targetPos.x, targetPos.y);
-
-            float desiredLift = 0.0f;
-            if (terrainAtCam) {
-                // Keep the camera high enough that its ray does not cut
-                // through a hill behind the character.
-                //
-                // Measured at the camera, which is the thing that has to
-                // clear the ground. It was measured at the pivot, against a
-                // fixed two metres above the terrain - and an absolute height
-                // undoes any attempt to place the pivot on the character, by
-                // exactly the amount that attempt moved it. On flat ground a
-                // gnome's pivot at 0.65 was lifted 1.35 and a human's at 1.60
-                // was lifted 0.40, both landing on 2.00 above the feet. Every
-                // race got the same pivot, every time, and which character was
-                // being followed made no difference to it.
-                //
-                // That is why zooming in on a gnome put them at the bottom of
-                // the frame: the camera was aiming at a point nearly twice
-                // their height, on level ground, with no hill in sight.
-                const float basePivotZ = targetPos.z + followedPivotHeight() + mountedOffset;
-                // The camera sits behind the character along the look
-                // direction, which carries the pitch with it.
-                desiredLift = terrainPivotLift(basePivotZ, (-f.forward3D).z,
-                                               currentDistance, *terrainAtCam);
-            }
-            // If character is already below local terrain sample, avoid lifting aggressively.
-            if (terrainAtPivot && targetPos.z < *terrainAtPivot - 0.2f) {
-                desiredLift = 0.0f;
-            }
-            // Said when it starts and when it stops, because a lift is the
-            // camera being moved by the ground rather than by the player and
-            // there was no way to tell the two apart from outside. This one
-            // was applying on flat ground in every session ever played.
-            const bool lifting = desiredLift > 0.01f;
-            if (lifting != pivotLiftActive_) {
-                pivotLiftActive_ = lifting;
-                LOG_WARNING("Camera pivot: terrain lift ",
-                            lifting ? "on, raising the pivot by " : "off, was ",
-                            desiredLift, " (pivot ", followedPivotHeight(),
-                            " above the feet, ground at the camera ",
-                            terrainAtCam ? *terrainAtCam - targetPos.z : 0.0f,
-                            " relative to them)");
-            }
-            cachedPivotLift_ = desiredLift;
-        }
-        pivotLift = cachedPivotLift_;
-    } else if (cachedInsideInteriorWMO) {
-        // Inside WMO volumes (including tunnel/cave shells): terrain-above samples
-        // are not relevant for camera pivoting.
-        cachedPivotLift_ = 0.0f;
-    }
-    glm::vec3 pivot = targetPos + glm::vec3(0.0f, 0.0f, followedPivotHeight() + mountedOffset + pivotLift);
+    cachedPivotLift_ = 0.0f;
+    glm::vec3 pivot = targetPos + glm::vec3(0.0f, 0.0f, followedPivotHeight() + mountedOffset);
     // Surface swimmers keep the eye above water; divers keep it below.
     // Apply the same half-space constraint before and after camera smoothing.
     std::optional<float> waterCameraBoundary;
@@ -2273,20 +2158,6 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
             pivot.z = cameraSubmerged ? std::min(pivot.z, *waterCameraBoundary)
                                       : std::max(pivot.z, *waterCameraBoundary);
         }
-    }
-
-    // Camera direction from yaw/pitch (already computed as forward3D)
-    glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
-    // Contact below the pivot (build 8606, Goldshire and Elwynn terrain,
-    // Shattrath walls and floor): once an obstacle stops the camera and the
-    // camera is below the pivot, pitching up further keeps the camera where
-    // it is and turns only the view; pitching back down below that orbit
-    // pitch moves the camera again.
-    if (floorContactPitch_ && pitch <= *floorContactPitch_) floorContactPitch_.reset();
-    const float orbitPitch = floorContactPitch_ ? *floorContactPitch_ : pitch;
-    if (floorContactPitch_) {
-        const float ry = glm::radians(yaw), rp = glm::radians(orbitPitch);
-        camDir = -glm::vec3(std::cos(ry) * std::cos(rp), std::sin(ry) * std::cos(rp), std::sin(rp));
     }
 
     // Throttle the active-group refresh: only recheck every 10 frames or when
@@ -2310,54 +2181,37 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // Cast a ray from the pivot toward the camera direction to find the
     // nearest building or doodad, and march the terrain heightfield along the same
     // ray so hills between the pivot and camera pull the camera in too.
-    // Pull-in is immediate; recovery follows easedCollisionLimit.
+    // Pull-in is immediate for both geometry and terrain; recovery follows
+    // easedCollisionLimit.
     collisionDistance = currentDistance;
+    glm::vec3 camDir = -f.forward3D;  // Camera looks at pivot, so it's behind
 
     if ((wmoRenderer || m2Renderer || terrainManager) && currentDistance > MIN_DISTANCE) {
-        // Geometry pulls the camera inward immediately. Terrain has its own
-        // slower response because sampled slope heights vary between frames.
-        auto geometryLimitAlong = [&](const glm::vec3& dir) -> float {
+        auto limitAlongDir = [&](const glm::vec3& dir) -> float {
             traceWmoHit_ = wmoRenderer ? wmoRenderer->raycastCamera(pivot, dir, currentDistance) : currentDistance;
             traceM2Hit_ = m2Renderer ? m2Renderer->raycastBoundingBoxes(pivot, dir, currentDistance) : currentDistance;
             const float hit = std::min(traceWmoHit_, traceM2Hit_);
-            // hit == currentDistance means no hit (returns maxDistance on miss)
-            if (hit >= currentDistance) return currentDistance;
-            return std::max(MIN_DISTANCE, hit - CAMERA_WALL_STANDOFF);
+            float lim = (hit >= currentDistance) ? currentDistance : std::max(MIN_DISTANCE, hit - CAMERA_WALL_STANDOFF);
+            if (!cachedInsideInteriorWMO) {
+                const float terrainLimit = raymarchTerrainCameraLimit(pivot, dir, currentDistance);
+                traceTerrainLimit_ = terrainLimit;
+                lim = std::min(lim, terrainLimit);
+            }
+            return lim;
         };
 
-        float rawLimit = geometryLimitAlong(camDir);
-
-        // Preserve the player's orbit direction. Obstacles only shorten the
-        // camera ray; terrain uses separate smoothing to avoid slope jitter.
-        if (!cachedInsideInteriorWMO) {
-            const float terrainLimit =
-                raymarchTerrainCameraLimit(pivot, camDir, currentDistance);
-            traceTerrainLimit_ = terrainLimit;
-            if (smoothedTerrainDist_ < 0.0f) smoothedTerrainDist_ = terrainLimit;
-            // Slower coming in than the built geometry above, which is what
-            // makes a slope feel like a slope rather than a series of nudges.
-            const float terrainTau = (terrainLimit < smoothedTerrainDist_) ? 0.18f : 0.45f;
-            const float terrainAlpha = 1.0f - std::exp(-deltaTime / terrainTau);
-            smoothedTerrainDist_ += (terrainLimit - smoothedTerrainDist_) * terrainAlpha;
-            rawLimit = std::min(rawLimit, smoothedTerrainDist_);
-        } else {
-            smoothedTerrainDist_ = -1.0f;
-        }
-
+        const auto contact = resolveOrbitPitchContact(
+            floorContactPitch_, pitch, yaw, currentDistance, limitAlongDir);
+        camDir = contact.camDir;
         const float applied = easedCollisionLimit(
-            rawLimit < currentDistance ? std::optional<float>(rawLimit) : std::nullopt, deltaTime);
+            contact.rawLimit < currentDistance ? std::optional<float>(contact.rawLimit) : std::nullopt,
+            deltaTime);
         collisionDistance = std::min(collisionDistance, applied);
-        // Any obstacle holds it once the camera is below the pivot: native
-        // against a Terrace wall slid along the ray down to orbit -1 deg and
-        // held at +2 (camera 1.65 yd above the feet, not on the floor); on
-        // terrain it held at the first blocked pitch (Elwynn 5.5, Goldshire 1).
-        if (!floorContactPitch_ && rawLimit < currentDistance - 0.01f && camDir.z < 0.0f) {
-            floorContactPitch_ = orbitPitch;
-        }
     } else {
         smoothedCollisionDist_ = -1.0f;   // Reset when no collision sources available
         collisionEaseTime_ = kCollisionEaseSeconds;
         smoothedTerrainDist_ = -1.0f;
+        floorContactPitch_.reset();
     }
 
     // Camera collision: terrain-only floor clamping
@@ -2457,7 +2311,6 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
     // group is open ground: Orgrimmar's valleys and the Sunwell Plateau
     // entrance lie inside such boxes, and the camera kept above the ground
     // everywhere else could sink into it there.
-    constexpr float MIN_FLOOR_CLEARANCE = 0.35f;
     if (!cachedInsideInteriorWMO) {
         const std::optional<float> camTerrainH = getTerrainFloorAt(smoothedCamPos.x, smoothedCamPos.y);
         std::optional<float> camWmoH;
@@ -2487,13 +2340,8 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         // terrain, the camera belongs above it too.
         auto groundH = cameraTerrainFloor(smoothedCamPos.x, smoothedCamPos.y, targetPos);
         if (groundH && (!camFloorH || *groundH > *camFloorH)) camFloorH = groundH;
-        if (camFloorH && smoothedCamPos.z < *camFloorH + MIN_FLOOR_CLEARANCE) {
-            smoothedCamPos.z = *camFloorH + MIN_FLOOR_CLEARANCE;
-        }
+        smoothedCamPos = clampCameraAboveFloor(smoothedCamPos, camFloorH);
     }
-    // Land camera clearance does not apply to swimmers. Underwater, looking
-    // upward puts the eye below the feet; only real geometry may obstruct it.
-    if (!swimming) smoothedCamPos.z = std::max(smoothedCamPos.z, targetPos.z + 0.15f);
 
     if (waterCameraBoundary) {
         smoothedCamPos = constrainWaterCamera(
@@ -3636,6 +3484,7 @@ void CameraController::resetView(int view) {
 }
 
 void CameraController::resetAngles() {
+    floorContactPitch_.reset();
     if (!camera) return;
     yaw = defaultYaw;
     facingYaw = defaultYaw;
@@ -3645,6 +3494,7 @@ void CameraController::resetAngles() {
 
 void CameraController::reset() {
     waterJumpAirborne_ = false;
+    floorContactPitch_.reset();
     if (!camera) {
         return;
     }
@@ -3878,6 +3728,7 @@ void CameraController::reset() {
 
 void CameraController::teleportTo(const glm::vec3& pos) {
     waterJumpAirborne_ = false;
+    floorContactPitch_.reset();
     if (!camera) return;
 
     verticalVelocity = 0.0f;

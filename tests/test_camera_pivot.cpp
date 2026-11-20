@@ -206,3 +206,131 @@ TEST_CASE("Pivot follows CreatureModelData CollisionHeight as build 8606 does", 
     // The setting moves it in proportion; the default is the original's.
     CHECK_THAT(CameraController::nativePivotHeight(0.8f, 2.031f, false), WithinAbs(1.864 / 2, 0.01));
 }
+
+// ── upward pitch limit, flat-ground clearance & sloped terrain camera ──
+
+TEST_CASE("Upward pitch limit matches native 2.4.3 (+89 deg)", "[camera][slope]") {
+    CHECK(CameraController::kMaxPitch == Catch::Approx(89.0f));
+    CHECK(CameraController::kTerrainCameraClearance >= 0.20f);
+    CHECK(CameraController::kTerrainCameraClearance <= 0.25f);
+}
+
+TEST_CASE("Flat-ground raymarch and floor clearance keep camera near ground without clipping", "[camera][slope]") {
+    const auto flatGround = [](float, float) -> std::optional<float> { return 10.0f; };
+    const glm::vec3 feet(0.0f, 0.0f, 10.0f);
+    const glm::vec3 pivot(0.0f, 0.0f, 10.0f + 1.864f);
+    constexpr float zoomDist = 12.0f;
+
+    // Looking slightly up (+5 deg): camZ = 11.864 - 12*sin(5) = 10.818 > 10.22 -> unobstructed.
+    std::optional<float> contactPitch;
+    auto limitFn = [&](const glm::vec3& dir) {
+        return CameraController::raymarchTerrainLimit(pivot, dir, zoomDist, flatGround);
+    };
+    const auto clear = CameraController::resolveOrbitPitchContact(
+        contactPitch, 5.0f, 0.0f, zoomDist, limitFn);
+    CHECK_FALSE(contactPitch.has_value());
+    CHECK(clear.rawLimit == Catch::Approx(zoomDist));
+
+    // Tilting up to +15 deg: ray hits flat ground at dist = (1.864 - 0.22) / sin(15 deg) ~= 6.35 yd.
+    const auto hit = CameraController::resolveOrbitPitchContact(
+        contactPitch, 15.0f, 0.0f, zoomDist, limitFn);
+    REQUIRE(contactPitch.has_value());
+    CHECK(*contactPitch == Catch::Approx(15.0f));
+    const glm::vec3 camPos = pivot + hit.camDir * hit.rawLimit;
+    CHECK(camPos.z >= 10.0f + CameraController::kTerrainCameraClearance - 0.02f);
+    CHECK(camPos.z <= 10.0f + CameraController::kTerrainCameraClearance + 0.05f);
+
+    // Continuing to tilt up to +89 deg holds orbit pitch at contact without pulling closer.
+    const auto maxUp = CameraController::resolveOrbitPitchContact(
+        contactPitch, CameraController::kMaxPitch, 0.0f, zoomDist, limitFn);
+    REQUIRE(contactPitch.has_value());
+    CHECK(maxUp.orbitPitch == Catch::Approx(15.0f));
+    CHECK(maxUp.rawLimit == Catch::Approx(hit.rawLimit));
+
+    // Final floor clamp preserves clearance above ground.
+    const auto floorH = CameraController::sampleCameraTerrainFloor(camPos.x, camPos.y, feet, flatGround);
+    REQUIRE(floorH.has_value());
+    const glm::vec3 clamped = CameraController::clampCameraAboveFloor(
+        glm::vec3(camPos.x, camPos.y, 9.5f), floorH);
+    CHECK(clamped.z == Catch::Approx(10.0f + CameraController::kTerrainCameraClearance));
+}
+
+TEST_CASE("Steep downhill slope behind player allows camera well below feet without clipping", "[camera][slope]") {
+    // 30-degree hillside rising along +X: z(x, y) = 25.0 + x * tan(30 deg).
+    // Player stands at (0, 0, 25) facing uphill (+X, yaw=0), so camera is along -X (downhill).
+    const float slopeTan = std::tan(glm::radians(30.0f));
+    const auto hillside = [slopeTan](float x, float) -> std::optional<float> {
+        return 25.0f + x * slopeTan;
+    };
+    const glm::vec3 feet(0.0f, 0.0f, 25.0f);
+    const glm::vec3 pivot(0.0f, 0.0f, 25.0f + 1.864f);
+    constexpr float zoomDist = 14.0f;
+
+    auto limitFn = [&](const glm::vec3& dir) {
+        return CameraController::raymarchTerrainLimit(pivot, dir, zoomDist, hillside);
+    };
+
+    // Tilting up to +35 deg (like Native's Azurebreeze Coast capture): camera sits
+    // ~5.5 yards BELOW the player's feet and stays unobstructed or right on the slope.
+    std::optional<float> contactPitch;
+    const auto res = CameraController::resolveOrbitPitchContact(
+        contactPitch, 35.0f, 0.0f, zoomDist, limitFn);
+    const glm::vec3 rawCam = pivot + res.camDir * res.rawLimit;
+    const auto floorH = CameraController::sampleCameraTerrainFloor(rawCam.x, rawCam.y, feet, hillside);
+    REQUIRE(floorH.has_value());
+    const glm::vec3 finalCam = CameraController::clampCameraAboveFloor(rawCam, floorH);
+
+    // Must descend well below player's feet (the old targetPos.z + 0.15 clamp pinned it at 25.15).
+    CHECK(finalCam.z < feet.z - 4.0f);
+    // Must stay above the actual terrain triangle beneath the camera (never underground).
+    const float exactGround = *hillside(finalCam.x, finalCam.y);
+    CHECK(finalCam.z >= exactGround + CameraController::kTerrainCameraClearance - 0.01f);
+}
+
+TEST_CASE("Steep uphill slope behind player pulls camera in cleanly and releases on yaw turn", "[camera][slope]") {
+    // Same 30-degree hillside rising along +X: player at (0, 0, 25).
+    const float slopeTan = std::tan(glm::radians(30.0f));
+    const auto hillside = [slopeTan](float x, float) -> std::optional<float> {
+        return 25.0f + x * slopeTan;
+    };
+    const glm::vec3 pivot(0.0f, 0.0f, 25.0f + 1.864f);
+    constexpr float zoomDist = 12.0f;
+
+    auto limitFn = [&](const glm::vec3& dir) {
+        return CameraController::raymarchTerrainLimit(pivot, dir, zoomDist, hillside);
+    };
+
+    // Facing downhill (-X, yaw=180): camera is uphill (+X), so hill rises into the ray.
+    std::optional<float> contactPitch;
+    const auto uphillHit = CameraController::resolveOrbitPitchContact(
+        contactPitch, 5.0f, 180.0f, zoomDist, limitFn);
+    REQUIRE(contactPitch.has_value());
+    CHECK(uphillHit.rawLimit < 4.0f);
+    const glm::vec3 uphillCam = pivot + uphillHit.camDir * uphillHit.rawLimit;
+    CHECK(uphillCam.z >= *hillside(uphillCam.x, uphillCam.y) + CameraController::kTerrainCameraClearance - 0.02f);
+
+    // Tilt view up to +30 deg while still facing downhill: orbit stays held on the hill.
+    const auto heldUp = CameraController::resolveOrbitPitchContact(
+        contactPitch, 30.0f, 180.0f, zoomDist, limitFn);
+    CHECK(heldUp.orbitPitch == Catch::Approx(5.0f));
+
+    // Now rotate yaw to 0 deg (facing uphill, camera downhill) while viewPitch is still +30 deg:
+    // the held +5 deg ray is now completely clear, so contactPitch MUST release and drop onto the slope!
+    const auto turned = CameraController::resolveOrbitPitchContact(
+        contactPitch, 30.0f, 0.0f, zoomDist, limitFn);
+    CHECK(turned.orbitPitch == Catch::Approx(30.0f));
+    CHECK(turned.rawLimit == Catch::Approx(zoomDist));
+    const glm::vec3 downhillCam = pivot + turned.camDir * turned.rawLimit;
+    CHECK(downhillCam.z < 21.0f);  // well below feet (25.0)
+}
+
+TEST_CASE("Terrain holes do not block the camera ray", "[camera][slope]") {
+    const auto holedGround = [](float x, float) -> std::optional<float> {
+        if (x < -1.0f) return std::nullopt;  // cave entrance hole
+        return 10.0f;
+    };
+    const glm::vec3 pivot(0.0f, 0.0f, 11.864f);
+    const glm::vec3 camDir = glm::normalize(glm::vec3(-1.0f, 0.0f, -0.5f));
+    CHECK(CameraController::raymarchTerrainLimit(pivot, camDir, 10.0f, holedGround)
+          == Catch::Approx(10.0f));
+}
