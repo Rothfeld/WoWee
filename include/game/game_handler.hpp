@@ -3727,7 +3727,10 @@ public:
     void withdrawGuildBankMoney(uint32_t amount);
     void guildBankWithdrawItem(uint8_t tabId, uint8_t bankSlot, uint8_t destBag,
                                uint8_t destSlot, uint32_t splitCount = 0);
-    void guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot);
+    void guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot,
+                              uint32_t splitCount = 0);
+    void guildBankSwapItems(uint8_t srcTab, uint8_t srcSlot, uint8_t dstTab, uint8_t dstSlot,
+                            uint32_t itemEntry = 0, uint32_t splitCount = 0);
     /// Rename a guild bank tab and pick its icon.
     void setGuildBankTabInfo(uint8_t tabId, const std::string& name, const std::string& icon);
     /// Ask for a tab's info text, and read back what arrived.
@@ -3735,6 +3738,7 @@ public:
     const std::string& getGuildBankTabText(uint8_t tabId) const;
     void guildBankDepositFromInventory(uint8_t srcBag, uint8_t srcSlot);
     bool isGuildBankOpen() const;
+    uint64_t getGuildBankerGuid() const;
     const GuildBankData& getGuildBankData() const;
     /// The bank's balance as SMSG_GUILD_EVENT reports it, for guild members
     /// who are not the one standing at the banker.

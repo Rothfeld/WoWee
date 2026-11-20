@@ -4246,24 +4246,52 @@ int lua_Tooltip_SetGuildBankItem(lua_State* L) {
     auto* gh = wowee::addons::getGameHandler(L);
     const int tab  = static_cast<int>(luaL_optnumber(L, 2, 0));
     const int slot = static_cast<int>(luaL_optnumber(L, 3, 0));
-    if (!w || !gh || slot < 1) { lua_pushboolean(L, 0); return 1; }
+    if (!w || !gh || tab < 1 || slot < 1) { lua_pushboolean(L, 0); return 1; }
 
     const auto& data = gh->getGuildBankData();
-    // The open tab is the one kept current; any other answers from whatever
-    // the last full update left behind, which is what the panel draws too.
     const std::vector<game::GuildBankItemSlot>* items = nullptr;
-    if (tab - 1 == data.tabId) {
+    if (tab <= static_cast<int>(data.tabs.size())) {
+        items = &data.tabs[static_cast<size_t>(tab - 1)].items;
+    } else if (tab - 1 == data.tabId) {
         items = &data.tabItems;
-    } else if (tab >= 1 && tab <= static_cast<int>(data.tabs.size())) {
-        items = &data.tabs[tab - 1].items;
     }
-    if (!items) { lua_pushboolean(L, 0); return 1; }
-
-    for (const auto& it : *items) {
-        if (it.slotId + 1 != slot) continue;
-        lua_pushboolean(L, fillItemTooltipById(L, gh, it.itemEntry) ? 1 : 0);
+    if (!items) {
+        clearTooltipUnit(L, *w);
+        w->tooltipLines.clear();
+        w->shown = false;
+        lua_pushboolean(L, 0);
         return 1;
     }
+
+    for (const auto& it : *items) {
+        if (it.slotId + 1 != slot || it.itemEntry == 0) continue;
+        const bool filled = fillItemTooltipById(L, gh, it.itemEntry);
+        if (filled) {
+            if (it.enchantId != 0) {
+                if (const std::string ench = gh->getEnchantName(it.enchantId); !ench.empty()) {
+                    w->tooltipLines.push_back({ench, "", 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false});
+                }
+            }
+            for (uint32_t sockEnchant : it.socketEnchantIds) {
+                if (sockEnchant == 0) continue;
+                if (const std::string gemText = gh->getEnchantName(sockEnchant); !gemText.empty()) {
+                    w->tooltipLines.push_back({gemText, "", 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false});
+                }
+            }
+            if (it.randomPropertyId != 0) {
+                game::ItemDef suff;
+                suff.itemId = it.itemEntry;
+                suff.randomPropertyId = static_cast<int32_t>(it.randomPropertyId);
+                suff.suffixFactor = it.suffixFactor;
+                appendRandomSuffix(L, w, gh, suff);
+            }
+        }
+        lua_pushboolean(L, filled ? 1 : 0);
+        return 1;
+    }
+    clearTooltipUnit(L, *w);
+    w->tooltipLines.clear();
+    w->shown = false;
     lua_pushboolean(L, 0);
     return 1;
 }

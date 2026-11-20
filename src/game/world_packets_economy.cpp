@@ -435,19 +435,23 @@ network::Packet GuildBankWithdrawMoneyPacket::build(uint64_t guid, uint32_t amou
     return p;
 }
 
-// CMSG_GUILD_BANK_SWAP_ITEMS (3.3.5a). The first byte selects the code path:
-//   bankToBank != 0 → move within the guild bank (two tabs); NOT used here.
-//   bankToBank == 0 → transfer between the guild bank and player inventory.
-// For the inventory path the server reads:
-//   u8 tabId, u8 slotId, u32 itemEntry, u8 autoStore
-//   if autoStore: u32 count, u8 (toChar, forced 1), u32 (0)   → bank→char auto
-//   else:         u8 playerBag, u8 playerSlot, u8 toChar, u32 splitedAmount
-// toChar: 1 = bank→character (withdraw), 0 = character→bank (deposit).
-// The old builder omitted toChar, wrote splitCount as a mid-packet u8, and the
-// deposit variant set bankToBank=1 - so item transfers were silently dropped.
+// CMSG_GUILD_BANK_SWAP_ITEMS (TBC 2.4.3 and WotLK 3.3.5a).
+// First byte after banker GUID is bankToBank:
+//   bankToBank != 0:
+//     u8 dstTab, u8 dstSlot, u32 0, u8 srcTab, u8 srcSlot, u32 itemEntry, u8 0,
+//     TBC: u8 splitCount | WotLK: u32 splitCount
+//   bankToBank == 0:
+//     u8 tabId, u8 slotId, u32 itemEntry, u8 autoStore
+//     if autoStore:
+//       TBC:   u8 count, u8 toChar(1), u8 0
+//       WotLK: u32 count, u8 toChar(1), u32 0
+//     else:
+//       u8 playerBag, u8 playerSlot, u8 toChar (1=bank->char, 0=char->bank),
+//       TBC: u8 splitCount | WotLK: u32 splitCount
+// Note: backpack wire bag is 0xFF with slot 23..38; AutoStore is (0xFF, 0xFF).
 network::Packet GuildBankSwapItemsPacket::buildBankToInventory(
     uint64_t guid, uint8_t tabId, uint8_t bankSlot,
-    uint8_t destBag, uint8_t destSlot, uint32_t splitCount)
+    uint8_t destBag, uint8_t destSlot, uint32_t splitCount, bool isTbc)
 {
     network::Packet p(wireOpcode(Opcode::CMSG_GUILD_BANK_SWAP_ITEMS));
     p.writeUInt64(guid);
@@ -455,25 +459,35 @@ network::Packet GuildBankSwapItemsPacket::buildBankToInventory(
     p.writeUInt8(tabId);
     p.writeUInt8(bankSlot);
     p.writeUInt32(0);         // itemEntry (server ignores)
-    if (destBag == 0xFF) {
+    if (destBag == 0xFF && destSlot == 0xFF) {
         // Let the server drop the item into the first free inventory slot.
         p.writeUInt8(1);      // autoStore = 1
-        p.writeUInt32(splitCount); // count (0 = whole stack)
-        p.writeUInt8(1);      // toChar = 1 (bank → character)
-        p.writeUInt32(0);     // trailing, always 0
+        if (isTbc) {
+            p.writeUInt8(static_cast<uint8_t>(splitCount));
+            p.writeUInt8(1);  // toChar = 1 (bank -> character)
+            p.writeUInt8(0);  // trailing unknown, always 0
+        } else {
+            p.writeUInt32(splitCount);
+            p.writeUInt8(1);  // toChar = 1 (bank -> character)
+            p.writeUInt32(0); // trailing, always 0
+        }
     } else {
         p.writeUInt8(0);      // autoStore = 0
         p.writeUInt8(destBag);   // playerBag
         p.writeUInt8(destSlot);  // playerSlot
         p.writeUInt8(1);      // toChar = 1 (withdraw)
-        p.writeUInt32(splitCount); // splitedAmount
+        if (isTbc) {
+            p.writeUInt8(static_cast<uint8_t>(splitCount));
+        } else {
+            p.writeUInt32(splitCount);
+        }
     }
     return p;
 }
 
 network::Packet GuildBankSwapItemsPacket::buildInventoryToBank(
     uint64_t guid, uint8_t tabId, uint8_t bankSlot,
-    uint8_t srcBag, uint8_t srcSlot, uint32_t splitCount)
+    uint8_t srcBag, uint8_t srcSlot, uint32_t splitCount, bool isTbc)
 {
     network::Packet p(wireOpcode(Opcode::CMSG_GUILD_BANK_SWAP_ITEMS));
     p.writeUInt64(guid);
@@ -484,12 +498,39 @@ network::Packet GuildBankSwapItemsPacket::buildInventoryToBank(
     p.writeUInt8(0);          // autoStore = 0
     p.writeUInt8(srcBag);     // playerBag
     p.writeUInt8(srcSlot);    // playerSlot
-    p.writeUInt8(0);          // toChar = 0 (character → bank = deposit)
-    p.writeUInt32(splitCount); // splitedAmount
+    p.writeUInt8(0);          // toChar = 0 (character -> bank = deposit)
+    if (isTbc) {
+        p.writeUInt8(static_cast<uint8_t>(splitCount));
+    } else {
+        p.writeUInt32(splitCount);
+    }
     return p;
 }
 
-bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
+network::Packet GuildBankSwapItemsPacket::buildBankToBank(
+    uint64_t guid, uint8_t srcTab, uint8_t srcSlot,
+    uint8_t dstTab, uint8_t dstSlot, uint32_t itemEntry,
+    uint32_t splitCount, bool isTbc)
+{
+    network::Packet p(wireOpcode(Opcode::CMSG_GUILD_BANK_SWAP_ITEMS));
+    p.writeUInt64(guid);
+    p.writeUInt8(1);          // bankToBank = 1
+    p.writeUInt8(dstTab);
+    p.writeUInt8(dstSlot);
+    p.writeUInt32(0);         // always 0
+    p.writeUInt8(srcTab);
+    p.writeUInt8(srcSlot);
+    p.writeUInt32(itemEntry);
+    p.writeUInt8(0);          // always 0
+    if (isTbc) {
+        p.writeUInt8(static_cast<uint8_t>(splitCount));
+    } else {
+        p.writeUInt32(splitCount);
+    }
+    return p;
+}
+
+bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data, bool isTbc) {
     if (!packet.hasRemaining(14)) return false;
 
     data.money = packet.readUInt64();
@@ -497,16 +538,12 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
     data.withdrawAmount = static_cast<int32_t>(packet.readUInt32());
     uint8_t fullUpdate = packet.readUInt8();
     data.tabsIncluded = (fullUpdate != 0);
+    data.itemsIncluded = false;
 
     // The flag alone decides it. GuildBankQueryResults::Write - which does gate
     // the tab list on `!Tab && FullUpdate` - is Cataclysm's packet; 3.3.5 and
     // 2.4.3 send it from Guild::SendBankList under `withTabInfo` and nothing
     // else, whichever tab the list describes.
-    //
-    // The extra test cost the tabs on any server that answers a tab query with
-    // the names attached: the block is on the wire, this skipped it, and every
-    // field after it was then read one block early - the item count out of the
-    // tab count, the items out of the names.
     if (fullUpdate) {
         if (!packet.hasRemaining(1)) {
             LOG_WARNING("GuildBankListParser: truncated before tabCount");
@@ -520,7 +557,6 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
             }
             data.tabs.resize(tabCount);
             for (uint8_t i = 0; i < tabCount; ++i) {
-                // Validate before reading strings
                 if (!packet.hasData()) {
                     LOG_WARNING("GuildBankListParser: truncated tab at index ", static_cast<int>(i));
                     break;
@@ -535,6 +571,10 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
         }
     }
 
+    if (data.tabId < data.tabs.size()) {
+        data.tabs[data.tabId].remainingWithdrawals = data.withdrawAmount;
+    }
+
     if (!packet.hasRemaining(1)) {
         LOG_WARNING("GuildBankListParser: truncated before numSlots");
         data.tabItems.clear();
@@ -543,8 +583,15 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
 
     uint8_t numSlots = packet.readUInt8();
     data.tabItems.clear();
+    if (numSlots == 0) {
+        // DisplayGuildBankTabsInfo and DisplayGuildBankMoneyUpdate send
+        // numSlots=0; keep existing per-tab items intact.
+        return true;
+    }
+
+    data.itemsIncluded = true;
     for (uint8_t i = 0; i < numSlots; ++i) {
-        // Validate minimum bytes before reading slot (slotId(1) + itemEntry(4) = 5)
+        // Minimum bytes before reading slot (slotId(1) + itemEntry(4) = 5)
         if (!packet.hasRemaining(5)) {
             LOG_WARNING("GuildBankListParser: truncated slot at index ", static_cast<int>(i));
             break;
@@ -553,53 +600,154 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
         slot.slotId = packet.readUInt8();
         slot.itemEntry = packet.readUInt32();
         if (slot.itemEntry != 0) {
-            // Flags, then the random property and - only when that is non-zero
-            // - its seed; then the stack, the permanent enchantment, the
-            // charges, and a socket list counted in a byte.
-            //
-            // This used to read a uint32 "enchant mask" and up to ten twelve-byte
-            // enchant records, then a stack, a spare word and a random property.
-            // None of that is on the wire. The first item came out with its
-            // flags read as a mask - so a flags value with low bits set invented
-            // enchant records - and every slot after it was read at whatever
-            // offset that left.
-            if (!packet.hasRemaining(8)) {
-                LOG_WARNING("GuildBankListParser: truncated item fields");
-                break;
-            }
-            /*flags=*/ packet.readUInt32();
-            slot.randomPropertyId = packet.readUInt32();
-            if (slot.randomPropertyId) {
+            if (isTbc) {
+                // TBC 2.4.3 (mangos-tbc AppendDisplayGuildBankSlot):
+                //   u32 randomPropertyId, [u32 suffixFactor if non-zero],
+                //   u8 stackCount, u32 permEnchantId, u8 charges,
+                //   u8 socketCount, socketCount * (u8 socketSlot, u32 gemEnchantId)
                 if (!packet.hasRemaining(4)) {
-                    LOG_WARNING("GuildBankListParser: truncated property seed");
+                    LOG_WARNING("GuildBankListParser: truncated TBC randomPropertyId");
                     break;
                 }
-                /*seed=*/ packet.readUInt32();
-            }
-            if (!packet.hasRemaining(10)) {
-                LOG_WARNING("GuildBankListParser: truncated item body");
-                break;
-            }
-            slot.stackCount = packet.readUInt32();
-            slot.enchantId  = packet.readUInt32();
-            /*charges=*/ packet.readUInt8();
-            const uint8_t socketCount = packet.readUInt8();
-            for (uint8_t sock = 0; sock < socketCount; ++sock) {
-                if (!packet.hasRemaining(5)) {
-                    LOG_WARNING("GuildBankListParser: truncated socket list");
+                slot.randomPropertyId = packet.readUInt32();
+                if (slot.randomPropertyId) {
+                    if (!packet.hasRemaining(4)) {
+                        LOG_WARNING("GuildBankListParser: truncated TBC suffixFactor");
+                        break;
+                    }
+                    slot.suffixFactor = packet.readUInt32();
+                }
+                if (!packet.hasRemaining(7)) {
+                    LOG_WARNING("GuildBankListParser: truncated TBC item body");
                     break;
                 }
-                packet.readUInt8();   // socket index
-                packet.readUInt32();  // socket enchantment
+                slot.stackCount = packet.readUInt8();
+                slot.enchantId  = packet.readUInt32();
+                slot.charges    = packet.readUInt8();
+                const uint8_t socketCount = packet.readUInt8();
+                for (uint8_t sock = 0; sock < socketCount; ++sock) {
+                    if (!packet.hasRemaining(5)) {
+                        LOG_WARNING("GuildBankListParser: truncated TBC socket list");
+                        break;
+                    }
+                    const uint8_t sockIdx = packet.readUInt8();
+                    const uint32_t sockEnchant = packet.readUInt32();
+                    if (sockIdx < slot.socketEnchantIds.size()) {
+                        slot.socketEnchantIds[sockIdx] = sockEnchant;
+                    }
+                }
+            } else {
+                // WotLK 3.3.5a:
+                //   u32 flags, u32 randomPropertyId, [u32 seed if non-zero],
+                //   u32 stackCount, u32 permEnchantId, u8 charges,
+                //   u8 socketCount, socketCount * (u8 socketSlot, u32 gemEnchantId)
+                if (!packet.hasRemaining(8)) {
+                    LOG_WARNING("GuildBankListParser: truncated item fields");
+                    break;
+                }
+                /*flags=*/ packet.readUInt32();
+                slot.randomPropertyId = packet.readUInt32();
+                if (slot.randomPropertyId) {
+                    if (!packet.hasRemaining(4)) {
+                        LOG_WARNING("GuildBankListParser: truncated property seed");
+                        break;
+                    }
+                    slot.suffixFactor = packet.readUInt32();
+                }
+                if (!packet.hasRemaining(10)) {
+                    LOG_WARNING("GuildBankListParser: truncated item body");
+                    break;
+                }
+                slot.stackCount = packet.readUInt32();
+                slot.enchantId  = packet.readUInt32();
+                slot.charges    = packet.readUInt8();
+                const uint8_t socketCount = packet.readUInt8();
+                for (uint8_t sock = 0; sock < socketCount; ++sock) {
+                    if (!packet.hasRemaining(5)) {
+                        LOG_WARNING("GuildBankListParser: truncated socket list");
+                        break;
+                    }
+                    const uint8_t sockIdx = packet.readUInt8();
+                    const uint32_t sockEnchant = packet.readUInt32();
+                    if (sockIdx < slot.socketEnchantIds.size()) {
+                        slot.socketEnchantIds[sockIdx] = sockEnchant;
+                    }
+                }
             }
         }
         data.tabItems.push_back(slot);
     }
+
+    // Maintain canonical per-tab item list so incremental updates (1-2 slots)
+    // merge cleanly without wiping the rest of the tab, and tab switches keep
+    // previously loaded tabs intact.
+    if (data.tabId < data.tabs.size()) {
+        auto& tabVec = data.tabs[data.tabId].items;
+        constexpr uint8_t kFullTabSlots = 98;
+        if (numSlots >= kFullTabSlots) {
+            tabVec.clear();
+            for (const auto& s : data.tabItems) {
+                if (s.itemEntry != 0) tabVec.push_back(s);
+            }
+        } else {
+            for (const auto& s : data.tabItems) {
+                auto it = std::find_if(tabVec.begin(), tabVec.end(),
+                                       [&](const GuildBankItemSlot& cur) { return cur.slotId == s.slotId; });
+                if (s.itemEntry == 0) {
+                    if (it != tabVec.end()) tabVec.erase(it);
+                } else if (it != tabVec.end()) {
+                    *it = s;
+                } else {
+                    tabVec.push_back(s);
+                }
+            }
+        }
+    }
     return true;
 }
 
-// ============================================================
-// Auction House System
+bool GuildBankLogParser::parse(network::Packet& packet, uint8_t& outTab,
+                               std::vector<GuildBankLogEntry>& outEntries, bool isTbc) {
+    if (!packet.hasRemaining(2)) return false;
+    outTab = packet.readUInt8();
+    const uint8_t count = packet.readUInt8();
+    outEntries.clear();
+    outEntries.reserve(count);
+    for (uint8_t i = 0; i < count; ++i) {
+        if (!packet.hasRemaining(9)) break;
+        GuildBankLogEntry e;
+        e.type = packet.readUInt8();
+        e.playerGuid = packet.readUInt64();
+        switch (e.type) {
+            case 1: case 2:                 // deposit / withdraw an item
+                if (!packet.hasRemaining(isTbc ? 5 : 8)) return false;
+                e.itemId = packet.readUInt32();
+                e.count  = isTbc ? static_cast<uint32_t>(packet.readUInt8()) : packet.readUInt32();
+                break;
+            case 3: case 7:                 // moved between tabs
+                if (!packet.hasRemaining(isTbc ? 6 : 9)) return false;
+                e.itemId   = packet.readUInt32();
+                e.count    = isTbc ? static_cast<uint32_t>(packet.readUInt8()) : packet.readUInt32();
+                e.otherTab = packet.readUInt8();
+                break;
+            default:                        // money, in copper
+                if (!packet.hasRemaining(4)) return false;
+                e.count = packet.readUInt32();
+                break;
+        }
+        if (!packet.hasRemaining(4)) break;
+        e.secondsAgo = packet.readUInt32();
+        outEntries.push_back(e);
+    }
+    return true;
+}
+
+bool GuildBankTextParser::parse(network::Packet& packet, uint8_t& outTab, std::string& outText) {
+    if (!packet.hasRemaining(1)) return false;
+    outTab = packet.readUInt8();
+    outText = packet.readString();
+    return true;
+}
 // ============================================================
 
 network::Packet AuctionHelloPacket::build(uint64_t guid) {

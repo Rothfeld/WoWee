@@ -1194,6 +1194,7 @@ void GameHandler::closeDistantNpcWindows() {
                   movementHandler_ ? movementHandler_->getTaxiNpcGuid() : 0,
                   [this]{ closeTaxi(); }, "Taxi window");
     closeIfTooFar(isTrainerWindowOpen(), getTrainerSpells().trainerGuid, [this]{ closeTrainer(); }, "Trainer");
+    closeIfTooFar(isGuildBankOpen(), getGuildBankerGuid(), [this]{ closeGuildBank(); }, "Guild bank");
 }
 
 // ============================================================
@@ -2529,8 +2530,15 @@ void GameHandler::guildBankWithdrawItem(uint8_t tabId, uint8_t bankSlot, uint8_t
                                                                    destSlot, splitCount);
 }
 
-void GameHandler::guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot) {
-    if (inventoryHandler_) inventoryHandler_->guildBankDepositItem(tabId, bankSlot, srcBag, srcSlot);
+void GameHandler::guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag,
+                                       uint8_t srcSlot, uint32_t splitCount) {
+    if (inventoryHandler_) inventoryHandler_->guildBankDepositItem(tabId, bankSlot, srcBag, srcSlot, splitCount);
+}
+
+void GameHandler::guildBankSwapItems(uint8_t srcTab, uint8_t srcSlot, uint8_t dstTab,
+                                     uint8_t dstSlot, uint32_t itemEntry, uint32_t splitCount) {
+    if (inventoryHandler_) inventoryHandler_->guildBankSwapItems(srcTab, srcSlot, dstTab, dstSlot,
+                                                                 itemEntry, splitCount);
 }
 
 void GameHandler::queryGuildBankText(uint8_t tabId) {

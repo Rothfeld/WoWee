@@ -795,6 +795,37 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- Guild Bank ----
     table[Opcode::SMSG_GUILD_BANK_LIST] = [this](network::Packet& packet) { handleGuildBankList(packet); };
+    table[Opcode::MSG_GUILD_BANK_MONEY_WITHDRAWN] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(4)) return;
+        guildBankData_.moneyWithdrawRemaining = static_cast<int32_t>(packet.readUInt32());
+        guildBankData_.hasMoneyWithdrawRemaining = true;
+        if (owner_.addonEventCallbackRef())
+            owner_.addonEventCallbackRef()("GUILDBANK_UPDATE_WITHDRAWMONEY", {});
+    };
+    table[Opcode::MSG_GUILD_PERMISSIONS] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(13)) return;
+        guildBankData_.playerRankId = static_cast<int32_t>(packet.readUInt32());
+        /*rights=*/ packet.readUInt32();
+        guildBankData_.moneyWithdrawRemaining = static_cast<int32_t>(packet.readUInt32());
+        guildBankData_.hasMoneyWithdrawRemaining = true;
+        const uint8_t tabCount = packet.readUInt8();
+        if (guildBankData_.tabs.size() < tabCount && tabCount <= 8) {
+            guildBankData_.tabs.resize(tabCount);
+        }
+        for (uint8_t i = 0; i < 6 && packet.hasRemaining(8); ++i) {
+            const uint32_t tabRights = packet.readUInt32();
+            const int32_t tabRemSlots = static_cast<int32_t>(packet.readUInt32());
+            if (i < guildBankData_.tabs.size()) {
+                guildBankData_.tabs[i].rights = tabRights;
+                guildBankData_.tabs[i].remainingWithdrawals = tabRemSlots;
+                guildBankData_.tabs[i].hasPermissions = true;
+            }
+        }
+        if (owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("GUILDBANK_UPDATE_WITHDRAWMONEY", {});
+            owner_.addonEventCallbackRef()("GUILDBANK_UPDATE_TABS", {});
+        }
+    };
     // The reply shares its opcode with the request: a tab id and its text.
     table[Opcode::MSG_QUERY_GUILD_BANK_TEXT] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(1)) return;
@@ -3638,6 +3669,11 @@ void InventoryHandler::openGuildBank(uint64_t guid) {
     if (owner_.getState() == WorldState::IN_WORLD && owner_.getSocket() && guid != 0) {
         auto activate = GuildBankerActivatePacket::build(guid);
         owner_.getSocket()->send(activate);
+        network::Packet moneyRem(wireOpcode(Opcode::MSG_GUILD_BANK_MONEY_WITHDRAWN));
+        owner_.getSocket()->send(moneyRem);
+        network::Packet perms(wireOpcode(Opcode::MSG_GUILD_PERMISSIONS));
+        owner_.getSocket()->send(perms);
+        if (!owner_.hasGuildRoster()) owner_.requestGuildRoster();
     }
     queryGuildBankTab(0);
 }
@@ -3681,8 +3717,9 @@ void InventoryHandler::withdrawGuildBankMoney(uint32_t amount) {
 void InventoryHandler::guildBankWithdrawItem(uint8_t tabId, uint8_t bankSlot, uint8_t destBag,
                                              uint8_t destSlot, uint32_t splitCount) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || guildBankerGuid_ == 0) return;
+    const bool isTbc = isActiveExpansion("tbc");
     auto packet = GuildBankSwapItemsPacket::buildBankToInventory(guildBankerGuid_, tabId, bankSlot,
-                                                                 destBag, destSlot, splitCount);
+                                                                 destBag, destSlot, splitCount, isTbc);
     owner_.getSocket()->send(packet);
 }
 
@@ -3713,9 +3750,21 @@ void InventoryHandler::setGuildBankTabInfo(uint8_t tabId, const std::string& nam
     owner_.getSocket()->send(p);
 }
 
-void InventoryHandler::guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot) {
+void InventoryHandler::guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag,
+                                            uint8_t srcSlot, uint32_t splitCount) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || guildBankerGuid_ == 0) return;
-    auto packet = GuildBankSwapItemsPacket::buildInventoryToBank(guildBankerGuid_, tabId, bankSlot, srcBag, srcSlot);
+    const bool isTbc = isActiveExpansion("tbc");
+    auto packet = GuildBankSwapItemsPacket::buildInventoryToBank(guildBankerGuid_, tabId, bankSlot,
+                                                                 srcBag, srcSlot, splitCount, isTbc);
+    owner_.getSocket()->send(packet);
+}
+
+void InventoryHandler::guildBankSwapItems(uint8_t srcTab, uint8_t srcSlot, uint8_t dstTab,
+                                          uint8_t dstSlot, uint32_t itemEntry, uint32_t splitCount) {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() || guildBankerGuid_ == 0) return;
+    const bool isTbc = isActiveExpansion("tbc");
+    auto packet = GuildBankSwapItemsPacket::buildBankToBank(guildBankerGuid_, srcTab, srcSlot,
+                                                            dstTab, dstSlot, itemEntry, splitCount, isTbc);
     owner_.getSocket()->send(packet);
 }
 
@@ -3723,12 +3772,15 @@ void InventoryHandler::guildBankDepositFromInventory(uint8_t srcBag, uint8_t src
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket() ||
         guildBankerGuid_ == 0 || !guildBankOpen_) return;
     // CMSG_GUILD_BANK_SWAP_ITEMS has no server-side auto-store for the deposit
-    // direction (that path forces bank→character), so the client picks the
+    // direction (that path forces bank->character), so the client picks the
     // target slot - the first empty one in the tab the player is viewing, which
     // is what the retail client does on a right-click deposit.
     constexpr int kTabSlots = 98; // GUILD_BANK_MAX_SLOTS
     std::array<bool, kTabSlots> occupied{};
-    for (const auto& slot : guildBankData_.tabItems) {
+    const auto& items = (guildBankActiveTab_ < guildBankData_.tabs.size())
+                        ? guildBankData_.tabs[guildBankActiveTab_].items
+                        : guildBankData_.tabItems;
+    for (const auto& slot : items) {
         if (slot.itemEntry != 0 && slot.slotId < kTabSlots)
             occupied[slot.slotId] = true;
     }
@@ -3751,42 +3803,34 @@ void InventoryHandler::setGuildBankMoney(uint64_t money) {
 }
 
 void InventoryHandler::handleGuildBankList(network::Packet& packet) {
-    if (!GuildBankListParser::parse(packet, guildBankData_)) return;
+    const bool isTbc = isActiveExpansion("tbc");
+    if (!GuildBankListParser::parse(packet, guildBankData_, isTbc)) return;
     // Receiving the bank list means the banker accepted us - make sure the
     // window is shown even if the open path didn't (e.g. a server-initiated
     // refresh, or the banker guid arrived only with the list).
-    if (guildBankerGuid_ != 0 && !guildBankOpen_) {
+    const bool justOpened = (guildBankerGuid_ != 0 && !guildBankOpen_);
+    if (justOpened) {
         guildBankOpen_ = true;
         if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("GUILDBANKFRAME_OPENED", {});
     }
-    // Each list is tagged with the tab it describes. Track it so the UI
-    // highlights the right tab and item withdraw/deposit target the tab the
-    // player is actually viewing (clicking a tab only sends a query - it never
-    // updated the active tab, so operations defaulted to tab 0).
-    guildBankActiveTab_ = guildBankData_.tabId;
+    // Only sync active tab when opening or receiving actual tab items, so
+    // DisplayGuildBankMoneyUpdate / DisplayGuildBankTabsInfo (which always
+    // tag tabId=0, numSlots=0) do not yank the user off another tab.
+    if (justOpened) {
+        guildBankActiveTab_ = guildBankData_.tabId;
+    }
+    for (const auto& item : guildBankData_.tabItems) {
+        if (item.itemEntry != 0) owner_.ensureItemInfo(item.itemEntry);
+    }
     if (owner_.addonEventCallbackRef()) {
-        // The three the panel listens for and this fired none of.
-        //
-        // GUILDBANK_UPDATE_TABS is the one that runs
-        // GuildBankFrame_SelectAvailableTab, which is what picks a tab the
-        // player may look in and draws it - without it the frame kept whatever
-        // tab it had and never chose one. Only when a tab list actually
-        // arrived: the event means the set of tabs changed, and a slot refresh
-        // does not change it.
-        if (guildBankData_.tabsIncluded && !guildBankData_.tabs.empty()) {
+        if (guildBankData_.tabsIncluded) {
             owner_.addonEventCallbackRef()("GUILDBANK_UPDATE_TABS", {});
         }
-        owner_.addonEventCallbackRef()("GUILDBANKBAGSLOTS_CHANGED", {});
-        // The money line and the withdraw allowance, which are read from
-        // GetGuildBankMoney and GetGuildBankWithdrawMoney and were never asked
-        // for again after the frame first drew.
+        if (guildBankData_.itemsIncluded || guildBankData_.tabsIncluded) {
+            owner_.addonEventCallbackRef()("GUILDBANKBAGSLOTS_CHANGED", {});
+        }
         owner_.addonEventCallbackRef()("GUILDBANK_UPDATE_MONEY", {});
         owner_.addonEventCallbackRef()("GUILDBANK_UPDATE_WITHDRAWMONEY", {});
-    }
-    for (const auto& tab : guildBankData_.tabs) {
-        for (const auto& item : tab.items) {
-            if (item.itemEntry != 0) owner_.ensureItemInfo(item.itemEntry);
-        }
     }
 }
 

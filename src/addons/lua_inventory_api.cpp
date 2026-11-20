@@ -964,19 +964,19 @@ namespace {
 /// server keeps up to date, and any other answers from whatever the last full
 /// update left behind. Tabs and slots are 1-based from Lua and 0-based here.
 const game::GuildBankItemSlot* guildBankItemAt(game::GameHandler* gh, int tab, int slot) {
-    if (!gh) return nullptr;
+    if (!gh || tab < 1 || slot < 1) return nullptr;
     const auto& data = gh->getGuildBankData();
 
     const std::vector<game::GuildBankItemSlot>* items = nullptr;
-    if (tab - 1 == data.tabId) {
+    if (tab <= static_cast<int>(data.tabs.size())) {
+        items = &data.tabs[static_cast<size_t>(tab - 1)].items;
+    } else if (tab - 1 == data.tabId) {
         items = &data.tabItems;
-    } else if (tab >= 1 && tab <= static_cast<int>(data.tabs.size())) {
-        items = &data.tabs[tab - 1].items;
     }
     if (!items) return nullptr;
 
     for (const auto& entry : *items) {
-        if (entry.slotId + 1 == slot) return &entry;
+        if (entry.slotId + 1 == slot && entry.itemEntry != 0) return &entry;
     }
     return nullptr;
 }
@@ -1032,7 +1032,8 @@ const char* bankLogTypeName(uint8_t type) {
         case 2: case 5: return "withdraw";
         case 3: case 7: return "move";
         case 6:         return "repair";
-        case 9:         return "buytab";
+        case 8:         return "withdrawForTab";
+        case 9:         return "buyTab";
         default:        return "deposit";
     }
 }
@@ -4492,17 +4493,52 @@ void registerInventoryLuaAPI(lua_State* L) {
         }},
                 {"GetGuildBankWithdrawMoney", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            // -1 is the server saying "no limit", and the panel reads that as
-            // a number to compare against - a large one keeps the comparison
-            // true without pretending to a figure.
-            const int32_t w = gh ? gh->getGuildBankData().withdrawAmount : 0;
-            lua_pushnumber(L, w < 0 ? 100000000.0 : static_cast<double>(w));
+            if (!gh) { lua_pushnumber(L, 0.0); return 1; }
+            const auto& data = gh->getGuildBankData();
+            // Blizzard_GuildBankUI tests `if ( withdrawLimit >= 0 )` and shows
+            // GuildBankMoneyUnlimitedLabel ("Unlimited") when negative (-1).
+            if (data.hasMoneyWithdrawRemaining) {
+                lua_pushnumber(L, static_cast<double>(data.moneyWithdrawRemaining));
+                return 1;
+            }
+            int rank = gh->getPlayerGuildRankIndex();
+            if (rank < 0) rank = data.playerRankId;
+            if (rank == 0) {
+                lua_pushnumber(L, -1.0);
+                return 1;
+            }
+            const auto& roster = gh->getGuildRoster();
+            if (rank > 0 && static_cast<size_t>(rank) < roster.ranks.size()) {
+                const uint32_t limit = roster.ranks[static_cast<size_t>(rank)].goldLimit;
+                if (limit == 0xFFFFFFFFu) {
+                    lua_pushnumber(L, -1.0);
+                } else {
+                    lua_pushnumber(L, static_cast<double>(limit) * 10000.0);
+                }
+                return 1;
+            }
+            lua_pushnumber(L, 0.0);
             return 1;
         }},
                 {"CanWithdrawGuildBankMoney", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            const int32_t w = gh ? gh->getGuildBankData().withdrawAmount : 0;
-            lua_pushboolean(L, (w != 0) ? 1 : 0);
+            if (!gh) { lua_pushboolean(L, 0); return 1; }
+            int rank = gh->getPlayerGuildRankIndex();
+            if (rank < 0) rank = gh->getGuildBankData().playerRankId;
+            if (rank == 0) { lua_pushboolean(L, 1); return 1; }
+            const auto& data = gh->getGuildBankData();
+            if (data.hasMoneyWithdrawRemaining) {
+                lua_pushboolean(L, data.moneyWithdrawRemaining != 0 ? 1 : 0);
+                return 1;
+            }
+            const auto& roster = gh->getGuildRoster();
+            if (rank > 0 && static_cast<size_t>(rank) < roster.ranks.size()) {
+                // GR_RIGHT_WITHDRAW_GOLD = 0x1000
+                const auto& r = roster.ranks[static_cast<size_t>(rank)];
+                lua_pushboolean(L, ((r.rights & 0x1000u) != 0 && r.goldLimit != 0) ? 1 : 0);
+                return 1;
+            }
+            lua_pushboolean(L, 0);
             return 1;
         }},
                 {"GetCurrentGuildBankTab", [](lua_State* L) -> int {
@@ -4565,13 +4601,50 @@ void registerInventoryLuaAPI(lua_State* L) {
                 lua_pushnumber(L, 0);    // withdrawals remaining
                 return 6;
             }
-            const auto& t = (*tabs)[tab - 1];
+            const auto& t = (*tabs)[static_cast<size_t>(tab - 1)];
+            std::string iconPath = t.tabIcon;
+            if (iconPath.empty()) {
+                iconPath = "Interface\\Icons\\INV_Misc_QuestionMark";
+            } else if (iconPath.find('\\') == std::string::npos &&
+                       iconPath.find('/') == std::string::npos) {
+                iconPath = "Interface\\Icons\\" + iconPath;
+            }
+            bool isViewable = true;
+            bool canDeposit = true;
+            int32_t numWithdrawals = -1;
+            int32_t remainingWithdrawals = t.remainingWithdrawals;
+            int rank = gh->getPlayerGuildRankIndex();
+            if (rank < 0) rank = gh->getGuildBankData().playerRankId;
+            if (rank == 0) {
+                isViewable = true;
+                canDeposit = true;
+                numWithdrawals = -1;
+                remainingWithdrawals = -1;
+            } else {
+                const auto& roster = gh->getGuildRoster();
+                const bool hasRosterRank =
+                    rank > 0 && static_cast<size_t>(rank) < roster.ranks.size() && tab <= 6;
+                if (t.hasPermissions) {
+                    isViewable = (t.rights & 0x01u) != 0;
+                    canDeposit = (t.rights & 0x02u) != 0;
+                } else if (hasRosterRank) {
+                    const uint32_t r = roster.ranks[static_cast<size_t>(rank)].bankTabRights[tab - 1];
+                    isViewable = (r & 0x01u) != 0;
+                    canDeposit = (r & 0x02u) != 0;
+                }
+                if (hasRosterRank) {
+                    numWithdrawals = static_cast<int32_t>(
+                        roster.ranks[static_cast<size_t>(rank)].bankTabSlotsPerDay[tab - 1]);
+                } else {
+                    numWithdrawals = remainingWithdrawals;
+                }
+            }
             lua_pushstring(L, t.tabName.c_str());
-            lua_pushstring(L, t.tabIcon.c_str());
-            lua_pushboolean(L, 1);   // viewable: it was sent, so it is
-            lua_pushboolean(L, 1);   // canDeposit
-            lua_pushnumber(L, 0);
-            lua_pushnumber(L, 0);
+            lua_pushstring(L, iconPath.c_str());
+            lua_pushboolean(L, isViewable ? 1 : 0);
+            lua_pushboolean(L, canDeposit ? 1 : 0);
+            lua_pushnumber(L, static_cast<lua_Number>(numWithdrawals));
+            lua_pushnumber(L, static_cast<lua_Number>(remainingWithdrawals));
             return 6;
         }},
                 // GetGuildBankItemInfo(tab, slot) → texture, count, locked
@@ -4639,10 +4712,12 @@ void registerInventoryLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             const int tab  = static_cast<int>(luaL_optnumber(L, 1, 1));
             const int slot = static_cast<int>(luaL_optnumber(L, 2, 1));
-            // Destination 0,0 lets the server pick the first free bag slot,
-            // which is what "auto store" means.
-            if (gh) gh->guildBankWithdrawItem(static_cast<uint8_t>(tab - 1),
-                                              static_cast<uint8_t>(slot - 1), 0, 0);
+            // Destination (0xFF, 0xFF) triggers CMSG_GUILD_BANK_SWAP_ITEMS AutoStore=1,
+            // letting the server place the item into the first free inventory slot.
+            if (gh && tab >= 1 && slot >= 1) {
+                gh->guildBankWithdrawItem(static_cast<uint8_t>(tab - 1),
+                                          static_cast<uint8_t>(slot - 1), 0xFF, 0xFF);
+            }
             return 0;
         }},
                 // Rank *is* in what this client parses - the roster carries a
@@ -4653,7 +4728,9 @@ void registerInventoryLuaAPI(lua_State* L) {
                 // Rank zero is the guild master; an unknown rank is not.
                 {"IsGuildLeader", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushboolean(L, gh && gh->getPlayerGuildRankIndex() == 0 ? 1 : 0);
+            const bool isGm = gh && (gh->getPlayerGuildRankIndex() == 0 ||
+                                     gh->getGuildBankData().playerRankId == 0);
+            lua_pushboolean(L, isGm ? 1 : 0);
             return 1;
         }},
                 // The transaction log, the tab text and the tabard are not in
@@ -4820,16 +4897,70 @@ void registerInventoryLuaAPI(lua_State* L) {
                 // is the client being stricter than the server, as retail is.
                 {"CanEditGuildTabInfo", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushboolean(L, gh && gh->getPlayerGuildRankIndex() == 0 ? 1 : 0);
+            if (!gh) { lua_pushboolean(L, 0); return 1; }
+            int rank = gh->getPlayerGuildRankIndex();
+            if (rank < 0) rank = gh->getGuildBankData().playerRankId;
+            if (rank == 0) { lua_pushboolean(L, 1); return 1; }
+            const int tab = static_cast<int>(luaL_optnumber(L, 1, 0));
+            if (tab >= 1 && tab <= 6) {
+                const auto& tabs = gh->getGuildBankData().tabs;
+                if (static_cast<size_t>(tab) <= tabs.size() && tabs[static_cast<size_t>(tab - 1)].hasPermissions) {
+                    lua_pushboolean(L, (tabs[static_cast<size_t>(tab - 1)].rights & 0x04u) != 0 ? 1 : 0);
+                    return 1;
+                }
+                const auto& roster = gh->getGuildRoster();
+                if (rank > 0 && static_cast<size_t>(rank) < roster.ranks.size()) {
+                    lua_pushboolean(L, (roster.ranks[static_cast<size_t>(rank)].bankTabRights[tab - 1] & 0x04u) != 0 ? 1 : 0);
+                    return 1;
+                }
+            }
+            lua_pushboolean(L, 0);
             return 1;
         }},
-                // SetGuildBankTabInfo(tab, name, icon) - the rename popup's
-                // Okay. The tab is FrameXML's, counted from one.
+                // SetGuildBankTabInfo(tab, name, iconIndex) - the rename popup's
+                // Okay. Blizzard_GuildBankUI passes a 1-based icon index into
+                // GetMacroItemIconInfo; also accept an explicit icon texture path.
                 {"SetGuildBankTabInfo", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int tab = static_cast<int>(luaL_optnumber(L, 1, 0));
             const char* name = luaL_optstring(L, 2, "");
-            const char* icon = luaL_optstring(L, 3, "");
+            std::string icon;
+            if (lua_isnumber(L, 3)) {
+                const int iconIdx = static_cast<int>(lua_tonumber(L, 3));
+                if (auto* svc = getLuaServices(L); svc && svc->listIconTextures && iconIdx >= 1) {
+                    const auto& icons = svc->listIconTextures();
+                    if (static_cast<size_t>(iconIdx) <= icons.size()) {
+                        icon = icons[static_cast<size_t>(iconIdx - 1)];
+                    }
+                }
+            } else if (lua_isstring(L, 3)) {
+                icon = lua_tostring(L, 3);
+            }
+            // Fall back to the tab's existing icon or default question mark if
+            // the user only changed the name without clicking an icon.
+            if (icon.empty() && gh && tab >= 1 &&
+                static_cast<size_t>(tab) <= gh->getGuildBankData().tabs.size()) {
+                icon = gh->getGuildBankData().tabs[static_cast<size_t>(tab - 1)].tabIcon;
+            }
+            // TBC 2.4.3 CMSG_GUILD_BANK_UPDATE_TAB sends the icon basename
+            // (e.g. "INV_Misc_QuestionMark") without "Interface\Icons\";
+            // GetGuildBankTabInfo prepends "Interface\Icons\" on read.
+            auto stripIconPrefix = [](std::string s) {
+                std::string lower = s;
+                for (char& c : lower) {
+                    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+                    if (c == '/') c = '\\';
+                }
+                constexpr std::string_view kPrefix = "interface\\icons\\";
+                if (lower.rfind(kPrefix, 0) == 0) {
+                    s.erase(0, kPrefix.size());
+                }
+                return s;
+            };
+            icon = stripIconPrefix(std::move(icon));
+            if (icon.empty()) {
+                icon = "INV_Misc_QuestionMark";
+            }
             if (gh && tab >= 1)
                 gh->setGuildBankTabInfo(static_cast<uint8_t>(tab - 1), name, icon);
             return 0;

@@ -5881,44 +5881,25 @@ void SocialHandler::requestGuildBankLog(uint8_t tab) {
 // log tab counted zero transactions and drew an empty page over a log the
 // server keeps.
 void SocialHandler::handleGuildBankLog(network::Packet& packet) {
-    if (!packet.hasRemaining(2)) { packet.skipAll(); return; }
-    const uint8_t tab = packet.readUInt8();
-    const uint8_t count = packet.readUInt8();
-    if (tab >= guildBankLogs_.size()) { packet.skipAll(); return; }
-
-    auto& log = guildBankLogs_[tab];
-    log.clear();
-    log.reserve(count);
-    for (uint8_t i = 0; i < count; ++i) {
-        if (!packet.hasRemaining(9)) break;
-        GuildBankLogEntry e;
-        e.type = packet.readUInt8();
-        e.playerGuid = packet.readUInt64();
-        switch (e.type) {
-            case 1: case 2:                 // deposit / withdraw an item
-                if (!packet.hasRemaining(8)) { packet.skipAll(); return; }
-                e.itemId = packet.readUInt32();
-                e.count  = packet.readUInt32();
-                break;
-            case 3: case 7:                 // moved between tabs
-                if (!packet.hasRemaining(9)) { packet.skipAll(); return; }
-                e.itemId   = packet.readUInt32();
-                e.count    = packet.readUInt32();
-                e.otherTab = packet.readUInt8();
-                break;
-            default:                        // money, in copper
-                if (!packet.hasRemaining(4)) { packet.skipAll(); return; }
-                e.count = packet.readUInt32();
-                break;
-        }
-        if (!packet.hasRemaining(4)) break;
-        e.secondsAgo = packet.readUInt32();
-        if (e.itemId) owner_.ensureItemInfo(e.itemId);
-        log.push_back(e);
+    uint8_t tab = 0;
+    std::vector<GuildBankLogEntry> entries;
+    const bool isTbc = isActiveExpansion("tbc");
+    if (!GuildBankLogParser::parse(packet, tab, entries, isTbc)) {
+        packet.skipAll();
+        return;
     }
     packet.skipAll();
+    if (tab >= guildBankLogs_.size()) return;
+
+    for (const auto& e : entries) {
+        if (e.itemId) owner_.ensureItemInfo(e.itemId);
+        if (e.playerGuid && owner_.lookupName(e.playerGuid).empty()) {
+            owner_.queryPlayerName(e.playerGuid);
+        }
+    }
+    guildBankLogs_[tab] = std::move(entries);
     LOG_INFO("MSG_GUILD_BANK_LOG_QUERY reply: tab ", static_cast<int>(tab),
-             ", ", log.size(), " entries");
+             ", ", guildBankLogs_[tab].size(), " entries");
     if (owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("GUILDBANKLOG_UPDATE", {});
     }

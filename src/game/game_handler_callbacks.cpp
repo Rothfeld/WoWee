@@ -1448,6 +1448,9 @@ int GameHandler::getEffectiveBankBagSlots() const {
 bool GameHandler::isGuildBankOpen() const {
     return inventoryHandler_ ? inventoryHandler_->isGuildBankOpen() : guildBankOpen_;
 }
+uint64_t GameHandler::getGuildBankerGuid() const {
+    return inventoryHandler_ ? inventoryHandler_->getGuildBankerGuid() : 0;
+}
 const GuildBankData& GameHandler::getGuildBankData() const {
     if (inventoryHandler_) return inventoryHandler_->getGuildBankData();
     return guildBankData_;

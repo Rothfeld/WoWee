@@ -1,5 +1,6 @@
 #pragma once
 
+#include "game/handler_types.hpp"
 #include "network/packet.hpp"
 #include "game/item_text.hpp"
 #include "game/opcodes.hpp"
@@ -3387,24 +3388,35 @@ struct GuildBankItemSlot {
     uint32_t stackCount = 1;
     uint32_t enchantId = 0;
     uint32_t randomPropertyId = 0;
+    uint32_t suffixFactor = 0;
+    uint8_t charges = 0;
+    std::array<uint32_t, 3> socketEnchantIds = {0, 0, 0};
 };
 
 struct GuildBankTab {
     std::string tabName;
     std::string tabIcon;
     std::vector<GuildBankItemSlot> items;
+    int32_t remainingWithdrawals = -1;  // -1 = unlimited (0xFFFFFFFF on wire)
+    uint32_t rights = 0;                // GUILD_BANK_RIGHT_* from MSG_GUILD_PERMISSIONS
+    bool hasPermissions = false;
 };
 
 struct GuildBankData {
     uint64_t money = 0;
     uint8_t tabId = 0;
-    int32_t withdrawAmount = -1;  // -1 = unlimited
+    int32_t withdrawAmount = -1;  // Tab remaining item withdrawals from SMSG_GUILD_BANK_LIST (-1 = unlimited)
+    int32_t moneyWithdrawRemaining = -1;  // Remaining daily copper from MSG_GUILD_BANK_MONEY_WITHDRAWN / MSG_GUILD_PERMISSIONS
+    bool hasMoneyWithdrawRemaining = false;
+    int32_t playerRankId = -1;  // Guild rank id from MSG_GUILD_PERMISSIONS (0 = GM)
     std::vector<GuildBankTab> tabs;  // Only populated on fullUpdate
-    std::vector<GuildBankItemSlot> tabItems;  // Current tab items
+    std::vector<GuildBankItemSlot> tabItems;  // Slots from the most recent SMSG_GUILD_BANK_LIST
     /// Whether the list just parsed carried the tab names, which is what the
     /// panel's GUILDBANK_UPDATE_TABS means. A slots-only update leaves `tabs`
     /// as it found them, so their contents cannot answer this.
     bool tabsIncluded = false;
+    /// Whether the list just parsed carried item slot updates (numSlots > 0).
+    bool itemsIncluded = false;
 };
 
 /** CMSG_GUILD_BANKER_ACTIVATE packet builder */
@@ -3440,18 +3452,38 @@ public:
 /** CMSG_GUILD_BANK_SWAP_ITEMS packet builder */
 class GuildBankSwapItemsPacket {
 public:
-    // Bank to inventory
+    // Bank to inventory (destBag == 0xFF && destSlot == 0xFF uses AutoStore)
     static network::Packet buildBankToInventory(uint64_t guid, uint8_t tabId, uint8_t bankSlot,
-                                                 uint8_t destBag, uint8_t destSlot, uint32_t splitCount = 0);
+                                                 uint8_t destBag, uint8_t destSlot,
+                                                 uint32_t splitCount = 0, bool isTbc = false);
     // Inventory to bank
     static network::Packet buildInventoryToBank(uint64_t guid, uint8_t tabId, uint8_t bankSlot,
-                                                 uint8_t srcBag, uint8_t srcSlot, uint32_t splitCount = 0);
+                                                 uint8_t srcBag, uint8_t srcSlot,
+                                                 uint32_t splitCount = 0, bool isTbc = false);
+    // Bank to bank (same tab or cross-tab, optional stack split)
+    static network::Packet buildBankToBank(uint64_t guid, uint8_t srcTab, uint8_t srcSlot,
+                                            uint8_t dstTab, uint8_t dstSlot,
+                                            uint32_t itemEntry = 0, uint32_t splitCount = 0,
+                                            bool isTbc = false);
 };
 
 /** SMSG_GUILD_BANK_LIST parser */
 class GuildBankListParser {
 public:
-    static bool parse(network::Packet& packet, GuildBankData& data);
+    static bool parse(network::Packet& packet, GuildBankData& data, bool isTbc = false);
+};
+
+/** MSG_GUILD_BANK_LOG_QUERY reply parser */
+class GuildBankLogParser {
+public:
+    static bool parse(network::Packet& packet, uint8_t& outTab,
+                      std::vector<GuildBankLogEntry>& outEntries, bool isTbc = false);
+};
+
+/** MSG_QUERY_GUILD_BANK_TEXT reply parser */
+class GuildBankTextParser {
+public:
+    static bool parse(network::Packet& packet, uint8_t& outTab, std::string& outText);
 };
 
 // ============================================================

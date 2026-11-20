@@ -496,10 +496,14 @@ public:
     /// why the empty name the popup allows is refused here rather than sent.
     void setGuildBankTabInfo(uint8_t tabId, const std::string& name,
                              const std::string& icon);
-    void guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot);
+    void guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot,
+                              uint32_t splitCount = 0);
+    void guildBankSwapItems(uint8_t srcTab, uint8_t srcSlot, uint8_t dstTab, uint8_t dstSlot,
+                            uint32_t itemEntry = 0, uint32_t splitCount = 0);
     // Deposit an inventory item into the first free slot of the viewed tab.
     void guildBankDepositFromInventory(uint8_t srcBag, uint8_t srcSlot);
     bool isGuildBankOpen() const { return guildBankOpen_; }
+    uint64_t getGuildBankerGuid() const { return guildBankerGuid_; }
     const GuildBankData& getGuildBankData() const { return guildBankData_; }
     /// The guild bank's balance as SMSG_GUILD_EVENT reports it. The bank list
     /// is only sent to whoever is standing at the banker; everyone else learns

@@ -1139,22 +1139,31 @@ static int lua_PickupGuildBankItem(lua_State* L) {
     uint8_t srcBag = 0, srcSlot = 0;
     if (cursorWireSlot(srcBag, srcSlot)) {
         gh->guildBankDepositItem(static_cast<uint8_t>(tab - 1),
-                                 static_cast<uint8_t>(slot - 1), srcBag, srcSlot);
+                                 static_cast<uint8_t>(slot - 1),
+                                 srcBag, srcSlot, s_cursorSplit);
         setCursorType(L, CursorType::NONE);
         return 0;
     }
-    // Carrying a bank item already: that is a move within the bank, and the
-    // request builder says plainly that it does not write that path. Dropping
-    // the cursor is better than sending something the server will read as a
-    // withdrawal to nowhere.
+    // Carrying a bank item already: move/swap/split within the guild bank
+    // (same tab or cross-tab).
     if (s_cursorType == CursorType::GUILDBANK) {
+        if (s_cursorBag != tab || s_cursorSlot != slot) {
+            gh->guildBankSwapItems(static_cast<uint8_t>(s_cursorBag - 1),
+                                   static_cast<uint8_t>(s_cursorSlot - 1),
+                                   static_cast<uint8_t>(tab - 1),
+                                   static_cast<uint8_t>(slot - 1),
+                                   s_cursorId, s_cursorSplit);
+        }
         setCursorType(L, CursorType::NONE);
         return 0;
     }
 
     // Otherwise pick the slot up, if there is anything in it.
     const auto& bank = gh->getGuildBankData();
-    for (const auto& it : bank.tabItems) {
+    const auto& items = (tab <= static_cast<int>(bank.tabs.size()))
+                        ? bank.tabs[static_cast<size_t>(tab - 1)].items
+                        : bank.tabItems;
+    for (const auto& it : items) {
         if (it.slotId != slot - 1 || it.itemEntry == 0) continue;
         setCursorType(L, CursorType::GUILDBANK);
         s_cursorId = it.itemEntry;
