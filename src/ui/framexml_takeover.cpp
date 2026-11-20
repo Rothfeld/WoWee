@@ -155,6 +155,15 @@ void frameXmlSetCursorPicture(std::function<std::string()> picture) {
 std::string frameXmlCursorItem() { return gCursorPicture ? gCursorPicture() : std::string(); }
 
 namespace {
+std::string gCursorTexture;
+} // namespace
+
+void frameXmlSetCursorTexture(std::string texturePath) {
+    gCursorTexture = std::move(texturePath);
+}
+std::string frameXmlCursorTexture() { return gCursorTexture; }
+
+namespace {
 std::function<bool(uint8_t&, uint8_t&)> gCursorHeldSlot;
 std::function<void()> gCursorPutDown;
 } // namespace

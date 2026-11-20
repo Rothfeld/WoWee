@@ -7521,6 +7521,7 @@ void LuaEngine::shutdown() {
         // through it after the close would be reading a freed state.
         ui::frameXmlSetCursorBridge(nullptr, nullptr);
         ui::frameXmlSetCursorPicture(nullptr);
+        ui::frameXmlSetCursorTexture({});
         releaseInput();
         ui::frameXmlSetPointTest(nullptr);
         lua_close(L_);

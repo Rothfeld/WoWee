@@ -3,6 +3,7 @@
 
 #include "core/logger.hpp"
 #include "game/game_handler.hpp"
+#include "game/inventory.hpp"
 #include "rendering/character_preview.hpp"
 #include "rendering/renderer.hpp"
 
@@ -64,8 +65,15 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
             for (size_t slot = 0; slot < displayIds.size(); ++slot) {
                 if (displayIds[slot] == 0) continue;
                 if (hiddenSlots & (1u << slot)) continue;
+                uint8_t invType = invTypes[slot];
+                // A One-Hand (13) weapon in the off-hand slot attaches to the
+                // left hand (CharacterPreview maps 13 to right hand, 22 to left).
+                if (slot == static_cast<size_t>(game::EquipSlot::OFF_HAND) &&
+                    invType == game::InvType::ONE_HAND) {
+                    invType = game::InvType::OFF_HAND;
+                }
                 worn.push_back({.displayModel = displayIds[slot],
-                                .inventoryType = invTypes[slot],
+                                .inventoryType = invType,
                                 .enchantment = 0u});
             }
         }

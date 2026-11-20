@@ -2030,6 +2030,17 @@ watcher:SetScript("OnEvent", function()
     if not GameTooltip or not GameTooltip.IsShown or not GameTooltip:IsShown() then
         return
     end
+    local owner = GameTooltip.GetOwner and GameTooltip:GetOwner()
+    if owner then
+        local prevThis = this
+        this = owner
+        if owner.UpdateTooltip then
+            owner:UpdateTooltip()
+        elseif CursorUpdate then
+            CursorUpdate()
+        end
+        this = prevThis
+    end
     local id = GameTooltip.__itemId
     if not id or id == 0 then return end
     if IsModifiedClick("COMPAREITEMS") then

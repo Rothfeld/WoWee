@@ -115,6 +115,9 @@ private:
     /// EntitySpawner; the local character had no equivalent at all.
     void loadEquippedHelm(game::Inventory& inventory);
 
+    /// Attach the equipped shoulderpads' left and right M2 models.
+    void loadEquippedShoulders(game::Inventory& inventory);
+
     // Attach the item visual (the display's own, else its enchant's) of the item in
     // the given equipment slot to the weapon already attached at attachmentId.
     void applyEnchantVisuals(uint32_t charInstanceId, game::EquipSlot slot, uint32_t attachmentId);

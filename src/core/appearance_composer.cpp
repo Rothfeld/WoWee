@@ -324,6 +324,55 @@ void AppearanceComposer::loadEquippedHelm(game::Inventory& inventory) {
     }
 }
 
+void AppearanceComposer::loadEquippedShoulders(game::Inventory& inventory) {
+    auto* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    const uint32_t charInstanceId = renderer_ ? renderer_->getCharacterInstanceId() : 0;
+    if (!charRenderer || charInstanceId == 0 || !assetManager_ || !gameHandler_) return;
+
+    charRenderer->detachWeapon(charInstanceId, kAttachRightShoulder);
+    charRenderer->detachWeapon(charInstanceId, kAttachLeftShoulder);
+
+    const auto& shoulderSlot = inventory.getEquipSlot(game::EquipSlot::SHOULDERS);
+    if (shoulderSlot.empty()) return;
+    const auto* info = gameHandler_->getItemInfo(shoulderSlot.item.itemId);
+    const uint32_t displayId = info && info->valid ? info->displayInfoId
+                                                   : shoulderSlot.item.displayInfoId;
+    if (displayId == 0) return;
+
+    uint8_t raceId = 0;
+    uint8_t genderId = 0;
+    if (const auto* ch = gameHandler_->getActiveCharacter()) {
+        raceId = static_cast<uint8_t>(ch->race);
+        genderId = (ch->gender == game::Gender::FEMALE ||
+                    (ch->gender == game::Gender::NONBINARY && ch->useFemaleModel)) ? 1 : 0;
+    }
+
+    const core::ShoulderVisual shoulders =
+        core::resolveShoulderVisual(*assetManager_, displayId, raceId, genderId);
+    if (!shoulders.valid()) return;
+
+    const auto attachSide = [&](const core::HelmVisual& side, uint32_t attachPoint, const char* label) {
+        if (!side.valid()) return;
+        pipeline::M2Model model;
+        std::string path;
+        if (!side.racialModelPath.empty()) {
+            path = side.racialModelPath;
+            if (!loadWeaponM2(path, model)) model = {};
+        }
+        if (!model.isValid()) {
+            path = side.baseModelPath;
+            if (!loadWeaponM2(path, model)) return;
+        }
+        const uint32_t modelId = entitySpawner_ ? entitySpawner_->allocateWeaponModelId() : 0;
+        if (charRenderer->attachWeapon(charInstanceId, attachPoint, model, modelId, side.texturePath)) {
+            LOG_INFO("Equipped ", label, " shoulder: ", path, " tex: ", side.texturePath);
+        }
+    };
+
+    attachSide(shoulders.left, kAttachLeftShoulder, "left");
+    attachSide(shoulders.right, kAttachRightShoulder, "right");
+}
+
 rendering::SheathSpot AppearanceComposer::sheathSpot(game::EquipSlot slot) const {
     if (!gameHandler_) return rendering::SheathSpot::NONE;
     const auto& equipped = gameHandler_->getInventory().getEquipSlot(slot);
@@ -388,6 +437,7 @@ void AppearanceComposer::loadEquippedWeapons() {
     };
 
     loadEquippedHelm(inventory);
+    loadEquippedShoulders(inventory);
 
     // Load ItemDisplayInfo.dbc
     auto displayInfoDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");

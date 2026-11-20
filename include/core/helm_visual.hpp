@@ -29,6 +29,11 @@ namespace core {
 /// after it stopped attaching anything.
 constexpr uint32_t kAttachHelm = 11;
 
+/// The M2 attachment points for shoulderpads. Attachment 5 is the right
+/// shoulder (-Y in M2 space); 6 is the left shoulder (+Y in M2 space).
+constexpr uint32_t kAttachRightShoulder = 5;
+constexpr uint32_t kAttachLeftShoulder = 6;
+
 /// The suffix a per-race, per-gender model carries - "_HuM" and the like.
 ///
 /// Helm_Plate_B_01_HuM.m2 is the human male cut of a helm, and the shoulders
@@ -76,6 +81,21 @@ HelmVisual resolveHelmVisual(pipeline::AssetManager& assets,
                              uint32_t itemDisplayInfoId,
                              uint8_t raceId,
                              uint8_t genderId);
+
+struct ShoulderVisual {
+    HelmVisual left;   ///< ItemDisplayInfo LeftModel -> kAttachLeftShoulder (6).
+    HelmVisual right;  ///< ItemDisplayInfo RightModel -> kAttachRightShoulder (5).
+
+    [[nodiscard]] bool valid() const { return left.valid() || right.valid(); }
+};
+
+/// Resolve the left and right shoulder models and textures for an
+/// ItemDisplayInfo id. Shared by remote players (EntitySpawner), the local
+/// player (AppearanceComposer), and model previews (CharacterPreview).
+ShoulderVisual resolveShoulderVisual(pipeline::AssetManager& assets,
+                                     uint32_t itemDisplayInfoId,
+                                     uint8_t raceId,
+                                     uint8_t genderId);
 
 /// HelmetGeosetVisData.dbc hide-mask columns, in file order, and the
 /// character geoset group each one hides.

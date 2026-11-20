@@ -18,6 +18,7 @@
 #include "pipeline/dbc_layout.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/asset_manager.hpp"
+#include "ui/framexml_takeover.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -4950,9 +4951,70 @@ void registerQuestLuaAPI(lua_State* L) {
             return 1;
         }},
                 
-                // SetCursor(art) - the pointer's own image, which this client
-                // does not change.
-                {"SetCursor", [](lua_State* L) -> int { (void)L; return 0; }},
+                // SetCursor(art) - contextual pointer texture (e.g.
+                // ShowInspectCursor -> SetCursor("INSPECT_CURSOR") ->
+                // Interface\Cursor\Inspect.blp). nil/empty resets to default.
+                {"SetCursor", [](lua_State* L) -> int {
+            if (lua_isnoneornil(L, 1)) {
+                ui::frameXmlSetCursorTexture({});
+                lua_pushnil(L);
+                return 1;
+            }
+            const char* raw = lua_tostring(L, 1);
+            if (!raw || raw[0] == '\0') {
+                ui::frameXmlSetCursorTexture({});
+                lua_pushnil(L);
+                return 1;
+            }
+            std::string key(raw);
+            std::string upper = key;
+            for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            std::string path;
+            if (upper == "INSPECT_CURSOR")          path = "Interface\\Cursor\\Inspect.blp";
+            else if (upper == "INSPECT_ERROR_CURSOR") path = "Interface\\Cursor\\UnableInspect.blp";
+            else if (upper == "CAST_CURSOR")        path = "Interface\\Cursor\\Cast.blp";
+            else if (upper == "CAST_ERROR_CURSOR")  path = "Interface\\Cursor\\UnableCast.blp";
+            else if (upper == "BUY_CURSOR")         path = "Interface\\Cursor\\Buy.blp";
+            else if (upper == "BUY_ERROR_CURSOR")   path = "Interface\\Cursor\\UnableBuy.blp";
+            else if (upper == "REPAIR_CURSOR")      path = "Interface\\Cursor\\Repair.blp";
+            else if (upper == "REPAIRNPC_CURSOR")   path = "Interface\\Cursor\\RepairNPC.blp";
+            else if (upper == "POINT_CURSOR")       path = "Interface\\Cursor\\Point.blp";
+            else if (upper == "POINT_ERROR_CURSOR") path = "Interface\\Cursor\\UnablePoint.blp";
+            else if (upper == "INTERACT_CURSOR")    path = "Interface\\Cursor\\Interact.blp";
+            else if (upper == "INTERACT_ERROR_CURSOR") path = "Interface\\Cursor\\UnableInteract.blp";
+            else if (upper == "LOOT_ALL_CURSOR")    path = "Interface\\Cursor\\LootAll.blp";
+            else if (upper == "PICKUP_CURSOR")      path = "Interface\\Cursor\\Pickup.blp";
+            else if (upper == "ITEM_CURSOR")        path = "Interface\\Cursor\\Item.blp";
+            else if (upper == "ATTACK_CURSOR")      path = "Interface\\Cursor\\Attack.blp";
+            else if (upper == "ATTACK_ERROR_CURSOR") path = "Interface\\Cursor\\UnableAttack.blp";
+            else if (upper == "QUEST_CURSOR")       path = "Interface\\Cursor\\Quest.blp";
+            else if (upper == "MAIL_CURSOR")        path = "Interface\\Cursor\\Mail.blp";
+            else if (upper == "TRAINER_CURSOR")     path = "Interface\\Cursor\\Trainer.blp";
+            else if (upper == "TAXI_CURSOR")        path = "Interface\\Cursor\\Taxi.blp";
+            else if (upper == "SPEAK_CURSOR")       path = "Interface\\Cursor\\Speak.blp";
+            else if (upper == "INNKEEPER_CURSOR")   path = "Interface\\Cursor\\Innkeeper.blp";
+            else if (upper == "MINE_CURSOR")        path = "Interface\\Cursor\\Mine.blp";
+            else if (upper == "GATHER_HERBS_CURSOR") path = "Interface\\Cursor\\GatherHerbs.blp";
+            else if (upper == "SKIN_CURSOR")        path = "Interface\\Cursor\\Skin.blp";
+            else if (upper == "PICKLOCK_CURSOR")    path = "Interface\\Cursor\\PickLock.blp";
+            else if (upper == "DIRECTIONS_CURSOR")  path = "Interface\\Cursor\\Directions.blp";
+            else if (upper == "PVP_CURSOR")         path = "Interface\\Cursor\\PvP.blp";
+            else if (key.find('\\') != std::string::npos || key.find('/') != std::string::npos) {
+                path = key;
+                if (path.size() < 4 ||
+                    (path.substr(path.size() - 4) != ".blp" &&
+                     path.substr(path.size() - 4) != ".BLP")) {
+                    path += ".blp";
+                }
+            }
+            if (path.empty()) {
+                lua_pushnil(L);
+                return 1;
+            }
+            ui::frameXmlSetCursorTexture(std::move(path));
+            lua_pushnumber(L, 1);
+            return 1;
+        }},
                 // How long until the daily quests reset, which the quest log
                 // prints in a tooltip through SecondsToTime. A nil there is
                 // arithmetic on nothing rather than a blank line.
@@ -4991,7 +5053,11 @@ void registerQuestLuaAPI(lua_State* L) {
                 // is what makes a typo look like a working call, and because a
                 // window that calls nothing undefined is the measure of
                 // whether it can be handed over.
-                {"ShowMerchantSellCursor", [](lua_State* L) -> int { (void)L; return 0; }},
+                {"ShowMerchantSellCursor", [](lua_State* L) -> int {
+            const int idx = static_cast<int>(luaL_optnumber(L, 1, 0));
+            ui::frameXmlSetCursorTexture(idx > 0 ? "Interface\\Cursor\\Buy.blp" : "");
+            return 0;
+        }},
                 // The merchant's repair-an-item button toggles between these
                 // two and reads the state back through InRepairMode. All three
                 // were stubs, so the button never latched and the per-item

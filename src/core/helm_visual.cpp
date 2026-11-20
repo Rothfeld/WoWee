@@ -15,11 +15,37 @@ namespace core {
 namespace {
 
 constexpr const char* kHeadDir = "Item\\ObjectComponents\\Head\\";
+constexpr const char* kShoulderDir = "Item\\ObjectComponents\\Shoulder\\";
 
 std::string stripExtension(std::string name) {
     const size_t dot = name.rfind('.');
     if (dot != std::string::npos) name.resize(dot);
     return name;
+}
+
+HelmVisual resolveComponentVisual(pipeline::AssetManager& assets,
+                                  const pipeline::DBCFile& dbc,
+                                  uint32_t row,
+                                  uint32_t modelField,
+                                  uint32_t textureField,
+                                  const char* dir,
+                                  const std::string& suffix) {
+    HelmVisual out;
+    const std::string modelName = stripExtension(dbc.getString(row, modelField));
+    if (modelName.empty()) return out;
+
+    if (!suffix.empty()) out.racialModelPath = dir + modelName + suffix + ".m2";
+    out.baseModelPath = dir + modelName + ".m2";
+
+    const std::string textureName = dbc.getString(row, textureField);
+    if (!textureName.empty()) {
+        if (!suffix.empty()) {
+            const std::string racial = dir + textureName + suffix + ".blp";
+            if (assets.fileExists(racial)) out.texturePath = racial;
+        }
+        if (out.texturePath.empty()) out.texturePath = dir + textureName + ".blp";
+    }
+    return out;
 }
 
 } // namespace
@@ -41,22 +67,35 @@ HelmVisual resolveHelmVisual(pipeline::AssetManager& assets,
     const uint32_t modelField = layout ? (*layout)["LeftModel"] : 1u;
     const uint32_t textureField = layout ? (*layout)["LeftModelTexture"] : 3u;
 
-    const std::string modelName =
-        stripExtension(dbc->getString(static_cast<uint32_t>(row), modelField));
-    if (modelName.empty()) return out;
+    const std::string suffix = raceGenderSuffix(raceId, genderId);
+    return resolveComponentVisual(assets, *dbc, static_cast<uint32_t>(row),
+                                  modelField, textureField, kHeadDir, suffix);
+}
+
+ShoulderVisual resolveShoulderVisual(pipeline::AssetManager& assets,
+                                     uint32_t itemDisplayInfoId,
+                                     uint8_t raceId,
+                                     uint8_t genderId) {
+    ShoulderVisual out;
+    if (itemDisplayInfoId == 0) return out;
+
+    auto dbc = assets.loadDBC("ItemDisplayInfo.dbc");
+    if (!dbc) return out;
+    const int32_t row = dbc->findRecordById(itemDisplayInfoId);
+    if (row < 0) return out;
+
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
+    const uint32_t leftModelField = layout ? (*layout)["LeftModel"] : 1u;
+    const uint32_t rightModelField = layout ? (*layout)["RightModel"] : 2u;
+    const uint32_t leftTexField = layout ? (*layout)["LeftModelTexture"] : 3u;
+    const uint32_t rightTexField = layout ? (*layout)["RightModelTexture"] : 4u;
 
     const std::string suffix = raceGenderSuffix(raceId, genderId);
-    if (!suffix.empty()) out.racialModelPath = kHeadDir + modelName + suffix + ".m2";
-    out.baseModelPath = kHeadDir + modelName + ".m2";
-
-    const std::string textureName = dbc->getString(static_cast<uint32_t>(row), textureField);
-    if (!textureName.empty()) {
-        if (!suffix.empty()) {
-            const std::string racial = kHeadDir + textureName + suffix + ".blp";
-            if (assets.fileExists(racial)) out.texturePath = racial;
-        }
-        if (out.texturePath.empty()) out.texturePath = kHeadDir + textureName + ".blp";
-    }
+    out.left = resolveComponentVisual(assets, *dbc, static_cast<uint32_t>(row),
+                                      leftModelField, leftTexField, kShoulderDir, suffix);
+    out.right = resolveComponentVisual(assets, *dbc, static_cast<uint32_t>(row),
+                                       rightModelField, rightTexField, kShoulderDir, suffix);
     return out;
 }
 

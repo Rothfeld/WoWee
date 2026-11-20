@@ -16,6 +16,7 @@
 #include <catch_amalgamated.hpp>
 
 #include "ui/framexml_takeover.hpp"
+#include "ui/dressup_slots.hpp"
 
 #include <cstdlib>
 #include <string>
@@ -97,4 +98,110 @@ TEST_CASE("Owning everything means suppressing nothing", "[takeover]") {
     }
     INFO("hidden despite being owned: " << suppressed);
     CHECK(suppressed.empty());
+}
+
+TEST_CASE("FrameXML contextual cursor texture round-trips and clears", "[takeover][cursor]") {
+    frameXmlSetCursorTexture({});
+    CHECK(frameXmlCursorTexture().empty());
+    frameXmlSetCursorTexture("Interface\\Cursor\\Inspect.blp");
+    CHECK(frameXmlCursorTexture() == "Interface\\Cursor\\Inspect.blp");
+    frameXmlSetCursorTexture({});
+    CHECK(frameXmlCursorTexture().empty());
+}
+
+TEST_CASE("DressUpModel TryOn weapon-hand state machine matches TBC 2.4.3", "[dressup]") {
+    namespace IT = wowee::game::InvType;
+    constexpr size_t MH = static_cast<size_t>(wowee::game::EquipSlot::MAIN_HAND);
+    constexpr size_t OH = static_cast<size_t>(wowee::game::EquipSlot::OFF_HAND);
+    constexpr size_t SH = static_cast<size_t>(wowee::game::EquipSlot::SHOULDERS);
+
+    SECTION("Dual-wield character: 1H fills MH then routes subsequent 1H to OH") {
+        std::array<uint32_t, 19> d{};
+        std::array<uint8_t, 19> t{};
+        // Naked + 1H(Scepter) -> MH
+        applyDressUpTryOn(d, t, 100, IT::ONE_HAND, true);
+        CHECK(d[MH] == 100);
+        CHECK(d[OH] == 0);
+        // + 1H(Thunderfury) -> OH (keeps MH)
+        applyDressUpTryOn(d, t, 200, IT::ONE_HAND, true);
+        CHECK(d[MH] == 100);
+        CHECK(d[OH] == 200);
+        // + 1H(Scepter2) -> replaces OH (keeps MH)
+        applyDressUpTryOn(d, t, 300, IT::ONE_HAND, true);
+        CHECK(d[MH] == 100);
+        CHECK(d[OH] == 300);
+    }
+
+    SECTION("Dual-wield character: dual Warglaives (21+22) + 1H replaces OH, keeps MH") {
+        std::array<uint32_t, 19> d{};
+        std::array<uint8_t, 19> t{};
+        applyDressUpTryOn(d, t, 32837, IT::MAIN_HAND, true);
+        applyDressUpTryOn(d, t, 32838, IT::OFF_HAND, true);
+        CHECK(d[MH] == 32837);
+        CHECK(d[OH] == 32838);
+        applyDressUpTryOn(d, t, 6323, IT::ONE_HAND, true);
+        CHECK(d[MH] == 32837);
+        CHECK(d[OH] == 6323);
+    }
+
+    SECTION("Dual-wield character: 1H + Shield + 1H replaces Shield in OH") {
+        std::array<uint32_t, 19> d{};
+        std::array<uint8_t, 19> t{};
+        applyDressUpTryOn(d, t, 19019, IT::ONE_HAND, true);
+        applyDressUpTryOn(d, t, 32375, IT::SHIELD, true);
+        CHECK(d[MH] == 19019);
+        CHECK(d[OH] == 32375);
+        applyDressUpTryOn(d, t, 6323, IT::ONE_HAND, true);
+        CHECK(d[MH] == 19019);
+        CHECK(d[OH] == 6323);
+    }
+
+    SECTION("Dual-wield character: 2H or Bow cleared by 1H into MH") {
+        std::array<uint32_t, 19> d{};
+        std::array<uint8_t, 19> t{};
+        applyDressUpTryOn(d, t, 19364, IT::TWO_HAND, true);
+        CHECK(d[MH] == 19364);
+        CHECK(d[OH] == 0);
+        applyDressUpTryOn(d, t, 6323, IT::ONE_HAND, true);
+        CHECK(d[MH] == 6323);
+        CHECK(d[OH] == 0);
+
+        applyDressUpTryOn(d, t, 34334, IT::RANGED_BOW, true);
+        CHECK(d[MH] == 0);
+        CHECK(d[OH] == 34334);
+        applyDressUpTryOn(d, t, 6323, IT::ONE_HAND, true);
+        CHECK(d[MH] == 6323);
+        CHECK(d[OH] == 0);
+    }
+
+    SECTION("Non-dual-wield character: 1H always overwrites MH, keeps shield, clears OH weapon") {
+        std::array<uint32_t, 19> d{};
+        std::array<uint8_t, 19> t{};
+        applyDressUpTryOn(d, t, 100, IT::ONE_HAND, false);
+        applyDressUpTryOn(d, t, 200, IT::ONE_HAND, false);
+        CHECK(d[MH] == 200);
+        CHECK(d[OH] == 0);
+
+        applyDressUpTryOn(d, t, 32375, IT::SHIELD, false);
+        applyDressUpTryOn(d, t, 300, IT::ONE_HAND, false);
+        CHECK(d[MH] == 300);
+        CHECK(d[OH] == 32375);
+
+        applyDressUpTryOn(d, t, 32837, IT::MAIN_HAND, false);
+        applyDressUpTryOn(d, t, 32838, IT::OFF_HAND, false);
+        CHECK(d[MH] == 0);
+        CHECK(d[OH] == 32838);
+
+        applyDressUpTryOn(d, t, 6323, IT::ONE_HAND, false);
+        CHECK(d[MH] == 6323);
+        CHECK(d[OH] == 0);
+    }
+
+    SECTION("Shoulders TryOn populates SHOULDERS slot") {
+        std::array<uint32_t, 19> d{};
+        std::array<uint8_t, 19> t{};
+        applyDressUpTryOn(d, t, 42414, IT::SHOULDERS, true);
+        CHECK(d[SH] == 42414);
+        CHECK(t[SH] == IT::SHOULDERS);
+    }
 }

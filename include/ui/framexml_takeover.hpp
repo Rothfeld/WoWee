@@ -329,6 +329,13 @@ bool frameXmlAddOnLoaded(std::string_view addOnName);
 void frameXmlSetCursorPicture(std::function<std::string()> picture);
 std::string frameXmlCursorItem();
 
+/// Contextual cursor art requested by FrameXML through SetCursor(art) (e.g.
+/// "Interface\\Cursor\\Inspect.blp" for ShowInspectCursor), or empty for the
+/// default gauntlet. Cleared by ResetCursor(), SetCursor(nil), or Lua shutdown.
+/// Main thread only.
+void frameXmlSetCursorTexture(std::string texturePath);
+std::string frameXmlCursorTexture();
+
 /// Where the item on FrameXML's cursor came from, in the server's flat slot
 /// space, and how to put it down again.
 ///

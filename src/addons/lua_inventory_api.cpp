@@ -274,10 +274,6 @@ static int lua_SetPortraitToTexture(lua_State* L) {
     return 0;
 }
 
-/// Bag calls that do nothing here, answered rather than left to the fallback:
-/// that answers with an object, and an object called as a function raises.
-static int lua_ContainerNoOp(lua_State* L) { (void)L; return 0; }
-
 /// SpellCanTargetItem() - whether something is waiting to be applied to an item.
 ///
 /// This client does have the notion after all: a sharpening stone, an oil, an
@@ -3540,10 +3536,27 @@ static int lua_PutItemInBackpack(lua_State* L) {
     return 1;
 }
 
-/// ResetCursor() - put the pointer back to the ordinary arrow. This client
-/// does not change the cursor for interface state, so there is nothing to
-/// undo; it exists because the interface calls it on every mouse-leave.
-static int lua_ResetCursor(lua_State* L) { (void)L; return 0; }
+/// ResetCursor() - put the pointer back to the ordinary gauntlet.
+static int lua_ResetCursor(lua_State* L) {
+    (void)L;
+    wowee::ui::frameXmlSetCursorTexture({});
+    return 0;
+}
+
+static int lua_ShowContainerSellCursor(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const int bag = static_cast<int>(luaL_optnumber(L, 1, -1));
+    const int slot = static_cast<int>(luaL_optnumber(L, 2, -1));
+    const game::ItemSlot* itemSlot = gh ? containerItemSlot(gh->getInventory(), bag, slot) : nullptr;
+    wowee::ui::frameXmlSetCursorTexture((itemSlot && !itemSlot->empty()) ? "Interface\\Cursor\\Buy.blp" : "");
+    return 0;
+}
+
+static int lua_ShowBuybackSellCursor(lua_State* L) {
+    const int idx = static_cast<int>(luaL_optnumber(L, 1, 0));
+    wowee::ui::frameXmlSetCursorTexture(idx > 0 ? "Interface\\Cursor\\Buy.blp" : "");
+    return 0;
+}
 
 /// Coin as words, for the name of the money slot, one denomination a line:
 /// the original's loot window reads "1 Silver" over "45 Copper" for 145
@@ -4036,8 +4049,8 @@ void registerInventoryLuaAPI(lua_State* L) {
             }
             return 0;
         }},
-                {"ShowContainerSellCursor", lua_ContainerNoOp},
-                {"ShowBuybackSellCursor", lua_ContainerNoOp},
+                {"ShowContainerSellCursor", lua_ShowContainerSellCursor},
+                {"ShowBuybackSellCursor", lua_ShowBuybackSellCursor},
                 // A left-click on a vendor's item goes here, and it was a
                 // no-op - so at a merchant only right-click bought anything.
                 // The cursor state lives in lua_action_api.cpp with everything

@@ -1710,6 +1710,18 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             selectCursorTexture(corner);
             heldIconTexture_ = cursorTexture(services_.assetManager, services_.window,
                                              held.c_str());
+        } else if (std::string fxCursor = frameXmlCursorTexture();
+                   !fxCursor.empty() && ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
+            const auto texture = cursorTexture(services_.assetManager, services_.window,
+                                               fxCursor.c_str());
+            if (texture) {
+                selectCursorTexture(texture);
+            } else {
+                const auto fallback = cursorTexture(services_.assetManager, services_.window,
+                                                    "Interface\\Cursor\\Point.blp");
+                if (!fallback) throw std::runtime_error("Missing default WoW cursor texture");
+                selectCursorTexture(fallback);
+            }
         } else if (ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
             const auto texture = cursorTexture(services_.assetManager, services_.window,
                                                "Interface\\Cursor\\Point.blp");

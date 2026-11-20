@@ -58,6 +58,7 @@
 #include "rendering/world_map.hpp"
 #include "rendering/world_map/map_navigator.hpp"
 #include "ui/framexml_takeover.hpp"
+#include "ui/dressup_slots.hpp"
 #include "ui/keybinding_manager.hpp"
 #include "rendering/quest_marker_renderer.hpp"
 #include "rendering/footprint_renderer.hpp"
@@ -5302,68 +5303,33 @@ void Application::render() {
                             const auto at = [](game::EquipSlot slot) {
                                 return static_cast<size_t>(slot);
                             };
-                            const size_t right = at(game::EquipSlot::MAIN_HAND);
-                            const size_t left = at(game::EquipSlot::OFF_HAND);
                             // The ranged slot is not drawn: a rogue's thrown
                             // knife never shows in 2.4.3's dressing room.
                             displayIds[at(game::EquipSlot::RANGED)] = 0;
-                            const auto clear = [&](size_t slot) {
-                                displayIds[slot] = 0;
-                                invTypes[slot] = 0;
-                            };
-                            // Weapons by hand, as build 8606 does them (pair 19,
-                            // _experiments/20261119T1337Z.dressup): a one-hander
-                            // always takes the right hand, a two-hander or a
-                            // ranged weapon empties the other hand, a bow is
-                            // held in the left, and a shield or off-hand item
-                            // empties a right hand holding a two-hander.
-                            const auto bothHands = [](uint8_t type) {
-                                return type == IT::TWO_HAND || type == IT::RANGED_BOW ||
-                                       type == IT::THROWN || type == IT::RANGED_GUN;
-                            };
+                            // Dual Wield passive: 674 (Warrior/Rogue/Hunter) or
+                            // 30798 (Shaman Enhancement). Measured on native
+                            // 2.4.3 (pair 19): only dual-wield characters route
+                            // a 1H try-on to off-hand when main-hand is filled.
+                            const auto& knownSpells = gameHandler->getKnownSpells();
+                            const bool canDualWield =
+                                knownSpells.count(674u) != 0 ||
+                                knownSpells.count(30798u) != 0;
                             for (const auto& tried : dressUp->tryOnItems) {
-                                const uint8_t type = tried.inventoryType;
-                                size_t slot = 0;
-                                switch (type) {
-                                    case IT::ONE_HAND: case IT::MAIN_HAND:
-                                        slot = right;
-                                        if (bothHands(invTypes[left])) clear(left);
-                                        break;
-                                    case IT::TWO_HAND: case IT::THROWN: case IT::RANGED_GUN:
-                                        slot = right;
-                                        clear(left);
-                                        break;
-                                    case IT::RANGED_BOW:
-                                        slot = left;
-                                        clear(right);
-                                        break;
-                                    case IT::SHIELD: case IT::OFF_HAND: case IT::HOLDABLE:
-                                        slot = left;
-                                        if (bothHands(invTypes[right])) clear(right);
-                                        break;
-                                    case IT::HEAD: slot = at(game::EquipSlot::HEAD); break;
-                                    case IT::SHOULDERS: slot = at(game::EquipSlot::SHOULDERS); break;
-                                    case IT::SHIRT: slot = at(game::EquipSlot::SHIRT); break;
-                                    case IT::CHEST: case IT::ROBE: slot = at(game::EquipSlot::CHEST); break;
-                                    case IT::WAIST: slot = at(game::EquipSlot::WAIST); break;
-                                    case IT::LEGS: slot = at(game::EquipSlot::LEGS); break;
-                                    case IT::FEET: slot = at(game::EquipSlot::FEET); break;
-                                    case IT::WRISTS: slot = at(game::EquipSlot::WRISTS); break;
-                                    case IT::HANDS: slot = at(game::EquipSlot::HANDS); break;
-                                    case IT::BACK: slot = at(game::EquipSlot::BACK); break;
-                                    case IT::TABARD: slot = at(game::EquipSlot::TABARD); break;
-                                    // Rings, trinkets, necks, bags and ammunition
-                                    // show nothing.
-                                    default: continue;
-                                }
-                                displayIds[slot] = tried.displayInfoId;
-                                invTypes[slot] = type;
+                                ui::applyDressUpTryOn(displayIds, invTypes,
+                                                      tried.displayInfoId,
+                                                      tried.inventoryType,
+                                                      canDualWield);
                             }
                             std::vector<game::EquipmentItem> worn;
                             for (size_t slot = 0; slot < displayIds.size(); ++slot) {
                                 if (displayIds[slot] == 0) continue;
+                                uint8_t invType = invTypes[slot];
+                                if (slot == at(game::EquipSlot::OFF_HAND) &&
+                                    invType == IT::ONE_HAND) {
+                                    invType = IT::OFF_HAND;
+                                }
                                 worn.push_back({.displayModel = displayIds[slot],
-                                                .inventoryType = invTypes[slot],
+                                                .inventoryType = invType,
                                                 .enchantment = 0u});
                             }
                             const uint8_t gender =

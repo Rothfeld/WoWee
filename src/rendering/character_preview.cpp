@@ -1259,6 +1259,30 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
         break;
     }
 
+    charRenderer_->detachWeapon(instanceId_, core::kAttachRightShoulder);
+    charRenderer_->detachWeapon(instanceId_, core::kAttachLeftShoulder);
+    for (const auto& item : equipment) {
+        if (item.inventoryType != 3 || !item.displayModel) continue;
+        const auto shoulders = core::resolveShoulderVisual(*assetManager_, item.displayModel,
+            static_cast<uint8_t>(race_), static_cast<uint8_t>(gender_));
+        if (!shoulders.valid()) continue;
+        const auto attachSide = [&](const core::HelmVisual& side, uint32_t attachPoint) {
+            if (!side.valid()) return;
+            const std::string path = (!side.racialModelPath.empty() &&
+                                      assetManager_->fileExists(side.racialModelPath))
+                ? side.racialModelPath : side.baseModelPath;
+            pipeline::M2Model model;
+            if (!loadPreviewM2(path, model) ||
+                !charRenderer_->attachWeapon(instanceId_, attachPoint, model,
+                                             previewModelIdFor(path), side.texturePath)) {
+                LOG_ERROR("CharacterPreview shoulder attachment failed: ", path);
+            }
+        };
+        attachSide(shoulders.left, core::kAttachLeftShoulder);
+        attachSide(shoulders.right, core::kAttachRightShoulder);
+        break;
+    }
+
     // Attachment 1 = right hand, 2 = left hand.
     charRenderer_->detachWeapon(instanceId_, 1);
     charRenderer_->detachWeapon(instanceId_, 2);
