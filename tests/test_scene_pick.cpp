@@ -60,6 +60,25 @@ TEST_CASE("an empty pick resolves to nothing") {
     CHECK(pick.resolve() == 0u);
 }
 
+TEST_CASE("local player 3D picking is enabled only during spell or item unit targeting", "[scene-pick][hoverself]") {
+    using wowee::ui::isScenePickCandidate;
+    using wowee::ui::shouldPickLocalPlayer;
+    constexpr uint64_t kPlayer = 0x0000000000000042u;
+    constexpr uint64_t kOther  = 0xF130000001u;
+
+    // Normal mode: local player is excluded so clicks pass through to world.
+    CHECK_FALSE(shouldPickLocalPlayer(false));
+    CHECK_FALSE(isScenePickCandidate(kPlayer, kPlayer, shouldPickLocalPlayer(false)));
+    CHECK(isScenePickCandidate(kOther, kPlayer, shouldPickLocalPlayer(false)));
+    CHECK_FALSE(isScenePickCandidate(0u, kPlayer, shouldPickLocalPlayer(false)));
+
+    // Unit targeting mode (SpellIsTargeting / item unit target): local player is pickable.
+    CHECK(shouldPickLocalPlayer(true));
+    CHECK(isScenePickCandidate(kPlayer, kPlayer, shouldPickLocalPlayer(true)));
+    CHECK(isScenePickCandidate(kOther, kPlayer, shouldPickLocalPlayer(true)));
+    CHECK_FALSE(isScenePickCandidate(0u, kPlayer, shouldPickLocalPlayer(true)));
+}
+
 #include "ui/world_cursor.hpp"
 #include <string>
 

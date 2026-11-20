@@ -78,6 +78,18 @@ bool terrainOccludesSceneRay(const rendering::Ray& ray, float hitDistance,
     return false;
 }
 
+/// Local player's own 3D model is ignored during normal world hover/click
+/// (clicks pass through), and included during spell/item unit targeting so
+/// hover-selfcast can highlight, show Cast.blp, and cast on click.
+[[nodiscard]] constexpr bool shouldPickLocalPlayer(bool awaitingUnitTarget) {
+    return awaitingUnitTarget;
+}
+
+[[nodiscard]] constexpr bool isScenePickCandidate(uint64_t guid, uint64_t playerGuid,
+                                                  bool includeLocalPlayer) {
+    return guid != 0 && (guid != playerGuid || includeLocalPlayer);
+}
+
 /// The parts of picking the two callers disagree about.
 struct ScenePickParams {
     /// Fallback hit sphere for a unit with no render bounds. The right-click
@@ -85,6 +97,7 @@ struct ScenePickParams {
     float unitHitRadius = 1.8f;
     float unitHeightOffset = 1.0f;
     bool trace = false; // Click diagnostics; hover stays quiet.
+    bool includeLocalPlayer = false;
 };
 
 /// Everything the traversal found, before either caller applies its own rules.

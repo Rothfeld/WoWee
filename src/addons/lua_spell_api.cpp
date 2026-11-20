@@ -83,10 +83,12 @@ static int lua_SpellTargetUnit(lua_State* L) {
         spellId != 0 && !gh->canSpellTargetUnit(spellId, guid)) {
         gh->errorGlobal("SPELL_FAILED_BAD_TARGETS");
         gh->cancelUnitTargeting(true);
+        ui::frameXmlSetCursorTexture({});
         lua_pushboolean(L, 1);
         return 1;
     }
     gh->completeItemUseOnUnit(guid);
+    ui::frameXmlSetCursorTexture({});
     lua_pushboolean(L, 1);
     return 1;
 }

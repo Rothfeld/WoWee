@@ -1652,8 +1652,10 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // The same picker the click uses, so the cursor affordance cannot
             // disagree with what clicking would actually select - including the
             // tighter sphere critters get, which this copy did not have.
-            const ui::ScenePick hoverPick =
-                ui::pickScene(gameHandler, ray, ui::ScenePickParams{});
+            const bool awaitingUnitTarget = gameHandler.isAwaitingUnitTarget();
+            const ui::ScenePick hoverPick = ui::pickScene(
+                gameHandler, ray,
+                ui::ScenePickParams{.includeLocalPlayer = ui::shouldPickLocalPlayer(awaitingUnitTarget)});
             const auto hovered = gameHandler.getEntityManager().getEntity(hoverPick.resolve());
             if (hovered && hovered->isUnit()) worldHoverGuid_ = hovered->getGuid();
             // 2.4.3 lights the object nearest under the pointer
@@ -1692,13 +1694,21 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 if (const auto texture = cursorTexture(services_.assetManager, services_.window,
                         aimed ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp"))
                     selectCursorTexture(texture);
-            } else if (const uint32_t unitSpell = gameHandler.pendingUnitTargetSpell(); unitSpell != 0) {
+            } else if (awaitingUnitTarget) {
                 const uint64_t unitGuid = hoverPick.resolve();
-                const bool aimed = unitGuid != 0 &&
-                                   gameHandler.canSpellTargetUnit(unitSpell, unitGuid) &&
-                                   gameHandler.unitSpellRange(unitSpell, unitGuid)
-                                       .value_or(game::spellclass::SpellRangeCheck::InRange) ==
-                                       game::spellclass::SpellRangeCheck::InRange;
+                const uint32_t unitSpell = gameHandler.pendingUnitTargetSpell();
+                bool aimed = false;
+                if (unitGuid != 0) {
+                    if (unitSpell != 0) {
+                        aimed = gameHandler.canSpellTargetUnit(unitSpell, unitGuid) &&
+                                gameHandler.unitSpellRange(unitSpell, unitGuid)
+                                    .value_or(game::spellclass::SpellRangeCheck::InRange) ==
+                                    game::spellclass::SpellRangeCheck::InRange;
+                    } else {
+                        aimed = unitGuid == gameHandler.getPlayerGuid() ||
+                                (hovered && hovered->isUnit());
+                    }
+                }
                 if (const auto texture = cursorTexture(services_.assetManager, services_.window,
                         aimed ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp"))
                     selectCursorTexture(texture);
@@ -1747,11 +1757,22 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 selectCursorTexture(fallback);
             }
         } else if (ImGui::GetMouseCursor() != ImGuiMouseCursor_None) {
-            const bool spellTargeting = gameHandler.pendingUnitTargetSpell() != 0 ||
+            const bool spellTargeting = gameHandler.isAwaitingUnitTarget() ||
                                         gameHandler.pendingLockTargetSpell() != 0 ||
                                         gameHandler.isAwaitingGroundTarget();
+            bool frameUnitAimed = false;
+            if (frameXmlOwnsMouse() && gameHandler.isAwaitingUnitTarget() && services_.addonManager) {
+                if (auto* engine = services_.addonManager->getLuaEngine()) {
+                    frameUnitAimed = engine->evaluateBoolean(
+                        "(function() local f = GetMouseFocus() "
+                        "for i = 1, 4 do if not f then break end "
+                        "local u = (f.GetAttribute and f:GetAttribute('unit')) or f.unit "
+                        "if type(u) == 'string' and u ~= '' then return SpellCanTargetUnit(u) end "
+                        "f = f.GetParent and f:GetParent() end return false end)()");
+                }
+            }
             const char* art = spellTargeting
-                ? "Interface\\Cursor\\UnableCast.blp"
+                ? (frameUnitAimed ? "Interface\\Cursor\\Cast.blp" : "Interface\\Cursor\\UnableCast.blp")
                 : "Interface\\Cursor\\Point.blp";
             const auto texture = cursorTexture(services_.assetManager, services_.window, art);
             if (!texture) throw std::runtime_error("Missing default WoW cursor texture");
@@ -1863,8 +1884,12 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     }
                 }
 
+                const bool awaitingUnitTarget = gameHandler.isAwaitingUnitTarget();
                 const ui::ScenePick pick = ui::pickScene(
-                    gameHandler, ray, ui::ScenePickParams{.trace = true});
+                    gameHandler, ray, ui::ScenePickParams{
+                        .trace = true,
+                        .includeLocalPlayer = ui::shouldPickLocalPlayer(awaitingUnitTarget),
+                    });
                 uint64_t closestGuid = pick.resolve();
 
                 // Dropping what the cursor is carrying onto another player
@@ -1919,13 +1944,22 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 }
 
                 // A spell or item waiting for a unit takes this click instead of
-                // selecting anyone or using scenery; over an invalid unit or
-                // game object a waiting spell stays armed.
-                if (closestGuid != 0 && gameHandler.isAwaitingUnitTarget()) {
-                    const uint32_t unitSpell = gameHandler.pendingUnitTargetSpell();
-                    if (unitSpell == 0 || gameHandler.canSpellTargetUnit(unitSpell, closestGuid))
-                        gameHandler.completeItemUseOnUnit(closestGuid);
-                } else if (closestGuid != 0) {
+                // selecting anyone or using scenery; over empty space or an
+                // invalid target a waiting spell stays armed and preserves any
+                // current selection.
+                if (awaitingUnitTarget) {
+                    if (closestGuid != 0) {
+                        const uint32_t unitSpell = gameHandler.pendingUnitTargetSpell();
+                        if (unitSpell == 0 || gameHandler.canSpellTargetUnit(unitSpell, closestGuid)) {
+                            gameHandler.completeItemUseOnUnit(closestGuid);
+                            frameXmlSetCursorTexture({});
+                        } else {
+                            gameHandler.errorGlobal("SPELL_FAILED_BAD_TARGETS");
+                        }
+                    }
+                    return;
+                }
+                if (closestGuid != 0) {
 #ifdef __ANDROID__
                     if (gameHandler.getTargetGuid() == closestGuid) {
                         auto tapped = gameHandler.getEntityManager().getEntity(closestGuid);
@@ -1998,6 +2032,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         }
         if (gameHandler.isAwaitingUnitTarget()) {
             gameHandler.cancelUnitTargeting(true);
+            frameXmlSetCursorTexture({});
             return;
         }
         // A right-click on a plate is a right-click on its unit: target it,

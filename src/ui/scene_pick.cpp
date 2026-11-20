@@ -49,7 +49,7 @@ ScenePick pickScene(game::GameHandler& gameHandler,
         if (type != game::ObjectType::UNIT &&
             type != game::ObjectType::PLAYER &&
             type != game::ObjectType::GAMEOBJECT) continue;
-        if (guid == myGuid) continue;  // never target yourself
+        if (!isScenePickCandidate(guid, myGuid, params.includeLocalPlayer)) continue;
 
         // Nor the scenery. A trigger is an ordinary unit on the wire - it has
         // health, a name and a model - and UNIT_FLAG_NOT_SELECTABLE is the

@@ -4524,4 +4524,35 @@ TEST_CASE_METHOD(Integration, "Spell unit targeting, autoSelfCast default, and S
         assert(SecureCmdOptionParse("") == "")
         assert(SecureCmdOptionParse("[combat] Smite") == nil)
     )lua");
+
+    // 6. Hover-selfcast / SpellTargetUnit("player") with an existing hostile target:
+    // casts Thorns on self while preserving the hostile target, and refuses hostile-only Wrath on self.
+    constexpr uint32_t kThorns = 467;  // EffectImplicitTargetA = 21 (Friend)
+    constexpr uint32_t kWrath  = 5176; // EffectImplicitTargetA = 6  (Enemy)
+    gh.spellNameCacheRef()[kThorns] = {.name = "Thorns", .rank = "Rank 1", .maxRange = 30.0f, .implicitTargetA = 21};
+    gh.spellNameCacheRef()[kWrath]  = {.name = "Wrath",  .rank = "Rank 1", .maxRange = 30.0f, .implicitTargetA = 6};
+    constexpr uint64_t kHostileMob = 0xF130000100ull;
+    session.receive(replay::UpdateObject().create(
+        kHostileMob, wowee::game::ObjectType::UNIT,
+        {{wowee::game::UF::UNIT_FIELD_HEALTH, 100},
+         {wowee::game::UF::UNIT_FIELD_MAXHEALTH, 100},
+         {wowee::game::UF::UNIT_FIELD_FACTIONTEMPLATE, 14}},
+        false));
+    gh.setTarget(kHostileMob);
+    REQUIRE(gh.getTargetGuid() == kHostileMob);
+
+    // Casting Thorns while targeting a hostile mob arms SpellIsTargeting().
+    const auto beforeThorns = casts().size();
+    gh.castSpell(kThorns, 0);
+    CHECK(casts().size() == beforeThorns);
+    CHECK(gh.isAwaitingUnitTarget());
+    CHECK(gh.pendingUnitTargetSpell() == kThorns);
+    CHECK(gh.canSpellTargetUnit(kThorns, gh.getPlayerGuid()));
+    CHECK_FALSE(gh.canSpellTargetUnit(kWrath, gh.getPlayerGuid()));
+
+    // Completing on local player (via 3D hover-click or PlayerFrame) casts on self and preserves hostile target.
+    run("assert(SpellTargetUnit('player'))");
+    REQUIRE(casts().size() == beforeThorns + 1);
+    CHECK_FALSE(gh.isAwaitingUnitTarget());
+    CHECK(gh.getTargetGuid() == kHostileMob);
 }

@@ -2068,7 +2068,7 @@ void InventoryHandler::dispatchUseItem(uint8_t wowBag, uint8_t wowSlot, uint64_t
         // them - so naming the whole consumable class here would have caught
         // nothing but treats and the other items that do need somebody picked.
         const bool selfIsImplicit =
-            isBandageItem(itemInfo) ||
+            (isBandageItem(itemInfo) && owner_.isAutoSelfCast()) ||
             (itemInfo && itemInfo->valid &&
              itemInfo->itemClass == ITEM_CLASS_CONSUMABLE &&
              itemInfo->subClass == ITEM_SUBCLASS_SCROLL);

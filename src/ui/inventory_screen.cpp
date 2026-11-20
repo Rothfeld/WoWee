@@ -199,12 +199,12 @@ VkDescriptorSet InventoryScreen::castCursorTexture() {
 }
 
 void InventoryScreen::renderItemTargetCursor() {
-    // Spells waiting for a lock or a unit draw the game's own Cast /
+    // Spells and items waiting for a lock or a unit draw the game's own Cast /
     // UnableCast cursor in GameScreen and route Escape through FrameXML's
     // ToggleGameMenu -> SpellStopTargeting.
     if (gameHandler_ &&
         (gameHandler_->pendingLockTargetSpell() != 0 ||
-         gameHandler_->pendingUnitTargetSpell() != 0)) {
+         gameHandler_->isAwaitingUnitTarget())) {
         itemTargetArmedFrame_ = -1;
         return;
     }
