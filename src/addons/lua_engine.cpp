@@ -796,6 +796,119 @@ int lua_Model_GetModelScale(lua_State* L) {
     return 1;
 }
 
+// --- TabardModel methods (TabardFrame.lua / TabardFrame.xml) ---
+
+int lua_TabardModel_InitializeTabardColors(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    auto* gh = getGameHandler(L);
+    pipeline::GuildTabardEmblem design;
+    if (gh) {
+        const auto& qd = gh->getGuildQueryData();
+        if (qd.guildId != 0) {
+            design.emblemStyle = qd.emblemStyle;
+            design.emblemColor = qd.emblemColor;
+            design.borderStyle = qd.borderStyle;
+            design.borderColor = qd.borderColor;
+            design.backgroundColor = qd.backgroundColor;
+        }
+    }
+    if (!design.isValid()) {
+        design.emblemStyle = 0;
+        design.emblemColor = 0;
+        design.borderStyle = 0;
+        design.borderColor = 0;
+        design.backgroundColor = 0;
+    }
+    w->tabardDesign = design;
+    w->hasTabardDesign = true;
+    return 0;
+}
+
+int lua_TabardModel_CycleVariation(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    const int variationId = static_cast<int>(luaL_checknumber(L, 2));
+    const int delta = static_cast<int>(luaL_checknumber(L, 3));
+    if (!w->hasTabardDesign || !w->tabardDesign.isValid()) {
+        w->tabardDesign = {0, 0, 0, 0, 0};
+        w->hasTabardDesign = true;
+    }
+    if (pipeline::cycleGuildTabardVariation(w->tabardDesign, variationId, delta)) {
+        if (auto* gh = getGameHandler(L); gh && gh->addonEventCallbackRef()) {
+            gh->addonEventCallbackRef()("TABARD_CANSAVE_CHANGED", {});
+        }
+    }
+    return 0;
+}
+
+static int tabardModelSetPartTexture(lua_State* L, bool isBorder, bool upper) {
+    auto* w = widgetOf(L, 1);
+    if (!w) return 0;
+    if (!w->hasTabardDesign || !w->tabardDesign.isValid()) {
+        w->tabardDesign = {0, 0, 0, 0, 0};
+        w->hasTabardDesign = true;
+    }
+    const std::string path = isBorder
+        ? pipeline::guildTabardBorderPath(w->tabardDesign.borderStyle, w->tabardDesign.borderColor, upper, false)
+        : pipeline::guildTabardEmblemPath(w->tabardDesign.emblemStyle, w->tabardDesign.emblemColor, upper, false);
+    if (auto* tex = widgetOf(L, 2)) {
+        tex->texturePath = path;
+        tex->solidColor = false;
+    }
+    lua_pushstring(L, path.c_str());
+    return 1;
+}
+
+int lua_TabardModel_GetUpperEmblemTexture(lua_State* L) {
+    return tabardModelSetPartTexture(L, false, true);
+}
+int lua_TabardModel_GetLowerEmblemTexture(lua_State* L) {
+    return tabardModelSetPartTexture(L, false, false);
+}
+int lua_TabardModel_GetUpperBorderTexture(lua_State* L) {
+    return tabardModelSetPartTexture(L, true, true);
+}
+int lua_TabardModel_GetLowerBorderTexture(lua_State* L) {
+    return tabardModelSetPartTexture(L, true, false);
+}
+
+int lua_TabardModel_CanSaveTabardNow(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    auto* gh = getGameHandler(L);
+    if (!w || !gh || !gh->isTabardDesignerOpen() || gh->isTabardSavePending() ||
+        !w->hasTabardDesign || !w->tabardDesign.isValid()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    // Only the guild master (rank 0) may save a guild emblem.
+    const uint32_t rankIdx = gh->getPlayerGuildRankIndex();
+    const bool isGuildMaster = (rankIdx == 0) ||
+                               (rankIdx == 0xFFFFFFFFu && gh->isInGuild() &&
+                                gh->getEntityGuildRank(gh->getPlayerGuid()) == 0);
+    if (!isGuildMaster) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const auto& qd = gh->getGuildQueryData();
+    pipeline::GuildTabardEmblem saved;
+    if (qd.guildId != 0) {
+        saved = {qd.emblemStyle, qd.emblemColor, qd.borderStyle, qd.borderColor, qd.backgroundColor};
+    }
+    const bool canSave = !saved.isValid() || !(saved == w->tabardDesign);
+    lua_pushboolean(L, canSave ? 1 : 0);
+    return 1;
+}
+
+int lua_TabardModel_Save(lua_State* L) {
+    auto* w = widgetOf(L, 1);
+    auto* gh = getGameHandler(L);
+    if (!w || !gh || !w->hasTabardDesign || !w->tabardDesign.isValid()) return 0;
+    const auto& d = w->tabardDesign;
+    gh->saveGuildEmblem(d.emblemStyle, d.emblemColor, d.borderStyle, d.borderColor, d.backgroundColor);
+    return 0;
+}
+
 int lua_Frame_SetMovable(lua_State* L) {
     if (auto* w = widgetOf(L, 1)) w->movable = lua_toboolean(L, 2) != 0;
     return 0;
@@ -7868,6 +7981,14 @@ void LuaEngine::registerCoreAPI() {
         {"GetFacing",       lua_Model_GetFacing},
         {"SetModelScale",   lua_Model_SetModelScale},
         {"GetModelScale",   lua_Model_GetModelScale},
+        {"InitializeTabardColors", lua_TabardModel_InitializeTabardColors},
+        {"CycleVariation",         lua_TabardModel_CycleVariation},
+        {"GetUpperEmblemTexture",  lua_TabardModel_GetUpperEmblemTexture},
+        {"GetLowerEmblemTexture",  lua_TabardModel_GetLowerEmblemTexture},
+        {"GetUpperBorderTexture",  lua_TabardModel_GetUpperBorderTexture},
+        {"GetLowerBorderTexture",  lua_TabardModel_GetLowerBorderTexture},
+        {"CanSaveTabardNow",       lua_TabardModel_CanSaveTabardNow},
+        {"Save",                   lua_TabardModel_Save},
         {"IsMovable",       lua_Frame_IsMovable},
         {"RegisterForDrag", lua_Frame_RegisterForDrag},
         {"StartMoving",     lua_Frame_StartMoving},

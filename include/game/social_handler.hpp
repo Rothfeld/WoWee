@@ -270,7 +270,18 @@ public:
     [[nodiscard]] const std::string& getPendingGuildInviteGuildName() const { return pendingGuildInviteGuildName_; }
     [[nodiscard]] const GuildInfoData& getGuildInfoData() const { return guildInfoData_; }
     [[nodiscard]] const GuildQueryResponseData& getGuildQueryData() const { return guildQueryData_; }
+    [[nodiscard]] const GuildQueryResponseData* getGuildQueryData(uint32_t guildId) const;
+    [[nodiscard]] uint32_t getGuildEmblemGeneration() const { return guildEmblemGeneration_; }
     [[nodiscard]] bool hasGuildInfoData() const { return guildInfoData_.isValid(); }
+
+    // Tabard Designer (TabardFrame)
+    [[nodiscard]] bool isTabardDesignerOpen() const { return tabardDesignerOpen_; }
+    [[nodiscard]] uint64_t getTabardVendorGuid() const { return tabardVendorGuid_; }
+    [[nodiscard]] bool isTabardSavePending() const { return tabardSavePending_; }
+    void closeTabardCreation();
+    void saveGuildEmblem(uint32_t emblemStyle, uint32_t emblemColor,
+                         uint32_t borderStyle, uint32_t borderColor,
+                         uint32_t backgroundColor);
 
     // Petition
     [[nodiscard]] bool hasPetitionShowlist() const { return showPetitionDialog_; }
@@ -290,8 +301,9 @@ public:
     [[nodiscard]] const PetitionInfo& getPetitionInfo() const { return petitionInfo_; }
     const PetitionInfo* queryPetitionItem(uint64_t itemGuid);
     [[nodiscard]] bool hasPetitionSignaturesUI() const { return petitionInfo_.showUI; }
-    void clearPetitionSignaturesUI() { petitionInfo_.showUI = false; }
+    void clearPetitionSignaturesUI();
     void signPetition(uint64_t petitionGuid);
+    void declinePetition(uint64_t petitionGuid);
     void turnInPetition(uint64_t petitionGuid);
     /// Offer the charter to another player so they can sign it.
     void offerPetition(uint64_t petitionGuid, uint64_t targetGuid);
@@ -299,6 +311,7 @@ public:
     // Guild name lookup
     const std::string& lookupGuildName(uint32_t guildId);
     [[nodiscard]] uint32_t getEntityGuildId(uint64_t guid) const;
+    [[nodiscard]] uint32_t getEntityGuildRank(uint64_t guid) const;
 
     // Ready check
     void initiateReadyCheck();
@@ -666,6 +679,8 @@ private:
     GuildRosterData guildRoster_;
     GuildInfoData guildInfoData_;
     GuildQueryResponseData guildQueryData_;
+    std::unordered_map<uint32_t, GuildQueryResponseData> guildQueryCache_;
+    uint32_t guildEmblemGeneration_ = 0;
     bool hasGuildRoster_ = false;
     bool guildInfoRequested_ = false;
     std::unordered_map<uint32_t, std::string> guildNameCache_;
@@ -673,10 +688,14 @@ private:
     bool pendingGuildInvite_ = false;
     std::string pendingGuildInviterName_;
     std::string pendingGuildInviteGuildName_;
+    bool tabardDesignerOpen_ = false;
+    bool tabardSavePending_ = false;
+    uint64_t tabardVendorGuid_ = 0;
     bool showPetitionDialog_ = false;
     /// Which of the two registrar panels is open - the offer says, not the
     /// opcode, and closing has to name the same one that opened.
     bool petitionIsGuildCharter_ = false;
+    bool petitionSignedByMe_ = false;
     std::vector<PetitionShowlistData::Charter> petitionCharters_;
     std::unordered_map<uint32_t, PetitionInfo> petitionItems_;
     uint32_t petitionCost_ = 0;

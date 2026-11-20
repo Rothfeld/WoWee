@@ -80,11 +80,37 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         if (worn.empty()) worn = self->equipment;
     }
 
+    pipeline::GuildTabardEmblem activeTabard;
+    if (hasPendingGuildTabard_) {
+        activeTabard = pendingGuildTabard_;
+    } else {
+        const auto& qd = gameHandler.getGuildQueryData();
+        if (qd.guildId != 0) {
+            activeTabard.emblemStyle = qd.emblemStyle;
+            activeTabard.emblemColor = qd.emblemColor;
+            activeTabard.borderStyle = qd.borderStyle;
+            activeTabard.borderColor = qd.borderColor;
+            activeTabard.backgroundColor = qd.backgroundColor;
+        }
+    }
+    if (forceGuildTabard_) {
+        // TabardModel previews the custom Guild Tabard on the player even if
+        // they do not currently own or equip item 5976.
+        worn.erase(std::remove_if(worn.begin(), worn.end(), [](const game::EquipmentItem& e) {
+            return e.inventoryType == game::InvType::TABARD;
+        }), worn.end());
+        worn.push_back({.displayModel = pipeline::GuildTabardEmblem::kGuildTabardDisplayId,
+                        .inventoryType = game::InvType::TABARD,
+                        .enchantment = 0u});
+    }
+
     const uint64_t equipHash = game::hashEquipmentAppearance(worn);
     const bool changed = (loadedGuid_ != self->guid) ||
                          (loadedAppearance_ != self->appearanceBytes) ||
                          (loadedFacialFeatures_ != self->facialFeatures) ||
-                         (loadedEquipHash_ != equipHash);
+                         (loadedEquipHash_ != equipHash) ||
+                         (loadedGuildTabard_ != activeTabard) ||
+                         (loadedForceGuildTabard_ != forceGuildTabard_);
     if (changed) {
         const uint8_t skin      =  self->appearanceBytes        & 0xFF;
         const uint8_t face      = (self->appearanceBytes >> 8)  & 0xFF;
@@ -97,7 +123,7 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         if (preview_->loadCharacter(self->race, self->gender, skin, face,
                                     hairStyle, hairColor, self->facialFeatures,
                                     self->useFemaleModel)) {
-            preview_->applyEquipment(worn);
+            preview_->applyEquipment(worn, activeTabard.isValid() ? &activeTabard : nullptr);
             // After the model, because its bounds are what the framing is
             // measured against.
             if (framing_ == Framing::Face) preview_->setPortraitFraming();
@@ -111,6 +137,8 @@ void UnitPortrait::update(game::GameHandler& gameHandler,
         loadedAppearance_ = self->appearanceBytes;
         loadedFacialFeatures_ = self->facialFeatures;
         loadedEquipHash_ = equipHash;
+        loadedGuildTabard_ = activeTabard;
+        loadedForceGuildTabard_ = forceGuildTabard_;
     }
 
     if (framing_ == Framing::FullBody && !applyModelFrameView()) return;
@@ -158,6 +186,7 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
                          (loadedRace_ != race) || (loadedGender_ != gender) ||
                          (loadedEquipHash_ != equipHash) ||
                          (loadedBake_ != pendingBake_) ||
+                         (loadedGuildTabard_ != pendingGuildTabard_) ||
                          !loadedCreaturePath_.empty();
     if (changed) {
         const uint8_t skin      =  appearanceBytes        & 0xFF;
@@ -173,7 +202,13 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
             // After the model, because applyEquipment reads its geosets, and
             // only where there is something to apply - an empty list is
             // "nothing known yet", and dressing a model in it strips it.
-            if (!equipment.empty()) preview_->applyEquipment(equipment);
+            if (!equipment.empty()) {
+                preview_->applyEquipment(
+                    equipment,
+                    (hasPendingGuildTabard_ && pendingGuildTabard_.isValid())
+                        ? &pendingGuildTabard_
+                        : nullptr);
+            }
             // After the equipment, because both write the skin slot and the
             // bake is the more complete answer: it already has the armour on
             // it, which is the half applyEquipment cannot composite for an NPC.
@@ -190,6 +225,7 @@ bool UnitPortrait::updatePlayer(uint8_t race, uint8_t gender,
         loadedFacialFeatures_ = facialFeatures;
         loadedEquipHash_ = equipHash;
         loadedBake_ = pendingBake_;
+        loadedGuildTabard_ = pendingGuildTabard_;
     }
 
     if (framing_ == Framing::FullBody && !applyModelFrameView()) return false;

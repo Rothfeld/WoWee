@@ -580,23 +580,55 @@ static int lua_IsInGuild(lua_State* L) {
     return 1;
 }
 
-// GetGuildInfo("player") → guildName, guildRankName, guildRankIndex
+// GetGuildInfo(unit) → guildName, guildRankName, guildRankIndex
 static int lua_GetGuildInfoFunc(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh || !gh->isInGuild()) { return luaReturnNil(L); }
-    lua_pushstring(L, gh->getGuildName().c_str());
-    // Get rank name for the player
-    const auto& roster = gh->getGuildRoster();
-    std::string rankName;
-    uint32_t rankIndex = 0;
-    for (const auto& m : roster.members) {
-        if (m.guid == gh->getPlayerGuid()) {
-            rankIndex = m.rankIndex;
-            const auto& rankNames = gh->getGuildRankNames();
-            if (rankIndex < rankNames.size()) rankName = rankNames[rankIndex];
-            break;
+    if (!gh) return luaReturnNil(L);
+    const char* unitArg = luaL_optstring(L, 1, "player");
+    const uint64_t guid = resolveUnitGuid(gh, unitArg ? unitArg : "player");
+    if (guid == 0) return luaReturnNil(L);
+
+    if (guid == gh->getPlayerGuid()) {
+        if (!gh->isInGuild()) return luaReturnNil(L);
+        const uint32_t guildId = gh->getEntityGuildId(guid);
+        std::string gName = gh->getGuildName();
+        if (gName.empty() && guildId != 0) gName = gh->lookupGuildName(guildId);
+        if (gName.empty()) return luaReturnNil(L);
+        lua_pushstring(L, gName.c_str());
+        const auto& roster = gh->getGuildRoster();
+        std::string rankName;
+        uint32_t rankIndex = gh->getEntityGuildRank(guid);
+        bool foundInRoster = false;
+        for (const auto& m : roster.members) {
+            if (m.guid == guid) {
+                rankIndex = m.rankIndex;
+                foundInRoster = true;
+                break;
+            }
         }
+        const auto& rankNames = gh->getGuildRankNames();
+        if (rankIndex < rankNames.size()) {
+            rankName = rankNames[rankIndex];
+        } else if (!foundInRoster && guildId != 0) {
+            if (const auto* qd = gh->getGuildQueryData(guildId); qd && rankIndex < 10) {
+                rankName = qd->rankNames[rankIndex];
+            }
+        }
+        lua_pushstring(L, rankName.c_str());
+        lua_pushnumber(L, rankIndex);
+        return 3;
     }
+
+    const uint32_t guildId = gh->getEntityGuildId(guid);
+    if (guildId == 0) return luaReturnNil(L);
+    const std::string& gName = gh->lookupGuildName(guildId);
+    if (gName.empty()) return luaReturnNil(L);
+    const uint32_t rankIndex = gh->getEntityGuildRank(guid);
+    std::string rankName;
+    if (const auto* qd = gh->getGuildQueryData(guildId); qd && rankIndex < 10) {
+        rankName = qd->rankNames[rankIndex];
+    }
+    lua_pushstring(L, gName.c_str());
     lua_pushstring(L, rankName.c_str());
     lua_pushnumber(L, rankIndex);
     return 3;
@@ -1572,7 +1604,7 @@ void registerSocialLuaAPI(lua_State* L) {
                 // vendor side exists; answering it wrongly would be inventing
                 // a session to end.
                 {"CloseTabardCreation", [](lua_State* L) -> int {
-            (void)L;
+            if (auto* gh = getGameHandler(L)) gh->closeTabardCreation();
             return 0;
         }},
                 // The guild bank tab dialog picks from the same icons under a

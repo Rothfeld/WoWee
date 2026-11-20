@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline/char_sections.hpp"
+#include "pipeline/guild_tabard.hpp"
 
 #include "game/character.hpp"
 #include <glm/glm.hpp>
@@ -63,7 +64,8 @@ public:
                       const std::vector<std::pair<uint32_t, std::string>>& skins = {});
 
     // Apply equipment overlays/geosets using SMSG_CHAR_ENUM equipment data (ItemDisplayInfo.dbc).
-    bool applyEquipment(const std::vector<game::EquipmentItem>& equipment);
+    bool applyEquipment(const std::vector<game::EquipmentItem>& equipment,
+                        const pipeline::GuildTabardEmblem* guildTabard = nullptr);
 
     void update(float deltaTime);
     void render();

@@ -704,6 +704,56 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_PETITION_QUERY_RESPONSE] = [this](network::Packet& packet) { handlePetitionQueryResponse(packet); };
     table[Opcode::SMSG_PETITION_SHOW_SIGNATURES] = [this](network::Packet& packet) { handlePetitionShowSignatures(packet); };
     table[Opcode::SMSG_PETITION_SIGN_RESULTS] = [this](network::Packet& packet) { handlePetitionSignResults(packet); };
+    table[Opcode::MSG_PETITION_DECLINE] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(8)) {
+            LOG_ERROR("Truncated MSG_PETITION_DECLINE");
+            return;
+        }
+        const uint64_t declinerGuid = packet.readUInt64();
+        const std::string& who = owner_.lookupName(declinerGuid);
+        if (!who.empty()) {
+            owner_.systemGlobal("ERR_PETITION_DECLINED_S", {who});
+        } else {
+            owner_.queryPlayerName(declinerGuid);
+            owner_.systemGlobal("ERR_PETITION_DECLINED_S", {"Unknown"});
+        }
+    };
+    table[Opcode::MSG_TABARDVENDOR_ACTIVATE] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(8)) {
+            LOG_ERROR("Truncated MSG_TABARDVENDOR_ACTIVATE");
+            return;
+        }
+        tabardVendorGuid_ = packet.readUInt64();
+        tabardDesignerOpen_ = true;
+        tabardSavePending_ = false;
+        LOG_INFO("MSG_TABARDVENDOR_ACTIVATE: vendor=0x", std::hex, tabardVendorGuid_, std::dec);
+        if (owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("OPEN_TABARD_FRAME", {});
+        }
+    };
+    table[Opcode::MSG_SAVE_GUILD_EMBLEM] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(4)) {
+            LOG_ERROR("Truncated MSG_SAVE_GUILD_EMBLEM");
+            return;
+        }
+        const uint32_t result = packet.readUInt32();
+        tabardSavePending_ = false;
+        switch (result) {
+            case 0:
+                owner_.systemGlobal("ERR_GUILDEMBLEM_SUCCESS");
+                closeTabardCreation();
+                break;
+            case 1: owner_.errorGlobal("ERR_GUILDEMBLEM_INVALID_TABARD_COLORS"); break;
+            case 2: owner_.errorGlobal("ERR_GUILDEMBLEM_NOGUILD"); break;
+            case 3: owner_.errorGlobal("ERR_GUILDEMBLEM_NOTGUILDMASTER"); break;
+            case 4: owner_.errorGlobal("ERR_GUILDEMBLEM_NOTENOUGHMONEY"); break;
+            case 5: owner_.errorGlobal("ERR_GUILDEMBLEM_INVALIDVENDOR"); break;
+            default: LOG_WARNING("MSG_SAVE_GUILD_EMBLEM: unknown result ", result); break;
+        }
+        if (owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("TABARD_CANSAVE_CHANGED", {});
+        }
+    };
     table[Opcode::MSG_PETITION_RENAME] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(9)) {
             LOG_ERROR("Truncated MSG_PETITION_RENAME");
@@ -1140,9 +1190,34 @@ bool SocialHandler::isInGuild() const {
 uint32_t SocialHandler::getEntityGuildId(uint64_t guid) const {
     auto entity = owner_.getEntityManager().getEntity(guid);
     if (!entity || entity->getType() != ObjectType::PLAYER) return 0;
-    const uint16_t ufUnitEnd = fieldIndex(UF::UNIT_END);
-    if (ufUnitEnd == 0xFFFF) return 0;
-    return entity->getField(ufUnitEnd + 3);
+    uint16_t uf = fieldIndex(UF::PLAYER_GUILDID);
+    if (uf == 0xFFFF) {
+        const uint16_t ufUnitEnd = fieldIndex(UF::UNIT_END);
+        if (ufUnitEnd == 0xFFFF) return 0;
+        uf = static_cast<uint16_t>(ufUnitEnd + 3);
+    }
+    return entity->getField(uf);
+}
+
+uint32_t SocialHandler::getEntityGuildRank(uint64_t guid) const {
+    auto entity = owner_.getEntityManager().getEntity(guid);
+    if (!entity || entity->getType() != ObjectType::PLAYER) return 0;
+    uint16_t uf = fieldIndex(UF::PLAYER_GUILDRANK);
+    if (uf == 0xFFFF) {
+        const uint16_t ufUnitEnd = fieldIndex(UF::UNIT_END);
+        if (ufUnitEnd == 0xFFFF) return 0;
+        uf = static_cast<uint16_t>(ufUnitEnd + 4);
+    }
+    return entity->getField(uf);
+}
+
+const GuildQueryResponseData* SocialHandler::getGuildQueryData(uint32_t guildId) const {
+    if (guildId == 0) return nullptr;
+    if (auto it = guildQueryCache_.find(guildId); it != guildQueryCache_.end()) {
+        return &it->second;
+    }
+    if (guildQueryData_.guildId == guildId) return &guildQueryData_;
+    return nullptr;
 }
 
 const std::string& SocialHandler::lookupGuildName(uint32_t guildId) {
@@ -1809,7 +1884,8 @@ void SocialHandler::requestPetitionShowlist(uint64_t npcGuid) {
 void SocialHandler::buyPetition(uint64_t npcGuid, const std::string& guildName,
                                 uint32_t clientIndex) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    auto packet = PetitionBuyPacket::build(npcGuid, guildName, clientIndex);
+    auto packet = PetitionBuyPacket::build(npcGuid, guildName, clientIndex,
+                                           isActiveExpansion("wotlk"));
     owner_.getSocket()->send(packet);
 }
 
@@ -1819,6 +1895,51 @@ void SocialHandler::signPetition(uint64_t petitionGuid) {
     pkt.writeUInt64(petitionGuid);
     pkt.writeUInt8(0);
     owner_.getSocket()->send(pkt);
+}
+
+void SocialHandler::declinePetition(uint64_t petitionGuid) {
+    if (!owner_.getSocket() || owner_.getState() != WorldState::IN_WORLD || petitionGuid == 0) return;
+    auto pkt = PetitionDeclinePacket::build(petitionGuid);
+    owner_.getSocket()->send(pkt);
+}
+
+void SocialHandler::clearPetitionSignaturesUI() {
+    if (!petitionInfo_.showUI) return;
+    const uint64_t petGuid = petitionInfo_.petitionGuid;
+    const bool shouldDecline =
+        petGuid != 0 &&
+        petitionInfo_.ownerGuid != 0 &&
+        petitionInfo_.ownerGuid != owner_.getPlayerGuid() &&
+        !petitionSignedByMe_;
+    petitionInfo_.showUI = false;
+    petitionSignedByMe_ = false;
+    if (shouldDecline) {
+        declinePetition(petGuid);
+    }
+}
+
+void SocialHandler::closeTabardCreation() {
+    if (!tabardDesignerOpen_) return;
+    tabardDesignerOpen_ = false;
+    tabardVendorGuid_ = 0;
+    tabardSavePending_ = false;
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("CLOSE_TABARD_FRAME", {});
+    }
+}
+
+void SocialHandler::saveGuildEmblem(uint32_t emblemStyle, uint32_t emblemColor,
+                                    uint32_t borderStyle, uint32_t borderColor,
+                                    uint32_t backgroundColor) {
+    if (!owner_.getSocket() || owner_.getState() != WorldState::IN_WORLD) return;
+    if (tabardVendorGuid_ == 0 || tabardSavePending_) return;
+    auto pkt = SaveGuildEmblemPacket::build(tabardVendorGuid_, emblemStyle, emblemColor,
+                                            borderStyle, borderColor, backgroundColor);
+    owner_.getSocket()->send(pkt);
+    tabardSavePending_ = true;
+    if (owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("TABARD_SAVE_PENDING", {});
+    }
 }
 
 void SocialHandler::turnInPetition(uint64_t petitionGuid) {
@@ -2880,11 +3001,20 @@ uint32_t SocialHandler::getPlayerGuildRankRights() const {
 void SocialHandler::handleGuildQueryResponse(network::Packet& packet) {
     GuildQueryResponseData data;
     if (!owner_.getPacketParsers()->parseGuildQueryResponse(packet, data)) return;
+    bool emblemChanged = false;
     if (data.guildId != 0) {
         pendingGuildNameQueries_.erase(data.guildId);
         if (!data.guildName.empty()) {
             rememberGuildName(data.guildId, data.guildName);
         }
+        auto prevIt = guildQueryCache_.find(data.guildId);
+        emblemChanged = (prevIt == guildQueryCache_.end()) ||
+                        prevIt->second.emblemStyle != data.emblemStyle ||
+                        prevIt->second.emblemColor != data.emblemColor ||
+                        prevIt->second.borderStyle != data.borderStyle ||
+                        prevIt->second.borderColor != data.borderColor ||
+                        prevIt->second.backgroundColor != data.backgroundColor;
+        guildQueryCache_[data.guildId] = data;
     }
     // Ours when it names the guild this character is actually in - which is
     // the player's own field once they have joined one, not the character
@@ -2899,6 +3029,13 @@ void SocialHandler::handleGuildQueryResponse(network::Packet& packet) {
         if (wasUnknown && !guildName_.empty()) {
             if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("PLAYER_GUILD_UPDATE", {});
         }
+        if (emblemChanged && owner_.addonEventCallbackRef()) {
+            owner_.addonEventCallbackRef()("GUILDTABARD_UPDATE", {});
+        }
+    }
+    if (data.guildId != 0 && emblemChanged) {
+        ++guildEmblemGeneration_;
+        owner_.notifyGuildEmblemChanged(data.guildId);
     }
 }
 
@@ -3328,17 +3465,27 @@ void SocialHandler::handlePetitionShowSignatures(network::Packet& packet) {
     auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 21) return;
     petitionInfo_ = PetitionInfo{};
+    petitionSignedByMe_ = false;
     petitionInfo_.petitionGuid = packet.readUInt64();
     petitionInfo_.ownerGuid    = packet.readUInt64();
     const uint32_t petEntry    = packet.readUInt32();
     uint8_t sigCount           = packet.readUInt8();
     petitionInfo_.signatureCount = sigCount;
     petitionInfo_.signatures.reserve(sigCount);
+    if (petitionInfo_.ownerGuid != 0 && owner_.lookupName(petitionInfo_.ownerGuid).empty()) {
+        owner_.queryPlayerName(petitionInfo_.ownerGuid);
+    }
     for (uint8_t i = 0; i < sigCount; ++i) {
         if (rem() < 12) break;
         PetitionSignature sig;
         sig.playerGuid = packet.readUInt64();
         /*uint32_t unk =*/ packet.readUInt32();
+        if (sig.playerGuid != 0 && owner_.lookupName(sig.playerGuid).empty()) {
+            owner_.queryPlayerName(sig.playerGuid);
+        }
+        if (sig.playerGuid == owner_.getPlayerGuid()) {
+            petitionSignedByMe_ = true;
+        }
         petitionInfo_.signatures.push_back(sig);
     }
     petitionInfo_.showUI = true;
@@ -3368,19 +3515,49 @@ void SocialHandler::handlePetitionSignResults(network::Packet& packet) {
     uint64_t petGuid    = packet.readUInt64();
     uint64_t playerGuid = packet.readUInt64();
     uint32_t result     = packet.readUInt32();
+    const bool isMe = (playerGuid == owner_.getPlayerGuid());
     switch (result) {
         // PetitionSigns (CMaNGOS Guild.h) -> ERR_PETITION_* lines.
         case 0:
-            if (playerGuid == owner_.getPlayerGuid()) owner_.systemGlobal("ERR_PETITION_SIGNED");
-            else if (const std::string& who = owner_.lookupName(playerGuid); !who.empty())
+            if (isMe) {
+                owner_.systemGlobal("ERR_PETITION_SIGNED");
+            } else if (const std::string& who = owner_.lookupName(playerGuid); !who.empty()) {
                 owner_.systemGlobal("ERR_PETITION_SIGNED_S", {who});
+            } else {
+                owner_.queryPlayerName(playerGuid);
+            }
             if (petitionInfo_.petitionGuid == petGuid) {
-                petitionInfo_.signatureCount++;
-                PetitionSignature sig; sig.playerGuid = playerGuid;
-                petitionInfo_.signatures.push_back(sig);
+                bool alreadyPresent = false;
+                for (const auto& s : petitionInfo_.signatures) {
+                    if (s.playerGuid == playerGuid) { alreadyPresent = true; break; }
+                }
+                if (!alreadyPresent) {
+                    petitionInfo_.signatureCount++;
+                    PetitionSignature sig;
+                    sig.playerGuid = playerGuid;
+                    petitionInfo_.signatures.push_back(sig);
+                }
+                if (isMe) {
+                    petitionSignedByMe_ = true;
+                    petitionInfo_.showUI = false;
+                    if (owner_.addonEventCallbackRef()) {
+                        owner_.addonEventCallbackRef()("PETITION_CLOSED", {});
+                    }
+                } else if (petitionInfo_.showUI && owner_.addonEventCallbackRef()) {
+                    owner_.addonEventCallbackRef()("PETITION_SHOW", {});
+                }
             }
             break;
-        case 1: owner_.systemGlobal("ERR_PETITION_ALREADY_SIGNED"); break;
+        case 1:
+            owner_.systemGlobal("ERR_PETITION_ALREADY_SIGNED");
+            if (isMe && petitionInfo_.petitionGuid == petGuid) {
+                petitionSignedByMe_ = true;
+                petitionInfo_.showUI = false;
+                if (owner_.addonEventCallbackRef()) {
+                    owner_.addonEventCallbackRef()("PETITION_CLOSED", {});
+                }
+            }
+            break;
         case 2: owner_.systemGlobal("ERR_PETITION_IN_GUILD"); break;
         case 3: owner_.systemGlobal("ERR_PETITION_CREATOR"); break;
         case 4: owner_.systemGlobal("ERR_PETITION_NOT_SAME_SERVER"); break;
@@ -5143,6 +5320,17 @@ void SocialHandler::onPlayerNameResolved(uint64_t guid, const std::string& name,
     }
     if (updated && owner_.addonEventCallbackRef()) {
         owner_.addonEventCallbackRef()("UPDATE_BATTLEFIELD_SCORE", {});
+    }
+    if (petitionInfo_.showUI && !name.empty() && owner_.addonEventCallbackRef()) {
+        bool petitionMatch = (petitionInfo_.ownerGuid == guid);
+        if (!petitionMatch) {
+            for (const auto& sig : petitionInfo_.signatures) {
+                if (sig.playerGuid == guid) { petitionMatch = true; break; }
+            }
+        }
+        if (petitionMatch) {
+            owner_.addonEventCallbackRef()("PETITION_SHOW", {});
+        }
     }
 }
 

@@ -2713,6 +2713,26 @@ void Application::setState(AppState newState) {
                 gameHandler->setPlayerModelRebuildCallback([this]() {
                     refreshPlayerCharacterModel();
                 });
+                // Guild emblem saved or queried: refresh local and remote players
+                // wearing Guild Tabard (5976) in that guild.
+                gameHandler->setGuildEmblemChangedCallback([this](uint32_t guildId) {
+                    if (!gameHandler || guildId == 0) return;
+                    if (gameHandler->getEntityGuildId(gameHandler->getPlayerGuid()) == guildId) {
+                        refreshPlayerCharacterModel();
+                    }
+                    if (entitySpawner_) {
+                        for (const auto& [guid, entity] : gameHandler->getEntityManager().getEntities()) {
+                            if (!entity || entity->getType() != game::ObjectType::PLAYER) continue;
+                            if (guid == gameHandler->getPlayerGuid()) continue;
+                            if (gameHandler->getEntityGuildId(guid) != guildId) continue;
+                            std::array<uint32_t, 19> displayIds{};
+                            std::array<uint8_t, 19> invTypes{};
+                            if (gameHandler->getOtherPlayerEquipment(guid, displayIds, invTypes)) {
+                                entitySpawner_->queuePlayerEquipment(guid, displayIds, invTypes);
+                            }
+                        }
+                    }
+                });
             }
             // Load quest marker models
             loadQuestMarkerModels();
@@ -5473,6 +5493,18 @@ void Application::render() {
                             inspectModel_.setFraming(ui::UnitPortrait::Framing::FullBody);
                             inspectModel_.setModelFrameView(inspectModel->modelFacing,
                                                             modelCameraScale(*inspectModel));
+                            {
+                                const uint32_t gid = gameHandler->getEntityGuildId(result->guid);
+                                if (const auto* qd = gid ? gameHandler->getGuildQueryData(gid) : nullptr) {
+                                    pipeline::GuildTabardEmblem emb{qd->emblemStyle, qd->emblemColor,
+                                                                    qd->borderStyle, qd->borderColor,
+                                                                    qd->backgroundColor};
+                                    if (emb.isValid()) inspectModel_.setGuildTabard(emb, false);
+                                    else inspectModel_.clearGuildTabard();
+                                } else {
+                                    inspectModel_.clearGuildTabard();
+                                }
+                            }
                             shown = inspectModel_.updatePlayer(
                                 race, gender, appearance, facial, worn,
                                 assetManager.get(), renderer.get(), io.DeltaTime);
@@ -5512,6 +5544,11 @@ void Application::render() {
                         uint8_t race = 0, gender = 0, facial = 0;
                         uint32_t appearance = 0;
                         if (guid == gameHandler->getPlayerGuid()) {
+                            if (frame->hasTabardDesign) {
+                                slot->setGuildTabard(frame->tabardDesign, true);
+                            } else {
+                                slot->clearGuildTabard();
+                            }
                             slot->update(*gameHandler, assetManager.get(), renderer.get(), io.DeltaTime,
                                          appearanceComposer_
                                              ? appearanceComposer_->hiddenBrokenWeaponSlots() : 0u);
@@ -5527,6 +5564,16 @@ void Application::render() {
                                                     .inventoryType = invTypes[s],
                                                     .enchantment = 0u});
                                 }
+                            }
+                            const uint32_t gid = gameHandler->getEntityGuildId(guid);
+                            if (const auto* qd = gid ? gameHandler->getGuildQueryData(gid) : nullptr) {
+                                pipeline::GuildTabardEmblem emb{qd->emblemStyle, qd->emblemColor,
+                                                                qd->borderStyle, qd->borderColor,
+                                                                qd->backgroundColor};
+                                if (emb.isValid()) slot->setGuildTabard(emb, false);
+                                else slot->clearGuildTabard();
+                            } else {
+                                slot->clearGuildTabard();
                             }
                             shown = slot->updatePlayer(race, gender, appearance, facial, worn,
                                                        assetManager.get(), renderer.get(), io.DeltaTime);

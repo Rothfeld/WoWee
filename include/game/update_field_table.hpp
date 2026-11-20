@@ -85,6 +85,9 @@ enum class UF : uint16_t {
     PLAYER_DUEL_ARBITER,
     PLAYER_DUEL_TEAM,
     PLAYER_FLAGS,
+    PLAYER_GUILDID,
+    PLAYER_GUILDRANK,
+    PLAYER_GUILD_TIMESTAMP,
     PLAYER_TRACK_RESOURCES,
     /// Unspent talent points (TBC: UNIT_END + 0x436). The server owns the
     /// count (Player::SetFreeTalentPoints); UnitCharacterPoints reads it.

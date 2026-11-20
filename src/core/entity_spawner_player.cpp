@@ -8,6 +8,7 @@
 #include "core/geoset_rules.hpp"
 #include "core/character_paths.hpp"
 #include "pipeline/char_sections.hpp"
+#include "pipeline/guild_tabard.hpp"
 
 // M2 attachment 11 is the helm. 0 is the shield mount, which is where head gear
 // was going: it attached, reported success, and hung off the forearm.
@@ -753,16 +754,42 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
     std::vector<std::pair<int, std::string>> regionLayers;
     const bool isFemale = (st.genderId == 1);
 
+    pipeline::GuildTabardEmblem remoteGuildTabard;
+    if (gameHandler_) {
+        const uint32_t guildId = gameHandler_->getEntityGuildId(guid);
+        if (guildId != 0) {
+            // Ensure the guild query is dispatched if not cached yet.
+            (void)gameHandler_->lookupGuildName(guildId);
+            if (const auto* qd = gameHandler_->getGuildQueryData(guildId)) {
+                remoteGuildTabard.emblemStyle = qd->emblemStyle;
+                remoteGuildTabard.emblemColor = qd->emblemColor;
+                remoteGuildTabard.borderStyle = qd->borderStyle;
+                remoteGuildTabard.borderColor = qd->borderColor;
+                remoteGuildTabard.backgroundColor = qd->backgroundColor;
+            }
+        }
+    }
+
     for (int s : {0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}) {
         uint32_t did = displayInfoIds[s];
         if (did == 0) continue;
         int32_t recIdx = displayInfoDbc->findRecordById(did);
         if (recIdx < 0) continue;
 
+        bool appendedCustomTabard = false;
         for (int region = 0; region < 8; region++) {
             std::string texName = displayInfoDbc->getString(
                 static_cast<uint32_t>(recIdx), texRegionFields[region]);
             if (texName.empty()) continue;
+
+            if (s == 18 && remoteGuildTabard.isValid() &&
+                pipeline::isGuildTabardTextureName(texName)) {
+                if (!appendedCustomTabard) {
+                    pipeline::appendGuildTabardRegionLayers(regionLayers, remoteGuildTabard);
+                    appendedCustomTabard = true;
+                }
+                continue;
+            }
 
             std::string fullPath = pipeline::resolveItemRegionTexture(
                 *assetManager_, region, texName, isFemale);

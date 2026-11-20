@@ -23,6 +23,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include "pipeline/guild_tabard.hpp"
 #include <vector>
 
 namespace wowee {
@@ -670,6 +671,9 @@ struct Widget {
     /// The unit a model frame was told to show with Model:SetUnit, resolved
     /// to its GUID when set (as the original client binds it). Zero is none.
     uint64_t modelUnitGuid = 0;
+    /// Active TabardModel designer state (TabardFrame).
+    pipeline::GuildTabardEmblem tabardDesign;
+    bool hasTabardDesign = false;
 
     /// The colour a ColorSelect frame is showing, as r, g, b. Its own state
     /// rather than the frame's tint: a colour picker draws its wheel in every

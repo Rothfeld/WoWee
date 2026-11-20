@@ -813,7 +813,8 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     return true;
 }
 
-bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& equipment) {
+bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& equipment,
+                                      const pipeline::GuildTabardEmblem* guildTabard) {
     if (!modelLoaded_ || instanceId_ == 0 || !charRenderer_ || !assetManager_ || !assetManager_->isInitialized()) {
         return false;
     }
@@ -1014,6 +1015,7 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
                 case 7: return 1;  // leggings
                 case 8: return 2;  // boots
                 case 5: case 20: return 3; // chest / robe
+                case 19: return 5; // tabard on top of chest/belt
                 default: return 4;
             }
         };
@@ -1024,9 +1026,19 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
         int32_t recIdx = displayInfoDbc->findRecordById(it.displayModel);
         if (recIdx < 0) continue;
 
+        bool appendedCustomTabard = false;
         for (int region = 0; region < 8; region++) {
             std::string texName = displayInfoDbc->getString(static_cast<uint32_t>(recIdx), texRegionFields[region]);
             if (texName.empty()) continue;
+
+            if (it.inventoryType == 19 && guildTabard && guildTabard->isValid() &&
+                pipeline::isGuildTabardTextureName(texName)) {
+                if (!appendedCustomTabard) {
+                    pipeline::appendGuildTabardRegionLayers(regionLayers, *guildTabard);
+                    appendedCustomTabard = true;
+                }
+                continue;
+            }
 
             const std::string fullPath = pipeline::resolveItemRegionTexture(
                 *assetManager_, region, texName, gender_ == game::Gender::FEMALE);

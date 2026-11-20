@@ -1282,7 +1282,21 @@ public:
 class PetitionBuyPacket {
 public:
     static network::Packet build(uint64_t npcGuid, const std::string& guildName,
-                                 uint32_t clientIndex = 1);
+                                 uint32_t clientIndex = 1, bool isWotlk = false);
+};
+
+/** MSG_PETITION_DECLINE packet builder */
+class PetitionDeclinePacket {
+public:
+    static network::Packet build(uint64_t petitionGuid);
+};
+
+/** MSG_SAVE_GUILD_EMBLEM packet builder */
+class SaveGuildEmblemPacket {
+public:
+    static network::Packet build(uint64_t vendorGuid, uint32_t emblemStyle,
+                                 uint32_t emblemColor, uint32_t borderStyle,
+                                 uint32_t borderColor, uint32_t backgroundColor);
 };
 
 /** SMSG_PETITION_SHOWLIST data */

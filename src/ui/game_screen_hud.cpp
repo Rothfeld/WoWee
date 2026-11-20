@@ -5,6 +5,7 @@
 #include "ui/ui_texture_load.hpp"
 #include "ui/ui_upload_budget.hpp"
 #include "core/helm_visual.hpp"
+#include "pipeline/guild_tabard.hpp"
 #include "ui/ui_raid_icons.hpp"
 #include "ui/ui_colors.hpp"
 #include "ui/ui_helpers.hpp"
@@ -387,6 +388,18 @@ void GameScreen::updateCharacterTextures(game::Inventory& inventory) {
     // Collect equipment texture regions from all equipped items
     std::vector<std::pair<int, std::string>> regionLayers;
 
+    pipeline::GuildTabardEmblem localGuildTabard;
+    if (auto* gh = app.getGameHandler()) {
+        const auto& qd = gh->getGuildQueryData();
+        if (qd.guildId != 0) {
+            localGuildTabard.emblemStyle = qd.emblemStyle;
+            localGuildTabard.emblemColor = qd.emblemColor;
+            localGuildTabard.borderStyle = qd.borderStyle;
+            localGuildTabard.borderColor = qd.borderColor;
+            localGuildTabard.backgroundColor = qd.backgroundColor;
+        }
+    }
+
     for (int s : {0, 1, 2, 3, 6, 7, 4, 8, 9, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18}) {
         const auto& slot = inventory.getEquipSlot(static_cast<game::EquipSlot>(s));
         if (slot.empty() || slot.item.displayInfoId == 0) continue;
@@ -394,10 +407,21 @@ void GameScreen::updateCharacterTextures(game::Inventory& inventory) {
         int32_t recIdx = displayInfoDbc->findRecordById(slot.item.displayInfoId);
         if (recIdx < 0) continue;
 
+        bool appendedCustomTabard = false;
         for (int region = 0; region < 8; region++) {
             std::string texName = displayInfoDbc->getString(
                 static_cast<uint32_t>(recIdx), texRegionFields[region]);
             if (texName.empty()) continue;
+
+            if (s == static_cast<int>(game::EquipSlot::TABARD) &&
+                localGuildTabard.isValid() &&
+                pipeline::isGuildTabardTextureName(texName)) {
+                if (!appendedCustomTabard) {
+                    pipeline::appendGuildTabardRegionLayers(regionLayers, localGuildTabard);
+                    appendedCustomTabard = true;
+                }
+                continue;
+            }
 
             // Which of _M, _F, _U exists is not recorded anywhere, so the
             // order they are asked in is the rule - pipeline/item_textures.hpp.
@@ -1725,7 +1749,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             float subX = sx - subSz.x * 0.5f;
             float subY = nameY + textSize.y + 1.0f;
             drawList->AddText(nameFont, nameFontSize, ImVec2(subX + 1.0f, subY + 1.0f), IM_COL32(0, 0, 0, A(120)), subLabel.c_str());
-            drawList->AddText(nameFont, nameFontSize, ImVec2(subX,         subY),         (isPlayer ? IM_COL32(180, 180, 180, A(200)) : nameColor), subLabel.c_str());
+            drawList->AddText(nameFont, nameFontSize, ImVec2(subX,         subY),         nameColor, subLabel.c_str());
         }
 
         {

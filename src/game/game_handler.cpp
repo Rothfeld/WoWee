@@ -1195,6 +1195,8 @@ void GameHandler::closeDistantNpcWindows() {
                   [this]{ closeTaxi(); }, "Taxi window");
     closeIfTooFar(isTrainerWindowOpen(), getTrainerSpells().trainerGuid, [this]{ closeTrainer(); }, "Trainer");
     closeIfTooFar(isGuildBankOpen(), getGuildBankerGuid(), [this]{ closeGuildBank(); }, "Guild bank");
+    closeIfTooFar(hasPetitionShowlist(), getPetitionNpcGuid(), [this]{ closePetitionVendor(); }, "Petition registrar");
+    closeIfTooFar(isTabardDesignerOpen(), getTabardVendorGuid(), [this]{ closeTabardCreation(); }, "Tabard designer");
 }
 
 // ============================================================
@@ -4472,6 +4474,39 @@ const GuildQueryResponseData& GameHandler::getGuildQueryData() const {
     if (socialHandler_) return socialHandler_->getGuildQueryData();
     static const GuildQueryResponseData empty;
     return empty;
+}
+
+const GuildQueryResponseData* GameHandler::getGuildQueryData(uint32_t guildId) const {
+    return socialHandler_ ? socialHandler_->getGuildQueryData(guildId) : nullptr;
+}
+
+uint32_t GameHandler::getGuildEmblemGeneration() const {
+    return socialHandler_ ? socialHandler_->getGuildEmblemGeneration() : 0;
+}
+
+bool GameHandler::isTabardDesignerOpen() const {
+    return socialHandler_ ? socialHandler_->isTabardDesignerOpen() : false;
+}
+
+uint64_t GameHandler::getTabardVendorGuid() const {
+    return socialHandler_ ? socialHandler_->getTabardVendorGuid() : 0;
+}
+
+bool GameHandler::isTabardSavePending() const {
+    return socialHandler_ ? socialHandler_->isTabardSavePending() : false;
+}
+
+void GameHandler::closeTabardCreation() {
+    if (socialHandler_) socialHandler_->closeTabardCreation();
+}
+
+void GameHandler::saveGuildEmblem(uint32_t emblemStyle, uint32_t emblemColor,
+                                  uint32_t borderStyle, uint32_t borderColor,
+                                  uint32_t backgroundColor) {
+    if (socialHandler_) {
+        socialHandler_->saveGuildEmblem(emblemStyle, emblemColor, borderStyle,
+                                        borderColor, backgroundColor);
+    }
 }
 
 bool GameHandler::hasGuildInfoData() const {

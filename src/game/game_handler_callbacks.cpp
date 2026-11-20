@@ -2285,6 +2285,8 @@ uint64_t GameHandler::getInteractNpcGuid() const {
     if (isBankOpen()) return getBankerGuid();
     if (isAuctionHouseOpen()) return getAuctioneerGuid();
     if (isStableWindowOpen()) return getStableMasterGuid();
+    if (isTabardDesignerOpen()) return getTabardVendorGuid();
+    if (hasPetitionShowlist()) return getPetitionNpcGuid();
     if (questHandler_) {
         if (questHandler_->isQuestDetailsOpen()) return getQuestDetails().npcGuid;
         if (isQuestRequestItemsOpen()) return getQuestRequestItems().npcGuid;
@@ -2915,6 +2917,11 @@ const std::string& GameHandler::lookupGuildName(uint32_t guildId) {
 
 uint32_t GameHandler::getEntityGuildId(uint64_t guid) const {
     if (socialHandler_) return socialHandler_->getEntityGuildId(guid);
+    return 0;
+}
+
+uint32_t GameHandler::getEntityGuildRank(uint64_t guid) const {
+    if (socialHandler_) return socialHandler_->getEntityGuildRank(guid);
     return 0;
 }
 

@@ -3831,7 +3831,8 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 if (texPtr == whiteTexture_.get() && !instance.isSceneModel) {
                     uint16_t group = batchGroup;
                     bool isSkinGroup = (group == 0 || group == 3 || group == 4 || group == 5 ||
-                                        group == 8 || group == 9 || group == 13);
+                                        group == 8 || group == 9 || group == 10 || group == 12 ||
+                                        group == 13 || group == 18);
                     if (isSkinGroup) {
                         uint32_t texType = 0;
                         if (batch.textureIndex < gpuModel.data.textureLookup.size()) {
@@ -4720,8 +4721,8 @@ VkTexture* CharacterRenderer::resolveComboTexture(const CharacterInstance& inst,
             // skin composite does not bleed onto cloak/hair.
             uint16_t grp = b.submeshId / 100;
             bool isSkinGroup = (grp == 0 || grp == 3 || grp == 4 || grp == 5 ||
-                                grp == 8 || grp == 9 || grp == 13 || grp == 15 ||
-                                grp == 20);
+                                grp == 8 || grp == 9 || grp == 10 || grp == 12 ||
+                                grp == 13 || grp == 15 || grp == 18 || grp == 20);
             if (isSkinGroup) texPtr = itO->second;
         } else {
             texPtr = itO->second;

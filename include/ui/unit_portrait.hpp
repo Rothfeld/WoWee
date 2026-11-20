@@ -18,6 +18,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "pipeline/guild_tabard.hpp"
 
 namespace wowee {
 namespace game { class GameHandler; struct EquipmentItem; }
@@ -87,6 +88,19 @@ public:
     /// it is the whole appearance already baked - skin, face, hair and the
     /// armour they wear. Set before the update that should use it; it is part
     /// of what decides a rebuild, so changing it is enough to apply it.
+    /// Set before the update to composite a specific guild tabard design
+    /// (e.g. TabardModel preview or another player's guild emblem).
+    void setGuildTabard(const pipeline::GuildTabardEmblem& emblem, bool forceEquip = false) {
+        pendingGuildTabard_ = emblem;
+        hasPendingGuildTabard_ = true;
+        forceGuildTabard_ = forceEquip;
+    }
+    void clearGuildTabard() {
+        pendingGuildTabard_ = pipeline::GuildTabardEmblem{};
+        hasPendingGuildTabard_ = false;
+        forceGuildTabard_ = false;
+    }
+
     void setBakedSkin(const std::string& path) { pendingBake_ = path; }
 
     /// Set before the first update, since framing is applied when the model
@@ -151,6 +165,12 @@ private:
     /// The bake asked for, and the one already on the model.
     std::string pendingBake_;
     std::string loadedBake_;
+
+    pipeline::GuildTabardEmblem pendingGuildTabard_;
+    pipeline::GuildTabardEmblem loadedGuildTabard_;
+    bool hasPendingGuildTabard_ = false;
+    bool forceGuildTabard_ = false;
+    bool loadedForceGuildTabard_ = false;
 
     uint64_t loadedGuid_ = 0;
     /// Race and gender as well, because another player is identified by these

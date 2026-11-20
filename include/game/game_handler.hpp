@@ -923,7 +923,24 @@ public:
     const std::string& getPendingGuildInviteGuildName() const;
     const GuildInfoData& getGuildInfoData() const;
     const GuildQueryResponseData& getGuildQueryData() const;
+    const GuildQueryResponseData* getGuildQueryData(uint32_t guildId) const;
+    uint32_t getGuildEmblemGeneration() const;
+    void setGuildEmblemChangedCallback(std::function<void(uint32_t)> cb) {
+        guildEmblemChangedCallback_ = std::move(cb);
+    }
+    void notifyGuildEmblemChanged(uint32_t guildId) {
+        if (guildEmblemChangedCallback_) guildEmblemChangedCallback_(guildId);
+    }
     bool hasGuildInfoData() const;
+
+    // Tabard Designer
+    bool isTabardDesignerOpen() const;
+    uint64_t getTabardVendorGuid() const;
+    bool isTabardSavePending() const;
+    void closeTabardCreation();
+    void saveGuildEmblem(uint32_t emblemStyle, uint32_t emblemColor,
+                         uint32_t borderStyle, uint32_t borderColor,
+                         uint32_t backgroundColor);
     bool hasPetitionShowlist() const;
     void closePetitionVendor();
     void acceptArenaTeamInvite();
@@ -973,6 +990,8 @@ public:
     const std::string& lookupGuildName(uint32_t guildId);
     // Returns the guildId for a player entity (from PLAYER_GUILDID update field).
     uint32_t getEntityGuildId(uint64_t guid) const;
+    // Returns the guild rank index for a player entity (from PLAYER_GUILDRANK update field).
+    uint32_t getEntityGuildRank(uint64_t guid) const;
 
     void initiateReadyCheck();
     void respondToReadyCheck(bool ready);
@@ -5214,6 +5233,7 @@ private:
 
     // ---- Guild state ----
     std::unordered_map<uint32_t, std::string> guildNameCache_;  // guildId → guild name
+    std::function<void(uint32_t)> guildEmblemChangedCallback_;
     std::unordered_set<uint32_t> pendingGuildNameQueries_;      // in-flight guild queries
     PetitionInfo petitionInfo_;
 
