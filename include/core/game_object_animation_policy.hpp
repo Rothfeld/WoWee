@@ -23,15 +23,20 @@ constexpr bool gameObjectPoseIsStateDriven(uint32_t type) {
 }
 
 // Whether a stateful object without state sequences shows READY through its
-// bind pose. Traps and chests do not: the Molten Core rune rings (TRAP
-// 178187-178193, FlameCircle.m2, Stand and Hold only) and lootable world
-// objects without lid sequences (CHEST 176213 Blood of Heroes,
-// BloodOfHeroes.m2, two Stand variations only) are READY and the original
-// client keeps their Stand running. Opening chests (chest01..03, titanchest,
-// etc.) author explicit Close/Closed/Open/Opened sequences and never reach
-// this fallback.
+// bind pose. Only doors, trapdoors, and destructible buildings do (e.g.
+// Undercity's lift doors have a single sequence id 0 that is the opening
+// motion). Buttons, chests, traps, texts, and goobers without explicit
+// Close/Closed/Open/Opened/Destroy sequences keep Stand (and its authored
+// Stand variation chain) running in READY: e.g. Silithyst Geyser (GOOBER
+// 181598, TugofWar_RedSpiceGeyser.m2, two Stand variations), Blood of Heroes
+// (CHEST 176213, BloodOfHeroes.m2, two Stand variations), Molten Core rune
+// rings (TRAP 178187-178193, FlameCircle.m2), and Coilfang steam vents
+// (BUTTON 190368, Coilfang_steam.m2). Objects with lids/doors/books author
+// explicit 146..149 sequences and never reach this fallback.
 constexpr bool gameObjectBindPoseShowsReady(uint32_t type) {
-    return type != 3u && type != 6u && gameObjectPoseIsStateDriven(type);
+    return type == 0u      // DOOR
+           || type == 33u  // DESTRUCTIBLE_BUILDING
+           || type == 35u; // TRAPDOOR
 }
 
 // Whether ACTIVE shows the model's Destroy (150), held at its end, where a

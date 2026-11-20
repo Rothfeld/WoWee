@@ -95,14 +95,16 @@ TEST_CASE("Readable books retain authored poses when template metadata arrives",
     }
 }
 
-TEST_CASE("Traps and chests without state sequences keep Stand running in READY", "[game-object-pose]") {
+TEST_CASE("Only door-like stateful GOs without state sequences freeze at bind pose in READY", "[game-object-pose]") {
     using wowee::core::gameObjectBindPoseShowsReady;
-    // Molten Core Circle traps (6, FlameCircle.m2) and lootable chests without
-    // lid state sequences (3, Blood of Heroes 176213, BloodOfHeroes.m2) loop
-    // Stand in the original.
-    CHECK_FALSE(gameObjectBindPoseShowsReady(3u));
-    CHECK_FALSE(gameObjectBindPoseShowsReady(6u));
-    for (uint32_t type : {0u, 1u, 9u, 10u, 33u, 35u}) {
+    // Buttons (1, Coilfang steam), chests (3, Blood of Heroes), traps (6,
+    // Molten Core rune rings), texts (9), and goobers (10, Silithyst Geyser)
+    // without state sequences loop Stand in the original.
+    for (uint32_t type : {1u, 3u, 6u, 9u, 10u}) {
+        CAPTURE(type);
+        CHECK_FALSE(gameObjectBindPoseShowsReady(type));
+    }
+    for (uint32_t type : {0u, 33u, 35u}) {
         CAPTURE(type);
         CHECK(gameObjectBindPoseShowsReady(type));
     }

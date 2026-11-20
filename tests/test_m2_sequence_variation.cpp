@@ -204,3 +204,122 @@ TEST_CASE("Real TBC weighted Stand variation models follow authored weights", "[
         CHECK(selectSequenceVariation(fish.sequences, 0, 24576) == vars[1]);
     }
 }
+
+TEST_CASE("Real TBC Silithyst Geyser (GOOBER 181598) keeps Stand running and erupts in variation 1", "[m2-variation][tbc-data]") {
+    const auto root = tbcDataRoot();
+    if (root.empty() || !std::filesystem::exists(root)) {
+        SKIP("WOWEE_TBC_DATA_DIR not set");
+    }
+
+    // Resolve displayId 6862 (Silithyst Geyser, entry 181598, type 10 GOOBER)
+    // via GameObjectDisplayInfo.dbc.
+    const auto dbcPath = root / "dbfilesclient" / "gameobjectdisplayinfo.dbc";
+    REQUIRE(std::filesystem::exists(dbcPath));
+    DBCFile dbc;
+    REQUIRE(dbc.load(readBinaryFile(dbcPath)));
+
+    std::string modelRel;
+    for (uint32_t r = 0; r < dbc.getRecordCount(); ++r) {
+        if (dbc.getUInt32(r, 0) == 6862u) {
+            modelRel = dbc.getString(r, 1);
+            break;
+        }
+    }
+    REQUIRE_FALSE(modelRel.empty());
+
+    std::string normalized = modelRel;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+    if (normalized.ends_with(".mdx") || normalized.ends_with(".mdl")) {
+        normalized.replace(normalized.size() - 4, 4, ".m2");
+    }
+
+    const auto m2Path = root / normalized;
+    REQUIRE(std::filesystem::exists(m2Path));
+
+    const M2Model model = M2Loader::load(readBinaryFile(m2Path));
+    REQUIRE(model.sequences.size() == 2);
+    REQUIRE(model.particleEmitters.size() == 4);
+
+    // No state/destroy sequences — GOOBER keeps Stand running in READY.
+    for (uint32_t stateId : {146u, 147u, 148u, 149u, 150u}) {
+        const bool hasState = std::any_of(model.sequences.begin(), model.sequences.end(),
+                                          [stateId](const M2Sequence& s) { return s.id == stateId; });
+        CHECK_FALSE(hasState);
+    }
+    CHECK_FALSE(wowee::core::gameObjectBindPoseShowsReady(10u));
+
+    // Authored Stand variations: seq 0 (quiet 3000ms, weight 22937 ~70%) ->
+    // seq 1 (spouting 3334ms, weight 9830 ~30%).
+    CHECK(model.sequences[0].id == 0u);
+    CHECK(model.sequences[1].id == 0u);
+    CHECK(model.sequences[0].duration == 3000u);
+    CHECK(model.sequences[1].duration == 3334u);
+    CHECK(model.sequences[0].nextAnimation == 1);
+    CHECK(model.sequences[1].nextAnimation == -1);
+    CHECK(model.sequences[0].frequency == 22937);
+    CHECK(model.sequences[1].frequency == 9830);
+
+    const auto vars = collectSequenceVariations(model.sequences, 0);
+    REQUIRE(vars == std::vector<int>({0, 1}));
+    CHECK(selectSequenceVariation(model.sequences, 0, 0) == 0);
+    CHECK(selectSequenceVariation(model.sequences, 0, 22936) == 0);
+    CHECK(selectSequenceVariation(model.sequences, 0, 22937) == 1);
+    CHECK(selectSequenceVariation(model.sequences, 0, 32766) == 1);
+
+    // In seq 0 (quiet), only emitter 1 (global sequence 0 ambient wisp) emits;
+    // emitters 0, 2, 3 are silent (<= 0).
+    CHECK(m2_track::sampleFloat(model.particleEmitters[0].emissionRate, 0, 1000.0f, 0.0f,
+                                model.globalSequenceDurations, 0.0f) <= 0.0f);
+    CHECK(m2_track::sampleFloat(model.particleEmitters[1].emissionRate, 0, 1000.0f, 100.0f,
+                                model.globalSequenceDurations, 0.0f) > 0.0f);
+    CHECK(m2_track::sampleFloat(model.particleEmitters[2].emissionRate, 0, 1000.0f, 0.0f,
+                                model.globalSequenceDurations, 0.0f) <= 0.0f);
+    CHECK(m2_track::sampleFloat(model.particleEmitters[3].emissionRate, 0, 1000.0f, 0.0f,
+                                model.globalSequenceDurations, 0.0f) <= 0.0f);
+
+    // In seq 1 (spouting, timeOffset=3333ms):
+    //   t=567ms (3900ms): emitter 0 = 5/s, emitter 2 = 100/s
+    //   t=634ms (3967ms): emitter 3 = 80/s
+    CHECK(m2_track::sampleFloat(model.particleEmitters[0].emissionRate, 1, 567.0f, 0.0f,
+                                model.globalSequenceDurations, 0.0f) == Catch::Approx(5.0f).margin(0.1f));
+    CHECK(m2_track::sampleFloat(model.particleEmitters[2].emissionRate, 1, 567.0f, 0.0f,
+                                model.globalSequenceDurations, 0.0f) == Catch::Approx(100.0f).margin(1.0f));
+    CHECK(m2_track::sampleFloat(model.particleEmitters[3].emissionRate, 1, 634.0f, 0.0f,
+                                model.globalSequenceDurations, 0.0f) == Catch::Approx(80.0f).margin(1.0f));
+}
+
+TEST_CASE("Real TBC world geyser doodads (Un'Goro & SteamGeyser) erupt in Stand variations", "[m2-variation][tbc-data]") {
+    const auto root = tbcDataRoot();
+    if (root.empty() || !std::filesystem::exists(root)) {
+        SKIP("WOWEE_TBC_DATA_DIR not set");
+    }
+
+    const auto ungoroPath = root / "world" / "kalimdor" / "ungoro" / "passivedoodads" / "geyser" / "ungorogeyser01.m2";
+    REQUIRE(std::filesystem::exists(ungoroPath));
+    const M2Model ungoro = M2Loader::load(readBinaryFile(ungoroPath));
+    REQUIRE(ungoro.sequences.size() == 3);
+    REQUIRE(ungoro.particleEmitters.size() == 6);
+    CHECK(collectSequenceVariations(ungoro.sequences, 0) == std::vector<int>({0, 1, 2}));
+    CHECK(selectSequenceVariation(ungoro.sequences, 0, 22937) == 0);
+    CHECK(selectSequenceVariation(ungoro.sequences, 0, 22938) == 1);
+    CHECK(selectSequenceVariation(ungoro.sequences, 0, 22938 + 3276) == 2);
+    CHECK(m2_track::sampleFloat(ungoro.particleEmitters[2].emissionRate, 0, 1000.0f, 0.0f,
+                                ungoro.globalSequenceDurations, 0.0f) <= 0.0f);
+    CHECK(m2_track::sampleFloat(ungoro.particleEmitters[2].emissionRate, 1, 567.0f, 0.0f,
+                                ungoro.globalSequenceDurations, 0.0f) == Catch::Approx(100.0f).margin(1.0f));
+
+    const auto steamPath = root / "world" / "generic" / "orc" / "passive doodads" / "geyser" / "steamgeyser.m2";
+    REQUIRE(std::filesystem::exists(steamPath));
+    const M2Model steam = M2Loader::load(readBinaryFile(steamPath));
+    REQUIRE(steam.sequences.size() == 2);
+    REQUIRE(steam.particleEmitters.size() == 3);
+    CHECK(collectSequenceVariations(steam.sequences, 0) == std::vector<int>({0, 1}));
+    CHECK(selectSequenceVariation(steam.sequences, 0, 29490) == 0);
+    CHECK(selectSequenceVariation(steam.sequences, 0, 29491) == 1);
+    CHECK(m2_track::sampleFloat(steam.particleEmitters[2].emissionRate, 0, 500.0f, 0.0f,
+                                steam.globalSequenceDurations, 0.0f) <= 0.0f);
+    CHECK(m2_track::sampleFloat(steam.particleEmitters[2].emissionRate, 1, 1900.0f, 0.0f,
+                                steam.globalSequenceDurations, 0.0f) == Catch::Approx(200.0f).margin(1.0f));
+}

@@ -1912,7 +1912,14 @@ void EntitySpawner::applyGameObjectAnimationPolicy(uint64_t guid, uint32_t entry
         return;
     }
 
-    const bool freeze = gameObjectPoseIsStateDriven(info->type);
+    auto hasStateOrDestroySequences = [&](uint32_t id) {
+        for (uint32_t seqId : {146u, 147u, 148u, 149u, 150u}) {
+            if (m2Renderer->hasAnimation(id, seqId)) return true;
+        }
+        return false;
+    };
+    const bool freeze = gameObjectPoseIsStateDriven(info->type) &&
+        (gameObjectBindPoseShowsReady(info->type) || hasStateOrDestroySequences(instanceId));
     m2Renderer->setInstanceAnimationFrozen(instanceId, freeze);
     if (info->type == 16u) { // DUEL_ARBITER: Spawn once, then Stand.
         m2Renderer->setInstanceAnimation(instanceId, 145u, false);
@@ -2164,12 +2171,13 @@ void EntitySpawner::onGameObjectInfoReceived(uint32_t entry) {
         LOG_DEBUG("GO animation policy resolved: entry=", entry,
                   " type=", info->type, " unfroze ", it->second.size(), " instance(s)");
     } else if (info && !gameObjectBindPoseShowsReady(info->type)) {
-        // A trap whose state arrived before its type: one without state
-        // sequences was frozen at its bind pose by applyGameObjectState.
-        // Those with them already play their state and keep it.
+        // A stateful object whose state arrived before its type: one without
+        // state or destroy sequences was frozen at its bind pose by
+        // applyGameObjectState. Those with them already play their state or
+        // destroy pose and keep it.
         for (uint32_t instanceId : it->second) {
             bool stateSequences = false;
-            for (uint32_t id : {146u, 147u, 148u, 149u})
+            for (uint32_t id : {146u, 147u, 148u, 149u, 150u})
                 stateSequences = stateSequences || m2Renderer->hasAnimation(instanceId, id);
             if (!stateSequences) m2Renderer->setInstanceAnimationFrozen(instanceId, false);
         }
