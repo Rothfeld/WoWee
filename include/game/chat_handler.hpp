@@ -67,6 +67,9 @@ public:
     /// gives it now.
     void joinBuiltinChannels(uint32_t flag);
     void leaveBuiltinChannels(uint32_t flag);
+    /// Apply a live change to one of the Chat > Channels to join switches
+    /// ("joingeneral", "jointrade", "joinlocaldefense", "joinlfg", "joinlocal").
+    void applyAutoJoinSetting(const std::string& key, bool enabled);
     /// ChatChannels.dbc flags (2.4.3 Flags column).
     static constexpr uint32_t kChannelInitial  = 0x00001;  ///< joined at login
     static constexpr uint32_t kChannelZoneDep  = 0x00002;  ///< named after the zone

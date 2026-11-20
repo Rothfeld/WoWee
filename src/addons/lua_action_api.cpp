@@ -2177,7 +2177,13 @@ static int lua_GetModifiedClick(lua_State* L) {
     const char* action = luaL_optstring(L, 1, "");
     std::string act(action);
     for (char& c : act) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    const std::string binding = modifiedClickBinding(L, act);
+    std::string binding = modifiedClickBinding(L, act);
+    if (binding.empty()) {
+        std::string stored = "modifiedclick_" + act;
+        for (char& c : stored) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const char* def = (act == "SELFCAST") ? "ALT" : (act == "FOCUSCAST" ? "NONE" : "SHIFT");
+        binding = storedCVarValue(stored, def);
+    }
     lua_pushstring(L, binding.empty() ? "SHIFT" : binding.c_str());
     return 1;
 }
@@ -2194,7 +2200,12 @@ static int lua_SetModifiedClick(lua_State* L) {
     std::string act(action);
     for (char& c : act) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     lua_getglobal(L, "__WoweeModifiedClick");
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0; }
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setglobal(L, "__WoweeModifiedClick");
+    }
     lua_pushstring(L, binding);
     lua_setfield(L, -2, act.c_str());
     lua_pop(L, 1);

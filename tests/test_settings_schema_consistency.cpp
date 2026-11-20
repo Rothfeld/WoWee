@@ -364,3 +364,55 @@ TEST_CASE("every panel the client offers still has settings on it", "[settings][
     INFO("the schema names " << present.size() << " categories where twenty are expected");
     CHECK(present.size() == 20);
 }
+
+TEST_CASE("expansion-filtered schemas remain consistent on TBC and WotLK", "[settings][schema]") {
+    const auto allRows = schema();
+    for (const int iface : {20400, 30300}) {
+        std::set<std::string> visibleKeys;
+        std::set<std::string> visibleCategories;
+        std::string currentCategory;
+        std::string carriedSection;
+        bool categoryOpened = false;
+
+        for (const auto& d : allRows) {
+            if (d.category != currentCategory) {
+                currentCategory = d.category;
+                carriedSection.clear();
+                categoryOpened = false;
+            }
+            if (!settingSupportedForInterface(d, iface)) {
+                if (d.section[0] != '\0') carriedSection = d.section;
+                continue;
+            }
+            visibleKeys.insert(d.key);
+            visibleCategories.insert(d.category);
+            std::string sec = d.section;
+            if (!sec.empty()) carriedSection.clear();
+            else if (!carriedSection.empty()) { sec = carriedSection; carriedSection.clear(); }
+
+            if (!categoryOpened) {
+                INFO("interface " << iface << ": first visible row of " << d.category
+                                  << " (" << d.key << ") has no section");
+                CHECK(!sec.empty());
+                categoryOpened = true;
+            }
+        }
+
+        INFO("interface " << iface << " lost a whole settings category");
+        CHECK(visibleCategories.size() == 20);
+
+        for (const auto& d : allRows) {
+            if (!settingSupportedForInterface(d, iface)) continue;
+            const std::string test = d.enabledWhen ? d.enabledWhen : "";
+            if (test.empty()) continue;
+            std::string other = test;
+            const std::size_t bang = test.find("!=");
+            const std::size_t eq = test.find('=');
+            if (bang != std::string::npos) other = test.substr(0, bang);
+            else if (eq != std::string::npos) other = test.substr(0, eq);
+            INFO("interface " << iface << ": " << d.key << " depends on " << other
+                              << ", which is hidden in that expansion");
+            CHECK(visibleKeys.count(other) == 1);
+        }
+    }
+}

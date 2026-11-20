@@ -106,52 +106,62 @@ TEST_CASE("every settings panel fits in its two columns", "[settings]") {
     const auto* schema = ui::clientSettingsSchema(count);
     REQUIRE(count > 0);
 
-    // Walk the schema exactly as buildPanel does: a category is a panel, a
-    // section adds a heading, and a control that will not fit moves to the
-    // second column - after which there is nowhere else to go.
-    std::string category, section;
-    int column = 1;
-    int y = columnTop;
-    for (std::size_t i = 0; i <= count; ++i) {
-        const bool last = (i == count);
-        const std::string thisCategory = last ? std::string() : schema[i].category;
-        if (last || thisCategory != category) {
-            category = thisCategory;
-            section.clear();
-            column = 1;
-            y = columnTop;
-            if (last) break;
-        }
+    // Walk the schema as WoweeSettingList + buildPanel do for both TBC (20400)
+    // and WotLK (30300): expansion-incompatible rows are omitted while carrying
+    // forward any section heading they opened.
+    for (const int iface : {20400, 30300}) {
+        std::string category, section, carriedSection;
+        int column = 1;
+        int y = columnTop;
+        for (std::size_t i = 0; i <= count; ++i) {
+            const bool last = (i == count);
+            const std::string thisCategory = last ? std::string() : schema[i].category;
+            if (last || thisCategory != category) {
+                category = thisCategory;
+                section.clear();
+                carriedSection.clear();
+                column = 1;
+                y = columnTop;
+                if (last) break;
+            }
+            if (!ui::settingSupportedForInterface(schema[i], iface)) {
+                if (schema[i].section[0] != '\0') carriedSection = schema[i].section;
+                continue;
+            }
 
-        const int controlHeight = schema[i].kind == ui::SettingKind::Bool ? kCheckButtonHeight
-                                                                          : kSliderHeight;
-        const std::string thisSection = schema[i].section;
-        int headingColumn = 0;
-        if (!thisSection.empty() && thisSection != section) {
-            section = thisSection;
-            // A heading is kept with its first control, as addHeading asks
-            // reserve to: both fit in this column, or both move.
-            if (y - kHeadingHeight - controlHeight < columnBottom && column < columnCount) {
+            const int controlHeight = schema[i].kind == ui::SettingKind::Bool ? kCheckButtonHeight
+                                                                              : kSliderHeight;
+            std::string thisSection = schema[i].section;
+            if (!thisSection.empty()) {
+                carriedSection.clear();
+            } else if (!carriedSection.empty()) {
+                thisSection = carriedSection;
+                carriedSection.clear();
+            }
+            int headingColumn = 0;
+            if (!thisSection.empty() && thisSection != section) {
+                section = thisSection;
+                // A heading is kept with its first control, as addHeading asks
+                // reserve to: both fit in this column, or both move.
+                if (y - kHeadingHeight - controlHeight < columnBottom && column < columnCount) {
+                    ++column;
+                    y = columnTop;
+                }
+                y -= kHeadingHeight;
+                headingColumn = column;
+            }
+
+            if (y - controlHeight < columnBottom && column < columnCount) {
                 ++column;
                 y = columnTop;
             }
-            y -= kHeadingHeight;
-            headingColumn = column;
+            INFO("interface " << iface << ": setting " << schema[i].key << " on panel "
+                              << schema[i].category << " lands at " << (y - controlHeight)
+                              << " in column " << column << ", past the bottom at " << columnBottom);
+            CHECK(y - controlHeight >= columnBottom);
+            if (headingColumn != 0) CHECK(headingColumn == column);
+            y -= controlHeight;
         }
-
-        if (y - controlHeight < columnBottom && column < columnCount) {
-            ++column;
-            y = columnTop;
-        }
-        INFO("setting " << schema[i].key << " on panel " << schema[i].category
-                        << " lands at " << (y - controlHeight) << " in column " << column
-                        << ", past the bottom at " << columnBottom);
-        CHECK(y - controlHeight >= columnBottom);
-        // The heading over it is in the same column, not left at the foot of
-        // the one before - which is how "Effects" came to sit alone at the
-        // bottom of the Detail page.
-        if (headingColumn != 0) CHECK(headingColumn == column);
-        y -= controlHeight;
     }
 }
 

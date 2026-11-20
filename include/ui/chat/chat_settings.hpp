@@ -20,7 +20,7 @@ struct ChatSettings {
     bool autoJoinTrade        = true;
     bool autoJoinLocalDefense = true;
     bool autoJoinLFG          = true;
-    bool autoJoinLocal        = true;
+    bool autoJoinLocal        = false;
 
     /// Speech bubbles over heads, for what is said and yelled nearby; and
     /// party and raid chat as well, which wants both. The interface's own

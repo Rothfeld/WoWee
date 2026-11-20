@@ -103,7 +103,19 @@ struct SettingDesc {
     /// game's own control did beyond writing its CVar - the global the
     /// interface reads, and the refresh that made the change show.
     const char* after = "";
+    /// Optional FrameXML interface bounds (e.g. 20400 for TBC, 30300 for WotLK).
+    /// Zero means unbounded on that end.
+    int minInterface = 0;
+    int maxInterface = 0;
 };
+
+/// Whether a schema row applies to a given FrameXML interface version (0 = all).
+inline bool settingSupportedForInterface(const SettingDesc& d, int iface) {
+    if (iface <= 0) return true;
+    if (d.minInterface > 0 && iface < d.minInterface) return false;
+    if (d.maxInterface > 0 && iface > d.maxInterface) return false;
+    return true;
+}
 
 /// A setting's value as a string, the way a CVar carries one.
 ///

@@ -205,6 +205,21 @@ TEST_CASE("the UI scale confirmation and TBC options integration scripts parse",
         compileError(wowee::addons::kTbcOptionsIntegrationLua, "TbcOptionsIntegration");
     INFO(tbcErr);
     CHECK(tbcErr.empty());
+
+    const std::string minimapErr =
+        compileError(wowee::addons::kMinimapShapeLua, "MinimapShape");
+    INFO(minimapErr);
+    CHECK(minimapErr.empty());
+
+    const std::string hudErr =
+        compileError(wowee::addons::kHudLayoutSettingsLua, "HudLayoutSettings");
+    INFO(hudErr);
+    CHECK(hudErr.empty());
+
+    const std::string chatVisErr =
+        compileError(wowee::addons::kChatBoxVisibilityLua, "ChatBoxVisibility");
+    INFO(chatVisErr);
+    CHECK(chatVisErr.empty());
 }
 
 TEST_CASE("TBC options integration widens slider bounds and retires duplicate panels", "[addonlua]") {

@@ -940,7 +940,8 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // which is what it drew before any of them were read.
     else if (n == "unitnameenemyplayername" || n == "unitnamefriendlyplayername" ||
              n == "unitnamenpc" || n == "unitnamenoncombatcreaturename" ||
-             n == "unitnamecompanionname")
+             n == "unitnamecompanionname" ||
+             n == "unitnameenemycreationname" || n == "unitnamefriendlycreationname")
         lua_pushstring(L, "1");
     // Off, as the real client has it: bars start unlocked and a player who
     // wants them held down says so.
@@ -1385,6 +1386,7 @@ constexpr ClientCVarBinding kClientCVars[] = {
     // the CVar answers from.
     {"nameplateshowenemies", "enemyplates"},
     {"rotateminimap",        "minimaprotate"},
+    {"showkeyring",          "showkeyring"},
 };
 // NOLINTEND(modernize-use-designated-initializers)
 
@@ -1672,6 +1674,7 @@ static std::string cvarLabelFor(const std::string& name) {
         {"statustextpercentage", "STATUS_TEXT_PERCENT"},
         {"showcastabledebuffs",  "SHOW_CASTABLE_DEBUFFS_TEXT"},
         {"showarenaenemyframes", "SHOW_ARENA_ENEMY_FRAMES_TEXT"},
+        {"showchaticons",        "SHOW_CHAT_ICONS"},
     };
     std::string key(name);
     toLowerInPlace(key);
@@ -1990,10 +1993,14 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
         std::string action = key.substr(14);
         for (char& c : action) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         lua_getglobal(L, "__WoweeModifiedClick");
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, value.c_str());
-            lua_setfield(L, -2, action.c_str());
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+            lua_pushvalue(L, -1);
+            lua_setglobal(L, "__WoweeModifiedClick");
         }
+        lua_pushstring(L, value.c_str());
+        lua_setfield(L, -2, action.c_str());
         lua_pop(L, 1);
     }
 }
@@ -5338,9 +5345,29 @@ static double schemaRowDefault(lua_State* L, const ui::SettingDesc& row) {
 static int lua_WoweeSettingList(lua_State* L) {
     std::size_t count = 0;
     const auto* schema = ui::clientSettingsSchema(count);
+    const int iface = interfaceVersion(L);
     lua_newtable(L);
+    int emitted = 0;
+    std::string currentCategory;
+    std::string carriedSection;
     for (std::size_t i = 0; i < count; ++i) {
         const auto& d = schema[i];
+        if (d.category != currentCategory) {
+            currentCategory = d.category;
+            carriedSection.clear();
+        }
+        if (!ui::settingSupportedForInterface(d, iface)) {
+            if (d.section[0] != '\0') carriedSection = d.section;
+            continue;
+        }
+        std::string section = d.section;
+        if (!section.empty()) {
+            carriedSection.clear();
+        } else if (!carriedSection.empty()) {
+            section = carriedSection;
+            carriedSection.clear();
+        }
+
         lua_newtable(L);
         lua_pushstring(L, d.key);      lua_setfield(L, -2, "key");
         lua_pushstring(L, d.label);    lua_setfield(L, -2, "label");
@@ -5353,13 +5380,13 @@ static int lua_WoweeSettingList(lua_State* L) {
         lua_pushnumber(L, d.maxValue); lua_setfield(L, -2, "max");
         lua_pushnumber(L, d.step);     lua_setfield(L, -2, "step");
         lua_pushstring(L, d.category); lua_setfield(L, -2, "category");
-        lua_pushstring(L, d.section);  lua_setfield(L, -2, "section");
+        lua_pushstring(L, section.c_str()); lua_setfield(L, -2, "section");
         lua_pushstring(L, d.tooltip);  lua_setfield(L, -2, "tooltip");
         lua_pushstring(L, d.choices);  lua_setfield(L, -2, "choices");
         lua_pushnumber(L, schemaRowDefault(L, d)); lua_setfield(L, -2, "default");
         lua_pushstring(L, d.enabledWhen);  lua_setfield(L, -2, "enabledwhen");
         lua_pushstring(L, d.store);        lua_setfield(L, -2, "store");
-        lua_rawseti(L, -2, static_cast<int>(i) + 1);
+        lua_rawseti(L, -2, ++emitted);
     }
     return 1;
 }
@@ -6428,16 +6455,16 @@ void registerSystemLuaAPI(lua_State* L) {
             // tick did nothing and the bar could only be turned on from this
             // client's own panel, where its checkbox then disagreed.
             if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
-                svc->setClientSetting("showbar2",     shown[0] ? "1" : "0");
-                svc->setClientSetting("showrightbar", shown[2] ? "1" : "0");
-                svc->setClientSetting("showleftbar",  shown[3] ? "1" : "0");
+                svc->setClientSetting("showbar2",          shown[0] ? "1" : "0");
+                svc->setClientSetting("showbottomrightbar", shown[1] ? "1" : "0");
+                svc->setClientSetting("showrightbar",      shown[2] ? "1" : "0");
+                svc->setClientSetting("showleftbar",       shown[3] ? "1" : "0");
             }
             return 0;
         }},
-                // Read back from the client's own settings for the two that
+                // Read back from the client's own settings for the four that
                 // drive a bar, so the checkbox shows what is on screen rather
-                // than what this file last stored. The two disagreed whenever
-                // the bar was turned on from the client's own settings window.
+                // than what this file last stored.
                 {"GetActionBarToggles", [](lua_State* L) -> int {
             auto shown = actionBarToggles();
             if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
@@ -6446,6 +6473,7 @@ void registerSystemLuaAPI(lua_State* L) {
                     return v.empty() ? fallback : (v != "0");
                 };
                 shown[0] = readBool("showbar2", shown[0]);
+                shown[1] = readBool("showbottomrightbar", shown[1]);
                 shown[2] = readBool("showrightbar", shown[2]);
                 shown[3] = readBool("showleftbar", shown[3]);
             }

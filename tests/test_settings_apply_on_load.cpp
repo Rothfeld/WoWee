@@ -41,7 +41,7 @@ std::set<std::string> namesIn(const std::string& source, const std::string& list
     const size_t end = source.find("};", start);
     const std::string body = source.substr(start, end - start);
     std::set<std::string> out;
-    const std::regex name(R"RX("([a-z]+)")RX");
+    const std::regex name(R"RX("([a-z0-9_]+)")RX");
     for (std::sregex_iterator it(body.begin(), body.end(), name), last;
          it != last; ++it) {
         out.insert((*it)[1].str());

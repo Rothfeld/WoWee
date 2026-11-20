@@ -1348,6 +1348,34 @@ void GameScreen::renderMinimapReadouts(const MinimapFrame& frame, game::GameHand
         drawList->AddText(font, fontSize, ImVec2(tx, ty), IM_COL32(230, 220, 140, 255), coordBuf);
     }
 
+    // Optional persistent latency meter below the minimap when FrameXML owns
+    // the ring (where renderMinimapChrome / renderMinimapIndicators does not run).
+    if (settingsPanel_.showLatencyMeter_ && frameXmlOwns(UiElement::Minimap)) {
+        const uint32_t ping = gameHandler.getLatencyMs();
+        char pingBuf[32];
+        std::snprintf(pingBuf, sizeof(pingBuf), "%u ms", ping);
+
+        ImFont* font = ImGui::GetFont();
+        float fontSize = ImGui::GetFontSize() * 0.9f;
+        ImVec2 textSz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, pingBuf);
+
+        float tx = frame.centerX - textSz.x * 0.5f;
+        float ty = frame.centerY + frame.mapRadius + 3.0f;
+        if (settingsPanel_.showMinimapCoordinates_) {
+            ty += ImGui::GetFontSize() + 8.0f;
+        }
+
+        const ImU32 pingCol = ping < 100 ? IM_COL32(120, 230, 120, 255)
+                            : ping < 250 ? IM_COL32(240, 210, 90, 255)
+                                         : IM_COL32(240, 100, 100, 255);
+        float pad = 3.0f;
+        drawList->AddRectFilled(
+            ImVec2(tx - pad, ty - pad),
+            ImVec2(tx + textSz.x + pad, ty + textSz.y + pad),
+            IM_COL32(0, 0, 0, 140), 4.0f);
+        drawList->AddText(font, fontSize, ImVec2(tx, ty), pingCol, pingBuf);
+    }
+
     // Zone name display - drawn inside the top edge of the minimap circle
     {
         std::string zoneName;
@@ -1772,7 +1800,6 @@ void GameScreen::saveSettings() {
     out << "separate_bags=" << (settingsPanel_.pendingSeparateBags ? 1 : 0) << "\n";
     out << "show_keyring=" << (settingsPanel_.pendingShowKeyring ? 1 : 0) << "\n";
     out << "bag_scale=" << settingsPanel_.pendingBagScale << "\n";
-    out << "show_micro_menu=" << (settingsPanel_.pendingShowMicroMenu ? 1 : 0) << "\n";
     out << "chat_box_visible=" << (settingsPanel_.pendingChatBoxVisible ? 1 : 0) << "\n";
     out << "idle_camera_orbit=" << (settingsPanel_.pendingIdleCameraOrbit ? 1 : 0) << "\n";
     out << "buff_bar_scale=" << settingsPanel_.pendingBuffBarScale << "\n";
@@ -1781,6 +1808,7 @@ void GameScreen::saveSettings() {
     out << "show_friendly_nameplates=" << (settingsPanel_.showFriendlyNameplates_ ? 1 : 0) << "\n";
     out << "show_enemy_nameplates=" << (settingsPanel_.showEnemyNameplates_ ? 1 : 0) << "\n";
     out << "show_action_bar2=" << (settingsPanel_.pendingShowActionBar2 ? 1 : 0) << "\n";
+    out << "show_bottom_right_bar=" << (settingsPanel_.pendingShowBottomRightBar ? 1 : 0) << "\n";
     out << "action_bar2_offset_x=" << settingsPanel_.pendingActionBar2OffsetX << "\n";
     out << "action_bar2_offset_y=" << settingsPanel_.pendingActionBar2OffsetY << "\n";
     out << "show_right_bar=" << (settingsPanel_.pendingShowRightBar ? 1 : 0) << "\n";
@@ -1922,11 +1950,6 @@ void GameScreen::loadSettings() {
         SettingsPanel::recommendedPixelScale(currentDisplayHeight, 0.75f, 1.5f);
     settingsPanel_.pendingWindowUiScale =
         SettingsPanel::recommendedPixelScale(currentDisplayHeight, 0.75f, 1.5f);
-    // The action bar's slots are 48 pixels times this, and nothing else moves
-    // them - the buff bar beside them scales itself with the screen height, and
-    // the bars did not. Only the default: a saved value still wins, so nobody's
-    // bars move under them. Scaling inside the panel the way the buff bar does
-    // would be the better shape and would change what an existing 1.0 means.
     settingsPanel_.pendingActionBarScale =
         SettingsPanel::recommendedPixelScale(currentDisplayHeight, 0.5f, 2.0f);
     if (!in.is_open()) return;
@@ -1999,7 +2022,7 @@ void GameScreen::loadSettings() {
             } else if (key == "chat_box_visible") {
                 settingsPanel_.pendingChatBoxVisible = (std::stoi(val) != 0);
             } else if (key == "show_micro_menu") {
-                settingsPanel_.pendingShowMicroMenu = (std::stoi(val) != 0);
+                LOG_INFO("Settings: ignoring retired show_micro_menu=", val);
             } else if (key == "idle_camera_orbit") {
                 settingsPanel_.pendingIdleCameraOrbit = (std::stoi(val) != 0);
             } else if (key == "buff_bar_scale") {
@@ -2015,6 +2038,8 @@ void GameScreen::loadSettings() {
                 settingsPanel_.showEnemyNameplates_ = (std::stoi(val) != 0);
             } else if (key == "show_action_bar2") {
                 settingsPanel_.pendingShowActionBar2 = (std::stoi(val) != 0);
+            } else if (key == "show_bottom_right_bar") {
+                settingsPanel_.pendingShowBottomRightBar = (std::stoi(val) != 0);
             } else if (key == "action_bar2_offset_x") {
                 settingsPanel_.pendingActionBar2OffsetX = std::clamp(std::stof(val), -600.0f, 600.0f);
             } else if (key == "action_bar2_offset_y") {

@@ -565,6 +565,8 @@ local function buildPanel(category, settings)
     end
     panel.name = category
     panel.parent = ROOT
+    _G.__WoweePanelsByCategory = rawget(_G, "__WoweePanelsByCategory") or {}
+    _G.__WoweePanelsByCategory[category] = panel
 
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
@@ -1835,12 +1837,16 @@ if type(InterfaceOptionsFrame_OpenToFrame) == "function" then
     local origOpen = InterfaceOptionsFrame_OpenToFrame
     InterfaceOptionsFrame_OpenToFrame = function(panel, ...)
         local root = rawget(_G, "WoweeOptionsRoot")
-        if retired[panel] and root then panel = root end
+        local byCat = rawget(_G, "__WoweePanelsByCategory")
+        if type(panel) == "string" and type(byCat) == "table" and byCat[panel] then
+            panel = byCat[panel]
+        elseif retired[panel] and root then
+            panel = root
+        end
         origOpen(panel, ...)
         local target = panel
         if type(target) == "string" then
-            local slug = tostring(target):gsub("[^%a%d]", "")
-            target = rawget(_G, "WoweeOptions" .. slug)
+            target = (type(byCat) == "table" and byCat[target]) or nil
             if not target and root and root.name == panel then target = root end
         end
         if type(target) == "table" and InterfaceOptionsFramePanelContainer and
@@ -2094,6 +2100,17 @@ if type(SoundOptionsFrame_Load) == "function" then
     end
 end
 
+if rawget(_G, "AudioOptionsFrame") and AudioOptionsFrame.HookScript then
+    AudioOptionsFrame:HookScript("OnShow", function()
+        tidyTbcSoundFrame()
+        if type(AudioOptionsFrame_ShowSubFrame) == "function" then
+            AudioOptionsFrame_ShowSubFrame("SoundOptionsFrame")
+        elseif rawget(_G, "SoundOptionsFrame") and SoundOptionsFrame.Show then
+            SoundOptionsFrame:Show()
+        end
+    end)
+end
+
 if rawget(_G, "SoundOptionsFrame") and not rawget(_G, "WoweeAudioMoreButton") and
    type(CreateFrame) == "function" then
     local volume = rawget(_G, "SoundOptionsFrameVolume")
@@ -2116,6 +2133,216 @@ if rawget(_G, "SoundOptionsFrame") and not rawget(_G, "WoweeAudioMoreButton") an
             InterfaceOptionsFrame_OpenToFrame(rawget(_G, "WoweeOptionsSound") or "Sound")
         end
     end)
+end
+
+-- Enable mouse-wheel chat scrolling on TBC ChatFrame1..N, where chatframe.lua
+-- provides ChatFrame_OnMouseWheel(arg1) without hooking OnMouseWheel by default.
+function __WoweeUpdateChatMouseScroll(v)
+    local cur = v
+    if cur == nil and type(GetCVar) == "function" then
+        cur = GetCVar("chatMouseScroll")
+    end
+    local on = (tostring(cur or "1") ~= "0")
+    local function applyChatWheel(cf)
+        if not cf or not cf.EnableMouseWheel or not cf.SetScript then return end
+        cf:EnableMouseWheel(on)
+        if on then
+            cf:SetScript("OnMouseWheel", function(self, delta)
+                local step = delta or arg1 or 0
+                if step > 0 then
+                    if self and self.ScrollUp then self:ScrollUp()
+                    elseif ChatFrame_OnMouseWheel then ChatFrame_OnMouseWheel(step) end
+                elseif step < 0 then
+                    if self and self.ScrollDown then self:ScrollDown()
+                    elseif ChatFrame_OnMouseWheel then ChatFrame_OnMouseWheel(step) end
+                end
+            end)
+        else
+            cf:SetScript("OnMouseWheel", nil)
+        end
+    end
+    for i = 1, (NUM_CHAT_WINDOWS or 10) do
+        applyChatWheel(rawget(_G, "ChatFrame" .. i))
+    end
+end
+__WoweeUpdateChatMouseScroll()
+if type(FCF_OpenNewWindow) == "function" and not __WoweeChatWheelWrapped then
+    __WoweeChatWheelWrapped = true
+    local origOpen = FCF_OpenNewWindow
+    FCF_OpenNewWindow = function(...)
+        local frame = origOpen(...)
+        __WoweeUpdateChatMouseScroll()
+        return frame
+    end
+end
+)LUA";
+
+/// Swap FrameXML's circular minimap border for a crisp square border when
+/// WoweeGetSetting("minimapsquare") is enabled, and restore it when disabled.
+inline constexpr const char* kMinimapShapeLua = R"LUA(
+if type(WoweeGetSetting) == "function" and rawget(_G, "Minimap") then
+    local square = (WoweeGetSetting("minimapsquare") == "1")
+    local roundBorder = rawget(_G, "MinimapBorder")
+    local sqBorder = rawget(_G, "WoweeMinimapSquareBorder")
+    if square then
+        if roundBorder and roundBorder.Hide then roundBorder:Hide() end
+        if not sqBorder and type(CreateFrame) == "function" then
+            sqBorder = CreateFrame("Frame", "WoweeMinimapSquareBorder", Minimap)
+            sqBorder:SetFrameLevel((Minimap:GetFrameLevel() or 1) + 2)
+            sqBorder:SetPoint("TOPLEFT", Minimap, "TOPLEFT", -2, 2)
+            sqBorder:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", 2, -2)
+            if sqBorder.SetBackdrop then
+                sqBorder:SetBackdrop({
+                    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                    edgeSize = 12,
+                })
+                if sqBorder.SetBackdropBorderColor then
+                    sqBorder:SetBackdropBorderColor(0.85, 0.72, 0.32, 0.95)
+                end
+            end
+        end
+        if sqBorder and sqBorder.Show then sqBorder:Show() end
+    else
+        if sqBorder and sqBorder.Hide then sqBorder:Hide() end
+        if roundBorder and roundBorder.Show then roundBorder:Show() end
+    end
+end
+)LUA";
+
+/// Apply WoWee Action Bars, Buff Bar, Bag Scale, and Keyring settings directly
+/// to FrameXML's MainMenuBar, MultiBar*, BuffFrame, ContainerFrame*, and KeyRingButton.
+inline constexpr const char* kHudLayoutSettingsLua = R"LUA(
+if type(WoweeGetSetting) == "function" then
+    local function numSetting(k, def)
+        local n = tonumber(WoweeGetSetting(k))
+        return n or def
+    end
+    local function boolSetting(k)
+        return WoweeGetSetting(k) == "1"
+    end
+
+    -- Patch MultiActionBar_Update once so MultiBarLeft (page 4) can show
+    -- independently when "Left side bar" is enabled even if Right side bar is off.
+    if type(MultiActionBar_Update) == "function" and not __WoweeMultiBarPatched then
+        __WoweeMultiBarPatched = true
+        local origMultiUpdate = MultiActionBar_Update
+        MultiActionBar_Update = function(...)
+            origMultiUpdate(...)
+            local mbl = rawget(_G, "MultiBarLeft")
+            if mbl then
+                if SHOW_MULTI_ACTIONBAR_4 then
+                    if mbl.Show then mbl:Show() end
+                    if type(VIEWABLE_ACTION_BAR_PAGES) == "table" and LEFT_ACTIONBAR_PAGE then
+                        VIEWABLE_ACTION_BAR_PAGES[LEFT_ACTIONBAR_PAGE] = nil
+                    end
+                else
+                    if mbl.Hide then mbl:Hide() end
+                    if type(VIEWABLE_ACTION_BAR_PAGES) == "table" and LEFT_ACTIONBAR_PAGE then
+                        VIEWABLE_ACTION_BAR_PAGES[LEFT_ACTIONBAR_PAGE] = 1
+                    end
+                end
+            end
+        end
+    end
+
+    SHOW_MULTI_ACTIONBAR_1 = boolSetting("showbar2") and 1 or nil
+    SHOW_MULTI_ACTIONBAR_2 = boolSetting("showbottomrightbar") and 1 or nil
+    SHOW_MULTI_ACTIONBAR_3 = boolSetting("showrightbar") and 1 or nil
+    SHOW_MULTI_ACTIONBAR_4 = boolSetting("showleftbar") and 1 or nil
+
+    if type(MultiActionBar_Update) == "function" then MultiActionBar_Update() end
+    if type(MultiActionBar_UpdateGridVisibility) == "function" then
+        MultiActionBar_UpdateGridVisibility()
+    end
+
+    -- Normalize pixel-based defaults (recommendedPixelScale against 1080 lines)
+    -- so untouched actionbarscale/bagscale leave FrameXML's 768-unit canvas at 1.0x.
+    local pixelH = 1080
+    if type(GetScreenHeight) == "function" then
+        local sh = GetScreenHeight() or 768
+        local eff = (rawget(_G, "UIParent") and UIParent.GetEffectiveScale)
+            and UIParent:GetEffectiveScale() or 1.0
+        if sh > 0 and eff > 0 then pixelH = sh * eff end
+    end
+    local autoScale = pixelH / 1080.0
+    if autoScale < 0.75 then autoScale = 0.75 end
+    if autoScale > 2.0 then autoScale = 2.0 end
+    local bagAutoScale = autoScale > 1.5 and 1.5 or autoScale
+
+    local barScale = numSetting("actionbarscale", autoScale) / autoScale
+    for _, name in ipairs({
+        "MainMenuBar",
+        "MultiBarBottomLeft",
+        "MultiBarBottomRight",
+        "MultiBarRight",
+        "MultiBarLeft",
+    }) do
+        local f = rawget(_G, name)
+        if f and f.SetScale then f:SetScale(barScale) end
+    end
+
+    local bbl = rawget(_G, "MultiBarBottomLeft")
+    local ab1 = rawget(_G, "ActionButton1")
+    if bbl and ab1 and bbl.ClearAllPoints and bbl.SetPoint then
+        local offX = numSetting("bar2offsetx", 0)
+        local offY = numSetting("bar2offsety", 0)
+        bbl:ClearAllPoints()
+        bbl:SetPoint("BOTTOMLEFT", ab1, "TOPLEFT", offX, 17 + offY)
+    end
+
+    local bbr = rawget(_G, "MultiBarBottomRight")
+    local ab7 = rawget(_G, "ActionButton7")
+    if bbr and bbr.ClearAllPoints and bbr.SetPoint then
+        bbr:ClearAllPoints()
+        if SHOW_MULTI_ACTIONBAR_1 and bbl then
+            bbr:SetPoint("LEFT", bbl, "RIGHT", 10, 0)
+        elseif ab7 then
+            bbr:SetPoint("BOTTOMLEFT", ab7, "TOPLEFT", 0, 17)
+        end
+    end
+
+    local mbr = rawget(_G, "MultiBarRight")
+    if mbr and rawget(_G, "UIParent") and mbr.ClearAllPoints and mbr.SetPoint then
+        local rightOffY = numSetting("rightbaroffsety", 0)
+        mbr:ClearAllPoints()
+        mbr:SetPoint("RIGHT", UIParent, "RIGHT", -7, rightOffY)
+    end
+
+    local mbl = rawget(_G, "MultiBarLeft")
+    if mbl and rawget(_G, "UIParent") and mbl.ClearAllPoints and mbl.SetPoint then
+        local leftOffY = numSetting("leftbaroffsety", 0)
+        mbl:ClearAllPoints()
+        mbl:SetPoint("LEFT", UIParent, "LEFT", 7, leftOffY)
+    end
+
+    local buffScale = numSetting("buffbarscale", 1.0)
+    for _, name in ipairs({"BuffFrame", "TemporaryEnchantFrame"}) do
+        local f = rawget(_G, name)
+        if f and f.SetScale then f:SetScale(buffScale) end
+    end
+
+    local bagScale = numSetting("bagscale", bagAutoScale) / bagAutoScale
+    for i = 1, 13 do
+        local cf = rawget(_G, "ContainerFrame" .. i)
+        if cf and cf.SetScale then cf:SetScale(bagScale) end
+    end
+
+    local kr = rawget(_G, "KeyRingButton")
+    if boolSetting("showkeyring") then
+        SHOW_KEYRING = 1
+        if type(MainMenuBar_UpdateKeyRing) == "function" then
+            MainMenuBar_UpdateKeyRing()
+        elseif kr and kr.Show and (not HasKey or HasKey()) then
+            kr:Show()
+        end
+    else
+        SHOW_KEYRING = 0
+        if kr and kr.Hide then kr:Hide() end
+    end
+
+    if type(UIParent_ManageFramePositions) == "function" then
+        UIParent_ManageFramePositions()
+    end
 end
 )LUA";
 
@@ -2157,16 +2384,38 @@ end
 /// that until the client runs it; a snippet in this file is parsed by
 /// test_addon_lua_snippets before it ever reaches a player.
 inline constexpr const char* kChatBoxVisibilityLua = R"LUA(
+local style = GetCVar("chatStyle")
+local hasPerWindowBoxes = false
 for i = 1, (NUM_CHAT_WINDOWS or 10) do
-    local e = _G["ChatFrame" .. i .. "EditBox"]
-    if e and not e:HasFocus() then
-        ChatEdit_DeactivateChat(e)
-        if GetCVar("chatStyle") == "classic" then e:Hide() end
+    local e = rawget(_G, "ChatFrame" .. i .. "EditBox")
+    if e then
+        hasPerWindowBoxes = true
+        if not e:HasFocus() then
+            if type(ChatEdit_DeactivateChat) == "function" then
+                ChatEdit_DeactivateChat(e)
+            end
+            if style == "classic" then e:Hide() end
+        end
     end
 end
-if GetCVar("chatStyle") == "im" then
-    local send = ChatEdit_ChooseBoxForSend()
-    if send and not send:HasFocus() then send:Show() end
+if hasPerWindowBoxes then
+    if style == "im" and type(ChatEdit_ChooseBoxForSend) == "function" then
+        local send = ChatEdit_ChooseBoxForSend()
+        if send and not send:HasFocus() then send:Show() end
+    end
+else
+    -- TBC 2.4.3 uses a single shared ChatFrameEditBox.
+    local tbcBox = rawget(_G, "ChatFrameEditBox")
+    if tbcBox and (not tbcBox.HasFocus or not tbcBox:HasFocus()) then
+        if style == "im" then
+            if tbcBox.Show then tbcBox:Show() end
+        else
+            if type(ChatEdit_OnEscapePressed) == "function" then
+                ChatEdit_OnEscapePressed(tbcBox)
+            end
+            if tbcBox.Hide then tbcBox:Hide() end
+        end
+    end
 end
 )LUA";
 

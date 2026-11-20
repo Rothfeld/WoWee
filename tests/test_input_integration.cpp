@@ -5051,3 +5051,51 @@ TEST_CASE("Bundled Wowee addons load on TBC 20400 even when checkAddonVersion is
     am.shutdown();
     fs::remove_all(tempDir, ec);
 }
+
+TEST_CASE_METHOD(Integration, "WoweeSettingList filters Wrath-only rows on TBC 20400 with dense array indices", "[options][tbc]") {
+    run("__WoweeInterfaceVersion = 20400");
+    run(R"LUA(
+        local list = WoweeSettingList()
+        __tbcCount = #list
+        __tbcDense = true
+        local keys = {}
+        local cats = {}
+        for i = 1, #list do
+            if not list[i] then __tbcDense = false end
+            keys[list[i].key] = true
+            cats[list[i].category] = (cats[list[i].category] or 0) + 1
+        end
+        __tbcHasWrathRows = keys.equipmentmanager or keys.previewtalents or keys.colorblindmode
+            or keys.arenaframes or keys.threatwarning or keys.widerquesttracker
+            or keys.clicktofocus or keys.chattimestamps or keys.critternames
+            or keys.micromenu or false
+        __tbcHasTbcRows = (keys.friendlycreationnames and keys.enemycreationnames
+            and keys.companionnames and keys.tbcdispellabledebuffs
+            and keys.worldpvpdisplay and keys.showchaticons and keys.raidrange
+            and keys.fcttargetdamage and keys.showbottomrightbar) or false
+    )LUA");
+    truth("__tbcCount >= 80");
+    truth("__tbcDense == true");
+    truth("__tbcHasWrathRows == false");
+    truth("__tbcHasTbcRows == true");
+
+    run("__WoweeInterfaceVersion = 30300");
+    run(R"LUA(
+        local list = WoweeSettingList()
+        local keys = {}
+        for i = 1, #list do keys[list[i].key] = true end
+        __wotlkHasWrathRows = (keys.equipmentmanager and keys.previewtalents
+            and keys.arenaframes and keys.threatwarning and keys.chattimestamps) or false
+        __wotlkHasTbcRows = keys.friendlycreationnames or keys.worldpvpdisplay
+            or keys.tbcdispellabledebuffs or keys.showchaticons or false
+    )LUA");
+    truth("__wotlkHasWrathRows == true");
+    truth("__wotlkHasTbcRows == false");
+
+    // Modified click AUTOLOOTTOGGLE respects SetModifiedClick changes.
+    run("SetModifiedClick('AUTOLOOTTOGGLE', 'ALT')");
+    CHECK(addons::isModifiedClickActive(lua.getState(), "AUTOLOOTTOGGLE", false, false, true));
+    CHECK_FALSE(addons::isModifiedClickActive(lua.getState(), "AUTOLOOTTOGGLE", true, false, false));
+    run("SetModifiedClick('AUTOLOOTTOGGLE', 'SHIFT')");
+    CHECK(addons::isModifiedClickActive(lua.getState(), "AUTOLOOTTOGGLE", true, false, false));
+}

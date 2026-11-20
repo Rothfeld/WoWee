@@ -37,6 +37,8 @@
 #include "rendering/vk_context.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/character_renderer.hpp"
+#include "game/chat_handler.hpp"
+#include "game/game_handler.hpp"
 #include "game/zone_manager.hpp"
 #include "audio/audio_coordinator.hpp"
 #include "audio/audio_engine.hpp"
@@ -121,6 +123,10 @@ constexpr const char* kGraphicsApplyKeys[] = {
     // only route in is the cvar behind it is one rename away from silence.
     "soundinbackground", "enablemusic", "loopmusic", "enableambience",
     "errorspeech", "enablesoundeffects",
+    // FrameXML action bar, buff bar, and bag layout settings.
+    "actionbarscale", "buffbarscale", "showbar2", "showbottomrightbar",
+    "bar2offsetx", "bar2offsety", "showrightbar", "rightbaroffsety",
+    "showleftbar", "leftbaroffsety", "bagscale", "showkeyring",
 };
 
 /// Whether a quality preset has an opinion about this setting.
@@ -335,7 +341,6 @@ constexpr FieldBinding kFieldBindings[] = {
     {.key = "scrollspeed",   .asFloat = &SettingsPanel::pendingScrollSpeed},
     {.key = "latencymeter",  .asBool  = &SettingsPanel::pendingShowLatencyMeter},
     {.key = "checkforupdates",   .asBool  = &SettingsPanel::pendingCheckForUpdates},
-    {.key = "micromenu",     .asBool  = &SettingsPanel::pendingShowMicroMenu},
     {.key = "chatboxvisible", .asBool = &SettingsPanel::pendingChatBoxVisible},
     {.key = "bagscale",      .asFloat = &SettingsPanel::pendingBagScale},
     {.key = "separatebags",  .asBool  = &SettingsPanel::pendingSeparateBags},
@@ -350,6 +355,7 @@ constexpr FieldBinding kFieldBindings[] = {
     {.key = "actionbarscale",  .asFloat = &SettingsPanel::pendingActionBarScale},
     {.key = "buffbarscale",    .asFloat = &SettingsPanel::pendingBuffBarScale},
     {.key = "showbar2",        .asBool  = &SettingsPanel::pendingShowActionBar2},
+    {.key = "showbottomrightbar", .asBool = &SettingsPanel::pendingShowBottomRightBar},
     {.key = "bar2offsetx",     .asFloat = &SettingsPanel::pendingActionBar2OffsetX},
     {.key = "bar2offsety",     .asFloat = &SettingsPanel::pendingActionBar2OffsetY},
     {.key = "showrightbar",    .asBool  = &SettingsPanel::pendingShowRightBar},
@@ -556,6 +562,11 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
         if (renderer) {
             if (auto* mm = renderer->getMinimap()) mm->setSquareShape(pendingMinimapSquare);
         }
+        if (services_.addonManager) {
+            services_.addonManager->runInterfaceCommand(wowee::addons::kMinimapShapeLua);
+        } else if (services_.gameHandler) {
+            services_.gameHandler->runInterfaceCommand(wowee::addons::kMinimapShapeLua);
+        }
     } else if (key == "invertmouse") {
         if (cameraController) cameraController->setInvertMouse(pendingInvertMouse);
     } else if (key == "gamepad") {
@@ -711,9 +722,25 @@ void SettingsPanel::applySettingSideEffects(const std::string& key) {
         // Applied by deactivating every box that is not being typed in - see
         // kChatBoxVisibilityLua, which is where the script lives so that
         // something parses it before a player does.
-        if (services_.gameHandler) {
+        if (services_.addonManager) {
+            services_.addonManager->runInterfaceCommand(
+                wowee::addons::kChatBoxVisibilityLua);
+        } else if (services_.gameHandler) {
             services_.gameHandler->runInterfaceCommand(
                 wowee::addons::kChatBoxVisibilityLua);
+        }
+    } else if (key == "actionbarscale" || key == "buffbarscale" ||
+               key == "showbar2" || key == "showbottomrightbar" ||
+               key == "bar2offsetx" || key == "bar2offsety" ||
+               key == "showrightbar" || key == "rightbaroffsety" ||
+               key == "showleftbar" || key == "leftbaroffsety" ||
+               key == "bagscale" || key == "showkeyring") {
+        if (services_.addonManager) {
+            services_.addonManager->runInterfaceCommand(
+                wowee::addons::kHudLayoutSettingsLua);
+        } else if (services_.gameHandler) {
+            services_.gameHandler->runInterfaceCommand(
+                wowee::addons::kHudLayoutSettingsLua);
         }
     } else if (isVolumeKey(key)) {
         // Every volume goes through one call, because each of them is a balance
@@ -799,6 +826,11 @@ bool SettingsPanel::setSettingValue(const std::string& key, const std::string& v
     if (const ChatFieldBinding* c = findChatFieldBinding(key)) {
         if (!chatSettings_) return false;
         chatSettings_->*(c->asBool) = on;
+        if (services_.gameHandler) {
+            if (auto* ch = services_.gameHandler->getChatHandler()) {
+                ch->applyAutoJoinSetting(key, on);
+            }
+        }
         // The store too, as below: the speech-bubble rows are bound to the
         // CVars the Social page's boxes wrote, and returned early past the
         // write-back until the control check said a change here was undone

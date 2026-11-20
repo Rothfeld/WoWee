@@ -1485,6 +1485,45 @@ void ChatHandler::leaveBuiltinChannels(uint32_t flag) {
     for (const auto& name : leaving) leaveChannel(name);
 }
 
+void ChatHandler::applyAutoJoinSetting(const std::string& key, bool enabled) {
+    uint32_t targetId = 0;
+    if (key == "joingeneral")           { chatAutoJoin.general = enabled;      targetId = 1; }
+    else if (key == "jointrade")        { chatAutoJoin.trade = enabled;        targetId = 2; }
+    else if (key == "joinlocaldefense") { chatAutoJoin.localDefense = enabled; targetId = 22; }
+    else if (key == "joinlfg")          { chatAutoJoin.lfg = enabled;          targetId = 26; }
+    else if (key == "joinlocal") {
+        chatAutoJoin.local = enabled;
+        if (!zoneChannelsInterfaceReady_) return;
+        const std::string resolved = resolveChannelName("Local");
+        if (enabled && resolved.empty()) joinChannel("Local");
+        else if (!enabled && !resolved.empty()) leaveChannel(resolved);
+        return;
+    } else {
+        return;
+    }
+
+    if (!zoneChannelsInterfaceReady_ || targetId == 0) return;
+    if (enabled) {
+        for (const auto& [name, id] : joinedChannelIds_) {
+            if (id == targetId) return;
+        }
+        const uint32_t zoneId = channelZoneId();
+        if (zoneId == 0) return;
+        for (const auto& channel : builtinChannels()) {
+            if (channel.id != targetId) continue;
+            const std::string name = builtinChannelJoinName(channel, zoneId);
+            if (!name.empty()) joinChannel(name, "", channel.id);
+            return;
+        }
+    } else {
+        std::vector<std::string> leaving;
+        for (const auto& [name, id] : joinedChannelIds_) {
+            if (id == targetId) leaving.push_back(name);
+        }
+        for (const auto& name : leaving) leaveChannel(name);
+    }
+}
+
 // 2.4.3 at login (pair 6, Goldshire): "Joined Channel: [1. General - Elwynn
 // Forest]", "[2. Trade - Elwynn Forest]", "[3. LocalDefense - Elwynn
 // Forest]", "[4. GuildRecruitment - Elwynn Forest]", "[5. LookingForGroup]";
@@ -1523,6 +1562,9 @@ void ChatHandler::tryJoinZoneChannels() {
             continue;
         }
         joinChannel(name, "", channel.id);
+    }
+    if (chatAutoJoin.local && resolveChannelName("Local").empty()) {
+        joinChannel("Local");
     }
 }
 

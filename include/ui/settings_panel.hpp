@@ -151,7 +151,6 @@ public:
     bool pendingSeparateBags = true;
     bool pendingShowKeyring = true;
     float pendingBagScale = 1.0f;
-    bool pendingShowMicroMenu = false;
     bool pendingChatBoxVisible = true;
 
     // ---- Pending gameplay ----
@@ -173,6 +172,7 @@ public:
 
     // ---- Pending action bar layout ----
     bool pendingShowActionBar2 = false;  // Show bottom-left extra action bar above main bar
+    bool pendingShowBottomRightBar = false;  // Show bottom-right extra action bar (FrameXML page 5)
     float pendingActionBarScale = 1.0f;  // Multiplier for action bar slot size (0.5–1.5)
     float pendingActionBar2OffsetX = 0.0f;  // Horizontal offset from default center position
     float pendingActionBar2OffsetY = 0.0f;  // Vertical offset from default (above bar 1)
