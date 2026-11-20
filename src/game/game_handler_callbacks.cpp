@@ -2055,6 +2055,16 @@ double GameHandler::getReleaseTimeRemainingSec() const {
     return releaseTimeRemainingSec(releaseNoTimer_, releaseDeadlineMs_, steadyNowMs());
 }
 
+bool GameHandler::hasInvisibilityGlow() const {
+    if (!entityController_) return false;
+    const uint16_t bytes2Field = fieldIndex(UF::PLAYER_FIELD_BYTES2);
+    if (bytes2Field == 0xFFFF) return false;
+    auto player = entityController_->getEntityManager().getEntity(playerGuid);
+    if (!player) return false;
+    constexpr uint32_t kPlayerFieldByte2InvisibilityGlow = 0x40u;
+    return ((player->getField(bytes2Field) >> 8) & kPlayerFieldByte2InvisibilityGlow) != 0;
+}
+
 void GameHandler::reclaimCorpse() {
     if (combatHandler_) combatHandler_->reclaimCorpse();
 }

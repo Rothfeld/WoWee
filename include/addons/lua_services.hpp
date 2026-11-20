@@ -118,10 +118,11 @@ struct LuaServices {
     /// cases handing chat over to FrameXML quietly dropped.
     std::function<void(const std::string&)> playEmoteAnimation;
 
-    /// The video options' glow and death-effect switches. Callbacks rather
-    /// than a renderer pointer, to keep this header off the rendering ones.
+    /// The video options' glow, death-effect, and nether-world switches. Callbacks
+    /// rather than a renderer pointer, to keep this header off the rendering ones.
     std::function<void(bool)> setGlowEnabled;
     std::function<void(bool)> setDeathEffectEnabled;
+    std::function<void(bool)> setNetherWorldEnabled;
 
     /// What the world map is showing, for the interface's own map.
     ///

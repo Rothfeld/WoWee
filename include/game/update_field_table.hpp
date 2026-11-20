@@ -108,6 +108,10 @@ enum class UF : uint16_t {
     // server sets on death (RELEASE_TIMER 0x08, NO_RELEASE_WINDOW 0x10).
     // TBC only: CMaNGOS UpdateFields.h, UNIT_END + 0x04E4.
     PLAYER_FIELD_BYTES,
+    // Private player byte flags 2. Byte 1 holds PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW
+    // (0x40), set by SPELL_AURA_MOD_INVISIBILITY to trigger Nether World lighting
+    // and fullscreen postprocess. TBC: CMaNGOS UpdateFields.h, UNIT_END + 0x0504.
+    PLAYER_FIELD_BYTES2,
 
     // Player spell power / healing bonus (WotLK: PRIVATE - int32 per school)
     PLAYER_FIELD_MOD_DAMAGE_DONE_POS,  // Spell damage bonus (first of 7 schools)

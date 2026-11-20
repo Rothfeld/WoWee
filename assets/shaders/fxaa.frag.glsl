@@ -28,6 +28,8 @@ layout(push_constant) uniform PC {
     float glow;
     float enableAA;
     float deathEffect;
+    float netherWorld;  // 0..1 Nether World blend strength (ffxNetherWorld)
+    float netherTime;   // elapsed seconds for ffxnetherblur rotation
 } pc;
 
 // The reference's default tuning. Subpix 0.75 is what it calls the default
@@ -59,6 +61,38 @@ vec3 compositeGlow(vec3 scene, vec2 uv) {
             blurred += texture(uScene, uv + (vec2(x, y) - 1.5) * stepUV).rgb
                      * weights[x] * weights[y];
     return scene + pc.glow * blurred * blurred;
+}
+
+vec3 compositeNetherWorld(vec3 scene, vec2 uv) {
+    if (pc.netherWorld <= 0.0) return scene;
+    // TBC 2.4.3 ffxnetherblur.bls + ffxnethercombine.bls:
+    // 4-tap directional blur on a 256x192 target (2x2 pre-box approximates downsampling),
+    // with per-region angle offset (vColor.r * 2 - 1) * 3.0 + c_fBaseAngle and
+    // c_fSampleOffs = 0.008 in UV space (not aspect-corrected).
+    float spatialPhase = 0.5 + 0.5 * sin(uv.x * 5.0 + uv.y * 3.0);
+    float baseAngle = pc.netherTime * 1.6 + 0.5 * sin(pc.netherTime * 0.9);
+    float angle = (spatialPhase * 2.0 - 1.0) * 3.0 + baseAngle;
+    vec2 stepUV = vec2(cos(angle), sin(angle)) * 0.008;
+    vec2 boxUV = vec2(0.00195313, 0.00260417);  // 0.5/256, 0.5/192 from ffxnetherblur.bls
+
+    vec3 blur = vec3(0.0);
+    for (int k = 0; k < 4; ++k) {
+        vec2 c = uv + float(k) * stepUV;
+        vec3 tap = 0.25 * (
+            texture(uScene, c + vec2(-boxUV.x, -boxUV.y)).rgb +
+            texture(uScene, c + vec2( boxUV.x, -boxUV.y)).rgb +
+            texture(uScene, c + vec2(-boxUV.x,  boxUV.y)).rgb +
+            texture(uScene, c + vec2( boxUV.x,  boxUV.y)).rgb
+        );
+        blur += tap;
+    }
+    blur *= 0.25;
+
+    // Exact ffxnethercombine.bls formula with measured vColorMul = (0.60, 0.60, 0.77, 0.76).
+    vec3 T = 0.5 * scene + blur;
+    vec3 M = 0.5 * T + vec3(dot(T, vec3(0.16666649)));
+    vec3 nether = M * vec3(0.60, 0.60, 0.77);
+    return clamp(mix(scene, nether, 0.76 * pc.netherWorld), 0.0, 1.0);
 }
 
 vec3 compositeDeath(vec3 scene) {
@@ -105,7 +139,7 @@ void main() {
     float range    = rangeMax - rangeMin;
 
     if (pc.enableAA == 0.0 || range < max(FXAA_EDGE_THRESHOLD_MIN, rangeMax * FXAA_EDGE_THRESHOLD)) {
-        outColor = vec4(compositeDeath(compositeGlow(rgbM, uv)), 1.0);
+        outColor = vec4(compositeDeath(compositeNetherWorld(compositeGlow(rgbM, uv), uv)), 1.0);
         return;
     }
 
@@ -213,5 +247,5 @@ void main() {
         fxaaResult = clamp(fxaaResult + s * (fxaaResult - blur), 0.0, 1.0);
     }
 
-    outColor = vec4(compositeDeath(compositeGlow(fxaaResult, uv)), 1.0);
+    outColor = vec4(compositeDeath(compositeNetherWorld(compositeGlow(fxaaResult, uv), uv)), 1.0);
 }

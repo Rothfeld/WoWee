@@ -61,6 +61,8 @@ TEST_CASE("TBC 8606 character fields match the server wire layout", "[updatefiel
     REQUIRE(table.index(UF::UNIT_FIELD_AURAFLAGS) == 6 + 0x62);
     REQUIRE(table.index(UF::PLAYER_BYTES) == 234 + 5);
     REQUIRE(table.index(UF::PLAYER_FIELD_COINAGE) == 234 + 0x4CB);
+    REQUIRE(table.index(UF::PLAYER_FIELD_BYTES) == 234 + 0x4E4);
+    REQUIRE(table.index(UF::PLAYER_FIELD_BYTES2) == 234 + 0x504);
     REQUIRE(table.index(UF::PLAYER_FIELD_KEYRING_SLOT_1) == 822);
     REQUIRE(table.index(UF::PLAYER_CRIT_PERCENTAGE) == 1321);
     // TBC publishes separate game-object state/type fields, not WotLK's bytes.

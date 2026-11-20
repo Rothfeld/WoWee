@@ -3319,6 +3319,44 @@ TEST_CASE_METHOD(Integration, "Death effect CVar controls compositor independent
     lua.setLuaServices({});
 }
 
+TEST_CASE_METHOD(Integration, "Nether World CVar controls compositor independently and honors ffx master switch", "[nether-cvar]") {
+    bool netherEnabled = true;
+    bool glowEnabled = true;
+    bool deathEnabled = true;
+    int glowCalls = 0;
+    int deathCalls = 0;
+    addons::LuaServices services;
+    services.setNetherWorldEnabled = [&](bool enabled) { netherEnabled = enabled; };
+    services.setGlowEnabled = [&](bool enabled) { glowEnabled = enabled; ++glowCalls; };
+    services.setDeathEffectEnabled = [&](bool enabled) { deathEnabled = enabled; ++deathCalls; };
+    lua.setLuaServices(services);
+
+    truth("GetCVarDefault('ffxNetherWorld') == '1'");
+    truth("GetCVarDefault('ffx') == '1'");
+    run("SetCVar('ffxNetherWorld', '0')");
+    CHECK_FALSE(netherEnabled);
+    truth("GetCVar('ffxNetherWorld') == '0'");
+    CHECK(glowCalls == 0);
+    CHECK(deathCalls == 0);
+
+    run("SetCVar('FFXNETHERWORLD', '1')");
+    CHECK(netherEnabled);
+    CHECK(glowCalls == 0);
+    CHECK(deathCalls == 0);
+
+    // Master ffx switch disables all fullscreen postprocess effects when 0.
+    run("SetCVar('ffx', '0')");
+    CHECK_FALSE(netherEnabled);
+    CHECK_FALSE(glowEnabled);
+    CHECK_FALSE(deathEnabled);
+
+    run("SetCVar('ffx', '1')");
+    CHECK(netherEnabled);
+    CHECK(glowEnabled);
+    CHECK(deathEnabled);
+    lua.setLuaServices({});
+}
+
 // Build 8606, measured (pair 19, _experiments/20261118T1650Z.half_brightness):
 // GetGamma() is 1 minus the gamma CVar, 0 untouched; SetGamma(v) stores 1 - v.
 // The TBC video options set their -0.5..0.5 Gamma slider to GetGamma() when they

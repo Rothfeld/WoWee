@@ -143,6 +143,8 @@ public:
     void setGlowEnabled(bool enabled) { glowEnabled_ = enabled; }
     void setGhost(bool ghost) { ghost_ = ghost; }
     void setDeathEffectEnabled(bool enabled) { deathEffectEnabled_ = enabled; }
+    void setNetherWorld(bool active) { netherWorld_ = active; }
+    void setNetherWorldEnabled(bool enabled) { netherWorldEnabled_ = enabled; }
     [[nodiscard]] float getBrightness() const { return brightness_; }
     void setIntoxication(float amount) { intoxication_ = glm::clamp(amount, 0.0f, 1.0f); }
     [[nodiscard]] float getIntoxication() const { return intoxication_; }
@@ -163,8 +165,16 @@ private:
     bool glowEnabled_ = true;
     bool ghost_ = false;
     bool deathEffectEnabled_ = true;
+    bool netherWorld_ = false;
+    bool netherWorldEnabled_ = true;
+    float netherStrength_ = 0.0f;
+    float netherTime_ = 0.0f;
 
-    [[nodiscard]] bool needsFXAAPass() const { return fxaa_.enabled || intoxication_ > 0.001f || (glowEnabled_ && glow_ > 0.0f) || (ghost_ && deathEffectEnabled_); }
+    [[nodiscard]] bool needsFXAAPass() const {
+        return fxaa_.enabled || intoxication_ > 0.001f || (glowEnabled_ && glow_ > 0.0f) ||
+               (ghost_ && deathEffectEnabled_) ||
+               (netherWorldEnabled_ && (netherWorld_ || netherStrength_ > 0.001f));
+    }
 
     // FSR 1.0 upscaling state
     struct FSRState {

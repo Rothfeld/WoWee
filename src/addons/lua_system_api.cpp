@@ -809,7 +809,7 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
         lua_pushstring(L, it->second.c_str());
         return;
     }
-    if (n == "ffxglow" || n == "ffxdeath") {
+    if (n == "ffx" || n == "ffxglow" || n == "ffxdeath" || n == "ffxnetherworld") {
         lua_pushstring(L, "1");
         return;
     }
@@ -1654,13 +1654,16 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
                                      std::atoi(cvarValueOr(L, "maxfpsbk", "0").c_str()));
         }
     }
-    if (key == "ffxdeath") {
-        if (auto* svc = getLuaServices(L); svc && svc->setDeathEffectEnabled)
-            svc->setDeathEffectEnabled(value != "0");
-    }
-    if (key == "ffxglow") {
-        if (auto* svc = getLuaServices(L); svc && svc->setGlowEnabled)
-            svc->setGlowEnabled(value != "0");
+    if (key == "ffx" || key == "ffxdeath" || key == "ffxglow" || key == "ffxnetherworld") {
+        const bool ffxMaster = cvarValueOr(L, "ffx", "1") != "0";
+        if (auto* svc = getLuaServices(L)) {
+            if ((key == "ffx" || key == "ffxdeath") && svc->setDeathEffectEnabled)
+                svc->setDeathEffectEnabled(ffxMaster && cvarValueOr(L, "ffxdeath", "1") != "0");
+            if ((key == "ffx" || key == "ffxglow") && svc->setGlowEnabled)
+                svc->setGlowEnabled(ffxMaster && cvarValueOr(L, "ffxglow", "1") != "0");
+            if ((key == "ffx" || key == "ffxnetherworld") && svc->setNetherWorldEnabled)
+                svc->setNetherWorldEnabled(ffxMaster && cvarValueOr(L, "ffxnetherworld", "1") != "0");
+        }
     }
     // A sound CVar is a setting, not a note. Without this the interface's
     // volume keys and its Sound options both wrote to a map nobody read, so

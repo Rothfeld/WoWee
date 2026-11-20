@@ -71,7 +71,8 @@ void PostProcessPipeline::manageResources() {
     }
     if (useFXAA && !fxaa_.sceneFramebuffer) {
         if (!initFXAAResources()) {
-            if ((glowEnabled_ && glow_ > 0.0f) || (ghost_ && deathEffectEnabled_))
+            if ((glowEnabled_ && glow_ > 0.0f) || (ghost_ && deathEffectEnabled_) ||
+                (netherWorldEnabled_ && netherWorld_))
                 throw std::runtime_error("Failed to initialize scene effect compositing resources");
             LOG_ERROR("FXAA: initialization failed, disabling");
             if (fxaa_.enabled) fxaa_.enabled = false;
@@ -183,6 +184,13 @@ bool PostProcessPipeline::executePostProcessing(VkCommandBuffer cmd, uint32_t im
     currentCmd_ = cmd;
     camera_ = camera;
     lastDeltaTime_ = deltaTime;
+    // Native 2.4.3 eases Nether World in over ~1.0s when 0x40 activates and snaps off immediately.
+    if (netherWorld_ && netherWorldEnabled_) {
+        netherStrength_ = std::min(1.0f, netherStrength_ + std::max(0.0f, deltaTime));
+        netherTime_ += std::max(0.0f, deltaTime);
+    } else {
+        netherStrength_ = 0.0f;
+    }
     bool inlineMode = false;
 
     if (fsr2_.enabled && fsr2_.sceneFramebuffer) {
@@ -1799,11 +1807,11 @@ bool PostProcessPipeline::initFXAAResources() {
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     }
 
-    // Pixel size, sharpening, intoxication, authored glow, AA and death switches.
+    // Pixel size, sharpening, intoxication, authored glow, AA, death and nether-world switches.
     VkPushConstantRange pc{};
     pc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pc.offset = 0;
-    pc.size = 28;
+    pc.size = 36;
     VkPipelineLayoutCreateInfo plCI{};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plCI.setLayoutCount = 1;
@@ -1879,15 +1887,21 @@ void PostProcessPipeline::renderFXAAPass() {
 
     // RCAS runs before this pass. Its sharpening slot stays zero here.
     // Glow can require compositing while antialiasing remains disabled.
+    // When Nether World is active (ffxNetherWorld=1), it replaces ffxGlow in 2.4.3.
     const float sharpness = 0.0f;
-    float pc[7] = {
+    const bool deathActive = ghost_ && deathEffectEnabled_;
+    const float netherActive = (!deathActive && netherWorldEnabled_) ? netherStrength_ : 0.0f;
+    const float glowActive = (glowEnabled_ && netherActive <= 0.001f) ? glow_ : 0.0f;
+    float pc[9] = {
         1.0f / static_cast<float>(ext.width),
         1.0f / static_cast<float>(ext.height),
         sharpness,
         intoxication_,
-        glowEnabled_ ? glow_ : 0.0f,
+        glowActive,
         fxaa_.enabled ? 1.0f : 0.0f,
-        ghost_ && deathEffectEnabled_ ? 1.0f : 0.0f
+        deathActive ? 1.0f : 0.0f,
+        netherActive,
+        netherTime_
     };
     vkCmdPushConstants(currentCmd_, fxaa_.pipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), pc);

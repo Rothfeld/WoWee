@@ -1254,17 +1254,19 @@ visible (group visibility in `IsFogOfWarVisibleStealth`). It is not a client
 fade, so do not look for it in the kit or renderer code.
 
 Any MOD_INVISIBILITY aura (11392 as well as 32612) sets
-`PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW` (0x40 in PLAYER_FIELD_BYTES2 byte 1).
-2.4.3 then draws the world dark blue with blurred glowing highlights, players
-pale and glowing, interface unchanged. The shipped shaders are
-`shaders/pixel/ffxnetherblur.bls`, `shaders/vertex/ffxnetherblur.bls`
-(four-tap directional blur whose direction turns with time) and
-`shaders/pixel/ffxnethercombine.bls`:
-`out = mix(S, (0.5*T + (T.r+T.g+T.b)/6) * vColorMul.rgb, vColorMul.a)` with
-`T = 0.5*S + blur`. vColorMul, the blur length and the turn rate are set by
-Wow.exe and are not in any data file. WoWee does not draw this effect. Native
-frames do not fit this formula with blur = scene and the same lighting
-(`nether_fit.py`), so the constants cannot be read from a single capture.
+`PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW` (0x40 in `PLAYER_FIELD_BYTES2` byte 1,
+TBC wire index 1518). Two effects follow: outdoor lighting switches to
+`Light.dbc` column 11 (`lightParamsIdDeath`, e.g. Elwynn LightParams 4 with
+`DeathClouds.mdx` skybox, dark blue ambient/diffuse/fog, and `glow=0.800`)
+independently of `ffxNetherWorld` (indoor WMO lighting is unchanged), and when
+both `ffx` and `ffxNetherWorld` (defaults `"1"`) are enabled, the compositor
+replaces `ffxGlow` with the Nether World postprocess (`ffxnetherblur.bls` 4-tap
+directional blur at 256x192 scale with `c_fSampleOffs=0.008` in UV space and
+`ffxnethercombine.bls` `out = mix(S, (0.5*T + (T.r+T.g+T.b)/6) * vColorMul.rgb, vColorMul.a)`
+with `T = 0.5*S + blur` and measured `vColorMul = (0.60, 0.60, 0.77, 0.76)`),
+easing in over 1.0 s and turning off immediately when the flag clears while
+leaving the UI and minimap untouched.
+Evidence: `_experiments/20261119T1915Z.invisibility_nether_fx/` in the workspace.
 
 Which observers see the kit fade differs by spell, measured from the native
 observer of a grouped player with `.aura` (opacity): 11392 0.59, 41253 0.37,

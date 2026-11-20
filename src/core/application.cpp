@@ -809,6 +809,10 @@ bool Application::initialize() {
             if (rend && rend->getPostProcessPipeline())
                 rend->getPostProcessPipeline()->setDeathEffectEnabled(enabled);
         };
+        luaSvc.setNetherWorldEnabled = [rend = renderer.get()](bool enabled) {
+            if (rend && rend->getPostProcessPipeline())
+                rend->getPostProcessPipeline()->setNetherWorldEnabled(enabled);
+        };
         // FrameXML's world map asks every question through MapNavigator, which
         // holds every continent at once with the original's rules. This
         // client's own map window keeps its own state and is not consulted:

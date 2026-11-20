@@ -1283,6 +1283,7 @@ void Renderer::beginFrame() {
     if (postProcessPipeline_) {
         const auto* gh = core::Application::getInstance().getGameHandler();
         postProcessPipeline_->setGhost(gh && gh->isPlayerGhost());
+        postProcessPipeline_->setNetherWorld(gh && gh->hasInvisibilityGlow());
         postProcessPipeline_->setGlow(game::isActiveExpansion("tbc") && lightingManager
             ? lightingManager->getLightingParams().glow : 0.0f);
         postProcessPipeline_->manageResources();
@@ -2143,7 +2144,8 @@ void Renderer::update(float deltaTime) {
         const uint32_t resolvedZoneId = getCurrentZoneId();
 
         lightingManager->update(characterPosition, mapId, resolvedZoneId,
-                                gameTime, isRaining, isUnderwater, gh && gh->isPlayerGhost());
+                                gameTime, isRaining, isUnderwater,
+                                gh && (gh->isPlayerGhost() || gh->hasInvisibilityGlow()));
 
         // Sync weather visual renderer with game state
         if (weather && gh) {
