@@ -793,67 +793,59 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
     glm::vec3 start, end;
     if (!resolveUnitPosition(casterGuid, start) || !resolveUnitPosition(targetGuid, end))
         return false;
-    // SpellVisual MissileAttachment -1 and MissileDestinationAttachment 1
-    // (1757 of the 2222 TBC spells with a missile model, Arcane Missile 7268 and
-    // Frostbolt 116 among them): the original launches from the hand the
-    // cast pose raises toward the target, M2 attachment 2, and lands in the
-    // upper chest, attachment 15. Creature "Mage 1" (1574) carries 15 but no 34 and
-    // was hit there, 1.41 above its feet; the old fixed feet + 1.0 hit its
-    // waist. Other values are not compared with the original yet.
-    static constexpr uint32_t kAttachLaunchHand = 2;
-    static constexpr uint32_t kAttachChestFront = 15;
+    static constexpr uint32_t kAttachChestFront = rendering::kAttachChestBloodFrontId;
     const auto attachments = svs->missileAttachments(visualId);
+    const int32_t missileAttachment = attachments ? attachments->launch : -1;
     if (attachments && (attachments->launch != -1 || attachments->destination != 1)) {
         LOG_WARNING("SpellVisual: missile visual ", visualId, " launch attachment ", attachments->launch,
                     " destination ", attachments->destination,
-                    " not verified against the original; using hand 2 and chest 15");
+                    " not verified against the original; using release event / chest 15");
     }
-    if (auto* characters = renderer->getCharacterRenderer()) {
-        auto place = [&](uint64_t guid, uint32_t attachment, glm::vec3& point) {
-            glm::mat4 transform(1.0f);
-            const uint32_t instance = owner_.resolveUnitRenderInstance(guid);
-            if (instance != 0 && characters->getAttachmentTransform(instance, attachment, transform)) {
-                point = glm::vec3(transform[3]);
-                return;
+    const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
+    const uint32_t targetInstance = owner_.resolveUnitRenderInstance(targetGuid);
+    auto* characters = renderer->getCharacterRenderer();
+    const auto* casterModel = (characters && casterInstance) ? characters->getInstanceModelData(casterInstance) : nullptr;
+    const uint32_t castAnim = svs->castAnimation(visualId);
+    const rendering::SpellLaunchOrigin launchOrigin =
+        rendering::resolveSpellLaunchOrigin(casterModel, castAnim, missileAttachment, skipReleaseDelay);
+    const float launchDelay = launchOrigin.launchDelaySeconds;
+
+    if (!skipReleaseDelay && launchOrigin.source != rendering::SpellLaunchOrigin::Source::EventBone) {
+        static std::unordered_set<uint64_t> said;
+        const uint64_t key = (static_cast<uint64_t>(visualId) << 32) | (casterModel ? casterModel->sequences.size() : 0u);
+        if (said.size() < 128 && said.insert(key).second)
+            LOG_WARNING("SpellVisual: no spell release event for missile visual ", visualId, " cast animation ",
+                        castAnim, " on caster 0x", std::hex, casterGuid, std::dec,
+                        casterModel ? "" : " (no caster model)", "; missile leaves at SPELL_GO");
+    }
+
+    if (characters) {
+        glm::mat4 transform(1.0f);
+        if (casterInstance != 0) {
+            bool placed = false;
+            if (launchOrigin.source == rendering::SpellLaunchOrigin::Source::EventBone) {
+                placed = characters->getBonePointTransform(casterInstance, launchOrigin.bone,
+                                                           launchOrigin.localOffset, transform);
+            } else if (launchOrigin.source == rendering::SpellLaunchOrigin::Source::Attachment) {
+                placed = characters->getAttachmentTransform(casterInstance, launchOrigin.attachmentId, transform);
             }
-            LOG_WARNING("SpellVisual: missile attachment ", attachment, " missing on 0x", std::hex, guid,
-                        std::dec, "; using the unit position");
-        };
-        place(casterGuid, skipReleaseDelay ? kAttachChestFront : kAttachLaunchHand, start);
-        place(targetGuid, kAttachChestFront, end);
-    }
-    // The missile leaves at the spell release event ($CS*) of the caster's
-    // cast animation (SpellVisualKit AnimID of the CastKit): $CSL at 200 ms of
-    // HumanMale SpellCastDirected for Fireball, Frostbolt and Shadow Bolt.
-    // A reflected missile bounces back from the victim immediately.
-    float launchDelay = 0.0f;
-    if (!skipReleaseDelay) {
-        const uint32_t animation = svs->castAnimation(visualId);
-        const auto* characters = renderer->getCharacterRenderer();
-        const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
-        const auto* model = characters && casterInstance ? characters->getInstanceModelData(casterInstance) : nullptr;
-        bool released = false;
-        if (model && animation != rendering::SpellVisualSystem::kNoAnimation) {
-            for (size_t i = 0; i < model->sequences.size(); ++i) {
-                if (model->sequences[i].id != animation || model->sequences[i].variationIndex != 0) continue;
-                if (i < model->spellReleaseEventTimes.size() && !model->spellReleaseEventTimes[i].empty()) {
-                    launchDelay = model->spellReleaseEventTimes[i].front() / 1000.0f;
-                    released = true;
-                }
-                break;
+            if (placed) {
+                start = glm::vec3(transform[3]);
+            } else {
+                LOG_WARNING("SpellVisual: missile launch origin missing on 0x", std::hex, casterGuid,
+                            std::dec, "; using the unit position");
             }
         }
-        if (!released) {
-            static std::unordered_set<uint64_t> said;
-            const uint64_t key = (static_cast<uint64_t>(visualId) << 32) | (model ? model->sequences.size() : 0u);
-            if (said.size() < 128 && said.insert(key).second)
-                LOG_WARNING("SpellVisual: no spell release event for missile visual ", visualId, " cast animation ",
-                            animation, " on caster 0x", std::hex, casterGuid, std::dec,
-                            model ? "" : " (no caster model)", "; missile leaves at SPELL_GO");
+        if (targetInstance != 0 && characters->getAttachmentTransform(targetInstance, kAttachChestFront, transform)) {
+            end = glm::vec3(transform[3]);
+        } else {
+            LOG_WARNING("SpellVisual: missile attachment ", kAttachChestFront, " missing on 0x", std::hex, targetGuid,
+                        std::dec, "; using the unit position");
         }
     }
     return svs->playSpellMissile(visualId, start, end, speed, launchDelay, impactAtEnd,
-                                 /*areaImpactAtEnd=*/false, resistEffectAtEnd, std::move(onArrive));
+                                 /*areaImpactAtEnd=*/false, resistEffectAtEnd, std::move(onArrive),
+                                 casterInstance, launchOrigin, targetInstance, kAttachChestFront);
 }
 
 void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
@@ -4014,9 +4006,30 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                         } else if (!data.hitTargets.empty()) {
                             svs->scheduleImpactAreaKit(visualId, destination,
                                                        glm::length(destination - start) / speed);
-                        } else if (!svs->playSpellMissile(visualId, start, destination, speed, 0.0f,
-                                                          /*impactAtEnd=*/false, /*areaImpactAtEnd=*/true)) {
-                            svs->playImpactAreaKit(visualId, destination);
+                        } else {
+                            const uint32_t casterInst = owner_.resolveUnitRenderInstance(data.casterUnit);
+                            auto* characters = renderer->getCharacterRenderer();
+                            const auto* casterModel = (characters && casterInst)
+                                ? characters->getInstanceModelData(casterInst) : nullptr;
+                            const auto attachments = svs->missileAttachments(visualId);
+                            const auto origin = rendering::resolveSpellLaunchOrigin(
+                                casterModel, svs->castAnimation(visualId),
+                                attachments ? attachments->launch : -1, /*skipReleaseDelay=*/false);
+                            if (characters && casterInst != 0) {
+                                glm::mat4 transform(1.0f);
+                                if (origin.source == rendering::SpellLaunchOrigin::Source::EventBone &&
+                                    characters->getBonePointTransform(casterInst, origin.bone, origin.localOffset, transform)) {
+                                    start = glm::vec3(transform[3]);
+                                } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
+                                           characters->getAttachmentTransform(casterInst, origin.attachmentId, transform)) {
+                                    start = glm::vec3(transform[3]);
+                                }
+                            }
+                            if (!svs->playSpellMissile(visualId, start, destination, speed, origin.launchDelaySeconds,
+                                                       /*impactAtEnd=*/false, /*areaImpactAtEnd=*/true,
+                                                       /*resistEffectAtEnd=*/false, {}, casterInst, origin)) {
+                                svs->playImpactAreaKit(visualId, destination);
+                            }
                         }
                     }
                 }

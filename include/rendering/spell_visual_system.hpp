@@ -10,6 +10,7 @@
 #include <glm/glm.hpp>
 #include "rendering/chain_effect.hpp"
 #include "rendering/m2_renderer.hpp"
+#include "rendering/spell_launch_origin.hpp"
 
 namespace wowee {
 namespace pipeline { class AssetManager; }
@@ -179,6 +180,9 @@ public:
     std::optional<MissileAttachments> missileAttachments(uint32_t visualId);
     /// The caster's attachment a channel or cast kit beam starts at.
     uint32_t beamStartAttachment(uint32_t visualId);
+    /// Caster-side beam start origin resolved against the caster's M2 ($CSL/$CSR/$CST
+    /// on the channel animation when MissileAttachment == -1, else chest 34).
+    SpellLaunchOrigin beamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel);
 
     // Missile of the visual from start to end. It lands distance / speed
     // seconds from now (Spell.dbc Speed, yards a second) and leaves the caster
@@ -189,9 +193,14 @@ public:
     // False when nothing was scheduled.
     // areaImpactAtEnd: a missile to a ground point plays the visual's
     // ImpactAreaKit where it lands instead of the impact kit.
+    // When casterInstanceId != 0, start is re-sampled live from the caster's
+    // animated bone/attachment at t = launchDelay so the missile leaves the
+    // extended hand instead of the stale Precast/Stand pose from SMSG_SPELL_GO.
     bool playSpellMissile(uint32_t visualId, const glm::vec3& start, const glm::vec3& end,
                           float speed, float launchDelay, bool impactAtEnd, bool areaImpactAtEnd = false,
-                          bool resistEffectAtEnd = false, std::function<void()> onArrive = {});
+                          bool resistEffectAtEnd = false, std::function<void()> onArrive = {},
+                          uint32_t casterInstanceId = 0, SpellLaunchOrigin launchOrigin = {},
+                          uint32_t targetInstanceId = 0, uint32_t destinationAttachment = kAttachChestBloodFrontId);
 
     // Launch a physical weapon projectile (arrow, bullet, or thrown item)
     // without invoking the spell visual pipeline.
@@ -270,6 +279,10 @@ private:
         bool resistEffectAtEnd = false;
         bool landed = false;         // drawn at its end; lands next frame
         std::function<void()> onArrive;
+        uint32_t casterInstanceId = 0;
+        SpellLaunchOrigin launchOrigin;
+        uint32_t targetInstanceId = 0;
+        uint32_t destinationAttachment = kAttachChestBloodFrontId;
     };
 
     void loadSpellVisualDbc();

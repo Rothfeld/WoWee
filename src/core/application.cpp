@@ -4487,12 +4487,20 @@ void Application::syncChannelVisuals() {
         channel.visualId = spell->second.spellVisualId;
         endpoint(*entity, channel.casterPosition);
         channel.start = channel.casterPosition;
-        // The caster's end follows the hand a missile would leave
-        // (SpellVisualSystem::beamStartAttachment), animated with the pose.
-        if (glm::mat4 hand(1.0f); channel.casterInstanceId && characters &&
-            characters->getAttachmentTransform(channel.casterInstanceId,
-                                               visuals->beamStartAttachment(channel.visualId), hand))
-            channel.start = glm::vec3(hand[3]);
+        // The caster's end follows the hand/event a missile would leave
+        // (SpellVisualSystem::beamStartOrigin), animated with the pose.
+        if (channel.casterInstanceId && characters) {
+            const auto* casterModel = characters->getInstanceModelData(channel.casterInstanceId);
+            const auto origin = visuals->beamStartOrigin(channel.visualId, casterModel);
+            glm::mat4 hand(1.0f);
+            if (origin.source == rendering::SpellLaunchOrigin::Source::EventBone &&
+                characters->getBonePointTransform(channel.casterInstanceId, origin.bone, origin.localOffset, hand)) {
+                channel.start = glm::vec3(hand[3]);
+            } else if (origin.source == rendering::SpellLaunchOrigin::Source::Attachment &&
+                       characters->getAttachmentTransform(channel.casterInstanceId, origin.attachmentId, hand)) {
+                channel.start = glm::vec3(hand[3]);
+            }
+        }
         const uint64_t target = static_cast<uint64_t>(entity->getField(objectLo)) |
                                 (static_cast<uint64_t>(entity->getField(objectHi)) << 32);
         if (target && target != guid) {

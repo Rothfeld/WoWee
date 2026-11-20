@@ -1122,7 +1122,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         const size_t eventSize = wotlkEvents ? 36 : 44;
         const size_t trackOfs = 24;  // identifier(4) + data(4) + bone(4) + position(12)
         model.footstepEventTimes.resize(model.sequences.size());
-        model.spellReleaseEventTimes.resize(model.sequences.size());
+        model.spellReleaseEvents.resize(model.sequences.size());
 
         auto rd32 = [&](size_t off) -> uint32_t {
             if (off + 4 > m2Data.size()) return 0;
@@ -1169,8 +1169,13 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 model.footfallEvents.push_back(std::move(event));
                 continue;
             }
-            if (std::memcmp(m2Data.data() + base, "$CS", 3) == 0) {
-                auto& release = model.spellReleaseEventTimes;
+            if (std::memcmp(ident, "$CS", 3) == 0 &&
+                (ident[3] == 'L' || ident[3] == 'R' || ident[3] == 'T')) {
+                auto& release = model.spellReleaseEvents;
+                const uint16_t evBone = static_cast<uint16_t>(rd32(base + 8));
+                glm::vec3 evPos(0.0f);
+                std::memcpy(&evPos, m2Data.data() + base + 12, sizeof(glm::vec3));
+                const char evSide = ident[3];
                 if (wotlkEvents) {
                     const uint32_t nArrays = rd32(base + trackOfs + 4);
                     const uint32_t ofsArrays = rd32(base + trackOfs + 8);
@@ -1178,7 +1183,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                         const uint32_t nTs = rd32(ofsArrays + s * 8);
                         const uint32_t ofsTs = rd32(ofsArrays + s * 8 + 4);
                         if (nTs == 0 || nTs > 1024 || ofsTs + nTs * sizeof(uint32_t) > m2Data.size()) continue;
-                        for (uint32_t ts : readArray<uint32_t>(m2Data, ofsTs, nTs)) release[s].push_back(ts);
+                        for (uint32_t ts : readArray<uint32_t>(m2Data, ofsTs, nTs)) {
+                            release[s].push_back({ts, evBone, evPos, evSide});
+                        }
                     }
                 } else {
                     const uint32_t nTs = rd32(base + trackOfs + 12);
@@ -1187,7 +1194,9 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                         for (uint32_t ts : readArray<uint32_t>(m2Data, ofsTs, nTs)) {
                             for (size_t s = 0; s < vanillaSeqWindows.size() && s < release.size(); s++) {
                                 const auto [start, end] = vanillaSeqWindows[s];
-                                if (start < end && ts >= start && ts < end) release[s].push_back(ts - start);
+                                if (start < end && ts >= start && ts < end) {
+                                    release[s].push_back({ts - start, evBone, evPos, evSide});
+                                }
                             }
                         }
                     }
@@ -1235,7 +1244,13 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         for (auto& list : model.footstepEventTimes) {
             std::sort(list.begin(), list.end());
         }
-        for (auto& list : model.spellReleaseEventTimes) std::sort(list.begin(), list.end());
+        for (auto& list : model.spellReleaseEvents) {
+            auto sideRank = [](char s) -> int { return s == 'L' ? 0 : (s == 'R' ? 1 : 2); };
+            std::sort(list.begin(), list.end(), [&](const auto& a, const auto& b) {
+                if (a.timeMs != b.timeMs) return a.timeMs < b.timeMs;
+                return sideRank(a.side) < sideRank(b.side);
+            });
+        }
         if (footfallStamps > 0) {
             core::Logger::getInstance().debug("  Footfall events: ", footfallStamps, " timestamps");
         }

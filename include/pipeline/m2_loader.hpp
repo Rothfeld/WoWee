@@ -327,11 +327,17 @@ struct M2Model {
     };
     std::vector<FootfallEvent> footfallEvents;
 
-    // Spell release ($CS* events: $CSL, $CSR, $CST, ...) times per sequence
-    // index, ms from the sequence start, sorted. HumanMale.m2 has $CSL at 200 ms
-    // of SpellCastDirected and $CST at 300 ms of SpellCastOmni; a spell missile
-    // leaves the caster there.
-    std::vector<std::vector<uint32_t>> spellReleaseEventTimes;
+    // Spell release ($CSL / $CSR / $CST) events per sequence index, sorted by
+    // timeMs. HumanMale.m2 has $CSL at 200 ms of SpellCastDirected, GnomeMale.m2
+    // and ScourgeMale.m2 have $CSR at 200 ms, and Imp.m2 has $CST at 766 ms;
+    // a spell missile leaves the caster from that bone/offset at that time.
+    struct SpellReleaseEvent {
+        uint32_t timeMs = 0;      // ms from sequence start
+        uint16_t bone = 0;        // bone index (position is in this bone's space)
+        glm::vec3 position{0.0f}; // offset in bone space
+        char side = 'T';          // 'L' ($CSL), 'R' ($CSR), 'T' ($CST)
+    };
+    std::vector<std::vector<SpellReleaseEvent>> spellReleaseEvents;
 
     // Bone lookup table (vertex bone indices reference this to get global bone index)
     std::vector<uint16_t> boneLookupTable;

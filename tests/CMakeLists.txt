@@ -1277,6 +1277,19 @@ wowee_test_link_glm(test_m2_footstep_events)
 add_test(NAME m2_footstep_events COMMAND test_m2_footstep_events)
 register_test_target(test_m2_footstep_events)
 
+# ── test_spell_launch_origin ─────────────────────────────────
+add_executable(test_spell_launch_origin
+    test_spell_launch_origin.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${TEST_COMMON_SOURCES}
+)
+target_include_directories(test_spell_launch_origin PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_spell_launch_origin SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_spell_launch_origin PRIVATE catch2_main)
+wowee_test_link_glm(test_spell_launch_origin)
+add_test(NAME spell_launch_origin COMMAND test_spell_launch_origin)
+register_test_target(test_spell_launch_origin)
+
 # ── test_blp_loader ──────────────────────────────────────────
 add_executable(test_blp_loader
     test_blp_loader.cpp

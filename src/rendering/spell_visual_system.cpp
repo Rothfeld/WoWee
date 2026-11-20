@@ -1406,6 +1406,14 @@ uint32_t SpellVisualSystem::beamStartAttachment(uint32_t visualId) {
     return it != launchAttachments_.end() && it->second == -1 ? 2 : 34;
 }
 
+SpellLaunchOrigin SpellVisualSystem::beamStartOrigin(uint32_t visualId, const pipeline::M2Model* casterModel) {
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+    const auto it = launchAttachments_.find(visualId);
+    const int32_t missileAttachment = it != launchAttachments_.end() ? it->second : 0;
+    const uint32_t chanAnim = channelAnimation(visualId);
+    return resolveBeamStartOrigin(casterModel, chanAnim, missileAttachment);
+}
+
 bool SpellVisualSystem::hasSpellMissile(uint32_t visualId) {
     if (visualId == 0) return false;
     if (!cachedAssetManager_)
@@ -1424,7 +1432,9 @@ std::optional<SpellVisualSystem::MissileAttachments> SpellVisualSystem::missileA
 bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& start,
                                          const glm::vec3& end, float speed, float launchDelay,
                                          bool impactAtEnd, bool areaImpactAtEnd,
-                                         bool resistEffectAtEnd, std::function<void()> onArrive) {
+                                         bool resistEffectAtEnd, std::function<void()> onArrive,
+                                         uint32_t casterInstanceId, SpellLaunchOrigin launchOrigin,
+                                         uint32_t targetInstanceId, uint32_t destinationAttachment) {
     if (!m2Renderer_ || !hasSpellMissile(visualId)) return false;
     if (!cachedAssetManager_) return false;
     if (!std::isfinite(speed) || speed <= 0.0f) return false;
@@ -1447,7 +1457,9 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
                               .end = end, .elapsed = 0.0f, .launchAt = launchDelay, .duration = duration,
                               .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId),
                               .areaImpactAtEnd = areaImpactAtEnd, .resistEffectAtEnd = resistEffectAtEnd,
-                              .onArrive = std::move(onArrive)});
+                              .onArrive = std::move(onArrive), .casterInstanceId = casterInstanceId,
+                              .launchOrigin = launchOrigin, .targetInstanceId = targetInstanceId,
+                              .destinationAttachment = destinationAttachment});
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
              " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay, "s");
     return true;
@@ -1671,6 +1683,29 @@ void SpellVisualSystem::update(float deltaTime) {
             continue;
         }
         if (!it->instanceId) {
+            // Sample live animated launch/target coordinates at the release moment
+            // (t = launchAt), not the stale Precast/Stand pose from SMSG_SPELL_GO.
+            if (auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr) {
+                if (it->casterInstanceId != 0) {
+                    glm::mat4 mat(1.0f);
+                    if (it->launchOrigin.source == SpellLaunchOrigin::Source::EventBone &&
+                        characters->getBonePointTransform(it->casterInstanceId, it->launchOrigin.bone,
+                                                          it->launchOrigin.localOffset, mat)) {
+                        it->start = glm::vec3(mat[3]);
+                    } else if (it->launchOrigin.source == SpellLaunchOrigin::Source::Attachment &&
+                               characters->getAttachmentTransform(it->casterInstanceId,
+                                                                  it->launchOrigin.attachmentId, mat)) {
+                        it->start = glm::vec3(mat[3]);
+                    }
+                }
+                if (it->targetInstanceId != 0) {
+                    glm::mat4 mat(1.0f);
+                    if (characters->getAttachmentTransform(it->targetInstanceId,
+                                                           it->destinationAttachment, mat)) {
+                        it->end = glm::vec3(mat[3]);
+                    }
+                }
+            }
             it->instanceId = m2Renderer_->createInstance(it->modelId, it->start, glm::vec3(0.0f), it->scale);
             if (!it->instanceId) {
                 LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);

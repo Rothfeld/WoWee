@@ -5939,6 +5939,21 @@ bool CharacterRenderer::getAttachmentTransform(uint32_t instanceId, uint32_t att
     return true;
 }
 
+bool CharacterRenderer::getBonePointTransform(uint32_t instanceId, uint16_t boneIndex,
+                                              const glm::vec3& localOffset,
+                                              glm::mat4& outTransform) const {
+    auto instIt = instances.find(instanceId);
+    if (instIt == instances.end()) return false;
+    const auto& instance = instIt->second;
+    if (boneIndex >= instance.boneMatrices.size()) return false;
+
+    const glm::mat4 modelMat = instance.hasOverrideModelMatrix
+        ? instance.overrideModelMatrix
+        : getModelMatrix(instance);
+    outTransform = modelMat * instance.boneMatrices[boneIndex] * glm::translate(glm::mat4(1.0f), localOffset);
+    return true;
+}
+
 void CharacterRenderer::dumpAnimations(uint32_t instanceId) const {
     auto instIt = instances.find(instanceId);
     if (instIt == instances.end()) {
