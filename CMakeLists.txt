@@ -488,11 +488,11 @@ option(WOWEE_SHADER_DEBUG_INFO
 # Function to compile GLSL shaders to SPIR-V
 function(compile_shaders TARGET_NAME)
     set(SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders)
-    # Compile in place, next to the GLSL. The .spv files are tracked (they are the
-    # fallback when glslc is absent), and the POST_BUILD step below copies the whole
-    # source assets/ tree over the runtime one - so compiling into the runtime tree
-    # would just be overwritten by the committed .spv, silently running stale shaders.
-    set(SPV_DIR ${SHADER_DIR})
+    # Emit compiled SPIR-V into the build directory so tracked fallback .spv
+    # files in assets/shaders/ are never dirtied during normal builds. Both
+    # ${TARGET_NAME}_shaders and wowee's POST_BUILD overlay SPV_DIR onto the
+    # runtime assets/shaders directory after copying source assets/.
+    set(SPV_DIR ${CMAKE_BINARY_DIR}/generated/shaders)
     file(MAKE_DIRECTORY ${SPV_DIR})
 
     # CONFIGURE_DEPENDS: a shader added after the build dir was configured is
@@ -747,150 +747,8 @@ set(WOWEE_SOURCES
     src/pipeline/wdt_loader.cpp
     src/pipeline/wowee_terrain_loader.cpp
     src/pipeline/wowee_model.cpp
-    src/pipeline/wowee_model_fromm2.cpp
     src/pipeline/wowee_building.cpp
     src/pipeline/wowee_collision.cpp
-    src/pipeline/wowee_light.cpp
-    src/pipeline/wowee_weather.cpp
-    src/pipeline/wowee_world_map.cpp
-    src/pipeline/wowee_sound.cpp
-    src/pipeline/wowee_spawns.cpp
-    src/pipeline/wowee_items.cpp
-    src/pipeline/wowee_loot.cpp
-    src/pipeline/wowee_creatures.cpp
-    src/pipeline/wowee_quests.cpp
-    src/pipeline/wowee_objects.cpp
-    src/pipeline/wowee_factions.cpp
-    src/pipeline/wowee_locks.cpp
-    src/pipeline/wowee_skills.cpp
-    src/pipeline/wowee_spells.cpp
-    src/pipeline/wowee_achievements.cpp
-    src/pipeline/wowee_trainers.cpp
-    src/pipeline/wowee_gossip.cpp
-    src/pipeline/wowee_taxi.cpp
-    src/pipeline/wowee_talents.cpp
-    src/pipeline/wowee_maps.cpp
-    src/pipeline/wowee_chars.cpp
-    src/pipeline/wowee_tokens.cpp
-    src/pipeline/wowee_triggers.cpp
-    src/pipeline/wowee_titles.cpp
-    src/pipeline/wowee_events.cpp
-    src/pipeline/wowee_mounts.cpp
-    src/pipeline/wowee_battlegrounds.cpp
-    src/pipeline/wowee_mail.cpp
-    src/pipeline/wowee_gems.cpp
-    src/pipeline/wowee_guilds.cpp
-    src/pipeline/wowee_conditions.cpp
-    src/pipeline/wowee_pets.cpp
-    src/pipeline/wowee_auction.cpp
-    src/pipeline/wowee_channels.cpp
-    src/pipeline/wowee_cinematics.cpp
-    src/pipeline/wowee_glyphs.cpp
-    src/pipeline/wowee_vehicles.cpp
-    src/pipeline/wowee_holidays.cpp
-    src/pipeline/wowee_liquids.cpp
-    src/pipeline/wowee_animations.cpp
-    src/pipeline/wowee_spell_visuals.cpp
-    src/pipeline/wowee_world_state_ui.cpp
-    src/pipeline/wowee_player_conditions.cpp
-    src/pipeline/wowee_trade_skills.cpp
-    src/pipeline/wowee_creature_equipment.cpp
-    src/pipeline/wowee_item_sets.cpp
-    src/pipeline/wowee_game_tips.cpp
-    src/pipeline/wowee_companions.cpp
-    src/pipeline/wowee_spell_mechanics.cpp
-    src/pipeline/wowee_keybindings.cpp
-    src/pipeline/wowee_spell_schools.cpp
-    src/pipeline/wowee_lfg.cpp
-    src/pipeline/wowee_macros.cpp
-    src/pipeline/wowee_char_features.cpp
-    src/pipeline/wowee_pvp.cpp
-    src/pipeline/wowee_bags.cpp
-    src/pipeline/wowee_runes.cpp
-    src/pipeline/wowee_loading_screens.cpp
-    src/pipeline/wowee_item_suffixes.cpp
-    src/pipeline/wowee_combat_ratings.cpp
-    src/pipeline/wowee_unit_movement.cpp
-    src/pipeline/wowee_quest_sorts.cpp
-    src/pipeline/wowee_spell_ranges.cpp
-    src/pipeline/wowee_spell_cast_times.cpp
-    src/pipeline/wowee_spell_durations.cpp
-    src/pipeline/wowee_spell_cooldowns.cpp
-    src/pipeline/wowee_creature_families.cpp
-    src/pipeline/wowee_spell_power_costs.cpp
-    src/pipeline/wowee_glyph_slots.cpp
-    src/pipeline/wowee_creature_difficulties.cpp
-    src/pipeline/wowee_item_materials.cpp
-    src/pipeline/wowee_player_spawn_profiles.cpp
-    src/pipeline/wowee_talent_tabs.cpp
-    src/pipeline/wowee_currency_types.cpp
-    src/pipeline/wowee_spell_reagents.cpp
-    src/pipeline/wowee_achievement_criteria.cpp
-    src/pipeline/wowee_spell_effect_types.cpp
-    src/pipeline/wowee_spell_aura_types.cpp
-    src/pipeline/wowee_item_qualities.cpp
-    src/pipeline/wowee_skill_costs.cpp
-    src/pipeline/wowee_item_flags.cpp
-    src/pipeline/wowee_npc_services.cpp
-    src/pipeline/wowee_token_rewards.cpp
-    src/pipeline/wowee_spell_procs.cpp
-    src/pipeline/wowee_creature_patrols.cpp
-    src/pipeline/wowee_boss_encounters.cpp
-    src/pipeline/wowee_instance_lockouts.cpp
-    src/pipeline/wowee_stable_slots.cpp
-    src/pipeline/wowee_stat_curves.cpp
-    src/pipeline/wowee_action_bars.cpp
-    src/pipeline/wowee_group_compositions.cpp
-    src/pipeline/wowee_hearth_binds.cpp
-    src/pipeline/wowee_server_broadcasts.cpp
-    src/pipeline/wowee_combat_maneuvers.cpp
-    src/pipeline/wowee_realm_list.cpp
-    src/pipeline/wowee_emotes.cpp
-    src/pipeline/wowee_buff_book.cpp
-    src/pipeline/wowee_tabards.cpp
-    src/pipeline/wowee_spell_markers.cpp
-    src/pipeline/wowee_learning_notifications.cpp
-    src/pipeline/wowee_creature_resists.cpp
-    src/pipeline/wowee_pet_talents.cpp
-    src/pipeline/wowee_heroic_scaling.cpp
-    src/pipeline/wowee_reputation_rewards.cpp
-    src/pipeline/wowee_minimap_levels.cpp
-    src/pipeline/wowee_pet_care.cpp
-    src/pipeline/wowee_movie_credits.cpp
-    src/pipeline/wowee_spell_variants.cpp
-    src/pipeline/wowee_voiceovers.cpp
-    src/pipeline/wowee_trade_rules.cpp
-    src/pipeline/wowee_word_filters.cpp
-    src/pipeline/wowee_raid_markers.cpp
-    src/pipeline/wowee_loot_modes.cpp
-    src/pipeline/wowee_sky_params.cpp
-    src/pipeline/wowee_server_config.cpp
-    src/pipeline/wowee_anniversary_events.cpp
-    src/pipeline/wowee_pvp_ranks.cpp
-    src/pipeline/wowee_localization.cpp
-    src/pipeline/wowee_global_channels.cpp
-    src/pipeline/wowee_addon_manifest.cpp
-    src/pipeline/wowee_spell_pack.cpp
-    src/pipeline/wowee_player_movement_anim.cpp
-    src/pipeline/wowee_transit_schedule.cpp
-    src/pipeline/wowee_mage_portals.cpp
-    src/pipeline/wowee_combat_stats.cpp
-    src/pipeline/wowee_guild_bank.cpp
-    src/pipeline/wowee_quest_graph.cpp
-    src/pipeline/wowee_crafting_recipes.cpp
-    src/pipeline/wowee_world_locations.cpp
-    src/pipeline/wowee_soulbind_rules.cpp
-    src/pipeline/wowee_creature_behavior.cpp
-    src/pipeline/wowee_random_property.cpp
-    src/pipeline/wowee_spell_proc_rules.cpp
-    src/pipeline/wowee_auction_houses.cpp
-    src/pipeline/wowee_battleground_rewards.cpp
-    src/pipeline/wowee_sound_swap.cpp
-    src/pipeline/wowee_tutorial_steps.cpp
-    src/pipeline/wowee_chat_commands.cpp
-    src/pipeline/wowee_camera_presets.cpp
-    src/pipeline/wowee_combat_formulas.cpp
-    src/pipeline/wowee_chat_links.cpp
     src/pipeline/custom_zone_discovery.cpp
     src/pipeline/char_sections.cpp
     src/ui/settings_schema.cpp
@@ -1648,6 +1506,14 @@ add_custom_command(TARGET wowee POST_BUILD
         $<TARGET_FILE_DIR:wowee>/assets
     COMMENT "Syncing assets to $<TARGET_FILE_DIR:wowee>/assets"
 )
+if(GLSLC)
+    add_custom_command(TARGET wowee POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_BINARY_DIR}/generated/shaders
+            $<TARGET_FILE_DIR:wowee>/assets/shaders
+        COMMENT "Overlaying compiled SPIR-V shaders onto $<TARGET_FILE_DIR:wowee>/assets/shaders"
+    )
+endif()
 
 # Symlink Data/ next to the executable so expansion profiles, opcode tables,
 # and other runtime data files are found when running from the build directory.
@@ -1692,6 +1558,11 @@ install(TARGETS wowee
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets
     DESTINATION bin
     PATTERN "Original Music" EXCLUDE)
+if(GLSLC)
+    install(DIRECTORY ${CMAKE_BINARY_DIR}/generated/shaders/
+        DESTINATION bin/assets/shaders
+        OPTIONAL)
+endif()
 
 # The expansion profiles, which say what each game this client can speak is:
 # its build number, protocol version, races and classes, opcode table and
@@ -2433,9 +2304,59 @@ add_executable(wowee_editor
     src/pipeline/wdt_loader.cpp
     src/pipeline/wowee_terrain_loader.cpp
     src/pipeline/wowee_model.cpp
-    src/pipeline/wowee_model_fromm2.cpp
     src/pipeline/wowee_building.cpp
     src/pipeline/wowee_collision.cpp
+    src/pipeline/custom_zone_discovery.cpp
+    src/pipeline/terrain_mesh.cpp
+    src/pipeline/adt_alpha.cpp
+
+    # Rendering core
+    src/rendering/vk_context.cpp
+    src/rendering/vk_utils.cpp
+    src/rendering/polygon_triangulate.cpp
+    src/rendering/vk_shader.cpp
+    src/rendering/vk_texture.cpp
+    src/rendering/vk_buffer.cpp
+    src/rendering/vk_pipeline.cpp
+    src/rendering/camera.cpp
+    src/rendering/terrain_renderer.cpp
+    src/rendering/shadow_params.cpp
+    src/rendering/m2_renderer.cpp
+    src/rendering/m2_renderer_instance.cpp
+    src/rendering/m2_renderer_particles.cpp
+    src/rendering/m2_renderer_render.cpp
+    src/rendering/m2_model_classifier.cpp
+    src/rendering/wmo_renderer.cpp
+    src/rendering/imgui_texture.cpp
+    src/rendering/bone_slots.cpp
+    src/rendering/normal_map.cpp
+    src/rendering/frustum.cpp
+    src/rendering/rt_bvh.cpp
+    src/rendering/rt_scene.cpp
+    src/rendering/rt_lighting.cpp
+    src/rendering/volumetric_fog.cpp
+
+    # Core
+    src/core/window.cpp
+    src/core/logger.cpp
+    src/core/memory_monitor.cpp
+
+    # stb_image (needed by AssetManager for PNG overrides)
+    tools/editor/stb_image_impl.cpp
+
+    ${WOWEE_MACOS_SOURCES}
+)
+target_include_directories(wowee_editor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/editor
+)
+target_include_directories(wowee_editor SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/vk-bootstrap/src
+)
+add_library(wowee_editor_catalogs STATIC EXCLUDE_FROM_ALL
+    src/pipeline/wowee_model_fromm2.cpp
     src/pipeline/wowee_light.cpp
     src/pipeline/wowee_weather.cpp
     src/pipeline/wowee_world_map.cpp
@@ -2577,56 +2498,25 @@ add_executable(wowee_editor
     src/pipeline/wowee_camera_presets.cpp
     src/pipeline/wowee_combat_formulas.cpp
     src/pipeline/wowee_chat_links.cpp
-    src/pipeline/custom_zone_discovery.cpp
-    src/pipeline/terrain_mesh.cpp
-    src/pipeline/adt_alpha.cpp
-
-    # Rendering core
-    src/rendering/vk_context.cpp
-    src/rendering/vk_utils.cpp
-    src/rendering/polygon_triangulate.cpp
-    src/rendering/vk_shader.cpp
-    src/rendering/vk_texture.cpp
-    src/rendering/vk_buffer.cpp
-    src/rendering/vk_pipeline.cpp
-    src/rendering/camera.cpp
-    src/rendering/terrain_renderer.cpp
-    src/rendering/shadow_params.cpp
-    src/rendering/m2_renderer.cpp
-    src/rendering/m2_renderer_instance.cpp
-    src/rendering/m2_renderer_particles.cpp
-    src/rendering/m2_renderer_render.cpp
-    src/rendering/m2_model_classifier.cpp
-    src/rendering/wmo_renderer.cpp
-    src/rendering/imgui_texture.cpp
-    src/rendering/bone_slots.cpp
-    src/rendering/normal_map.cpp
-    src/rendering/frustum.cpp
-    src/rendering/rt_bvh.cpp
-    src/rendering/rt_scene.cpp
-    src/rendering/rt_lighting.cpp
-    src/rendering/volumetric_fog.cpp
-
-    # Core
-    src/core/window.cpp
-    src/core/logger.cpp
-    src/core/memory_monitor.cpp
-
-    # stb_image (needed by AssetManager for PNG overrides)
-    tools/editor/stb_image_impl.cpp
-
-    ${WOWEE_MACOS_SOURCES}
 )
-target_include_directories(wowee_editor PRIVATE
+target_include_directories(wowee_editor_catalogs PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/editor
 )
-target_include_directories(wowee_editor SYSTEM PRIVATE
+target_include_directories(wowee_editor_catalogs SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/extern
-    ${CMAKE_CURRENT_SOURCE_DIR}/extern/vk-bootstrap/src
 )
+target_compile_features(wowee_editor_catalogs PRIVATE cxx_std_20)
+if(TARGET glm::glm-header-only)
+    target_link_libraries(wowee_editor_catalogs PRIVATE glm::glm-header-only)
+elseif(TARGET glm::glm)
+    target_link_libraries(wowee_editor_catalogs PRIVATE glm::glm)
+elseif(glm_FOUND)
+    target_include_directories(wowee_editor_catalogs PRIVATE ${GLM_INCLUDE_DIRS})
+endif()
+
 target_link_libraries(wowee_editor PRIVATE
+    wowee_editor_catalogs
     SDL3::SDL3
     Vulkan::Vulkan
     Threads::Threads
@@ -2795,8 +2685,9 @@ include(CPack)
 # deleted them.
 add_custom_target(copy_bundled_addons ALL
     COMMAND ${CMAKE_COMMAND} -E rm -rf $<TARGET_FILE_DIR:wowee>/addons
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:wowee>/addons/WoweeAllBags
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/addons $<TARGET_FILE_DIR:wowee>/addons
+            ${CMAKE_SOURCE_DIR}/addons/WoweeAllBags $<TARGET_FILE_DIR:wowee>/addons/WoweeAllBags
     # And without anyone's saved variables - see the script for why the source
     # tree has them at all.
     COMMAND ${CMAKE_COMMAND} -DDIR=$<TARGET_FILE_DIR:wowee>/addons
