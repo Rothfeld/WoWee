@@ -564,6 +564,7 @@ private:
     // CMSG_USE_ITEM requires a valid spellId or the server silently ignores it.
     void seedCooldownFromSpellInfo(uint32_t spellId, bool isPet = false);
     void syncActionBarCooldowns(uint32_t spellId, uint32_t categoryId);
+    void upgradeActionBarSpell(uint32_t oldSpellId, uint32_t newSpellId);
     void handleSupercededSpell(network::Packet& packet);
     void handleRemovedSpell(network::Packet& packet);
     void handleUnlearnSpells(network::Packet& packet);

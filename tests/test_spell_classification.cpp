@@ -549,3 +549,64 @@ TEST_CASE("isAuraVisible and isAuraCancellable match native TBC 2.4.3 Spell.dbc 
     CHECK_FALSE(isAuraCancellable(0x88000100u, 0x00000000u, false));
     CHECK_FALSE(isAuraCancellable(0x00010000u, 0x00000000u, true));
 }
+
+// ---------------------------------------------------------------------------
+// Action bar rank auto-upgrade (Native 2.4.3 SMSG_LEARNED_SPELL parity)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Learning a higher spell rank upgrades only the previous highest known rank",
+          "[spell][rank][rankupgrade]") {
+    FakeSpellDbc dbc;
+    dbc.add(686,  "Shadow Bolt", "Rank 1");
+    dbc.add(695,  "Shadow Bolt", "Rank 2");
+    dbc.add(705,  "Shadow Bolt", "Rank 3");
+    dbc.add(1088, "Shadow Bolt", "Rank 4");
+    dbc.add(172,  "Corruption",  "Rank 1");
+    dbc.add(8690, "Hearthstone", "");
+
+    SECTION("Rank 1 -> Rank 2 upgrades Rank 1") {
+        const std::unordered_set<uint32_t> known{686, 172};
+        CHECK(findActionBarRankUpgradeSource(695, known, dbc.lookup()) == 686);
+    }
+
+    SECTION("Rank 1 + Rank 2 -> Rank 3 upgrades Rank 2 only, preserving intentional Rank 1 downrank") {
+        const std::unordered_set<uint32_t> known{686, 695};
+        CHECK(findActionBarRankUpgradeSource(705, known, dbc.lookup()) == 695);
+    }
+
+    SECTION("Skipping a rank (know only Rank 1 -> learn Rank 3) upgrades Rank 1 -> Rank 3") {
+        const std::unordered_set<uint32_t> known{686};
+        CHECK(findActionBarRankUpgradeSource(705, known, dbc.lookup()) == 686);
+    }
+
+    SECTION("Learning a lower rank while a higher rank is known never downgrades or replaces") {
+        const std::unordered_set<uint32_t> known{686, 705};
+        CHECK(findActionBarRankUpgradeSource(695, known, dbc.lookup()) == 0);
+    }
+
+    SECTION("Already known, first rank, rankless, and unknown spells return 0") {
+        const std::unordered_set<uint32_t> known{686, 695};
+        CHECK(findActionBarRankUpgradeSource(695, known, dbc.lookup()) == 0);
+        CHECK(findActionBarRankUpgradeSource(172, known, dbc.lookup()) == 0);
+        CHECK(findActionBarRankUpgradeSource(8690, known, dbc.lookup()) == 0);
+        CHECK(findActionBarRankUpgradeSource(0, known, dbc.lookup()) == 0);
+        CHECK(findActionBarRankUpgradeSource(999999, known, dbc.lookup()) == 0);
+    }
+
+    SECTION("Tolerates lookup adapter with reused scratch storage") {
+        const std::unordered_map<uint32_t, SpellRankInfo> entries{
+            {686, {"Shadow Bolt", "Rank 1"}},
+            {695, {"Shadow Bolt", "Rank 2"}},
+            {172, {"Corruption",  "Rank 1"}},
+        };
+        SpellRankInfo scratch;
+        auto reusedLookup = [&entries, &scratch](uint32_t id) -> const SpellRankInfo* {
+            auto it = entries.find(id);
+            if (it == entries.end()) return nullptr;
+            scratch = it->second;
+            return &scratch;
+        };
+        const std::unordered_set<uint32_t> known{686, 172};
+        CHECK(findActionBarRankUpgradeSource(695, known, reusedLookup) == 686);
+    }
+}

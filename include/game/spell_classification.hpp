@@ -369,6 +369,52 @@ inline uint32_t resolveHighestKnownRank(
     return best != 0 ? best : spellId;
 }
 
+/// Returns the spell id that action bar slots should upgrade from when the player
+/// newly learns `newSpellId`, or 0 when no action bar slot should change.
+///
+/// Measured on Native 2.4.3 (pair 5, Shadow Bolt Ranks 1-4):
+/// - Learning a ranked spell (`rankValue(rank) > 0`) that becomes the player's new
+///   highest known rank of that spell name upgrades every action bar slot (1..120)
+///   holding the previous highest known rank of that spell name to `newSpellId`.
+/// - Intentional downranks (slots holding any lower rank than the previous highest,
+///   e.g. Rank 1 when Rank 2 is known and Rank 3 is learned) are left untouched.
+/// - Skipping a rank (knowing only Rank 1 and learning Rank 3) upgrades Rank 1 -> 3
+///   because Rank 1 was the previous highest known rank.
+/// - Learning a rank lower than an already-known rank (e.g. knowing Rank 1 + Rank 3
+///   and learning Rank 2) never downgrades or alters any action bar slot.
+/// - `previouslyKnownSpells` is the set of known spells *before* `newSpellId` is
+///   inserted; if `newSpellId` is already present, returns 0.
+inline uint32_t findActionBarRankUpgradeSource(
+        uint32_t newSpellId,
+        const std::unordered_set<uint32_t>& previouslyKnownSpells,
+        const std::function<const SpellRankInfo*(uint32_t)>& lookup) {
+    if (newSpellId == 0 || previouslyKnownSpells.count(newSpellId) > 0) return 0;
+
+    const SpellRankInfo* newInfo = lookup(newSpellId);
+    if (!newInfo || newInfo->name.empty()) return 0;
+
+    const int newRank = rankValue(newInfo->rank);
+    if (newRank <= 0) return 0;
+
+    // Copy name by value: DBC lookup adapters may reuse a single scratch object.
+    const std::string targetName = newInfo->name;
+
+    uint32_t prevHighestId = 0;
+    int prevHighestRank = 0;
+    for (uint32_t known : previouslyKnownSpells) {
+        const SpellRankInfo* info = lookup(known);
+        if (!info || info->name != targetName) continue;
+        const int r = rankValue(info->rank);
+        if (r > prevHighestRank) {
+            prevHighestRank = r;
+            prevHighestId = known;
+        }
+    }
+
+    if (prevHighestId == 0 || newRank <= prevHighestRank) return 0;
+    return prevHighestId;
+}
+
 /// What IsHarmfulSpell and IsHelpfulSpell answer, from the implicit targets
 /// (A and B) of a spell's three effects.
 ///

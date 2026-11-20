@@ -4345,11 +4345,32 @@ void SpellHandler::handleLearnedSpell(network::Packet& packet) {
     uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
 
     const bool alreadyKnown = knownSpells_.count(spellId) > 0;
+    uint32_t upgradeFromSpellId = 0;
+    if (!alreadyKnown) {
+        loadSpellNameCache();
+        const auto& cache = owner_.spellNameCacheRef();
+        spellclass::SpellRankInfo scratch;
+        upgradeFromSpellId = spellclass::findActionBarRankUpgradeSource(
+            spellId, knownSpells_,
+            [&cache, &scratch](uint32_t id) -> const spellclass::SpellRankInfo* {
+                const auto it = cache.find(id);
+                if (it == cache.end()) return nullptr;
+                scratch.name = it->second.name;
+                scratch.rank = it->second.rank;
+                return &scratch;
+            });
+    }
     knownSpells_.insert(spellId);
     LOG_INFO("Learned spell: ", spellId, alreadyKnown ? " (already known, skipping chat)" : "");
     if (isPreWotlk()) {
         loadTalentDbc();
         syncPreWotlkTalentsFromKnownSpells();
+    }
+    // Native 2.4.3 upgrades action bar slots holding the previous highest known
+    // rank to the newly learned higher rank, emitting ACTIONBAR_SLOT_CHANGED and
+    // CMSG_SET_ACTION_BUTTON before the learned chat line and SPELLS_CHANGED.
+    if (upgradeFromSpellId != 0) {
+        upgradeActionBarSpell(upgradeFromSpellId, spellId);
     }
 
     // Check if this spell corresponds to a talent rank
@@ -4452,6 +4473,34 @@ void SpellHandler::handleRemovedSpell(network::Packet& packet) {
     if (barChanged) owner_.saveCharacterConfig();
 }
 
+void SpellHandler::upgradeActionBarSpell(uint32_t oldSpellId, uint32_t newSpellId) {
+    if (oldSpellId == 0 || newSpellId == 0 || oldSpellId == newSpellId) return;
+
+    const auto& fire = owner_.addonEventCallbackRef();
+    bool barChanged = false;
+    auto& bar = owner_.actionBarRef();
+    for (size_t i = 0; i < bar.size(); ++i) {
+        auto& slot = bar[i];
+        if (slot.type == ActionBarSlot::SPELL && slot.id == oldSpellId) {
+            slot.id = newSpellId;
+            slot.cooldownRemaining = 0.0f;
+            slot.cooldownTotal = 0.0f;
+            barChanged = true;
+            LOG_DEBUG("Action bar slot ", i + 1, " upgraded: spell ", oldSpellId, " -> ", newSpellId);
+            if (fire) fire("ACTIONBAR_SLOT_CHANGED", {std::to_string(i + 1)});
+            // The server keeps the button as it was told: native 2.4.3 sends
+            // CMSG_SET_ACTION_BUTTON with the new rank (both for SMSG_SUPERCEDED_SPELL
+            // and for SMSG_LEARNED_SPELL rank upgrades), so the button persists in
+            // character_action across logout/relog.
+            if (owner_.getSocket() && owner_.getState() == WorldState::IN_WORLD) {
+                owner_.getSocket()->send(SetActionButtonPacket::build(static_cast<uint8_t>(i),
+                    static_cast<uint8_t>(ActionBarSlot::SPELL), newSpellId, isClassicLikeExpansion()));
+            }
+        }
+    }
+    if (barChanged) owner_.saveCharacterConfig();
+}
+
 void SpellHandler::handleSupercededSpell(network::Packet& packet) {
     // Two uint16 through 2.4.3 (CMaNGOS TBC Player::SendSupercededSpell).
     const bool classicSpellId = isPreWotlk();
@@ -4470,28 +4519,9 @@ void SpellHandler::handleSupercededSpell(network::Packet& packet) {
 
     LOG_INFO("Spell superceded: ", oldSpellId, " -> ", newSpellId);
 
+    upgradeActionBarSpell(oldSpellId, newSpellId);
+
     const auto& fire = owner_.addonEventCallbackRef();
-    bool barChanged = false;
-    auto& bar = owner_.actionBarRef();
-    for (size_t i = 0; i < bar.size(); ++i) {
-        auto& slot = bar[i];
-        if (slot.type == ActionBarSlot::SPELL && slot.id == oldSpellId) {
-            slot.id = newSpellId;
-            slot.cooldownRemaining = 0.0f;
-            slot.cooldownTotal = 0.0f;
-            barChanged = true;
-            LOG_DEBUG("Action bar slot upgraded: spell ", oldSpellId, " -> ", newSpellId);
-            if (fire) fire("ACTIONBAR_SLOT_CHANGED", {std::to_string(i + 1)});
-            // The server keeps the button as it was told: native 2.4.3 sends
-            // CMSG_SET_ACTION_BUTTON with the new rank (a new warrior's Heroic
-            // Strike button 73 is stored as 30324 after `.learn all_myclass`),
-            // so the button survives a relog that no longer knows rank 1.
-            if (owner_.getSocket() && owner_.getState() == WorldState::IN_WORLD)
-                owner_.getSocket()->send(SetActionButtonPacket::build(static_cast<uint8_t>(i),
-                    static_cast<uint8_t>(ActionBarSlot::SPELL), newSpellId, isClassicLikeExpansion()));
-        }
-    }
-    if (barChanged) owner_.saveCharacterConfig();
 
     // 2.4.3 announces the rank that took the old one's place, in the words of
     // SMSG_LEARNED_SPELL, and the SMSG_LEARNED_SPELL that follows a trained

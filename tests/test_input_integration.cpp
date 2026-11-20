@@ -4556,3 +4556,106 @@ TEST_CASE_METHOD(Integration, "Spell unit targeting, autoSelfCast default, and S
     CHECK_FALSE(gh.isAwaitingUnitTarget());
     CHECK(gh.getTargetGuid() == kHostileMob);
 }
+
+TEST_CASE("TBC SMSG_LEARNED_SPELL and SMSG_SUPERCEDED_SPELL auto-upgrade action bar ranks",
+          "[rankupgrade]") {
+    using namespace wowee::game;
+
+    replay::Session session("tbc");
+    auto& gh = session.handler();
+    gh.spellNameCacheLoadedRef() = true;
+    gh.spellNameCacheRef()[686]  = {.name = "Shadow Bolt", .rank = "Rank 1"};
+    gh.spellNameCacheRef()[695]  = {.name = "Shadow Bolt", .rank = "Rank 2"};
+    gh.spellNameCacheRef()[705]  = {.name = "Shadow Bolt", .rank = "Rank 3"};
+    gh.spellNameCacheRef()[703]  = {.name = "Garrote",     .rank = "Rank 1"};
+    gh.spellNameCacheRef()[8631] = {.name = "Garrote",     .rank = "Rank 2"};
+
+    auto decodeSetButtons = [&session]() {
+        std::vector<std::pair<uint8_t, uint32_t>> out;
+        for (auto pkt : session.sent().of(Opcode::CMSG_SET_ACTION_BUTTON)) {
+            const uint8_t btn = pkt.readUInt8();
+            const uint32_t packed = pkt.readUInt32();
+            out.emplace_back(btn, packed);
+        }
+        return out;
+    };
+
+    // 1. SMSG_INITIAL_SPELLS on login must NOT emit CMSG_SET_ACTION_BUTTON.
+    gh.actionBarRef()[4]  = {.type = ActionBarSlot::SPELL, .id = 686}; // slot 5 (main bar)
+    gh.actionBarRef()[60] = {.type = ActionBarSlot::SPELL, .id = 686}; // slot 61 (multi-bar)
+    {
+        wowee::network::Packet init(wireOpcode(Opcode::SMSG_INITIAL_SPELLS));
+        init.writeUInt8(0);      // talentSpec / unk
+        init.writeUInt16(1);     // spellCount
+        init.writeUInt16(686);   // Shadow Bolt (Rank 1)
+        init.writeUInt16(0);     // slot
+        init.writeUInt16(0);     // cooldownCount
+        session.receive(init);
+    }
+    CHECK(gh.getKnownSpells().count(686) == 1);
+    CHECK(decodeSetButtons().empty());
+
+    // 2. Learning Shadow Bolt Rank 2 upgrades both main-bar slot 5 and multi-bar slot 61,
+    //    fires ACTIONBAR_SLOT_CHANGED before SPELLS_CHANGED, and persists via CMSG_SET_ACTION_BUTTON.
+    std::vector<std::pair<std::string, std::string>> events;
+    gh.setAddonEventCallback([&events](const std::string& name, const std::vector<std::string>& args) {
+        events.emplace_back(name, args.empty() ? "" : args[0]);
+    });
+    {
+        wowee::network::Packet learned(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+        learned.writeUInt32(695);
+        session.receive(learned);
+    }
+    CHECK(gh.actionBarRef()[4].id == 695);
+    CHECK(gh.actionBarRef()[60].id == 695);
+    const auto sentAfterR2 = decodeSetButtons();
+    REQUIRE(sentAfterR2.size() == 2);
+    CHECK(sentAfterR2[0] == std::pair<uint8_t, uint32_t>{4, 695u});
+    CHECK(sentAfterR2[1] == std::pair<uint8_t, uint32_t>{60, 695u});
+    REQUIRE(events.size() >= 2);
+    CHECK(events[0] == std::pair<std::string, std::string>{"ACTIONBAR_SLOT_CHANGED", "5"});
+    CHECK(events[1] == std::pair<std::string, std::string>{"ACTIONBAR_SLOT_CHANGED", "61"});
+
+    // 3. Intentional downrank preservation: slot 5 holds Rank 1, slot 6 & 61 hold Rank 2.
+    //    Learning Rank 3 upgrades ONLY slots 6 and 61, leaving slot 5 at Rank 1.
+    gh.actionBarRef()[4] = {.type = ActionBarSlot::SPELL, .id = 686};
+    gh.actionBarRef()[5] = {.type = ActionBarSlot::SPELL, .id = 695};
+    events.clear();
+    {
+        wowee::network::Packet learned(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+        learned.writeUInt32(705);
+        session.receive(learned);
+    }
+    CHECK(gh.actionBarRef()[4].id == 686);
+    CHECK(gh.actionBarRef()[5].id == 705);
+    CHECK(gh.actionBarRef()[60].id == 705);
+    const auto sentAfterR3 = decodeSetButtons();
+    REQUIRE(sentAfterR3.size() == 4);
+    CHECK(sentAfterR3[2] == std::pair<uint8_t, uint32_t>{5, 705u});
+    CHECK(sentAfterR3[3] == std::pair<uint8_t, uint32_t>{60, 705u});
+
+    // 4. SMSG_SUPERCEDED_SPELL upgrades slot and sends CMSG_SET_ACTION_BUTTON once;
+    //    a trailing SMSG_LEARNED_SPELL for the same new spell does not double-send.
+    gh.actionBarRef()[72] = {.type = ActionBarSlot::SPELL, .id = 703}; // slot 73 (stance bar)
+    {
+        wowee::network::Packet learn1(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+        learn1.writeUInt32(703);
+        session.receive(learn1);
+    }
+    const auto beforeSupercede = decodeSetButtons().size();
+    {
+        wowee::network::Packet superceded(wireOpcode(Opcode::SMSG_SUPERCEDED_SPELL));
+        superceded.writeUInt16(703);
+        superceded.writeUInt16(8631);
+        session.receive(superceded);
+        wowee::network::Packet learn2(wireOpcode(Opcode::SMSG_LEARNED_SPELL));
+        learn2.writeUInt32(8631);
+        session.receive(learn2);
+    }
+    CHECK(gh.actionBarRef()[72].id == 8631);
+    const auto afterSupercede = decodeSetButtons();
+    REQUIRE(afterSupercede.size() == beforeSupercede + 1);
+    CHECK(afterSupercede.back() == std::pair<uint8_t, uint32_t>{72, 8631u});
+
+    gh.setAddonEventCallback({});
+}
