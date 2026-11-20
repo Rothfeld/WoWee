@@ -483,6 +483,7 @@ private:
         int upperBodySequenceIndex = -1;
         float upperBodyAnimationTime = 0.0f;
         bool upperBodyAnimationLoop = true;
+        float upperBodyOneShotMaxDurationMs = 0.0f;
         std::vector<bool> upperBodyBones;
         // The upper body's outgoing pose, faded out over the incoming
         // sequence's authored blend time when a rider's swing starts or ends
@@ -665,10 +666,12 @@ private:
     std::unordered_map<uint32_t, uint32_t> animationFallback_;
     std::unordered_map<uint32_t, uint32_t> animationFlags_;
     std::unordered_map<uint32_t, uint32_t> animationWeaponFlags_;
+    std::unordered_map<uint32_t, uint32_t> animationBodyFlags_;
     bool animationFallbackLoaded_ = false;
     void loadAnimationData();
     std::optional<uint32_t> animationFallback(uint32_t animationId);
     uint32_t animationFlags(uint32_t animationId);
+    uint32_t animationBodyFlags(uint32_t animationId);
     /// The sequence animation and play mode shown for `animationId` on a
     /// model without it (rendering/animation/playable_animation.hpp).
     std::optional<PlayableStandIn> playableStandIn(const pipeline::M2Model& model, uint32_t animationId);

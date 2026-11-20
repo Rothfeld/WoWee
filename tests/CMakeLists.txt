@@ -1348,6 +1348,11 @@ wowee_add_test(test_unit_size
 wowee_add_test(test_rider_pose
     SOURCES test_rider_pose.cpp)
 
+# ── test_upper_body_split ────────────────────────────────────
+# Upper-body action split over locomotion (M2 SpineLow + AnimationData BodyFlags).
+wowee_add_test(test_upper_body_split
+    SOURCES test_upper_body_split.cpp)
+
 # ── test_frustum ─────────────────────────────────────────────
 wowee_add_test(test_frustum
     SOURCES test_frustum.cpp

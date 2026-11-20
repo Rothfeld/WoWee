@@ -1,6 +1,7 @@
 #include <cassert>
 #include "rendering/animation/stand_pose.hpp"
 #include "rendering/animation/rider_pose.hpp"
+#include "rendering/animation/upper_body_split.hpp"
 /**
  * CharacterRenderer - GPU rendering of M2 character models with skeletal animation (Vulkan)
  *
@@ -2108,10 +2109,15 @@ void CharacterRenderer::loadAnimationData() {
     const uint32_t weaponField = layout->tryField("WeaponFlags");
     if (weaponField == 0xFFFFFFFFu || weaponField >= dbc->getFieldCount())
         throw std::runtime_error("dbc_layouts.json lacks AnimationData WeaponFlags; deploy current expansion metadata");
+    const uint32_t layoutBodyField = layout->tryField("BodyFlags");
+    const uint32_t bodyField = layoutBodyField != 0xFFFFFFFFu ? layoutBodyField : (weaponField + 1u);
+    assert(bodyField < dbc->getFieldCount());
     for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
-        animationFallback_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, field);
-        animationFlags_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, flagsField);
-        animationWeaponFlags_[dbc->getUInt32(r, 0)] = dbc->getUInt32(r, weaponField);
+        const uint32_t id = dbc->getUInt32(r, 0);
+        animationFallback_[id] = dbc->getUInt32(r, field);
+        animationFlags_[id] = dbc->getUInt32(r, flagsField);
+        animationWeaponFlags_[id] = dbc->getUInt32(r, weaponField);
+        animationBodyFlags_[id] = dbc->getUInt32(r, bodyField);
     }
 }
 
@@ -2126,6 +2132,12 @@ uint32_t CharacterRenderer::animationFlags(uint32_t animationId) {
     loadAnimationData();
     const auto it = animationFlags_.find(animationId);
     return it == animationFlags_.end() ? 0u : it->second;
+}
+
+uint32_t CharacterRenderer::animationBodyFlags(uint32_t animationId) {
+    loadAnimationData();
+    const auto it = animationBodyFlags_.find(animationId);
+    return it == animationBodyFlags_.end() ? 0u : it->second;
 }
 
 std::optional<PlayableStandIn> CharacterRenderer::playableStandIn(const pipeline::M2Model& model,
@@ -2168,6 +2180,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     // pose leaves the rider seated.
     if (instance.riding && (animationId == anim::DEATH || animationId == anim::DEAD)) {
         instance.upperBodySequenceIndex = -1;
+        instance.upperBodyOneShotMaxDurationMs = 0.0f;
         instance.upperBodyReturnAnim = 0;
     } else if (instance.riding) {
         const auto riderSequence = [&](uint32_t wanted) -> uint32_t {
@@ -2190,6 +2203,7 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                 // locomotion changes; it leaves a cast or swing running.
                 if (animationId != anim::MOUNT) {
                     instance.upperBodySequenceIndex = -1;
+                    instance.upperBodyOneShotMaxDurationMs = 0.0f;
                     instance.upperBodyReturnAnim = 0;
                 }
                 if (instance.currentAnimationId == anim::MOUNT && instance.currentSequenceIndex >= 0) return;
@@ -2204,6 +2218,109 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
                 instance.upperBodyReturnAnim = held;
                 return;
             }
+        }
+    } else {
+        const bool hasSpine = std::any_of(model.bones.begin(), model.bones.end(),
+            [](const auto& bone) { return bone.keyBoneId == kKeyBoneSpineLow; });
+        const auto buildUpperBodyMask = [&]() {
+            instance.upperBodyBones.assign(model.bones.size(), false);
+            for (size_t i = 0; i < model.bones.size(); ++i) {
+                const auto& bone = model.bones[i];
+                assert(bone.parentBone < static_cast<int>(i));
+                const bool spine = bone.keyBoneId == kKeyBoneSpineLow;
+                instance.upperBodyBones[i] = spine ||
+                    (bone.parentBone >= 0 && instance.upperBodyBones[bone.parentBone]);
+            }
+        };
+        const uint32_t curBodyFlags = animationBodyFlags(instance.currentAnimationId);
+        const uint32_t incBodyFlags = animationBodyFlags(animationId);
+        // 1) A one-shot upper-body action (swing, instant cast, wound, parry)
+        // arriving while the unit is already running/walking plays from SpineLow
+        // upward so the legs keep moving.
+        if (shouldPlayOnUpperBodyOverLocomotion({
+                .hasSpineLow = hasSpine,
+                .riding = false,
+                .currentSequenceValid = instance.currentSequenceIndex >= 0 &&
+                    static_cast<size_t>(instance.currentSequenceIndex) < model.sequences.size(),
+                .currentLoop = instance.animationLoop,
+                .currentAnimId = instance.currentAnimationId,
+                .currentBodyFlags = curBodyFlags,
+                .incomingAnimId = animationId,
+                .incomingBodyFlags = incBodyFlags,
+                .incomingLoop = loop,
+                .incomingHoldFinalPose = holdFinalPose,
+            })) {
+            int seqIdx = -1;
+            static std::mt19937 upperVariationRandom(std::random_device{}());
+            if (const auto drawn = drawSequenceVariation(model.sequences, animationId, upperVariationRandom)) {
+                if (model.sequences[drawn->index].duration > 0) seqIdx = drawn->index;
+            }
+            if (seqIdx < 0) {
+                if (const auto standIn = playableStandIn(model, animationId);
+                    standIn && !standIn->frozenAtEnd && !standIn->reversed) {
+                    for (size_t i = 0; i < model.sequences.size(); ++i) {
+                        if (model.sequences[i].id != standIn->animationId || model.sequences[i].duration == 0)
+                            continue;
+                        seqIdx = static_cast<int>(i);
+                        if (model.sequences[i].variationIndex == 0) break;
+                    }
+                }
+            }
+            if (seqIdx >= 0) {
+                if (instance.upperBodySequenceIndex >= 0) {
+                    instance.upperBodyBlendSequence = instance.upperBodySequenceIndex;
+                    instance.upperBodyBlendTime = instance.upperBodyAnimationTime;
+                } else if (instance.currentSequenceIndex >= 0) {
+                    instance.upperBodyBlendSequence = instance.currentSequenceIndex;
+                    instance.upperBodyBlendTime = instance.animationTime;
+                }
+                instance.upperBodyBlendElapsed = 0.0f;
+                instance.upperBodyBlendDuration = static_cast<float>(model.sequences[seqIdx].blendTime);
+                if (instance.upperBodyBlendDuration <= 0.0f) instance.upperBodyBlendSequence = -1;
+                instance.upperBodySequenceIndex = seqIdx;
+                instance.upperBodyAnimationTime = 0.0f;
+                instance.upperBodyAnimationLoop = false;
+                instance.upperBodyOneShotMaxDurationMs = 0.0f;
+                instance.upperBodyReturnAnim = 0;
+                buildUpperBodyMask();
+                return;
+            }
+        }
+        // 2) Starting locomotion (Run/Walk/Swim) while an upper-body one-shot
+        // (e.g. a Felguard's melee swing) is still in progress promotes that
+        // swing seamlessly onto the upper-body layer at its current timestamp
+        // while the legs immediately begin running.
+        const bool prevValid = instance.currentSequenceIndex >= 0 &&
+            static_cast<size_t>(instance.currentSequenceIndex) < model.sequences.size();
+        const float prevDuration = prevValid
+            ? static_cast<float>(model.sequences[instance.currentSequenceIndex].duration) : 0.0f;
+        if (shouldPromoteToUpperBodyOnBaseChange({
+                .hasSpineLow = hasSpine,
+                .riding = false,
+                .previousSequenceValid = prevValid,
+                .previousLoop = instance.animationLoop,
+                .previousAnimId = instance.currentAnimationId,
+                .previousBodyFlags = curBodyFlags,
+                .previousTimeMs = instance.animationTime,
+                .previousDurationMs = prevDuration,
+                .incomingAnimId = animationId,
+                .incomingBodyFlags = incBodyFlags,
+                .incomingLoop = loop,
+            })) {
+            instance.upperBodySequenceIndex = instance.currentSequenceIndex;
+            instance.upperBodyAnimationTime = instance.animationTime;
+            instance.upperBodyAnimationLoop = false;
+            instance.upperBodyOneShotMaxDurationMs = instance.oneShotMaxDurationMs;
+            instance.upperBodyReturnAnim = 0;
+            instance.upperBodyBlendSequence = -1;
+            buildUpperBodyMask();
+        } else if (instance.upperBodySequenceIndex >= 0 &&
+                   !upperBodyAllowsBase(animationId, incBodyFlags, false)) {
+            instance.upperBodySequenceIndex = -1;
+            instance.upperBodyAnimationTime = 0.0f;
+            instance.upperBodyOneShotMaxDurationMs = 0.0f;
+            instance.upperBodyReturnAnim = 0;
+            instance.upperBodyBlendSequence = -1;
         }
     }
 
@@ -2381,22 +2498,29 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
 void CharacterRenderer::fitOneShotDuration(uint32_t instanceId, float maxMs) {
     assert(maxMs > 0.0f);
     auto& instance = instances.at(instanceId);
-    assert(!instance.animationLoop);
-    instance.oneShotMaxDurationMs = maxMs;
+    if (!instance.animationLoop) {
+        instance.oneShotMaxDurationMs = maxMs;
+    } else {
+        assert(instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop);
+        instance.upperBodyOneShotMaxDurationMs = maxMs;
+    }
 }
 
 void CharacterRenderer::pickWeightedVariation(uint32_t instanceId) {
     auto& instance = instances.at(instanceId);
-    if (instance.currentSequenceIndex < 0) return;
+    const bool useUpper = instance.animationLoop &&
+        instance.upperBodySequenceIndex >= 0 && !instance.upperBodyAnimationLoop;
+    int& targetSeq = useUpper ? instance.upperBodySequenceIndex : instance.currentSequenceIndex;
+    if (targetSeq < 0) return;
     const auto& sequences = models.at(instance.modelId).data.sequences;
-    const uint16_t id = sequences[instance.currentSequenceIndex].id;
+    const uint16_t id = sequences[targetSeq].id;
     std::vector<double> weights(sequences.size(), 0.0);
     for (size_t i = 0; i < sequences.size(); ++i)
         if (sequences[i].id == id && sequences[i].duration > 0)
             weights[i] = std::max<int>(0, sequences[i].frequency);
     if (std::accumulate(weights.begin(), weights.end(), 0.0) <= 0.0) return;
     static std::mt19937 variationRandom(std::random_device{}());
-    instance.currentSequenceIndex = std::discrete_distribution<int>(weights.begin(), weights.end())(variationRandom);
+    targetSeq = std::discrete_distribution<int>(weights.begin(), weights.end())(variationRandom);
 }
 
 void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from, uint32_t to) {
@@ -2556,13 +2680,18 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         }
         if (inst.upperBodySequenceIndex >= 0 && inst.currentAnimationId != anim::SIT_GROUND_DOWN) {
             const auto& upper = inst.cachedModel->data.sequences[inst.upperBodySequenceIndex];
-            inst.upperBodyAnimationTime += deltaTime * 1000.0f;
+            float upperRate = 1.0f;
+            if (!inst.upperBodyAnimationLoop && inst.upperBodyOneShotMaxDurationMs > 0.0f &&
+                static_cast<float>(upper.duration) > inst.upperBodyOneShotMaxDurationMs) {
+                upperRate = static_cast<float>(upper.duration) / inst.upperBodyOneShotMaxDurationMs;
+            }
+            inst.upperBodyAnimationTime += deltaTime * 1000.0f * upperRate;
             if (inst.upperBodyAnimationLoop)
                 inst.upperBodyAnimationTime = std::fmod(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
             else if (inst.upperBodyAnimationTime >= upper.duration ||
-                     !(isSeatedBaseAnimation(inst.currentAnimationId) ||
-                       (inst.riding && inst.currentAnimationId == anim::MOUNT))) {
-                // Fade from the finished pose into the seat at the seat's
+                     !upperBodyAllowsBase(inst.currentAnimationId,
+                                          animationBodyFlags(inst.currentAnimationId), inst.riding)) {
+                // Fade from the finished pose into the base animation at its
                 // authored blend time instead of cutting to it.
                 inst.upperBodyBlendSequence = inst.upperBodySequenceIndex;
                 inst.upperBodyBlendTime = std::min(inst.upperBodyAnimationTime, static_cast<float>(upper.duration));
@@ -2571,6 +2700,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                     ? static_cast<float>(inst.cachedModel->data.sequences[inst.currentSequenceIndex].blendTime) : 0.0f;
                 if (inst.upperBodyBlendDuration <= 0.0f) inst.upperBodyBlendSequence = -1;
                 inst.upperBodySequenceIndex = -1;
+                inst.upperBodyOneShotMaxDurationMs = 0.0f;
                 // A rider's swing or cast ends in the hold it interrupted
                 // (a channel, a precast); otherwise only the seat remains.
                 if (inst.riding && inst.currentAnimationId == anim::MOUNT && inst.upperBodyReturnAnim != 0) {
