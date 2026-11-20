@@ -23,6 +23,7 @@ inline constexpr const char* kBindingDeviceEditor = R"LUA(
 if not KeyBindingFrame or not KeyBindingFrame_OnKeyDown or KeyBindingFrame.woweeDevices then return end
 local frame = KeyBindingFrame
 frame.woweeDevices = true
+if KeyBindingFrameCharacterButton then KeyBindingFrameCharacterButton:Hide() end
 local controller = false
 local env = setmetatable({}, {__index = _G})
 env.GetBinding = function(...) return (controller and WoweeGetControllerBinding or GetBinding)(...) end
@@ -533,9 +534,13 @@ local headings = {}
 local function hostContainerFor(category)
     local host = kCategoryHost[category]
     local frame
-    if host == "video" then frame = VideoOptionsFrame
-    elseif host == "audio" then frame = AudioOptionsFrame
-    else frame = InterfaceOptionsFrame end
+    if host == "video" and VideoOptionsFrame and OptionsFrame_AddCategory then
+        frame = VideoOptionsFrame
+    elseif host == "audio" and AudioOptionsFrame and OptionsFrame_AddCategory then
+        frame = AudioOptionsFrame
+    else
+        frame = InterfaceOptionsFrame
+    end
     -- .panelContainer, or the global the XML names it by. VideoOptionsFrame
     -- and AudioOptionsFrame set the field; InterfaceOptionsFrame does not, and
     -- only has InterfaceOptionsFramePanelContainer - so its panels were left
@@ -972,13 +977,14 @@ root.refresh = function() end
 InterfaceOptions_AddCategory(root)
 
 -- The headings first: a category can only nest under a name already in that
--- frame's list.
-if VideoOptionsFrame then
+-- frame's list. TBC's AudioOptionsFrame is a tabbed dialog with no category
+-- list, so both guards require OptionsFrame_AddCategory as well.
+if VideoOptionsFrame and OptionsFrame_AddCategory then
     addHostHeading(VideoOptionsFrame,
         "This client's own graphics settings, under the headings below. "
         .. "The game's own Resolution and Effects panels are above.")
 end
-if AudioOptionsFrame then
+if AudioOptionsFrame and OptionsFrame_AddCategory then
     addHostHeading(AudioOptionsFrame,
         "This client's own sound settings. The game's Sound panel above "
         .. "carries the master, music, ambience and effects volumes.")
@@ -1396,16 +1402,21 @@ local kRemovedCategories = {
     "InterfaceOptionsLanguagesPanel",
 }
 
+local isTbc = type(__WoweeInterfaceVersion) == "number"
+              and __WoweeInterfaceVersion > 0
+              and __WoweeInterfaceVersion < 30000
 local removed = {}
 __WoweeRemovedControlsMissing = __WoweeRemovedControlsMissing or {}
 for _, name in ipairs(kRemoved) do
     local f = _G[name]
     -- Asked for by name rather than assumed. A renamed or misspelled entry
     -- removes nothing while the list goes on claiming it, which is how a list
-    -- like this rots without a sound.
+    -- like this rots without a sound. On TBC, WotLK-named frames do not exist
+    -- in FrameXML and TBC's own OptionsFrame/SoundOptionsFrame are handled by
+    -- kTbcOptionsIntegrationLua.
     if f and f.GetName and f:GetName() == name then
         removed[f] = true
-    else
+    elseif not isTbc then
         table.insert(__WoweeRemovedControlsMissing, name)
     end
 end
@@ -1691,10 +1702,22 @@ StaticPopupDialogs["WOWEE_CONFIRM_UI_SCALE"] = {
     end,
     OnCancel = function(self, data, reason)
         if data and data.baseline then
+            if data.useBaseline ~= nil then
+                SetCVar("useUiScale", data.useBaseline)
+                if OptionsFrameCheckButton9 and OptionsFrameCheckButton9.SetChecked then
+                    OptionsFrameCheckButton9:SetChecked(data.useBaseline ~= "0")
+                end
+            end
             SetCVar("uiscale", data.baseline)
             local slider = VideoOptionsResolutionPanelUIScaleSlider
             if slider and slider.SetDisplayValue then
                 slider:SetDisplayValue(tonumber(data.baseline) or 1)
+            end
+            if OptionsFrameSlider1 and OptionsFrameSlider1.SetValue then
+                OptionsFrameSlider1:SetValue(tonumber(data.baseline) or 1)
+            end
+            if OptionsFrame_UpdateUIScaleControls then
+                OptionsFrame_UpdateUIScaleControls()
             end
         end
     end,
@@ -1727,6 +1750,370 @@ if okay and okay.HookScript then
             StaticPopup_Show("WOWEE_CONFIRM_UI_SCALE", nil, nil,
                              { baseline = baseline })
             if p then p.woweeUiScaleBaseline = current end
+        end
+    end)
+end
+
+-- TBC 2.4.3 hosts UI Scale on OptionsFrame instead of VideoOptionsResolutionPanel.
+if OptionsFrame and OptionsFrame.HookScript then
+    OptionsFrame:HookScript("OnShow", function(self)
+        self.woweeUiScaleBaseline = GetCVar("uiscale")
+        self.woweeUseUiScaleBaseline = GetCVar("useUiScale")
+    end)
+end
+if OptionsFrameOkay and OptionsFrameOkay.HookScript then
+    OptionsFrameOkay:HookScript("OnClick", function()
+        local p = OptionsFrame
+        if not p then return end
+        local baseScale = p.woweeUiScaleBaseline
+        local baseUse = p.woweeUseUiScaleBaseline or "1"
+        local curScale = GetCVar("uiscale")
+        local curUse = GetCVar("useUiScale") or "1"
+        local effBefore = (baseUse ~= "0") and baseScale or "1"
+        local effAfter = (curUse ~= "0") and curScale or "1"
+        if baseScale and curScale and effBefore ~= effAfter then
+            StaticPopup_Show("WOWEE_CONFIRM_UI_SCALE", nil, nil,
+                             { baseline = baseScale, useBaseline = baseUse })
+            p.woweeUiScaleBaseline = curScale
+            p.woweeUseUiScaleBaseline = curUse
+        end
+    end)
+end
+)LUA";
+
+/// TBC 2.4.3 OptionsFrame, AudioOptionsFrame/SoundOptionsFrame, and
+/// InterfaceOptionsFrame integration.
+///
+/// Separate from kRemovedControlsLua so WotLK static sweeps over kRemoved and
+/// kRemovedCategories continue to check WotLK frame names unchanged.
+inline constexpr const char* kTbcOptionsIntegrationLua = R"LUA(
+if type(__WoweeInterfaceVersion) ~= "number" or
+   __WoweeInterfaceVersion <= 0 or
+   __WoweeInterfaceVersion >= 30000 then
+    return
+end
+
+local function nothing() end
+
+-- Retire TBC's two renamed Interface Options panels (Quests -> Objectives and
+-- PartyRaid -> UnitFrame in WotLK), which kRemovedCategories did not list.
+local kTbcRetiredPanels = {
+    "InterfaceOptionsControlsPanel",
+    "InterfaceOptionsCombatPanel",
+    "InterfaceOptionsDisplayPanel",
+    "InterfaceOptionsQuestsPanel",
+    "InterfaceOptionsSocialPanel",
+    "InterfaceOptionsActionBarsPanel",
+    "InterfaceOptionsNamesPanel",
+    "InterfaceOptionsCombatTextPanel",
+    "InterfaceOptionsStatusTextPanel",
+    "InterfaceOptionsPartyRaidPanel",
+    "InterfaceOptionsCameraPanel",
+    "InterfaceOptionsMousePanel",
+    "InterfaceOptionsHelpPanel",
+    "InterfaceOptionsLanguagesPanel",
+}
+local retired = {}
+for _, name in ipairs(kTbcRetiredPanels) do
+    local p = rawget(_G, name)
+    if p then
+        p.hidden = true
+        if p.Hide then p:Hide() end
+        p.okay, p.cancel, p.default, p.refresh = nothing, nothing, nothing, nothing
+        retired[p] = true
+        if p.name then retired[p.name] = true end
+    end
+end
+if type(InterfaceCategoryList_Update) == "function" then
+    InterfaceCategoryList_Update()
+end
+
+-- TBC uses InterfaceOptionsFrame_OpenToFrame rather than OpenToCategory, and
+-- its button loop only visits the visible scroll window (~18 rows), missing
+-- categories near the bottom of WoWee's 20-row list unless scrolled/selected.
+if type(InterfaceOptionsFrame_OpenToFrame) == "function" then
+    local origOpen = InterfaceOptionsFrame_OpenToFrame
+    InterfaceOptionsFrame_OpenToFrame = function(panel, ...)
+        local root = rawget(_G, "WoweeOptionsRoot")
+        if retired[panel] and root then panel = root end
+        origOpen(panel, ...)
+        local target = panel
+        if type(target) == "string" then
+            local slug = tostring(target):gsub("[^%a%d]", "")
+            target = rawget(_G, "WoweeOptions" .. slug)
+            if not target and root and root.name == panel then target = root end
+        end
+        if type(target) == "table" and InterfaceOptionsFramePanelContainer and
+           InterfaceOptionsFramePanelContainer.displayedFrame ~= target then
+            if root and target.parent == root.name and root.collapsed then
+                root.collapsed = false
+                if type(InterfaceOptions_ToggleSubCategories) == "function" then
+                    root.collapsed = true
+                    for _, b in ipairs(InterfaceOptionsFrameCategories and InterfaceOptionsFrameCategories.buttons or {}) do
+                        if b.element == root and b.toggle and b.toggle.Click then
+                            b.toggle:Click()
+                            break
+                        end
+                    end
+                end
+            end
+            if InterfaceOptionsFrame and not InterfaceOptionsFrame:IsShown() and
+               type(InterfaceOptionsFrame_Show) == "function" then
+                InterfaceOptionsFrame_Show()
+            end
+            if type(InterfaceOptionsList_DisplayFrame) == "function" then
+                InterfaceOptionsList_DisplayFrame(target)
+            end
+            if InterfaceOptionsFrameCategories then
+                InterfaceOptionsFrameCategories.selection = target
+            end
+            if type(InterfaceCategoryList_Update) == "function" then
+                InterfaceCategoryList_Update()
+            end
+        end
+    end
+end
+
+-- Fix TBC OptionsFrame (Video Options) slider ranges and strip dead controls
+-- so opening Video Options and clicking Okay never clobbers view distance
+-- (777 vs 1900), ground clutter, clutter radius, or anisotropic filtering.
+OPTIONS_FARCLIP_MIN = 400
+OPTIONS_FARCLIP_MAX = 2400
+
+if type(OptionsFrameSliders) == "table" then
+    local maxUiScale = (type(GetCVarMax) == "function" and tonumber(GetCVarMax("uiscale"))) or 1.0
+    if OptionsFrameSliders[1] then
+        OptionsFrameSliders[1].minValue = 0.64
+        OptionsFrameSliders[1].maxValue = maxUiScale
+        OptionsFrameSliders[1].valueStep = 0.01
+    end
+    local s1High = rawget(_G, "OptionsFrameSlider1High")
+    if s1High and s1High.SetText then s1High:SetText(tostring(maxUiScale)) end
+    if OptionsFrameSliders[3] then
+        OptionsFrameSliders[3].minValue = 400
+        OptionsFrameSliders[3].maxValue = 2400
+        OptionsFrameSliders[3].valueStep = 50
+    end
+    -- TerrainMip (4) and BaseMip (9) have no renderer backing; nil keys are
+    -- skipped cleanly because OptionsFrame_Load/Save/SetDefaults use pairs().
+    OptionsFrameSliders[4] = nil
+    if OptionsFrameSliders[7] then
+        OptionsFrameSliders[7].minValue = 0
+        OptionsFrameSliders[7].maxValue = 64
+        OptionsFrameSliders[7].valueStep = 4
+    end
+    if OptionsFrameSliders[8] then
+        OptionsFrameSliders[8].minValue = 70
+        OptionsFrameSliders[8].maxValue = 300
+        OptionsFrameSliders[8].valueStep = 10
+    end
+    OptionsFrameSliders[9] = nil
+    if OptionsFrameSliders[10] then
+        OptionsFrameSliders[10].minValue = 0
+        OptionsFrameSliders[10].maxValue = 4
+        OptionsFrameSliders[10].valueStep = 1
+        OptionsFrameSliders[10].restartClient = nil
+        OptionsFrameSliders[10].tooltipRequirement = nil
+    end
+end
+
+if type(OptionsFrameCheckButtons) == "table" then
+    OptionsFrameCheckButtons["TERRAIN_HIGHLIGHTS"] = nil
+    OptionsFrameCheckButtons["CINEMATIC_SUBTITLES"] = nil
+    OptionsFrameCheckButtons["WORLD_LOD"] = nil
+    OptionsFrameCheckButtons["WINDOW_LOCK"] = nil
+    OptionsFrameCheckButtons["TRIPLE_BUFFER"] = nil
+    OptionsFrameCheckButtons["HARDWARE_CURSOR"] = nil
+    OptionsFrameCheckButtons["WINDOWED_MAXIMIZED"] = nil
+end
+
+local function tidyTbcVideoFrame()
+    for _, name in ipairs({
+        "OptionsFrameRefreshDropDown",
+        "OptionsFrameSlider4",
+        "OptionsFrameSlider9",
+        "OptionsFrameCheckButton2",
+        "OptionsFrameCheckButton6",
+        "OptionsFrameCheckButton7",
+        "OptionsFrameCheckButton11",
+        "OptionsFrameCheckButton13",
+        "OptionsFrameCheckButton14",
+        "OptionsFrameCheckButton17",
+    }) do
+        local f = rawget(_G, name)
+        if f and f.Hide then f:Hide() end
+    end
+    local ms = rawget(_G, "OptionsFrameMultiSampleDropDown")
+    local res = rawget(_G, "OptionsFrameResolutionDropDown")
+    if ms and res and ms.ClearAllPoints then
+        ms:ClearAllPoints()
+        ms:SetPoint("TOPLEFT", res, "BOTTOMLEFT", 0, -14)
+    end
+    local cb9 = rawget(_G, "OptionsFrameCheckButton9")
+    local cb10 = rawget(_G, "OptionsFrameCheckButton10")
+    if cb9 and cb10 and cb9.ClearAllPoints then
+        cb9:ClearAllPoints()
+        cb9:SetPoint("TOP", cb10, "BOTTOM", -5, -2)
+    end
+    local s5 = rawget(_G, "OptionsFrameSlider5")
+    local s3 = rawget(_G, "OptionsFrameSlider3")
+    if s5 and s3 and s5.ClearAllPoints then
+        s5:ClearAllPoints()
+        s5:SetPoint("TOP", s3, "BOTTOM", 0, -23)
+    end
+    local s10 = rawget(_G, "OptionsFrameSlider10")
+    local s6 = rawget(_G, "OptionsFrameSlider6")
+    if s10 and s6 and s10.ClearAllPoints then
+        s10:ClearAllPoints()
+        s10:SetPoint("LEFT", s6, "RIGHT", 25, 0)
+    end
+    local cb3 = rawget(_G, "OptionsFrameCheckButton3")
+    local ps = rawget(_G, "OptionsFramePixelShaders")
+    if cb3 and ps and cb3.ClearAllPoints then
+        cb3:ClearAllPoints()
+        cb3:SetPoint("TOPLEFT", ps, "TOPLEFT", 10, -8)
+    end
+    local cb19 = rawget(_G, "OptionsFrameCheckButton19")
+    local misc = rawget(_G, "OptionsFrameMiscellaneous")
+    if cb19 and misc and cb19.ClearAllPoints then
+        cb19:ClearAllPoints()
+        cb19:SetPoint("TOPLEFT", misc, "TOPLEFT", 10, -8)
+    end
+end
+
+tidyTbcVideoFrame()
+
+if type(OptionsFrame_Load) == "function" then
+    local origLoad = OptionsFrame_Load
+    OptionsFrame_Load = function(...)
+        origLoad(...)
+        tidyTbcVideoFrame()
+    end
+end
+
+if type(OptionsFrame_Save) == "function" then
+    local origSave = OptionsFrame_Save
+    OptionsFrame_Save = function(...)
+        local ref = rawget(_G, "OptionsFrameRefreshDropDown")
+        if ref and type(UIDropDownMenu_SetSelectedValue) == "function" then
+            UIDropDownMenu_SetSelectedValue(ref, GetCVar("gxRefresh"))
+        end
+        return origSave(...)
+    end
+end
+
+if type(OptionsFrame_SetDefaults) == "function" then
+    local origDefaults = OptionsFrame_SetDefaults
+    OptionsFrame_SetDefaults = function(...)
+        origDefaults(...)
+        if type(OptionsFrame_Load) == "function" then OptionsFrame_Load() end
+        if type(OptionsFrameMultiSampleDropDown_OnLoad) == "function" and
+           rawget(_G, "OptionsFrameMultiSampleDropDown") then
+            local prevThis = this
+            this = OptionsFrameMultiSampleDropDown
+            OptionsFrameMultiSampleDropDown_OnLoad()
+            this = prevThis
+        end
+    end
+end
+
+if rawget(_G, "OptionsFrame") and not rawget(_G, "WoweeVideoMoreButton") and
+   type(CreateFrame) == "function" then
+    local defs = rawget(_G, "OptionsFrameDefaults")
+    if defs and defs.SetWidth then defs:SetWidth(110) end
+    local more = CreateFrame("Button", "WoweeVideoMoreButton", OptionsFrame, "UIPanelButtonTemplate")
+    more:SetWidth(145)
+    more:SetHeight(21)
+    if defs then
+        more:SetPoint("LEFT", defs, "RIGHT", 6, 0)
+    else
+        more:SetPoint("BOTTOMLEFT", OptionsFrame, "BOTTOMLEFT", 130, 16)
+    end
+    more:SetText("WoWee Graphics...")
+    more:SetScript("OnClick", function()
+        if type(OptionsFrame_Save) == "function" then OptionsFrame_Save() end
+        if type(HideUIPanel) == "function" then
+            HideUIPanel(OptionsFrame)
+            if rawget(_G, "GameMenuFrame") then HideUIPanel(GameMenuFrame) end
+        end
+        if type(InterfaceOptionsFrame_OpenToFrame) == "function" then
+            InterfaceOptionsFrame_OpenToFrame(rawget(_G, "WoweeOptionsGraphics") or "Graphics")
+        end
+    end)
+end
+
+-- Fix TBC AudioOptionsFrame / SoundOptionsFrame: hide unimplemented Voice tab
+-- and dead hardware/reverb/channel/quality controls, and add jump button.
+if type(SoundOptionsFrameCheckButtons) == "table" then
+    SoundOptionsFrameCheckButtons["ENABLE_SOUND_AT_CHARACTER"] = nil
+    SoundOptionsFrameCheckButtons["ENABLE_REVERB"] = nil
+    SoundOptionsFrameCheckButtons["ENABLE_HARDWARE"] = nil
+end
+if type(SoundOptionsFrameSliders) == "table" then
+    for k, v in pairs(SoundOptionsFrameSliders) do
+        if type(v) == "table" and (v.index == 5 or v.index == 6) then
+            SoundOptionsFrameSliders[k] = nil
+        end
+    end
+end
+
+local function tidyTbcSoundFrame()
+    for _, name in ipairs({
+        "AudioOptionsFrameTab1",
+        "AudioOptionsFrameTab2",
+        "VoiceOptionsFrame",
+        "SoundOptionsFrameCheckButton8",
+        "SoundOptionsFrameCheckButton10",
+        "SoundOptionsFrameCheckButton11",
+        "SoundOptionsFrameSlider5",
+        "SoundOptionsFrameSlider6",
+        "SoundOptionsOutputDropDown",
+        "SoundOptionsFrameHardware",
+    }) do
+        local f = rawget(_G, name)
+        if f and f.Hide then f:Hide() end
+    end
+    local playback = rawget(_G, "SoundOptionsFramePlayback")
+    local volume = rawget(_G, "SoundOptionsFrameVolume")
+    if playback and playback.SetHeight then
+        playback:SetHeight(215)
+    end
+    if volume and playback and volume.ClearAllPoints then
+        volume:ClearAllPoints()
+        volume:SetPoint("TOPLEFT", playback, "TOPRIGHT", 3, 0)
+    end
+end
+
+tidyTbcSoundFrame()
+
+if type(SoundOptionsFrame_Load) == "function" then
+    local origSoundLoad = SoundOptionsFrame_Load
+    SoundOptionsFrame_Load = function(...)
+        origSoundLoad(...)
+        tidyTbcSoundFrame()
+    end
+end
+
+if rawget(_G, "SoundOptionsFrame") and not rawget(_G, "WoweeAudioMoreButton") and
+   type(CreateFrame) == "function" then
+    local volume = rawget(_G, "SoundOptionsFrameVolume")
+    local more = CreateFrame("Button", "WoweeAudioMoreButton", SoundOptionsFrame, "UIPanelButtonTemplate")
+    more:SetWidth(180)
+    more:SetHeight(22)
+    if volume then
+        more:SetPoint("TOP", volume, "BOTTOM", 0, -12)
+    else
+        more:SetPoint("BOTTOM", SoundOptionsFrame, "BOTTOM", 0, 48)
+    end
+    more:SetText("WoWee Sound...")
+    more:SetScript("OnClick", function()
+        if rawget(_G, "AudioOptionsFrame") then AudioOptionsFrame.okay = true end
+        if type(HideUIPanel) == "function" then
+            if rawget(_G, "AudioOptionsFrame") then HideUIPanel(AudioOptionsFrame) end
+            if rawget(_G, "GameMenuFrame") then HideUIPanel(GameMenuFrame) end
+        end
+        if type(InterfaceOptionsFrame_OpenToFrame) == "function" then
+            InterfaceOptionsFrame_OpenToFrame(rawget(_G, "WoweeOptionsSound") or "Sound")
         end
     end)
 end

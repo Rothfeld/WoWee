@@ -194,3 +194,93 @@ TEST_CASE("the chat background swatch script parses", "[addonlua]") {
     INFO(err);
     CHECK(err.empty());
 }
+
+TEST_CASE("the UI scale confirmation and TBC options integration scripts parse", "[addonlua]") {
+    const std::string scaleErr =
+        compileError(wowee::addons::kUiScaleConfirmLua, "UiScaleConfirm");
+    INFO(scaleErr);
+    CHECK(scaleErr.empty());
+
+    const std::string tbcErr =
+        compileError(wowee::addons::kTbcOptionsIntegrationLua, "TbcOptionsIntegration");
+    INFO(tbcErr);
+    CHECK(tbcErr.empty());
+}
+
+TEST_CASE("TBC options integration widens slider bounds and retires duplicate panels", "[addonlua]") {
+    const std::string result = runChunks({
+        {R"LUA(
+            __WoweeInterfaceVersion = 20400
+            GetCVarMax = function(name)
+                if name == "uiscale" then return 1.2 end
+                return nil
+            end
+            OPTIONS_FARCLIP_MIN = 177
+            OPTIONS_FARCLIP_MAX = 777
+            OptionsFrameSliders = {
+                { func = "uiscale", minValue = 0.64, maxValue = 1.0, valueStep = 0.01 },
+                { func = "Gamma", minValue = -0.5, maxValue = 0.5, valueStep = 0.1 },
+                { func = "farclip", minValue = 177, maxValue = 777, valueStep = 60 },
+                { func = "TerrainMip", minValue = 0, maxValue = 1, valueStep = 1 },
+                { func = "spellEffectLevel", minValue = 0, maxValue = 9, valueStep = 1 },
+                { func = "WorldDetail", minValue = 0, maxValue = 2, valueStep = 1 },
+                { func = "groundEffectDensity", minValue = 16, maxValue = 64, valueStep = 8 },
+                { func = "groundEffectDist", minValue = 70, maxValue = 140, valueStep = 10 },
+                { func = "BaseMip", minValue = 0, maxValue = 1, valueStep = 1 },
+                { func = "textureFilteringMode", minValue = 0, maxValue = 5, valueStep = 1, restartClient = 1 },
+                { func = "weatherDensity", minValue = 0, maxValue = 3, valueStep = 1 },
+            }
+            OptionsFrameCheckButtons = {
+                DESKTOP_GAMMA = { index = 1, cvar = "desktopGamma" },
+                TERRAIN_HIGHLIGHTS = { index = 2, cvar = "specular" },
+                FULL_SCREEN_GLOW = { index = 3, cvar = "ffxGlow" },
+                VERTICAL_SYNC = { index = 5, cvar = "gxVSync" },
+                TRIPLE_BUFFER = { index = 13, cvar = "gxTripleBuffer" },
+                CHARACTER_SHADOWS = { index = 19, cvar = "shadowLOD" },
+            }
+            SoundOptionsFrameCheckButtons = {
+                ENABLE_SOUND = { index = 1, cvar = "Sound_EnableAllSound" },
+                ENABLE_EMOTE_SOUNDS = { index = 4, cvar = "Sound_EnableEmoteSounds" },
+                ENABLE_REVERB = { index = 10, cvar = "Sound_EnableReverb" },
+                ENABLE_HARDWARE = { index = 11, cvar = "Sound_EnableHardware" },
+            }
+            SoundOptionsFrameSliders = {
+                { index = 1, cvar = "Sound_MasterVolume" },
+                { index = 5, cvar = "Sound_NumChannels" },
+                { index = 6, cvar = "Sound_OutputQuality" },
+            }
+            InterfaceOptionsQuestsPanel = { name = "Quests", Hide = function(self) self._hidden = true end }
+            InterfaceOptionsPartyRaidPanel = { name = "Party & Raid", Hide = function(self) self._hidden = true end }
+            WoweeOptionsRoot = { name = "WoWee" }
+            local openedTo = nil
+            InterfaceOptionsFrame_OpenToFrame = function(p) openedTo = p end
+            _G.__readOpenedTo = function() return openedTo end
+        )LUA",
+         "TbcSetup"},
+        {wowee::addons::kRemovedControlsLua, "RemovedControls"},
+        {wowee::addons::kTbcOptionsIntegrationLua, "TbcOptionsIntegration"},
+        {R"LUA(
+            InterfaceOptionsFrame_OpenToFrame("Quests")
+            local redirected = (_G.__readOpenedTo() == WoweeOptionsRoot)
+            return "missing=" .. tostring(#__WoweeRemovedControlsMissing)
+                .. " farMax=" .. tostring(OptionsFrameSliders[3].maxValue)
+                .. " clutterMin=" .. tostring(OptionsFrameSliders[7].minValue)
+                .. " distMax=" .. tostring(OptionsFrameSliders[8].maxValue)
+                .. " anisoMax=" .. tostring(OptionsFrameSliders[10].maxValue)
+                .. " terrainMip=" .. tostring(OptionsFrameSliders[4])
+                .. " baseMip=" .. tostring(OptionsFrameSliders[9])
+                .. " tripleBuf=" .. tostring(OptionsFrameCheckButtons.TRIPLE_BUFFER)
+                .. " emoteKept=" .. tostring(SoundOptionsFrameCheckButtons.ENABLE_EMOTE_SOUNDS ~= nil)
+                .. " reverb=" .. tostring(SoundOptionsFrameCheckButtons.ENABLE_REVERB)
+                .. " soundCh=" .. tostring(SoundOptionsFrameSliders[2])
+                .. " questsHidden=" .. tostring(InterfaceOptionsQuestsPanel.hidden)
+                .. " partyHidden=" .. tostring(InterfaceOptionsPartyRaidPanel.hidden)
+                .. " redirected=" .. tostring(redirected)
+        )LUA",
+         "Verify"},
+    });
+    CHECK(result ==
+          "missing=0 farMax=2400 clutterMin=0 distMax=300 anisoMax=4 "
+          "terrainMip=nil baseMip=nil tripleBuf=nil emoteKept=true reverb=nil soundCh=nil "
+          "questsHidden=true partyHidden=true redirected=true");
+}

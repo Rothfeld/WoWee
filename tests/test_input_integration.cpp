@@ -4956,3 +4956,62 @@ TEST_CASE_METHOD(Integration,
     event(SDL_SCANCODE_A, false);
     event(SDL_SCANCODE_D, false);
 }
+
+TEST_CASE_METHOD(Integration, "TBC video CVar aliases and gamma brightness bridge stay synchronized", "[options][tbc]") {
+    std::unordered_map<std::string, std::string> settings = {
+        {"particledensity", "60"},
+        {"environmentdetail", "150"},
+        {"shadows", "0"},
+        {"brightness", "50"},
+        {"viewdistance", "2200"},
+    };
+    float particleDensityApplied = -1.0f;
+    float envDetailApplied = -1.0f;
+
+    addons::LuaServices svc{};
+    svc.getClientSetting = [&](const std::string& key) -> std::string {
+        const auto it = settings.find(key);
+        return it == settings.end() ? "" : it->second;
+    };
+    svc.setClientSetting = [&](const std::string& key, const std::string& val) {
+        settings[key] = val;
+    };
+    svc.setParticleDensity = [&](float d) { particleDensityApplied = d; };
+    svc.setEnvironmentDetail = [&](float d) { envDetailApplied = d; };
+    lua.setLuaServices(svc);
+
+    truth("GetCVar('spellEffectLevel') == '5'");
+    truth("GetCVar('WorldDetail') == '2'");
+    truth("GetCVar('shadowLOD') == '0'");
+    truth("GetCVarDefault('farclip') == '1900'");
+
+    run("SetCVar('spellEffectLevel', '9')");
+    CHECK(settings["particledensity"] == "100");
+    CHECK(particleDensityApplied == Catch::Approx(1.0f));
+
+    run("SetCVar('WorldDetail', '0')");
+    CHECK(settings["environmentdetail"] == "50");
+    CHECK(envDetailApplied == Catch::Approx(0.5f));
+
+    run("SetCVar('shadowLOD', '1')");
+    CHECK(settings["shadows"] == "1");
+
+    // With desktopGamma on (default "1"), SetGamma leaves WoWee brightness untouched.
+    settings["brightness"] = "70";
+    run("SetCVar('desktopGamma', '1')");
+    run("SetGamma(0.2)");
+    CHECK(settings["brightness"] == "70");
+
+    // With desktopGamma off ("0"), dragging TBC Gamma drives brightness (0 -> 50, -0.2 -> 30).
+    run("SetCVar('desktopGamma', '0')");
+    run("SetGamma(-0.2)");
+    CHECK(settings["brightness"] == "30");
+
+    run("RestoreVideoDefaults()");
+    CHECK(settings["viewdistance"] == "1900");
+    CHECK(settings["brightness"] == "50");
+    truth("GetCVar('desktopGamma') == '1'");
+    truth("GetCVar('gamma') == '1.0'");
+
+    lua.setLuaServices({});
+}

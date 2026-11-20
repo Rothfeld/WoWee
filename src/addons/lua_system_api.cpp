@@ -885,9 +885,25 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     else if (n == "weatherdensity") lua_pushstring(L, "2");
     else if (n == "particledensity") lua_pushstring(L, "1");
     else if (n == "environmentdetail") lua_pushstring(L, "1");
-    // The top of the slider: this client has always drawn at 16x, so anything
-    // less would be a quality setting the player never asked for.
-    else if (n == "texturefilteringmode") lua_pushstring(L, "5");
+    else if (n == "farclip") lua_pushstring(L, "1900");
+    else if (n == "groundeffectdensity") lua_pushstring(L, "30");
+    else if (n == "spelleffectlevel") lua_pushstring(L, "9");
+    else if (n == "worlddetail") lua_pushstring(L, "1");
+    else if (n == "smallcull") lua_pushstring(L, "0.04");
+    else if (n == "shadowlod") lua_pushstring(L, "1");
+    else if (n == "desktopgamma") lua_pushstring(L, "1");
+    else if (n == "screenedgeflash") lua_pushstring(L, "1");
+    else if (n == "showpartydebuffs") lua_pushstring(L, "1");
+    else if (n == "showpartybuffs") lua_pushstring(L, "0");
+    else if (n == "showraidrange") lua_pushstring(L, "0");
+    else if (n == "showchaticons") lua_pushstring(L, "0");
+    else if (n == "usesimplechat") lua_pushstring(L, "0");
+    else if (n == "chatlocked") lua_pushstring(L, "0");
+    else if (n == "petspelldamage") lua_pushstring(L, "1");
+    // The top of the slider: this client has always drawn at 16x (mode 4 in
+    // our five-step 0..4 sampler range), so anything less would be a quality
+    // setting the player never asked for.
+    else if (n == "texturefilteringmode") lua_pushstring(L, "4");
     else if (n == "groundeffectdist") lua_pushstring(L, "140");
     // Level 3 is 4096, which is the shadow map this client drew before the
     // setting existed. Answering the size it has always used keeps a player who
@@ -1536,6 +1552,33 @@ static int lua_GetCVar(lua_State* L) {
             return 1;
         }
     }
+    if (n == "spelleffectlevel" || n == "worlddetail" || n == "shadowlod") {
+        if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
+            if (n == "spelleffectlevel") {
+                const std::string v = svc->getClientSetting("particledensity");
+                if (!v.empty()) {
+                    const int pct = std::atoi(v.c_str());
+                    const int level = std::clamp(static_cast<int>(std::lround((pct - 10) / 10.0)), 0, 9);
+                    lua_pushstring(L, std::to_string(level).c_str());
+                    return 1;
+                }
+            } else if (n == "worlddetail") {
+                const std::string v = svc->getClientSetting("environmentdetail");
+                if (!v.empty()) {
+                    const int pct = std::atoi(v.c_str());
+                    const int wd = std::clamp(static_cast<int>(std::lround((pct - 50) / 50.0)), 0, 2);
+                    lua_pushstring(L, std::to_string(wd).c_str());
+                    return 1;
+                }
+            } else {
+                const std::string v = svc->getClientSetting("shadows");
+                if (!v.empty()) {
+                    lua_pushstring(L, v != "0" ? "1" : "0");
+                    return 1;
+                }
+            }
+        }
+    }
     if (const auto* binding = findClientCVar(n)) {
         if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
             const std::string v = svc->getClientSetting(binding->setting);
@@ -1669,8 +1712,42 @@ static bool mouseLookSpeedAccepted(const std::string& value) {
            number <= rendering::CameraController::kMoveSpeedMax;
 }
 
+static void syncTbcVideoAlias(lua_State* L, const std::string& cvar,
+                              const std::string& value) {
+    auto* svc = getLuaServices(L);
+    if (!svc) return;
+    if (cvar == "spelleffectlevel") {
+        const int level = std::clamp(std::atoi(value.c_str()), 0, 9);
+        const int pct = 10 + level * 10;
+        if (svc->setParticleDensity) svc->setParticleDensity(static_cast<float>(pct) / 100.0f);
+        if (!g_replayingStoredCVars && svc->setClientSetting) {
+            g_applyingCVarToSetting = true;
+            svc->setClientSetting("particledensity", std::to_string(pct));
+            g_applyingCVarToSetting = false;
+        }
+    } else if (cvar == "worlddetail") {
+        const int wd = std::clamp(std::atoi(value.c_str()), 0, 2);
+        const int pct = 50 + wd * 50;
+        if (svc->setEnvironmentDetail) svc->setEnvironmentDetail(static_cast<float>(pct) / 100.0f);
+        if (!g_replayingStoredCVars && svc->setClientSetting) {
+            g_applyingCVarToSetting = true;
+            svc->setClientSetting("environmentdetail", std::to_string(pct));
+            g_applyingCVarToSetting = false;
+        }
+    } else if (cvar == "shadowlod") {
+        if (!g_replayingStoredCVars && svc->setClientSetting) {
+            g_applyingCVarToSetting = true;
+            svc->setClientSetting("shadows", value != "0" ? "1" : "0");
+            g_applyingCVarToSetting = false;
+        }
+    }
+}
+
 static void applyCVarSideEffects(lua_State* L, const std::string& key,
                                  const std::string& value) {
+    if (key == "spelleffectlevel" || key == "worlddetail" || key == "shadowlod") {
+        syncTbcVideoAlias(L, key, value);
+    }
     // The frame limits, read by the main loop every frame. Both are handed
     // over together because maxFPSBk only means something beside maxFPS.
     if (key == "maxfps" || key == "maxfpsbk") {
@@ -5520,10 +5597,55 @@ static int lua_GetGamma(lua_State* L) {
 }
 
 static int lua_SetGamma(lua_State* L) {
-    const float gamma = 1.0f - static_cast<float>(luaL_checknumber(L, 1));
+    const double offset = luaL_checknumber(L, 1);
+    const float gamma = 1.0f - static_cast<float>(offset);
+    const float prevGamma =
+        static_cast<float>(std::atof(cvarValueOr(L, "gamma", kGammaCVarDefault).c_str()));
     char text[32];
     std::snprintf(text, sizeof(text), "%f", static_cast<double>(gamma));
     setStoredCVar("gamma", text);
+    if (std::fabs(gamma - prevGamma) > 1e-4f &&
+        cvarValueOr(L, "desktopgamma", "1") == "0") {
+        if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
+            const int brightness =
+                std::clamp(static_cast<int>(std::lround((0.5 + offset) * 100.0)), 0, 100);
+            svc->setClientSetting("brightness", std::to_string(brightness));
+        }
+    }
+    return 0;
+}
+
+static int lua_RestoreVideoDefaults(lua_State* L) {
+    std::size_t count = 0;
+    const auto* schema = ui::clientSettingsSchema(count);
+    auto* svc = getLuaServices(L);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto& row = schema[i];
+        const std::string cat = row.category;
+        if (cat != "Graphics" && cat != "Detail" && cat != "Grass" &&
+            cat != "Ray Tracing" && cat != "Upscaling" && cat != "Display") {
+            continue;
+        }
+        const std::string defText = ui::settingNumberText(schemaRowDefault(L, row));
+        if (row.store[0] != '\0') {
+            writeStoredSetting(L, row, defText);
+        } else if (svc && svc->setClientSetting) {
+            svc->setClientSetting(row.key, defText);
+        }
+    }
+    static constexpr std::pair<const char*, const char*> kVideoCVars[] = {
+        {"uiscale", "1"},
+        {"useUiScale", "1"},
+        {"gamma", "1.0"},
+        {"desktopGamma", "1"},
+        {"ffxGlow", "1"},
+        {"ffxDeath", "1"},
+    };
+    for (const auto& [cvar, defVal] : kVideoCVars) {
+        lua_pushstring(L, cvar);
+        lua_pushstring(L, defVal);
+        callGlobal(L, "SetCVar", 2);
+    }
     return 0;
 }
 
@@ -6218,8 +6340,9 @@ void registerSystemLuaAPI(lua_State* L) {
                 // than guessed: the defaults live as function-local constants
                 // in the settings panel, and a Restore that picks its own would
                 // disagree with the Defaults button beside it.
-                {"RestoreVideoResolutionDefaults", lua_ReturnNothing},
-                {"RestoreVideoEffectsDefaults",    lua_ReturnNothing},
+                {"RestoreVideoDefaults",           lua_RestoreVideoDefaults},
+                {"RestoreVideoResolutionDefaults", lua_RestoreVideoDefaults},
+                {"RestoreVideoEffectsDefaults",    lua_RestoreVideoDefaults},
                 {"RestoreVideoStereoDefaults",     lua_ReturnNothing},
                 // Applying video settings restarts the graphics device on the
                 // real client. This one applies what it can as it goes and has
