@@ -663,20 +663,36 @@ void GameScreen::renderMinimapFlightMasters(const MinimapFrame& frame, const Ent
 
 }
 
-namespace {
+void GameScreen::refreshOwnedUiTextures() {
+    auto* vkCtx = services_.window ? services_.window->getVkContext() : nullptr;
+    const uint64_t gen = vkCtx ? vkCtx->uiTextureGeneration() : 0;
+    if (gen != uiTextureGenerationSeen_) {
+        uiTextureGenerationSeen_ = gen;
+        plateBorderTex_ = VK_NULL_HANDLE;
+        plateFillTex_ = VK_NULL_HANDLE;
+        plateGlowTex_ = VK_NULL_HANDLE;
+        minimapObjectAtlasTex_ = VK_NULL_HANDLE;
+        minimapPoiAtlasTex_ = VK_NULL_HANDLE;
+        spellIconCache_.clear();
+    }
+}
+
 // Interface\Minimap\ObjectIcons.blp: eight 32px columns, two rows. Second
 // row: gold circle, yellow ! and ?, blue repeatable ! and ?, green !.
-VkDescriptorSet minimapObjectIconAtlas(pipeline::AssetManager* assets, core::Window* window) {
-    static VkDescriptorSet atlas = VK_NULL_HANDLE;
-    if (!atlas) {
-        atlas = uploadUiTextureFromBlp(assets, "Interface\\Minimap\\ObjectIcons.blp", window);
-        if (!atlas) {
+VkDescriptorSet GameScreen::ensureMinimapObjectIconAtlas() {
+    refreshOwnedUiTextures();
+    if (!minimapObjectAtlasTex_) {
+        minimapObjectAtlasTex_ = uploadUiTextureFromBlp(
+            services_.assetManager, "Interface\\Minimap\\ObjectIcons.blp", services_.window);
+        if (!minimapObjectAtlasTex_) {
             LOG_ERROR("Minimap object icon atlas failed to load");
             throw std::runtime_error("Minimap object icon atlas failed to load");
         }
     }
-    return atlas;
+    return minimapObjectAtlasTex_;
 }
+
+namespace {
 
 // One of the Rotating-Minimap*Arrow images at the rim, pointing along
 // `direction` (unit, minimap pixels). Their 32px images have alpha bounds
@@ -748,7 +764,7 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
 
         // Second row: yellow !/?, then blue repeatable !/? (not grey).
         const int column = (mark.symbol[0] == '!' ? 1 : 2) + (mark.repeatable ? 2 : 0);
-        drawObjectIconCell(frame.drawList, minimapObjectIconAtlas(services_.assetManager, services_.window),
+        drawObjectIconCell(frame.drawList, ensureMinimapObjectIconAtlas(),
                            column, sx, sy);
 
         if (entity->getType() == game::ObjectType::UNIT)
@@ -768,7 +784,7 @@ void GameScreen::renderMinimapQuestGivers(const MinimapFrame& frame, const Quest
         if (!entity) continue;
         float sx = 0.0f, sy = 0.0f;
         if (!frame.projectEntity(*entity, sx, sy)) continue;
-        drawObjectIconCell(frame.drawList, minimapObjectIconAtlas(services_.assetManager, services_.window),
+        drawObjectIconCell(frame.drawList, ensureMinimapObjectIconAtlas(),
                            kObjectIconGreenExclamation, sx, sy);
         if (entity->getType() == game::ObjectType::UNIT)
             noteMinimapBlip(sx, sy, std::static_pointer_cast<game::Unit>(entity)->getName());
@@ -860,16 +876,16 @@ void GameScreen::renderMinimapGossipPois(const MinimapFrame& frame, game::GameHa
         float sx = 0.0f, sy = 0.0f;
         if (!frame.projectCanonical(poi.x, poi.y, sx, sy)) continue;
 
-        static VkDescriptorSet poiAtlas = VK_NULL_HANDLE;
-        if (!poiAtlas) {
-            poiAtlas = uploadUiTextureFromBlp(services_.assetManager,
+        refreshOwnedUiTextures();
+        if (!minimapPoiAtlasTex_) {
+            minimapPoiAtlasTex_ = uploadUiTextureFromBlp(services_.assetManager,
                 "Interface\\Minimap\\POIIcons.blp", services_.window);
-            if (!poiAtlas) throw std::runtime_error("Minimap POI icon atlas failed to load");
+            if (!minimapPoiAtlasTex_) throw std::runtime_error("Minimap POI icon atlas failed to load");
         }
         // TBC POIIcons uses 16px cells in a 128px atlas, shared with WorldMap.
         const float u = (poi.icon % 8) / 8.0f;
         const float v = (poi.icon / 8) / 8.0f;
-        frame.drawList->AddImage((ImTextureID)(uintptr_t)poiAtlas,
+        frame.drawList->AddImage((ImTextureID)(uintptr_t)minimapPoiAtlasTex_,
             ImVec2(sx - 8, sy - 8), ImVec2(sx + 8, sy + 8),
             ImVec2(u, v), ImVec2(u + 1.0f / 8, v + 1.0f / 8));
 
@@ -1044,7 +1060,7 @@ void GameScreen::renderMinimapResources(const MinimapFrame& frame, const EntityL
     if (field == 0xFFFF || flagsField == 0xFFFF || dynamicField == 0xFFFF)
         throw std::runtime_error("TBC update_fields.json lacks resource tracking fields; deploy current expansion metadata");
     const uint32_t mask = player ? player->getField(field) : 0;
-    const VkDescriptorSet atlas = minimapObjectIconAtlas(services_.assetManager, services_.window);
+    const VkDescriptorSet atlas = ensureMinimapObjectIconAtlas();
     const float half = 8.0f * (engine ? engine->widgets().uiScale() : 1.0f);
     // ObjectIcons second row, first cell: the gold circle.
     const auto drawGold = [&](const game::Entity& entity, const std::string& name) {

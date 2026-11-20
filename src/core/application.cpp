@@ -5170,21 +5170,7 @@ void Application::render() {
                         // map has to be told: Minimap:SetZoom is the interface
                         // saying what it wants, not the map changing. Six
                         // levels as WoW has them, zero furthest out.
-                        static int appliedZoom = -1;
-                        static bool appliedIndoors = false;
-                        const bool indoors = renderer->isPlayerIndoors();
-                        if (mm->zoomLevel != appliedZoom || indoors != appliedIndoors) {
-                            appliedZoom = mm->zoomLevel;
-                            appliedIndoors = indoors;
-                            static const float kRadius[6] = {
-                                700.0f / 3.0f, 200.0f, 500.0f / 3.0f,
-                                400.0f / 3.0f, 100.0f, 200.0f / 3.0f
-                            };
-                            const int lvl = (mm->zoomLevel < 0) ? 0
-                                          : (mm->zoomLevel > 5 ? 5 : mm->zoomLevel);
-                            static const float kIndoorRadius[6] = {150, 120, 90, 60, 40, 25};
-                            map->setViewRadius(indoors ? kIndoorRadius[lvl] : kRadius[lvl]);
-                        }
+                        map->applyInterfaceZoom(mm->zoomLevel, renderer->isPlayerIndoors());
 
                         // Minimap:PingLocation, which is all Minimap_OnClick
                         // does. The offsets are minimap-local interface units

@@ -310,8 +310,16 @@ private:
     SpellbookScreen spellbookScreen;
     // WorldMap is now owned by Renderer (accessed via renderer->getWorldMap())
 
-    // Spell icon cache: spellId -> GL texture ID
+    // Spell icon cache: spellId -> ImGui Vulkan descriptor set
     std::unordered_map<uint32_t, VkDescriptorSet> spellIconCache_;
+    uint64_t uiTextureGenerationSeen_ = 0;
+    VkDescriptorSet plateBorderTex_ = VK_NULL_HANDLE;
+    VkDescriptorSet plateFillTex_ = VK_NULL_HANDLE;
+    VkDescriptorSet plateGlowTex_ = VK_NULL_HANDLE;
+    VkDescriptorSet minimapObjectAtlasTex_ = VK_NULL_HANDLE;
+    VkDescriptorSet minimapPoiAtlasTex_ = VK_NULL_HANDLE;
+    void refreshOwnedUiTextures();
+    VkDescriptorSet ensureMinimapObjectIconAtlas();
     // SpellIconID -> icon path (from SpellIcon.dbc)
     std::unordered_map<uint32_t, std::string> spellIconPaths_;
     // SpellID -> SpellIconID (from the active expansion's Spell.dbc layout)

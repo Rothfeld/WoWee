@@ -559,16 +559,22 @@ TEST_CASE("Animator: Z clamping on non-world-coord client anim", "[transport_ani
         {1000, glm::vec3(5.0f, 0.0f, -50.0f)},  // Deep negative Z
         {2000, glm::vec3(10.0f, 0.0f, 0.0f)},
     };
-    CatmullRomSpline spline(std::move(keys), false);
-    PathEntry path(std::move(spline), 200, false, true, false);
+    CatmullRomSpline nonDbcSpline(keys, false);
+    PathEntry nonDbcPath(std::move(nonDbcSpline), 200, false, /*fromDBC=*/false, false);
 
     auto t = makeTransport();
     t.useClientAnimation = true;
-    t.serverUpdateCount = 0;  // <= 1, so Z clamping applies
+    t.serverUpdateCount = 0;  // <= 1, so Z clamping applies on non-DBC paths
 
-    animator.evaluateAndApply(t, path, 1000);
-    // Z should be clamped to >= -2.0 (kMinFallbackZOffset)
+    animator.evaluateAndApply(t, nonDbcPath, 1000);
+    // Non-DBC inferred paths clamp Z to >= -2.0 (kMinFallbackZOffset)
     REQUIRE(t.position.z >= (t.basePosition.z - 2.0f));
+
+    // Authored TransportAnimation.dbc lifts keep their full vertical travel
+    CatmullRomSpline dbcSpline(std::move(keys), false);
+    PathEntry dbcPath(std::move(dbcSpline), 201, false, /*fromDBC=*/true, false);
+    animator.evaluateAndApply(t, dbcPath, 1000);
+    REQUIRE(t.position.z == Catch::Approx(t.basePosition.z - 50.0f));
 }
 
 // ══════════════════════════════════════════════════════════════════

@@ -2530,11 +2530,23 @@ void CharacterRenderer::retargetOneShotReturn(uint32_t instanceId, uint32_t from
     if (resumes == from) instance.oneShotReturnAnim = to;
 }
 
-void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
-    // Instances whose fade-out reached zero last frame (drawn at zero opacity,
-    // which the draw skips). Removed here, outside the iteration below.
-    for (const uint32_t id : fadedOut_) removeInstance(id);
-    fadedOut_.clear();
+void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos,
+                               uint32_t onlyInstance) {
+    std::unordered_set<uint32_t> scopedIds;
+    if (onlyInstance != 0) {
+        auto rootIt = instances.find(onlyInstance);
+        if (rootIt == instances.end()) return;
+        scopedIds.insert(onlyInstance);
+        for (const auto& wa : rootIt->second.weaponAttachments) {
+            scopedIds.insert(wa.weaponInstanceId);
+            for (const auto& fx : wa.effects) scopedIds.insert(fx.effectInstanceId);
+        }
+    } else {
+        // Instances whose fade-out reached zero last frame (drawn at zero opacity,
+        // which the draw skips). Removed here, outside the iteration below.
+        for (const uint32_t id : fadedOut_) removeInstance(id);
+        fadedOut_.clear();
+    }
 
     boneCameraPos_ = cameraPos;
 
@@ -2545,6 +2557,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
     toUpdate_.clear();
 
     for (auto& pair : instances) {
+        if (onlyInstance != 0 && scopedIds.find(pair.first) == scopedIds.end()) continue;
         auto& inst = pair.second;
 
         // Fade-out ahead of removal; the instance goes once it reaches zero.
@@ -2865,6 +2878,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
     // Riders onto their mounts' seats as this frame posed them, before
     // anything attached to a rider (weapons, helm) is placed from it.
     for (auto& [id, rider] : instances) {
+        if (onlyInstance != 0 && scopedIds.find(id) == scopedIds.end()) continue;
         if (!rider.seatMountId) continue;
         glm::mat4 seat(1.0f);
         const bool found = getAttachmentTransform(rider.seatMountId, 0, seat);
@@ -2879,6 +2893,7 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
     // Update weapon attachment transforms (after all bone matrices are computed)
     loadAnimationData();
     for (auto& pair : instances) {
+        if (onlyInstance != 0 && pair.first != onlyInstance) continue;
         auto& instance = pair.second;
         if (instance.weaponAttachments.empty()) continue;
         if (glm::distance2(instance.position, cameraPos) > animUpdateRadiusSq) {
@@ -3587,6 +3602,30 @@ std::vector<std::pair<float, uint32_t>> CharacterRenderer::drawOrder(const Camer
     return order;
 }
 
+std::vector<std::pair<float, uint32_t>> CharacterRenderer::drawOrderForInstance(
+        const Camera& camera, uint32_t onlyInstance) const {
+    std::vector<std::pair<float, uint32_t>> order;
+    auto rootIt = instances.find(onlyInstance);
+    if (rootIt == instances.end()) return order;
+    const auto& view = camera.getViewMatrix();
+    const auto appendIfVisible = [&](uint32_t id) {
+        auto it = instances.find(id);
+        if (it == instances.end()) return;
+        const auto& instance = it->second;
+        if (!instance.visible || instance.replaced || instance.roomHidden) return;
+        const glm::vec3 position = instance.hasOverrideModelMatrix
+            ? glm::vec3(instance.overrideModelMatrix[3]) : instance.position;
+        order.emplace_back((view * glm::vec4(position, 1.0f)).z, id);
+    };
+    appendIfVisible(onlyInstance);
+    for (const auto& wa : rootIt->second.weaponAttachments) {
+        appendIfVisible(wa.weaponInstanceId);
+        for (const auto& fx : wa.effects) appendIfVisible(fx.effectInstanceId);
+    }
+    std::sort(order.begin(), order.end());
+    return order;
+}
+
 void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
                                RenderPhase phase, uint32_t onlyInstance) {
     if (instances.empty() || !opaquePipeline_) {
@@ -3694,7 +3733,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     // geometry: a stealthed rogue in front of an opaque one then wrote depth
     // before the opaque one was drawn, and cut it out of the picture where
     // 2.4.3 shows it through the faded body.
-    const auto order = onlyInstance ? std::vector<std::pair<float, uint32_t>>{{0, onlyInstance}}
+    const auto order = onlyInstance ? drawOrderForInstance(camera, onlyInstance)
                                     : drawOrder(camera);
     std::vector<std::pair<int, uint32_t>> steps;
     steps.reserve(order.size() * 3);

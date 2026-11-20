@@ -1,4 +1,5 @@
 #include "rendering/character_preview.hpp"
+#include <atomic>
 #include <cassert>
 #include "rendering/imgui_texture.hpp"
 #include "rendering/character_renderer.hpp"
@@ -40,6 +41,11 @@ namespace {
 /// WoW's own key bone numbering: 4 is the lower spine, 6 the head, 7 the jaw.
 constexpr int32_t kKeyBoneHead = 6;
 
+uint32_t allocatePreviewModelId() {
+    static std::atomic<uint32_t> nextId{100000};
+    return nextId.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool isFiniteVec3(const glm::vec3& v) {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
@@ -75,7 +81,9 @@ void frameCameraForModelBounds(Camera& camera, const glm::vec3& boundMin, const 
 
 } // namespace
 
-CharacterPreview::CharacterPreview() = default;
+CharacterPreview::CharacterPreview()
+    : modelId_(allocatePreviewModelId()),
+      backdropModelId_(allocatePreviewModelId()) {}
 
 CharacterPreview::~CharacterPreview() {
     shutdown();
@@ -211,17 +219,13 @@ bool CharacterPreview::initialize(pipeline::AssetManager* am, int width, int hei
         return false;
     }
 
-    // Initialize CharacterRenderer with our off-screen render pass
-    charRenderer_ = std::make_unique<CharacterRenderer>();
-    if (!charRenderer_->initialize(vkCtx_, perFrameLayout, am, renderTarget_->getRenderPass(),
-                                   renderTarget_->getSampleCount())) {
-        LOG_ERROR("CharacterPreview: failed to initialize CharacterRenderer");
+    // Share a single off-screen CharacterRenderer across previews with matching MSAA.
+    charRenderer_ = appRenderer->getOrCreatePreviewCharacterRenderer(
+        am, renderTarget_->getRenderPass(), renderTarget_->getSampleCount());
+    if (!charRenderer_) {
+        LOG_ERROR("CharacterPreview: failed to acquire preview CharacterRenderer");
         return false;
     }
-
-    // Configure lighting for character preview
-    // Use distant fog to avoid clipping, enable shadows for visual depth
-    charRenderer_->setFog(glm::vec3(0.05f, 0.05f, 0.1f), 9999.0f, 10000.0f);
 
     camera_ = std::make_unique<Camera>();
     // Portrait-style camera: WoW Z-up coordinate system
@@ -236,20 +240,46 @@ bool CharacterPreview::initialize(pipeline::AssetManager* am, int width, int hei
     return true;
 }
 
+void CharacterPreview::queryHeadBoneZ() {
+    modelHeadZ_ = 0.0f;
+    if (charRenderer_ && instanceId_ > 0) {
+        float headZ = 0.0f;
+        if (charRenderer_->getInstanceKeyBonePivotZ(instanceId_, kKeyBoneHead, headZ)) {
+            modelHeadZ_ = headZ;
+        }
+    }
+}
+
+void CharacterPreview::releasePreviewInstances() {
+    if (charRenderer_ && charRenderer_->isInitialized()) {
+        if (instanceId_ > 0) charRenderer_->removeInstance(instanceId_);
+        if (backdropInstanceId_ > 0) charRenderer_->removeInstance(backdropInstanceId_);
+        if (modelId_ > 0) charRenderer_->unloadModelIfUnused(modelId_);
+        if (backdropModelId_ > 0) charRenderer_->unloadModelIfUnused(backdropModelId_);
+        for (const auto& [assetKey, id] : previewModelIds_) {
+            (void)assetKey;
+            charRenderer_->unloadModelIfUnused(id);
+        }
+    }
+    previewModelIds_.clear();
+    instanceId_ = 0;
+    backdropInstanceId_ = 0;
+    backdropRace_ = -1;
+}
+
 void CharacterPreview::shutdown() {
     // Unregister from renderer before destroying resources
-    auto* appRenderer = core::Application::getInstance().getRenderer();
+    auto* appRenderer = core::Application::hasInstance()
+        ? core::Application::getInstance().getRenderer()
+        : nullptr;
     if (appRenderer) appRenderer->unregisterPreview(this);
 
-    if (charRenderer_) {
-        charRenderer_->shutdown();
-        charRenderer_.reset();
-    }
+    releasePreviewInstances();
+    charRenderer_.reset();
     camera_.reset();
     destroyFBO();
     modelLoaded_ = false;
     compositeRendered_ = false;
-    instanceId_ = 0;
 }
 
 void CharacterPreview::createFBO() {
@@ -536,15 +566,21 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         return false;
     }
 
-    // Remove existing instance.
-    // Must wait for GPU to finish - compositePass() may have recorded draw commands
-    // referencing this instance's bone buffers earlier in the current frame.
+    // Remove existing instance via CharacterRenderer's frame-deferred cleanup;
+    // allocate a fresh modelId_ so any in-flight draw of the old model finishes
+    // without blocking the main thread on vkDeviceWaitIdle.
     if (instanceId_ > 0) {
-        if (vkCtx_) vkDeviceWaitIdle(vkCtx_->getDevice());
         charRenderer_->removeInstance(instanceId_);
+        if (modelId_ > 0) charRenderer_->unloadModelIfUnused(modelId_);
+        for (const auto& [assetKey, id] : previewModelIds_) {
+            (void)assetKey;
+            charRenderer_->unloadModelIfUnused(id);
+        }
+        previewModelIds_.clear();
         instanceId_ = 0;
         modelLoaded_ = false;
     }
+    modelId_ = allocatePreviewModelId();
 
     std::string m2Path = game::getPlayerModelPath(race, gender, useFemaleModel);
 
@@ -590,12 +626,6 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         modelBoundMinZ_ = frameMin.z;
         modelBoundMaxZ_ = frameMax.z;
         modelHeadZ_ = 0.0f;
-        if (charRenderer_ && instanceId_ > 0) {
-            float headZ = 0.0f;
-            if (charRenderer_->getInstanceKeyBonePivotZ(instanceId_, kKeyBoneHead, headZ)) {
-                modelHeadZ_ = headZ;
-            }
-        }
         fullBodyDistance_ = camera_->getPosition().y;
         // Player M2s carry the same type-0 portrait camera as creatures.
         // Use authored framing rather than a generic head-bone distance.
@@ -715,7 +745,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     // Flag 0x20 = embedded data; when clear, animation lives in {ModelName}{SeqID}-{Var}.anim
     pipeline::loadExternalAnimations(*assetManager_, m2Path, m2Data, model);
 
-    if (!charRenderer_->loadModel(model, PREVIEW_MODEL_ID)) {
+    if (!charRenderer_->loadModel(model, modelId_)) {
         LOG_WARNING("CharacterPreview: failed to load model to GPU");
         return false;
     }
@@ -739,7 +769,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
             if (compositeTex != nullptr) {
                 for (size_t ti = 0; ti < model.textures.size(); ti++) {
                     if (model.textures[ti].type == 1) {
-                        charRenderer_->setModelTexture(PREVIEW_MODEL_ID, static_cast<uint32_t>(ti), compositeTex);
+                        charRenderer_->setModelTexture(modelId_, static_cast<uint32_t>(ti), compositeTex);
                         break;
                     }
                 }
@@ -750,7 +780,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
             if (skinTex != nullptr) {
                 for (size_t ti = 0; ti < model.textures.size(); ti++) {
                     if (model.textures[ti].type == 1) {
-                        charRenderer_->setModelTexture(PREVIEW_MODEL_ID, static_cast<uint32_t>(ti), skinTex);
+                        charRenderer_->setModelTexture(modelId_, static_cast<uint32_t>(ti), skinTex);
                         break;
                     }
                 }
@@ -764,7 +794,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         if (hairTex != nullptr) {
             for (size_t ti = 0; ti < model.textures.size(); ti++) {
                 if (model.textures[ti].type == 6) {
-                    charRenderer_->setModelTexture(PREVIEW_MODEL_ID, static_cast<uint32_t>(ti), hairTex);
+                    charRenderer_->setModelTexture(modelId_, static_cast<uint32_t>(ti), hairTex);
                     break;
                 }
             }
@@ -772,7 +802,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     }
 
     // Create instance at origin with current yaw
-    instanceId_ = charRenderer_->createInstance(PREVIEW_MODEL_ID,
+    instanceId_ = charRenderer_->createInstance(modelId_,
         glm::vec3(0.0f, 0.0f, 0.0f),
         glm::vec3(0.0f, 0.0f, modelYaw_),
         1.0f);
@@ -781,6 +811,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         LOG_WARNING("CharacterPreview: failed to create instance");
         return false;
     }
+    queryHeadBoneZ();
 
     // Cache core appearance before geoset selection; the DBC resolver uses it.
     race_ = race;
@@ -885,7 +916,7 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
 
     // CharGeosets: group 4=gloves(forearm), 5=boots(shin), 8=sleeves, 13=pants
     std::unordered_set<uint16_t> modelGeosets;
-    if (const auto* modelData = charRenderer_->getModelData(PREVIEW_MODEL_ID)) {
+    if (const auto* modelData = charRenderer_->getModelData(modelId_)) {
         for (const auto& batch : modelData->batches) {
             modelGeosets.insert(batch.submeshId);
         }
@@ -1092,7 +1123,7 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
                     VkTexture* capeTex = charRenderer_->loadTexture(c);
                     if (capeTex != nullptr && capeTex != whiteTex) {
                         charRenderer_->setGroupTextureOverride(instanceId_, 15, capeTex);
-                        if (const auto* md = charRenderer_->getModelData(PREVIEW_MODEL_ID)) {
+                        if (const auto* md = charRenderer_->getModelData(modelId_)) {
                             for (size_t ti = 0; ti < md->textures.size(); ti++) {
                                 if (md->textures[ti].type == 2) {
                                     charRenderer_->setTextureSlotOverride(instanceId_, static_cast<uint16_t>(ti), capeTex);
@@ -1105,7 +1136,7 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
             }
         }
     } else {
-        if (const auto* md = charRenderer_->getModelData(PREVIEW_MODEL_ID)) {
+        if (const auto* md = charRenderer_->getModelData(modelId_)) {
             for (size_t ti = 0; ti < md->textures.size(); ti++) {
                 if (md->textures[ti].type == 2) {
                     charRenderer_->clearTextureSlotOverride(instanceId_, static_cast<uint16_t>(ti));
@@ -1134,7 +1165,7 @@ bool CharacterPreview::setBakedSkin(const std::string& bakePath) {
     // about its face and the table is the better answer - the same rule, and
     // the same vertex ceiling, the world spawner applies.
     constexpr size_t kShippedCharacterVertexCeiling = 12000;
-    if (const auto* md = charRenderer_->getModelData(PREVIEW_MODEL_ID)) {
+    if (const auto* md = charRenderer_->getModelData(modelId_)) {
         if (md->vertices.size() > kShippedCharacterVertexCeiling) return false;
     }
     VkTexture* tex = charRenderer_->loadTexture(bakePath);
@@ -1154,8 +1185,15 @@ bool CharacterPreview::loadCreature(
 
     if (instanceId_ > 0) {
         charRenderer_->removeInstance(instanceId_);
+        if (modelId_ > 0) charRenderer_->unloadModelIfUnused(modelId_);
+        for (const auto& [assetKey, id] : previewModelIds_) {
+            (void)assetKey;
+            charRenderer_->unloadModelIfUnused(id);
+        }
+        previewModelIds_.clear();
         instanceId_ = 0;
     }
+    modelId_ = allocatePreviewModelId();
 
     pipeline::M2Model model;
     if (!loadPreviewM2(m2Path, model)) {
@@ -1187,12 +1225,6 @@ bool CharacterPreview::loadCreature(
         modelBoundMinZ_ = frameMin.z;
         modelBoundMaxZ_ = frameMax.z;
         modelHeadZ_ = 0.0f;
-        if (charRenderer_ && instanceId_ > 0) {
-            float headZ = 0.0f;
-            if (charRenderer_->getInstanceKeyBonePivotZ(instanceId_, kKeyBoneHead, headZ)) {
-                modelHeadZ_ = headZ;
-            }
-        }
         fullBodyDistance_ = camera_->getPosition().y;
     }
 
@@ -1209,12 +1241,12 @@ bool CharacterPreview::loadCreature(
         break;
     }
 
-    if (!charRenderer_->loadModel(model, PREVIEW_MODEL_ID)) {
+    if (!charRenderer_->loadModel(model, modelId_)) {
         LOG_WARNING("CharacterPreview: failed to upload creature model");
         return false;
     }
 
-    instanceId_ = charRenderer_->createInstance(PREVIEW_MODEL_ID,
+    instanceId_ = charRenderer_->createInstance(modelId_,
         glm::vec3(0.0f, 0.0f, 0.0f),
         glm::vec3(0.0f, 0.0f, modelYaw_),
         1.0f);
@@ -1222,16 +1254,18 @@ bool CharacterPreview::loadCreature(
         LOG_WARNING("CharacterPreview: failed to create creature instance");
         return false;
     }
+    queryHeadBoneZ();
+    if (zoomLevel_ > 0.0f) applyPreviewView();
 
     // The display's skins, into the slots the model declared for them. Without
     // this the geometry draws with no texture at all, which is what the target
     // frame's portrait showed: a white shape in the right silhouette.
-    if (const auto* data = charRenderer_->getModelData(PREVIEW_MODEL_ID)) {
+    if (const auto* data = charRenderer_->getModelData(modelId_)) {
         for (size_t ti = 0; ti < data->textures.size(); ++ti) {
             for (const auto& [texType, path] : skins) {
                 if (data->textures[ti].type != texType) continue;
                 if (VkTexture* tex = charRenderer_->loadTexture(path)) {
-                    charRenderer_->setModelTexture(PREVIEW_MODEL_ID,
+                    charRenderer_->setModelTexture(modelId_,
                                                    static_cast<uint32_t>(ti), tex);
                 }
                 break;
@@ -1265,7 +1299,7 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
         pipeline::M2Model model;
         if (!loadPreviewM2(path, model) ||
             !charRenderer_->attachWeapon(instanceId_, core::kAttachHelm, model,
-                                         previewModelIdFor(path), helm.texturePath)) {
+                                         previewModelIdFor(path + "|" + helm.texturePath), helm.texturePath)) {
             LOG_ERROR("CharacterPreview helmet attachment failed: ", path);
         }
         break;
@@ -1286,7 +1320,7 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
             pipeline::M2Model model;
             if (!loadPreviewM2(path, model) ||
                 !charRenderer_->attachWeapon(instanceId_, attachPoint, model,
-                                             previewModelIdFor(path), side.texturePath)) {
+                                             previewModelIdFor(path + "|" + side.texturePath), side.texturePath)) {
                 LOG_ERROR("CharacterPreview shoulder attachment failed: ", path);
             }
         };
@@ -1359,7 +1393,7 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
             }
         }
 
-        const uint32_t weaponModelId = previewModelIdFor(m2Path);
+        const uint32_t weaponModelId = previewModelIdFor(m2Path + "|" + texturePath);
         if (!charRenderer_->attachWeapon(instanceId_, ws.attachmentId, weaponModel,
                                          weaponModelId, texturePath)) {
             continue;
@@ -1371,7 +1405,7 @@ void CharacterPreview::attachWeapons(const std::vector<game::EquipmentItem>& equ
 uint32_t CharacterPreview::previewModelIdFor(const std::string& assetKey) {
     auto it = previewModelIds_.find(assetKey);
     if (it != previewModelIds_.end()) return it->second;
-    uint32_t id = nextPreviewModelId_++;
+    uint32_t id = allocatePreviewModelId();
     previewModelIds_.emplace(assetKey, id);
     return id;
 }
@@ -1420,6 +1454,8 @@ void CharacterPreview::loadRacialBackdrop(game::Race race) {
 
     if (backdropInstanceId_ != 0) {
         charRenderer_->removeInstance(backdropInstanceId_);
+        if (backdropModelId_ > 0) charRenderer_->unloadModelIfUnused(backdropModelId_);
+        backdropModelId_ = allocatePreviewModelId();
         backdropInstanceId_ = 0;
     }
     backdropRace_ = static_cast<int>(race);
@@ -1473,12 +1509,12 @@ void CharacterPreview::loadRacialBackdrop(game::Race race) {
         if (att.id == 0) { standPos = att.position; break; }
     }
 
-    if (!charRenderer_->loadModel(sceneModel, PREVIEW_BACKDROP_MODEL_ID)) {
+    if (!charRenderer_->loadModel(sceneModel, backdropModelId_)) {
         LOG_WARNING("CharacterPreview: failed to load racial backdrop ", scenePath);
         return;
     }
 
-    backdropInstanceId_ = charRenderer_->createInstance(PREVIEW_BACKDROP_MODEL_ID, glm::vec3(0.0f));
+    backdropInstanceId_ = charRenderer_->createInstance(backdropModelId_, glm::vec3(0.0f));
     if (backdropInstanceId_ == 0) return;
     charRenderer_->setInstanceSceneModel(backdropInstanceId_, true);
 
@@ -1499,13 +1535,18 @@ void CharacterPreview::loadRacialBackdrop(game::Race race) {
 void CharacterPreview::update(float deltaTime) {
     if (charRenderer_ && modelLoaded_) {
         // Racial glue scenes place the character far from world origin (the
-        // human scene is roughly 230 units away). Use this preview's camera for
-        // animation distance checks; testing against the renderer's default
-        // origin culled bone and weapon-attachment updates, leaving the paper
-        // doll rigid and its equipped weapons invisible.
+        // human scene is roughly 230 units away). Update only this preview's
+        // instances against its own camera so multiple previews sharing one
+        // CharacterRenderer neither advance each other's clocks nor overwrite
+        // billboard-bone camera positions.
         const glm::vec3 cameraPos = camera_ ? camera_->getPosition()
                                             : previewStandPosition_;
-        charRenderer_->update(deltaTime, cameraPos);
+        if (backdropInstanceId_ != 0) {
+            charRenderer_->update(deltaTime, cameraPos, backdropInstanceId_);
+        }
+        if (instanceId_ != 0) {
+            charRenderer_->update(deltaTime, cameraPos, instanceId_);
+        }
     }
 }
 
@@ -1561,8 +1602,16 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     // GPU allocation outside CharacterRenderer::render().
     charRenderer_->prepareRender(fi);
 
-    // Render the character model
-    charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_);
+    // Render only this preview's racial backdrop (when present) and character
+    // instance (+ attached weapons/helm/shoulders/effects).
+    if (backdropInstanceId_ != 0) {
+        charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_,
+                              CharacterRenderer::RenderPhase::All, backdropInstanceId_);
+    }
+    if (instanceId_ != 0) {
+        charRenderer_->render(cmd, previewPerFrameSet_[fi], *camera_,
+                              CharacterRenderer::RenderPhase::All, instanceId_);
+    }
     vkCtx_->checkpoint(cmd, "character preview draws recorded");
 
     renderTarget_->endPass(cmd);
@@ -1590,6 +1639,7 @@ void CharacterPreview::setTransparentBackground(bool transparent) {
     // so it goes as well.
     if (transparent && backdropInstanceId_ != 0 && charRenderer_) {
         charRenderer_->removeInstance(backdropInstanceId_);
+        if (backdropModelId_ > 0) charRenderer_->unloadModelIfUnused(backdropModelId_);
         backdropInstanceId_ = 0;
         backdropRace_ = -1;
     }

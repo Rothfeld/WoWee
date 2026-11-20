@@ -86,11 +86,11 @@ TEST_CASE("an unavailable object offers nothing whatever its type", "[gameobject
 }
 
 TEST_CASE("rows the server does not settle come from native hovers", "[gameobject][type-rule]") {
-    for (uint32_t t : {8u, 16u, 25u, 27u, 34u}) {
+    for (uint32_t t : {6u, 8u, 16u, 25u, 27u, 34u}) {
         INFO("type " << t);
         CHECK(gameObjectTypeRule(t).source == GameObjectRuleSource::Native);
     }
-    CHECK(gameObjectTypeRule(6).source == GameObjectRuleSource::NeedsCapture);
+    CHECK_FALSE(gameObjectAffordance(6, 0, 0, true).hoverable());
     // Teleport-Stone to Hyjal 211050 (MINI_GAME) shows the gear; the Guild
     // Vault 187299 shows Buy.
     CHECK(std::string(gameObjectAffordance(27, 0, 0, true).cursor) == "Interact");

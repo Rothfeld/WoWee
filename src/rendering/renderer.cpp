@@ -1055,6 +1055,10 @@ void Renderer::shutdown() {
         characterRenderer->shutdown();
         characterRenderer.reset();
     }
+    if (previewCharacterRenderer_) {
+        previewCharacterRenderer_->shutdown();
+        previewCharacterRenderer_.reset();
+    }
 
     // Shutdown AnimationController before renderers it references (§4.2)
     animationController_.reset();
@@ -1138,6 +1142,34 @@ void Renderer::unregisterPreview(CharacterPreview* preview) {
     if (it != activePreviews_.end()) {
         activePreviews_.erase(it);
     }
+}
+
+std::shared_ptr<CharacterRenderer> Renderer::getOrCreatePreviewCharacterRenderer(
+        pipeline::AssetManager* assetManager,
+        VkRenderPass renderPass,
+        VkSampleCountFlagBits samples) {
+    if (!vkCtx || perFrameSetLayout == VK_NULL_HANDLE || renderPass == VK_NULL_HANDLE) {
+        return nullptr;
+    }
+    if (previewCharacterRenderer_ && previewCharacterRenderer_->isInitialized() &&
+        previewCharacterSamples_ == samples) {
+        if (assetManager) previewCharacterRenderer_->setAssetManager(assetManager);
+        return previewCharacterRenderer_;
+    }
+    if (previewCharacterRenderer_) {
+        previewCharacterRenderer_->shutdown();
+        previewCharacterRenderer_.reset();
+    }
+    auto cr = std::make_shared<CharacterRenderer>();
+    if (!cr->initialize(vkCtx, perFrameSetLayout, assetManager, renderPass, samples)) {
+        LOG_ERROR("Renderer: failed to initialize shared preview CharacterRenderer");
+        return nullptr;
+    }
+    cr->setFog(glm::vec3(0.05f, 0.05f, 0.1f), 9999.0f, 10000.0f);
+    cr->setViewDistance(10000.0f);
+    previewCharacterRenderer_ = std::move(cr);
+    previewCharacterSamples_ = samples;
+    return previewCharacterRenderer_;
 }
 
 void Renderer::setWaterRefractionEnabled(bool /*enabled*/) {

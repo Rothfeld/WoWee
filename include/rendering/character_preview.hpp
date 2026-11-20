@@ -111,9 +111,7 @@ public:
     [[nodiscard]] int getWidth() const { return fboWidth_; }
     [[nodiscard]] int getHeight() const { return fboHeight_; }
 
-    CharacterRenderer* getCharacterRenderer() { return charRenderer_.get(); }
     [[nodiscard]] uint32_t getInstanceId() const { return instanceId_; }
-    [[nodiscard]] uint32_t getModelId() const { return PREVIEW_MODEL_ID; }
     [[nodiscard]] bool isModelLoaded() const { return modelLoaded_; }
 
 private:
@@ -138,10 +136,12 @@ private:
     // Load the race's glue scene (Stormwind for humans, Orgrimmar for orcs, ...) as a backdrop.
     void loadRacialBackdrop(game::Race race);
     void applyPreviewView();
+    void queryHeadBoneZ();
+    void releasePreviewInstances();
 
     pipeline::AssetManager* assetManager_ = nullptr;
     VkContext* vkCtx_ = nullptr;
-    std::unique_ptr<CharacterRenderer> charRenderer_;
+    std::shared_ptr<CharacterRenderer> charRenderer_;
     std::unique_ptr<Camera> camera_;
 
     // Off-screen render target (color + depth)
@@ -169,8 +169,8 @@ private:
     int fboWidth_ = 640;
     int fboHeight_ = 800;
 
-    static constexpr uint32_t PREVIEW_MODEL_ID = 9999;
-    static constexpr uint32_t PREVIEW_BACKDROP_MODEL_ID = 9996;
+    uint32_t modelId_ = 0;
+    uint32_t backdropModelId_ = 0;
 
     // CharacterRenderer::loadModel() keeps a model cache keyed by id and skips
     // loading when the id is already present, so a fixed id per hand would hand
@@ -179,7 +179,6 @@ private:
     // weapon gets its own.
     uint32_t previewModelIdFor(const std::string& assetKey);
     std::unordered_map<std::string, uint32_t> previewModelIds_;
-    uint32_t nextPreviewModelId_ = 20000;
     uint32_t backdropInstanceId_ = 0;
     int backdropRace_ = -1;   // race whose glue scene is currently loaded (-1 = none)
     uint32_t instanceId_ = 0;

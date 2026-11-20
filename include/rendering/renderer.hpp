@@ -413,6 +413,10 @@ public:
     // Character preview registration (for off-screen composite pass)
     void registerPreview(CharacterPreview* preview);
     void unregisterPreview(CharacterPreview* preview);
+    std::shared_ptr<CharacterRenderer> getOrCreatePreviewCharacterRenderer(
+        pipeline::AssetManager* assetManager,
+        VkRenderPass renderPass,
+        VkSampleCountFlagBits samples);
 
     /// Off stops the scene sampling the shadow map; the shadow pass itself
     /// still runs whole, casters and all. See renderShadowPass.
@@ -569,6 +573,8 @@ private:
 
     // Active character previews for off-screen rendering
     std::vector<CharacterPreview*> activePreviews_;
+    std::shared_ptr<CharacterRenderer> previewCharacterRenderer_;
+    VkSampleCountFlagBits previewCharacterSamples_ = VK_SAMPLE_COUNT_1_BIT;
 
     bool terrainEnabled = true;
     bool terrainLoaded = false;

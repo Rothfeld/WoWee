@@ -1057,18 +1057,21 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     // Build 8606 WorldFrame plate geometry, queried at its 768-unit UI height.
     const float plateArtScale = screenH / 768.0f * (156.651184f / 128.0f)
                              * settingsPanel_.nameplateScale_;
-    static VkDescriptorSet plateBorder = VK_NULL_HANDLE;
-    static VkDescriptorSet plateFill = VK_NULL_HANDLE;
-    static VkDescriptorSet plateGlow = VK_NULL_HANDLE;
+    refreshOwnedUiTextures();
     if (legacyPlates && (settingsPanel_.showFriendlyNameplates_ || settingsPanel_.showEnemyNameplates_)) {
-        if (!plateBorder) plateBorder = uploadUiTextureFromBlp(services_.assetManager,
+        if (!plateBorderTex_) plateBorderTex_ = uploadUiTextureFromBlp(services_.assetManager,
             "Interface/Tooltips/Nameplate-Border.blp", services_.window);
-        if (!plateFill) plateFill = uploadUiTextureFromBlp(services_.assetManager,
+        if (!plateFillTex_) plateFillTex_ = uploadUiTextureFromBlp(services_.assetManager,
             "Interface/TargetingFrame/UI-TargetingFrame-BarFill.blp", services_.window);
-        if (!plateGlow) plateGlow = uploadUiTextureFromBlp(services_.assetManager,
+        if (!plateGlowTex_) plateGlowTex_ = uploadUiTextureFromBlp(services_.assetManager,
             "Interface/Tooltips/Nameplate-Glow.blp", services_.window);
-        if (!plateBorder || !plateFill || !plateGlow) throw std::runtime_error("Missing original nameplate textures");
+        if (!plateBorderTex_ || !plateFillTex_ || !plateGlowTex_) {
+            throw std::runtime_error("Missing original nameplate textures");
+        }
     }
+    const VkDescriptorSet plateBorder = plateBorderTex_;
+    const VkDescriptorSet plateFill = plateFillTex_;
+    const VkDescriptorSet plateGlow = plateGlowTex_;
 
     refreshQuestObjectiveCache(gameHandler);
     const auto& questKillEntries = minimapQuestCreatureEntries_;

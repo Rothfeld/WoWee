@@ -18,17 +18,6 @@
 namespace wowee::game {
 
 namespace {
-glm::vec3 taxiCurve(const glm::vec3& a, const glm::vec3& b,
-                   const glm::vec3& c, const glm::vec3& d, float u) {
-    return 0.5f * ((2.0f*b) + (-a+c)*u + (2.0f*a-5.0f*b+4.0f*c-d)*u*u +
-                   (-a+3.0f*b-3.0f*c+d)*u*u*u);
-}
-glm::vec3 taxiTangent(const glm::vec3& a, const glm::vec3& b,
-                     const glm::vec3& c, const glm::vec3& d, float u) {
-    return 0.5f * ((-a+c) + 2.0f*(2.0f*a-5.0f*b+4.0f*c-d)*u +
-                   3.0f*(-a+3.0f*b-3.0f*c+d)*u*u);
-}
-
 double taxiArcLength(const glm::vec3& p0, const glm::vec3& p1,
                      const glm::vec3& p2, const glm::vec3& p3) {
     const glm::dvec3 a(p0), b(p1), c(p2), d(p3);
@@ -172,28 +161,6 @@ uint32_t TransportPathRepository::realmTransportPeriod(uint32_t entry) const {
     if (found == realmTransportPeriods_.end())
         throw std::invalid_argument("Configured realm timetable omits transport " + std::to_string(entry));
     return found->second;
-}
-
-TaxiRouteSchedule::Sample TaxiRouteSchedule::evaluate(uint32_t timeMs) const {
-    timeMs %= durationMs_;
-    auto it = std::upper_bound(frames_.begin(), frames_.end(), timeMs,
-        [](uint32_t time, const Frame& frame) { return time < frame.arriveMs; });
-    const auto& frame = it == frames_.begin() ? frames_.front() : *std::prev(it);
-    if (timeMs < frame.departMs || frame.teleport || frame.nextDistance == 0)
-        return {frame.node.position, frame.stopTangent, frame.node.mapId};
-    const float elapsed = (timeMs-frame.departMs)/1000.0f;
-    const float fromStop = frame.timeFromStop+elapsed;
-    const float toStop = frame.timeToStop-elapsed;
-    const float accelerationTime = speed_/acceleration_;
-    const auto distanceAt = [&](float time) {
-        return time < accelerationTime ? 0.5f*acceleration_*time*time
-            : 0.5f*speed_*accelerationTime+(time-accelerationTime)*speed_;
-    };
-    const float travelled = fromStop < toStop
-        ? distanceAt(fromStop)-frame.sinceStop : frame.untilStop-distanceAt(toStop);
-    const float u = std::clamp(travelled/frame.nextDistance, 0.0f, 1.0f);
-    return {taxiCurve(frame.p0, frame.p1, frame.p2, frame.p3, u),
-            taxiTangent(frame.p0, frame.p1, frame.p2, frame.p3, u), frame.node.mapId};
 }
 
 namespace {

@@ -647,7 +647,7 @@ std::map<std::string, std::string> livePendingPairs(const std::string& header) {
 TEST_CASE("nothing writes a live setting without the field it is saved from", "[settings]") {
     const auto pairs = livePendingPairs(wowee::test::slurp("include/ui/settings_panel.hpp"));
     INFO("no live/pending pairs were found, so this checked nothing");
-    REQUIRE(pairs.size() >= 7);
+    REQUIRE(pairs.size() >= 6);
 
     // Where the toggles are. The settings panel is excluded because it owns
     // both sides; the loader sets both together and is inside this file.

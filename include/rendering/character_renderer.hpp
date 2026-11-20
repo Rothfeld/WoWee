@@ -101,6 +101,7 @@ public:
     [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout, pipeline::AssetManager* am,
                     VkRenderPass renderPassOverride = VK_NULL_HANDLE,
                     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT);
+    [[nodiscard]] bool isInitialized() const { return vkCtx_ != nullptr; }
     void shutdown();
     void clear();  // Remove all models/instances/textures but keep pipelines/pools
     /// Drive the particle and ribbon emitters of every drawn instance through
@@ -148,12 +149,15 @@ public:
     void setInstanceSeat(uint32_t riderInstanceId, uint32_t mountInstanceId);
     [[nodiscard]] uint32_t instanceSeat(uint32_t riderInstanceId) const;
 
-    void update(float deltaTime, const glm::vec3& cameraPos = glm::vec3(0.0f));
+    void update(float deltaTime, const glm::vec3& cameraPos = glm::vec3(0.0f),
+                uint32_t onlyInstance = 0);
 
     /** Pre-allocate GPU resources (bone SSBOs, descriptors) on main thread before parallel render. */
     void prepareRender(uint32_t frameIndex);
     enum class RenderPhase { All, Solid, Blended };
     std::vector<std::pair<float, uint32_t>> drawOrder(const Camera& camera) const;
+    std::vector<std::pair<float, uint32_t>> drawOrderForInstance(const Camera& camera,
+                                                                 uint32_t onlyInstance) const;
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera,
                 RenderPhase phase = RenderPhase::All, uint32_t onlyInstance = 0);
     void recreatePipelines();

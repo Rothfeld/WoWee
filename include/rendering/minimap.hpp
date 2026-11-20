@@ -65,6 +65,7 @@ public:
     void toggle() { enabled = !enabled; }
 
     void setViewRadius(float radius) { viewRadius = radius; }
+    void applyInterfaceZoom(int zoomLevel, bool indoors);
     void setRotateWithCamera(bool rotate) { rotateWithCamera = rotate; }
     [[nodiscard]] bool isRotateWithCamera() const { return rotateWithCamera; }
 
@@ -165,6 +166,8 @@ private:
 
     int mapSize = 200;
     float viewRadius = 400.0f;
+    int appliedZoom_ = -1;
+    bool appliedIndoors_ = false;
     bool enabled = true;
     bool rotateWithCamera = false;
     bool squareShape = false;

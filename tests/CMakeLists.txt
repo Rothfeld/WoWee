@@ -2109,7 +2109,6 @@ target_link_libraries(test_editor_units PRIVATE catch2_main)
 wowee_test_link_glm(test_editor_units)
 add_test(NAME editor_units COMMAND test_editor_units)
 register_test_target(test_editor_units)
-register_test_target(test_editor_units)
 
 # ── test_expansion_profile ──────────────────────────────────
 add_executable(test_expansion_profile

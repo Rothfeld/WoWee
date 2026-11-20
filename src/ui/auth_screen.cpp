@@ -1686,7 +1686,7 @@ void AuthScreen::loadLoginGraphicsState() {
         else if (key == "pom_quality")      loginGfx_.pomQuality     = clampI(std::stoi(val), 0, rendering::kPomQualityCount - 1);
         else if (key == "upscaling_mode")   loginGfx_.upscalingMode  = clampI(std::stoi(val), 0, 2);
         else if (key == "water_refraction") loginGfx_.waterRefraction = (val == "1");
-        else if (key == "ground_clutter_density") loginGfx_.groundClutter = std::clamp(std::stof(val), 0.0f, 150.0f);
+        else if (key == "ground_clutter_density") loginGfx_.groundClutter = clampF(std::stof(val), 0.0f, 150.0f);
         else if (key == "grass_enabled")    loginGfx_.grass          = (val == "1");
         else if (key == "grass_density")    loginGfx_.grassDensity   = clampI(std::stoi(val), 0, 300);
         else if (key == "grass_height")     loginGfx_.grassHeight    = clampI(std::stoi(val), 50, 300);

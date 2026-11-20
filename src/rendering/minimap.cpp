@@ -83,6 +83,8 @@ void Minimap::buildDisplayPipeline(VkDevice device,
 bool Minimap::initialize(VkContext* ctx, VkDescriptorSetLayout /*perFrameLayout*/, int size) {
     vkCtx = ctx;
     mapSize = size;
+    appliedZoom_ = -1;
+    appliedIndoors_ = false;
     VkDevice device = vkCtx->getDevice();
 
     // --- Composite render target (768x768) ---
@@ -301,7 +303,22 @@ void Minimap::setMapName(const std::string& name) {
         hasCachedFrame = false;
         lastCenterTileX = -1;
         lastCenterTileY = -1;
+        appliedZoom_ = -1;
+        appliedIndoors_ = false;
     }
+}
+
+void Minimap::applyInterfaceZoom(int zoomLevel, bool indoors) {
+    if (zoomLevel == appliedZoom_ && indoors == appliedIndoors_) return;
+    appliedZoom_ = zoomLevel;
+    appliedIndoors_ = indoors;
+    static constexpr float kRadius[6] = {
+        700.0f / 3.0f, 200.0f, 500.0f / 3.0f,
+        400.0f / 3.0f, 100.0f, 200.0f / 3.0f
+    };
+    static constexpr float kIndoorRadius[6] = {150.0f, 120.0f, 90.0f, 60.0f, 40.0f, 25.0f};
+    const int lvl = std::clamp(zoomLevel, 0, 5);
+    setViewRadius(indoors ? kIndoorRadius[lvl] : kRadius[lvl]);
 }
 
 // --------------------------------------------------------
