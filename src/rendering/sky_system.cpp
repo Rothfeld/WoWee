@@ -1,4 +1,5 @@
 #include "rendering/sky_system.hpp"
+#include "game/game_utils.hpp"
 #include "rendering/sun_direction.hpp"
 #include "rendering/skybox.hpp"
 #include "rendering/celestial.hpp"
@@ -142,25 +143,35 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
         }
     }
 
+    // Original skybox M2s supply their own celestial bodies, clouds, and
+    // nebulae; only sharp procedural stars may replace the dropped star layer.
+    if (params.useOriginalSkybox) {
+        return;
+    }
+
+    const float overcastAttenuation = 1.0f - glm::smoothstep(0.15f, 0.70f, params.weatherIntensity);
+    const float celestialVisibility =
+        overcastAttenuation * glm::clamp(params.celestialGlowThrough, 0.0f, 1.0f);
+
     // --- Celestial bodies (sun + White Lady + Blue Child) ---
     if (celestial_) {
         // Gate moon visibility on how dark the DBC sky actually is. The
         // hardcoded 19:00 night window can precede sky darkening by hours,
         // and full-brightness moons on a daylight sky read as extra suns.
         float skyLum = glm::dot(params.skyTopColor, glm::vec3(0.2126f, 0.7152f, 0.0722f));
-        float nightFactor = 1.0f - glm::smoothstep(0.08f, 0.25f, skyLum);
+        float nightFactor = (1.0f - glm::smoothstep(0.08f, 0.25f, skyLum)) * celestialVisibility;
         celestial_->render(cmd, perFrameSet, params.timeOfDay,
                            &params.directionalDir, &params.sunColor, params.gameTime,
-                           nightFactor);
+                           nightFactor, celestialVisibility);
     }
 
-    // --- Clouds (DBC-driven colors + sun lighting) ---
-    if (clouds_) {
-        // Sync cloud density with weather/DBC-driven cloud coverage.
-        // Active weather (rain/snow/storm) increases cloud density for visual consistency.
+    // --- Clouds (DBC-driven colors + sun lighting; non-TBC only) ---
+    // TBC 2.4.3 LightParams.dbc carries cloudTypeId == 0 on all 582 rows and
+    // ships no procedural cloud dome shader; clouds exist only on skybox M2s.
+    if (clouds_ && !game::isActiveExpansion("tbc")) {
         float effectiveDensity = params.cloudDensity;
         if (params.weatherIntensity > 0.05f) {
-            float weatherBoost = params.weatherIntensity * 0.4f;  // storms add up to 0.4 density
+            float weatherBoost = params.weatherIntensity * 0.4f;
             effectiveDensity = glm::min(1.0f, effectiveDensity + weatherBoost);
         }
         clouds_->setDensity(effectiveDensity);

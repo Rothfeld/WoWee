@@ -49,6 +49,16 @@ inline LightBandSlot lightBandSlot(uint32_t blockIndex, uint32_t channelsPerRow)
     return out;
 }
 
+/// Sanitize a LightIntBand / LightFloatBand keyframe count.
+///
+/// Valid bands hold 0..16 keyframes. A few unused rows in TBC 2.4.3 carry
+/// uninitialized exporter counts > 16 (e.g. 0xFFFFFFFF on LightFloatBand 1,
+/// 2640 on LightFloatBand 2520 alongside 0xCCCCCCCC floats); clamping those to
+/// 16 reads garbage memory into the curve instead of treating the band as empty.
+[[nodiscard]] constexpr uint8_t sanitizeBandKeyframeCount(uint32_t rawCount) {
+    return rawCount <= 16u ? static_cast<uint8_t>(rawCount) : uint8_t{0};
+}
+
 /// Put a band's keys in ascending time order, values alongside.
 ///
 /// Sampling assumes ascending times. 239 LightIntBand and 41 LightFloatBand

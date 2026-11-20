@@ -33,13 +33,15 @@ struct LightingParams {
     float fogEnd = 1000.0f;                         // Fog end distance
     float fogDensity = 0.001f;                      // Fog density
 
-    glm::vec3 skyTopColor{0.5f, 0.7f, 1.0f};       // Sky zenith color
-    glm::vec3 skyMiddleColor{0.7f, 0.85f, 1.0f};   // Sky horizon color
-    glm::vec3 skyBand1Color{0.9f, 0.95f, 1.0f};    // Sky band 1
-    glm::vec3 skyBand2Color{1.0f, 0.98f, 0.9f};    // Sky band 2
+    glm::vec3 skyTopColor{0.5f, 0.7f, 1.0f};       // Sky zenith color (90 deg)
+    glm::vec3 skyMiddleColor{0.7f, 0.85f, 1.0f};   // Sky middle color (30 deg)
+    glm::vec3 skyBand1Color{0.9f, 0.95f, 1.0f};    // Sky band 1 (15 deg)
+    glm::vec3 skyBand2Color{1.0f, 0.98f, 0.9f};    // Sky band 2 (5 deg)
+    glm::vec3 skySmogColor{0.85f, 0.88f, 0.92f};   // Sky smog horizon fringe (2.5 deg, IntBand 6)
     glm::vec3 cloudColor{0.9f, 0.95f, 1.0f};       // DBC cloud sun/tint color
 
-    float cloudDensity = 0.3f;                      // Cloud density/opacity
+    float celestialGlowThrough = 1.0f;              // Sun/moon glow-through switch (FloatBand 2)
+    float cloudDensity = 0.3f;                      // Sky smog / cloud weight (FloatBand 3)
     float horizonGlow = 0.3f;                       // Horizon glow intensity
 };
 
@@ -210,6 +212,13 @@ public:
     void update(const glm::vec3& playerPos, uint32_t mapId, uint32_t zoneId,
                 float gameTime = -1.0f,
                 bool isRaining = false, bool isUnderwater = false, bool isGhost = false);
+
+    /// Continuous storm-weight variant (`stormWeight` in [0, 1] blends each
+    /// volume's clear LightParams toward its storm LightParamsRain, matching
+    /// TBC 2.4.3 weather grade transitions).
+    void updateWithStormWeight(const glm::vec3& playerPos, uint32_t mapId, uint32_t zoneId,
+                               float gameTime, float stormWeight,
+                               bool isUnderwater = false, bool isGhost = false);
 
     /**
      * Get current lighting parameters

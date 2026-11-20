@@ -16,9 +16,14 @@ namespace wowee::rendering {
 namespace {
 
 struct MistPush {
-    glm::vec4 depthParams; // x = near, y = far, z = invFadeRange (0 = disabled), w = unused
-    glm::vec4 screenSize;  // xy = render target extent in pixels
+    glm::vec4 depthParams; // x = near, y = far, z = maxFadeRange (0 = disabled), w = depthFadeSlope
+    glm::vec4 screenSize;  // xy = render target extent in pixels, z = minFadeRange, w = unused
 };
+
+float wrapSigned(float offset, float halfSpan) {
+    const float span = 2.0f * halfSpan;
+    return offset - span * std::floor((offset + halfSpan) / span);
+}
 
 std::mt19937& rng() {
     static std::mt19937 gen(std::random_device{}());
@@ -127,9 +132,8 @@ void WeatherMist::clear() {
 
 void WeatherMist::update(const Camera& camera, float deltaTime, float amount, const Shape& shape) {
     if (!vkCtx_) return;
+    assert(shape.farDepth > shape.nearDepth && shape.speed > 0.0f && shape.halfWidth > 0.0f);
     softFadeRange_ = mistSoftFadeRange(shape.size);
-    time_ += deltaTime;
-    std::erase_if(puffs_, [this](const Puff& p) { return p.death <= time_; });
 
     glm::vec3 forward = camera.getForward();
     forward.z = 0.0f;
@@ -138,35 +142,72 @@ void WeatherMist::update(const Camera& camera, float deltaTime, float amount, co
     forward = glm::normalize(forward);
     const glm::vec3 right(forward.y, -forward.x, 0.0f);
 
-    // Born at the far end at the rate that keeps amount * the full count on
-    // the path, so a weather that starts fills in from the distance.
-    const float pathTime = (shape.farDepth - shape.nearDepth) / shape.speed;
-    budget_ += amount * shape.puffsAtFull / pathTime * deltaTime;
+    const float spanAlong = shape.farDepth - shape.nearDepth;
+    const float pathTime = spanAlong / shape.speed;
+    const float targetCount = std::max(amount, 0.0f) * shape.puffsAtFull;
+
+    // Pre-populate the 3D volume around the camera when weather begins (matching
+    // rain and snow box population) so foreground and downward-pitched views have
+    // immediate mist coverage instead of waiting ~10 s for far puffs to walk in.
+    if (puffs_.empty() && targetCount >= 1.0f) {
+        const size_t initialCount = std::min<size_t>(
+            kMaxPuffs, static_cast<size_t>(std::lround(targetCount)));
+        for (size_t i = 0; i < initialCount; ++i) {
+            const float along = uniform(shape.nearDepth, shape.farDepth);
+            const glm::vec3 pos = forward * along +
+                                  right * uniform(-shape.halfWidth, shape.halfWidth) +
+                                  glm::vec3(0.0f, 0.0f, uniform(-shape.below, shape.above));
+            const float age = std::clamp((shape.farDepth - along) / shape.speed, 0.0f, pathTime);
+            puffs_.push_back({pos, age, pathTime, shape.size, shape.fade});
+        }
+    }
+
+    for (Puff& p : puffs_) {
+        p.age += deltaTime;
+        p.position -= forward * (shape.speed * deltaTime);
+        // Keep lateral & upwind coordinates inside the camera-centered slab when
+        // the player yaws the camera, without rigidly locking puffs to screen space.
+        const float along = glm::dot(p.position, forward);
+        const float across = glm::dot(p.position, right);
+        if (std::abs(across) > shape.halfWidth || along > shape.farDepth) {
+            const float wrappedAcross = wrapSigned(across, shape.halfWidth);
+            const float wrappedAlong = (along > shape.farDepth)
+                ? (shape.nearDepth + std::fmod(along - shape.nearDepth, spanAlong))
+                : along;
+            p.position = forward * wrappedAlong + right * wrappedAcross +
+                         glm::vec3(0.0f, 0.0f, p.position.z);
+        }
+    }
+    std::erase_if(puffs_, [&](const Puff& p) {
+        return p.age >= p.life || glm::dot(p.position, forward) <= shape.nearDepth;
+    });
+
+    budget_ += targetCount / pathTime * deltaTime;
     while (budget_ >= 1.0f && puffs_.size() < kMaxPuffs) {
-        const glm::vec3 start = forward * shape.farDepth +
-                                right * uniform(-shape.halfWidth, shape.halfWidth) +
-                                glm::vec3(0.0f, 0.0f, uniform(-shape.below, shape.above));
-        puffs_.push_back({start, time_, -forward * shape.speed, time_ + pathTime, shape.size, shape.fade});
+        const glm::vec3 pos = forward * shape.farDepth +
+                              right * uniform(-shape.halfWidth, shape.halfWidth) +
+                              glm::vec3(0.0f, 0.0f, uniform(-shape.below, shape.above));
+        puffs_.push_back({pos, 0.0f, pathTime, shape.size, shape.fade});
         budget_ -= 1.0f;
     }
     budget_ = std::min(budget_, 1.0f);
 
-    // Camera-facing quads, far to near.
+    // Camera-facing quads, sorted far to near along planar view depth.
+    const glm::vec3 camForward = camera.getForward();
     const glm::vec3 camRight = camera.getRight();
     const glm::vec3 camUp = camera.getUp();
-    std::sort(puffs_.begin(), puffs_.end(), [this](const Puff& a, const Puff& b) {
-        const glm::vec3 pa = a.start + a.velocity * (time_ - a.birth);
-        const glm::vec3 pb = b.start + b.velocity * (time_ - b.birth);
-        return glm::dot(pa, pa) > glm::dot(pb, pb);
+    std::sort(puffs_.begin(), puffs_.end(), [&](const Puff& a, const Puff& b) {
+        return glm::dot(a.position, camForward) > glm::dot(b.position, camForward);
     });
     vertices_.clear();
     for (const Puff& p : puffs_) {
-        const float age = time_ - p.birth;
-        const float life = p.death - p.birth;
-        const float alpha = glm::clamp(age / p.fade, 0.0f, 1.0f) *
-                            glm::clamp((life - age) / p.fade, 0.0f, 1.0f);
+        const float viewDepth = glm::dot(p.position, camForward);
+        if (viewDepth <= 0.5f) continue;
+        const float lifeAlpha = glm::clamp(p.age / p.fade, 0.0f, 1.0f) *
+                                glm::clamp((p.life - p.age) / p.fade, 0.0f, 1.0f);
+        const float alpha = lifeAlpha * mistNearCameraFade(glm::length(p.position));
         if (alpha <= 0.0f) continue;
-        const glm::vec3 c = p.start + p.velocity * age;
+        const glm::vec3 c = p.position;
         const glm::vec3 r = camRight * (0.5f * p.size);
         const glm::vec3 u = camUp * (0.5f * p.size);
         const MistVertex v0{c - r - u, alpha, {0, 1}}, v1{c + r - u, alpha, {1, 1}},
@@ -182,10 +223,10 @@ void WeatherMist::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     const VkDescriptorSet sets[] = {perFrameSet, texture_.set(), depthCtx.sceneSet};
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 3, sets, 0, nullptr);
-    const float invFadeRange = (depthCtx.enabled && softFadeRange_ > 0.0f) ? (1.0f / softFadeRange_) : 0.0f;
+    const float maxFadeRange = (depthCtx.enabled && softFadeRange_ > 0.0f) ? softFadeRange_ : 0.0f;
     MistPush push{
-        glm::vec4(depthCtx.nearPlane, depthCtx.farPlane, invFadeRange, 0.0f),
-        glm::vec4(depthCtx.screenWidth, depthCtx.screenHeight, 0.0f, 0.0f),
+        glm::vec4(depthCtx.nearPlane, depthCtx.farPlane, maxFadeRange, kMistDepthFadeSlope),
+        glm::vec4(depthCtx.screenWidth, depthCtx.screenHeight, kMistMinSoftFadeRange, 0.0f),
     };
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
     VkDeviceSize offset = 0;

@@ -53,7 +53,7 @@ void main() {
     vec4 viewPos4  = view * worldPos;
     gl_Position    = projection * viewPos4;
 
-    float dist      = length(viewPos4.xyz);
+    float dist      = max(-viewPos4.z, 0.0);
     float fogStart  = fogParams.x;
     float fogEnd    = fogParams.y;
     vFogFactor      = clamp((fogEnd - dist) / max(fogEnd - fogStart, 0.001), 0.0, 1.0);

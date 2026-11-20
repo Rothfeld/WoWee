@@ -2219,7 +2219,7 @@ void Renderer::update(float deltaTime) {
         const auto* gh = core::Application::getInstance().getGameHandler();
         uint32_t mapId    = gh ? gh->getCurrentMapId() : 0;
         float gameTime    = gh ? gh->getGameTime() : -1.0f;
-        bool isRaining    = gh ? gh->isStormy() : false;
+        float stormWeight = gh ? gh->getStormLightingWeight() : 0.0f;
         // Lighting follows the eye, including an orbit below the surface while
         // the player remains above it. Swimming alone does not submerge a view.
         const auto eye = camera->getPosition();
@@ -2229,9 +2229,10 @@ void Renderer::update(float deltaTime) {
         const bool isUnderwater = eyeWater && eye.z < *eyeWater;
         const uint32_t resolvedZoneId = getCurrentZoneId();
 
-        lightingManager->update(characterPosition, mapId, resolvedZoneId,
-                                gameTime, isRaining, isUnderwater,
-                                gh && (gh->isPlayerGhost() || gh->hasInvisibilityGlow()));
+        lightingManager->updateWithStormWeight(
+            characterPosition, mapId, resolvedZoneId,
+            gameTime, stormWeight, isUnderwater,
+            gh && (gh->isPlayerGhost() || gh->hasInvisibilityGlow()));
 
         // Sync weather visual renderer with game state
         if (weather && gh) {

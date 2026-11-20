@@ -119,7 +119,8 @@ void Celestial::shutdown() {
 void Celestial::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                        float timeOfDay,
                        const glm::vec3* sunDir, const glm::vec3* sunColor,
-                       float gameTime, float nightFactor) {
+                       float gameTime, float nightFactor,
+                       float sunVisibility) {
     if (!renderingEnabled_ || pipeline_ == VK_NULL_HANDLE) {
         return;
     }
@@ -140,7 +141,7 @@ void Celestial::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     vkCmdBindIndexBuffer(cmd, indexBuffer_, 0, VK_INDEX_TYPE_UINT32);
 
     // Draw sun, then moon(s) - each call pushes different constants
-    renderSun(cmd, perFrameSet, timeOfDay, sunDir, sunColor);
+    renderSun(cmd, perFrameSet, timeOfDay, sunDir, sunColor, sunVisibility);
     renderMoon(cmd, perFrameSet, timeOfDay, nightFactor);
     if (dualMoonMode_) {
         renderBlueChild(cmd, perFrameSet, timeOfDay, nightFactor);
@@ -153,9 +154,10 @@ void Celestial::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
 void Celestial::renderSun(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
                            float timeOfDay,
-                           const glm::vec3* sunDir, const glm::vec3* sunColor) {
+                           const glm::vec3* sunDir, const glm::vec3* sunColor,
+                           float sunVisibility) {
     // Sun visible 5:00–19:00
-    if (timeOfDay < 5.0f || timeOfDay >= 19.0f) {
+    if (timeOfDay < 5.0f || timeOfDay >= 19.0f || sunVisibility <= 0.01f) {
         return;
     }
 
@@ -176,7 +178,7 @@ void Celestial::renderSun(VkCommandBuffer cmd, VkDescriptorSet /*perFrameSet*/,
     glm::vec3 color = sunColor ? *sunColor : getSunColor(timeOfDay);
     const glm::vec3 warmSun(1.0f, 0.88f, 0.55f);
     color = glm::mix(color, warmSun, 0.52f);
-    float intensity = getSunIntensity(timeOfDay) * 0.92f;
+    float intensity = getSunIntensity(timeOfDay) * 0.92f * glm::clamp(sunVisibility, 0.0f, 1.0f);
 
     CelestialPush push{};
     push.model          = model;

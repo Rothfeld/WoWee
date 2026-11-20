@@ -293,7 +293,8 @@ void selectFog(bool interior) {
 // everything between the camera and that, sunlit shafts and torch glow
 // included.
 vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
-    float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+    float fogDepth = max(-(view * vec4(worldPos, 1.0)).z, 0.0);
+    float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
     color = mix(gFogColor.rgb, color, fogFactor);
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeAt(worldPos);

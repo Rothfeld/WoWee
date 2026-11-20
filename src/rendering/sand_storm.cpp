@@ -32,10 +32,10 @@ namespace {
 // (grains show from the bottom of the screen to its top); the original's own
 // box cannot be read off the screen.
 constexpr float kSpeed = 12.0f;             // yards per second
-constexpr float kGrainNear = 2.0f;          // spawn depth range ahead, yards
+constexpr float kGrainNear = -16.0f;        // spawn/pass-behind range along horizontal forward, yards
 constexpr float kGrainFar = 40.0f;
 constexpr float kGrainHalfWidth = 40.0f;    // spawn box across and up/down
-constexpr float kGrainBelow = 20.0f;
+constexpr float kGrainBelow = 30.0f;
 constexpr float kGrainAbove = 25.0f;
 // Live grains at full intensity. The original builds them in packets of
 // 6144 (Wow.exe names the type Packet<Sand::Grain,0x1800>). Its sky shows
@@ -49,22 +49,19 @@ constexpr float kGrainsAtFull = 4.0f * kGrainsPerPacket;
 // pixel, 7% two, 3% four.
 constexpr float kGrainSizePx = 2.0f;
 
-// Mist puffs: WeatherMistGrainy01 quads. Their haze over the clear scene,
-// fitted per depth in front of the camera, starts near 8 yards and builds
-// at 0.0095 per yard (0.07 at 15 yd, 0.2 at 30, 0.32 at 53, 0.45 at 110, about
-// 0.6 on the sky). Puffs cross the screen at 30-40 yards across. Haze reaches
-// ground 8 yards below the camera and the sky 30 degrees up; the slab's sides
-// are chosen to cover that, not measured.
-constexpr float kPuffNear = 8.0f;
+// Mist puffs: WeatherMistGrainy01 quads in the same 3D camera-surrounding slab
+// [-28, 110] x [-65, 65] x [-32, 32] as rain/snow mist so downward and horizon
+// views both see full sandstorm haze and puff billowing (~70 puffs at full).
+constexpr float kPuffNear = -28.0f;
 constexpr float kPuffFar = 110.0f;
 constexpr float kPuffSize = 36.0f;
-constexpr float kPuffHalfWidth = 60.0f;
-constexpr float kPuffBelow = 15.0f;
-constexpr float kPuffAbove = 30.0f;
-// Optical depth 0.0095/yd = puffs per yd^3 * quad area * mean texture alpha
+constexpr float kPuffHalfWidth = 65.0f;
+constexpr float kPuffBelow = 32.0f;
+constexpr float kPuffAbove = 32.0f;
+// Optical depth 0.0145/yd = puffs per yd^3 * quad area * mean texture alpha
 // (46.7/255 for WeatherMistGrainy01), which sets the count across the slab.
 constexpr float kMeanTextureAlpha = 46.7f / 255.0f;
-constexpr float kOpticalDepthPerYard = 0.0095f;
+constexpr float kOpticalDepthPerYard = 0.0105f;
 constexpr float kPuffSlab = (2.0f * kPuffHalfWidth) * (kPuffBelow + kPuffAbove) * (kPuffFar - kPuffNear);
 constexpr float kPuffsAtFull =
     kOpticalDepthPerYard * kPuffSlab / (kPuffSize * kPuffSize * kMeanTextureAlpha);
@@ -73,8 +70,8 @@ constexpr float kPuffsAtFull =
 // by about 7 s; grains follow at 8-9 s.
 constexpr float kRampPerSecond = 1.0f / 7.0f;
 // sand.bls fades every grain in over its first 0.2 s and out over its last
-// (sand_grain.vert.glsl). Puffs are given the same fade.
-constexpr float kPuffFade = 0.2f;
+// (sand_grain.vert.glsl). Puffs fade smoothly at birth and death.
+constexpr float kPuffFade = 0.35f;
 
 constexpr size_t kMaxGrains = 4 * kGrainsPerPacket;
 
@@ -199,8 +196,9 @@ void SandStorm::spawnGrain(const glm::vec3& forward, const glm::vec3& right) {
     const float depth = uniform(kGrainNear, kGrainFar);
     const glm::vec3 start = forward * depth + right * uniform(-kGrainHalfWidth, kGrainHalfWidth) +
                             glm::vec3(0.0f, 0.0f, uniform(-kGrainBelow, kGrainAbove));
-    // A grain lives until it reaches the camera's plane.
-    grains_.push_back({start, time_, -forward * kSpeed, time_ + depth / kSpeed});
+    // A grain travels all the way past kGrainNear so downward camera views stay populated.
+    const float life = std::max((depth - kGrainNear) / kSpeed, 0.25f);
+    grains_.push_back({start, time_, -forward * kSpeed, time_ + life});
 }
 
 void SandStorm::update(const Camera& camera, float deltaTime, float targetIntensity) {
@@ -220,7 +218,7 @@ void SandStorm::update(const Camera& camera, float deltaTime, float targetIntens
 
     const float amount = intensity_ * densityScale_;
     // Grains: a steady stream whose live count is proportional to intensity.
-    const float meanLife = 0.5f * (kGrainNear + kGrainFar) / kSpeed;
+    const float meanLife = 0.5f * (kGrainFar - kGrainNear) / kSpeed;
     grainBudget_ += amount * kGrainsAtFull / meanLife * deltaTime;
     while (grainBudget_ >= 1.0f && grains_.size() < kMaxGrains) {
         spawnGrain(forward, right);

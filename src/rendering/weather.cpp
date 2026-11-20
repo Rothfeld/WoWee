@@ -72,23 +72,22 @@ constexpr float kSplashLife = 0.25f;
 constexpr float kSplashCell = 0.23f;
 
 // ---- Mist: Mists::Mist puffs, SnowMist01.blp with rain and snow ----
-// Same class as the sandstorm's (weather_mist.hpp), and the same slab: rain's
-// haze is nothing nearer than 8-12 yards and builds evenly with distance out
-// to about 110 (native terrain contrast against WoWee without mist, both
-// against clear weather: Stranglethorn 4% at 22 yd, 12% at 50, 19% at 75-115).
-// Optical depth per yard in that slab: Stranglethorn 0.0021, Westfall 0.0012,
-// Elwynn 0.0014, Wetlands 0.0022 (four seconds each; a handful of puffs, so
-// it varies), 0.0017 on average. Count = depth * slab volume / (quad area *
-// mean texture alpha 46.7/255), as for the sandstorm.
+// 3D camera-surrounding slab [-28, 110] along horizontal forward x [-65, 65]
+// across x [-32, 32] vertical so downward and steep top-down camera views
+// (-42 and -68 deg, zoomed out up to 28 yd) see full drifting mist over ground
+// and cobblestones just like horizon views. Optical depth calibrated directly
+// from multi-frame Native 2.4.3 bursts (avoiding temporal-median erasure of
+// <50%-duty-cycle puffs): ~0.0115/yd in rain (~56 puffs) and ~0.0052/yd in snow
+// (~25 puffs).
 constexpr float kMistSpeed = 12.0f;
-constexpr float kMistNear = 8.0f, kMistFar = 110.0f, kMistSize = 36.0f;
-constexpr float kMistHalfWidth = 60.0f, kMistBelow = 15.0f, kMistAbove = 30.0f;
-constexpr float kRainMistDepthPerYard = 0.0017f;
+constexpr float kMistNear = -28.0f, kMistFar = 110.0f, kMistSize = 36.0f;
+constexpr float kMistHalfWidth = 65.0f, kMistBelow = 32.0f, kMistAbove = 32.0f;
+constexpr float kRainMistDepthPerYard = 0.0085f;
 constexpr float kMistPuffsPerDepth = (2.0f * kMistHalfWidth) * (kMistBelow + kMistAbove) * (kMistFar - kMistNear) /
                                      (kMistSize * kMistSize * (46.7f / 255.0f));
 constexpr WeatherMist::Shape kRainMist{
     .speed = kMistSpeed, .nearDepth = kMistNear, .farDepth = kMistFar, .size = kMistSize,
-    .halfWidth = kMistHalfWidth, .below = kMistBelow, .above = kMistAbove, .fade = 0.2f,
+    .halfWidth = kMistHalfWidth, .below = kMistBelow, .above = kMistAbove, .fade = 0.35f,
     .puffsAtFull = kRainMistDepthPerYard * kMistPuffsPerDepth};
 
 // ---- Snow: Shaders\Vertex\snowpoint.bls (game data) ----
@@ -114,11 +113,12 @@ constexpr float kSnowSpawnAbove = 34.0f;
 constexpr float kFlakeSpeed = 3.35f * 1.044f;  // along kDropDirection
 const glm::vec3 kFlakeVelocity = kDropDirection * kFlakeSpeed;
 constexpr glm::vec3 kFlakeSize(-1.0f / 42.0f, 1.0f + 16.0f / 42.0f, 10.5f);
-// Snow's mist in Winterspring, measured as rain's: 1-3% beyond 12 yards.
-constexpr float kSnowMistDepthPerYard = 0.00026f;
+// Snow's mist in Winterspring and Dun Morogh, measured on multi-frame bursts:
+// ~20 puffs in the 3D camera slab (~0.0042/yd optical depth).
+constexpr float kSnowMistDepthPerYard = 0.0042f;
 constexpr WeatherMist::Shape kSnowMist{
     .speed = kMistSpeed, .nearDepth = kMistNear, .farDepth = kMistFar, .size = kMistSize,
-    .halfWidth = kMistHalfWidth, .below = kMistBelow, .above = kMistAbove, .fade = 0.2f,
+    .halfWidth = kMistHalfWidth, .below = kMistBelow, .above = kMistAbove, .fade = 0.35f,
     .puffsAtFull = kSnowMistDepthPerYard * kMistPuffsPerDepth};
 
 // Weather.dbc EffectColor of every rain and snow row.

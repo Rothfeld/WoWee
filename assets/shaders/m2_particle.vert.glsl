@@ -86,9 +86,9 @@ void main() {
     }
     vColor = aColor;
     vTile = aTile;
-    float worldDist = length(viewPos.xyz - aPos);
+    float fogDepth = max(-(view * vec4(aPos, 1.0)).z, 0.0);
     float fogRange = max(fogParams.y - fogParams.x, 0.001);
-    vFogVisibility = clamp((fogParams.y - worldDist) / fogRange, 0.0, 1.0);
+    vFogVisibility = clamp((fogParams.y - fogDepth) / fogRange, 0.0, 1.0);
     // And thinned by the air in front of it, the way distance thins it:
     // a spark deep in a bank of mist is mostly the mist.
     if (volumetricParams.x > 0.5) vFogVisibility *= fogVolumeAt(aPos).a;

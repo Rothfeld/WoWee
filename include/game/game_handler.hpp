@@ -1684,8 +1684,13 @@ public:
     bool isStormy() const {
         const WeatherKind kind = getWeatherKind();
         return (kind == WeatherKind::RAIN || kind == WeatherKind::THUNDERSTORM ||
-                kind == WeatherKind::SNOW || kind == WeatherKind::SANDSTORM) &&
+                kind == WeatherKind::SNOW || kind == WeatherKind::SANDSTORM ||
+                kind == WeatherKind::FOG) &&
                weatherIntensity_ > 0.05f;
+    }
+    float getStormLightingWeight() const {
+        if (getWeatherKind() == WeatherKind::NONE) return 0.0f;
+        return std::clamp(weatherIntensity_, 0.0f, 1.0f);
     }
     uint32_t getOverrideLightId() const { return overrideLightId_; }
     uint32_t getOverrideLightTransMs() const { return overrideLightTransMs_; }

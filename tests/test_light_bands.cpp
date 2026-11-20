@@ -31,8 +31,10 @@
 #include "rendering/light_band_block.hpp"
 #include "rendering/light_coords.hpp"
 #include "rendering/lighting_manager.hpp"
+#include "rendering/sky_params_from_lighting.hpp"
 
 using wowee::rendering::lightBandSlot;
+using wowee::rendering::sanitizeBandKeyframeCount;
 using wowee::rendering::LIGHT_FLOAT_CHANNELS;
 using wowee::rendering::LIGHT_INT_CHANNELS;
 
@@ -308,4 +310,35 @@ TEST_CASE("channel 7 is the fog and channel 6 is the smog above it", "[light]") 
     CHECK(fog[2] > fog[0] + 40);
     // Channel 10 is the DBC cloud tint channel.
     CHECK(Profile::CLOUD_SUN_COLOR == 10);
+}
+
+TEST_CASE("uninitialized band keyframe counts past sixteen are treated as empty", "[light]") {
+    CHECK(sanitizeBandKeyframeCount(0u) == 0u);
+    CHECK(sanitizeBandKeyframeCount(1u) == 1u);
+    CHECK(sanitizeBandKeyframeCount(6u) == 6u);
+    CHECK(sanitizeBandKeyframeCount(16u) == 16u);
+    // Real corrupt exporter counts from TBC 2.4.3 LightFloatBand / LightIntBand:
+    CHECK(sanitizeBandKeyframeCount(17u) == 0u);
+    CHECK(sanitizeBandKeyframeCount(360u) == 0u);
+    CHECK(sanitizeBandKeyframeCount(2640u) == 0u);
+    CHECK(sanitizeBandKeyframeCount(1061997773u) == 0u);
+    CHECK(sanitizeBandKeyframeCount(0xFFFFFFFFu) == 0u);
+}
+
+TEST_CASE("skyParamsFromLighting forwards smog colour, horizon fog colour, and celestial glow-through", "[light]") {
+    wowee::rendering::LightingParams lp;
+    lp.skySmogColor = glm::vec3(0.69f, 0.58f, 0.47f);
+    lp.fogColor = glm::vec3(0.72f, 0.60f, 0.49f);
+    lp.celestialGlowThrough = 0.25f;
+    lp.cloudDensity = 0.70f;
+
+    const auto sky = wowee::rendering::skyParamsFromLighting(12.0f, 12.0f, 1.0f, &lp, false);
+    CHECK(sky.skySmogColor.r == Catch::Approx(0.69f));
+    CHECK(sky.skySmogColor.g == Catch::Approx(0.58f));
+    CHECK(sky.skySmogColor.b == Catch::Approx(0.47f));
+    CHECK(sky.fogColor.r == Catch::Approx(0.72f));
+    CHECK(sky.fogColor.g == Catch::Approx(0.60f));
+    CHECK(sky.fogColor.b == Catch::Approx(0.49f));
+    CHECK(sky.celestialGlowThrough == Catch::Approx(0.25f));
+    CHECK(sky.cloudDensity == Catch::Approx(0.70f));
 }

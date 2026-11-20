@@ -29,10 +29,13 @@ struct SkyParams {
     glm::vec3 skyMiddleColor{0.7f, 0.85f, 1.0f};
     glm::vec3 skyBand1Color{0.9f, 0.95f, 1.0f};
     glm::vec3 skyBand2Color{1.0f, 0.98f, 0.9f};
+    glm::vec3 skySmogColor{0.85f, 0.88f, 0.92f};
+    glm::vec3 fogColor{0.5f, 0.6f, 0.7f};
     glm::vec3 cloudColor{0.9f, 0.95f, 1.0f};
 
     // Atmospheric effects
-    float cloudDensity = 0.0f;      // 0-1
+    float celestialGlowThrough = 1.0f; // 0-1 (LightFloatBand 2)
+    float cloudDensity = 0.0f;         // 0-1 (LightFloatBand 3: sky smog / cloud weight)
     float fogDensity = 0.0f;        // 0-1
     float horizonGlow = 0.3f;       // 0-1
     float weatherIntensity = 0.0f;  // 0-1 (rain/snow intensity, attenuates lens flare)

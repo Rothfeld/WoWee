@@ -5,8 +5,12 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 using wowee::rendering::canUseWaterContinuePass;
+using wowee::rendering::kMistNearEyeFadeEnd;
+using wowee::rendering::kMistNearEyeFadeStart;
 using wowee::rendering::kMistSoftFadeFactor;
 using wowee::rendering::linearizeMistDepth;
+using wowee::rendering::mistEffectiveSoftFadeRange;
+using wowee::rendering::mistNearCameraFade;
 using wowee::rendering::mistSoftDepthFade;
 using wowee::rendering::mistSoftDepthFadeNdc;
 using wowee::rendering::mistSoftFadeRange;
@@ -110,4 +114,28 @@ TEST_CASE("canUseWaterContinuePass enables 1x continuation for MSAA off-screen p
         CHECK_FALSE(canUseWaterContinuePass(true, true, true, false, false));
         CHECK_FALSE(canUseWaterContinuePass(true, false, true, true, false));
     }
+}
+
+TEST_CASE("mistSoftDepthFade preserves foreground mist in downward camera views", "[weather_mist]") {
+    const float maxFadeRange = mistSoftFadeRange(36.0f);
+
+    // Pitched down -42..-68 deg at zoom 14: ground is ~14.5 yd from camera eye,
+    // and drifting mist puffs pass 9-11 yd from the eye (~3.5-5.5 yd above cobblestones).
+    CHECK(mistEffectiveSoftFadeRange(10.0f, maxFadeRange) == Catch::Approx(3.0f));
+    CHECK(mistSoftDepthFade(14.5f, 10.0f, maxFadeRange) == Catch::Approx(1.0f));
+    // Right where the quad meets the cobblestones (depthDelta == 0..effRange), it still feathers smoothly.
+    CHECK(mistSoftDepthFade(14.5f, 14.5f, maxFadeRange) == 0.0f);
+    const float effAt13 = mistEffectiveSoftFadeRange(13.0f, maxFadeRange);
+    CHECK(effAt13 == Catch::Approx(3.9f));
+    CHECK(mistSoftDepthFade(13.0f + 0.5f * effAt13, 13.0f, maxFadeRange) == Catch::Approx(0.5f));
+}
+
+TEST_CASE("mistNearCameraFade fades near lens by 3D eye distance without killing downward views", "[weather_mist]") {
+    CHECK(mistNearCameraFade(0.0f) == 0.0f);
+    CHECK(mistNearCameraFade(kMistNearEyeFadeStart) == 0.0f);
+    CHECK(mistNearCameraFade(0.5f * (kMistNearEyeFadeStart + kMistNearEyeFadeEnd)) == Catch::Approx(0.5f));
+    CHECK(mistNearCameraFade(kMistNearEyeFadeEnd) == 1.0f);
+    // Directly underneath a camera 14.5 yd above the player (horiz_dist = 0, dist3D = 14.5 yd): >60% mist.
+    CHECK(mistNearCameraFade(14.5f) > 0.60f);
+    CHECK(mistNearCameraFade(24.0f) == 1.0f);
 }

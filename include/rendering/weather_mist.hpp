@@ -81,10 +81,9 @@ public:
 
 private:
     struct Puff {
-        glm::vec3 start;    // camera-relative centre, at birth
-        float birth;
-        glm::vec3 velocity;
-        float death;
+        glm::vec3 position; // camera-relative centre
+        float age;
+        float life;
         float size;         // quad edge, yards
         float fade;
     };
@@ -114,7 +113,6 @@ private:
 
     std::vector<Puff> puffs_;
     std::vector<MistVertex> vertices_;
-    float time_ = 0.0f;
     float budget_ = 0.0f;  // fractional puffs owed to the spawn rate
     float softFadeRange_ = 0.0f;
 };

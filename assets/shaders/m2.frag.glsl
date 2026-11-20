@@ -153,7 +153,8 @@ void selectFog(bool interior) {
 // everything between the camera and that, sunlit shafts and torch glow
 // included.
 vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
-    float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+    float fogDepth = max(-(view * vec4(worldPos, 1.0)).z, 0.0);
+    float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
     color = mix(gFogColor.rgb, color, fogFactor);
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeAt(worldPos);
@@ -241,7 +242,8 @@ void main() {
     // Illidan's door, fog end 389) are absent in 8606 with farclip 1277, and
     // at farclip 177 Nagrand's floating islands over Garadar go while the
     // mountains behind them stay (docs/wmo-fog.md).
-    if (!isInteriorFog && length(viewPos.xyz - FragPos) > outdoorFogParams.y) discard;
+    const float fogDepth = max(-(view * vec4(FragPos, 1.0)).z, 0.0);
+    if (!isInteriorFog && fogDepth > outdoorFogParams.y) discard;
     if (alphaTest == 3) {
         // Ground clutter blends by its texture alpha. 2.4.3 draws detail
         // doodads with soft, see-through blade edges where its alpha-key
@@ -264,8 +266,7 @@ void main() {
         // them: the unlit texture, fogged and faded toward the factor that
         // leaves the scene unchanged (1 and 0.5).
         if (vFadeAlpha < 1.0 / 255.0) discard;
-        float dist = length(viewPos.xyz - FragPos);
-        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
         vec3 neutral = vec3(blendMode == 5 ? 1.0 : 0.5);
         float opacity = vFadeAlpha * fadeAlpha;
         outColor = vec4(mix(neutral, texColor.rgb, fogFactor * opacity), texColor.a * opacity);
@@ -345,14 +346,7 @@ void main() {
 
     float dist = length(viewPos.xyz - FragPos);
     if (blendMode >= 3) {
-        // Additive. Mixing toward the fog colour would give the card's black
-        // corners the fog's colour, and additive then adds that to the scene -
-        // the whole quad shows up as a lit rectangle hanging in the air, which
-        // is what Orgrimmar's bonfire glow was doing to the wall behind it.
-        // Distance can only take an additive contribution away, and so can
-        // the air in front of it: its own light is already in the scene
-        // behind the card.
-        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
         result *= fogFactor;
         if (volumetricParams.x > 0.5) result *= fogVolumeAt(FragPos).a;
     } else {

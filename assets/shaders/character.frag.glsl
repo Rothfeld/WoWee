@@ -336,7 +336,8 @@ void selectFog(bool interior) {
 // everything between the camera and that, sunlit shafts and torch glow
 // included.
 vec3 applyFog(vec3 color, vec3 worldPos, float dist) {
-    float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+    float fogDepth = max(-(view * vec4(worldPos, 1.0)).z, 0.0);
+    float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
     color = mix(gFogColor.rgb, color, fogFactor);
     if (volumetricParams.x > 0.5) {
         vec4 air = fogVolumeAt(worldPos);
@@ -559,21 +560,15 @@ void main() {
     if (lightDir.w == 0.0) result *= 1.0 + hoverHighlight;
 
     float dist = length(viewPos.xyz - FragPos);
+    float fogDepth = max(-(view * vec4(FragPos, 1.0)).z, 0.0);
     if (blendMode == 5 || blendMode == 6) {
-        // Mod / Mod2x multiply what is behind: the unlit texture, fogged
-        // toward the factor that leaves the scene unchanged (1 and 0.5).
-        // A faded model's multiply layer fades toward that factor too, as an
-        // additive one adds less light: a stealthed Warglaive of Azzinoth's
-        // Mod2x reflection otherwise whitened the 0.3 blade.
-        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
         vec3 neutral = vec3(blendMode == 5 ? 1.0 : 0.5);
         outColor = vec4(mix(neutral, texColor.rgb, fogFactor * opacity), texColor.a * opacity);
         return;
     }
     if (blendMode == 3 || blendMode == 4 || blendMode == 7) {
-        // Additive, as m2.frag: distance and air only take light away; mixing
-        // toward the fog colour would add that colour over the card's black.
-        float fogFactor = clamp((gFogParams.y - dist) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
+        float fogFactor = clamp((gFogParams.y - fogDepth) / (gFogParams.y - gFogParams.x), 0.0, 1.0);
         result *= fogFactor;
         if (volumetricParams.x > 0.5) result *= fogVolumeAt(FragPos).a;
     } else {
