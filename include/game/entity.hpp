@@ -676,6 +676,11 @@ public:
     [[nodiscard]] bool isHostile() const { return hostile; }
     void setHostile(bool h) { hostile = h; }
 
+    // True when created via SMSG_UPDATE_OBJECT UPDATETYPE_CREATE_OBJECT2
+    // (newly spawned/summoned in-world) rather than CREATE_OBJECT (existing unit entering view).
+    [[nodiscard]] bool isNewlySpawned() const { return newlySpawned_; }
+    void setNewlySpawned(bool v) { newlySpawned_ = v; }
+
 protected:
     std::string name;
     bool petNamed_ = false;
@@ -702,6 +707,7 @@ protected:
     uint32_t npcEmoteState = 0;
     uint32_t factionTemplate = 0;
     bool hostile = false;
+    bool newlySpawned_ = false;
 };
 
 /**

@@ -1605,13 +1605,14 @@ void EntitySpawner::playCreatureSpawnPose(uint64_t guid, uint32_t instanceId) {
 // queued spawn was processed is a corpse on arrival: Dead (6), not a replay
 // of Death - unless its previous model was still falling
 // (removeCreatureForNewDisplay), which goes on as Death on the new one.
+bool displayChanged = false;
 if (deadCreatureGuids_.count(guid)) {
     if (dyingCreatureGuids_.erase(guid))
         charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
     else
         charRenderer->playAnimation(instanceId, rendering::anim::DEAD, true);
 } else {
-    const bool displayChanged = displayChangedCreatureGuids_.erase(guid) != 0;
+    displayChanged = displayChangedCreatureGuids_.erase(guid) != 0;
     // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
     uint32_t npcEmote = 0;
     if (gameHandler_) {
@@ -1650,7 +1651,23 @@ if (deadCreatureGuids_.count(guid)) {
             ? rendering::anim::FLY_IDLE : rendering::anim::STAND, true);
     }
 }
-charRenderer->startFadeIn(instanceId, rendering::kUnitFadeSeconds);
+bool newlySpawned = false;
+float targetOpacity = 1.0f;
+if (gameHandler_) {
+    if (auto entity = gameHandler_->getEntityManager().getEntity(guid);
+        entity && entity->getType() == game::ObjectType::UNIT) {
+        const auto* unit = static_cast<const game::Unit*>(entity.get());
+        newlySpawned = !displayChanged && unit->isNewlySpawned();
+        targetOpacity = creatureDisplayAlpha(unit->getDisplayId());
+    }
+}
+// Seed applied display opacity before the periodic sync in EntitySpawner::update()
+// runs; otherwise its first tick calls setInstanceOpacity() and cancels fade-in.
+creatureAppliedOpacity_[guid] = targetOpacity;
+const float fadeDuration = newlySpawned
+    ? rendering::kUnitSpawnFadeInSeconds
+    : rendering::kUnitFadeSeconds;
+charRenderer->startFadeIn(instanceId, fadeDuration, targetOpacity);
 }
 
 // Choose one mesh per clothing group for a character-style NPC.

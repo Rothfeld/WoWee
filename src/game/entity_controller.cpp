@@ -2302,6 +2302,15 @@ void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<En
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     bool unitInitiallyDead = applyUnitFieldsOnCreate(block, unit, ufi);
     queryPetNameIfNamed(block, *unit);
+    // A newly spawned/summoned unit fades in over kUnitSpawnFadeInSeconds (2.0 s).
+    // Standard servers send UPDATETYPE_CREATE_OBJECT2 for new spawns; CMaNGOS TBC
+    // also sends UPDATETYPE_CREATE_OBJECT with UNIT_FIELD_SUMMONEDBY set for pets.
+    uint64_t summoner = 0;
+    if (const uint16_t lo = fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_LO); lo != 0xFFFF) {
+        summoner = static_cast<uint64_t>(unit->getField(lo)) |
+                   (static_cast<uint64_t>(unit->getField(fieldIndex(UF::UNIT_FIELD_SUMMONEDBY_HI))) << 32);
+    }
+    unit->setNewlySpawned(block.updateType == UpdateType::CREATE_OBJECT2 || summoner != 0);
     // A creature's auras are its UNIT_FIELD_AURA* fields before WotLK, as a
     // player's are; only players were read, so no creature target ever showed
     // a buff or debuff (Lady Vashj's Magic Barrier, pair 8: UnitBuff nil).

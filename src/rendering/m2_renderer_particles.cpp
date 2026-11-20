@@ -160,9 +160,13 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
                 const float width = interpFloat(em.emissionAreaWidth, sampleAnimTime,
                     inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-                localPos += splineEmissionPoint(em.splinePoints, splineBirthParameter(length, width,
-                    particleTrackVaries(em.emissionAreaWidth, inst.currentSequenceIndex),
-                    (distN(particleRng_) + 1.0f) * 0.5f));
+                localPos += splinePointToBoneSpace(splineEmissionPoint(
+                    em.splinePoints,
+                    splineBirthParameter(
+                        length, width,
+                        particleTrackVaries(em.emissionAreaLength, inst.currentSequenceIndex),
+                        particleTrackVaries(em.emissionAreaWidth, inst.currentSequenceIndex),
+                        (distN(particleRng_) + 1.0f) * 0.5f)));
             }
             // Born p.life ago: where the emitter was then, between its pose at
             // the previous step and now. Placing every birth of a frame at the

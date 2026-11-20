@@ -1825,14 +1825,17 @@ void EntitySpawner::erasePendingGuidIfUnqueued(uint64_t guid) {
 }
 
 void EntitySpawner::despawnCreatureFromServer(uint64_t guid) {
-    // Native fades a despawning corpse out (ledger #75c). The instance is
-    // handed to the renderer to fade and remove; everything here forgets the
-    // guid at once, so a respawn under the same guid starts clean.
+    // Native fades server-destroyed units out (corpses, dismissed/replaced pets).
+    // The instance is handed to the renderer to fade and remove; everything here
+    // forgets the guid at once, so a respawn under the same guid starts clean.
     const bool corpse = deadCreatureGuids_.count(guid) != 0;
     auto it = creatureInstances_.find(guid);
     auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
-    if (corpse && it != creatureInstances_.end() && characters) {
-        characters->fadeOutAndRemove(it->second, rendering::kUnitFadeSeconds);
+    if (it != creatureInstances_.end() && characters) {
+        const float duration = corpse
+            ? rendering::kUnitFadeSeconds
+            : rendering::kUnitDespawnFadeOutSeconds;
+        characters->fadeOutAndRemove(it->second, duration);
         creatureInstances_.erase(it);  // despawnCreature must not remove it now
     }
     despawnCreature(guid);

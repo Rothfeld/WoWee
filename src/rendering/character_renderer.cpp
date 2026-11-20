@@ -2625,11 +2625,20 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             }
         }
 
-        // Update fade-in opacity
-        if (inst.fadeInDuration > 0.0f && inst.opacity < 1.0f) {
+        // Update fade-in opacity (carried to the unit's weapons and their effects)
+        if (inst.fadeInDuration > 0.0f) {
             inst.fadeInTime += deltaTime;
-            inst.opacity = std::min(1.0f, inst.fadeInTime / inst.fadeInDuration);
-            if (inst.opacity >= 1.0f) {
+            const float opacity = fadeInOpacity(inst.fadeInTargetOpacity, inst.fadeInTime,
+                                                inst.fadeInDuration);
+            inst.opacity = opacity;
+            for (const auto& attachment : inst.weaponAttachments) {
+                if (auto w = instances.find(attachment.weaponInstanceId); w != instances.end())
+                    w->second.opacity = opacity;
+                for (const auto& effect : attachment.effects)
+                    if (auto e = instances.find(effect.effectInstanceId); e != instances.end())
+                        e->second.opacity = opacity;
+            }
+            if (inst.fadeInTime >= inst.fadeInDuration) {
                 inst.fadeInDuration = 0.0f;
             }
         }
@@ -4996,12 +5005,27 @@ void CharacterRenderer::fadeOutAndRemove(uint32_t instanceId, float durationSeco
     inst.fadeOutDuration = durationSeconds;
 }
 
-void CharacterRenderer::startFadeIn(uint32_t instanceId, float durationSeconds) {
+void CharacterRenderer::startFadeIn(uint32_t instanceId, float durationSeconds, float targetOpacity) {
     auto it = instances.find(instanceId);
     if (it == instances.end()) return;
-    it->second.opacity = 0.0f;
-    it->second.fadeInTime = 0.0f;
-    it->second.fadeInDuration = durationSeconds;
+    auto& inst = it->second;
+    const float clampedTarget = std::clamp(targetOpacity, 0.0f, 1.0f);
+    inst.opacity = (durationSeconds > 0.0f) ? 0.0f : clampedTarget;
+    inst.fadeInTime = 0.0f;
+    inst.fadeInDuration = std::max(0.0f, durationSeconds);
+    inst.fadeInTargetOpacity = clampedTarget;
+    for (const auto& attachment : inst.weaponAttachments) {
+        if (auto w = instances.find(attachment.weaponInstanceId); w != instances.end()) {
+            w->second.opacity = inst.opacity;
+            w->second.fadeInDuration = 0.0f;
+        }
+        for (const auto& effect : attachment.effects) {
+            if (auto e = instances.find(effect.effectInstanceId); e != instances.end()) {
+                e->second.opacity = inst.opacity;
+                e->second.fadeInDuration = 0.0f;
+            }
+        }
+    }
 }
 
 float CharacterRenderer::getInstanceScale(uint32_t instanceId) const {

@@ -386,12 +386,31 @@ inline bool particleTrackVaries(const pipeline::M2AnimationTrack& track, int seq
 /// width. Shadowmoon_Rune2 (constant 0 / 1; Witch's Sanctum, Ground Rune
 /// 183036) draws its #0 streaks as a fence all round its ring in the
 /// original; at the path end they stood in one purple column.
-/// Width animated: births stand at its current value. FlameCircle.m2 (0 -> 1
-/// over each 1 s Stand, length 0) is a flame front running round the Molten
-/// Core rune once a second; spread over [0, width] the ring stayed brightest
-/// at its start, which the original does not show.
+/// Only width animated (length constant): births stand at width's current
+/// value. FlameCircle.m2 (width 0 -> 1 over each 1 s Stand, length 0) is a
+/// flame front running round the Molten Core rune once a second.
+/// Both length and width animated: they bound a moving window [length, width]
+/// along the path (SummonPet_Impact_Base.m2 [0.0->0.82->0.9, 0.17->1.0->1.0]
+/// and SummonPet_Cast_Impact_Base.m2 [0.9->0.2->0.0, 1.0->0.0->0.0]).
+inline float splineBirthParameter(float length, float width, bool lengthVaries,
+                                  bool widthVaries, float random01) {
+    const float t = (widthVaries && !lengthVaries) ? width : glm::mix(length, width, random01);
+    return std::clamp(t, 0.0f, 1.0f);
+}
+
 inline float splineBirthParameter(float length, float width, bool widthVaries, float random01) {
-    return widthVaries ? width : glm::mix(length, width, random01);
+    return splineBirthParameter(length, width, /*lengthVaries=*/false, widthVaries, random01);
+}
+
+/// Converts a raw M2 spline emitter point into M2 bone space (+90 deg about Z).
+/// M2 spline control points are authored rotated -90 deg about Z relative to
+/// bone space: SummonPet_Cast_Impact_Base.m2 (bones 9..12 map +Y to +Z_world)
+/// and SummonPet_Impact_Base.m2 (bones 7..11 map +Y to +Z_world) author their
+/// vertical arcs along X; FlameStrike_Impact.m2 (Z-cylindrical billboard bone 0)
+/// and BurningSpirit_Impact_Head.m2 (spherical billboard bone 2) author their
+/// camera-facing ribbons in XZ rather than the billboard's YZ plane.
+inline glm::vec3 splinePointToBoneSpace(const glm::vec3& raw) {
+    return {-raw.y, raw.x, raw.z};
 }
 
 /// A point on a spline emitter's path at `t` in [0, 1], equal parameter per

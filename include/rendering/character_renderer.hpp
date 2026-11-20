@@ -172,7 +172,7 @@ public:
     void setInstanceTorsoYaw(uint32_t instanceId, float deltaYawRad);
     void moveInstanceTo(uint32_t instanceId, const glm::vec3& destination, float durationSeconds,
                         bool updateAnimation = true);
-    void startFadeIn(uint32_t instanceId, float durationSeconds);
+    void startFadeIn(uint32_t instanceId, float durationSeconds, float targetOpacity = 1.0f);
     /// Fade the instance, its weapons and their effects out from their
     /// current opacity, then remove it. The caller forgets the instance now.
     void fadeOutAndRemove(uint32_t instanceId, float durationSeconds);
@@ -566,8 +566,9 @@ private:
         // SpellVisualKit CharProc 11: holds the instance's animation clock and
         // current pose motionless until cleared.
         bool kitAnimationFrozen = false;
-        float fadeInTime = 0.0f;     // elapsed fade time (seconds)
-        float fadeInDuration = 0.0f; // total fade duration (0 = no fade)
+        float fadeInTime = 0.0f;          // elapsed fade time (seconds)
+        float fadeInDuration = 0.0f;      // total fade duration (0 = no fade)
+        float fadeInTargetOpacity = 1.0f; // destination opacity at end of fade-in
         // Fade-out ahead of removal (fadeOutAndRemove); 0 = not fading out.
         float fadeOutDuration = 0.0f;
         float fadeOutTime = 0.0f;

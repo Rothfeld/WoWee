@@ -526,10 +526,29 @@ TEST_CASE("Spline births spread over a held width and follow an animated one", "
     swept.sequences.resize(1); swept.sequences[0].floatValues = {0.0f, 1.0f};
     // Shadowmoon_Rune2 #0 (length 0, width 1 held): a fence round the ring.
     CHECK_FALSE(particleTrackVaries(held, 0));
-    CHECK(splineBirthParameter(0.0f, 1.0f, false, 0.25f) == Catch::Approx(0.25f));
-    // FlameCircle (width 0 -> 1 over Stand): the front at the width.
+    CHECK(splineBirthParameter(0.0f, 1.0f, false, false, 0.25f) == Catch::Approx(0.25f));
+    // FlameCircle (length 0 held, width 0 -> 1 over Stand): the front at the width.
     CHECK(particleTrackVaries(swept, 0));
-    CHECK(splineBirthParameter(0.0f, 0.4f, true, 0.9f) == Catch::Approx(0.4f));
+    CHECK(splineBirthParameter(0.0f, 0.4f, false, true, 0.9f) == Catch::Approx(0.4f));
+    // SummonPet_Cast_Impact_Base / SummonPet_Impact_Base (both length and width animated):
+    // births span the moving window [length(t), width(t)].
+    CHECK(splineBirthParameter(0.9f, 1.0f, true, true, 0.5f) == Catch::Approx(0.95f));
+    CHECK(splineBirthParameter(0.2f, 0.0f, true, true, 0.25f) == Catch::Approx(0.15f));
+}
+
+TEST_CASE("Spline points rotate +90 deg about Z into M2 bone space", "[m2][particle]") {
+    using wowee::rendering::splinePointToBoneSpace;
+    // SummonPet_Cast_Impact_Base.m2 arcs authored along X map to bone +Y (+Z_world),
+    // with radial extent Y mapped to -X_bone (outward from caster center).
+    const glm::vec3 peak = splinePointToBoneSpace({2.24f, 0.31f, 0.0f});
+    CHECK(peak.x == Catch::Approx(-0.31f));
+    CHECK(peak.y == Catch::Approx(2.24f));
+    CHECK(peak.z == Catch::Approx(0.0f));
+    // FlameStrike_Impact.m2 XZ billboard ribbons map into the YZ billboard plane.
+    const glm::vec3 ribbon = splinePointToBoneSpace({0.93f, 0.0f, 13.15f});
+    CHECK(ribbon.x == Catch::Approx(0.0f));
+    CHECK(ribbon.y == Catch::Approx(0.93f));
+    CHECK(ribbon.z == Catch::Approx(13.15f));
 }
 
 TEST_CASE("A step track says nothing past its last key", "[m2][particle]") {
