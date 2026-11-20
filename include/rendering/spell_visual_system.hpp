@@ -243,6 +243,32 @@ public:
     // Called on map change / combat reset.
     void reset();
 
+    /// M2 attachment IDs used by SpellVisualKit slots.
+    static constexpr uint32_t kAttachBreath = 17;
+    static constexpr uint32_t kAttachSpellLeftHand = 21;
+    static constexpr uint32_t kAttachSpellRightHand = 22;
+    static constexpr uint32_t kAttachSpecial1 = 23;
+    static constexpr uint32_t kAttachSpecial3 = 25;
+
+    // Slots whose effect takes the attachment bone's full orientation, every
+    // frame, and not only the unit's yaw: Breath 17, SpellLeftHand/SpellRightHand
+    // 21-22, and Special 23-25.
+    // - Onyxia's Flame Breath 18435 (cast kit 4450 SpecialEffect0,
+    //   dragonflamebreath.m2): the fire first dives with her head to the ground
+    //   ahead of her, then climbs as the SpellCastDirected head lifts.
+    // - Mage Cone of Cold 120 (cast kit 1027 LeftHandEffect, ConeofCold_Hand.m2):
+    //   all 11 emitters fire along local -Z, which SpellLeftHand (21) aims
+    //   forward during SpellCastDirected (anim 53); yaw-only placement aimed it
+    //   straight down into the ground.
+    // Head 18 (overhead anchor), Base 19, Chest 34, and World 0 stay upright
+    // with the unit's yaw only.
+    static constexpr bool slotFollowsBone(uint32_t attachment) {
+        return attachment == kAttachBreath ||
+               attachment == kAttachSpellLeftHand ||
+               attachment == kAttachSpellRightHand ||
+               (attachment >= kAttachSpecial1 && attachment <= kAttachSpecial3);
+    }
+
 private:
     // Spell visual effects - transient M2 instances spawned by SMSG_PLAY_SPELL_VISUAL/IMPACT
     struct SpellVisualInstance {
@@ -339,28 +365,11 @@ private:
     std::unordered_map<uint32_t, uint32_t> targetImpactKits_;
     std::unordered_map<uint32_t, uint32_t> persistentAreaKits_;
     std::unordered_map<uint64_t, std::vector<uint32_t>> persistentAreas_;  // key -> M2 instances
-    /// M2 attachment 17, named Breath. SpellVisualKit's BreathEffect slot is
-    /// placed there and aimed along it: Creature\FireElemental\FireElemental.m2
-    /// carries it on bone 82 in front of the face, bone +X forward.
-    static constexpr uint32_t kAttachBreath = 17;
-    static constexpr uint32_t kAttachSpellLeftHand = 21, kAttachSpellRightHand = 22;
     // Slots whose effect is not drawn on a model lacking their attachment:
     // spell hands 21/22 and breath 17 (others fall back to the unit position).
     static constexpr bool slotSkippedWhenAbsent(uint32_t attachment) {
         return attachment == kAttachSpellLeftHand || attachment == kAttachSpellRightHand ||
                attachment == kAttachBreath;
-    }
-    /// M2 Special1-3, SpellVisualKit SpecialEffect0-2. Dragons carry 23 at the
-    /// mouth (DragonOnyxia.m2 bone 130, drake.m2).
-    static constexpr uint32_t kAttachSpecial1 = 23, kAttachSpecial3 = 25;
-    // Slots whose effect takes the attachment bone's full orientation, every
-    // frame, and not only the unit's yaw: Breath 17 and Special 23-25. Build
-    // 8606, Onyxia's Flame Breath 18435 (cast kit 4450 SpecialEffect0,
-    // dragonflamebreath.m2): the fire first dives with her head to the ground
-    // ahead of her, then climbs as the SpellCastDirected head lifts.
-    static constexpr bool slotFollowsBone(uint32_t attachment) {
-        return attachment == kAttachBreath ||
-               (attachment >= kAttachSpecial1 && attachment <= kAttachSpecial3);
     }
     /// SpellVisualKit CharProc 0: CharParamZero is a SpellChainEffects.dbc id,
     /// the beam drawn while the kit plays. All 284 TBC kits with procedure 0

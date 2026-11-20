@@ -816,3 +816,23 @@ TEST_CASE("Continuous emitter stochastic accumulator averages half the authored 
         CHECK(measuredRate == Catch::Approx(4.0f).margin(0.15f));
     }
 }
+
+TEST_CASE("Detached particle gravity stays world -Z under pitched bone attachment transforms", "[m2][particle]") {
+    using namespace wowee::rendering;
+    // Hand-attached fire precast (Fire_Precast_Hand.m2, flags 0x29, gravity -3.47)
+    // and pitched breath effects (AcidLiquidBreath.m2, flags 0x229, gravity +2.78)
+    // receive an attachment bone transform pitched 90 deg forward; detached gravity
+    // must still accelerate vertically along world -Z (scaled when placement-scaled).
+    const auto pitched = glm::scale(
+        glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        glm::vec3(1.5f));
+    const glm::vec3 worldScaled = particleGravityDirection(0x29u, pitched, /*scalesWithPlacement=*/true);
+    CHECK(worldScaled.x == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(worldScaled.y == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(worldScaled.z == Catch::Approx(-1.5f).margin(1e-5f));
+
+    const glm::vec3 worldYards = particleGravityDirection(0x229u, pitched, /*scalesWithPlacement=*/false);
+    CHECK(worldYards.x == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(worldYards.y == Catch::Approx(0.0f).margin(1e-5f));
+    CHECK(worldYards.z == Catch::Approx(-1.0f).margin(1e-5f));
+}

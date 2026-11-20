@@ -188,15 +188,17 @@ inline bool particleMovesInYards(uint32_t flags, bool scalesWithPlacement);
 
 inline glm::vec3 particleGravityDirection(uint32_t flags, const glm::mat4& model,
                                           bool scalesWithPlacement) {
-    // Gravity pulls along the model's -Z, never the emitter bone's: the
-    // Core Hound's drool falls straight down on the original while its head
-    // bone is pitched. The model placement keeps its scale and orientation.
-    // NoTrail particles are simulated in the bone's own frame.
-    // Detached particles without flag 0x8 fall in the placed model's scaled
-    // frame, as they move (particleWorldVelocityBasis).
+    // Gravity pulls along world -Z, never the emitter bone's or a pitched
+    // attachment bone's -Z: Core Hound drool falls straight down while its head
+    // bone is pitched, and bone-oriented hand/breath effects (Fire_Precast_Hand,
+    // AcidLiquidBreath) still rise/fall vertically when the hand/head bone pitches.
+    // NoTrail and ModelFrame particles are simulated in their local frame.
+    // Detached particles without flag 0x8 (or on map doodads/spell visuals) scale
+    // gravity by the placement scale, matching particleWorldVelocityBasis.
     if (flags & (kParticleNoTrail | kParticleModelFrame)) return {0, 0, -1};
-    const glm::vec3 down = glm::mat3(model) * glm::vec3(0, 0, -1);
-    return particleMovesInYards(flags, scalesWithPlacement) ? glm::normalize(down) : down;
+    const float scale = particleMovesInYards(flags, scalesWithPlacement)
+        ? 1.0f : particlePlacementScale(model);
+    return {0.0f, 0.0f, -scale};
 }
 
 // Flag 0x8: a detached particle (neither NoTrail nor in the model's frame)

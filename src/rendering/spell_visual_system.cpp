@@ -407,8 +407,8 @@ void SpellVisualSystem::playSpellVisualPrecast(uint32_t visualId, const glm::vec
 
 // Every effect a kit names, each at the attachment its SpellVisualKit slot
 // names: LeftHand 21, RightHand 22, Chest 34, Head 18 (overhead), Breath 17,
-// Base 19, Special 23-25 (17 and 23-25 oriented by their bone); World at the
-// unit's position.
+// Base 19, Special 23-25 (17, 21-22, and 23-25 oriented by their bone); World
+// at the unit's position.
 float SpellVisualSystem::spawnKitEffects(uint32_t kitId, const glm::vec3& worldPosition,
                                          uint32_t attachInstanceId, float duration, KitStage stage) {
     const auto effects = kitEffects_.find(kitId);
