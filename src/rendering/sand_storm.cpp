@@ -102,14 +102,15 @@ SandStorm::~SandStorm() {
 }
 
 bool SandStorm::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+                           VkDescriptorSetLayout sceneSetLayout,
                            pipeline::AssetManager* assetManager) {
-    assert(ctx && assetManager);
+    assert(ctx && assetManager && sceneSetLayout);
     if (vkCtx_) return true;
     vkCtx_ = ctx;
     perFrameLayout_ = perFrameLayout;
     // Named in Wow.exe next to Shaders\Vertex\sand.bls; Weather.dbc's sand rows
     // leave EffectTexture empty.
-    if (!mist_.initialize(ctx, perFrameLayout, assetManager, "Textures\\Weather\\WeatherMistGrainy01.blp") ||
+    if (!mist_.initialize(ctx, perFrameLayout, sceneSetLayout, assetManager, "Textures\\Weather\\WeatherMistGrainy01.blp") ||
         !createPipelines() || !createBuffers()) {
         LOG_ERROR("SandStorm: initialization failed");
         shutdown();
@@ -230,9 +231,10 @@ void SandStorm::update(const Camera& camera, float deltaTime, float targetIntens
     mist_.update(camera, deltaTime, amount, kMist);
 }
 
-void SandStorm::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
+void SandStorm::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                       bool includeMist, const WeatherMist::DepthContext& mistDepth) {
     if (!vkCtx_) return;
-    mist_.render(cmd, perFrameSet);
+    if (includeMist) mist_.render(cmd, perFrameSet, mistDepth);
     FrameBuffers& f = frames_[vkCtx_->getCurrentFrame()];
     VkDeviceSize offset = 0;
     if (!grains_.empty()) {
@@ -245,6 +247,12 @@ void SandStorm::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
         vkCmdBindVertexBuffers(cmd, 0, 1, &f.grains, &offset);
         vkCmdDraw(cmd, static_cast<uint32_t>(grains_.size()), 1, 0, 0);
     }
+}
+
+void SandStorm::renderMist(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                           const WeatherMist::DepthContext& mistDepth) {
+    if (!vkCtx_) return;
+    mist_.render(cmd, perFrameSet, mistDepth);
 }
 
 } // namespace wowee::rendering

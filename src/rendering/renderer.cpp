@@ -1244,11 +1244,11 @@ void Renderer::applyMsaaChange() {
     if (skyboxModelRenderer_) skyboxModelRenderer_->recreatePipelines();
     if (characterRenderer) characterRenderer->recreatePipelines();
     if (footprintRenderer) footprintRenderer->recreatePipelines();
+    syncSwimEffectsTargetPass();
     if (weather) weather->recreatePipelines();
     if (sandStorm) sandStorm->recreatePipelines();
     if (lightning) lightning->recreatePipelines();
     if (swimEffects) {
-        syncSwimEffectsTargetPass();
         swimEffects->recreatePipelines();
     }
     if (mountDust) mountDust->recreatePipelines();
@@ -2669,14 +2669,17 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
         case 4:
             if (audioCoordinator_->getMovementSoundManager()) audioCoordinator_->getMovementSoundManager()->initialize(cachedAssetManager);
             break;
-        case 5:
+        case 5: {
             if (footprintRenderer && !footprintRenderer->initialize(this, vkCtx, perFrameSetLayout, cachedAssetManager))
                 LOG_WARNING("Footprint renderer re-init failed (non-fatal)");
-            if (sandStorm && !sandStorm->isInitialized() &&
-                !sandStorm->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
+            syncSwimEffectsTargetPass();
+            const VkDescriptorSetLayout mistSceneLayout =
+                waterRenderer ? waterRenderer->getSceneSetLayout() : VK_NULL_HANDLE;
+            if (sandStorm && !sandStorm->isInitialized() && mistSceneLayout &&
+                !sandStorm->initialize(vkCtx, perFrameSetLayout, mistSceneLayout, cachedAssetManager))
                 LOG_ERROR("Sandstorm weather initialization failed");
-            if (weather && !weather->isInitialized()) {
-                if (!weather->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
+            if (weather && !weather->isInitialized() && mistSceneLayout) {
+                if (!weather->initialize(vkCtx, perFrameSetLayout, mistSceneLayout, cachedAssetManager))
                     LOG_ERROR("Rain and snow initialization failed");
                 // Drops land on the terrain or on a building's floor.
                 weather->setGroundQuery([this](float x, float y, float z) -> std::optional<float> {
@@ -2693,6 +2696,7 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
                 });
             }
             break;
+        }
         default:
             deferredWorldInitPending_ = false;
             return;
@@ -3586,8 +3590,10 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 waterRenderer->setRenderExtent(activeRenderExtent_);
                 waterRenderer->render(cmd, perFrameSet, *camera, globalTime, false, frameIdx);
             }
-            if (weather && camera) weather->render(cmd, perFrameSet);
-            if (sandStorm && camera) sandStorm->render(cmd, perFrameSet);
+            WeatherMist::DepthContext fallbackMistDepth{};
+            fallbackMistDepth.sceneSet = waterRenderer ? waterRenderer->getSceneSet(frameIdx) : VK_NULL_HANDLE;
+            if (weather && camera) weather->render(cmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
+            if (sandStorm && camera) sandStorm->render(cmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
             if (lightning && camera && lightning->isEnabled()) lightning->render(cmd, perFrameSet);
             if (swimEffects && camera && !swimEffectsDrawWithWater_) {
                 swimEffects->render(cmd, perFrameSet);
@@ -3788,8 +3794,10 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             waterRenderer->render(currentCmd, perFrameSet, *camera, globalTime, false, frameIdx);
             if (vkCtx) vkCtx->gpuMark(currentCmd, "water");
         }
-        if (weather && camera) weather->render(currentCmd, perFrameSet);
-        if (sandStorm && camera) sandStorm->render(currentCmd, perFrameSet);
+        WeatherMist::DepthContext fallbackMistDepth{};
+        fallbackMistDepth.sceneSet = waterRenderer ? waterRenderer->getSceneSet(frameIdx) : VK_NULL_HANDLE;
+        if (weather && camera) weather->render(currentCmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
+        if (sandStorm && camera) sandStorm->render(currentCmd, perFrameSet, !swimEffectsDrawWithWater_, fallbackMistDepth);
         if (lightning && camera && lightning->isEnabled()) lightning->render(currentCmd, perFrameSet);
         if (swimEffects && camera && !swimEffectsDrawWithWater_) {
             swimEffects->render(currentCmd, perFrameSet);
@@ -3835,7 +3843,10 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         // lighting reads its depth here, for the surfaces of the next frame.
         recordRtLighting(sceneDepth, sceneExtent, depthIsMsaa);
 
-        if (sceneColor != VK_NULL_HANDLE && waterRenderer->isRefractionEnabled()) {
+        const bool mistNeedsDepth =
+            (weather && weather->hasMistPuffs()) || (sandStorm && sandStorm->hasMistPuffs());
+        if (sceneColor != VK_NULL_HANDLE &&
+            (waterRenderer->isRefractionEnabled() || mistNeedsDepth)) {
             waterRenderer->captureSceneHistory(currentCmd, sceneColor, sceneDepth,
                                                sceneExtent, depthIsMsaa,
                                                vkCtx->getCurrentFrame());
@@ -3878,6 +3889,17 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         if (swimEffects && camera && swimEffectsDrawWithWater_) {
             swimEffects->render(currentCmd, perFrameSet);
         }
+        if (swimEffectsDrawWithWater_ && camera && waterRenderer) {
+            WeatherMist::DepthContext mistDepth{};
+            mistDepth.sceneSet = waterRenderer->getSceneSet(frameIdx);
+            mistDepth.nearPlane = camera->getNearPlane();
+            mistDepth.farPlane = camera->getFarPlane();
+            mistDepth.screenWidth = static_cast<float>(waterExtent.width);
+            mistDepth.screenHeight = static_cast<float>(waterExtent.height);
+            mistDepth.enabled = (mistDepth.sceneSet != VK_NULL_HANDLE);
+            if (weather) weather->renderMist(currentCmd, perFrameSet, mistDepth);
+            if (sandStorm) sandStorm->renderMist(currentCmd, perFrameSet, mistDepth);
+        }
 
     }
 
@@ -3912,6 +3934,8 @@ void Renderer::syncSwimEffectsTargetPass() {
     }
 
     if (swimEffects) swimEffects->setTargetPass(pass, samples);
+    if (weather) weather->setMistTargetPass(pass, samples);
+    if (sandStorm) sandStorm->setMistTargetPass(pass, samples);
     // Interface terrain must remain outside world color effects and water.
     if (minimap) {
         minimap->setTargetPass(vkCtx->getOverlayRenderPass(), VK_SAMPLE_COUNT_1_BIT);
@@ -4648,10 +4672,12 @@ void Renderer::refreshSwimEffectsPass() {
     if (!vkCtx) return;
     const bool sprayWasWithWater = swimEffectsDrawWithWater_;
     syncSwimEffectsTargetPass();
-    const bool sprayMoved = swimEffects && swimEffectsDrawWithWater_ != sprayWasWithWater;
-    if (!sprayMoved) return;
+    const bool passChanged = swimEffectsDrawWithWater_ != sprayWasWithWater;
+    if (!passChanged) return;
     vkDeviceWaitIdle(vkCtx->getDevice());
-    if (sprayMoved) swimEffects->recreatePipelines();
+    if (swimEffects) swimEffects->recreatePipelines();
+    if (weather && weather->isInitialized()) weather->recreateMistPipeline();
+    if (sandStorm && sandStorm->isInitialized()) sandStorm->recreateMistPipeline();
 }
 
 // ========================= Multithreaded Secondary Command Buffers =========================

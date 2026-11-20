@@ -1404,6 +1404,11 @@ wowee_add_test(test_recording_size
 wowee_add_test(test_volumetric_fog_math
     SOURCES test_volumetric_fog_math.cpp)
 
+# ── test_weather_mist_math ───────────────────────────────────
+# Header-only: soft-particle depth fade for weather mist quads against terrain.
+wowee_add_test(test_weather_mist_math
+    SOURCES test_weather_mist_math.cpp)
+
 # ── test_packed_time ─────────────────────────────────────────
 # Header-only domain logic: the one uint32 that carries a whole date, which
 # four separate readers in this tree got wrong in four different ways.

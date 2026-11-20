@@ -44,6 +44,18 @@ public:
 
     static constexpr size_t kMaxPuffs = 256;
 
+    /// Scene depth descriptor and projection range for soft terrain-intersection
+    /// fading. When `enabled` is true, `sceneSet` must be the current frame's
+    /// captured scene descriptor set (binding 1 = resolved scene depth).
+    struct DepthContext {
+        VkDescriptorSet sceneSet = VK_NULL_HANDLE;
+        float nearPlane = 0.5f;
+        float farPlane = 1000.0f;
+        float screenWidth = 1.0f;
+        float screenHeight = 1.0f;
+        bool enabled = false;
+    };
+
     WeatherMist() = default;
     ~WeatherMist();
     WeatherMist(const WeatherMist&) = delete;
@@ -51,15 +63,20 @@ public:
 
     [[nodiscard]] bool isInitialized() const { return vkCtx_ != nullptr; }
     [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+                                  VkDescriptorSetLayout sceneSetLayout,
                                   pipeline::AssetManager* assets, const std::string& texturePath);
     void shutdown();
+    void setTargetPass(VkRenderPass pass, VkSampleCountFlagBits samples) {
+        targetPass_ = pass;
+        targetSamples_ = samples;
+    }
     void recreatePipeline();
 
     /// `amount` is the weather's drawn intensity times the Weather Detail
     /// scale; the live puff count moves toward amount * shape.puffsAtFull.
     void update(const Camera& camera, float deltaTime, float amount, const Shape& shape);
     void clear();
-    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
+    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const DepthContext& depthCtx);
     [[nodiscard]] size_t puffCount() const { return puffs_.size(); }
 
 private:
@@ -81,6 +98,9 @@ private:
 
     VkContext* vkCtx_ = nullptr;
     VkDescriptorSetLayout perFrameLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout sceneSetLayout_ = VK_NULL_HANDLE;
+    VkRenderPass targetPass_ = VK_NULL_HANDLE;
+    VkSampleCountFlagBits targetSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     WeatherTexture texture_;
@@ -96,6 +116,7 @@ private:
     std::vector<MistVertex> vertices_;
     float time_ = 0.0f;
     float budget_ = 0.0f;  // fractional puffs owed to the spawn rate
+    float softFadeRange_ = 0.0f;
 };
 
 } // namespace rendering

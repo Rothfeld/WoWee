@@ -153,8 +153,9 @@ Weather::~Weather() {
 }
 
 bool Weather::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+                         VkDescriptorSetLayout sceneSetLayout,
                          pipeline::AssetManager* assets) {
-    assert(ctx && assets);
+    assert(ctx && assets && sceneSetLayout);
     if (vkCtx_) return true;
     vkCtx_ = ctx;
     perFrameLayout_ = perFrameLayout;
@@ -163,7 +164,7 @@ bool Weather::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
     if (!dropTexture_.load(*ctx, *assets, "Textures\\Weather\\RainDrop01.blp") ||
         !splashTexture_.load(*ctx, *assets, "Textures\\Weather\\RainDropSplash01.blp") ||
         !flakeTexture_.load(*ctx, *assets, "Textures\\Weather\\SnowFlake01.blp") ||
-        !mist_.initialize(ctx, perFrameLayout, assets, "Textures\\Weather\\SnowMist01.blp") ||
+        !mist_.initialize(ctx, perFrameLayout, sceneSetLayout, assets, "Textures\\Weather\\SnowMist01.blp") ||
         !createPipelines()) {
         LOG_ERROR("Weather: initialization failed");
         shutdown();
@@ -544,9 +545,10 @@ void Weather::updateSnow(const Camera& camera, float deltaTime, float amount) {
     }
 }
 
-void Weather::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
+void Weather::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                     bool includeMist, const WeatherMist::DepthContext& mistDepth) {
     if (!vkCtx_) return;
-    mist_.render(cmd, perFrameSet);
+    if (includeMist) mist_.render(cmd, perFrameSet, mistDepth);
     FrameBuffers& f = frames_[vkCtx_->getCurrentFrame()];
     VkDeviceSize offset = 0;
     if (!dropVertices_.empty() || !splashVertices_.empty()) {
@@ -578,6 +580,12 @@ void Weather::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
         vkCmdBindVertexBuffers(cmd, 0, 1, &f.flakes, &offset);
         vkCmdDraw(cmd, static_cast<uint32_t>(flakeVertices_.size()), 1, 0, 0);
     }
+}
+
+void Weather::renderMist(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                         const WeatherMist::DepthContext& mistDepth) {
+    if (!vkCtx_) return;
+    mist_.render(cmd, perFrameSet, mistDepth);
 }
 
 // ---------------------------------------------------------------------------

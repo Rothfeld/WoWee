@@ -56,15 +56,24 @@ public:
     /// assets are available. Returns false when anything failed; the weather
     /// is then not drawn.
     [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+                                  VkDescriptorSetLayout sceneSetLayout,
                                   pipeline::AssetManager* assets);
     [[nodiscard]] bool isInitialized() const { return vkCtx_ != nullptr; }
+    void setMistTargetPass(VkRenderPass pass, VkSampleCountFlagBits samples) {
+        mist_.setTargetPass(pass, samples);
+    }
     void recreatePipelines();
+    void recreateMistPipeline() { mist_.recreatePipeline(); }
     void shutdown();
 
     void setGroundQuery(GroundQuery query) { groundQuery_ = std::move(query); }
 
     void update(const Camera& camera, float deltaTime);
-    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
+    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                bool includeMist = true, const WeatherMist::DepthContext& mistDepth = {});
+    void renderMist(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                    const WeatherMist::DepthContext& mistDepth);
+    [[nodiscard]] bool hasMistPuffs() const { return mist_.puffCount() > 0; }
 
     void setWeatherType(Type type);
     [[nodiscard]] Type getWeatherType() const { return weatherType; }

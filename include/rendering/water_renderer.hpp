@@ -146,6 +146,10 @@ public:
                              VkExtent2D srcExtent,
                              bool srcDepthIsMsaa,
                              uint32_t frameIndex = 0);
+    [[nodiscard]] VkDescriptorSetLayout getSceneSetLayout() const { return sceneSetLayout; }
+    [[nodiscard]] VkDescriptorSet getSceneSet(uint32_t frameIndex) const {
+        return sceneHistory[frameIndex % SCENE_HISTORY_FRAMES].sceneSet;
+    }
 
     // --- Planar reflection pass ---
     // Call sequence: beginReflectionPass → [render scene] → endReflectionPass

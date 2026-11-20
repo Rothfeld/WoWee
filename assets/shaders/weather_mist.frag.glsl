@@ -1,12 +1,33 @@
 #version 450
 
 layout(set = 1, binding = 0) uniform sampler2D uMist;
+layout(set = 2, binding = 1) uniform sampler2D uSceneDepth;
+
+layout(push_constant) uniform MistPush {
+    vec4 depthParams; // x = near, y = far, z = invFadeRange (0 = disabled), w = unused
+    vec4 screenSize;  // xy = render target extent in pixels
+} push;
 
 layout(location = 0) in vec2 vTexCoord;
 layout(location = 1) in vec4 vColor;
 layout(location = 0) out vec4 outColor;
 
+float linearizeDepth(float d, float near, float far) {
+    return near * far / (far - d * (far - near));
+}
+
 void main() {
     vec4 t = texture(uMist, vTexCoord);
-    outColor = vec4(vColor.rgb * t.rgb, vColor.a * t.a);
+    float alpha = vColor.a * t.a;
+    if (push.depthParams.z > 0.0) {
+        vec2 screenUV = clamp(gl_FragCoord.xy / max(push.screenSize.xy, vec2(1.0)),
+                              vec2(0.0), vec2(1.0));
+        float sceneDepth = texture(uSceneDepth, screenUV).r;
+        float sceneLin = linearizeDepth(sceneDepth, push.depthParams.x, push.depthParams.y);
+        float fragLin = linearizeDepth(gl_FragCoord.z, push.depthParams.x, push.depthParams.y);
+        float depthDelta = sceneLin - fragLin;
+        float fade = smoothstep(0.0, 1.0, clamp(depthDelta * push.depthParams.z, 0.0, 1.0));
+        alpha *= fade;
+    }
+    outColor = vec4(vColor.rgb * t.rgb, alpha);
 }

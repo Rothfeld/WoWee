@@ -1,4 +1,5 @@
 #include "rendering/weather_mist.hpp"
+#include "rendering/weather_mist_math.hpp"
 
 #include "core/logger.hpp"
 #include "rendering/camera.hpp"
@@ -13,6 +14,11 @@
 
 namespace wowee::rendering {
 namespace {
+
+struct MistPush {
+    glm::vec4 depthParams; // x = near, y = far, z = invFadeRange (0 = disabled), w = unused
+    glm::vec4 screenSize;  // xy = render target extent in pixels
+};
 
 std::mt19937& rng() {
     static std::mt19937 gen(std::random_device{}());
@@ -29,11 +35,13 @@ WeatherMist::~WeatherMist() {
 }
 
 bool WeatherMist::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+                             VkDescriptorSetLayout sceneSetLayout,
                              pipeline::AssetManager* assets, const std::string& texturePath) {
-    assert(ctx && assets);
+    assert(ctx && assets && sceneSetLayout);
     if (vkCtx_) return true;
     vkCtx_ = ctx;
     perFrameLayout_ = perFrameLayout;
+    sceneSetLayout_ = sceneSetLayout;
     if (!texture_.load(*ctx, *assets, texturePath) || !createPipeline()) {
         LOG_ERROR("WeatherMist: initialization failed for ", texturePath);
         shutdown();
@@ -76,13 +84,18 @@ bool WeatherMist::createPipeline() {
     auto shaders = loadShaderPair(device, "assets/shaders/weather_mist.vert.spv",
                                   "assets/shaders/weather_mist.frag.spv", "weather mist");
     if (!shaders) return false;
-    if (!layout_) layout_ = createPipelineLayout(device, {perFrameLayout_, texture_.layout()}, {});
+    if (!layout_) {
+        VkPushConstantRange push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(MistPush)};
+        layout_ = createPipelineLayout(device, {perFrameLayout_, texture_.layout(), sceneSetLayout_}, {push});
+    }
     if (!layout_) return false;
     VkVertexInputBindingDescription binding{0, sizeof(MistVertex), VK_VERTEX_INPUT_RATE_VERTEX};
     std::vector<VkVertexInputAttributeDescription> attrs{
         {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MistVertex, position)},
         {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MistVertex, uv)},
     };
+    const VkRenderPass rp = targetPass_ ? targetPass_ : vkCtx_->getImGuiRenderPass();
+    const VkSampleCountFlagBits samples = targetPass_ ? targetSamples_ : vkCtx_->getMsaaSamples();
     pipeline_ = PipelineBuilder()
         .setShaders(shaders.vertStage, shaders.fragStage)
         .setVertexInput({binding}, attrs)
@@ -90,9 +103,9 @@ bool WeatherMist::createPipeline() {
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
         .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
         .setColorBlendAttachment(PipelineBuilder::blendAlpha())
-        .setMultisample(vkCtx_->getMsaaSamples())
+        .setMultisample(samples)
         .setLayout(layout_)
-        .setRenderPass(vkCtx_->getImGuiRenderPass())
+        .setRenderPass(rp)
         .setDynamicStates(viewportAndScissorDynamic())
         .build(device, vkCtx_->getPipelineCache());
     shaders.vert.destroy();
@@ -114,6 +127,7 @@ void WeatherMist::clear() {
 
 void WeatherMist::update(const Camera& camera, float deltaTime, float amount, const Shape& shape) {
     if (!vkCtx_) return;
+    softFadeRange_ = mistSoftFadeRange(shape.size);
     time_ += deltaTime;
     std::erase_if(puffs_, [this](const Puff& p) { return p.death <= time_; });
 
@@ -161,13 +175,19 @@ void WeatherMist::update(const Camera& camera, float deltaTime, float amount, co
     }
 }
 
-void WeatherMist::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
-    if (!vkCtx_ || vertices_.empty() || !pipeline_) return;
+void WeatherMist::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const DepthContext& depthCtx) {
+    if (!vkCtx_ || vertices_.empty() || !pipeline_ || depthCtx.sceneSet == VK_NULL_HANDLE) return;
     FrameBuffer& f = frames_[vkCtx_->getCurrentFrame()];
     std::memcpy(f.mapped, vertices_.data(), vertices_.size() * sizeof(MistVertex));
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    const VkDescriptorSet sets[] = {perFrameSet, texture_.set()};
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 2, sets, 0, nullptr);
+    const VkDescriptorSet sets[] = {perFrameSet, texture_.set(), depthCtx.sceneSet};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 3, sets, 0, nullptr);
+    const float invFadeRange = (depthCtx.enabled && softFadeRange_ > 0.0f) ? (1.0f / softFadeRange_) : 0.0f;
+    MistPush push{
+        glm::vec4(depthCtx.nearPlane, depthCtx.farPlane, invFadeRange, 0.0f),
+        glm::vec4(depthCtx.screenWidth, depthCtx.screenHeight, 0.0f, 0.0f),
+    };
+    vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &f.buffer, &offset);
     vkCmdDraw(cmd, static_cast<uint32_t>(vertices_.size()), 1, 0, 0);

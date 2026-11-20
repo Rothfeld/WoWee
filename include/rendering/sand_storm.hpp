@@ -41,15 +41,24 @@ public:
 
     [[nodiscard]] bool isInitialized() const { return vkCtx_ != nullptr; }
     [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+                                  VkDescriptorSetLayout sceneSetLayout,
                                   pipeline::AssetManager* assetManager);
     void shutdown();
+    void setMistTargetPass(VkRenderPass pass, VkSampleCountFlagBits samples) {
+        mist_.setTargetPass(pass, samples);
+    }
     void recreatePipelines();
+    void recreateMistPipeline() { mist_.recreatePipeline(); }
 
     /// `targetIntensity` is the server's grade (SMSG_WEATHER's float) while a
     /// sandstorm is reported and the camera is outdoors, else 0. The drawn
     /// intensity moves toward it at a fixed rate.
     void update(const Camera& camera, float deltaTime, float targetIntensity);
-    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
+    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                bool includeMist = true, const WeatherMist::DepthContext& mistDepth = {});
+    void renderMist(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
+                    const WeatherMist::DepthContext& mistDepth);
+    [[nodiscard]] bool hasMistPuffs() const { return mist_.puffCount() > 0; }
 
     /// The game's Weather Detail setting, as for rain and snow.
     void setDensityScale(float scale) { densityScale_ = glm::clamp(scale, 0.0f, 1.0f); }
