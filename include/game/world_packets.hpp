@@ -13,6 +13,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <string>
 #include <map>
 #include <unordered_map>
@@ -3296,6 +3297,40 @@ struct MailMessage {
     bool read = false;
     std::vector<MailAttachment> attachments;
 };
+
+struct PendingMailSender {
+    uint64_t senderGuid = 0;
+    uint32_t senderId = 0;
+    uint32_t messageType = 0;   // 0=normal, 2=auction, 3=creature, 4=gameobject
+    uint32_t stationeryId = 0;
+    float timeLeft = 0.0f;
+};
+
+struct QueryNextMailTimeData {
+    float nextTime = -86400.0f;
+    uint32_t count = 0;
+    bool hasCountField = false;
+    std::vector<PendingMailSender> senders;
+
+    bool hasUnread() const {
+        if (nextTime < 0.0f) return false;
+        return hasCountField ? (count > 0 || !senders.empty()) : true;
+    }
+};
+
+struct MailSenderNameLookup {
+    std::function<std::string(uint64_t)> playerName;
+    std::function<std::string(uint32_t)> creatureName;
+    std::function<std::string(uint32_t)> auctionHouseName;
+    std::function<std::string(uint32_t)> gameObjectName;
+};
+
+bool parseQueryNextMailTime(network::Packet& packet, QueryNextMailTimeData& out);
+std::string resolvePendingMailSenderName(const PendingMailSender& sender,
+                                         const MailSenderNameLookup& lookup);
+std::vector<std::string> resolveLatestThreeSenders(const std::vector<PendingMailSender>& pendingSenders,
+                                                   const std::vector<MailMessage>& mailInbox,
+                                                   const MailSenderNameLookup& lookup);
 
 struct AuctionMailSubject {
     uint32_t itemEntry = 0;

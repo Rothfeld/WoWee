@@ -1066,6 +1066,10 @@ public:
     /// Who a piece of mail is from, resolved from its GUID or entry depending on
     /// the mail type. Resolved on demand so a late name query still shows.
     std::string getMailSenderName(const MailMessage& mail) const;
+    /// Localized AuctionHouse.dbc name for an auction house entry, or "Auction House".
+    std::string getAuctionHouseName(uint32_t auctionHouseId) const;
+    /// Up to three resolved sender names for GetLatestThreeSenders().
+    std::vector<std::string> getLatestThreeMailSenders() const;
     /// The item Stationery.dbc names for a letterhead (column 1), 0 if none.
     uint32_t getStationeryItemId(uint32_t stationeryId) const;
     /// GetInboxHeaderInfo's stationeryIcon: the icon of the stationery's item
@@ -3709,6 +3713,8 @@ public:
     /// Whether the compose frame is showing, without clearing the draft.
     void setMailComposeShowing(bool showing);
     bool hasNewMail() const;
+    const std::vector<PendingMailSender>& getPendingMailSenders() const;
+    void queryNextMailTime();
     void openMailbox(uint64_t guid);
     void closeMailbox();
     void sendMail(const std::string& recipient, const std::string& subject,
@@ -5400,6 +5406,7 @@ private:
     // Mail
     bool mailboxOpen_ = false;
     std::vector<MailMessage> mailInbox_;
+    std::vector<PendingMailSender> pendingMailSenders_;
     int selectedMailIndex_ = -1;
     bool showMailCompose_ = false;
     bool hasNewMail_ = false;

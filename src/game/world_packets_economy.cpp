@@ -2,6 +2,7 @@
 #include "game/packet_parsers.hpp"
 #include "game/opcodes.hpp"
 #include "game/character.hpp"
+#include "game/stationery.hpp"
 #include "auth/crypto.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
@@ -359,6 +360,109 @@ bool PacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessa
 
     LOG_INFO("Parsed ", inbox.size(), " mail messages");
     return true;
+}
+
+bool parseQueryNextMailTime(network::Packet& packet, QueryNextMailTimeData& out) {
+    out = QueryNextMailTimeData{};
+    if (!packet.hasRemaining(4)) return false;
+
+    out.nextTime = packet.readFloat();
+    if (!packet.hasRemaining(4)) {
+        // Classic 1.12 sends only the float timer with no sender list.
+        return true;
+    }
+
+    out.hasCountField = true;
+    out.count = packet.readUInt32();
+
+    // TBC 2.4.3 / WotLK 3.3.5a: each sender entry is 24 bytes:
+    //   uint64 senderGuid, uint32 senderId, uint32 messageType,
+    //   uint32 stationery, float timeLeft.
+    constexpr size_t kEntryBytes = 8 + 4 + 4 + 4 + 4;
+    const uint32_t cappedCount = std::min<uint32_t>(out.count, 32);
+    out.senders.reserve(std::min<size_t>(cappedCount, packet.getRemainingSize() / kEntryBytes));
+    for (uint32_t i = 0; i < cappedCount && packet.hasRemaining(kEntryBytes); ++i) {
+        PendingMailSender sender;
+        sender.senderGuid = packet.readUInt64();
+        sender.senderId = packet.readUInt32();
+        sender.messageType = packet.readUInt32();
+        sender.stationeryId = packet.readUInt32();
+        sender.timeLeft = packet.readFloat();
+        out.senders.push_back(sender);
+    }
+    packet.skipAll();
+    return true;
+}
+
+std::string resolvePendingMailSenderName(const PendingMailSender& sender,
+                                         const MailSenderNameLookup& lookup) {
+    if (isGmStationery(sender.stationeryId)) return "Customer Support";
+    switch (sender.messageType) {
+        case 0: {  // MAIL_NORMAL (player)
+            const uint64_t guid = sender.senderGuid != 0
+                ? sender.senderGuid
+                : static_cast<uint64_t>(sender.senderId);
+            if (guid != 0 && lookup.playerName) return lookup.playerName(guid);
+            return {};
+        }
+        case 2: {  // MAIL_AUCTION
+            if (lookup.auctionHouseName) {
+                std::string name = lookup.auctionHouseName(sender.senderId);
+                if (!name.empty()) return name;
+            }
+            return "Auction House";
+        }
+        case 3: {  // MAIL_CREATURE
+            if (sender.senderId != 0 && lookup.creatureName) {
+                return lookup.creatureName(sender.senderId);
+            }
+            return {};
+        }
+        case 4: {  // MAIL_GAMEOBJECT
+            if (sender.senderId != 0 && lookup.gameObjectName) {
+                return lookup.gameObjectName(sender.senderId);
+            }
+            return {};
+        }
+        default:
+            return {};
+    }
+}
+
+std::vector<std::string> resolveLatestThreeSenders(const std::vector<PendingMailSender>& pendingSenders,
+                                                   const std::vector<MailMessage>& mailInbox,
+                                                   const MailSenderNameLookup& lookup) {
+    std::vector<std::string> result;
+    result.reserve(3);
+
+    if (!pendingSenders.empty()) {
+        for (const auto& sender : pendingSenders) {
+            if (result.size() >= 3) break;
+            std::string name = resolvePendingMailSenderName(sender, lookup);
+            if (!name.empty()) result.push_back(std::move(name));
+        }
+        return result;
+    }
+
+    // Fallback when standing at a mailbox before MSG_QUERY_NEXT_MAIL_TIME is refreshed.
+    for (auto it = mailInbox.rbegin(); it != mailInbox.rend() && result.size() < 3; ++it) {
+        if (it->read) continue;
+        std::string name;
+        if (isGmStationery(it->stationeryId)) {
+            name = "Customer Support";
+        } else if (it->messageType == 0 && !it->senderName.empty()) {
+            name = it->senderName;
+        } else {
+            PendingMailSender s;
+            s.senderGuid = it->senderGuid;
+            s.senderId = it->senderEntry;
+            s.messageType = it->messageType;
+            s.stationeryId = it->stationeryId;
+            name = resolvePendingMailSenderName(s, lookup);
+        }
+        if (!name.empty()) result.push_back(std::move(name));
+    }
+    return result;
 }
 
 // ============================================================

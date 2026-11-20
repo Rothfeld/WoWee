@@ -1,4 +1,5 @@
 #include "game/inventory_handler.hpp"
+#include "game/stationery.hpp"
 #include "game/inventory_result_text.hpp"
 #include "game/cast_result_text.hpp"
 #include "addons/lua_api_registrations.hpp"
@@ -3168,6 +3169,16 @@ void InventoryHandler::closeMailbox() {
     showMailCompose_ = false;
     clearMailAttachments();
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("MAIL_CLOSED", {});
+    queryNextMailTime();
+}
+
+void InventoryHandler::queryNextMailTime() {
+    if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    const uint16_t nextMailWire = wireOpcode(Opcode::MSG_QUERY_NEXT_MAIL_TIME);
+    if (nextMailWire == 0xFFFF) return;
+    network::Packet nextMail(nextMailWire);
+    owner_.getSocket()->send(nextMail);
+    LOG_INFO("Sent MSG_QUERY_NEXT_MAIL_TIME");
 }
 
 void InventoryHandler::refreshMailList() {
@@ -3436,6 +3447,12 @@ void InventoryHandler::handleMailListResult(network::Packet& packet) {
         if (mail.messageType == 0 && mail.senderGuid != 0 &&
             owner_.lookupName(mail.senderGuid).empty()) {
             owner_.queryPlayerName(mail.senderGuid);
+        } else if (mail.messageType == 3 && mail.senderEntry != 0 &&
+                   owner_.getCachedCreatureName(mail.senderEntry).empty()) {
+            owner_.queryCreatureInfo(mail.senderEntry, 0);
+        } else if (mail.messageType == 4 && mail.senderEntry != 0 &&
+                   !owner_.getCachedGameObjectInfo(mail.senderEntry)) {
+            owner_.queryGameObjectInfo(mail.senderEntry, 0);
         }
         if (mail.messageType == 2) {
             AuctionMailSubject auction;
@@ -3527,16 +3544,50 @@ void InventoryHandler::handleSendMailResult(network::Packet& packet) {
 void InventoryHandler::handleReceivedMail(network::Packet& packet) {
     (void)packet;
     setHasNewMail(true);
+    queryNextMailTime();
 }
 
 void InventoryHandler::handleQueryNextMailTime(network::Packet& packet) {
-    if (!packet.hasRemaining(8)) return;
-    // readFloat() uses memcpy internally, avoiding the strict aliasing violation
-    // that the previous reinterpret_cast<float*> on raw packet bytes had.
-    float nextTime = packet.readFloat();
-    uint32_t count = packet.readUInt32();
-    setHasNewMail(nextTime >= 0.0f && count > 0);
-    packet.skipAll();
+    QueryNextMailTimeData data;
+    if (!parseQueryNextMailTime(packet, data)) return;
+
+    const bool hasUnread = data.hasUnread();
+    if (hasUnread) {
+        pendingMailSenders_ = std::move(data.senders);
+        for (const auto& sender : pendingMailSenders_) {
+            if (isGmStationery(sender.stationeryId)) continue;
+            switch (sender.messageType) {
+                case 0: {  // MAIL_NORMAL
+                    const uint64_t guid = sender.senderGuid != 0
+                        ? sender.senderGuid
+                        : static_cast<uint64_t>(sender.senderId);
+                    if (guid != 0 && owner_.lookupName(guid).empty()) {
+                        owner_.queryPlayerName(guid);
+                    }
+                    break;
+                }
+                case 3: {  // MAIL_CREATURE
+                    if (sender.senderId != 0 &&
+                        owner_.getCachedCreatureName(sender.senderId).empty()) {
+                        owner_.queryCreatureInfo(sender.senderId, sender.senderGuid);
+                    }
+                    break;
+                }
+                case 4: {  // MAIL_GAMEOBJECT
+                    if (sender.senderId != 0 &&
+                        !owner_.getCachedGameObjectInfo(sender.senderId)) {
+                        owner_.queryGameObjectInfo(sender.senderId, sender.senderGuid);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    } else {
+        pendingMailSenders_.clear();
+    }
+    setHasNewMail(hasUnread);
 }
 
 void InventoryHandler::setHasNewMail(bool value) {
@@ -3549,6 +3600,7 @@ void InventoryHandler::setHasNewMail(bool value) {
             if (auto* sfx = ac->getUiSoundManager()) sfx->playMailReceived();
     }
     hasNewMail_ = value;
+    if (!value) pendingMailSenders_.clear();
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("UPDATE_PENDING_MAIL", {});
 }
 

@@ -497,3 +497,181 @@ TEST_CASE("A body that is not an invoice is refused", "[mail][auction][invoice]"
     // Decimal fields are decimal: hex only applies to the guid.
     CHECK_FALSE(parseAuctionMailBody("1a2b:5000:1f", invoice));
 }
+
+// ============================================================
+// MSG_QUERY_NEXT_MAIL_TIME parsing and GetLatestThreeSenders
+// ============================================================
+
+TEST_CASE("TBC MSG_QUERY_NEXT_MAIL_TIME parses creature, player, auction and GO senders",
+          "[mail][tbc][nextmail]") {
+    wowee::network::Packet packet;
+    packet.writeFloat(0.0f);  // nextTime (0 = unread waiting)
+    packet.writeUInt32(3);    // count
+
+    // Entry 1: Creature NPC mail (e.g. Binjy Featherwhistle, entry 12779)
+    packet.writeUInt64(0xF1300000000031EBULL); // HIGHGUID_UNIT + entry
+    packet.writeUInt32(12779);                 // senderId (creature entry)
+    packet.writeUInt32(3);                     // MAIL_CREATURE
+    packet.writeUInt32(41);                    // default stationery
+    packet.writeFloat(0.0f);                   // delay
+
+    // Entry 2: Player mail
+    packet.writeUInt64(0x0000000000000042ULL); // player GUID
+    packet.writeUInt32(0x42);                  // low GUID
+    packet.writeUInt32(0);                     // MAIL_NORMAL
+    packet.writeUInt32(41);                    // default stationery
+    packet.writeFloat(0.0f);                   // delay
+
+    // Entry 3: Auction House mail (Alliance Auction House = 2)
+    packet.writeUInt64(0x0000000000000002ULL);
+    packet.writeUInt32(2);                     // AuctionHouse.dbc ID
+    packet.writeUInt32(2);                     // MAIL_AUCTION
+    packet.writeUInt32(62);                    // auction stationery
+    packet.writeFloat(0.0f);                   // delay
+
+    QueryNextMailTimeData data;
+    REQUIRE(parseQueryNextMailTime(packet, data));
+    CHECK(data.hasUnread());
+    CHECK(data.nextTime == Catch::Approx(0.0f));
+    CHECK(data.count == 3);
+    REQUIRE(data.senders.size() == 3);
+
+    CHECK(data.senders[0].messageType == 3);
+    CHECK(data.senders[0].senderId == 12779);
+    CHECK(data.senders[0].senderGuid == 0xF1300000000031EBULL);
+    CHECK(data.senders[0].stationeryId == 41);
+
+    CHECK(data.senders[1].messageType == 0);
+    CHECK(data.senders[1].senderGuid == 0x42ULL);
+    CHECK(data.senders[1].senderId == 0x42);
+
+    CHECK(data.senders[2].messageType == 2);
+    CHECK(data.senders[2].senderId == 2);
+    CHECK(data.senders[2].stationeryId == 62);
+    CHECK(packet.getRemainingSize() == 0);
+}
+
+TEST_CASE("TBC MSG_QUERY_NEXT_MAIL_TIME handles empty/no-unread and Classic 4-byte form",
+          "[mail][tbc][nextmail]") {
+    SECTION("No unread mail (-86400, count 0)") {
+        wowee::network::Packet packet;
+        packet.writeFloat(-86400.0f);
+        packet.writeUInt32(0);
+
+        QueryNextMailTimeData data;
+        REQUIRE(parseQueryNextMailTime(packet, data));
+        CHECK_FALSE(data.hasUnread());
+        CHECK(data.senders.empty());
+    }
+
+    SECTION("Unread mail not yet delivered (nextTime 0, count 0)") {
+        wowee::network::Packet packet;
+        packet.writeFloat(0.0f);
+        packet.writeUInt32(0);
+
+        QueryNextMailTimeData data;
+        REQUIRE(parseQueryNextMailTime(packet, data));
+        CHECK_FALSE(data.hasUnread());
+        CHECK(data.senders.empty());
+    }
+
+    SECTION("Classic 1.12 4-byte float-only packet") {
+        wowee::network::Packet packet;
+        packet.writeFloat(0.0f);
+
+        QueryNextMailTimeData data;
+        REQUIRE(parseQueryNextMailTime(packet, data));
+        CHECK(data.hasUnread());
+        CHECK(data.senders.empty());
+    }
+
+    SECTION("Truncated payload stops cleanly at available entries") {
+        wowee::network::Packet packet;
+        packet.writeFloat(0.0f);
+        packet.writeUInt32(3); // claims 3, only 1 follows
+        packet.writeUInt64(0x1234ULL);
+        packet.writeUInt32(0x1234);
+        packet.writeUInt32(0);
+        packet.writeUInt32(41);
+        packet.writeFloat(0.0f);
+
+        QueryNextMailTimeData data;
+        REQUIRE(parseQueryNextMailTime(packet, data));
+        CHECK(data.hasUnread());
+        REQUIRE(data.senders.size() == 1);
+        CHECK(data.senders[0].senderGuid == 0x1234ULL);
+    }
+}
+
+TEST_CASE("resolveLatestThreeSenders resolves NPC, player, auction, GO, GM and unresolved fallback",
+          "[mail][nextmail]") {
+    MailSenderNameLookup lookup;
+    lookup.playerName = [](uint64_t guid) -> std::string {
+        return guid == 0x42ULL ? "Gaar" : "";
+    };
+    lookup.creatureName = [](uint32_t entry) -> std::string {
+        return entry == 12779 ? "Binjy Featherwhistle" : "";
+    };
+    lookup.auctionHouseName = [](uint32_t ahId) -> std::string {
+        return ahId == 2 ? "Alliance Auction House" : "";
+    };
+    lookup.gameObjectName = [](uint32_t entry) -> std::string {
+        return entry == 180000 ? "Mysterious Crate" : "";
+    };
+
+    SECTION("Resolves up to three pending senders in server order") {
+        std::vector<PendingMailSender> pending = {
+            {0xF1300000000031EBULL, 12779, 3, 41, 0.0f}, // Binjy Featherwhistle
+            {0x42ULL, 0x42, 0, 41, 0.0f},                // Gaar
+            {0x2ULL, 2, 2, 62, 0.0f},                    // Alliance Auction House
+            {0x0ULL, 180000, 4, 41, 0.0f},               // 4th ignored
+        };
+        auto names = resolveLatestThreeSenders(pending, {}, lookup);
+        REQUIRE(names.size() == 3);
+        CHECK(names[0] == "Binjy Featherwhistle");
+        CHECK(names[1] == "Gaar");
+        CHECK(names[2] == "Alliance Auction House");
+    }
+
+    SECTION("Unresolved pending senders return empty so Lua falls back to HAVE_MAIL") {
+        std::vector<PendingMailSender> pending = {
+            {0x999ULL, 0x999, 0, 41, 0.0f}, // unknown player
+            {0x0ULL, 99999, 3, 41, 0.0f},   // unknown creature
+        };
+        auto names = resolveLatestThreeSenders(pending, {}, lookup);
+        CHECK(names.empty());
+    }
+
+    SECTION("GM stationery resolves to Customer Support and GO resolves via cache") {
+        std::vector<PendingMailSender> pending = {
+            {0x999ULL, 0x999, 0, 61, 0.0f}, // GM stationery
+            {0x0ULL, 180000, 4, 41, 0.0f},  // GameObject
+        };
+        auto names = resolveLatestThreeSenders(pending, {}, lookup);
+        REQUIRE(names.size() == 2);
+        CHECK(names[0] == "Customer Support");
+        CHECK(names[1] == "Mysterious Crate");
+    }
+
+    SECTION("Falls back to unread inbox entries when pending list is empty") {
+        MailMessage readMsg;
+        readMsg.messageType = 0;
+        readMsg.senderGuid = 0x42ULL;
+        readMsg.read = true;
+
+        MailMessage unreadNpc;
+        unreadNpc.messageType = 3;
+        unreadNpc.senderEntry = 12779;
+        unreadNpc.read = false;
+
+        MailMessage unreadAh;
+        unreadAh.messageType = 2;
+        unreadAh.senderEntry = 2;
+        unreadAh.read = false;
+
+        auto names = resolveLatestThreeSenders({}, {readMsg, unreadNpc, unreadAh}, lookup);
+        REQUIRE(names.size() == 2);
+        CHECK(names[0] == "Alliance Auction House");
+        CHECK(names[1] == "Binjy Featherwhistle");
+    }
+}

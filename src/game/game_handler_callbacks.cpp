@@ -1422,6 +1422,13 @@ void GameHandler::setMailComposeShowing(bool showing) {
 bool GameHandler::hasNewMail() const {
     return inventoryHandler_ ? inventoryHandler_->hasNewMail() : hasNewMail_;
 }
+const std::vector<PendingMailSender>& GameHandler::getPendingMailSenders() const {
+    if (inventoryHandler_) return inventoryHandler_->getPendingMailSenders();
+    return pendingMailSenders_;
+}
+void GameHandler::queryNextMailTime() {
+    if (inventoryHandler_) inventoryHandler_->queryNextMailTime();
+}
 const std::array<GameHandler::MailAttachSlot, 12>& GameHandler::getMailAttachments() const {
     if (inventoryHandler_) {
         // Layout-identical structs (InventoryHandler::MailAttachSlot == GameHandler::MailAttachSlot)
@@ -2175,6 +2182,40 @@ std::string GameHandler::getMailStationeryIcon(const MailMessage& mail) {
     return info ? getItemIconPath(info->displayInfoId) : std::string{};
 }
 
+std::string GameHandler::getAuctionHouseName(uint32_t auctionHouseId) const {
+    // AuctionHouse.dbc: ID (col 0), FactionID (col 1), DepositRate (col 2),
+    // ConsignmentRate (col 3), Name (localized string fields starting at col 4,
+    // followed by flags in the last column).
+    static std::unordered_map<uint32_t, std::string> names;
+    static bool loaded = false;
+    if (!loaded) {
+        auto* am = services_.assetManager;
+        if (am && am->isInitialized()) {
+            loaded = true;
+            auto dbc = am->loadDBC("AuctionHouse.dbc");
+            if (dbc && dbc->isLoaded() && dbc->getFieldCount() > 4) {
+                const uint32_t nameEnd = dbc->getFieldCount() > 5
+                    ? dbc->getFieldCount() - 1
+                    : dbc->getFieldCount();
+                for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+                    const uint32_t id = dbc->getUInt32(i, 0);
+                    for (uint32_t col = 4; col < nameEnd; ++col) {
+                        std::string localized = dbc->getString(i, col);
+                        if (!localized.empty()) {
+                            names[id] = std::move(localized);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (auto it = names.find(auctionHouseId); it != names.end() && !it->second.empty()) {
+        return it->second;
+    }
+    return "Auction House";
+}
+
 std::string GameHandler::getMailSenderName(const MailMessage& mail) const {
     // The original names GM mail "Customer Support" (pair 6, letters sent
     // with ".send mail"); "Blizzard Support" was this client's own.
@@ -2191,7 +2232,7 @@ std::string GameHandler::getMailSenderName(const MailMessage& mail) const {
             return "Unknown";
         }
         case 2:    // the auction house, which has no creature behind it
-            return "Auction House";
+            return getAuctionHouseName(mail.senderEntry);
         case 3: {  // a creature
             std::string name = getCachedCreatureName(mail.senderEntry);
             if (!name.empty()) return name;
@@ -2208,6 +2249,24 @@ std::string GameHandler::getMailSenderName(const MailMessage& mail) const {
             break;
     }
     return "Unknown";
+}
+
+std::vector<std::string> GameHandler::getLatestThreeMailSenders() const {
+    MailSenderNameLookup lookup;
+    lookup.playerName = [this](uint64_t guid) -> std::string {
+        return std::string(lookupName(guid));
+    };
+    lookup.creatureName = [this](uint32_t entry) -> std::string {
+        return getCachedCreatureName(entry);
+    };
+    lookup.auctionHouseName = [this](uint32_t ahId) -> std::string {
+        return getAuctionHouseName(ahId);
+    };
+    lookup.gameObjectName = [this](uint32_t entry) -> std::string {
+        const auto* info = getCachedGameObjectInfo(entry);
+        return (info && !info->name.empty()) ? info->name : std::string{};
+    };
+    return resolveLatestThreeSenders(getPendingMailSenders(), getMailInbox(), lookup);
 }
 
 void GameHandler::queryPlayerName(uint64_t guid) {

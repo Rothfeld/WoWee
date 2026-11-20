@@ -3472,6 +3472,15 @@ void EntityController::handleNameQueryResponse(network::Packet& packet) {
                 mail.senderName = data.name;
             }
         }
+        for (const auto& sender : owner_.getPendingMailSenders()) {
+            const uint64_t senderGuid = sender.senderGuid != 0
+                ? sender.senderGuid
+                : static_cast<uint64_t>(sender.senderId);
+            if (sender.messageType == 0 && senderGuid == data.guid) {
+                owner_.fireAddonEvent("UPDATE_PENDING_MAIL", {});
+                break;
+            }
+        }
 
         // Backfill friend list: if this GUID came from a friend list packet,
         // register the name in owner_.friendsCacheRef() now that we know it.
@@ -3586,6 +3595,12 @@ void EntityController::handleCreatureQueryResponse(network::Packet& packet) {
                 }
             }
         }
+        for (const auto& sender : owner_.getPendingMailSenders()) {
+            if (sender.messageType == 3 && sender.senderId == data.entry) {
+                owner_.fireAddonEvent("UPDATE_PENDING_MAIL", {});
+                break;
+            }
+        }
     }
 }
 
@@ -3635,6 +3650,12 @@ void EntityController::handleGameObjectQueryResponse(network::Packet& packet) {
             for (uint64_t guid : ready) {
                 pendingPageTextGuids_.erase(guid);
                 if (entityManager.getEntity(guid)) showGameObjectPageText(guid);
+            }
+        }
+        for (const auto& sender : owner_.getPendingMailSenders()) {
+            if (sender.messageType == 4 && sender.senderId == data.entry) {
+                owner_.fireAddonEvent("UPDATE_PENDING_MAIL", {});
+                break;
             }
         }
 

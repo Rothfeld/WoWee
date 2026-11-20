@@ -374,6 +374,8 @@ public:
     void openMailCompose() { showMailCompose_ = true; clearMailAttachments(); }
     void closeMailCompose() { showMailCompose_ = false; clearMailAttachments(); }
     bool hasNewMail() const { return hasNewMail_; }
+    const std::vector<PendingMailSender>& getPendingMailSenders() const { return pendingMailSenders_; }
+    void queryNextMailTime();
     void openMailbox(uint64_t guid);
     void closeMailbox();
     /// What the server's mail refusal means, in words.
@@ -817,6 +819,7 @@ private:
     bool mailboxOpen_ = false;
     uint64_t mailboxGuid_ = 0;
     std::vector<MailMessage> mailInbox_;
+    std::vector<PendingMailSender> pendingMailSenders_;
     int selectedMailIndex_ = -1;
     bool showMailCompose_ = false;
     bool hasNewMail_ = false;

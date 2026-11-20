@@ -2750,17 +2750,14 @@ static int lua_GetKeyRingSize(lua_State* L) {
 // is normal and the caller tests each one, so the tail is simply absent.
 static int lua_GetLatestThreeSenders(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh) { lua_pushnil(L); lua_pushnil(L); lua_pushnil(L); return 3; }
+    if (!gh) { return 0; }
 
-    const auto& inbox = gh->getMailInbox();
-    int pushed = 0;
-    for (auto it = inbox.rbegin(); it != inbox.rend() && pushed < 3; ++it) {
-        if (it->read || it->senderName.empty()) continue;
-        lua_pushstring(L, it->senderName.c_str());
-        ++pushed;
+    const auto senders = gh->getLatestThreeMailSenders();
+    const int count = static_cast<int>(std::min<size_t>(senders.size(), 3));
+    for (int i = 0; i < count; ++i) {
+        lua_pushstring(L, senders[i].c_str());
     }
-    for (; pushed < 3; ++pushed) lua_pushnil(L);
-    return 3;
+    return count;
 }
 
 /// PickupEquipmentSetByName(name) - drag a gear set onto the cursor.
