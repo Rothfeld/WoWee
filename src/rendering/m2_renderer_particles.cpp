@@ -650,6 +650,17 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             const bool additive = gpu.ribbonBlendModes.at(ri) >= 3;
             VkPipeline pipe = additive ? ribbonAdditivePipeline_ : ribbonPipeline_;
 
+            // M2 material flag 0x01 is Unlit. Lit ribbons (e.g. Spells\ChargeTrail.m2
+            // and Spells\InterveneTrail.m2, flags=0x16) are modulated by scene
+            // lighting just like lit particles, while unlit spell/totem ribbons
+            // (Fireball, Shadowbolt, totems, Phoenix, flags=0x17/0x15) stay full-bright.
+            const bool unlit = (gpu.ribbonRenderFlags.at(ri) & 0x01u) != 0;
+            const glm::vec3 ribbonLight = unlit ? glm::vec3(1.0f)
+                : ((inst.indoorLighting & 2u)
+                    ? glm::vec3((inst.indoorLighting >> 8) & 255u, (inst.indoorLighting >> 16) & 255u,
+                                (inst.indoorLighting >> 24) & 255u) / 255.0f
+                    : outdoorParticleLight(outdoorAmbient_, outdoorDiffuse_, outdoorLightDir_));
+
             // Descriptor set for texture
             VkDescriptorSet texSet = (ri < gpu.ribbonTexSets.size())
                                      ? gpu.ribbonTexSets[ri] : VK_NULL_HANDLE;
@@ -685,13 +696,14 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 // local +Y to -Z (downward), so mapping +localY->v=1 and
                 // -localY->v=0 places the bright crisp edge at the top (+Z) and
                 // fades softly downward, matching native TBC 2.4.3.
+                const glm::vec3 litColor = e.color * ribbonLight;
                 const glm::vec3& top = e.top;
                 dst[written * 9 + 0] = top.x;
                 dst[written * 9 + 1] = top.y;
                 dst[written * 9 + 2] = top.z;
-                dst[written * 9 + 3] = e.color.r;
-                dst[written * 9 + 4] = e.color.g;
-                dst[written * 9 + 5] = e.color.b;
+                dst[written * 9 + 3] = litColor.r;
+                dst[written * 9 + 4] = litColor.g;
+                dst[written * 9 + 5] = litColor.b;
                 dst[written * 9 + 6] = a;
                 dst[written * 9 + 7] = u;
                 dst[written * 9 + 8] = 1.0f; // v = +heightAbove (+localY)
@@ -702,9 +714,9 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 dst[written * 9 + 0] = bot.x;
                 dst[written * 9 + 1] = bot.y;
                 dst[written * 9 + 2] = bot.z;
-                dst[written * 9 + 3] = e.color.r;
-                dst[written * 9 + 4] = e.color.g;
-                dst[written * 9 + 5] = e.color.b;
+                dst[written * 9 + 3] = litColor.r;
+                dst[written * 9 + 4] = litColor.g;
+                dst[written * 9 + 5] = litColor.b;
                 dst[written * 9 + 6] = a;
                 dst[written * 9 + 7] = u;
                 dst[written * 9 + 8] = 0.0f; // v = -heightBelow (-localY)

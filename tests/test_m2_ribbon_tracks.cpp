@@ -317,6 +317,7 @@ TEST_CASE("TBC ChargeTrail and InterveneTrail ribbons orient vertically along bo
         REQUIRE(model.particleEmitters.size() == 1);
         REQUIRE(model.materials.size() == 1);
         CHECK(model.materials[0].blendMode == 4);
+        CHECK((model.materials[0].flags & 0x01u) == 0); // lit by scene lighting (flags=0x16)
 
         const auto& rib = model.ribbonEmitters[0];
         CHECK(rib.bone == 1);

@@ -1785,6 +1785,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
             // ribbons name a material inside the table.
             const uint16_t material = model.ribbonEmitters[ri].materialIndex;
             gpuModel.ribbonBlendModes.push_back(model.materials.at(material).blendMode);
+            gpuModel.ribbonRenderFlags.push_back(model.materials.at(material).flags);
             // Resolve texture: ribbon textureIndex is a direct index into the
             // model's texture array (NOT through the textureLookup table).
             uint16_t texDirect = model.ribbonEmitters[ri].textureIndex;
