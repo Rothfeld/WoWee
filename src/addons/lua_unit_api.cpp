@@ -5,6 +5,9 @@
 #include <optional>
 #include "game/game_utils.hpp"
 #include "game/bg_score_defs.hpp"
+#include "game/world_state_ui.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_layout.hpp"
 #include "addons/lua_api_helpers.hpp"
 
 namespace wowee::addons {
@@ -3159,59 +3162,61 @@ void registerUnitLuaAPI(lua_State* L) {
             lua_pushnumber(L, p.bonusHonor);        // honorGained
             lua_pushnumber(L, p.team);              // faction (0=Horde,1=Alliance)
             lua_pushnumber(L, 0);                   // rank
-            lua_pushstring(L, "");                  // race
-            lua_pushstring(L, "");                  // class
-            // Nil, not a class. The packet carries none - AppendToPacket sends
-            // a guid and six numbers - and the scoreboard asks for exactly
-            // this case: `if (classToken) then ... else buttonClass:Hide()`.
-            // So absence is an answer it handles, and "WARRIOR" was not a
-            // safer default than nil but a wrong one that looks like data: it
-            // drew a warrior's icon beside all forty players in the
-            // battleground, every one of them.
-            lua_pushnil(L);                         // classToken
+            const char* raceName = (p.raceId > 0 && p.raceId < 12) ? kLuaRaces[p.raceId] : "";
+            const char* className = (p.classId > 0 && p.classId < 12) ? kLuaClasses[p.classId] : "";
+            lua_pushstring(L, raceName);            // race
+            lua_pushstring(L, className);           // class
+            luaPushClassToken(L, p.classId);        // classToken (nil when unknown)
             lua_pushnumber(L, p.damageDone);        // damageDone
             lua_pushnumber(L, p.healingDone);       // healingDone
             return 12;
         }},
                 // ---- The scoreboard's per-battleground columns ----
                 //
-                // Every battleground adds its own: flags captured in Warsong,
-                // bases assaulted in Arathi, towers defended in Alterac. The
-                // server names each one and sends a value per player, and this
-                // client has parsed both into BgPlayerScore::bgStats all along
-                // - nothing read them, and GetNumBattlefieldStats answered zero
-                // from the counting stub, so the scoreboard drew the common
-                // columns and stopped.
+                // WorldStateUI.dbc Type == 2 rows supply each battleground's
+                // custom scoreboard columns (label, column icon prefix, tooltip)
+                // in DBC file order, matching MSG_PVP_LOG_DATA's stat array.
                 {"GetNumBattlefieldStats", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const auto* sb = gh ? gh->getBgScoreboard() : nullptr;
             size_t columns = 0;
-            // The widest row rather than the first: a row that arrived short
-            // would otherwise decide the column count for the whole table.
             if (sb) for (const auto& p : sb->players) columns = std::max(columns, p.bgStats.size());
             lua_pushnumber(L, static_cast<double>(columns));
             return 1;
         }},
                 // GetBattlefieldStatInfo(index) → text, icon, tooltip
-                //
-                // The icon is "" rather than nil on purpose: the frame tests it
-                // with ~= "" and then concatenates the faction onto it, so nil
-                // passes the test and dies on the concatenation. This client
-                // has no artwork per column, and "" is how the frame is told so.
                 {"GetBattlefieldStatInfo", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int index = static_cast<int>(luaL_checknumber(L, 1));
             const auto* sb = gh ? gh->getBgScoreboard() : nullptr;
             if (!sb || index < 1) return luaReturnNil(L);
-            // The label is this client's to supply. BuildObjectivesBlock
-            // sends a count and that many bare numbers, so the name this used
-            // to read out of the row was never on the wire - it was bytes of
-            // the value before it, read as a string.
-            //
-            // Which column is which follows from the map: Warsong sends flags
-            // captured and returned, Alterac Valley five graveyard and tower
-            // counts, Eye of the Storm one. The table is beside the world-state
-            // one it belongs with.
+            if (auto* am = gh->services().assetManager) {
+                const auto* layouts = pipeline::getActiveDBCLayout();
+                const auto* l = layouts ? layouts->getLayout("WorldStateUI") : nullptr;
+                const auto dbc = am->loadDBC("WorldStateUI.dbc");
+                if (l && dbc && dbc->isLoaded()) {
+                    std::vector<game::WorldStateUIRow> rows;
+                    rows.reserve(dbc->getRecordCount());
+                    for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+                        game::WorldStateUIRow row;
+                        row.mapId = dbc->getUInt32(r, l->field("MapID"));
+                        row.type = dbc->getUInt32(r, l->field("Type"));
+                        if (row.type != 2 || row.mapId != gh->getCurrentMapId()) continue;
+                        row.icon = dbc->getString(r, l->field("Icon"));
+                        row.text = dbc->getString(r, l->field("String"));
+                        row.tooltip = dbc->getString(r, l->field("Tooltip"));
+                        rows.push_back(std::move(row));
+                    }
+                    const auto stats = game::worldStateBattlefieldStats(rows, gh->getCurrentMapId());
+                    if (static_cast<size_t>(index) <= stats.size()) {
+                        const auto& s = stats[static_cast<size_t>(index - 1)];
+                        lua_pushstring(L, s.text.c_str());
+                        lua_pushstring(L, s.icon.c_str());
+                        lua_pushstring(L, s.tooltip.c_str());
+                        return 3;
+                    }
+                }
+            }
             const char* label = game::bgObjectiveLabel(
                 gh->getCurrentMapId(), static_cast<size_t>(index - 1));
             if (!label) return luaReturnNil(L);
@@ -3222,18 +3227,21 @@ void registerUnitLuaAPI(lua_State* L) {
         }},
                 // GetBattlefieldStatData(playerIndex, statIndex) → the value.
                 //
-                // Always a number. The frame compares it against zero the line
-                // after it asks, so nil is not "no value" there, it is an error.
+                // Always a number. Indexes the filtered/sorted scoreboard rows
+                // to match GetBattlefieldScore(playerIndex).
                 {"GetBattlefieldStatData", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int playerIndex = static_cast<int>(luaL_checknumber(L, 1));
             const int statIndex   = static_cast<int>(luaL_checknumber(L, 2));
             const auto* sb = gh ? gh->getBgScoreboard() : nullptr;
             double value = 0.0;
-            if (sb && playerIndex >= 1 && playerIndex <= static_cast<int>(sb->players.size())) {
-                const auto& stats = sb->players[static_cast<size_t>(playerIndex - 1)].bgStats;
-                if (statIndex >= 1 && statIndex <= static_cast<int>(stats.size()))
-                    value = static_cast<double>(stats[static_cast<size_t>(statIndex - 1)].second);
+            if (sb) {
+                const auto rows = filteredBgScores(*sb);
+                if (playerIndex >= 1 && playerIndex <= static_cast<int>(rows.size())) {
+                    const auto& stats = rows[static_cast<size_t>(playerIndex - 1)]->bgStats;
+                    if (statIndex >= 1 && statIndex <= static_cast<int>(stats.size()))
+                        value = static_cast<double>(stats[static_cast<size_t>(statIndex - 1)].second);
+                }
             }
             lua_pushnumber(L, value);
             return 1;

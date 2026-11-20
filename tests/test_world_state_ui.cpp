@@ -94,3 +94,35 @@ TEST_CASE("world state text substitution", "[worldstate]") {
     CHECK(expandWorldStateText("West Beacon", value) == "West Beacon");
     CHECK(expandWorldStateText("%w %12x", value) == "%w %12x");
 }
+
+TEST_CASE("Alterac Valley Type 2 scoreboard stat rows are excluded from AlwaysUp HUD", "[worldstate]") {
+    std::vector<WorldStateUIRow> avRows = {
+        {180, 30, 0, 3134, 0, "Interface\\TargetingFrame\\UI-PVP-Alliance",
+            "Reinforcements: %3127w", "Alliance Reinforcements", "", "", "", {0, 0, 0}},
+        {181, 30, 0, 3133, 0, "Interface\\TargetingFrame\\UI-PVP-Horde",
+            "Reinforcements: %3128w", "Horde Reinforcements", "", "", "", {0, 0, 0}},
+        {63, 30, 0, 0, 2, "Interface\\WorldStateFrame\\ColumnIcon-GraveyardCapture",
+            "Graveyards Assaulted", "Number of times enemy graveyard banners have been removed", "", "", "", {0, 0, 0}},
+        {65, 30, 0, 0, 2, "Interface\\WorldStateFrame\\ColumnIcon-GraveyardDefend",
+            "Graveyards Defended", "Number of times a graveyard capture has been prevented", "", "", "", {0, 0, 0}},
+        {61, 30, 0, 0, 2, "Interface\\WorldStateFrame\\ColumnIcon-TowerCapture",
+            "Towers Assaulted", "Number of times enemy tower banners have been removed", "", "", "", {0, 0, 0}},
+        {64, 30, 0, 0, 2, "Interface\\WorldStateFrame\\ColumnIcon-TowerDefend",
+            "Towers Defended", "Number of times a tower capture has been prevented", "", "", "", {0, 0, 0}},
+        {82, 30, 0, 0, 2, "",
+            "Secondary Objectives", "Number of secondary units activated", "", "", "", {0, 0, 0}},
+    };
+
+    const auto lines = worldStateUILines(avRows, 30, {2597},
+        lookup({{3134, 1}, {3133, 1}, {3127, 600}, {3128, 600}}));
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].text == "Reinforcements: 600");
+    CHECK(lines[1].text == "Reinforcements: 600");
+
+    const auto stats = wowee::game::worldStateBattlefieldStats(avRows, 30);
+    REQUIRE(stats.size() == 5);
+    CHECK(stats[0].text == "Graveyards Assaulted");
+    CHECK(stats[0].icon == "Interface\\WorldStateFrame\\ColumnIcon-GraveyardCapture");
+    CHECK(stats[4].text == "Secondary Objectives");
+    CHECK(stats[4].icon.empty());
+}

@@ -3411,6 +3411,9 @@ void EntityController::handleNameQueryResponse(network::Packet& packet) {
             playerClassRaceCache_[data.guid] = {.classId = data.classId, .raceId = data.race,
                                                 .gender = data.gender};
         }
+        if (owner_.getSocialHandler()) {
+            owner_.getSocialHandler()->onPlayerNameResolved(data.guid, data.name, data.race, data.classId);
+        }
         for (const auto& row : owner_.tbcLfg().results) {
             if (row.guid == data.guid || std::any_of(row.members.begin(), row.members.end(),
                     [&data](const auto& member) { return member.guid == data.guid; })) {

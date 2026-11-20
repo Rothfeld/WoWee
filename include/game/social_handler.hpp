@@ -130,6 +130,7 @@ public:
     [[nodiscard]] const std::array<BgQueueSlot, 3>& getBgQueues() const { return bgQueues_; }
     [[nodiscard]] const std::vector<AvailableBgInfo>& getAvailableBgs() const { return availableBgs_; }
     void requestPvpLog();
+    void onPlayerNameResolved(uint64_t guid, const std::string& name, uint8_t raceId, uint8_t classId);
     [[nodiscard]] const BgScoreboardData* getBgScoreboard() const {
         return bgScoreboard_.players.empty() ? nullptr : &bgScoreboard_;
     }

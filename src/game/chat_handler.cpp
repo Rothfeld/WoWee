@@ -725,7 +725,11 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
         // A system line carries no language: 2.4.3 hands CHAT_MSG_SYSTEM an
         // empty arg3 ("Edrick added to friends.", "DB table ... reloaded.",
         // pair 11), where the packet's language is Universal.
-        const std::string lang = data.type == ChatType::SYSTEM
+        const bool noLanguage = data.type == ChatType::SYSTEM ||
+            data.type == ChatType::BG_SYSTEM_NEUTRAL ||
+            data.type == ChatType::BG_SYSTEM_ALLIANCE ||
+            data.type == ChatType::BG_SYSTEM_HORDE;
+        const std::string lang = noLanguage
             ? std::string() : owner_.getLanguageName(static_cast<uint32_t>(data.language));
         char guidBuf[32];
         snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)data.senderGuid);

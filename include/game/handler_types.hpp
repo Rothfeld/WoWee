@@ -201,6 +201,8 @@ struct BgPlayerScore {
     uint64_t    guid            = 0;
     std::string name;
     uint8_t     team            = 0;
+    uint8_t     raceId          = 0;
+    uint8_t     classId         = 0;
     uint32_t    killingBlows    = 0;
     uint32_t    deaths          = 0;
     uint32_t    honorableKills  = 0;
@@ -209,15 +211,34 @@ struct BgPlayerScore {
     /// scoreboard showed two columns of zeros.
     uint32_t    damageDone      = 0;
     uint32_t    healingDone     = 0;
-    /// Whether the team above came from the packet. Arenas carry a team byte
-    /// and battlegrounds do not, so a battleground row has no faction to give
-    /// and saying so is better than answering zero as though it meant Horde.
+    /// Whether team above is known (from the packet for arenas, or derived from
+    /// player race for battlegrounds: 0 = Horde, 1 = Alliance).
     bool        hasTeam         = false;
     /// The objective values, in the order the battleground writes them. The
     /// names are not on the wire - this used to read one before each value and
     /// took every value after the first from the wrong offset.
     std::vector<std::pair<std::string, uint32_t>> bgStats;
 };
+
+/// Battleground faction from ChrRaces ID (0 = Horde, 1 = Alliance, -1 = unknown).
+inline int bgFactionFromRace(uint8_t raceId) {
+    switch (raceId) {
+        case 1:  // Human
+        case 3:  // Dwarf
+        case 4:  // Night Elf
+        case 7:  // Gnome
+        case 11: // Draenei
+            return 1;
+        case 2:  // Orc
+        case 5:  // Undead
+        case 6:  // Tauren
+        case 8:  // Troll
+        case 10: // Blood Elf
+            return 0;
+        default:
+            return -1;
+    }
+}
 
 struct ArenaTeamScore {
     std::string teamName;

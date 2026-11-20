@@ -24,7 +24,7 @@ inline constexpr BgObjectiveColumns kBgObjectiveColumns[] = {
     { .mapId = 489, .labels = {"Flags Captured", "Flags Returned", nullptr, nullptr, nullptr} },
     { .mapId = 529, .labels = {"Bases Assaulted", "Bases Defended", nullptr, nullptr, nullptr} },
     {  .mapId = 30, .labels = {"Graveyards Assaulted", "Graveyards Defended",
-            "Towers Assaulted", "Towers Defended", "Mines Captured"} },
+            "Towers Assaulted", "Towers Defended", "Secondary Objectives"} },
     { .mapId = 566, .labels = {"Flags Captured", nullptr, nullptr, nullptr, nullptr} },
     { .mapId = 607, .labels = {"Demolishers Destroyed", "Gates Destroyed", nullptr, nullptr, nullptr} },
     { .mapId = 628, .labels = {"Bases Assaulted", "Bases Defended", nullptr, nullptr, nullptr} },

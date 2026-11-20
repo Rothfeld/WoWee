@@ -239,6 +239,7 @@ void GameHandler::registerCoreOpcodes() {
         uint32_t value = packet.readUInt32();
         worldStates_[field] = value;
         LOG_DEBUG("SMSG_UPDATE_WORLD_STATE: field=", field, " value=", value);
+        fireAddonEvent("WORLD_MAP_UPDATE", {});
         fireAddonEvent("UPDATE_WORLD_STATES", {});
     };
     dispatchTable_[Opcode::SMSG_WORLD_STATE_UI_TIMER_UPDATE] = [this](network::Packet& packet) {
@@ -1311,9 +1312,10 @@ void GameHandler::registerCoreOpcodes() {
             worldStates_[key] = val;
             LOG_DEBUG("SMSG_INIT_WORLD_STATES: field=", key, " value=", val);
         }
-        // Build 8606 fires UPDATE_WORLD_STATES for this packet as it does for
-        // each SMSG_UPDATE_WORLD_STATE: teleporting out of Hellfire Peninsula
-        // (five update packets, then this one) fired the event six times.
+        // Build 8606 fires WORLD_MAP_UPDATE and UPDATE_WORLD_STATES for world
+        // state packets so both WorldMapFrame/BattlefieldMinimap landmarks and
+        // WorldStateAlwaysUpFrame refresh live.
+        fireAddonEvent("WORLD_MAP_UPDATE", {});
         fireAddonEvent("UPDATE_WORLD_STATES", {});
     };
 

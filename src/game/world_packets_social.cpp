@@ -173,9 +173,10 @@ bool MessageChatParser::parse(network::Packet& packet, MessageChatData& data) {
         case ChatType::BG_SYSTEM_NEUTRAL:
         case ChatType::BG_SYSTEM_ALLIANCE:
         case ChatType::BG_SYSTEM_HORDE:
-            // BG/Arena system messages - no sender GUID or name field, just message.
-            // Reclassify as SYSTEM for consistent display.
-            data.type = ChatType::SYSTEM;
+            // TBC/WotLK wire format: uint64 targetGuid precedes messageLen,
+            // with no sender/target name string. Preserve ChatType so FrameXML
+            // receives CHAT_MSG_BG_SYSTEM_* with faction colors.
+            data.receiverGuid = packet.readUInt64();
             break;
 
         default:

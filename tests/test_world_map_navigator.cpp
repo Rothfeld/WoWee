@@ -233,3 +233,39 @@ TEST_CASE("MapNavigator opens on the player's zone, an instance's entrance zone"
     REQUIRE(nav.continent() == 1);
     REQUIRE(*nav.mapFile() == "AzuremystIsle");
 }
+
+TEST_CASE("MapNavigator opens battleground standalone map and dynamic landmarks", "[world_map][navigator]") {
+    auto d = data();
+    d.areas.push_back({2597, 30, 0, 0, "Alterac Valley"});
+    d.mapAreas.push_back({401, 30, 2597, "AlteracValley", 1781.2f, -2456.2f, 1085.4f, -1739.6f, -1});
+    // Dun Baldar (flags=0x4, area=0, ws=0 -> textureIndex 15 on zone view)
+    d.pois.push_back({1328, 6, 0x04, 30, 0, 0, 693.1f, -19.2f, "Dun Baldar", ""});
+    // Snowfall Graveyard Alliance Contested (flags=0x84, ws=1341 -> textureIndex 3)
+    d.pois.push_back({1341, 3, 0x84, 30, 1341, 0, -202.6f, -112.8f, "Snowfall Graveyard", "In Conflict"});
+    // Inactive world-state POI (ws=1342 == 0 -> excluded)
+    d.pois.push_back({1342, 4, 0x84, 30, 1342, 0, -202.6f, -112.8f, "Snowfall Graveyard", "Alliance Controlled"});
+
+    MapNavigator nav(std::move(d),
+                     [](uint32_t) { return false; },
+                     [](uint32_t ws) { return ws == 1341 ? 1u : 0u; },
+                     [](const std::string&) { return glm::ivec2(256, 256); });
+
+    nav.setToPosition(30, -202.6f, -112.8f, 2597);
+    REQUIRE(nav.continent() == MapNavigator::kCosmic);
+    REQUIRE(nav.zone() == 0);
+    REQUIRE(nav.mapFile().has_value());
+    REQUIRE(*nav.mapFile() == "AlteracValley");
+    REQUIRE(nav.mapAreaId() == 401u);
+
+    const auto marks = nav.landmarks();
+    REQUIRE(marks.size() == 2);
+    REQUIRE(marks[0].name == "Dun Baldar");
+    REQUIRE(marks[0].texture == 15);
+    REQUIRE(marks[1].name == "Snowfall Graveyard");
+    REQUIRE(marks[1].description == "In Conflict");
+    REQUIRE(marks[1].texture == 3);
+    REQUIRE(marks[1].x > 0.0f);
+    REQUIRE(marks[1].x < 1.0f);
+    REQUIRE(marks[1].y > 0.0f);
+    REQUIRE(marks[1].y < 1.0f);
+}

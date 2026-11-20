@@ -58,6 +58,13 @@ struct WorldStateUILine {
     std::array<uint32_t, 3> extendedUIStates{};
 };
 
+/// GetBattlefieldStatInfo's three returns for one scoreboard column (Type == 2).
+struct WorldStateStatColumn {
+    std::string text;
+    std::string icon;
+    std::string tooltip;
+};
+
 /// A world state's value, or nothing when the server has not sent it.
 using WorldStateLookup = std::function<std::optional<uint32_t>(uint32_t)>;
 
@@ -87,12 +94,15 @@ inline std::string expandWorldStateText(std::string_view text, const WorldStateL
 
 /// The lines for a player on mapId inside every area of areaChain (the area
 /// under the player and each of its AreaTable parents).
+/// Type == 2 rows are battleground scoreboard stat columns (GetBattlefieldStatInfo)
+/// rather than AlwaysUp/ExtendedUI HUD lines (GetWorldStateUIInfo).
 inline std::vector<WorldStateUILine> worldStateUILines(
         const std::vector<WorldStateUIRow>& rows, uint32_t mapId,
         const std::vector<uint32_t>& areaChain, const WorldStateLookup& value) {
     std::vector<WorldStateUILine> out;
     for (const auto& row : rows) {
         if (row.mapId != mapId) continue;
+        if (row.type == 2) continue;
         if (row.areaId != 0) {
             bool inArea = false;
             for (const uint32_t a : areaChain) inArea = inArea || a == row.areaId;
@@ -112,6 +122,18 @@ inline std::vector<WorldStateUILine> worldStateUILines(
             line.extendedUIStates[k] = var == 0 ? 0u : value(var).value_or(0);
         }
         out.push_back(std::move(line));
+    }
+    return out;
+}
+
+/// Battleground scoreboard custom stat columns for mapId (WorldStateUI.dbc Type == 2),
+/// in DBC file order.
+inline std::vector<WorldStateStatColumn> worldStateBattlefieldStats(
+        const std::vector<WorldStateUIRow>& rows, uint32_t mapId) {
+    std::vector<WorldStateStatColumn> out;
+    for (const auto& row : rows) {
+        if (row.mapId != mapId || row.type != 2) continue;
+        out.push_back({row.text, row.icon, row.tooltip});
     }
     return out;
 }

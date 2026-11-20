@@ -146,6 +146,7 @@ int MapNavigator::continentIndexForMap(uint32_t mapId) const {
 }
 
 const Data::MapArea* MapNavigator::shownArea() const {
+    if (standaloneMapArea_ >= 0) return &data_.mapAreas[static_cast<size_t>(standaloneMapArea_)];
     if (continent_ <= 0) return nullptr;
     const auto& c = continents_[static_cast<size_t>(continent_) - 1];
     const int index = zone_ == 0 ? c.mapArea : c.zones[static_cast<size_t>(zone_) - 1];
@@ -153,6 +154,7 @@ const Data::MapArea* MapNavigator::shownArea() const {
 }
 
 void MapNavigator::setZoom(int continent, int zone) {
+    standaloneMapArea_ = -1;
     if (continent <= kCosmic) { continent_ = kCosmic; zone_ = 0; return; }
     if (continent == kWorld || continent > static_cast<int>(continents_.size())) {
         continent_ = kWorld; zone_ = 0; return;
@@ -176,13 +178,23 @@ void MapNavigator::setToPosition(uint32_t mapId, float x, float y, uint32_t zone
     const glm::vec3 shown = toDisplayMap(mapId, x, y);
     const int c = continentIndexForMap(static_cast<uint32_t>(shown.x));
     if (c == 0) {
-        // A map with its own WorldMapArea row and no continent (a battleground).
+        // A map with its own WorldMapArea row and no continent (e.g. battlegrounds):
+        // build 8606 reports GetCurrentMapContinent() == -1, GetCurrentMapZone() == 0,
+        // and GetMapInfo() == that row's folder ("AlteracValley", "WarsongGulch", ...).
+        int best = -1;
         for (size_t i = 0; i < data_.mapAreas.size(); ++i) {
-            if (data_.mapAreas[i].mapId == mapId) {
-                LOG_WARNING("MapNavigator: map ", mapId, " ('", data_.mapAreas[i].folder,
-                            "') is on no continent; showing the world");
+            if (data_.mapAreas[i].mapId != mapId) continue;
+            if (best < 0) best = static_cast<int>(i);
+            if (zoneAreaId != 0 && data_.mapAreas[i].areaId == zoneAreaId) {
+                best = static_cast<int>(i);
                 break;
             }
+        }
+        if (best >= 0) {
+            continent_ = kCosmic;
+            zone_ = 0;
+            standaloneMapArea_ = best;
+            return;
         }
         setZoom(kWorld);
         return;
@@ -198,6 +210,7 @@ void MapNavigator::setToPosition(uint32_t mapId, float x, float y, uint32_t zone
 }
 
 void MapNavigator::zoomOut() {
+    if (standaloneMapArea_ >= 0) return;
     if (continent_ > 0 && zone_ != 0) { zone_ = 0; return; }
     if (continent_ > 0) {
         const uint32_t mapId = continents_[static_cast<size_t>(continent_) - 1].mapId;
@@ -246,6 +259,14 @@ bool MapNavigator::showMapArea(uint32_t mapAreaId) {
                 setZoom(static_cast<int>(c) + 1, static_cast<int>(z) + 1);
                 return true;
             }
+        }
+    }
+    for (size_t i = 0; i < data_.mapAreas.size(); ++i) {
+        if (data_.mapAreas[i].id == mapAreaId) {
+            continent_ = kCosmic;
+            zone_ = 0;
+            standaloneMapArea_ = static_cast<int>(i);
+            return true;
         }
     }
     return false;
@@ -323,6 +344,7 @@ MapNavigator::Highlight MapNavigator::highlight(float u, float v) const {
         }
         return h;
     }
+    if (standaloneMapArea_ >= 0) return h;
     const auto* shown = shownArea();
     if (!shown) return h;
     const auto& c = continents_[static_cast<size_t>(continent_) - 1];
@@ -381,17 +403,24 @@ MapNavigator::Highlight MapNavigator::highlight(float u, float v) const {
 
 std::vector<MapNavigator::Landmark> MapNavigator::landmarks() const {
     std::vector<Landmark> out;
-    if (continent_ == kCosmic) return out;
-    const uint32_t flag = continent_ == kWorld ? kPoiOnWorld : (zone_ == 0 ? kPoiOnContinent : kPoiOnZone);
+    if (standaloneMapArea_ < 0 && continent_ == kCosmic) return out;
+    const uint32_t flag = standaloneMapArea_ >= 0
+        ? kPoiOnZone
+        : (continent_ == kWorld ? kPoiOnWorld : (zone_ == 0 ? kPoiOnContinent : kPoiOnZone));
+    const bool isZoneView = (zone_ != 0 || standaloneMapArea_ >= 0);
     for (const auto& p : data_.pois) {
         if (!(p.flags & flag)) continue;
         if (p.flags & kPoiWorldState) {
             if (p.worldState == 0 || worldState_(p.worldState) == 0) continue;
+        } else if (standaloneMapArea_ >= 0) {
+            // Battleground base landmarks (Dun Baldar, Frostwolf Keep) carry areaId == 0
+            // and flags == 0x4; show them without an exploration-bit check.
+            if (p.areaId > 0 && !areaExplored(static_cast<uint32_t>(p.areaId))) continue;
         } else if (p.areaId <= 0 || !areaExplored(static_cast<uint32_t>(p.areaId))) {
             continue;
         }
         std::optional<glm::vec2> uv;
-        if (continent_ == kWorld) {
+        if (standaloneMapArea_ < 0 && continent_ == kWorld) {
             uv = worldSheetPoint(p.mapId, p.x, p.y);
         } else {
             uv = project(p.mapId, p.x, p.y);
@@ -400,7 +429,7 @@ std::vector<MapNavigator::Landmark> MapNavigator::landmarks() const {
         Landmark l;
         l.name = p.name;
         l.description = p.description;
-        l.texture = (zone_ != 0 && !(p.flags & kPoiWorldState)) ? kZoneLandmarkTexture
+        l.texture = (isZoneView && !(p.flags & kPoiWorldState)) ? kZoneLandmarkTexture
                                                                 : static_cast<int>(p.icon);
         l.x = uv->x;
         l.y = uv->y;
@@ -412,7 +441,7 @@ std::vector<MapNavigator::Landmark> MapNavigator::landmarks() const {
 std::vector<MapNavigator::OverlayInfo> MapNavigator::overlays() const {
     std::vector<OverlayInfo> out;
     const auto* shown = shownArea();
-    if (!shown || zone_ == 0) return out;
+    if (!shown || (zone_ == 0 && standaloneMapArea_ < 0)) return out;
     for (const auto& o : data_.overlays) {
         if (o.mapAreaId != shown->id) continue;
         if (!std::any_of(o.areaIds.begin(), o.areaIds.end(),
@@ -424,6 +453,14 @@ std::vector<MapNavigator::OverlayInfo> MapNavigator::overlays() const {
 }
 
 std::optional<glm::vec2> MapNavigator::project(uint32_t mapId, float x, float y) const {
+    if (standaloneMapArea_ >= 0) {
+        const auto* shown = shownArea();
+        if (!shown || shown->mapId != mapId) return std::nullopt;
+        const glm::vec4 b(shown->left, shown->right, shown->top, shown->bottom);
+        const glm::vec2 uv((b.x - y) / (b.x - b.y), (b.z - x) / (b.z - b.w));
+        if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return std::nullopt;
+        return uv;
+    }
     if (continent_ == kCosmic) return std::nullopt;
     if (continent_ == kWorld) return worldSheetPoint(mapId, x, y);
     const auto* shown = shownArea();

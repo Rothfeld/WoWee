@@ -177,6 +177,9 @@ private:
     std::vector<ContinentEntry> continents_;
     int continent_ = 0;
     int zone_ = 0;
+    /// Index into data_.mapAreas when showing a standalone map with no continent
+    /// (e.g. battlegrounds: AV, WSG, AB, EotS). Native reports continent=-1, zone=0.
+    int standaloneMapArea_ = -1;
 };
 
 } // namespace world_map

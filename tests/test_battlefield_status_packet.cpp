@@ -274,3 +274,34 @@ TEST_CASE("MSG_PVP_LOG_DATA parses TBC 2.4.3 Arena and EotS layouts",
         CHECK(pkt.readUInt8() == 0);
     }
 }
+
+TEST_CASE("SMSG_MESSAGECHAT parses BG_SYSTEM_NEUTRAL/ALLIANCE/HORDE with targetGuid",
+          "[battleground][chat][packet]") {
+    auto buildBgChat = [](ChatType type, const std::string& text) {
+        wowee::network::Packet pkt(0x096);
+        pkt.writeUInt8(static_cast<uint8_t>(type));
+        pkt.writeUInt32(0); // LANG_UNIVERSAL
+        pkt.writeUInt64(0); // senderGuid
+        pkt.writeUInt32(0); // unknown/chatFlags (TBC/WotLK)
+        pkt.writeUInt64(0); // targetGuid (mangos-tbc Chat.cpp:3723)
+        pkt.writeUInt32(static_cast<uint32_t>(text.size() + 1));
+        for (char c : text) pkt.writeUInt8(static_cast<uint8_t>(c));
+        pkt.writeUInt8(0);
+        pkt.writeUInt8(0); // chatTag
+        return pkt;
+    };
+
+    for (ChatType t : {ChatType::BG_SYSTEM_NEUTRAL, ChatType::BG_SYSTEM_ALLIANCE, ChatType::BG_SYSTEM_HORDE}) {
+        auto pkt = buildBgChat(t, "The battle for Alterac Valley has begun!");
+        MessageChatData d;
+        REQUIRE(MessageChatParser::parse(pkt, d));
+        CHECK(d.type == t);
+        CHECK(d.message == "The battle for Alterac Valley has begun!");
+    }
+}
+
+TEST_CASE("bgFactionFromRace maps TBC Alliance and Horde races", "[battleground]") {
+    for (uint8_t r : {1, 3, 4, 7, 11}) CHECK(bgFactionFromRace(r) == 1);
+    for (uint8_t r : {2, 5, 6, 8, 10}) CHECK(bgFactionFromRace(r) == 0);
+    CHECK(bgFactionFromRace(0) == -1);
+}

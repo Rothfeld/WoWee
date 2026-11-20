@@ -5003,10 +5003,46 @@ void SocialHandler::handlePvpLogData(network::Packet& packet) {
     if (!PvpLogDataPacket::parse(packet, bgScoreboard_, !isPreWotlk())) return;
 
     for (auto& ps : bgScoreboard_.players) {
-        auto ent = owner_.getEntityManager().getEntity(ps.guid);
-        if (ent && (ent->getType() == game::ObjectType::PLAYER || ent->getType() == game::ObjectType::UNIT)) {
-            auto u = std::static_pointer_cast<game::Unit>(ent);
-            if (!u->getName().empty()) ps.name = u->getName();
+        // Resolve player name, race, class, and (for non-arena BGs) faction from
+        // local player, visible entity, or name-query cache; query server if absent.
+        if (ps.guid == owner_.getPlayerGuid()) {
+            ps.name = owner_.lookupName(ps.guid);
+            if (ps.name.empty()) {
+                if (const auto* ch = owner_.getActiveCharacter()) ps.name = ch->name;
+            }
+            ps.raceId = owner_.getPlayerRace();
+            ps.classId = owner_.getPlayerClass();
+        } else {
+            if (auto ent = owner_.getEntityManager().getEntity(ps.guid)) {
+                if (ent->getType() == game::ObjectType::PLAYER || ent->getType() == game::ObjectType::UNIT) {
+                    auto u = std::static_pointer_cast<game::Unit>(ent);
+                    if (!u->getName().empty()) ps.name = u->getName();
+                    const uint32_t bytes0 = u->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+                    if (bytes0 != 0) {
+                        ps.raceId = static_cast<uint8_t>(bytes0 & 0xFF);
+                        ps.classId = static_cast<uint8_t>((bytes0 >> 8) & 0xFF);
+                    }
+                }
+            }
+            if (ps.name.empty()) {
+                ps.name = owner_.lookupName(ps.guid);
+            }
+            if (ps.raceId == 0) {
+                ps.raceId = owner_.lookupPlayerRace(ps.guid);
+            }
+            if (ps.classId == 0) {
+                ps.classId = owner_.lookupPlayerClass(ps.guid);
+            }
+            if (ps.name.empty() || ps.raceId == 0 || ps.classId == 0) {
+                owner_.queryPlayerName(ps.guid);
+            }
+        }
+        if (!bgScoreboard_.isArena) {
+            const int faction = bgFactionFromRace(ps.raceId);
+            if (faction >= 0) {
+                ps.team = static_cast<uint8_t>(faction);
+                ps.hasTeam = true;
+            }
         }
     }
     // The scoreboard is drawn from this and asked for it by name -
@@ -5014,6 +5050,30 @@ void SocialHandler::handlePvpLogData(network::Packet& packet) {
     // the answer arriving. Every row, every column and the winner were parsed
     // and stored, and the frame that displays them was never told.
     if (owner_.addonEventCallbackRef()) owner_.addonEventCallbackRef()("UPDATE_BATTLEFIELD_SCORE", {});
+}
+
+void SocialHandler::onPlayerNameResolved(uint64_t guid, const std::string& name,
+                                         uint8_t raceId, uint8_t classId) {
+    bool updated = false;
+    for (auto& ps : bgScoreboard_.players) {
+        if (ps.guid != guid) continue;
+        if (!name.empty() && ps.name != name) { ps.name = name; updated = true; }
+        if (raceId != 0 && ps.raceId != raceId) {
+            ps.raceId = raceId;
+            updated = true;
+            if (!bgScoreboard_.isArena) {
+                const int faction = bgFactionFromRace(raceId);
+                if (faction >= 0) {
+                    ps.team = static_cast<uint8_t>(faction);
+                    ps.hasTeam = true;
+                }
+            }
+        }
+        if (classId != 0 && ps.classId != classId) { ps.classId = classId; updated = true; }
+    }
+    if (updated && owner_.addonEventCallbackRef()) {
+        owner_.addonEventCallbackRef()("UPDATE_BATTLEFIELD_SCORE", {});
+    }
 }
 
 void SocialHandler::updateLogoutCountdown(float deltaTime) {
