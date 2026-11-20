@@ -1934,6 +1934,45 @@ network::Packet BattlemasterJoinArenaPacket::build(uint64_t battlemasterGuid,
     return packet;
 }
 
+network::Packet BattlefieldStatusPacket::buildLeave(uint16_t wireOpcode,
+                                                    uint8_t arenaType,
+                                                    uint32_t bgTypeId,
+                                                    bool classicFormat) {
+    network::Packet pkt(wireOpcode);
+    if (!classicFormat) {
+        pkt.writeUInt8(arenaType);
+        pkt.writeUInt8(0x00);
+        pkt.writeUInt32(bgTypeId);
+        pkt.writeUInt16(0x0000);
+    }
+    return pkt;
+}
+
+const char* resolveBattlefieldFlagTexture(uint32_t mapId, uint8_t carrierRace,
+                                          uint32_t wsAllianceFlagState,
+                                          uint32_t wsHordeFlagState,
+                                          int oneBasedIndex) {
+    auto isHordeRace = [](uint8_t race) {
+        return race == 2 || race == 5 || race == 6 || race == 8 || race == 10;
+    };
+    if (carrierRace != 0) {
+        const bool hordeCarrier = isHordeRace(carrierRace);
+        if (mapId == 566) {
+            return hordeCarrier ? "HordeFlag" : "AllianceFlag";
+        }
+        // WSG (489) and standard CTF: Horde carries AllianceFlag, Alliance carries HordeFlag.
+        return hordeCarrier ? "AllianceFlag" : "HordeFlag";
+    }
+    if (mapId == 489) {
+        // WorldState 2338 = Alliance flag (2 = picked up), 2339 = Horde flag (2 = picked up).
+        const bool alliancePicked = (wsAllianceFlagState == 2);
+        const bool hordePicked = (wsHordeFlagState == 2);
+        if (alliancePicked && !hordePicked) return "AllianceFlag";
+        if (hordePicked && !alliancePicked) return "HordeFlag";
+    }
+    return oneBasedIndex == 1 ? "AllianceFlag" : "HordeFlag";
+}
+
 network::Packet LfgJoinPacket::build(const std::vector<uint32_t>& dungeonIds,
                                     uint32_t roles,
                                     const std::string& comment) {

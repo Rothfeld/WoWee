@@ -351,3 +351,37 @@ TEST_CASE("substituteBgSystemPlayerToken expands $n and $N in BG system announce
     substituteBgSystemPlayerToken(unchanged, "Edricp");
     CHECK(unchanged == "The Battle for Arathi Basin has begun!");
 }
+
+TEST_CASE("CMSG_LEAVE_BATTLEFIELD writes 8-byte BG payload on TBC/WotLK",
+          "[battleground][packet]") {
+    SECTION("TBC Warsong Gulch leave carries bgTypeId in bytes 2..5") {
+        auto pkt = BattlefieldStatusPacket::buildLeave(0x2E1, 0, 2, /*classicFormat=*/false);
+        REQUIRE(pkt.getSize() == 8u);
+        const uint64_t raw = pkt.readUInt64();
+        const uint32_t bgTypeId = static_cast<uint32_t>((raw & 0x0000FFFFFFFF0000ULL) >> 16);
+        CHECK(bgTypeId == 2u);
+    }
+
+    SECTION("Classic leave sends empty payload") {
+        auto pkt = BattlefieldStatusPacket::buildLeave(0x2E1, 0, 2, /*classicFormat=*/true);
+        CHECK(pkt.getSize() == 0u);
+    }
+}
+
+TEST_CASE("resolveBattlefieldFlagTexture maps carrier faction and worldstate fallback",
+          "[battleground][wsg]") {
+    // WSG (map 489): Alliance carrier (Human = 1) holds HordeFlag; Horde carrier (Orc = 2) holds AllianceFlag.
+    CHECK(std::string(resolveBattlefieldFlagTexture(489, 1, 1, 2, 1)) == "HordeFlag");
+    CHECK(std::string(resolveBattlefieldFlagTexture(489, 2, 2, 1, 1)) == "AllianceFlag");
+
+    // Out-of-range uncached carrier (race 0) falls back to WSG world states 2338/2339.
+    CHECK(std::string(resolveBattlefieldFlagTexture(489, 0, 1, 2, 1)) == "HordeFlag");
+    CHECK(std::string(resolveBattlefieldFlagTexture(489, 0, 2, 1, 1)) == "AllianceFlag");
+    // Both picked up and uncached: server writes AllianceFlag carrier first, HordeFlag carrier second.
+    CHECK(std::string(resolveBattlefieldFlagTexture(489, 0, 2, 2, 1)) == "AllianceFlag");
+    CHECK(std::string(resolveBattlefieldFlagTexture(489, 0, 2, 2, 2)) == "HordeFlag");
+
+    // EotS (map 566): carrier faction matches flag icon.
+    CHECK(std::string(resolveBattlefieldFlagTexture(566, 1, 0, 0, 1)) == "AllianceFlag");
+    CHECK(std::string(resolveBattlefieldFlagTexture(566, 2, 0, 0, 1)) == "HordeFlag");
+}

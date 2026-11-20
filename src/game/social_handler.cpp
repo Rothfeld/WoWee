@@ -3987,7 +3987,18 @@ void SocialHandler::reportPvpAfk(uint64_t playerGuid) {
 
 void SocialHandler::leaveBattlefield() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_LEAVE_BATTLEFIELD));
+    uint8_t arenaType = 0;
+    uint32_t bgTypeId = 0;
+    for (const auto& s : bgQueues_) {
+        if (s.statusId == 3 || s.statusId == 4) {
+            arenaType = s.arenaType;
+            bgTypeId = s.bgTypeId;
+            break;
+        }
+    }
+    network::Packet pkt = BattlefieldStatusPacket::buildLeave(
+        wireOpcode(Opcode::CMSG_LEAVE_BATTLEFIELD), arenaType, bgTypeId,
+        isClassicLikeExpansion());
     owner_.getSocket()->send(pkt);
 }
 

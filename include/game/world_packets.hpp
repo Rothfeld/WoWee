@@ -3081,6 +3081,11 @@ public:
     /// classicFormat selects the pre-TBC shape, which has no arena fields.
     static bool parse(network::Packet& packet, BattlefieldStatusData& data,
                       bool classicFormat = false, bool wotlkFormat = true);
+
+    /// Build CMSG_LEAVE_BATTLEFIELD. TBC and WotLK read an 8-byte BG header
+    /// (uint8 arenaType, uint8 0, uint32 bgTypeId, uint16 0); Classic sends 0 bytes.
+    static network::Packet buildLeave(uint16_t wireOpcode, uint8_t arenaType,
+                                      uint32_t bgTypeId, bool classicFormat = false);
 };
 
 struct BgScoreboardData;
@@ -3104,6 +3109,17 @@ public:
     static network::Packet build(uint64_t battlemasterGuid, uint8_t arenaSlot,
                                  bool asGroup, bool isRated);
 };
+
+/// Resolve the Interface\WorldStateFrame texture name ("AllianceFlag" / "HordeFlag")
+/// for a carried battleground flag in MSG_BATTLEGROUND_PLAYER_POSITIONS.
+/// In WSG (map 489), an Alliance carrier holds "HordeFlag" and a Horde carrier
+/// holds "AllianceFlag"; if carrierRace is 0 (out of range and uncached), falls
+/// back to WSG world states 2338 (Alliance flag) / 2339 (Horde flag) and server order.
+/// In EotS (map 566), carrier faction matches the flag icon.
+const char* resolveBattlefieldFlagTexture(uint32_t mapId, uint8_t carrierRace,
+                                          uint32_t wsAllianceFlagState,
+                                          uint32_t wsHordeFlagState,
+                                          int oneBasedIndex);
 
 /** CMSG_LFG_JOIN packet builder */
 class LfgJoinPacket {

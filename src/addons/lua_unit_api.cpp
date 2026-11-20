@@ -3068,6 +3068,12 @@ void registerUnitLuaAPI(lua_State* L) {
                             break;
                         }
                     }
+                    if (minLevel == 0 && maxLevel == 0) {
+                        if (const auto* bm = gh->getBattlemasterInfo(q.bgTypeId)) {
+                            minLevel = bm->minLevel;
+                            maxLevel = bm->maxLevel;
+                        }
+                    }
                 }
             }
             // An empty queue answers a nil map name, which is what the real

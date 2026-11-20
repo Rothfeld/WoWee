@@ -1025,6 +1025,7 @@ void GameHandler::update(float deltaTime) {
         updateCombatText(deltaTime);
         tickMinimapPings(deltaTime);
         tickMirrorTimers(deltaTime);
+        updateAreaSpiritHealer(deltaTime);
 
         // Tick logout countdown
         if (socialHandler_) socialHandler_->updateLogoutCountdown(deltaTime);
@@ -1074,6 +1075,63 @@ void GameHandler::update(float deltaTime) {
 
         updateEntityInterpolation(deltaTime);
 
+    }
+}
+
+void GameHandler::updateAreaSpiritHealer(float deltaTime) {
+    if (areaSpiritHealerSeconds_ > 0.0f) {
+        areaSpiritHealerSeconds_ = std::max(0.0f, areaSpiritHealerSeconds_ - deltaTime);
+    }
+    if (areaSpiritHealerQueryCooldown_ > 0.0f) {
+        areaSpiritHealerQueryCooldown_ = std::max(0.0f, areaSpiritHealerQueryCooldown_ - deltaTime);
+    }
+
+    auto leaveRange = [this]() {
+        if (areaSpiritHealerInRange_ || areaSpiritHealerGuid_ != 0) {
+            areaSpiritHealerGuid_ = 0;
+            areaSpiritHealerSeconds_ = 0.0f;
+            areaSpiritHealerInRange_ = false;
+            fireAddonEvent("AREA_SPIRIT_HEALER_OUT_OF_RANGE", {});
+        }
+    };
+
+    if (!isInWorld() || !isPlayerGhost()) {
+        leaveRange();
+        return;
+    }
+
+    // Native 2.4.3 automatically queries nearby battleground Spirit Guides
+    // (NPC_FLAG_SPIRIT_GUIDE) while dead/ghost so SMSG_AREA_SPIRIT_HEALER_TIME
+    // triggers AREA_SPIRIT_HEALER_IN_RANGE and raises the wave countdown popup.
+    constexpr float kAreaSpiritGuideRangeSq = 30.0f * 30.0f;
+    uint64_t nearestGuid = 0;
+    float nearestDistSq = kAreaSpiritGuideRangeSq;
+    for (const auto& [guid, entity] : getEntityManager().getEntities()) {
+        if (!entity || entity->getType() != ObjectType::UNIT) continue;
+        auto* unit = static_cast<Unit*>(entity.get());
+        if ((unit->getNpcFlags() & NPC_FLAG_SPIRIT_GUIDE) == 0) continue;
+        if (unitReactionToPlayer(*unit) < 4) continue;
+        const float dx = movementInfo.x - unit->getX();
+        const float dy = movementInfo.y - unit->getY();
+        const float dz = movementInfo.z - unit->getZ();
+        const float distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq <= nearestDistSq) {
+            nearestDistSq = distSq;
+            nearestGuid = guid;
+        }
+    }
+
+    if (nearestGuid != 0) {
+        const bool needQuery =
+            (nearestGuid != areaSpiritHealerGuid_) ||
+            (!areaSpiritHealerInRange_ && areaSpiritHealerQueryCooldown_ <= 0.0f) ||
+            (areaSpiritHealerSeconds_ <= 0.0f && areaSpiritHealerQueryCooldown_ <= 0.0f);
+        if (needQuery) {
+            areaSpiritHealerQueryCooldown_ = 1.5f;
+            queryAreaSpiritHealer(nearestGuid);
+        }
+    } else {
+        leaveRange();
     }
 }
 

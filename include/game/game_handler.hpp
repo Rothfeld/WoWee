@@ -5787,6 +5787,9 @@ private:
     bool        resurrectHasSickness_ = false;
     bool        resurrectHasTimer_ = true;
     uint64_t    areaSpiritHealerGuid_ = 0;
+    float       areaSpiritHealerQueryCooldown_ = 0.0f;
+    bool        areaSpiritHealerInRange_ = false;
+    void        updateAreaSpiritHealer(float deltaTime);
     /// The conversation last asked for, until the server answers it.
     ///
     /// A server that refuses one says nothing - out of reach, a creature that

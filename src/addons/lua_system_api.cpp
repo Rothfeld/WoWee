@@ -3297,11 +3297,21 @@ static int lua_GetBattlefieldFlagPosition(lua_State* L) {
     const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
     float u = 0.0f, v = 0.0f;
     const auto* p = bgEntryAt(gh, 1, index);
-    if (p && bgCount(gh, 1) == 2 && svc && svc->mapUVForWorldPos &&
+    if (p && svc && svc->mapUVForWorldPos &&
         svc->mapUVForWorldPos(p->wowX, p->wowY, 0.0f, u, v)) {
+        uint8_t carrierRace = 0;
+        if (p->guid == gh->getPlayerGuid()) {
+            carrierRace = gh->getPlayerRace();
+        } else {
+            carrierRace = gh->lookupPlayerRace(p->guid);
+        }
+        const char* tex = game::resolveBattlefieldFlagTexture(
+            gh->getCurrentMapId(), carrierRace,
+            gh->getWorldState(2338).value_or(0),
+            gh->getWorldState(2339).value_or(0), index);
         lua_pushnumber(L, u);
         lua_pushnumber(L, v);
-        lua_pushstring(L, index == 1 ? "AllianceFlag" : "HordeFlag");
+        lua_pushstring(L, tex);
         return 3;
     }
     lua_pushnumber(L, 0.0);
@@ -7073,12 +7083,8 @@ void registerSystemLuaAPI(lua_State* L) {
             return 0;
         }},
                 {"GetNumBattlefieldFlagPositions", [](lua_State* L) -> int {
-            // Only when both are carried, for the reason the accessor gives:
-            // one carrier cannot be told from the other, and the loop this
-            // bounds draws a named flag texture per entry.
             auto* gh = getGameHandler(L);
-            const int n = bgCount(gh, 1);
-            lua_pushnumber(L, n == 2 ? 2 : 0);
+            lua_pushnumber(L, bgCount(gh, 1));
             return 1;
         }},
                 {"GetBattlefieldFlagPosition",     lua_GetBattlefieldFlagPosition},
