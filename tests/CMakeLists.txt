@@ -3137,6 +3137,55 @@ wowee_add_test(test_playable_animation
             ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp)
 set_tests_properties(playable_animation PROPERTIES SKIP_RETURN_CODE 4)
 
+# ── test_tbc_audio_coverage ──────────────────────────────────
+# End-to-end TBC 2.4.3 audio coverage: headless PCM mix, WAV/MP3 decode,
+# SoundEntries/UISoundLookups/ItemGroupSounds, ZoneMusic day/night & intro
+# cooldowns, weather/underwater loops, M2 $WNG/$WGG wing events, weapons,
+# SpellVisualKit sounds, GameObjectDisplayInfo sounds, NPCSounds, EmotesTextSound.
+add_executable(test_tbc_audio_coverage
+    test_tbc_audio_coverage.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_engine.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/sound_entries.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/audio_coordinator.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/music_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/footstep_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/creature_sound_index_assets.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/activity_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/mount_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/npc_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/player_voice_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ambient_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/ui_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/combat_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/spell_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio/movement_sound_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/game/zone_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/asset_manifest.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/loose_file_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_layout.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/blp_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dds_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/m2_loader.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/memory_monitor.cpp
+)
+target_include_directories(test_tbc_audio_coverage PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_tbc_audio_coverage SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_compile_definitions(test_tbc_audio_coverage PRIVATE
+    WOWEE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_tbc_audio_coverage PRIVATE
+    catch2_main ZLIB::ZLIB Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_tbc_audio_coverage PRIVATE m)
+endif()
+wowee_test_link_glm(test_tbc_audio_coverage)
+add_test(NAME tbc_audio_coverage COMMAND test_tbc_audio_coverage)
+set_tests_properties(tbc_audio_coverage PROPERTIES SKIP_RETURN_CODE 4)
+register_test_target(test_tbc_audio_coverage)
+
 get_property(ALL_TEST_TARGETS GLOBAL PROPERTY WOWEE_ALL_TEST_TARGETS)
 list(LENGTH ALL_TEST_TARGETS _wowee_test_target_count)
 message(STATUS "Test targets registered: ${_wowee_test_target_count}")
