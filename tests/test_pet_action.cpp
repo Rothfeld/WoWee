@@ -62,3 +62,17 @@ TEST_CASE("a spell id larger than 24 bits cannot corrupt the type", "[pet]") {
     REQUIRE(petActionType(packed) == ActionType::Enabled);
     REQUIRE(petActionId(packed) == 0x00FFFFFFu);
 }
+
+TEST_CASE("stay and passive have zero low bits but non-zero packed values", "[pet]") {
+    // Regression: CastPetAction and GetPetActionSlotUsable previously checked
+    // (packed & 0x00FFFFFF) != 0, silently dropping Stay (0x07000000) and
+    // Passive (0x06000000).
+    const uint32_t stay    = packPetAction(ActionType::Command,  kStay);
+    const uint32_t passive = packPetAction(ActionType::Reaction, kPassive);
+    REQUIRE(stay != 0u);
+    REQUIRE(passive != 0u);
+    REQUIRE(petActionId(stay) == 0u);
+    REQUIRE(petActionId(passive) == 0u);
+    REQUIRE_FALSE(isPetSpellAction(stay));
+    REQUIRE_FALSE(isPetSpellAction(passive));
+}

@@ -35,11 +35,14 @@ inline CombatTextFilterRule combatTextFilterFor(CombatTextEntry::Type type,
                                                 uint64_t srcGuid,
                                                 uint64_t dstGuid,
                                                 uint64_t petGuid,
-                                                uint64_t targetGuid) {
+                                                uint64_t targetGuid,
+                                                bool isSpell = false) {
     using T = CombatTextEntry;
-    // Everything the pet causes is the "Pet Damage" row ("Show damage caused
-    // by your pet"): its Firebolts and their resists as well as its swings.
-    if (petGuid != 0 && srcGuid == petGuid) return {.cvar = "PetMeleeDamage", .fallback = "1"};
+    // TBC build 8606 gates pet melee swings with PetMeleeDamage and pet spell
+    // abilities (e.g. Imp Firebolt) with PetSpellDamage (verified on Pair 8).
+    if (petGuid != 0 && srcGuid == petGuid) {
+        return {.cvar = isSpell ? "PetSpellDamage" : "PetMeleeDamage", .fallback = "1"};
+    }
     switch (type) {
         // Effects rather than numbers, read against the unit they landed on
         // instead of who caused them: the panel offers your target and

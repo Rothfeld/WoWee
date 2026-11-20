@@ -672,6 +672,8 @@ struct Widget {
     /// The unit a model frame was told to show with Model:SetUnit, resolved
     /// to its GUID when set (as the original client binds it). Zero is none.
     uint64_t modelUnitGuid = 0;
+    /// True when this Model frame displays UI-AutoCastButton.mdx (pet bar / pet spellbook autocast shine).
+    bool isAutoCastShine = false;
     /// Active TabardModel designer state (TabardFrame).
     pipeline::GuildTabardEmblem tabardDesign;
     bool hasTabardDesign = false;

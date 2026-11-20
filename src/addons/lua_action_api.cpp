@@ -255,9 +255,10 @@ static std::optional<game::ActionBarSlot> macroStandIn(game::GameHandler& gh, co
     return std::nullopt;
 }
 
-enum class CursorType { NONE, SPELL, ITEM, MACRO, MERCHANT, MONEY, GUILDBANK };
+enum class CursorType { NONE, SPELL, ITEM, MACRO, MERCHANT, MONEY, GUILDBANK, PET_ACTION };
 static CursorType s_cursorType = CursorType::NONE;
 static uint32_t   s_cursorId   = 0;    // spellId, itemId, or action slot
+static uint32_t   s_cursorPetPacked = 0; // packed pet action when CursorType::PET_ACTION
 static int        s_cursorSlot = 0;    // source slot for placement
 /// Which container the cursor's item came out of, and one of the four values
 /// game::slots documents: 0 the backpack, 1-4 a worn bag, -1 the paperdoll,
@@ -269,6 +270,7 @@ static uint64_t   s_cursorMoney = 0;   // copper, when the cursor carries money
 /// has to wait on the cursor until the drop says where it is going.
 static uint32_t   s_cursorSplit = 0;
 static void setCursorType(lua_State* L, CursorType type);
+static void clearCursorItem(lua_State* L);
 /// Where the cursor's item came from, in wire bag/slot space. Declared here
 /// because the guild bank pickup above needs it and it is defined further down
 /// with the other cursor helpers.
@@ -324,19 +326,54 @@ bool cursorHoldsAction() {
            (s_cursorType == CursorType::ITEM && !game::slots::cursorSourceIsInventory(s_cursorBag));
 }
 
-/// PickupPetAction(slot) - pick a pet ability up off the pet bar.
+/// PickupPetAction(slot) - pick up, place, or swap a pet bar slot (1..10).
 ///
-/// Defined and does nothing. The cursor here holds spells, items, actions and
-/// macros; a pet action is a fifth kind in its own slot space, and moving one
-/// is a server operation this client does not send. Inventing a cursor state
-/// that cannot be put down anywhere would be worse than not picking up.
-///
-/// Defined because it is reachable three ways - shift-clicking a pet button,
-/// dragging one, and dropping on one - and the pet bar is drawn. Undefined,
-/// the first shift-click on a pet ability takes the bar down. Clicking a pet
-/// ability to use it goes through a different path and works; only rearranging
-/// the bar is lost.
-static int lua_PickupPetAction(lua_State* L) { (void)L; return 0; }
+/// Mirrors PickupAction: empty cursor lifts the slot; carrying a pet action
+/// swaps source and destination via CMSG_PET_SET_ACTION (24-byte 2-slot form);
+/// carrying a pet spell from SpellBookFrame places it into an empty or spell
+/// slot via CMSG_PET_SET_ACTION (16-byte 1-slot form).
+static int lua_PickupPetAction(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh || !gh->hasPet()) return 0;
+    const int slot = static_cast<int>(luaL_optnumber(L, 1, 0));
+    if (slot < 1 || slot > game::GameHandler::PET_ACTION_BAR_SLOTS) return 0;
+    const uint32_t existing = gh->getPetActionSlot(slot - 1);
+
+    if (s_cursorType == CursorType::PET_ACTION) {
+        const int srcSlot = s_cursorSlot;
+        const uint32_t heldPacked = s_cursorPetPacked;
+        clearCursorItem(L);
+        if (srcSlot >= 1 && srcSlot <= game::GameHandler::PET_ACTION_BAR_SLOTS && srcSlot != slot) {
+            gh->petSetAction(static_cast<uint32_t>(slot - 1), heldPacked,
+                             true, static_cast<uint32_t>(srcSlot - 1), existing);
+        }
+        return 0;
+    }
+
+    if (s_cursorType == CursorType::SPELL && s_cursorId != 0) {
+        const uint32_t spellId = s_cursorId;
+        const auto& petSpells = gh->getPetSpells();
+        const bool isPetSpell = std::find(petSpells.begin(), petSpells.end(), spellId) != petSpells.end();
+        if (!isPetSpell) return 0;
+        // Commands and stances cannot be overwritten by a single-slot drop.
+        if (existing != 0 && !game::pet::isPetSpellAction(existing)) return 0;
+        const uint32_t packed = game::pet::packPetAction(
+            gh->isPetSpellAutocast(spellId) ? game::pet::ActionType::Enabled
+                                            : game::pet::ActionType::Disabled,
+            spellId);
+        clearCursorItem(L);
+        gh->petSetAction(static_cast<uint32_t>(slot - 1), packed);
+        return 0;
+    }
+
+    if (s_cursorType != CursorType::NONE || existing == 0) return 0;
+    s_cursorId = game::pet::petActionId(existing);
+    s_cursorPetPacked = existing;
+    s_cursorSlot = slot;
+    s_cursorBag = -1;
+    setCursorType(L, CursorType::PET_ACTION);
+    return 0;
+}
 
 /// Change what the cursor is holding, and say so.
 ///
@@ -360,7 +397,7 @@ static void clearCursorItem(lua_State* L);
 /// thing on the cursor that does not: 2.4.3 fires no ACTIONBAR_SHOWGRID for
 /// PickupPlayerMoney and none of the grid's buttons would take it.
 static bool showsActionGrid(CursorType type) {
-    return type != CursorType::NONE && type != CursorType::MONEY;
+    return type != CursorType::NONE && type != CursorType::MONEY && type != CursorType::PET_ACTION;
 }
 
 static void setCursorType(lua_State* L, CursorType type) {
@@ -369,8 +406,11 @@ static void setCursorType(lua_State* L, CursorType type) {
     // cursor between the pickup and the drop, and a leftover would be applied
     // to the next withdrawal - a stack the player never asked to divide.
     if (type != CursorType::GUILDBANK) s_cursorSplit = 0;
+    if (type != CursorType::PET_ACTION) s_cursorPetPacked = 0;
     const bool wasGrid = showsActionGrid(s_cursorType);
     const bool nowGrid = showsActionGrid(type);
+    const bool wasPetGrid = s_cursorType == CursorType::PET_ACTION;
+    const bool nowPetGrid = type == CursorType::PET_ACTION;
     s_cursorType = type;
     lua_getfield(L, LUA_REGISTRYINDEX, "wowee_lua_engine");
     auto* engine = static_cast<LuaEngine*>(lua_touserdata(L, -1));
@@ -385,8 +425,10 @@ static void setCursorType(lua_State* L, CursorType type) {
     // In 2.4.3's order: a pickup says CURSOR_UPDATE and then
     // ACTIONBAR_SHOWGRID, a put-down ACTIONBAR_HIDEGRID and then CURSOR_UPDATE.
     if (wasGrid && !nowGrid) engine->fireEvent("ACTIONBAR_HIDEGRID", {});
+    if (wasPetGrid && !nowPetGrid) engine->fireEvent("PET_BAR_HIDEGRID", {});
     engine->fireEvent("CURSOR_UPDATE", {});
     if (nowGrid && !wasGrid) engine->fireEvent("ACTIONBAR_SHOWGRID", {});
+    if (nowPetGrid && !wasPetGrid) engine->fireEvent("PET_BAR_SHOWGRID", {});
 }
 
 // Bonus bar five while the player possesses a unit: action slots 121-130 are
@@ -926,6 +968,10 @@ static int lua_GetCursorInfo(lua_State* L) {
             lua_pushstring(L, "merchant");
             lua_pushnumber(L, s_cursorId);   // the vendor's list index
             return 2;
+        case CursorType::PET_ACTION:
+            lua_pushstring(L, "petaction");
+            lua_pushnumber(L, s_cursorSlot);
+            return 2;
         default:
             return 0;
     }
@@ -1300,6 +1346,16 @@ static std::string cursorPicture(lua_State* L) {
             const int index = static_cast<int>(s_cursorId);
             if (index < 1 || index > static_cast<int>(items.size())) return {};
             return gh->getItemIconPath(items[static_cast<size_t>(index) - 1].displayInfoId);
+        }
+        case CursorType::PET_ACTION: {
+            if (const char* globalName = possessTokenTexture(s_cursorPetPacked)) {
+                lua_getglobal(L, globalName);
+                std::string path = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+                lua_pop(L, 1);
+                return path;
+            }
+            const uint32_t spellId = game::pet::petActionId(s_cursorPetPacked);
+            return spellId ? gh->getSpellIconPath(spellId) : std::string{};
         }
         case CursorType::NONE:
             break;
@@ -3030,12 +3086,12 @@ void registerActionLuaAPI(lua_State* L) {
                 {"GetPetActionSlotUsable", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
-            if (!gh || index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) {
+            if (!gh || !gh->hasPet() || index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) {
                 lua_pushboolean(L, 0);
                 return 1;
             }
-            const uint32_t spellId = gh->getPetActionSlot(index - 1) & 0x00FFFFFF;
-            lua_pushboolean(L, spellId != 0 ? 1 : 0);
+            const uint32_t packed = gh->getPetActionSlot(index - 1);
+            lua_pushboolean(L, packed != 0 ? 1 : 0);
             return 1;
         }},
                 // GetPetActionInfo(index) →
@@ -3129,9 +3185,24 @@ void registerActionLuaAPI(lua_State* L) {
             // belongs to the stance. Reading the autocast bits as active put
             // it on every spell the pet knows.
             flag(false);                                                // isActive
-            flag(true);                                                 // autoCastAllowed
-            flag(gh->isPetSpellAutocast(spellId));
+            const bool canAutocast = (type == game::pet::ActionType::Enabled ||
+                                      type == game::pet::ActionType::Disabled);
+            flag(canAutocast);                                          // autoCastAllowed
+            flag(canAutocast && gh->isPetSpellAutocast(spellId));       // autoCastEnabled
             return 7;
+        }},
+                {"WoweePetActionSpellId", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+            if (!gh || index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) {
+                lua_pushnumber(L, 0);
+                return 1;
+            }
+            const uint32_t packed = gh->getPetActionSlot(index - 1);
+            const uint32_t spellId = game::pet::isPetSpellAction(packed)
+                ? game::pet::petActionId(packed) : 0u;
+            lua_pushnumber(L, spellId);
+            return 1;
         }},
                 // IsPetAttackAction(index) - which slot is the attack command,
                 // so the bar can flash it while the pet is on a target.
@@ -3215,14 +3286,21 @@ void registerActionLuaAPI(lua_State* L) {
             auto* gh = getGameHandler(L);
             int index = static_cast<int>(luaL_checknumber(L, 1));
             if (!gh || !gh->hasPet() || index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) return 0;
-            uint32_t packed = gh->getPetActionSlot(index - 1);
-            uint32_t spellId = packed & 0x00FFFFFF;
-            if (spellId != 0) {
+            const uint32_t packed = gh->getPetActionSlot(index - 1);
+            if (packed == 0) return 0;
+            const auto type = game::pet::petActionType(packed);
+            const uint32_t actionId = game::pet::petActionId(packed);
+            // Stay (COMMAND_STAY=0) and Passive (REACT_PASSIVE=0) have low 24 bits == 0
+            // and must still be sent; only empty spell slots (non-command/reaction with id 0) skip.
+            if (game::pet::isPetSpellAction(packed) && actionId == 0) return 0;
+
+            uint64_t target = 0;
+            const bool needsTarget = game::pet::isPetSpellAction(packed) ||
+                (type == game::pet::ActionType::Command && actionId == game::pet::kAttack);
+            if (needsTarget) {
                 // CastPetAction(action, unit) - the unit is what a click-cast
                 // binding on a unit frame passes, and dropping it sent the pet
-                // at whatever was targeted instead of what was clicked. The
-                // same fault CastSpellByID had, two files over.
-                uint64_t target = 0;
+                // at whatever was targeted instead of what was clicked.
                 if (const char* uid = luaL_optstring(L, 2, nullptr)) {
                     std::string u(uid);
                     toLowerInPlace(u);
@@ -3230,17 +3308,25 @@ void registerActionLuaAPI(lua_State* L) {
                 }
                 if (target == 0)
                     target = gh->hasTarget() ? gh->getTargetGuid() : gh->getPetGuid();
-                gh->sendPetAction(packed, target);
             }
+            gh->sendPetAction(packed, target);
             return 0;
         }},
                 {"TogglePetAutocast", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             int index = static_cast<int>(luaL_checknumber(L, 1));
             if (!gh || !gh->hasPet() || index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) return 0;
-            uint32_t packed = gh->getPetActionSlot(index - 1);
-            uint32_t spellId = packed & 0x00FFFFFF;
+            const uint32_t packed = gh->getPetActionSlot(index - 1);
+            if (!game::pet::isPetSpellAction(packed)) return 0;
+            const auto type = game::pet::petActionType(packed);
+            if (type != game::pet::ActionType::Enabled && type != game::pet::ActionType::Disabled) return 0;
+            const uint32_t spellId = game::pet::petActionId(packed);
             if (spellId != 0) gh->togglePetSpellAutocast(spellId);
+            return 0;
+        }},
+                {"PetStopAttack", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh && gh->hasPet()) gh->petStopAttack();
             return 0;
         }},
                 {"PetDismiss", [](lua_State* L) -> int {
@@ -3301,7 +3387,29 @@ void registerActionLuaAPI(lua_State* L) {
         }},
                 {"IsPetAttackActive", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
-            lua_pushboolean(L, gh && gh->getPetCommand() == 2 ? 1 : 0); // 2=attack
+            if (!gh || gh->getPetCommand() != game::pet::kAttack) {
+                lua_pushnil(L);
+                return 1;
+            }
+            // PetActionButton_OnClick passes this:GetID(); only the Attack slot
+            // should answer active so clicking Follow/Stay/stances never routes
+            // to PetStopAttack().
+            if (lua_gettop(L) >= 1 && !lua_isnil(L, 1)) {
+                const int index = static_cast<int>(luaL_optnumber(L, 1, 0));
+                if (index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) {
+                    lua_pushnil(L);
+                    return 1;
+                }
+                const uint32_t packed = gh->getPetActionSlot(index - 1);
+                const bool isAttackSlot =
+                    game::pet::petActionType(packed) == game::pet::ActionType::Command &&
+                    game::pet::petActionId(packed) == game::pet::kAttack;
+                if (!isAttackSlot) {
+                    lua_pushnil(L);
+                    return 1;
+                }
+            }
+            lua_pushnumber(L, 1);
             return 1;
         }},
                 {"PetDefensiveMode", [](lua_State* L) -> int {

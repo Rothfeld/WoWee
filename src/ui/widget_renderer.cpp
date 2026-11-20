@@ -2547,6 +2547,46 @@ void WidgetRenderer::draw(WidgetTree& tree, float screenW, float screenH) {
                              ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
                              packColor(w->color, w->effAlpha));
             }
+            if (w->isAutoCastShine) {
+                // Animated golden orbiting sparkles matching TBC UI-AutoCastButton.mdx
+                // around the perimeter of PetActionButton*AutoCast and SpellButton*AutoCast.
+                const float rw = x1 - x0;
+                const float rh = y1 - y0;
+                const float perim = 2.0f * (rw + rh);
+                if (perim > 1.0f) {
+                    const double now = ImGui::GetTime();
+                    const float baseSpeed = 0.45f; // revolutions per second
+                    const auto pointOnRect = [&](float t) -> ImVec2 {
+                        float d = std::fmod(t, 1.0f);
+                        if (d < 0.0f) d += 1.0f;
+                        float p = d * perim;
+                        if (p < rw) return ImVec2(x0 + p, y0);
+                        p -= rw;
+                        if (p < rh) return ImVec2(x1, y0 + p);
+                        p -= rh;
+                        if (p < rw) return ImVec2(x1 - p, y1);
+                        p -= rw;
+                        return ImVec2(x0, y1 - p);
+                    };
+                    // Soft golden border glow
+                    const ImU32 glowCol = IM_COL32(255, 220, 90, static_cast<int>(w->effAlpha * 110.0f));
+                    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), glowCol, 0.0f, 0, std::max(1.5f, 1.6f * ws));
+                    // 4 orbiting sparkle trails (head + 3 trailing dots each)
+                    for (int g = 0; g < 4; ++g) {
+                        const float headT = static_cast<float>(std::fmod(now * baseSpeed + g * 0.25, 1.0));
+                        for (int k = 0; k < 4; ++k) {
+                            const float t = headT - k * 0.022f;
+                            const ImVec2 pt = pointOnRect(t);
+                            const float radius = (k == 0 ? 2.8f : k == 1 ? 2.1f : k == 2 ? 1.5f : 1.0f) * ws;
+                            const float fade = (1.0f - k * 0.22f) * w->effAlpha;
+                            const ImU32 outerCol = IM_COL32(255, 210, 60, static_cast<int>(fade * 180.0f));
+                            const ImU32 coreCol  = IM_COL32(255, 252, 210, static_cast<int>(fade * 255.0f));
+                            dl->AddCircleFilled(pt, radius * 1.45f, outerCol, 10);
+                            dl->AddCircleFilled(pt, radius * 0.75f, coreCol, 8);
+                        }
+                    }
+                }
+            }
             // A tooltip's rows, counted once: the box below is drawn to hold
             // them and the text further down is laid out by them.
             //

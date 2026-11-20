@@ -4676,6 +4676,69 @@ void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
     owner_.getSocket()->send(pkt);
     LOG_DEBUG("sendPetAction: petGuid=0x", std::hex, owner_.petGuidRef(),
               " action=0x", action, " target=0x", targetGuid, std::dec);
+
+    // The server does not echo SMSG_PET_SPELLS or SMSG_PET_MODE after
+    // CMSG_PET_ACTION for stance/command changes. Update local command/react
+    // state immediately and fire PET_BAR_UPDATE so PetActionBar_Update()
+    // moves the active checked border onto the chosen button.
+    const auto type = pet::petActionType(action);
+    const uint32_t id = pet::petActionId(action);
+    if (type == pet::ActionType::Reaction && id <= pet::kAggressive) {
+        owner_.petReactRef() = static_cast<uint8_t>(id);
+        owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+    } else if (type == pet::ActionType::Command) {
+        if (id == pet::kStay || id == pet::kFollow) {
+            owner_.petCommandRef() = static_cast<uint8_t>(id);
+        }
+        owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+    }
+}
+
+void SpellHandler::petStopAttack() {
+    if (!owner_.hasPet() || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_STOP_ATTACK));
+    pkt.writeUInt64(owner_.petGuidRef());
+    owner_.getSocket()->send(pkt);
+    LOG_DEBUG("CMSG_PET_STOP_ATTACK: petGuid=0x", std::hex, owner_.petGuidRef(), std::dec);
+    if (owner_.petCommandRef() == pet::kAttack) {
+        owner_.petCommandRef() = pet::kFollow;
+        owner_.fireAddonEvent("PET_ATTACK_STOP", {});
+    }
+    owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+}
+
+void SpellHandler::petCancelAura(uint32_t spellId) {
+    if (!owner_.hasPet() || spellId == 0 || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_CANCEL_AURA));
+    pkt.writeUInt64(owner_.petGuidRef());
+    pkt.writeUInt32(spellId);
+    owner_.getSocket()->send(pkt);
+    LOG_DEBUG("CMSG_PET_CANCEL_AURA: petGuid=0x", std::hex, owner_.petGuidRef(), std::dec, " spellId=", spellId);
+}
+
+void SpellHandler::petSetAction(uint32_t pos0, uint32_t data0,
+                                bool hasSecond, uint32_t pos1, uint32_t data1) {
+    if (!owner_.hasPet() || owner_.getState() != WorldState::IN_WORLD || !owner_.getSocket()) return;
+    if (pos0 >= GameHandler::PET_ACTION_BAR_SLOTS) return;
+    if (hasSecond && pos1 >= GameHandler::PET_ACTION_BAR_SLOTS) return;
+
+    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_SET_ACTION));
+    pkt.writeUInt64(owner_.petGuidRef());
+    pkt.writeUInt32(pos0);
+    pkt.writeUInt32(data0);
+    if (hasSecond) {
+        pkt.writeUInt32(pos1);
+        pkt.writeUInt32(data1);
+    }
+    owner_.getSocket()->send(pkt);
+
+    owner_.petActionSlotsRef()[pos0] = data0;
+    if (hasSecond) {
+        owner_.petActionSlotsRef()[pos1] = data1;
+    }
+    LOG_DEBUG("CMSG_PET_SET_ACTION: pos0=", pos0, " data0=0x", std::hex, data0,
+              " hasSecond=", std::dec, hasSecond, " pos1=", pos1, " data1=0x", std::hex, data1, std::dec);
+    owner_.fireAddonEvent("PET_BAR_UPDATE", {});
 }
 
 void SpellHandler::dismissPet() {
@@ -4700,7 +4763,20 @@ void SpellHandler::togglePetSpellAutocast(uint32_t spellId) {
         owner_.petAutocastSpellsRef().insert(spellId);
     else
         owner_.petAutocastSpellsRef().erase(spellId);
+    // Keep packed pet action bar slots synchronized (ACT_ENABLED=0xC1 <-> ACT_DISABLED=0x81).
+    for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
+        uint32_t packed = owner_.petActionSlotsRef()[i];
+        if (pet::isPetSpellAction(packed) && pet::petActionId(packed) == spellId) {
+            const auto t = pet::petActionType(packed);
+            if (t == pet::ActionType::Enabled || t == pet::ActionType::Disabled) {
+                owner_.petActionSlotsRef()[i] = pet::packPetAction(
+                    newState ? pet::ActionType::Enabled : pet::ActionType::Disabled, spellId);
+            }
+        }
+    }
     LOG_DEBUG("togglePetSpellAutocast: spellId=", spellId, " autocast=", static_cast<int>(newState));
+    owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+    owner_.fireAddonEvent("SPELL_UPDATE_USABLE", {});
 }
 
 void SpellHandler::renamePet(const std::string& newName) {

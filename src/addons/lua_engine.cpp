@@ -796,6 +796,19 @@ int lua_Model_GetModelScale(lua_State* L) {
     lua_pushnumber(L, w ? w->modelScale : 1.0);
     return 1;
 }
+int lua_Model_SetModelFile(lua_State* L) {
+    if (auto* w = widgetOf(L, 1)) {
+        const char* path = lua_isstring(L, 2) ? lua_tostring(L, 2) : nullptr;
+        bool shine = false;
+        if (path) {
+            std::string lower(path);
+            for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            shine = lower.find("ui-autocastbutton") != std::string::npos;
+        }
+        w->isAutoCastShine = shine;
+    }
+    return 0;
+}
 
 // --- TabardModel methods (TabardFrame.lua / TabardFrame.xml) ---
 
@@ -7987,6 +8000,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetFacing",       lua_Model_GetFacing},
         {"SetModelScale",   lua_Model_SetModelScale},
         {"GetModelScale",   lua_Model_GetModelScale},
+        {"__WoweeSetModelFile", lua_Model_SetModelFile},
         {"InitializeTabardColors", lua_TabardModel_InitializeTabardColors},
         {"CycleVariation",         lua_TabardModel_CycleVariation},
         {"GetUpperEmblemTexture",  lua_TabardModel_GetUpperEmblemTexture},
@@ -8346,7 +8360,7 @@ void LuaEngine::registerCoreAPI() {
         // and built by the render loop, which is where the offscreen views
         // are; zero clears it.
         "function mt:SetCreature(id) __WoweeSetModelCreature(self, id) end\n"
-        "function mt:ClearModel() __WoweeSetModelCreature(self, 0) __WoweePriv(self).model = nil end\n"
+        "function mt:ClearModel() __WoweeSetModelCreature(self, 0) self:__WoweeSetModelFile(nil) __WoweePriv(self).model = nil end\n"
         // The model file a Model shows, as 2.4.3 reads it back: lower case
         // with the .m2 extension (PlayerArrowFrame answers
         // interface\\minimap\\minimaparrow.m2), and the frame itself when it
@@ -8358,6 +8372,7 @@ void LuaEngine::registerCoreAPI() {
         "    path = string.lower(path):gsub('%.mdx$', '.m2'):gsub('%.mdl$', '.m2')\n"
         "    if not path:find('%.m2$') then path = path .. '.m2' end\n"
         "    __WoweePriv(self).model = path\n"
+        "    self:__WoweeSetModelFile(path)\n"
         "end\n"
         "function mt:GetModel() return __WoweePriv(self).model or self end\n"
         "function mt:RefreshUnit() end\n"
@@ -10535,7 +10550,13 @@ void LuaEngine::registerCoreAPI() {
         "    self:ClearLines()\n"
         "    local name, subtext, _, isToken = GetPetActionInfo(slot)\n"
         "    if not name then return end\n"
-        "    if isToken then\n"
+        "    if not isToken then\n"
+        "        local spellId = WoweePetActionSpellId and WoweePetActionSpellId(slot) or 0\n"
+        "        if spellId and spellId > 0 then\n"
+        "            self:SetSpellByID(spellId, true)\n"
+        "            if self:NumLines() > 0 then return end\n"
+        "        end\n"
+        "    else\n"
         "        name = _G[name] or name\n"
         "        subtext = subtext and _G[subtext] or subtext\n"
         "    end\n"

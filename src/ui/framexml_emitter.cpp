@@ -1231,10 +1231,15 @@ struct Emitter {
         // doubled DressUpModel's rect and every child anchored inside it:
         // the dressing room's figure covered the top of the screen and its
         // rotate buttons hung in the middle of the scene.
+        const bool isModelTag = node.name == "Model" || node.name == "PlayerModel" ||
+                                node.name == "DressUpModel" || node.name == "TabardModel";
+        if (isModelTag) {
+            if (const std::string* file = node.attr("file")) {
+                line(var + ":SetModel(" + quote(*file) + ")");
+            }
+        }
         if (const std::string* sc = node.attr("scale")) {
-            const bool model = node.name == "Model" || node.name == "PlayerModel" ||
-                               node.name == "DressUpModel" || node.name == "TabardModel";
-            line(var + (model ? ":SetModelScale(" : ":SetScale(") + *sc + ")");
+            line(var + (isModelTag ? ":SetModelScale(" : ":SetScale(") + *sc + ")");
         }
         if (node.attr("toplevel")) {
             line(var + ":SetToplevel(" +

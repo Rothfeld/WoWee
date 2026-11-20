@@ -238,6 +238,7 @@ for 3 s and faded linearly to 0 at 6 s (`footprintOpacity`), attenuated by
 distance fog. Evidence: `_experiments/20261120T125526Z.snow_footprints_parity/`
 in the workspace.
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
+TBC 2.4.3 pet world floating combat text draws pet melee swings (normal and crit) in orange `(255, 132, 0)` gated by `PetMeleeDamage`, and pet spell abilities (e.g. Imp `Firebolt`) in yellow `(255, 222, 0)` gated by `PetSpellDamage`. `PetActionBarFrame` updates local command/reaction state and fires `PET_BAR_UPDATE` on `CMSG_PET_ACTION` (`Stay=0x07000000` and `Passive=0x06000000` have zero low 24 bits), `CMSG_PET_SPELL_AUTOCAST`, `CMSG_PET_STOP_ATTACK`, and `CMSG_PET_SET_ACTION`, and draws `UI-AutoCastButton.mdx` as animated orbiting golden sparkles. Evidence: `_experiments/20261120T132000Z.pet_bar_and_combat_text/` in the workspace.
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).
 Minimap blips, rim arrows and tooltips: [original rules](docs/minimap-markers.md).

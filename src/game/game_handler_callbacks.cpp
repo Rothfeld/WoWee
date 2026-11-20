@@ -2643,6 +2643,19 @@ void GameHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
     if (spellHandler_) spellHandler_->sendPetAction(action, targetGuid);
 }
 
+void GameHandler::petStopAttack() {
+    if (spellHandler_) spellHandler_->petStopAttack();
+}
+
+void GameHandler::petCancelAura(uint32_t spellId) {
+    if (spellHandler_) spellHandler_->petCancelAura(spellId);
+}
+
+void GameHandler::petSetAction(uint32_t pos0, uint32_t data0,
+                               bool hasSecond, uint32_t pos1, uint32_t data1) {
+    if (spellHandler_) spellHandler_->petSetAction(pos0, data0, hasSecond, pos1, data1);
+}
+
 void GameHandler::dismissCritter() {
     if (activeCritterGuid_ == 0 || !getSocket() || getState() != WorldState::IN_WORLD) return;
     const uint16_t wire = wireOpcode(Opcode::CMSG_DISMISS_CRITTER);

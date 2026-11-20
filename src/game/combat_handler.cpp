@@ -469,7 +469,8 @@ void CombatHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, ui
     // lives in combat_text_filter.hpp so it can be tested without a settings
     // store; only the lookup is here.
     const auto rule = combatTextFilterFor(type, isPlayerSource, srcGuid, dstGuid,
-                                          owner_.getPetGuid(), owner_.getTargetGuid());
+                                          owner_.getPetGuid(), owner_.getTargetGuid(),
+                                          spellId != 0);
     if (rule.cvar && addons::storedCVarValue(rule.cvar, rule.fallback) == "0") return;
 
     CombatTextEntry entry;
@@ -1361,6 +1362,7 @@ void CombatHandler::handlePetMode(network::Packet& packet) {
                 owner_.addonEventCallbackRef()(
                     nowAttacking ? "PET_ATTACK_START" : "PET_ATTACK_STOP", {});
             }
+            owner_.fireAddonEvent("PET_BAR_UPDATE", {});
             LOG_DEBUG("SMSG_PET_MODE: command=", static_cast<int>(owner_.petCommandRef()),
                       " react=", static_cast<int>(owner_.petReactRef()));
         }

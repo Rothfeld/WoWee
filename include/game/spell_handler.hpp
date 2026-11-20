@@ -349,6 +349,10 @@ public:
 
     // Pet spells
     void sendPetAction(uint32_t action, uint64_t targetGuid = 0);
+    void petStopAttack();
+    void petCancelAura(uint32_t spellId);
+    void petSetAction(uint32_t pos0, uint32_t data0,
+                      bool hasSecond = false, uint32_t pos1 = 0, uint32_t data1 = 0);
     void dismissPet();
     void togglePetSpellAutocast(uint32_t spellId);
     void renamePet(const std::string& newName);

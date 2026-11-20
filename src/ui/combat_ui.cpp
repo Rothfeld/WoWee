@@ -127,8 +127,9 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     for (const auto& entry : entries) {
         // The player's lines and the pet's ("Pet Damage") are written over
         // the unit they landed on.
-        const bool outgoing = entry.isPlayerSource ||
-            (entry.srcGuid != 0 && entry.srcGuid == gameHandler.getPetGuid());
+        const bool isPetSource = !entry.isPlayerSource &&
+            entry.srcGuid != 0 && entry.srcGuid == gameHandler.getPetGuid();
+        const bool outgoing = entry.isPlayerSource || isPetSource;
         const bool experience = entry.type == game::CombatTextEntry::XP_GAIN;
         const bool reward = experience || entry.type == game::CombatTextEntry::HONOR_GAIN;
         // Lines that land on the player are Blizzard_CombatText's, which
@@ -165,7 +166,8 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
                 }
                 snprintf(text, sizeof(text), "%s", word.c_str());
             }
-            color = shown.spell ? ImVec4(1, 222.0f / 255.0f, 0, alpha) : ImVec4(1, 1, 1, alpha);
+            const fct::ColorRgb rgb = fct::colorFor(shown, isPetSource);
+            color = ImVec4(rgb.r, rgb.g, rgb.b, alpha);
         } else switch (entry.type) {
             case game::CombatTextEntry::HEAL:
                 snprintf(text, sizeof(text), "+%d", entry.amount);

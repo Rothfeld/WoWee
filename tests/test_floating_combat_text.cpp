@@ -131,3 +131,36 @@ TEST_CASE("power gains, power drains and procs are not drawn as world text", "[f
     CHECK(showsInWorld(CombatTextEntry::HEAL));
     CHECK(showsInWorld(CombatTextEntry::XP_GAIN));
 }
+
+TEST_CASE("pet melee damage is orange (255,132,0) and pet spells are yellow (255,222,0)", "[fct]") {
+    using wowee::game::CombatTextEntry;
+    CombatTextEntry melee{};
+    melee.type = CombatTextEntry::MELEE_DAMAGE;
+    melee.amount = 104;
+    const auto playerMeleeCol = colorFor(presentationFor(melee), false);
+    CHECK(playerMeleeCol.r == Catch::Approx(1.0f));
+    CHECK(playerMeleeCol.g == Catch::Approx(1.0f));
+    CHECK(playerMeleeCol.b == Catch::Approx(1.0f));
+
+    const auto petMeleeCol = colorFor(presentationFor(melee), true);
+    CHECK(petMeleeCol.r == Catch::Approx(1.0f));
+    CHECK(petMeleeCol.g == Catch::Approx(132.0f / 255.0f));
+    CHECK(petMeleeCol.b == Catch::Approx(0.0f));
+
+    CombatTextEntry petCrit = melee;
+    petCrit.type = CombatTextEntry::CRIT_DAMAGE;
+    petCrit.amount = 236;
+    const auto petCritCol = colorFor(presentationFor(petCrit), true);
+    CHECK(petCritCol.r == Catch::Approx(1.0f));
+    CHECK(petCritCol.g == Catch::Approx(132.0f / 255.0f));
+    CHECK(petCritCol.b == Catch::Approx(0.0f));
+
+    CombatTextEntry petSpell{};
+    petSpell.type = CombatTextEntry::SPELL_DAMAGE;
+    petSpell.spellId = 3110; // Imp Firebolt
+    petSpell.amount = 8;
+    const auto petSpellCol = colorFor(presentationFor(petSpell), true);
+    CHECK(petSpellCol.r == Catch::Approx(1.0f));
+    CHECK(petSpellCol.g == Catch::Approx(222.0f / 255.0f));
+    CHECK(petSpellCol.b == Catch::Approx(0.0f));
+}

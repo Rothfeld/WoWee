@@ -93,6 +93,26 @@ struct Presentation {
     bool spell = false;
 };
 
+struct ColorRgb {
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+};
+
+/// Measured RGB colors in TBC build 8606 (WOWEE_PAIR=8 live captures):
+/// - Player melee swing / miss / dodge: white (255, 255, 255)
+/// - Player or pet spell (Imp Firebolt): yellow (255, 222, 0)
+/// - Pet melee swing (normal & crit): orange (255, 132, 0)
+constexpr ColorRgb kPlayerMeleeColor{1.0f, 1.0f, 1.0f};
+constexpr ColorRgb kSpellColor{1.0f, 222.0f / 255.0f, 0.0f};
+constexpr ColorRgb kPetMeleeColor{1.0f, 132.0f / 255.0f, 0.0f};
+
+inline ColorRgb colorFor(const Presentation& p, bool isPetSource) {
+    if (p.spell) return kSpellColor;
+    if (isPetSource) return kPetMeleeColor;
+    return kPlayerMeleeColor;
+}
+
 inline Presentation presentationFor(const game::CombatTextEntry& e) {
     using T = game::CombatTextEntry;
     Presentation p;

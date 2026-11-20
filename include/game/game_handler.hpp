@@ -1201,6 +1201,13 @@ public:
     }
     // Send CMSG_PET_ACTION to issue a pet command
     void sendPetAction(uint32_t action, uint64_t targetGuid = 0);
+    // Stop pet attacking via CMSG_PET_STOP_ATTACK
+    void petStopAttack();
+    // Cancel an aura on the active pet via CMSG_PET_CANCEL_AURA
+    void petCancelAura(uint32_t spellId);
+    // Update one or two pet action bar slots via CMSG_PET_SET_ACTION
+    void petSetAction(uint32_t pos0, uint32_t data0,
+                      bool hasSecond = false, uint32_t pos1 = 0, uint32_t data1 = 0);
     // Toggle autocast for a pet spell via CMSG_PET_SPELL_AUTOCAST
     void togglePetSpellAutocast(uint32_t spellId);
     const std::unordered_set<uint32_t>& getKnownSpells() const {

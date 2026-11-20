@@ -30,10 +30,16 @@ TEST_CASE("damage the player deals answers to the damage row", "[combattext]") {
     CHECK(std::string(r.fallback) == "1");
 }
 
-TEST_CASE("a pet's swing answers to the pet row, not the player's", "[combattext]") {
-    const auto r = ruleFor(T::MELEE_DAMAGE, false, kPet, kTarget);
-    REQUIRE(r.cvar != nullptr);
-    CHECK(std::string(r.cvar) == "PetMeleeDamage");
+TEST_CASE("a pet's swing answers to PetMeleeDamage and pet spells to PetSpellDamage", "[combattext]") {
+    const auto rMelee = combatTextFilterFor(T::MELEE_DAMAGE, false, kPet, kTarget, kPet, kTarget, false);
+    REQUIRE(rMelee.cvar != nullptr);
+    CHECK(std::string(rMelee.cvar) == "PetMeleeDamage");
+    CHECK(std::string(rMelee.fallback) == "1");
+
+    const auto rSpell = combatTextFilterFor(T::SPELL_DAMAGE, false, kPet, kTarget, kPet, kTarget, true);
+    REQUIRE(rSpell.cvar != nullptr);
+    CHECK(std::string(rSpell.cvar) == "PetSpellDamage");
+    CHECK(std::string(rSpell.fallback) == "1");
 }
 
 TEST_CASE("damage arriving at the player is not filtered here", "[combattext]") {
