@@ -15,6 +15,7 @@
 #include "core/coordinates.hpp"
 #include "core/logger.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/spell_visual_system.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/character_renderer.hpp"
@@ -124,6 +125,8 @@ void EntitySpawner::syncPlayerMorphs() {
     auto drop = [&](uint64_t guid) {
         const auto found = playerMorphs_.find(guid);
         if (found == playerMorphs_.end()) return;
+        if (auto* visuals = renderer_->getSpellVisualSystem())
+            visuals->transferUnitVisuals(found->second.instanceId, found->second.playerInstanceId);
         cr->removeInstance(found->second.instanceId);
         if (cr->getInstanceModelData(found->second.playerInstanceId))
             cr->setInstanceReplaced(found->second.playerInstanceId, false);
@@ -199,6 +202,8 @@ void EntitySpawner::syncPlayerMorphs() {
                      " model=", modelPath, " scale=", scale);
             found = playerMorphs_.emplace(guid, PlayerMorph{.displayId = display, .instanceId = instance,
                                                               .playerInstanceId = playerInstance}).first;
+            if (auto* visuals = renderer_->getSpellVisualSystem())
+                visuals->transferUnitVisuals(playerInstance, instance);
         }
         auto& morph = found->second;
         if (!morph.instanceId) continue;
@@ -318,6 +323,7 @@ void EntitySpawner::shutdown() {
     playerInstances_.clear();
     onlinePlayerAppearance_.clear();
     remoteStandStates_.clear();
+    unitTransformAuraVisuals_.clear();
     remotePlayerMounts_.clear();
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();
@@ -348,6 +354,7 @@ void EntitySpawner::resetAllState() {
     playerInstances_.clear();
     onlinePlayerAppearance_.clear();
     remoteStandStates_.clear();
+    unitTransformAuraVisuals_.clear();
     remotePlayerMounts_.clear();
     pendingRemotePlayerMounts_.clear();
     gameObjectInstances_.clear();

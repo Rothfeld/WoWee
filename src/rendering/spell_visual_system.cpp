@@ -1845,6 +1845,56 @@ void SpellVisualSystem::cancelPrecastVisuals(uint32_t attachInstanceId) {
     }
 }
 
+void SpellVisualSystem::transferUnitVisuals(uint32_t fromInstanceId, uint32_t toInstanceId) {
+    if (!fromInstanceId || !toInstanceId || fromInstanceId == toInstanceId) return;
+    auto* characters = renderer_ ? renderer_->getCharacterRenderer() : nullptr;
+    glm::vec3 newPos(0.0f);
+    const bool havePos = characters && characters->getInstancePosition(toInstanceId, newPos);
+    for (auto& visual : activeSpellVisuals_) {
+        if (visual.attachInstanceId != fromInstanceId) continue;
+        visual.attachInstanceId = toInstanceId;
+        if (!characters || !m2Renderer_) continue;
+        if (visual.attachmentId != 0) {
+            glm::mat4 attachMat(1.0f);
+            if (characters->getAttachmentTransform(toInstanceId, visual.attachmentId, attachMat)) {
+                if (visual.orientWithAttachment)
+                    m2Renderer_->setInstanceTransform(visual.instanceId,
+                                                      glm::scale(attachMat, glm::vec3(visual.effectScale)));
+                else
+                    placeOnUnit(visual, characters, glm::vec3(attachMat[3]), attachmentScale(attachMat));
+            } else if (!slotSkippedWhenAbsent(visual.attachmentId) && havePos) {
+                visual.attachmentId = 0;
+                placeOnUnit(visual, characters, newPos, 1.0f);
+            }
+        } else if (havePos) {
+            placeOnUnit(visual, characters, newPos, 1.0f);
+        }
+    }
+    if (auto node = unitAuraVisuals_.extract(fromInstanceId)) {
+        node.key() = toInstanceId;
+        unitAuraVisuals_.erase(toInstanceId);
+        unitAuraVisuals_.insert(std::move(node));
+    }
+    if (auto node = unitChannelVisuals_.extract(fromInstanceId)) {
+        node.key() = toInstanceId;
+        unitChannelVisuals_.erase(toInstanceId);
+        unitChannelVisuals_.insert(std::move(node));
+    }
+    if (auto node = fieldChannels_.extract(fromInstanceId)) {
+        node.key() = toInstanceId;
+        fieldChannels_.erase(toInstanceId);
+        fieldChannels_.insert(std::move(node));
+    }
+    if (heldChannelKits_.erase(fromInstanceId)) heldChannelKits_.insert(toInstanceId);
+    for (auto& draining : drainingCasterEffects_)
+        if (draining.attachInstanceId == fromInstanceId) draining.attachInstanceId = toInstanceId;
+    for (auto& beam : castBeams_) {
+        if (beam.start.instanceId == fromInstanceId) beam.start.instanceId = toInstanceId;
+        if (beam.end.instanceId == fromInstanceId) beam.end.instanceId = toInstanceId;
+    }
+    applyCharacterProcedures(toInstanceId);
+}
+
 void SpellVisualSystem::reset() {
     unitAuraVisuals_.clear();
     unitChannelVisuals_.clear();

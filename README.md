@@ -212,6 +212,17 @@ arbitrarily flipped single-sided quads such as `Spells\ResistanceAura_Base.m2`
 (Shadow/Frost/Fire Resistance, Sanctity, and Crusader Auras) and `g_blanket.m2`
 to back-facing so Vulkan backface culling dropped them. Evidence:
 `_experiments/20261120T112000Z.paladin_aura_visuals/` in the workspace.
+Shapeshift and transform auras (`SPELL_AURA_MOD_SHAPESHIFT` 36, `SPELL_AURA_TRANSFORM` 56)
+replay their `SpellVisual.ImpactKit` when the aura ends and the unit leaves form
+(Ghost Wolf 2645 `Purge_Impact_Chest.m2`, Bear/Cat Form 5487/768
+`DruidMorph_Impact_Base.m2`, Polymorph 118 `Polymorph_Impact_Base.m2`; `.demorph`
+without an aura plays nothing). `EntitySpawner::syncPlayerMorphs` transfers active
+spell, aura, and channel visuals across player morph instance swaps (`transferUnitVisuals`).
+Newborn M2 particles apply `drag` over their initial age, and `particleTailVector`
+clamps tail span to `min(tailLength, age)` so high-drag tail emitters such as
+`Purge_Impact_Chest.m2` #1 (`drag=30`, `tailLength=4.75`) do not draw multi-yard
+spikes on birth frames. Evidence: `_experiments/20261120T115300Z.ghost_wolf_visuals/`
+in the workspace.
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 #include <glm/glm.hpp>
@@ -92,7 +93,10 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
     return scaleMin + (scaleMax - scaleMin) * (static_cast<float>(h >> 8) / 16777215.0f);
 }
 
-// A tail quad runs from the particle back along -velocity * tailLength.
+// A tail quad runs from the particle back along -velocity * min(tailLength, age).
+// A particle cannot trail behind its birth time (Purge_Impact_Chest.m2 #1,
+// flags 0x19, speed 0.556 yd/s, drag 30, tailLength 4.75 s otherwise draws
+// 2.6 yd spikes on newborn frames that native 2.4.3 does not show).
 // Pinned tails (0x400) end at the particle's birth point at most. 2204 of
 // the 3522 TBC tail emitters are pinned, many authoring tailLength 10 s:
 // Bloodlust/Summon hand rings (0x479, 0.28 yd/s, 10 s) and the fire precast
@@ -100,8 +104,10 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
 // the original client does not show. Acid breath drops (0x429, 4.44 yd/s,
 // 0.1 s) keep their short velocity tail once past their birth point.
 inline glm::vec3 particleTailVector(uint32_t flags, const glm::vec3& velocity, float tailLength,
-                                    const glm::vec3& toBirth) {
-    const glm::vec3 tail = -velocity * tailLength;
+                                    const glm::vec3& toBirth,
+                                    float age = std::numeric_limits<float>::infinity()) {
+    const float span = std::min(tailLength, std::max(age, 0.0f));
+    const glm::vec3 tail = -velocity * span;
     if (!(flags & kParticlePinned)) return tail;
     return glm::dot(tail, tail) > glm::dot(toBirth, toBirth) ? toBirth : tail;
 }

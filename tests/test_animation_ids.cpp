@@ -405,3 +405,33 @@ TEST_CASE("SpellVisualKit CharProc 11 freezes animation in place once a sequence
     CHECK_FALSE(frozenAnimationAllowsPlay(true, 0));
     CHECK_FALSE(frozenAnimationAllowsPlay(true, 42));
 }
+
+TEST_CASE("Shapeshift and transform aura removal replays ImpactKit only when leaving form", "[aura][shapeshift]") {
+    using namespace wowee::rendering;
+    // Ghost Wolf (2645): SPELL_AURA_MOD_SHAPESHIFT (36), SPELL_AURA_MOD_INCREASE_SPEED (31)
+    const uint32_t ghostWolfAuras[3] = {36, 31, 0};
+    // Polymorph (118): SPELL_AURA_MOD_CONFUSE (5), SPELL_AURA_TRANSFORM (56)
+    const uint32_t polymorphAuras[3] = {5, 56, 0};
+    // Regular buff: SPELL_AURA_MOD_STAT (29)
+    const uint32_t normalBuffAuras[3] = {29, 0, 0};
+
+    CHECK(auraIsTransformOrShapeshift(ghostWolfAuras));
+    CHECK(auraIsTransformOrShapeshift(polymorphAuras));
+    CHECK_FALSE(auraIsTransformOrShapeshift(normalBuffAuras));
+
+    // Entering Ghost Wolf (311): nothing removed.
+    const std::vector<uint32_t> empty{};
+    const std::vector<uint32_t> ghostWolf{311};
+    const std::vector<uint32_t> bearForm{653};
+    const std::vector<uint32_t> catForm{4228};
+
+    CHECK(removedTransformAuraVisuals(empty, ghostWolf).empty());
+    // Leaving Ghost Wolf -> humanoid: replays visual 311 ImpactKit.
+    CHECK(removedTransformAuraVisuals(ghostWolf, empty) == std::vector<uint32_t>{311});
+    // Leaving Bear Form -> humanoid: replays visual 653 ImpactKit.
+    CHECK(removedTransformAuraVisuals(bearForm, empty) == std::vector<uint32_t>{653});
+    // Direct Bear -> Cat swap in one update: new form's SMSG_SPELL_GO already plays ImpactKit.
+    CHECK(removedTransformAuraVisuals(bearForm, catForm).empty());
+    // Steady state: no replay.
+    CHECK(removedTransformAuraVisuals(ghostWolf, ghostWolf).empty());
+}

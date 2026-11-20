@@ -473,6 +473,15 @@ TEST_CASE("Pinned particle tails end at the birth point", "[m2][particle]") {
     // Acid breath drop (0x429) far from its birth: velocity tail.
     const glm::vec3 drop = particleTailVector(0x429, glm::vec3(0, 4.44f, 0), 0.1f, glm::vec3(0, -3.0f, 0));
     CHECK(drop.y == Catch::Approx(-0.444f));
+    // Purge_Impact_Chest #1 (0x19, non-pinned): speed 0.556, drag 30, tailLength 4.75 s.
+    // A newborn particle cannot trail behind its birth time; drag + age clamp keep tails short.
+    for (float age : {0.002f, 0.01f, 0.033f, 0.1f, 0.25f}) {
+        const float v = 0.556f * std::exp(-30.0f * age);
+        const float dist = 0.556f * particleDragTravel(30.0f, age);
+        const glm::vec3 t = particleTailVector(0x19, glm::vec3(v, 0.0f, 0.0f), 4.75f,
+                                               glm::vec3(-dist, 0.0f, 0.0f), age);
+        CHECK(glm::length(t) < 0.01f);
+    }
 }
 
 TEST_CASE("Spline emitters read Bezier points and place births along them", "[m2][particle]") {

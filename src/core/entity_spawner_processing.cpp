@@ -1854,6 +1854,7 @@ void EntitySpawner::despawnCreature(uint64_t guid) {
     remoteCastHolds_.erase(guid);
     remoteWasAuraLocomotion_.erase(guid);
     remoteStandStates_.erase(guid);
+    unitTransformAuraVisuals_.erase(guid);
     remoteIdleAnims_.erase(guid);
     creatureSpawnRetryDeadlines_.erase(guid);
     // Cleared with the rest, so the map does not grow and a creature that

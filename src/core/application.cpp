@@ -3705,10 +3705,12 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
         if (entitySpawner_) entitySpawner_->syncLocalFootprintModels();
         if (entitySpawner_ && renderer->getCharacterInstanceId() != 0) {
             if (auto self = gameHandler->getEntityManager().getEntity(gameHandler->getPlayerGuid())) {
-                entitySpawner_->syncUnitAuraVisuals(*self, renderer->getCharacterInstanceId());
+                const uint32_t drawnSelf = entitySpawner_->drawnInstanceIdForGuid(gameHandler->getPlayerGuid());
+                const uint32_t auraOwner = drawnSelf ? drawnSelf : renderer->getCharacterInstanceId();
+                entitySpawner_->syncUnitAuraVisuals(*self, auraOwner);
                 // The aura's held animation, Stand excepted (it holds nothing).
                 const auto* visuals = renderer->getSpellVisualSystem();
-                const uint32_t aura = visuals ? visuals->auraStateAnimation(renderer->getCharacterInstanceId())
+                const uint32_t aura = visuals ? visuals->auraStateAnimation(auraOwner)
                                               : rendering::SpellVisualSystem::kNoAnimation;
                 if (auto* ac = renderer->getAnimationController())
                     ac->setAuraHoldAnimation(aura == rendering::SpellVisualSystem::kNoAnimation ||
@@ -4418,6 +4420,9 @@ void Application::syncChannelVisuals() {
     auto* characters = renderer->getCharacterRenderer();
     const uint64_t self = gameHandler->getPlayerGuid();
     auto instanceOf = [&](uint64_t guid) -> uint32_t {
+        if (entitySpawner_) {
+            if (const uint32_t drawn = entitySpawner_->drawnInstanceIdForGuid(guid)) return drawn;
+        }
         return guid == self ? renderer->getCharacterInstanceId() : gameHandler->resolveUnitRenderInstance(guid);
     };
     // Where a beam meets this object, false when it is not in the world.

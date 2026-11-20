@@ -197,7 +197,8 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
             const float gravity = interpFloat(em.gravity, sampleAnimTime,
                 inst.globalSequenceTime, inst.currentSequenceIndex, gpu.globalSequenceDurations);
-            p.position += p.velocity * p.life;
+            p.position += p.velocity * particleDragTravel(em.drag, p.life);
+            p.velocity *= std::exp(-em.drag * p.life);
             p.position += p.gravityDirection * (0.5f * gravity * p.life * p.life);
             p.velocity += p.gravityDirection * (gravity * p.life);
             inst.particles.push_back(p);
@@ -1044,7 +1045,8 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 vd[8] = static_cast<float>(particleCell(em, lifeRatio, tail, cachedTotalTiles));
                 const glm::vec3 displacement = xyQuad ? cachedQuadAxes.first
                     : tail ? particleTailVector(em.flags, worldVelocity, em.tailLength,
-                        glm::vec3(cachedParticleTransform * glm::vec4(p.birthPosition, 1)) - worldPosition)
+                        glm::vec3(cachedParticleTransform * glm::vec4(p.birthPosition, 1)) - worldPosition,
+                        p.life)
                     : glm::vec3(0);
                 vd[9] = displacement.x;
                 vd[10] = displacement.y;

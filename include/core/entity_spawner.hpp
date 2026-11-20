@@ -605,6 +605,7 @@ private:
     std::unordered_map<uint64_t, uint32_t> requestedCreatureDisplayIds_;
     std::unordered_map<uint64_t, glm::vec3> creatureRenderPosCache_; // guid → last synced render position
     std::unordered_map<uint64_t, uint8_t> remoteStandStates_;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> unitTransformAuraVisuals_;
     std::unordered_map<uint64_t, uint32_t> remoteIdleAnims_;  // idle each unit was last given
     std::unordered_map<uint64_t, bool> creatureWasMoving_;
     std::unordered_map<uint64_t, bool> creatureWasSwimming_;

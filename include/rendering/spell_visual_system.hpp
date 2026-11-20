@@ -217,6 +217,10 @@ public:
     /// mid-cast included. Other units' precasts go on.
     void cancelPrecastVisuals(uint32_t attachInstanceId);
 
+    /// Re-bind active spell visuals, aura visuals, channel visuals, and beams
+    /// when a unit swaps render instance (e.g. player morph/shapeshift IN/OUT).
+    void transferUnitVisuals(uint32_t fromInstanceId, uint32_t toInstanceId);
+
     // Remove all active spell visual instances and reset caches.
     // Called on map change / combat reset.
     void reset();

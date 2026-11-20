@@ -1190,6 +1190,7 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
     auto* visuals = renderer_->getSpellVisualSystem();
     if (!visuals) return;
     std::vector<uint32_t> auraVisuals;
+    std::vector<uint32_t> transformAuraVisuals;
     gameHandler_->loadSpellNameCache();
     const auto& spells = gameHandler_->spellNameCacheRef();
     bool observerConcealed = false;
@@ -1202,8 +1203,11 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
     }
     auto addAura = [&](uint32_t spellId) {
         const auto spell = spells.find(spellId);
-        if (spell != spells.end() && spell->second.spellVisualId)
+        if (spell != spells.end() && spell->second.spellVisualId) {
             auraVisuals.push_back(spell->second.spellVisualId);
+            if (rendering::auraIsTransformOrShapeshift(spell->second.effectAuraIds))
+                transformAuraVisuals.push_back(spell->second.spellVisualId);
+        }
     };
     if (game::isPreWotlk()) {
         const auto first = game::fieldIndex(game::UF::UNIT_FIELD_AURAS);
@@ -1214,7 +1218,30 @@ void EntitySpawner::syncUnitAuraVisuals(const game::Entity& entity, uint32_t ins
     }
     std::sort(auraVisuals.begin(), auraVisuals.end());
     auraVisuals.erase(std::unique(auraVisuals.begin(), auraVisuals.end()), auraVisuals.end());
+    std::sort(transformAuraVisuals.begin(), transformAuraVisuals.end());
+    transformAuraVisuals.erase(std::unique(transformAuraVisuals.begin(), transformAuraVisuals.end()),
+                               transformAuraVisuals.end());
     visuals->syncAuraVisuals(instanceId, auraVisuals, observerConcealed);
+
+    const uint64_t guid = entity.getGuid();
+    const auto prevIt = unitTransformAuraVisuals_.find(guid);
+    if (prevIt != unitTransformAuraVisuals_.end()) {
+        const auto ended = rendering::removedTransformAuraVisuals(prevIt->second, transformAuraVisuals);
+        if (!ended.empty()) {
+            glm::vec3 pos(0.0f);
+            auto* cr = renderer_->getCharacterRenderer();
+            if (cr && cr->getInstancePosition(instanceId, pos)) {
+                for (uint32_t visualId : ended) {
+                    LOG_INFO("Transform aura ended: guid=0x", std::hex, guid, std::dec,
+                             " replaying ImpactKit visual=", visualId, " instance=", instanceId);
+                    visuals->playSpellVisual(visualId, pos, /*useImpactKit=*/true, instanceId);
+                }
+            }
+        }
+        prevIt->second = std::move(transformAuraVisuals);
+    } else {
+        unitTransformAuraVisuals_.emplace(guid, std::move(transformAuraVisuals));
+    }
 }
 
 void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bool moving, bool mounted) {
@@ -1226,7 +1253,8 @@ void EntitySpawner::updateRemoteUnitState(uint64_t guid, uint32_t instanceId, bo
         if (const auto* mount = getRemotePlayerMount(guid))
             cr->setInstanceCreatureModel(mount->instanceId, mount->displayId, creatureModelDataIdForDisplay(mount->displayId));
     }
-    syncUnitAuraVisuals(*entity, instanceId);
+    const uint32_t drawn = drawnInstanceIdForGuid(guid);
+    syncUnitAuraVisuals(*entity, drawn ? drawn : instanceId);
     const auto state = static_cast<uint8_t>(entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_1)));
     renderer_->getCharacterRenderer()->setStandState(instanceId, state);
     const auto [it, initial] = remoteStandStates_.try_emplace(guid, state);
@@ -1269,6 +1297,7 @@ void EntitySpawner::despawnPlayer(uint64_t guid) {
     remoteWasAuraLocomotion_.erase(guid);
     if (!renderer_ || !renderer_->getCharacterRenderer()) return;
     remoteStandStates_.erase(guid);
+    unitTransformAuraVisuals_.erase(guid);
     remoteIdleAnims_.erase(guid);
     creatureActiveEmotes_.erase(guid);
     pendingRemotePlayerMounts_.erase(guid);
