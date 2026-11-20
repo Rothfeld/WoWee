@@ -3853,7 +3853,6 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             }
         }
         if (isMeleeAbility) {
-            if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(sid);
             if (auto* ac = owner_.services().audioCoordinator) {
                 if (auto* csm = ac->getCombatSoundManager()) {
                     csm->playWeaponSwing(audio::CombatSoundManager::WeaponSize::MEDIUM, false);
@@ -3865,12 +3864,13 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
         const bool wasInTimedCast = casting_ && (data.spellId == currentCastSpellId_);
 
-        // The cast kit's animation plays once, timed and instant casts alike.
-        // Melee abilities and ranged auto attacks animate through their own
-        // swing/shot paths; food/water sits down instead (the server's kit
-        // packets schedule the eating gestures).
+        // The cast kit's animation plays once, timed and instant casts alike
+        // (including melee special attacks, whose SpellVisualKit AnimID is
+        // adapted to the equipped weapon in AnimationCallbackHandler). Ranged
+        // auto-attacks animate through their own shot path; food/water sits
+        // down instead (server kit packets schedule eating gestures).
         if (owner_.spellCastAnimCallbackRef()) {
-            if (!isMeleeAbility && !rangedWeaponAttack && !restorationLoop)
+            if (!rangedWeaponAttack && !restorationLoop)
                 owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::CAST, data.spellId);
             else if (wasInTimedCast)
                 owner_.spellCastAnimCallbackRef()(owner_.getPlayerGuid(), SpellAnimPhase::STOP, data.spellId);

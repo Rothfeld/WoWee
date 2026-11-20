@@ -1,6 +1,7 @@
 #include <span>
 
 #include "rendering/animation/melee_anim_chains.hpp"
+#include "rendering/animation/weapon_spell_anim.hpp"
 #include "rendering/animation_controller.hpp"
 #include "rendering/animation/emote_registry.hpp"
 #include "rendering/animation/stand_pose.hpp"
@@ -191,6 +192,9 @@ void AnimationController::startSpellCast(uint32_t precastAnimId, uint32_t castAn
     meleeSwingTimer_ = 0.0f;
     specialAttackAnimId_ = 0;
     rangedShootTimer_ = 0.0f;
+    // Allow consecutive identical one-shot casts (e.g. Mortal Strike followed
+    // immediately by Heroic Strike) to restart from t=0.
+    lastPlayerAnimRequest_ = UINT32_MAX;
     characterAnimator_.startSpellCast(precastAnimId, castAnimId, castLoop, finalizeAnimId);
 }
 
@@ -346,18 +350,14 @@ void AnimationController::triggerSpecialAttack(uint32_t /*spellId*/) {
 
     auto has = [&](uint32_t id) { return characterRenderer->hasAnimation(characterInstanceId, id); };
 
-    // Choose special attack animation based on equipped weapon type
-    uint32_t specAnim = 0;
-    if (weaponLoadout_.hasShield && has(anim::SHIELD_BASH)) {
-        specAnim = anim::SHIELD_BASH;
-    } else if ((weaponLoadout_.inventoryType == game::InvType::TWO_HAND || weaponLoadout_.is2HLoose) && has(anim::SPECIAL_2H)) {
-        specAnim = anim::SPECIAL_2H;
-    } else if (weaponLoadout_.inventoryType != game::InvType::NON_EQUIP && has(anim::SPECIAL_1H)) {
-        specAnim = anim::SPECIAL_1H;
-    } else if (has(anim::SPECIAL_UNARMED)) {
-        specAnim = anim::SPECIAL_UNARMED;
-    } else if (has(anim::SPECIAL_1H)) {
-        specAnim = anim::SPECIAL_1H;
+    // Choose generic special attack animation based on equipped main-hand weapon
+    // (ShieldBash 59 comes from SpellVisualKit.dbc for shield abilities, never
+    // from merely having a shield equipped).
+    uint32_t specAnim = resolveWeaponSpellAnimation(anim::SPECIAL_1H, weaponLoadout_);
+    if (!has(specAnim)) {
+        if (has(anim::SPECIAL_1H)) specAnim = anim::SPECIAL_1H;
+        else if (has(anim::SPECIAL_UNARMED)) specAnim = anim::SPECIAL_UNARMED;
+        else specAnim = 0;
     }
 
     if (specAnim == 0) {

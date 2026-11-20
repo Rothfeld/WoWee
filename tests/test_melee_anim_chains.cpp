@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "rendering/animation/melee_anim_chains.hpp"
+#include "rendering/animation/weapon_spell_anim.hpp"
 
 using namespace wowee::rendering::anim;
 
@@ -120,4 +121,95 @@ TEST_CASE("the generic chain has no parry in it", "[anim]") {
     CHECK(std::find(ids.begin(), ids.end(), PARRY_1H) == ids.end());
     CHECK(std::find(ids.begin(), ids.end(), PARRY_UNARMED) == ids.end());
     CHECK(ids.back() == ATTACK_UNARMED);
+}
+
+namespace {
+
+wowee::rendering::WeaponLoadout makeLoadout(uint32_t invType, bool is2HLoose = false,
+                                            bool isFist = false, bool isDagger = false,
+                                            bool hasOffHand = false, bool hasShield = false) {
+    wowee::rendering::WeaponLoadout wl{};
+    wl.inventoryType = invType;
+    wl.is2HLoose = is2HLoose;
+    wl.isFist = isFist;
+    wl.isDagger = isDagger;
+    wl.hasOffHand = hasOffHand;
+    wl.hasShield = hasShield;
+    return wl;
+}
+
+}  // namespace
+
+TEST_CASE("SpellVisualKit special-attack animations adapt to equipped weapon loadout (TBC 2.4.3 parity)",
+          "[anim][weapon-spell]") {
+    namespace InvType = wowee::game::InvType;
+    using wowee::rendering::resolveWeaponSpellAnimation;
+
+    const auto oneHandShield = makeLoadout(InvType::ONE_HAND, false, false, false, false, true);
+    const auto twoHandSword  = makeLoadout(InvType::TWO_HAND);
+    const auto twoHandStaff  = makeLoadout(InvType::TWO_HAND, /*is2HLoose=*/true);
+    const auto dualDaggers   = makeLoadout(InvType::ONE_HAND, false, false, /*isDagger=*/true, /*hasOffHand=*/true);
+    const auto fistWeapon    = makeLoadout(InvType::ONE_HAND, false, /*isFist=*/true);
+    const auto unarmed       = makeLoadout(InvType::NON_EQUIP);
+
+    // Mortal Strike / Heroic Strike / Overpower / Rend / Cleave / Execute / Devastate / Revenge (kit anim = Special1H 57):
+    // 1H+Shield MUST play Special1H (57), NEVER ShieldBash (59).
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_1H, oneHandShield) == SPECIAL_1H);
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_1H, twoHandSword)  == SPECIAL_2H);
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_1H, twoHandStaff)  == SPECIAL_2H);
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_1H, dualDaggers)   == SPECIAL_1H);
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_1H, fistWeapon)    == SPECIAL_1H);
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_1H, unarmed)       == SPECIAL_UNARMED);
+
+    // Slam / Concussion Blow (kit anim = Special2H 58): adapts down to Special1H with 1H+Shield.
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_2H, oneHandShield) == SPECIAL_1H);
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_2H, twoHandSword)  == SPECIAL_2H);
+    CHECK(resolveWeaponSpellAnimation(SPECIAL_2H, unarmed)       == SPECIAL_UNARMED);
+
+    // Sinister Strike / Cheap Shot / Sap (kit anim = Attack1H 17): adapts across all weapon classes.
+    CHECK(resolveWeaponSpellAnimation(ATTACK_1H, oneHandShield) == ATTACK_1H);
+    CHECK(resolveWeaponSpellAnimation(ATTACK_1H, twoHandSword)  == ATTACK_2H);
+    CHECK(resolveWeaponSpellAnimation(ATTACK_1H, twoHandStaff)  == ATTACK_2H_LOOSE);
+    CHECK(resolveWeaponSpellAnimation(ATTACK_1H, dualDaggers)   == ATTACK_1H_PIERCE);
+    CHECK(resolveWeaponSpellAnimation(ATTACK_1H, fistWeapon)    == ATTACK_UNARMED);
+    CHECK(resolveWeaponSpellAnimation(ATTACK_1H, unarmed)       == ATTACK_UNARMED);
+
+    // Explicit non-generic animations play as authored regardless of equipped weapon.
+    for (const auto& wl : {oneHandShield, twoHandSword, twoHandStaff, dualDaggers, fistWeapon, unarmed}) {
+        CHECK(resolveWeaponSpellAnimation(SHIELD_BASH, wl)       == SHIELD_BASH);       // Shield Bash (72), Shield Slam (23922)
+        CHECK(resolveWeaponSpellAnimation(WHIRLWIND, wl)         == WHIRLWIND);         // Whirlwind (1680)
+        CHECK(resolveWeaponSpellAnimation(KICK, wl)              == KICK);              // Kick (1766)
+        CHECK(resolveWeaponSpellAnimation(MUTILATE, wl)          == MUTILATE);          // Mutilate (1329)
+        CHECK(resolveWeaponSpellAnimation(SPECIAL_UNARMED, wl)   == SPECIAL_UNARMED);   // Pummel (6552), Hammer of Justice (853)
+        CHECK(resolveWeaponSpellAnimation(ATTACK_1H_PIERCE, wl)  == ATTACK_1H_PIERCE);  // Backstab (53), Ambush (8676)
+        CHECK(resolveWeaponSpellAnimation(ATTACK_OFF_PIERCE, wl) == ATTACK_OFF_PIERCE); // Shiv (5938)
+        CHECK(resolveWeaponSpellAnimation(DRAGON_STOMP, wl)      == DRAGON_STOMP);      // Thunder Clap (6343)
+        CHECK(resolveWeaponSpellAnimation(DRUID_CAT_CLAW, wl)    == DRUID_CAT_CLAW);    // Claw / Shred
+        CHECK(resolveWeaponSpellAnimation(DRUID_BEAR_MAUL, wl)   == DRUID_BEAR_MAUL);   // Maul / Mangle (Bear)
+        CHECK(resolveWeaponSpellAnimation(BATTLE_ROAR, wl)       == BATTLE_ROAR);       // Taunt / Battle Shout
+        CHECK(resolveWeaponSpellAnimation(SPELL_CAST_DIRECTED, wl) == SPELL_CAST_DIRECTED);
+        CHECK(resolveWeaponSpellAnimation(SPELL_CAST_OMNI, wl)   == SPELL_CAST_OMNI);
+    }
+}
+
+TEST_CASE("isMeleeWeaponSpellAnimation identifies melee weapon swings for unsheathing",
+          "[anim][weapon-spell]") {
+    using wowee::rendering::isMeleeWeaponSpellAnimation;
+
+    CHECK(isMeleeWeaponSpellAnimation(SPECIAL_1H));
+    CHECK(isMeleeWeaponSpellAnimation(SPECIAL_2H));
+    CHECK(isMeleeWeaponSpellAnimation(SHIELD_BASH));
+    CHECK(isMeleeWeaponSpellAnimation(WHIRLWIND));
+    CHECK(isMeleeWeaponSpellAnimation(MUTILATE));
+    CHECK(isMeleeWeaponSpellAnimation(ATTACK_1H));
+    CHECK(isMeleeWeaponSpellAnimation(ATTACK_2H));
+    CHECK(isMeleeWeaponSpellAnimation(ATTACK_2H_LOOSE));
+    CHECK(isMeleeWeaponSpellAnimation(ATTACK_1H_PIERCE));
+    CHECK(isMeleeWeaponSpellAnimation(ATTACK_OFF_PIERCE));
+    CHECK(isMeleeWeaponSpellAnimation(SPECIAL_UNARMED));
+
+    CHECK_FALSE(isMeleeWeaponSpellAnimation(SPELL_CAST_DIRECTED));
+    CHECK_FALSE(isMeleeWeaponSpellAnimation(SPELL_CAST_OMNI));
+    CHECK_FALSE(isMeleeWeaponSpellAnimation(BATTLE_ROAR));
+    CHECK_FALSE(isMeleeWeaponSpellAnimation(STAND));
 }

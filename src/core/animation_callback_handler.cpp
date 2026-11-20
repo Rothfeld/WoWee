@@ -13,6 +13,7 @@
 #include "rendering/animation/combat_fsm.hpp"
 #include "rendering/animation/emote_registry.hpp"
 #include "rendering/animation/stand_pose.hpp"
+#include "rendering/animation/weapon_spell_anim.hpp"
 #include "game/game_handler.hpp"
 #include "game/spell_classification.hpp"
 #include "game/gather_spells.hpp"
@@ -599,9 +600,21 @@ void AnimationCallbackHandler::setupCallbacks() {
             return;
         }
         case game::SpellAnimPhase::CAST: {
-            const uint32_t animation = visuals->castAnimation(visual);
+            const uint32_t rawAnimation = visuals->castAnimation(visual);
+            uint32_t animation = rawAnimation;
+            if (animation != none) {
+                rendering::WeaponLoadout loadout{};
+                if (isLocalPlayer) {
+                    loadout = ac->getWeaponLoadout();
+                } else if (const auto unit = std::dynamic_pointer_cast<game::Unit>(
+                               gameHandler_.getEntityManager().getEntity(guid))) {
+                    loadout = entitySpawner_.meleeWeaponLoadout(*unit);
+                }
+                animation = rendering::resolveWeaponSpellAnimation(rawAnimation, loadout);
+            }
             LOG_DEBUG("Cast animation: cast guid=0x", std::hex, guid, std::dec,
-                      " spell=", spellId, " visual=", visual, " animation=", animation);
+                      " spell=", spellId, " visual=", visual,
+                      " rawAnim=", rawAnimation, " animation=", animation);
             const auto held = castHolds_.find(guid);
             const bool underChannel = held != castHolds_.end() && held->second.channel &&
                                       held->second.spellId != spellId;
@@ -621,6 +634,13 @@ void AnimationCallbackHandler::setupCallbacks() {
                         appearanceComposer_.loadEquippedWeapons();
                     }
                     appearanceComposer_.showFishingPole(true);
+                } else if (rendering::isMeleeWeaponSpellAnimation(animation)) {
+                    if (appearanceComposer_.isShowingRanged())
+                        appearanceComposer_.showRangedWeapon(false);
+                    if (appearanceComposer_.isWeaponsSheathed()) {
+                        appearanceComposer_.setWeaponsSheathed(false);
+                        appearanceComposer_.loadEquippedWeapons();
+                    }
                 }
             }
             if (underChannel) {

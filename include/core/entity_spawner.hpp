@@ -9,6 +9,7 @@
 #include "pipeline/char_sections.hpp"
 #include "rendering/animation/ground_direction.hpp"
 #include "rendering/animation/turn_shuffle.hpp"
+#include "rendering/animation/weapon_type.hpp"
 #include "rendering/unit_shadow.hpp"
 #include <memory>
 #include <string>
@@ -356,6 +357,8 @@ public:
     [[nodiscard]] bool remoteGaitWalks(uint64_t guid, uint32_t locomotionInstanceId) const;
     /// Ready stance a meleeing unit idles in, from its main-hand item.
     uint32_t meleeReadyAnimation(const game::Unit& unit) const;
+    /// Main-hand / off-hand weapon loadout of a remote player or creature.
+    rendering::WeaponLoadout meleeWeaponLoadout(const game::Unit& unit) const;
     /// Ready stance and swing of a unit's main-hand weapon class.
     struct MeleeWeaponAnimations { uint32_t ready; uint32_t attack; };
     MeleeWeaponAnimations meleeWeaponAnimations(const game::Unit& unit) const;

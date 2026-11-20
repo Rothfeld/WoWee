@@ -737,11 +737,12 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
         // Skip melee animation if a ranged shot was just triggered from
-        // SMSG_SPELL_GO (Auto Shot / Shoot / Throw).  The ranged animation
-        // is already playing; firing the melee callback here would override it.
+        // SMSG_SPELL_GO (Auto Shot / Shoot / Throw), or if HITINFO_NOACTION
+        // marks an on-next-swing spell result (Heroic Strike, Cleave, Maul,
+        // Raptor Strike) whose animation already comes from SMSG_SPELL_GO.
         if (owner_.consumeSuppressMeleeSwingAnim()) {
             LOG_DEBUG("Suppressed melee swing anim - ranged shot already triggered");
-        } else {
+        } else if (!data.isNoAction()) {
             if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0);
         }
     }
@@ -755,7 +756,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         std::static_pointer_cast<Unit>(attacker)->setMeleeVictimGuid(data.targetGuid);
     }
     constexpr uint32_t HITINFO_LEFTSWING = 0x4;  // CMaNGOS Unit.h HitInfo
-    if (!isPlayerAttacker && owner_.npcSwingCallbackRef()) {
+    if (!isPlayerAttacker && !data.isNoAction() && owner_.npcSwingCallbackRef()) {
         owner_.npcSwingCallbackRef()(data.attackerGuid, (data.hitInfo & HITINFO_LEFTSWING) != 0);
     }
     // Observers must see the same victim reaction as the combatants. Miss,

@@ -199,6 +199,7 @@ public:
     // ── Query helpers (used by Renderer) ───────────────────────────────────
     [[nodiscard]] bool isFootstepAnimationState() const;
     [[nodiscard]] float getMeleeSwingTimer() const { return meleeSwingTimer_; }
+    [[nodiscard]] const WeaponLoadout& getWeaponLoadout() const { return weaponLoadout_; }
     [[nodiscard]] float getMountHeightOffset() const { return mountHeightOffset_; }
     [[nodiscard]] bool isTaxiFlight() const { return taxiFlight_; }
 
