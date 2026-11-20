@@ -104,7 +104,23 @@ std::string ExpansionProfile::versionString() const {
     return ss.str();
 }
 
+ExpansionRegistry::~ExpansionRegistry() {
+    if (ownsProfile(getActiveExpansionProfile())) {
+        setActiveExpansionProfile(nullptr);
+    }
+}
+
+bool ExpansionRegistry::ownsProfile(const ExpansionProfile* profile) const {
+    if (!profile || profiles_.empty()) return false;
+    const ExpansionProfile* begin = profiles_.data();
+    const ExpansionProfile* end = begin + profiles_.size();
+    return profile >= begin && profile < end;
+}
+
 size_t ExpansionRegistry::initialize(const std::string& dataRoot) {
+    if (ownsProfile(getActiveExpansionProfile())) {
+        setActiveExpansionProfile(nullptr);
+    }
     profiles_.clear();
     activeId_.clear();
 
@@ -175,6 +191,7 @@ void ExpansionRegistry::activeChanged() {
     slots::setBankLayout(
         slots::bankLayoutFor(activeId_ == "classic" || activeId_ == "turtle"));
     setItemLinkShape(activeId_ == "tbc" ? ItemLinkShape::Tbc : ItemLinkShape::NineFields);
+    setActiveExpansionProfile(getActive());
 }
 
 bool ExpansionRegistry::setActive(const std::string& id) {

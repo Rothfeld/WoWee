@@ -639,7 +639,7 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data, bo
 
     data.money = packet.readUInt64();
     data.tabId = packet.readUInt8();
-    const int32_t withdrawAmount = static_cast<int32_t>(packet.readUInt32());
+    data.withdrawAmount = static_cast<int32_t>(packet.readUInt32());
     uint8_t fullUpdate = packet.readUInt8();
     data.tabsIncluded = (fullUpdate != 0);
     data.itemsIncluded = false;
@@ -676,7 +676,7 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data, bo
     }
 
     if (data.tabId < data.tabs.size()) {
-        data.tabs[data.tabId].remainingWithdrawals = withdrawAmount;
+        data.tabs[data.tabId].remainingWithdrawals = data.withdrawAmount;
     }
 
     if (!packet.hasRemaining(1)) {

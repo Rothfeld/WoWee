@@ -15,15 +15,8 @@
 
 #include <cstdint>
 
-#include "core/application.hpp"
 #include "game/packet_parsers.hpp"
 #include "game/world_packets.hpp"
-
-namespace wowee {
-namespace core {
-Application* Application::instance = nullptr;
-}
-}  // namespace wowee
 
 using namespace wowee::game;
 

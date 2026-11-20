@@ -1,5 +1,4 @@
 #include <catch_amalgamated.hpp>
-#include "core/application.hpp"
 #include "game/world_packets.hpp"
 #include "game/opcode_table.hpp"
 #include "game/update_field_table.hpp"
@@ -7,10 +6,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-namespace wowee::core {
-Application* Application::instance = nullptr;
-}
 
 using namespace wowee::game;
 using namespace wowee::network;

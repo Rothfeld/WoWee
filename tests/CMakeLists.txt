@@ -154,12 +154,9 @@ function(wowee_add_packet_test target)
                              ${TEST_PACKET_SOURCES} ${ARG_SOURCES})
     target_include_directories(${target} PRIVATE ${TEST_INCLUDE_DIRS})
     target_include_directories(${target} SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
-    target_link_libraries(${target} PRIVATE catch2_main SDL3::SDL3 ZLIB::ZLIB
+    target_link_libraries(${target} PRIVATE catch2_main ZLIB::ZLIB
                                             OpenSSL::SSL OpenSSL::Crypto)
     wowee_test_link_glm(${target})
-    if(TARGET Vulkan::Vulkan)
-        target_link_libraries(${target} PRIVATE Vulkan::Vulkan)
-    endif()
     string(REGEX REPLACE "^test_" "" _name ${target})
     add_test(NAME ${_name} COMMAND ${target})
     register_test_target(${target})
@@ -1823,6 +1820,7 @@ wowee_add_test(test_unit_fade SOURCES test_unit_fade.cpp)
 # TBC 2.4.3 petition/charter wire layouts, tabard emblem compositing, and guild update fields.
 wowee_add_packet_test(test_guild_charter_tabard
     SOURCES ${CMAKE_SOURCE_DIR}/src/game/update_field_table.cpp)
+set_tests_properties(guild_charter_tabard PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # ── test_summon_title ────────────────────────────────────────
 # Companion / minion subtitle choice under summoned units.
@@ -2301,12 +2299,9 @@ add_executable(test_calendar_packet
 )
 target_include_directories(test_calendar_packet PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_calendar_packet SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
-target_link_libraries(test_calendar_packet PRIVATE catch2_main SDL3::SDL3 ZLIB::ZLIB
+target_link_libraries(test_calendar_packet PRIVATE catch2_main ZLIB::ZLIB
                                                  OpenSSL::SSL OpenSSL::Crypto)
 wowee_test_link_glm(test_calendar_packet)
-if(TARGET Vulkan::Vulkan)
-    target_link_libraries(test_calendar_packet PRIVATE Vulkan::Vulkan)
-endif()
 add_test(NAME calendar_packet COMMAND test_calendar_packet)
 register_test_target(test_calendar_packet)
 

@@ -50,6 +50,11 @@ struct ExpansionProfile {
  */
 class ExpansionRegistry {
 public:
+    ExpansionRegistry() = default;
+    ~ExpansionRegistry();
+    ExpansionRegistry(const ExpansionRegistry&) = delete;
+    ExpansionRegistry& operator=(const ExpansionRegistry&) = delete;
+
     /**
      * Scan dataRoot/expansions/ for expansion.json files.
      * @param dataRoot Path to Data/ directory (e.g. "./Data")
@@ -82,7 +87,24 @@ private:
     void activeChanged();
 
     bool loadProfile(const std::string& jsonPath, const std::string& dirPath);
+    [[nodiscard]] bool ownsProfile(const ExpansionProfile* profile) const;
 };
+
+/// Active expansion profile across the process, or nullptr when no
+/// ExpansionRegistry has initialized or selected one (standalone packet tests,
+/// wowee_editor). Inline, like slots::bankLayoutRef(), so game_utils.hpp can
+/// query isActiveExpansion() without pulling in Application or linking
+/// expansion_profile.cpp when no registry is constructed.
+inline const ExpansionProfile*& activeExpansionProfileRef() {
+    static const ExpansionProfile* profile = nullptr;
+    return profile;
+}
+inline const ExpansionProfile* getActiveExpansionProfile() {
+    return activeExpansionProfileRef();
+}
+inline void setActiveExpansionProfile(const ExpansionProfile* profile) {
+    activeExpansionProfileRef() = profile;
+}
 
 } // namespace game
 } // namespace wowee

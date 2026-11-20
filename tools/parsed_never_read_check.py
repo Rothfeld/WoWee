@@ -73,6 +73,7 @@ EXPECTED = {
     # and bank frames do draw one, from GetContainerItemQuestInfo, which is a
     # different source entirely.
     ("LootItem", "isQuestItem"): "no consumer in 3.3.5's loot frame",
+    ("GuildBankData", "withdrawAmount"): "copied into tabs[tabId].remainingWithdrawals inside parser; asserted directly in test_guild_bank_list",
     # Named unknown because it is. Reading it would be inventing a meaning.
     ("AuthChallengeData", "unknown1"): "unidentified field, by name",
     # Echoed, not decided: AzerothCore reads emoteNum off CMSG_TEXT_EMOTE and

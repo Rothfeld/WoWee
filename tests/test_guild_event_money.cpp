@@ -14,14 +14,7 @@
 #include <string>
 #include <vector>
 
-#include "core/application.hpp"
 #include "game/world_packets.hpp"
-
-namespace wowee {
-namespace core {
-Application* Application::instance = nullptr;
-}
-}
 
 using namespace wowee::game;
 

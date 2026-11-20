@@ -18,13 +18,6 @@
 #include "game/world_packets.hpp"
 #include "game/bg_score_defs.hpp"
 #include "game/handler_types.hpp"
-#include "core/application.hpp"
-
-namespace wowee {
-namespace core {
-Application* Application::instance = nullptr;
-}
-}
 
 using namespace wowee::game;
 
