@@ -2907,6 +2907,14 @@ wowee_add_test(test_adt_truncation
             ${TEST_COMMON_SOURCES}
             ${CMAKE_SOURCE_DIR}/src/pipeline/adt_loader.cpp)
 
+# ── test_ocean_water ─────────────────────────────────────────
+# TBC ocean MCLQ tile visibility (0x80 fatigue flag vs 0x0F empty sentinel)
+# and Map 530 Expansion01 North Sea tile coverage.
+wowee_add_test(test_ocean_water
+    SOURCES test_ocean_water.cpp
+            ${TEST_COMMON_SOURCES}
+            ${CMAKE_SOURCE_DIR}/src/pipeline/adt_loader.cpp)
+
 # ── test_blp_truncation ──────────────────────────────────────
 # What the BLP loader does with a texture that lies about its own sizes. The
 # decompressors derived how much source to read from width and height and

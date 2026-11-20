@@ -331,10 +331,15 @@ void main() {
         }
         float alpha = mix(liquidParams.x, liquidParams.y, clamp(LiquidDepth / ndotv, 0.0, 1.0));
         if (push.legacyWmoMode > 2.5) {
-            // MCLQ depth bytes store floor(9 * depth_yards) normalized by 255.
-            // Scaling by 255/90 maps 10 yards of optical path length (depth / NdotV)
-            // to the deep end of the LightParams shallow->deep color/alpha ramp.
-            float opticalDepth = clamp(LiquidDepth * (255.0 / 90.0) / ndotv, 0.0, 1.0);
+            // MCLQ depth bytes are normalized to [0, 1] by 255.
+            // Ocean uses the authored [0, 1] depth ramp directly: coastal depths
+            // (e.g. 30-90/255) stay near oceanShallowColor/alpha so swimming
+            // players remain visible through the surface, while deep fatigue
+            // ocean (255/255) reaches oceanDeepColor/alpha. Rivers/lakes scale
+            // by (255/90)/NdotV for grazing-angle obscuration.
+            float opticalDepth = basicType > 0.5
+                ? clamp(LiquidDepth, 0.0, 1.0)
+                : clamp(LiquidDepth * (255.0 / 90.0) / ndotv, 0.0, 1.0);
             vec4 shallow = basicType > 0.5 ? oceanShallowColor : vec4(riverShallowColor.rgb, liquidParams.x);
             vec4 deep = basicType > 0.5 ? oceanDeepColor : vec4(riverDeepColor.rgb, liquidParams.y);
             vec4 depthColor = mix(shallow, deep, opticalDepth);
