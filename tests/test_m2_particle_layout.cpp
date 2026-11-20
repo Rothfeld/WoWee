@@ -236,6 +236,18 @@ TEST_CASE("Sphere emitters: elevation above the horizontal plane, no negative ra
     CHECK(death.direction == glm::vec3(0));
     // Etherial.m2 Death #21 (radius 0, 0x100): straight up.
     CHECK(sphericalParticleEmission(0, 0, 3.0f, 0, 0.5f, 0x100).direction == glm::vec3(0, 0, 1));
+    // Strike_Impact_Chest.m2 #1 (Flurry 12970 CastKit 3010 LeftHand/RightHand &
+    // melee impacts): radius 0, vertical pi, horizontal 0, flags 0x8429 (no 0x100).
+    // Must spawn at emitter center and travel radially in the billboard YZ plane
+    // so pinned tail streaks radiate outward instead of collapsing to zero length.
+    for (const float elev : {-3.14159265f, -1.57079633f, 0.0f, 0.78539816f, 2.35619449f}) {
+        const auto burst = sphericalParticleEmission(0.0f, 0.0f, elev, 0.0f, 0.5f, 0x8429);
+        CHECK(burst.offset == glm::vec3(0));
+        CHECK(burst.direction.x == Catch::Approx(0.0f).margin(1e-6f));
+        CHECK(glm::length(burst.direction) == Catch::Approx(1.0f));
+        CHECK(burst.direction.y == Catch::Approx(std::cos(elev)).margin(1e-5f));
+        CHECK(burst.direction.z == Catch::Approx(std::sin(elev)).margin(1e-5f));
+    }
 }
 
 TEST_CASE("Summoning portal emits a ring rather than filling its center", "[m2][particle]") {

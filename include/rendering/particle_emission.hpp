@@ -258,8 +258,10 @@ struct ParticleEmission {
 // The area length / width tracks are the minimum / maximum radius; a birth
 // takes a radius between them. The vertical range is an elevation above the
 // model's horizontal plane, the horizontal range an azimuth about +Z.
-// Particles travel away from the emitter centre (along the offset), or up +Z
-// with flag 0x100; at zero radius without 0x100 they have no velocity.
+// Particles travel away from the emitter centre along the sampled radial
+// direction (including at zero radius, e.g. Strike_Impact_Chest.m2 #1 on
+// Flurry 12970 / melee impacts, 546 TBC sphere emitters), or up +Z with flag
+// 0x100; at negative radius without 0x100 they have no velocity.
 // Native evidence (pair 23, _experiments/20261118T143000Z.sphere_emission):
 // - Shadow Nova 30852 (shadow_nova_area.m2 #0, vertical 0, horizontal pi,
 //   radius to 9.7, 0x2209, kit scale 1): a smoke band spreading flat over
@@ -277,10 +279,10 @@ inline ParticleEmission sphericalParticleEmission(float length, float width,
     float elevation, float azimuth, float radius, uint32_t flags) {
     const glm::vec3 direction(std::cos(elevation) * std::sin(azimuth),
                               std::cos(elevation) * std::cos(azimuth), std::sin(elevation));
-    const glm::vec3 offset = direction * std::fmax(glm::mix(length, width, radius), 0.0f);
-    const float magnitude = glm::length(offset);
+    const float sampledRadius = glm::mix(length, width, radius);
+    const glm::vec3 offset = direction * std::fmax(sampledRadius, 0.0f);
     return {offset, (flags & 0x100u) != 0 ? glm::vec3(0, 0, 1)
-                    : magnitude > 0 ? offset / magnitude : glm::vec3(0)};
+                    : sampledRadius >= 0.0f ? direction : glm::vec3(0)};
 }
 
 // Plane emitter (type 1) birth offset in the emitter bone's XY plane.
