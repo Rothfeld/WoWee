@@ -2598,12 +2598,49 @@ void InventoryHandler::fireBagUpdates() {
     // The character sheet redraws from this one rather than from BAG_UPDATE, so
     // both go out together - equipping something changes a bag and a slot.
     fire("UNIT_INVENTORY_CHANGED", {"player"});
+    // Track equipped main-hand and ranged weapon changes: in native TBC 2.4.3,
+    // equipping, swapping, or unequipping a weapon (or receiving its item
+    // metadata) emits SPELLS_CHANGED (refreshing open SpellBookFrame) and
+    // ACTIONBAR_SLOT_CHANGED for action buttons whose icon follows that weapon
+    // (Attack 6603, auto-repeat ranged spells 75/5019, and dynamic macros).
+    auto snapshotEquip = [&](EquipSlot equipSlot) -> WeaponSlotSnapshot {
+        const auto& s = owner_.inventoryRef().getEquipSlot(equipSlot);
+        if (s.empty()) return {};
+        WeaponSlotSnapshot snap{s.item.itemId, s.item.displayInfoId, s.item.inventoryType};
+        if (snap.displayInfoId == 0 || snap.inventoryType == 0) {
+            if (const auto* info = owner_.getItemInfo(snap.itemId)) {
+                if (snap.displayInfoId == 0) snap.displayInfoId = info->displayInfoId;
+                if (snap.inventoryType == 0) snap.inventoryType = info->inventoryType;
+            }
+        }
+        return snap;
+    };
+    const WeaponSlotSnapshot curMainHand = snapshotEquip(EquipSlot::MAIN_HAND);
+    const WeaponSlotSnapshot curRanged = snapshotEquip(EquipSlot::RANGED);
+    const bool mainHandChanged = (curMainHand != lastMainHandSnapshot_);
+    const bool rangedChanged = (curRanged != lastRangedSnapshot_);
+    lastMainHandSnapshot_ = curMainHand;
+    lastRangedSnapshot_ = curRanged;
+    if (mainHandChanged || rangedChanged) {
+        fire("SPELLS_CHANGED", {});
+    }
     // ActionButton does not listen for BAG_UPDATE. Notify after the rebuilt
     // inventory is available, including when item objects arrive after slots.
     const auto& actions = owner_.getActionBar();
     for (size_t slot = 0; slot < actions.size(); ++slot) {
-        if (actions[slot].type == ActionBarSlot::ITEM && actions[slot].id != 0)
+        bool notify = (actions[slot].type == ActionBarSlot::ITEM && actions[slot].id != 0);
+        if (!notify && (mainHandChanged || rangedChanged)) {
+            if (actions[slot].type == ActionBarSlot::SPELL && actions[slot].id != 0) {
+                const auto dynSlot = owner_.spellDynamicWeaponIconSlot(actions[slot].id);
+                notify = (mainHandChanged && dynSlot == GameHandler::DynamicWeaponIconSlot::MainHand) ||
+                         (rangedChanged && dynSlot == GameHandler::DynamicWeaponIconSlot::Ranged);
+            } else if (actions[slot].type == ActionBarSlot::MACRO && actions[slot].id != 0) {
+                notify = true;
+            }
+        }
+        if (notify) {
             fire("ACTIONBAR_SLOT_CHANGED", {std::to_string(slot + 1)});
+        }
     }
     // An open trade skill window is looking at the bags too, and it does not
     // watch them: TradeSkillFrame_OnLoad registers TRADE_SKILL_UPDATE,

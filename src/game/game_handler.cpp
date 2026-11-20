@@ -3412,32 +3412,56 @@ void GameHandler::loadFactionNameCache() const {
              factionRepListToId_.size(), " with reputation tracking");
 }
 
-std::string GameHandler::getSpellIconPath(uint32_t spellId) const {
-    // Attack's artwork follows the main hand. Its DBC icon is Temp, a
-    // placeholder: empty-handed, native 2.4.3 GetSpellTexture answers
-    // Interface\Buttons\Spell-Reset (a paladin with no weapon, pair 21).
-    if (spellId == 6603) {
-        const auto& weapon = inventory.getEquipSlot(EquipSlot::MAIN_HAND);
-        if (weapon.empty()) return "Interface\\Buttons\\Spell-Reset";
-        uint32_t displayId = weapon.item.displayInfoId;
-        if (displayId == 0) {
-            if (const auto* info = getItemInfo(weapon.item.itemId)) displayId = info->displayInfoId;
-        }
-        return getItemIconPath(displayId);
-    }
-    // An auto-repeat shot (AttributesEx2 0x20: Auto Shot, the wand's Shoot)
-    // wears the ranged weapon's icon: native 2.4.3 GetSpellTexture("Auto Shot")
-    // and the action button holding it answer INV_Weapon_Rifle_01 for a hunter
-    // with an Old Blunderbuss. Throw (no auto-repeat) keeps Ability_Throw.
+GameHandler::DynamicWeaponIconSlot GameHandler::spellDynamicWeaponIconSlot(uint32_t spellId) const {
+    if (spellId == 6603) return DynamicWeaponIconSlot::MainHand;
     constexpr uint32_t kAttrEx2AutoRepeat = 0x20;
     if (const auto* entry = getSpellNameEntry(spellId); entry && (entry->attrEx2 & kAttrEx2AutoRepeat)) {
+        return DynamicWeaponIconSlot::Ranged;
+    }
+    return DynamicWeaponIconSlot::None;
+}
+
+std::string GameHandler::getSpellIconPath(uint32_t spellId) const {
+    const auto dynSlot = spellDynamicWeaponIconSlot(spellId);
+    // Attack's artwork follows the main hand. Its DBC icon is Temp, a
+    // placeholder: empty-handed (or while item metadata is still in flight),
+    // native 2.4.3 GetSpellTexture/GetSpellInfo/GetActionTexture answer
+    // Interface\Buttons\Spell-Reset.
+    if (dynSlot == DynamicWeaponIconSlot::MainHand) {
+        const auto& weapon = inventory.getEquipSlot(EquipSlot::MAIN_HAND);
+        if (!weapon.empty()) {
+            uint32_t displayId = weapon.item.displayInfoId;
+            if (displayId == 0) {
+                if (const auto* info = getItemInfo(weapon.item.itemId)) displayId = info->displayInfoId;
+            }
+            if (displayId != 0) {
+                std::string icon = getItemIconPath(displayId);
+                if (!icon.empty()) return icon;
+            }
+        }
+        return "Interface\\Buttons\\Spell-Reset";
+    }
+    // An auto-repeat shot (AttributesEx2 0x20: Auto Shot 75, wand Shoot 5019)
+    // wears the equipped bow/gun/crossbow/wand icon (InvType::RANGED_BOW or
+    // InvType::RANGED_GUN). With a Thrown weapon, Relic, or empty ranged slot,
+    // native 2.4.3 keeps the spell's DBC icon (Ability_Whirlwind / Ability_ShootWand).
+    // Non-auto-repeat Shoot (3018) and Throw (2764) always keep their DBC icons.
+    if (dynSlot == DynamicWeaponIconSlot::Ranged) {
         const auto& ranged = inventory.getEquipSlot(EquipSlot::RANGED);
         if (!ranged.empty()) {
             uint32_t displayId = ranged.item.displayInfoId;
-            if (displayId == 0) {
-                if (const auto* info = getItemInfo(ranged.item.itemId)) displayId = info->displayInfoId;
+            uint8_t invType = ranged.item.inventoryType;
+            if (displayId == 0 || invType == 0) {
+                if (const auto* info = getItemInfo(ranged.item.itemId)) {
+                    if (displayId == 0) displayId = info->displayInfoId;
+                    if (invType == 0) invType = info->inventoryType;
+                }
             }
-            if (displayId != 0) return getItemIconPath(displayId);
+            const bool isLauncher = (invType == InvType::RANGED_BOW || invType == InvType::RANGED_GUN);
+            if (isLauncher && displayId != 0) {
+                std::string icon = getItemIconPath(displayId);
+                if (!icon.empty()) return icon;
+            }
         }
     }
     return spellIconPathResolver_ ? spellIconPathResolver_(spellId) : std::string{};

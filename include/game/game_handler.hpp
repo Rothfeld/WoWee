@@ -462,6 +462,13 @@ public:
     void setSpellIconPathResolver(SpellIconPathResolver r) { spellIconPathResolver_ = std::move(r); }
     std::string getSpellIconPath(uint32_t spellId) const;
 
+    /// Which equipped weapon slot (if any) supplies this spell's dynamic icon
+    /// in TBC 2.4.3: Attack (6603) follows MAIN_HAND, while auto-repeat ranged
+    /// spells (AttributesEx2 & 0x20: Auto Shot 75, wand Shoot 5019) follow RANGED
+    /// when a bow/gun/crossbow/wand is equipped.
+    enum class DynamicWeaponIconSlot : uint8_t { None, MainHand, Ranged };
+    DynamicWeaponIconSlot spellDynamicWeaponIconSlot(uint32_t spellId) const;
+
     // The same SpellIcon.dbc, reached by icon id rather than through a spell.
     // SkillLine.dbc names an icon directly, so a spellbook tab has one without
     // any spell standing between it and the picture.

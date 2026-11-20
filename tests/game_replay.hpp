@@ -23,6 +23,7 @@
 #include "game/expansion_profile.hpp"
 #include "game/game_handler.hpp"
 #include "game/game_services.hpp"
+#include "game/inventory_handler.hpp"
 #include "game/opcode_table.hpp"
 #include "game/packet_parsers.hpp"
 #include "game/social_handler.hpp"
@@ -94,6 +95,9 @@ struct GameHandlerTestAccess {
     }
     static void setExpansions(core::Application& app, std::unique_ptr<ExpansionRegistry> registry) {
         app.expansionRegistry_ = std::move(registry);
+    }
+    static void fireBagUpdates(GameHandler& gh) {
+        if (gh.inventoryHandler_) gh.inventoryHandler_->fireBagUpdates();
     }
 };
 

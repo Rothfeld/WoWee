@@ -910,6 +910,18 @@ private:
     mutable bool itemSetsLoaded_ = false;
     mutable std::unordered_map<uint32_t, ItemSetInfo> itemSets_;
     uint32_t estimateItemRepairCost(uint64_t itemGuid) const;
+
+    // Last announced equipped main-hand and ranged weapon visual state, so
+    // fireBagUpdates() emits SPELLS_CHANGED and dynamic-weapon-icon
+    // ACTIONBAR_SLOT_CHANGED only when those slots actually change.
+    struct WeaponSlotSnapshot {
+        uint32_t itemId = 0;
+        uint32_t displayInfoId = 0;
+        uint8_t inventoryType = 0;
+        bool operator==(const WeaponSlotSnapshot&) const = default;
+    };
+    WeaponSlotSnapshot lastMainHandSnapshot_;
+    WeaponSlotSnapshot lastRangedSnapshot_;
 };
 
 } // namespace game
