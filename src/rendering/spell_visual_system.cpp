@@ -526,6 +526,50 @@ void SpellVisualSystem::playEffectAtAttachment(uint32_t effectNameId, uint32_t a
               attachInstanceId, " duration=", lifetime, "s model=", path->second);
 }
 
+void SpellVisualSystem::playResistImmuneEffect(const glm::vec3& impactPosition,
+                                               const glm::vec3& incomingDirection) {
+    if (!m2Renderer_) return;
+    if (!cachedAssetManager_)
+        cachedAssetManager_ = core::Application::getInstance().getAssetManager();
+    if (!cachedAssetManager_) return;
+    if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
+
+    // SpellVisualEffectName.dbc row 3207: 'HARDCODED Resist Spell' -> spells\resist_immune_effect.mdx
+    static constexpr uint32_t kEffectResistImmune = 3207;
+    const auto path = effectPaths_.find(kEffectResistImmune);
+    if (path == effectPaths_.end()) {
+        LOG_DEBUG("SpellVisual: HARDCODED Resist Spell (3207) absent from SpellVisualEffectName.dbc");
+        return;
+    }
+    const uint32_t modelId = loadSpellModel(path->second);
+    if (modelId == 0) return;
+
+    // resist_immune_effect.m2 authors its curved shockwave dome at X=[-1.45, -0.84],
+    // so aligning +X along incomingDirection (caster -> victim) places the dome in
+    // front of the victim facing the incoming missile (verified at 30 Hz on build 8606).
+    glm::vec3 rotation(0.0f);
+    const float len = glm::length(incomingDirection);
+    if (len > 1e-4f) {
+        const glm::vec3 dir = incomingDirection / len;
+        rotation.z = std::atan2(dir.y, dir.x);
+        rotation.y = -std::asin(std::clamp(dir.z, -1.0f, 1.0f));
+    }
+    const float scale = effectScale(kEffectResistImmune);
+    const uint32_t instanceId = m2Renderer_->createInstanceWithMatrix(
+        modelId, placementModelMatrix(impactPosition, rotation, scale), impactPosition);
+    if (instanceId == 0) {
+        LOG_WARNING("SpellVisual: instance failed for resist/immune effect model=", path->second);
+        return;
+    }
+    m2Renderer_->setInstanceIsSpellVisual(instanceId);
+    m2Renderer_->restartInstanceAnimation(instanceId);
+    const float animDurMs = m2Renderer_->getInstanceAnimDuration(instanceId);
+    const float lifetime = animDurMs > 0.0f ? (animDurMs / 1000.0f) : 0.5f;
+    activeSpellVisuals_.push_back({.instanceId = instanceId, .elapsed = 0.0f, .duration = lifetime,
+        .isPrecast = false, .attachmentId = 0, .attachInstanceId = 0, .effectScale = scale});
+    LOG_DEBUG("SpellVisual: resist/immune effect instance=", instanceId, " duration=", lifetime, "s");
+}
+
 // The cast, impact and missile models load the same way: a model ID per path,
 // a negative cache for paths that failed, and the skin beside a WotLK model.
 uint32_t SpellVisualSystem::loadSpellModel(const std::string& modelPath) {
@@ -1379,7 +1423,8 @@ std::optional<SpellVisualSystem::MissileAttachments> SpellVisualSystem::missileA
 
 bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& start,
                                          const glm::vec3& end, float speed, float launchDelay,
-                                         bool impactAtEnd, bool areaImpactAtEnd) {
+                                         bool impactAtEnd, bool areaImpactAtEnd,
+                                         bool resistEffectAtEnd, std::function<void()> onArrive) {
     if (!m2Renderer_ || !hasSpellMissile(visualId)) return false;
     if (!cachedAssetManager_) return false;
     if (!std::isfinite(speed) || speed <= 0.0f) return false;
@@ -1401,7 +1446,8 @@ bool SpellVisualSystem::playSpellMissile(uint32_t visualId, const glm::vec3& sta
     spellMissiles_.push_back({.instanceId = 0, .modelId = modelId, .visualId = visualId, .start = start,
                               .end = end, .elapsed = 0.0f, .launchAt = launchDelay, .duration = duration,
                               .impactAtEnd = impactAtEnd, .scale = spellVisualMissileScale_.at(visualId),
-                              .areaImpactAtEnd = areaImpactAtEnd});
+                              .areaImpactAtEnd = areaImpactAtEnd, .resistEffectAtEnd = resistEffectAtEnd,
+                              .onArrive = std::move(onArrive)});
     LOG_INFO("SpellVisual: missile visualId=", visualId, " model=", modelPath,
              " distance=", distance, " speed=", speed, " lands=", duration, "s leaves=", launchDelay, "s");
     return true;
@@ -1595,9 +1641,11 @@ void SpellVisualSystem::update(float deltaTime) {
         return;
 
     // Collected first: the impact spawns into activeSpellVisuals_, and a
-    // missile's arrival is the moment its impact kit belongs to.
+    // missile's arrival is the moment its impact/resist kit belongs to.
     std::vector<std::pair<uint32_t, glm::vec3>> arrivals;
     std::vector<std::pair<uint32_t, glm::vec3>> areaArrivals;
+    std::vector<std::pair<glm::vec3, glm::vec3>> resistArrivals;
+    std::vector<std::function<void()>> arriveCallbacks;
     for (auto it = spellMissiles_.begin(); it != spellMissiles_.end(); ) {
         it->elapsed += deltaTime;
         // A missile is drawn from the hand at its release even when its landing
@@ -1612,6 +1660,8 @@ void SpellVisualSystem::update(float deltaTime) {
         if (it->landed) {
             if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
             if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
+            if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->end - it->start);
+            if (it->onArrive) arriveCallbacks.push_back(std::move(it->onArrive));
             m2Renderer_->retireMissileInstance(it->instanceId);
             it = spellMissiles_.erase(it);
             continue;
@@ -1626,6 +1676,8 @@ void SpellVisualSystem::update(float deltaTime) {
                 LOG_WARNING("SpellVisual: failed to create missile instance for visualId=", it->visualId);
                 if (it->impactAtEnd) arrivals.emplace_back(it->visualId, it->end);
                 if (it->areaImpactAtEnd) areaArrivals.emplace_back(it->visualId, it->end);
+                if (it->resistEffectAtEnd) resistArrivals.emplace_back(it->end, it->end - it->start);
+                if (it->onArrive) arriveCallbacks.push_back(std::move(it->onArrive));
                 it = spellMissiles_.erase(it);
                 continue;
             }
@@ -1644,6 +1696,10 @@ void SpellVisualSystem::update(float deltaTime) {
         playSpellVisual(visualId, pos, /*useImpactKit=*/true);
     for (const auto& [visualId, pos] : areaArrivals)
         playImpactAreaKit(visualId, pos);
+    for (const auto& [pos, dir] : resistArrivals)
+        playResistImmuneEffect(pos, dir);
+    for (auto& cb : arriveCallbacks)
+        cb();
 
     // Get character bone tracking context (once per frame)
     CharacterRenderer* charRenderer = renderer_ ? renderer_->getCharacterRenderer() : nullptr;

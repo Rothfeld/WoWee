@@ -1420,6 +1420,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 e.model = inst.modelMatrix;
                 e.uvOffset = glm::vec2(0.0f);
                 e.uvOffset2 = glm::vec2(0.0f);
+                e.uvScale = glm::vec4(1.0f);
                 e.tintPacked = 0;
                 e.fadeAlpha = p.fadeAlpha;
                 e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
@@ -1721,12 +1722,18 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             const auto& p = pending[j];
                             auto& inst = instances[p.instanceIdx];
                             glm::vec2 uvOffset(0.0f);
+                            glm::vec2 uvScale(1.0f);
                             if (tt) {
                                 glm::vec3 trans = m2_track::sampleVec3(
                                     tt->translation, inst.currentSequenceIndex,
                                     inst.animTime, inst.globalSequenceTime,
                                     model.globalSequenceDurations, glm::vec3(0.0f));
                                 uvOffset = glm::vec2(trans.x, trans.y);
+                                glm::vec3 sc = m2_track::sampleVec3(
+                                    tt->scale, inst.currentSequenceIndex,
+                                    inst.animTime, inst.globalSequenceTime,
+                                    model.globalSequenceDurations, glm::vec3(1.0f));
+                                uvScale = glm::vec2(sc.x, sc.y);
                             }
                             // Rebuild the entry from CPU-side data rather than copying it
                             // out of the base entry. instSSBO lives in write-combined
@@ -1736,6 +1743,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             e.model = inst.modelMatrix;
                             e.uvOffset = uvOffset;
                             e.uvOffset2 = secondTextureOffset(model, batch, inst);
+                            e.uvScale = glm::vec4(uvScale, 1.0f, 1.0f);
                             e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, inst);
                             e.fadeAlpha = p.fadeAlpha * m2_internal::animatedBatchOpacity(model, batch, inst);
                             e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
@@ -2055,6 +2063,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             static const bool skyNoTexAnim =
                 std::getenv("WOWEE_SKY_M2_NO_TEXANIM") != nullptr;
             glm::vec2 uvOffset(0.0f);
+            glm::vec2 uvScale(1.0f);
             if (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation &&
                 !(skyMode_ && skyNoTexAnim)) {
                 uint16_t lookupIdx = batch.textureAnimIndex;
@@ -2067,6 +2076,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             instance.animTime, instance.globalSequenceTime,
                             model.globalSequenceDurations, glm::vec3(0.0f));
                         uvOffset = glm::vec2(trans.x, trans.y);
+                        glm::vec3 sc = m2_track::sampleVec3(
+                            tt.scale, instance.currentSequenceIndex,
+                            instance.animTime, instance.globalSequenceTime,
+                            model.globalSequenceDurations, glm::vec3(1.0f));
+                        uvScale = glm::vec2(sc.x, sc.y);
                     }
                 }
             }
@@ -2078,6 +2092,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             e.model = instance.modelMatrix;
             e.uvOffset = uvOffset;
             e.uvOffset2 = secondTextureOffset(model, batch, instance);
+            e.uvScale = glm::vec4(uvScale, 1.0f, 1.0f);
             e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, instance);
             e.fadeAlpha = instanceFadeAlpha * m2_internal::animatedBatchOpacity(model, batch, instance);
             e.useBones = (needsBones && !kM2NoSkinning) ? 1 : 0;

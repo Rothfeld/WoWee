@@ -462,6 +462,10 @@ public:
                             float wireRadius = -1.0f);
     void hidePersistentArea(uint64_t guid);
 
+    /// Whether a SpellVisual missile with this SpellMissInfo outcome plays
+    /// HARDCODED Resist Spell (3207, spells\resist_immune_effect.m2) on arrival.
+    [[nodiscard]] static bool spellMissShowsResistEffect(uint8_t missType);
+
 private:
     std::unordered_map<uint32_t, uint64_t> pendingPetNameQueries_;
 
@@ -516,9 +520,12 @@ private:
     uint32_t resolveSpellVisualId(uint32_t spellId);
     float resolveSpellMissileSpeed(uint32_t spellId);
     /// Fly the spell's missile from the caster to one target. True when one
-    /// launched, which then plays the impact kit itself when it lands.
+    /// launched, which then plays the impact/resist kit itself when it lands.
     bool launchSpellMissile(uint32_t spellId, uint32_t visualId, uint64_t casterGuid,
-                            uint64_t targetGuid, bool impactAtEnd);
+                            uint64_t targetGuid, bool impactAtEnd,
+                            bool resistEffectAtEnd = false,
+                            std::function<void()> onArrive = {},
+                            bool skipReleaseDelay = false);
     // Resolve render-space position for a unit GUID (player or entity).
     bool resolveUnitPosition(uint64_t guid, glm::vec3& outPos);
     // Play the cast/precast visual effect at the caster's position.

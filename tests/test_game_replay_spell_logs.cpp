@@ -119,3 +119,114 @@ TEST_CASE("a failed dispel has whole guids, and classic has no dispel spell", "[
         CHECK_FALSE(chatHas(s, "(spell"));
     }
 }
+
+namespace {
+
+Packet tbcSpellGoMiss(uint64_t caster, uint32_t spellId, uint64_t victim,
+                      uint8_t missType, uint8_t reflectResult = 0) {
+    Packet p(wireOpcode(Opcode::SMSG_SPELL_GO));
+    p.writePackedGuid(caster);
+    p.writePackedGuid(caster);
+    p.writeUInt32(spellId);
+    p.writeUInt16(0);       // castFlags
+    p.writeUInt32(1000);    // timestamp
+    p.writeUInt8(0);        // hitCount
+    p.writeUInt8(1);        // missCount
+    p.writeUInt64(victim);
+    p.writeUInt8(missType);
+    if (missType == wowee::game::SpellMissInfo::REFLECT) {
+        p.writeUInt8(reflectResult);
+    }
+    p.writeUInt32(0);       // SpellCastTargets flags = TARGET_FLAG_SELF/none
+    return p;
+}
+
+}  // namespace
+
+TEST_CASE("spell miss resist effect and victim animation rules match TBC 2.4.3", "[replay][spellmiss]") {
+    using wowee::game::GameHandler;
+    using wowee::game::SpellHandler;
+    namespace MI = wowee::game::SpellMissInfo;
+
+    // Resist/Immune/Miss/Deflect/Evade on missiles show HARDCODED Resist Spell (3207).
+    CHECK(SpellHandler::spellMissShowsResistEffect(MI::MISS));
+    CHECK(SpellHandler::spellMissShowsResistEffect(MI::RESIST));
+    CHECK(SpellHandler::spellMissShowsResistEffect(MI::EVADE));
+    CHECK(SpellHandler::spellMissShowsResistEffect(MI::IMMUNE));
+    CHECK(SpellHandler::spellMissShowsResistEffect(MI::IMMUNE2));
+    CHECK(SpellHandler::spellMissShowsResistEffect(MI::DEFLECT));
+
+    // Dodge/Parry/Block/Absorb/Reflect/None do not show the resist dome.
+    CHECK_FALSE(SpellHandler::spellMissShowsResistEffect(MI::NONE));
+    CHECK_FALSE(SpellHandler::spellMissShowsResistEffect(MI::DODGE));
+    CHECK_FALSE(SpellHandler::spellMissShowsResistEffect(MI::PARRY));
+    CHECK_FALSE(SpellHandler::spellMissShowsResistEffect(MI::BLOCK));
+    CHECK_FALSE(SpellHandler::spellMissShowsResistEffect(MI::ABSORB));
+    CHECK_FALSE(SpellHandler::spellMissShowsResistEffect(MI::REFLECT));
+
+    // Victim reaction mapping across missile and non-missile spells.
+    CHECK(GameHandler::spellMissHitReaction(MI::RESIST, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::RESIST, false) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::IMMUNE, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::IMMUNE, false) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::DODGE, false) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::PARRY, false) == GameHandler::HitReaction::PARRY);
+    CHECK(GameHandler::spellMissHitReaction(MI::BLOCK, false) == GameHandler::HitReaction::SHIELD_BLOCK);
+    CHECK(GameHandler::spellMissHitReaction(MI::REFLECT, true) == GameHandler::HitReaction::DODGE);
+    CHECK(GameHandler::spellMissHitReaction(MI::MISS, true) == GameHandler::HitReaction::DODGE);
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::MISS, false).has_value());
+    CHECK_FALSE(GameHandler::spellMissHitReaction(MI::ABSORB, true).has_value());
+}
+
+TEST_CASE("TBC SMSG_SPELL_GO miss targets fire victim hit reactions and parse reflectResult", "[replay][spellmiss]") {
+    using wowee::game::GameHandler;
+    namespace MI = wowee::game::SpellMissInfo;
+
+    // Parser preserves reflectResult byte on SPELL_MISS_REFLECT.
+    {
+        Session s("tbc");
+        Packet p = tbcSpellGoMiss(kMob, 7588, kPlayer, MI::REFLECT, MI::IMMUNE);
+        wowee::game::SpellGoData data;
+        REQUIRE(s.handler().getPacketParsers()->parseSpellGo(p, data));
+        REQUIRE(data.missTargets.size() == 1);
+        CHECK(data.missTargets[0].targetGuid == kPlayer);
+        CHECK(data.missTargets[0].missType == MI::REFLECT);
+        CHECK(data.missTargets[0].reflectResult == MI::IMMUNE);
+    }
+
+    // Non-missile SMSG_SPELL_GO misses trigger victim hit reactions on both player and creature.
+    struct Case {
+        uint64_t caster;
+        uint64_t victim;
+        uint32_t spellId;
+        uint8_t missType;
+        std::optional<GameHandler::HitReaction> expected;
+    };
+    const Case cases[] = {
+        {kMob,    kPlayer, 2136, MI::RESIST,  GameHandler::HitReaction::DODGE},
+        {kMob,    kPlayer, 2136, MI::IMMUNE,  GameHandler::HitReaction::DODGE},
+        {kMob,    kPlayer, 1752, MI::DODGE,   GameHandler::HitReaction::DODGE},
+        {kMob,    kPlayer, 1752, MI::PARRY,   GameHandler::HitReaction::PARRY},
+        {kMob,    kPlayer, 1752, MI::BLOCK,   GameHandler::HitReaction::SHIELD_BLOCK},
+        {kMob,    kPlayer, 2764, MI::MISS,    std::nullopt},
+        {kPlayer, kMob,    2136, MI::IMMUNE,  GameHandler::HitReaction::DODGE},
+        {kPlayer, kMob,    1752, MI::PARRY,   GameHandler::HitReaction::PARRY},
+        {kMob,    kPlayer, 2136, MI::REFLECT, GameHandler::HitReaction::DODGE},
+    };
+    for (const auto& c : cases) {
+        Session s("tbc");
+        std::vector<std::tuple<uint64_t, uint64_t, GameHandler::HitReaction>> reactions;
+        s.handler().setHitReactionCallback([&](uint64_t a, uint64_t v, GameHandler::HitReaction r) {
+            reactions.emplace_back(a, v, r);
+        });
+        s.receive(tbcSpellGoMiss(c.caster, c.spellId, c.victim, c.missType));
+        if (c.expected) {
+            REQUIRE(reactions.size() == 1);
+            CHECK(std::get<0>(reactions[0]) == c.caster);
+            CHECK(std::get<1>(reactions[0]) == c.victim);
+            CHECK(std::get<2>(reactions[0]) == *c.expected);
+        } else {
+            CHECK(reactions.empty());
+        }
+    }
+}

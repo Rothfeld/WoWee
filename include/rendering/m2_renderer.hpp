@@ -1086,6 +1086,7 @@ private:
         glm::vec4 customAmbient{0.0f};   // 16 bytes @ offset 112 - xyz: ambient, w: worldBoundsCenter.x
         glm::vec4 customDiffuse{0.0f};   // 16 bytes @ offset 128 - xyz: diffuse, w: worldBoundsCenter.y
         glm::vec4 customLightDir{0.0f};  // 16 bytes @ offset 144 - xyz: lightDir, w: worldBoundsCenter.z
+        glm::vec4 uvScale{1.0f};         // 16 bytes @ offset 160 - xy: tex0 UV scale, zw: tex1 UV scale
     };
     // How many instances one frame may hand the GPU, not how many exist. Ground
     // clutter is what fills it: it is drawn by the thousand and every tuft

@@ -2379,8 +2379,9 @@ public:
 
 /** SMSG_SPELL_GO data (simplified) */
 struct SpellGoMissEntry {
-    uint64_t targetGuid = 0;
-    uint8_t  missType   = 0;  // SpellMissInfo (spell_defines.hpp)
+    uint64_t targetGuid    = 0;
+    uint8_t  missType      = 0;  // SpellMissInfo (spell_defines.hpp)
+    uint8_t  reflectResult = 0;  // SpellMissInfo when missType == REFLECT (11)
 };
 
 struct SpellGoData {

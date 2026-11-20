@@ -195,6 +195,16 @@ asset path, because each `VkTexture` owns its sampler. `barrel01.m2` clamps
 `barrel04dark2.blp`, while `barrellowpoly.m2` repeats that same texture with U
 coordinates reaching 2.915. Sharing their sampler stretches edge pixels across
 the repeated barrel faces. File decoding remains keyed by asset path.
+Missed/resisted/immune spell missiles (`SMSG_SPELL_GO` `missTargets` with
+`MISS`, `RESIST`, `EVADE`, `IMMUNE`, `IMMUNE2`, or `DEFLECT`) fly to the victim
+and play `SpellVisualEffectName` 3207 (`HARDCODED Resist Spell`,
+`spells\resist_immune_effect.m2`) oriented along the incoming trajectory on
+arrival, together with the victim's reaction animation (`Dodge`/`Parry`/`ShieldBlock`).
+`SPELL_MISS_REFLECT` bounces the missile back to the caster using the packet's
+`reflectResult` byte. Non-missile misses play the victim reaction immediately
+without the resist dome. `M2Renderer` samples `M2TextureTransform::scale` around
+`(0.5, 0.5)` so UV-scaled shockwaves expand at their authored size. Evidence:
+`_experiments/20261120T092500Z.spell_miss_resist_fx/` in the workspace.
 TBC group finder: [LFG/LFM protocol and validation](docs/tbc-lfg.md).
 Party frames and map transfers: [protocol and input lifecycle](docs/party-stats-and-map-input.md).
 Interior minimaps: [authored room tiles and validation](docs/interior-minimap.md).

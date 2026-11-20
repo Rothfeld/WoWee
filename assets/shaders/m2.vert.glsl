@@ -50,6 +50,7 @@ struct InstanceData {
     vec4 customAmbient;
     vec4 customDiffuse;
     vec4 customLightDir;
+    vec4 uvScale;
 };
 layout(set = 3, binding = 0) readonly buffer InstanceSSBO {
     InstanceData instanceData[];
@@ -156,12 +157,15 @@ void main() {
         : vec3(0.0);
     VertexLighting = clamp(effAmbient + diffuse * effDiffuse + m2Point, 0.0, 1.0);
 
-    TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;
+    vec2 baseUV = push.texCoordSet == 1 ? aTexCoord2 : aTexCoord;
     vec3 eyeNormal = normalizedNormal(mat3(view) * Normal);
     vec2 environmentUV = eyeNormal.xy * 0.5 + 0.5;
-    if (push.texCoordSet == -1) TexCoord = environmentUV + uvOff;
-    TexCoord2 = (push.texCoordSet2 == -1 ? environmentUV :
-        (push.texCoordSet2 == 1 ? aTexCoord2 : aTexCoord)) +
+    if (push.texCoordSet == -1) baseUV = environmentUV;
+    vec4 uvSc = instanceData[instIdx].uvScale;
+    TexCoord = (baseUV - vec2(0.5)) * uvSc.xy + vec2(0.5) + uvOff;
+    vec2 baseUV2 = push.texCoordSet2 == -1 ? environmentUV :
+        (push.texCoordSet2 == 1 ? aTexCoord2 : aTexCoord);
+    TexCoord2 = (baseUV2 - vec2(0.5)) * uvSc.zw + vec2(0.5) +
         instanceData[instIdx].uvOffset2;
 
     InstanceOrigin = model[3].xyz;

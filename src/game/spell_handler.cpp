@@ -739,8 +739,47 @@ float SpellHandler::resolveSpellMissileSpeed(uint32_t spellId) {
     return (it != owner_.spellNameCacheRef().end()) ? it->second.missileSpeed : 0.0f;
 }
 
+bool SpellHandler::spellMissShowsResistEffect(uint8_t missType) {
+    switch (missType) {
+        case SpellMissInfo::MISS:
+        case SpellMissInfo::RESIST:
+        case SpellMissInfo::EVADE:
+        case SpellMissInfo::IMMUNE:
+        case SpellMissInfo::IMMUNE2:
+        case SpellMissInfo::DEFLECT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+std::optional<GameHandler::HitReaction> GameHandler::spellMissHitReaction(
+    uint8_t missType, bool hasMissile) {
+    switch (missType) {
+        case SpellMissInfo::RESIST:
+        case SpellMissInfo::DODGE:
+        case SpellMissInfo::EVADE:
+        case SpellMissInfo::IMMUNE:
+        case SpellMissInfo::IMMUNE2:
+        case SpellMissInfo::DEFLECT:
+        case SpellMissInfo::REFLECT:
+            return GameHandler::HitReaction::DODGE;
+        case SpellMissInfo::PARRY:
+            return GameHandler::HitReaction::PARRY;
+        case SpellMissInfo::BLOCK:
+            return GameHandler::HitReaction::SHIELD_BLOCK;
+        case SpellMissInfo::MISS:
+            return hasMissile ? std::optional{GameHandler::HitReaction::DODGE} : std::nullopt;
+        default:
+            return std::nullopt;
+    }
+}
+
 bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint64_t casterGuid,
-                                      uint64_t targetGuid, bool impactAtEnd) {
+                                      uint64_t targetGuid, bool impactAtEnd,
+                                      bool resistEffectAtEnd,
+                                      std::function<void()> onArrive,
+                                      bool skipReleaseDelay) {
     if (targetGuid == 0 || targetGuid == casterGuid) return false;
     auto* renderer = owner_.services().renderer;
     auto* svs = renderer ? renderer->getSpellVisualSystem() : nullptr;
@@ -780,37 +819,41 @@ bool SpellHandler::launchSpellMissile(uint32_t spellId, uint32_t visualId, uint6
             LOG_WARNING("SpellVisual: missile attachment ", attachment, " missing on 0x", std::hex, guid,
                         std::dec, "; using the unit position");
         };
-        place(casterGuid, kAttachLaunchHand, start);
+        place(casterGuid, skipReleaseDelay ? kAttachChestFront : kAttachLaunchHand, start);
         place(targetGuid, kAttachChestFront, end);
     }
     // The missile leaves at the spell release event ($CS*) of the caster's
     // cast animation (SpellVisualKit AnimID of the CastKit): $CSL at 200 ms of
     // HumanMale SpellCastDirected for Fireball, Frostbolt and Shadow Bolt.
+    // A reflected missile bounces back from the victim immediately.
     float launchDelay = 0.0f;
-    const uint32_t animation = svs->castAnimation(visualId);
-    const auto* characters = renderer->getCharacterRenderer();
-    const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
-    const auto* model = characters && casterInstance ? characters->getInstanceModelData(casterInstance) : nullptr;
-    bool released = false;
-    if (model && animation != rendering::SpellVisualSystem::kNoAnimation) {
-        for (size_t i = 0; i < model->sequences.size(); ++i) {
-            if (model->sequences[i].id != animation || model->sequences[i].variationIndex != 0) continue;
-            if (i < model->spellReleaseEventTimes.size() && !model->spellReleaseEventTimes[i].empty()) {
-                launchDelay = model->spellReleaseEventTimes[i].front() / 1000.0f;
-                released = true;
+    if (!skipReleaseDelay) {
+        const uint32_t animation = svs->castAnimation(visualId);
+        const auto* characters = renderer->getCharacterRenderer();
+        const uint32_t casterInstance = owner_.resolveUnitRenderInstance(casterGuid);
+        const auto* model = characters && casterInstance ? characters->getInstanceModelData(casterInstance) : nullptr;
+        bool released = false;
+        if (model && animation != rendering::SpellVisualSystem::kNoAnimation) {
+            for (size_t i = 0; i < model->sequences.size(); ++i) {
+                if (model->sequences[i].id != animation || model->sequences[i].variationIndex != 0) continue;
+                if (i < model->spellReleaseEventTimes.size() && !model->spellReleaseEventTimes[i].empty()) {
+                    launchDelay = model->spellReleaseEventTimes[i].front() / 1000.0f;
+                    released = true;
+                }
+                break;
             }
-            break;
+        }
+        if (!released) {
+            static std::unordered_set<uint64_t> said;
+            const uint64_t key = (static_cast<uint64_t>(visualId) << 32) | (model ? model->sequences.size() : 0u);
+            if (said.size() < 128 && said.insert(key).second)
+                LOG_WARNING("SpellVisual: no spell release event for missile visual ", visualId, " cast animation ",
+                            animation, " on caster 0x", std::hex, casterGuid, std::dec,
+                            model ? "" : " (no caster model)", "; missile leaves at SPELL_GO");
         }
     }
-    if (!released) {
-        static std::unordered_set<uint64_t> said;
-        const uint64_t key = (static_cast<uint64_t>(visualId) << 32) | (model ? model->sequences.size() : 0u);
-        if (said.size() < 128 && said.insert(key).second)
-            LOG_WARNING("SpellVisual: no spell release event for missile visual ", visualId, " cast animation ",
-                        animation, " on caster 0x", std::hex, casterGuid, std::dec,
-                        model ? "" : " (no caster model)", "; missile leaves at SPELL_GO");
-    }
-    return svs->playSpellMissile(visualId, start, end, speed, launchDelay, impactAtEnd);
+    return svs->playSpellMissile(visualId, start, end, speed, launchDelay, impactAtEnd,
+                                 /*areaImpactAtEnd=*/false, resistEffectAtEnd, std::move(onArrive));
 }
 
 void SpellHandler::launchAmmoProjectile(const SpellGoData& data) {
@@ -3892,9 +3935,77 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
                     triggerImpactVisual(data.spellId, tgt);
                 }
             }
-            for (const auto& miss : data.missTargets) {
-                launchSpellMissile(data.spellId, visualId, data.casterUnit, miss.targetGuid,
-                                   /*impactAtEnd=*/false);
+        }
+    }
+
+    // Missed/resisted/dodged/immune/reflected targets:
+    // - Missile spells fly to the victim and, at arrival, play HARDCODED Resist
+    //   Spell (3207, spells\resist_immune_effect.m2) facing the caster plus the
+    //   victim's reaction animation (Dodge/Parry/ShieldBlock), or bounce the
+    //   missile back to the caster on SPELL_MISS_REFLECT.
+    // - Non-missile spells (instant magic, melee abilities, ranged ammo) play
+    //   the victim's reaction animation immediately with no resist forcefield.
+    if (!data.missTargets.empty() && !owner_.isProfessionSpell(data.spellId)) {
+        const uint64_t casterGuid = data.casterUnit != 0 ? data.casterUnit : data.casterGuid;
+        const uint32_t visualId = rangedWeaponAttack ? 0 : resolveSpellVisualId(data.spellId);
+        for (const auto& miss : data.missTargets) {
+            if (miss.targetGuid == 0) continue;
+            bool missileLaunched = false;
+            if (visualId != 0) {
+                const bool resistFx = spellMissShowsResistEffect(miss.missType);
+                const auto missileReaction = GameHandler::spellMissHitReaction(miss.missType, /*hasMissile=*/true);
+                const uint32_t spellId = data.spellId;
+                const uint64_t victimGuid = miss.targetGuid;
+                const uint8_t missType = miss.missType;
+                const uint8_t reflectResult = miss.reflectResult;
+                std::function<void()> onArrive;
+                if (missileReaction || missType == SpellMissInfo::REFLECT) {
+                    onArrive = [this, casterGuid, victimGuid, spellId, visualId,
+                                missType, reflectResult, missileReaction]() {
+                        if (missileReaction && owner_.hitReactionCallbackRef())
+                            owner_.hitReactionCallbackRef()(casterGuid, victimGuid, *missileReaction);
+                        if (missType == SpellMissInfo::REFLECT &&
+                            casterGuid != 0 && casterGuid != victimGuid) {
+                            const bool reflectHit = (reflectResult == SpellMissInfo::NONE);
+                            const bool reflectResistFx =
+                                !reflectHit && spellMissShowsResistEffect(reflectResult);
+                            const auto reflectReaction =
+                                !reflectHit ? GameHandler::spellMissHitReaction(reflectResult, /*hasMissile=*/true)
+                                            : std::nullopt;
+                            std::function<void()> onReflectArrive;
+                            if (reflectReaction) {
+                                onReflectArrive = [this, victimGuid, casterGuid, reflectReaction]() {
+                                    if (owner_.hitReactionCallbackRef())
+                                        owner_.hitReactionCallbackRef()(victimGuid, casterGuid, *reflectReaction);
+                                };
+                            }
+                            if (!launchSpellMissile(spellId, visualId, victimGuid, casterGuid,
+                                                    /*impactAtEnd=*/reflectHit, reflectResistFx,
+                                                    std::move(onReflectArrive),
+                                                    /*skipReleaseDelay=*/true)) {
+                                if (reflectHit) {
+                                    triggerImpactVisual(spellId, casterGuid);
+                                } else if (reflectReaction && owner_.hitReactionCallbackRef()) {
+                                    owner_.hitReactionCallbackRef()(victimGuid, casterGuid, *reflectReaction);
+                                }
+                            }
+                        }
+                    };
+                }
+                missileLaunched = launchSpellMissile(
+                    spellId, visualId, casterGuid, victimGuid,
+                    /*impactAtEnd=*/false, resistFx, std::move(onArrive));
+            }
+            if (!missileLaunched) {
+                if (const auto reaction = GameHandler::spellMissHitReaction(miss.missType, /*hasMissile=*/false);
+                    reaction && owner_.hitReactionCallbackRef()) {
+                    owner_.hitReactionCallbackRef()(casterGuid, miss.targetGuid, *reaction);
+                }
+                if (miss.missType == SpellMissInfo::REFLECT &&
+                    miss.reflectResult == SpellMissInfo::NONE &&
+                    visualId != 0 && casterGuid != 0 && casterGuid != miss.targetGuid) {
+                    triggerImpactVisual(data.spellId, casterGuid);
+                }
             }
         }
     }

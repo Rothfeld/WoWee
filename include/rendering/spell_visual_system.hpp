@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -87,6 +88,11 @@ public:
     /// One SpellVisualEffectName.dbc model at a unit's M2 attachment, e.g. a
     /// UnitBlood.dbc combat blood spurt at ChestBloodFront (15).
     void playEffectAtAttachment(uint32_t effectNameId, uint32_t attachInstanceId, uint32_t attachment);
+    /// HARDCODED Resist Spell (SpellVisualEffectName 3207, spells\resist_immune_effect.m2):
+    /// directional dark shockwave dome placed at `impactPosition` and oriented
+    /// along `incomingDirection` (caster -> victim, so its -X dome faces the caster).
+    /// Native 2.4.3 plays this at missile arrival on resisted/immune spell missiles.
+    void playResistImmuneEffect(const glm::vec3& impactPosition, const glm::vec3& incomingDirection);
     void startChannelVisual(uint32_t visualId, const glm::vec3& position,
                             uint32_t durationMs, uint32_t attachInstanceId);
     void updateChannelVisual(uint32_t attachInstanceId, uint32_t remainingMs);
@@ -184,7 +190,8 @@ public:
     // areaImpactAtEnd: a missile to a ground point plays the visual's
     // ImpactAreaKit where it lands instead of the impact kit.
     bool playSpellMissile(uint32_t visualId, const glm::vec3& start, const glm::vec3& end,
-                          float speed, float launchDelay, bool impactAtEnd, bool areaImpactAtEnd = false);
+                          float speed, float launchDelay, bool impactAtEnd, bool areaImpactAtEnd = false,
+                          bool resistEffectAtEnd = false, std::function<void()> onArrive = {});
 
     // Launch a physical weapon projectile (arrow, bullet, or thrown item)
     // without invoking the spell visual pipeline.
@@ -256,7 +263,9 @@ private:
         bool impactAtEnd = false;
         float scale = 1.0f;          // SpellVisualEffectName.Scale of the missile model
         bool areaImpactAtEnd = false;
+        bool resistEffectAtEnd = false;
         bool landed = false;         // drawn at its end; lands next frame
+        std::function<void()> onArrive;
     };
 
     void loadSpellVisualDbc();

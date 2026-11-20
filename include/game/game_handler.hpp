@@ -1549,6 +1549,9 @@ public:
 
     // Hit reaction callback - triggers victim animation (dodge, block, wound, crit wound)
     enum class HitReaction : uint8_t { WOUND, CRIT_WOUND, DODGE, PARRY, BLOCK, SHIELD_BLOCK };
+    /// Victim HitReaction animation for an SMSG_SPELL_GO miss entry, if any.
+    [[nodiscard]] static std::optional<HitReaction> spellMissHitReaction(
+        uint8_t missType, bool hasMissile);
     using HitReactionCallback = std::function<void(uint64_t attackerGuid, uint64_t victimGuid, HitReaction reaction)>;
     void setHitReactionCallback(HitReactionCallback cb) { hitReactionCallback_ = std::move(cb); }
 
