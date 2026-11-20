@@ -2577,6 +2577,10 @@ static int lua_SetBinding(lua_State* L) {
 // SaveBindings(which) → writes what is bound where, for the next run
 static int lua_SaveBindings(lua_State* L) {
     seedBindingDefaults(L);
+    const int which = static_cast<int>(luaL_optinteger(L, 1, 1));
+    if (which == 1 || which == 2) {
+        setStoredCVar("wowee_bindingset", which == 2 ? "2" : "1");
+    }
     lua_pushboolean(L, wowee::ui::KeybindingManager::getInstance().saveBindings(bindingsFilePath()));
     return 1;
 }
@@ -2972,7 +2976,9 @@ void registerActionLuaAPI(lua_State* L) {
                 // separate option handlers - so changing an option would have
                 // thrown rather than saved.
                 {"GetCurrentBindingSet", [](lua_State* L) -> int {
-            lua_pushnumber(L, 1); return 1;
+            const std::string v = storedCVarValue("wowee_bindingset", "1");
+            lua_pushnumber(L, v == "2" ? 2 : 1);
+            return 1;
         }},
                 {"SaveBindings",        lua_SaveBindings},
                 {"LoadBindings",        lua_LoadBindings},

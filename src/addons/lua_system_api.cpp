@@ -1280,6 +1280,31 @@ static void pushCvarDefault(lua_State* L, const std::string& n) {
     // everything unlisted, which is right for a flag and wrong for any setting
     // whose value is a word.
     else if (n == "showtimestamps") lua_pushstring(L, "none");
+    else if (n == "autolootcorpse") lua_pushstring(L, "0");
+    else if (n == "showtutorials" || n == "showgametips" ||
+             n == "screenedgeflash" || n == "camerawatercollision" ||
+             n == "camerapivot" || n == "camerasmoothtrackingstyle" ||
+             n == "showpartydebuffs") lua_pushstring(L, "1");
+    else if (n == "showpartybuffs" || n == "showchaticons") lua_pushstring(L, "0");
+    else if (n == "desktopgamma" || n == "specular" || n == "lod" ||
+             n == "ffx" || n == "ffxglow" || n == "ffxdeath" ||
+             n == "gamma" || n == "gxcursor" || n == "gxwindow") lua_pushstring(L, "1");
+    else if (n == "basemip" || n == "shadowlevel") lua_pushstring(L, "0");
+    else if (n == "smallcull") lua_pushstring(L, "0.04");
+    else if (n == "gxcolorbits" || n == "gxdepthbits") lua_pushstring(L, "24");
+    else if (n == "gxrefresh") lua_pushstring(L, "60");
+    else if (n == "sound_numchannels") lua_pushstring(L, "32");
+    else if (n == "sound_outputquality") lua_pushstring(L, "1");
+    else if (n == "sound_outputdriverindex") lua_pushstring(L, "0");
+    else if (n == "sound_outputdrivername") lua_pushstring(L, "System Default");
+    else if (n == "sound_listeneratcharacter" || n == "sound_enableemotesounds" ||
+             n == "sound_enableerrorspeech" || n == "sound_enablesfx" ||
+             n == "sound_enableambience") lua_pushstring(L, "1");
+    else if (n == "pushtotalkbutton") lua_pushstring(L, "`");
+    else if (n == "outboundchatvolume" || n == "inboundchatvolume") lua_pushstring(L, "1");
+    else if (n == "chatsoundvolume" || n == "chatmusicvolume" ||
+             n == "chatambiencevolume" || n == "voiceactivationsensitivity") lua_pushstring(L, "0.4");
+    else if (n == "wowee_bindingset") lua_pushstring(L, "1");
     else lua_pushstring(L, "0");
 }
 
@@ -1536,6 +1561,14 @@ static int lua_GetCVar(lua_State* L) {
             lua_pushstring(L, gh->isAutoSelfCast() ? "1" : "0");
             return 1;
         }
+    } else if (n == "autolootcorpse") {
+        if (auto* svc = getLuaServices(L); svc && svc->getClientSetting) {
+            const std::string v = svc->getClientSetting("autoloot");
+            if (!v.empty()) {
+                lua_pushstring(L, v != "0" ? "1" : "0");
+                return 1;
+            }
+        }
     } else if (n == "showtimestamps") {
         // A stored "0" here was never chosen. It is what the old default
         // answered, and the options panel writes back whatever it read, so a
@@ -1607,6 +1640,10 @@ static int lua_GetCVar(lua_State* L) {
         lua_pushstring(L, it->second.c_str());
         return 1;
     }
+    if (const int iv = interfaceVersion(L); iv > 0 && iv < 30000) {
+        if (n == "camerayawsmoothspeed") { lua_pushstring(L, "180"); return 1; }
+        if (n == "camerasmoothstyle") { lua_pushstring(L, "1"); return 1; }
+    }
     pushCvarDefault(L, n);
     return 1;
 }
@@ -1621,6 +1658,10 @@ static int lua_GetCVarDefault(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     std::string n(name);
     toLowerInPlace(n);
+    if (const int iv = interfaceVersion(L); iv > 0 && iv < 30000) {
+        if (n == "camerayawsmoothspeed") { lua_pushstring(L, "180"); return 1; }
+        if (n == "camerasmoothstyle") { lua_pushstring(L, "1"); return 1; }
+    }
     pushCvarDefault(L, n);
     return 1;
 }
@@ -1843,6 +1884,13 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
             svc->setClientSetting("fullscreen", value == "0" ? "1" : "0");
         }
     }
+    if (key == "autolootcorpse" && !g_replayingStoredCVars) {
+        if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
+            g_applyingCVarToSetting = true;
+            svc->setClientSetting("autoloot", value != "0" ? "1" : "0");
+            g_applyingCVarToSetting = false;
+        }
+    }
     if (key == "camerasmoothstyle") {
         if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
             svc->setClientSetting("smoothfollow", value == "0" ? "0" : "1");
@@ -1867,7 +1915,13 @@ static void applyCVarSideEffects(lua_State* L, const std::string& key,
     }
     if (key == "camerayawsmoothspeed") {
         if (auto* svc = getLuaServices(L); svc && svc->setClientSetting) {
-            svc->setClientSetting("camerastiffness", value);
+            std::string stiffness = value;
+            if (const int iv = interfaceVersion(L); iv > 0 && iv < 30000) {
+                const double raw = std::clamp(std::atof(value.c_str()), 90.0, 270.0);
+                stiffness = std::to_string(
+                    static_cast<int>(std::lround(5.0 + (raw - 90.0) * (95.0 / 180.0))));
+            }
+            svc->setClientSetting("camerastiffness", stiffness);
         }
     }
     // Mouse-look: build 8606 turns cameraYawMoveSpeed/800 degrees of yaw and
@@ -3278,16 +3332,16 @@ static int lua_SetMultisampleFormat(lua_State* L) {
 /// switch between them, so the list is that one device by name - the truth
 /// rather than a stub, and the shape GetScreenResolutions already takes.
 static int lua_Sound_GetNumOutputDrivers(lua_State* L) {
-    lua_pushnumber(L, audio::AudioEngine::instance().isInitialized() ? 1 : 0);
+    lua_pushnumber(L, 1);
     return 1;
 }
 
 /// The driver at that index, counted from zero as the panel counts it.
 static int lua_Sound_GetOutputDriverNameByIndex(lua_State* L) {
     const int index = static_cast<int>(luaL_optnumber(L, 1, -1));
+    if (index != 0) { lua_pushnil(L); return 1; }
     std::string name = audio::AudioEngine::instance().getOutputDeviceName();
-    if (index != 0 || name.empty()) { lua_pushnil(L); return 1; }
-    lua_pushstring(L, name.c_str());
+    lua_pushstring(L, name.empty() ? "System Default" : name.c_str());
     return 1;
 }
 
@@ -3617,7 +3671,7 @@ static void saveInterfaceState();
 static int windowChannelZone(lua_State* L, const std::string& name, int stored) {
     auto* gh = getGameHandler(L);
     const auto* chat = gh ? gh->getChatHandler() : nullptr;
-    assert(chat && "window channels asked for without a chat handler");
+    if (!chat) return stored;
     const uint32_t id = chat->builtinChannelId(name);
     if (id != 0 && (chat->builtinChannelFlags(id) & game::ChatHandler::kChannelZoneDep))
         return static_cast<int>(id);
@@ -5701,15 +5755,29 @@ static int lua_RestoreVideoDefaults(lua_State* L) {
 /// yet. The slider works and remembers where it was put, which is the whole of
 /// what the panel can observe, and a value is here for the renderer to read
 /// when it grows one.
-static int& terrainMip() { static int level = 1; return level; }
-
 static int lua_GetTerrainMip(lua_State* L) {
-    lua_pushnumber(L, terrainMip());
+    const std::string v = storedCVarValue("shadowlevel", "0");
+    const int mip = std::clamp(std::atoi(v.c_str()), 0, 1);
+    lua_pushnumber(L, 1 - mip);
     return 1;
 }
 
 static int lua_SetTerrainMip(lua_State* L) {
-    terrainMip() = static_cast<int>(luaL_optnumber(L, 1, 1));
+    const int sliderVal = std::clamp(static_cast<int>(luaL_optnumber(L, 1, 1)), 0, 1);
+    setStoredCVar("shadowlevel", sliderVal >= 1 ? "0" : "1");
+    return 0;
+}
+
+static int lua_GetBaseMip(lua_State* L) {
+    const std::string v = storedCVarValue("basemip", "0");
+    const int mip = std::clamp(std::atoi(v.c_str()), 0, 1);
+    lua_pushnumber(L, 1 - mip);
+    return 1;
+}
+
+static int lua_SetBaseMip(lua_State* L) {
+    const int sliderVal = std::clamp(static_cast<int>(luaL_optnumber(L, 1, 1)), 0, 1);
+    setStoredCVar("basemip", sliderVal >= 1 ? "0" : "1");
     return 0;
 }
 
@@ -6147,6 +6215,8 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"GetGamma",                 lua_GetGamma},
                 {"GetTerrainMip",            lua_GetTerrainMip},
                 {"SetTerrainMip",            lua_SetTerrainMip},
+                {"GetBaseMip",               lua_GetBaseMip},
+                {"SetBaseMip",               lua_SetBaseMip},
                 {"SetGamma",                 lua_SetGamma},
                 {"WoweeReportMissingFixedControls",
                                              lua_WoweeReportMissingFixedControls},
@@ -6486,8 +6556,11 @@ void registerSystemLuaAPI(lua_State* L) {
                 {"VoiceIsDisabledByClient",  lua_ReturnTrue},
                 {"VoiceEnumerateCaptureDevices", lua_ReturnNothing},
                 {"VoiceEnumerateOutputDevices",  lua_ReturnNothing},
+                {"VoiceGetCurrentCaptureDevice", lua_ReturnZero},
+                {"VoiceGetCurrentOutputDevice",  lua_ReturnZero},
                 {"VoiceSelectCaptureDevice", lua_ReturnNothing},
                 {"VoiceSelectOutputDevice",  lua_ReturnNothing},
+                {"SetSelfMuteState",         lua_ReturnNothing},
                 {"VoiceChat_StopPlayingLoopbackSound",   lua_ReturnNothing},
                 {"VoiceChat_StopRecordingLoopbackSound", lua_ReturnNothing},
                 // GetCompanionInfo(type, index) → creatureID, creatureName,
@@ -7675,6 +7748,7 @@ void registerSystemLuaAPI(lua_State* L) {
         }},
                 {"SetAutoLootDefault", [](lua_State* L) -> int {
             const bool enabled = lua_toboolean(L, 1) != 0;
+            setStoredCVar("autoLootCorpse", enabled ? "1" : "0");
             lua_settop(L, 0); lua_pushstring(L, "autoLootDefault"); lua_pushboolean(L, enabled); return lua_SetCVar(L);
         }},
                 // Joins (1) or leaves (0) GuildRecruitment and nothing else:
@@ -7923,9 +7997,19 @@ void registerSystemLuaAPI(lua_State* L) {
                 // in the CVar file. Answering false would grey out a button
                 // that would have worked.
                 {"CanResetTutorials",           lua_ReturnTrue},
+                {"TutorialsEnabled", [](lua_State* L) -> int {
+            lua_pushboolean(L, storedCVarValue("showtutorials", "1") != "0" ? 1 : 0);
+            return 1;
+        }},
+                {"ClearTutorials", [](lua_State* L) -> int {
+            (void)L;
+            setStoredCVar("showtutorials", "0");
+            return 0;
+        }},
                 {"ResetTutorials", [](lua_State* L) -> int {
             (void)L;
             cvarStore()[kTutorialCVar].clear();
+            cvarStore()["showtutorials"] = "1";
             saveStoredCVars();
             return 0;
         }},

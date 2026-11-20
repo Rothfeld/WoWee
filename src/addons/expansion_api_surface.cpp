@@ -111,6 +111,7 @@ constexpr const char* kFlagAnswersTbc[] = {
     "LootSlotIsCoin", "LootSlotIsItem", "OffhandHasWeapon", "PetCanBeAbandoned",
     "PetCanBeRenamed", "PetHasActionBar", "PlayerHasSpells", "ResurrectHasSickness",
     "ShowingCloak", "ShowingHelm", "SpellCanTargetItem", "SpellCanTargetUnit", "SpellIsTargeting",
+    "TutorialsEnabled",
     "UnitAffectingCombat", "UnitCanAssist", "UnitCanAttack", "UnitCanCooperate",
     "UnitExists", "UnitHasRelicSlot", "UnitInRange", "UnitIsCharmed", "UnitIsConnected",
     "UnitIsCorpse", "UnitIsDead", "UnitIsDeadOrGhost", "UnitIsEnemy", "UnitIsFriend",

@@ -377,66 +377,59 @@ void WidgetRenderer::sizeFontStringWidget(Widget* w, float pixelScale) {
     // added to the schema could be reached however correctly it registered.
     const bool spansX = anchorsSpanAxis(w->anchors, true);
     const bool spansY = anchorsSpanAxis(w->anchors, false);
-    if (spansX && spansY) return;
+    const bool fixedW = spansX || (!w->autoSized && w->width > 0.0f);
+    const bool fixedH = spansY || (!w->autoSized && w->height > 0.0f);
+    if (fixedW && fixedH) return;
 
-    // A width with no height is a paragraph, not a request to be measured.
+    // A width (or horizontal anchor span) with no height is a paragraph, not a
+    // request to be measured on one unbounded line.
     //
-    // `<AbsDimension x="285" y="0"/>` is WoW's way of saying "wrap inside
-    // 285 and be as tall as that takes", and it is what every block of
-    // prose in the interface declares. Reading the zero height as "size
-    // yourself" and measuring the text on one unbounded line replaced the
-    // 285 with however wide the sentence happened to be - 424 for a short
-    // quest description, far more for a real one - and marked the string
-    // auto-sized, which is also what tells the draw below not to wrap it.
-    // So it drew one line out through the side of the scroll frame that
-    // clips it, and everything anchored beneath it sat on top of the lines
-    // that should have pushed it down.
+    // `<AbsDimension x="285" y="0"/>` (or opposing LEFT/RIGHT anchors with
+    // y="0" or y="32") is WoW's way of saying "wrap inside that horizontal box".
+    // Measuring the text on one unbounded line replaced the box width with
+    // however wide the sentence happened to be and marked the string auto-sized,
+    // which also told the draw pass not to wrap it and pushed anything anchored
+    // to its right edge far outside the panel.
     const bool paragraph =
         w->wrapsToWidth ||
-        (!w->autoSized && w->width > 0.0f && w->height <= 0.0f);
+        (fixedW && !fixedH);
 
     // Measured by the original's rules - whole-pixel font height, whole-pixel
     // pens - in the widget's own face, which is also how the draw lays it out.
     const float size = interfaceFontSize(w->fontHeight, pixelScale);
-    // Already the right size for this text, measured the way it would be
-    // measured now. A label that has changed what it says is measured
-    // again; one sized by its XML is left alone.
-    //
-    // The size and the face are part of that question. The interface's own
-    // typeface is registered after the first frames have been laid out, and
-    // a label measured before that kept a rect built from the fallback font
-    // for the rest of the session - its text had not changed, so nothing
-    // ever looked again. Every one of them then drew glyphs wider than the
-    // box it was given, the backpack's coin amounts among them: that rect
-    // is anchored to end exactly where the coin picture begins, so the
-    // overspill lands on the coin.
     const int outlinePx = outlinePixelsForFlag(w->fontOutline);
     const bool sameMeasurement = w->measuredText == w->text &&
                                  w->measuredSize == size &&
                                  w->measuredFace == w->fontFace &&
                                  w->measuredOutline == w->fontOutline;
     if (paragraph) {
-        if (sameMeasurement) return;
+        if (!spansX && sameMeasurement) return;
     } else {
         if (w->autoSized && sameMeasurement) return;
-        if (!w->autoSized && w->width > 0.0f && w->height > 0.0f) return;
     }
 
     if (paragraph) {
-        // The width stays as declared and the height follows the wrap.
-        // autoSized stays false on purpose: it is what the draw reads to
-        // decide whether there is a box to wrap inside, and this string is
-        // exactly the kind that has one.
-        w->wrapsToWidth = true;
-        const int rows = interfaceTextLines(w->text, w->fontFace, w->fontHeight, w->width,
+        // The width stays as declared (or anchor-spanned) and the height follows
+        // the wrap. autoSized stays false on purpose: it is what the draw reads
+        // to decide whether there is a box to wrap inside.
+        const float wrapWidth = spansX ? w->rectW : w->width;
+        if (spansX && wrapWidth <= 0.0f) {
+            w->wrappedLines = 1;
+            w->height = interfaceTextBlockHeight(1, w->fontHeight, w->lineSpacing, pixelScale);
+            return;
+        }
+        if (!spansX) w->wrapsToWidth = true;
+        const int rows = interfaceTextLines(w->text, w->fontFace, w->fontHeight, wrapWidth,
                                             w->nonSpaceWrap, pixelScale, w->hasShadow ? w->shadowX : 0.0f,
                                             outlinePx);
         w->wrappedLines = rows > 0 ? rows : 1;
         w->height = interfaceTextBlockHeight(w->wrappedLines, w->fontHeight, w->lineSpacing, pixelScale);
-        w->measuredText = w->text;
-        w->measuredSize = size;
-        w->measuredFace = w->fontFace;
-        w->measuredOutline = w->fontOutline;
+        if (!spansX) {
+            w->measuredText = w->text;
+            w->measuredSize = size;
+            w->measuredFace = w->fontFace;
+            w->measuredOutline = w->fontOutline;
+        }
         return;
     }
 

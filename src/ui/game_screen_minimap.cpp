@@ -1325,8 +1325,9 @@ void GameScreen::renderMinimapReadouts(const MinimapFrame& frame, game::GameHand
     auto* minimap = renderer ? renderer->getMinimap() : nullptr;
     if (!minimap) return;
     ImDrawList* drawList = frame.drawList;
-    // Optional persistent coordinate display below the minimap.
-    if (settingsPanel_.showMinimapCoordinates_) {
+    // Optional persistent coordinate display below the minimap when this client
+    // draws its own minimap chrome rather than FrameXML's Minimap.
+    if (settingsPanel_.showMinimapCoordinates_ && !frameXmlOwns(UiElement::Minimap)) {
         glm::vec3 playerCanon = core::coords::renderToCanonical(frame.playerRender);
         char coordBuf[32];
         std::snprintf(coordBuf, sizeof(coordBuf), "%.1f, %.1f", playerCanon.x, playerCanon.y);
@@ -1346,34 +1347,6 @@ void GameScreen::renderMinimapReadouts(const MinimapFrame& frame, game::GameHand
             IM_COL32(0, 0, 0, 140), 4.0f);
         // Coordinate text in warm yellow
         drawList->AddText(font, fontSize, ImVec2(tx, ty), IM_COL32(230, 220, 140, 255), coordBuf);
-    }
-
-    // Optional persistent latency meter below the minimap when FrameXML owns
-    // the ring (where renderMinimapChrome / renderMinimapIndicators does not run).
-    if (settingsPanel_.showLatencyMeter_ && frameXmlOwns(UiElement::Minimap)) {
-        const uint32_t ping = gameHandler.getLatencyMs();
-        char pingBuf[32];
-        std::snprintf(pingBuf, sizeof(pingBuf), "%u ms", ping);
-
-        ImFont* font = ImGui::GetFont();
-        float fontSize = ImGui::GetFontSize() * 0.9f;
-        ImVec2 textSz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, pingBuf);
-
-        float tx = frame.centerX - textSz.x * 0.5f;
-        float ty = frame.centerY + frame.mapRadius + 3.0f;
-        if (settingsPanel_.showMinimapCoordinates_) {
-            ty += ImGui::GetFontSize() + 8.0f;
-        }
-
-        const ImU32 pingCol = ping < 100 ? IM_COL32(120, 230, 120, 255)
-                            : ping < 250 ? IM_COL32(240, 210, 90, 255)
-                                         : IM_COL32(240, 100, 100, 255);
-        float pad = 3.0f;
-        drawList->AddRectFilled(
-            ImVec2(tx - pad, ty - pad),
-            ImVec2(tx + textSz.x + pad, ty + textSz.y + pad),
-            IM_COL32(0, 0, 0, 140), 4.0f);
-        drawList->AddText(font, fontSize, ImVec2(tx, ty), pingCol, pingBuf);
     }
 
     // Zone name display - drawn inside the top edge of the minimap circle

@@ -20,6 +20,11 @@ namespace addons {
 // The stock binding editor is load-on-demand. Only its functions/scripts get
 // this environment: addon/profile APIs never change meaning with the selector.
 inline constexpr const char* kBindingDeviceEditor = R"LUA(
+if type(__WoweeInterfaceVersion) == "number" and
+   __WoweeInterfaceVersion > 0 and
+   __WoweeInterfaceVersion < 30000 then
+    return
+end
 if not KeyBindingFrame or not KeyBindingFrame_OnKeyDown or KeyBindingFrame.woweeDevices then return end
 local frame = KeyBindingFrame
 frame.woweeDevices = true
@@ -109,6 +114,11 @@ end)
 /// Built from WoweeSettingList() rather than written out, so a setting added to
 /// the schema appears without anyone editing Lua.
 inline constexpr const char* kWoweeOptionsPanelLua = R"LUA(
+if type(__WoweeInterfaceVersion) == "number" and
+   __WoweeInterfaceVersion > 0 and
+   __WoweeInterfaceVersion < 30000 then
+    return
+end
 local list = WoweeSettingList and WoweeSettingList()
 if not list or #list == 0 then return end
 
@@ -1109,6 +1119,11 @@ inline constexpr const char* kAboutMenuLua = R"LUA(
 -- rawget, not _G[...]: an unknown global answers with a stand-in table here,
 -- so reading one to ask whether it exists says yes every time - which is how
 -- this snippet spent its first run returning at the first line.
+if type(__WoweeInterfaceVersion) == "number" and
+   __WoweeInterfaceVersion > 0 and
+   __WoweeInterfaceVersion < 30000 then
+    return
+end
 if not GameMenuFrame or rawget(_G, "GameMenuButtonWoweeAbout") then return end
 
 local kURL = "https://github.com/Kelsidavis/WoWee"
@@ -1409,6 +1424,7 @@ local isTbc = type(__WoweeInterfaceVersion) == "number"
               and __WoweeInterfaceVersion < 30000
 local removed = {}
 __WoweeRemovedControlsMissing = __WoweeRemovedControlsMissing or {}
+if isTbc then return end
 for _, name in ipairs(kRemoved) do
     local f = _G[name]
     -- Asked for by name rather than assumed. A renamed or misspelled entry
@@ -1786,8 +1802,9 @@ end
 /// TBC 2.4.3 OptionsFrame, AudioOptionsFrame/SoundOptionsFrame, and
 /// InterfaceOptionsFrame integration.
 ///
-/// Separate from kRemovedControlsLua so WotLK static sweeps over kRemoved and
-/// kRemovedCategories continue to check WotLK frame names unchanged.
+/// Keeps Blizzard's shipped TBC InterfaceOptionsFrame, SoundOptionsFrame, and
+/// OptionsFrame Tab 1 ([ Video ]) intact, and adds a second bottom tab
+/// ([ Renderer ]) on OptionsFrame for WoWee-only renderer settings.
 inline constexpr const char* kTbcOptionsIntegrationLua = R"LUA(
 if type(__WoweeInterfaceVersion) ~= "number" or
    __WoweeInterfaceVersion <= 0 or
@@ -1795,94 +1812,42 @@ if type(__WoweeInterfaceVersion) ~= "number" or
     return
 end
 
-local function nothing() end
-
--- Retire TBC's two renamed Interface Options panels (Quests -> Objectives and
--- PartyRaid -> UnitFrame in WotLK), which kRemovedCategories did not list.
-local kTbcRetiredPanels = {
-    "InterfaceOptionsControlsPanel",
-    "InterfaceOptionsCombatPanel",
-    "InterfaceOptionsDisplayPanel",
-    "InterfaceOptionsQuestsPanel",
-    "InterfaceOptionsSocialPanel",
-    "InterfaceOptionsActionBarsPanel",
-    "InterfaceOptionsNamesPanel",
-    "InterfaceOptionsCombatTextPanel",
-    "InterfaceOptionsStatusTextPanel",
-    "InterfaceOptionsPartyRaidPanel",
-    "InterfaceOptionsCameraPanel",
-    "InterfaceOptionsMousePanel",
-    "InterfaceOptionsHelpPanel",
-    "InterfaceOptionsLanguagesPanel",
-}
-local retired = {}
-for _, name in ipairs(kTbcRetiredPanels) do
-    local p = rawget(_G, name)
-    if p then
-        p.hidden = true
-        if p.Hide then p:Hide() end
-        p.okay, p.cancel, p.default, p.refresh = nothing, nothing, nothing, nothing
-        retired[p] = true
-        if p.name then retired[p.name] = true end
-    end
-end
-if type(InterfaceCategoryList_Update) == "function" then
-    InterfaceCategoryList_Update()
-end
-
--- TBC uses InterfaceOptionsFrame_OpenToFrame rather than OpenToCategory, and
--- its button loop only visits the visible scroll window (~18 rows), missing
--- categories near the bottom of WoWee's 20-row list unless scrolled/selected.
-if type(InterfaceOptionsFrame_OpenToFrame) == "function" then
-    local origOpen = InterfaceOptionsFrame_OpenToFrame
-    InterfaceOptionsFrame_OpenToFrame = function(panel, ...)
-        local root = rawget(_G, "WoweeOptionsRoot")
-        local byCat = rawget(_G, "__WoweePanelsByCategory")
-        if type(panel) == "string" and type(byCat) == "table" and byCat[panel] then
-            panel = byCat[panel]
-        elseif retired[panel] and root then
-            panel = root
-        end
-        origOpen(panel, ...)
-        local target = panel
-        if type(target) == "string" then
-            target = (type(byCat) == "table" and byCat[target]) or nil
-            if not target and root and root.name == panel then target = root end
-        end
-        if type(target) == "table" and InterfaceOptionsFramePanelContainer and
-           InterfaceOptionsFramePanelContainer.displayedFrame ~= target then
-            if root and target.parent == root.name and root.collapsed then
-                root.collapsed = false
-                if type(InterfaceOptions_ToggleSubCategories) == "function" then
-                    root.collapsed = true
-                    for _, b in ipairs(InterfaceOptionsFrameCategories and InterfaceOptionsFrameCategories.buttons or {}) do
-                        if b.element == root and b.toggle and b.toggle.Click then
-                            b.toggle:Click()
-                            break
-                        end
-                    end
-                end
-            end
-            if InterfaceOptionsFrame and not InterfaceOptionsFrame:IsShown() and
-               type(InterfaceOptionsFrame_Show) == "function" then
-                InterfaceOptionsFrame_Show()
-            end
-            if type(InterfaceOptionsList_DisplayFrame) == "function" then
-                InterfaceOptionsList_DisplayFrame(target)
-            end
-            if InterfaceOptionsFrameCategories then
-                InterfaceOptionsFrameCategories.selection = target
-            end
-            if type(InterfaceCategoryList_Update) == "function" then
-                InterfaceCategoryList_Update()
-            end
-        end
+-- TBC 2.4.3 UIDropDownMenu_SetWidth / UIDropDownMenu_SetText take
+-- (width_or_text, frame) with the frame in argument 2.
+local function setDropDownWidth(dd, width)
+    if dd and type(UIDropDownMenu_SetWidth) == "function" then
+        UIDropDownMenu_SetWidth(width, dd)
     end
 end
 
--- Fix TBC OptionsFrame (Video Options) slider ranges and strip dead controls
--- so opening Video Options and clicking Okay never clobbers view distance
--- (777 vs 1900), ground clutter, clutter radius, or anisotropic filtering.
+local function setDropDownText(dd, text)
+    if dd and type(UIDropDownMenu_SetText) == "function" then
+        UIDropDownMenu_SetText(text, dd)
+    end
+end
+
+-- UIOptionsPanels.lua:249 calls UIDropDownMenu_SetWidth(90, UIOptionsWorldPVPObjectiveDisplay)
+-- with an undefined global name left over from 2.3; ensure the real dropdown gets width 90.
+local pvpDropDown = rawget(_G, "InterfaceOptionsDisplayPanelWorldPVPObjectiveDisplay")
+if pvpDropDown then
+    setDropDownWidth(pvpDropDown, 90)
+end
+
+-- Help panel Defaults button should also re-enable Tutorials alongside CVars.
+local helpPanel = rawget(_G, "InterfaceOptionsHelpPanel")
+if helpPanel and type(helpPanel.default) == "function" then
+    local origHelpDefault = helpPanel.default
+    helpPanel.default = function(self, ...)
+        if type(ResetTutorials) == "function" then ResetTutorials() end
+        local tutCheck = rawget(_G, "InterfaceOptionsHelpPanelTutorials")
+        if tutCheck and tutCheck.SetChecked then tutCheck:SetChecked(1) end
+        return origHelpDefault(self, ...)
+    end
+end
+
+-- Keep stock TBC OptionsFrame Tab 1 ([ Video ]) intact while aligning slider
+-- bounds with WoWee's renderer so opening Video Options and clicking Okay
+-- never clobbers view distance (1900 vs 777), clutter radius, or filtering.
 OPTIONS_FARCLIP_MIN = 400
 OPTIONS_FARCLIP_MAX = 2400
 
@@ -1900,9 +1865,10 @@ if type(OptionsFrameSliders) == "table" then
         OptionsFrameSliders[3].maxValue = 2400
         OptionsFrameSliders[3].valueStep = 50
     end
-    -- TerrainMip (4) and BaseMip (9) have no renderer backing; nil keys are
-    -- skipped cleanly because OptionsFrame_Load/Save/SetDefaults use pairs().
-    OptionsFrameSliders[4] = nil
+    if OptionsFrameSliders[4] then
+        OptionsFrameSliders[4].restartClient = nil
+        OptionsFrameSliders[4].tooltipRequirement = nil
+    end
     if OptionsFrameSliders[7] then
         OptionsFrameSliders[7].minValue = 0
         OptionsFrameSliders[7].maxValue = 64
@@ -1913,7 +1879,6 @@ if type(OptionsFrameSliders) == "table" then
         OptionsFrameSliders[8].maxValue = 300
         OptionsFrameSliders[8].valueStep = 10
     end
-    OptionsFrameSliders[9] = nil
     if OptionsFrameSliders[10] then
         OptionsFrameSliders[10].minValue = 0
         OptionsFrameSliders[10].maxValue = 4
@@ -1923,77 +1888,525 @@ if type(OptionsFrameSliders) == "table" then
     end
 end
 
-if type(OptionsFrameCheckButtons) == "table" then
-    OptionsFrameCheckButtons["TERRAIN_HIGHLIGHTS"] = nil
-    OptionsFrameCheckButtons["CINEMATIC_SUBTITLES"] = nil
-    OptionsFrameCheckButtons["WORLD_LOD"] = nil
-    OptionsFrameCheckButtons["WINDOW_LOCK"] = nil
-    OptionsFrameCheckButtons["TRIPLE_BUFFER"] = nil
-    OptionsFrameCheckButtons["HARDWARE_CURSOR"] = nil
-    OptionsFrameCheckButtons["WINDOWED_MAXIMIZED"] = nil
+local function refreshRefreshRateText()
+    local ref = rawget(_G, "OptionsFrameRefreshDropDown")
+    if not ref then return end
+    if type(GetRefreshRates) == "function" then
+        local r1 = GetRefreshRates()
+        if r1 == 0 then
+            local hz = (type(GetCVar) == "function" and GetCVar("gxRefresh")) or "60"
+            if not hz or hz == "" or hz == "0" then hz = "60" end
+            setDropDownText(ref, tostring(hz) .. (rawget(_G, "HERTZ") or " Hz"))
+            if type(UIDropDownMenu_SetSelectedValue) == "function" then
+                UIDropDownMenu_SetSelectedValue(ref, hz)
+            end
+        end
+    end
+end
+refreshRefreshRateText()
+if rawget(_G, "OptionsFrameRefreshDropDown") and OptionsFrameRefreshDropDown.HookScript then
+    OptionsFrameRefreshDropDown:HookScript("OnShow", refreshRefreshRateText)
 end
 
-local function tidyTbcVideoFrame()
-    for _, name in ipairs({
-        "OptionsFrameRefreshDropDown",
-        "OptionsFrameSlider4",
-        "OptionsFrameSlider9",
-        "OptionsFrameCheckButton2",
-        "OptionsFrameCheckButton6",
-        "OptionsFrameCheckButton7",
-        "OptionsFrameCheckButton11",
-        "OptionsFrameCheckButton13",
-        "OptionsFrameCheckButton14",
-        "OptionsFrameCheckButton17",
-    }) do
+-- ============================================================================
+-- OptionsFrame Bottom Tabs: [ Video ] | [ Renderer ]
+-- ============================================================================
+local kVideoSubFrames = {
+    "OptionsFrameDisplay",
+    "OptionsFrameBrightness",
+    "OptionsFrameWorldAppearance",
+    "OptionsFramePixelShaders",
+    "OptionsFrameMiscellaneous",
+}
+
+local kRendererDefaults = {
+    upscaling         = "0",
+    fsrquality        = "3",
+    fsrsharpness      = "1.6",
+    framecap          = "0",
+    fxaa              = "0",
+    sunshafts         = "1",
+    lensflare         = "1",
+    raytracedlighting = "0",
+    lightshafts       = "2",
+    parallaxquality   = "1",
+    normalmapping     = "1",
+    parallax          = "1",
+    normalmapstrength = "0.8",
+    shadowdistance    = "300",
+    grassenabled      = "0",
+    sharpstars        = "1",
+    fogstrength       = "0.4",
+    grassdensity      = "100",
+    grassdistance     = "150",
+}
+
+local kRendererKeys = {
+    "upscaling", "fsrquality", "fsrsharpness", "framecap",
+    "fxaa", "sunshafts", "lensflare",
+    "raytracedlighting", "lightshafts", "parallaxquality",
+    "normalmapping", "parallax", "normalmapstrength", "shadowdistance",
+    "grassenabled", "sharpstars", "fogstrength", "grassdensity", "grassdistance",
+}
+
+local rendererControls = {}
+local rendererSnapshot = nil
+local rendererSuppressWrite = false
+
+local function getRendererSetting(key)
+    if type(WoweeGetSetting) == "function" then
+        local v = WoweeGetSetting(key)
+        if v ~= nil and v ~= "" then return tostring(v) end
+    end
+    return kRendererDefaults[key] or "0"
+end
+
+local function setRendererSetting(key, val)
+    if rendererSuppressWrite then return end
+    if type(WoweeSetSetting) == "function" then
+        WoweeSetSetting(key, tostring(val))
+    end
+end
+
+local function formatSliderValue(fmt, v)
+    if fmt == "int" then
+        return tostring(math.floor((tonumber(v) or 0) + 0.5))
+    elseif fmt == "pct" then
+        return tostring(math.floor((tonumber(v) or 0) + 0.5)) .. "%"
+    elseif fmt == "yd" then
+        return tostring(math.floor((tonumber(v) or 0) + 0.5)) .. " yd"
+    elseif fmt == "f2" then
+        return string.format("%.2f", tonumber(v) or 0)
+    else
+        return string.format("%.1f", tonumber(v) or 0)
+    end
+end
+
+local function updateRendererDependencies()
+    local upscaleOn = (tonumber(getRendererSetting("upscaling")) or 0) > 0
+    local normalsOn = getRendererSetting("normalmapping") ~= "0"
+    local parallaxOn = getRendererSetting("parallax") ~= "0"
+    local grassOn = getRendererSetting("grassenabled") ~= "0"
+
+    local function setDropDownEnabled(ctrl, enabled)
+        if not ctrl or not ctrl.frame then return end
+        if enabled then
+            if type(UIDropDownMenu_EnableDropDown) == "function" then
+                UIDropDownMenu_EnableDropDown(ctrl.frame)
+            end
+            if ctrl.label and ctrl.label.SetVertexColor and NORMAL_FONT_COLOR then
+                ctrl.label:SetVertexColor(NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b)
+            end
+        else
+            if type(UIDropDownMenu_DisableDropDown) == "function" then
+                UIDropDownMenu_DisableDropDown(ctrl.frame)
+            end
+            if ctrl.label and ctrl.label.SetVertexColor and GRAY_FONT_COLOR then
+                ctrl.label:SetVertexColor(GRAY_FONT_COLOR.r, GRAY_FONT_COLOR.g, GRAY_FONT_COLOR.b)
+            end
+        end
+    end
+
+    local function setSliderEnabled(ctrl, enabled)
+        if not ctrl or not ctrl.frame then return end
+        if enabled then
+            if type(OptionsFrame_EnableSlider) == "function" then
+                OptionsFrame_EnableSlider(ctrl.frame)
+            elseif ctrl.frame.Enable then
+                ctrl.frame:Enable()
+            end
+        else
+            if type(OptionsFrame_DisableSlider) == "function" then
+                OptionsFrame_DisableSlider(ctrl.frame)
+            elseif ctrl.frame.Disable then
+                ctrl.frame:Disable()
+            end
+        end
+    end
+
+    setDropDownEnabled(rendererControls["fsrquality"], upscaleOn)
+    setSliderEnabled(rendererControls["fsrsharpness"], upscaleOn)
+    setSliderEnabled(rendererControls["normalmapstrength"], normalsOn)
+    setDropDownEnabled(rendererControls["parallaxquality"], parallaxOn)
+    setSliderEnabled(rendererControls["grassdensity"], grassOn)
+    setSliderEnabled(rendererControls["grassdistance"], grassOn)
+end
+
+local function loadRendererControlsFromSettings(takeSnapshot)
+    if takeSnapshot then
+        rendererSnapshot = {}
+        for _, k in ipairs(kRendererKeys) do
+            rendererSnapshot[k] = getRendererSetting(k)
+        end
+        if rawget(_G, "OptionsFrame") then
+            OptionsFrame.__woweeCommitted = false
+        end
+    end
+    rendererSuppressWrite = true
+    for key, ctrl in pairs(rendererControls) do
+        local raw = getRendererSetting(key)
+        if ctrl.kind == "check" then
+            ctrl.value = (raw ~= "0") and "1" or "0"
+            if ctrl.frame.SetChecked then
+                ctrl.frame:SetChecked(ctrl.value == "1" and 1 or nil)
+            end
+        elseif ctrl.kind == "slider" then
+            local v = tonumber(raw) or tonumber(kRendererDefaults[key]) or ctrl.minVal
+            if v < ctrl.minVal then v = ctrl.minVal end
+            if v > ctrl.maxVal then v = ctrl.maxVal end
+            ctrl.value = v
+            if ctrl.frame.SetValue then ctrl.frame:SetValue(v) end
+            if ctrl.titleFS and ctrl.titleFS.SetText then
+                ctrl.titleFS:SetText(ctrl.title .. ": " .. formatSliderValue(ctrl.fmt, v))
+            end
+        elseif ctrl.kind == "dropdown" then
+            local idx = (tonumber(raw) or 0) + 1
+            if idx < 1 or idx > #ctrl.items then idx = 1 end
+            ctrl.selectedIndex = idx
+            if type(UIDropDownMenu_Initialize) == "function" and ctrl.initFn then
+                UIDropDownMenu_Initialize(ctrl.frame, ctrl.initFn)
+            end
+            if type(UIDropDownMenu_SetSelectedID) == "function" then
+                UIDropDownMenu_SetSelectedID(ctrl.frame, idx)
+            end
+            setDropDownText(ctrl.frame, ctrl.items[idx])
+        end
+    end
+    rendererSuppressWrite = false
+    updateRendererDependencies()
+end
+
+local function commitRendererControls()
+    for key, ctrl in pairs(rendererControls) do
+        if ctrl.kind == "check" then
+            local checked = (ctrl.frame.GetChecked and ctrl.frame:GetChecked()) and "1" or "0"
+            setRendererSetting(key, checked)
+        elseif ctrl.kind == "slider" then
+            local v = (ctrl.frame.GetValue and ctrl.frame:GetValue()) or ctrl.value or ctrl.minVal
+            setRendererSetting(key, v)
+        elseif ctrl.kind == "dropdown" then
+            local idx = ctrl.selectedIndex or 1
+            setRendererSetting(key, tostring(idx - 1))
+        end
+    end
+    rendererSnapshot = {}
+    for _, k in ipairs(kRendererKeys) do
+        rendererSnapshot[k] = getRendererSetting(k)
+    end
+end
+
+local function rollbackRendererControls()
+    if not rendererSnapshot then return end
+    for _, k in ipairs(kRendererKeys) do
+        if rendererSnapshot[k] ~= nil then
+            setRendererSetting(k, rendererSnapshot[k])
+        end
+    end
+    loadRendererControlsFromSettings(false)
+end
+
+local function resetRendererControlsToDefaults()
+    for _, k in ipairs(kRendererKeys) do
+        setRendererSetting(k, kRendererDefaults[k])
+    end
+    loadRendererControlsFromSettings(false)
+    rendererSnapshot = {}
+    for _, k in ipairs(kRendererKeys) do
+        rendererSnapshot[k] = getRendererSetting(k)
+    end
+end
+
+function OptionsFrame_SelectTab(tabId)
+    if not rawget(_G, "OptionsFrame") then return end
+    local id = (tabId == 2) and 2 or 1
+    OptionsFrame.selectedTab = id
+    if type(PanelTemplates_SetTab) == "function" and rawget(_G, "OptionsFrameTab1") then
+        PanelTemplates_SetTab(OptionsFrame, id)
+    end
+    for _, name in ipairs(kVideoSubFrames) do
         local f = rawget(_G, name)
-        if f and f.Hide then f:Hide() end
+        if f then
+            if id == 1 then
+                if f.Show then f:Show() end
+            else
+                if f.Hide then f:Hide() end
+            end
+        end
     end
-    local ms = rawget(_G, "OptionsFrameMultiSampleDropDown")
-    local res = rawget(_G, "OptionsFrameResolutionDropDown")
-    if ms and res and ms.ClearAllPoints then
-        ms:ClearAllPoints()
-        ms:SetPoint("TOPLEFT", res, "BOTTOMLEFT", 0, -14)
-    end
-    local cb9 = rawget(_G, "OptionsFrameCheckButton9")
-    local cb10 = rawget(_G, "OptionsFrameCheckButton10")
-    if cb9 and cb10 and cb9.ClearAllPoints then
-        cb9:ClearAllPoints()
-        cb9:SetPoint("TOP", cb10, "BOTTOM", -5, -2)
-    end
-    local s5 = rawget(_G, "OptionsFrameSlider5")
-    local s3 = rawget(_G, "OptionsFrameSlider3")
-    if s5 and s3 and s5.ClearAllPoints then
-        s5:ClearAllPoints()
-        s5:SetPoint("TOP", s3, "BOTTOM", 0, -23)
-    end
-    local s10 = rawget(_G, "OptionsFrameSlider10")
-    local s6 = rawget(_G, "OptionsFrameSlider6")
-    if s10 and s6 and s10.ClearAllPoints then
-        s10:ClearAllPoints()
-        s10:SetPoint("LEFT", s6, "RIGHT", 25, 0)
-    end
-    local cb3 = rawget(_G, "OptionsFrameCheckButton3")
-    local ps = rawget(_G, "OptionsFramePixelShaders")
-    if cb3 and ps and cb3.ClearAllPoints then
-        cb3:ClearAllPoints()
-        cb3:SetPoint("TOPLEFT", ps, "TOPLEFT", 10, -8)
-    end
-    local cb19 = rawget(_G, "OptionsFrameCheckButton19")
-    local misc = rawget(_G, "OptionsFrameMiscellaneous")
-    if cb19 and misc and cb19.ClearAllPoints then
-        cb19:ClearAllPoints()
-        cb19:SetPoint("TOPLEFT", misc, "TOPLEFT", 10, -8)
+    local rPanel = rawget(_G, "OptionsFrameRendererPanel")
+    if rPanel then
+        if id == 2 then
+            loadRendererControlsFromSettings(false)
+            if rPanel.Show then rPanel:Show() end
+        else
+            if rPanel.Hide then rPanel:Hide() end
+        end
     end
 end
 
-tidyTbcVideoFrame()
+if rawget(_G, "OptionsFrame") and type(CreateFrame) == "function" and
+   not rawget(_G, "OptionsFrameRendererPanel") then
+    local rPanel = CreateFrame("Frame", "OptionsFrameRendererPanel", OptionsFrame)
+    rPanel:SetWidth(470)
+    rPanel:SetHeight(517)
+    rPanel:SetPoint("TOPLEFT", OptionsFrame, "TOPLEFT", 12, -35)
+    rPanel:Hide()
+
+    local function makeGroupBox(name, titleText, height, prevBox)
+        local box = CreateFrame("Frame", name, rPanel, "OptionFrameBoxTemplate")
+        box:SetWidth(470)
+        box:SetHeight(height)
+        if prevBox then
+            box:SetPoint("TOPLEFT", prevBox, "BOTTOMLEFT", 0, -18)
+        else
+            box:SetPoint("TOPLEFT", rPanel, "TOPLEFT", 0, 0)
+        end
+        if box.SetBackdropBorderColor then box:SetBackdropBorderColor(0.4, 0.4, 0.4) end
+        if box.SetBackdropColor then box:SetBackdropColor(0.15, 0.15, 0.15) end
+        local titleFS = rawget(_G, name .. "Title")
+        if titleFS and titleFS.SetText then titleFS:SetText(titleText) end
+        return box
+    end
+
+    local function attachTooltip(widget, titleText, bodyText)
+        if not widget or not widget.SetScript then return end
+        widget:SetScript("OnEnter", function()
+            local owner = this or widget
+            if GameTooltip and GameTooltip.SetOwner then
+                GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+                GameTooltip:SetText(titleText, 1.0, 0.82, 0.0)
+                if bodyText and bodyText ~= "" and GameTooltip.AddLine then
+                    GameTooltip:AddLine(bodyText, 1.0, 1.0, 1.0, 1)
+                end
+                GameTooltip:Show()
+            end
+        end)
+        widget:SetScript("OnLeave", function()
+            if GameTooltip and GameTooltip.Hide then GameTooltip:Hide() end
+        end)
+    end
+
+    local function makeCheck(box, name, key, labelText, x, y, tipText)
+        local cb = CreateFrame("CheckButton", name, box, "OptionsCheckButtonTemplate")
+        if cb.SetWidth then cb:SetWidth(26) end
+        if cb.SetHeight then cb:SetHeight(26) end
+        cb:SetPoint("TOPLEFT", box, "TOPLEFT", x, y)
+        local textFS = rawget(_G, name .. "Text")
+        if textFS and textFS.SetText then
+            textFS:SetText(labelText)
+        end
+        attachTooltip(cb, labelText, tipText)
+        local ctrl = { kind = "check", key = key, frame = cb, title = labelText, value = "0" }
+        rendererControls[key] = ctrl
+        cb:SetScript("OnClick", function()
+            local selfBtn = this or cb
+            local checked = (selfBtn.GetChecked and selfBtn:GetChecked()) and "1" or "0"
+            if PlaySound then
+                PlaySound(checked == "1" and "igMainMenuOptionCheckBoxOn" or "igMainMenuOptionCheckBoxOff")
+            end
+            ctrl.value = checked
+            setRendererSetting(key, checked)
+            updateRendererDependencies()
+        end)
+        return cb
+    end
+
+    local function makeSlider(box, name, key, labelText, x, y, width, minVal, maxVal, stepVal, lowText, highText, fmt, tipText)
+        local sl = CreateFrame("Slider", name, box, "OptionsSliderTemplate")
+        sl:SetPoint("TOPLEFT", box, "TOPLEFT", x, y)
+        if sl.SetWidth then sl:SetWidth(width) end
+        if sl.SetMinMaxValues then sl:SetMinMaxValues(minVal, maxVal) end
+        if sl.SetValueStep then sl:SetValueStep(stepVal) end
+        local titleFS = rawget(_G, name .. "Text")
+        local lowFS = rawget(_G, name .. "Low")
+        local highFS = rawget(_G, name .. "High")
+        if titleFS and titleFS.SetText then titleFS:SetText(labelText) end
+        if lowFS and lowFS.SetText then lowFS:SetText(lowText) end
+        if highFS and highFS.SetText then highFS:SetText(highText) end
+        attachTooltip(sl, labelText, tipText)
+        local ctrl = {
+            kind = "slider", key = key, frame = sl, title = labelText,
+            titleFS = titleFS, minVal = minVal, maxVal = maxVal, stepVal = stepVal,
+            fmt = fmt, value = minVal,
+        }
+        rendererControls[key] = ctrl
+        sl:SetScript("OnValueChanged", function()
+            local selfSl = this or sl
+            local v = arg1
+            if v == nil and selfSl.GetValue then v = selfSl:GetValue() end
+            v = tonumber(v) or minVal
+            if stepVal and stepVal > 0 then
+                v = math.floor((v - minVal) / stepVal + 0.5) * stepVal + minVal
+                if v < minVal then v = minVal end
+                if v > maxVal then v = maxVal end
+            end
+            ctrl.value = v
+            if titleFS and titleFS.SetText then
+                titleFS:SetText(labelText .. ": " .. formatSliderValue(fmt, v))
+            end
+            setRendererSetting(key, v)
+        end)
+        return sl
+    end
+
+    local function makeDropDown(box, name, key, labelText, x, y, ddWidth, items, tipText)
+        local dd = CreateFrame("Frame", name, box, "UIDropDownMenuTemplate")
+        dd:SetPoint("TOPLEFT", box, "TOPLEFT", x, y)
+        local labelFS = dd:CreateFontString(name .. "Label", "BACKGROUND", "GameFontNormalSmall")
+        labelFS:SetPoint("BOTTOMLEFT", dd, "TOPLEFT", 21, 0)
+        labelFS:SetText(labelText)
+        setDropDownWidth(dd, ddWidth)
+        attachTooltip(dd, labelText, tipText)
+        local ctrl = {
+            kind = "dropdown", key = key, frame = dd, label = labelFS,
+            title = labelText, items = items, selectedIndex = 1,
+        }
+        local function initFn()
+            if type(UIDropDownMenu_CreateInfo) ~= "function" or
+               type(UIDropDownMenu_AddButton) ~= "function" then
+                return
+            end
+            for idx, itemText in ipairs(items) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = itemText
+                info.value = idx - 1
+                info.checked = (idx == ctrl.selectedIndex) and 1 or nil
+                local pickIdx = idx
+                local pickText = itemText
+                info.func = function()
+                    ctrl.selectedIndex = pickIdx
+                    if type(UIDropDownMenu_SetSelectedID) == "function" then
+                        UIDropDownMenu_SetSelectedID(dd, pickIdx)
+                    end
+                    setDropDownText(dd, pickText)
+                    setRendererSetting(key, tostring(pickIdx - 1))
+                    updateRendererDependencies()
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end
+        ctrl.initFn = initFn
+        rendererControls[key] = ctrl
+        if type(UIDropDownMenu_Initialize) == "function" then
+            UIDropDownMenu_Initialize(dd, initFn)
+        end
+        setDropDownText(dd, items[1] or "")
+        return dd
+    end
+
+    -- Box 1: Upscaling & Post-Processing (470 x 168)
+    local box1 = makeGroupBox("OptionsFrameRendererUpscaling", "Upscaling & Post-Processing", 168, nil)
+    makeDropDown(box1, "OptionsFrameRendererUpscalingDropDown", "upscaling", "Upscaling",
+        -4, -20, 145,
+        { "Off", "FSR 1 (Spatial)", "FSR 3 (Temporal)" },
+        "Render the scene at a lower internal resolution and upscale to fit your display.")
+    makeDropDown(box1, "OptionsFrameRendererFsrQualityDropDown", "fsrquality", "Render Scale",
+        -4, -65, 145,
+        { "Ultra Quality (77%)", "Quality (67%)", "Balanced (59%)", "Native (100%)" },
+        "Internal render resolution before FSR upscaling.")
+    makeDropDown(box1, "OptionsFrameRendererFrameCapDropDown", "framecap", "Frame Rate Limit",
+        -4, -110, 145,
+        { "Unlimited", "30 FPS", "60 FPS", "90 FPS", "120 FPS", "144 FPS", "240 FPS" },
+        "Maximum frames rendered per second.")
+    makeCheck(box1, "OptionsFrameRendererFxaaCheck", "fxaa", "Edge Smoothing (FXAA)",
+        235, -8, "Fast post-process edge smoothing over foliage and alpha-tested geometry.")
+    makeCheck(box1, "OptionsFrameRendererSunShaftsCheck", "sunshafts", "Sun Shafts",
+        235, -36, "Screen-space light rays streaming from the sun past trees and buildings.")
+    makeSlider(box1, "OptionsFrameRendererFsrSharpSlider", "fsrsharpness", "FSR Sharpening",
+        240, -80, 190, 0.0, 2.0, 0.1, "0.0", "2.0", "f1",
+        "Sharpening strength applied after FSR upscaling.")
+    makeSlider(box1, "OptionsFrameRendererLensFlareSlider", "lensflare", "Lens Flare",
+        240, -126, 190, 0.0, 2.0, 0.1, "Off", "2.0", "f1",
+        "Intensity of the sun flare when looking toward the sun.")
+
+    -- Box 2: Lighting & Surface Detail (470 x 176)
+    local box2 = makeGroupBox("OptionsFrameRendererLighting", "Lighting & Surface Detail", 176, box1)
+    makeDropDown(box2, "OptionsFrameRendererRtDropDown", "raytracedlighting", "Ray-Traced Lighting",
+        -4, -20, 145,
+        { "Off", "Sun Shadows", "Shadows + Occlusion", "Full GI (Bounce)" },
+        "Experimental ray-traced sun shadows, ambient occlusion, and indirect bounce lighting.")
+    makeDropDown(box2, "OptionsFrameRendererLightShaftsDropDown", "lightshafts", "Light Shafts & Mist",
+        -4, -65, 145,
+        { "Off", "Low", "Medium", "High" },
+        "Volumetric mist lit by the sun, torches, and lava.")
+    makeDropDown(box2, "OptionsFrameRendererParallaxQualDropDown", "parallaxquality", "Parallax Quality",
+        -4, -110, 145,
+        { "Low", "Medium", "High" },
+        "Ray-marching precision for surface depth (16, 32, or 64 steps).")
+    makeCheck(box2, "OptionsFrameRendererNormalsCheck", "normalmapping", "Surface Bumps (Normals)",
+        235, -8, "Per-pixel normal-mapped lighting on stone, wood, cloth, and metal.")
+    makeCheck(box2, "OptionsFrameRendererParallaxCheck", "parallax", "Surface Depth (Parallax)",
+        235, -36, "Parallax occlusion depth on cobblestones, bricks, and planks.")
+    makeSlider(box2, "OptionsFrameRendererNormalStrSlider", "normalmapstrength", "Bump Strength",
+        240, -82, 190, 0.0, 2.0, 0.1, "0.0", "2.0", "f1",
+        "Strength of normal-mapped surface relief.")
+    makeSlider(box2, "OptionsFrameRendererShadowDistSlider", "shadowdistance", "Shadow Distance",
+        240, -130, 190, 40, 500, 20, rawget(_G, "NEAR") or "Near", rawget(_G, "FAR") or "Far", "yd",
+        "Maximum distance at which directional shadows are cast.")
+
+    -- Box 3: Procedural Grass & Atmosphere (470 x 132)
+    local box3 = makeGroupBox("OptionsFrameRendererGrass", "Procedural Grass & Atmosphere", 132, box2)
+    makeCheck(box3, "OptionsFrameRendererGrassCheck", "grassenabled", "Procedural Grass",
+        12, -8, "Experimental wind-animated grass blades grown from terrain ground-effect data.")
+    makeCheck(box3, "OptionsFrameRendererStarsCheck", "sharpstars", "Sharp Night Stars",
+        12, -36, "Render crisp procedural point stars in the night sky.")
+    makeSlider(box3, "OptionsFrameRendererFogSlider", "fogstrength", "Fog Thickness",
+        18, -86, 185, 0.0, 2.0, 0.05, "0.0", "2.0", "f2",
+        "Distance fog density multiplier relative to the zone design.")
+    makeSlider(box3, "OptionsFrameRendererGrassDensitySlider", "grassdensity", "Grass Density",
+        240, -28, 190, 0, 300, 10, "0%", "300%", "pct",
+        "Blade density percentage for procedural grass.")
+    makeSlider(box3, "OptionsFrameRendererGrassDistSlider", "grassdistance", "Grass Distance",
+        240, -86, 190, 30, 2000, 50, rawget(_G, "NEAR") or "Near", rawget(_G, "FAR") or "Far", "yd",
+        "Maximum draw distance for procedural grass.")
+
+    -- Bottom Tabs matching AudioOptionsFrame ([ Sound ] | [ Voice ])
+    local tab1 = CreateFrame("Button", "OptionsFrameTab1", OptionsFrame, "AudioOptionsFrameTabButtonTemplate")
+    if tab1.SetID then tab1:SetID(1) end
+    tab1:SetText("Video")
+    tab1:SetPoint("CENTER", OptionsFrame, "BOTTOMLEFT", 52, -8)
+    tab1:SetScript("OnClick", function()
+        if PlaySound then PlaySound("igCharacterInfoTab") end
+        OptionsFrame_SelectTab(1)
+    end)
+
+    local tab2 = CreateFrame("Button", "OptionsFrameTab2", OptionsFrame, "AudioOptionsFrameTabButtonTemplate")
+    if tab2.SetID then tab2:SetID(2) end
+    tab2:SetText("Renderer")
+    tab2:SetPoint("LEFT", tab1, "RIGHT", -16, 0)
+    tab2:SetScript("OnClick", function()
+        if PlaySound then PlaySound("igCharacterInfoTab") end
+        OptionsFrame_SelectTab(2)
+    end)
+
+    if type(PanelTemplates_SetNumTabs) == "function" then
+        PanelTemplates_SetNumTabs(OptionsFrame, 2)
+    end
+    OptionsFrame_SelectTab(1)
+    loadRendererControlsFromSettings(true)
+
+    if OptionsFrame.HookScript then
+        OptionsFrame:HookScript("OnShow", function()
+            if not OptionsFrame.selectedTab then OptionsFrame.selectedTab = 1 end
+            OptionsFrame_SelectTab(OptionsFrame.selectedTab)
+        end)
+        OptionsFrame:HookScript("OnHide", function()
+            if not OptionsFrame.__woweeCommitted then
+                rollbackRendererControls()
+            end
+        end)
+    end
+end
 
 if type(OptionsFrame_Load) == "function" then
     local origLoad = OptionsFrame_Load
     OptionsFrame_Load = function(...)
         origLoad(...)
-        tidyTbcVideoFrame()
+        refreshRefreshRateText()
+        loadRendererControlsFromSettings(true)
+        if rawget(_G, "OptionsFrame") and OptionsFrame.selectedTab == 2 then
+            OptionsFrame_SelectTab(2)
+        end
     end
 end
 
@@ -2001,138 +2414,50 @@ if type(OptionsFrame_Save) == "function" then
     local origSave = OptionsFrame_Save
     OptionsFrame_Save = function(...)
         local ref = rawget(_G, "OptionsFrameRefreshDropDown")
-        if ref and type(UIDropDownMenu_SetSelectedValue) == "function" then
+        if ref and type(UIDropDownMenu_SetSelectedValue) == "function" and type(GetCVar) == "function" then
             UIDropDownMenu_SetSelectedValue(ref, GetCVar("gxRefresh"))
         end
+        if rawget(_G, "OptionsFrame") then
+            OptionsFrame.__woweeCommitted = true
+        end
+        commitRendererControls()
         return origSave(...)
+    end
+end
+
+if type(OptionsFrame_Cancel) == "function" then
+    local origCancel = OptionsFrame_Cancel
+    OptionsFrame_Cancel = function(...)
+        if rawget(_G, "OptionsFrame") then
+            OptionsFrame.__woweeCommitted = true
+        end
+        rollbackRendererControls()
+        return origCancel(...)
     end
 end
 
 if type(OptionsFrame_SetDefaults) == "function" then
     local origDefaults = OptionsFrame_SetDefaults
     OptionsFrame_SetDefaults = function(...)
+        if rawget(_G, "OptionsFrame") then
+            OptionsFrame.__woweeCommitted = true
+        end
         origDefaults(...)
-        if type(OptionsFrame_Load) == "function" then OptionsFrame_Load() end
-        if type(OptionsFrameMultiSampleDropDown_OnLoad) == "function" and
-           rawget(_G, "OptionsFrameMultiSampleDropDown") then
+        resetRendererControlsToDefaults()
+        if rawget(_G, "OptionsFrameResolutionDropDown") and
+           type(UIDropDownMenu_SetSelectedID) == "function" and
+           type(GetCurrentResolution) == "function" then
+            UIDropDownMenu_SetSelectedID(OptionsFrameResolutionDropDown, GetCurrentResolution(), 1)
+        end
+        if rawget(_G, "OptionsFrameMultiSampleDropDown") and
+           type(OptionsFrameMultiSampleDropDown_OnLoad) == "function" then
             local prevThis = this
             this = OptionsFrameMultiSampleDropDown
             OptionsFrameMultiSampleDropDown_OnLoad()
             this = prevThis
         end
+        refreshRefreshRateText()
     end
-end
-
-if rawget(_G, "OptionsFrame") and not rawget(_G, "WoweeVideoMoreButton") and
-   type(CreateFrame) == "function" then
-    local defs = rawget(_G, "OptionsFrameDefaults")
-    if defs and defs.SetWidth then defs:SetWidth(110) end
-    local more = CreateFrame("Button", "WoweeVideoMoreButton", OptionsFrame, "UIPanelButtonTemplate")
-    more:SetWidth(145)
-    more:SetHeight(21)
-    if defs then
-        more:SetPoint("LEFT", defs, "RIGHT", 6, 0)
-    else
-        more:SetPoint("BOTTOMLEFT", OptionsFrame, "BOTTOMLEFT", 130, 16)
-    end
-    more:SetText("WoWee Graphics...")
-    more:SetScript("OnClick", function()
-        if type(OptionsFrame_Save) == "function" then OptionsFrame_Save() end
-        if type(HideUIPanel) == "function" then
-            HideUIPanel(OptionsFrame)
-            if rawget(_G, "GameMenuFrame") then HideUIPanel(GameMenuFrame) end
-        end
-        if type(InterfaceOptionsFrame_OpenToFrame) == "function" then
-            InterfaceOptionsFrame_OpenToFrame(rawget(_G, "WoweeOptionsGraphics") or "Graphics")
-        end
-    end)
-end
-
--- Fix TBC AudioOptionsFrame / SoundOptionsFrame: hide unimplemented Voice tab
--- and dead hardware/reverb/channel/quality controls, and add jump button.
-if type(SoundOptionsFrameCheckButtons) == "table" then
-    SoundOptionsFrameCheckButtons["ENABLE_SOUND_AT_CHARACTER"] = nil
-    SoundOptionsFrameCheckButtons["ENABLE_REVERB"] = nil
-    SoundOptionsFrameCheckButtons["ENABLE_HARDWARE"] = nil
-end
-if type(SoundOptionsFrameSliders) == "table" then
-    for k, v in pairs(SoundOptionsFrameSliders) do
-        if type(v) == "table" and (v.index == 5 or v.index == 6) then
-            SoundOptionsFrameSliders[k] = nil
-        end
-    end
-end
-
-local function tidyTbcSoundFrame()
-    for _, name in ipairs({
-        "AudioOptionsFrameTab1",
-        "AudioOptionsFrameTab2",
-        "VoiceOptionsFrame",
-        "SoundOptionsFrameCheckButton8",
-        "SoundOptionsFrameCheckButton10",
-        "SoundOptionsFrameCheckButton11",
-        "SoundOptionsFrameSlider5",
-        "SoundOptionsFrameSlider6",
-        "SoundOptionsOutputDropDown",
-        "SoundOptionsFrameHardware",
-    }) do
-        local f = rawget(_G, name)
-        if f and f.Hide then f:Hide() end
-    end
-    local playback = rawget(_G, "SoundOptionsFramePlayback")
-    local volume = rawget(_G, "SoundOptionsFrameVolume")
-    if playback and playback.SetHeight then
-        playback:SetHeight(215)
-    end
-    if volume and playback and volume.ClearAllPoints then
-        volume:ClearAllPoints()
-        volume:SetPoint("TOPLEFT", playback, "TOPRIGHT", 3, 0)
-    end
-end
-
-tidyTbcSoundFrame()
-
-if type(SoundOptionsFrame_Load) == "function" then
-    local origSoundLoad = SoundOptionsFrame_Load
-    SoundOptionsFrame_Load = function(...)
-        origSoundLoad(...)
-        tidyTbcSoundFrame()
-    end
-end
-
-if rawget(_G, "AudioOptionsFrame") and AudioOptionsFrame.HookScript then
-    AudioOptionsFrame:HookScript("OnShow", function()
-        tidyTbcSoundFrame()
-        if type(AudioOptionsFrame_ShowSubFrame) == "function" then
-            AudioOptionsFrame_ShowSubFrame("SoundOptionsFrame")
-        elseif rawget(_G, "SoundOptionsFrame") and SoundOptionsFrame.Show then
-            SoundOptionsFrame:Show()
-        end
-    end)
-end
-
-if rawget(_G, "SoundOptionsFrame") and not rawget(_G, "WoweeAudioMoreButton") and
-   type(CreateFrame) == "function" then
-    local volume = rawget(_G, "SoundOptionsFrameVolume")
-    local more = CreateFrame("Button", "WoweeAudioMoreButton", SoundOptionsFrame, "UIPanelButtonTemplate")
-    more:SetWidth(180)
-    more:SetHeight(22)
-    if volume then
-        more:SetPoint("TOP", volume, "BOTTOM", 0, -12)
-    else
-        more:SetPoint("BOTTOM", SoundOptionsFrame, "BOTTOM", 0, 48)
-    end
-    more:SetText("WoWee Sound...")
-    more:SetScript("OnClick", function()
-        if rawget(_G, "AudioOptionsFrame") then AudioOptionsFrame.okay = true end
-        if type(HideUIPanel) == "function" then
-            if rawget(_G, "AudioOptionsFrame") then HideUIPanel(AudioOptionsFrame) end
-            if rawget(_G, "GameMenuFrame") then HideUIPanel(GameMenuFrame) end
-        end
-        if type(InterfaceOptionsFrame_OpenToFrame) == "function" then
-            InterfaceOptionsFrame_OpenToFrame(rawget(_G, "WoweeOptionsSound") or "Sound")
-        end
-    end)
 end
 
 -- Enable mouse-wheel chat scrolling on TBC ChatFrame1..N, where chatframe.lua
@@ -2180,6 +2505,11 @@ end
 /// Swap FrameXML's circular minimap border for a crisp square border when
 /// WoweeGetSetting("minimapsquare") is enabled, and restore it when disabled.
 inline constexpr const char* kMinimapShapeLua = R"LUA(
+if type(__WoweeInterfaceVersion) == "number" and
+   __WoweeInterfaceVersion > 0 and
+   __WoweeInterfaceVersion < 30000 then
+    return
+end
 if type(WoweeGetSetting) == "function" and rawget(_G, "Minimap") then
     local square = (WoweeGetSetting("minimapsquare") == "1")
     local roundBorder = rawget(_G, "MinimapBorder")
@@ -2212,6 +2542,11 @@ end
 /// Apply WoWee Action Bars, Buff Bar, Bag Scale, and Keyring settings directly
 /// to FrameXML's MainMenuBar, MultiBar*, BuffFrame, ContainerFrame*, and KeyRingButton.
 inline constexpr const char* kHudLayoutSettingsLua = R"LUA(
+if type(__WoweeInterfaceVersion) == "number" and
+   __WoweeInterfaceVersion > 0 and
+   __WoweeInterfaceVersion < 30000 then
+    return
+end
 if type(WoweeGetSetting) == "function" then
     local function numSetting(k, def)
         local n = tonumber(WoweeGetSetting(k))
