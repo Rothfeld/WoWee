@@ -232,7 +232,6 @@ public:
     AnimationController* getAnimationController() const { return animationController_.get(); }
     LevelUpEffect* getLevelUpEffect() const { return levelUpEffect.get(); }
     LootSparkles* getLootSparkles() const { return lootSparkles_.get(); }
-    ChargeEffect* getChargeEffect() const { return chargeEffect.get(); }
     SwimEffects* getSwimEffects() const { return swimEffects.get(); }
 
     // Selection circle for targeted entity

@@ -283,3 +283,89 @@ TEST_CASE("TBC Shaman elemental totems parse rising ribbons and projected base g
         }
     }
 }
+
+TEST_CASE("TBC ChargeTrail and InterveneTrail ribbons orient vertically along bone local Y",
+          "[m2][ribbon][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    auto boneWorldRotation = [](const M2Model& model, uint32_t boneIdx) {
+        glm::quat q(1.0f, 0.0f, 0.0f, 0.0f);
+        std::vector<int32_t> chain;
+        int32_t cur = static_cast<int32_t>(boneIdx);
+        while (cur >= 0 && static_cast<size_t>(cur) < model.bones.size() && chain.size() < 32) {
+            chain.push_back(cur);
+            cur = model.bones[cur].parentBone;
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            const auto& rot = model.bones[*it].rotation;
+            if (!rot.sequences.empty() && !rot.sequences[0].quatValues.empty()) {
+                q = q * rot.sequences[0].quatValues[0];
+            }
+        }
+        return q;
+    };
+
+    SECTION("Spells\\ChargeTrail.m2 (SpellVisualKit 44 for Charge and Intercept)") {
+        std::ifstream in(std::string(root) + "/spells/chargetrail.m2", std::ios::binary);
+        const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+        REQUIRE_FALSE(data.empty());
+
+        const M2Model model = M2Loader::load(data);
+        REQUIRE(model.version == 260);
+        REQUIRE(model.ribbonEmitters.size() == 1);
+        REQUIRE(model.particleEmitters.size() == 1);
+        REQUIRE(model.materials.size() == 1);
+        CHECK(model.materials[0].blendMode == 4);
+
+        const auto& rib = model.ribbonEmitters[0];
+        CHECK(rib.bone == 1);
+        CHECK(rib.edgesPerSecond == Catch::Approx(50.0f));
+        CHECK(rib.edgeLifetime == Catch::Approx(1.0f));
+        CHECK(rib.gravity == 0.0f);
+
+        // Bone 1 rotates local +Y ~10 deg off -Z (downward), so the vertical
+        // ribbon spans ~0.94 yd tall with -localY at the top (+Z, v=0 bright
+        // edge of GRAD3A.BLP) and +localY at the bottom (-Z, v=1 faded edge).
+        const glm::vec3 widthAxis = boneWorldRotation(model, rib.bone) * glm::vec3(0.0f, 1.0f, 0.0f);
+        CHECK(widthAxis.x == Catch::Approx(-0.1736f).margin(0.01f));
+        CHECK(std::abs(widthAxis.y) < 0.01f);
+        CHECK(widthAxis.z == Catch::Approx(-0.9848f).margin(0.01f));
+
+        REQUIRE_FALSE(rib.heightAboveTrack.sequences.empty());
+        REQUIRE_FALSE(rib.heightBelowTrack.sequences.empty());
+        CHECK(rib.heightAboveTrack.sequences[0].floatValues[0] == Catch::Approx(0.472222f).margin(1e-4f));
+        CHECK(rib.heightBelowTrack.sequences[0].floatValues[0] == Catch::Approx(0.472222f).margin(1e-4f));
+
+        REQUIRE_FALSE(rib.colorTrack.sequences.empty());
+        REQUIRE_FALSE(rib.colorTrack.sequences[0].vec3Values.empty());
+        const glm::vec3 col = rib.colorTrack.sequences[0].vec3Values[0];
+        CHECK(col.r == Catch::Approx(0.811765f).margin(1e-3f));
+        CHECK(col.g == Catch::Approx(0.0f).margin(1e-3f));
+        CHECK(col.b == Catch::Approx(0.0f).margin(1e-3f));
+
+        REQUIRE_FALSE(rib.alphaTrack.sequences.empty());
+        CHECK(rib.alphaTrack.sequences[0].floatValues[0] == Catch::Approx(26214.0f / 32767.0f).margin(1e-3f));
+        REQUIRE_FALSE(rib.visibilityTrack.sequences.empty());
+        CHECK(rib.visibilityTrack.sequences[0].floatValues[0] == 1.0f);
+    }
+
+    SECTION("Spells\\InterveneTrail.m2 (SpellVisualKit 7726 for Intervene)") {
+        std::ifstream in(std::string(root) + "/spells/intervenetrail.m2", std::ios::binary);
+        const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+        REQUIRE_FALSE(data.empty());
+
+        const M2Model model = M2Loader::load(data);
+        REQUIRE(model.ribbonEmitters.size() == 1);
+        const auto& rib = model.ribbonEmitters[0];
+        CHECK(rib.bone == 1);
+        CHECK(rib.edgesPerSecond == Catch::Approx(50.0f));
+        CHECK(rib.edgeLifetime == Catch::Approx(0.5f));
+        REQUIRE_FALSE(rib.heightAboveTrack.sequences.empty());
+        REQUIRE_FALSE(rib.heightBelowTrack.sequences.empty());
+        CHECK(rib.heightAboveTrack.sequences[0].floatValues[0] == Catch::Approx(0.0f).margin(1e-4f));
+        CHECK(rib.heightBelowTrack.sequences[0].floatValues[0] == Catch::Approx(0.611111f).margin(1e-4f));
+        const glm::vec3 widthAxis = boneWorldRotation(model, rib.bone) * glm::vec3(0.0f, 1.0f, 0.0f);
+        CHECK(glm::length(widthAxis) == Catch::Approx(1.0f).margin(1e-3f));
+    }
+}

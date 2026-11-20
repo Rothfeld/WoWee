@@ -874,9 +874,10 @@ bool Renderer::initialize(core::Window* win) {
     if (!mountDust->initialize(vkCtx, perFrameSetLayout))
         LOG_WARNING("Mount dust effect initialization failed (non-fatal)");
 
-    chargeEffect = std::make_unique<ChargeEffect>();
-    if (!chargeEffect->initialize(vkCtx, perFrameSetLayout))
-        LOG_WARNING("Charge effect initialization failed (non-fatal)");
+    // Charge/Intercept/Intervene trails are driven by SpellVisualKit M2s
+    // (Spells\ChargeTrail.m2 / Spells\InterveneTrail.m2 at attachment 34 +
+    // Spells\DustCloud_Land.m2 at attachment 19) through SpellVisualSystem and
+    // M2Renderer; do not draw the legacy procedural ChargeEffect wall on top.
 
     levelUpEffect = std::make_unique<LevelUpEffect>();
     lootSparkles_ = std::make_unique<LootSparkles>();

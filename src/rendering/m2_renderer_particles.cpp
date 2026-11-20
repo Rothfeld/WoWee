@@ -678,6 +678,13 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 float a = e.alpha * inst.fade;
                 float u = 1.0f - static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
 
+                // In TBC M2 ribbons, the -heightBelow edge (-localY) carries v=0
+                // (top row of the BLP) and +heightAbove (+localY) carries v=1
+                // (bottom row). On Spells\ChargeTrail.m2 (SPELLS\GRAD3A.BLP,
+                // brightest at row 0 and fading toward row 63), bone 1 rotates
+                // local +Y to -Z (downward), so mapping +localY->v=1 and
+                // -localY->v=0 places the bright crisp edge at the top (+Z) and
+                // fades softly downward, matching native TBC 2.4.3.
                 const glm::vec3& top = e.top;
                 dst[written * 9 + 0] = top.x;
                 dst[written * 9 + 1] = top.y;
@@ -687,10 +694,10 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 dst[written * 9 + 5] = e.color.b;
                 dst[written * 9 + 6] = a;
                 dst[written * 9 + 7] = u;
-                dst[written * 9 + 8] = 0.0f; // v = top
+                dst[written * 9 + 8] = 1.0f; // v = +heightAbove (+localY)
                 written++;
 
-                // Bottom vertex (the other side)
+                // Bottom vertex (-heightBelow / -localY)
                 const glm::vec3& bot = e.bottom;
                 dst[written * 9 + 0] = bot.x;
                 dst[written * 9 + 1] = bot.y;
@@ -700,7 +707,7 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
                 dst[written * 9 + 5] = e.color.b;
                 dst[written * 9 + 6] = a;
                 dst[written * 9 + 7] = u;
-                dst[written * 9 + 8] = 1.0f; // v = bottom
+                dst[written * 9 + 8] = 0.0f; // v = -heightBelow (-localY)
                 written++;
             }
 

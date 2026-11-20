@@ -65,7 +65,6 @@ bool AnimationCallbackHandler::updateCharge(float deltaTime) {
         dir *= glm::inversesqrt(dirLenSq);
         float yawDeg = glm::degrees(std::atan2(dir.x, dir.y));
         renderer_.setCharacterYaw(yawDeg);
-        if (auto* ac = renderer_.getAnimationController()) ac->emitChargeEffect(renderPos, dir);
     }
 
     // Sync to game handler
@@ -84,7 +83,6 @@ bool AnimationCallbackHandler::updateCharge(float deltaTime) {
     if (t >= 1.0f) {
         chargeActive_ = false;
         if (auto* ac = renderer_.getAnimationController()) ac->setCharging(false);
-        if (auto* ac = renderer_.getAnimationController()) ac->stopChargeEffect();
         renderer_.getCameraController()->setExternalFollow(false);
         renderer_.getCameraController()->setExternalMoving(false);
 
@@ -214,9 +212,8 @@ void AnimationCallbackHandler::setupCallbacks() {
         renderer_.getCameraController()->clearMovementInputs();
         if (auto* ac = renderer_.getAnimationController()) ac->setCharging(true);
 
-        // Start charge visual effect (red haze + dust)
-        glm::vec3 chargeDir = glm::normalize(endRender - startRender);
-        if (auto* ac = renderer_.getAnimationController()) ac->startChargeEffect(startRender, chargeDir);
+        // Charge/Intercept visual trails come from SpellVisualKit 44
+        // (Spells\ChargeTrail.m2 + Spells\DustCloud_Land.m2) via SpellVisualSystem.
 
         // Charge's cast kit points at SoundEntries 3330 ("HeroicLeap"), whose file name
         // carries Blizzard's own typo. There is no Sound\Spells\Charge.wav.
