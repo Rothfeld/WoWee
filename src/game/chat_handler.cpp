@@ -1,5 +1,6 @@
 #include <cassert>
 #include "game/chat_handler.hpp"
+#include "game/bg_score_defs.hpp"
 #include "game/group_defines.hpp"
 #include "game/cast_result_text.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -489,6 +490,50 @@ void ChatHandler::deliverChatMessage(MessageChatData data, bool alreadyWaited) {
 
     if (data.message.empty()) {
         return;
+    }
+
+    // CHAT_MSG_BG_SYSTEM_* (AB/AV/WSG/EotS node claims, assaults, defenses)
+    // carry "$n" / "$N" in the message and the acting player's GUID in
+    // receiverGuid (targetGuid on the wire, mangos-tbc BattleGround2ChatBuilder).
+    if ((data.type == ChatType::BG_SYSTEM_NEUTRAL ||
+         data.type == ChatType::BG_SYSTEM_ALLIANCE ||
+         data.type == ChatType::BG_SYSTEM_HORDE) &&
+        (data.message.find("$n") != std::string::npos ||
+         data.message.find("$N") != std::string::npos)) {
+        const uint64_t subjectGuid = data.receiverGuid != 0 ? data.receiverGuid : data.senderGuid;
+        if (subjectGuid != 0) {
+            std::string subjectName;
+            auto nameIt = owner_.getPlayerNameCache().find(subjectGuid);
+            if (nameIt != owner_.getPlayerNameCache().end() && !nameIt->second.empty()) {
+                subjectName = nameIt->second;
+            }
+            if (subjectName.empty()) {
+                if (auto entity = owner_.getEntityManager().getEntity(subjectGuid)) {
+                    if (entity->getType() == ObjectType::PLAYER) {
+                        auto player = std::static_pointer_cast<Player>(entity);
+                        if (!player->getName().empty()) subjectName = player->getName();
+                    }
+                }
+            }
+            if (subjectName.empty()) {
+                for (const auto& member : owner_.getPartyData().members) {
+                    if (member.guid == subjectGuid && !member.name.empty()) {
+                        subjectName = member.name;
+                        break;
+                    }
+                }
+            }
+            if (subjectName.empty()) {
+                owner_.queryPlayerName(subjectGuid);
+                if (!alreadyWaited) {
+                    chatAwaitingName_.push_back({std::move(data), subjectGuid,
+                                                 core::appTimeSeconds() + kNameWaitSeconds});
+                    return;
+                }
+            } else {
+                substituteBgSystemPlayerToken(data.message, subjectName);
+            }
+        }
     }
 
     if (data.type == ChatType::ACHIEVEMENT ||

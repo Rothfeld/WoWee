@@ -16,6 +16,7 @@
 // battleground queue with no tracker, no chat line and no invitation.
 #include <catch_amalgamated.hpp>
 #include "game/world_packets.hpp"
+#include "game/bg_score_defs.hpp"
 #include "game/handler_types.hpp"
 #include "core/application.hpp"
 
@@ -265,6 +266,36 @@ TEST_CASE("MSG_PVP_LOG_DATA parses TBC 2.4.3 Arena and EotS layouts",
         CHECK(sb.players[0].bgStats[0].second == 3u);
     }
 
+    SECTION("TBC Arathi Basin victory row carries Bases Assaulted and Bases Defended") {
+        std::vector<uint8_t> body;
+        body.push_back(0);            // isArena = 0
+        body.push_back(1);            // hasWinner = 1
+        body.push_back(1);            // winner = 1 (Alliance)
+        pushU32(body, 1);             // playerCount = 1
+        pushU64(body, 0x2f);
+        pushU32(body, 0);             // killingBlows
+        pushU32(body, 0);             // honorableKills
+        pushU32(body, 0);             // deaths
+        pushU32(body, 189);           // bonusHonor
+        pushU32(body, 0);             // damageDone
+        pushU32(body, 0);             // healingDone
+        pushU32(body, 2);             // statCount = 2 (Bases Assaulted, Bases Defended)
+        pushU32(body, 4);             // basesAssaulted = 4
+        pushU32(body, 1);             // basesDefended = 1
+
+        wowee::network::Packet pkt(0x2E0, body);
+        BgScoreboardData sb;
+        REQUIRE(PvpLogDataPacket::parse(pkt, sb, /*wotlkFormat=*/false));
+        CHECK_FALSE(sb.isArena);
+        CHECK(sb.hasWinner);
+        CHECK(sb.winner == 1);
+        REQUIRE(sb.players.size() == 1);
+        CHECK(sb.players[0].bonusHonor == 189u);
+        REQUIRE(sb.players[0].bgStats.size() == 2);
+        CHECK(sb.players[0].bgStats[0].second == 4u);
+        CHECK(sb.players[0].bgStats[1].second == 1u);
+    }
+
     SECTION("CMSG_BATTLEMASTER_JOIN_ARENA encodes guid, slot, asGroup, isRated") {
         auto pkt = BattlemasterJoinArenaPacket::build(0xF130004DC7596DC1ULL, 0, false, false);
         REQUIRE(pkt.getSize() == 11);
@@ -304,4 +335,19 @@ TEST_CASE("bgFactionFromRace maps TBC Alliance and Horde races", "[battleground]
     for (uint8_t r : {1, 3, 4, 7, 11}) CHECK(bgFactionFromRace(r) == 1);
     for (uint8_t r : {2, 5, 6, 8, 10}) CHECK(bgFactionFromRace(r) == 0);
     CHECK(bgFactionFromRace(0) == -1);
+}
+
+TEST_CASE("substituteBgSystemPlayerToken expands $n and $N in BG system announcements",
+          "[battleground][chat][ab]") {
+    std::string msg = "$n claims the stables! If left unchallenged, the Alliance will control it in 1 minute!";
+    substituteBgSystemPlayerToken(msg, "Edricp");
+    CHECK(msg == "Edricp claims the stables! If left unchallenged, the Alliance will control it in 1 minute!");
+
+    std::string upper = "$N has assaulted the blacksmith!";
+    substituteBgSystemPlayerToken(upper, "Edrikp");
+    CHECK(upper == "Edrikp has assaulted the blacksmith!");
+
+    std::string unchanged = "The Battle for Arathi Basin has begun!";
+    substituteBgSystemPlayerToken(unchanged, "Edricp");
+    CHECK(unchanged == "The Battle for Arathi Basin has begun!");
 }

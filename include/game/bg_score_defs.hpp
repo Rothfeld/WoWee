@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <string>
+#include <string_view>
 
 namespace wowee {
 namespace game {
@@ -38,6 +40,20 @@ inline const char* bgObjectiveLabel(uint32_t mapId, size_t index) {
         if (c.mapId == mapId) return c.labels[index];
     }
     return nullptr;
+}
+
+/// Replace `$n` / `$N` player-name tokens in CHAT_MSG_BG_SYSTEM_* messages
+/// (e.g. "$n claims the stables!..." where mangos-tbc sends the acting player's
+/// GUID in targetGuid).
+inline void substituteBgSystemPlayerToken(std::string& message, std::string_view playerName) {
+    if (playerName.empty()) return;
+    for (const std::string_view token : {"$n", "$N"}) {
+        size_t pos = 0;
+        while ((pos = message.find(token, pos)) != std::string::npos) {
+            message.replace(pos, token.size(), playerName);
+            pos += playerName.size();
+        }
+    }
 }
 
 }  // namespace game

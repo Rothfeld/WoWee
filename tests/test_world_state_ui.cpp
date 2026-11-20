@@ -126,3 +126,32 @@ TEST_CASE("Alterac Valley Type 2 scoreboard stat rows are excluded from AlwaysUp
     CHECK(stats[4].text == "Secondary Objectives");
     CHECK(stats[4].icon.empty());
 }
+
+TEST_CASE("Arathi Basin WorldStateUI splits AlwaysUp resource lines from Type 2 scoreboard columns",
+          "[worldstate][ab]") {
+    std::vector<WorldStateUIRow> abRows = {
+        {101, 529, 0, 0, 0, "Interface\\TargetingFrame\\UI-PVP-Alliance",
+            "Bases: %1779w  Resources: %1776w/%1780w", "Alliance status", "", "", "", {0, 0, 0}},
+        {102, 529, 0, 0, 0, "Interface\\TargetingFrame\\UI-PVP-Horde",
+            "Bases: %1778w  Resources: %1777w/%1780w", "Horde status", "", "", "", {0, 0, 0}},
+        {122, 529, 0, 0, 2, "Interface\\WorldStateFrame\\ColumnIcon-TowerCapture",
+            "Bases Assaulted", "Number of times enemy base banners have been removed", "", "", "", {0, 0, 0}},
+        {123, 529, 0, 0, 2, "Interface\\WorldStateFrame\\ColumnIcon-TowerDefend",
+            "Bases Defended", "Number of times a base capture has been prevented", "", "", "", {0, 0, 0}},
+    };
+
+    const auto lines = worldStateUILines(abRows, 529, {3358},
+        lookup({{1779, 5}, {1776, 2000}, {1778, 0}, {1777, 0}, {1780, 2000}}));
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].state == 1);
+    CHECK(lines[0].text == "Bases: 5  Resources: 2000/2000");
+    CHECK(lines[1].state == 1);
+    CHECK(lines[1].text == "Bases: 0  Resources: 0/2000");
+
+    const auto stats = wowee::game::worldStateBattlefieldStats(abRows, 529);
+    REQUIRE(stats.size() == 2);
+    CHECK(stats[0].text == "Bases Assaulted");
+    CHECK(stats[0].icon == "Interface\\WorldStateFrame\\ColumnIcon-TowerCapture");
+    CHECK(stats[1].text == "Bases Defended");
+    CHECK(stats[1].icon == "Interface\\WorldStateFrame\\ColumnIcon-TowerDefend");
+}

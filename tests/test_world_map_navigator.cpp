@@ -269,3 +269,63 @@ TEST_CASE("MapNavigator opens battleground standalone map and dynamic landmarks"
     REQUIRE(marks[1].y > 0.0f);
     REQUIRE(marks[1].y < 1.0f);
 }
+
+TEST_CASE("MapNavigator opens Arathi Basin and updates 5 base landmarks across Neutral/Contested/Controlled",
+          "[world_map][navigator][ab]") {
+    auto d = data();
+    d.areas.push_back({3358, 529, 0, 0, "Arathi Basin"});
+    d.mapAreas.push_back({461, 529, 3358, "ArathiBasin",
+                          1858.33325f, 102.08333f, 1508.33325f, 337.5f, -1});
+    // 5 neutral AB POIs + Stables Alliance Contested (1769) and Alliance Controlled (1767)
+    d.pois.push_back({1614, 26, 0x84, 529, 1846, -1, 988.9f, 1012.6f, "Blacksmith", "Uncontrolled"});
+    d.pois.push_back({1629, 31, 0x84, 529, 1845, -1, 824.3f, 826.3f, "Farm", "Uncontrolled"});
+    d.pois.push_back({1624, 16, 0x84, 529, 1843, -1, 1178.2f, 822.5f, "Gold Mine", "Uncontrolled"});
+    d.pois.push_back({1619, 21, 0x84, 529, 1844, -1, 813.1f, 1182.1f, "Lumber Mill", "Uncontrolled"});
+    d.pois.push_back({1609, 36, 0x84, 529, 1842, -1, 1180.9f, 1185.8f, "Stables", "Uncontrolled"});
+    d.pois.push_back({1612, 37, 0x84, 529, 1769, -1, 1181.5f, 1185.7f, "Stables", "In Conflict"});
+    d.pois.push_back({1610, 38, 0x84, 529, 1767, -1, 1181.6f, 1185.6f, "Stables", "Alliance Controlled"});
+
+    std::unordered_map<uint32_t, uint32_t> ws = {
+        {1846, 1}, {1845, 1}, {1843, 1}, {1844, 1}, {1842, 1}
+    };
+    MapNavigator nav(std::move(d),
+                     [](uint32_t) { return false; },
+                     [&](uint32_t id) { auto it = ws.find(id); return it != ws.end() ? it->second : 0u; },
+                     [](const std::string&) { return glm::ivec2(256, 256); });
+
+    nav.setToPosition(529, 1166.8f, 1200.1f, 3358);
+    REQUIRE(nav.continent() == MapNavigator::kCosmic);
+    REQUIRE(nav.zone() == 0);
+    REQUIRE(nav.mapFile().has_value());
+    REQUIRE(*nav.mapFile() == "ArathiBasin");
+    REQUIRE(nav.mapAreaId() == 461u);
+
+    auto marks = nav.landmarks();
+    REQUIRE(marks.size() == 5);
+    // Blacksmith matches Native 2.4.3 measured UV (0.482, 0.444)
+    CHECK(marks[0].name == "Blacksmith");
+    CHECK(marks[0].texture == 26);
+    CHECK(marks[0].x == Catch::Approx(0.4816f).margin(0.002f));
+    CHECK(marks[0].y == Catch::Approx(0.4436f).margin(0.002f));
+    CHECK(marks[4].name == "Stables");
+    CHECK(marks[4].description == "Uncontrolled");
+    CHECK(marks[4].texture == 36);
+
+    // Transition Stables: Neutral -> Alliance Contested
+    ws[1842] = 0;
+    ws[1769] = 1;
+    marks = nav.landmarks();
+    REQUIRE(marks.size() == 5);
+    CHECK(marks[4].name == "Stables");
+    CHECK(marks[4].description == "In Conflict");
+    CHECK(marks[4].texture == 37);
+
+    // Transition Stables: Alliance Contested -> Alliance Controlled
+    ws[1769] = 0;
+    ws[1767] = 1;
+    marks = nav.landmarks();
+    REQUIRE(marks.size() == 5);
+    CHECK(marks[4].name == "Stables");
+    CHECK(marks[4].description == "Alliance Controlled");
+    CHECK(marks[4].texture == 38);
+}
