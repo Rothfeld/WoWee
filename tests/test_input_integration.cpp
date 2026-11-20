@@ -5258,3 +5258,91 @@ TEST_CASE_METHOD(Integration, "Bonus action bar offset, stance hotkeys, empty-to
     const_cast<GameServices&>(gh.services()).assetManager = nullptr;
     wowee::pipeline::setActiveDBCLayout(nullptr);
 }
+
+TEST_CASE_METHOD(Integration,
+                 "Third-person orbit camera preserves exact zoom distance while moving and turning without snapping",
+                 "[input][camera][rmb][movement]") {
+    auto& input = core::Input::getInstance();
+
+    for (float stiffness : {5.0f, 30.0f}) {
+        for (bool smoothFollow : {false, true}) {
+            INFO("stiffness=" << stiffness << " smoothFollow=" << smoothFollow);
+            rendering::Camera camera;
+            rendering::CameraController controller(&camera);
+            glm::vec3 playerPos(100.0f, 200.0f, 50.0f);
+            controller.setIdleOrbitEnabled(false);
+            controller.setFollowTarget(&playerPos);
+            controller.setUseWoWSpeed(true);
+            controller.setGravityDisabled(true);
+            controller.setCameraSmoothSpeed(stiffness);
+            controller.setSmoothCameraFollow(smoothFollow);
+            controller.setFacingYaw(0.0f);
+            controller.setGrounded(true);
+
+            auto pivotFor = [&]() {
+                return playerPos + glm::vec3(0.0f, 0.0f, controller.followedPivotHeight());
+            };
+            auto stepAndCheck = [&](float dt) {
+                controller.setGrounded(true);
+                input.update();
+                controller.update(dt);
+                const float dist = glm::distance(camera.getPosition(), pivotFor());
+                CHECK(dist == Catch::Approx(controller.zoomDistance()).margin(1e-4f));
+                return dist;
+            };
+
+            // Baseline idle
+            const float idleDist = stepAndCheck(1.0f / 60.0f);
+            REQUIRE(idleDist == Catch::Approx(controller.zoomDistance()).margin(1e-4f));
+
+            // Run forward (W) for 1 second: camera must never trail behind pivot.
+            event(SDL_SCANCODE_W, true);
+            float preTurnDist = idleDist;
+            for (int i = 0; i < 60; ++i) {
+                preTurnDist = stepAndCheck(1.0f / 60.0f);
+            }
+            CHECK(playerPos.x > 105.0f);
+
+            // Engage steering/turning while still running forward: zero zoom/position snap.
+            controller.setSteering(true);
+            const float steerStartDist = stepAndCheck(1.0f / 60.0f);
+            CHECK(std::abs(steerStartDist - preTurnDist) < 1e-4f);
+            controller.applyLookDelta(40.0f, -10.0f);
+            const float steerDragDist = stepAndCheck(1.0f / 60.0f);
+            CHECK(std::abs(steerDragDist - preTurnDist) < 1e-4f);
+            controller.setSteering(false);
+            const float steerEndDist = stepAndCheck(1.0f / 60.0f);
+            CHECK(std::abs(steerEndDist - preTurnDist) < 1e-4f);
+
+            // Keyboard turn (A) while running forward: zero snap on press or release.
+            event(SDL_SCANCODE_A, true);
+            const float turnStartDist = stepAndCheck(1.0f / 60.0f);
+            CHECK(std::abs(turnStartDist - preTurnDist) < 1e-4f);
+            for (int i = 0; i < 15; ++i) stepAndCheck(1.0f / 60.0f);
+            event(SDL_SCANCODE_A, false);
+            stepAndCheck(1.0f / 60.0f);
+            event(SDL_SCANCODE_W, false);
+
+            // Backpedal (S) and strafe (Q/E): zero forward or lateral camera lag.
+            for (SDL_Scancode sc : {SDL_SCANCODE_S, SDL_SCANCODE_Q, SDL_SCANCODE_E}) {
+                event(sc, true);
+                for (int i = 0; i < 30; ++i) stepAndCheck(1.0f / 60.0f);
+                controller.setSteering(true);
+                stepAndCheck(1.0f / 60.0f);
+                controller.setSteering(false);
+                stepAndCheck(1.0f / 60.0f);
+                event(sc, false);
+            }
+
+            // Taxi / externalFollow_ moving at high speed (32 yd/s): zero lag or snap.
+            controller.setExternalFollow(true);
+            for (int i = 0; i < 30; ++i) {
+                playerPos.x += 32.0f / 60.0f;
+                controller.update(1.0f / 60.0f);
+                const float dist = glm::distance(camera.getPosition(), pivotFor());
+                CHECK(dist == Catch::Approx(controller.zoomDistance()).margin(1e-4f));
+            }
+            controller.setExternalFollow(false);
+        }
+    }
+}

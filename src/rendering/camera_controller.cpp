@@ -2293,14 +2293,12 @@ void CameraController::updateOrbitCamera(float deltaTime, FrameInput& f,
         waterNudgeZ_ = 0.0f;
     }
 
-    // Smooth camera position to avoid jitter
-    if (glm::dot(smoothedCamPos, smoothedCamPos) < 1e-4f) {
-        smoothedCamPos = actualCam;  // Initialize
-    }
-    bool activelyRotating = mouseButtonDown || f.nowTurnLeft || f.nowTurnRight;
-    float camLerp = (activelyRotating && !smoothCameraFollow_)
-        ? 1.0f : (1.0f - std::exp(-camSmoothSpeed_ * deltaTime));
-    smoothedCamPos += (actualCam - smoothedCamPos) * camLerp;
+    // Native TBC 2.4.3 locks the orbit camera to pivot + camDir * actualDist
+    // with zero world-space position lag (zoom, collision recovery, and water
+    // clearance each apply their own easing). Exponentially smoothing world
+    // position trailed behind moving characters by v / camSmoothSpeed_ and
+    // snapped forward (zooming in) when RMB/LMB/A/D switched camLerp to 1.0.
+    smoothedCamPos = actualCam;
 
     // ===== Final floor clearance check =====
     // Use WMO-aware floor so the camera doesn't pop above tunnels/caves.
@@ -2735,13 +2733,9 @@ void CameraController::update(float deltaTime) {
                 actualCam = pivot + camDir * actualDist;
             }
 
-            // Smooth camera position (1:1 while actively dragging, see main update()).
-            if (glm::dot(smoothedCamPos, smoothedCamPos) < 1e-4f) {
-                smoothedCamPos = actualCam;
-            }
-            float camLerp = (mouseButtonDown && !smoothCameraFollow_)
-                ? 1.0f : (1.0f - std::exp(-camSmoothSpeed_ * deltaTime));
-            smoothedCamPos += (actualCam - smoothedCamPos) * camLerp;
+            // Lock camera rigidly to pivot + camDir * actualDist on taxis too
+            // so pressing RMB/LMB mid-flight cannot snap the camera forward.
+            smoothedCamPos = actualCam;
 
             // A flight path skims ridges and lands on hillsides.
             if (auto groundH = cameraTerrainFloor(smoothedCamPos.x, smoothedCamPos.y, targetPos)) {
