@@ -607,6 +607,11 @@ private:
         uint32_t vertexCount = 0;
         glm::vec3 boundingBoxMin;
         glm::vec3 boundingBoxMax;
+        // Tight AABB computed from actual group vertex positions (MOVT).
+        // Authored MOGP bounds can extend far above an underground room's
+        // geometry (e.g. md_cryptonerm_004.wmo zMax +7.37 vs vertex zMax -7.33).
+        glm::vec3 geometryMin{};
+        glm::vec3 geometryMax{};
 
         uint32_t groupId = 0;
         uint32_t authoredIndex = 0;

@@ -1892,6 +1892,16 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     resources.indexCount = group.indices.size();
     resources.boundingBoxMin = group.boundingBoxMin;
     resources.boundingBoxMax = group.boundingBoxMax;
+    {
+        glm::vec3 geomMin(std::numeric_limits<float>::max());
+        glm::vec3 geomMax(std::numeric_limits<float>::lowest());
+        for (const auto& v : group.vertices) {
+            geomMin = glm::min(geomMin, v.position);
+            geomMax = glm::max(geomMax, v.position);
+        }
+        resources.geometryMin = geomMin;
+        resources.geometryMax = geomMax;
+    }
 
     std::vector<WMOVertex> vertices;
     vertices.reserve(group.vertices.size());
@@ -2217,10 +2227,10 @@ int WMORenderer::findContainingGroup(const ModelData& model, const glm::vec3& lo
     for (size_t gi = 0; gi < model.groups.size(); gi++) {
         const auto& group = model.groups[gi];
         if (group.unreachable) continue;
-        if (localPos.x >= group.boundingBoxMin.x && localPos.x <= group.boundingBoxMax.x &&
-            localPos.y >= group.boundingBoxMin.y && localPos.y <= group.boundingBoxMax.y &&
-            localPos.z >= group.boundingBoxMin.z && localPos.z <= group.boundingBoxMax.z) {
-            glm::vec3 size = group.boundingBoxMax - group.boundingBoxMin;
+        if (localPos.x >= group.geometryMin.x && localPos.x <= group.geometryMax.x &&
+            localPos.y >= group.geometryMin.y && localPos.y <= group.geometryMax.y &&
+            localPos.z >= group.geometryMin.z && localPos.z <= group.geometryMax.z) {
+            glm::vec3 size = group.geometryMax - group.geometryMin;
             float volume = size.x * size.y * size.z;
             if (volume < bestVolume) {
                 bestVolume = volume;
@@ -2442,8 +2452,8 @@ std::vector<uint16_t> WMORenderer::interiorRoomsOf(const ModelData& model, const
         return (group.groupFlags & WMO_GROUP_FLAG_INDOOR) && !(group.groupFlags & WMO_GROUP_FLAG_OUTDOOR);
     };
     const auto holds = [](const GroupResources& group, const glm::vec3& local) {
-        return glm::all(glm::greaterThanEqual(local, group.boundingBoxMin)) &&
-               glm::all(glm::lessThanEqual(local, group.boundingBoxMax));
+        return glm::all(glm::greaterThanEqual(local, group.geometryMin)) &&
+               glm::all(glm::lessThanEqual(local, group.geometryMax));
     };
     const glm::vec3 local(invModelMatrix * glm::vec4(point, 1.0f));
     const glm::vec3 localDown = glm::normalize(glm::vec3(invModelMatrix * glm::vec4(0, 0, -1, 0)));
@@ -3083,19 +3093,27 @@ int WMORenderer::groupBeneath(const ModelData& model, const glm::vec3& localPos,
                               const glm::vec3& localDown) const {
     int best = -1;
     float bestDistance = std::numeric_limits<float>::max();
+    bool bestBackface = true;
     for (size_t gi = 0; gi < model.groups.size(); ++gi) {
         const auto& group = model.groups[gi];
         if (!trianglesAlongRay(group, localPos, localDown, tl_triScratch)) continue;
         const auto& indices = group.collisionIndices;
         const auto& vertices = group.collisionVertices;
         for (uint32_t triangle : tl_triScratch) {
-            const float distance = rayTriangleIntersect(localPos, localDown,
-                vertices[indices[triangle]], vertices[indices[triangle + 1]],
-                vertices[indices[triangle + 2]]);
-            if (distance <= 0.0f || distance >= bestDistance) continue;
+            const glm::vec3& v0 = vertices[indices[triangle]];
+            const glm::vec3& v1 = vertices[indices[triangle + 1]];
+            const glm::vec3& v2 = vertices[indices[triangle + 2]];
+            const float distance = rayTriangleIntersect(localPos, localDown, v0, v1, v2);
+            if (distance <= 0.0f) continue;
+            const bool backface = isDownwardHitInteriorCeilingBackface(v0, v1, v2, localDown);
+            if (!preferDownwardSurfaceHit(distance, backface, bestDistance, bestBackface)) continue;
             bestDistance = distance;
+            bestBackface = backface;
             best = static_cast<int>(gi);
         }
+    }
+    if (best >= 0 && bestBackface && wmoGroupIsIndoorOnly(model.groups[static_cast<size_t>(best)].groupFlags)) {
+        return -1;
     }
     return best;
 }
@@ -4583,41 +4601,65 @@ std::optional<WMORenderer::InteriorLocation> WMORenderer::getInteriorLocation(co
     std::optional<InteriorLocation> result;
     bool resultIndoor = false;
     float bestDistance = std::numeric_limits<float>::max();
+    bool bestBackface = true;
     for (size_t index : tl_candidateScratch) {
         const auto& instance = instances[index];
         const auto modelIt = loadedModels.find(instance.modelId);
         if (modelIt == loadedModels.end()) continue;
         const auto& model = modelIt->second;
         const glm::vec3 local(instance.invModelMatrix * glm::vec4(position, 1));
+        // Indoor queries require the point to lie within the actual vertex
+        // bounds of at least one indoor group (MOGP 0x2000). Using all groups
+        // (including outdoor groups) or bloated authored MOGP bounds lets an
+        // outdoor camera above an open stairwell (e.g. md_cryptonerm group 0
+        // over group 1) or above an underground crypt (md_cryptonerm group 4,
+        // MOGP zMax +7.37 vs vertex zMax -7.33) misclassify as indoor.
         if (indoorOnly &&
             std::none_of(model.groups.begin(), model.groups.end(), [&](const auto& group) {
-                return !group.unreachable && glm::all(glm::greaterThanEqual(local, group.boundingBoxMin)) &&
-                       glm::all(glm::lessThanEqual(local, group.boundingBoxMax));
+                return !group.unreachable &&
+                       (group.groupFlags & kWMOGroupIndoor) != 0 &&
+                       glm::all(glm::greaterThanEqual(local, group.geometryMin)) &&
+                       glm::all(glm::lessThanEqual(local, group.geometryMax));
             })) {
             continue;
         }
         const glm::vec3 down(instance.invModelMatrix * glm::vec4(0, 0, -1, 0));
         for (size_t groupIndex = 0; groupIndex < model.groups.size(); ++groupIndex) {
             const auto& group = model.groups[groupIndex];
-            if (!rayIntersectsAABB(local, down, group.boundingBoxMin, group.boundingBoxMax)) continue;
+            if (!rayIntersectsAABB(local, down, group.geometryMin, group.geometryMax)) continue;
             if (!trianglesAlongRay(group, local, down, tl_triScratch)) continue;
             float distance = std::numeric_limits<float>::max();
+            bool groupBackface = true;
             for (uint32_t triangle : tl_triScratch) {
                 const auto& indices = group.collisionIndices;
                 const auto& vertices = group.collisionVertices;
-                const float t = rayTriangleIntersect(local, down,
-                    vertices[indices[triangle]], vertices[indices[triangle + 1]],
-                    vertices[indices[triangle + 2]]);
-                if (t > 0.0f) distance = std::min(distance, t);
+                const glm::vec3& v0 = vertices[indices[triangle]];
+                const glm::vec3& v1 = vertices[indices[triangle + 1]];
+                const glm::vec3& v2 = vertices[indices[triangle + 2]];
+                const float t = rayTriangleIntersect(local, down, v0, v1, v2);
+                if (t <= 0.0f) continue;
+                const bool backface = isDownwardHitInteriorCeilingBackface(v0, v1, v2, down);
+                if (preferDownwardSurfaceHit(t, backface, distance, groupBackface)) {
+                    distance = t;
+                    groupBackface = backface;
+                }
             }
-            if (distance >= bestDistance) continue;
+            if (distance == std::numeric_limits<float>::max()) continue;
+            if (!preferDownwardSurfaceHit(distance, groupBackface, bestDistance, bestBackface)) continue;
             bestDistance = distance;
+            bestBackface = groupBackface;
             resultIndoor = (group.groupFlags & kWMOGroupIndoor) != 0;
             result = InteriorLocation{model.rootId, instance.nameSet, group.groupId,
                 static_cast<uint32_t>(groupIndex), instance.id, model.sourcePath,
                 local, group.boundingBoxMin, group.boundingBoxMax, instance.modelMatrix,
                 position.z - distance, group.groupFlags};
         }
+    }
+    // If the nearest surface below is the back-face of an interior-only room's
+    // ceiling (normal pointing down into the room, away from position), the
+    // point is outside above that room (e.g. on outdoor terrain over a crypt).
+    if (result && bestBackface && wmoGroupIsIndoorOnly(result->groupFlags)) {
+        return std::nullopt;
     }
     if (indoorOnly && !resultIndoor) return std::nullopt;
     return result;

@@ -35,6 +35,34 @@ struct PortalRefInfo {
     int16_t side = 0;
 };
 
+/// Whether a WMO group is strictly interior-only (indoor flag 0x2000 without
+/// outdoor flag 0x8).
+[[nodiscard]] inline bool wmoGroupIsIndoorOnly(uint32_t groupFlags) {
+    return (groupFlags & kWmoGroupFlagIndoor) != 0 &&
+           (groupFlags & kWmoGroupFlagOutdoor) == 0;
+}
+
+/// Whether a downward ray hitting triangle (v0, v1, v2) struck its back-face
+/// (normal pointing along localDown, away from the ray origin). An indoor-only
+/// room's ceiling has its front-face pointing down into the room, so a downward
+/// ray from above the ceiling hits its back-face first.
+[[nodiscard]] inline bool isDownwardHitInteriorCeilingBackface(
+    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+    const glm::vec3& localDown) {
+    const glm::vec3 triNormal = glm::cross(v1 - v0, v2 - v0);
+    return glm::dot(triNormal, localDown) > 0.0f;
+}
+
+/// Prefer the nearer downward surface hit; on coplanar ties (within 1mm),
+/// prefer a front-facing floor over a back-facing ceiling/collision triangle.
+[[nodiscard]] inline bool preferDownwardSurfaceHit(
+    float candDist, bool candBackface, float bestDist, bool bestBackface) {
+    constexpr float kTieEps = 1e-3f;
+    if (candDist < bestDist - kTieEps) return true;
+    if (candDist <= bestDist + kTieEps && !candBackface && bestBackface) return true;
+    return false;
+}
+
 /// Whether a WMO group itself exposes the outdoor world (exterior group,
 /// exterior-lit courtyard/walkway, skylight group, or non-indoor group).
 [[nodiscard]] inline bool wmoGroupSeesExterior(uint32_t groupFlags) {

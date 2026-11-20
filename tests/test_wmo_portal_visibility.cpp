@@ -11,11 +11,14 @@ using wowee::rendering::Frustum;
 using wowee::rendering::PortalGroupInfo;
 using wowee::rendering::PortalPlaneInfo;
 using wowee::rendering::PortalRefInfo;
+using wowee::rendering::isDownwardHitInteriorCeilingBackface;
 using wowee::rendering::isExteriorVisibleThroughPortals;
 using wowee::rendering::kWmoGroupFlagExteriorLit;
 using wowee::rendering::kWmoGroupFlagIndoor;
 using wowee::rendering::kWmoGroupFlagOutdoor;
 using wowee::rendering::kWmoGroupFlagShowExteriorSky;
+using wowee::rendering::preferDownwardSurfaceHit;
+using wowee::rendering::wmoGroupIsIndoorOnly;
 using wowee::rendering::wmoGroupSeesExterior;
 
 namespace {
@@ -212,4 +215,78 @@ TEST_CASE("L-shaped corridor exit portal facing away from camera is culled", "[w
     const glm::mat4 vp = makeViewProj(cam, glm::vec3(14.0f, -10.0f, 2.0f));
     CHECK_FALSE(isExteriorVisibleThroughPortals(
         groups, portals, verts, refs, 0, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+}
+
+TEST_CASE("Downward ceiling backface test distinguishes floors from ceilings hit from above", "[wmo][portal]") {
+    const glm::vec3 down(0.0f, 0.0f, -1.0f);
+
+    // CCW floor in XY plane: normal = (0, 0, +1), faces up toward ray origin -> NOT backface.
+    const glm::vec3 f0(0.0f, 0.0f, 0.0f);
+    const glm::vec3 f1(4.0f, 0.0f, 0.0f);
+    const glm::vec3 f2(0.0f, 4.0f, 0.0f);
+    CHECK_FALSE(isDownwardHitInteriorCeilingBackface(f0, f1, f2, down));
+
+    // CW ceiling in XY plane: normal = (0, 0, -1), faces down into room -> backface when hit from above.
+    const glm::vec3 c0(0.0f, 0.0f, 5.0f);
+    const glm::vec3 c1(0.0f, 4.0f, 5.0f);
+    const glm::vec3 c2(4.0f, 0.0f, 5.0f);
+    CHECK(isDownwardHitInteriorCeilingBackface(c0, c1, c2, down));
+
+    // Indoor-only classification excludes outdoor and mixed groups.
+    CHECK(wmoGroupIsIndoorOnly(kWmoGroupFlagIndoor));
+    CHECK_FALSE(wmoGroupIsIndoorOnly(kWmoGroupFlagOutdoor));
+    CHECK_FALSE(wmoGroupIsIndoorOnly(kWmoGroupFlagIndoor | kWmoGroupFlagOutdoor));
+    CHECK_FALSE(wmoGroupIsIndoorOnly(0u));
+
+    // Tie-breaking prefers a front-facing floor over a coplanar back-facing triangle,
+    // while strictly preferring a nearer ceiling hit (above room) over a deeper floor hit.
+    CHECK(preferDownwardSurfaceHit(2.0f, false, 2.0005f, true));
+    CHECK_FALSE(preferDownwardSurfaceHit(2.0005f, true, 2.0f, false));
+    CHECK(preferDownwardSurfaceHit(8.27f, true, 19.97f, false));
+    CHECK_FALSE(preferDownwardSurfaceHit(19.97f, false, 8.27f, true));
+}
+
+TEST_CASE("Shadow Grave horizontal stairwell portal visibility matches crypt geometry", "[wmo][portal]") {
+    // Exact portal 0 of TBC md_cryptonerm.wmo (Shadow Grave, Deathknell):
+    // horizontal plane at local Z = +0.615 with normal (0, 0, +1), dist = -0.615,
+    // connecting group 0 (outdoor, 0x809) and group 1 (Crypt, indoor, 0x2a05).
+    const std::vector<glm::vec3> verts = {
+        {-0.63f, -2.95f, 0.615f},
+        { 8.58f, -2.95f, 0.615f},
+        { 8.58f,  2.72f, 0.615f},
+        {-0.63f,  2.72f, 0.615f},
+    };
+    const std::vector<PortalPlaneInfo> portals = {
+        {0, 4, glm::vec3(0.0f, 0.0f, 1.0f), -0.615f},
+    };
+    const std::vector<PortalRefInfo> refs = {
+        {0, 1,  1},  // group 0 -> group 1
+        {0, 0, -1},  // group 1 -> group 0
+    };
+    const std::vector<PortalGroupInfo> groups = {
+        {kWmoGroupFlagOutdoor | 0x801u, 0, 1},  // group 0: outdoor entrance
+        {kWmoGroupFlagIndoor  | 0x0a05u, 1, 1}, // group 1: Crypt stairs
+    };
+
+    // Climbing stairs inside group 1 looking up toward the outdoor doorway -> exterior visible.
+    {
+        const glm::vec3 cam(4.0f, 0.0f, -2.5f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(0.0f, 0.0f, 1.0f));
+        CHECK(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 1, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
+    // Near the top of the stairs straddling Portal 0 -> exterior stays visible even looking horizontally.
+    {
+        const glm::vec3 cam(1.1f, 0.5f, 0.4f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(-5.0f, 0.5f, 0.4f));
+        CHECK(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 1, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
+    // Deep inside group 1 looking away/down into the dark crypt -> exterior hidden.
+    {
+        const glm::vec3 cam(14.0f, -5.0f, -10.0f);
+        const glm::mat4 vp = makeViewProj(cam, glm::vec3(18.0f, -10.0f, -14.0f));
+        CHECK_FALSE(isExteriorVisibleThroughPortals(
+            groups, portals, verts, refs, 1, cam, makeFrustum(vp), vp, glm::mat4(1.0f)));
+    }
 }
