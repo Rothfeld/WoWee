@@ -3460,9 +3460,14 @@ GameHandler::SpellDataInfo GameHandler::getSpellData(uint32_t spellId) const {
         auto player = std::dynamic_pointer_cast<Unit>(getEntityManager().getEntity(playerGuid));
         if (!player) return info;
         constexpr uint8_t kPowerMana = 0;
-        const uint32_t pool = info.powerType == kPowerMana
-            ? player->getField(fieldIndex(UF::UNIT_FIELD_BASE_MANA))
-            : player->getMaxPowerByType(info.powerType);
+        uint32_t pool = 0;
+        if (info.powerType == kPowerMana) {
+            pool = player->getField(fieldIndex(UF::UNIT_FIELD_BASE_MANA));
+        } else if (info.powerType == kPowerHealth) {
+            pool = player->getMaxHealth();
+        } else {
+            pool = player->getMaxPowerByType(info.powerType);
+        }
         info.manaCost += spellclass::percentPowerCost(pool, info.manaCostPct);
     }
     // The player's cost modifiers (talents, set bonuses: Assassination

@@ -1324,14 +1324,18 @@ static int lua_GetSpellPowerCost(lua_State* L) {
     uint32_t spellId = static_cast<uint32_t>(luaL_checknumber(L, 1));
     auto data = gh->getSpellData(spellId);
     lua_newtable(L); // outer table (array of cost entries)
-    if (data.manaCost > 0) {
+    const uint32_t displayCost = game::displayPowerCost(data.powerType, data.manaCost);
+    if (displayCost > 0) {
         lua_newtable(L); // cost entry
-        lua_pushnumber(L, data.powerType);
+        lua_pushnumber(L, data.powerType == game::kPowerHealth ? -2 : static_cast<int>(data.powerType));
         lua_setfield(L, -2, "type");
-        lua_pushnumber(L, data.manaCost);
+        lua_pushnumber(L, displayCost);
         lua_setfield(L, -2, "cost");
     
-        lua_pushstring(L, data.powerType < 7 ? kLuaPowerNames[data.powerType] : "MANA");
+        const char* powerName = data.powerType == game::kPowerHealth
+            ? "HEALTH"
+            : (data.powerType < 7 ? kLuaPowerNames[data.powerType] : "MANA");
+        lua_pushstring(L, powerName);
         lua_setfield(L, -2, "name");
         lua_rawseti(L, -2, 1); // outer[1] = entry
     }
@@ -1378,9 +1382,10 @@ static int lua_GetSpellInfo(lua_State* L) {
     // for every spell but a handful of warlock drains, and it is what the
     // callers branch on rather than display.
     auto spellData = gh->getSpellData(spellId);
-    lua_pushnumber(L, spellData.manaCost);                   // 4: cost
-    lua_pushboolean(L, 0);                                   // 5: isFunnel
-    lua_pushnumber(L, spellData.powerType);                  // 6: powerType
+    lua_pushnumber(L, game::displayPowerCost(spellData.powerType, spellData.manaCost)); // 4: cost
+    lua_pushboolean(L, 0);                                                              // 5: isFunnel
+    lua_pushnumber(L, spellData.powerType == game::kPowerHealth
+        ? -2 : static_cast<int>(spellData.powerType));                                  // 6: powerType
     lua_pushnumber(L, spellData.castTimeMs);                 // 7: castTime (ms)
     lua_pushnumber(L, spellData.minRange);                   // 8: minRange (yards)
     lua_pushnumber(L, spellData.maxRange);                   // 9: maxRange (yards)

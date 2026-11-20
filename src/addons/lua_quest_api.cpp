@@ -4960,6 +4960,12 @@ void registerQuestLuaAPI(lua_State* L) {
                 {"GetTrainerServiceItemLink", [](lua_State*) -> int {
             return 0;
         }},
+                {"WoweeTrainerServiceSpellId", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const auto* svc = shownTrainerService(L, gh, static_cast<int>(luaL_optnumber(L, 1, 0)));
+            lua_pushnumber(L, svc ? svc->spellId : 0);
+            return 1;
+        }},
                 {"GetTrainerGreetingText", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
             const std::string& g = gh ? gh->getTrainerSpells().greeting

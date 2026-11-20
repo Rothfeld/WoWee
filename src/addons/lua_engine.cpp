@@ -2661,9 +2661,18 @@ static void appendSpellCastLines(lua_State* L, wowee::ui::Widget* w, game::GameH
         const auto field = game::fieldIndex(game::UF::UNIT_FIELD_BASEATTACKTIME);
         if (player && field != 0xFFFF) powerCost += player->getField(field + 1) / 100;
     }
-    if (powerCost > 0) {
+    const uint32_t displayCost = game::displayPowerCost(info.powerType, powerCost);
+    const uint32_t displayPerSec = game::displayPowerCost(info.powerType, info.manaPerSecond);
+    if (displayCost > 0 || displayPerSec > 0) {
         const char* unit = game::powerTypeName(info.powerType);
-        cost = std::to_string(powerCost) + (unit ? std::string(" ") + unit : "");
+        const std::string unitStr = unit ? std::string(" ") + unit : std::string();
+        if (displayCost > 0 && displayPerSec > 0) {
+            cost = std::to_string(displayCost) + unitStr + ", plus " + std::to_string(displayPerSec) + " per sec";
+        } else if (displayPerSec > 0) {
+            cost = std::to_string(displayPerSec) + unitStr + " per sec";
+        } else {
+            cost = std::to_string(displayCost) + unitStr;
+        }
     }
     // "Melee Range" is SpellRange.dbc flag 1 (Combat Range); a 5 yard range
     // without it prints as yards (Disarm Trap: "5 yd range").
@@ -10057,6 +10066,10 @@ void LuaEngine::registerCoreAPI() {
         "    if not index then return end\n"
         "    local link = GetTrainerServiceItemLink and GetTrainerServiceItemLink(index)\n"
         "    if link then return self:SetHyperlink(link) end\n"
+        "    local spellId = WoweeTrainerServiceSpellId and WoweeTrainerServiceSpellId(index) or 0\n"
+        "    if spellId and spellId > 0 and self.SetSpellByID then\n"
+        "        return self:SetSpellByID(spellId, true)\n"
+        "    end\n"
         "    local name, subText = GetTrainerServiceInfo(index)\n"
         "    if name then self:SetText(name, 1, 1, 1) end\n"
         "    if subText and subText ~= '' then self:AddLine(subText, 0.5, 0.5, 0.5) end\n"

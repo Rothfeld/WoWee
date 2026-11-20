@@ -1,4 +1,5 @@
 #include "ui/spellbook_screen.hpp"
+#include "game/spell_defines.hpp"
 #include "ui/ui_texture_load.hpp"
 #include "ui/ui_upload_budget.hpp"
 #include "ui/ui_colors.hpp"
@@ -216,8 +217,8 @@ void SpellbookScreen::getSpellPowerInfo(uint32_t spellId, pipeline::AssetManager
     }
     auto it = spellData.find(spellId);
     if (it != spellData.end()) {
-        outCost = it->second.manaCost;
         outPowerType = it->second.powerType;
+        outCost = game::displayPowerCost(static_cast<uint8_t>(outPowerType), it->second.manaCost);
     }
 }
 

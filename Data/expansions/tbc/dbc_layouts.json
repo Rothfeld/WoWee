@@ -394,6 +394,8 @@
     "IconID": 124,
     "ActiveIconID": 125,
     "ManaCost": 36,
+    "ManaCostPercentage": 195,
+    "ManaPerSecond": 38,
     "Name": 127,
     "PowerType": 35,
     "RangeIndex": 40,

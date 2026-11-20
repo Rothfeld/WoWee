@@ -87,6 +87,16 @@ struct CombatTextEntry {
     return (powerType == 1 || powerType == 6) ? (rawAmount / 10) : rawAmount;
 }
 
+/// Spell.dbc PowerType value for health-cost spells (int32 -2, e.g. Health Funnel, Bloodrage).
+inline constexpr uint8_t kPowerHealth = 254;
+
+/// Rage (1) and Runic Power (6) spell costs are stored in Spell.dbc (and sent
+/// in SMSG_SET_FLAT_SPELL_MODIFIER) in tenths (e.g. 150 = 15 Rage, 100 = 10 Rage).
+/// Tooltips and Lua APIs (GetSpellInfo, GetSpellPowerCost) report whole points.
+[[nodiscard]] inline uint32_t displayPowerCost(uint8_t powerType, uint32_t rawCost) {
+    return (powerType == 1 || powerType == 6) ? (rawCost / 10) : rawCost;
+}
+
 /**
  * Persistent combat log entry (stored in a rolling deque, survives beyond floating-text lifetime)
  */

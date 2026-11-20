@@ -1387,9 +1387,14 @@ SpellPrerequisite spellPrerequisite(GameHandler& owner, uint32_t spellId, uint64
         return SpellPrerequisite::NoComboPoints;
     const auto data = owner.getSpellData(spellId);
     const auto player = owner.getEntityManager().getEntity(owner.getPlayerGuid());
-    if (player && player->isUnit() && data.manaCost > 0 &&
-        static_cast<const Unit*>(player.get())->getPowerByType(data.powerType) < data.manaCost)
-        return SpellPrerequisite::NoPower;
+    if (player && player->isUnit() && data.manaCost > 0) {
+        const auto* unit = static_cast<const Unit*>(player.get());
+        const uint32_t have = data.powerType == kPowerHealth
+            ? unit->getHealth()
+            : unit->getPowerByType(data.powerType);
+        if (have < data.manaCost)
+            return SpellPrerequisite::NoPower;
+    }
     return SpellPrerequisite::Ready;
 }
 
@@ -1511,9 +1516,14 @@ SpellUsability castableNow(GameHandler& owner, uint32_t spellId) {
         return {};
     const auto data = owner.getSpellData(spellId);
     const auto player = owner.getEntityManager().getEntity(owner.getPlayerGuid());
-    if (player && player->isUnit() && data.manaCost > 0 &&
-        static_cast<const Unit*>(player.get())->getPowerByType(data.powerType) < data.manaCost)
-        return {.usable = false, .noPower = true};
+    if (player && player->isUnit() && data.manaCost > 0) {
+        const auto* unit = static_cast<const Unit*>(player.get());
+        const uint32_t have = data.powerType == kPowerHealth
+            ? unit->getHealth()
+            : unit->getPowerByType(data.powerType);
+        if (have < data.manaCost)
+            return {.usable = false, .noPower = true};
+    }
     return {.usable = true, .noPower = false};
 }
 } // namespace

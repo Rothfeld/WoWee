@@ -63,6 +63,8 @@ inline const char* powerTypeName(uint32_t powerType) {
         case 3: return "Energy";
         case 4: return "Happiness";
         case 6: return "Runic Power";
+        case 254:
+        case 0xFFFFFFFEu: return "Health";
         default: return nullptr;
     }
 }
