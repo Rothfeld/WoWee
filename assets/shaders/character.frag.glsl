@@ -86,6 +86,17 @@ layout(set = 1, binding = 1) uniform CharMaterial {
     float tintR;
     float tintG;
     float tintB;
+    float unitDiffuseR;
+    float unitDiffuseG;
+    float unitDiffuseB;
+    float unitLightDirX;
+    float unitLightDirY;
+    float unitLightDirZ;
+    float unitModelCenterX;
+    float unitModelCenterY;
+    float unitModelCenterZ;
+    float unitModelRadius;
+    int unitHasCustomLight;
 };
 
 layout(set = 1, binding = 2) uniform sampler2D uNormalHeightMap;
@@ -172,6 +183,28 @@ vec3 localLightContribution(vec3 pos, vec3 normal, vec3 albedo) {
         float wrappedDiffuse = 0.22 + 0.78 * max(dot(normal, toLight / max(dist, 0.001)), 0.0);
         sum += albedo * localLightColorIntensity[i].rgb *
                (localLightColorIntensity[i].w * attenuation * wrappedDiffuse);
+    }
+    return sum;
+}
+
+vec3 tbcM2PointLightSum(vec3 worldPos, vec3 norm, vec3 boundsCenter, float boundsRadius) {
+    int totalLights = min(localLightMeta.y, 64);
+    if (totalLights <= 0) return vec3(0.0);
+    vec3 sum = vec3(0.0);
+    int applied = 0;
+    for (int i = 0; i < totalLights && applied < 4; ++i) {
+        vec3 lightPos = localLightPosRadius[i].xyz;
+        float radius = localLightPosRadius[i].w;
+        float maxDist = radius + boundsRadius;
+        vec3 centerDelta = lightPos - boundsCenter;
+        if (radius <= 0.0 || dot(centerDelta, centerDelta) > maxDist * maxDist) continue;
+        applied++;
+        vec3 toLight = lightPos - worldPos;
+        float d2 = dot(toLight, toLight);
+        float invD = inversesqrt(max(d2, 1e-8));
+        float d = d2 * invD;
+        float ndotl = max(dot(norm, toLight * invD), 0.0);
+        sum += localLightColorIntensity[i].rgb * (ndotl / max(0.7 * d + 0.03 * d2, 1e-5));
     }
     return sum;
 }
@@ -400,7 +433,9 @@ void main() {
     }
 
     vec4 texColor = combineStages(textureGrad(uTexture, finalUV, uvDx, uvDy), secondColor);
-    texColor.rgb *= vec3(tintR, tintG, tintB);
+    vec3 batchTint = vec3(tintR, tintG, tintB);
+    vec3 rawTexRgb = texColor.rgb;
+    texColor.rgb *= batchTint;
     texColor.a = min(texColor.a, 1.0);
     // Repair dark DXT fringes on alpha-cut character textures such as hair.
     // Transparent edge texels can carry black/garbage RGB even when alpha is
@@ -409,6 +444,7 @@ void main() {
     if (alphaTest != 0 && texColor.a > 0.01 && texColor.a < 1.0) {
         vec3 mipColor = textureLod(uTexture, finalUV, 4.0).rgb;
         float trust = smoothstep(0.0, 0.9, texColor.a);
+        rawTexRgb = mix(mipColor, rawTexRgb, trust);
         texColor.rgb = mix(mipColor, texColor.rgb, trust);
     }
 
@@ -497,34 +533,36 @@ void main() {
         result = rtAmbient(rt, ambient) * texColor.rgb
                + shadow * (diff * sunLight * texColor.rgb + spec * sunLight);
         if (lightDir.w != 0.0) {
-            // TBC: creatures and players are M2 models and take the same
-            // light as every other M2 (m2.vert/m2.frag): LightParams ambient
-            // plus diffuse by N.L, saturated, times the texture. No floor
-            // under N.L and no added highlight; those were this renderer's.
-            // Both terms take the area's gain before saturating
-            // (unitLight.x = 1 + 2 x AreaTable AmbientMultiplier): 2.4.3
-            // draws units in Thousand Needles (0.5) at twice the light of
-            // GM Island or Elwynn Forest (0), ambient and sun side alike,
-            // day and night, while terrain there is unchanged.
-            // A highlighted unit (pointer over it, or targeted) takes one
-            // more unit of that gain, still before saturating: 2.4.3 hover
-            // and target light the same pixel 2x in Elwynn (gain 1) and
-            // 3.2/2.2 = 1.45x in Hellfire Peninsula (gain 2.2), never past
-            // the texel, so a unit already lit to saturation by the area's
-            // gain barely changes.
-            float gain = unitLight.x + hoverHighlight;
-            vec3 unitAmbient = ambient * gain;
-            vec3 legacyLight = clamp(unitAmbient +
-                max(dot(norm, ldir), 0.0) * sunLight * gain, 0.0, 1.0);
-            vec3 shaded = min(unitAmbient, vec3(1.0));
-            result = texColor.rgb * (shaded + shadow * (legacyLight - shaded));
-        }
-        if (interiorLit != 0) {
-            // Highlighted, the interior light takes one more unit of gain as
-            // the outdoor light does, saturated (MOCV light is at most 1).
+            // TBC model2.bls lighting:
+            // - Outdoor: ambient = (1 + 2*AmbientMultiplier)*Ambient_DBC,
+            //   diffuse = (mcshShadow ? 0.5 : 2.5)*Diffuse_DBC along surface sun dir.
+            // - Indoor: ambient = capMax(MOCV, 96/255), diffuse = floorMax(MOCV, 168/255)
+            //   along (-0.3082, -0.3082, -0.9), merged with group MOLR point lights
+            //   and blended with outdoor light on transBatch vertices (MOCV.a).
+            // - Authored M2Light point lights add diffColor*diffIntensity*N.L/(0.7*d + 0.03*d^2)
+            //   before the [0, 1] clamp.
+            // - Hover and target add 1.0 * Ambient_DBC (c29) after batch tint, clamped to [0, 1].
+            vec3 effAmbient = (unitHasCustomLight != 0
+                ? vec3(interiorLightR, interiorLightG, interiorLightB)
+                : ambientColor.rgb * unitLight.x) * kitLight;
+            vec3 effDiffuse = (unitHasCustomLight != 0
+                ? vec3(unitDiffuseR, unitDiffuseG, unitDiffuseB)
+                : lightColor.rgb * 2.5) * kitLight;
+            vec3 effDir = unitHasCustomLight != 0
+                ? safeNormalize(-vec3(unitLightDirX, unitLightDirY, unitLightDirZ), ldir)
+                : ldir;
+            vec3 m2Point = tbcM2PointLightSum(
+                FragPos, norm,
+                vec3(unitModelCenterX, unitModelCenterY, unitModelCenterZ),
+                unitModelRadius) * kitLight;
+            vec3 baseLight = clamp(effAmbient + max(dot(norm, effDir), 0.0) * effDiffuse + m2Point, 0.0, 1.0);
+            vec3 shaded = clamp(effAmbient + m2Point, 0.0, 1.0);
+            vec3 litFactor = (interiorLit != 0) ? baseLight : mix(shaded, baseLight, shadow);
+            vec3 hoverAdd = hoverHighlight * ambientColor.rgb * kitLight;
+            result = rawTexRgb * clamp(batchTint * litFactor + hoverAdd, 0.0, 1.0);
+        } else if (interiorLit != 0) {
             vec3 interiorLight = vec3(interiorLightR, interiorLightG, interiorLightB) * kitLight;
-            result = texColor.rgb * (lightDir.w != 0.0
-                ? min(interiorLight * (1.0 + hoverHighlight), vec3(1.0)) : interiorLight);
+            result = texColor.rgb * interiorLight;
         }
     }
 

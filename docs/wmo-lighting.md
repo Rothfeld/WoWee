@@ -65,21 +65,20 @@ doodads keep the colour: the sacks of group 32 (MODD 943, 946, 950: colours
 near (0,0,0)) are black in 2.4.3. Evidence:
 `../_experiments/20261118T223141Z.black_mast/`.
 
-Units and game objects standing in a locally lit interior group take the
-floor's MOCV under their feet (the closest WMO surface below, the group's box
-holding them), floored by the MOHD ambient, in place of the outdoor light.
-Units use it as their light; game objects use it as interior doodads use their
-MODD colour. Shattrath's Terrace of Light braziers (`ANCIENT_D_STANDING_LIGHT.m2`,
-group 1, MOGP 0xb805) are purple there, not the green of outdoor Light 458; a
-unit beside one measures 0.9x the MOCV (178,153,231) under it. Not modelled:
-native lit sides of units reach about 1.8x MOCV, and game objects are about
-0.45x MOCV natively (WoWee about 1.3x brighter, as for interior doodads).
-Groups with their own lights (MOGP 0x200) do not light units this way: units
-there keep the outdoor light. Tempest Keep's hall01 (tk_raid group 2, 0x2a05,
-MOCV red 0.6-0.9/0.3-0.5/0.3-0.6): native skin 134/93/75, WoWee with the MOCV
-78/26/22, without 121/97/82; the Warglaive of Azzinoth's additive glow green
-214 native, 151 then 175. Two groups support the rule (this and Shattrath's
-0xb805), no more. Evidence: `../_experiments/20261118T121312Z.glaive_glow/`.
+Units and game objects standing in a locally lit interior group (including
+`MOGP 0x200` groups with `MOLR` lights such as Shadowfang Keep's Banquet Hall
+`Kitchen_Entrance01`, Goldshire Inn's kitchen, Jasperlode Mine, and Tempest
+Keep) sample the drawn floor's `MOCV` (or `MOHD` ambient when `MOGP 0x4` is
+absent) and build the build-8606 directional light rig: ambient capped at
+`96/255`, diffuse floored at `168/255` for units (`112/255` for doodads/game
+objects) along `(-0.3082, -0.3082, -0.9)`, merged with the group's `MOLR`/`MOLT`
+point lights via Rec.709 luminance-weighted dipole merging and blended with
+outdoor light by `FixColorVertexAlpha` (`MOCV.a` on `transBatch`, `0` on
+`intBatch`, `1` on `extBatch`). Authored `M2Light` point lights add
+`diffColor * diffIntensity * N.L / (0.7*d + 0.03*d^2)` before the `[0, 1]`
+clamp. Interior fog (`MFOG`) applies whenever the unit or object stands in a
+locally lit interior group (`exteriorBlend < 1.0`), decoupled from `0x200` /
+`0x4` flags. Evidence: `../_experiments/20261119T1630Z.unit_light_model/`.
 
 The floor under the feet is the drawn floor: collision-only triangles (MOPY
 material 0xFF) are skipped. Collision-only vertices of their own are white:

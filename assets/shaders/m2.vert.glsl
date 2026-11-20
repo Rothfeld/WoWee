@@ -13,6 +13,9 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 shadowParams;
     vec4 playerPos;   // xyz = player world position, w = horizontal speed
     vec4 playerWake;  // xyz = trailing player position (springback reference)
+    vec4 localLightPosRadius[64];
+    vec4 localLightColorIntensity[64];
+    ivec4 localLightMeta;
 };
 
 // Per-draw push constants (batch-level data only)
@@ -39,11 +42,14 @@ struct InstanceData {
     // 0 for an ordinary instance, 1 while the player is pressing on it. Sits
     // in what was padding, so the entry is the same 96 bytes it always was.
     float highlight;
-    // Bit 1: placement lighting from MODD in bits 8..31. Also in what was padding.
+    // Bit 0: outdoor MCSH shadow; Bit 1: custom indoor rig; Bit 2: interior fog.
     int flags;
     vec2 uvOffset2;
     uint tintPacked;
-    uint reserved;
+    float boundsRadius;
+    vec4 customAmbient;
+    vec4 customDiffuse;
+    vec4 customLightDir;
 };
 layout(set = 3, binding = 0) readonly buffer InstanceSSBO {
     InstanceData instanceData[];
@@ -72,6 +78,28 @@ layout(location = 11) flat out vec4 vInstanceTint;
 vec3 normalizedNormal(vec3 value) {
     // Authored zero-scale bones have zero normals during hidden phases.
     return value * inversesqrt(max(dot(value, value), 1e-20));
+}
+
+vec3 tbcM2PointLightSum(vec3 worldPos, vec3 norm, vec3 boundsCenter, float boundsRadius) {
+    int totalLights = min(localLightMeta.y, 64);
+    if (totalLights <= 0) return vec3(0.0);
+    vec3 sum = vec3(0.0);
+    int applied = 0;
+    for (int i = 0; i < totalLights && applied < 4; ++i) {
+        vec3 lightPos = localLightPosRadius[i].xyz;
+        float radius = localLightPosRadius[i].w;
+        float maxDist = radius + boundsRadius;
+        vec3 centerDelta = lightPos - boundsCenter;
+        if (radius <= 0.0 || dot(centerDelta, centerDelta) > maxDist * maxDist) continue;
+        applied++;
+        vec3 toLight = lightPos - worldPos;
+        float d2 = dot(toLight, toLight);
+        float invD = inversesqrt(max(d2, 1e-8));
+        float d = d2 * invD;
+        float ndotl = max(dot(norm, toLight * invD), 0.0);
+        sum += localLightColorIntensity[i].rgb * (ndotl / max(0.7 * d + 0.03 * d2, 1e-5));
+    }
+    return sum;
 }
 
 void main() {
@@ -109,11 +137,24 @@ void main() {
     // from the sun into ambient-only blue-grey; 2.4.3 draws the same tufts in
     // the terrain's own light whichever way they face (Dustwallow Marsh, Beezil's Wreck).
     vec3 lightingNormal = push.drawMode == 2 ? vec3(0.0, 0.0, 1.0) : normalizedNormal(Normal);
-    float diffuse = max(dot(lightingNormal, normalize(-lightDir.xyz)), 0.0);
-    // TBC: a highlighted object (pointer over it) takes its light twice
-    // before saturating, as a highlighted unit takes one more unit of its gain.
-    float lightGain = 1.0 + (lightDir.w != 0.0 ? instanceData[instIdx].highlight : 0.0);
-    VertexLighting = clamp((ambientColor.rgb + diffuse * lightColor.rgb) * lightGain, 0.0, 1.0);
+    uint lightFlags = uint(instanceData[instIdx].flags);
+    bool hasCustomRig = (lightFlags & 2u) != 0u;
+    float outdoorDiffScale = (lightDir.w != 0.0 && push.drawMode != 2 && (lightFlags & 1u) != 0u)
+        ? 0.5 : 1.0;
+    vec3 effAmbient = hasCustomRig ? instanceData[instIdx].customAmbient.rgb : ambientColor.rgb;
+    vec3 effDiffuse = hasCustomRig ? instanceData[instIdx].customDiffuse.rgb : (lightColor.rgb * outdoorDiffScale);
+    vec3 effDir = hasCustomRig
+        ? normalizedNormal(-instanceData[instIdx].customLightDir.xyz)
+        : normalize(-lightDir.xyz);
+    float diffuse = max(dot(lightingNormal, effDir), 0.0);
+    vec3 boundsCenter = vec3(instanceData[instIdx].customAmbient.w,
+                             instanceData[instIdx].customDiffuse.w,
+                             instanceData[instIdx].customLightDir.w);
+    float boundsRadius = instanceData[instIdx].boundsRadius;
+    vec3 m2Point = (lightDir.w != 0.0 && push.drawMode >= 0)
+        ? tbcM2PointLightSum(worldPos.xyz, lightingNormal, boundsCenter, boundsRadius)
+        : vec3(0.0);
+    VertexLighting = clamp(effAmbient + diffuse * effDiffuse + m2Point, 0.0, 1.0);
 
     TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;
     vec3 eyeNormal = normalizedNormal(mat3(view) * Normal);
@@ -128,12 +169,11 @@ void main() {
     // height (a flame card fades out over its own tip with it).
     ModelHeight = push.modelHeight > 0.0 ? clamp(pos.z / push.modelHeight, 0.0, 1.0) : 1.0;
     vFadeAlpha = fade;
-    vSkyMode = push.drawMode < 0 ? 1 : 0;
+    vSkyMode = (push.drawMode < 0 ? 1 : 0) |
+               (hasCustomRig ? 2 : 0) |
+               ((lightFlags & 4u) != 0u ? 4 : 0);
     vHighlight = instanceData[instIdx].highlight;
-    uint lighting = uint(instanceData[instIdx].flags);
-    vIndoorLighting = vec4(vec3((lighting >> 8) & 255u, (lighting >> 16) & 255u,
-                              (lighting >> 24) & 255u) / 255.0,
-                          (lighting & 2u) != 0u ? 1.0 : 0.0);
+    vIndoorLighting = vec4(effAmbient, hasCustomRig ? 1.0 : 0.0);
     uint packedTint = instanceData[instIdx].tintPacked;
     vInstanceTint = vec4(vec3(packedTint & 255u, (packedTint >> 8) & 255u,
                               (packedTint >> 16) & 255u) / 255.0,

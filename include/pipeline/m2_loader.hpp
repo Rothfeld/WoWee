@@ -136,6 +136,22 @@ struct M2Attachment {
     glm::vec3 position; // Offset from bone pivot
 };
 
+// Light definition baked into M2 model (torches, totems, runestones, etc.)
+struct M2Light {
+    uint16_t type = 1;                  // 0=directional, 1=point
+    int16_t bone = -1;                  // Bone index (-1 = model origin)
+    glm::vec3 position{0.0f};           // Offset in model coordinates
+    glm::vec3 diffuseColor{1.0f};       // First keyframe RGB
+    float diffuseIntensity = 1.0f;      // First keyframe intensity
+    float attenuationStart = 0.0f;      // First keyframe start radius
+    float attenuationEnd = 0.0f;        // First keyframe end radius
+    bool visible = true;                // First keyframe visibility
+    M2AnimationTrack diffuseColorTrack;
+    M2AnimationTrack diffuseIntensityTrack;
+    M2AnimationTrack attenuationEndTrack;
+    M2AnimationTrack visibilityTrack;
+};
+
 // Camera baked into the model. Scene models (the character-select glue screens,
 // cinematics) carry the framing the artist authored them for; without it, a scene
 // whose geometry sits hundreds of units from its origin cannot be placed sensibly.
@@ -359,6 +375,7 @@ struct M2Model {
 
     // Attachment points (for weapon/effect anchoring)
     std::vector<M2Attachment> attachments;
+    std::vector<M2Light> lights;
     std::vector<M2Camera> cameras;
     std::vector<uint16_t> attachmentLookup; // attachment ID → index
 
@@ -390,7 +407,7 @@ struct M2Model {
     // Peninsula tiles, blacksmith_smoke.m2, AshTreeSmoke01.m2. isValid()
     // stays the test for code that needs triangles (collision, picking).
     [[nodiscard]] bool hasRenderableContent() const {
-        return isValid() || !particleEmitters.empty() || !ribbonEmitters.empty();
+        return isValid() || !particleEmitters.empty() || !ribbonEmitters.empty() || !lights.empty();
     }
 };
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/coordinates.hpp"
+#include "rendering/legacy_light_direction.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/terrain_mesh.hpp"
 #include "pipeline/m2_loader.hpp"
@@ -107,6 +108,8 @@ struct PendingTile {
         glm::vec3 position;
         glm::vec3 rotation;
         float scale;
+        bool shadowed = false;
+        bool shadowChecked = false;
     };
     std::vector<M2Placement> m2Placements;
 
@@ -129,6 +132,7 @@ struct PendingTile {
         glm::vec3 worldPosition;   // For frustum culling
         glm::mat4 modelMatrix;     // Pre-computed world transform
         std::optional<glm::vec3> indoorLighting;
+        std::optional<DirectionalLightRig> indoorLightRig;
         uint32_t wmoUniqueId = 0;            // MODF placement the doodad belongs to
         std::vector<uint16_t> rooms;         // pipeline::wmoDoodadRooms
     };
@@ -380,6 +384,8 @@ public:
 
     /** Get the precise MCNK AreaTable ID at a world position. */
     [[nodiscard]] std::optional<uint32_t> getAreaIdAt(float glX, float glY) const;
+    /// Check the ADT MCNK MCSH 64x64 1-bit baked shadow map at a world position.
+    [[nodiscard]] bool isShadowedAt(float glX, float glY) const;
     /// Every non-zero MCNK area id of a loaded tile; empty when not loaded.
     [[nodiscard]] std::vector<uint32_t> getTileAreaIds(const TileCoord& coord) const;
 

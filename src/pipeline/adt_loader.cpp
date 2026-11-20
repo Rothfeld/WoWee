@@ -331,6 +331,8 @@ void ADTLoader::parseMCNK(std::span<const uint8_t> data, int chunkIndex, ADTTerr
     uint32_t ofsLayer = readUInt32(data, 28);    // MCLY offset
     uint32_t ofsAlpha = readUInt32(data, 36);    // MCAL offset
     uint32_t sizeAlpha = readUInt32(data, 40);
+    uint32_t ofsShadow = readUInt32(data, 44);   // MCSH offset (0x2C)
+    uint32_t sizeShadow = readUInt32(data, 48);  // MCSH size (0x30, 512 bytes)
 
     // Debug first chunk only
     if (chunkIndex == 0) {
@@ -396,6 +398,16 @@ void ADTLoader::parseMCNK(std::span<const uint8_t> data, int chunkIndex, ADTTerr
         uint32_t skip = (possibleMagic == MCAL) ? 8 : 0;
         if (sizeAlpha > skip) {
             parseMCAL(data.subspan(ofsAlpha + skip, sizeAlpha - skip), chunk);
+        }
+    }
+
+    // Baked shadow map (MCSH) - 64x64 1-bit shadow map (512 bytes) when MCNK flag 0x1 is set.
+    if ((chunk.flags & 0x1u) != 0 && ofsShadow > 0 && sizeShadow >= 512) {
+        uint32_t possibleMagic = readUInt32(data, ofsShadow);
+        uint32_t skip = (possibleMagic == MCSH) ? 8 : 0;
+        if (ofsShadow + skip + 512 <= data.size()) {
+            std::memcpy(chunk.shadowMap.data(), data.data() + ofsShadow + skip, 512);
+            chunk.hasShadowMap = true;
         }
     }
 

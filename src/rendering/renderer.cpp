@@ -580,7 +580,13 @@ void Renderer::updatePerFrameUBO() {
         // _experiments/20261119T0840Z.creature_light in the workspace.
         const float ambientMultiplier =
             zoneManager ? zoneManager->getAreaAmbientMultiplier(getCurrentAreaId()) : 0.0f;
-        currentFrameData.unitLight = glm::vec4(1.0f + 2.0f * ambientMultiplier, 0.0f, 0.0f, 0.0f);
+        const float unitAmbGain = 1.0f + 2.0f * ambientMultiplier;
+        currentFrameData.unitLight = glm::vec4(unitAmbGain, 0.0f, 0.0f, 0.0f);
+        if (characterRenderer) {
+            characterRenderer->setOutdoorUnitLight(lp.ambientColor * unitAmbGain,
+                                                   lp.diffuseColor,
+                                                   glm::vec3(currentFrameData.lightDir));
+        }
         currentFrameData.specularColor = glm::vec4(lp.specularColor, 1.0f);
         currentFrameData.fogColor = glm::vec4(lp.fogColor, 1.0f);
         currentFrameData.fogParams.x = lp.fogStart;
@@ -652,13 +658,51 @@ void Renderer::updatePerFrameUBO() {
     // textures/vertex colors; adding them again produces orange patches.
     const bool synthesizeLocalLights = !game::isActiveExpansion("tbc");
     uint32_t localLightCount = 0;
+    uint32_t authoredM2LightCount = 0;
     if (m2Renderer && synthesizeLocalLights && localLightCount < MAX_LOCAL_LIGHTS) {
         localLightCount += m2Renderer->gatherLocalLights(camera->getPosition(),
             currentFrameData.localLightPosRadius + localLightCount,
             currentFrameData.localLightColorIntensity + localLightCount,
             MAX_LOCAL_LIGHTS - localLightCount);
+    } else if (!synthesizeLocalLights) {
+        const glm::vec3 gatherCenter = camera->getPosition();
+        if (m2Renderer && authoredM2LightCount < MAX_LOCAL_LIGHTS) {
+            authoredM2LightCount += m2Renderer->gatherAuthoredM2Lights(
+                gatherCenter,
+                currentFrameData.localLightPosRadius + authoredM2LightCount,
+                currentFrameData.localLightColorIntensity + authoredM2LightCount,
+                MAX_LOCAL_LIGHTS - authoredM2LightCount);
+        }
+        if (characterRenderer && authoredM2LightCount < MAX_LOCAL_LIGHTS) {
+            authoredM2LightCount += characterRenderer->gatherAuthoredM2Lights(
+                gatherCenter,
+                currentFrameData.localLightPosRadius + authoredM2LightCount,
+                currentFrameData.localLightColorIntensity + authoredM2LightCount,
+                MAX_LOCAL_LIGHTS - authoredM2LightCount);
+        }
+        if (authoredM2LightCount > 1) {
+            std::vector<uint32_t> order(authoredM2LightCount);
+            for (uint32_t i = 0; i < authoredM2LightCount; ++i) order[i] = i;
+            std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+                const glm::vec3 da = glm::vec3(currentFrameData.localLightPosRadius[a]) - gatherCenter;
+                const glm::vec3 db = glm::vec3(currentFrameData.localLightPosRadius[b]) - gatherCenter;
+                return glm::dot(da, da) < glm::dot(db, db);
+            });
+            glm::vec4 sortedPos[MAX_LOCAL_LIGHTS];
+            glm::vec4 sortedCol[MAX_LOCAL_LIGHTS];
+            for (uint32_t i = 0; i < authoredM2LightCount; ++i) {
+                sortedPos[i] = currentFrameData.localLightPosRadius[order[i]];
+                sortedCol[i] = currentFrameData.localLightColorIntensity[order[i]];
+            }
+            for (uint32_t i = 0; i < authoredM2LightCount; ++i) {
+                currentFrameData.localLightPosRadius[i] = sortedPos[i];
+                currentFrameData.localLightColorIntensity[i] = sortedCol[i];
+            }
+        }
     }
-    currentFrameData.localLightMeta = glm::ivec4(static_cast<int32_t>(localLightCount), 0, 0, 0);
+    currentFrameData.localLightMeta = glm::ivec4(
+        static_cast<int32_t>(localLightCount),
+        static_cast<int32_t>(authoredM2LightCount), 0, 0);
 
     if (rtLighting_) {
         const RtLighting::ConsumerData rt = rtLighting_->consumerData();
@@ -2391,9 +2435,37 @@ void Renderer::update(float deltaTime) {
     bool m2AnimLaunched = false;
     if (m2Renderer && camera) {
         WMORenderer* wmo = wmoRenderer.get();
+        TerrainManager* tm = terrainManager.get();
+        glm::vec3 outAmb(0.5f), outDiff(1.0f), outDir(0.3f, -0.7f, 0.6f);
+        if (lightingManager) {
+            const auto& lp = lightingManager->getLightingParams();
+            outAmb = lp.ambientColor;
+            outDiff = lp.diffuseColor;
+            outDir = lightingManager->getSurfaceLightDirection();
+        }
         m2Renderer->setInteriorLightQuery(wmo ? M2Renderer::InteriorLightQuery(
             [wmo](const glm::vec3& position) { return wmo->interiorObjectLight(position); })
             : M2Renderer::InteriorLightQuery{});
+        m2Renderer->setObjectLightQuery([wmo, tm, outAmb, outDiff, outDir](const glm::vec3& position, float sampleHeight) {
+            M2Renderer::ObjectLightResolution res{};
+            auto sample = wmo ? wmo->sampleFloorLight(position, sampleHeight, false) : std::nullopt;
+            if (sample && tm && !tm->isHoleAt(position.x, position.y)) {
+                if (const auto tz = tm->getHeightAt(position.x, position.y);
+                    tz && *tz <= position.z + 0.5f && *tz > sample->floorZ + 0.1f) {
+                    sample.reset();
+                }
+            }
+            if (sample && sample->isInterior) {
+                res.interiorFog = (sample->exteriorBlend < 1.0f);
+                res.particleLight = sample->mocv;
+                res.customRig = blendIndoorWithOutdoorRig(
+                    sample->indoorRig, outAmb, outDiff, outDir, sample->exteriorBlend, false);
+            } else {
+                const bool onWmoExterior = sample.has_value();
+                res.outdoorShadowed = !onWmoExterior && tm && tm->isShadowedAt(position.x, position.y);
+            }
+            return res;
+        });
         m2Renderer->setRoomAtQuery(wmo ? M2Renderer::RoomAtQuery(
             [wmo](const glm::vec3& position) { return wmo->interiorRoomAt(position); })
             : M2Renderer::RoomAtQuery{});
@@ -2410,9 +2482,29 @@ void Renderer::update(float deltaTime) {
     // Update character animations (runs in parallel with M2 animation above)
     if (characterRenderer && camera) {
         WMORenderer* wmo = wmoRenderer.get();
+        TerrainManager* tm = terrainManager.get();
         characterRenderer->setInteriorLightQuery(wmo ? CharacterRenderer::InteriorLightQuery(
             [wmo](const glm::vec3& position) { return wmo->interiorObjectLight(position); })
             : CharacterRenderer::InteriorLightQuery{});
+        characterRenderer->setUnitFloorLightQuery([wmo, tm](const glm::vec3& position, float sampleHeight) {
+            CharacterRenderer::UnitFloorLight res{.valid = true};
+            auto sample = wmo ? wmo->sampleFloorLight(position, sampleHeight, true) : std::nullopt;
+            if (sample && tm && !tm->isHoleAt(position.x, position.y)) {
+                if (const auto tz = tm->getHeightAt(position.x, position.y);
+                    tz && *tz <= position.z + 0.5f && *tz > sample->floorZ + 0.1f) {
+                    sample.reset();
+                }
+            }
+            if (sample && sample->isInterior) {
+                res.isInterior = true;
+                res.exteriorBlend = sample->exteriorBlend;
+                res.indoorRig = sample->indoorRig;
+            } else {
+                const bool onWmoExterior = sample.has_value();
+                res.terrainShadowed = !onWmoExterior && tm && tm->isShadowedAt(position.x, position.y);
+            }
+            return res;
+        });
         characterRenderer->update(deltaTime, camera->getPosition());
     }
 

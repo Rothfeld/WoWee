@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <span>
 #include <vector>
 #include <string>
@@ -66,8 +67,20 @@ struct MapChunk {
     // Normals (compressed)
     std::array<int8_t, 145 * 3> normals;  // X, Y, Z per vertex
 
+    // MCSH 64x64 1-bit baked shadow map (512 bytes, present when MCNK flag 0x1 is set)
+    bool hasShadowMap = false;
+    std::array<uint8_t, 512> shadowMap{};
+
     [[nodiscard]] bool hasHeightMap() const { return heightMap.isLoaded(); }
     [[nodiscard]] bool hasLayers() const { return !layers.empty(); }
+
+    // Check MCSH baked shadow bit at chunk fractions (fracX, fracY) in [0, 8].
+    [[nodiscard]] bool isShadowed(float fracX, float fracY) const {
+        if (!hasShadowMap) return false;
+        const int row = std::clamp(static_cast<int>(fracY * 8.0f), 0, 63);
+        const int col = std::clamp(static_cast<int>(fracX * 8.0f), 0, 63);
+        return ((shadowMap[static_cast<size_t>(row * 8 + col / 8)] >> (col % 8)) & 1u) != 0;
+    }
 
     // Check if a quad has a hole (y and x are quad indices 0-7)
     [[nodiscard]] bool isHole(int y, int x) const {

@@ -33,6 +33,7 @@ constexpr uint32_t MOBA = 0x4D4F4241;  // Batches
 constexpr uint32_t MOCV = 0x4D4F4356;  // Vertex colors
 constexpr uint32_t MONR = 0x4D4F4E52;  // Normals
 constexpr uint32_t MOTV = 0x4D4F5456;  // Texture coords
+constexpr uint32_t MOLR = 0x4D4F4C52;  // Light references
 constexpr uint32_t MODR = 0x4D4F4452;
 constexpr uint32_t MLIQ = 0x4D4C4951;  // Liquid
 
@@ -243,32 +244,34 @@ WMOModel WMOLoader::load(const std::vector<uint8_t>& wmoData) {
             }
 
             case MOLT: {
-                // Lights
-                uint32_t nLights = chunkSize / 48;  // Approximate size
-                for (uint32_t i = 0; i < nLights && offset < chunkEnd; i++) {
-                    WMOLight light;
-                    light.type = read<uint32_t>(wmoData, offset);
+                // Lights (48 bytes per record: type/atten/pad[2], BGRA color,
+                // pos[3], intensity, rotation[4], attenStart, attenEnd)
+                uint32_t nLights = chunkSize / 48;
+                for (uint32_t i = 0; i < nLights && offset + 48 <= chunkEnd; i++) {
+                    WMOLight light{};
+                    light.type = read<uint8_t>(wmoData, offset);
                     light.useAttenuation = read<uint8_t>(wmoData, offset);
                     light.pad[0] = read<uint8_t>(wmoData, offset);
                     light.pad[1] = read<uint8_t>(wmoData, offset);
-                    light.pad[2] = read<uint8_t>(wmoData, offset);
 
-                    light.color.r = read<float>(wmoData, offset);
-                    light.color.g = read<float>(wmoData, offset);
-                    light.color.b = read<float>(wmoData, offset);
-                    light.color.a = read<float>(wmoData, offset);
+                    const uint32_t bgra = read<uint32_t>(wmoData, offset);
+                    light.color = glm::vec4(
+                        static_cast<float>((bgra >> 16) & 0xFFu),
+                        static_cast<float>((bgra >> 8) & 0xFFu),
+                        static_cast<float>(bgra & 0xFFu),
+                        static_cast<float>((bgra >> 24) & 0xFFu)) / 255.0f;
 
                     light.position.x = read<float>(wmoData, offset);
                     light.position.y = read<float>(wmoData, offset);
                     light.position.z = read<float>(wmoData, offset);
 
                     light.intensity = read<float>(wmoData, offset);
+                    light.rotation.x = read<float>(wmoData, offset);
+                    light.rotation.y = read<float>(wmoData, offset);
+                    light.rotation.z = read<float>(wmoData, offset);
+                    light.rotation.w = read<float>(wmoData, offset);
                     light.attenuationStart = read<float>(wmoData, offset);
                     light.attenuationEnd = read<float>(wmoData, offset);
-
-                    for (float& value : light.unknown) {
-                        value = read<float>(wmoData, offset);
-                    }
 
                     model.lights.push_back(light);
                 }
@@ -501,7 +504,10 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
             group.boundingBoxMax.z = read<float>(groupData, mogpOffset);
             group.portalStart = read<uint16_t>(groupData, mogpOffset);
             group.portalCount = read<uint16_t>(groupData, mogpOffset);
-            mogpOffset += 8; // transBatchCount, intBatchCount, extBatchCount, padding
+            group.transBatchCount = read<uint16_t>(groupData, mogpOffset);
+            group.intBatchCount = read<uint16_t>(groupData, mogpOffset);
+            group.extBatchCount = read<uint16_t>(groupData, mogpOffset);
+            mogpOffset += 2; // padding uint16
             // fogIndices: 4 × uint8 (4 bytes total, NOT 4 × uint32)
             group.fogIndices[0] = read<uint8_t>(groupData, mogpOffset);
             group.fogIndices[1] = read<uint8_t>(groupData, mogpOffset);
@@ -644,6 +650,11 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                                 batch.lastVertex, "] mat=", static_cast<int>(batch.materialId), " flags=", static_cast<int>(batch.flags));
                         }
                     }
+                }
+                else if (subChunkId == MOLR) {
+                    assert(subChunkSize % 2 == 0);
+                    group.lightRefs.resize(subChunkSize / 2);
+                    for (auto& ref : group.lightRefs) ref = read<uint16_t>(groupData, mogpOffset);
                 }
                 else if (subChunkId == MODR) {
                     assert(subChunkSize % 2 == 0);

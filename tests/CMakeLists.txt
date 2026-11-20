@@ -3025,6 +3025,10 @@ wowee_add_test(test_cast_bar_text SOURCES test_cast_bar_text.cpp)
 wowee_add_test(test_projected_texture
     SOURCES test_projected_texture.cpp)
 
+# Build 8606 indoor/outdoor unit & doodad light rig math and MCSH shadow lookup.
+wowee_add_test(test_legacy_light_rig
+    SOURCES test_legacy_light_rig.cpp)
+
 # ── test_playable_animation ──────────────────────────────────
 # Playable lookup stand-ins and the AnimationData chain behind them.
 wowee_add_test(test_playable_animation

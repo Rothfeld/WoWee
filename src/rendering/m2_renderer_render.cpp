@@ -449,7 +449,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     // there, where the outdoor Light 458 drew them green. Asked again once
     // moved a quarter yard or a second on (a WMO loading in).
     // Its room is asked at the same moments (setRoomAtQuery).
-    if (interiorLightQuery_ || roomAtQuery_) {
+    if (objectLightQuery_ || interiorLightQuery_ || roomAtQuery_) {
         for (auto& instance : instances) {
             if (!instance.isGameObject) continue;
             instance.interiorLightAge += deltaTime;
@@ -463,12 +463,30 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
                 if (room) instance.wmoRooms = std::move(room->second);
                 else instance.wmoRooms.clear();
             }
-            if (!interiorLightQuery_) continue;
-            if (const auto light = interiorLightQuery_(instance.position)) {
-                const auto rgb = glm::uvec3(glm::round(glm::clamp(*light, 0.0f, 1.0f) * 255.0f));
-                instance.indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
-            } else {
-                instance.indoorLighting = 0;
+            if (objectLightQuery_) {
+                const float sampleHeight = std::max(0.5f * (instance.worldBoundsMax.z - instance.worldBoundsMin.z), 0.5f);
+                const auto res = objectLightQuery_(instance.position, sampleHeight);
+                instance.outdoorShadowed = res.outdoorShadowed;
+                instance.interiorFog = res.interiorFog;
+                instance.customLightRig = res.customRig;
+                if (res.particleLight) {
+                    const auto rgb = glm::uvec3(glm::round(glm::clamp(*res.particleLight, 0.0f, 1.0f) * 255.0f));
+                    instance.indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
+                } else {
+                    instance.indoorLighting = 0;
+                }
+            } else if (interiorLightQuery_) {
+                if (const auto light = interiorLightQuery_(instance.position)) {
+                    const auto rgb = glm::uvec3(glm::round(glm::clamp(*light, 0.0f, 1.0f) * 255.0f));
+                    instance.indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
+                    instance.interiorFog = true;
+                    instance.outdoorShadowed = false;
+                    instance.customLightRig = indoorDoodadRig(glm::clamp(*light, 0.0f, 1.0f));
+                } else {
+                    instance.indoorLighting = 0;
+                    instance.interiorFog = false;
+                    instance.customLightRig.reset();
+                }
             }
         }
     }
@@ -1402,13 +1420,28 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 e.uvOffset = glm::vec2(0.0f);
                 e.uvOffset2 = glm::vec2(0.0f);
                 e.tintPacked = 0;
-                e.reserved = 0;
                 e.fadeAlpha = p.fadeAlpha;
                 e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
                 e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
                 e.boneCount = static_cast<int32_t>(inst.boneMatrices.size());
                 e.highlight = inst.highlight;
-                e.flags = static_cast<int32_t>(inst.indoorLighting);
+                {
+                    int32_t lf = (inst.outdoorShadowed ? 1 : 0) |
+                                 (inst.customLightRig ? 2 : 0) |
+                                 (inst.interiorFog ? 4 : 0);
+                    e.flags = lf;
+                    const glm::vec3 bc = 0.5f * (inst.worldBoundsMin + inst.worldBoundsMax);
+                    e.boundsRadius = std::max(0.5f * glm::length(inst.worldBoundsMax - inst.worldBoundsMin), 0.5f);
+                    if (inst.customLightRig) {
+                        e.customAmbient = glm::vec4(inst.customLightRig->ambient, bc.x);
+                        e.customDiffuse = glm::vec4(inst.customLightRig->diffuse, bc.y);
+                        e.customLightDir = glm::vec4(inst.customLightRig->dir, bc.z);
+                    } else {
+                        e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
+                        e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
+                        e.customLightDir = glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
+                    }
+                }
                 instanceDataCount_++;
                 ++writtenInstances;
             }
@@ -1703,13 +1736,28 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                             e.uvOffset = uvOffset;
                             e.uvOffset2 = secondTextureOffset(model, batch, inst);
                             e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, inst);
-                            e.reserved = 0;
                             e.fadeAlpha = p.fadeAlpha * m2_internal::animatedBatchOpacity(model, batch, inst);
                             e.useBones = (p.useBones && !kM2NoSkinning) ? 1 : 0;
                             e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
                             e.boneCount = static_cast<int32_t>(inst.boneMatrices.size());
                             e.highlight = inst.highlight;
-                            e.flags = static_cast<int32_t>(inst.indoorLighting);
+                            {
+                                int32_t lf = (inst.outdoorShadowed ? 1 : 0) |
+                                             (inst.customLightRig ? 2 : 0) |
+                                             (inst.interiorFog ? 4 : 0);
+                                e.flags = lf;
+                                const glm::vec3 bc = 0.5f * (inst.worldBoundsMin + inst.worldBoundsMax);
+                                e.boundsRadius = std::max(0.5f * glm::length(inst.worldBoundsMax - inst.worldBoundsMin), 0.5f);
+                                if (inst.customLightRig) {
+                                    e.customAmbient = glm::vec4(inst.customLightRig->ambient, bc.x);
+                                    e.customDiffuse = glm::vec4(inst.customLightRig->diffuse, bc.y);
+                                    e.customLightDir = glm::vec4(inst.customLightRig->dir, bc.z);
+                                } else {
+                                    e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
+                                    e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
+                                    e.customLightDir = glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
+                                }
+                            }
                             instanceDataCount_++;
                         }
                     }
@@ -2030,13 +2078,28 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             e.uvOffset = uvOffset;
             e.uvOffset2 = secondTextureOffset(model, batch, instance);
             e.tintPacked = m2_internal::packAnimatedBatchTint(model, batch, instance);
-            e.reserved = 0;
             e.fadeAlpha = instanceFadeAlpha * m2_internal::animatedBatchOpacity(model, batch, instance);
             e.useBones = (needsBones && !kM2NoSkinning) ? 1 : 0;
             e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
             e.boneCount = static_cast<int32_t>(instance.boneMatrices.size());
             e.highlight = instance.highlight;
-            e.flags = static_cast<int32_t>(instance.indoorLighting);
+            {
+                int32_t lf = (instance.outdoorShadowed ? 1 : 0) |
+                             (instance.customLightRig ? 2 : 0) |
+                             (instance.interiorFog ? 4 : 0);
+                e.flags = lf;
+                const glm::vec3 bc = 0.5f * (instance.worldBoundsMin + instance.worldBoundsMax);
+                e.boundsRadius = std::max(0.5f * glm::length(instance.worldBoundsMax - instance.worldBoundsMin), 0.5f);
+                if (instance.customLightRig) {
+                    e.customAmbient = glm::vec4(instance.customLightRig->ambient, bc.x);
+                    e.customDiffuse = glm::vec4(instance.customLightRig->diffuse, bc.y);
+                    e.customLightDir = glm::vec4(instance.customLightRig->dir, bc.z);
+                } else {
+                    e.customAmbient = glm::vec4(0.0f, 0.0f, 0.0f, bc.x);
+                    e.customDiffuse = glm::vec4(0.0f, 0.0f, 0.0f, bc.y);
+                    e.customLightDir = glm::vec4(0.0f, 0.0f, -1.0f, bc.z);
+                }
+            }
             if (projectedDraw) {
                 // The grid is already in place in the world, relative to
                 // the instance origin.

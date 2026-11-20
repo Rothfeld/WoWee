@@ -267,7 +267,14 @@ struct CharMaterialUBO {
     float kitLightR, kitLightG, kitLightB;
     // The batch's M2 colour (at rest), as m2.frag's tint.
     float tintR, tintG, tintB;
+    float unitDiffuseR, unitDiffuseG, unitDiffuseB;
+    float unitLightDirX, unitLightDirY, unitLightDirZ;
+    float unitModelCenterX, unitModelCenterY, unitModelCenterZ;
+    float unitModelRadius;
+    int32_t unitHasCustomLight;
 };
+static_assert(sizeof(CharMaterialUBO) == 51 * sizeof(float),
+              "CharMaterialUBO must remain tightly packed 4-byte scalars matching character.frag.glsl");
 
 // GPU vertex struct with tangent (expanded from M2Vertex for normal mapping)
 struct CharVertexGPU {
@@ -2425,13 +2432,31 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             if (inst.fadeOutTime >= inst.fadeOutDuration) fadedOut_.push_back(pair.first);
         }
 
-        // Interior light under the feet, asked again once the instance has
-        // moved a quarter yard or a second has passed (a WMO loading in).
-        if (interiorLightQuery_) {
+        // Floor / terrain MCSH light under the feet. Attached weapons/effects
+        // receive their wielder's floorLight in the attachment loop below.
+        if (!inst.hasOverrideModelMatrix && (unitFloorLightQuery_ || interiorLightQuery_)) {
             inst.interiorLightAge += deltaTime;
             const glm::vec3 moved = inst.position - inst.interiorLightQueriedAt;
-            if (inst.interiorLightAge >= 1.0f || glm::dot(moved, moved) > 0.0625f) {
-                inst.interiorLight = interiorLightQuery_(inst.position);
+            if (!inst.floorLight.valid || inst.interiorLightAge >= 0.25f || glm::dot(moved, moved) > 0.0025f) {
+                if (unitFloorLightQuery_) {
+                    float topZ = 2.03f;
+                    if (inst.cachedModel) {
+                        topZ = std::max({inst.cachedModel->data.boundMin.z,
+                                         inst.cachedModel->data.boundMax.z, 0.5f});
+                    }
+                    const float sampleHeight = 0.585f * topZ * std::max(inst.scale, 0.1f);
+                    inst.floorLight = unitFloorLightQuery_(inst.position, sampleHeight);
+                    inst.interiorLight = inst.floorLight.isInterior
+                        ? std::optional<glm::vec3>(inst.floorLight.indoorRig.ambient)
+                        : std::nullopt;
+                } else if (interiorLightQuery_) {
+                    inst.interiorLight = interiorLightQuery_(inst.position);
+                    inst.floorLight = UnitFloorLight{
+                        .valid = true,
+                        .isInterior = inst.interiorLight.has_value(),
+                        .indoorRig = inst.interiorLight ? indoorUnitRig(*inst.interiorLight) : DirectionalLightRig{},
+                    };
+                }
                 static const bool traceInteriorLight = core::envFlagEnabled("WOWEE_INTERIOR_LIGHT_TRACE");
                 if (traceInteriorLight) {
                     LOG_INFO("Interior light: instance ", pair.first, " at (", inst.position.x, ",",
@@ -2802,6 +2827,8 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             weapIt->second.hasOverrideModelMatrix = true;
             // Animation distance culling works off instance position.
             weapIt->second.position = instance.position;
+            weapIt->second.floorLight = instance.floorLight;
+            weapIt->second.interiorLight = instance.interiorLight;
             if (weapIt->second.cachedModel && weapIt->second.cachedModel->hasBillboardBones)
                 calculateBoneMatrices(weapIt->second);
 
@@ -2819,11 +2846,69 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                 // Keep the effect near the character so animation distance culling
                 // (which works off instance position) treats it like its wielder.
                 fxIt->second.position = instance.position;
+                fxIt->second.floorLight = instance.floorLight;
+                fxIt->second.interiorLight = instance.interiorLight;
                 if (fxIt->second.cachedModel && fxIt->second.cachedModel->hasBillboardBones)
                     calculateBoneMatrices(fxIt->second);
             }
         }
     }
+}
+uint32_t CharacterRenderer::gatherAuthoredM2Lights(const glm::vec3& centerPos,
+                                                   glm::vec4* outPosRadius,
+                                                   glm::vec4* outColorIntensity,
+                                                   uint32_t maxLights) const {
+    if (!outPosRadius || !outColorIntensity || maxLights == 0) return 0;
+
+    struct Candidate {
+        float distSq;
+        glm::vec4 posRadius;
+        glm::vec4 colorIntensity;
+    };
+    std::vector<Candidate> candidates;
+
+    for (const auto& [instId, instance] : instances) {
+        (void)instId;
+        if (!instance.visible || instance.replaced || instance.opacity <= 0.0f) continue;
+        const auto* gpuModel = instance.cachedModel;
+        if (!gpuModel || gpuModel->data.lights.empty()) continue;
+
+        const glm::vec3 instDelta = instance.position - centerPos;
+        if (glm::dot(instDelta, instDelta) > 250.0f * 250.0f) continue;
+
+        const glm::mat4 modelMat = instance.hasOverrideModelMatrix
+            ? instance.overrideModelMatrix
+            : getModelMatrix(instance);
+        const float scale = std::max(instance.scale, 1e-4f);
+        for (const auto& light : gpuModel->data.lights) {
+            if (light.type != 1 || !light.visible || light.attenuationEnd <= 0.0f ||
+                light.diffuseIntensity <= 0.0f) {
+                continue;
+            }
+            glm::vec3 localPos = light.position;
+            if (light.bone >= 0 && static_cast<size_t>(light.bone) < instance.boneMatrices.size()) {
+                localPos = glm::vec3(instance.boneMatrices[light.bone] * glm::vec4(localPos, 1.0f));
+            }
+            const glm::vec3 worldPos(modelMat * glm::vec4(localPos, 1.0f));
+            const float radius = light.attenuationEnd * scale;
+            const glm::vec3 d = worldPos - centerPos;
+            candidates.push_back({
+                .distSq = glm::dot(d, d),
+                .posRadius = glm::vec4(worldPos, radius),
+                .colorIntensity = glm::vec4(light.diffuseColor * light.diffuseIntensity, 1.0f),
+            });
+        }
+    }
+
+    const uint32_t count = std::min<uint32_t>(maxLights, static_cast<uint32_t>(candidates.size()));
+    if (count == 0) return 0;
+    std::partial_sort(candidates.begin(), candidates.begin() + count, candidates.end(),
+                      [](const Candidate& a, const Candidate& b) { return a.distSq < b.distSq; });
+    for (uint32_t i = 0; i < count; ++i) {
+        outPosRadius[i] = candidates[i].posRadius;
+        outColorIntensity[i] = candidates[i].colorIntensity;
+    }
+    return count;
 }
 void CharacterRenderer::syncEmitters(M2Renderer& m2Renderer) {
     // Drop emitters whose owner is gone, no longer drawn, replaced by another
@@ -3900,6 +3985,41 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     matData.interiorLightG = instance.interiorLight->g;
                     matData.interiorLightB = instance.interiorLight->b;
                 }
+                {
+                    const float sc = std::max(instance.scale, 0.1f);
+                    const glm::vec3 mc = instance.position + glm::vec3(0.0f, 0.0f, 1.0f * sc);
+                    matData.unitModelCenterX = mc.x;
+                    matData.unitModelCenterY = mc.y;
+                    matData.unitModelCenterZ = mc.z;
+                    matData.unitModelRadius = std::max(gpuModel.data.boundRadius, 1.5f) * sc;
+                }
+                if (renderPassOverride_ == VK_NULL_HANDLE && instance.floorLight.valid) {
+                    DirectionalLightRig rig{};
+                    if (instance.floorLight.isInterior) {
+                        rig = blendIndoorWithOutdoorRig(
+                            instance.floorLight.indoorRig, outdoorUnitAmbient_, outdoorDiffuseBase_,
+                            outdoorLightDir_, instance.floorLight.exteriorBlend, true);
+                        matData.interiorLit = (instance.floorLight.exteriorBlend < 1.0f) ? 1 : 0;
+                    } else {
+                        const float diffScale = instance.floorLight.terrainShadowed ? 0.5f : 2.5f;
+                        rig = {
+                            .ambient = outdoorUnitAmbient_,
+                            .diffuse = outdoorDiffuseBase_ * diffScale,
+                            .dir = outdoorLightDir_,
+                        };
+                        matData.interiorLit = 0;
+                    }
+                    matData.unitHasCustomLight = 1;
+                    matData.interiorLightR = rig.ambient.r;
+                    matData.interiorLightG = rig.ambient.g;
+                    matData.interiorLightB = rig.ambient.b;
+                    matData.unitDiffuseR = rig.diffuse.r;
+                    matData.unitDiffuseG = rig.diffuse.g;
+                    matData.unitDiffuseB = rig.diffuse.b;
+                    matData.unitLightDirX = rig.dir.x;
+                    matData.unitLightDirY = rig.dir.y;
+                    matData.unitLightDirZ = rig.dir.z;
+                }
                 matData.alphaTest = blendNeedsCutout ? 1 : 0;
                 matData.colorKeyBlack = 0;
                 matData.unlit = unlit ? 1 : 0;
@@ -4087,6 +4207,41 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 matData.interiorLightR = instance.interiorLight->r;
                 matData.interiorLightG = instance.interiorLight->g;
                 matData.interiorLightB = instance.interiorLight->b;
+            }
+            {
+                const float sc = std::max(instance.scale, 0.1f);
+                const glm::vec3 mc = instance.position + glm::vec3(0.0f, 0.0f, 1.0f * sc);
+                matData.unitModelCenterX = mc.x;
+                matData.unitModelCenterY = mc.y;
+                matData.unitModelCenterZ = mc.z;
+                matData.unitModelRadius = std::max(gpuModel.data.boundRadius, 1.5f) * sc;
+            }
+            if (renderPassOverride_ == VK_NULL_HANDLE && instance.floorLight.valid) {
+                DirectionalLightRig rig{};
+                if (instance.floorLight.isInterior) {
+                    rig = blendIndoorWithOutdoorRig(
+                        instance.floorLight.indoorRig, outdoorUnitAmbient_, outdoorDiffuseBase_,
+                        outdoorLightDir_, instance.floorLight.exteriorBlend, true);
+                    matData.interiorLit = (instance.floorLight.exteriorBlend < 1.0f) ? 1 : 0;
+                } else {
+                    const float diffScale = instance.floorLight.terrainShadowed ? 0.5f : 2.5f;
+                    rig = {
+                        .ambient = outdoorUnitAmbient_,
+                        .diffuse = outdoorDiffuseBase_ * diffScale,
+                        .dir = outdoorLightDir_,
+                    };
+                    matData.interiorLit = 0;
+                }
+                matData.unitHasCustomLight = 1;
+                matData.interiorLightR = rig.ambient.r;
+                matData.interiorLightG = rig.ambient.g;
+                matData.interiorLightB = rig.ambient.b;
+                matData.unitDiffuseR = rig.diffuse.r;
+                matData.unitDiffuseG = rig.diffuse.g;
+                matData.unitDiffuseB = rig.diffuse.b;
+                matData.unitLightDirX = rig.dir.x;
+                matData.unitLightDirY = rig.dir.y;
+                matData.unitLightDirZ = rig.dir.z;
             }
             matData.alphaTest = 0;
             matData.combiner0 = 1;  // Mod: texture alpha, as before stage modes

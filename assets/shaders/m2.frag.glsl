@@ -211,7 +211,9 @@ void main() {
     // animates, e.g. Flamestrike_Impact_Base's outer flame sheets). A glow
     // card is painted white and coloured here - Orgrimmar's bonfire carries
     // (1.0, 0.329, 0.0) - so without it every fire in the world burns white.
-    texColor.rgb *= vInstanceTint.w > 0.5 ? vInstanceTint.rgb : vec3(tintR, tintG, tintB);
+    vec3 batchTint = vInstanceTint.w > 0.5 ? vInstanceTint.rgb : vec3(tintR, tintG, tintB);
+    vec3 rawTexRgb = texColor.rgb;
+    texColor.rgb *= batchTint;
 
     // Original client sky M2s carry their authored colour and alpha, and are
     // taken as they are. They are camera-centered and unlit, and must not be
@@ -230,7 +232,7 @@ void main() {
     // camera moved that edge, so Hellfire's sky flickered while the view moved
     // and stood still when it did not, on its blended layers alone. The rescale
     // is for foliage cutouts, where a hard edge is the point.
-    if (vSkyMode != 0) {
+    if ((vSkyMode & 1) != 0) {
         // An opaque layer's alpha channel says nothing - it was never
         // blended - so only the fade is its alpha. That matters while the
         // sky crossfades between zones, when every layer is drawn blended.
@@ -248,14 +250,15 @@ void main() {
         return;
     }
 
-    selectFog(vIndoorLighting.w > 0.5);
+    const bool isInteriorFog = (vSkyMode & 4) != 0;
+    selectFog(isInteriorFog);
     // An outdoor doodad is not drawn past the outdoor fog's end; the sky
     // shows there. Terrain goes on past it. Black Temple's floating rocks
     // (shadowmoon_overhangrock_large_01, 509 yards from the stairs to
     // Illidan's door, fog end 389) are absent in 8606 with farclip 1277, and
     // at farclip 177 Nagrand's floating islands over Garadar go while the
     // mountains behind them stay (docs/wmo-fog.md).
-    if (vIndoorLighting.w <= 0.5 && length(viewPos.xyz - FragPos) > outdoorFogParams.y) discard;
+    if (!isInteriorFog && length(viewPos.xyz - FragPos) > outdoorFogParams.y) discard;
     if (alphaTest == 3) {
         // Ground clutter blends by its texture alpha. 2.4.3 draws detail
         // doodads with soft, see-through blade edges where its alpha-key
@@ -308,12 +311,16 @@ void main() {
             result += vec3(0.32, 0.14, 0.025) * (emissiveBoost - 1.0) *
                       emissiveWeight;
         }
-    } else if (vIndoorLighting.w > 0.5) {
-        // Interior WMO props carry placement lighting in MODD. Outdoor sky
-        // lighting would tint their authored warm surfaces blue/green.
-        // TBC: a highlighted object takes this light twice, saturated.
-        float indoorGain = 1.0 + (lightDir.w != 0.0 ? vHighlight : 0.0);
-        result = min(vIndoorLighting.rgb * indoorGain, vec3(1.0)) * texColor.rgb;
+    } else if ((vSkyMode & 2) != 0) {
+        // Interior WMO doodads (MODD + MOLR) and indoor game objects (MOCV + MOLR):
+        // VertexLighting holds clamp(c11 + N.L * c10 + M2Lights, 0, 1).
+        // TBC hover adds 1.0 * outdoor Light.dbc ambient (c29) before clamping.
+        if (lightDir.w != 0.0) {
+            vec3 hoverAdd = vHighlight * ambientColor.rgb;
+            result = rawTexRgb * clamp(batchTint * VertexLighting + hoverAdd, 0.0, 1.0);
+        } else {
+            result = VertexLighting * texColor.rgb;
+        }
     } else {
         vec3 viewDir = normalize(viewPos.xyz - FragPos);
 
@@ -342,11 +349,11 @@ void main() {
         result = ambientTerm * texColor.rgb
                + shadow * (diff * lightColor.rgb * texColor.rgb + spec * lightColor.rgb);
         if (lightDir.w != 0.0) {
-            vec3 ambientLight = min(ambientColor.rgb * (1.0 + vHighlight), vec3(1.0));
-            result = texColor.rgb * (ambientLight + shadow * (VertexLighting - ambientLight));
-        }
-
-        if (interiorDarken > 0.0) {
+            vec3 baseAmb = min(ambientColor.rgb, vec3(1.0));
+            vec3 litFactor = mix(baseAmb, VertexLighting, shadow);
+            vec3 hoverAdd = vHighlight * ambientColor.rgb;
+            result = rawTexRgb * clamp(batchTint * litFactor + hoverAdd, 0.0, 1.0);
+        } else if (interiorDarken > 0.0) {
             result *= mix(1.0, 0.5, interiorDarken);
         }
     }

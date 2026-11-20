@@ -235,6 +235,61 @@ uint32_t M2Renderer::gatherLocalLights(const glm::vec3& cameraPos,
     return count;
 }
 
+uint32_t M2Renderer::gatherAuthoredM2Lights(const glm::vec3& centerPos,
+                                            glm::vec4* outPosRadius,
+                                            glm::vec4* outColorIntensity,
+                                            uint32_t maxLights) const {
+    if (!outPosRadius || !outColorIntensity || maxLights == 0) return 0;
+
+    struct Candidate {
+        float distSq;
+        glm::vec4 posRadius;
+        glm::vec4 colorIntensity;
+    };
+    std::vector<Candidate> candidates;
+
+    for (const auto& instance : instances) {
+        const M2ModelGPU* model = instance.cachedModel;
+        if (!model || model->lights.empty() || instance.fade <= 0.0f) continue;
+        if (!instance.wmoRooms.empty() && wmoRoomDrawn_ &&
+            !wmoRoomDrawn_(instance.wmoRoomInstance, instance.wmoRooms)) continue;
+
+        const glm::vec3 instDelta = instance.position - centerPos;
+        if (glm::dot(instDelta, instDelta) > 250.0f * 250.0f) continue;
+
+        const float scale = std::max(instance.scale, 1e-4f);
+        for (const auto& light : model->lights) {
+            if (light.type != 1 || !light.visible || light.attenuationEnd <= 0.0f ||
+                light.diffuseIntensity <= 0.0f) {
+                continue;
+            }
+            glm::vec3 localPos = light.position;
+            if (light.bone >= 0 && static_cast<size_t>(light.bone) < instance.boneMatrices.size()) {
+                localPos = glm::vec3(instance.boneMatrices[light.bone] * glm::vec4(localPos, 1.0f));
+            }
+            const glm::vec3 worldPos(instance.modelMatrix * glm::vec4(localPos, 1.0f));
+            const float radius = light.attenuationEnd * scale;
+            const glm::vec3 d = worldPos - centerPos;
+            const float distSq = glm::dot(d, d);
+            candidates.push_back({
+                .distSq = distSq,
+                .posRadius = glm::vec4(worldPos, radius),
+                .colorIntensity = glm::vec4(light.diffuseColor * light.diffuseIntensity, 1.0f),
+            });
+        }
+    }
+
+    const uint32_t count = std::min<uint32_t>(maxLights, static_cast<uint32_t>(candidates.size()));
+    if (count == 0) return 0;
+    std::partial_sort(candidates.begin(), candidates.begin() + count, candidates.end(),
+                      [](const Candidate& a, const Candidate& b) { return a.distSq < b.distSq; });
+    for (uint32_t i = 0; i < count; ++i) {
+        outPosRadius[i] = candidates[i].posRadius;
+        outColorIntensity[i] = candidates[i].colorIntensity;
+    }
+    return count;
+}
+
 /// The nine main-pass pipelines, built once at startup and again after a
 /// device loss.
 ///
@@ -715,7 +770,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
     // Instance data SSBO - per-frame buffer holding per-instance transforms, fade, bones.
     // Shader reads instanceData[push.instanceDataOffset + gl_InstanceIndex].
     {
-        static_assert(sizeof(M2InstanceGPU) == 112, "M2InstanceGPU must be 112 bytes (std430)");
+        static_assert(sizeof(M2InstanceGPU) == 160, "M2InstanceGPU must be 160 bytes (std430)");
         const VkDeviceSize instBufSize = MAX_INSTANCE_DATA * sizeof(M2InstanceGPU);
 
         // Descriptor pool for 2 sets (double-buffered)
@@ -1298,7 +1353,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
     bool hasGeometry = !model.vertices.empty() && !model.indices.empty();
     bool hasParticles = !model.particleEmitters.empty();
     bool hasRibbons   = !model.ribbonEmitters.empty();
-    if (!hasGeometry && !hasParticles && !hasRibbons) {
+    bool hasLights    = !model.lights.empty();
+    if (!hasGeometry && !hasParticles && !hasRibbons && !hasLights) {
         LOG_WARNING("M2 model has no renderable content: id=", modelId,
                     " name=", model.name.empty() ? "<unnamed>" : model.name);
         return false;
@@ -1634,6 +1690,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId, boo
 
     // Copy particle emitter data and resolve textures
     gpuModel.particleEmitters = model.particleEmitters;
+    gpuModel.lights = model.lights;
     gpuModel.particleTextures.resize(model.particleEmitters.size(), whiteTexture_.get());
     for (size_t ei = 0; ei < model.particleEmitters.size(); ei++) {
         uint16_t texIdx = model.particleEmitters[ei].texture;

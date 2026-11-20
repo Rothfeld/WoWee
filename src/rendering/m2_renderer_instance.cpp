@@ -76,11 +76,22 @@ void M2Renderer::setInstanceFade(uint32_t instanceId, float alpha) {
     instances[idxIt->second].fade = std::clamp(alpha, 0.0f, 1.0f);
 }
 
-void M2Renderer::setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color) {
+void M2Renderer::setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color,
+                                           const DirectionalLightRig* rig) {
     const auto index = instanceIndexById.find(instanceId);
     assert(index != instanceIndexById.end());
+    auto& inst = instances[index->second];
     const auto rgb = glm::uvec3(glm::round(glm::clamp(color, 0.0f, 1.0f) * 255.0f));
-    instances[index->second].indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
+    inst.indoorLighting = 2u | (rgb.r << 8) | (rgb.g << 16) | (rgb.b << 24);
+    inst.interiorFog = true;
+    inst.outdoorShadowed = false;
+    inst.customLightRig = rig ? *rig : indoorDoodadRig(glm::clamp(color, 0.0f, 1.0f));
+}
+
+void M2Renderer::setInstanceOutdoorShadowed(uint32_t instanceId, bool shadowed) {
+    const auto index = instanceIndexById.find(instanceId);
+    if (index == instanceIndexById.end()) return;
+    instances[index->second].outdoorShadowed = shadowed;
 }
 
 void M2Renderer::addInstanceWmoDoodad(uint32_t instanceId, uint32_t wmoInstanceId,

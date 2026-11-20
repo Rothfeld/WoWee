@@ -513,7 +513,11 @@ void WorldLoader::loadMapGeometry(uint32_t mapId, const std::string& mapName,
                                     m2Renderer->addInstanceWmoDoodad(doodadInstId, instanceId,
                                                                      pipeline::wmoDoodadRooms(wmoModel, doodadIdx));
                                     if (pipeline::wmoDoodadUsesLocalLighting(wmoModel, doodadIdx)) {
-                                        m2Renderer->setInstanceIndoorLighting(doodadInstId, glm::vec3(doodad.color));
+                                        const glm::vec3 localCenter = 0.5f * (m2Model.vertexBoxMin + m2Model.vertexBoxMax);
+                                        const glm::vec3 sampleWorldPos(worldMatrix * glm::vec4(localCenter, 1.0f));
+                                        const auto rig = rendering::WMORenderer::resolveDoodadLightRig(
+                                            wmoModel, doodadIdx, wmoMatrix, sampleWorldPos);
+                                        m2Renderer->setInstanceIndoorLighting(doodadInstId, glm::vec3(doodad.color), &rig);
                                     }
                                 }
                                 loadedDoodads++;

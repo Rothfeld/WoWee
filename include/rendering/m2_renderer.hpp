@@ -4,6 +4,7 @@
 #include "rendering/collision_geometry.hpp"
 #include "rendering/spatial_grid.hpp"
 #include "rendering/shadow_params.hpp"
+#include "rendering/legacy_light_direction.hpp"
 
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/blp_loader.hpp"
@@ -219,6 +220,7 @@ struct M2ModelGPU {
 
     // Ribbon emitter data (kept from M2Model)
     std::vector<pipeline::M2RibbonEmitter> ribbonEmitters;
+    std::vector<pipeline::M2Light> lights;
     std::vector<VkTexture*> ribbonTextures;       // Resolved texture per ribbon emitter
     std::vector<VkDescriptorSet> ribbonTexSets;   // Descriptor sets per ribbon emitter
     // M2 material blend mode the ribbon's materialIndex names (3+ additive).
@@ -267,6 +269,9 @@ struct M2Instance {
     // rendering::addWmoDoodad.
     bool wmoDoodadPlaced = false;
     uint32_t indoorLighting = 0; // packed MODD RGB in bits 8..31, bit 1 enables
+    bool outdoorShadowed = false;
+    bool interiorFog = false;
+    std::optional<DirectionalLightRig> customLightRig;
     // Game objects: where and how long ago their interior light was asked.
     glm::vec3 interiorLightQueriedAt{std::numeric_limits<float>::max()};
     float interiorLightAge = 0.0f;
@@ -550,6 +555,12 @@ public:
                                glm::vec4* outColorIntensity,
                                uint32_t maxLights) const;
 
+    /** Gather authored M2Light point lights (TBC model2.bls point lights). */
+    uint32_t gatherAuthoredM2Lights(const glm::vec3& centerPos,
+                                    glm::vec4* outPosRadius,
+                                    glm::vec4* outColorIntensity,
+                                    uint32_t maxLights) const;
+
     /// Where loaded models register their geometry for the ray traced
     /// lighting. Static doodads only - animated models would cast their
     /// bind pose. Not given to the sky's renderer.
@@ -642,8 +653,11 @@ public:
     /// Loop the model's Stand (M2ModelGPU::standSequenceIndex) from its start.
     void playInstanceStand(uint32_t instanceId);
 
-    /// Light an instance while it is being pressed on. 0 clears it.
-    void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color);
+    /// Set placement lighting on a WMO doodad instance (MODD + group MOLR rig),
+    /// or outdoor terrain MCSH shadow state on an ADT doodad instance.
+    void setInstanceIndoorLighting(uint32_t instanceId, const glm::vec3& color,
+                                   const DirectionalLightRig* rig = nullptr);
+    void setInstanceOutdoorShadowed(uint32_t instanceId, bool shadowed);
     /// Record a WMO doodad (MODD entry) placed as this instance, with the
     /// rooms that list it (pipeline::wmoDoodadRooms; empty: drawn with the
     /// building). An instance standing for several entries is drawn while any
@@ -657,6 +671,14 @@ public:
     /// take it as interior doodads take their MODD colour.
     using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
     void setInteriorLightQuery(InteriorLightQuery query) { interiorLightQuery_ = std::move(query); }
+    struct ObjectLightResolution {
+        bool outdoorShadowed = false;
+        bool interiorFog = false;
+        std::optional<glm::vec3> particleLight;
+        std::optional<DirectionalLightRig> customRig;
+    };
+    using ObjectLightQuery = std::function<ObjectLightResolution(const glm::vec3& pos, float sampleHeight)>;
+    void setObjectLightQuery(ObjectLightQuery query) { objectLightQuery_ = std::move(query); }
     /// The WMO room a game object stands in (WMORenderer::interiorRoomAt).
     /// A game object there is drawn with that room, as a room doodad is:
     /// Orgrimmar's Mighty Blaze braziers stand in its interior groups, and
@@ -1036,17 +1058,20 @@ private:
     // GPU instance data SSBO - per-instance transforms, fade, bones for instanced draws.
     // Shader reads instanceData[push.instanceDataOffset + gl_InstanceIndex].
     struct M2InstanceGPU {
-        glm::mat4 model;           // 64 bytes @ offset 0
-        glm::vec2 uvOffset;        //  8 bytes @ offset 64
-        float fadeAlpha;           //  4 bytes @ offset 72
-        int32_t useBones;          //  4 bytes @ offset 76
-        int32_t boneBase;          //  4 bytes @ offset 80
-        int32_t boneCount;         //  4 bytes @ offset 84 - clamps skinning reads
-        float highlight = 0.0f;    //  4 bytes @ offset 88 - pressed-on lift
-        int32_t flags = {};        //  4 bytes @ offset 92 - bit 1 + bits 8..31: MODD placement light
-        glm::vec2 uvOffset2{};     //  8 bytes @ offset 96 - second texture translation
-        uint32_t tintPacked = 0;   //  4 bytes @ offset 104 - bit 24 + RGB8 animated M2Color tint
-        uint32_t reserved = 0;     //  4 bytes @ offset 108
+        glm::mat4 model;                 // 64 bytes @ offset 0
+        glm::vec2 uvOffset;              //  8 bytes @ offset 64
+        float fadeAlpha;                 //  4 bytes @ offset 72
+        int32_t useBones;                //  4 bytes @ offset 76
+        int32_t boneBase;                //  4 bytes @ offset 80
+        int32_t boneCount;               //  4 bytes @ offset 84 - clamps skinning reads
+        float highlight = 0.0f;          //  4 bytes @ offset 88 - pressed-on / hover lift
+        int32_t flags = {};              //  4 bytes @ offset 92 - bit0: MCSH shadow, bit1: customRig, bit2: interiorFog
+        glm::vec2 uvOffset2{};           //  8 bytes @ offset 96 - second texture translation
+        uint32_t tintPacked = 0;         //  4 bytes @ offset 104 - bit 24 + RGB8 animated M2Color tint
+        float boundsRadius = 0.5f;       //  4 bytes @ offset 108 - worldBoundsRadius
+        glm::vec4 customAmbient{0.0f};   // 16 bytes @ offset 112 - xyz: ambient, w: worldBoundsCenter.x
+        glm::vec4 customDiffuse{0.0f};   // 16 bytes @ offset 128 - xyz: diffuse, w: worldBoundsCenter.y
+        glm::vec4 customLightDir{0.0f};  // 16 bytes @ offset 144 - xyz: lightDir, w: worldBoundsCenter.z
     };
     // How many instances one frame may hand the GPU, not how many exist. Ground
     // clutter is what fills it: it is drawn by the thousand and every tuft
@@ -1228,6 +1253,7 @@ private:
     };
     WmoRoomQuery wmoRoomDrawn_;
     InteriorLightQuery interiorLightQuery_;
+    ObjectLightQuery objectLightQuery_;
     RoomAtQuery roomAtQuery_;
     std::vector<VisibleEntry> sortedVisible_;  // Reused each frame
     std::vector<VisibleEntry> transparentVisible_; // Only models needing pass 2

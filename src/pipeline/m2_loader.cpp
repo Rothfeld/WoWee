@@ -1586,6 +1586,70 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
         model.attachmentLookup = readArray<uint16_t>(m2Data, header.ofsAttachmentLookup, header.nAttachmentLookup);
     }
 
+    // Read authored M2 lights (212 bytes pre-WotLK, 156 bytes WotLK+)
+    if (header.nLights > 0 && header.ofsLights > 0) {
+        constexpr uint32_t kMaxM2Lights = 64;
+        const uint32_t lightCount = capCount(header.nLights, kMaxM2Lights, "nLights");
+        const bool wotlk = header.version >= 264;
+        const uint32_t trackSize = wotlk ? sizeof(M2TrackDisk) : sizeof(M2TrackDiskVanilla);
+        const uint32_t lightStride = 16u + 7u * trackSize;
+        std::vector<uint32_t> seqFlags;
+        if (wotlk) {
+            seqFlags.reserve(model.sequences.size());
+            for (const auto& seq : model.sequences) seqFlags.push_back(seq.flags);
+        }
+        auto readLightTrack = [&](uint32_t trackOfs, M2AnimationTrack& outTrack, TrackType type) {
+            if (wotlk) {
+                M2TrackDisk td = readValue<M2TrackDisk>(m2Data, trackOfs);
+                parseAnimTrack(m2Data, td, outTrack, type, seqFlags);
+            } else {
+                M2TrackDiskVanilla td = readValue<M2TrackDiskVanilla>(m2Data, trackOfs);
+                parseAnimTrackVanilla(m2Data, td, outTrack, type, vanillaSeqWindows);
+            }
+        };
+        auto firstFloat = [](const M2AnimationTrack& tr, float fallback) {
+            for (const auto& seq : tr.sequences) {
+                if (!seq.floatValues.empty()) return seq.floatValues[0];
+            }
+            return fallback;
+        };
+        auto firstVec3 = [](const M2AnimationTrack& tr, const glm::vec3& fallback) {
+            for (const auto& seq : tr.sequences) {
+                if (!seq.vec3Values.empty()) return seq.vec3Values[0];
+            }
+            return fallback;
+        };
+
+        model.lights.reserve(lightCount);
+        for (uint32_t li = 0; li < lightCount; ++li) {
+            const uint64_t base64 = static_cast<uint64_t>(header.ofsLights) + static_cast<uint64_t>(li) * lightStride;
+            if (base64 + lightStride > m2Data.size()) break;
+            const uint32_t base = static_cast<uint32_t>(base64);
+
+            M2Light light{};
+            light.type = readValue<uint16_t>(m2Data, base);
+            light.bone = readValue<int16_t>(m2Data, base + 2);
+            light.position = glm::vec3(
+                readValue<float>(m2Data, base + 4),
+                readValue<float>(m2Data, base + 8),
+                readValue<float>(m2Data, base + 12));
+
+            M2AnimationTrack attStartTrack;
+            readLightTrack(base + 16u + 2u * trackSize, light.diffuseColorTrack, TrackType::VEC3);
+            readLightTrack(base + 16u + 3u * trackSize, light.diffuseIntensityTrack, TrackType::FLOAT);
+            readLightTrack(base + 16u + 4u * trackSize, attStartTrack, TrackType::FLOAT);
+            readLightTrack(base + 16u + 5u * trackSize, light.attenuationEndTrack, TrackType::FLOAT);
+            readLightTrack(base + 16u + 6u * trackSize, light.visibilityTrack, TrackType::BYTE_BOOL);
+
+            light.diffuseColor = firstVec3(light.diffuseColorTrack, glm::vec3(1.0f));
+            light.diffuseIntensity = firstFloat(light.diffuseIntensityTrack, 1.0f);
+            light.attenuationStart = firstFloat(attStartTrack, 0.0f);
+            light.attenuationEnd = firstFloat(light.attenuationEndTrack, 0.0f);
+            light.visible = firstFloat(light.visibilityTrack, 1.0f) >= 0.5f;
+            model.lights.push_back(std::move(light));
+        }
+    }
+
     // Cameras - only the static base position/target are used; scene models keep
     // their framing here, and animated camera tracks are not needed for a backdrop.
     if (header.nCameras > 0 && header.ofsCameras > 0) {

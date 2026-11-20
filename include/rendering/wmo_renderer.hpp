@@ -5,6 +5,7 @@
 #include "rendering/spatial_grid.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/wmo_fog.hpp"
+#include "rendering/legacy_light_direction.hpp"
 
 #include "pipeline/blp_loader.hpp"
 #include "pipeline/grass_clearing.hpp"
@@ -448,7 +449,30 @@ public:
     /// (MOCV) under the feet, floored by the root's MOHD ambient as the
     /// interior surfaces are. Anything else under the feet (an exterior group,
     /// no WMO) leaves the object to the outdoor Light.dbc light.
+    struct FloorLightSample {
+        float floorZ = 0.0f;
+        bool isInterior = false;
+        float exteriorBlend = 0.0f;
+        glm::vec3 mocv{0.0f};
+        DirectionalLightRig indoorRig{};
+    };
+
+    /// Sample the closest drawn WMO surface below `position + (0,0,0.5)` and,
+    /// when that surface belongs to a locally-lit interior group, compute its
+    /// MOCV + group MOLR light rig at `position + (0,0,sampleHeightOffset)`.
+    /// Also reports exterior WMO surfaces (`isInterior == false`) so callers
+    /// know the object stands on a WMO surface rather than terrain MCSH shadow.
+    std::optional<FloorLightSample> sampleFloorLight(const glm::vec3& position,
+                                                    float sampleHeightOffset = 1.19f,
+                                                    bool isUnit = true) const;
+
     std::optional<glm::vec3> interiorObjectLight(const glm::vec3& position) const;
+
+    /// Resolve an interior WMO doodad's MODD + group MOLR directional light rig.
+    static DirectionalLightRig resolveDoodadLightRig(const pipeline::WMOModel& wmoModel,
+                                                     uint32_t doodadIdx,
+                                                     const glm::mat4& wmoWorldMatrix,
+                                                     const glm::vec3& sampleWorldPos);
 
     /// The interior-only rooms (MOGP 0x2000 without 0x8) a game object stands
     /// in, with their WMO instance id, by the rule roomHides uses for units
@@ -610,9 +634,10 @@ private:
         // Collision geometry (positions only, for floor raycasting)
         std::vector<glm::vec3> collisionVertices;
         std::vector<uint16_t> collisionIndices;
-        // MOCV per collision vertex, for groups lit locally (see
-        // interiorObjectLight); empty for every other group.
-        std::vector<glm::vec3> collisionColors;
+        // MOCV RGB + FixColorVertexAlpha exteriorBlend alpha per collision
+        // vertex, for groups lit locally; empty for exterior groups.
+        std::vector<glm::vec4> collisionColors;
+        std::vector<uint16_t> lightRefs; // MOLR indices into ModelData::lights
 
         // 2D spatial grid for fast triangle lookup (built at load time).
         // Bins triangles by their XY bounding box into grid cells.
@@ -696,6 +721,7 @@ private:
         uint32_t id;
         std::vector<GroupResources> groups;
         std::vector<pipeline::WMOFog> fogs;
+        std::vector<pipeline::WMOLight> lights;
         glm::vec3 boundingBoxMin;
         glm::vec3 boundingBoxMax;
         glm::vec3 wmoAmbientColor{0.5f, 0.5f, 0.5f};  // From MOHD, used for interior lighting
@@ -814,7 +840,9 @@ private:
     /**
      * Create GPU resources for a WMO group
      */
-    bool createGroupResources(const pipeline::WMOGroup& group, GroupResources& resources, uint32_t groupFlags = 0);
+    bool createGroupResources(const pipeline::WMOGroup& group, GroupResources& resources,
+                              uint32_t groupFlags = 0,
+                              const glm::vec3& wmoAmbientColor = glm::vec3(0.0f));
 
     /**
      * Check if group is visible in frustum

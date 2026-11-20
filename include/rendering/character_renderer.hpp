@@ -8,6 +8,7 @@
 #include "rendering/animation/playable_animation.hpp"
 #include "rendering/shadow_params.hpp"
 #include "rendering/hand_grip.hpp"
+#include "rendering/legacy_light_direction.hpp"
 
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/blp_loader.hpp"
@@ -223,6 +224,25 @@ public:
     /// nothing outdoors (WMORenderer::interiorObjectLight).
     using InteriorLightQuery = std::function<std::optional<glm::vec3>(const glm::vec3&)>;
     void setInteriorLightQuery(InteriorLightQuery query) { interiorLightQuery_ = std::move(query); }
+    struct UnitFloorLight {
+        bool valid = false;
+        bool isInterior = false;
+        bool terrainShadowed = false;
+        float exteriorBlend = 0.0f;
+        DirectionalLightRig indoorRig{};
+    };
+    using UnitFloorLightQuery = std::function<UnitFloorLight(const glm::vec3& pos, float sampleHeight)>;
+    void setUnitFloorLightQuery(UnitFloorLightQuery query) { unitFloorLightQuery_ = std::move(query); }
+    void setOutdoorUnitLight(const glm::vec3& unitAmbient, const glm::vec3& diffuseBase,
+                             const glm::vec3& lightDir) {
+        outdoorUnitAmbient_ = unitAmbient;
+        outdoorDiffuseBase_ = diffuseBase;
+        outdoorLightDir_ = lightDir;
+    }
+    uint32_t gatherAuthoredM2Lights(const glm::vec3& centerPos,
+                                    glm::vec4* outPosRadius,
+                                    glm::vec4* outColorIntensity,
+                                    uint32_t maxLights) const;
     static constexpr float kKitOpacityTransition = 1.0f;
     /// Highlight the unit under the pointer and the targeted unit (0 for
     /// none), with what they carry. 2.4.3 lights both alike.
@@ -530,6 +550,7 @@ private:
         // Floor light of a locally lit WMO interior under the instance, or
         // nothing outdoors (setInteriorLightQuery); re-asked as it moves.
         std::optional<glm::vec3> interiorLight;
+        UnitFloorLight floorLight{};
         glm::vec3 interiorLightQueriedAt{std::numeric_limits<float>::max()};
         float interiorLightAge = 0.0f;
         // Drawn kit opacity, moving from kitOpacityFrom to kitOpacityTarget
@@ -800,6 +821,10 @@ public:
     void processPendingNormalMaps(int budget = 4);
 private:
     InteriorLightQuery interiorLightQuery_;
+    UnitFloorLightQuery unitFloorLightQuery_;
+    glm::vec3 outdoorUnitAmbient_{0.5f};
+    glm::vec3 outdoorDiffuseBase_{1.0f};
+    glm::vec3 outdoorLightDir_{0.3f, -0.7f, 0.6f};
 
     // Normal mapping / POM settings
     bool normalMappingEnabled_ = true;

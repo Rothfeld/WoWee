@@ -500,6 +500,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
     modelData.boundingBoxMax = model.boundingBoxMax;
     modelData.wmoAmbientColor = model.ambientColor;
     modelData.fogs = model.fogs;
+    modelData.lights = model.lights;
     {
         glm::vec3 ext = model.boundingBoxMax - model.boundingBoxMin;
         float horiz = std::max(ext.x, ext.y);
@@ -636,7 +637,7 @@ WMORenderer::ModelLoadResult WMORenderer::loadModelIncremental(
         resources.authoredIndex = static_cast<uint32_t>(gi);
         // Every group is drawn at every distance: 2.4.3 has no distance-only
         // groups. What a camera sees of a building is chosen by portals alone.
-        if (createGroupResources(wmoGroup, resources, wmoGroup.flags)) {
+        if (createGroupResources(wmoGroup, resources, wmoGroup.flags, modelData.wmoAmbientColor)) {
             modelData.groups.push_back(resources);
             modelData.loadedGroups++;
         }
@@ -1842,7 +1843,8 @@ uint32_t WMORenderer::getTotalTriangleCount() const {
     return total;
 }
 
-bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupResources& resources, uint32_t groupFlags) {
+bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupResources& resources,
+                                       uint32_t groupFlags, const glm::vec3& wmoAmbientColor) {
     if (group.vertices.empty() || group.indices.empty()) {
         return false;
     }
@@ -1951,15 +1953,37 @@ bool WMORenderer::createGroupResources(const pipeline::WMOGroup& group, GroupRes
     for (const auto& v : group.vertices) {
         resources.collisionVertices.push_back(v.position);
     }
-    // Units and game objects take the floor MOCV only in groups without
-    // their own lights (MOGP 0x200). Tempest Keep's hall01 (tk_raid group 2,
-    // 0x2a05, MOCV red 0.6-0.9/0.3-0.5/0.3-0.6) lights the original's units
-    // as outdoors: skin and Warglaive glow neutral and bright, where the MOCV
-    // made them dark red. Shattrath's Terrace of Light (0xb805) has no lights
-    // and is MOCV-lit (93d00be).
-    if ((group.flags & 0x4) && (group.flags & 0x200) == 0 && pipeline::wmoUsesLocalLighting(group.flags)) {
+    resources.lightRefs = group.lightRefs;
+    // All locally-lit interior groups (including MOGP 0x200 groups with MOLR
+    // lights such as Goldshire Inn's kitchen, Jasperlode Mine, and Tempest Keep)
+    // store floor MOCV RGB plus FixColorVertexAlpha's exterior-blend alpha:
+    // transBatch vertices keep their authored MOCV.a (0..1 transition weight),
+    // intBatch vertices use 0 (their MOCV.a is wall overbright, not exterior
+    // blend), and extBatch vertices use 1.
+    if (pipeline::wmoUsesLocalLighting(group.flags)) {
         resources.collisionColors.reserve(group.vertices.size());
-        for (const auto& v : group.vertices) resources.collisionColors.emplace_back(v.color);
+        if ((group.flags & 0x4u) != 0) {
+            size_t transVertexEnd = 0;
+            if (group.transBatchCount > 0) {
+                transVertexEnd = (group.transBatchCount < group.batches.size())
+                    ? static_cast<size_t>(group.batches[group.transBatchCount].startVertex)
+                    : group.vertices.size();
+            }
+            const size_t extBatchStart = static_cast<size_t>(group.transBatchCount) + group.intBatchCount;
+            size_t extVertexStart = group.vertices.size();
+            if (group.extBatchCount > 0 && extBatchStart < group.batches.size()) {
+                extVertexStart = static_cast<size_t>(group.batches[extBatchStart].startVertex);
+            }
+            for (size_t vi = 0; vi < group.vertices.size(); ++vi) {
+                const auto& v = group.vertices[vi];
+                float extBlend = 0.0f;
+                if (vi < transVertexEnd) extBlend = v.color.a;
+                else if (vi >= extVertexStart) extBlend = 1.0f;
+                resources.collisionColors.emplace_back(v.color.r, v.color.g, v.color.b, extBlend);
+            }
+        } else {
+            resources.collisionColors.assign(group.vertices.size(), glm::vec4(wmoAmbientColor, 0.0f));
+        }
     }
     resources.triMaterials = group.triMaterials;
     // MOGP 0x80 (unreachable): a group no one stands in - Black Temple's
@@ -4264,15 +4288,49 @@ std::optional<WMOFogSample> WMORenderer::getFog(const glm::vec3& position, bool 
     return sampleWMOFog(model.fogs, group.fogIndices, location->localPosition, underwater);
 }
 
-std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& position) const {
+namespace {
+
+void mergeWmoLightRefs(DirectionalLightRig& rig,
+                       const std::vector<pipeline::WMOLight>& lights,
+                       const std::vector<uint16_t>& lightRefs,
+                       const glm::mat4& wmoModelMatrix,
+                       const glm::vec3& sampleWorldPos) {
+    for (uint16_t lightIdx : lightRefs) {
+        if (lightIdx >= lights.size()) continue;
+        const auto& L = lights[lightIdx];
+        if (L.attenuationEnd <= 0.0f || L.intensity <= 0.0f) continue;
+        const glm::vec3 lightWorldPos(wmoModelMatrix * glm::vec4(L.position, 1.0f));
+        const glm::vec3 delta = sampleWorldPos - lightWorldPos;
+        const float dist = glm::length(delta);
+        if (dist >= L.attenuationEnd) continue;
+        const float att = L.useAttenuation
+            ? glm::clamp((L.attenuationEnd - dist) /
+                             std::max(L.attenuationEnd - L.attenuationStart, 1e-4f),
+                         0.0f, 1.0f)
+            : 1.0f;
+        const glm::vec3 dColor = glm::vec3(L.color) * (L.intensity * att);
+        const glm::vec3 lDir = dist > 1e-5f ? (delta / dist) : kLegacyIndoorLightDir;
+        rig = mergeDirectionalRig(rig, {.ambient = glm::vec3(0.0f), .diffuse = dColor, .dir = lDir});
+    }
+}
+
+} // namespace
+
+std::optional<WMORenderer::FloorLightSample> WMORenderer::sampleFloorLight(
+        const glm::vec3& position, float sampleHeightOffset, bool isUnit) const {
     // From a little above the feet, so the floor stood on is found and a
     // ceiling just overhead is not.
     const glm::vec3 origin = position + glm::vec3(0.0f, 0.0f, 0.5f);
     gatherCandidates(origin - glm::vec3(0.5f, 0.5f, 500.0f), origin + glm::vec3(0.5f), tl_candidateScratch);
-    float bestDistance = std::numeric_limits<float>::max();
-    std::optional<glm::vec3> light;
+    float bestWorldDist = std::numeric_limits<float>::max();
+    std::optional<FloorLightSample> bestSample;
+    const ModelData* bestModel = nullptr;
+    const GroupResources* bestGroup = nullptr;
+    const WMOInstance* bestInstance = nullptr;
+
     for (size_t index : tl_candidateScratch) {
         const auto& instance = instances[index];
+        if (instance.hidden) continue;
         const auto modelIt = loadedModels.find(instance.modelId);
         if (modelIt == loadedModels.end()) continue;
         const auto& model = modelIt->second;
@@ -4291,26 +4349,31 @@ std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& posit
             for (uint32_t triangle : tl_triScratch) {
                 assert(triangle / 3 < group.triMaterials.size() &&
                        "WMO group without one MOPY material per triangle");
-                // The drawn floor lights, not the walking surface: collision-only
-                // triangles (MOPY material 0xFF) carry no meaningful MOCV.
-                // Scholomance's Great Ossuary stairs (ruinedkeep_crypt_instance
-                // group 4) have an invisible ramp, MOCV white, cutting through
-                // the drawn treads (MOCV about 0.25); taking whichever lay first
-                // below the feet flashed a unit white and dark on every step.
-                // 2.4.3's unit stays dark and steady there.
+                // Collision-only triangles (MOPY material 0xFF) carry white MOCV
+                // on invisible walking ramps (e.g. Scholomance Ossuary stairs).
                 if (group.triMaterials[triangle / 3] == 0xFF) continue;
                 const glm::vec3& v0 = vertices[indices[triangle]];
                 const glm::vec3& v1 = vertices[indices[triangle + 1]];
                 const glm::vec3& v2 = vertices[indices[triangle + 2]];
                 const float distance = rayTriangleIntersect(local, down, v0, v1, v2);
-                if (distance <= 0.0f || distance >= bestDistance) continue;
-                bestDistance = distance;
+                if (distance <= 0.0f) continue;
+                const glm::vec3 hit = local + down * distance;
+                const glm::vec3 worldHit(instance.modelMatrix * glm::vec4(hit, 1.0f));
+                const float worldDist = origin.z - worldHit.z;
+                if (worldDist <= 0.0f || worldDist >= bestWorldDist) continue;
+                bestWorldDist = worldDist;
+
                 if (group.collisionColors.empty()) {
-                    light.reset();
+                    bestSample = FloorLightSample{
+                        .floorZ = worldHit.z,
+                        .isInterior = false,
+                    };
+                    bestModel = nullptr;
+                    bestGroup = nullptr;
+                    bestInstance = nullptr;
                     continue;
                 }
                 // Barycentric weights of the hit point.
-                const glm::vec3 hit = local + down * distance;
                 const glm::vec3 e1 = v1 - v0, e2 = v2 - v0, d = hit - v0;
                 const float d11 = glm::dot(e1, e1), d12 = glm::dot(e1, e2), d22 = glm::dot(e2, e2);
                 const float dp1 = glm::dot(d, e1), dp2 = glm::dot(d, e2);
@@ -4319,14 +4382,53 @@ std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& posit
                 const float b1 = (d22 * dp1 - d12 * dp2) / denom;
                 const float b2 = (d11 * dp2 - d12 * dp1) / denom;
                 const auto& colors = group.collisionColors;
-                const glm::vec3 mocv = colors[indices[triangle]] * (1.0f - b1 - b2) +
+                const glm::vec4 mocv = colors[indices[triangle]] * (1.0f - b1 - b2) +
                                        colors[indices[triangle + 1]] * b1 +
                                        colors[indices[triangle + 2]] * b2;
-                light = glm::max(mocv, model.wmoAmbientColor);
+                const glm::vec3 mocvRgb = glm::clamp(glm::vec3(mocv), 0.0f, 1.0f);
+                bestSample = FloorLightSample{
+                    .floorZ = worldHit.z,
+                    .isInterior = true,
+                    .exteriorBlend = glm::clamp(mocv.a, 0.0f, 1.0f),
+                    .mocv = mocvRgb,
+                    .indoorRig = isUnit ? indoorUnitRig(mocvRgb) : indoorDoodadRig(mocvRgb),
+                };
+                bestModel = &model;
+                bestGroup = &group;
+                bestInstance = &instance;
             }
         }
     }
-    return light;
+
+    if (bestSample && bestSample->isInterior && bestModel && bestGroup && bestInstance &&
+        !bestGroup->lightRefs.empty()) {
+        const glm::vec3 samplePos = position + glm::vec3(0.0f, 0.0f, sampleHeightOffset);
+        mergeWmoLightRefs(bestSample->indoorRig, bestModel->lights, bestGroup->lightRefs,
+                          bestInstance->modelMatrix, samplePos);
+    }
+    return bestSample;
+}
+
+std::optional<glm::vec3> WMORenderer::interiorObjectLight(const glm::vec3& position) const {
+    const auto sample = sampleFloorLight(position, 1.19f, false);
+    if (!sample || !sample->isInterior) return std::nullopt;
+    return sample->mocv;
+}
+
+DirectionalLightRig WMORenderer::resolveDoodadLightRig(
+        const pipeline::WMOModel& wmoModel,
+        uint32_t doodadIdx,
+        const glm::mat4& wmoWorldMatrix,
+        const glm::vec3& sampleWorldPos) {
+    const glm::vec3 moddColor = doodadIdx < wmoModel.doodads.size()
+        ? glm::clamp(glm::vec3(wmoModel.doodads[doodadIdx].color), 0.0f, 1.0f)
+        : glm::vec3(1.0f);
+    DirectionalLightRig rig = indoorDoodadRig(moddColor);
+    const auto lightRefs = pipeline::wmoDoodadLightRefs(wmoModel, doodadIdx);
+    if (!lightRefs.empty() && !wmoModel.lights.empty()) {
+        mergeWmoLightRefs(rig, wmoModel.lights, lightRefs, wmoWorldMatrix, sampleWorldPos);
+    }
+    return rig;
 }
 
 std::optional<WMORenderer::SealedInterior> WMORenderer::findSealedInterior(const glm::vec3& position) const {

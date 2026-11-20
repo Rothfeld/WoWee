@@ -640,6 +640,19 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
         p.position = glPos;
         p.rotation = placementEuler(placement.rotation);
         p.scale = placement.scale * kInv1024;
+        {
+            const float unitSize = CHUNK_SIZE / 8.0f;
+            for (const auto& chunk : pending->terrain.chunks) {
+                if (!chunk.hasHeightMap()) continue;
+                float fx = 0.0f, fy = 0.0f;
+                if (pipeline::TerrainMeshGenerator::chunkFractionsAt(
+                        chunk.position, glPos.x, glPos.y, unitSize, fx, fy)) {
+                    p.shadowed = chunk.isShadowed(fx, fy);
+                    p.shadowChecked = true;
+                    break;
+                }
+            }
+        }
         pending->m2Placements.push_back(p);
     }
 
@@ -848,11 +861,15 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
 
                         PendingTile::WMODoodadReady doodadReady;
                         doodadReady.modelId = doodadModelId;
+                        const glm::vec3 localCenter = 0.5f * (m2Model.vertexBoxMin + m2Model.vertexBoxMax);
+                        const glm::vec3 sampleWorldPos(worldMatrix * glm::vec4(localCenter, 1.0f));
                         doodadReady.model = std::move(m2Model);
                         doodadReady.worldPosition = worldPos;
                         doodadReady.modelMatrix = worldMatrix;
                         if (pipeline::wmoDoodadUsesLocalLighting(wmoModel, doodadIdx)) {
                             doodadReady.indoorLighting = glm::vec3(doodad.color);
+                            doodadReady.indoorLightRig = WMORenderer::resolveDoodadLightRig(
+                                wmoModel, doodadIdx, wmoMatrix, sampleWorldPos);
                         }
                         doodadReady.wmoUniqueId = placement.uniqueId;
                         doodadReady.rooms = pipeline::wmoDoodadRooms(wmoModel, doodadIdx);
@@ -1102,6 +1119,8 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                 }
                 uint32_t instId = m2Renderer->createInstance(p.modelId, p.position, p.rotation, p.scale);
                 if (instId) {
+                    const bool shadowed = p.shadowChecked ? p.shadowed : isShadowedAt(p.position.x, p.position.y);
+                    if (shadowed) m2Renderer->setInstanceOutdoorShadowed(instId, true);
                     ft.m2InstanceIds.push_back(instId);
                     if (p.uniqueId != 0) {
                         placedDoodadIds.insert(p.uniqueId);
@@ -1254,8 +1273,11 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                 uint32_t wmoDoodadInstId = m2Renderer->createInstanceWithMatrix(
                     doodad.modelId, doodad.modelMatrix, doodad.worldPosition);
                 if (wmoDoodadInstId) {
-                    if (doodad.indoorLighting)
-                        m2Renderer->setInstanceIndoorLighting(wmoDoodadInstId, *doodad.indoorLighting);
+                    if (doodad.indoorLighting) {
+                        m2Renderer->setInstanceIndoorLighting(
+                            wmoDoodadInstId, *doodad.indoorLighting,
+                            doodad.indoorLightRig ? &(*doodad.indoorLightRig) : nullptr);
+                    }
                     // Doodads are prepared once per uniqueId, by the tile that
                     // placed the building first, so it is placed by now.
                     const auto building = placedWmoIds.find(doodad.wmoUniqueId);
@@ -2321,6 +2343,12 @@ std::optional<uint32_t> TerrainManager::getAreaIdAt(float glX, float glY) const 
     const pipeline::MapChunk* chunk = findChunkAt(glX, glY, fracX, fracY);
     if (!chunk || chunk->areaId == 0) return std::nullopt;
     return chunk->areaId;
+}
+
+bool TerrainManager::isShadowedAt(float glX, float glY) const {
+    float fracX = 0.0f, fracY = 0.0f;
+    const pipeline::MapChunk* chunk = findChunkAt(glX, glY, fracX, fracY);
+    return chunk ? chunk->isShadowed(fracX, fracY) : false;
 }
 
 std::vector<uint32_t> TerrainManager::getTileAreaIds(const TileCoord& coord) const {

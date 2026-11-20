@@ -50,17 +50,17 @@ struct WMOGroupInfo {
     int32_t nameOffset;         // Group name in MOGN chunk
 };
 
-// WMO Light
+// WMO Light (48-byte MOLT entry)
 struct WMOLight {
-    uint32_t type;              // 0=omni, 1=spot, 2=directional, 3=ambient
-    uint8_t useAttenuation;
-    uint8_t pad[3];
-    glm::vec4 color;
-    glm::vec3 position;
-    float intensity;
-    float attenuationStart;
-    float attenuationEnd;
-    float unknown[4];
+    uint8_t type = 0;           // 0=omni, 1=spot, 2=directional, 3=ambient
+    uint8_t useAttenuation = 0;
+    uint8_t pad[2]{};
+    glm::vec4 color{1.0f};      // Unpacked from BGRA bytes
+    glm::vec3 position{0.0f};   // WMO local coordinates
+    float intensity = 1.0f;
+    glm::vec4 rotation{0.0f};   // +0x18..+0x27
+    float attenuationStart = 0.0f;
+    float attenuationEnd = 0.0f;
 };
 
 // WMO Doodad Set (collection of M2 models placed in WMO)
@@ -164,8 +164,9 @@ struct WMOGroup {
     glm::vec3 boundingBoxMax;
     uint16_t portalStart;
     uint16_t portalCount;
-    uint16_t batchCountA;
-    uint16_t batchCountB;
+    uint16_t transBatchCount = 0;
+    uint16_t intBatchCount = 0;
+    uint16_t extBatchCount = 0;
     uint32_t fogIndices[4];     // Fog references
     uint32_t liquidType;
     uint32_t groupId;
@@ -176,6 +177,7 @@ struct WMOGroup {
     std::vector<WMOBatch> batches;
     std::vector<uint8_t> triMaterials;
     std::vector<uint16_t> doodadRefs; // MODR indices into root MODD
+    std::vector<uint16_t> lightRefs;  // MOLR indices into root MOLT
     std::vector<uint8_t> triFlags;  // Per-triangle MOPY flags (0x04 = detail/no-collide)
 
     // Portals
@@ -311,6 +313,22 @@ inline bool wmoDoodadUsesLocalLighting(const WMOModel& model, uint32_t doodadIdx
         listed = true;
     }
     return listed;
+}
+
+/// Deduplicated MOLR light indices from the WMO groups whose MODR lists doodadIdx.
+inline std::vector<uint16_t> wmoDoodadLightRefs(const WMOModel& model, uint32_t doodadIdx) {
+    std::vector<uint16_t> refs;
+    for (const auto& group : model.groups) {
+        bool here = false;
+        for (uint16_t ref : group.doodadRefs) here = here || ref == doodadIdx;
+        if (!here) continue;
+        for (uint16_t lref : group.lightRefs) {
+            bool exists = false;
+            for (uint16_t existing : refs) exists = exists || existing == lref;
+            if (!exists) refs.push_back(lref);
+        }
+    }
+    return refs;
 }
 
 } // namespace pipeline
