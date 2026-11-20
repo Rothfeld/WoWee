@@ -7,14 +7,17 @@
 
 #include "pipeline/char_sections.hpp"
 #include "pipeline/dbc_loader.hpp"
+#include "pipeline/m2_loader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <set>
 
 using wowee::pipeline::SkinRegion;
 
@@ -103,4 +106,171 @@ TEST_CASE("Only face and underwear columns have body regions", "[char-sections]"
     CHECK_FALSE(charSectionRegion(0, 0));  // body skin: the base, not a region
     CHECK_FALSE(charSectionRegion(3, 0));  // hair
     CHECK_FALSE(charSectionRegion(4, 2));
+}
+
+TEST_CASE("resolveSkinExtraTexture prefers skinExtra, then underwear, then bodySkin", "[char-sections]") {
+    using wowee::pipeline::CharacterSectionTextures;
+    using wowee::pipeline::resolveSkinExtraTexture;
+
+    CharacterSectionTextures tex;
+    CHECK(resolveSkinExtraTexture(tex).empty());
+
+    tex.bodySkin = "Character\\Tauren\\Male\\TaurenMaleSkin00_00.blp";
+    CHECK(resolveSkinExtraTexture(tex) == tex.bodySkin);
+
+    tex.underwear.push_back({"Character\\Tauren\\Male\\TaurenMaleNakedPelvisSkin00_00.blp", SkinRegion::Pelvis});
+    CHECK(resolveSkinExtraTexture(tex) == tex.underwear.front().path);
+
+    tex.skinExtra = "Character\\Tauren\\Male\\TaurenMaleSkin00_00_Extra.blp";
+    CHECK(resolveSkinExtraTexture(tex) == tex.skinExtra);
+}
+
+TEST_CASE("TBC character models bind valid BLPs for skin, hair, and Skin Extra (type 8) slots", "[char-sections][assets]") {
+    const auto root = dataRoot();
+
+    auto loadFileBytes = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::vector<uint8_t>{std::istreambuf_iterator<char>(in), {}};
+    };
+
+    const auto csBytes = loadFileBytes(root / "dbfilesclient" / "charsections.dbc");
+    REQUIRE_FALSE(csBytes.empty());
+    wowee::pipeline::DBCFile csDbc;
+    REQUIRE(csDbc.load(csBytes));
+
+    // TBC 2.4.3 CharSections.dbc layout (variation-first).
+    wowee::pipeline::CharSectionsFields csF{};
+    csF.raceId = 1;
+    csF.sexId = 2;
+    csF.baseSection = 3;
+    csF.variationIndex = 4;
+    csF.colorIndex = 5;
+    csF.texture1 = 6;
+    csF.texture2 = 7;
+    csF.texture3 = 8;
+    csF.flags = 9;
+
+    struct ModelSpec {
+        uint32_t raceId;
+        uint32_t sexId;
+        const char* raceFolder;
+        const char* m2RelPath;
+        bool expectType8;
+    };
+
+    const std::array<ModelSpec, 22> models = {{
+        {1,  0, "Human",    "character/human/male/humanmale.m2",         false},
+        {1,  1, "Human",    "character/human/female/humanfemale.m2",     false},
+        {2,  0, "Orc",      "character/orc/male/orcmale.m2",             false},
+        {2,  1, "Orc",      "character/orc/female/orcfemale.m2",         false},
+        {3,  0, "Dwarf",    "character/dwarf/male/dwarfmale.m2",         false},
+        {3,  1, "Dwarf",    "character/dwarf/female/dwarffemale.m2",     false},
+        {4,  0, "NightElf", "character/nightelf/male/nightelfmale.m2",   false},
+        {4,  1, "NightElf", "character/nightelf/female/nightelffemale.m2", false},
+        {5,  0, "Scourge",  "character/scourge/male/scourgemale.m2",     false},
+        {5,  1, "Scourge",  "character/scourge/female/scourgefemale.m2", false},
+        {6,  0, "Tauren",   "character/tauren/male/taurenmale.m2",       true},
+        {6,  1, "Tauren",   "character/tauren/female/taurenfemale.m2",   true},
+        {7,  0, "Gnome",    "character/gnome/male/gnomemale.m2",         false},
+        {7,  1, "Gnome",    "character/gnome/female/gnomefemale.m2",     false},
+        {8,  0, "Troll",    "character/troll/male/trollmale.m2",         false},
+        {8,  1, "Troll",    "character/troll/female/trollfemale.m2",     false},
+        {10, 0, "BloodElf", "character/bloodelf/male/bloodelfmale.m2",   false},
+        {10, 1, "BloodElf", "character/bloodelf/female/bloodelffemale.m2", false},
+        {11, 0, "Draenei",  "character/draenei/male/draeneimale.m2",     false},
+        {11, 1, "Draenei",  "character/draenei/female/draeneifemale.m2", false},
+        {13, 0, "Naga_",    "character/naga_/male/naga_male.m2",         true},
+        {13, 1, "Naga_",    "character/naga_/female/naga_female.m2",     true},
+    }};
+
+    for (const auto& spec : models) {
+        INFO(spec.m2RelPath);
+        const auto m2Bytes = loadFileBytes(root / spec.m2RelPath);
+        REQUIRE_FALSE(m2Bytes.empty());
+        auto m2 = wowee::pipeline::M2Loader::load(m2Bytes);
+        REQUIRE(m2.isValid());
+
+        bool hasType8 = false;
+        for (const auto& tex : m2.textures) {
+            if (tex.type == 8) hasType8 = true;
+        }
+        CHECK(hasType8 == spec.expectType8);
+
+        // Verify skin=0 (and for TaurenMale also skin=7 = Horserichy) binds
+        // every replaceable slot (type 1, 6, 8) to a valid BLP2 file on disk.
+        std::vector<uint8_t> skinsToCheck = {0};
+        if (spec.raceId == 6 && spec.sexId == 0) {
+            skinsToCheck = {0, 3, 6, 7, 9, 12, 15, 18};
+        } else if (spec.raceId == 6 && spec.sexId == 1) {
+            skinsToCheck = {0, 2, 4, 6, 8, 10};
+        }
+
+        for (uint8_t skinId : skinsToCheck) {
+            wowee::pipeline::CharacterAppearance who{};
+            who.raceId = spec.raceId;
+            who.sexId = spec.sexId;
+            who.skinId = skinId;
+            who.faceId = 0;
+            who.hairStyleId = 1;
+            who.hairColorId = 0;
+
+            const auto sections = wowee::pipeline::resolveCharacterSections(&csDbc, csF, who);
+            auto modelCopy = m2;
+            wowee::pipeline::applyCharacterTextures(modelCopy, sections, spec.raceFolder);
+
+            for (const auto& tex : modelCopy.textures) {
+                if (tex.type == 1 || tex.type == 6 || tex.type == 8) {
+                    INFO("skin=" << int(skinId) << " texType=" << tex.type << " path=" << tex.filename);
+                    CHECK_FALSE(tex.filename.empty());
+                    CHECK(blpWidth(root, tex.filename) > 0);
+                }
+            }
+            if (spec.expectType8) {
+                INFO("skin=" << int(skinId) << " skinExtra=" << sections.skinExtra);
+                CHECK_FALSE(sections.skinExtra.empty());
+                CHECK(wowee::pipeline::resolveSkinExtraTexture(sections) == sections.skinExtra);
+                CHECK(blpWidth(root, sections.skinExtra) > 0);
+            }
+        }
+    }
+
+    // TaurenMale group 15 contains both cape (type 2) and tail (type 8) batches;
+    // overriding group 15 as a whole would paint the cape onto the tail.
+    const auto tmBytes = loadFileBytes(root / "character/tauren/male/taurenmale.m2");
+    auto tm = wowee::pipeline::M2Loader::load(tmBytes);
+    REQUIRE(tm.isValid());
+    bool g15HasType2 = false;
+    bool g15HasType8 = false;
+    for (const auto& batch : tm.batches) {
+        if (batch.submeshId / 100 != 15) continue;
+        REQUIRE(batch.textureIndex < tm.textureLookup.size());
+        const uint16_t slot = tm.textureLookup[batch.textureIndex];
+        REQUIRE(slot < tm.textures.size());
+        if (tm.textures[slot].type == 2) g15HasType2 = true;
+        if (tm.textures[slot].type == 8) g15HasType8 = true;
+    }
+    CHECK(g15HasType2);
+    CHECK(g15HasType8);
+
+    // CreatureDisplayInfoExtra.dbc Tauren humanoid NPC rows all resolve valid skinExtra BLPs.
+    const auto cdieBytes = loadFileBytes(root / "dbfilesclient" / "creaturedisplayinfoextra.dbc");
+    REQUIRE_FALSE(cdieBytes.empty());
+    wowee::pipeline::DBCFile cdieDbc;
+    REQUIRE(cdieDbc.load(cdieBytes));
+    size_t taurenNpcRows = 0;
+    for (uint32_t r = 0; r < cdieDbc.getRecordCount(); ++r) {
+        const uint32_t raceId = cdieDbc.getUInt32(r, 1);
+        const uint32_t sexId = cdieDbc.getUInt32(r, 2);
+        const uint32_t skinId = cdieDbc.getUInt32(r, 3);
+        if (raceId != 6) continue;
+        ++taurenNpcRows;
+        wowee::pipeline::CharacterAppearance who{};
+        who.raceId = raceId;
+        who.sexId = sexId;
+        who.skinId = static_cast<uint8_t>(skinId);
+        const auto sections = wowee::pipeline::resolveCharacterSections(&csDbc, csF, who);
+        CHECK_FALSE(sections.skinExtra.empty());
+        CHECK(blpWidth(root, sections.skinExtra) > 0);
+    }
+    CHECK(taurenNpcRows > 0);
 }

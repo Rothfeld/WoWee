@@ -1997,13 +1997,13 @@ if (const auto* md = charRenderer->getModelData(modelId)) {
             charRenderer->setActiveGeosets(instanceId, normalizedGeosets);
         }
 
-        // Apply cape texture override so the cloak mesh shows the actual cape
-        // instead of the default body texture.
+        // Apply cape texture override to type-2 (Object Skin) slots only; group 15
+        // also carries non-cape batches such as TaurenMale's tail (type 8) and
+        // ScourgeMale's exposed spine (type 1).
         if (hasRenderableCape && !capeTexturePath.empty()) {
             rendering::VkTexture* capeTex = charRenderer->loadTexture(capeTexturePath);
             const rendering::VkTexture* whiteTex = charRenderer->loadTexture("");
             if (capeTex && capeTex != whiteTex) {
-                charRenderer->setGroupTextureOverride(instanceId, 15, capeTex);
                 if (const auto* md2 = charRenderer->getModelData(modelId)) {
                     for (size_t ti = 0; ti < md2->textures.size(); ti++) {
                         if (md2->textures[ti].type == 2) {

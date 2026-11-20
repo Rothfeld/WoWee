@@ -301,14 +301,19 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     if (!hairTexturePath.empty()) {
         hairTex = charRenderer->loadTexture(hairTexturePath);
     }
-    // Texture type 8 is Skin Extra: the head detail sheet an HD model draws its
-    // ears, eyes and eyelashes from. CharSections names it in the skin row's
-    // second texture, which the tables the game shipped leave blank - so on a
-    // stock model this still falls through to the underwear art it always used.
+    // Texture type 8 is Skin Extra: Tauren mane/tail/fur, Naga fins/scales, or
+    // HD head detail. Resolve with the same shared fallback chain as the local
+    // player and preview paths.
     rendering::VkTexture* skinExtraTex = nullptr;
-    if (!skinExtraPath.empty()) skinExtraTex = charRenderer->loadTexture(skinExtraPath);
-    else if (!underwearPaths.empty()) skinExtraTex = charRenderer->loadTexture(underwearPaths[0].path);
-    else skinExtraTex = charRenderer->loadTexture(pelvisPath);
+    {
+        pipeline::CharacterSectionTextures resolved;
+        resolved.bodySkin = bodySkinPath;
+        resolved.skinExtra = skinExtraPath;
+        resolved.underwear = underwearPaths;
+        const std::string extraPath = pipeline::resolveSkinExtraTexture(resolved);
+        if (!extraPath.empty()) skinExtraTex = charRenderer->loadTexture(extraPath);
+        else skinExtraTex = charRenderer->loadTexture(pelvisPath);
+    }
 
     const PlayerTextureSlots& slots = playerTextureSlotsByModelId_[modelId];
     if (slots.skin >= 0 && compositeTex) {
@@ -618,7 +623,9 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
                     }
 
                     if (capeTexture) {
-                        charRenderer->setGroupTextureOverride(st.instanceId, 15, capeTexture);
+                        // Bind only type-2 (Object Skin) slots; group 15 also carries
+                        // non-cape batches such as TaurenMale's tail (type 8) and
+                        // ScourgeMale's exposed spine (type 1).
                         if (const auto* md = charRenderer->getModelData(st.modelId)) {
                             for (size_t ti = 0; ti < md->textures.size(); ti++) {
                                 if (md->textures[ti].type == 2) {

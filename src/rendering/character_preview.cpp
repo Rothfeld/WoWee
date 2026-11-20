@@ -801,6 +801,27 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         }
     }
 
+    // Bind Skin Extra texture on GPU (type-8 slot: Tauren mane/tail/fur, Naga
+    // fins/scales, HD head detail). CharacterRenderer::loadModel leaves all
+    // replaceable (type != 0) slots unbound until bound here.
+    {
+        pipeline::CharacterSectionTextures resolved;
+        resolved.bodySkin = bodySkinPath_;
+        resolved.skinExtra = skinExtraPath_;
+        resolved.underwear = underwearPaths;
+        const std::string extraPath = pipeline::resolveSkinExtraTexture(resolved);
+        if (!extraPath.empty()) {
+            VkTexture* extraTex = charRenderer_->loadTexture(extraPath);
+            if (extraTex != nullptr) {
+                for (size_t ti = 0; ti < model.textures.size(); ti++) {
+                    if (model.textures[ti].type == 8) {
+                        charRenderer_->setModelTexture(modelId_, static_cast<uint32_t>(ti), extraTex);
+                    }
+                }
+            }
+        }
+    }
+
     // Create instance at origin with current yaw
     instanceId_ = charRenderer_->createInstance(modelId_,
         glm::vec3(0.0f, 0.0f, 0.0f),
@@ -1032,7 +1053,9 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
                 for (const auto& c : candidates) {
                     VkTexture* capeTex = charRenderer_->loadTexture(c);
                     if (capeTex != nullptr && capeTex != whiteTex) {
-                        charRenderer_->setGroupTextureOverride(instanceId_, 15, capeTex);
+                        // Bind only type-2 (Object Skin) slots; group 15 also carries
+                        // non-cape batches such as TaurenMale's tail (type 8) and
+                        // ScourgeMale's exposed spine (type 1).
                         if (const auto* md = charRenderer_->getModelData(modelId_)) {
                             for (size_t ti = 0; ti < md->textures.size(); ti++) {
                                 if (md->textures[ti].type == 2) {

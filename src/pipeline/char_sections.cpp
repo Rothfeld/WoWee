@@ -107,9 +107,17 @@ std::optional<SkinRegion> charSectionRegion(uint32_t section, uint32_t column) {
     return std::nullopt;
 }
 
+std::string resolveSkinExtraTexture(const CharacterSectionTextures& textures) {
+    if (!textures.skinExtra.empty()) return textures.skinExtra;
+    if (!textures.underwear.empty()) return textures.underwear.front().path;
+    if (!textures.bodySkin.empty()) return textures.bodySkin;
+    return {};
+}
+
 void applyCharacterTextures(M2Model& model,
                             const CharacterSectionTextures& textures,
                             const std::string& raceFolderName) {
+    const std::string skinExtraPath = resolveSkinExtraTexture(textures);
     for (auto& tex : model.textures) {
         switch (tex.type) {
             case 1:  // the body, composited from skin, face and underwear
@@ -123,18 +131,11 @@ void applyCharacterTextures(M2Model& model,
                 }
                 break;
             case 8:
-                // Skin Extra. What this art is depends entirely on the race - a
-                // head-detail sheet for a human or an orc, the ears for a night
-                // elf, the horns for a draenei male, the tail for a draenei
-                // female - and seven of the twenty race and sex pairs name none
-                // at all. Those fall back to art that exists rather than keeping
-                // a name that does not.
-                if (!textures.skinExtra.empty()) {
-                    tex.filename = textures.skinExtra;
-                } else if (!textures.underwear.empty()) {
-                    tex.filename = textures.underwear.front().path;
-                } else if (!textures.bodySkin.empty()) {
-                    tex.filename = textures.bodySkin;
+                // Skin Extra: Tauren mane/tail/fur, Naga fins/scales, or HD
+                // head detail. Races that name none fall back to underwear or
+                // body skin rather than leaving the slot unbound.
+                if (!skinExtraPath.empty()) {
+                    tex.filename = skinExtraPath;
                 }
                 break;
             default:

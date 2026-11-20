@@ -167,21 +167,23 @@ void AppearanceComposer::compositePlayerSkin(uint32_t modelSlotId, const PlayerT
         for (const auto& up : texInfo.underwearPaths) {
             layers.push_back(up);
         }
+        rendering::VkTexture* skinTex = nullptr;
         if (layers.size() > 1) {
-            rendering::VkTexture* compositeTex = charRenderer->compositeTextures(layers);
-            if (compositeTex != nullptr) {
-                // Find type-1 (skin) texture slot and replace with composite
-                // We need model texture info - walk slots via charRenderer
-                // Use the model slot ID to find the right texture index
-                auto* modelData = charRenderer->getModelData(modelSlotId);
-                if (modelData) {
-                    for (size_t ti = 0; ti < modelData->textures.size(); ti++) {
-                        if (modelData->textures[ti].type == 1) {
-                            charRenderer->setModelTexture(modelSlotId, static_cast<uint32_t>(ti), compositeTex);
-                            skinTextureSlotIndex_ = static_cast<uint32_t>(ti);
-                            LOG_INFO("Replaced type-1 texture slot ", ti, " with composited body+face+underwear");
-                            break;
-                        }
+            skinTex = charRenderer->compositeTextures(layers);
+        } else if (!texInfo.bodySkinPath.empty()) {
+            skinTex = charRenderer->loadTexture(texInfo.bodySkinPath);
+        }
+        if (skinTex != nullptr) {
+            // Find type-1 (skin) texture slot and bind on GPU (loadModel leaves
+            // all replaceable texture slots null until the caller binds them).
+            auto* modelData = charRenderer->getModelData(modelSlotId);
+            if (modelData) {
+                for (size_t ti = 0; ti < modelData->textures.size(); ti++) {
+                    if (modelData->textures[ti].type == 1) {
+                        charRenderer->setModelTexture(modelSlotId, static_cast<uint32_t>(ti), skinTex);
+                        skinTextureSlotIndex_ = static_cast<uint32_t>(ti);
+                        LOG_INFO("Replaced type-1 texture slot ", ti, " with composited body+face+underwear");
+                        break;
                     }
                 }
             }
@@ -199,6 +201,31 @@ void AppearanceComposer::compositePlayerSkin(uint32_t modelSlotId, const PlayerT
                         charRenderer->setModelTexture(modelSlotId, static_cast<uint32_t>(ti), hairTex);
                         LOG_INFO("Applied DBC hair texture to slot ", ti, ": ", texInfo.hairTexturePath);
                         break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Bind Skin Extra texture on GPU (type-8 slot: Tauren mane/tail/fur, Naga
+    // fins/scales, HD head detail). CharacterRenderer::loadModel leaves all
+    // replaceable (type != 0) slots unbound, so type-8 must be explicitly bound.
+    {
+        pipeline::CharacterSectionTextures resolved;
+        resolved.bodySkin = texInfo.bodySkinPath;
+        resolved.skinExtra = texInfo.skinExtraPath;
+        resolved.underwear = texInfo.underwearPaths;
+        const std::string extraPath = pipeline::resolveSkinExtraTexture(resolved);
+        if (!extraPath.empty()) {
+            rendering::VkTexture* extraTex = charRenderer->loadTexture(extraPath);
+            if (extraTex) {
+                auto* modelData = charRenderer->getModelData(modelSlotId);
+                if (modelData) {
+                    for (size_t ti = 0; ti < modelData->textures.size(); ti++) {
+                        if (modelData->textures[ti].type == 8) {
+                            charRenderer->setModelTexture(modelSlotId, static_cast<uint32_t>(ti), extraTex);
+                            LOG_INFO("Applied DBC skin-extra texture to slot ", ti, ": ", extraPath);
+                        }
                     }
                 }
             }

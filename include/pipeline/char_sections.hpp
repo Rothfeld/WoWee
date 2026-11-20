@@ -88,6 +88,11 @@ CharacterSectionTextures resolveCharacterSections(
     bool (*keepUnderwear)(const std::string&, void*) = nullptr,
     void* keepUnderwearContext = nullptr);
 
+/// Choose the texture path for a model's Skin Extra (M2 texture type 8) slot:
+/// CharSections' skin-row second texture (Tauren fur/mane/tail, Naga fins, HD
+/// head detail), falling back to underwear or body skin when a race names none.
+std::string resolveSkinExtraTexture(const CharacterSectionTextures& textures);
+
 /// Put the resolved textures into a character model's runtime texture slots.
 ///
 /// A non-zero texture type means the client supplies the art - that is what the
