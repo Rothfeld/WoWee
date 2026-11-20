@@ -2568,6 +2568,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
         owner_.resurrectRequestPendingRef() = false;
         owner_.releasedSpiritRef()         = false;
         owner_.playerDeadRef()             = false;
+        owner_.clearReleaseTimer();
         owner_.repopPendingRef()           = false;
         owner_.pendingSpiritHealerGuidRef() = 0;
         owner_.resurrectCasterGuidRef()    = 0;

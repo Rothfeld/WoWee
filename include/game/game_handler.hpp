@@ -2107,6 +2107,8 @@ public:
     float getCorpseReclaimDelaySec() const;
     /** Latch the automatic-release timer when the player dies (see game/death_release.hpp). */
     void latchReleaseTimer(const char* source);
+    /** Clear the latched release timer once the player releases spirit or revives. */
+    void clearReleaseTimer();
     /** GetReleaseTimeRemaining: seconds, -1 for no timer, 0 when none runs. */
     double getReleaseTimeRemainingSec() const;
     /** Distance (yards) from ghost to corpse, or -1 if no corpse data. */

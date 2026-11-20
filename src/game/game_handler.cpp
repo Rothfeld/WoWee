@@ -3014,13 +3014,13 @@ const GameHandler::BattlemasterEntry* GameHandler::getBattlemasterInfo(uint32_t 
                 e.maxGroupSize = dbc->getUInt32(i, tbc ? 12 : 28);
                 e.minLevel     = dbc->getUInt32(i, tbc ? 10 : 30);
                 e.maxLevel     = dbc->getUInt32(i, tbc ? 11 : 31);
-                // Fields 1-8 are map ids, 0xFFFFFFFF where unused, and field 9
-                // is the instance type - verified against the file rather than
-                // taken from a layout table, which does not carry this row.
+                // Fields 1-8 are map ids: 0xFFFFFFFF (WotLK) or 0 (TBC) where
+                // unused (Map 0 is Eastern Kingdoms, never a BG or arena).
+                // Field 9 is the instance type (3 = BG, 4 = arena).
                 e.instanceType = dbc->getUInt32(i, 9);
                 for (uint32_t f = 1; f <= 8; ++f) {
                     const uint32_t mapId = dbc->getUInt32(i, f);
-                    if (mapId == 0xFFFFFFFFu) continue;
+                    if (mapId == 0xFFFFFFFFu || mapId == 0) continue;
                     e.mapCount++;
                     e.mapIds.push_back(mapId);
                 }

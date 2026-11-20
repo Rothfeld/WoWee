@@ -34,8 +34,14 @@ inline constexpr int32_t releaseTimerAtDeathMs(uint32_t playerFieldBytes) {
 }
 
 /// GetReleaseTimeRemaining's answer in seconds from the state latched at death.
+/// waitingToRelease: true only while dead and not yet a ghost; alive or ghost
+/// players always get 0.0 (matching 2.4.3).
 /// noTimer: the latch chose DEATH_RELEASE_NO_TIMER. deadlineMs: 0 if never latched.
-inline constexpr double releaseTimeRemainingSec(bool noTimer, uint64_t deadlineMs, uint64_t nowMs) {
+inline constexpr double releaseTimeRemainingSec(bool waitingToRelease,
+                                                bool noTimer,
+                                                uint64_t deadlineMs,
+                                                uint64_t nowMs) {
+    if (!waitingToRelease) return 0.0;
     if (noTimer) return -1.0;
     if (deadlineMs == 0 || deadlineMs <= nowMs) return 0.0;
     return static_cast<double>(deadlineMs - nowMs) / 1000.0;

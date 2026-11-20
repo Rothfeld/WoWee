@@ -20,13 +20,23 @@ TEST_CASE("release timer chosen from player field bytes", "[death]") {
     CHECK(releaseTimerAtDeathMs(0x18) == 0);
 }
 
-TEST_CASE("GetReleaseTimeRemaining counts down in seconds", "[death]") {
-    CHECK(releaseTimeRemainingSec(true, 0, 1000) == -1.0);
-    CHECK(releaseTimeRemainingSec(false, 0, 1000) == 0.0);
+TEST_CASE("GetReleaseTimeRemaining counts down in seconds while waiting to release", "[death]") {
+    CHECK(releaseTimeRemainingSec(true, true, 0, 1000) == -1.0);
+    CHECK(releaseTimeRemainingSec(true, false, 0, 1000) == 0.0);
     const uint64_t death = 50000;
     const uint64_t deadline = death + DEATH_RELEASE_TIMER_MS;
-    CHECK(releaseTimeRemainingSec(false, deadline, death) == 360.0);
-    CHECK(releaseTimeRemainingSec(false, deadline, death + 1500) == 358.5);
-    CHECK(releaseTimeRemainingSec(false, deadline, deadline) == 0.0);
-    CHECK(releaseTimeRemainingSec(false, deadline, deadline + 5000) == 0.0);
+    CHECK(releaseTimeRemainingSec(true, false, deadline, death) == 360.0);
+    CHECK(releaseTimeRemainingSec(true, false, deadline, death + 1500) == 358.5);
+    CHECK(releaseTimeRemainingSec(true, false, deadline, deadline) == 0.0);
+    CHECK(releaseTimeRemainingSec(true, false, deadline, deadline + 5000) == 0.0);
+}
+
+TEST_CASE("GetReleaseTimeRemaining returns 0 once alive or ghost", "[death]") {
+    const uint64_t death = 50000;
+    const uint64_t deadline = death + DEATH_RELEASE_TIMER_MS;
+    // After releasing spirit (ghost) or reviving (alive), waitingToRelease is false:
+    // neither a remaining 6-minute deadline nor an instance no-timer flag may leak.
+    CHECK(releaseTimeRemainingSec(false, false, deadline, death + 1500) == 0.0);
+    CHECK(releaseTimeRemainingSec(false, true, 0, death + 1500) == 0.0);
+    CHECK(releaseTimeRemainingSec(false, false, 0, death) == 0.0);
 }

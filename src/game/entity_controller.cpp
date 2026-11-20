@@ -1290,6 +1290,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 if (block.guid == owner_.getPlayerGuid()) {
                     bool wasGhost = owner_.releasedSpiritRef();
                     owner_.playerDeadRef() = false;
+                    owner_.clearReleaseTimer();
                     owner_.selfResAvailableRef() = false;
                     owner_.selfResSpellIdRef() = 0;
                     if (!wasGhost) {
@@ -1422,6 +1423,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 } else if (wasDead && !nowDead) {
                     owner_.playerDeadRef() = false;
                     owner_.releasedSpiritRef() = false;
+                    owner_.clearReleaseTimer();
                     owner_.selfResAvailableRef() = false;
                     owner_.selfResSpellIdRef() = 0;
                     LOG_INFO("Player resurrected (dynamic flags)");
@@ -1751,10 +1753,12 @@ bool EntityController::applyPlayerStatFields(const FlatFieldMap& fields,
             bool nowGhost = (val & PLAYER_FLAGS_GHOST) != 0;
             if (!wasGhost && nowGhost) {
                 owner_.releasedSpiritRef() = true;
+                owner_.clearReleaseTimer();
                 LOG_INFO("Player entered ghost form (PLAYER_FLAGS)");
             } else if (wasGhost && !nowGhost) {
                 owner_.releasedSpiritRef() = false;
                 owner_.playerDeadRef() = false;
+                owner_.clearReleaseTimer();
                 owner_.repopPendingRef() = false;
                 owner_.resurrectPendingRef() = false;
                 owner_.selfResAvailableRef() = false;

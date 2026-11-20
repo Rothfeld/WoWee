@@ -628,6 +628,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     lastInteractedGoGuid_ = 0;
     playerDead_ = false;
     releasedSpirit_ = false;
+    clearReleaseTimer();
     // A character whose flags are all clear sends no PLAYER_FLAGS on login,
     // so nothing else would put down the last character's inn.
     isResting_ = false;
@@ -2063,8 +2064,13 @@ void GameHandler::latchReleaseTimer(const char* source) {
              " -> ", ms, " ms");
 }
 
+void GameHandler::clearReleaseTimer() {
+    releaseNoTimer_ = false;
+    releaseDeadlineMs_ = 0;
+}
+
 double GameHandler::getReleaseTimeRemainingSec() const {
-    return releaseTimeRemainingSec(releaseNoTimer_, releaseDeadlineMs_, steadyNowMs());
+    return releaseTimeRemainingSec(showDeathDialog(), releaseNoTimer_, releaseDeadlineMs_, steadyNowMs());
 }
 
 bool GameHandler::hasInvisibilityGlow() const {
