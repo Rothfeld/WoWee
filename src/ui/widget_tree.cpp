@@ -358,6 +358,10 @@ void WidgetTree::setWidth(uint32_t id, float width) {
         // And it is no longer a paragraph: there is no width left to wrap
         // inside, which is the whole of what that meant.
         w->wrapsToWidth = false;
+    } else if (w->kind == WidgetKind::FontString && w->wrapsToWidth && width != w->width) {
+        // Changing the wrap width changes line count and height, so the
+        // previous measurement is stale.
+        w->measuredText.clear();
     }
     w->width = width;
     // Provisional, so a read before the next layout sees what was just set.

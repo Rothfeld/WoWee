@@ -3265,3 +3265,31 @@ TEST_CASE("Parent opacity controls descendant quest regions", "[widget][alpha]")
     tree.layout(kScreenW, kScreenH);
     REQUIRE(tree.get(text)->effAlpha == Catch::Approx(0.08f));
 }
+
+TEST_CASE("Changing width on a wrapsToWidth FontString invalidates its cached measurement",
+          "[widget][fontstring][staticpopup]") {
+    WidgetTree tree;
+    const uint32_t text = tree.create(WidgetKind::FontString, tree.uiParentId(), "PopupText");
+    Widget* w = tree.get(text);
+    REQUIRE(w != nullptr);
+    w->width = 290.0f;
+    w->height = 48.0f;
+    w->wrapsToWidth = true;
+    w->measuredText = "Long multi-line popup message";
+
+    // Same width keeps the cached measurement intact.
+    tree.setWidth(text, 290.0f);
+    CHECK(w->measuredText == "Long multi-line popup message");
+    CHECK(w->wrapsToWidth);
+
+    // Different positive width invalidates measuredText so the paragraph re-wraps.
+    tree.setWidth(text, 400.0f);
+    CHECK(w->measuredText.empty());
+    CHECK(w->wrapsToWidth);
+
+    // Width 0 clears paragraph mode as before.
+    w->measuredText = "Again";
+    tree.setWidth(text, 0.0f);
+    CHECK(w->measuredText.empty());
+    CHECK_FALSE(w->wrapsToWidth);
+}

@@ -292,3 +292,178 @@ TEST_CASE("dying with PLAYER_SELF_RES_SPELL populates HasSoulstone before PLAYER
     CHECK_FALSE(gh.canSelfRes());
     CHECK(gh.getSelfResOptionText().empty());
 }
+
+#include "addons/lua_engine.hpp"
+
+TEST_CASE("StaticPopup paragraph FontString GetHeight updates immediately on text change",
+          "[replay][staticpopup][death][revive]") {
+    wowee::addons::LuaEngine lua;
+    REQUIRE(lua.initialize());
+
+    // Create a StaticPopup-shaped dialog with a wrapsToWidth paragraph FontString
+    // (<Size x="290" y="0"/>) and a 20-tall Button1, mirroring StaticPopup.xml.
+    REQUIRE(lua.executeString(R"lua(
+        local d = CreateFrame("Frame", "TestStaticPopup1", UIParent)
+        d:SetWidth(320)
+        d:SetHeight(72)
+        d:SetPoint("TOP", UIParent, "TOP", 0, -135)
+        local t = d:CreateFontString("TestStaticPopup1Text", "ARTWORK", "GameFontHighlight")
+        t:SetWidth(290)
+        t:SetHeight(0)
+        t:SetPoint("TOP", d, "TOP", 0, -16)
+        local b1 = CreateFrame("Button", "TestStaticPopup1Button1", d)
+        b1:SetWidth(128)
+        b1:SetHeight(20)
+        b1:SetPoint("TOP", t, "BOTTOM", 0, -8)
+        function TestResize()
+            d:SetHeight(16 + t:GetHeight() + 8 + b1:GetHeight() + 16)
+        end
+    )lua"));
+
+    auto& tree = lua.widgets();
+    tree.layout(1280.0f, 720.0f);
+
+    wowee::ui::Widget* textWidget = tree.findByName("TestStaticPopup1Text");
+    REQUIRE(textWidget != nullptr);
+
+    // 1) Simulate a tall 5-line XP_LOSS popup measured by WidgetRenderer::sizeFontStringWidget.
+    const std::string longText =
+        "If you find your corpse, you can resurrect for no penalty.  "
+        "If I resurrect you all of your items will take 25% durability damage "
+        "(equipped and inventory) and you will be afflicted by 10 min of Resurrection Sickness.";
+    REQUIRE(lua.executeString(
+        "TestStaticPopup1Text:SetText([[" + longText + "]])\n"
+        "TestResize()\n"
+        "H_LONG_TEXT = TestStaticPopup1Text:GetHeight()\n"
+        "H_LONG_DIALOG = TestStaticPopup1:GetHeight()\n"));
+
+    // Mark the paragraph as previously measured at the tall multi-line height,
+    // exactly as WidgetRenderer::sizeFontStringWidget does on render.
+    textWidget->wrapsToWidth = true;
+    textWidget->autoSized = false;
+    textWidget->measuredText = longText;
+    textWidget->height = 64.0f;
+    textWidget->rectH = 64.0f * (textWidget->effScale > 0.0f ? textWidget->effScale : 1.0f);
+
+    // 2) Reuse the same StaticPopup1 for 1-line RECOVER_CORPSE ("Resurrect now?").
+    // GetHeight() must NOT return the stale 64.0 height from XP_LOSS.
+    REQUIRE(lua.executeString(R"lua(
+        TestStaticPopup1Text:SetText("Resurrect now?")
+        TestResize()
+        H_SHORT_TEXT = TestStaticPopup1Text:GetHeight()
+        H_SHORT_DIALOG = TestStaticPopup1:GetHeight()
+    )lua"));
+    CHECK(lua.evaluateBoolean("H_SHORT_TEXT > 0 and H_SHORT_TEXT < 25"));
+    CHECK(lua.evaluateBoolean("H_SHORT_DIALOG > 60 and H_SHORT_DIALOG < 85"));
+
+    // 3) Simulate renderer measuring the 1-line text, then transition to multi-line RESURRECT.
+    textWidget->measuredText = "Resurrect now?";
+    textWidget->height = 12.0f;
+    textWidget->rectH = 12.0f * (textWidget->effScale > 0.0f ? textWidget->effScale : 1.0f);
+
+    REQUIRE(lua.executeString(R"lua(
+        TestStaticPopup1Text:SetFormattedText(
+            "%s wants to resurrect you.  You will be afflicted with resurrection sickness.",
+            "Edrikt")
+        TestResize()
+        H_REZ_TEXT = TestStaticPopup1Text:GetHeight()
+        H_REZ_DIALOG = TestStaticPopup1:GetHeight()
+    )lua"));
+    CHECK(lua.evaluateBoolean("H_REZ_TEXT > H_SHORT_TEXT"));
+    CHECK(lua.evaluateBoolean("H_REZ_DIALOG > H_SHORT_DIALOG"));
+
+    // 4) Plural escape formatting in DEATH / RECOVER_CORPSE_TIMER countdown strings.
+    REQUIRE(lua.executeString(R"lua(
+        TestStaticPopup1Text:SetFormattedText("%d %s until release", 6, "|4Minute:Minutes;")
+        DEATH_PLURAL_OK = (TestStaticPopup1Text:GetText() == "6 Minutes until release")
+        TestStaticPopup1Text:SetFormattedText("%d %s until resurrection", 1, "|4Second:Seconds;")
+        CORPSE_SINGULAR_OK = (TestStaticPopup1Text:GetText() == "1 Second until resurrection")
+    )lua"));
+    CHECK(lua.evaluateBoolean("DEATH_PLURAL_OK"));
+    CHECK(lua.evaluateBoolean("CORPSE_SINGULAR_OK"));
+
+    // 5) Clearing text on a wrapsToWidth FontString yields 0 height, not stale height.
+    REQUIRE(lua.executeString(R"lua(
+        TestStaticPopup1Text:SetText("")
+        H_EMPTY = TestStaticPopup1Text:GetHeight()
+    )lua"));
+    CHECK(lua.evaluateBoolean("H_EMPTY == 0"));
+}
+
+TEST_CASE("Reviving does not create any custom onscreen 'You have been resurrected' banner",
+          "[replay][revive][banner]") {
+    wowee::addons::LuaEngine lua;
+    REQUIRE(lua.initialize());
+    CHECK(lua.evaluateBoolean("__WoweeResurrectBanner == nil"));
+    // Firing PLAYER_ALIVE / PLAYER_UNGHOST must not create or show any custom banner.
+    lua.fireEvent("PLAYER_ALIVE", {});
+    lua.fireEvent("PLAYER_UNGHOST", {});
+    CHECK(lua.evaluateBoolean("__WoweeResurrectBanner == nil"));
+}
+
+TEST_CASE("SMSG_CORPSE_RECLAIM_DELAY, SMSG_RESURRECT_REQUEST, and SMSG_SPIRIT_HEALER_CONFIRM update revive state",
+          "[replay][revive][packets]") {
+    Session s("tbc");
+    auto& gh = s.handler();
+    spawnAlivePlayer(s);
+
+    std::vector<std::pair<std::string, std::vector<std::string>>> events;
+    gh.setAddonEventCallback([&](const std::string& e, const std::vector<std::string>& args) {
+        events.emplace_back(e, args);
+    });
+
+    // 1) SMSG_CORPSE_RECLAIM_DELAY (30 seconds)
+    {
+        wowee::network::Packet pkt(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_CORPSE_RECLAIM_DELAY));
+        pkt.writeUInt32(30000);
+        s.receive(pkt);
+        CHECK(gh.getCorpseReclaimDelaySec() > 25.0f);
+        CHECK(gh.getCorpseReclaimDelaySec() <= 30.0f);
+    }
+
+    // 2) SMSG_RESURRECT_REQUEST from a player (sickness=0, no trailing uint32 => hasTimer=true)
+    {
+        const uint64_t priestGuid = 0x0000000000001234ull;
+        const std::string name = "Priestess";
+        wowee::network::Packet pkt(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_RESURRECT_REQUEST));
+        pkt.writeUInt64(priestGuid);
+        pkt.writeUInt32(static_cast<uint32_t>(name.size() + 1));
+        pkt.writeString(name);
+        pkt.writeUInt8(0);  // second terminator
+        pkt.writeUInt8(0);  // sickness = false
+        s.receive(pkt);
+        CHECK_FALSE(gh.resurrectHasSickness());
+        CHECK(gh.resurrectHasTimer());
+        REQUIRE_FALSE(events.empty());
+        CHECK(events.back().first == "RESURRECT_REQUEST");
+        REQUIRE(events.back().second.size() == 1);
+        CHECK(events.back().second[0] == "Priestess");
+    }
+
+    // 3) SMSG_RESURRECT_REQUEST from a creature with sickness=1 and timer waived (trailing uint32)
+    {
+        const uint64_t healerGuid = 0xF13000195B000001ull;
+        const std::string name = "Spirit Healer";
+        wowee::network::Packet pkt(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_RESURRECT_REQUEST));
+        pkt.writeUInt64(healerGuid);
+        pkt.writeUInt32(static_cast<uint32_t>(name.size() + 1));
+        pkt.writeString(name);
+        pkt.writeUInt8(0);
+        pkt.writeUInt8(1);  // sickness = true
+        pkt.writeUInt32(0); // waive reclaim delay => hasTimer = false
+        s.receive(pkt);
+        CHECK(gh.resurrectHasSickness());
+        CHECK_FALSE(gh.resurrectHasTimer());
+        CHECK(events.back().first == "RESURRECT_REQUEST");
+        CHECK(events.back().second[0] == "Spirit Healer");
+    }
+
+    // 4) SMSG_SPIRIT_HEALER_CONFIRM fires CONFIRM_XP_LOSS
+    {
+        const uint64_t spiritGuid = 0xF13000195B000002ull;
+        wowee::network::Packet pkt(wowee::game::wireOpcode(wowee::game::Opcode::SMSG_SPIRIT_HEALER_CONFIRM));
+        pkt.writeUInt64(spiritGuid);
+        s.receive(pkt);
+        CHECK(events.back().first == "CONFIRM_XP_LOSS");
+    }
+}

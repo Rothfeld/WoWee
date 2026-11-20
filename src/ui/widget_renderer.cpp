@@ -348,7 +348,15 @@ void WidgetRenderer::sizeTextureWidget(Widget* w) {
 
 /// One label, sized from its own text. See sizeArtAndText.
 void WidgetRenderer::sizeFontStringWidget(Widget* w, float pixelScale) {
-    if (w->text.empty()) return;
+    if (w->text.empty()) {
+        if (w->autoSized || w->wrapsToWidth) {
+            if (w->autoSized) w->width = 0.0f;
+            w->height = 0.0f;
+            w->wrappedLines = 0;
+            w->measuredText.clear();
+        }
+        return;
+    }
     // Anchors that span an axis give the size on that axis, and the string
     // does not get a say about it. Asked per axis, the way the texture
     // sizing above asks it - anchorsSpanAxis exists for exactly this and

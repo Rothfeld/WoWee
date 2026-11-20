@@ -1227,7 +1227,8 @@ double fontStringTextHeight(const wowee::ui::Widget& w, float pixelScale) {
 int lua_Region_GetTextHeight(lua_State* L) {
     const auto* w = textWidgetOf(L, 1);
     if (!w) { lua_pushnumber(L, 0.0); return 1; }
-    lua_pushnumber(L, fontStringTextHeight(*w, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale));
+    const float es = w->effScale > 0.0f ? w->effScale : 1.0f;
+    lua_pushnumber(L, fontStringTextHeight(*w, wowee::addons::getWidgetTree(L)->uiScale() * es));
     return 1;
 }
 
@@ -1249,7 +1250,7 @@ int lua_Region_GetWidth(lua_State* L) {
     // began under the longer ones.
     const bool staleAutoSize =
         w && w->kind == wowee::ui::WidgetKind::FontString && w->autoSized &&
-        !w->text.empty() && w->text != w->measuredText;
+        w->text != w->measuredText;
     // Nor does one declared with no anchors and no size. The layout places it
     // over its whole parent - that is where it draws, centred - but that rect
     // is borrowed, not a width it was given, and FrameXML reads this to size
@@ -1260,15 +1261,19 @@ int lua_Region_GetWidth(lua_State* L) {
     const bool widthBorrowed =
         w && w->kind == wowee::ui::WidgetKind::FontString && w->anchors.empty() &&
         w->width <= 0.0f;
-    if (w && !w->text.empty() && w->kind == wowee::ui::WidgetKind::FontString &&
+    if (w && w->kind == wowee::ui::WidgetKind::FontString &&
         (staleAutoSize || widthBorrowed || (w->rectW <= 0.0f && w->width <= 0.0f))) {
+        if (w->text.empty()) {
+            lua_pushnumber(L, 0.0);
+            return 1;
+        }
         // A font string that was never given a width is as wide as its text.
         // That is what WoW answers, and the interface sizes things from it:
         // PanelTemplates_TabResize builds a tab's width out of
         // _G[name.."Text"]:GetWidth(), so answering zero made every tab on the
         // character sheet collapse to the width of its two end textures, with
         // the label clipped out of sight inside it.
-        lua_pushnumber(L, measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale, w->hasShadow ? w->shadowX : 0.0f));
+        lua_pushnumber(L, measureTextWidth(w->text, w->fontFace, w->fontHeight, wowee::addons::getWidgetTree(L)->uiScale() * es, w->hasShadow ? w->shadowX : 0.0f));
         return 1;
     }
     lua_pushnumber(L, w ? (w->rectW > 0.0f ? w->rectW / es : w->width) : 0.0);
@@ -1279,12 +1284,21 @@ int lua_Region_GetHeight(lua_State* L) {
     const float es = (w && w->effScale > 0.0f) ? w->effScale : 1.0f;
     // The same staleness as GetWidth: a label measured last frame is measured
     // against last frame's text, and the interface reads a height it has just
-    // changed the text of.
-    const bool staleAutoSize =
-        w && w->kind == wowee::ui::WidgetKind::FontString && w->autoSized &&
-        !w->text.empty() && w->text != w->measuredText;
-    if (w && !w->text.empty() && w->kind == wowee::ui::WidgetKind::FontString &&
-        (staleAutoSize || (w->rectH <= 0.0f && w->height <= 0.0f))) {
+    // changed the text of. Both autoSized labels and wrapsToWidth paragraphs
+    // (such as StaticPopup1Text, declared with <Size x="290" y="0"/>) derive
+    // their height from their current text; skipping wrapsToWidth left
+    // StaticPopup_Resize reading the previous popup's height whenever a popup
+    // frame was reused.
+    const bool staleDynamicHeight =
+        w && w->kind == wowee::ui::WidgetKind::FontString &&
+        (w->autoSized || w->wrapsToWidth) &&
+        w->text != w->measuredText;
+    if (w && w->kind == wowee::ui::WidgetKind::FontString &&
+        (staleDynamicHeight || (w->rectH <= 0.0f && w->height <= 0.0f))) {
+        if (w->text.empty()) {
+            lua_pushnumber(L, 0.0);
+            return 1;
+        }
         // A font string that was never given a height is as tall as its text,
         // the same way one never given a width is as wide as it - and the
         // interface reads that. `<Size x="160" y="0"/>` is how a wrapping
@@ -1293,7 +1307,7 @@ int lua_Region_GetHeight(lua_State* L) {
         // against one line and gives a two-line objective a taller row. Zero
         // failed that test always, so every wrapped objective was drawn over
         // the row beneath it.
-        lua_pushnumber(L, fontStringTextHeight(*w, wowee::addons::getWidgetTree(L)->uiScale() * w->effScale));
+        lua_pushnumber(L, fontStringTextHeight(*w, wowee::addons::getWidgetTree(L)->uiScale() * es));
         return 1;
     }
     lua_pushnumber(L, w ? (w->rectH > 0.0f ? w->rectH / es : w->height) : 0.0);
@@ -9393,14 +9407,9 @@ void LuaEngine::registerCoreAPI() {
         "duel:SetScript('OnUpdate', tick)\n"
         "duel:Hide()\n");
 
-    // Two banners this client puts over the middle of the screen, "Level N!"
-    // with a gold wash on a level-up and "You have been resurrected" with a
-    // pale one on coming back. No interface of 1.12 to 3.3.5 has either; the
-    // chat lines for both are the interface's own and are not repeated here.
-    //
-    // One builder for the pair: a frame over the whole screen, a tint that
-    // fades within the first second, and a line of text that holds and then
-    // fades over the last half second.
+    // Level-up banner over the middle of the screen, "Level N!" with a gold
+    // wash on a level-up. Native 2.4.3 does not show any onscreen banner on
+    // resurrection, so PLAYER_ALIVE / PLAYER_UNGHOST emit no custom banner.
     bootstrap(
         "local function wBanner(name, font, r, g, b, tr, tg, tb)\n"
         "    local f = CreateFrame('Frame', name)\n"
@@ -9437,13 +9446,6 @@ void LuaEngine::registerCoreAPI() {
         "ding:SetScript('OnEvent', function(self, event, level)\n"
         "    level = tonumber(level or arg1)\n"
         "    if level then self:Start('Level ' .. level .. '!', 4, 0.25) end\n"
-        "end)\n"
-        "local rez = wBanner('__WoweeResurrectBanner', 'large', 1, 0.94, 0.47, 0.78, 0.9, 1)\n"
-        "rez:RegisterEvent('PLAYER_ALIVE')\n"
-        "rez:RegisterEvent('PLAYER_UNGHOST')\n"
-        "rez:SetScript('OnEvent', function(self)\n"
-        "    if UnitIsDeadOrGhost and UnitIsDeadOrGhost('player') then return end\n"
-        "    self:Start('You have been resurrected', 3, 0.2)\n"
         "end)\n");
 
     // The cooldown tracker and the damage meter, two panels the client's own
