@@ -349,6 +349,35 @@ TEST_CASE("hostile-target spells are the ones that must not be sent unaimed",
     }
 }
 
+TEST_CASE("autoAcquiresHostileTarget matches native TBC 2.4.3 Spell.dbc flags",
+          "[spell][classification][autotarget]") {
+    using namespace wowee::game::spellclass;
+
+    // Attack (6603)
+    CHECK(autoAcquiresHostileTarget(6603, 0x00000010, 0x00000000, 0x00000000));
+    // AttributesEx & 0x200 (Sinister Strike, Backstab, Kick, Riposte, Cleave, Deadly Throw)
+    CHECK(autoAcquiresHostileTarget(1752, 0x00050010, 0x08000200, 0x00000000));
+    CHECK(autoAcquiresHostileTarget(53,   0x00050010, 0x08000200, 0x00100000));
+    CHECK(autoAcquiresHostileTarget(1766, 0x00050010, 0x08000200, 0x00000000));
+    CHECK(autoAcquiresHostileTarget(14251,0x00050010, 0x00020200, 0x00000000));
+    // Attributes & 0x04 next-swing without 0x200 (Heroic Strike, Raptor Strike)
+    CHECK(autoAcquiresHostileTarget(78,   0x00050014, 0x08000000, 0x00000000));
+    CHECK(autoAcquiresHostileTarget(2973, 0x00050404, 0x00000000, 0x00000000));
+    // AttributesEx2 & 0x20 autorepeat (Auto Shot 75, Shoot 5019)
+    CHECK(autoAcquiresHostileTarget(75,   0x00050012, 0x00000000, 0x00000020));
+    CHECK(autoAcquiresHostileTarget(5019, 0x00000012, 0x00000000, 0x00000020));
+
+    // Hostile spells without those flags do NOT auto-acquire a target:
+    // Gouge (1776), Sap (6770), Blind (2094), Throw (2764), Fireball (133), Smite (585), SW:P (589)
+    CHECK_FALSE(autoAcquiresHostileTarget(1776, 0x00150010, 0x08040000, 0x00000000));
+    CHECK_FALSE(autoAcquiresHostileTarget(6770, 0x00370010, 0x08040520, 0x00000000));
+    CHECK_FALSE(autoAcquiresHostileTarget(2094, 0x40110010, 0x00000000, 0x00000000));
+    CHECK_FALSE(autoAcquiresHostileTarget(2764, 0x00410012, 0x00000000, 0x00000000));
+    CHECK_FALSE(autoAcquiresHostileTarget(133,  0x00010000, 0x00000000, 0x00000000));
+    CHECK_FALSE(autoAcquiresHostileTarget(585,  0x00010000, 0x00000000, 0x00000000));
+    CHECK_FALSE(autoAcquiresHostileTarget(589,  0x00050000, 0x00000000, 0x00080000));
+}
+
 // ---------------------------------------------------------------------------
 // Range between two units takes both combat reaches. Native 2.4.3
 // IsSpellInRange, measured from a human rogue (reach 1.5) at a stunned Mottled

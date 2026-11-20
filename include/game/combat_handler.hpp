@@ -109,6 +109,16 @@ public:
     void targetLastTarget();
     void targetEnemy(bool reverse);
     void targetFriend(bool reverse);
+    /// Nearest live attackable enemy using the Tab-target cone/range/screen rule,
+    /// without changing target or resetting the Tab cycle timer. Returns 0 if none.
+    [[nodiscard]] uint64_t findNearestEnemy() const;
+    /// Resolve an attackable target for Attack / /startattack / auto-target skills:
+    /// - Live attackable current target: returned as-is.
+    /// - Dead target: refuses with ERR_INVALID_ATTACK_TARGET without switching.
+    /// - No target or friendly/self target (when explicitTargetGuid == 0): tries
+    ///   findNearestEnemy(), selects and returns it if found, else raises
+    ///   ERR_NO_ATTACK_TARGET (no target) or ERR_INVALID_ATTACK_TARGET (friendly).
+    [[nodiscard]] uint64_t acquireAttackTarget(uint64_t explicitTargetGuid = 0);
 
     /// The four narrower cycles WoW binds keys to, and which answered nothing.
     ///

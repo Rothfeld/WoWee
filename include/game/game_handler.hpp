@@ -1097,6 +1097,7 @@ public:
 
     void startAutoAttack(uint64_t targetGuid);
     void stopAutoAttack();
+    [[nodiscard]] uint64_t acquireAttackTarget(uint64_t explicitTargetGuid = 0);
     bool isAutoAttacking() const;
     bool hasAutoAttackIntent() const;
     bool isInCombat() const;

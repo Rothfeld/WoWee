@@ -1605,17 +1605,13 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
 
     const auto prerequisite = spellPrerequisite(owner_, spellId,
         targetGuid != 0 ? targetGuid : owner_.getTargetGuid());
-    // A melee ability with nothing selected: native 2.4.3 answers Shield
-    // Bash in Berserker Stance and Execute without rage alike with "There is
-    // nothing to attack." (ERR_NO_ATTACK_TARGET) and no UNIT_SPELLCAST_FAILED,
-    // ahead of power and form. Melee is the spell's SpellRange flag.
-    if ((prerequisite == SpellPrerequisite::Ready || prerequisite == SpellPrerequisite::NoPower) &&
-        (targetGuid != 0 ? targetGuid : owner_.getTargetGuid()) == 0 &&
-        (owner_.getSpellData(spellId).rangeFlags & spellclass::kSpellRangeFlagMelee) &&
-        spellclass::requiresHostileTarget(getSpellImplicitTargetA(spellId))) {
-        raiseGlobalStringError(owner_, "ERR_NO_ATTACK_TARGET");
-        return;
-    }
+    const auto* spellEntry = owner_.getSpellNameEntry(spellId);
+    const bool autoTargetsEnemy =
+        spellId == SPELL_ID_ATTACK ||
+        (spellEntry && spellclass::autoAcquiresHostileTarget(
+            spellId, spellEntry->attr, spellEntry->attrEx, spellEntry->attrEx2));
+
+    bool deferredNoPower = false;
     switch (prerequisite) {
         case SpellPrerequisite::Ready: break;
         case SpellPrerequisite::Unknown:
@@ -1634,6 +1630,18 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             // the Stealth form), not ONLY_STEALTHED's "You must be in stealth
             // mode." that a local refusal would have shown.
             break;
+        case SpellPrerequisite::NoPower:
+            // Auto-target offensive spells (Sinister Strike, Heroic Strike,
+            // Raptor Strike, Execute) acquire their enemy target BEFORE power
+            // refusal on native 2.4.3 (selecting the enemy and then saying
+            // "Not enough rage/mana/energy", or "There is nothing to attack."
+            // if none is in front). Non-auto-target spells (Intercept, Fireball)
+            // refuse power right here before form/target checks.
+            if (autoTargetsEnemy && targetGuid == 0) {
+                deferredNoPower = true;
+                break;
+            }
+            [[fallthrough]];
         default: {
             // The client's own refusals, in the same GlobalStrings words the
             // server's would carry.
@@ -1653,6 +1661,56 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
             // A refused cast is a failed one to the interface: native 2.4.3,
             // /cast Intercept with no rage in Battle Stance, fires
             // UI_ERROR_MESSAGE "Not enough rage" then UNIT_SPELLCAST_FAILED.
+            if (owner_.addonEventCallbackRef())
+                owner_.addonEventCallbackRef()("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+            return;
+        }
+    }
+
+    // Attack routes to auto-attack instead of cast (toggles off if already
+    // swinging, otherwise acquires the nearest enemy if needed and starts).
+    if (spellId == SPELL_ID_ATTACK) {
+        if (restorationActive_) cancelCast();
+        if (owner_.hasAutoAttackIntent()) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - autoAttackToggledAt_).count();
+            constexpr long kToggleGuardMs = 500;
+            if (autoAttackToggledAt_.time_since_epoch().count() != 0 &&
+                since < kToggleGuardMs &&
+                addons::storedCVarValue("secureAbilityToggle", "0") != "0") {
+                return;
+            }
+            owner_.stopAutoAttack();
+            autoAttackToggledAt_ = now;
+        } else {
+            const uint64_t target = owner_.acquireAttackTarget(targetGuid);
+            if (target != 0) {
+                owner_.startAutoAttack(target);
+                autoAttackToggledAt_ = std::chrono::steady_clock::now();
+            }
+        }
+        return;
+    }
+
+    // Native 2.4.3 checks equipment requirements (e.g. Backstab dagger, Shoot
+    // wand) BEFORE auto-acquiring a hostile target, and acquires the target
+    // BEFORE power/form/range checks.
+    if (autoTargetsEnemy && targetGuid == 0) {
+        if (const auto result = missingEquipment(owner_, spellId)) {
+            const auto& entry = owner_.spellNameCacheRef().at(spellId);
+            const std::string text = castFailureText(owner_, spellId, *result,
+                static_cast<uint32_t>(entry.equippedItemClass), entry.equippedItemSubClassMask);
+            if (!text.empty()) owner_.raiseUiError(text);
+            owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
+            return;
+        }
+        if (owner_.acquireAttackTarget(0) == 0) {
+            return;
+        }
+        if (deferredNoPower) {
+            const char* name = noPowerGlobalName(owner_.getSpellData(spellId).powerType);
+            if (name) raiseGlobalStringError(owner_, name);
             if (owner_.addonEventCallbackRef())
                 owner_.addonEventCallbackRef()("UNIT_SPELLCAST_FAILED", spellcastArgs("player", spellId));
             return;
@@ -1720,39 +1778,6 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid, std::optiona
     // Food and water are server auras, but using any action interrupts them.
     // Cancel the aura and stand first, then allow the requested action to proceed.
     if (restorationActive_) cancelCast();
-
-    // Attack routes to auto-attack instead of cast
-    if (spellId == SPELL_ID_ATTACK) {
-        uint64_t target = targetGuid != 0 ? targetGuid : owner_.getTargetGuid();
-        if (target != 0 || owner_.hasAutoAttackIntent()) {
-            if (owner_.hasAutoAttackIntent()) {
-                // Ability Toggle, which the panel describes exactly: protection
-                // from turning an ability off by hitting its button twice in a
-                // short space of time. Offered, and read by nothing - so a
-                // double-tap on Attack has always stopped the swing that the
-                // first tap started.
-                //
-                // The guard is on the second press rather than on the state:
-                // stopping deliberately a second later is what the button is
-                // for, and only the accident within the window is refused.
-                const auto now = std::chrono::steady_clock::now();
-                const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - autoAttackToggledAt_).count();
-                constexpr long kToggleGuardMs = 500;
-                if (autoAttackToggledAt_.time_since_epoch().count() != 0 &&
-                    since < kToggleGuardMs &&
-                    addons::storedCVarValue("secureAbilityToggle", "0") != "0") {
-                    return;
-                }
-                owner_.stopAutoAttack();
-                autoAttackToggledAt_ = now;
-            } else {
-                owner_.startAutoAttack(target);
-                autoAttackToggledAt_ = std::chrono::steady_clock::now();
-            }
-        }
-        return;
-    }
 
     // Action bars restored from the server can still hold a rank that a higher rank
     // has since superseded. The server drops casts of superseded ranks without

@@ -1647,6 +1647,102 @@ void CombatHandler::targetEnemy(bool reverse) {
     });
 }
 
+uint64_t CombatHandler::findNearestEnemy() const {
+    auto* renderer = owner_.services().renderer;
+    const bool checkScreen = renderer && renderer->getCamera();
+    const glm::mat4 viewProjection = checkScreen ? renderer->getCamera()->getViewProjectionMatrix()
+                                                 : glm::mat4(1.0f);
+
+    const auto& movement = owner_.getMovementInfo();
+    const glm::vec3 player(movement.x, movement.y, movement.z);
+
+    std::vector<TabCandidate> candidates;
+    for (const auto& [guid, entity] : owner_.getEntityManager().getEntities()) {
+        if (!entity || guid == owner_.getPlayerGuid()) continue;
+        const auto t = entity->getType();
+        if (t != ObjectType::UNIT && t != ObjectType::PLAYER) continue;
+        auto* unit = dynamic_cast<Unit*>(entity.get());
+        if (!unit || unit->getHealth() == 0) continue;
+        if (!isEnemyTarget(guid, *unit)) continue;
+        const glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
+        if (!isInTabRange(player, pos) || !isInTabCone(player, movement.orientation, pos)) continue;
+        if (checkScreen && !isOnScreen(viewProjection, core::coords::canonicalToRender(pos))) continue;
+        candidates.push_back({.guid = guid, .distance = glm::distance(player, pos)});
+    }
+
+    return pickTabTarget(std::move(candidates), 0, /*restart=*/true, /*reverse=*/false);
+}
+
+uint64_t CombatHandler::acquireAttackTarget(uint64_t explicitTargetGuid) {
+    if (owner_.isPlayerDead()) {
+        owner_.errorGlobal("ERR_ATTACK_DEAD");
+        return 0;
+    }
+
+    const uint64_t current = explicitTargetGuid != 0 ? explicitTargetGuid : owner_.getTargetGuid();
+    if (current == 0) {
+        if (const uint64_t found = findNearestEnemy(); found != 0) {
+            setTarget(found);
+            return found;
+        }
+        owner_.errorGlobal("ERR_NO_ATTACK_TARGET");
+        return 0;
+    }
+
+    // Self or friendly target: native 2.4.3 auto-switches to the nearest enemy
+    // in cone when no explicit unit was named, else refuses with
+    // "You cannot attack that target." (ERR_INVALID_ATTACK_TARGET).
+    if (current == owner_.getPlayerGuid()) {
+        if (explicitTargetGuid == 0) {
+            if (const uint64_t found = findNearestEnemy(); found != 0) {
+                setTarget(found);
+                return found;
+            }
+        }
+        owner_.errorGlobal("ERR_INVALID_ATTACK_TARGET");
+        return 0;
+    }
+
+    if (auto entity = owner_.getEntityManager().getEntity(current)) {
+        const auto t = entity->getType();
+        auto* unit = dynamic_cast<Unit*>(entity.get());
+        if (!unit || (t != ObjectType::UNIT && t != ObjectType::PLAYER)) {
+            owner_.errorGlobal("ERR_INVALID_ATTACK_TARGET");
+            return 0;
+        }
+        // Dead corpse selected: native 2.4.3 does NOT auto-switch to another
+        // enemy; it keeps the corpse targeted and raises ERR_INVALID_ATTACK_TARGET.
+        if (unit->getHealth() == 0) {
+            owner_.errorGlobal("ERR_INVALID_ATTACK_TARGET");
+            return 0;
+        }
+        if (!isEnemyTarget(current, *unit)) {
+            // Assist Attack: when attacking a friendly unit that has a hostile
+            // target, let startAutoAttack handle assistAttack if enabled.
+            if (addons::storedCVarValue("assistAttack", "0") != "0") {
+                const uint64_t theirTarget = unitTargetGuid(entity);
+                if (auto their = owner_.getEntityManager().getEntity(theirTarget)) {
+                    if (auto* theirUnit = dynamic_cast<Unit*>(their.get());
+                        theirUnit && theirUnit->getHealth() > 0 &&
+                        (theirUnit->isHostile() || isAggressiveTowardPlayer(theirTarget))) {
+                        return current;
+                    }
+                }
+            }
+            if (explicitTargetGuid == 0) {
+                if (const uint64_t found = findNearestEnemy(); found != 0) {
+                    setTarget(found);
+                    return found;
+                }
+            }
+            owner_.errorGlobal("ERR_INVALID_ATTACK_TARGET");
+            return 0;
+        }
+    }
+
+    return current;
+}
+
 bool CombatHandler::isEnemyTarget(uint64_t guid, const Unit& unit) const {
     return isTabTargetable(unit.isHostile(),
                            owner_.isFriendlyFaction(unit.getFactionTemplate()),

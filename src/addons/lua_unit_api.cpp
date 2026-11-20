@@ -2188,16 +2188,33 @@ static int lua_Dismount(lua_State* L) {
     return 0;
 }
 
-// StartAttack([unit]) / StopAttack() - swing at what is targeted
-//
-// The interface passes a unit only to attack something other than the current
-// target, which this client cannot do without changing target first, so the
-// argument is read and the current target used.
+// StartAttack([unit]) / StopAttack() / AttackTarget() - swing at what is targeted
+// (acquiring the nearest enemy in cone when no target or a friendly target is selected).
 static int lua_StartAttack(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) return 0;
-    const uint64_t target = gh->getTargetGuid();
-    if (target != 0) gh->startAutoAttack(target);
+    uint64_t named = 0;
+    if (const char* unit = lua_tostring(L, 1); unit && *unit) {
+        std::string uid(unit);
+        toLowerInPlace(uid);
+        named = resolveUnitGuid(gh, uid);
+    }
+    if (const uint64_t target = gh->acquireAttackTarget(named)) {
+        gh->startAutoAttack(target);
+    }
+    return 0;
+}
+
+static int lua_AttackTarget(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    if (gh->hasAutoAttackIntent()) {
+        gh->stopAutoAttack();
+        return 0;
+    }
+    if (const uint64_t target = gh->acquireAttackTarget(0)) {
+        gh->startAutoAttack(target);
+    }
     return 0;
 }
 
@@ -3339,6 +3356,7 @@ void registerUnitLuaAPI(lua_State* L) {
                 {"RetrieveCorpse",      lua_RetrieveCorpse},
                 {"Dismount",            lua_Dismount},
                 {"StartAttack",         lua_StartAttack},
+                {"AttackTarget",        lua_AttackTarget},
                 {"StopAttack",          lua_StopAttack},
                 {"UnitInParty",         lua_UnitInParty},
                 {"UnitInRaid",          lua_UnitInRaid},

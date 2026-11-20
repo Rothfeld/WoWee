@@ -2431,6 +2431,22 @@ measurements. Gotcha: the native client also sometimes appends units within
 about 10 yards outside the cone after the cone units; that set could not be
 reduced to a rule and is not reproduced.
 
+### Hostile auto-target acquisition
+
+`Attack` (6603), `/startattack`, `StartAttack()`, `AttackTarget()`, and spells
+carrying `AttributesEx & 0x200` (enables auto-attack: Sinister Strike, Backstab,
+Kick, Riposte, ...), `Attributes & 0x04` (on-next-swing: Heroic Strike, Raptor
+Strike), or `AttributesEx2 & 0x20` (auto-repeat: Auto Shot, Shoot) auto-acquire
+the nearest live attackable enemy using the Tab-target rule when invoked unnamed
+with no target or a friendly/self target. Hostile spells without those flags
+(Gouge, Sap, Blind, Throw, Fireball, Frostbolt, Smite, Shadow Word: Pain) do not
+auto-acquire. A selected dead corpse is never auto-switched and refuses with
+`ERR_INVALID_ATTACK_TARGET`. Equipment, combo-point, and dead-caster checks run
+before auto-acquisition; power and range checks run after it. Measured on native
+2.4.3 (`_experiments/20261120T091749Z.attack_autotarget` in the workspace) and
+checked by `test_spell_classification '[autotarget]'` and
+`test_game_replay '[autotarget]'`.
+
 ### Duel requests
 
 The duel menu casts spell 7266 through the active expansion packet parser.

@@ -477,16 +477,10 @@ public:
             }
         }
         if (condPass) {
-            uint64_t atkTarget = (saOverride != static_cast<uint64_t>(-1) && saOverride != 0)
-                ? saOverride : (ctx.gameHandler.hasTarget() ? ctx.gameHandler.getTargetGuid() : 0);
-            if (atkTarget != 0) {
+            const uint64_t explicitTarget =
+                (saOverride != static_cast<uint64_t>(-1) && saOverride != 0) ? saOverride : 0;
+            if (const uint64_t atkTarget = ctx.gameHandler.acquireAttackTarget(explicitTarget)) {
                 ctx.gameHandler.startAutoAttack(atkTarget);
-            } else {
-                game::MessageChatData msg;
-                msg.type = game::ChatType::SYSTEM;
-                msg.language = game::ChatLanguage::UNIVERSAL;
-                msg.message = "You have no target.";
-                ctx.gameHandler.addLocalChatMessage(msg);
             }
         }
         return {};

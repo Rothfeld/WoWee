@@ -148,6 +148,30 @@ inline bool requiresHostileTarget(uint32_t implicitTargetA) {
     return implicitTargetA == kImplicitTargetEnemy;
 }
 
+/// Whether using this spell with no target (or a friendly target) auto-acquires
+/// the nearest attackable enemy in front of the player, matching native TBC 2.4.3
+/// (measured on pair 5, _experiments/20261120T091749Z.attack_autotarget):
+/// - Attack (6603)
+/// - AttributesEx & 0x200 (SPELL_ATTR_EX_INITIATES_COMBAT_ENABLES_AUTO_ATTACK):
+///   Sinister Strike, Backstab, Kick, Riposte, Cleave, Slam, Maul, ...
+/// - Attributes & 0x04 (SPELL_ATTR_ON_NEXT_SWING):
+///   Heroic Strike, Raptor Strike, Cleave, Maul
+/// - AttributesEx2 & 0x20 (SPELL_ATTR_EX2_AUTOREPEAT_FLAG):
+///   Auto Shot (75), Shoot (5019)
+/// Hostile spells without these flags (Gouge, Sap, Blind, Throw, Fireball,
+/// Frostbolt, Smite, Shadow Word: Pain) do not auto-acquire a target.
+inline bool autoAcquiresHostileTarget(uint32_t spellId, uint32_t attr,
+                                      uint32_t attrEx, uint32_t attrEx2) {
+    constexpr uint32_t kAttrOnNextSwing         = 0x00000004u;
+    constexpr uint32_t kAttrExEnablesAutoAttack = 0x00000200u;
+    constexpr uint32_t kAttrEx2AutoRepeat       = 0x00000020u;
+    constexpr uint32_t kSpellIdAttack           = 6603u;
+    return spellId == kSpellIdAttack ||
+           (attrEx & kAttrExEnablesAutoAttack) != 0 ||
+           (attr & kAttrOnNextSwing) != 0 ||
+           (attrEx2 & kAttrEx2AutoRepeat) != 0;
+}
+
 /// Which units a single-unit spell can be cast at, from Spell.dbc's first
 /// EffectImplicitTargetA and SpellCastTargetFlags (Targets).
 ///

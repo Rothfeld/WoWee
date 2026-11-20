@@ -2339,6 +2339,10 @@ void GameHandler::stopAutoAttack() {
     if (combatHandler_) combatHandler_->stopAutoAttack();
 }
 
+uint64_t GameHandler::acquireAttackTarget(uint64_t explicitTargetGuid) {
+    return combatHandler_ ? combatHandler_->acquireAttackTarget(explicitTargetGuid) : 0;
+}
+
 void GameHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
                                 uint64_t srcGuid, uint64_t dstGuid, uint32_t schoolMask, bool reduction, bool unitCombat) {
     if (combatHandler_) combatHandler_->addCombatText(type, amount, spellId, isPlayerSource, powerType, srcGuid, dstGuid,
