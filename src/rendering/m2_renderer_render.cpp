@@ -1145,8 +1145,9 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                                  .effectiveMaxDistSq = effectiveMaxDistSq,
                                  .groundDetail = instance.cachedIsGroundDetail};
             // A faded instance is drawn blended, all of it - see M2Instance::fade.
+            // External-pose companions only carry projected transparent batches.
             const bool faded = instance.fade < 0.999f;
-            if (!faded) out.opaque.push_back(visible);
+            if (!faded && !instance.externalPose) out.opaque.push_back(visible);
             if (faded || (instance.cachedModel &&
                 (instance.cachedModel->hasTransparentBatches || instance.cachedModel->isSpellEffect ||
                  instance.cachedModel->hasProjectedBatches))) {
@@ -1996,7 +1997,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
         if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;
         bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
-        if (needsBones && instance.megaBoneOffset == 0) continue;
+        // External-pose companions only carry CPU-skinned projected batches,
+        // which draw from projectedVB_ with e.useBones = 0 and need no megaBoneOffset.
+        if (needsBones && instance.megaBoneOffset == 0 &&
+            !(instance.externalPose && model.hasProjectedBatches)) continue;
 
         uint16_t desiredLOD = 0;
         if (entry.distSq > 150.0f * 150.0f) desiredLOD = 3;
@@ -2451,7 +2455,7 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
     shadowCasters_.clear();
     for (uint32_t i = 0; i < instances.size(); ++i) {
         const auto& instance = instances[i];
-        if (!instance.cachedIsValid ||
+        if (!instance.cachedIsValid || instance.externalPose ||
             instance.cachedIsInvisibleTrap || instance.retiring) continue;
         if (!instance.cachedModel) continue;
         const M2ModelGPU& model = *instance.cachedModel;

@@ -106,7 +106,13 @@ inline float particleTwinkleScale(uint32_t seed, float age, float speed,
 inline glm::vec3 particleTailVector(uint32_t flags, const glm::vec3& velocity, float tailLength,
                                     const glm::vec3& toBirth,
                                     float age = std::numeric_limits<float>::infinity()) {
-    const float span = std::min(tailLength, std::max(age, 0.0f));
+    // Pinned (0x400) and NoTrail (0x10, e.g. Purge_Impact_Chest #1 with drag 30)
+    // tails cannot trail behind their birth time. Unpinned world-space tail
+    // emitters (e.g. Shaman Water/Air/Earth totem top flames, flags 0x9,
+    // tailLength 1.2 s) keep their full authored velocity * tailLength so the
+    // streak reaches back into the totem bowl rather than floating above it.
+    const bool clampToAge = (flags & (kParticlePinned | kParticleNoTrail)) != 0;
+    const float span = clampToAge ? std::min(tailLength, std::max(age, 0.0f)) : tailLength;
     const glm::vec3 tail = -velocity * span;
     if (!(flags & kParticlePinned)) return tail;
     return glm::dot(tail, tail) > glm::dot(toBirth, toBirth) ? toBirth : tail;
@@ -487,4 +493,14 @@ inline uint32_t particleCell(const pipeline::M2ParticleEmitter& em, float lifeRa
     if (tail) return particleCellInRange(head ? em.tailCells : em.tailDecayCells, phase, tiles);
     return particleCellInRange(head ? em.headCells : em.decayCells, phase, tiles);
 }
+/// Vertical displacement of an M2 ribbon edge whose age advances from
+/// `prevAge` to `newAge` under `gravity` (positive rises along +Z).
+/// In WoW M2 ribbons (e.g. Shaman elemental totems with gravity=+5,
+/// edgeLifetime=0.51s; Cyclone +5; BlackMagic_Precast +10; DemonicSacrifice
+/// -0.5), the cumulative vertical offset at age `t` is `gravity * t^2 * scaleZ`,
+/// independent of frame rate.
+inline float ribbonGravityStepZ(float gravity, float prevAge, float newAge, float scaleZ = 1.0f) {
+    return gravity * (newAge * newAge - prevAge * prevAge) * scaleZ;
+}
+
 } // namespace wowee::rendering

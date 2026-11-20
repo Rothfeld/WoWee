@@ -13,7 +13,9 @@
 // animated skeleton exactly as the mesh does.
 
 #include "pipeline/m2_loader.hpp"
+#include "rendering/projected_texture.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <glm/glm.hpp>
 
@@ -24,19 +26,42 @@
 
 namespace wowee::rendering {
 
-/// Whether a model has anything for the emitter path to run.
-inline bool hasEffectEmitters(const pipeline::M2Model& model) {
-    return !model.particleEmitters.empty() || !model.ribbonEmitters.empty();
+/// Whether a skin batch is a projected ground-decal quad (flags & 0x4, 6 indices),
+/// such as Shaman elemental totem base glows, battle standards, and Al'ar's aura.
+inline bool isProjectedQuadBatch(const pipeline::M2Batch& batch) {
+    return (batch.flags & projected_texture::kBatchFlagProjected) != 0 &&
+           batch.indexCount == 6;
 }
 
-/// The model with its drawable and collision geometry removed. Bones,
+/// Whether a model carries any projected ground-decal batches.
+inline bool hasProjectedBatches(const pipeline::M2Model& model) {
+    return std::any_of(model.batches.begin(), model.batches.end(), isProjectedQuadBatch);
+}
+
+/// Whether a model has anything for the M2Renderer companion path to run
+/// (particle emitters, ribbon emitters, or projected ground-decal batches).
+inline bool hasEffectEmitters(const pipeline::M2Model& model) {
+    return !model.particleEmitters.empty() || !model.ribbonEmitters.empty() ||
+           hasProjectedBatches(model);
+}
+
+/// The model with its regular drawable and collision geometry removed. Bones,
 /// sequences, global sequences, textures, materials and emitters stay: the
 /// emitters index the bones and textures, and their tracks the sequences.
+/// Projected ground-decal quad batches (and the vertices/indices they reference)
+/// stay too so M2Renderer drapes them onto terrain/WMO surfaces instead of
+/// CharacterRenderer drawing flat ground-clipping quads.
 inline pipeline::M2Model emitterOnlyModel(const pipeline::M2Model& model) {
     pipeline::M2Model effects = model;
-    effects.vertices.clear();
-    effects.indices.clear();
-    effects.batches.clear();
+    if (hasProjectedBatches(model)) {
+        std::erase_if(effects.batches, [](const pipeline::M2Batch& batch) {
+            return !isProjectedQuadBatch(batch);
+        });
+    } else {
+        effects.vertices.clear();
+        effects.indices.clear();
+        effects.batches.clear();
+    }
     effects.collisionVertices.clear();
     effects.collisionIndices.clear();
     effects.collisionNormals.clear();

@@ -482,6 +482,12 @@ TEST_CASE("Pinned particle tails end at the birth point", "[m2][particle]") {
                                                glm::vec3(-dist, 0.0f, 0.0f), age);
         CHECK(glm::length(t) < 0.01f);
     }
+    // Shaman Water/Air/Earth totem top flame (flags 0x9, unpinned, not NoTrail):
+    // keeps full authored -velocity * tailLength even at young age so the flame
+    // streak reaches down into the totem bowl instead of floating above the horns.
+    const glm::vec3 totemTail = particleTailVector(0x9, glm::vec3(0.0f, 0.0f, 0.908f), 1.2f,
+                                                   glm::vec3(0.0f, 0.0f, -0.1f), 0.1f);
+    CHECK(totemTail.z == Catch::Approx(-0.908f * 1.2f));
 }
 
 TEST_CASE("Spline emitters read Bezier points and place births along them", "[m2][particle]") {

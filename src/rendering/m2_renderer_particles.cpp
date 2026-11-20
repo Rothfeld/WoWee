@@ -394,14 +394,17 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
                                                   inst.globalSequenceTime, gsd, 1.0f);
 
         // Age existing edges and remove expired ones
+        const float scaleZ = glm::length(glm::vec3(inst.modelMatrix[2]));
         for (auto& e : edges) {
+            const float prevAge = e.age;
             e.age += dt;
-            // Apply gravity
+            // Apply ribbon gravity: z(age) = z0 + gravity * age^2 * scaleZ
+            // (positive rises along +Z, e.g. Shaman elemental totem spirals).
             if (em.gravity != 0.0f) {
-                const float drop = em.gravity * dt * dt * 0.5f;
-                e.worldPos.z -= drop;
-                e.top.z -= drop;
-                e.bottom.z -= drop;
+                const float dz = ribbonGravityStepZ(em.gravity, prevAge, e.age, scaleZ);
+                e.worldPos.z += dz;
+                e.top.z += dz;
+                e.bottom.z += dz;
             }
         }
         while (!edges.empty() && edges.front().age >= em.edgeLifetime) {

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "pipeline/m2_loader.hpp"
+#include "rendering/particle_emission.hpp"
 
 using namespace wowee::pipeline;
 
@@ -220,6 +221,65 @@ TEST_CASE("Fireball and Shadowbolt missile ribbons use bone local Y perpendicula
         for (const auto& rib : model.ribbonEmitters) {
             const glm::vec3 y = boneWorldRotation(model, rib.bone) * glm::vec3(0.0f, 1.0f, 0.0f);
             CHECK(std::abs(y.x) < 0.05f);
+        }
+    }
+}
+
+TEST_CASE("ribbonGravityStepZ integrates z(age) = gravity * age^2 frame-rate independently",
+          "[m2][ribbon]") {
+    using wowee::rendering::ribbonGravityStepZ;
+    // WaterElementalTotem: gravity=+5, edgeLifetime=0.51s -> rises +1.3005 yd along +Z.
+    const float gravity = 5.0f;
+    const float lifetime = 0.51f;
+
+    float z60 = 0.0f;
+    for (int i = 0; i < 30; ++i) {
+        const float t0 = lifetime * static_cast<float>(i) / 30.0f;
+        const float t1 = lifetime * static_cast<float>(i + 1) / 30.0f;
+        z60 += ribbonGravityStepZ(gravity, t0, t1);
+    }
+    float z10 = 0.0f;
+    for (int i = 0; i < 5; ++i) {
+        const float t0 = lifetime * static_cast<float>(i) / 5.0f;
+        const float t1 = lifetime * static_cast<float>(i + 1) / 5.0f;
+        z10 += ribbonGravityStepZ(gravity, t0, t1);
+    }
+    const float expected = gravity * lifetime * lifetime;
+    CHECK(z60 == Catch::Approx(expected).margin(1e-5f));
+    CHECK(z10 == Catch::Approx(expected).margin(1e-5f));
+    CHECK(z60 > 1.25f);
+    // Negative gravity falls along -Z; scaleZ scales displacement proportionally.
+    CHECK(ribbonGravityStepZ(-1.0f, 0.0f, 0.5f, 2.0f) == Catch::Approx(-0.5f));
+}
+
+TEST_CASE("TBC Shaman elemental totems parse rising ribbons and projected base glow",
+          "[m2][ribbon][assets]") {
+    const char* root = std::getenv("WOWEE_TBC_DATA_DIR");
+    if (!root || !*root) SKIP("Set WOWEE_TBC_DATA_DIR to client/wowee-data/expansions/tbc");
+
+    for (const char* rel : {
+             "/creature/spells/waterelementaltotem.m2",
+             "/creature/spells/airelementaltotem.m2",
+             "/creature/spells/earthelementaltotem.m2",
+             "/creature/spells/fireelementaltotem.m2",
+         }) {
+        INFO("totem=" << rel);
+        std::ifstream in(std::string(root) + rel, std::ios::binary);
+        const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in), {}};
+        REQUIRE_FALSE(data.empty());
+
+        const M2Model model = M2Loader::load(data);
+        REQUIRE(model.ribbonEmitters.size() >= 2);
+        for (const auto& rib : model.ribbonEmitters) {
+            CHECK(rib.gravity == Catch::Approx(5.0f).margin(0.01f));
+            CHECK(rib.edgesPerSecond >= 20.0f);
+            CHECK(rib.edgeLifetime >= 0.5f);
+            // Stand sequence (index 1) has visibility=1; Birth (index 0) has visibility=0.
+            REQUIRE(rib.visibilityTrack.sequences.size() >= 2);
+            REQUIRE_FALSE(rib.visibilityTrack.sequences[0].floatValues.empty());
+            REQUIRE_FALSE(rib.visibilityTrack.sequences[1].floatValues.empty());
+            CHECK(rib.visibilityTrack.sequences[0].floatValues[0] == 0.0f);
+            CHECK(rib.visibilityTrack.sequences[1].floatValues[0] == 1.0f);
         }
     }
 }

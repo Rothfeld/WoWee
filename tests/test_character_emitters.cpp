@@ -99,3 +99,29 @@ TEST_CASE("A display's ParticleColor row recolours emitters by their colour inde
     CHECK(model.particleEmitters[1].particleColor.vec3Values[0] == glm::vec3(0, 1, 0));
     CHECK(rendering::characterEmitterModelId("FelReaver", 3, 306) != rendering::characterEmitterModelId("FelReaver", 3, 332));
 }
+
+TEST_CASE("projected ground-decal batches are preserved in the emitter companion model", "[character-emitters]") {
+    pipeline::M2Model totem;
+    totem.name = "Creature\\Spells\\WaterElementalTotem.m2";
+    totem.vertices.resize(267);
+    totem.indices.resize(800);
+    pipeline::M2Batch wood;
+    wood.flags = 0x10;
+    wood.indexCount = 744;
+    pipeline::M2Batch groundGlow;
+    groundGlow.flags = 0x0c; // 0x08 | kBatchFlagProjected (0x04)
+    groundGlow.indexCount = 6;
+    totem.batches = {wood, groundGlow};
+
+    CHECK(rendering::isProjectedQuadBatch(groundGlow));
+    CHECK_FALSE(rendering::isProjectedQuadBatch(wood));
+    CHECK(rendering::hasProjectedBatches(totem));
+    CHECK(rendering::hasEffectEmitters(totem));
+
+    const auto companion = rendering::emitterOnlyModel(totem);
+    CHECK(companion.isValid());
+    REQUIRE(companion.batches.size() == 1);
+    CHECK(rendering::isProjectedQuadBatch(companion.batches[0]));
+    CHECK(companion.vertices.size() == 267);
+    CHECK(companion.indices.size() == 800);
+}

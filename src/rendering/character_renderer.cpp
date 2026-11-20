@@ -3951,6 +3951,13 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 // submeshes and only one is alpha-1 in any given animation.
                 // Opaque batches can't express alpha in the shader, so cull
                 // batches whose track evaluates to ~0 for the current sequence.
+                // Projected ground-decal quads (flags & 0x4, 6 indices, e.g.
+                // Shaman totem base glows) are draped over terrain/WMO surfaces
+                // by the M2Renderer companion in world rendering rather than
+                // drawn as flat terrain-clipping quads here.
+                if (renderPassOverride_ == VK_NULL_HANDLE && isProjectedQuadBatch(batch)) {
+                    continue;
+                }
                 const float batchColorAlpha = glm::clamp(
                     evalBatchColorAlpha(gpuModel.data, batch,
                                         instance.currentSequenceIndex,
