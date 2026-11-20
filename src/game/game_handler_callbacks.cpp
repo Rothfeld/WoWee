@@ -3698,8 +3698,13 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                 return;
             }
         }
-        // Face object and send heartbeat before use so strict servers don't require
-        // a nudge movement to accept interaction.
+        // Measure 3D distance and display-box reach before sending use.
+        // Native TBC 2.4.3 never turns the player toward an interacted game
+        // object (questgiver notice boards / wanted posters, mailboxes, books,
+        // chests / Opening casts, buttons, goobers, chairs) and sends neither
+        // MSG_MOVE_SET_FACING nor a stationary MSG_MOVE_HEARTBEAT; CMaNGOS TBC
+        // checks distance only (never HasInArc) on GameObject use/loot/casts,
+        // and chairs orient the player server-side via NearTeleportTo.
         float dx = entity->getX() - movementInfo.x;
         float dy = entity->getY() - movementInfo.y;
         float dz = entity->getZ() - movementInfo.z;
@@ -3772,10 +3777,6 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
             movementInfo.flags &= ~0x0000000Fu; // clear directional movement flags
             sendMovement(Opcode::MSG_MOVE_STOP);
         }
-        if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-            faceCanonicalYaw(std::atan2(-dy, dx));
-        }
-        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
     }
 
     // Determine GO type for interaction strategy
