@@ -4484,7 +4484,7 @@ void Application::syncRenderInstancesToEntities(float deltaTime) {
                 smoothedLegYaw = 0.0f;
             } else {
                 smoothedLegYaw = rendering::stepLegYawOffset(
-                    smoothedLegYaw, targetLegYaw, legsTravel && legs.moving, deltaTime);
+                    smoothedLegYaw, targetLegYaw, deltaTime);
             }
             const float renderYaw = facingYaw + smoothedLegYaw;
             charRenderer->setInstanceTorsoYaw(instanceId,

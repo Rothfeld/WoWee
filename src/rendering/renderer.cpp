@@ -2320,9 +2320,8 @@ void Renderer::update(float deltaTime) {
             // Applying the land-stride yaw and spine counter-rotation twists it twice.
             const bool swimming = cameraController->isSwimming();
             const float targetLegYawRad = swimming ? 0.0f : cameraController->getTargetLegYawOffsetRad();
-            const bool legMoving = !swimming && cameraController->isLegDirectionMoving();
             characterLegYawOffsetRad_ = stepLegYawOffset(
-                characterLegYawOffsetRad_, targetLegYawRad, legMoving, deltaTime);
+                characterLegYawOffsetRad_, targetLegYawRad, deltaTime);
         }
         const float modelYawRad = glm::radians(characterYaw) + characterLegYawOffsetRad_;
         characterRenderer->setInstanceRotation(characterInstanceId, glm::vec3(0.0f, 0.0f, modelYawRad));

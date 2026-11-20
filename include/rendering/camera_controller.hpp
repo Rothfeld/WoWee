@@ -183,8 +183,6 @@ public:
     [[nodiscard]] bool legsFollowTravel() const { return legsFollowTravel_; }
     /// Target relative lower-body yaw offset in [-pi/2, +pi/2] radians (see groundDirection).
     [[nodiscard]] float getTargetLegYawOffsetRad() const { return targetLegYawOffsetRad_; }
-    /// True while directional ground/airborne locomotion is active for leg-yaw slewing.
-    [[nodiscard]] bool isLegDirectionMoving() const { return legDirectionMoving_; }
     [[nodiscard]] bool isThirdPerson() const { return thirdPerson; }
     [[nodiscard]] bool isFirstPersonView() const { return thirdPerson && (userTargetDistance <= FIRST_PERSON_DISTANCE); }
     [[nodiscard]] bool shouldHidePlayer() const { return playerCameraOpacity_ <= 0.0f; }
@@ -573,7 +571,6 @@ private:
     bool legsFollowTravel_ = false;
     std::optional<GroundDirection> airborneLegDir_;
     float targetLegYawOffsetRad_ = 0.0f;
-    bool legDirectionMoving_ = false;
 
     // Movement settings
     float groundLocomotionSpeed_ = 0.0f;

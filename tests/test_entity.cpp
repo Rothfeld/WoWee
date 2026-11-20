@@ -5,6 +5,8 @@
 #include "game/remote_jump.hpp"
 #include "rendering/loot_sparkles.hpp"
 #include "rendering/animation/ground_direction.hpp"
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <algorithm>
 #include <memory>
@@ -468,50 +470,69 @@ TEST_CASE("Legs keep the takeoff direction until landing", "[movement][animation
 }
 
 TEST_CASE("Strafe and diagonal leg yaw slews smoothly through front", "[movement][animation]") {
+    using wowee::rendering::kLegYawDecayPerSec;
     using wowee::rendering::stepLegYawOffset;
-    constexpr float halfPi = 1.57079632679f;
-    constexpr float quarterPi = 0.78539816339f;
+    constexpr float pi = 3.14159265358979323846f;
+    constexpr float halfPi = 0.5f * pi;
+    constexpr float quarterPi = 0.25f * pi;
+    constexpr float dt60 = 1.0f / 60.0f;
+    const float halfLifeSec = std::log(2.0f) / kLegYawDecayPerSec; // ~40.16 ms
 
-    // Strafe left (+90 deg) -> strafe right (-90 deg) at 60 fps:
-    // pivots monotonically through 0 (front), hits 0 at 125ms, reaches -90 deg at 250ms.
+    // Native TBC 2.4.3 at 60 Hz multiplies remaining error by 0.75 per frame:
+    // Q (+90 deg) -> E (-90 deg) steps +90 -> +45 -> +11.25 -> -14.0625 -> -33.046875 ...
     float yaw = halfPi;
-    for (int i = 0; i < 15; ++i) {
-        const float next = stepLegYawOffset(yaw, -halfPi, true, 1.0f / 60.0f);
+    const float expectedDeg60[] = {
+        45.0f, 11.25f, -14.0625f, -33.046875f, -47.28515625f,
+        -57.96386719f, -65.97290039f, -71.97967529f, -76.48475647f, -79.86356735f,
+    };
+    for (float expDeg : expectedDeg60) {
+        const float next = stepLegYawOffset(yaw, -halfPi, dt60);
         REQUIRE(next < yaw);
         REQUIRE(next >= -halfPi);
         REQUIRE(next <= halfPi);
+        REQUIRE(next * (180.0f / pi) == Catch::Approx(expDeg).margin(1e-3f));
         yaw = next;
     }
-    REQUIRE(yaw == Catch::Approx(-halfPi).margin(1e-4f));
 
-    // Midpoint check at 125ms: passes straight through 0 (front).
-    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, 0.125f) == Catch::Approx(0.0f).margin(1e-4f));
-    REQUIRE(stepLegYawOffset(-halfPi, halfPi, true, 0.125f) == Catch::Approx(0.0f).margin(1e-4f));
+    // Crosses 0 (front) at t_1/2 = ln(2) / k (~40.16 ms), never taking the 180 deg back arc.
+    REQUIRE(halfLifeSec == Catch::Approx(0.040157f).margin(1e-5f));
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, halfLifeSec) == Catch::Approx(0.0f).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(-halfPi, halfPi, halfLifeSec) == Catch::Approx(0.0f).margin(1e-4f));
 
-    // Diagonal F+L (+45 deg) -> F+R (-45 deg) and Back+L (-45 deg) -> Back+R (+45 deg): 125ms.
-    REQUIRE(stepLegYawOffset(quarterPi, -quarterPi, true, 0.0625f) == Catch::Approx(0.0f).margin(1e-4f));
-    REQUIRE(stepLegYawOffset(quarterPi, -quarterPi, true, 0.125f) == Catch::Approx(-quarterPi).margin(1e-4f));
-    REQUIRE(stepLegYawOffset(-quarterPi, quarterPi, true, 0.125f) == Catch::Approx(quarterPi).margin(1e-4f));
+    // Diagonal F+L (+45 deg) <-> F+R (-45 deg) and Back+L (-45 deg) <-> Back+R (+45 deg):
+    // frame 1 @ 60 Hz hits +-22.5 deg; crosses 0 at the same 40.16 ms half-life.
+    REQUIRE(stepLegYawOffset(quarterPi, -quarterPi, dt60) == Catch::Approx(0.5f * quarterPi).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(quarterPi, -quarterPi, halfLifeSec) == Catch::Approx(0.0f).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(-quarterPi, quarterPi, halfLifeSec) == Catch::Approx(0.0f).margin(1e-4f));
 
-    // Stand (0) -> Strafe L (+90 deg): 125ms.
-    REQUIRE(stepLegYawOffset(0.0f, halfPi, true, 0.0625f) == Catch::Approx(quarterPi).margin(1e-4f));
-    REQUIRE(stepLegYawOffset(0.0f, halfPi, true, 0.125f) == Catch::Approx(halfPi).margin(1e-4f));
+    // Stand (0) -> Strafe L (+90 deg): +22.5 deg on frame 1, +45 deg at half-life.
+    REQUIRE(stepLegYawOffset(0.0f, halfPi, dt60) == Catch::Approx(0.5f * quarterPi).margin(1e-4f));
+    REQUIRE(stepLegYawOffset(0.0f, halfPi, halfLifeSec) == Catch::Approx(quarterPi).margin(1e-4f));
 
-    // Strafe R (-90 deg) -> Stop (0, moving=false): unwinds slower (~250ms for 90 deg).
-    REQUIRE(stepLegYawOffset(-halfPi, 0.0f, false, 0.125f) == Catch::Approx(-quarterPi).margin(1e-4f));
-    REQUIRE(stepLegYawOffset(-halfPi, 0.0f, false, 0.250f) == Catch::Approx(0.0f).margin(1e-4f));
+    // Strafe R (-90 deg) -> Stop (0) unwinds with the exact same exponential decay:
+    // after 10 frames @ 60 Hz (166.7 ms), -90 * 0.75^10 = -5.068 deg (Native measured: -5.12 deg).
+    float stopYaw = -halfPi;
+    for (int i = 0; i < 10; ++i) stopYaw = stepLegYawOffset(stopYaw, 0.0f, dt60);
+    REQUIRE(stopYaw * (180.0f / pi) == Catch::Approx(-90.0f * std::pow(0.75f, 10)).margin(1e-2f));
 
-    // Frame-rate invariance: 30 fps vs 120 fps over 125ms.
-    float y30 = halfPi;
-    for (int i = 0; i < 3; ++i) y30 = stepLegYawOffset(y30, -halfPi, true, 1.0f / 24.0f);
-    float y120 = halfPi;
-    for (int i = 0; i < 15; ++i) y120 = stepLegYawOffset(y120, -halfPi, true, 1.0f / 120.0f);
-    REQUIRE(y30 == Catch::Approx(y120).margin(1e-4f));
+    // Exact semigroup frame-rate invariance across 15, 30, 60, 120, and 240 Hz over 100 ms.
+    const auto runFor = [&](int hz) {
+        float y = halfPi;
+        const int steps = hz / 10;
+        for (int i = 0; i < steps; ++i) y = stepLegYawOffset(y, -halfPi, 1.0f / float(hz));
+        return y;
+    };
+    const float ref60 = runFor(60);
+    REQUIRE(runFor(30) == Catch::Approx(ref60).margin(1e-4f));
+    REQUIRE(runFor(120) == Catch::Approx(ref60).margin(1e-4f));
+    REQUIRE(runFor(240) == Catch::Approx(ref60).margin(1e-4f));
 
-    // Non-positive dt is a no-op; huge dt lands cleanly on target without overshoot.
-    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, 0.0f) == Catch::Approx(halfPi));
-    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, -0.1f) == Catch::Approx(halfPi));
-    REQUIRE(stepLegYawOffset(halfPi, -halfPi, true, 10.0f) == Catch::Approx(-halfPi));
+    // Non-positive / non-finite dt is a no-op; out-of-range inputs clamp; large dt snaps cleanly to target.
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, 0.0f) == Catch::Approx(halfPi));
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, -0.1f) == Catch::Approx(halfPi));
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, std::numeric_limits<float>::infinity()) == Catch::Approx(halfPi));
+    REQUIRE(stepLegYawOffset(halfPi, -halfPi, 1.0f) == Catch::Approx(-halfPi));
+    REQUIRE(stepLegYawOffset(3.0f, -3.0f, 1.0f) == Catch::Approx(-halfPi));
 }
 
 TEST_CASE("Remote jump follows an arc across heartbeats and lands", "[entity][movement]") {

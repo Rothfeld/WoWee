@@ -13,27 +13,36 @@ struct GroundDirection {
     bool moving = false;  // any direction key held
 };
 
-// Native TBC 2.4.3 (build 8606) slews the lower-body yaw offset smoothly
-// within [-pi/2, +pi/2] instead of snapping 1 frame to the new strafe/diagonal
-// angle. Because the offset is a signed scalar in [-pi/2, +pi/2], reversing
-// strafe direction (+pi/2 <-> -pi/2) always pivots through 0 (front), keeping
-// torso counter-rotation within [-90 deg, +90 deg].
-// Measured from 30 fps Native 2.4.3 captures across Human Male, Tauren Male,
-// and Druid Cat (Run, Walk, diagonal, back+strafe, stand->strafe, strafe->stop):
-//   - Moving transitions (L<->R 180 deg in ~250ms; 90 deg in ~125ms): 4*pi rad/s (720 deg/s)
-//   - Stopping return to idle (90 deg -> 0 in ~250ms):                2*pi rad/s (360 deg/s)
-constexpr float kLegYawMaxOffsetRad      = 0.5f * 3.14159265358979323846f;
-constexpr float kLegYawMoveRateRadPerSec = 4.0f * 3.14159265358979323846f;
-constexpr float kLegYawStopRateRadPerSec = 2.0f * 3.14159265358979323846f;
+// Native TBC 2.4.3 (build 8606) exponentially filters the lower-body yaw offset
+// within [-pi/2, +pi/2] instead of snapping 1 frame or slewing at constant
+// linear angular speed. Because the offset is a signed scalar in [-pi/2, +pi/2],
+// reversing strafe direction (+pi/2 <-> -pi/2) always pivots through 0 (front),
+// keeping torso counter-rotation within [-90 deg, +90 deg].
+//
+// Measured at 200 Hz sampling on Native 2.4.3 (DruidCat, HumanMale, TaurenMale;
+// Stand->Strafe, Q<->E, W+Q<->W+E, S+Q<->S+E, W+E->W, Strafe->Stop):
+//   - Remaining angular error multiplies by 0.75 per 60 Hz frame (alpha = 0.25):
+//       theta(t + dt) = target + (current - target) * 0.75^(60 * dt)
+//                     = target + (current - target) * exp(-kLegYawDecayPerSec * dt)
+//     with kLegYawDecayPerSec = 60 * ln(4 / 3) = 17.2609243 s^-1.
+//   - Q -> E (+90 -> -90 deg) at 60 Hz steps +90 -> +45 -> +11.25 -> -14.06 ->
+//     -33.05 -> -47.29 -> -57.96 -> -65.97 -> -71.98 deg, crossing 0 deg (front)
+//     at t_1/2 = ln(2) / k = 40.16 ms (~2.4 frames), 90% in 133 ms, 95% in 173 ms.
+//   - Stopping (Strafe -> Stand) and diagonal release (W+E -> W) follow the
+//     exact same exponential decay toward 0.
+constexpr float kLegYawMaxOffsetRad = 0.5f * 3.14159265358979323846f;
+constexpr float kLegYawDecayPerSec  = 17.260924347106847f; // 60 * ln(4 / 3)
+constexpr float kLegYawSnapEpsRad   = 1e-4f;
 
-inline float stepLegYawOffset(float currentRad, float targetRad, bool moving, float dt) {
+inline float stepLegYawOffset(float currentRad, float targetRad, float dt) {
     if (!(dt > 0.0f) || !std::isfinite(dt)) return currentRad;
     const float clampedCurrent = std::clamp(currentRad, -kLegYawMaxOffsetRad, kLegYawMaxOffsetRad);
     const float clampedTarget  = std::clamp(targetRad,  -kLegYawMaxOffsetRad, kLegYawMaxOffsetRad);
-    const float diff = clampedTarget - clampedCurrent;
-    const float maxStep = (moving ? kLegYawMoveRateRadPerSec : kLegYawStopRateRadPerSec) * dt;
-    if (std::abs(diff) <= maxStep) return clampedTarget;
-    return clampedCurrent + (diff > 0.0f ? maxStep : -maxStep);
+    const float remaining = clampedCurrent - clampedTarget;
+    if (std::abs(remaining) <= kLegYawSnapEpsRad) return clampedTarget;
+    const float next = clampedTarget + remaining * std::exp(-kLegYawDecayPerSec * dt);
+    if (std::abs(next - clampedTarget) <= kLegYawSnapEpsRad) return clampedTarget;
+    return next;
 }
 
 // Models run along local +X. Backpedal plays along local -X. Rotate the
